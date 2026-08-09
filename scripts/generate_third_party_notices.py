@@ -19,6 +19,10 @@ LOCK_ENTRY_RE = re.compile(r"^([A-Za-z0-9_.-]+)==([^\\\s]+)")
 def normalize_name(value: str) -> str:
     """Normalize name.
 
+    Args:
+        value: Candidate value consumed by normalize name.
+
+
     Returns:
         The normalize name result.
     """
@@ -26,7 +30,11 @@ def normalize_name(value: str) -> str:
 
 
 def markdown(value: str) -> str:
-    """Return markdown."""
+    """Return markdown.
+
+    Args:
+        value: Candidate value consumed by markdown.
+    """
     return value.replace("|", "\\|").replace("\n", " ").strip()
 
 
@@ -55,7 +63,11 @@ def locked_packages(path: Path) -> dict[str, tuple[str, str]]:
 
 
 def license_from_metadata(metadata) -> str:
-    """Return license from metadata."""
+    """Return license from metadata.
+
+    Args:
+        metadata: Structured metadata associated with the artifact or operation.
+    """
     expression = (metadata.get("License-Expression") or "").strip()
     if expression:
         return expression
@@ -69,7 +81,11 @@ def license_from_metadata(metadata) -> str:
 
 
 def source_from_metadata(metadata) -> str:
-    """Return source from metadata."""
+    """Return source from metadata.
+
+    Args:
+        metadata: Structured metadata associated with the artifact or operation.
+    """
     homepage = (metadata.get("Home-page") or "").strip()
     if homepage:
         return homepage
@@ -87,6 +103,11 @@ def source_from_metadata(metadata) -> str:
 
 def wheel_records(wheelhouse: Path, expected: dict[str, tuple[str, str]]) -> dict[str, dict[str, str]]:
     """Return wheel records.
+
+    Args:
+        wheelhouse: Filesystem path associated with wheelhouse.
+        expected: Expected consumed by wheel records.
+
 
     Raises:
         ValueError: If an input value is invalid.
@@ -135,6 +156,11 @@ def installed_python_records(
     environment: Path, expected: dict[str, tuple[str, str]] | None = None
 ) -> dict[str, dict[str, str]]:
     """Return installed python records.
+
+    Args:
+        environment: Filesystem path associated with environment.
+        expected: Expected consumed by installed python records.
+
 
     Raises:
         ValueError: If an input value is invalid.
@@ -203,6 +229,10 @@ def rpm_records(path: Path) -> list[dict[str, str]]:
 def vendored_records(config_path: Path) -> list[dict[str, str]]:
     """Return vendored records.
 
+    Args:
+        config_path: Filesystem path containing the operation configuration.
+
+
     Raises:
         ValueError: If an input value is invalid.
     """
@@ -225,6 +255,12 @@ def vendored_records(config_path: Path) -> list[dict[str, str]]:
 
 def render_section(title: str, records: list[dict[str, str]], *, notice_column: bool = False) -> list[str]:
     """Render section.
+
+    Args:
+        title: Title consumed by render section.
+        records: Persistent or reported records processed by the operation.
+        notice_column: Whether notice column applies to the operation.
+
 
     Returns:
         The rendered section.

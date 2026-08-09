@@ -115,7 +115,11 @@ def test_ca_certificate_row_capabilities_follow_lifecycle_and_ownership():
 
 
 def test_managed_ca_specs_include_portal_https_certificate(client):
-    """Verify that managed ca specs include portal https certificate."""
+    """Verify that managed ca specs include portal https certificate.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
     from sqlalchemy import select
 
     from atlaso.app.database import SessionLocal

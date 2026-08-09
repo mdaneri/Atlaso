@@ -8,7 +8,11 @@ from sqlalchemy import select
 
 
 def login(client):
-    """Handle login."""
+    """Handle login.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
     page = client.get("/login")
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
     response = client.post(
@@ -20,12 +24,20 @@ def login(client):
 
 
 def csrf_from_page(text: str) -> str:
-    """Return csrf from page."""
+    """Return csrf from page.
+
+    Args:
+        text: Text content consumed by the operation.
+    """
     return text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
 
 
 def test_vault_ui_encrypts_masks_and_explicitly_reveals_password(client):
-    """Verify that vault ui encrypts masks and explicitly reveals password."""
+    """Verify that vault ui encrypts masks and explicitly reveals password.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import AuditEvent, Vault, VaultEntry
 
@@ -91,7 +103,11 @@ def test_vault_ui_encrypts_masks_and_explicitly_reveals_password(client):
 
 
 def test_vault_delete_blocks_enabled_kickstart_marker_dependencies(client):
-    """Verify that vault delete blocks enabled kickstart marker dependencies."""
+    """Verify that vault delete blocks enabled kickstart marker dependencies.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import EsxiKickstart, Vault
     from atlaso.app.services.esxi_pxe import content_hash
@@ -150,7 +166,11 @@ def test_vault_delete_blocks_enabled_kickstart_marker_dependencies(client):
 
 
 def test_vault_ui_copies_entry_without_returning_plaintext(client):
-    """Verify that vault ui copies entry without returning plaintext."""
+    """Verify that vault ui copies entry without returning plaintext.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import AuditEvent, Vault, VaultEntry
     from atlaso.app.secrets import decrypt_secret
@@ -218,7 +238,11 @@ def test_vault_ui_copies_entry_without_returning_plaintext(client):
 
 
 def test_vault_service_rejects_unsupported_types(client):
-    """Verify that vault service rejects unsupported types."""
+    """Verify that vault service rejects unsupported types.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import Vault
     from atlaso.app.services.vaults import VaultEntryInput, upsert_vault_entry
@@ -250,7 +274,12 @@ def test_vault_service_rejects_unsupported_types(client):
     ],
 )
 def test_vault_uri_validation_rejects_unsupported_or_unsafe_values(uris, message):
-    """Verify that vault uri validation rejects unsupported or unsafe values."""
+    """Verify that vault uri validation rejects unsupported or unsafe values.
+
+    Args:
+        uris: Uris supplied to the test scenario.
+        message: Human-readable message associated with the operation.
+    """
     from atlaso.app.services.vaults import normalize_vault_uris
 
     with pytest.raises(ValueError, match=message):
@@ -258,7 +287,13 @@ def test_vault_uri_validation_rejects_unsupported_or_unsafe_values(uris, message
 
 
 def test_vault_cli_fails_closed_and_reads_only_scoped_credential(tmp_path, monkeypatch, capsys):
-    """Verify that vault cli fails closed and reads only scoped credential."""
+    """Verify that vault cli fails closed and reads only scoped credential.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+        capsys: Pytest fixture used to capture standard output and standard error.
+    """
     from atlaso.app import vault_cli
 
     monkeypatch.delenv("CREDENTIALS_DIRECTORY", raising=False)
@@ -278,7 +313,11 @@ def test_vault_cli_fails_closed_and_reads_only_scoped_credential(tmp_path, monke
 
 
 def test_dynamic_kickstart_derives_exact_vault_scope_without_caching(client):
-    """Verify that dynamic kickstart derives exact vault scope without caching."""
+    """Verify that dynamic kickstart derives exact vault scope without caching.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import EsxiKickstart, EsxiKickstartVaultBinding, EsxiPxeHost, Vault
     from atlaso.app.services.esxi_pxe import content_hash
@@ -367,7 +406,13 @@ def test_dynamic_kickstart_derives_exact_vault_scope_without_caching(client):
     ],
 )
 def test_kickstart_save_rejects_missing_unsupported_and_malformed_vault_markers(client, marker, case_name):
-    """Verify that kickstart save rejects missing unsupported and malformed vault markers."""
+    """Verify that kickstart save rejects missing unsupported and malformed vault markers.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+        marker: Marker supplied to the test scenario.
+        case_name: Case name supplied to the test scenario.
+    """
     login(client)
     page = client.get("/esxi-pxe")
     csrf = csrf_from_page(page.text)
@@ -398,7 +443,11 @@ def test_kickstart_marker_parser_handles_adversarial_braces_without_regex_backtr
 
 
 def test_kickstart_json_errors_do_not_expose_database_exception_details(client):
-    """Verify that kickstart json errors do not expose database exception details."""
+    """Verify that kickstart json errors do not expose database exception details.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
     login(client)
     page = client.get("/esxi-pxe")
     csrf = csrf_from_page(page.text)
@@ -420,7 +469,12 @@ def test_kickstart_json_errors_do_not_expose_database_exception_details(client):
 
 
 def test_kickstart_completion_and_save_validate_metadata_without_decrypting(client, monkeypatch):
-    """Verify that kickstart completion and save validate metadata without decrypting."""
+    """Verify that kickstart completion and save validate metadata without decrypting.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+    """
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import Vault
     from atlaso.app.services.vaults import VaultEntryInput, upsert_vault_entry
@@ -596,7 +650,12 @@ def test_vmware_wheel_deploy_exposes_fail_closed_vault_shell_commands():
 
 
 def test_remote_vault_uri_launch_uses_one_use_server_side_ticket(client, monkeypatch):
-    """Verify that remote vault uri launch uses one use server side ticket."""
+    """Verify that remote vault uri launch uses one use server side ticket.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+    """
     from types import SimpleNamespace
     from urllib.parse import parse_qs, urlsplit
 
@@ -732,6 +791,10 @@ def test_remote_vault_uri_launch_uses_one_use_server_side_ticket(client, monkeyp
     def unavailable_target(*_args):
         """Handle unavailable target.
 
+        Args:
+            *_args: Additional positional arguments accepted by the callable.
+
+
         Raises:
             ConnectionRefusedError: If the operation encounters an invalid state.
         """
@@ -749,7 +812,12 @@ def test_remote_vault_uri_launch_uses_one_use_server_side_ticket(client, monkeyp
 
 
 def test_remote_vault_uri_authenticates_server_side_after_rechecking_host_key(client, monkeypatch):
-    """Verify that remote vault uri authenticates server side after rechecking host key."""
+    """Verify that remote vault uri authenticates server side after rechecking host key.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+    """
     from atlaso.app import web_terminal
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import Vault
@@ -794,7 +862,11 @@ def test_remote_vault_uri_authenticates_server_side_after_rechecking_host_key(cl
             self.shell_invoked = False
 
         def get_pty(self, **kwargs):
-            """Return pty."""
+            """Return pty.
+
+            Args:
+                **kwargs: Additional keyword arguments accepted by the callable.
+            """
             self.pty = kwargs
 
         def invoke_shell(self):
@@ -810,7 +882,11 @@ def test_remote_vault_uri_authenticates_server_side_after_rechecking_host_key(cl
             closed: Closed captured or supplied by this test helper.
         """
         def __init__(self, _socket):
-            """Initialize the fake transport."""
+            """Initialize the fake transport.
+
+            Args:
+                _socket: Socket supplied to the test scenario.
+            """
             self.channel = FakeChannel()
             self.authentication = None
             self.closed = False
@@ -853,7 +929,11 @@ def test_remote_vault_uri_authenticates_server_side_after_rechecking_host_key(cl
     transports = []
 
     def fake_transport(sock):
-        """Return fake transport."""
+        """Return fake transport.
+
+        Args:
+            sock: Sock supplied to the test scenario.
+        """
         transport = FakeTransport(sock)
         transports.append(transport)
         return transport
@@ -898,7 +978,11 @@ def test_vcf_import_discovers_sddc_manager_and_installer_passwords():
             payloads: Payloads captured or supplied by this test helper.
         """
         def __init__(self, payloads):
-            """Initialize the fake client."""
+            """Initialize the fake client.
+
+            Args:
+                payloads: Payloads supplied to the test scenario.
+            """
             self.payloads = payloads
 
         def get(self, path, **_kwargs):
@@ -906,7 +990,7 @@ def test_vcf_import_discovers_sddc_manager_and_installer_passwords():
 
             Args:
                 path: Filesystem or URL path to read, validate, or update.
-                _kwargs: Additional keyword arguments accepted by the test double.
+                **_kwargs: Additional keyword arguments accepted by the test double.
             """
             return httpx.Response(200, json=self.payloads[path])
 
@@ -917,12 +1001,21 @@ def test_vcf_import_discovers_sddc_manager_and_installer_passwords():
             client: Client captured or supplied by this test helper.
         """
         def __init__(self, payloads):
-            """Initialize the fake api."""
+            """Initialize the fake api.
+
+            Args:
+                payloads: Payloads supplied to the test scenario.
+            """
             self.client = FakeClient(payloads)
 
         @staticmethod
         def _raise(response, _message):
-            """Handle raise."""
+            """Handle raise.
+
+            Args:
+                response: HTTP or command response being inspected.
+                _message: Human-readable message associated with the operation.
+            """
             assert response.is_success
 
     sddc = _sddc_manager_candidates(
@@ -969,7 +1062,11 @@ def test_vcf_import_discovers_sddc_manager_and_installer_passwords():
 
 
 def test_settings_archive_excludes_and_restore_clears_vaults(client):
-    """Verify that settings archive excludes and restore clears vaults."""
+    """Verify that settings archive excludes and restore clears vaults.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import Vault
     from atlaso.app.services.settings_archive import export_settings_archive, restore_settings_archive
@@ -999,7 +1096,12 @@ def test_settings_archive_excludes_and_restore_clears_vaults(client):
 
 
 def test_worker_stages_selected_vault_and_redacts_captured_output(client, monkeypatch):
-    """Verify that worker stages selected vault and redacts captured output."""
+    """Verify that worker stages selected vault and redacts captured output.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+    """
     from atlaso.app.adapters.system import AdapterResult, SystemAdapter
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import AutomationScript, Job, Vault
@@ -1083,7 +1185,12 @@ def test_worker_stages_selected_vault_and_redacts_captured_output(client, monkey
 
 
 def test_worker_rejects_reused_vault_id_before_decrypting(client, monkeypatch):
-    """Verify that worker rejects reused vault id before decrypting."""
+    """Verify that worker rejects reused vault id before decrypting.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+    """
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import AutomationScript, Job, Vault
     from atlaso.app.services.automation import create_script_revision
@@ -1141,7 +1248,12 @@ def test_worker_rejects_reused_vault_id_before_decrypting(client, monkeypatch):
 
 
 def test_vcf_helper_inspection_returns_metadata_and_import_encrypts_value(client, monkeypatch):
-    """Verify that vcf helper inspection returns metadata and import encrypts value."""
+    """Verify that vcf helper inspection returns metadata and import encrypts value.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+    """
     from atlaso.app import ui
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import Vault, VaultEntry
@@ -1199,7 +1311,12 @@ def test_vcf_helper_inspection_returns_metadata_and_import_encrypts_value(client
 
 
 def test_vcf_helper_vault_picker_resolves_password_only_on_server(client, monkeypatch):
-    """Verify that vcf helper vault picker resolves password only on server."""
+    """Verify that vcf helper vault picker resolves password only on server.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+    """
     from atlaso.app import ui
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import AuditEvent, Vault
@@ -1262,7 +1379,11 @@ def test_vcf_helper_vault_picker_resolves_password_only_on_server(client, monkey
     captured = {}
 
     def discover(**kwargs):
-        """Return discover."""
+        """Return discover.
+
+        Args:
+            **kwargs: Additional keyword arguments accepted by the callable.
+        """
         captured.update(kwargs)
         return [
             VcfPasswordCandidate(

@@ -61,7 +61,11 @@ def test_photon_image_installs_fixed_size_atlaso_grub_branding():
 
 
 def test_inventory_linux_release_package_is_reproducible_and_deployable(tmp_path):
-    """Verify that inventory linux release package is reproducible and deployable."""
+    """Verify that inventory linux release package is reproducible and deployable.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
     path = Path("scripts/build_inventory_linux_package.py")
     spec = importlib.util.spec_from_file_location("build_inventory_linux_package", path)
     assert spec and spec.loader

@@ -14,14 +14,22 @@ VCF_BACKUP_DEFAULT_USERNAME = "vcf-backup"
 
 
 def vcf_backup_remote_directory(settings: VcfBackupSettings) -> str:
-    """Return vcf backup remote directory."""
+    """Return vcf backup remote directory.
+
+    Args:
+        settings: Current Atlaso settings used to configure the operation.
+    """
     if settings.chroot_enabled:
         return VCF_BACKUP_REMOTE_DIRECTORY
     return settings.storage_path.rstrip("/") or VCF_BACKUP_DEFAULT_VOLUME_MOUNT
 
 
 def vcf_backup_settings_to_dict(settings: VcfBackupSettings) -> dict:
-    """Return vcf backup settings to dict."""
+    """Return vcf backup settings to dict.
+
+    Args:
+        settings: Current Atlaso settings used to configure the operation.
+    """
     return {
         "id": settings.id,
         "enabled": settings.enabled,
@@ -42,7 +50,12 @@ def vcf_backup_settings_to_dict(settings: VcfBackupSettings) -> dict:
 
 
 def vcf_backup_service_state(settings: VcfBackupSettings, *, sshd_active: bool | None = None) -> dict[str, object]:
-    """Return vcf backup service state."""
+    """Return vcf backup service state.
+
+    Args:
+        settings: Current Atlaso settings used to configure the operation.
+        sshd_active: Sshd active consumed by VCF backup service state.
+    """
     desired_enabled = bool(settings.enabled)
     running = bool(sshd_active) if sshd_active is not None else desired_enabled
     if running and desired_enabled:
@@ -72,6 +85,12 @@ def vcf_backup_service_state(settings: VcfBackupSettings, *, sshd_active: bool |
 
 def validate_vcf_backup_state(settings: VcfBackupSettings, users: list[User], interface_names: set[str] | None = None) -> list[str]:
     """Validate vcf backup state.
+
+    Args:
+        settings: Current Atlaso settings used to configure the operation.
+        users: Candidate users to validate.
+        interface_names: Candidate interface names to validate.
+
 
     Returns:
         The validate vcf backup state result.
@@ -114,6 +133,10 @@ def validate_vcf_backup_state(settings: VcfBackupSettings, users: list[User], in
 
 def render_vcf_backup_config(settings: VcfBackupSettings) -> str:
     """Render vcf backup config.
+
+    Args:
+        settings: Current Atlaso settings used to configure the operation.
+
 
     Returns:
         The rendered vcf backup config.

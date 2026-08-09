@@ -52,19 +52,31 @@ _PENDING_OS_PASSWORDS: dict[str, tuple[str, datetime]] = {}
 
 
 def _pending_key(user: User | str) -> str:
-    """Return pending key."""
+    """Return pending key.
+
+    Args:
+        user: User record or identity affected by the operation.
+    """
     if isinstance(user, User):
         return user.username.strip().lower()
     return str(user).strip().lower()
 
 
 def has_pending_os_password(user: User) -> bool:
-    """Return whether pending os password."""
+    """Return whether pending os password.
+
+    Args:
+        user: User record or identity affected by the operation.
+    """
     return _pending_key(user) in _PENDING_OS_PASSWORDS
 
 
 def pending_os_password_since(user: User) -> datetime | None:
-    """Return pending os password since."""
+    """Return pending os password since.
+
+    Args:
+        user: User record or identity affected by the operation.
+    """
     pending = _PENDING_OS_PASSWORDS.get(_pending_key(user))
     if pending:
         return pending[1]
@@ -72,25 +84,42 @@ def pending_os_password_since(user: User) -> datetime | None:
 
 
 def pending_os_password_count(users: list[User]) -> int:
-    """Return pending os password count."""
+    """Return pending os password count.
+
+    Args:
+        users: Users consumed by pending operating-system password count.
+    """
     keys = {_pending_key(user) for user in users}
     return sum(1 for key in keys if key in _PENDING_OS_PASSWORDS)
 
 
 def clear_pending_os_password(user: User | str) -> None:
-    """Remove pending os password."""
+    """Remove pending os password.
+
+    Args:
+        user: User record or identity affected by the operation.
+    """
     _PENDING_OS_PASSWORDS.pop(_pending_key(user), None)
 
 
 def rename_pending_os_password(old_username: str, new_username: str) -> None:
-    """Handle rename pending os password."""
+    """Handle rename pending os password.
+
+    Args:
+        old_username: Old username consumed by rename pending operating-system password.
+        new_username: New username consumed by rename pending operating-system password.
+    """
     pending = _PENDING_OS_PASSWORDS.pop(_pending_key(old_username), None)
     if pending:
         _PENDING_OS_PASSWORDS[_pending_key(new_username)] = pending
 
 
 def password_policy_from_json(raw_value: str | None) -> dict[str, bool | int]:
-    """Return password policy from json."""
+    """Return password policy from json.
+
+    Args:
+        raw_value: Raw value consumed by password policy from JSON.
+    """
     policy = dict(DEFAULT_PASSWORD_POLICY)
     if raw_value:
         try:
@@ -110,13 +139,21 @@ def password_policy_from_json(raw_value: str | None) -> dict[str, bool | int]:
 
 
 def password_policy_to_json(policy: dict[str, bool | int]) -> str:
-    """Return password policy to json."""
+    """Return password policy to json.
+
+    Args:
+        policy: Policy consumed by password policy to JSON.
+    """
     normalized = password_policy_from_json(json.dumps(policy))
     return json.dumps(normalized, indent=2, sort_keys=True)
 
 
 def password_policy_summary(policy: dict[str, bool | int]) -> str:
-    """Return password policy summary."""
+    """Return password policy summary.
+
+    Args:
+        policy: Policy consumed by password policy summary.
+    """
     parts = [f"minimum {int(policy['min_length'])} characters"]
     if policy.get("require_uppercase"):
         parts.append("uppercase")
@@ -163,6 +200,10 @@ def validate_password(password: str, username: str, policy: dict[str, bool | int
 def validate_local_usernames(users: list[User]) -> list[str]:
     """Validate local usernames.
 
+    Args:
+        users: Candidate users to validate.
+
+
     Returns:
         The validate local usernames result.
     """
@@ -183,12 +224,20 @@ def validate_local_usernames(users: list[User]) -> list[str]:
 
 
 def is_valid_user_shell(shell: str | None) -> bool:
-    """Return whether valid user shell."""
+    """Return whether valid user shell.
+
+    Args:
+        shell: Shell consumed by is valid user shell.
+    """
     return (shell or DEFAULT_LOCAL_USER_SHELL).strip() in LOCAL_USER_SHELLS
 
 
 def normalize_user_shell(shell: str | None) -> str:
     """Normalize user shell.
+
+    Args:
+        shell: Candidate shell to normalize.
+
 
     Returns:
         The normalize user shell result.
@@ -198,7 +247,11 @@ def normalize_user_shell(shell: str | None) -> str:
 
 
 def os_sync_status_label(user: User) -> str:
-    """Return os sync status label."""
+    """Return os sync status label.
+
+    Args:
+        user: User record or identity affected by the operation.
+    """
     if has_pending_os_password(user):
         return "password staged"
     if user.os_password_applied_at:
@@ -209,7 +262,11 @@ def os_sync_status_label(user: User) -> str:
 
 
 def local_user_sync_rows(users: list[User]) -> list[dict[str, Any]]:
-    """Return local user sync rows."""
+    """Return local user sync rows.
+
+    Args:
+        users: Users consumed by local user sync rows.
+    """
     rows: list[dict[str, Any]] = []
     for user in users:
         rows.append(
@@ -232,7 +289,11 @@ def local_user_sync_rows(users: list[User]) -> list[dict[str, Any]]:
 
 
 def _normalized_removed_users(removed_users: list[str] | None = None) -> list[str]:
-    """Return normalized removed users."""
+    """Return normalized removed users.
+
+    Args:
+        removed_users: Removed users consumed by normalized removed users.
+    """
     normalized: list[str] = []
     for username in removed_users or []:
         value = username.strip().lower()
@@ -248,7 +309,14 @@ def local_users_payload(
     removed_users: list[str] | None = None,
     include_passwords: bool = False,
 ) -> dict[str, Any]:
-    """Return local users payload."""
+    """Return local users payload.
+
+    Args:
+        users: Users consumed by local users payload.
+        password_policy: Password policy consumed by local users payload.
+        removed_users: Removed users consumed by local users payload.
+        include_passwords: Whether include passwords applies to the operation.
+    """
     rows = local_user_sync_rows(users)
     payload = {
         "managed_by": "Atlaso",
@@ -289,6 +357,12 @@ def render_local_users_preview(
 ) -> str:
     """Render local users preview.
 
+    Args:
+        users: Users consumed by render local users preview.
+        password_policy: Password policy consumed by render local users preview.
+        removed_users: Removed users consumed by render local users preview.
+
+
     Returns:
         The rendered local users preview.
     """
@@ -306,6 +380,12 @@ def render_local_users_apply_config(
     removed_users: list[str] | None = None,
 ) -> str:
     """Render local users apply config.
+
+    Args:
+        users: Users consumed by render local users apply config.
+        password_policy: Password policy consumed by render local users apply config.
+        removed_users: Removed users consumed by render local users apply config.
+
 
     Returns:
         The rendered local users apply config.
@@ -332,7 +412,12 @@ def stage_user_os_password(user: User, password: str) -> None:
 
 
 def mark_local_users_applied(users: list[User], *, applied_at: datetime | None = None) -> None:
-    """Handle mark local users applied."""
+    """Handle mark local users applied.
+
+    Args:
+        users: Users consumed by mark local users applied.
+        applied_at: Applied at consumed by mark local users applied.
+    """
     timestamp = applied_at or utcnow()
     for user in users:
         password_was_pending = has_pending_os_password(user)
@@ -349,7 +434,12 @@ def mark_local_users_applied(users: list[User], *, applied_at: datetime | None =
 
 
 def mark_local_users_failed(users: list[User], error: str) -> None:
-    """Handle mark local users failed."""
+    """Handle mark local users failed.
+
+    Args:
+        users: Users consumed by mark local users failed.
+        error: Failure being recorded, propagated, or reported.
+    """
     for user in users:
         user.os_sync_status = "failed"
         user.os_sync_error = error[:1000]

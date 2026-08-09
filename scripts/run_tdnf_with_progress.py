@@ -20,6 +20,10 @@ ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 def _format_duration(seconds: float) -> str:
     """Render duration.
 
+    Args:
+        seconds: Seconds consumed by format duration.
+
+
     Returns:
         The format duration result.
     """
@@ -35,6 +39,10 @@ def _format_duration(seconds: float) -> str:
 
 def _format_size(size: int) -> str:
     """Render size.
+
+    Args:
+        size: Size consumed by format size.
+
 
     Returns:
         The format size result.
@@ -122,7 +130,12 @@ def run(
         )
 
     def forward_signal(signum: int, _frame: object) -> None:
-        """Handle forward signal."""
+        """Handle forward signal.
+
+        Args:
+            signum: Signum consumed by forward signal.
+            _frame: Frame consumed by forward signal.
+        """
         try:
             if os.name == "posix":
                 os.killpg(process.pid, signum)
@@ -174,6 +187,10 @@ def run(
 
 def main(argv: list[str] | None = None) -> int:
     """Run the command-line entry point.
+
+    Args:
+        argv: Command-line arguments to parse, or ``None`` to use the process arguments.
+
 
     Returns:
         The main result.

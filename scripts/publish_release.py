@@ -26,6 +26,11 @@ RASD_NAMESPACE = "http://schemas.dmtf.org/wbem/wscim/1/cim-schema/2/CIM_Resource
 def run(command: list[str], *, check: bool = True) -> subprocess.CompletedProcess[str]:
     """Run operation.
 
+    Args:
+        command: Command and arguments to execute.
+        check: Whether a nonzero command status raises an exception.
+
+
     Returns:
         The run result.
 
@@ -139,6 +144,11 @@ def verify_vmware_ovf_topology(path: Path, asset_names: set[str]) -> None:
 def verify_vmware_release_assets(directory: Path, names: set[str]) -> None:
     """Validate vmware release assets.
 
+    Args:
+        directory: Filesystem path associated with directory.
+        names: Names consumed by verify vmware release assets.
+
+
     Raises:
         SystemExit: If the operation encounters an invalid state.
     """
@@ -190,6 +200,10 @@ def verify_vmware_release_assets(directory: Path, names: set[str]) -> None:
 
 def main(argv: list[str] | None = None) -> int:
     """Run the command-line entry point.
+
+    Args:
+        argv: Command-line arguments to parse, or ``None`` to use the process arguments.
+
 
     Returns:
         The main result.

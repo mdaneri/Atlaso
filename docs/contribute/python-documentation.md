@@ -16,8 +16,11 @@ uses PEP 257 docstrings with Google-style sections where a summary alone cannot 
 
 - Start with a concise imperative summary that describes observable behavior, such as `Return`, `Validate`, `Create`,
   or `Render`.
-- Document arguments when their meaning, units, trust boundary, or lifecycle role is not clear from the name and type
-  hint. Do not repeat type information from the signature.
+- Document every explicit function and method parameter in a Google-style `Args` section, including positional-only,
+  keyword-only, `*args`, and `**kwargs` parameters. Exclude only the implicit `self` and `cls` parameters. Describe the
+  parameter's domain meaning, units, trust boundary, or lifecycle role without repeating its type annotation.
+- FastAPI route docstrings may document internal dependency parameters normally. The shared documented-route class
+  keeps Google-style implementation sections out of the public OpenAPI operation description.
 - Describe a return value in the summary for a simple accessor or predicate. Use a `Returns` section when the returned
   object, ownership, normalization, or state needs more explanation.
 - List exceptions intentionally raised by the function under `Raises`. Describe the condition that triggers each
@@ -66,6 +69,7 @@ Run the repository's normal Python and documentation checks after changing docst
 
 ```powershell
 python -m compileall atlaso scripts tests
+python -m pytest -q tests/test_python_documentation.py
 python scripts/check_repo.py
 npm run lint:markdown
 python scripts/check_docs.py

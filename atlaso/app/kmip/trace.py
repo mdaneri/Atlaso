@@ -101,6 +101,10 @@ class TraceSummary:
 def validate_contract(contract: dict[str, Any]) -> dict[str, Any]:
     """Validate contract.
 
+    Args:
+        contract: Candidate contract to validate.
+
+
     Returns:
         The validate contract result.
 
@@ -190,12 +194,21 @@ def load_contract(path: Path = CONTRACT_PATH) -> dict[str, Any]:
 
 
 def _normalized_field(value: str) -> str:
-    """Return normalized field."""
+    """Return normalized field.
+
+    Args:
+        value: Candidate value consumed by normalized field.
+    """
     return "".join(character for character in value.casefold() if character.isalnum())
 
 
 def _reject_secret_fields(value: Any, *, location: str) -> None:
     """Handle reject secret fields.
+
+    Args:
+        value: Candidate value consumed by reject secret fields.
+        location: Location consumed by reject secret fields.
+
 
     Raises:
         TraceValidationError: If the operation encounters an invalid state.
@@ -216,6 +229,12 @@ def _reject_secret_fields(value: Any, *, location: str) -> None:
 def _require_sha256(value: object, *, field: str, line: int) -> str:
     """Return require sha256.
 
+    Args:
+        value: Candidate value consumed by require sha256.
+        field: Field consumed by require sha256.
+        line: Source or output line being parsed.
+
+
     Raises:
         TraceValidationError: If the operation encounters an invalid state.
     """
@@ -232,6 +251,12 @@ def _validate_event(
     line: int,
 ) -> None:
     """Validate event.
+
+    Args:
+        event: Candidate event to validate.
+        contract: Candidate contract to validate.
+        line: Source or output line being parsed.
+
 
     Raises:
         TraceValidationError: If the operation encounters an invalid state.
@@ -311,6 +336,12 @@ def validate_trace(
 ) -> TraceSummary:
     """Validate trace.
 
+    Args:
+        lines: Source or output lines being parsed.
+        contract: Candidate contract to validate.
+        contract_bytes: Contract size in bytes.
+
+
     Returns:
         The validate trace result.
 
@@ -351,6 +382,10 @@ def validate_trace(
 
 def main(argv: list[str] | None = None) -> int:
     """Run the command-line entry point.
+
+    Args:
+        argv: Command-line arguments to parse, or ``None`` to use the process arguments.
+
 
     Returns:
         The main result.

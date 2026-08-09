@@ -29,7 +29,11 @@ KEY_ID = "test-release-key"
 
 
 def canonical(payload: dict) -> bytes:
-    """Return canonical."""
+    """Return canonical.
+
+    Args:
+        payload: Validated request or task payload consumed by the operation.
+    """
     return (json.dumps(payload, indent=2, sort_keys=True) + "\n").encode()
 
 
@@ -74,7 +78,12 @@ def inventory_payload() -> dict:
 
 
 def signed(payload: dict, private_key: Ed25519PrivateKey) -> tuple[bytes, bytes]:
-    """Return signed."""
+    """Return signed.
+
+    Args:
+        payload: Validated request or task payload consumed by the operation.
+        private_key: Private key supplied to the test scenario.
+    """
     raw = canonical(payload)
     signature = canonical(
         {
@@ -88,7 +97,11 @@ def signed(payload: dict, private_key: Ed25519PrivateKey) -> tuple[bytes, bytes]
 
 @pytest.fixture
 def trust(tmp_path):
-    """Return trust."""
+    """Return trust.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
     private_key = Ed25519PrivateKey.generate()
     public_key = private_key.public_key().public_bytes(
         serialization.Encoding.PEM,
@@ -101,7 +114,11 @@ def trust(tmp_path):
 
 
 def test_signed_release_verification_fails_closed(trust):
-    """Verify that signed release verification fails closed."""
+    """Verify that signed release verification fails closed.
+
+    Args:
+        trust: Trust supplied to the test scenario.
+    """
     private_key, trust_dir = trust
     raw, signature = signed(release_payload(), private_key)
 
@@ -119,7 +136,11 @@ def test_signed_release_verification_fails_closed(trust):
 
 
 def test_channel_pointer_must_match_named_key(trust):
-    """Verify that channel pointer must match named key."""
+    """Verify that channel pointer must match named key.
+
+    Args:
+        trust: Trust supplied to the test scenario.
+    """
     private_key, trust_dir = trust
     channel = {
         "schema_version": 2,
@@ -147,7 +168,11 @@ def test_channel_pointer_must_match_named_key(trust):
 
 
 def test_signed_inventory_release_verification_detects_tampering(trust):
-    """Verify that signed inventory release verification detects tampering."""
+    """Verify that signed inventory release verification detects tampering.
+
+    Args:
+        trust: Trust supplied to the test scenario.
+    """
     private_key, trust_dir = trust
     raw, signature = signed(inventory_payload(), private_key)
     assert verify_signed_json(
@@ -186,7 +211,12 @@ def test_signed_inventory_release_verification_detects_tampering(trust):
     ],
 )
 def test_inventory_release_manifest_fails_closed(mutation, message):
-    """Verify that inventory release manifest fails closed."""
+    """Verify that inventory release manifest fails closed.
+
+    Args:
+        mutation: Mutation supplied to the test scenario.
+        message: Human-readable message associated with the operation.
+    """
     payload = inventory_payload()
     for key, value in mutation.items():
         if key == "package":
@@ -213,7 +243,13 @@ def test_inventory_version_order_includes_revision():
     ],
 )
 def test_release_manifest_requires_complete_v2_interface(field, value, message):
-    """Verify that release manifest requires complete v2 interface."""
+    """Verify that release manifest requires complete v2 interface.
+
+    Args:
+        field: Field supplied to the test scenario.
+        value: Candidate value consumed by test release manifest requires complete v2 interface.
+        message: Human-readable message associated with the operation.
+    """
     payload = release_payload()
     payload[field] = value
     with pytest.raises(ReleaseManifestError, match=message):
@@ -294,7 +330,12 @@ def test_release_workflows_use_successful_main_sha_and_promote_without_rebuildin
 
 
 def test_idempotent_publisher_refuses_existing_tag_for_another_commit(monkeypatch, tmp_path):
-    """Verify that idempotent publisher refuses existing tag for another commit."""
+    """Verify that idempotent publisher refuses existing tag for another commit.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
     spec = importlib.util.spec_from_file_location("publish_release", ROOT / "scripts/publish_release.py")
     assert spec and spec.loader
     module = importlib.util.module_from_spec(spec)
@@ -307,6 +348,11 @@ def test_idempotent_publisher_refuses_existing_tag_for_another_commit(monkeypatc
 
     def fake_run(command, *, check=True):
         """Return fake run.
+
+        Args:
+            command: Command and arguments to execute.
+            check: Whether a nonzero command status raises an exception.
+
 
         Raises:
             AssertionError: If an expected invariant is not satisfied.
@@ -331,7 +377,12 @@ def test_idempotent_publisher_creates_annotated_tag_without_global_git_identity(
     monkeypatch,
     tmp_path,
 ):
-    """Verify that idempotent publisher creates annotated tag without global git identity."""
+    """Verify that idempotent publisher creates annotated tag without global git identity.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
     spec = importlib.util.spec_from_file_location("publish_release", ROOT / "scripts/publish_release.py")
     assert spec and spec.loader
     module = importlib.util.module_from_spec(spec)
@@ -343,7 +394,12 @@ def test_idempotent_publisher_creates_annotated_tag_without_global_git_identity(
     commands: list[list[str]] = []
 
     def fake_run(command, *, check=True):
-        """Return fake run."""
+        """Return fake run.
+
+        Args:
+            command: Command and arguments to execute.
+            check: Whether a nonzero command status raises an exception.
+        """
         import subprocess
 
         commands.append(command)
@@ -374,7 +430,11 @@ def test_idempotent_publisher_creates_annotated_tag_without_global_git_identity(
 
 
 def test_deterministic_release_archive_normalizes_metadata(tmp_path):
-    """Verify that deterministic release archive normalizes metadata."""
+    """Verify that deterministic release archive normalizes metadata.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
     spec = importlib.util.spec_from_file_location("build_release_bundle", ROOT / "scripts/build_release_bundle.py")
     assert spec and spec.loader
     module = importlib.util.module_from_spec(spec)
@@ -393,7 +453,12 @@ def test_deterministic_release_archive_normalizes_metadata(tmp_path):
 
 
 def test_abi_wheelhouse_lock_covers_exact_checked_in_versions(monkeypatch, tmp_path):
-    """Verify that abi wheelhouse lock covers exact checked in versions."""
+    """Verify that abi wheelhouse lock covers exact checked in versions.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
     spec = importlib.util.spec_from_file_location(
         "write_wheelhouse_lock",
         ROOT / "scripts/write_wheelhouse_lock.py",
@@ -424,7 +489,12 @@ def test_abi_wheelhouse_lock_covers_exact_checked_in_versions(monkeypatch, tmp_p
 
 
 def test_helper_offline_install_uses_only_locked_wheelhouse(monkeypatch, tmp_path):
-    """Verify that helper offline install uses only locked wheelhouse."""
+    """Verify that helper offline install uses only locked wheelhouse.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
     from tests.test_appliance_update import load_helper_module
 
     helper = load_helper_module()
@@ -440,7 +510,13 @@ def test_helper_offline_install_uses_only_locked_wheelhouse(monkeypatch, tmp_pat
     captured: list[tuple[list[str], dict[str, str]]] = []
 
     def fake_command(command, *, success_codes=None, env=None):
-        """Return fake command."""
+        """Return fake command.
+
+        Args:
+            command: Command and arguments to execute.
+            success_codes: Success codes supplied to the test scenario.
+            env: Environment variables supplied to the child process.
+        """
         captured.append((command, env or {}))
         if command[1:3] == ["-m", "venv"]:
             (Path(command[-1]) / "bin").mkdir(parents=True)
@@ -460,7 +536,11 @@ def test_helper_offline_install_uses_only_locked_wheelhouse(monkeypatch, tmp_pat
 
 
 def test_photon_candidate_abi_uses_python_nevra_and_transaction_is_test_only(monkeypatch):
-    """Verify that photon candidate abi uses python nevra and transaction is test only."""
+    """Verify that photon candidate abi uses python nevra and transaction is test only.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+    """
     from tests.test_appliance_update import load_helper_module
 
     helper = load_helper_module()
@@ -485,7 +565,11 @@ def test_photon_candidate_abi_uses_python_nevra_and_transaction_is_test_only(mon
 
 
 def test_helper_rejects_unsafe_release_archive(tmp_path):
-    """Verify that helper rejects unsafe release archive."""
+    """Verify that helper rejects unsafe release archive.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
     from tests.test_appliance_update import load_helper_module
 
     helper = load_helper_module()
@@ -500,7 +584,12 @@ def test_helper_rejects_unsafe_release_archive(tmp_path):
 
 
 def test_sqlite_backup_restores_database_identity(monkeypatch, tmp_path):
-    """Verify that sqlite backup restores database identity."""
+    """Verify that sqlite backup restores database identity.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
     import sqlite3
     from tests.test_appliance_update import load_helper_module
 
@@ -531,7 +620,13 @@ def test_sqlite_backup_restores_database_identity(monkeypatch, tmp_path):
 
 
 def test_worker_restart_uses_matching_root_release_finalizer(client, monkeypatch, tmp_path):
-    """Verify that worker restart uses matching root release finalizer."""
+    """Verify that worker restart uses matching root release finalizer.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
     from atlaso.app import worker
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import Job
@@ -573,7 +668,13 @@ def test_worker_restart_uses_matching_root_release_finalizer(client, monkeypatch
 
 
 def test_worker_restart_fails_update_parent_after_children_commit(client, monkeypatch, tmp_path):
-    """Verify that worker restart fails update parent after children commit."""
+    """Verify that worker restart fails update parent after children commit.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
     from atlaso.app import worker
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import Job
@@ -621,7 +722,12 @@ def test_worker_restart_fails_update_parent_after_children_commit(client, monkey
 
 
 def test_worker_restart_removes_interrupted_network_boot_upload(client, monkeypatch):
-    """Verify that worker restart removes interrupted network boot upload."""
+    """Verify that worker restart removes interrupted network boot upload.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+    """
     from atlaso.app import worker
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import Job
@@ -647,7 +753,13 @@ def test_worker_restart_removes_interrupted_network_boot_upload(client, monkeypa
 
 
 def test_worker_restart_keeps_release_finalizer_scoped_to_its_child(client, monkeypatch, tmp_path):
-    """Verify that worker restart keeps release finalizer scoped to its child."""
+    """Verify that worker restart keeps release finalizer scoped to its child.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
     from sqlalchemy import select
 
     from atlaso.app import worker
@@ -708,7 +820,13 @@ def test_worker_restart_keeps_release_finalizer_scoped_to_its_child(client, monk
 
 @pytest.mark.parametrize("failure_stage", ["database_migration", "symlink_switch", "service_health"])
 def test_failed_candidate_restores_previous_release_and_database(monkeypatch, tmp_path, failure_stage):
-    """Verify that failed candidate restores previous release and database."""
+    """Verify that failed candidate restores previous release and database.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+        failure_stage: Failure stage supplied to the test scenario.
+    """
     import sqlite3
     from tests.test_appliance_update import load_helper_module
 
@@ -725,7 +843,11 @@ def test_failed_candidate_restores_previous_release_and_database(monkeypatch, tm
     database = tmp_path / "atlaso.db"
 
     def set_identity(value: str) -> None:
-        """Update identity."""
+        """Update identity.
+
+        Args:
+            value: Candidate value consumed by set identity.
+        """
         connection = sqlite3.connect(database)
         try:
             connection.execute("create table if not exists identity(value text)")
@@ -784,6 +906,11 @@ def test_failed_candidate_restores_previous_release_and_database(monkeypatch, tm
     def replace_symlink(target: Path, link: Path) -> None:
         """Handle replace symlink.
 
+        Args:
+            target: Target resource or location affected by the operation.
+            link: Filesystem path associated with link.
+
+
         Raises:
             OSError: If the operating-system operation fails.
         """
@@ -802,7 +929,12 @@ def test_failed_candidate_restores_previous_release_and_database(monkeypatch, tm
     monkeypatch.setattr(helper, "_fetch_http_bytes", lambda *_args: bundle_bytes)
 
     def install_venv(root: Path, _abi: str):
-        """Return install venv."""
+        """Return install venv.
+
+        Args:
+            root: Repository or filesystem root searched by the operation.
+            _abi: Abi supplied to the test scenario.
+        """
         (root / ".venv").mkdir()
         return [{"command": ["offline-install"], "returncode": 0, "success": True, "stdout": "", "stderr": ""}]
 
@@ -811,7 +943,12 @@ def test_failed_candidate_restores_previous_release_and_database(monkeypatch, tm
     migration_injected = False
 
     def service_command(action, *units):
-        """Return service command."""
+        """Return service command.
+
+        Args:
+            action: Action supplied to the test scenario.
+            *units: Additional positional arguments accepted by the callable.
+        """
         nonlocal migration_injected
         if (
             failure_stage == "database_migration"
@@ -874,7 +1011,13 @@ def test_pre_switch_release_failures_leave_previous_release_and_database_untouch
     tmp_path,
     failure_stage,
 ):
-    """Verify that pre switch release failures leave previous release and database untouched."""
+    """Verify that pre switch release failures leave previous release and database untouched.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+        failure_stage: Failure stage supplied to the test scenario.
+    """
     from tests.test_appliance_update import load_helper_module
 
     helper = load_helper_module()
@@ -970,7 +1113,12 @@ def test_pre_switch_release_failures_leave_previous_release_and_database_untouch
 
 
 def test_failed_revalidation_does_not_delete_an_existing_release(monkeypatch, tmp_path):
-    """Verify that failed revalidation does not delete an existing release."""
+    """Verify that failed revalidation does not delete an existing release.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
     from tests.test_appliance_update import load_helper_module
 
     helper = load_helper_module()

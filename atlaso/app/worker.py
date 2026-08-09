@@ -45,13 +45,22 @@ _stop_requested = False
 
 
 def _request_stop(_signum: int, _frame: object) -> None:
-    """Handle request stop."""
+    """Handle request stop.
+
+    Args:
+        _signum: Signum consumed by request stop.
+        _frame: Frame consumed by request stop.
+    """
     global _stop_requested
     _stop_requested = True
 
 
 def _job_config(job: Job) -> dict[str, Any]:
-    """Return job config."""
+    """Return job config.
+
+    Args:
+        job: Background job record affected by the operation.
+    """
     return json_object(job.task_config_json, label="Job configuration")
 
 
@@ -230,7 +239,11 @@ def _fail_job(db: Session, job: Job, exc: Exception) -> None:
 
 
 def _appliance_update_result_error(result: dict[str, Any]) -> str:
-    """Return appliance update result error."""
+    """Return appliance update result error.
+
+    Args:
+        result: Operation result being inspected or returned.
+    """
     explicit = str(result.get("error") or "").strip()
     if explicit:
         return explicit
@@ -244,7 +257,14 @@ def _appliance_update_result_error(result: dict[str, Any]) -> str:
 
 
 def _set_appliance_update_step_running(job_id: str, stream: str, *, completed: int, total: int) -> None:
-    """Update appliance update step running."""
+    """Update appliance update step running.
+
+    Args:
+        job_id: Stable identifier of the associated job resource.
+        stream: Stream consumed by set appliance update step running.
+        completed: Completed consumed by set appliance update step running.
+        total: Total consumed by set appliance update step running.
+    """
     with SessionLocal() as db:
         job = db.get(Job, job_id)
         step = db.get(JobStep, f"{job_id}:{stream}")
@@ -295,7 +315,11 @@ def _complete_appliance_update_step(
 
 
 def _run_appliance_update(job_id: str) -> None:
-    """Run appliance update."""
+    """Run appliance update.
+
+    Args:
+        job_id: Stable identifier of the associated job resource.
+    """
     from atlaso.app.ui import (
         aggregate_appliance_update_results,
         appliance_update_exception_result,
@@ -411,7 +435,12 @@ def _run_appliance_update(job_id: str) -> None:
 
 
 def _automation_stage_path(job_id: str, interpreter: str) -> Path:
-    """Return automation stage path."""
+    """Return automation stage path.
+
+    Args:
+        job_id: Stable identifier of the associated job resource.
+        interpreter: Interpreter consumed by automation stage path.
+    """
     suffix = {"bash": ".sh", "python": ".py", "powershell": ".ps1"}[interpreter]
     if get_settings().environment != "appliance":
         return Path("data") / "automation" / "scripts" / f"{job_id}{suffix}"
@@ -419,7 +448,11 @@ def _automation_stage_path(job_id: str, interpreter: str) -> Path:
 
 
 def _automation_vault_stage_path(job_id: str) -> Path:
-    """Return automation vault stage path."""
+    """Return automation vault stage path.
+
+    Args:
+        job_id: Stable identifier of the associated job resource.
+    """
     if get_settings().environment != "appliance":
         return Path("data") / "automation" / "vaults" / f"{job_id}.json"
     return AUTOMATION_VAULT_STAGE_DIR / f"{job_id}.json"

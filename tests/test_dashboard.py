@@ -7,7 +7,11 @@ from sqlalchemy import select
 
 
 def login(client):
-    """Handle login."""
+    """Handle login.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
     page = client.get("/login")
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
     response = client.post(
@@ -19,7 +23,12 @@ def login(client):
 
 
 def controlled_units(*, invalid_changed: bool = False, valid_changed: bool = False):
-    """Return controlled units."""
+    """Return controlled units.
+
+    Args:
+        invalid_changed: Whether invalid changed applies to the operation.
+        valid_changed: Whether valid changed applies to the operation.
+    """
     return [
         {
             "id": "appliance_settings",
@@ -41,7 +50,11 @@ def controlled_units(*, invalid_changed: bool = False, valid_changed: bool = Fal
 
 
 def test_dashboard_data_requires_session_and_preserves_public_api_contract(client):
-    """Verify that dashboard data requires session and preserves public api contract."""
+    """Verify that dashboard data requires session and preserves public api contract.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
     private = client.get("/dashboard/data", follow_redirects=False)
     assert private.status_code == 303
     assert private.headers["location"] == "/login?next=/dashboard/data"
@@ -81,7 +94,12 @@ def test_dashboard_data_requires_session_and_preserves_public_api_contract(clien
 
 
 def test_dashboard_setup_exit_healthy_and_needs_attention_states(client, monkeypatch):
-    """Verify that dashboard setup exit healthy and needs attention states."""
+    """Verify that dashboard setup exit healthy and needs attention states.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+    """
     from atlaso.app import ui
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import Job, JobStatus, utcnow
@@ -130,7 +148,12 @@ def test_dashboard_setup_exit_healthy_and_needs_attention_states(client, monkeyp
 
 
 def test_dashboard_successful_appliance_apply_resolves_retried_units(client, monkeypatch):
-    """Verify that dashboard successful appliance apply resolves retried units."""
+    """Verify that dashboard successful appliance apply resolves retried units.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+    """
     from atlaso.app import ui
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import Job, JobStatus, utcnow
@@ -187,7 +210,12 @@ def test_dashboard_successful_appliance_apply_resolves_retried_units(client, mon
 
 
 def test_dashboard_unrelated_success_does_not_resolve_apply_failure(client, monkeypatch):
-    """Verify that dashboard unrelated success does not resolve apply failure."""
+    """Verify that dashboard unrelated success does not resolve apply failure.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+    """
     from atlaso.app import ui
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import Job, JobStatus, utcnow
@@ -240,7 +268,12 @@ def test_dashboard_unrelated_success_does_not_resolve_apply_failure(client, monk
 
 
 def test_dashboard_attention_priority_pending_separation_and_false_positive_filters(client, monkeypatch):
-    """Verify that dashboard attention priority pending separation and false positive filters."""
+    """Verify that dashboard attention priority pending separation and false positive filters.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+    """
     from atlaso.app import ui
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import Job, JobStatus, PhysicalInterface, ServiceState, utcnow
@@ -314,7 +347,12 @@ def test_dashboard_attention_priority_pending_separation_and_false_positive_filt
 
 
 def test_dashboard_failed_task_window_and_activity_merge_are_safe(client, monkeypatch):
-    """Verify that dashboard failed task window and activity merge are safe."""
+    """Verify that dashboard failed task window and activity merge are safe.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+    """
     from atlaso.app import ui
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import AuditEvent, Job, JobStatus, utcnow
@@ -383,13 +421,22 @@ def test_dashboard_failed_task_window_and_activity_merge_are_safe(client, monkey
 
 
 def test_dashboard_apply_summary_disables_reconciliation(monkeypatch):
-    """Verify that dashboard apply summary disables reconciliation."""
+    """Verify that dashboard apply summary disables reconciliation.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+    """
     from atlaso.app import ui
 
     calls = []
 
     def fake_units(_db, *, reconcile=True):
-        """Return fake units."""
+        """Return fake units.
+
+        Args:
+            _db: Active database session used by the operation.
+            reconcile: Reconcile supplied to the test scenario.
+        """
         calls.append(reconcile)
         return controlled_units()
 
@@ -399,12 +446,22 @@ def test_dashboard_apply_summary_disables_reconciliation(monkeypatch):
 
 
 def test_dashboard_snapshot_does_not_call_desired_state_reconcilers(client, monkeypatch):
-    """Verify that dashboard snapshot does not call desired state reconcilers."""
+    """Verify that dashboard snapshot does not call desired state reconcilers.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+    """
     from atlaso.app import ui
     from atlaso.app.database import SessionLocal
 
     def unexpected_reconciliation(*_args, **_kwargs):
         """Handle unexpected reconciliation.
+
+        Args:
+            *_args: Additional positional arguments accepted by the callable.
+            **_kwargs: Additional keyword arguments accepted by the callable.
+
 
         Raises:
             AssertionError: If an expected invariant is not satisfied.
@@ -429,7 +486,11 @@ def test_dashboard_snapshot_does_not_call_desired_state_reconcilers(client, monk
 
 
 def test_dashboard_html_removes_old_inventory_and_javascript_refresh_is_resilient(client):
-    """Verify that dashboard html removes old inventory and javascript refresh is resilient."""
+    """Verify that dashboard html removes old inventory and javascript refresh is resilient.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
     from pathlib import Path
 
     login(client)

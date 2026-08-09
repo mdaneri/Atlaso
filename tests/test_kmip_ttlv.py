@@ -54,7 +54,12 @@ def test_ttlv_round_trip_preserves_nested_values_and_padding() -> None:
     ],
 )
 def test_ttlv_decoder_rejects_malformed_input(payload: bytes, message: str) -> None:
-    """Verify that ttlv decoder rejects malformed input."""
+    """Verify that ttlv decoder rejects malformed input.
+
+    Args:
+        payload: Validated request or task payload consumed by the operation.
+        message: Human-readable message associated with the operation.
+    """
     with pytest.raises(TtlvError, match=message):
         decode(payload)
 

@@ -272,7 +272,11 @@ class DeferredNetworkBootMediaSync:
 
 
 def _as_utc(value: datetime) -> datetime:
-    """Return as utc."""
+    """Return as utc.
+
+    Args:
+        value: Candidate value consumed by as utc.
+    """
     return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value
 
 
@@ -481,7 +485,11 @@ def register_bundled_inventory_media(
 
 
 def media_to_dict(row: NetworkBootMedia) -> dict[str, Any]:
-    """Return media to dict."""
+    """Return media to dict.
+
+    Args:
+        row: Persistent database row affected by the operation.
+    """
     try:
         manifest = json.loads(row.manifest_json or "{}")
     except json.JSONDecodeError:
@@ -504,6 +512,10 @@ def media_to_dict(row: NetworkBootMedia) -> dict[str, Any]:
 def normalize_environment_key(value: str) -> str:
     """Normalize environment key.
 
+    Args:
+        value: Candidate value consumed by normalize environment key.
+
+
     Returns:
         The normalize environment key result.
 
@@ -519,6 +531,10 @@ def normalize_environment_key(value: str) -> str:
 def normalize_version(value: str) -> str:
     """Normalize version.
 
+    Args:
+        value: Candidate value consumed by normalize version.
+
+
     Returns:
         The normalize version result.
 
@@ -532,7 +548,11 @@ def normalize_version(value: str) -> str:
 
 
 def _natural_version_key(value: str) -> tuple[tuple[int, int | str], ...]:
-    """Return natural version key."""
+    """Return natural version key.
+
+    Args:
+        value: Candidate value consumed by natural version key.
+    """
     return tuple(
         (0, int(part)) if part.isdigit() else (1, part.casefold())
         for part in re.split(r"([0-9]+)", value)
@@ -593,6 +613,11 @@ def set_environment_desired_state(
 def normalize_mac(value: Any, *, required: bool = False) -> str:
     """Normalize mac.
 
+    Args:
+        value: Candidate value consumed by normalize MAC.
+        required: Whether required applies to the operation.
+
+
     Returns:
         The normalize mac result.
 
@@ -615,6 +640,10 @@ def normalize_mac(value: Any, *, required: bool = False) -> str:
 def _normalize_optional_inventory_mac(value: Any) -> str:
     """Normalize optional inventory mac.
 
+    Args:
+        value: Candidate value consumed by normalize optional inventory MAC.
+
+
     Returns:
         The normalize optional inventory mac result.
     """
@@ -626,6 +655,10 @@ def _normalize_optional_inventory_mac(value: Any) -> str:
 
 def normalize_dmi_uuid(value: Any) -> str:
     """Normalize dmi uuid.
+
+    Args:
+        value: Candidate value consumed by normalize dmi UUID.
+
 
     Returns:
         The normalize dmi uuid result.
@@ -642,6 +675,12 @@ def normalize_dmi_uuid(value: Any) -> str:
 
 def _bounded_string(value: Any, field: str, *, maximum: int = 512) -> str:
     """Return bounded string.
+
+    Args:
+        value: Candidate value consumed by bounded string.
+        field: Field consumed by bounded string.
+        maximum: Maximum consumed by bounded string.
+
 
     Raises:
         ValueError: If an input value is invalid.
@@ -660,6 +699,13 @@ def _bounded_integer(
     maximum: int = 2**63 - 1,
 ) -> int:
     """Return bounded integer.
+
+    Args:
+        value: Candidate value consumed by bounded integer.
+        field: Field consumed by bounded integer.
+        minimum: Minimum consumed by bounded integer.
+        maximum: Maximum consumed by bounded integer.
+
 
     Raises:
         ValueError: If an input value is invalid.
@@ -682,6 +728,13 @@ def _bounded_integer(
 def _string_list(value: Any, field: str, *, maximum_items: int, maximum_length: int = 128) -> list[str]:
     """Return string list.
 
+    Args:
+        value: Candidate value consumed by string list.
+        field: Field consumed by string list.
+        maximum_items: Maximum items consumed by string list.
+        maximum_length: Maximum length consumed by string list.
+
+
     Raises:
         ValueError: If an input value is invalid.
     """
@@ -695,6 +748,11 @@ def _string_list(value: Any, field: str, *, maximum_items: int, maximum_length: 
 def _bounded_bool(value: Any, field: str) -> bool:
     """Return bounded bool.
 
+    Args:
+        value: Candidate value consumed by bounded bool.
+        field: Field consumed by bounded bool.
+
+
     Raises:
         ValueError: If an input value is invalid.
     """
@@ -707,6 +765,12 @@ def _bounded_bool(value: Any, field: str) -> bool:
 
 def _object_list(value: Any, field: str, *, maximum_items: int) -> list[dict[str, Any]]:
     """Return object list.
+
+    Args:
+        value: Candidate value consumed by object list.
+        field: Field consumed by object list.
+        maximum_items: Maximum items consumed by object list.
+
 
     Raises:
         ValueError: If an input value is invalid.
@@ -722,12 +786,23 @@ def _object_list(value: Any, field: str, *, maximum_items: int) -> list[dict[str
 
 
 def _hardware_string(value: Any, field: str, *, maximum: int = 240) -> str:
-    """Return hardware string."""
+    """Return hardware string.
+
+    Args:
+        value: Candidate value consumed by hardware string.
+        field: Field consumed by hardware string.
+        maximum: Maximum consumed by hardware string.
+    """
     return _bounded_string(value, field, maximum=maximum)
 
 
 def _pci_id(value: Any, field: str) -> str:
     """Return pci id.
+
+    Args:
+        value: Candidate value consumed by pci identifier.
+        field: Field consumed by pci identifier.
+
 
     Raises:
         ValueError: If an input value is invalid.
@@ -741,6 +816,11 @@ def _pci_id(value: Any, field: str) -> str:
 def _pci_class_id(value: Any, field: str) -> str:
     """Return pci class id.
 
+    Args:
+        value: Candidate value consumed by pci class identifier.
+        field: Field consumed by pci class identifier.
+
+
     Raises:
         ValueError: If an input value is invalid.
     """
@@ -751,17 +831,31 @@ def _pci_class_id(value: Any, field: str) -> str:
 
 
 def _usb_id(value: Any, field: str) -> str:
-    """Return usb id."""
+    """Return usb id.
+
+    Args:
+        value: Candidate value consumed by usb identifier.
+        field: Field consumed by usb identifier.
+    """
     return _pci_id(value, field)
 
 
 def _human_size(value: Any, field: str) -> str:
-    """Return human size."""
+    """Return human size.
+
+    Args:
+        value: Candidate value consumed by human size.
+        field: Field consumed by human size.
+    """
     return _bounded_string(value, field, maximum=32)
 
 
 def normalize_inventory_report(payload: Any) -> dict[str, Any]:
     """Normalize inventory report.
+
+    Args:
+        payload: Validated request or task payload consumed by the operation.
+
 
     Returns:
         The normalize inventory report result.
@@ -1089,7 +1183,11 @@ def normalize_inventory_report(payload: Any) -> dict[str, Any]:
 
 
 def report_identity(report: dict[str, Any]) -> tuple[str, str, list[str]]:
-    """Return report identity."""
+    """Return report identity.
+
+    Args:
+        report: Report consumed by report identity.
+    """
     dmi_uuid = str(report["system"].get("dmi_uuid") or "")
     boot_mac = str(report.get("boot_mac") or "")
     macs = sorted(
@@ -1109,7 +1207,11 @@ def report_identity(report: dict[str, Any]) -> tuple[str, str, list[str]]:
 
 
 def _macs(row: NetworkBootDiscoveredHost) -> set[str]:
-    """Return macs."""
+    """Return macs.
+
+    Args:
+        row: Persistent database row affected by the operation.
+    """
     try:
         values = json.loads(row.macs_json or "[]")
     except json.JSONDecodeError:
@@ -1699,7 +1801,11 @@ def report_history(
 
 
 def wake_on_lan_packet(mac_address: str) -> bytes:
-    """Return the standard magic packet for one server-owned MAC address."""
+    """Return the standard magic packet for one server-owned MAC address.
+
+    Args:
+        mac_address: Mac address consumed by wake on lan packet.
+    """
     try:
         normalized = normalize_mac(mac_address, required=True)
     except ValueError as exc:
@@ -1717,14 +1823,24 @@ class WakeOnLanDeliveryError(OSError):
     """
 
     def __init__(self, failed_target: str, sent_targets: list[str], cause: OSError):
-        """Initialize the wake on lan delivery error."""
+        """Initialize the wake on lan delivery error.
+
+        Args:
+            failed_target: Failed target consumed by init.
+            sent_targets: Sent targets consumed by init.
+            cause: Cause consumed by init.
+        """
         super().__init__(str(cause))
         self.failed_target = failed_target
         self.sent_targets = list(sent_targets)
 
 
 def wake_on_lan_broadcast_targets(db: Session) -> list[str]:
-    """Return distinct IPv4 broadcasts for the applied Network Boot zones."""
+    """Return distinct IPv4 broadcasts for the applied Network Boot zones.
+
+    Args:
+        db: Active database session used by the operation.
+    """
     targets: set[str] = set()
     boot, _artifacts = _applied_esxi_pxe_runtime(db)
     for scope in boot.get("dhcp_scopes") or []:
@@ -1747,7 +1863,13 @@ def send_wake_on_lan(
     *,
     socket_factory: Callable[..., Any] = socket.socket,
 ) -> list[str]:
-    """Send one magic packet to each distinct validated IPv4 broadcast."""
+    """Send one magic packet to each distinct validated IPv4 broadcast.
+
+    Args:
+        mac_address: Mac address consumed by send wake on lan.
+        broadcast_targets: Broadcast targets consumed by send wake on lan.
+        socket_factory: Socket factory consumed by send wake on lan.
+    """
     packet = wake_on_lan_packet(mac_address)
     normalized_targets: set[str] = set()
     for target in broadcast_targets:
@@ -1955,7 +2077,12 @@ def _chain_line(
     *,
     http_origin: str,
 ) -> str:
-    """Return chain line."""
+    """Return chain line.
+
+    Args:
+        media: Media consumed by chain line.
+        http_origin: Http origin consumed by chain line.
+    """
     manifest = json.loads(media.manifest_json or "{}")
     boot = manifest.get("boot") if isinstance(manifest.get("boot"), dict) else {}
     kernel = str(boot.get("kernel") or "")
@@ -1991,7 +2118,12 @@ def _chain_line(
 
 
 def _request_http_origin(boot: dict[str, Any], requested_origin: str) -> str:
-    """Return request http origin."""
+    """Return request http origin.
+
+    Args:
+        boot: Boot consumed by request HTTP origin.
+        requested_origin: Requested origin consumed by request HTTP origin.
+    """
     default_base = esxi_http_base_url(boot)
     default = urllib.parse.urlsplit(default_base)
     fallback = (
@@ -2093,7 +2225,12 @@ def render_network_boot_menu(
         *,
         label: str,
     ) -> list[str]:
-        """Return esxi loader lines."""
+        """Return esxi loader lines.
+
+        Args:
+            artifact: Artifact consumed by ESXi loader lines.
+            label: Human-readable label used to identify the result.
+        """
         mac_key = str(artifact.get("mac_key") or "default")
         normalized_firmware = firmware.strip().lower()
         uefi_lines = [
@@ -2298,7 +2435,11 @@ class _BoundedHttpsRedirectHandler(urllib.request.HTTPRedirectHandler):
         max_redirects: Maximum accepted redirects.
     """
     def __init__(self, max_redirects: int):
-        """Initialize the bounded https redirect handler."""
+        """Initialize the bounded https redirect handler.
+
+        Args:
+            max_redirects: Max redirects consumed by init.
+        """
         super().__init__()
         self.max_redirects = max_redirects
 
@@ -2368,6 +2509,12 @@ class BoundedHttpsDownloader:
     ) -> tuple[str, str]:
         """Return download.
 
+        Args:
+            url: URL contacted or emitted by the operation.
+            destination: Destination object or location receiving the result.
+            cancelled: Cancelled consumed by download.
+
+
         Raises:
             NetworkBootMediaSyncCancelled: If the operation encounters an invalid state.
             ValueError: If an input value is invalid.
@@ -2431,6 +2578,11 @@ class BoundedHttpsDownloader:
 def checksum_for_filename(checksum_text: str, filename: str) -> str:
     """Return checksum for filename.
 
+    Args:
+        checksum_text: Checksum text consumed by checksum for filename.
+        filename: Source filename associated with the parsed or reported content.
+
+
     Raises:
         ValueError: If an input value is invalid.
     """
@@ -2453,6 +2605,13 @@ def verify_gpg_signature(
     keyring_path: Path,
 ) -> None:
     """Validate gpg signature.
+
+    Args:
+        checksum_path: Filesystem path used for checksum.
+        signature_path: Filesystem path used for signature.
+        fingerprint: Fingerprint consumed by verify gpg signature.
+        keyring_path: Filesystem path used for keyring.
+
 
     Raises:
         ValueError: If an input value is invalid.
@@ -2496,6 +2655,13 @@ def verify_signed_checksum(
     fingerprint: str,
 ) -> None:
     """Validate signed checksum.
+
+    Args:
+        checksum_path: Filesystem path used for checksum.
+        signature_path: Filesystem path used for signature.
+        public_key_path: Filesystem path used for public key.
+        fingerprint: Fingerprint consumed by verify signed checksum.
+
 
     Raises:
         ValueError: If an input value is invalid.
@@ -2541,7 +2707,11 @@ def verify_signed_checksum(
 
 
 def safe_archive_member(member_name: str) -> bool:
-    """Return safe archive member."""
+    """Return safe archive member.
+
+    Args:
+        member_name: Candidate member name to safe.
+    """
     path = PurePosixPath(member_name.replace("\\", "/"))
     return bool(
         member_name
@@ -2638,6 +2808,10 @@ def _fetch_https_text(url: str, *, max_bytes: int = 2 * 1024 * 1024) -> str:
 
 def _release_descriptor(environment_key: str) -> dict[str, str]:
     """Return release descriptor.
+
+    Args:
+        environment_key: Environment key consumed by release descriptor.
+
 
     Raises:
         ValueError: If an input value is invalid.
@@ -2753,7 +2927,11 @@ def _release_descriptor(environment_key: str) -> dict[str, str]:
 
 
 def available_network_boot_versions(*, force_refresh: bool = False) -> list[dict[str, str]]:
-    """Resolve current upstream versions without downloading media artifacts."""
+    """Resolve current upstream versions without downloading media artifacts.
+
+    Args:
+        force_refresh: Whether force refresh applies to the operation.
+    """
     now = time.monotonic()
     with _AVAILABLE_VERSION_CACHE_LOCK:
         missing = [
@@ -2827,6 +3005,12 @@ def _extract_zip_allowlist(
 ) -> list[str]:
     """Return extract zip allowlist.
 
+    Args:
+        archive: Filesystem path associated with archive.
+        destination: Destination object or location receiving the result.
+        allowed_names: Allowed names consumed by extract zip allowlist.
+
+
     Raises:
         ValueError: If an input value is invalid.
     """
@@ -2853,6 +3037,11 @@ def _extract_shredos_kernel(
     destination: Path,
 ) -> list[str]:
     """Return extract shredos kernel.
+
+    Args:
+        archive: Filesystem path associated with archive.
+        destination: Destination object or location receiving the result.
+
 
     Raises:
         ValueError: If an input value is invalid.
@@ -2903,6 +3092,12 @@ def _media_boot_manifest(
     extracted: Iterable[str],
 ) -> dict[str, Any]:
     """Return media boot manifest.
+
+    Args:
+        environment_key: Environment key consumed by media boot manifest.
+        version: Atlaso or artifact version being validated or produced.
+        extracted: Extracted consumed by media boot manifest.
+
 
     Raises:
         ValueError: If an input value is invalid.
@@ -2969,7 +3164,13 @@ def _enumerated_media_directory(
     version: str,
     media_root: Path,
 ) -> Path | None:
-    """Return enumerated media directory."""
+    """Return enumerated media directory.
+
+    Args:
+        environment_key: Environment key consumed by enumerated media directory.
+        version: Atlaso or artifact version being validated or produced.
+        media_root: Filesystem path associated with media root.
+    """
     environment_root = (media_root / normalize_environment_key(environment_key)).resolve()
     if not environment_root.is_dir() or environment_root.is_symlink():
         return None
@@ -2989,7 +3190,11 @@ def _enumerated_media_directory(
 
 
 def _enumerated_regular_files(root: Path) -> dict[str, Path] | None:
-    """Return enumerated regular files."""
+    """Return enumerated regular files.
+
+    Args:
+        root: Repository or filesystem root searched by the operation.
+    """
     files: dict[str, Path] = {}
     pending = [root]
     visited = 0
@@ -3016,7 +3221,12 @@ def _verified_cached_media(
     *,
     media_root: Path,
 ) -> Path | None:
-    """Return verified cached media."""
+    """Return verified cached media.
+
+    Args:
+        media: Media consumed by verified cached media.
+        media_root: Filesystem path associated with media root.
+    """
     environment_root = (
         media_root / normalize_environment_key(media.environment_key)
     ).resolve()
@@ -3088,7 +3298,12 @@ def prune_superseded_shredos_media(
     *,
     media_root: Path = NETWORK_BOOT_MEDIA_ROOT,
 ) -> int:
-    """Remove immutable ShredOS snapshots no longer referenced by desired or applied state."""
+    """Remove immutable ShredOS snapshots no longer referenced by desired or applied state.
+
+    Args:
+        db: Active database session used by the operation.
+        media_root: Filesystem path associated with media root.
+    """
     root = media_root.resolve()
     environment_root = (root / "shredos").resolve()
     if (
@@ -3223,7 +3438,11 @@ def _write_media_swap_journal(
 
 
 def _fsync_directory(directory: Path) -> None:
-    """Handle fsync directory."""
+    """Handle fsync directory.
+
+    Args:
+        directory: Filesystem path associated with directory.
+    """
     if os.name == "nt":
         return
     directory_fd = os.open(
@@ -3238,6 +3457,10 @@ def _fsync_directory(directory: Path) -> None:
 
 def _fsync_media_tree(root: Path) -> None:
     """Handle fsync media tree.
+
+    Args:
+        root: Repository or filesystem root searched by the operation.
+
 
     Raises:
         ValueError: If an input value is invalid.
@@ -3275,7 +3498,11 @@ class _MediaSwapRecoveryLock:
         process_acquired: Process acquired maintained by this mediaswaprecoverylock.
     """
     def __init__(self, media_root: Path):
-        """Initialize the media swap recovery lock."""
+        """Initialize the media swap recovery lock.
+
+        Args:
+            media_root: Filesystem path associated with media root.
+        """
         self.lock_path = media_root / ".atlaso-media-swap-recovery.lock"
         self.lock_fd: int | None = None
         self.thread_acquired = False
@@ -3344,7 +3571,13 @@ class _MediaSwapRecoveryLock:
         return self
 
     def __exit__(self, _exc_type, _exc_value, _traceback):
-        """Exit the managed context without suppressing exceptions."""
+        """Exit the managed context without suppressing exceptions.
+
+        Args:
+            _exc_type: Exc type consumed by exit.
+            _exc_value: Exc value consumed by exit.
+            _traceback: Traceback consumed by exit.
+        """
         self.release()
 
 
@@ -3359,7 +3592,11 @@ class _MediaStagingLease:
         identity: Identity maintained by this mediastaginglease.
     """
     def __init__(self, staging_directory: Path):
-        """Initialize the media staging lease."""
+        """Initialize the media staging lease.
+
+        Args:
+            staging_directory: Filesystem path associated with staging directory.
+        """
         self.staging_directory = staging_directory
         self.lock_path = staging_directory / ".atlaso-staging.lock"
         self.lock_fd: int | None = None
@@ -3407,7 +3644,13 @@ class _MediaStagingLease:
             publication_lock.release()
 
     def __exit__(self, _exc_type, _exc_value, _traceback):
-        """Exit the managed context without suppressing exceptions."""
+        """Exit the managed context without suppressing exceptions.
+
+        Args:
+            _exc_type: Exc type consumed by exit.
+            _exc_value: Exc value consumed by exit.
+            _traceback: Traceback consumed by exit.
+        """
         self._release()
 
     def _release(self) -> None:
@@ -3432,6 +3675,11 @@ def _remove_orphan_media_staging_directories(
     environment_key: str,
 ) -> int:
     """Remove orphan media staging directories.
+
+    Args:
+        environment_root: Filesystem path associated with environment root.
+        environment_key: Environment key consumed by remove orphan media staging directories.
+
 
     Returns:
         The remove orphan media staging directories result.
@@ -3656,6 +3904,11 @@ def network_boot_upload_path(
 ) -> Path:
     """Return network boot upload path.
 
+    Args:
+        job_id: Stable identifier of the associated job resource.
+        upload_root: Filesystem path associated with upload root.
+
+
     Raises:
         ValueError: If an input value is invalid.
     """
@@ -3669,7 +3922,12 @@ def cleanup_network_boot_upload(
     *,
     upload_root: Path | None = None,
 ) -> None:
-    """Remove network boot upload."""
+    """Remove network boot upload.
+
+    Args:
+        job_id: Stable identifier of the associated job resource.
+        upload_root: Filesystem path associated with upload root.
+    """
     upload_path = network_boot_upload_path(job_id, upload_root=upload_root)
     upload_path.unlink(missing_ok=True)
     try:

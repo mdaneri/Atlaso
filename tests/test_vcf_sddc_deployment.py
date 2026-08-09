@@ -53,7 +53,11 @@ def write_ova(path: Path, *, corrupt_manifest: bool = False) -> None:
 
 
 def test_inspect_ova_exposes_only_user_configurable_properties(tmp_path):
-    """Verify that inspect ova exposes only user configurable properties."""
+    """Verify that inspect ova exposes only user configurable properties.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
     ova = tmp_path / "SDDC.OVA"
     write_ova(ova)
     descriptor = inspect_ova(ova, root=tmp_path)
@@ -68,7 +72,11 @@ def test_inspect_ova_exposes_only_user_configurable_properties(tmp_path):
 
 
 def test_ova_path_and_manifest_validation_are_strict(tmp_path):
-    """Verify that ova path and manifest validation are strict."""
+    """Verify that ova path and manifest validation are strict.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
     root = tmp_path / "root"
     root.mkdir()
     outside = tmp_path / "outside.ova"
@@ -84,7 +92,11 @@ def test_ova_path_and_manifest_validation_are_strict(tmp_path):
 
 
 def test_nfc_upload_uses_stream_vmdk_post(monkeypatch):
-    """Verify that nfc upload uses stream vmdk post."""
+    """Verify that nfc upload uses stream vmdk post.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+    """
     class Response:
         """Represent response.
 
@@ -94,7 +106,11 @@ def test_nfc_upload_uses_stream_vmdk_post(monkeypatch):
         status = 200
 
         def read(self, _size=-1):
-            """Return operation."""
+            """Return operation.
+
+            Args:
+                _size: Size supplied to the test scenario.
+            """
             return b""
 
     class Connection:
@@ -112,7 +128,13 @@ def test_nfc_upload_uses_stream_vmdk_post(monkeypatch):
         instances = []
 
         def __init__(self, host, port, **_kwargs):
-            """Initialize the connection."""
+            """Initialize the connection.
+
+            Args:
+                host: Host supplied to the test scenario.
+                port: Network port contacted, validated, or configured by the operation.
+                **_kwargs: Additional keyword arguments accepted by the callable.
+            """
             self.host = host
             self.port = port
             self.method = ""
@@ -122,12 +144,22 @@ def test_nfc_upload_uses_stream_vmdk_post(monkeypatch):
             Connection.instances.append(self)
 
         def putrequest(self, method, target):
-            """Handle putrequest."""
+            """Handle putrequest.
+
+            Args:
+                method: Method supplied to the test scenario.
+                target: Target resource or location affected by the operation.
+            """
             self.method = method
             self.target = target
 
         def putheader(self, name, value):
-            """Handle putheader."""
+            """Handle putheader.
+
+            Args:
+                name: Stable name identifying the resource or operation.
+                value: Candidate value consumed by putheader.
+            """
             self.headers[name] = value
 
         def endheaders(self):
@@ -135,7 +167,11 @@ def test_nfc_upload_uses_stream_vmdk_post(monkeypatch):
             pass
 
         def send(self, chunk):
-            """Handle send."""
+            """Handle send.
+
+            Args:
+                chunk: Chunk supplied to the test scenario.
+            """
             self.body += chunk
 
         def getresponse(self):
@@ -157,7 +193,11 @@ def test_nfc_upload_uses_stream_vmdk_post(monkeypatch):
             self.progress = []
 
         def HttpNfcLeaseProgress(self, percent):
-            """Handle http nfc lease progress."""
+            """Handle http nfc lease progress.
+
+            Args:
+                percent: Percent supplied to the test scenario.
+            """
             self.progress.append(percent)
 
     monkeypatch.setattr("http.client.HTTPConnection", Connection)

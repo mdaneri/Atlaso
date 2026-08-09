@@ -137,7 +137,11 @@ class SoftwareDepotIdResult:
 
 
 def find_local_vcf_download_tool_archive(upload_dir: Path = VCF_DEPOT_UPLOAD_DIR) -> Path | None:
-    """Return local vcf download tool archive."""
+    """Return local vcf download tool archive.
+
+    Args:
+        upload_dir: Filesystem path associated with upload dir.
+    """
     if not upload_dir.exists():
         return None
     archives = sorted(upload_dir.glob(VCF_DEPOT_ARCHIVE_PATTERN), key=lambda path: path.stat().st_mtime, reverse=True)
@@ -145,7 +149,11 @@ def find_local_vcf_download_tool_archive(upload_dir: Path = VCF_DEPOT_UPLOAD_DIR
 
 
 def detect_vcf_download_tool_version(archive_path: str | Path) -> str:
-    """Return detect vcf download tool version."""
+    """Return detect vcf download tool version.
+
+    Args:
+        archive_path: Filesystem path used for archive.
+    """
     path = Path(archive_path)
     if not path.exists():
         return ""
@@ -162,6 +170,10 @@ def detect_vcf_download_tool_version(archive_path: str | Path) -> str:
 def parse_vcf_download_tool_version(output: str) -> str:
     """Parse vcf download tool version.
 
+    Args:
+        output: Candidate output to parse.
+
+
     Returns:
         The parsed vcf download tool version.
     """
@@ -170,7 +182,11 @@ def parse_vcf_download_tool_version(output: str) -> str:
 
 
 def staged_vcf_download_tool_version(archive_path: str | Path) -> str:
-    """Return the non-secret version encoded in a validated VCFDT archive name."""
+    """Return the non-secret version encoded in a validated VCFDT archive name.
+
+    Args:
+        archive_path: Filesystem path used for archive.
+    """
     archive_name = Path(archive_path or "").name
     if not re.fullmatch(r"vcf-download-tool-[A-Za-z0-9._-]+\.tar\.gz", archive_name):
         return ""
@@ -178,7 +194,11 @@ def staged_vcf_download_tool_version(archive_path: str | Path) -> str:
 
 
 def _read_properties_from_archive(archive_path: str | Path) -> str:
-    """Return properties from archive."""
+    """Return properties from archive.
+
+    Args:
+        archive_path: Filesystem path used for archive.
+    """
     path = Path(archive_path)
     if not path.exists():
         return ""
@@ -222,12 +242,20 @@ def default_vcf_depot_application_properties() -> str:
 
 
 def vcf_depot_application_properties_from_tool(settings: VcfOfflineDepotSettings) -> tuple[str, str]:
-    """Return vcf depot application properties from tool."""
+    """Return vcf depot application properties from tool.
+
+    Args:
+        settings: Current Atlaso settings used to configure the operation.
+    """
     return default_vcf_depot_application_properties(), "Atlaso default"
 
 
 def safe_archive_upload_name(filename: str) -> str:
     """Return safe archive upload name.
+
+    Args:
+        filename: Source filename associated with the parsed or reported content.
+
 
     Raises:
         ValueError: If an input value is invalid.
@@ -240,6 +268,11 @@ def safe_archive_upload_name(filename: str) -> str:
 
 def _validate_tar_members(members: list[tarfile.TarInfo], destination: Path) -> None:
     """Validate tar members.
+
+    Args:
+        members: Candidate members to validate.
+        destination: Destination object or location receiving the result.
+
 
     Raises:
         ValueError: If an input value is invalid.
@@ -254,6 +287,10 @@ def _validate_tar_members(members: list[tarfile.TarInfo], destination: Path) -> 
 def validate_vcf_download_tool_archive(archive_path: Path) -> None:
     """Validate vcf download tool archive.
 
+    Args:
+        archive_path: Filesystem path used for archive.
+
+
     Raises:
         ValueError: If an input value is invalid.
     """
@@ -266,12 +303,21 @@ def validate_vcf_download_tool_archive(archive_path: Path) -> None:
 
 
 def validate_vcf_download_tool_upload_envelope(archive_path: Path) -> None:
-    """Validate vcf download tool upload envelope."""
+    """Validate vcf download tool upload envelope.
+
+    Args:
+        archive_path: Filesystem path used for archive.
+    """
     validate_vcf_download_tool_archive(archive_path)
 
 
 def _safe_extract_tar_gz(archive_path: Path, destination: Path) -> None:
     """Handle safe extract tar gz.
+
+    Args:
+        archive_path: Filesystem path used for archive.
+        destination: Destination object or location receiving the result.
+
 
     Raises:
         ValueError: If an input value is invalid.
@@ -291,6 +337,10 @@ def _safe_extract_tar_gz(archive_path: Path, destination: Path) -> None:
 def _find_vcf_download_tool_binary(extraction_dir: Path) -> Path:
     """Return vcf download tool binary.
 
+    Args:
+        extraction_dir: Filesystem path associated with extraction dir.
+
+
     Raises:
         FileNotFoundError: If a required file does not exist.
     """
@@ -309,13 +359,21 @@ def _find_vcf_download_tool_binary(extraction_dir: Path) -> Path:
 def parse_software_depot_id(output: str) -> str:
     """Parse software depot id.
 
+    Args:
+        output: Candidate output to parse.
+
+
     Returns:
         The parsed software depot id.
     """
     uuid_pattern = r"\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b"
 
     def unique_candidate(candidates: list[str]) -> str:
-        """Return unique candidate."""
+        """Return unique candidate.
+
+        Args:
+            candidates: Candidates consumed by unique candidate.
+        """
         unique = list(dict.fromkeys(candidate.strip() for candidate in candidates if candidate.strip()))
         return unique[0] if len(unique) == 1 else ""
 
@@ -402,14 +460,22 @@ def generate_vcf_software_depot_id(
 
 
 def vcf_depot_endpoint(settings: VcfOfflineDepotSettings) -> str:
-    """Return vcf depot endpoint."""
+    """Return vcf depot endpoint.
+
+    Args:
+        settings: Current Atlaso settings used to configure the operation.
+    """
     port = settings.port or 443
     host = settings.hostname.strip()
     return host if port == 443 else f"{host}:{port}"
 
 
 def vcf_depot_settings_to_dict(settings: VcfOfflineDepotSettings) -> dict[str, object]:
-    """Return vcf depot settings to dict."""
+    """Return vcf depot settings to dict.
+
+    Args:
+        settings: Current Atlaso settings used to configure the operation.
+    """
     return {
         "id": settings.id,
         "enabled": settings.enabled,
@@ -432,7 +498,12 @@ def vcf_depot_settings_to_dict(settings: VcfOfflineDepotSettings) -> dict[str, o
 
 
 def vcf_depot_service_state(settings: VcfOfflineDepotSettings, *, nginx_active: bool | None = None) -> dict[str, object]:
-    """Return vcf depot service state."""
+    """Return vcf depot service state.
+
+    Args:
+        settings: Current Atlaso settings used to configure the operation.
+        nginx_active: Nginx active consumed by VCF depot service state.
+    """
     desired_enabled = bool(settings.enabled)
     running = bool(nginx_active) if nginx_active is not None else desired_enabled
     if running and desired_enabled:
@@ -466,7 +537,13 @@ def vcf_depot_profile_start_blocker(
     download_token_present: bool = False,
     activation_code_present: bool = False,
 ) -> str:
-    """Return vcf depot profile start blocker."""
+    """Return vcf depot profile start blocker.
+
+    Args:
+        profile: Configuration profile consumed by the operation.
+        download_token_present: Whether download token present applies to the operation.
+        activation_code_present: Whether activation code present applies to the operation.
+    """
     if not profile.enabled:
         return "Enable the VCFDT download profile before starting a download."
     profile_type = (profile.profile_type or "binaries").strip() or "binaries"
@@ -485,7 +562,13 @@ def vcf_depot_profile_to_dict(
     download_token_present: bool = False,
     activation_code_present: bool = False,
 ) -> dict[str, object]:
-    """Return vcf depot profile to dict."""
+    """Return vcf depot profile to dict.
+
+    Args:
+        profile: Configuration profile consumed by the operation.
+        download_token_present: Whether download token present applies to the operation.
+        activation_code_present: Whether activation code present applies to the operation.
+    """
     component = profile.component or ""
     start_blocker = vcf_depot_profile_start_blocker(
         profile,
@@ -525,7 +608,12 @@ def vcf_depot_profile_to_dict(
 
 
 def setting_secret_state(name_setting: Setting | None, value_setting: Setting | None) -> SecretState:
-    """Return setting secret state."""
+    """Return setting secret state.
+
+    Args:
+        name_setting: Name setting consumed by setting secret state.
+        value_setting: Value setting consumed by setting secret state.
+    """
     present = bool(value_setting and value_setting.value.strip())
     filename = name_setting.value if name_setting else ""
     updated_at = value_setting.updated_at.isoformat() if value_setting and value_setting.updated_at else ""
@@ -736,14 +824,24 @@ def render_nginx_depot_config(
 
 
 def _append_optional_flag(command: list[str], flag: str, value: str | None) -> None:
-    """Handle append optional flag."""
+    """Handle append optional flag.
+
+    Args:
+        command: Command and arguments to execute.
+        flag: Flag consumed by append optional flag.
+        value: Candidate value consumed by append optional flag.
+    """
     stripped = (value or "").strip()
     if stripped:
         command.append(f"{flag}={stripped}")
 
 
 def split_vcf_depot_lines(value: str | None) -> list[str]:
-    """Return split vcf depot lines."""
+    """Return split vcf depot lines.
+
+    Args:
+        value: Candidate value consumed by split VCF depot lines.
+    """
     return [item.strip() for item in (value or "").splitlines() if item.strip()]
 
 
@@ -752,7 +850,14 @@ def vcf_depot_download_credential_flag(
     activation_code_present: bool = False,
     preferred_credential_type: str = "",
 ) -> str:
-    """Return vcf depot download credential flag."""
+    """Return vcf depot download credential flag.
+
+    Args:
+        download_token_present: Whether download token present applies to the operation.
+        activation_code_present: Whether activation code present applies to the operation.
+        preferred_credential_type: Preferred credential type consumed by VCF depot download
+            credential flag.
+    """
     if preferred_credential_type == "activation_code" and activation_code_present:
         return f"--depot-download-activation-code-file={VCF_DEPOT_STAGED_ACTIVATION_FILE}"
     if preferred_credential_type == "download_token" and download_token_present:
@@ -834,7 +939,12 @@ def vcfdt_commands_for_profile(
 
 
 def _shell_arg(arg: str, settings: VcfOfflineDepotSettings) -> str:
-    """Return shell arg."""
+    """Return shell arg.
+
+    Args:
+        arg: Arg consumed by shell arg.
+        settings: Current Atlaso settings used to configure the operation.
+    """
     if arg == f"--depot-store={settings.depot_store_path}":
         return '"--depot-store=${DEPOT_STORE}"'
     if arg == f"--depot-download-token-file={VCF_DEPOT_STAGED_TOKEN_FILE}":
@@ -845,12 +955,21 @@ def _shell_arg(arg: str, settings: VcfOfflineDepotSettings) -> str:
 
 
 def _shell_command(command: list[str], settings: VcfOfflineDepotSettings) -> str:
-    """Return shell command."""
+    """Return shell command.
+
+    Args:
+        command: Command and arguments to execute.
+        settings: Current Atlaso settings used to configure the operation.
+    """
     return " ".join(_shell_arg(arg, settings) for arg in command)
 
 
 def _json_string_array(values: list[str]) -> list[str]:
-    """Return json string array."""
+    """Return json string array.
+
+    Args:
+        values: Candidate values consumed by JSON string array.
+    """
     lines = ['{', '  "disabledPlatforms": [']
     for index, value in enumerate(values):
         comma = "," if index < len(values) - 1 else ""
@@ -860,7 +979,12 @@ def _json_string_array(values: list[str]) -> list[str]:
 
 
 def _printf_json_to_file_command(lines: list[str], target: str) -> str:
-    """Return printf json to file command."""
+    """Return printf json to file command.
+
+    Args:
+        lines: Source or output lines being parsed.
+        target: Target resource or location affected by the operation.
+    """
     quoted_lines = " ".join(shlex.quote(line) for line in lines)
     return f"printf '%s\\n' {quoted_lines} > {target}"
 

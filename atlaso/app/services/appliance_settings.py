@@ -32,7 +32,11 @@ HOSTNAME_PATTERN = re.compile(r"^(?=.{1,253}$)([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9
 
 
 def appliance_settings_to_dict(settings: ApplianceSettings) -> dict[str, Any]:
-    """Return appliance settings to dict."""
+    """Return appliance settings to dict.
+
+    Args:
+        settings: Current Atlaso settings used to configure the operation.
+    """
     return {
         "id": settings.id,
         "fqdn": settings.fqdn,
@@ -49,7 +53,11 @@ def appliance_settings_to_dict(settings: ApplianceSettings) -> dict[str, Any]:
 
 
 def web_terminal_interfaces_from_json(value: str | None) -> list[str]:
-    """Return web terminal interfaces from json."""
+    """Return web terminal interfaces from json.
+
+    Args:
+        value: Candidate value consumed by web terminal interfaces from JSON.
+    """
     try:
         parsed = json.loads(value or "[]")
     except json.JSONDecodeError:
@@ -65,7 +73,11 @@ def web_terminal_interfaces_from_json(value: str | None) -> list[str]:
 
 
 def web_terminal_interfaces_to_json(values: list[str]) -> str:
-    """Return web terminal interfaces to json."""
+    """Return web terminal interfaces to json.
+
+    Args:
+        values: Candidate values consumed by web terminal interfaces to JSON.
+    """
     normalized: list[str] = []
     for value in values:
         name = str(value or "").strip()
@@ -78,7 +90,12 @@ def web_terminal_interface_options(
     interfaces: list[PhysicalInterface],
     vlans: list[VlanInterface],
 ) -> list[dict[str, Any]]:
-    """Return web terminal interface options."""
+    """Return web terminal interface options.
+
+    Args:
+        interfaces: Interfaces consumed by web terminal interface options.
+        vlans: Vlans consumed by web terminal interface options.
+    """
     options: list[dict[str, Any]] = []
     parents = {interface.name: interface for interface in interfaces}
     management_name = management_interface_context(interfaces).get("name", "")
@@ -126,7 +143,12 @@ def web_terminal_interface_options(
 
 
 def normalized_web_terminal_interfaces(settings: ApplianceSettings, management_interface: dict[str, str]) -> list[str]:
-    """Return normalized web terminal interfaces."""
+    """Return normalized web terminal interfaces.
+
+    Args:
+        settings: Current Atlaso settings used to configure the operation.
+        management_interface: Management interface consumed by normalized web terminal interfaces.
+    """
     selected = web_terminal_interfaces_from_json(settings.web_terminal_interfaces_json)
     management_name = str(management_interface.get("name") or "")
     if settings.web_terminal_enabled and management_name:
@@ -135,7 +157,12 @@ def normalized_web_terminal_interfaces(settings: ApplianceSettings, management_i
 
 
 def web_terminal_addresses(selected: list[str], options: list[dict[str, Any]]) -> list[str]:
-    """Return web terminal addresses."""
+    """Return web terminal addresses.
+
+    Args:
+        selected: Selected consumed by web terminal addresses.
+        options: Options controlling the operation.
+    """
     by_name = {str(option["name"]): option for option in options}
     addresses: list[str] = []
     for name in selected:
@@ -149,7 +176,12 @@ def web_terminal_listener_interfaces(
     selected: list[str],
     options: list[dict[str, Any]],
 ) -> list[str]:
-    """Return web terminal listener interfaces."""
+    """Return web terminal listener interfaces.
+
+    Args:
+        selected: Selected consumed by web terminal listener interfaces.
+        options: Options controlling the operation.
+    """
     by_name = {str(option.get("name") or ""): option for option in options}
     return [
         name
@@ -159,7 +191,12 @@ def web_terminal_listener_interfaces(
 
 
 def _interface_addresses(ipv4_cidr: str | None, ipv6_cidr: str | None) -> list[str]:
-    """Return interface addresses."""
+    """Return interface addresses.
+
+    Args:
+        ipv4_cidr: Ipv4 cidr consumed by interface addresses.
+        ipv6_cidr: Ipv6 cidr consumed by interface addresses.
+    """
     result: list[str] = []
     for value in (ipv4_cidr, ipv6_cidr):
         if not value:
@@ -176,6 +213,10 @@ def _interface_addresses(ipv4_cidr: str | None, ipv6_cidr: str | None) -> list[s
 def normalize_fqdn(value: str) -> str:
     """Normalize fqdn.
 
+    Args:
+        value: Candidate value consumed by normalize FQDN.
+
+
     Returns:
         The normalize fqdn result.
     """
@@ -185,6 +226,10 @@ def normalize_fqdn(value: str) -> str:
 def normalize_multiline_values(value: str) -> str:
     """Normalize multiline values.
 
+    Args:
+        value: Candidate value consumed by normalize multiline values.
+
+
     Returns:
         The normalize multiline values result.
     """
@@ -193,6 +238,10 @@ def normalize_multiline_values(value: str) -> str:
 
 def normalize_service_dns_target_naming(value: str | None) -> str:
     """Normalize service dns target naming.
+
+    Args:
+        value: Candidate value consumed by normalize service DNS target naming.
+
 
     Returns:
         The normalize service dns target naming result.
@@ -204,7 +253,11 @@ def normalize_service_dns_target_naming(value: str | None) -> str:
 
 
 def is_app_owned_appliance_dns_record(description: str | None) -> bool:
-    """Return whether app owned appliance dns record."""
+    """Return whether app owned appliance dns record.
+
+    Args:
+        description: Operator-facing purpose or context for the resource.
+    """
     return APPLIANCE_DNS_RECORD_DESCRIPTION in (description or "")
 
 
@@ -214,7 +267,13 @@ def resolver_mode_for_settings(
     management_interface: dict[str, str],
     external_servers: list[str],
 ) -> str:
-    """Return resolver mode for settings."""
+    """Return resolver mode for settings.
+
+    Args:
+        local_dns_enabled: Whether local DNS is enabled.
+        management_interface: Management interface consumed by resolver mode for settings.
+        external_servers: External servers consumed by resolver mode for settings.
+    """
     if local_dns_enabled:
         return RESOLVER_MODE_LOCAL_DNS
     if not external_servers and management_interface.get("ipv4_method") == "dhcp":
@@ -224,6 +283,10 @@ def resolver_mode_for_settings(
 
 def parse_resolvectl_dns_servers(output: str) -> list[str]:
     """Parse resolvectl dns servers.
+
+    Args:
+        output: Candidate output to parse.
+
 
     Returns:
         The parsed resolvectl dns servers.
@@ -253,6 +316,11 @@ def parse_resolvectl_dns_servers(output: str) -> list[str]:
 def parse_networkd_dhcp_dns_payload(output: str, interface_name: str) -> list[str]:
     """Parse networkd dhcp dns payload.
 
+    Args:
+        output: Candidate output to parse.
+        interface_name: Host network-interface name affected by the operation.
+
+
     Returns:
         The parsed networkd dhcp dns payload.
     """
@@ -271,7 +339,11 @@ def parse_networkd_dhcp_dns_payload(output: str, interface_name: str) -> list[st
 
 
 def observed_management_dhcp_dns_servers(interface_name: str) -> list[str]:
-    """Return observed management dhcp dns servers."""
+    """Return observed management dhcp dns servers.
+
+    Args:
+        interface_name: Host network-interface name affected by the operation.
+    """
     if not interface_name:
         return []
     try:
@@ -298,7 +370,11 @@ def observed_management_dhcp_dns_servers(interface_name: str) -> list[str]:
 
 
 def management_dhcp_dns_context(interfaces: list[PhysicalInterface]) -> tuple[dict[str, str], list[str]]:
-    """Return management dhcp dns context."""
+    """Return management dhcp dns context.
+
+    Args:
+        interfaces: Interfaces consumed by management dhcp DNS context.
+    """
     management = management_interface_context(interfaces)
     if management.get("ipv4_method") != "dhcp":
         return management, []
@@ -320,7 +396,11 @@ def management_dhcp_dns_context(interfaces: list[PhysicalInterface]) -> tuple[di
 
 
 def management_interface_context(interfaces: list[PhysicalInterface]) -> dict[str, Any]:
-    """Return management interface context."""
+    """Return management interface context.
+
+    Args:
+        interfaces: Interfaces consumed by management interface context.
+    """
     candidates = [interface for interface in interfaces if interface.role == "management"] + [
         interface for interface in interfaces if interface.name == "eth0"
     ]

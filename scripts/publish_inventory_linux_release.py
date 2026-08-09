@@ -32,6 +32,11 @@ GIT_RELEASE_USER_EMAIL = "41898282+github-actions[bot]@users.noreply.github.com"
 def run(command: list[str], *, check: bool = True) -> subprocess.CompletedProcess[str]:
     """Run operation.
 
+    Args:
+        command: Command and arguments to execute.
+        check: Whether a nonzero command status raises an exception.
+
+
     Returns:
         The run result.
 
@@ -61,6 +66,12 @@ def verify_manifest(
     trusted_key: Path,
 ) -> dict:
     """Validate manifest.
+
+    Args:
+        manifest_path: Filesystem path used for manifest.
+        signature_path: Filesystem path used for signature.
+        trusted_key: Filesystem path associated with trusted key.
+
 
     Returns:
         The verify manifest result.
@@ -161,6 +172,10 @@ def publish_pages(
 
 def main(argv: list[str] | None = None) -> int:
     """Run the command-line entry point.
+
+    Args:
+        argv: Command-line arguments to parse, or ``None`` to use the process arguments.
+
 
     Returns:
         The main result.

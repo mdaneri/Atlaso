@@ -57,7 +57,12 @@ def test_console_management_validation_limits_dhcp_and_static_values():
     [("x86_64", "amd64"), ("AMD64", "amd64"), ("aarch64", "arm64"), ("armv7l", "armv7"), ("riscv64", "riscv64"), ("", "unknown")],
 )
 def test_console_architecture_label_normalizes_common_platform_names(reported, expected):
-    """Verify that console architecture label normalizes common platform names."""
+    """Verify that console architecture label normalizes common platform names.
+
+    Args:
+        reported: Reported supplied to the test scenario.
+        expected: Expected value used to verify the tested behavior.
+    """
     assert appliance_console._architecture_label(reported) == expected
 
 
@@ -115,7 +120,11 @@ def test_console_management_urls_bracket_ipv6_and_ignore_link_local_addresses():
 
 
 def test_console_load_summary_uses_one_five_and_fifteen_minute_averages(monkeypatch):
-    """Verify that console load summary uses one five and fifteen minute averages."""
+    """Verify that console load summary uses one five and fifteen minute averages.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+    """
     monkeypatch.setattr(appliance_console.os, "getloadavg", lambda: (0.125, 1.5, 12.345), raising=False)
 
     assert appliance_console._load_summary() == "1 min 0.12 | 5 min 1.50 | 15 min 12.35"
@@ -132,7 +141,14 @@ def test_console_load_summary_uses_one_five_and_fifteen_minute_averages(monkeypa
     ],
 )
 def test_console_load_status_scales_warning_and_critical_thresholds_by_cpu_count(values, cpu_count, expected):
-    """Verify that console load status scales warning and critical thresholds by cpu count."""
+    """Verify that console load status scales warning and critical thresholds by cpu count.
+
+    Args:
+        values: Candidate values consumed by test console load status scales warning and critical
+            thresholds by CPU count.
+        cpu_count: Number of CPU entries.
+        expected: Expected value used to verify the tested behavior.
+    """
     summary, severity = appliance_console._load_status(values, cpu_count)
 
     assert summary.startswith("1 min ")
@@ -162,7 +178,11 @@ def test_console_uses_bounded_recovery_redraws_after_service_activity():
 
 
 def test_console_refresh_interval_defaults_to_five_seconds_and_is_bounded(monkeypatch):
-    """Verify that console refresh interval defaults to five seconds and is bounded."""
+    """Verify that console refresh interval defaults to five seconds and is bounded.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+    """
     monkeypatch.delenv(appliance_console.CONSOLE_REFRESH_ENV, raising=False)
     assert appliance_console._console_refresh_seconds() == 5
     monkeypatch.setenv(appliance_console.CONSOLE_REFRESH_ENV, "15")
@@ -194,7 +214,11 @@ def test_console_missing_network_inventory_is_initializing_only_during_startup_g
 
 
 def test_console_uninitialized_physical_interface_table_is_network_initialization(monkeypatch):
-    """Verify that console uninitialized physical interface table is network initialization."""
+    """Verify that console uninitialized physical interface table is network initialization.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+    """
     class UninitializedDatabase:
         """Represent uninitialized database."""
         def __enter__(self):
@@ -212,6 +236,10 @@ def test_console_uninitialized_physical_interface_table_is_network_initializatio
         def __exit__(self, *_args):
             """Exit the managed context without suppressing exceptions.
 
+            Args:
+                *_args: Additional positional arguments accepted by the callable.
+
+
             Returns:
                 The exit result.
             """
@@ -227,7 +255,11 @@ def test_console_uninitialized_physical_interface_table_is_network_initializatio
 
 
 def test_console_does_not_hide_unrelated_database_errors(monkeypatch):
-    """Verify that console does not hide unrelated database errors."""
+    """Verify that console does not hide unrelated database errors.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+    """
     error = SQLAlchemyOperationalError(
         "SELECT * FROM settings",
         {},
@@ -246,6 +278,10 @@ def test_console_does_not_hide_unrelated_database_errors(monkeypatch):
 
         def __exit__(self, *_args):
             """Exit the managed context without suppressing exceptions.
+
+            Args:
+                *_args: Additional positional arguments accepted by the callable.
+
 
             Returns:
                 The exit result.
@@ -271,7 +307,11 @@ def test_console_unrelated_status_failures_are_not_hidden_during_startup():
 
 
 def test_console_draws_initializing_network_message_during_startup(monkeypatch):
-    """Verify that console draws initializing network message during startup."""
+    """Verify that console draws initializing network message during startup.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+    """
     class FakeCurses:
         """Represent fake curses.
 
@@ -282,7 +322,11 @@ def test_console_draws_initializing_network_message_during_startup(monkeypatch):
 
         @staticmethod
         def color_pair(value):
-            """Return color pair."""
+            """Return color pair.
+
+            Args:
+                value: Candidate value consumed by color pair.
+            """
             return value
 
     class FakeScreen:
@@ -373,7 +417,11 @@ def test_console_management_form_uses_field_navigation_and_cursor_editing():
     class FakeWindow:
         """Represent fake window."""
         def keypad(self, _enabled):
-            """Return keypad."""
+            """Return keypad.
+
+            Args:
+                _enabled: Whether the associated resource or behavior is enabled.
+            """
             return None
 
         def erase(self):
@@ -381,7 +429,11 @@ def test_console_management_form_uses_field_navigation_and_cursor_editing():
             return None
 
         def bkgd(self, *_args):
-            """Return bkgd."""
+            """Return bkgd.
+
+            Args:
+                *_args: Additional positional arguments accepted by the callable.
+            """
             return None
 
         def box(self):
@@ -389,11 +441,19 @@ def test_console_management_form_uses_field_navigation_and_cursor_editing():
             return None
 
         def addnstr(self, *_args):
-            """Return addnstr."""
+            """Return addnstr.
+
+            Args:
+                *_args: Additional positional arguments accepted by the callable.
+            """
             return None
 
         def move(self, *_args):
-            """Return move."""
+            """Return move.
+
+            Args:
+                *_args: Additional positional arguments accepted by the callable.
+            """
             return None
 
         def refresh(self):
@@ -436,17 +496,29 @@ def test_console_management_form_uses_field_navigation_and_cursor_editing():
 
         @staticmethod
         def color_pair(value):
-            """Return color pair."""
+            """Return color pair.
+
+            Args:
+                value: Candidate value consumed by color pair.
+            """
             return value
 
         @staticmethod
         def curs_set(_value):
-            """Return curs set."""
+            """Return curs set.
+
+            Args:
+                _value: Candidate value consumed by curs set.
+            """
             return None
 
         @staticmethod
         def newwin(*_args):
-            """Return newwin."""
+            """Return newwin.
+
+            Args:
+                *_args: Additional positional arguments accepted by the callable.
+            """
             return FakeWindow()
 
     console = CursesConsole.__new__(CursesConsole)
@@ -476,7 +548,11 @@ def test_console_management_form_uses_field_navigation_and_cursor_editing():
 
 
 def test_console_top_temporarily_leaves_and_restores_curses(monkeypatch):
-    """Verify that console top temporarily leaves and restores curses."""
+    """Verify that console top temporarily leaves and restores curses.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+    """
     events: list[str] = []
 
     class FakeCurses:
@@ -526,7 +602,12 @@ def test_console_top_temporarily_leaves_and_restores_curses(monkeypatch):
 
 @pytest.mark.parametrize(("authenticated", "expected_calls"), [(True, 1), (False, 0)])
 def test_console_top_requires_fresh_root_authentication(authenticated, expected_calls):
-    """Verify that console top requires fresh root authentication."""
+    """Verify that console top requires fresh root authentication.
+
+    Args:
+        authenticated: Authenticated supplied to the test scenario.
+        expected_calls: Expected calls used to verify dependency interactions.
+    """
     console = CursesConsole.__new__(CursesConsole)
     calls: list[str] = []
     console._require_authentication = lambda: authenticated
@@ -538,7 +619,11 @@ def test_console_top_requires_fresh_root_authentication(authenticated, expected_
 
 
 def test_console_top_authentication_cancel_does_not_check_password(monkeypatch):
-    """Verify that console top authentication cancel does not check password."""
+    """Verify that console top authentication cancel does not check password.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+    """
     console = CursesConsole.__new__(CursesConsole)
     console._prompt = lambda *args, **kwargs: None
     console.message = ""
@@ -559,11 +644,19 @@ def test_console_password_prompt_uses_light_network_field_style():
     class FakeWindow:
         """Represent fake window."""
         def keypad(self, _enabled):
-            """Return keypad."""
+            """Return keypad.
+
+            Args:
+                _enabled: Whether the associated resource or behavior is enabled.
+            """
             return None
 
         def bkgd(self, *_args):
-            """Return bkgd."""
+            """Return bkgd.
+
+            Args:
+                *_args: Additional positional arguments accepted by the callable.
+            """
             return None
 
         def box(self):
@@ -586,7 +679,11 @@ def test_console_password_prompt_uses_light_network_field_style():
                 field_attributes.append(attribute)
 
         def move(self, *_args):
-            """Return move."""
+            """Return move.
+
+            Args:
+                *_args: Additional positional arguments accepted by the callable.
+            """
             return None
 
         def refresh(self):
@@ -619,17 +716,29 @@ def test_console_password_prompt_uses_light_network_field_style():
 
         @staticmethod
         def color_pair(value):
-            """Return color pair."""
+            """Return color pair.
+
+            Args:
+                value: Candidate value consumed by color pair.
+            """
             return value
 
         @staticmethod
         def curs_set(_value):
-            """Return curs set."""
+            """Return curs set.
+
+            Args:
+                _value: Candidate value consumed by curs set.
+            """
             return None
 
         @staticmethod
         def newwin(*_args):
-            """Return newwin."""
+            """Return newwin.
+
+            Args:
+                *_args: Additional positional arguments accepted by the callable.
+            """
             return FakeWindow()
 
     console = CursesConsole.__new__(CursesConsole)
@@ -650,11 +759,19 @@ def test_console_password_prompt_preserves_literal_root_password_characters():
     class FakeWindow:
         """Represent fake window."""
         def keypad(self, _enabled):
-            """Return keypad."""
+            """Return keypad.
+
+            Args:
+                _enabled: Whether the associated resource or behavior is enabled.
+            """
             return None
 
         def bkgd(self, *_args):
-            """Return bkgd."""
+            """Return bkgd.
+
+            Args:
+                *_args: Additional positional arguments accepted by the callable.
+            """
             return None
 
         def box(self):
@@ -662,11 +779,19 @@ def test_console_password_prompt_preserves_literal_root_password_characters():
             return None
 
         def addnstr(self, *_args):
-            """Return addnstr."""
+            """Return addnstr.
+
+            Args:
+                *_args: Additional positional arguments accepted by the callable.
+            """
             return None
 
         def move(self, *_args):
-            """Return move."""
+            """Return move.
+
+            Args:
+                *_args: Additional positional arguments accepted by the callable.
+            """
             return None
 
         def refresh(self):
@@ -699,17 +824,29 @@ def test_console_password_prompt_preserves_literal_root_password_characters():
 
         @staticmethod
         def color_pair(value):
-            """Return color pair."""
+            """Return color pair.
+
+            Args:
+                value: Candidate value consumed by color pair.
+            """
             return value
 
         @staticmethod
         def curs_set(_value):
-            """Return curs set."""
+            """Return curs set.
+
+            Args:
+                _value: Candidate value consumed by curs set.
+            """
             return None
 
         @staticmethod
         def newwin(*_args):
-            """Return newwin."""
+            """Return newwin.
+
+            Args:
+                *_args: Additional positional arguments accepted by the callable.
+            """
             return FakeWindow()
 
     console = CursesConsole.__new__(CursesConsole)
@@ -720,7 +857,11 @@ def test_console_password_prompt_preserves_literal_root_password_characters():
 
 
 def test_console_top_authentication_failure_is_visible(monkeypatch):
-    """Verify that console top authentication failure is visible."""
+    """Verify that console top authentication failure is visible.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+    """
     console = CursesConsole.__new__(CursesConsole)
     console._prompt = lambda *args, **kwargs: "incorrect"
     console.message = "Previous message"
@@ -736,7 +877,11 @@ def test_console_top_authentication_failure_is_visible(monkeypatch):
 
 
 def test_console_shell_is_audited_and_returns_to_curses(monkeypatch):
-    """Verify that console shell is audited and returns to curses."""
+    """Verify that console shell is audited and returns to curses.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+    """
     console = CursesConsole.__new__(CursesConsole)
     events: list[object] = []
     console.message = ""
@@ -786,7 +931,11 @@ def test_console_help_modal_pages_forward_and_closes():
     class FakeWindow:
         """Represent fake window."""
         def keypad(self, _enabled):
-            """Return keypad."""
+            """Return keypad.
+
+            Args:
+                _enabled: Whether the associated resource or behavior is enabled.
+            """
             return None
 
         def erase(self):
@@ -794,7 +943,11 @@ def test_console_help_modal_pages_forward_and_closes():
             return None
 
         def bkgd(self, *_args):
-            """Return bkgd."""
+            """Return bkgd.
+
+            Args:
+                *_args: Additional positional arguments accepted by the callable.
+            """
             return None
 
         def box(self):
@@ -802,7 +955,14 @@ def test_console_help_modal_pages_forward_and_closes():
             return None
 
         def addnstr(self, row, _column, value, *_args):
-            """Handle addnstr."""
+            """Handle addnstr.
+
+            Args:
+                row: Persistent database row affected by the operation.
+                _column: Column supplied to the test scenario.
+                value: Candidate value consumed by addnstr.
+                *_args: Additional positional arguments accepted by the callable.
+            """
             if row == 0:
                 framed_titles.append(value)
 
@@ -844,12 +1004,20 @@ def test_console_help_modal_pages_forward_and_closes():
 
         @staticmethod
         def color_pair(value):
-            """Return color pair."""
+            """Return color pair.
+
+            Args:
+                value: Candidate value consumed by color pair.
+            """
             return value
 
         @staticmethod
         def newwin(*_args):
-            """Return newwin."""
+            """Return newwin.
+
+            Args:
+                *_args: Additional positional arguments accepted by the callable.
+            """
             return FakeWindow()
 
     console = CursesConsole.__new__(CursesConsole)
@@ -883,7 +1051,11 @@ def test_console_footer_includes_help_and_compact_power_label():
 
 
 def test_console_appliance_services_use_full_catalog_and_optional_units(monkeypatch):
-    """Verify that console appliance services use full catalog and optional units."""
+    """Verify that console appliance services use full catalog and optional units.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+    """
     from atlaso.app import ui
 
     rows = [
@@ -917,7 +1089,11 @@ def test_console_appliance_services_use_full_catalog_and_optional_units(monkeypa
 
 
 def test_console_enabled_optional_service_without_unit_is_unavailable(monkeypatch):
-    """Verify that console enabled optional service without unit is unavailable."""
+    """Verify that console enabled optional service without unit is unavailable.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+    """
     from atlaso.app import ui
 
     rows = [
@@ -983,7 +1159,11 @@ def test_console_restores_main_surface_before_reopening_parent_menu():
 
 
 def test_console_authentication_is_requested_for_each_menu_entry(monkeypatch):
-    """Verify that console authentication is requested for each menu entry."""
+    """Verify that console authentication is requested for each menu entry.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+    """
     console = CursesConsole.__new__(CursesConsole)
     prompts = iter(["first-password", "second-password"])
     console._prompt = lambda *args, **kwargs: next(prompts)
@@ -998,7 +1178,12 @@ def test_console_authentication_is_requested_for_each_menu_entry(monkeypatch):
 
 
 def test_console_firewall_toggle_persists_desired_state_and_selects_only_firewall(client, monkeypatch):
-    """Verify that console firewall toggle persists desired state and selects only firewall."""
+    """Verify that console firewall toggle persists desired state and selects only firewall.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+    """
     from sqlalchemy import select
 
     from atlaso.app.database import SessionLocal
@@ -1016,14 +1201,24 @@ def test_console_firewall_toggle_persists_desired_state_and_selects_only_firewal
 
 
 def test_console_power_task_is_committed_before_real_helper_invocation(client, monkeypatch):
-    """Verify that console power task is committed before real helper invocation."""
+    """Verify that console power task is committed before real helper invocation.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+    """
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import Job, JobStatus
 
     observed: list[tuple[list[str], str, str]] = []
 
     def fake_run(command, **kwargs):
-        """Return fake run."""
+        """Return fake run.
+
+        Args:
+            command: Command and arguments to execute.
+            **kwargs: Additional keyword arguments accepted by the callable.
+        """
         with SessionLocal() as db:
             job = db.query(Job).filter(Job.type == "appliance-reboot").one()
             observed.append((command, job.status, job.created_by))
@@ -1041,7 +1236,11 @@ def test_console_power_task_is_committed_before_real_helper_invocation(client, m
 
 
 def test_forced_real_apply_seam_rejects_non_console_jobs(client):
-    """Verify that forced real apply seam rejects non console jobs."""
+    """Verify that forced real apply seam rejects non console jobs.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import Job, JobStatus
     from atlaso.app.ui import run_appliance_apply_job
@@ -1055,7 +1254,11 @@ def test_forced_real_apply_seam_rejects_non_console_jobs(client):
 
 
 def test_console_desired_state_edit_is_rejected_before_commit_when_apply_is_active(client):
-    """Verify that console desired state edit is rejected before commit when apply is active."""
+    """Verify that console desired state edit is rejected before commit when apply is active.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
     from sqlalchemy import select
 
     from atlaso.app.database import SessionLocal
@@ -1103,7 +1306,13 @@ def test_console_systemd_unit_replaces_only_tty1():
 
 
 def test_console_service_isolation_preserves_console_network_and_firewall(monkeypatch, tmp_path, capsys):
-    """Verify that console service isolation preserves console network and firewall."""
+    """Verify that console service isolation preserves console network and firewall.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+        capsys: Pytest fixture used to capture standard output and standard error.
+    """
     helper = load_helper_module()
     state_dir = tmp_path / "console"
     state_path = state_dir / "services.json"
@@ -1117,7 +1326,11 @@ def test_console_service_isolation_preserves_console_network_and_firewall(monkey
     commands: list[list[str]] = []
 
     def fake_run(command: list[str]) -> subprocess.CompletedProcess[str]:
-        """Return fake run."""
+        """Return fake run.
+
+        Args:
+            command: Command and arguments to execute.
+        """
         commands.append(command)
         return subprocess.CompletedProcess(command, 0, "", "")
 
@@ -1135,7 +1348,12 @@ def test_console_service_isolation_preserves_console_network_and_firewall(monkey
 
 
 def test_console_service_restore_uses_saved_enable_and_active_state(monkeypatch, tmp_path):
-    """Verify that console service restore uses saved enable and active state."""
+    """Verify that console service restore uses saved enable and active state.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
     helper = load_helper_module()
     state_dir = tmp_path / "console"
     state_dir.mkdir()
@@ -1165,7 +1383,12 @@ def test_console_service_restore_uses_saved_enable_and_active_state(monkeypatch,
 
 
 def test_console_service_restore_keeps_snapshot_when_restoration_is_incomplete(monkeypatch, tmp_path):
-    """Verify that console service restore keeps snapshot when restoration is incomplete."""
+    """Verify that console service restore keeps snapshot when restoration is incomplete.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
     helper = load_helper_module()
     state_dir = tmp_path / "console"
     state_dir.mkdir()

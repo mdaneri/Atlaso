@@ -20,6 +20,10 @@ ATLASO_CHANNELS = {"stable", "preview", "development"}
 def update_source_settings(source: UpdateSource) -> dict[str, Any]:
     """Update source settings.
 
+    Args:
+        source: Source object or location from which data is obtained.
+
+
     Returns:
         The update source settings result.
     """
@@ -32,6 +36,12 @@ def update_source_settings(source: UpdateSource) -> dict[str, Any]:
 
 def validate_http_url(value: str, *, label: str, required: bool) -> list[str]:
     """Validate http url.
+
+    Args:
+        value: Candidate value consumed by validate HTTP URL.
+        label: Human-readable label used to identify the result.
+        required: Whether required applies to the operation.
+
 
     Returns:
         The validate http url result.
@@ -49,6 +59,10 @@ def validate_http_url(value: str, *, label: str, required: bool) -> list[str]:
 
 def validate_update_source(source: UpdateSource) -> list[str]:
     """Validate update source.
+
+    Args:
+        source: Source object or location from which data is obtained.
+
 
     Returns:
         The validate update source result.
@@ -73,7 +87,11 @@ def validate_update_source(source: UpdateSource) -> list[str]:
 
 
 def atlaso_manifest_url(source: UpdateSource) -> str:
-    """Return atlaso manifest url."""
+    """Return atlaso manifest url.
+
+    Args:
+        source: Source object or location from which data is obtained.
+    """
     base = source.url.strip()
     if not base:
         return ""
@@ -142,7 +160,11 @@ def effective_update_settings(db: Session, *, stored: dict[str, str] | None = No
 
 
 def unsynchronized_powershell_repositories(settings: dict[str, Any]) -> list[str]:
-    """Handle unsynchronized powershell repositories."""
+    """Handle unsynchronized powershell repositories.
+
+    Args:
+        settings: Current Atlaso settings used to configure the operation.
+    """
     modules = settings.get("powershell_modules")
     referenced = {
         str(module.get("repository_name") or "").strip()
@@ -164,7 +186,11 @@ def unsynchronized_powershell_repositories(settings: dict[str, Any]) -> list[str
 
 
 def unsynchronized_photon_repositories(settings: dict[str, Any]) -> list[str]:
-    """Handle unsynchronized photon repositories."""
+    """Handle unsynchronized photon repositories.
+
+    Args:
+        settings: Current Atlaso settings used to configure the operation.
+    """
     definitions = settings.get("source_definitions")
     if not isinstance(definitions, list):
         return []
@@ -181,7 +207,11 @@ def unsynchronized_photon_repositories(settings: dict[str, Any]) -> list[str]:
 
 
 def update_source_credentials(db: Session) -> dict[str, dict[str, str]]:
-    """Return decrypted credentials for the protected helper runtime channel only."""
+    """Return decrypted credentials for the protected helper runtime channel only.
+
+    Args:
+        db: Active database session used by the operation.
+    """
     credentials: dict[str, dict[str, str]] = {}
     for source in source_rows(db):
         if not source.enabled or not source.credential_encrypted or source.id is None:
@@ -200,7 +230,11 @@ def update_source_credentials(db: Session) -> dict[str, dict[str, str]]:
 
 
 def default_source_settings(kind: str) -> dict[str, Any]:
-    """Return default source settings."""
+    """Return default source settings.
+
+    Args:
+        kind: Kind consumed by default source settings.
+    """
     return {
         "photon": {"managed": True, "gpgcheck": True, "gpgkey": "", "tls_verify": True},
         "powershell": {"trusted": False},
@@ -210,6 +244,10 @@ def default_source_settings(kind: str) -> dict[str, Any]:
 
 def validate_managed_package(package: ManagedPackage) -> list[str]:
     """Validate managed package.
+
+    Args:
+        package: Candidate package to validate.
+
 
     Returns:
         The validate managed package result.
@@ -232,6 +270,10 @@ def validate_managed_package(package: ManagedPackage) -> list[str]:
 
 def update_source_payload(source: UpdateSource) -> dict[str, Any]:
     """Update source payload.
+
+    Args:
+        source: Source object or location from which data is obtained.
+
 
     Returns:
         The update source payload result.

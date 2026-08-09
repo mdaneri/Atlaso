@@ -99,7 +99,11 @@ admin_router = APIRouter(
 
 
 def _public_configuration_error(exc: OidcConfigurationError) -> HTTPException:
-    """Return public configuration error."""
+    """Return public configuration error.
+
+    Args:
+        exc: Exception that caused the current failure path.
+    """
     return HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
 
 
@@ -168,7 +172,12 @@ _OIDC_LOGIN_BUCKETS: OrderedDict[str, deque[float]] = OrderedDict()
 
 
 def _identity_https(request: Request, db: Session | None = None) -> bool:
-    """Trust HTTPS forwarded by loopback only on the configured OIDC listener."""
+    """Trust HTTPS forwarded by loopback only on the configured OIDC listener.
+
+    Args:
+        request: Incoming HTTP request carrying the operation context.
+        db: Active database session used by the operation.
+    """
     if request.url.scheme == "https":
         return True
     forwarded = request.headers.get("x-forwarded-proto", "").lower() == "https"
@@ -183,14 +192,24 @@ def _identity_https(request: Request, db: Session | None = None) -> bool:
 
 
 def _no_store(response: Response) -> Response:
-    """Return no store."""
+    """Return no store.
+
+    Args:
+        response: HTTP or command response being inspected.
+    """
     response.headers["Cache-Control"] = "no-store"
     response.headers["Pragma"] = "no-cache"
     return response
 
 
 def _oidc_error(redirect_uri: str | None, error: str, state_value: str = "") -> Response:
-    """Return oidc error."""
+    """Return oidc error.
+
+    Args:
+        redirect_uri: Redirect uri consumed by OIDC error.
+        error: Failure being recorded, propagated, or reported.
+        state_value: State value consumed by OIDC error.
+    """
     if redirect_uri:
         query = urlencode({"error": error, **({"state": state_value} if state_value else {})})
         return _no_store(
@@ -249,7 +268,11 @@ def _set_oidc_cookie(response: Response, session: dict[str, object]) -> None:
 
 
 def _clear_oidc_cookie(response: Response) -> None:
-    """Remove oidc cookie."""
+    """Remove oidc cookie.
+
+    Args:
+        response: HTTP or command response being inspected.
+    """
     response.delete_cookie(
         OIDC_SESSION_COOKIE,
         path="/identity",
@@ -262,14 +285,28 @@ def _clear_oidc_cookie(response: Response) -> None:
 def _login_bucket_key(
     *, client_id: str, source: str, organization_id: int | None, username: str
 ) -> str:
-    """Return login bucket key."""
+    """Return login bucket key.
+
+    Args:
+        client_id: Stable identifier of the associated client resource.
+        source: Source object or location from which data is obtained.
+        organization_id: Stable identifier of the associated organization resource.
+        username: Atlaso account name associated with the operation.
+    """
     return f"{client_id}:{source}:{organization_id or 0}:{username.strip().casefold()}"
 
 
 def _login_throttled(
     *, client_id: str, source: str, organization_id: int | None, username: str
 ) -> bool:
-    """Return login throttled."""
+    """Return login throttled.
+
+    Args:
+        client_id: Stable identifier of the associated client resource.
+        source: Source object or location from which data is obtained.
+        organization_id: Stable identifier of the associated organization resource.
+        username: Atlaso account name associated with the operation.
+    """
     now = monotonic()
     key = _login_bucket_key(
         client_id=client_id,
@@ -289,7 +326,14 @@ def _login_throttled(
 def _record_login_failure(
     *, client_id: str, source: str, organization_id: int | None, username: str
 ) -> None:
-    """Persist login failure."""
+    """Persist login failure.
+
+    Args:
+        client_id: Stable identifier of the associated client resource.
+        source: Source object or location from which data is obtained.
+        organization_id: Stable identifier of the associated organization resource.
+        username: Atlaso account name associated with the operation.
+    """
     now = monotonic()
     key = _login_bucket_key(
         client_id=client_id,
@@ -913,6 +957,10 @@ def get_oidc_provider_settings(
 
     Requires the `admin:all` API scope. This read-only operation does not change saved desired state
     or appliance runtime state.
+
+    Args:
+        _identity: Authenticated identity authorizing the operation.
+        db: Active database session used by the operation.
     """
     return _provider_response(db)
 
@@ -928,6 +976,12 @@ def update_oidc_provider_settings(
 
     Requires the `admin:all` API scope. The operation updates saved Atlaso state and does not bypass
     the documented global Appliance Apply or service lifecycle boundary.
+
+    Args:
+        payload: Validated request or task payload consumed by the operation.
+        request: Incoming HTTP request carrying the operation context.
+        identity: Authenticated identity authorizing the operation.
+        db: Active database session used by the operation.
     """
     if payload.enabled and not OIDC_AUTHORIZATION_FLOW_AVAILABLE:
         raise HTTPException(
@@ -993,6 +1047,10 @@ def get_oidc_signing_keys(
 
     Requires the `admin:all` API scope. This read-only operation does not change saved desired state
     or appliance runtime state.
+
+    Args:
+        _identity: Authenticated identity authorizing the operation.
+        db: Active database session used by the operation.
     """
     rows = db.execute(select(OidcSigningKey).order_by(OidcSigningKey.created_at.desc())).scalars().all()
     return [OidcSigningKeyResponse(**signing_key_to_dict(row)) for row in rows]
@@ -1013,6 +1071,11 @@ def create_oidc_signing_key(
     Requires the `admin:all` API scope. The operation changes saved Atlaso application state; any
     appliance host enforcement remains subject to the documented apply or task boundary for the
     resource.
+
+    Args:
+        request: Incoming HTTP request carrying the operation context.
+        identity: Authenticated identity authorizing the operation.
+        db: Active database session used by the operation.
     """
     try:
         row, _previous = generate_signing_key(db, rotate=False)
@@ -1041,6 +1104,11 @@ def rotate_oidc_signing_key(
     Requires the `admin:all` API scope. The operation changes saved Atlaso application state; any
     appliance host enforcement remains subject to the documented apply or task boundary for the
     resource.
+
+    Args:
+        request: Incoming HTTP request carrying the operation context.
+        identity: Authenticated identity authorizing the operation.
+        db: Active database session used by the operation.
     """
     row, previous = generate_signing_key(db, rotate=True)
     action = "rotate_oidc_signing_key" if previous is not None else "generate_oidc_signing_key"
@@ -1074,6 +1142,12 @@ def delete_oidc_signing_key(
 
     Requires the `admin:all` API scope. Removal or revocation takes effect in Atlaso application
     state; appliance host changes remain subject to the documented apply boundary for the resource.
+
+    Args:
+        key_id: Stable identifier of the associated key resource.
+        request: Incoming HTTP request carrying the operation context.
+        identity: Authenticated identity authorizing the operation.
+        db: Active database session used by the operation.
     """
     row = db.get(OidcSigningKey, key_id)
     if row is None:
@@ -1104,6 +1178,10 @@ def get_oidc_clients(
 
     Requires the `admin:all` API scope. This read-only operation does not change saved desired state
     or appliance runtime state.
+
+    Args:
+        _identity: Authenticated identity authorizing the operation.
+        db: Active database session used by the operation.
     """
     return [OidcClientResponse(**oidc_client_to_dict(row)) for row in list_clients(db)]
 
@@ -1121,6 +1199,10 @@ def get_oidc_group_mappings(
 
     Requires the `admin:all` API scope. This read-only operation does not change saved desired state
     or appliance runtime state.
+
+    Args:
+        _identity: Authenticated identity authorizing the operation.
+        db: Active database session used by the operation.
     """
     return [
         OidcGroupMappingResponse(**group_mapping_to_dict(row))
@@ -1145,6 +1227,12 @@ def create_oidc_group_mapping(
     Requires the `admin:all` API scope. The operation changes saved Atlaso application state; any
     appliance host enforcement remains subject to the documented apply or task boundary for the
     resource.
+
+    Args:
+        payload: Validated request or task payload consumed by the operation.
+        request: Incoming HTTP request carrying the operation context.
+        identity: Authenticated identity authorizing the operation.
+        db: Active database session used by the operation.
     """
     try:
         row = create_group_mapping(
@@ -1195,6 +1283,13 @@ def update_oidc_group_mapping(
 
     Requires the `admin:all` API scope. The operation updates saved Atlaso state and does not bypass
     the documented global Appliance Apply or service lifecycle boundary.
+
+    Args:
+        mapping_id: Stable identifier of the associated mapping resource.
+        payload: Validated request or task payload consumed by the operation.
+        request: Incoming HTTP request carrying the operation context.
+        identity: Authenticated identity authorizing the operation.
+        db: Active database session used by the operation.
     """
     row = db.get(OidcGroupMapping, mapping_id)
     if row is None:
@@ -1248,6 +1343,12 @@ def delete_oidc_group_mapping(
 
     Requires the `admin:all` API scope. Removal or revocation takes effect in Atlaso application
     state; appliance host changes remain subject to the documented apply boundary for the resource.
+
+    Args:
+        mapping_id: Stable identifier of the associated mapping resource.
+        request: Incoming HTTP request carrying the operation context.
+        identity: Authenticated identity authorizing the operation.
+        db: Active database session used by the operation.
     """
     row = db.get(OidcGroupMapping, mapping_id)
     if row is None:
@@ -1292,6 +1393,10 @@ def get_oidc_subjects(
 
     Requires the `admin:all` API scope. This read-only operation does not change saved desired state
     or appliance runtime state.
+
+    Args:
+        _identity: Authenticated identity authorizing the operation.
+        db: Active database session used by the operation.
     """
     return [OidcSubjectResponse(**row) for row in list_subjects(db)]
 
@@ -1312,6 +1417,12 @@ def create_oidc_client(
     Requires the `admin:all` API scope. The operation changes saved Atlaso application state; any
     appliance host enforcement remains subject to the documented apply or task boundary for the
     resource.
+
+    Args:
+        payload: Validated request or task payload consumed by the operation.
+        request: Incoming HTTP request carrying the operation context.
+        identity: Authenticated identity authorizing the operation.
+        db: Active database session used by the operation.
     """
     try:
         row, raw_secret = create_client(
@@ -1361,6 +1472,13 @@ def update_oidc_client(
 
     Requires the `admin:all` API scope. The operation updates saved Atlaso state and does not bypass
     the documented global Appliance Apply or service lifecycle boundary.
+
+    Args:
+        client_record_id: Stable identifier of the associated client record resource.
+        payload: Validated request or task payload consumed by the operation.
+        request: Incoming HTTP request carrying the operation context.
+        identity: Authenticated identity authorizing the operation.
+        db: Active database session used by the operation.
     """
     try:
         row = get_client(db, client_record_id)
@@ -1414,6 +1532,12 @@ def export_oidc_client_integration(
 
     Requires the `admin:all` API scope. This read-only operation does not change saved desired state
     or appliance runtime state.
+
+    Args:
+        client_record_id: Stable identifier of the associated client record resource.
+        request: Incoming HTTP request carrying the operation context.
+        identity: Authenticated identity authorizing the operation.
+        db: Active database session used by the operation.
     """
     try:
         row = get_client(db, client_record_id)
@@ -1446,6 +1570,12 @@ def rotate_oidc_client_secret(
     Requires the `admin:all` API scope. The operation changes saved Atlaso application state; any
     appliance host enforcement remains subject to the documented apply or task boundary for the
     resource.
+
+    Args:
+        client_record_id: Stable identifier of the associated client record resource.
+        request: Incoming HTTP request carrying the operation context.
+        identity: Authenticated identity authorizing the operation.
+        db: Active database session used by the operation.
     """
     try:
         row = get_client(db, client_record_id)
@@ -1476,6 +1606,13 @@ def set_oidc_client_enabled(
 
     Requires the `admin:all` API scope. The operation updates saved Atlaso state and does not bypass
     the documented global Appliance Apply or service lifecycle boundary.
+
+    Args:
+        client_record_id: Stable identifier of the associated client record resource.
+        payload: Validated request or task payload consumed by the operation.
+        request: Incoming HTTP request carrying the operation context.
+        identity: Authenticated identity authorizing the operation.
+        db: Active database session used by the operation.
     """
     try:
         row = get_client(db, client_record_id)
@@ -1508,6 +1645,12 @@ def delete_oidc_client(
 
     Requires the `admin:all` API scope. Removal or revocation takes effect in Atlaso application
     state; appliance host changes remain subject to the documented apply boundary for the resource.
+
+    Args:
+        client_record_id: Stable identifier of the associated client record resource.
+        request: Incoming HTTP request carrying the operation context.
+        identity: Authenticated identity authorizing the operation.
+        db: Active database session used by the operation.
     """
     try:
         row = get_client(db, client_record_id)

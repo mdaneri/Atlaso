@@ -47,7 +47,12 @@ from atlaso.app.kmip.trace import validate_trace
 
 
 def test_load_secrets_key_from_systemd_credential(monkeypatch, tmp_path):
-    """Verify that load secrets key from systemd credential."""
+    """Verify that load secrets key from systemd credential.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
     credential = tmp_path / "atlaso-secrets-key"
     credential.write_text("credential-secret\n", encoding="utf-8")
     monkeypatch.setenv("ATLASO_SECRETS_KEY", "shared-environment-secret")
@@ -57,7 +62,12 @@ def test_load_secrets_key_from_systemd_credential(monkeypatch, tmp_path):
 
 
 def test_load_secrets_key_rejects_missing_systemd_credential(monkeypatch, tmp_path):
-    """Verify that load secrets key rejects missing systemd credential."""
+    """Verify that load secrets key rejects missing systemd credential.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
     monkeypatch.setenv("ATLASO_SECRETS_KEY_FILE", str(tmp_path / "missing"))
 
     with pytest.raises(ConfigurationError, match="runtime credential is unavailable"):
@@ -166,7 +176,11 @@ def certificate(
 
 
 def material(tmp_path: Path) -> dict[str, Path]:
-    """Return material."""
+    """Return material.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
     ca_cert, _ca_key_path, ca_key, ca = certificate(tmp_path, "ca")
     server_cert, server_key, _server_private, _server = certificate(
         tmp_path,
@@ -200,7 +214,12 @@ def material(tmp_path: Path) -> dict[str, Path]:
 
 
 def service_config(tmp_path: Path, materials: dict[str, Path]) -> ServiceConfig:
-    """Return service config."""
+    """Return service config.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+        materials: Filesystem path associated with materials.
+    """
     provider_id = str(uuid.uuid4())
     return ServiceConfig(
         enabled=True,
@@ -305,7 +324,12 @@ def create_request() -> bytes:
 
 
 def client_context(materials: dict[str, Path], *, trusted: bool) -> ssl.SSLContext:
-    """Return client context."""
+    """Return client context.
+
+    Args:
+        materials: Filesystem path associated with materials.
+        trusted: Whether trusted applies to the operation.
+    """
     context = ssl.create_default_context(ssl.Purpose.SERVER_AUTH, cafile=materials["ca_cert"])
     context.minimum_version = ssl.TLSVersion.TLSv1_2
     prefix = "client" if trusted else "untrusted"
@@ -314,7 +338,11 @@ def client_context(materials: dict[str, Path], *, trusted: bool) -> ssl.SSLConte
 
 
 def test_mtls_server_accepts_mapped_fingerprint_and_writes_redacted_trace(tmp_path: Path) -> None:
-    """Verify that mtls server accepts mapped fingerprint and writes redacted trace."""
+    """Verify that mtls server accepts mapped fingerprint and writes redacted trace.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
     materials = material(tmp_path)
     server = build_server(service_config(tmp_path, materials), secrets_key="appliance-secrets-key")
     thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -347,7 +375,11 @@ def test_mtls_server_accepts_mapped_fingerprint_and_writes_redacted_trace(tmp_pa
 
 
 def test_mtls_server_rejects_ca_valid_but_unmapped_client(tmp_path: Path) -> None:
-    """Verify that mtls server rejects ca valid but unmapped client."""
+    """Verify that mtls server rejects ca valid but unmapped client.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
     materials = material(tmp_path)
     server = build_server(service_config(tmp_path, materials), secrets_key="appliance-secrets-key")
     thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -368,7 +400,11 @@ def test_mtls_server_rejects_ca_valid_but_unmapped_client(tmp_path: Path) -> Non
 
 
 def test_stalled_tls_handshake_does_not_block_other_connections(tmp_path: Path) -> None:
-    """Verify that stalled tls handshake does not block other connections."""
+    """Verify that stalled tls handshake does not block other connections.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
     materials = material(tmp_path)
     server = build_server(service_config(tmp_path, materials), secrets_key="appliance-secrets-key")
     thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -395,7 +431,11 @@ def test_stalled_tls_handshake_does_not_block_other_connections(tmp_path: Path) 
 
 
 def test_server_close_waits_for_request_threads_before_zeroing_kek(tmp_path: Path) -> None:
-    """Verify that server close waits for request threads before zeroing kek."""
+    """Verify that server close waits for request threads before zeroing kek.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
     materials = material(tmp_path)
     server = build_server(service_config(tmp_path, materials), secrets_key="appliance-secrets-key")
     thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -423,7 +463,11 @@ def test_server_close_waits_for_request_threads_before_zeroing_kek(tmp_path: Pat
 
 
 def test_configuration_rejects_ambiguous_client_provider_mapping(tmp_path: Path) -> None:
-    """Verify that configuration rejects ambiguous client provider mapping."""
+    """Verify that configuration rejects ambiguous client provider mapping.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
     materials = material(tmp_path)
     fingerprint = certificate_sha256(materials["client_cert"])
     document = {
@@ -467,7 +511,11 @@ def test_configuration_rejects_ambiguous_client_provider_mapping(tmp_path: Path)
 
 
 def test_certificate_fingerprint_is_der_sha256(tmp_path: Path) -> None:
-    """Verify that certificate fingerprint is der sha256."""
+    """Verify that certificate fingerprint is der sha256.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
     materials = material(tmp_path)
     certificate_value = x509.load_pem_x509_certificate(materials["client_cert"].read_bytes())
 
@@ -477,7 +525,11 @@ def test_certificate_fingerprint_is_der_sha256(tmp_path: Path) -> None:
 
 
 def test_disabled_configuration_accepts_no_provider(tmp_path: Path) -> None:
-    """Verify that disabled configuration accepts no provider."""
+    """Verify that disabled configuration accepts no provider.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
     document = {
         "schema_version": 1,
         "enabled": False,
@@ -574,7 +626,11 @@ def test_configuration_rejects_coerced_json_types(
 
 
 def test_trace_records_create_parameters_from_request(tmp_path: Path) -> None:
-    """Verify that trace records create parameters from request."""
+    """Verify that trace records create parameters from request.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
     provider_id = str(uuid.uuid4())
     store = WrappedKeyStore(
         tmp_path / "store.db",
@@ -604,7 +660,11 @@ def test_trace_records_create_parameters_from_request(tmp_path: Path) -> None:
 
 
 def test_trace_skips_invalid_create_without_suppressing_failed_response(tmp_path: Path) -> None:
-    """Verify that trace skips invalid create without suppressing failed response."""
+    """Verify that trace skips invalid create without suppressing failed response.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
     provider_id = str(uuid.uuid4())
     store = WrappedKeyStore(
         tmp_path / "store.db",
@@ -648,11 +708,22 @@ def test_trace_skips_invalid_create_without_suppressing_failed_response(tmp_path
 
 
 def test_tcp_server_selects_ipv6_address_family_before_binding(monkeypatch, tmp_path: Path) -> None:
-    """Verify that tcp server selects ipv6 address family before binding."""
+    """Verify that tcp server selects ipv6 address family before binding.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
     observed: dict[str, object] = {}
 
     def fake_init(server, address, handler):
-        """Handle fake init."""
+        """Handle fake init.
+
+        Args:
+            server: Server supplied to the test scenario.
+            address: Network address contacted or validated by the operation.
+            handler: Handler supplied to the test scenario.
+        """
         observed["family"] = server.address_family
         observed["address"] = address
         observed["handler"] = handler

@@ -98,7 +98,12 @@ class StepResult:
     error: str | None = None
 
     def finish(self, status: str = "passed", error: str | None = None) -> None:
-        """Handle finish."""
+        """Handle finish.
+
+        Args:
+            status: Lifecycle or operation status to record or evaluate.
+            error: Failure being recorded, propagated, or reported.
+        """
         self.status = status
         self.error = error
         self.finished_at = utc_now()
@@ -116,6 +121,10 @@ def utc_now() -> str:
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     """Parse args.
+
+    Args:
+        argv: Command-line arguments to parse, or ``None`` to use the process arguments.
+
 
     Returns:
         The parsed args.
@@ -195,7 +204,11 @@ class HttpClient:
         bearer_token: Bearer token maintained by this httpclient.
     """
     def __init__(self, base_url: str) -> None:
-        """Initialize the http client."""
+        """Initialize the http client.
+
+        Args:
+            base_url: URL used for base.
+        """
         self.base_url = base_url.rstrip("/")
         self.cookie_jar = http.cookiejar.CookieJar()
         self.https_context = ssl.create_default_context()
@@ -208,7 +221,11 @@ class HttpClient:
         self.bearer_token = ""
 
     def remember_base_url(self, url: str) -> None:
-        """Handle remember base url."""
+        """Handle remember base url.
+
+        Args:
+            url: URL contacted or emitted by the operation.
+        """
         parsed = urllib.parse.urlparse(url)
         if parsed.scheme and parsed.netloc:
             self.base_url = f"{parsed.scheme}://{parsed.netloc}"
@@ -380,7 +397,12 @@ class HttpClient:
 
 
 def header_value(headers: dict[str, str], name: str) -> str:
-    """Return header value."""
+    """Return header value.
+
+    Args:
+        headers: Headers consumed by header value.
+        name: Stable name identifying the resource or operation.
+    """
     return next((value for key, value in headers.items() if key.lower() == name.lower()), "")
 
 
@@ -401,7 +423,12 @@ class NoRedirectHandler(urllib.request.HTTPRedirectHandler):
 
 
 def no_redirect_opener(cookie_jar: http.cookiejar.CookieJar, https_context: ssl.SSLContext | None = None) -> urllib.request.OpenerDirector:
-    """Return no redirect opener."""
+    """Return no redirect opener.
+
+    Args:
+        cookie_jar: Cookie jar consumed by no redirect opener.
+        https_context: Https context consumed by no redirect opener.
+    """
     handlers: list[Any] = [urllib.request.HTTPCookieProcessor(cookie_jar), NoRedirectHandler]
     if https_context is not None:
         handlers.append(urllib.request.HTTPSHandler(context=https_context))
@@ -410,6 +437,10 @@ def no_redirect_opener(cookie_jar: http.cookiejar.CookieJar, https_context: ssl.
 
 def extract_csrf(body: str) -> str:
     """Return extract csrf.
+
+    Args:
+        body: Document or response body processed by the operation.
+
 
     Raises:
         LifecycleError: If the operation encounters an invalid state.
@@ -426,7 +457,12 @@ def extract_csrf(body: str) -> str:
 
 
 def summarize_html_response(body: str, *, limit: int = 1200) -> str:
-    """Return summarize html response."""
+    """Return summarize html response.
+
+    Args:
+        body: Document or response body processed by the operation.
+        limit: Limit consumed by summarize html response.
+    """
     text = re.sub(r"(?is)<(script|style)\b.*?</\1>", " ", body)
     text = re.sub(r"(?s)<[^>]+>", " ", text)
     text = html.unescape(text)
@@ -444,7 +480,12 @@ def summarize_html_response(body: str, *, limit: int = 1200) -> str:
 
 
 def ssh_username(args: argparse.Namespace, role: str) -> str:
-    """Return ssh username."""
+    """Return ssh username.
+
+    Args:
+        args: Parsed command-line options consumed by the operation.
+        role: Role consumed by SSH username.
+    """
     if args.ssh_user:
         return args.ssh_user
     if role == "appliance":
@@ -453,7 +494,13 @@ def ssh_username(args: argparse.Namespace, role: str) -> str:
 
 
 def ssh_hostkey(host: str, args: argparse.Namespace, role: str) -> str:
-    """Return ssh hostkey."""
+    """Return ssh hostkey.
+
+    Args:
+        host: Host consumed by SSH hostkey.
+        args: Parsed command-line options consumed by the operation.
+        role: Role consumed by SSH hostkey.
+    """
     if role == "appliance":
         return args.appliance_ssh_hostkey
     if host == args.client_a_host:
@@ -464,7 +511,12 @@ def ssh_hostkey(host: str, args: argparse.Namespace, role: str) -> str:
 
 
 def appliance_ssh_command(args: argparse.Namespace, command: str) -> str:
-    """Return appliance ssh command."""
+    """Return appliance ssh command.
+
+    Args:
+        args: Parsed command-line options consumed by the operation.
+        command: Command and arguments to execute.
+    """
     if ssh_username(args, "appliance") == "root":
         return command
     quoted_command = shell_single_quote(command)
@@ -475,7 +527,12 @@ def appliance_ssh_command(args: argparse.Namespace, command: str) -> str:
 
 
 def redact_text(value: str, secrets: list[str] | None = None) -> str:
-    """Return redact text."""
+    """Return redact text.
+
+    Args:
+        value: Candidate value consumed by redact text.
+        secrets: Secrets consumed by redact text.
+    """
     redacted = value
     for secret in secrets or []:
         if secret:
@@ -484,7 +541,12 @@ def redact_text(value: str, secrets: list[str] | None = None) -> str:
 
 
 def redact_sequence(values: list[str], secrets: list[str] | None = None) -> list[str]:
-    """Return redact sequence."""
+    """Return redact sequence.
+
+    Args:
+        values: Candidate values consumed by redact sequence.
+        secrets: Secrets consumed by redact sequence.
+    """
     return [redact_text(value, secrets) for value in values]
 
 
@@ -564,6 +626,11 @@ def ssh_command(
 def require_success(result: dict[str, Any], label: str) -> None:
     """Handle require success.
 
+    Args:
+        result: Operation result being inspected or returned.
+        label: Human-readable label used to identify the result.
+
+
     Raises:
         LifecycleError: If the operation encounters an invalid state.
     """
@@ -613,7 +680,11 @@ def ssh_until_success(
 
 
 def lifecycle_plan(args: argparse.Namespace) -> dict[str, Any]:
-    """Return lifecycle plan."""
+    """Return lifecycle plan.
+
+    Args:
+        args: Parsed command-line options consumed by the operation.
+    """
     vlan_name = f"{args.trunk_interface}.{args.vlan_id}"
     oidc_check = (
         "OIDC Authorization Code, explicit Local selection, client-specific "
@@ -683,7 +754,12 @@ def lifecycle_plan(args: argparse.Namespace) -> dict[str, Any]:
 
 
 def api_login(client: HttpClient, args: argparse.Namespace) -> str:
-    """Return api login."""
+    """Return api login.
+
+    Args:
+        client: Client consumed by API login.
+        args: Parsed command-line options consumed by the operation.
+    """
     path = f"/api/v1/auth/login?{urllib.parse.urlencode({'username': args.username, 'password': args.password})}"
     payload = {"name": "hyperv lifecycle interop", "scopes": ALL_SCOPES}
     token = client.json_request("POST", path, json_body=payload)["raw_token"]
@@ -693,6 +769,11 @@ def api_login(client: HttpClient, args: argparse.Namespace) -> str:
 
 def ui_login(client: HttpClient, args: argparse.Namespace) -> str:
     """Return ui login.
+
+    Args:
+        client: Client consumed by UI login.
+        args: Parsed command-line options consumed by the operation.
+
 
     Raises:
         LifecycleError: If the operation encounters an invalid state.
@@ -713,7 +794,12 @@ def ui_login(client: HttpClient, args: argparse.Namespace) -> str:
 
 
 def authenticated_ui_client(client: HttpClient, args: argparse.Namespace) -> HttpClient:
-    """Return authenticated ui client."""
+    """Return authenticated ui client.
+
+    Args:
+        client: Client consumed by authenticated UI client.
+        args: Parsed command-line options consumed by the operation.
+    """
     fresh_client = HttpClient(client.base_url)
     api_login(fresh_client, args)
     ui_login(fresh_client, args)
@@ -722,6 +808,11 @@ def authenticated_ui_client(client: HttpClient, args: argparse.Namespace) -> Htt
 
 def configure_network(client: HttpClient, args: argparse.Namespace) -> dict[str, Any]:
     """Update network.
+
+    Args:
+        client: Client consumed by configure network.
+        args: Parsed command-line options consumed by the operation.
+
 
     Returns:
         The configure network result.
@@ -803,6 +894,11 @@ def ensure_vlan(client: HttpClient, *, parent_interface: str, vlan_id: int, ip_c
 
 def configure_dns_dhcp(client: HttpClient, args: argparse.Namespace) -> dict[str, Any]:
     """Update dns dhcp.
+
+    Args:
+        client: Client consumed by configure DNS dhcp.
+        args: Parsed command-line options consumed by the operation.
+
 
     Returns:
         The configure dns dhcp result.
@@ -895,6 +991,11 @@ def configure_dns_dhcp(client: HttpClient, args: argparse.Namespace) -> dict[str
 
 def configure_esxi_pxe(client: HttpClient, args: argparse.Namespace) -> dict[str, Any]:
     """Update esxi pxe.
+
+    Args:
+        client: Client consumed by configure ESXi PXE.
+        args: Parsed command-line options consumed by the operation.
+
 
     Returns:
         The configure esxi pxe result.
@@ -1043,6 +1144,10 @@ esxcli network firewall ruleset set -e true -r sshServer
 def ensure_lifecycle_esxi_kickstart(client: HttpClient) -> dict[str, Any]:
     """Ensure lifecycle esxi kickstart.
 
+    Args:
+        client: Client consumed by ensure lifecycle ESXi kickstart.
+
+
     Returns:
         The ensure lifecycle esxi kickstart result.
     """
@@ -1062,6 +1167,11 @@ def ensure_lifecycle_esxi_kickstart(client: HttpClient) -> dict[str, Any]:
 
 def configure_firewall(client: HttpClient, args: argparse.Namespace) -> dict[str, Any]:
     """Update firewall.
+
+    Args:
+        client: Client consumed by configure firewall.
+        args: Parsed command-line options consumed by the operation.
+
 
     Returns:
         The configure firewall result.
@@ -1085,6 +1195,11 @@ def configure_firewall(client: HttpClient, args: argparse.Namespace) -> dict[str
 def configure_wan_policy(client: HttpClient, args: argparse.Namespace) -> dict[str, Any]:
     """Update wan policy.
 
+    Args:
+        client: Client consumed by configure WAN policy.
+        args: Parsed command-line options consumed by the operation.
+
+
     Returns:
         The configure wan policy result.
     """
@@ -1098,6 +1213,12 @@ def configure_wan_policy(client: HttpClient, args: argparse.Namespace) -> dict[s
 
 def configure_routes_nat(client: HttpClient, args: argparse.Namespace, policy: dict[str, Any] | None = None) -> dict[str, Any]:
     """Update routes nat.
+
+    Args:
+        client: Client consumed by configure routes nat.
+        args: Parsed command-line options consumed by the operation.
+        policy: Policy consumed by configure routes nat.
+
 
     Returns:
         The configure routes nat result.
@@ -1147,7 +1268,11 @@ def configure_routes_nat(client: HttpClient, args: argparse.Namespace, policy: d
 
 
 def routing_rule_form_payload(args: argparse.Namespace) -> dict[str, str]:
-    """Return routing rule form payload."""
+    """Return routing rule form payload.
+
+    Args:
+        args: Parsed command-line options consumed by the operation.
+    """
     return {
         "name": "Lifecycle SiteA to WAN",
         "source_interface": args.site_interface,
@@ -1160,6 +1285,11 @@ def routing_rule_form_payload(args: argparse.Namespace) -> dict[str, str]:
 
 def configure_routing_permissions(client: HttpClient, args: argparse.Namespace) -> dict[str, Any]:
     """Update routing permissions.
+
+    Args:
+        client: Client consumed by configure routing permissions.
+        args: Parsed command-line options consumed by the operation.
+
 
     Returns:
         The configure routing permissions result.
@@ -1190,6 +1320,11 @@ def configure_routing_permissions(client: HttpClient, args: argparse.Namespace) 
 def configure_firewall_wan(client: HttpClient, args: argparse.Namespace) -> dict[str, Any]:
     """Update firewall wan.
 
+    Args:
+        client: Client consumed by configure firewall WAN.
+        args: Parsed command-line options consumed by the operation.
+
+
     Returns:
         The configure firewall wan result.
     """
@@ -1201,7 +1336,11 @@ def configure_firewall_wan(client: HttpClient, args: argparse.Namespace) -> dict
 
 
 def wan_policy_payload(*, packet_loss_percent: float) -> dict[str, Any]:
-    """Return wan policy payload."""
+    """Return wan policy payload.
+
+    Args:
+        packet_loss_percent: Packet loss expressed as a percentage.
+    """
     return {
         "name": "Lifecycle WAN",
         "description": "Hyper-V lifecycle interop WAN policy",
@@ -1218,6 +1357,11 @@ def wan_policy_payload(*, packet_loss_percent: float) -> dict[str, Any]:
 
 def set_lifecycle_wan_policy(client: HttpClient, *, packet_loss_percent: float) -> dict[str, Any]:
     """Update lifecycle wan policy.
+
+    Args:
+        client: Client consumed by set lifecycle WAN policy.
+        packet_loss_percent: Packet loss expressed as a percentage.
+
 
     Returns:
         The set lifecycle wan policy result.
@@ -1238,7 +1382,11 @@ def set_lifecycle_wan_policy(client: HttpClient, *, packet_loss_percent: float) 
 
 
 def certificate_summary(pem: str) -> dict[str, Any]:
-    """Return certificate summary."""
+    """Return certificate summary.
+
+    Args:
+        pem: Pem consumed by certificate summary.
+    """
     summary: dict[str, Any] = {"pem_bytes": len(pem.encode("utf-8"))}
     if x509 is None:
         return summary
@@ -1258,6 +1406,11 @@ def certificate_summary(pem: str) -> dict[str, Any]:
 
 def configure_ca(client: HttpClient, args: argparse.Namespace) -> dict[str, Any]:
     """Update ca.
+
+    Args:
+        client: Client consumed by configure CA.
+        args: Parsed command-line options consumed by the operation.
+
 
     Returns:
         The configure ca result.
@@ -1297,6 +1450,11 @@ def configure_ca(client: HttpClient, args: argparse.Namespace) -> dict[str, Any]
 
 def configure_ntp(client: HttpClient, args: argparse.Namespace) -> dict[str, Any]:
     """Update ntp.
+
+    Args:
+        client: Client consumed by configure NTP.
+        args: Parsed command-line options consumed by the operation.
+
 
     Returns:
         The configure ntp result.
@@ -1349,6 +1507,11 @@ def configure_ntp(client: HttpClient, args: argparse.Namespace) -> dict[str, Any
 
 def configure_management_https(client: HttpClient, args: argparse.Namespace) -> dict[str, Any]:
     """Update management https.
+
+    Args:
+        client: Client consumed by configure management HTTPS.
+        args: Parsed command-line options consumed by the operation.
+
 
     Returns:
         The configure management https result.
@@ -1410,7 +1573,11 @@ def configure_management_https(client: HttpClient, args: argparse.Namespace) -> 
 
 
 def https_request_unverified(url: str) -> tuple[int, str, dict[str, str]]:
-    """Return https request unverified."""
+    """Return https request unverified.
+
+    Args:
+        url: URL contacted or emitted by the operation.
+    """
     request = urllib.request.Request(url, method="GET")
     context = ssl.create_default_context()
     context.check_hostname = False
@@ -1424,6 +1591,11 @@ def https_request_unverified(url: str) -> tuple[int, str, dict[str, str]]:
 
 def management_https_check(client: HttpClient, args: argparse.Namespace) -> dict[str, Any]:
     """Return management https check.
+
+    Args:
+        client: Client consumed by management HTTPS check.
+        args: Parsed command-line options consumed by the operation.
+
 
     Raises:
         LifecycleError: If the operation encounters an invalid state.
@@ -1447,6 +1619,11 @@ def management_https_check(client: HttpClient, args: argparse.Namespace) -> dict
 
 def oidc_authorization_code_check(client: HttpClient, args: argparse.Namespace) -> dict[str, Any]:
     """Return oidc authorization code check.
+
+    Args:
+        client: Client consumed by OIDC authorization code check.
+        args: Parsed command-line options consumed by the operation.
+
 
     Raises:
         LifecycleError: If the operation encounters an invalid state.
@@ -1650,6 +1827,11 @@ def oidc_authorization_code_check(client: HttpClient, args: argparse.Namespace) 
 def web_terminal_check(client: HttpClient, args: argparse.Namespace) -> dict[str, Any]:
     """Return web terminal check.
 
+    Args:
+        client: Client consumed by web terminal check.
+        args: Parsed command-line options consumed by the operation.
+
+
     Raises:
         LifecycleError: If the operation encounters an invalid state.
     """
@@ -1703,6 +1885,11 @@ def web_terminal_check(client: HttpClient, args: argparse.Namespace) -> dict[str
 def extract_ca_profile_id(body: str, profile_name: str) -> str:
     """Return extract ca profile id.
 
+    Args:
+        body: Document or response body processed by the operation.
+        profile_name: Profile name consumed by extract CA profile identifier.
+
+
     Raises:
         LifecycleError: If the operation encounters an invalid state.
     """
@@ -1714,6 +1901,11 @@ def extract_ca_profile_id(body: str, profile_name: str) -> str:
 
 def extract_ca_certificate_id(body: str, common_name: str) -> str:
     """Return extract ca certificate id.
+
+    Args:
+        body: Document or response body processed by the operation.
+        common_name: Common name consumed by extract CA certificate identifier.
+
 
     Raises:
         LifecycleError: If the operation encounters an invalid state.
@@ -1733,6 +1925,10 @@ def extract_ca_certificate_id(body: str, common_name: str) -> str:
 
 def create_client_csr(common_name: str) -> str:
     """Create client csr.
+
+    Args:
+        common_name: Common name consumed by create client csr.
+
 
     Returns:
         The created client csr.
@@ -1760,7 +1956,13 @@ def create_client_csr(common_name: str) -> str:
 
 
 def client_ca_probe_setup(interface_name: str, address_cidr: str, request_host: str) -> str:
-    """Return client ca probe setup."""
+    """Return client ca probe setup.
+
+    Args:
+        interface_name: Host network-interface name affected by the operation.
+        address_cidr: Address cidr consumed by client CA probe setup.
+        request_host: Request host consumed by client CA probe setup.
+    """
     ca_request = ip_interface(address_cidr)
     ca_interface = shell_single_quote(interface_name)
     neigh_flush = ""
@@ -1777,12 +1979,21 @@ def client_ca_probe_setup(interface_name: str, address_cidr: str, request_host: 
 
 
 def session_cookie_header(client: HttpClient) -> str:
-    """Return session cookie header."""
+    """Return session cookie header.
+
+    Args:
+        client: Client consumed by session cookie header.
+    """
     return "; ".join(f"{cookie.name}={cookie.value}" for cookie in client.cookie_jar)
 
 
 def ca_client_certificate_request(client: HttpClient, args: argparse.Namespace) -> dict[str, Any]:
     """Return ca client certificate request.
+
+    Args:
+        client: Client consumed by CA client certificate request.
+        args: Parsed command-line options consumed by the operation.
+
 
     Raises:
         LifecycleError: If the operation encounters an invalid state.
@@ -1840,6 +2051,11 @@ def ca_client_certificate_request(client: HttpClient, args: argparse.Namespace) 
 
 def ca_generated_certificate_request_check(client: HttpClient, args: argparse.Namespace) -> dict[str, Any]:
     """Return ca generated certificate request check.
+
+    Args:
+        client: Client consumed by CA generated certificate request check.
+        args: Parsed command-line options consumed by the operation.
+
 
     Raises:
         LifecycleError: If the operation encounters an invalid state.
@@ -1909,6 +2125,10 @@ def ca_generated_certificate_request_check(client: HttpClient, args: argparse.Na
 def extract_vcf_backup_user_id(body: str) -> str:
     """Return extract vcf backup user id.
 
+    Args:
+        body: Document or response body processed by the operation.
+
+
     Raises:
         LifecycleError: If the operation encounters an invalid state.
     """
@@ -1921,6 +2141,11 @@ def extract_vcf_backup_user_id(body: str) -> str:
 
 def extract_user_id_from_users_page(body: str, username: str) -> str:
     """Return extract user id from users page.
+
+    Args:
+        body: Document or response body processed by the operation.
+        username: Atlaso account name associated with the operation.
+
 
     Raises:
         LifecycleError: If the operation encounters an invalid state.
@@ -1936,6 +2161,11 @@ def extract_user_id_from_users_page(body: str, username: str) -> str:
 
 def ensure_vcf_backup_user_id(client: HttpClient, args: argparse.Namespace) -> tuple[str, str]:
     """Ensure vcf backup user id.
+
+    Args:
+        client: Client consumed by ensure VCF backup user identifier.
+        args: Parsed command-line options consumed by the operation.
+
 
     Returns:
         The ensure vcf backup user id result.
@@ -1966,7 +2196,11 @@ def ensure_vcf_backup_user_id(client: HttpClient, args: argparse.Namespace) -> t
 
 
 def stage_vcf_backup_password_via_appliance(args: argparse.Namespace) -> dict[str, Any]:
-    """Return stage vcf backup password via appliance."""
+    """Return stage vcf backup password via appliance.
+
+    Args:
+        args: Parsed command-line options consumed by the operation.
+    """
     password_literal = repr(args.vcf_backup_password)
     python_script = f"""
 from sqlalchemy import select
@@ -2004,6 +2238,11 @@ with SessionLocal() as db:
 
 def stage_vcf_backup_password(client: HttpClient, args: argparse.Namespace) -> dict[str, Any]:
     """Return stage vcf backup password.
+
+    Args:
+        client: Client consumed by stage VCF backup password.
+        args: Parsed command-line options consumed by the operation.
+
 
     Raises:
         LifecycleError: If the operation encounters an invalid state.
@@ -2121,6 +2360,11 @@ def stage_vcf_depot_password(client: HttpClient, args: argparse.Namespace, passw
 def configure_vcf_offline_depot(client: HttpClient, args: argparse.Namespace) -> dict[str, Any]:
     """Update vcf offline depot.
 
+    Args:
+        client: Client consumed by configure VCF offline depot.
+        args: Parsed command-line options consumed by the operation.
+
+
     Returns:
         The configure vcf offline depot result.
 
@@ -2167,6 +2411,11 @@ def configure_vcf_offline_depot(client: HttpClient, args: argparse.Namespace) ->
 def configure_vcf_backups(client: HttpClient, args: argparse.Namespace) -> dict[str, Any]:
     """Update vcf backups.
 
+    Args:
+        client: Client consumed by configure VCF backups.
+        args: Parsed command-line options consumed by the operation.
+
+
     Returns:
         The configure vcf backups result.
 
@@ -2212,6 +2461,11 @@ def configure_vcf_backups(client: HttpClient, args: argparse.Namespace) -> dict[
 
 def configure_kms(client: HttpClient, args: argparse.Namespace) -> dict[str, Any]:
     """Update kms.
+
+    Args:
+        client: Client consumed by configure KMS.
+        args: Parsed command-line options consumed by the operation.
+
 
     Returns:
         The configure kms result.
@@ -2274,6 +2528,11 @@ def configure_kms(client: HttpClient, args: argparse.Namespace) -> dict[str, Any
 
 def configure_ldap(client: HttpClient, args: argparse.Namespace) -> dict[str, Any]:
     """Update ldap.
+
+    Args:
+        client: Client consumed by configure LDAP.
+        args: Parsed command-line options consumed by the operation.
+
 
     Returns:
         The configure ldap result.
@@ -2401,6 +2660,12 @@ def configure_ldap(client: HttpClient, args: argparse.Namespace) -> dict[str, An
 def apply_units(client: HttpClient, units: list[str], args: argparse.Namespace) -> dict[str, Any]:
     """Update units.
 
+    Args:
+        client: Client consumed by apply units.
+        units: Units consumed by apply units.
+        args: Parsed command-line options consumed by the operation.
+
+
     Returns:
         The apply units result.
 
@@ -2502,6 +2767,12 @@ def _configure_signed_release_source(
 ) -> dict[str, Any]:
     """Update signed release source.
 
+    Args:
+        client: Client consumed by configure signed release source.
+        args: Parsed command-line options consumed by the operation.
+        channel: Channel consumed by configure signed release source.
+
+
     Returns:
         The configure signed release source result.
 
@@ -2529,7 +2800,12 @@ def _configure_signed_release_source(
     source_id, form_body = source_match.groups()
 
     def field_value(name: str, default: str) -> str:
-        """Return field value."""
+        """Return field value.
+
+        Args:
+            name: Stable name identifying the resource or operation.
+            default: Default consumed by field value.
+        """
         match = re.search(rf'<input\b[^>]*name="{re.escape(name)}"[^>]*value="([^"]*)"', form_body)
         return html.unescape(match.group(1)) if match else default
 
@@ -2638,6 +2914,10 @@ def _submit_signed_release_update(
 def _release_database_identity(args: argparse.Namespace) -> dict[str, Any]:
     """Return release database identity.
 
+    Args:
+        args: Parsed command-line options consumed by the operation.
+
+
     Raises:
         LifecycleError: If the operation encounters an invalid state.
     """
@@ -2684,6 +2964,11 @@ print(json.dumps({
 def signed_release_update_check(client: HttpClient, args: argparse.Namespace) -> dict[str, Any]:
     """Return signed release update check.
 
+    Args:
+        client: Client consumed by signed release update check.
+        args: Parsed command-line options consumed by the operation.
+
+
     Raises:
         LifecycleError: If the operation encounters an invalid state.
     """
@@ -2728,6 +3013,11 @@ def signed_release_update_check(client: HttpClient, args: argparse.Namespace) ->
 def appliance_health(client: HttpClient, args: argparse.Namespace) -> dict[str, Any]:
     """Return appliance health.
 
+    Args:
+        client: Client consumed by appliance health.
+        args: Parsed command-line options consumed by the operation.
+
+
     Raises:
         LifecycleError: If the operation encounters an invalid state.
     """
@@ -2762,7 +3052,13 @@ def appliance_health(client: HttpClient, args: argparse.Namespace) -> dict[str, 
 
 
 def direct_dns_a_query_command(name: str, server: str, expected_ip: str) -> str:
-    """Return direct dns a query command."""
+    """Return direct dns a query command.
+
+    Args:
+        name: Stable name identifying the resource or operation.
+        server: Server consumed by direct DNS a query command.
+        expected_ip: Expected IP used to verify the result.
+    """
     script = f"""
 import random
 import socket
@@ -2818,7 +3114,13 @@ if expected_ip not in answers:
 
 
 def authoritative_dns_probe_command(domain: str, server: str, expected_ip: str) -> str:
-    """Return authoritative dns probe command."""
+    """Return authoritative dns probe command.
+
+    Args:
+        domain: Domain consumed by authoritative DNS probe command.
+        server: Server consumed by authoritative DNS probe command.
+        expected_ip: Expected IP used to verify the result.
+    """
     script = f'''
 import random
 import socket
@@ -2886,7 +3188,12 @@ print("authoritative DNS lifecycle probes passed")
 
 
 def recursive_dns_probe_command(server: str, expected_ip: str) -> str:
-    """Return recursive dns probe command."""
+    """Return recursive dns probe command.
+
+    Args:
+        server: Server consumed by recursive DNS probe command.
+        expected_ip: Expected IP used to verify the result.
+    """
     reverse_name = ip_address(expected_ip).reverse_pointer
     script = f'''
 import random
@@ -2950,6 +3257,12 @@ def run_host_checks(
 ) -> dict[str, Any]:
     """Run host checks.
 
+    Args:
+        args: Parsed command-line options consumed by the operation.
+        checks: Checks consumed by run host checks.
+        appliance_as_root: Whether appliance as root applies to the operation.
+
+
     Returns:
         The run host checks result.
     """
@@ -2968,7 +3281,11 @@ def run_host_checks(
 
 
 def managed_ldap_helper_authentication_check(args: argparse.Namespace) -> dict[str, Any]:
-    """Return managed ldap helper authentication check."""
+    """Return managed ldap helper authentication check.
+
+    Args:
+        args: Parsed command-line options consumed by the operation.
+    """
     user_dn = "uid=operator,ou=users,dc=lifecycle-org-a,dc=ldap,dc=atlaso,dc=internal"
     helper_command = (
         "IFS= read -r ldap_password; "
@@ -3032,7 +3349,12 @@ def managed_ldap_helper_authentication_check(args: argparse.Namespace) -> dict[s
 
 
 def configure_esx_storage(client: HttpClient, args: argparse.Namespace) -> dict[str, Any]:
-    """Configure one volume and equivalent dual-stack NFS 3 and 4.1 datastores."""
+    """Configure one volume and equivalent dual-stack NFS 3 and 4.1 datastores.
+
+    Args:
+        client: Client consumed by configure ESX storage.
+        args: Parsed command-line options consumed by the operation.
+    """
     if not args.esx_storage_test:
         return {"skipped": "--esx-storage-test was not selected"}
     volumes = client.json_request("GET", "/api/v1/esx-storage/volumes")
@@ -3099,7 +3421,11 @@ def configure_esx_storage(client: HttpClient, args: argparse.Namespace) -> dict[
 
 
 def routing_host_check_commands(args: argparse.Namespace) -> dict[str, str]:
-    """Return routing host check commands."""
+    """Return routing host check commands.
+
+    Args:
+        args: Parsed command-line options consumed by the operation.
+    """
     wan_network = str(ip_interface(args.wan_cidr).network)
     return {
         "network": "ip -br addr && ip route",
@@ -3125,12 +3451,20 @@ def routing_host_check_commands(args: argparse.Namespace) -> dict[str, str]:
 
 
 def routing_host_state_checks(args: argparse.Namespace) -> dict[str, Any]:
-    """Return routing host state checks."""
+    """Return routing host state checks.
+
+    Args:
+        args: Parsed command-line options consumed by the operation.
+    """
     return run_host_checks(args, routing_host_check_commands(args))
 
 
 def host_state_checks(args: argparse.Namespace) -> dict[str, Any]:
-    """Return host state checks."""
+    """Return host state checks.
+
+    Args:
+        args: Parsed command-line options consumed by the operation.
+    """
     site_ip = str(ip_interface(args.site_cidr).ip)
     httpx_probe = base64.b64encode(b"import httpx; print(httpx.__version__)").decode("ascii")
     vcf_sdk_probe = base64.b64encode(
@@ -3253,7 +3587,11 @@ def host_state_checks(args: argparse.Namespace) -> dict[str, Any]:
 
 
 def authoritative_dns_state_check(args: argparse.Namespace) -> dict[str, Any]:
-    """Return authoritative dns state check."""
+    """Return authoritative dns state check.
+
+    Args:
+        args: Parsed command-line options consumed by the operation.
+    """
     site_ip = str(ip_interface(args.site_cidr).ip)
     if args.skip_client_checks or not args.client_a_host:
         return {"skipped": "client A host not provided"}
@@ -3268,7 +3606,11 @@ def authoritative_dns_state_check(args: argparse.Namespace) -> dict[str, Any]:
 
 
 def recursive_dns_state_check(args: argparse.Namespace) -> dict[str, Any]:
-    """Return recursive dns state check."""
+    """Return recursive dns state check.
+
+    Args:
+        args: Parsed command-line options consumed by the operation.
+    """
     site_ip = str(ip_interface(args.site_cidr).ip)
     recursive = ssh_command(
         args.appliance_ssh_host,
@@ -3281,7 +3623,11 @@ def recursive_dns_state_check(args: argparse.Namespace) -> dict[str, Any]:
 
 
 def vcf_backup_client_check(args: argparse.Namespace) -> dict[str, Any]:
-    """Return vcf backup client check."""
+    """Return vcf backup client check.
+
+    Args:
+        args: Parsed command-line options consumed by the operation.
+    """
     if args.skip_client_checks:
         return {"skipped": "client checks disabled"}
     if not args.client_a_host:
@@ -3390,7 +3736,12 @@ def vcf_depot_auth_check(client: HttpClient, args: argparse.Namespace, password:
 
 
 def rotate_vcf_depot_password_without_depot_apply(client: HttpClient, args: argparse.Namespace) -> dict[str, Any]:
-    """Return rotate vcf depot password without depot apply."""
+    """Return rotate vcf depot password without depot apply.
+
+    Args:
+        client: Client consumed by rotate VCF depot password without depot apply.
+        args: Parsed command-line options consumed by the operation.
+    """
     stage = stage_vcf_depot_password(client, args, args.vcf_depot_new_password)
     apply = apply_units(client, ["local_users"], args)
     site_ip = str(ip_interface(args.site_cidr).ip)
@@ -3408,12 +3759,22 @@ def rotate_vcf_depot_password_without_depot_apply(client: HttpClient, args: argp
 
 
 def shell_single_quote(value: str) -> str:
-    """Return shell single quote."""
+    """Return shell single quote.
+
+    Args:
+        value: Candidate value consumed by shell single quote.
+    """
     return "'" + value.replace("'", "'\"'\"'") + "'"
 
 
 def verify_certificate_signed_by_root(certificate_pem: str, root_ca_pem: str, common_name: str) -> dict[str, Any]:
     """Validate certificate signed by root.
+
+    Args:
+        certificate_pem: Certificate pem consumed by verify certificate signed by root.
+        root_ca_pem: Root ca pem consumed by verify certificate signed by root.
+        common_name: Common name consumed by verify certificate signed by root.
+
 
     Returns:
         The verify certificate signed by root result.
@@ -3447,6 +3808,11 @@ def verify_certificate_signed_by_root(certificate_pem: str, root_ca_pem: str, co
 
 def ca_client_certificate_check(client: HttpClient, args: argparse.Namespace) -> dict[str, Any]:
     """Return ca client certificate check.
+
+    Args:
+        client: Client consumed by CA client certificate check.
+        args: Parsed command-line options consumed by the operation.
+
 
     Raises:
         LifecycleError: If the operation encounters an invalid state.
@@ -3499,12 +3865,21 @@ def elevation_probe() -> str:
 
 
 def second_host_address(cidr: str) -> str:
-    """Return second host address."""
+    """Return second host address.
+
+    Args:
+        cidr: Cidr consumed by second host address.
+    """
     return host_address(cidr, 2)
 
 
 def host_address(cidr: str, host_offset: int) -> str:
     """Return host address.
+
+    Args:
+        cidr: Cidr consumed by host address.
+        host_offset: Host offset consumed by host address.
+
 
     Raises:
         LifecycleError: If the operation encounters an invalid state.
@@ -3516,7 +3891,11 @@ def host_address(cidr: str, host_offset: int) -> str:
 
 
 def pxe_client_ip(args: argparse.Namespace) -> str:
-    """Return pxe client ip."""
+    """Return pxe client ip.
+
+    Args:
+        args: Parsed command-line options consumed by the operation.
+    """
     if args.pxe_client_ip:
         return args.pxe_client_ip
     network = ip_interface(args.site_cidr).network
@@ -3525,7 +3904,13 @@ def pxe_client_ip(args: argparse.Namespace) -> str:
 
 
 def client_b_wan_setup_command(args: argparse.Namespace, *, include_site_route: bool = True, include_vlan_route: bool = False) -> str:
-    """Return client b wan setup command."""
+    """Return client b wan setup command.
+
+    Args:
+        args: Parsed command-line options consumed by the operation.
+        include_site_route: Whether include site route applies to the operation.
+        include_vlan_route: Whether include VLAN route applies to the operation.
+    """
     site = ip_interface(args.site_cidr)
     vlan = ip_interface(args.vlan_cidr)
     wan = ip_interface(args.wan_cidr)
@@ -3546,7 +3931,12 @@ def client_b_wan_setup_command(args: argparse.Namespace, *, include_site_route: 
 
 
 def client_a_access_to_wan_command(args: argparse.Namespace, *, expect_success: bool) -> str:
-    """Return client a access to wan command."""
+    """Return client a access to wan command.
+
+    Args:
+        args: Parsed command-line options consumed by the operation.
+        expect_success: Whether expect success applies to the operation.
+    """
     site = ip_interface(args.site_cidr)
     wan = ip_interface(args.wan_cidr)
     site_ip = str(site.ip)
@@ -3561,7 +3951,11 @@ def client_a_access_to_wan_command(args: argparse.Namespace, *, expect_success: 
 
 
 def client_a_route_role_to_wan_command(args: argparse.Namespace) -> str:
-    """Return client a route role to wan command."""
+    """Return client a route role to wan command.
+
+    Args:
+        args: Parsed command-line options consumed by the operation.
+    """
     vlan = ip_interface(args.vlan_cidr)
     wan = ip_interface(args.wan_cidr)
     vlan_peer_ip = second_host_address(args.vlan_cidr)
@@ -3579,7 +3973,11 @@ def client_a_route_role_to_wan_command(args: argparse.Namespace) -> str:
 
 
 def access_routing_blocked_check(args: argparse.Namespace) -> dict[str, Any]:
-    """Return access routing blocked check."""
+    """Return access routing blocked check.
+
+    Args:
+        args: Parsed command-line options consumed by the operation.
+    """
     if args.skip_client_checks:
         return {"skipped": "client checks disabled"}
     if not args.client_a_host or not args.client_b_host:
@@ -3592,7 +3990,11 @@ def access_routing_blocked_check(args: argparse.Namespace) -> dict[str, Any]:
 
 
 def route_role_routing_check(args: argparse.Namespace) -> dict[str, Any]:
-    """Return route role routing check."""
+    """Return route role routing check.
+
+    Args:
+        args: Parsed command-line options consumed by the operation.
+    """
     if args.skip_client_checks:
         return {"skipped": "client checks disabled"}
     if not args.client_a_host or not args.client_b_host:
@@ -3605,7 +4007,11 @@ def route_role_routing_check(args: argparse.Namespace) -> dict[str, Any]:
 
 
 def client_checks(args: argparse.Namespace) -> dict[str, Any]:
-    """Return client checks."""
+    """Return client checks.
+
+    Args:
+        args: Parsed command-line options consumed by the operation.
+    """
     if args.skip_client_checks:
         return {"skipped": "client checks disabled"}
     evidence: dict[str, Any] = {}
@@ -3644,7 +4050,11 @@ def client_checks(args: argparse.Namespace) -> dict[str, Any]:
 
 
 def ntp_client_checks(args: argparse.Namespace) -> dict[str, Any]:
-    """Return ntp client checks."""
+    """Return ntp client checks.
+
+    Args:
+        args: Parsed command-line options consumed by the operation.
+    """
     if args.skip_client_checks:
         return {"skipped": "client checks disabled"}
     if not args.client_a_host:
@@ -3669,6 +4079,11 @@ def ntp_client_checks(args: argparse.Namespace) -> dict[str, Any]:
 
 def wan_packet_loss_check(client: HttpClient, args: argparse.Namespace) -> dict[str, Any]:
     """Return wan packet loss check.
+
+    Args:
+        client: Client consumed by WAN packet loss check.
+        args: Parsed command-line options consumed by the operation.
+
 
     Raises:
         LifecycleError: If the operation encounters an invalid state.
@@ -3800,6 +4215,13 @@ def wan_packet_loss_check(client: HttpClient, args: argparse.Namespace) -> dict[
 def run_step(results: list[StepResult], name: str, func, *args) -> Any:  # type: ignore[no-untyped-def]
     """Run step.
 
+    Args:
+        results: Results consumed by run step.
+        name: Stable name identifying the resource or operation.
+        func: Func consumed by run step.
+        *args: Additional positional arguments accepted by the callable.
+
+
     Returns:
         The run step result.
     """
@@ -3817,6 +4239,12 @@ def run_step(results: list[StepResult], name: str, func, *args) -> Any:  # type:
 
 def export_settings_backup(client: HttpClient, args: argparse.Namespace, archive_path: str) -> dict[str, Any]:
     """Serialize settings backup.
+
+    Args:
+        client: Client consumed by export settings backup.
+        args: Parsed command-line options consumed by the operation.
+        archive_path: Filesystem path used for archive.
+
 
     Returns:
         The export settings backup result.
@@ -3854,6 +4282,11 @@ def export_settings_backup(client: HttpClient, args: argparse.Namespace, archive
 def restore_settings_backup(client: HttpClient, args: argparse.Namespace) -> dict[str, Any]:
     """Return restore settings backup.
 
+    Args:
+        client: Client consumed by restore settings backup.
+        args: Parsed command-line options consumed by the operation.
+
+
     Raises:
         LifecycleError: If the operation encounters an invalid state.
     """
@@ -3887,6 +4320,11 @@ def restore_settings_backup(client: HttpClient, args: argparse.Namespace) -> dic
 def step_evidence(result: dict[str, Any], step_name: str) -> dict[str, Any]:
     """Return step evidence.
 
+    Args:
+        result: Operation result being inspected or returned.
+        step_name: Step name consumed by step evidence.
+
+
     Raises:
         LifecycleError: If the operation encounters an invalid state.
     """
@@ -3900,6 +4338,11 @@ def step_evidence(result: dict[str, Any], step_name: str) -> dict[str, Any]:
 
 def restored_certificate_baseline_check(args: argparse.Namespace, restored_evidence: dict[str, Any]) -> dict[str, Any]:
     """Return restored certificate baseline check.
+
+    Args:
+        args: Parsed command-line options consumed by the operation.
+        restored_evidence: Restored evidence consumed by restored certificate baseline check.
+
 
     Raises:
         LifecycleError: If the operation encounters an invalid state.
@@ -3930,7 +4373,11 @@ def restored_certificate_baseline_check(args: argparse.Namespace, restored_evide
 
 
 def ca_archive_certificate_identity(archive: dict[str, Any]) -> dict[str, Any]:
-    """Return ca archive certificate identity."""
+    """Return ca archive certificate identity.
+
+    Args:
+        archive: Archive consumed by CA archive certificate identity.
+    """
     data = archive.get("data") or {}
     identity: dict[str, Any] = {"root_ca": None, "certificates": {}}
     settings_rows = data.get("ca_settings") or []
@@ -3958,6 +4405,11 @@ def ca_archive_certificate_identity(archive: dict[str, Any]) -> dict[str, Any]:
 
 def restored_ca_archive_baseline_check(args: argparse.Namespace, restored_archive_path: str) -> dict[str, Any]:
     """Return restored ca archive baseline check.
+
+    Args:
+        args: Parsed command-line options consumed by the operation.
+        restored_archive_path: Filesystem path used for restored archive.
+
 
     Raises:
         LifecycleError: If the operation encounters an invalid state.
@@ -3989,7 +4441,13 @@ def restored_ca_archive_baseline_check(args: argparse.Namespace, restored_archiv
 
 
 def run_full_lifecycle(results: list[StepResult], client: HttpClient, args: argparse.Namespace) -> None:
-    """Run full lifecycle."""
+    """Run full lifecycle.
+
+    Args:
+        results: Results consumed by run full lifecycle.
+        client: Client consumed by run full lifecycle.
+        args: Parsed command-line options consumed by the operation.
+    """
     run_step(results, "appliance-health", appliance_health, client, args)
     run_step(results, "configure-network", configure_network, client, args)
     run_step(results, "configure-dns-dhcp", configure_dns_dhcp, client, args)
@@ -4041,7 +4499,13 @@ def run_full_lifecycle(results: list[StepResult], client: HttpClient, args: argp
 
 
 def run_routing_wan_lifecycle(results: list[StepResult], client: HttpClient, args: argparse.Namespace) -> None:
-    """Run routing wan lifecycle."""
+    """Run routing wan lifecycle.
+
+    Args:
+        results: Results consumed by run routing WAN lifecycle.
+        client: Client consumed by run routing WAN lifecycle.
+        args: Parsed command-line options consumed by the operation.
+    """
     run_step(results, "appliance-health", appliance_health, client, args)
     run_step(results, "configure-network", configure_network, client, args)
     run_step(results, "configure-firewall", configure_firewall, client, args)
@@ -4059,13 +4523,25 @@ def run_routing_wan_lifecycle(results: list[StepResult], client: HttpClient, arg
 
 
 def run_oidc_lifecycle(results: list[StepResult], client: HttpClient, args: argparse.Namespace) -> None:
-    """Run oidc lifecycle."""
+    """Run oidc lifecycle.
+
+    Args:
+        results: Results consumed by run OIDC lifecycle.
+        client: Client consumed by run OIDC lifecycle.
+        args: Parsed command-line options consumed by the operation.
+    """
     run_step(results, "appliance-health", appliance_health, client, args)
     run_step(results, "oidc-authorization-code-check", oidc_authorization_code_check, client, args)
 
 
 def run_restored_lifecycle(results: list[StepResult], client: HttpClient, args: argparse.Namespace) -> None:
     """Run restored lifecycle.
+
+    Args:
+        results: Results consumed by run restored lifecycle.
+        client: Client consumed by run restored lifecycle.
+        args: Parsed command-line options consumed by the operation.
+
 
     Raises:
         LifecycleError: If the operation encounters an invalid state.
@@ -4114,6 +4590,10 @@ def run_restored_lifecycle(results: list[StepResult], client: HttpClient, args: 
 
 def format_step_summary(step: dict[str, Any]) -> str:
     """Render step summary.
+
+    Args:
+        step: Step consumed by format step summary.
+
 
     Returns:
         The format step summary result.
@@ -4183,7 +4663,12 @@ def format_step_summary(step: dict[str, Any]) -> str:
 
 
 def print_human_summary(result: dict[str, Any], result_path: Path) -> None:
-    """Handle print human summary."""
+    """Handle print human summary.
+
+    Args:
+        result: Operation result being inspected or returned.
+        result_path: Filesystem path used for result.
+    """
     print("")
     print("Lifecycle summary")
     print("=================")

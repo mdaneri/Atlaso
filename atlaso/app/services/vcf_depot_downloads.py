@@ -26,7 +26,11 @@ class ActiveVcfDepotDownloadError(ValueError):
         active_job_id: Identifier of the associated active job.
     """
     def __init__(self, active_job_id: str) -> None:
-        """Initialize the active vcf depot download error."""
+        """Initialize the active vcf depot download error.
+
+        Args:
+            active_job_id: Stable identifier of the associated active job resource.
+        """
         self.active_job_id = active_job_id
         super().__init__(
             f"VCFDT task {active_job_id} is already active. Wait for it to finish before starting another VCFDT operation."
@@ -34,7 +38,11 @@ class ActiveVcfDepotDownloadError(ValueError):
 
 
 def vcf_depot_profile_id(task_config_json: str) -> int:
-    """Return vcf depot profile id."""
+    """Return vcf depot profile id.
+
+    Args:
+        task_config_json: Task config json consumed by VCF depot profile identifier.
+    """
     try:
         config = json.loads(task_config_json or "{}")
     except json.JSONDecodeError:
@@ -116,7 +124,12 @@ def active_vcf_depot_download_job(db: Session) -> Job | None:
 
 
 def vcf_depot_task_log_reference(job_id: str, _profile_name: str = "") -> str:
-    """Return vcf depot task log reference."""
+    """Return vcf depot task log reference.
+
+    Args:
+        job_id: Stable identifier of the associated job resource.
+        _profile_name: Profile name consumed by VCF depot task log reference.
+    """
     return f"{VCF_DEPOT_TASK_LOG_DIR}/{job_id}.log"
 
 

@@ -18,7 +18,11 @@ LEGACY_DIRECT_APPLY_PATHS = {
 
 
 def iter_operations(schema: dict[str, Any]) -> Iterator[tuple[str, str, dict[str, Any]]]:
-    """Handle iter operations."""
+    """Handle iter operations.
+
+    Args:
+        schema: Schema supplied to the test scenario.
+    """
     for path, path_item in schema["paths"].items():
         for method, operation in path_item.items():
             if method in HTTP_METHODS:
@@ -30,7 +34,12 @@ def iter_schema_properties(
     *,
     location: str,
 ) -> Iterator[tuple[str, str, dict[str, Any]]]:
-    """Handle iter schema properties."""
+    """Handle iter schema properties.
+
+    Args:
+        node: Node supplied to the test scenario.
+        location: Location supplied to the test scenario.
+    """
     if isinstance(node, dict):
         for name, value in node.get("properties", {}).items():
             yield location, name, value
@@ -42,7 +51,11 @@ def iter_schema_properties(
 
 
 def test_openapi_document_is_31_and_has_bearer_security(client):
-    """Verify that openapi document is 31 and has bearer security."""
+    """Verify that openapi document is 31 and has bearer security.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
     response = client.get("/openapi.json")
     assert response.status_code == 200
     schema = response.json()
@@ -56,7 +69,11 @@ def test_openapi_document_is_31_and_has_bearer_security(client):
 
 
 def test_openapi_contains_only_the_versioned_management_api(client):
-    """Verify that openapi contains only the versioned management api."""
+    """Verify that openapi contains only the versioned management api.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
     schema = client.get("/openapi.json").json()
 
     assert schema["paths"]
@@ -76,7 +93,11 @@ def test_non_versioned_protocol_and_ui_routes_remain_registered():
 
 
 def test_legacy_direct_apply_routes_remain_compatible_but_are_not_promoted(client):
-    """Verify that legacy direct apply routes remain compatible but are not promoted."""
+    """Verify that legacy direct apply routes remain compatible but are not promoted.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
     schema = client.get("/openapi.json").json()
 
     for path in LEGACY_DIRECT_APPLY_PATHS:
@@ -85,7 +106,11 @@ def test_legacy_direct_apply_routes_remain_compatible_but_are_not_promoted(clien
 
 
 def test_every_openapi_operation_has_detailed_documentation(client):
-    """Verify that every openapi operation has detailed documentation."""
+    """Verify that every openapi operation has detailed documentation.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
     schema = client.get("/openapi.json").json()
     declared_tags = {tag["name"]: tag for tag in schema["tags"]}
     used_tags: set[str] = set()
@@ -95,6 +120,10 @@ def test_every_openapi_operation_has_detailed_documentation(client):
         assert operation.get("summary", "").strip(), f"{method.upper()} {path} has no summary"
         description = operation.get("description", "").strip()
         assert len(description) >= 80, f"{method.upper()} {path} has no detailed description"
+        assert all(
+            f"\n{heading}:" not in description
+            for heading in ("Args", "Arguments", "Keyword Args")
+        ), f"{method.upper()} {path} exposes internal Python arguments"
         assert operation.get("tags"), f"{method.upper()} {path} has no tag"
         used_tags.update(operation["tags"])
 
@@ -122,7 +151,11 @@ def test_every_openapi_operation_has_detailed_documentation(client):
 
 
 def test_every_openapi_schema_property_has_a_description(client):
-    """Verify that every openapi schema property has a description."""
+    """Verify that every openapi schema property has a description.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
     schema = client.get("/openapi.json").json()
     properties = [
         property_entry
@@ -137,14 +170,22 @@ def test_every_openapi_schema_property_has_a_description(client):
 
 
 def test_operation_ids_are_unique(client):
-    """Verify that operation ids are unique."""
+    """Verify that operation ids are unique.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
     schema = client.get("/openapi.json").json()
     operation_ids = [operation["operationId"] for _, _, operation in iter_operations(schema)]
     assert len(operation_ids) == len(set(operation_ids))
 
 
 def test_initial_api_resources_are_documented(client):
-    """Verify that initial api resources are documented."""
+    """Verify that initial api resources are documented.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
     schema = client.get("/openapi.json").json()
     paths = schema["paths"]
     expected = [
@@ -193,7 +234,11 @@ def test_initial_api_resources_are_documented(client):
 
 
 def test_appliance_version_openapi_contract_is_public(client):
-    """Verify that appliance version openapi contract is public."""
+    """Verify that appliance version openapi contract is public.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
     schema = client.get("/openapi.json").json()
     operation = schema["paths"]["/api/v1/version"]["get"]
 
@@ -207,7 +252,11 @@ def test_appliance_version_openapi_contract_is_public(client):
 
 
 def test_esxi_custom_variable_openapi_contract(client):
-    """Verify that esxi custom variable openapi contract."""
+    """Verify that esxi custom variable openapi contract.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
     schema = client.get("/openapi.json").json()
     collection = schema["paths"]["/api/v1/esxi-pxe/custom-variables"]
     item = schema["paths"]["/api/v1/esxi-pxe/custom-variables/{variable_name}"]
@@ -221,7 +270,11 @@ def test_esxi_custom_variable_openapi_contract(client):
 
 
 def test_oidc_group_mapping_openapi_contract(client):
-    """Verify that oidc group mapping openapi contract."""
+    """Verify that oidc group mapping openapi contract.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
     schema = client.get("/openapi.json").json()
     path = schema["paths"]["/api/v1/oidc/group-mappings"]
     assert path["get"]["operationId"] == "listOidcGroupMappings"
@@ -231,7 +284,11 @@ def test_oidc_group_mapping_openapi_contract(client):
 
 
 def test_oidc_administration_lifecycle_openapi_contract(client):
-    """Verify that oidc administration lifecycle openapi contract."""
+    """Verify that oidc administration lifecycle openapi contract.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
     schema = client.get("/openapi.json").json()
     client_path = schema["paths"]["/api/v1/oidc/clients/{client_record_id}"]
     assert client_path["put"]["operationId"] == "updateOidcClient"
@@ -246,7 +303,11 @@ def test_oidc_administration_lifecycle_openapi_contract(client):
 
 
 def test_route_wan_mode_contract_is_interface_only(client):
-    """Verify that route wan mode contract is interface only."""
+    """Verify that route wan mode contract is interface only.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
     schema = client.get("/openapi.json").json()
     wan_mode = schema["components"]["schemas"]["RouteCreate"]["properties"]["wan_mode"]
 
@@ -254,7 +315,11 @@ def test_route_wan_mode_contract_is_interface_only(client):
 
 
 def test_api_routes_have_response_models_or_documented_204(client):
-    """Verify that api routes have response models or documented 204."""
+    """Verify that api routes have response models or documented 204.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
     schema = client.get("/openapi.json").json()
     for path, path_item in schema["paths"].items():
         if not path.startswith("/api/v1"):

@@ -214,6 +214,11 @@ class ProtocolFailure(Exception):
 def _value(node: Ttlv, expected_type: TtlvType) -> int | bool | str | bytes:
     """Return value.
 
+    Args:
+        node: Node consumed by value.
+        expected_type: Expected type used to verify the result.
+
+
     Raises:
         ProtocolFailure: If the operation encounters an invalid state.
     """
@@ -225,6 +230,11 @@ def _value(node: Ttlv, expected_type: TtlvType) -> int | bool | str | bytes:
 
 def _integer_value(node: Ttlv, expected_type: TtlvType = TtlvType.INTEGER) -> int:
     """Return integer value.
+
+    Args:
+        node: Node consumed by integer value.
+        expected_type: Expected type used to verify the result.
+
 
     Raises:
         ProtocolFailure: If the operation encounters an invalid state.
@@ -238,6 +248,10 @@ def _integer_value(node: Ttlv, expected_type: TtlvType = TtlvType.INTEGER) -> in
 def _text_value(node: Ttlv) -> str:
     """Return text value.
 
+    Args:
+        node: Node consumed by text value.
+
+
     Raises:
         ProtocolFailure: If the operation encounters an invalid state.
     """
@@ -249,6 +263,11 @@ def _text_value(node: Ttlv) -> str:
 
 def _required_child(node: Ttlv, tag: Tag) -> Ttlv:
     """Return required child.
+
+    Args:
+        node: Node consumed by required child.
+        tag: Tag consumed by required child.
+
 
     Raises:
         ProtocolFailure: If the operation encounters an invalid state.
@@ -263,6 +282,10 @@ def _required_child(node: Ttlv, tag: Tag) -> Ttlv:
 
 def _protocol_version(node: Ttlv) -> tuple[int, int]:
     """Return protocol version.
+
+    Args:
+        node: Node consumed by protocol version.
+
 
     Raises:
         ProtocolFailure: If the operation encounters an invalid state.
@@ -288,7 +311,12 @@ def _version_node() -> Ttlv:
 
 
 def _attribute(name: str, value: Ttlv) -> Ttlv:
-    """Return attribute."""
+    """Return attribute.
+
+    Args:
+        name: Stable name identifying the resource or operation.
+        value: Candidate value consumed by attribute.
+    """
     return structure(
         Tag.ATTRIBUTE,
         text_string(Tag.ATTRIBUTE_NAME, name),
@@ -298,6 +326,11 @@ def _attribute(name: str, value: Ttlv) -> Ttlv:
 
 def _metadata_attribute(name: str, metadata: StoredKey) -> Ttlv:
     """Return metadata attribute.
+
+    Args:
+        name: Stable name identifying the resource or operation.
+        metadata: Structured metadata associated with the artifact or operation.
+
 
     Raises:
         ProtocolFailure: If the operation encounters an invalid state.
@@ -344,6 +377,10 @@ def _metadata_attribute(name: str, metadata: StoredKey) -> Ttlv:
 def _parse_name(node: Ttlv) -> str:
     """Parse name.
 
+    Args:
+        node: Candidate node to parse.
+
+
     Returns:
         The parsed name.
 
@@ -377,6 +414,11 @@ def _parse_template_attributes(
     allowed_names: set[str],
 ) -> dict[str, int | str]:
     """Parse template attributes.
+
+    Args:
+        template: Candidate template to parse.
+        allowed_names: Candidate allowed names to parse.
+
 
     Returns:
         The parsed template attributes.
@@ -419,6 +461,10 @@ def _parse_template_attributes(
 def _unique_identifier(payload: Ttlv) -> str:
     """Return unique identifier.
 
+    Args:
+        payload: Validated request or task payload consumed by the operation.
+
+
     Raises:
         ProtocolFailure: If the operation encounters an invalid state.
     """
@@ -436,11 +482,20 @@ class KmipDispatcher:
     """
 
     def __init__(self, store: WrappedKeyStore) -> None:
-        """Initialize the kmip dispatcher."""
+        """Initialize the kmip dispatcher.
+
+        Args:
+            store: Store consumed by init.
+        """
         self.store = store
 
     def _create(self, provider_id: str, payload: Ttlv) -> list[Ttlv]:
         """Create operation.
+
+        Args:
+            provider_id: Stable identifier of the associated provider resource.
+            payload: Validated request or task payload consumed by the operation.
+
 
         Returns:
             The create result.
@@ -488,6 +543,11 @@ class KmipDispatcher:
     def _activate(self, provider_id: str, payload: Ttlv) -> list[Ttlv]:
         """Return activate.
 
+        Args:
+            provider_id: Stable identifier of the associated provider resource.
+            payload: Validated request or task payload consumed by the operation.
+
+
         Raises:
             ProtocolFailure: If the operation encounters an invalid state.
         """
@@ -501,6 +561,11 @@ class KmipDispatcher:
 
     def _get(self, provider_id: str, payload: Ttlv) -> list[Ttlv]:
         """Return operation.
+
+        Args:
+            provider_id: Stable identifier of the associated provider resource.
+            payload: Validated request or task payload consumed by the operation.
+
 
         Raises:
             ProtocolFailure: If the operation encounters an invalid state.
@@ -547,6 +612,11 @@ class KmipDispatcher:
     def _get_attribute_list(self, provider_id: str, payload: Ttlv) -> list[Ttlv]:
         """Return attribute list.
 
+        Args:
+            provider_id: Stable identifier of the associated provider resource.
+            payload: Validated request or task payload consumed by the operation.
+
+
         Raises:
             ProtocolFailure: If the operation encounters an invalid state.
         """
@@ -577,6 +647,11 @@ class KmipDispatcher:
 
     def _get_attributes(self, provider_id: str, payload: Ttlv) -> list[Ttlv]:
         """Return attributes.
+
+        Args:
+            provider_id: Stable identifier of the associated provider resource.
+            payload: Validated request or task payload consumed by the operation.
+
 
         Raises:
             ProtocolFailure: If the operation encounters an invalid state.
@@ -612,6 +687,11 @@ class KmipDispatcher:
 
     def _locate(self, provider_id: str, payload: Ttlv) -> list[Ttlv]:
         """Return locate.
+
+        Args:
+            provider_id: Stable identifier of the associated provider resource.
+            payload: Validated request or task payload consumed by the operation.
+
 
         Raises:
             ProtocolFailure: If the operation encounters an invalid state.
@@ -660,6 +740,10 @@ class KmipDispatcher:
     def _query(payload: Ttlv) -> list[Ttlv]:
         """Return query.
 
+        Args:
+            payload: Validated request or task payload consumed by the operation.
+
+
         Raises:
             ProtocolFailure: If the operation encounters an invalid state.
         """
@@ -694,6 +778,10 @@ class KmipDispatcher:
     def _discover_versions(payload: Ttlv) -> list[Ttlv]:
         """Return discover versions.
 
+        Args:
+            payload: Validated request or task payload consumed by the operation.
+
+
         Raises:
             ProtocolFailure: If the operation encounters an invalid state.
         """
@@ -720,6 +808,12 @@ class KmipDispatcher:
     ) -> list[Ttlv]:
         """Return dispatch operation.
 
+        Args:
+            provider_id: Stable identifier of the associated provider resource.
+            operation: Operation consumed by dispatch operation.
+            payload: Validated request or task payload consumed by the operation.
+
+
         Raises:
             ProtocolFailure: If the operation encounters an invalid state.
         """
@@ -741,7 +835,12 @@ class KmipDispatcher:
 
     @staticmethod
     def _failed_batch(operation_value: int, failure: ProtocolFailure) -> Ttlv:
-        """Return failed batch."""
+        """Return failed batch.
+
+        Args:
+            operation_value: Operation value consumed by failed batch.
+            failure: Failure consumed by failed batch.
+        """
         return structure(
             Tag.BATCH_ITEM,
             enumeration(Tag.OPERATION, operation_value),

@@ -15,7 +15,11 @@ from scripts.compile_requirements import (
 
 
 def write_valid_policy(root: Path) -> None:
-    """Persist valid policy."""
+    """Persist valid policy.
+
+    Args:
+        root: Repository or filesystem root searched by the operation.
+    """
     dependabot = root / ".github" / "dependabot.yml"
     dependabot.parent.mkdir(parents=True)
     dependabot.write_text(
@@ -64,7 +68,11 @@ updates:
 
 
 def test_dependency_policy_accepts_all_generated_locks(tmp_path: Path) -> None:
-    """Verify that dependency policy accepts all generated locks."""
+    """Verify that dependency policy accepts all generated locks.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
     write_valid_policy(tmp_path)
 
     assert validate(tmp_path) == []
@@ -73,7 +81,11 @@ def test_dependency_policy_accepts_all_generated_locks(tmp_path: Path) -> None:
 def test_dependency_policy_rejects_missing_dependabot_cooldown(
     tmp_path: Path,
 ) -> None:
-    """Verify that dependency policy rejects missing dependabot cooldown."""
+    """Verify that dependency policy rejects missing dependabot cooldown.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
     write_valid_policy(tmp_path)
     dependabot = tmp_path / ".github" / "dependabot.yml"
     dependabot.write_text(
@@ -85,7 +97,11 @@ def test_dependency_policy_rejects_missing_dependabot_cooldown(
 
 
 def test_dependency_policy_rejects_lock_without_upload_cutoff(tmp_path: Path) -> None:
-    """Verify that dependency policy rejects lock without upload cutoff."""
+    """Verify that dependency policy rejects lock without upload cutoff.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
     write_valid_policy(tmp_path)
     path = tmp_path / "requirements-appliance.lock"
     path.write_text(
@@ -101,7 +117,11 @@ def test_dependency_policy_rejects_lock_without_upload_cutoff(tmp_path: Path) ->
 
 
 def test_dependency_policy_rejects_unhashed_pin(tmp_path: Path) -> None:
-    """Verify that dependency policy rejects unhashed pin."""
+    """Verify that dependency policy rejects unhashed pin.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
     write_valid_policy(tmp_path)
     path = tmp_path / "requirements-docs.lock"
     path.write_text(
@@ -118,7 +138,11 @@ def test_dependency_policy_rejects_unhashed_pin(tmp_path: Path) -> None:
 
 
 def test_dependency_policy_rejects_non_exact_requirement(tmp_path: Path) -> None:
-    """Verify that dependency policy rejects non exact requirement."""
+    """Verify that dependency policy rejects non exact requirement.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
     write_valid_policy(tmp_path)
     path = tmp_path / "requirements-release-tools.lock"
     path.write_text(
@@ -184,6 +208,10 @@ def test_index_validation_requires_https_without_embedded_credentials() -> None:
 def test_index_metadata_check_rejects_missing_upload_times(monkeypatch) -> None:
     """Verify that index metadata check rejects missing upload times.
 
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+
+
     Raises:
         AssertionError: If an expected invariant is not satisfied.
     """
@@ -202,7 +230,11 @@ def test_index_metadata_check_rejects_missing_upload_times(monkeypatch) -> None:
 
 
 def test_index_metadata_check_accepts_complete_upload_times(monkeypatch) -> None:
-    """Verify that index metadata check accepts complete upload times."""
+    """Verify that index metadata check accepts complete upload times.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+    """
     payload = {
         "files": [
             {
@@ -222,7 +254,11 @@ def test_index_metadata_check_accepts_complete_upload_times(monkeypatch) -> None
 def test_compile_environment_ignores_unverified_package_sources(
     monkeypatch,
 ) -> None:
-    """Verify that compile environment ignores unverified package sources."""
+    """Verify that compile environment ignores unverified package sources.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+    """
     monkeypatch.setenv("PIP_INDEX_URL", "https://mirror.invalid/simple")
     monkeypatch.setenv("PIP_EXTRA_INDEX_URL", "https://extra.invalid/simple")
     monkeypatch.setenv("PIP_FIND_LINKS", "https://files.invalid/")

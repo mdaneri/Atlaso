@@ -22,7 +22,11 @@ from uuid import uuid4
 
 
 def token_to_response(token: ApiToken) -> ApiTokenResponse:
-    """Return token to response."""
+    """Return token to response.
+
+    Args:
+        token: Credential or token value consumed by the operation.
+    """
     return ApiTokenResponse(
         id=token.id,
         jti=token.jti,

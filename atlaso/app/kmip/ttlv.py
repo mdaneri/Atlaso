@@ -60,6 +60,10 @@ class Ttlv:
     def children(self, tag: int | None = None) -> list["Ttlv"]:
         """Return children.
 
+        Args:
+            tag: Tag consumed by children.
+
+
         Raises:
             TtlvError: If the operation encounters an invalid state.
         """
@@ -71,6 +75,11 @@ class Ttlv:
 
     def child(self, tag: int, *, required: bool = True) -> "Ttlv | None":
         """Return child.
+
+        Args:
+            tag: Tag consumed by child.
+            required: Whether required applies to the operation.
+
 
         Raises:
             TtlvError: If the operation encounters an invalid state.
@@ -86,42 +95,81 @@ class Ttlv:
 
 
 def structure(tag: int, *children: Ttlv) -> Ttlv:
-    """Return structure."""
+    """Return structure.
+
+    Args:
+        tag: Tag consumed by structure.
+        *children: Additional positional arguments accepted by the callable.
+    """
     return Ttlv(tag, TtlvType.STRUCTURE, tuple(children))
 
 
 def integer(tag: int, value: int) -> Ttlv:
-    """Return integer."""
+    """Return integer.
+
+    Args:
+        tag: Tag consumed by integer.
+        value: Candidate value consumed by integer.
+    """
     return Ttlv(tag, TtlvType.INTEGER, value)
 
 
 def enumeration(tag: int, value: int) -> Ttlv:
-    """Return enumeration."""
+    """Return enumeration.
+
+    Args:
+        tag: Tag consumed by enumeration.
+        value: Candidate value consumed by enumeration.
+    """
     return Ttlv(tag, TtlvType.ENUMERATION, value)
 
 
 def boolean(tag: int, value: bool) -> Ttlv:
-    """Return boolean."""
+    """Return boolean.
+
+    Args:
+        tag: Tag consumed by boolean.
+        value: Candidate value consumed by boolean.
+    """
     return Ttlv(tag, TtlvType.BOOLEAN, value)
 
 
 def text_string(tag: int, value: str) -> Ttlv:
-    """Return text string."""
+    """Return text string.
+
+    Args:
+        tag: Tag consumed by text string.
+        value: Candidate value consumed by text string.
+    """
     return Ttlv(tag, TtlvType.TEXT_STRING, value)
 
 
 def byte_string(tag: int, value: bytes) -> Ttlv:
-    """Return byte string."""
+    """Return byte string.
+
+    Args:
+        tag: Tag consumed by byte string.
+        value: Candidate value consumed by byte string.
+    """
     return Ttlv(tag, TtlvType.BYTE_STRING, value)
 
 
 def date_time(tag: int, value: int) -> Ttlv:
-    """Return date time."""
+    """Return date time.
+
+    Args:
+        tag: Tag consumed by date time.
+        value: Candidate value consumed by date time.
+    """
     return Ttlv(tag, TtlvType.DATE_TIME, value)
 
 
 def _encoded_value(node: Ttlv) -> bytes:
     """Return encoded value.
+
+    Args:
+        node: Node consumed by encoded value.
+
 
     Raises:
         TtlvError: If the operation encounters an invalid state.
@@ -157,6 +205,10 @@ def _encoded_value(node: Ttlv) -> bytes:
 def encode(node: Ttlv) -> bytes:
     """Serialize operation.
 
+    Args:
+        node: Node consumed by encode.
+
+
     Returns:
         The encode result.
 
@@ -191,6 +243,13 @@ def _decode_one(
     state: _DecodeState,
 ) -> tuple[Ttlv, int]:
     """Deserialize one.
+
+    Args:
+        data: Data consumed by decode one.
+        offset: Offset consumed by decode one.
+        depth: Depth consumed by decode one.
+        state: Current lifecycle state consumed by the operation.
+
 
     Returns:
         The decode one result.
@@ -265,6 +324,10 @@ def _decode_one(
 def decode(data: bytes) -> Ttlv:
     """Deserialize operation.
 
+    Args:
+        data: Data consumed by decode.
+
+
     Returns:
         The decode result.
 
@@ -283,6 +346,11 @@ def decode(data: bytes) -> Ttlv:
 
 def assert_only_tags(node: Ttlv, allowed: Iterable[int]) -> None:
     """Check only tags.
+
+    Args:
+        node: Node consumed by assert only tags.
+        allowed: Allowed consumed by assert only tags.
+
 
     Raises:
         TtlvError: If the operation encounters an invalid state.

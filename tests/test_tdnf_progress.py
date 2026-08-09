@@ -13,6 +13,12 @@ SCRIPT = Path("scripts/run_tdnf_with_progress.py").resolve()
 def run_progress_wrapper(tmp_path: Path, child_source: str, *extra_args: str) -> subprocess.CompletedProcess[str]:
     """Run progress wrapper.
 
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+        child_source: Child source supplied to the test scenario.
+        *extra_args: Additional positional arguments accepted by the callable.
+
+
     Returns:
         The run progress wrapper result.
     """
@@ -43,7 +49,11 @@ def run_progress_wrapper(tmp_path: Path, child_source: str, *extra_args: str) ->
 
 
 def test_progress_wrapper_emits_heartbeats_without_streaming_raw_output(tmp_path):
-    """Verify that progress wrapper emits heartbeats without streaming raw output."""
+    """Verify that progress wrapper emits heartbeats without streaming raw output.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
     result = run_progress_wrapper(
         tmp_path,
         "import time; print('raw transaction output', flush=True); time.sleep(0.14)",
@@ -59,7 +69,11 @@ def test_progress_wrapper_emits_heartbeats_without_streaming_raw_output(tmp_path
 
 
 def test_progress_wrapper_replays_bounded_normalized_tail_on_failure(tmp_path):
-    """Verify that progress wrapper replays bounded normalized tail on failure."""
+    """Verify that progress wrapper replays bounded normalized tail on failure.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
     result = run_progress_wrapper(
         tmp_path,
         "import sys; "

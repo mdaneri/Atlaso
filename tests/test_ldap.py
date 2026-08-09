@@ -21,7 +21,12 @@ from atlaso.app.services.ldap import (
 
 
 def api_token(client, scopes: list[str]) -> str:
-    """Return api token."""
+    """Return api token.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+        scopes: Normalized authorization scopes granted or required by the operation.
+    """
     response = client.post(
         "/api/v1/auth/login?username=admin&password=atlaso-admin",
         json={"name": "LDAP tests", "scopes": scopes},
@@ -31,7 +36,11 @@ def api_token(client, scopes: list[str]) -> str:
 
 
 def test_ldap_api_manages_isolated_organizations_users_groups_and_vcf_mapping(client):
-    """Verify that ldap api manages isolated organizations users groups and vcf mapping."""
+    """Verify that ldap api manages isolated organizations users groups and vcf mapping.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
     token = api_token(client, ["read:ldap", "write:ldap"])
     headers = {"Authorization": f"Bearer {token}"}
 
@@ -104,7 +113,11 @@ def test_ldap_api_manages_isolated_organizations_users_groups_and_vcf_mapping(cl
 
 
 def test_ldap_api_rejects_cross_organization_membership_and_nested_cycle(client):
-    """Verify that ldap api rejects cross organization membership and nested cycle."""
+    """Verify that ldap api rejects cross organization membership and nested cycle.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
     token = api_token(client, ["read:ldap", "write:ldap"])
     headers = {"Authorization": f"Bearer {token}"}
     org_a = client.post("/api/v1/ldap/organizations", headers=headers, json={"name": "Cycle A"}).json()
@@ -143,7 +156,11 @@ def test_ldap_api_rejects_cross_organization_membership_and_nested_cycle(client)
 
 
 def test_ldap_uid_change_marks_applied_password_not_staged(client):
-    """Verify that ldap uid change marks applied password not staged."""
+    """Verify that ldap uid change marks applied password not staged.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
     from sqlalchemy import select
 
     from atlaso.app.database import SessionLocal
@@ -343,7 +360,11 @@ def test_ldap_recovery_envelope_and_manifest_validation():
 
 
 def test_ldap_api_settings_reject_management_and_accept_addressed_access_interface(client):
-    """Verify that ldap api settings reject management and accept addressed access interface."""
+    """Verify that ldap api settings reject management and accept addressed access interface.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
     from sqlalchemy import select
 
     from atlaso.app.database import SessionLocal
@@ -410,7 +431,11 @@ def test_ldap_api_settings_reject_management_and_accept_addressed_access_interfa
 
 
 def test_ldap_dns_reconciliation_does_not_change_ldap_snapshot_timestamp(client):
-    """Verify that ldap dns reconciliation does not change ldap snapshot timestamp."""
+    """Verify that ldap dns reconciliation does not change ldap snapshot timestamp.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
     from sqlalchemy import select
 
     from atlaso.app.database import SessionLocal

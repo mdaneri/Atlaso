@@ -51,7 +51,12 @@ def write_wheel(path: Path, *, license_name: str = "MIT") -> None:
 
 
 def test_generator_uses_locked_wheel_metadata_and_is_deterministic(monkeypatch, tmp_path):
-    """Verify that generator uses locked wheel metadata and is deterministic."""
+    """Verify that generator uses locked wheel metadata and is deterministic.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
     module = load_module()
     wheelhouse = tmp_path / "wheelhouse"
     wheelhouse.mkdir()
@@ -107,7 +112,12 @@ def test_generator_uses_locked_wheel_metadata_and_is_deterministic(monkeypatch, 
 
 
 def test_generator_rejects_wheel_without_license(monkeypatch, tmp_path):
-    """Verify that generator rejects wheel without license."""
+    """Verify that generator rejects wheel without license.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
     module = load_module()
     wheelhouse = tmp_path / "wheelhouse"
     wheelhouse.mkdir()
@@ -145,7 +155,12 @@ def test_installed_records_ignore_nested_vendored_distribution_metadata(
     tmp_path,
     site_packages_relative,
 ):
-    """Verify that installed records ignore nested vendored distribution metadata."""
+    """Verify that installed records ignore nested vendored distribution metadata.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+        site_packages_relative: Site packages relative supplied to the test scenario.
+    """
     module = load_module()
     environment = tmp_path / "environment"
     site_packages = environment / site_packages_relative

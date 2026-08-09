@@ -31,11 +31,19 @@ class FakeMonitorCollector:
         snapshots: Snapshots captured or supplied by this test helper.
     """
     def __init__(self, snapshots):
-        """Initialize the fake monitor collector."""
+        """Initialize the fake monitor collector.
+
+        Args:
+            snapshots: Snapshots supplied to the test scenario.
+        """
         self.snapshots = list(snapshots)
 
     def collect(self, sampled_at=None):
         """Return collect.
+
+        Args:
+            sampled_at: Sampled at supplied to the test scenario.
+
 
         Raises:
             AssertionError: If an expected invariant is not satisfied.
@@ -82,7 +90,12 @@ def test_monitor_parsers_handle_linux_proc_shapes():
 
 
 def test_monitor_samples_persist_rates_and_payload(client, monkeypatch):
-    """Verify that monitor samples persist rates and payload."""
+    """Verify that monitor samples persist rates and payload.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+    """
     from atlaso.app.database import SessionLocal
 
     now = utcnow()
@@ -159,7 +172,11 @@ def test_monitor_samples_persist_rates_and_payload(client, monkeypatch):
 
 
 def test_monitor_payload_disabled_does_not_collect_or_write(client):
-    """Verify that monitor payload disabled does not collect or write."""
+    """Verify that monitor payload disabled does not collect or write.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
     from atlaso.app.database import SessionLocal
 
     with SessionLocal() as db:

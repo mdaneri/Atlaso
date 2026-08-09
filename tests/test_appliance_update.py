@@ -12,7 +12,11 @@ from atlaso.app.adapters.system import AdapterResult
 
 
 def login(client):
-    """Return login."""
+    """Return login.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
     page = client.get("/login")
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
     response = client.post(
@@ -25,7 +29,11 @@ def login(client):
 
 
 def csrf_from_page(page_text: str) -> str:
-    """Return csrf from page."""
+    """Return csrf from page.
+
+    Args:
+        page_text: Page text supplied to the test scenario.
+    """
     return page_text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
 
 
@@ -41,7 +49,11 @@ def load_helper_module():
 
 
 def test_appliance_update_page_and_dry_run_job(client):
-    """Verify that appliance update page and dry run job."""
+    """Verify that appliance update page and dry run job.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
     login(client)
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import UpdateSource
@@ -145,7 +157,11 @@ def test_appliance_update_page_and_dry_run_job(client):
 
 
 def test_powershell_update_requires_synchronized_referenced_repository(client):
-    """Verify that powershell update requires synchronized referenced repository."""
+    """Verify that powershell update requires synchronized referenced repository.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
     login(client)
     page = client.get("/appliance-update")
     csrf = csrf_from_page(page.text)
@@ -163,7 +179,11 @@ def test_powershell_update_requires_synchronized_referenced_repository(client):
 
 
 def test_photon_update_requires_synchronized_managed_repository(client):
-    """Verify that photon update requires synchronized managed repository."""
+    """Verify that photon update requires synchronized managed repository.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import UpdateSource
 
@@ -199,7 +219,11 @@ def test_photon_update_requires_synchronized_managed_repository(client):
 
 
 def test_appliance_update_settings_validate_urls(client):
-    """Verify that appliance update settings validate urls."""
+    """Verify that appliance update settings validate urls.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
     login(client)
     page = client.get("/appliance-update")
     csrf = csrf_from_page(page.text)
@@ -217,7 +241,11 @@ def test_appliance_update_settings_validate_urls(client):
 
 
 def test_appliance_update_settings_reject_embedded_credentials(client):
-    """Verify that appliance update settings reject embedded credentials."""
+    """Verify that appliance update settings reject embedded credentials.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
     login(client)
     page = client.get("/appliance-update")
     csrf = csrf_from_page(page.text)
@@ -235,7 +263,13 @@ def test_appliance_update_settings_reject_embedded_credentials(client):
 
 
 def test_appliance_update_real_helper_failure_is_logged(client, monkeypatch, caplog):
-    """Verify that appliance update real helper failure is logged."""
+    """Verify that appliance update real helper failure is logged.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+        caplog: Pytest fixture used to capture emitted log records.
+    """
     import atlaso.app.ui as ui
 
     class FailingUpdateAdapter:
@@ -248,6 +282,10 @@ def test_appliance_update_real_helper_failure_is_logged(client, monkeypatch, cap
 
         def check_appliance_update_config(self, config_path: str) -> AdapterResult:
             """Check appliance update config.
+
+            Args:
+                config_path: Filesystem path containing the operation configuration.
+
 
             Returns:
                 The check appliance update config result.
@@ -291,7 +329,13 @@ def test_appliance_update_real_helper_failure_is_logged(client, monkeypatch, cap
 
 
 def test_appliance_update_staging_exception_records_failed_job_and_logs(client, monkeypatch, caplog):
-    """Verify that appliance update staging exception records failed job and logs."""
+    """Verify that appliance update staging exception records failed job and logs.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+        caplog: Pytest fixture used to capture emitted log records.
+    """
     import atlaso.app.ui as ui
 
     class RealUpdateAdapter:
@@ -306,6 +350,11 @@ def test_appliance_update_staging_exception_records_failed_job_and_logs(client, 
 
     def fail_stage(_path: str, _preview: str) -> str:
         """Return fail stage.
+
+        Args:
+            _path: Filesystem path read, validated, or updated by the operation.
+            _preview: Preview supplied to the test scenario.
+
 
         Raises:
             PermissionError: If the operation lacks the required permission.
@@ -344,7 +393,12 @@ def test_appliance_update_staging_exception_records_failed_job_and_logs(client, 
 
 
 def test_appliance_update_check_runs_every_child_after_failure(client, monkeypatch):
-    """Verify that appliance update check runs every child after failure."""
+    """Verify that appliance update check runs every child after failure.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+    """
     import atlaso.app.ui as ui
 
     from atlaso.app.database import SessionLocal
@@ -357,7 +411,11 @@ def test_appliance_update_check_runs_every_child_after_failure(client, monkeypat
     calls = []
 
     def fake_execute(**kwargs):
-        """Return fake execute."""
+        """Return fake execute.
+
+        Args:
+            **kwargs: Additional keyword arguments accepted by the callable.
+        """
         stream = kwargs["selected_stream_ids"][0]
         calls.append(stream)
         succeeded = stream != "atlaso_release"
@@ -410,7 +468,12 @@ def test_appliance_update_check_runs_every_child_after_failure(client, monkeypat
 
 
 def test_appliance_update_install_skips_photon_after_earlier_failure(client, monkeypatch):
-    """Verify that appliance update install skips photon after earlier failure."""
+    """Verify that appliance update install skips photon after earlier failure.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+    """
     import atlaso.app.ui as ui
 
     from atlaso.app.database import SessionLocal
@@ -423,7 +486,11 @@ def test_appliance_update_install_skips_photon_after_earlier_failure(client, mon
     calls = []
 
     def fake_execute(**kwargs):
-        """Return fake execute."""
+        """Return fake execute.
+
+        Args:
+            **kwargs: Additional keyword arguments accepted by the callable.
+        """
         stream = kwargs["selected_stream_ids"][0]
         calls.append(stream)
         succeeded = stream != "atlaso_release"
@@ -486,7 +553,11 @@ def test_appliance_update_service_version_helpers():
 
 
 def test_current_version_info_has_public_branch_wheel_label(monkeypatch):
-    """Verify that current version info has public branch wheel label."""
+    """Verify that current version info has public branch wheel label.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+    """
     import atlaso
     import atlaso.app.services.appliance_update as appliance_update
 
@@ -503,7 +574,11 @@ def test_current_version_info_has_public_branch_wheel_label(monkeypatch):
 
 
 def test_current_version_info_has_installed_checksum_fallback(monkeypatch):
-    """Verify that current version info has installed checksum fallback."""
+    """Verify that current version info has installed checksum fallback.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+    """
     import atlaso
     import atlaso.app.services.appliance_update as appliance_update
 
@@ -519,7 +594,11 @@ def test_current_version_info_has_installed_checksum_fallback(monkeypatch):
 
 
 def test_atlaso_repository_url_derives_channel_manifest(client):
-    """Verify that atlaso repository url derives channel manifest."""
+    """Verify that atlaso repository url derives channel manifest.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import UpdateSource
     from atlaso.app.services.update_sources import effective_update_settings
@@ -536,7 +615,11 @@ def test_atlaso_repository_url_derives_channel_manifest(client):
 
 
 def test_runtime_photon_source_details(tmp_path):
-    """Verify that runtime photon source details."""
+    """Verify that runtime photon source details.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
     from atlaso.app.services import appliance_update
 
     (tmp_path / "photon.repo").write_text(
@@ -557,7 +640,11 @@ def test_runtime_photon_source_details(tmp_path):
     assert "photon | Photon 5 release | baseurl=https://packages.example.test" in appliance_update.photon_repository_summary(tmp_path)
 
 def test_source_sync_is_queued_and_records_validation_status(client):
-    """Verify that source sync is queued and records validation status."""
+    """Verify that source sync is queued and records validation status.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import Job, UpdateSource
     from atlaso.app.worker import run_worker_once
@@ -587,7 +674,11 @@ def test_source_sync_is_queued_and_records_validation_status(client):
 
 
 def test_source_sync_preserves_per_repository_results(client):
-    """Verify that source sync preserves per repository results."""
+    """Verify that source sync preserves per repository results.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import Job, JobStatus, UpdateSource
     from atlaso.app.ui import complete_appliance_update_task
@@ -640,7 +731,11 @@ def test_source_sync_preserves_per_repository_results(client):
 
 
 def test_source_sync_json_submission_queues_without_page_render(client):
-    """Verify that source sync json submission queues without page render."""
+    """Verify that source sync json submission queues without page render.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
     login(client)
     page = client.get("/appliance-update")
     csrf = csrf_from_page(page.text)
@@ -658,7 +753,12 @@ def test_source_sync_json_submission_queues_without_page_render(client):
 
 
 def test_source_sync_helper_results_are_promoted_to_task_result(client, monkeypatch):
-    """Verify that source sync helper results are promoted to task result."""
+    """Verify that source sync helper results are promoted to task result.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+    """
     import atlaso.app.ui as ui
 
     from atlaso.app.database import SessionLocal
@@ -679,7 +779,11 @@ def test_source_sync_helper_results_are_promoted_to_task_result(client, monkeypa
         dry_run = False
 
         def sync_appliance_update_sources(self, config_path: str) -> AdapterResult:
-            """Handle sync appliance update sources."""
+            """Handle sync appliance update sources.
+
+            Args:
+                config_path: Filesystem path containing the operation configuration.
+            """
             return AdapterResult(
                 command=["atlaso-helper", "appliance-update", "sync-sources", config_path],
                 dry_run=False,
@@ -703,7 +807,11 @@ def test_source_sync_helper_results_are_promoted_to_task_result(client, monkeypa
 
 
 def test_software_source_and_managed_module_lifecycle(client):
-    """Verify that software source and managed module lifecycle."""
+    """Verify that software source and managed module lifecycle.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import ManagedPackage, UpdateSource
     from atlaso.app.services.update_sources import effective_update_settings
@@ -937,7 +1045,11 @@ def test_software_source_and_managed_module_lifecycle(client):
 
 
 def test_effective_update_settings_preserves_all_enabled_repository_sources(client):
-    """Verify that effective update settings preserves all enabled repository sources."""
+    """Verify that effective update settings preserves all enabled repository sources.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import UpdateSource
     from atlaso.app.services.update_sources import effective_update_settings
@@ -978,7 +1090,11 @@ def test_effective_update_settings_preserves_all_enabled_repository_sources(clie
 
 
 def test_source_credentials_use_protected_runtime_channel_without_manifest_disclosure(client):
-    """Verify that source credentials use protected runtime channel without manifest disclosure."""
+    """Verify that source credentials use protected runtime channel without manifest disclosure.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import UpdateSource
     from atlaso.app.secrets import encrypt_secret
@@ -1063,7 +1179,11 @@ def test_helper_rejects_unsynchronized_managed_photon_repository():
 
 
 def test_helper_redacts_repository_credentials_from_package_client_output(monkeypatch):
-    """Verify that helper redacts repository credentials from package client output."""
+    """Verify that helper redacts repository credentials from package client output.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+    """
     from types import SimpleNamespace
 
     helper = load_helper_module()
@@ -1091,7 +1211,11 @@ def test_helper_redacts_repository_credentials_from_package_client_output(monkey
 
 
 def test_helper_falls_back_to_next_signed_atlaso_release_source(monkeypatch):
-    """Verify that helper falls back to next signed atlaso release source."""
+    """Verify that helper falls back to next signed atlaso release source.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+    """
     helper = load_helper_module()
     attempted = []
     expected_channel = {"channel": "preview", "release_manifest_url": "https://backup.example.test/release.json"}
@@ -1099,6 +1223,11 @@ def test_helper_falls_back_to_next_signed_atlaso_release_source(monkeypatch):
 
     def fake_release(url, credential=None):
         """Return fake release.
+
+        Args:
+            url: URL contacted or emitted by the operation.
+            credential: Credential supplied to the test scenario.
+
 
         Raises:
             OSError: If the operating-system operation fails.
@@ -1135,7 +1264,12 @@ def test_helper_falls_back_to_next_signed_atlaso_release_source(monkeypatch):
 
 
 def test_helper_syncs_only_owned_photon_and_powershell_sources(monkeypatch, tmp_path):
-    """Verify that helper syncs only owned photon and powershell sources."""
+    """Verify that helper syncs only owned photon and powershell sources.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
     helper = load_helper_module()
     photon_path = tmp_path / "atlaso-managed.repo"
     state_path = tmp_path / "update-sources.json"
@@ -1161,7 +1295,12 @@ def test_helper_syncs_only_owned_photon_and_powershell_sources(monkeypatch, tmp_
 
 
 def test_helper_reports_unresolvable_powershell_repository_host(monkeypatch, tmp_path):
-    """Verify that helper reports unresolvable powershell repository host."""
+    """Verify that helper reports unresolvable powershell repository host.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
     import socket
 
     helper = load_helper_module()
@@ -1194,7 +1333,12 @@ def test_helper_reports_unresolvable_powershell_repository_host(monkeypatch, tmp
 
 
 def test_helper_source_sync_probes_powershell_repository_endpoint(monkeypatch, tmp_path):
-    """Verify that helper source sync probes powershell repository endpoint."""
+    """Verify that helper source sync probes powershell repository endpoint.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
     import base64
 
     helper = load_helper_module()
@@ -1205,7 +1349,13 @@ def test_helper_source_sync_probes_powershell_repository_endpoint(monkeypatch, t
     monkeypatch.setattr(helper.socket, "getaddrinfo", lambda *_args, **_kwargs: [(None, None, None, None, None)])
 
     def fail_invalid_endpoint(command, *, success_codes=None, env=None):
-        """Handle fail invalid endpoint."""
+        """Handle fail invalid endpoint.
+
+        Args:
+            command: Command and arguments to execute.
+            success_codes: Success codes supplied to the test scenario.
+            env: Environment variables supplied to the child process.
+        """
         scripts.append(base64.b64decode(command[-1]).decode("utf-16-le"))
         return {
             "command": command,
@@ -1262,7 +1412,13 @@ def test_appliance_update_failure_message_uses_actionable_command_stderr():
 
 
 def test_helper_promotes_source_sync_failure_to_stderr(monkeypatch, tmp_path, capsys):
-    """Verify that helper promotes source sync failure to stderr."""
+    """Verify that helper promotes source sync failure to stderr.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+        capsys: Pytest fixture used to capture standard output and standard error.
+    """
     helper = load_helper_module()
     config_path = tmp_path / "atlaso-update.json"
     config_path.write_text("{}\n", encoding="utf-8")
@@ -1283,7 +1439,12 @@ def test_helper_promotes_source_sync_failure_to_stderr(monkeypatch, tmp_path, ca
 
 
 def test_helper_uses_each_modules_bound_powershell_repository(monkeypatch, tmp_path):
-    """Verify that helper uses each modules bound powershell repository."""
+    """Verify that helper uses each modules bound powershell repository.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
     import base64
 
     helper = load_helper_module()
@@ -1294,7 +1455,13 @@ def test_helper_uses_each_modules_bound_powershell_repository(monkeypatch, tmp_p
     monkeypatch.setattr(helper, "_command_path", lambda _name: "/usr/bin/pwsh")
 
     def fake_command(command, *, success_codes=None, env=None):
-        """Return fake command."""
+        """Return fake command.
+
+        Args:
+            command: Command and arguments to execute.
+            success_codes: Success codes supplied to the test scenario.
+            env: Environment variables supplied to the child process.
+        """
         scripts.append(base64.b64decode(command[-1]).decode("utf-16-le"))
         environments.append(env)
         return {"command": command, "returncode": 0, "success": True, "stdout": "", "stderr": ""}
@@ -1316,14 +1483,25 @@ def test_helper_uses_each_modules_bound_powershell_repository(monkeypatch, tmp_p
 
 
 def test_helper_normalizes_system_powershell_module_permissions_after_install(monkeypatch, tmp_path):
-    """Verify that helper normalizes system powershell module permissions after install."""
+    """Verify that helper normalizes system powershell module permissions after install.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
     helper = load_helper_module()
     powershell_root = tmp_path / "powershell"
     module_root = powershell_root / "Modules"
     commands = []
 
     def fake_command(command, *, success_codes=None, env=None):
-        """Return fake command."""
+        """Return fake command.
+
+        Args:
+            command: Command and arguments to execute.
+            success_codes: Success codes supplied to the test scenario.
+            env: Environment variables supplied to the child process.
+        """
         commands.append(command)
         return {"command": command, "returncode": 0, "success": True, "stdout": "", "stderr": ""}
 
@@ -1353,7 +1531,12 @@ def test_helper_normalizes_system_powershell_module_permissions_after_install(mo
 
 
 def test_helper_reasserts_global_ceip_after_powercli_install(monkeypatch, tmp_path):
-    """Verify that helper reasserts global ceip after powercli install."""
+    """Verify that helper reasserts global ceip after powercli install.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
     import base64
 
     helper = load_helper_module()
@@ -1361,7 +1544,13 @@ def test_helper_reasserts_global_ceip_after_powercli_install(monkeypatch, tmp_pa
     monkeypatch.setattr(helper, "ATLASO_POWERSHELL_HOME", tmp_path / "powershell-home")
 
     def fake_command(command, *, success_codes=None, env=None):
-        """Return fake command."""
+        """Return fake command.
+
+        Args:
+            command: Command and arguments to execute.
+            success_codes: Success codes supplied to the test scenario.
+            env: Environment variables supplied to the child process.
+        """
         if command[0].endswith("pwsh"):
             scripts.append(base64.b64decode(command[-1]).decode("utf-16-le"))
         return {"command": command, "returncode": 0, "success": True, "stdout": "", "stderr": ""}
@@ -1390,13 +1579,24 @@ def test_helper_reasserts_global_ceip_after_powercli_install(monkeypatch, tmp_pa
 
 
 def test_helper_reports_powershell_permission_normalization_failure(monkeypatch, tmp_path):
-    """Verify that helper reports powershell permission normalization failure."""
+    """Verify that helper reports powershell permission normalization failure.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
     helper = load_helper_module()
     powershell_root = tmp_path / "powershell"
     module_root = powershell_root / "Modules"
 
     def fake_command(command, *, success_codes=None, env=None):
-        """Return fake command."""
+        """Return fake command.
+
+        Args:
+            command: Command and arguments to execute.
+            success_codes: Success codes supplied to the test scenario.
+            env: Environment variables supplied to the child process.
+        """
         failed = command[:3] == ["/usr/bin/chmod", "-R", "a+rX,go-w"]
         return {
             "command": command,
@@ -1444,7 +1644,12 @@ def test_helper_reports_powershell_permission_normalization_failure(monkeypatch,
 
 
 def test_helper_runs_managed_script_in_unprivileged_systemd_sandbox(monkeypatch, tmp_path):
-    """Verify that helper runs managed script in unprivileged systemd sandbox."""
+    """Verify that helper runs managed script in unprivileged systemd sandbox.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
     from types import SimpleNamespace
 
     helper = load_helper_module()
@@ -1462,7 +1667,11 @@ def test_helper_runs_managed_script_in_unprivileged_systemd_sandbox(monkeypatch,
     captured = {}
 
     def fake_run(command):
-        """Return fake run."""
+        """Return fake run.
+
+        Args:
+            command: Command and arguments to execute.
+        """
         captured["command"] = command
         return SimpleNamespace(returncode=0, stdout="completed\n", stderr="")
 
@@ -1481,7 +1690,13 @@ def test_helper_runs_managed_script_in_unprivileged_systemd_sandbox(monkeypatch,
 
 
 def test_helper_loads_scoped_vault_credential_and_redacts_output(monkeypatch, tmp_path, capsys):
-    """Verify that helper loads scoped vault credential and redacts output."""
+    """Verify that helper loads scoped vault credential and redacts output.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+        capsys: Pytest fixture used to capture standard output and standard error.
+    """
     from types import SimpleNamespace
 
     helper = load_helper_module()
@@ -1508,7 +1723,11 @@ def test_helper_loads_scoped_vault_credential_and_redacts_output(monkeypatch, tm
     commands = []
 
     def fake_run(command):
-        """Return fake run."""
+        """Return fake run.
+
+        Args:
+            command: Command and arguments to execute.
+        """
         commands.append(command)
         return SimpleNamespace(returncode=0, stdout="password=VMware1!\n", stderr="")
 
@@ -1526,6 +1745,10 @@ def test_helper_loads_scoped_vault_credential_and_redacts_output(monkeypatch, tm
 def test_helper_rejects_appliance_update_config_outside_apply_dir(tmp_path):
     """Verify that helper rejects appliance update config outside apply dir.
 
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+
+
     Raises:
         AssertionError: If an expected invariant is not satisfied.
     """
@@ -1542,7 +1765,13 @@ def test_helper_rejects_appliance_update_config_outside_apply_dir(tmp_path):
 
 
 def test_helper_rejects_unsigned_v1_release_manifest(monkeypatch, tmp_path, capsys):
-    """Verify that helper rejects unsigned v1 release manifest."""
+    """Verify that helper rejects unsigned v1 release manifest.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+        capsys: Pytest fixture used to capture standard output and standard error.
+    """
     helper = load_helper_module()
     apply_dir = tmp_path / "apply" / "appliance-update"
     apply_dir.mkdir(parents=True)
@@ -1559,7 +1788,12 @@ def test_helper_rejects_unsigned_v1_release_manifest(monkeypatch, tmp_path, caps
     monkeypatch.setattr(helper, "APPLIANCE_UPDATE_APPLY_DIR", apply_dir)
 
     def fake_fetch(url: str, _credential=None) -> bytes:
-        """Return fake fetch."""
+        """Return fake fetch.
+
+        Args:
+            url: URL contacted or emitted by the operation.
+            _credential: Credential supplied to the test scenario.
+        """
         if url.endswith("manifest.json"):
             return json.dumps(
                 {
@@ -1579,7 +1813,12 @@ def test_helper_rejects_unsigned_v1_release_manifest(monkeypatch, tmp_path, caps
 
 
 def test_helper_rejects_credentialed_update_urls(tmp_path, capsys):
-    """Verify that helper rejects credentialed update urls."""
+    """Verify that helper rejects credentialed update urls.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+        capsys: Pytest fixture used to capture standard output and standard error.
+    """
     helper = load_helper_module()
     apply_dir = tmp_path / "apply" / "appliance-update"
     apply_dir.mkdir(parents=True)
@@ -1601,12 +1840,21 @@ def test_helper_rejects_credentialed_update_urls(tmp_path, capsys):
 
 
 def test_helper_writes_failed_update_info_for_failed_commands(monkeypatch):
-    """Verify that helper writes failed update info for failed commands."""
+    """Verify that helper writes failed update info for failed commands.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+    """
     helper = load_helper_module()
     written = {}
 
     def fake_command_payload(command, *, success_codes=None):
-        """Return fake command payload."""
+        """Return fake command payload.
+
+        Args:
+            command: Command and arguments to execute.
+            success_codes: Success codes supplied to the test scenario.
+        """
         return {"command": command, "returncode": 1, "success": False, "stdout": "", "stderr": "failed"}
 
     monkeypatch.setattr(helper, "_command_payload", fake_command_payload)
@@ -1623,14 +1871,23 @@ def test_helper_writes_failed_update_info_for_failed_commands(monkeypatch):
 
 
 def test_helper_queries_photon_python_without_unsupported_latest_limit(monkeypatch):
-    """Verify that helper queries photon python without unsupported latest limit."""
+    """Verify that helper queries photon python without unsupported latest limit.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+    """
     helper = load_helper_module()
     captured = {}
 
     monkeypatch.setattr(helper, "_command_path", lambda command: f"/usr/bin/{command}")
 
     def fake_command_payload(command, **_kwargs):
-        """Return fake command payload."""
+        """Return fake command payload.
+
+        Args:
+            command: Command and arguments to execute.
+            **_kwargs: Additional keyword arguments accepted by the callable.
+        """
         captured["command"] = command
         return {
             "command": command,

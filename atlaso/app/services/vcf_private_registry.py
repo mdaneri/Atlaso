@@ -23,7 +23,11 @@ STATUS_VALUES = {"planned", "ready", "relocated", "blocked"}
 
 
 def vcf_registry_endpoint(settings: VcfPrivateRegistrySettings) -> str:
-    """Return vcf registry endpoint."""
+    """Return vcf registry endpoint.
+
+    Args:
+        settings: Current Atlaso settings used to configure the operation.
+    """
     port = settings.port or 443
     if port == 443:
         return settings.hostname.strip()
@@ -31,7 +35,12 @@ def vcf_registry_endpoint(settings: VcfPrivateRegistrySettings) -> str:
 
 
 def default_target_reference(settings: VcfPrivateRegistrySettings, source_reference: str) -> str:
-    """Return default target reference."""
+    """Return default target reference.
+
+    Args:
+        settings: Current Atlaso settings used to configure the operation.
+        source_reference: Source reference consumed by default target reference.
+    """
     source = source_reference.strip()
     if not source:
         return ""
@@ -41,7 +50,11 @@ def default_target_reference(settings: VcfPrivateRegistrySettings, source_refere
 
 
 def vcf_registry_settings_to_dict(settings: VcfPrivateRegistrySettings) -> dict[str, object]:
-    """Return vcf registry settings to dict."""
+    """Return vcf registry settings to dict.
+
+    Args:
+        settings: Current Atlaso settings used to configure the operation.
+    """
     return {
         "id": settings.id,
         "enabled": settings.enabled,
@@ -62,7 +75,11 @@ def vcf_registry_settings_to_dict(settings: VcfPrivateRegistrySettings) -> dict[
 
 
 def vcf_registry_bundle_to_dict(bundle: VcfRegistryBundle) -> dict[str, object]:
-    """Return vcf registry bundle to dict."""
+    """Return vcf registry bundle to dict.
+
+    Args:
+        bundle: Bundle consumed by VCF registry bundle to dict.
+    """
     return {
         "id": bundle.id,
         "name": bundle.name,
@@ -78,6 +95,10 @@ def vcf_registry_bundle_to_dict(bundle: VcfRegistryBundle) -> dict[str, object]:
 
 def render_harbor_config(settings: VcfPrivateRegistrySettings) -> str:
     """Render harbor config.
+
+    Args:
+        settings: Current Atlaso settings used to configure the operation.
+
 
     Returns:
         The rendered harbor config.
@@ -116,6 +137,11 @@ def render_harbor_config(settings: VcfPrivateRegistrySettings) -> str:
 
 def render_imgpkg_relocation_preview(settings: VcfPrivateRegistrySettings, bundles: list[VcfRegistryBundle]) -> str:
     """Render imgpkg relocation preview.
+
+    Args:
+        settings: Current Atlaso settings used to configure the operation.
+        bundles: Bundles consumed by render imgpkg relocation preview.
+
 
     Returns:
         The rendered imgpkg relocation preview.

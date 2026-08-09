@@ -27,6 +27,10 @@ def parse_args() -> argparse.Namespace:
 def cloud_init_files(args: argparse.Namespace) -> dict[str, str]:
     """Return cloud init files.
 
+    Args:
+        args: Parsed command-line options consumed by the operation.
+
+
     Raises:
         ValueError: If an input value is invalid.
     """
@@ -105,7 +109,14 @@ ethernets:
 
 
 def add_file(iso, name: str, content: str, iso_name: str) -> None:  # type: ignore[no-untyped-def]
-    """Create file."""
+    """Create file.
+
+    Args:
+        iso: Iso consumed by add file.
+        name: Stable name identifying the resource or operation.
+        content: Content processed or persisted by the operation.
+        iso_name: Iso name consumed by add file.
+    """
     data = content.encode("utf-8")
     iso.add_fp(io.BytesIO(data), len(data), iso_path=f"/{iso_name}.;1", joliet_path=f"/{name}")
 

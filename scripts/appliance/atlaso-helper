@@ -37,6 +37,11 @@ except ModuleNotFoundError:
     class _MissingGrp:
         @staticmethod
         def getgrnam(name: str) -> object:
+            """Perform getgrnam.
+
+            Args:
+                name: Stable name identifying the resource or operation.
+            """
             raise KeyError(name)
 
     grp = _MissingGrp()
@@ -47,6 +52,11 @@ except ModuleNotFoundError:
     class _MissingPwd:
         @staticmethod
         def getpwnam(name: str) -> object:
+            """Perform getpwnam.
+
+            Args:
+                name: Stable name identifying the resource or operation.
+            """
             raise KeyError(name)
 
     pwd = _MissingPwd()
@@ -80,6 +90,11 @@ COMMANDS: dict[str, set[str]] = {
 
 
 def _sha256_file(path: Path) -> str:
+    """Perform sha256 file.
+
+    Args:
+        path: Filesystem path read, validated, or updated by the operation.
+    """
     with path.open("rb") as stream:
         return hashlib.file_digest(stream, "sha256").hexdigest()
 
@@ -351,14 +366,30 @@ LOCAL_USERS_RESERVED_USERNAMES = {
 def _run(
     command: list[str], *, timeout: float | None = None, env: dict[str, str] | None = None
 ) -> subprocess.CompletedProcess[str]:
+    """Perform run.
+
+    Args:
+        command: Command and arguments to execute.
+        timeout: Maximum time allowed for the operation to complete.
+        env: Environment variables supplied to the child process.
+    """
     return subprocess.run(command, check=False, capture_output=True, text=True, timeout=timeout, env=env)
 
 
 def _run_with_input(command: list[str], input_text: str) -> subprocess.CompletedProcess[str]:
+    """Run with input.
+
+    Args:
+        command: Command and arguments to execute.
+        input_text: Text supplied to the invoked command through standard input.
+    """
     return subprocess.run(command, input=input_text, check=False, capture_output=True, text=True)
 
 
 def _vcfdt_atlaso_environment() -> tuple[dict[str, str], int | None, int | None]:
+    """Perform vcfdt atlaso environment.
+
+    """
     try:
         account = pwd.getpwnam(ATLASO_SERVICE_USER)
     except KeyError:
@@ -391,6 +422,12 @@ def _vcfdt_atlaso_environment() -> tuple[dict[str, str], int | None, int | None]
 
 
 def _run_vcfdt_user_command(command: list[str], *, input_text: str | None = None) -> subprocess.CompletedProcess[str]:
+    """Run vcfdt user command.
+
+    Args:
+        command: Command and arguments to execute.
+        input_text: Text supplied to the invoked command through standard input.
+    """
     env, uid, gid = _vcfdt_atlaso_environment()
     kwargs: dict[str, object] = {
         "check": False,
@@ -402,6 +439,9 @@ def _run_vcfdt_user_command(command: list[str], *, input_text: str | None = None
         kwargs["input"] = input_text
     if os.name == "posix" and uid is not None and gid is not None:
         def demote_to_atlaso() -> None:
+            """Perform demote to atlaso.
+
+            """
             os.initgroups(ATLASO_SERVICE_USER, gid)
             os.setgid(gid)
             os.setuid(uid)
@@ -411,6 +451,11 @@ def _run_vcfdt_user_command(command: list[str], *, input_text: str | None = None
 
 
 def _run_account_command(command: list[str]) -> subprocess.CompletedProcess[str]:
+    """Run account command.
+
+    Args:
+        command: Command and arguments to execute.
+    """
     if os.environ.get("ATLASO_HELPER_USE_SYSTEMD_RUN") == "1":
         systemd_run = shutil.which("systemd-run")
         if systemd_run is not None:
@@ -419,6 +464,12 @@ def _run_account_command(command: list[str]) -> subprocess.CompletedProcess[str]
 
 
 def _run_account_command_with_input(command: list[str], input_text: str) -> subprocess.CompletedProcess[str]:
+    """Run account command with input.
+
+    Args:
+        command: Command and arguments to execute.
+        input_text: Text supplied to the invoked command through standard input.
+    """
     if os.environ.get("ATLASO_HELPER_USE_SYSTEMD_RUN") == "1":
         systemd_run = shutil.which("systemd-run")
         if systemd_run is not None:
@@ -427,6 +478,11 @@ def _run_account_command_with_input(command: list[str], input_text: str) -> subp
 
 
 def _should_run_real_action_with_systemd(action: str) -> bool:
+    """Perform should run real action with systemd.
+
+    Args:
+        action: Action consumed by should run real action with systemd.
+    """
     return (
         action in SYSTEMD_RUN_REAL_ACTIONS
         and os.environ.get("ATLASO_HELPER_USE_SYSTEMD_RUN") == "1"
@@ -436,6 +492,9 @@ def _should_run_real_action_with_systemd(action: str) -> bool:
 
 
 def _appliance_update_powershell_environment() -> dict[str, str]:
+    """Perform appliance update powershell environment.
+
+    """
     directories = [
         ATLASO_POWERSHELL_HOME,
         ATLASO_POWERSHELL_HOME / ".cache",
@@ -459,6 +518,13 @@ def _appliance_update_powershell_environment() -> dict[str, str]:
 
 
 def _run_real_action_with_systemd(group: str, action: str, args: list[str]) -> int:
+    """Run real action with systemd.
+
+    Args:
+        group: Group consumed by run real action with systemd.
+        action: Action consumed by run real action with systemd.
+        args: Parsed command-line options consumed by the operation.
+    """
     helper_path = str(Path(__file__).resolve())
     command = [
         shutil.which("systemd-run") or "systemd-run",
@@ -497,12 +563,22 @@ def _run_real_action_with_systemd(group: str, action: str, args: list[str]) -> i
 
 
 def _chown_path(path: Path, uid: int, gid: int) -> None:
+    """Perform chown path.
+
+    Args:
+        path: Filesystem path read, validated, or updated by the operation.
+        uid: Uid consumed by chown path.
+        gid: Gid consumed by chown path.
+    """
     chown = getattr(os, "chown", None)
     if chown is not None:
         chown(path, uid, gid)
 
 
 def _usage() -> int:
+    """Perform usage.
+
+    """
     groups = ", ".join(sorted(COMMANDS))
     print(f"usage: atlaso-helper <group> <action> [--real] [path]", file=sys.stderr)
     print(f"groups: {groups}", file=sys.stderr)
@@ -510,6 +586,11 @@ def _usage() -> int:
 
 
 def _validate_path(path_value: str) -> str:
+    """Validate path.
+
+    Args:
+        path_value: Candidate path value to validate.
+    """
     path = Path(path_value)
     if not path.is_absolute():
         raise ValueError(f"path must be absolute: {path_value}")
@@ -517,6 +598,12 @@ def _validate_path(path_value: str) -> str:
 
 
 def _handle_staging(action: str, args: list[str]) -> int:
+    """Handle staging.
+
+    Args:
+        action: Action consumed by handle staging.
+        args: Parsed command-line options consumed by the operation.
+    """
     if action != "prepare":
         print(f"unsupported staging action: {action}", file=sys.stderr)
         return 2
@@ -550,6 +637,11 @@ def _handle_staging(action: str, args: list[str]) -> int:
 
 
 def _validate_firewall_config_path(path_value: str) -> Path:
+    """Validate firewall config path.
+
+    Args:
+        path_value: Candidate path value to validate.
+    """
     path = Path(_validate_path(path_value)).resolve()
     if path.suffix != ".nft":
         raise ValueError("firewall config path must end with .nft")
@@ -561,12 +653,22 @@ def _validate_firewall_config_path(path_value: str) -> Path:
 
 
 def _validate_firewall_config(path: Path) -> subprocess.CompletedProcess[str]:
+    """Validate firewall config.
+
+    Args:
+        path: Filesystem path read, validated, or updated by the operation.
+    """
     if shutil.which("nft") is None:
         return subprocess.CompletedProcess(["nft", "-c", "-f", str(path)], 127, "", "nft command not found\n")
     return _run(["nft", "-c", "-f", str(path)])
 
 
 def _validate_dnsmasq_config_path(path_value: str) -> Path:
+    """Validate dnsmasq config path.
+
+    Args:
+        path_value: Candidate path value to validate.
+    """
     path = Path(_validate_path(path_value)).resolve()
     if path.suffix != ".conf":
         raise ValueError("dnsmasq config path must end with .conf")
@@ -578,6 +680,11 @@ def _validate_dnsmasq_config_path(path_value: str) -> Path:
 
 
 def _validate_kms_config_path(path_value: str) -> Path:
+    """Validate KMS config path.
+
+    Args:
+        path_value: Candidate path value to validate.
+    """
     path = Path(_validate_path(path_value)).resolve()
     if path.suffix != ".json":
         raise ValueError("KMS config path must end with .json")
@@ -589,6 +696,11 @@ def _validate_kms_config_path(path_value: str) -> Path:
 
 
 def _validate_ldap_config_path(path_value: str) -> Path:
+    """Validate LDAP config path.
+
+    Args:
+        path_value: Candidate path value to validate.
+    """
     path = Path(_validate_path(path_value)).resolve()
     if path.suffix != ".json":
         raise ValueError("LDAP config path must end with .json")
@@ -600,6 +712,11 @@ def _validate_ldap_config_path(path_value: str) -> Path:
 
 
 def _validate_ntpd_config_path(path_value: str) -> Path:
+    """Validate ntpd config path.
+
+    Args:
+        path_value: Candidate path value to validate.
+    """
     path = Path(_validate_path(path_value)).resolve()
     if path.suffix != ".conf":
         raise ValueError("ntpd config path must end with .conf")
@@ -611,6 +728,11 @@ def _validate_ntpd_config_path(path_value: str) -> Path:
 
 
 def _validate_ca_config_path(path_value: str) -> Path:
+    """Validate CA config path.
+
+    Args:
+        path_value: Candidate path value to validate.
+    """
     path = Path(_validate_path(path_value)).resolve()
     if path.suffix != ".json":
         raise ValueError("CA config path must end with .json")
@@ -622,6 +744,11 @@ def _validate_ca_config_path(path_value: str) -> Path:
 
 
 def _validate_appliance_update_config_path(path_value: str) -> Path:
+    """Validate appliance update config path.
+
+    Args:
+        path_value: Candidate path value to validate.
+    """
     path = Path(_validate_path(path_value)).resolve()
     if path.suffix != ".json":
         raise ValueError("appliance update config path must end with .json")
@@ -633,6 +760,12 @@ def _validate_appliance_update_config_path(path_value: str) -> Path:
 
 
 def _ca_managed_path(value: str, label: str) -> Path:
+    """Perform CA managed path.
+
+    Args:
+        value: Candidate value consumed by CA managed path.
+        label: Human-readable label used to identify the result.
+    """
     path = Path(_validate_path(value)).resolve()
     if not path.is_relative_to(CA_MANAGED_PATH_BASE):
         raise ValueError(f"{label} must stay under {CA_MANAGED_PATH_BASE}")
@@ -640,6 +773,13 @@ def _ca_managed_path(value: str, label: str) -> Path:
 
 
 def _pem_errors(value: str, label: str, *, private_key: bool = False) -> list[str]:
+    """Perform PEM errors.
+
+    Args:
+        value: Candidate value consumed by PEM errors.
+        label: Human-readable label used to identify the result.
+        private_key: Whether private key applies to the operation.
+    """
     begin = "PRIVATE KEY" if private_key else "CERTIFICATE"
     if f"-----BEGIN {begin}-----" not in value or f"-----END {begin}-----" not in value:
         return [f"{label} must contain a PEM {begin.lower()} block."]
@@ -647,6 +787,12 @@ def _pem_errors(value: str, label: str, *, private_key: bool = False) -> list[st
 
 
 def _crl_errors(value: str, label: str) -> list[str]:
+    """Perform CRL errors.
+
+    Args:
+        value: Candidate value consumed by CRL errors.
+        label: Human-readable label used to identify the result.
+    """
     if not value:
         return []
     if "-----BEGIN X509 CRL-----" not in value or "-----END X509 CRL-----" not in value:
@@ -655,6 +801,12 @@ def _crl_errors(value: str, label: str) -> list[str]:
 
 
 def _openssl_public_key(value: str, *, private_key: bool) -> str | None:
+    """Perform openssl public key.
+
+    Args:
+        value: Candidate value consumed by openssl public key.
+        private_key: Whether private key applies to the operation.
+    """
     openssl = shutil.which("openssl")
     if openssl is None:
         return None
@@ -672,6 +824,12 @@ def _openssl_public_key(value: str, *, private_key: bool) -> str | None:
 
 
 def _ca_key_matches_certificate(certificate_pem: str, private_key_pem: str) -> bool | None:
+    """Perform CA key matches certificate.
+
+    Args:
+        certificate_pem: Certificate pem consumed by CA key matches certificate.
+        private_key_pem: Private key pem consumed by CA key matches certificate.
+    """
     cert_public = _openssl_public_key(certificate_pem, private_key=False)
     key_public = _openssl_public_key(private_key_pem, private_key=True)
     if cert_public is None or key_public is None:
@@ -680,6 +838,11 @@ def _ca_key_matches_certificate(certificate_pem: str, private_key_pem: str) -> b
 
 
 def _load_ca_payload(path: Path) -> dict:
+    """Load CA payload.
+
+    Args:
+        path: Filesystem path read, validated, or updated by the operation.
+    """
     try:
         with path.open("r", encoding="utf-8") as handle:
             payload = json.load(handle)
@@ -691,6 +854,11 @@ def _load_ca_payload(path: Path) -> dict:
 
 
 def _ca_payload_errors(path: Path) -> list[str]:
+    """Perform CA payload errors.
+
+    Args:
+        path: Filesystem path read, validated, or updated by the operation.
+    """
     errors: list[str] = []
     try:
         payload = _load_ca_payload(path)
@@ -745,30 +913,55 @@ def _ca_payload_errors(path: Path) -> list[str]:
 
 
 def _write_secret_file(path: Path, value: str, mode: int) -> None:
+    """Write secret file.
+
+    Args:
+        path: Filesystem path read, validated, or updated by the operation.
+        value: Candidate value consumed by write secret file.
+        mode: Mode consumed by write secret file.
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(value, encoding="utf-8")
     path.chmod(mode)
 
 
 def _grant_ldap_private_key_read(key_path: Path) -> None:
+    """Perform grant LDAP private key read.
+
+    Args:
+        key_path: Filesystem path used for key.
+    """
     account_name = _ldap_account_name()
     shutil.chown(key_path, user="root", group=account_name)
     os.chmod(key_path, 0o640)
 
 
 def _grant_kms_private_key_read(key_path: Path) -> None:
+    """Perform grant KMS private key read.
+
+    Args:
+        key_path: Filesystem path used for key.
+    """
     _account, group = _ensure_kms_service_identity()
     os.chown(key_path, 0, group.gr_gid)
     os.chmod(key_path, 0o640)
 
 
 def _grant_ntpd_private_key_read(key_path: Path) -> None:
+    """Perform grant ntpd private key read.
+
+    Args:
+        key_path: Filesystem path used for key.
+    """
     ntp_group = grp.getgrnam("ntp")
     os.chown(key_path, 0, ntp_group.gr_gid)
     os.chmod(key_path, 0o640)
 
 
 def _kms_service_identity_available() -> tuple[bool, bool]:
+    """Perform KMS service identity available.
+
+    """
     try:
         grp.getgrnam(KMS_SERVICE_USER)
         group_available = True
@@ -783,6 +976,9 @@ def _kms_service_identity_available() -> tuple[bool, bool]:
 
 
 def _ensure_kms_service_identity() -> tuple[object, object]:
+    """Ensure KMS service identity.
+
+    """
     group_available, account_available = _kms_service_identity_available()
     if not group_available:
         groupadd = _command_path("groupadd")
@@ -817,6 +1013,9 @@ def _ensure_kms_service_identity() -> tuple[object, object]:
 
 
 def _install_kms_credential() -> None:
+    """Perform install KMS credential.
+
+    """
     try:
         source_lines = ATLASO_ENV_PATH.read_text(encoding="utf-8").splitlines()
     except OSError as exc:
@@ -861,6 +1060,12 @@ def _install_kms_credential() -> None:
 
 
 def _handle_ca_inner(action: str, args: list[str]) -> int:
+    """Handle CA inner.
+
+    Args:
+        action: Action consumed by handle CA inner.
+        args: Parsed command-line options consumed by the operation.
+    """
     try:
         config_path = _validate_ca_config_path(args[0])
     except (IndexError, ValueError) as exc:
@@ -934,6 +1139,12 @@ def _handle_ca_inner(action: str, args: list[str]) -> int:
 
 
 def _handle_ca(action: str, args: list[str]) -> int:
+    """Handle CA.
+
+    Args:
+        action: Action consumed by handle CA.
+        args: Parsed command-line options consumed by the operation.
+    """
     config_path: Path | None = None
     result: int | None = None
     if action in {"validate", "apply"} and len(args) == 1:
@@ -952,6 +1163,11 @@ def _handle_ca(action: str, args: list[str]) -> int:
 
 
 def _validate_dnsmasq_config(path: Path) -> subprocess.CompletedProcess[str]:
+    """Validate dnsmasq config.
+
+    Args:
+        path: Filesystem path read, validated, or updated by the operation.
+    """
     required_upstream_error = _dnsmasq_required_upstream_error(path)
     if required_upstream_error:
         return subprocess.CompletedProcess(
@@ -967,6 +1183,11 @@ def _validate_dnsmasq_config(path: Path) -> subprocess.CompletedProcess[str]:
 
 
 def _dnsmasq_required_upstream_error(path: Path) -> str:
+    """Perform dnsmasq required upstream error.
+
+    Args:
+        path: Filesystem path read, validated, or updated by the operation.
+    """
     lines = [line.strip() for line in path.read_text(encoding="utf-8").splitlines()]
     if "# atlaso-dhcp-upstream-required" not in lines:
         return ""
@@ -986,6 +1207,11 @@ def _dnsmasq_required_upstream_error(path: Path) -> str:
 
 
 def _dnsmasq_config_uses_dnssec(path: Path) -> bool:
+    """Perform dnsmasq config uses dnssec.
+
+    Args:
+        path: Filesystem path read, validated, or updated by the operation.
+    """
     for raw_line in path.read_text(encoding="utf-8").splitlines():
         line = raw_line.strip().lower()
         if line == "dnssec":
@@ -994,6 +1220,9 @@ def _dnsmasq_config_uses_dnssec(path: Path) -> bool:
 
 
 def _dnsmasq_supports_dnssec() -> tuple[bool, str]:
+    """Perform dnsmasq supports dnssec.
+
+    """
     dnsmasq = shutil.which("dnsmasq")
     if dnsmasq is None:
         return False, "dnsmasq command not found"
@@ -1009,6 +1238,9 @@ def _dnsmasq_supports_dnssec() -> tuple[bool, str]:
 
 
 def _find_dnsmasq_trust_anchor_file() -> Path | None:
+    """Perform find dnsmasq trust anchor file.
+
+    """
     for candidate in DNSMASQ_DNSSEC_TRUST_ANCHOR_CANDIDATES:
         if candidate.is_file():
             return candidate
@@ -1016,6 +1248,11 @@ def _find_dnsmasq_trust_anchor_file() -> Path | None:
 
 
 def _prepare_dnsmasq_dnssec(path: Path) -> tuple[bool, str]:
+    """Perform prepare dnsmasq dnssec.
+
+    Args:
+        path: Filesystem path read, validated, or updated by the operation.
+    """
     if not _dnsmasq_config_uses_dnssec(path):
         return True, ""
     supported, detail = _dnsmasq_supports_dnssec()
@@ -1036,6 +1273,11 @@ def _prepare_dnsmasq_dnssec(path: Path) -> tuple[bool, str]:
 
 
 def _dnsmasq_tftp_roots(path: Path) -> list[Path]:
+    """Perform dnsmasq tftp roots.
+
+    Args:
+        path: Filesystem path read, validated, or updated by the operation.
+    """
     roots: list[Path] = []
     for raw_line in path.read_text(encoding="utf-8").splitlines():
         line = raw_line.strip()
@@ -1048,6 +1290,11 @@ def _dnsmasq_tftp_roots(path: Path) -> list[Path]:
 
 
 def _prepare_dnsmasq_tftp_roots(path: Path) -> None:
+    """Perform prepare dnsmasq tftp roots.
+
+    Args:
+        path: Filesystem path read, validated, or updated by the operation.
+    """
     allowed_root = ESXI_TFTP_ROOT.resolve()
     for root in _dnsmasq_tftp_roots(path):
         if root.resolve() != allowed_root:
@@ -1060,6 +1307,9 @@ def _prepare_dnsmasq_tftp_roots(path: Path) -> None:
 
 
 def _install_dnsmasq_service_dropin() -> None:
+    """Perform install dnsmasq service dropin.
+
+    """
     dnsmasq = shutil.which("dnsmasq") or "/usr/sbin/dnsmasq"
     DNSMASQ_SERVICE_DROPIN_DIR.mkdir(parents=True, exist_ok=True)
     DNSMASQ_SERVICE_DROPIN_PATH.write_text(
@@ -1076,6 +1326,9 @@ def _install_dnsmasq_service_dropin() -> None:
 
 
 def _read_dnsmasq_leases() -> int:
+    """Read dnsmasq leases.
+
+    """
     lease_path = DNSMASQ_LEASE_FILE_PATH.resolve()
     if not lease_path.is_relative_to(DNSMASQ_STATE_DIR.resolve()):
         print(f"dnsmasq lease file must stay under {DNSMASQ_STATE_DIR}", file=sys.stderr)
@@ -1090,6 +1343,11 @@ def _read_dnsmasq_leases() -> int:
 
 
 def _systemd_unit_logs(unit: str) -> int:
+    """Perform systemd unit logs.
+
+    Args:
+        unit: Unit consumed by systemd unit logs.
+    """
     journalctl = shutil.which("journalctl")
     if journalctl is None:
         print("journalctl command not found", file=sys.stderr)
@@ -1103,6 +1361,12 @@ def _systemd_unit_logs(unit: str) -> int:
 
 
 def _write_management_resolver(servers: list[str], domains: list[str]) -> None:
+    """Write management resolver.
+
+    Args:
+        servers: Servers consumed by write management resolver.
+        domains: Domains consumed by write management resolver.
+    """
     if NETWORKD_MGMT_CONFIG_PATH.is_file():
         lines = NETWORKD_MGMT_CONFIG_PATH.read_text(encoding="utf-8").splitlines()
         updated: list[str] = []
@@ -1130,6 +1394,13 @@ def _write_management_resolver(servers: list[str], domains: list[str]) -> None:
 
 
 def _configure_resolver(interface_name: str, servers: list[str], domains: list[str]) -> subprocess.CompletedProcess[str]:
+    """Perform configure resolver.
+
+    Args:
+        interface_name: Host network-interface name affected by the operation.
+        servers: Servers consumed by configure resolver.
+        domains: Domains consumed by configure resolver.
+    """
     _write_management_resolver(servers, domains)
     commands = [
         ["resolvectl", "dns", interface_name, *servers],
@@ -1145,6 +1416,11 @@ def _configure_resolver(interface_name: str, servers: list[str], domains: list[s
 
 
 def _configure_dhcp_resolver(interface_name: str) -> subprocess.CompletedProcess[str]:
+    """Perform configure dhcp resolver.
+
+    Args:
+        interface_name: Host network-interface name affected by the operation.
+    """
     _write_management_resolver([], [])
     result = _run(["resolvectl", "revert", interface_name])
     print(result.stdout, end="")
@@ -1153,10 +1429,19 @@ def _configure_dhcp_resolver(interface_name: str) -> subprocess.CompletedProcess
 
 
 def _configure_local_resolver() -> subprocess.CompletedProcess[str]:
+    """Perform configure local resolver.
+
+    """
     return _configure_resolver("eth0", ["127.0.0.1"], ["~."])
 
 
 def _handle_dnsmasq(action: str, args: list[str]) -> int:
+    """Handle dnsmasq.
+
+    Args:
+        action: Action consumed by handle dnsmasq.
+        args: Parsed command-line options consumed by the operation.
+    """
     if action == "logs":
         if args:
             print("dnsmasq logs does not accept a path", file=sys.stderr)
@@ -1228,6 +1513,11 @@ def _handle_dnsmasq(action: str, args: list[str]) -> int:
 
 
 def _validate_esxi_pxe_config_path(path_value: str) -> Path:
+    """Validate ESXi PXE config path.
+
+    Args:
+        path_value: Candidate path value to validate.
+    """
     path = Path(path_value).resolve()
     if path.suffix != ".json":
         raise ValueError("ESXi PXE manifest path must end with .json")
@@ -1239,6 +1529,11 @@ def _validate_esxi_pxe_config_path(path_value: str) -> Path:
 
 
 def _load_esxi_pxe_manifest(path: Path) -> dict:
+    """Load ESXi PXE manifest.
+
+    Args:
+        path: Filesystem path read, validated, or updated by the operation.
+    """
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
@@ -1265,10 +1560,20 @@ def _load_esxi_pxe_manifest(path: Path) -> dict:
 
 
 def _simple_pxe_filename(value: str) -> bool:
+    """Perform simple PXE filename.
+
+    Args:
+        value: Candidate value consumed by simple PXE filename.
+    """
     return bool(re.fullmatch(r"[A-Za-z0-9._-]+", value or "")) and "/" not in value and "\\" not in value and not value.startswith(".")
 
 
 def _find_pxe_boot_binary(filename: str) -> Path | None:
+    """Perform find PXE boot binary.
+
+    Args:
+        filename: Source filename associated with the parsed or reported content.
+    """
     for directory in PXE_BOOT_BINARY_DIRS:
         candidate = directory / filename
         if candidate.is_file():
@@ -1283,6 +1588,11 @@ def _find_pxe_boot_binary(filename: str) -> Path | None:
 
 
 def _esxi_pxe_boot_errors(boot: dict) -> list[str]:
+    """Perform ESXi PXE boot errors.
+
+    Args:
+        boot: Boot consumed by ESXi PXE boot errors.
+    """
     errors: list[str] = []
     if not isinstance(boot, dict):
         return ["ESXi PXE boot settings must be an object."]
@@ -1335,6 +1645,11 @@ def _esxi_pxe_boot_errors(boot: dict) -> list[str]:
 
 
 def _esxi_pxe_manifest_errors(payload: dict) -> list[str]:
+    """Perform ESXi PXE manifest errors.
+
+    Args:
+        payload: Validated request or task payload consumed by the operation.
+    """
     errors: list[str] = []
     seen_ids: set[int] = set()
     enabled_ids: set[int] = set()
@@ -1551,14 +1866,29 @@ def _esxi_pxe_manifest_errors(payload: dict) -> list[str]:
 
 
 def _remove_cdromboot(options: str) -> list[str]:
+    """Remove cdromboot.
+
+    Args:
+        options: Options controlling the operation.
+    """
     return [item for item in options.split() if item != "cdromBoot"]
 
 
 def _normalize_esxi_boot_path(value: str) -> str:
+    """Normalize ESXi boot path.
+
+    Args:
+        value: Candidate value consumed by normalize ESXi boot path.
+    """
     return value.strip().lstrip("/")
 
 
 def _bootif_from_mac_key(mac_key: str) -> str:
+    """Perform bootif from MAC key.
+
+    Args:
+        mac_key: Mac key consumed by bootif from MAC key.
+    """
     key = (mac_key or "").strip().lower()
     if re.fullmatch(r"01(-[0-9a-f]{2}){6}", key):
         return f"BOOTIF={key}"
@@ -1566,6 +1896,15 @@ def _bootif_from_mac_key(mac_key: str) -> str:
 
 
 def _render_esxi_boot_cfg(source_text: str, *, prefix_url: str, kickstart_url: str = "", bootif: str = "", fallback_netdevice: str = "") -> str:
+    """Render ESXi boot cfg.
+
+    Args:
+        source_text: Source text consumed by render ESXi boot cfg.
+        prefix_url: URL used for prefix.
+        kickstart_url: URL used for kickstart.
+        bootif: Bootif consumed by render ESXi boot cfg.
+        fallback_netdevice: Fallback netdevice consumed by render ESXi boot cfg.
+    """
     lines = source_text.replace("\r\n", "\n").replace("\r", "\n").splitlines()
     rendered: list[str] = []
     saw_prefix = False
@@ -1626,10 +1965,22 @@ def _render_esxi_boot_cfg(source_text: str, *, prefix_url: str, kickstart_url: s
 
 
 def _safe_relative_path(path: Path, base: Path) -> str:
+    """Return a safe relative path.
+
+    Args:
+        path: Filesystem path read, validated, or updated by the operation.
+        base: Filesystem path associated with base.
+    """
     return path.resolve().relative_to(base.resolve()).as_posix()
 
 
 def _find_under(root: Path, names: list[str]) -> Path | None:
+    """Perform find under.
+
+    Args:
+        root: Repository or filesystem root searched by the operation.
+        names: Names consumed by find under.
+    """
     wanted = {name.lower() for name in names}
     for candidate in root.rglob("*"):
         if candidate.is_file() and candidate.name.lower() in wanted:
@@ -1638,6 +1989,11 @@ def _find_under(root: Path, names: list[str]) -> Path | None:
 
 
 def _find_esxi_uefi_bootloader(root: Path) -> Path | None:
+    """Perform find ESXi uefi bootloader.
+
+    Args:
+        root: Repository or filesystem root searched by the operation.
+    """
     for directory in root.rglob("*"):
         if not directory.is_dir():
             continue
@@ -1651,6 +2007,12 @@ def _find_esxi_uefi_bootloader(root: Path) -> Path | None:
 
 
 def _copy_tree_contents(source: Path, destination: Path) -> None:
+    """Perform copy tree contents.
+
+    Args:
+        source: Source object or location from which data is obtained.
+        destination: Destination object or location receiving the result.
+    """
     destination.mkdir(parents=True, exist_ok=True)
     for child in source.iterdir():
         target = destination / child.name
@@ -1661,6 +2023,12 @@ def _copy_tree_contents(source: Path, destination: Path) -> None:
 
 
 def _copy_installer_iso_contents(source: Path, destination: Path) -> None:
+    """Perform copy installer ISO contents.
+
+    Args:
+        source: Source object or location from which data is obtained.
+        destination: Destination object or location receiving the result.
+    """
     if source.is_dir():
         _copy_tree_contents(source, destination)
         return
@@ -1686,6 +2054,12 @@ def _copy_installer_iso_contents(source: Path, destination: Path) -> None:
 
 
 def _render_pxelinux_config(*, kernel_path: str, boot_cfg_path: str) -> str:
+    """Render pxelinux config.
+
+    Args:
+        kernel_path: Filesystem path used for kernel.
+        boot_cfg_path: Filesystem path used for boot cfg.
+    """
     return "\n".join(
         [
             "DEFAULT install",
@@ -1700,6 +2074,9 @@ def _render_pxelinux_config(*, kernel_path: str, boot_cfg_path: str) -> str:
 
 
 def _default_esxi_ipxe_script() -> str:
+    """Perform default ESXi ipxe script.
+
+    """
     return "\n".join(
         [
             "#!ipxe",
@@ -1712,6 +2089,11 @@ def _default_esxi_ipxe_script() -> str:
 
 
 def _esxi_ipxe_script_text(boot: dict) -> str:
+    """Perform ESXi ipxe script text.
+
+    Args:
+        boot: Boot consumed by ESXi ipxe script text.
+    """
     text = str(boot.get("ipxe_script") or "").strip()
     if not text:
         text = _default_esxi_ipxe_script().strip()
@@ -1721,18 +2103,38 @@ def _esxi_ipxe_script_text(boot: dict) -> str:
 
 
 def _write_text(path: Path, text: str, mode: int = 0o644) -> None:
+    """Write text.
+
+    Args:
+        path: Filesystem path read, validated, or updated by the operation.
+        text: Text content consumed by the operation.
+        mode: Mode consumed by write text.
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text, encoding="utf-8")
     path.chmod(mode)
 
 
 def _copy_file(path: Path, target: Path, mode: int = 0o644) -> None:
+    """Perform copy file.
+
+    Args:
+        path: Filesystem path read, validated, or updated by the operation.
+        target: Target resource or location affected by the operation.
+        mode: Mode consumed by copy file.
+    """
     target.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(path, target)
     target.chmod(mode)
 
 
 def _remove_legacy_esxi_pxe_artifacts(generated_files: list[str], generated_tftp_files: list[str]) -> None:
+    """Remove legacy ESXi PXE artifacts.
+
+    Args:
+        generated_files: Generated files consumed by remove legacy ESXi PXE artifacts.
+        generated_tftp_files: Generated tftp files consumed by remove legacy ESXi PXE artifacts.
+    """
     generated = {Path(path).resolve() for path in [*generated_files, *generated_tftp_files]}
     for path in (
         ESXI_TFTP_ROOT / "bootx64.efi",
@@ -1745,10 +2147,21 @@ def _remove_legacy_esxi_pxe_artifacts(generated_files: list[str], generated_tftp
 
 
 def _managed_pxe_artifact_name(name: str) -> bool:
+    """Perform managed PXE artifact name.
+
+    Args:
+        name: Stable name identifying the resource or operation.
+    """
     return name == "default" or bool(re.fullmatch(r"01(?:-[0-9a-f]{2}){6}", name))
 
 
 def _remove_stale_esxi_pxe_host_artifacts(generated_files: list[str], generated_tftp_files: list[str]) -> None:
+    """Remove stale ESXi PXE host artifacts.
+
+    Args:
+        generated_files: Generated files consumed by remove stale ESXi PXE host artifacts.
+        generated_tftp_files: Generated tftp files consumed by remove stale ESXi PXE host artifacts.
+    """
     generated = {Path(path).resolve() for path in [*generated_files, *generated_tftp_files]}
     for path in (ESXI_TFTP_ROOT / "boot.cfg", ESXI_PXE_HTTP_BASE / "boot.cfg"):
         if path.resolve() not in generated:
@@ -1776,6 +2189,11 @@ def _remove_stale_esxi_pxe_host_artifacts(generated_files: list[str], generated_
 
 
 def _esxi_pxe_nginx_config(port: int) -> str:
+    """Perform ESXi PXE nginx config.
+
+    Args:
+        port: Network port contacted, validated, or configured by the operation.
+    """
     return "\n".join(
         [
             "# Managed by Atlaso. Local changes may be overwritten.",
@@ -1817,6 +2235,11 @@ def _esxi_pxe_nginx_config(port: int) -> str:
 
 
 def _activate_network_boot_media(payload: dict) -> list[str]:
+    """Perform activate network boot media.
+
+    Args:
+        payload: Validated request or task payload consumed by the operation.
+    """
     network_boot = payload.get("network_boot")
     if not isinstance(network_boot, dict):
         return []
@@ -1841,6 +2264,11 @@ def _activate_network_boot_media(payload: dict) -> list[str]:
 
 
 def _apply_esxi_pxe_manifest(payload: dict) -> int:
+    """Perform apply ESXi PXE manifest.
+
+    Args:
+        payload: Validated request or task payload consumed by the operation.
+    """
     ESXI_PXE_HTTP_ROOT.mkdir(parents=True, exist_ok=True)
     ESXI_PXE_HTTP_BASE.mkdir(parents=True, exist_ok=True)
     ESXI_PXE_IMAGE_HTTP_ROOT.mkdir(parents=True, exist_ok=True)
@@ -2020,6 +2448,12 @@ def _apply_esxi_pxe_manifest(payload: dict) -> int:
 
 
 def _handle_esxi_pxe(action: str, args: list[str]) -> int:
+    """Handle ESXi PXE.
+
+    Args:
+        action: Action consumed by handle ESXi PXE.
+        args: Parsed command-line options consumed by the operation.
+    """
     if len(args) != 1:
         print(f"esxi-pxe {action} requires exactly one staged manifest path", file=sys.stderr)
         return 2
@@ -2053,6 +2487,11 @@ def _handle_esxi_pxe(action: str, args: list[str]) -> int:
 
 
 def _load_ldap_config(path: Path) -> dict:
+    """Load LDAP config.
+
+    Args:
+        path: Filesystem path read, validated, or updated by the operation.
+    """
     payload = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(payload, dict):
         raise ValueError("LDAP staged config must be a JSON object.")
@@ -2060,6 +2499,11 @@ def _load_ldap_config(path: Path) -> dict:
 
 
 def _ldap_config_errors(payload: dict) -> list[str]:
+    """Perform LDAP config errors.
+
+    Args:
+        payload: Validated request or task payload consumed by the operation.
+    """
     errors: list[str] = []
     if payload.get("schema_version") != 1:
         errors.append("LDAP staged config schema_version must be 1.")
@@ -2164,6 +2608,11 @@ def _ldap_config_errors(payload: dict) -> list[str]:
         visited: set[int] = set()
 
         def visit(group_id: int) -> None:
+            """Perform visit.
+
+            Args:
+                group_id: Stable identifier of the associated group resource.
+            """
             if group_id in visiting:
                 errors.append(f"{label}: nested LDAP groups contain a cycle.")
                 return
@@ -2204,6 +2653,11 @@ def _ldap_config_errors(payload: dict) -> list[str]:
 
 
 def _openldap_schema_path(name: str) -> Path:
+    """Perform openldap schema path.
+
+    Args:
+        name: Stable name identifying the resource or operation.
+    """
     candidates = [
         LDAP_CONFIG_ROOT / "schema" / f"{name}.schema",
         Path("/usr/share/openldap/schema") / f"{name}.schema",
@@ -2217,6 +2671,13 @@ def _render_ldap_slapd_config(
     state_root: Path = LDAP_STATE_DIR,
     runtime_root: Path = LDAP_RUNTIME_DIR,
 ) -> str:
+    """Render LDAP slapd config.
+
+    Args:
+        payload: Validated request or task payload consumed by the operation.
+        state_root: Filesystem path associated with state root.
+        runtime_root: Filesystem path associated with runtime root.
+    """
     service = payload["service"]
     policy = service["password_policy"]
     lines = [
@@ -2295,17 +2756,33 @@ def _render_ldap_slapd_config(
 
 
 def _ldif_line(attribute: str, value: object) -> str:
+    """Perform ldif line.
+
+    Args:
+        attribute: Attribute consumed by ldif line.
+        value: Candidate value consumed by ldif line.
+    """
     encoded = base64.b64encode(str(value).encode("utf-8")).decode("ascii")
     return f"{attribute}:: {encoded}"
 
 
 def _ldap_entry_exists(dn: str) -> bool:
+    """Perform LDAP entry exists.
+
+    Args:
+        dn: Dn consumed by LDAP entry exists.
+    """
     ldapsearch = shutil.which("ldapsearch") or "ldapsearch"
     result = _run([ldapsearch, "-LLL", "-o", "ldif-wrap=no", "-Y", "EXTERNAL", "-H", "ldapi:///", "-b", dn, "-s", "base", "dn"])
     return result.returncode == 0 and any(line.lower().startswith("dn:") for line in result.stdout.splitlines())
 
 
 def _ldap_modify(ldif: str) -> int:
+    """Perform LDAP modify.
+
+    Args:
+        ldif: Ldif consumed by LDAP modify.
+    """
     ldapmodify = shutil.which("ldapmodify") or "ldapmodify"
     result = _run_with_input([ldapmodify, "-Y", "EXTERNAL", "-H", "ldapi:///"], ldif)
     if result.returncode != 0:
@@ -2314,6 +2791,13 @@ def _ldap_modify(ldif: str) -> int:
 
 
 def _ldap_upsert_entry(dn: str, attributes: dict[str, list[str] | str], *, secret_attributes: set[str] | None = None) -> int:
+    """Perform LDAP upsert entry.
+
+    Args:
+        dn: Dn consumed by LDAP upsert entry.
+        attributes: Attributes consumed by LDAP upsert entry.
+        secret_attributes: Secret attributes consumed by LDAP upsert entry.
+    """
     secret_attributes = secret_attributes or set()
     normalized = {
         attribute: values if isinstance(values, list) else [values]
@@ -2340,6 +2824,12 @@ def _ldap_upsert_entry(dn: str, attributes: dict[str, list[str] | str], *, secre
 
 
 def _ldap_delete_attribute(dn: str, attribute: str) -> int:
+    """Perform LDAP delete attribute.
+
+    Args:
+        dn: Dn consumed by LDAP delete attribute.
+        attribute: Attribute consumed by LDAP delete attribute.
+    """
     if not _ldap_entry_exists(dn):
         return 0
     ldif = "\n".join([_ldif_line("dn", dn), "changetype: modify", f"replace: {attribute}", "-", ""])
@@ -2348,6 +2838,11 @@ def _ldap_delete_attribute(dn: str, attribute: str) -> int:
 
 
 def _ldap_list_dns(base_dn: str) -> list[str]:
+    """Perform LDAP list DNS.
+
+    Args:
+        base_dn: Base dn consumed by LDAP list DNS.
+    """
     ldapsearch = shutil.which("ldapsearch") or "ldapsearch"
     result = _run([ldapsearch, "-LLL", "-o", "ldif-wrap=no", "-Y", "EXTERNAL", "-H", "ldapi:///", "-b", base_dn, "-s", "one", "dn"])
     if result.returncode != 0:
@@ -2365,6 +2860,11 @@ def _ldap_list_dns(base_dn: str) -> list[str]:
 
 
 def _ldap_delete_entries(dns: list[str]) -> int:
+    """Perform LDAP delete entries.
+
+    Args:
+        dns: Dns consumed by LDAP delete entries.
+    """
     ldapdelete = shutil.which("ldapdelete") or "ldapdelete"
     for dn in dns:
         result = _run([ldapdelete, "-Y", "EXTERNAL", "-H", "ldapi:///", dn])
@@ -2375,6 +2875,12 @@ def _ldap_delete_entries(dns: list[str]) -> int:
 
 
 def _ldap_reconcile_organization(organization: dict, policy: dict) -> int:
+    """Perform LDAP reconcile organization.
+
+    Args:
+        organization: Organization consumed by LDAP reconcile organization.
+        policy: Policy consumed by LDAP reconcile organization.
+    """
     suffix = organization["suffix_dn"]
     root_rdn = suffix.split(",", 1)[0]
     root_attribute, root_value = root_rdn.split("=", 1)
@@ -2513,6 +3019,11 @@ def _ldap_reconcile_organization(organization: dict, policy: dict) -> int:
 
 
 def _ldap_listener_urls(service: dict) -> str:
+    """Perform LDAP listener urls.
+
+    Args:
+        service: Atlaso or host service affected by the operation.
+    """
     urls = ["ldapi:///"]
     for raw_address in re.split(r"[\s,]+", str(service.get("listen_address") or "")):
         address = raw_address.strip()
@@ -2531,6 +3042,11 @@ def _ldap_listener_urls(service: dict) -> str:
 
 
 def _install_ldap_listener_config(service: dict) -> None:
+    """Perform install LDAP listener config.
+
+    Args:
+        service: Atlaso or host service affected by the operation.
+    """
     listener_urls = _ldap_listener_urls(service)
     LDAP_SYSTEMD_DROPIN_DIR.mkdir(parents=True, exist_ok=True)
     LDAP_SYSTEMD_DROPIN_PATH.write_text(
@@ -2556,6 +3072,9 @@ def _install_ldap_listener_config(service: dict) -> None:
 
 
 def _ldap_account_name() -> str:
+    """Perform LDAP account name.
+
+    """
     for name in ("ldap", "openldap"):
         try:
             pwd.getpwnam(name)
@@ -2566,7 +3085,11 @@ def _ldap_account_name() -> str:
 
 
 def _prepare_ldap_runtime_dir(*, runtime_dir: Path = LDAP_RUNTIME_DIR) -> None:
-    """Prepare slapd's volatile PID/args directory for first apply and restart."""
+    """Prepare slapd's volatile PID/args directory for first apply and restart.
+
+    Args:
+        runtime_dir: Filesystem path associated with runtime dir.
+    """
     account_name = _ldap_account_name()
     runtime_dir.mkdir(parents=True, exist_ok=True)
     shutil.chown(runtime_dir, user=account_name, group=account_name)
@@ -2574,6 +3097,11 @@ def _prepare_ldap_runtime_dir(*, runtime_dir: Path = LDAP_RUNTIME_DIR) -> None:
 
 
 def _ldap_config_suffixes(config_ldif: str) -> dict[int, str]:
+    """Perform LDAP config suffixes.
+
+    Args:
+        config_ldif: Config ldif consumed by LDAP config suffixes.
+    """
     suffixes: dict[int, str] = {}
     current_index: int | None = None
     for raw_line in config_ldif.splitlines():
@@ -2589,6 +3117,12 @@ def _ldap_config_suffixes(config_ldif: str) -> dict[int, str]:
 
 
 def _restore_ldap_recovery(payload: dict, config_dir: Path) -> int:
+    """Perform restore LDAP recovery.
+
+    Args:
+        payload: Validated request or task payload consumed by the operation.
+        config_dir: Filesystem path associated with config dir.
+    """
     recovery = payload.get("recovery_import")
     if not isinstance(recovery, dict) or not recovery.get("payload_b64"):
         return 0
@@ -2672,6 +3206,11 @@ def _restore_ldap_recovery(payload: dict, config_dir: Path) -> int:
 
 
 def _remove_obsolete_ldap_data_directories(payload: dict) -> None:
+    """Remove obsolete LDAP data directories.
+
+    Args:
+        payload: Validated request or task payload consumed by the operation.
+    """
     desired_slugs = {
         str(organization.get("slug") or "")
         for organization in payload.get("organizations", [])
@@ -2689,6 +3228,11 @@ def _remove_obsolete_ldap_data_directories(payload: dict) -> None:
 
 
 def _apply_ldap_config(payload: dict) -> int:
+    """Perform apply LDAP config.
+
+    Args:
+        payload: Validated request or task payload consumed by the operation.
+    """
     service = payload["service"]
     if not service.get("enabled"):
         result = _run(["systemctl", "disable", "--now", "slapd.service"])
@@ -2800,6 +3344,12 @@ def _apply_ldap_config(payload: dict) -> int:
 
 
 def _handle_ldap_inner(action: str, args: list[str]) -> int:
+    """Handle LDAP inner.
+
+    Args:
+        action: Action consumed by handle LDAP inner.
+        args: Parsed command-line options consumed by the operation.
+    """
     if action == "authenticate":
         if len(args) != 1:
             return 1
@@ -3004,6 +3554,12 @@ def _handle_ldap_inner(action: str, args: list[str]) -> int:
 
 
 def _handle_ldap(action: str, args: list[str]) -> int:
+    """Handle LDAP.
+
+    Args:
+        action: Action consumed by handle LDAP.
+        args: Parsed command-line options consumed by the operation.
+    """
     config_path: Path | None = None
     result: int | None = None
     if action in {"validate", "apply"} and len(args) == 1:
@@ -3020,11 +3576,21 @@ def _handle_ldap(action: str, args: list[str]) -> int:
 
 
 def _kms_config_enabled(path: Path) -> bool:
+    """Perform KMS config enabled.
+
+    Args:
+        path: Filesystem path read, validated, or updated by the operation.
+    """
     payload = _read_kms_config(path)
     return payload.get("enabled") is True
 
 
 def _read_kms_config(path: Path) -> dict:
+    """Read KMS config.
+
+    Args:
+        path: Filesystem path read, validated, or updated by the operation.
+    """
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
@@ -3035,6 +3601,11 @@ def _read_kms_config(path: Path) -> dict:
 
 
 def _kms_config_errors(path: Path) -> list[str]:
+    """Perform KMS config errors.
+
+    Args:
+        path: Filesystem path read, validated, or updated by the operation.
+    """
     errors: list[str] = []
     try:
         payload = _read_kms_config(path)
@@ -3242,6 +3813,11 @@ def _kms_config_errors(path: Path) -> list[str]:
 
 
 def _install_kms_service(config_path: Path) -> None:
+    """Perform install KMS service.
+
+    Args:
+        config_path: Filesystem path containing the operation configuration.
+    """
     KMS_SERVICE_PATH.parent.mkdir(parents=True, exist_ok=True)
     KMS_SERVICE_PATH.write_text(
         "\n".join(
@@ -3294,6 +3870,12 @@ def _install_kms_service(config_path: Path) -> None:
 
 
 def _handle_kms(action: str, args: list[str]) -> int:
+    """Handle KMS.
+
+    Args:
+        action: Action consumed by handle KMS.
+        args: Parsed command-line options consumed by the operation.
+    """
     if len(args) != 1:
         print(f"kms {action} requires exactly one staged config path", file=sys.stderr)
         return 2
@@ -3406,6 +3988,11 @@ def _handle_kms(action: str, args: list[str]) -> int:
 
 
 def _ntpd_config_enabled(path: Path) -> bool:
+    """Perform ntpd config enabled.
+
+    Args:
+        path: Filesystem path read, validated, or updated by the operation.
+    """
     for line in path.read_text(encoding="utf-8").splitlines():
         stripped = line.strip().lower()
         if stripped.startswith("# atlaso ntp enabled:"):
@@ -3414,6 +4001,11 @@ def _ntpd_config_enabled(path: Path) -> bool:
 
 
 def _parse_ntpd_server(value: str) -> tuple[str, int | None, bool]:
+    """Parse ntpd server.
+
+    Args:
+        value: Candidate value consumed by parse ntpd server.
+    """
     source = str(value or "").strip()
     if not source:
         raise ValueError("source is empty")
@@ -3457,6 +4049,11 @@ def _parse_ntpd_server(value: str) -> tuple[str, int | None, bool]:
 
 
 def _ntpd_config_errors(path: Path) -> list[str]:
+    """Perform ntpd config errors.
+
+    Args:
+        path: Filesystem path read, validated, or updated by the operation.
+    """
     errors: list[str] = []
     servers: list[str] = []
     listen_addresses: list[str] = []
@@ -3470,6 +4067,11 @@ def _ntpd_config_errors(path: Path) -> list[str]:
     enabled = _ntpd_config_enabled(path)
 
     def add_allow_entry(value: str) -> None:
+        """Perform add allow entry.
+
+        Args:
+            value: Candidate value consumed by add allow entry.
+        """
         normalized = value.strip().lower()
         if normalized and normalized not in allow_entries:
             allow_entries.append(normalized)
@@ -3591,6 +4193,9 @@ def _ntpd_config_errors(path: Path) -> list[str]:
 
 
 def _ntpd_supports_nts() -> bool:
+    """Perform ntpd supports nts.
+
+    """
     ntpd = shutil.which("ntpd")
     if ntpd is None:
         return False
@@ -3603,6 +4208,9 @@ def _ntpd_supports_nts() -> bool:
 
 
 def _ntpd_runtime_identity_result() -> tuple[list[str], list[str]]:
+    """Perform ntpd runtime identity result.
+
+    """
     errors: list[str] = []
     probe_errors: list[str] = []
     rpm = shutil.which("rpm")
@@ -3639,11 +4247,19 @@ def _ntpd_runtime_identity_result() -> tuple[list[str], list[str]]:
 
 
 def _ntpd_runtime_identity_errors() -> list[str]:
+    """Perform ntpd runtime identity errors.
+
+    """
     errors, probe_errors = _ntpd_runtime_identity_result()
     return [*errors, *probe_errors]
 
 
 def _install_ntpd_config(config_path: Path) -> None:
+    """Perform install ntpd config.
+
+    Args:
+        config_path: Filesystem path containing the operation configuration.
+    """
     NTP_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
     NTP_STATE_DIR.mkdir(parents=True, exist_ok=True)
     try:
@@ -3664,6 +4280,11 @@ def _install_ntpd_config(config_path: Path) -> None:
 
 
 def _ntpd_nts_server_enabled(config_path: Path) -> bool:
+    """Perform ntpd nts server enabled.
+
+    Args:
+        config_path: Filesystem path containing the operation configuration.
+    """
     return any(
         line.strip().lower() == "nts enable"
         for line in config_path.read_text(encoding="utf-8").splitlines()
@@ -3671,6 +4292,9 @@ def _ntpd_nts_server_enabled(config_path: Path) -> bool:
 
 
 def _remove_ntpd_nts_server_material() -> list[str]:
+    """Remove ntpd nts server material.
+
+    """
     removed: list[str] = []
     for path in (NTP_NTS_COOKIE_PATH, NTP_CERT_DIR):
         if path.is_symlink() or path.is_file():
@@ -3683,6 +4307,11 @@ def _remove_ntpd_nts_server_material() -> list[str]:
 
 
 def _ntpd_nts_server_key_path(config_path: Path) -> Path | None:
+    """Perform ntpd nts server key path.
+
+    Args:
+        config_path: Filesystem path containing the operation configuration.
+    """
     for raw_line in config_path.read_text(encoding="utf-8").splitlines():
         line = raw_line.strip()
         if line.lower().startswith("nts key "):
@@ -3693,6 +4322,11 @@ def _ntpd_nts_server_key_path(config_path: Path) -> Path | None:
 
 
 def _grant_ntpd_nts_server_key_read(config_path: Path) -> Path | None:
+    """Perform grant ntpd nts server key read.
+
+    Args:
+        config_path: Filesystem path containing the operation configuration.
+    """
     key_path = _ntpd_nts_server_key_path(config_path)
     if key_path is None or not key_path.exists():
         return key_path
@@ -3704,6 +4338,9 @@ def _grant_ntpd_nts_server_key_read(config_path: Path) -> Path | None:
 
 
 def _ntpd_status() -> int:
+    """Perform ntpd status.
+
+    """
     ntpq = shutil.which("ntpq")
     if ntpq is None:
         print(json.dumps({"error": "ntpq command not found"}, sort_keys=True))
@@ -3732,10 +4369,19 @@ def _ntpd_status() -> int:
 
 
 def _ntpd_logs() -> int:
+    """Perform ntpd logs.
+
+    """
     return _systemd_unit_logs("ntpd.service")
 
 
 def _handle_nginx(action: str, args: list[str]) -> int:
+    """Handle nginx.
+
+    Args:
+        action: Action consumed by handle nginx.
+        args: Parsed command-line options consumed by the operation.
+    """
     if action not in {"logs", "access-logs", "error-logs"}:
         print(f"unsupported nginx action: {action}", file=sys.stderr)
         return 2
@@ -3764,6 +4410,9 @@ def _handle_nginx(action: str, args: list[str]) -> int:
 
 
 def _ntpd_capabilities() -> int:
+    """Perform ntpd capabilities.
+
+    """
     ntpd = shutil.which("ntpd")
     if ntpd is None:
         print(json.dumps({"nts": False, "error": "ntpd command not found"}, sort_keys=True))
@@ -3803,6 +4452,12 @@ def _ntpd_capabilities() -> int:
 
 
 def _handle_ntpd(action: str, args: list[str]) -> int:
+    """Handle ntpd.
+
+    Args:
+        action: Action consumed by handle ntpd.
+        args: Parsed command-line options consumed by the operation.
+    """
     if action == "capabilities":
         if args:
             print("ntpd capabilities does not accept a path", file=sys.stderr)
@@ -3899,6 +4554,11 @@ def _handle_ntpd(action: str, args: list[str]) -> int:
 
 
 def _validate_appliance_settings_config_path(path_value: str) -> Path:
+    """Validate appliance settings config path.
+
+    Args:
+        path_value: Candidate path value to validate.
+    """
     path = Path(_validate_path(path_value)).resolve()
     if path.suffix != ".json":
         raise ValueError("appliance settings config path must end with .json")
@@ -3910,6 +4570,11 @@ def _validate_appliance_settings_config_path(path_value: str) -> Path:
 
 
 def _load_appliance_settings_config(path: Path) -> dict:
+    """Load appliance settings config.
+
+    Args:
+        path: Filesystem path read, validated, or updated by the operation.
+    """
     with path.open("r", encoding="utf-8") as handle:
         payload = json.load(handle)
     if not isinstance(payload, dict):
@@ -3918,6 +4583,11 @@ def _load_appliance_settings_config(path: Path) -> dict:
 
 
 def _appliance_settings_config_errors(path: Path) -> list[str]:
+    """Perform appliance settings config errors.
+
+    Args:
+        path: Filesystem path read, validated, or updated by the operation.
+    """
     errors: list[str] = []
     try:
         payload = _load_appliance_settings_config(path)
@@ -4053,6 +4723,12 @@ def _appliance_settings_config_errors(path: Path) -> list[str]:
 
 
 def _atlaso_service_loopback_dropin(host: str, port: int) -> str:
+    """Perform atlaso service loopback dropin.
+
+    Args:
+        host: Host consumed by atlaso service loopback dropin.
+        port: Network port contacted, validated, or configured by the operation.
+    """
     return "\n".join(
         [
             "# Managed by Atlaso. Local changes may be overwritten.",
@@ -4065,6 +4741,11 @@ def _atlaso_service_loopback_dropin(host: str, port: int) -> str:
 
 
 def _grant_atlaso_service_key_read(key_path: Path) -> None:
+    """Perform grant atlaso service key read.
+
+    Args:
+        key_path: Filesystem path used for key.
+    """
     os.chmod(key_path, 0o640)
     try:
         shutil.chown(key_path, user="root", group="atlaso")
@@ -4074,6 +4755,11 @@ def _grant_atlaso_service_key_read(key_path: Path) -> None:
 
 
 def _run_checked_commands(commands: list[list[str]]) -> int:
+    """Run checked commands.
+
+    Args:
+        commands: Commands consumed by run checked commands.
+    """
     for command in commands:
         result = _run(command)
         print(result.stdout, end="")
@@ -4084,10 +4770,16 @@ def _run_checked_commands(commands: list[list[str]]) -> int:
 
 
 def _nginx_binary() -> str | None:
+    """Perform nginx binary.
+
+    """
     return shutil.which("nginx") or ("/usr/sbin/nginx" if Path("/usr/sbin/nginx").exists() else None)
 
 
 def _install_nginx_include() -> None:
+    """Perform install nginx include.
+
+    """
     NGINX_SITES_DIR.mkdir(parents=True, exist_ok=True)
     NGINX_CONF_INCLUDE_PATH.parent.mkdir(parents=True, exist_ok=True)
     include_text = "\n".join(
@@ -4105,6 +4797,11 @@ def _install_nginx_include() -> None:
 
 
 def _http_block_end_offset(text: str) -> int:
+    """Perform HTTP block end offset.
+
+    Args:
+        text: Text content consumed by the operation.
+    """
     match = re.search(r"(?m)^http\s*\{", text)
     if not match:
         return -1
@@ -4123,6 +4820,9 @@ def _http_block_end_offset(text: str) -> int:
 
 
 def _ensure_nginx_main_config_includes_atlaso() -> None:
+    """Ensure nginx main config includes atlaso.
+
+    """
     if not NGINX_MAIN_CONFIG_PATH.exists():
         return
     text = NGINX_MAIN_CONFIG_PATH.read_text(encoding="utf-8")
@@ -4142,6 +4842,9 @@ def _ensure_nginx_main_config_includes_atlaso() -> None:
 
 
 def _nginx_test_command() -> subprocess.CompletedProcess[str]:
+    """Perform nginx test command.
+
+    """
     nginx = _nginx_binary()
     if nginx is None:
         return subprocess.CompletedProcess(["nginx", "-t"], 127, "", "nginx command not found\n")
@@ -4149,6 +4852,9 @@ def _nginx_test_command() -> subprocess.CompletedProcess[str]:
 
 
 def _reload_nginx() -> int:
+    """Perform reload nginx.
+
+    """
     commands = [["systemctl", "enable", "--now", "nginx"]]
     reload_result = _run(["systemctl", "reload", "nginx"])
     if reload_result.returncode == 0:
@@ -4160,6 +4866,11 @@ def _reload_nginx() -> int:
 
 
 def _nginx_site_metadata(text: str) -> list[tuple[str, set[str]]]:
+    """Perform nginx site metadata.
+
+    Args:
+        text: Text content consumed by the operation.
+    """
     metadata: list[tuple[str, set[str]]] = []
     for block in re.findall(r"server\s*\{(?P<body>.*?)\n\}", text, flags=re.DOTALL):
         names: set[str] = set()
@@ -4179,6 +4890,12 @@ def _nginx_site_metadata(text: str) -> list[tuple[str, set[str]]]:
 
 
 def _nginx_site_conflict(site_path: Path, text: str) -> str:
+    """Perform nginx site conflict.
+
+    Args:
+        site_path: Filesystem path used for site.
+        text: Text content consumed by the operation.
+    """
     if not NGINX_SITES_DIR.exists():
         return ""
     candidate = _nginx_site_metadata(text)
@@ -4193,6 +4910,12 @@ def _nginx_site_conflict(site_path: Path, text: str) -> str:
 
 
 def _install_nginx_site(site_path: Path, text: str) -> int:
+    """Perform install nginx site.
+
+    Args:
+        site_path: Filesystem path used for site.
+        text: Text content consumed by the operation.
+    """
     nginx = _nginx_binary()
     if nginx is None:
         print("nginx command not found", file=sys.stderr)
@@ -4222,6 +4945,11 @@ def _install_nginx_site(site_path: Path, text: str) -> int:
 
 
 def _remove_nginx_site(site_path: Path) -> int:
+    """Remove nginx site.
+
+    Args:
+        site_path: Filesystem path used for site.
+    """
     if not site_path.exists():
         return 0
     _install_nginx_include()
@@ -4235,6 +4963,11 @@ def _remove_nginx_site(site_path: Path) -> int:
 
 
 def _validate_public_services_config_path(path_value: str) -> Path:
+    """Validate public services config path.
+
+    Args:
+        path_value: Candidate path value to validate.
+    """
     path = Path(_validate_path(path_value)).resolve()
     if path.suffix != ".conf":
         raise ValueError("Public services nginx config path must end with .conf")
@@ -4246,6 +4979,11 @@ def _validate_public_services_config_path(path_value: str) -> Path:
 
 
 def _public_services_config_errors(path: Path) -> list[str]:
+    """Perform public services config errors.
+
+    Args:
+        path: Filesystem path read, validated, or updated by the operation.
+    """
     try:
         text = path.read_text(encoding="utf-8")
     except OSError as exc:
@@ -4374,6 +5112,11 @@ def _public_services_config_errors(path: Path) -> list[str]:
 
 
 def _public_services_prod_alias_path(alias: str) -> Path:
+    """Perform public services prod alias path.
+
+    Args:
+        alias: Alias consumed by public services prod alias path.
+    """
     normalized = alias.strip().rstrip("/")
     if normalized.endswith("/$1"):
         normalized = normalized[:-3]
@@ -4381,6 +5124,12 @@ def _public_services_prod_alias_path(alias: str) -> Path:
 
 
 def _handle_public_services(action: str, args: list[str]) -> int:
+    """Handle public services.
+
+    Args:
+        action: Action consumed by handle public services.
+        args: Parsed command-line options consumed by the operation.
+    """
     if len(args) != 1:
         print(f"public-services {action} requires exactly one staged nginx config path", file=sys.stderr)
         return 2
@@ -4414,6 +5163,13 @@ def _handle_public_services(action: str, args: list[str]) -> int:
 
 
 def _management_proxy_location(upstream_host: str, upstream_port: int, forwarded_proto: str) -> list[str]:
+    """Perform management proxy location.
+
+    Args:
+        upstream_host: Upstream host consumed by management proxy location.
+        upstream_port: Upstream port consumed by management proxy location.
+        forwarded_proto: Forwarded proto consumed by management proxy location.
+    """
     return [
         "  client_max_body_size 1g;",
         f"  if (-f {ATLASO_UPDATE_MAINTENANCE_PATH}) {{ return 503; }}",
@@ -4433,6 +5189,12 @@ def _management_proxy_location(upstream_host: str, upstream_port: int, forwarded
 
 
 def _management_ca_download_locations(upstream_host: str, upstream_port: int) -> list[str]:
+    """Perform management CA download locations.
+
+    Args:
+        upstream_host: Upstream host consumed by management CA download locations.
+        upstream_port: Upstream port consumed by management CA download locations.
+    """
     lines: list[str] = []
     for path in ("/ca/downloads/root-ca.pem", "/ca/downloads/ca-bundle.pem"):
         lines.extend(
@@ -4451,6 +5213,13 @@ def _management_ca_download_locations(upstream_host: str, upstream_port: int) ->
 
 
 def _management_nginx_config(payload: dict, cert_path: Path | None = None, key_path: Path | None = None) -> str:
+    """Perform management nginx config.
+
+    Args:
+        payload: Validated request or task payload consumed by the operation.
+        cert_path: Filesystem path used for cert.
+        key_path: Filesystem path used for key.
+    """
     fqdn = str(payload["fqdn"])
     https_enabled = bool(payload.get("management_https_enabled"))
     public_http_port = int(payload.get("management_public_http_port") or 80)
@@ -4495,6 +5264,11 @@ def _management_nginx_config(payload: dict, cert_path: Path | None = None, key_p
 
 
 def _configure_atlaso_management_https(payload: dict) -> int:
+    """Perform configure atlaso management HTTPS.
+
+    Args:
+        payload: Validated request or task payload consumed by the operation.
+    """
     enabled = bool(payload.get("management_https_enabled"))
     changed = False
     port = int(payload.get("management_upstream_port") or payload.get("management_http_port") or 8000)
@@ -4546,6 +5320,11 @@ def _configure_atlaso_management_https(payload: dict) -> int:
 
 
 def _root_ssh_config(enabled: bool) -> str:
+    """Perform root SSH config.
+
+    Args:
+        enabled: Whether the associated resource or behavior is enabled.
+    """
     lines = [
         "# Managed by Atlaso. Local changes may be overwritten.",
         f"PermitRootLogin {'yes' if enabled else 'no'}",
@@ -4557,6 +5336,11 @@ def _root_ssh_config(enabled: bool) -> str:
 
 
 def _ensure_sshd_dropin_include(*, unset_global_options: set[str] | None = None) -> int:
+    """Ensure sshd dropin include.
+
+    Args:
+        unset_global_options: Unset global options consumed by ensure sshd dropin include.
+    """
     include_line = "Include /etc/ssh/sshd_config.d/*.conf"
     unset_options = {option.lower() for option in (unset_global_options or set())}
     try:
@@ -4594,6 +5378,11 @@ def _ensure_sshd_dropin_include(*, unset_global_options: set[str] | None = None)
 
 
 def _configure_root_ssh(enabled: bool) -> int:
+    """Perform configure root SSH.
+
+    Args:
+        enabled: Whether the associated resource or behavior is enabled.
+    """
     SSHD_CONFIG_DIR.mkdir(parents=True, exist_ok=True)
     include_result = _ensure_sshd_dropin_include(
         unset_global_options={"PermitRootLogin", "PasswordAuthentication", "KbdInteractiveAuthentication"}
@@ -4622,6 +5411,11 @@ def _configure_root_ssh(enabled: bool) -> int:
 
 
 def _configure_web_terminal(enabled: bool) -> int:
+    """Perform configure web terminal.
+
+    Args:
+        enabled: Whether the associated resource or behavior is enabled.
+    """
     SSHD_CONFIG_DIR.mkdir(parents=True, exist_ok=True)
     include_result = _ensure_sshd_dropin_include()
     if include_result != 0:
@@ -4671,6 +5465,11 @@ def _configure_web_terminal(enabled: bool) -> int:
 
 
 def _validate_web_terminal_request_path(path_value: str) -> Path:
+    """Validate web terminal request path.
+
+    Args:
+        path_value: Candidate path value to validate.
+    """
     path = Path(_validate_path(path_value)).resolve()
     if path.suffix != ".json" or not path.is_relative_to(WEB_TERMINAL_REQUEST_DIR):
         raise ValueError(f"web terminal request must be JSON staged under {WEB_TERMINAL_REQUEST_DIR}")
@@ -4680,6 +5479,12 @@ def _validate_web_terminal_request_path(path_value: str) -> Path:
 
 
 def _handle_web_terminal(action: str, args: list[str]) -> int:
+    """Handle web terminal.
+
+    Args:
+        action: Action consumed by handle web terminal.
+        args: Parsed command-line options consumed by the operation.
+    """
     if action == "status":
         if args:
             return 2
@@ -4742,6 +5547,11 @@ def _handle_web_terminal(action: str, args: list[str]) -> int:
 
 
 def _apply_hostname(fqdn: str) -> int:
+    """Perform apply hostname.
+
+    Args:
+        fqdn: Fqdn consumed by apply hostname.
+    """
     hostnamectl = shutil.which("hostnamectl")
     if hostnamectl is not None:
         result = _run([hostnamectl, "set-hostname", fqdn])
@@ -4763,6 +5573,11 @@ def _apply_hostname(fqdn: str) -> int:
 
 
 def _configure_powercli_ceip(enabled: bool) -> tuple[int, str]:
+    """Perform configure powercli ceip.
+
+    Args:
+        enabled: Whether the associated resource or behavior is enabled.
+    """
     pwsh = shutil.which("pwsh")
     if pwsh is None:
         return 0, "skipped: PowerShell is not installed"
@@ -4797,6 +5612,11 @@ def _configure_powercli_ceip(enabled: bool) -> tuple[int, str]:
 
 
 def _apply_vcf_download_tool_ceip(enabled: bool) -> tuple[int, str]:
+    """Perform apply VCF download tool ceip.
+
+    Args:
+        enabled: Whether the associated resource or behavior is enabled.
+    """
     tool_candidates = [
         VCF_DEPOT_RUNTIME_TOOL_DIR / "vcf-download-tool",
         VCF_DEPOT_RUNTIME_TOOL_DIR / "bin" / "vcf-download-tool",
@@ -4826,6 +5646,12 @@ def _apply_vcf_download_tool_ceip(enabled: bool) -> tuple[int, str]:
 
 
 def _handle_appliance_settings(action: str, args: list[str]) -> int:
+    """Handle appliance settings.
+
+    Args:
+        action: Action consumed by handle appliance settings.
+        args: Parsed command-line options consumed by the operation.
+    """
     if len(args) != 1:
         print(f"appliance-settings {action} requires exactly one staged JSON config path", file=sys.stderr)
         return 2
@@ -4914,6 +5740,11 @@ def _handle_appliance_settings(action: str, args: list[str]) -> int:
 
 
 def _validate_local_users_config_path(path_value: str) -> Path:
+    """Validate local users config path.
+
+    Args:
+        path_value: Candidate path value to validate.
+    """
     path = Path(_validate_path(path_value)).resolve()
     if path.suffix != ".json":
         raise ValueError("local users config path must end with .json")
@@ -4925,6 +5756,11 @@ def _validate_local_users_config_path(path_value: str) -> Path:
 
 
 def _load_local_users_config(path: Path) -> dict:
+    """Load local users config.
+
+    Args:
+        path: Filesystem path read, validated, or updated by the operation.
+    """
     with path.open("r", encoding="utf-8") as handle:
         payload = json.load(handle)
     if not isinstance(payload, dict):
@@ -4933,10 +5769,22 @@ def _load_local_users_config(path: Path) -> dict:
 
 
 def _local_user_home(username: str) -> str:
+    """Perform local user home.
+
+    Args:
+        username: Atlaso account name associated with the operation.
+    """
     return (LOCAL_USERS_HOME_BASE / username).as_posix()
 
 
 def _local_user_password_policy_errors(password: str, username: str, policy: dict) -> list[str]:
+    """Perform local user password policy errors.
+
+    Args:
+        password: Password consumed by local user password policy errors.
+        username: Atlaso account name associated with the operation.
+        policy: Policy consumed by local user password policy errors.
+    """
     errors: list[str] = []
     try:
         min_length = int(policy.get("min_length", 12))
@@ -4959,6 +5807,11 @@ def _local_user_password_policy_errors(password: str, username: str, policy: dic
 
 
 def _local_users_config_errors(path: Path) -> list[str]:
+    """Perform local users config errors.
+
+    Args:
+        path: Filesystem path read, validated, or updated by the operation.
+    """
     errors: list[str] = []
     try:
         payload = _load_local_users_config(path)
@@ -5027,10 +5880,20 @@ def _local_users_config_errors(path: Path) -> list[str]:
 
 
 def _local_users_payload(path: Path) -> dict:
+    """Perform local users payload.
+
+    Args:
+        path: Filesystem path read, validated, or updated by the operation.
+    """
     return _load_local_users_config(path)
 
 
 def _command_path(command: str) -> str | None:
+    """Perform command path.
+
+    Args:
+        command: Command and arguments to execute.
+    """
     found = shutil.which(command)
     if found:
         return found
@@ -5041,11 +5904,22 @@ def _command_path(command: str) -> str | None:
 
 
 def _os_user_exists(username: str) -> bool:
+    """Perform operating-system user exists.
+
+    Args:
+        username: Atlaso account name associated with the operation.
+    """
     id_command = _command_path("id")
     return id_command is not None and _run([id_command, username]).returncode == 0
 
 
 def _run_and_forward(command: list[str], *, account_command: bool = True) -> int:
+    """Run and forward.
+
+    Args:
+        command: Command and arguments to execute.
+        account_command: Whether account command applies to the operation.
+    """
     result = _run_account_command(command) if account_command else _run(command)
     print(result.stdout, end="")
     print(result.stderr, end="", file=sys.stderr)
@@ -5053,6 +5927,13 @@ def _run_and_forward(command: list[str], *, account_command: bool = True) -> int
 
 
 def _ensure_os_user(username: str, home: str, shell: str) -> int:
+    """Ensure operating-system user.
+
+    Args:
+        username: Atlaso account name associated with the operation.
+        home: Home consumed by ensure operating-system user.
+        shell: Shell consumed by ensure operating-system user.
+    """
     id_command = _command_path("id")
     useradd = _command_path("useradd")
     if id_command is None:
@@ -5068,6 +5949,12 @@ def _ensure_os_user(username: str, home: str, shell: str) -> int:
 
 
 def _set_os_user_shell(username: str, shell: str) -> int:
+    """Perform set operating-system user shell.
+
+    Args:
+        username: Atlaso account name associated with the operation.
+        shell: Shell consumed by set operating-system user shell.
+    """
     usermod = _command_path("usermod")
     if usermod is None:
         print("usermod command not found", file=sys.stderr)
@@ -5076,6 +5963,12 @@ def _set_os_user_shell(username: str, shell: str) -> int:
 
 
 def _ensure_os_user_role_groups(username: str, role: str) -> int:
+    """Ensure operating-system user role groups.
+
+    Args:
+        username: Atlaso account name associated with the operation.
+        role: Role consumed by ensure operating-system user role groups.
+    """
     id_command = _command_path("id")
     if id_command is None:
         print("id command not found", file=sys.stderr)
@@ -5104,6 +5997,11 @@ def _ensure_os_user_role_groups(username: str, role: str) -> int:
 
 
 def _unlock_os_user(username: str) -> int:
+    """Perform unlock operating-system user.
+
+    Args:
+        username: Atlaso account name associated with the operation.
+    """
     passwd = _command_path("passwd")
     if passwd is None:
         print("passwd command not found", file=sys.stderr)
@@ -5112,6 +6010,11 @@ def _unlock_os_user(username: str) -> int:
 
 
 def _reset_user_faillock(username: str) -> int:
+    """Perform reset user faillock.
+
+    Args:
+        username: Atlaso account name associated with the operation.
+    """
     faillock = _command_path("faillock")
     if faillock is None:
         return 0
@@ -5119,6 +6022,11 @@ def _reset_user_faillock(username: str) -> int:
 
 
 def _delete_os_user(username: str) -> int:
+    """Delete operating-system user.
+
+    Args:
+        username: Atlaso account name associated with the operation.
+    """
     if not _os_user_exists(username):
         return 0
     userdel = _command_path("userdel")
@@ -5129,6 +6037,12 @@ def _delete_os_user(username: str) -> int:
 
 
 def _set_os_user_password(username: str, password: str) -> int:
+    """Perform set operating-system user password.
+
+    Args:
+        username: Atlaso account name associated with the operation.
+        password: Password consumed by set operating-system user password.
+    """
     chpasswd = _command_path("chpasswd")
     if chpasswd is None:
         print("chpasswd command not found", file=sys.stderr)
@@ -5145,7 +6059,18 @@ def _set_os_user_password(username: str, password: str) -> int:
 
 
 def _pwquality_policy_lines(policy: dict) -> list[str]:
+    """Perform pwquality policy lines.
+
+    Args:
+        policy: Policy consumed by pwquality policy lines.
+    """
     def bool_policy(name: str, default: bool = True) -> bool:
+        """Perform bool policy.
+
+        Args:
+            name: Stable name identifying the resource or operation.
+            default: Whether default applies to the operation.
+        """
         value = policy.get(name, default)
         return bool(value)
 
@@ -5166,6 +6091,11 @@ def _pwquality_policy_lines(policy: dict) -> list[str]:
 
 
 def _apply_pwquality_conf(policy: dict) -> None:
+    """Perform apply pwquality conf.
+
+    Args:
+        policy: Policy consumed by apply pwquality conf.
+    """
     current = LOCAL_USERS_PWQUALITY_PATH.read_text(encoding="utf-8") if LOCAL_USERS_PWQUALITY_PATH.exists() else ""
     lines = current.splitlines()
     output: list[str] = []
@@ -5188,6 +6118,9 @@ def _apply_pwquality_conf(policy: dict) -> None:
 
 
 def _ensure_pam_pwquality() -> None:
+    """Ensure pam pwquality.
+
+    """
     path = LOCAL_USERS_SYSTEM_PASSWORD_PAM_PATH
     if not path.exists():
         return
@@ -5201,11 +6134,21 @@ def _ensure_pam_pwquality() -> None:
 
 
 def _apply_local_users_password_policy(policy: dict) -> None:
+    """Perform apply local users password policy.
+
+    Args:
+        policy: Policy consumed by apply local users password policy.
+    """
     _apply_pwquality_conf(policy)
     _ensure_pam_pwquality()
 
 
 def _passwd_status(username: str) -> tuple[str, str]:
+    """Perform passwd status.
+
+    Args:
+        username: Atlaso account name associated with the operation.
+    """
     passwd = _command_path("passwd")
     if passwd is None:
         return "status unavailable", "passwd command not found"
@@ -5224,6 +6167,11 @@ def _passwd_status(username: str) -> tuple[str, str]:
 
 
 def _faillock_blocked(username: str) -> tuple[bool, str]:
+    """Perform faillock blocked.
+
+    Args:
+        username: Atlaso account name associated with the operation.
+    """
     faillock = _command_path("faillock")
     if faillock is None:
         return False, ""
@@ -5245,6 +6193,11 @@ def _faillock_blocked(username: str) -> tuple[bool, str]:
 
 
 def _local_user_status_rows(users: list[dict]) -> list[dict[str, object]]:
+    """Perform local user status rows.
+
+    Args:
+        users: Users consumed by local user status rows.
+    """
     rows: list[dict[str, object]] = []
     for row in users:
         username = str(row.get("username") or "").strip().lower()
@@ -5272,6 +6225,12 @@ def _local_user_status_rows(users: list[dict]) -> list[dict[str, object]]:
 
 
 def _handle_local_users_inner(action: str, args: list[str]) -> int:
+    """Handle local users inner.
+
+    Args:
+        action: Action consumed by handle local users inner.
+        args: Parsed command-line options consumed by the operation.
+    """
     if action == "authenticate":
         if len(args) != 1 or not LOCAL_USERS_USERNAME_PATTERN.fullmatch(args[0]):
             return 1
@@ -5388,6 +6347,12 @@ def _handle_local_users_inner(action: str, args: list[str]) -> int:
 
 
 def _handle_local_users(action: str, args: list[str]) -> int:
+    """Handle local users.
+
+    Args:
+        action: Action consumed by handle local users.
+        args: Parsed command-line options consumed by the operation.
+    """
     config_path: Path | None = None
     result: int | None = None
     if action in {"validate", "apply"} and len(args) == 1:
@@ -5404,6 +6369,11 @@ def _handle_local_users(action: str, args: list[str]) -> int:
 
 
 def _validate_network_config_path(path_value: str) -> Path:
+    """Validate network config path.
+
+    Args:
+        path_value: Candidate path value to validate.
+    """
     path = Path(_validate_path(path_value)).resolve()
     if path.suffix != ".conf":
         raise ValueError("network config path must end with .conf")
@@ -5415,6 +6385,11 @@ def _validate_network_config_path(path_value: str) -> Path:
 
 
 def _parse_network_config(path: Path) -> tuple[list[dict[str, str]], list[dict[str, str]], list[dict[str, str]]]:
+    """Parse network config.
+
+    Args:
+        path: Filesystem path read, validated, or updated by the operation.
+    """
     physical_interfaces: list[dict[str, str]] = []
     vlan_interfaces: list[dict[str, str]] = []
     removed_vlan_interfaces: list[dict[str, str]] = []
@@ -5449,16 +6424,30 @@ def _parse_network_config(path: Path) -> tuple[list[dict[str, str]], list[dict[s
 
 
 def _valid_network_interface_name(name: str) -> bool:
+    """Perform valid network interface name.
+
+    Args:
+        name: Stable name identifying the resource or operation.
+    """
     return bool(name and NETWORK_INTERFACE_NAME_PATTERN.fullmatch(name) and "/" not in name)
 
 
 def _networkd_managed_filename(name: str, suffix: str) -> str:
+    """Perform networkd managed filename.
+
+    Args:
+        name: Stable name identifying the resource or operation.
+        suffix: Suffix consumed by networkd managed filename.
+    """
     if not _valid_network_interface_name(name):
         raise ValueError(f"invalid interface name for systemd-networkd file: {name}")
     return f"{NETWORKD_MANAGED_PREFIX}{name}.{suffix}"
 
 
 def _read_existing_management_network_values() -> dict[str, list[str]]:
+    """Read existing management network values.
+
+    """
     values: dict[str, list[str]] = {"Gateway": [], "DNS": [], "Name": []}
     try:
         lines = NETWORKD_MGMT_CONFIG_PATH.read_text(encoding="utf-8").splitlines()
@@ -5483,6 +6472,12 @@ def _read_existing_management_network_values() -> dict[str, list[str]]:
 
 
 def _usable_management_default_gateways(networks: list[str], candidates: list[str]) -> list[str]:
+    """Perform usable management default gateways.
+
+    Args:
+        networks: Networks consumed by usable management default gateways.
+        candidates: Candidates consumed by usable management default gateways.
+    """
     parsed_networks = []
     for network in networks:
         try:
@@ -5509,6 +6504,11 @@ def _usable_management_default_gateways(networks: list[str], candidates: list[st
 
 
 def _systemd_networkd_files(path: Path) -> tuple[dict[str, str], list[str], list[str]]:
+    """Perform systemd networkd files.
+
+    Args:
+        path: Filesystem path read, validated, or updated by the operation.
+    """
     physical_interfaces, vlan_interfaces, _removed_vlan_interfaces = _parse_network_config(path)
     vlans_by_parent: dict[str, list[dict[str, str]]] = {}
     for vlan in vlan_interfaces:
@@ -5640,6 +6640,11 @@ def _systemd_networkd_files(path: Path) -> tuple[dict[str, str], list[str], list
 
 
 def _network_config_errors(path: Path) -> list[str]:
+    """Perform network config errors.
+
+    Args:
+        path: Filesystem path read, validated, or updated by the operation.
+    """
     physical_interfaces, vlan_interfaces, removed_vlan_interfaces = _parse_network_config(path)
     errors: list[str] = []
     physical_modes = {row.get("name", ""): row.get("mode", "") for row in physical_interfaces}
@@ -5791,10 +6796,20 @@ def _network_config_errors(path: Path) -> list[str]:
 
 
 def _link_exists(name: str) -> bool:
+    """Perform link exists.
+
+    Args:
+        name: Stable name identifying the resource or operation.
+    """
     return _run(["ip", "link", "show", "dev", name]).returncode == 0
 
 
 def _is_vlan_link(name: str) -> bool:
+    """Return whether VLAN link.
+
+    Args:
+        name: Stable name identifying the resource or operation.
+    """
     result = _run(["ip", "-j", "-d", "link", "show", "dev", name])
     if result.returncode != 0:
         return False
@@ -5809,6 +6824,11 @@ def _is_vlan_link(name: str) -> bool:
 
 
 def _apply_vlan_interfaces(path: Path) -> int:
+    """Perform apply VLAN interfaces.
+
+    Args:
+        path: Filesystem path read, validated, or updated by the operation.
+    """
     if shutil.which("ip") is None:
         print("ip command not found", file=sys.stderr)
         return 127
@@ -5883,6 +6903,11 @@ def _apply_vlan_interfaces(path: Path) -> int:
 
 
 def _install_systemd_networkd_files(path: Path) -> tuple[int, list[str], list[str], list[str]]:
+    """Perform install systemd networkd files.
+
+    Args:
+        path: Filesystem path read, validated, or updated by the operation.
+    """
     try:
         files, reconfigure_links, admin_down_links = _systemd_networkd_files(path)
     except ValueError as exc:
@@ -5937,6 +6962,12 @@ def _install_systemd_networkd_files(path: Path) -> tuple[int, list[str], list[st
 
 
 def _handle_network(action: str, args: list[str]) -> int:
+    """Handle network.
+
+    Args:
+        action: Action consumed by handle network.
+        args: Parsed command-line options consumed by the operation.
+    """
     if action == "dhcp-dns":
         if len(args) != 1:
             print("network dhcp-dns requires exactly one interface name", file=sys.stderr)
@@ -6001,6 +7032,11 @@ def _handle_network(action: str, args: list[str]) -> int:
 
 
 def _networkd_dhcp_dns_payload(interface_name: str) -> dict[str, object]:
+    """Perform networkd dhcp DNS payload.
+
+    Args:
+        interface_name: Host network-interface name affected by the operation.
+    """
     if not re.fullmatch(r"[A-Za-z0-9_.:-]{1,15}", interface_name):
         raise ValueError("network dhcp-dns interface name is invalid")
     ifindex_path = SYSTEMD_NETWORK_INTERFACE_DIR / interface_name / "ifindex"
@@ -6040,6 +7076,11 @@ def _networkd_dhcp_dns_payload(interface_name: str) -> dict[str, object]:
 
 
 def _validate_wan_config_path(path_value: str) -> Path:
+    """Validate WAN config path.
+
+    Args:
+        path_value: Candidate path value to validate.
+    """
     path = Path(_validate_path(path_value)).resolve()
     if path.suffix != ".conf":
         raise ValueError("WAN config path must end with .conf")
@@ -6051,6 +7092,11 @@ def _validate_wan_config_path(path_value: str) -> Path:
 
 
 def _parse_wan_config(path: Path) -> dict[str, list[dict[str, str]]]:
+    """Parse WAN config.
+
+    Args:
+        path: Filesystem path read, validated, or updated by the operation.
+    """
     sections: dict[str, list[dict[str, str]]] = {
         "targets": [],
         "routes": [],
@@ -6095,12 +7141,23 @@ def _parse_wan_config(path: Path) -> dict[str, list[dict[str, str]]]:
 
 
 def _wan_bool(value: str, *, default: bool = False) -> bool:
+    """Perform WAN bool.
+
+    Args:
+        value: Candidate value consumed by WAN bool.
+        default: Whether default applies to the operation.
+    """
     if value.strip() == "":
         return default
     return value.strip().lower() in {"1", "true", "yes", "on", "enabled"}
 
 
 def _wan_config_errors(path: Path) -> list[str]:
+    """Perform WAN config errors.
+
+    Args:
+        path: Filesystem path read, validated, or updated by the operation.
+    """
     parsed = _parse_wan_config(path)
     errors: list[str] = []
     targets = {row.get("name", ""): row for row in parsed["targets"]}
@@ -6289,6 +7346,11 @@ def _wan_config_errors(path: Path) -> list[str]:
 
 
 def _wan_source_expr(source: str) -> str:
+    """Perform WAN source expr.
+
+    Args:
+        source: Source object or location from which data is obtained.
+    """
     value = source.strip()
     if not value or value.lower() == "any":
         return ""
@@ -6299,6 +7361,11 @@ def _wan_source_expr(source: str) -> str:
 
 
 def _render_wan_nat_config(nat_rules: list[dict[str, str]]) -> str:
+    """Render WAN nat config.
+
+    Args:
+        nat_rules: Nat rules consumed by render WAN nat config.
+    """
     lines = [
         "# Managed by Atlaso. Local changes may be overwritten.",
         "table ip atlaso_nat {",
@@ -6315,12 +7382,22 @@ def _render_wan_nat_config(nat_rules: list[dict[str, str]]) -> str:
 
 
 def _validate_wan_nat_config(nat_config: str) -> subprocess.CompletedProcess[str]:
+    """Validate WAN nat config.
+
+    Args:
+        nat_config: Candidate nat config to validate.
+    """
     if shutil.which("nft") is None:
         return subprocess.CompletedProcess(["nft", "-c", "-f", "-"], 127, "", "nft command not found\n")
     return _run_with_input(["nft", "-c", "-f", "-"], nat_config)
 
 
 def _wan_netem_args(policy: dict[str, str]) -> list[str]:
+    """Perform WAN netem args.
+
+    Args:
+        policy: Policy consumed by WAN netem args.
+    """
     args = ["delay", f"{int(policy.get('latency_ms', '0') or '0')}ms"]
     jitter = int(policy.get("jitter_ms", "0") or "0")
     if jitter:
@@ -6340,6 +7417,11 @@ def _wan_netem_args(policy: dict[str, str]) -> list[str]:
 
 
 def _route_command_prefix(destination: str) -> list[str]:
+    """Perform route command prefix.
+
+    Args:
+        destination: Destination object or location receiving the result.
+    """
     try:
         network = ip_network(destination, strict=False)
     except ValueError:
@@ -6348,6 +7430,11 @@ def _route_command_prefix(destination: str) -> list[str]:
 
 
 def _rule_command_prefix(source: str) -> list[str]:
+    """Perform rule command prefix.
+
+    Args:
+        source: Source object or location from which data is obtained.
+    """
     try:
         network = ip_network(source, strict=False)
     except ValueError:
@@ -6356,6 +7443,11 @@ def _rule_command_prefix(source: str) -> list[str]:
 
 
 def _target_networks(target: dict[str, str]) -> list[str]:
+    """Perform target networks.
+
+    Args:
+        target: Target resource or location affected by the operation.
+    """
     networks: list[str] = []
     for key in ("ip_cidr", "ipv6_cidr"):
         if target.get(key):
@@ -6364,6 +7456,11 @@ def _target_networks(target: dict[str, str]) -> list[str]:
 
 
 def _target_network_owners(targets: list[dict[str, str]]) -> dict[str, int]:
+    """Perform target network owners.
+
+    Args:
+        targets: Targets consumed by target network owners.
+    """
     owners: dict[str, int] = {}
     for index, target in enumerate(targets):
         for network in _target_networks(target):
@@ -6378,10 +7475,22 @@ def _target_network_owners(targets: list[dict[str, str]]) -> dict[str, int]:
 
 
 def _target_route_table_id(target: dict[str, str]) -> int:
+    """Perform target route table identifier.
+
+    Args:
+        target: Target resource or location affected by the operation.
+    """
     return MANAGEMENT_ROUTE_TABLE_ID if target.get("routing_domain", "lab") == "management" else LAB_ROUTE_TABLE_ID
 
 
 def _run_target_route_replace(network: str, interface_name: str, table_id: int) -> int:
+    """Run target route replace.
+
+    Args:
+        network: Network consumed by run target route replace.
+        interface_name: Host network-interface name affected by the operation.
+        table_id: Stable identifier of the associated table resource.
+    """
     command = [*_route_command_prefix(network), "replace", network, "dev", interface_name, "table", str(table_id)]
     result = _run(command)
     print(result.stdout, end="")
@@ -6390,6 +7499,13 @@ def _run_target_route_replace(network: str, interface_name: str, table_id: int) 
 
 
 def _run_target_route_delete(network: str, interface_name: str, table_id: int) -> int:
+    """Run target route delete.
+
+    Args:
+        network: Network consumed by run target route delete.
+        interface_name: Host network-interface name affected by the operation.
+        table_id: Stable identifier of the associated table resource.
+    """
     command = [*_route_command_prefix(network), "del", network, "dev", interface_name, "table", str(table_id)]
     result = _run(command)
     if result.returncode == 2:
@@ -6400,6 +7516,13 @@ def _run_target_route_delete(network: str, interface_name: str, table_id: int) -
 
 
 def _run_default_gateway_route_replace(gateway: str, interface_name: str, table_id: int | None = None) -> int:
+    """Run default gateway route replace.
+
+    Args:
+        gateway: Gateway consumed by run default gateway route replace.
+        interface_name: Host network-interface name affected by the operation.
+        table_id: Stable identifier of the associated table resource.
+    """
     try:
         gateway_address = ip_address(gateway)
     except ValueError:
@@ -6416,6 +7539,13 @@ def _run_default_gateway_route_replace(gateway: str, interface_name: str, table_
 
 
 def _run_default_gateway_route_delete(interface_name: str, table_id: int | None, version: int) -> int:
+    """Run default gateway route delete.
+
+    Args:
+        interface_name: Host network-interface name affected by the operation.
+        table_id: Stable identifier of the associated table resource.
+        version: Atlaso or artifact version being validated or produced.
+    """
     prefix = ["ip", "-6", "route"] if version == 6 else ["ip", "route"]
     command = [*prefix, "del", "default", "dev", interface_name]
     if table_id is not None:
@@ -6429,6 +7559,11 @@ def _run_default_gateway_route_delete(interface_name: str, table_id: int | None,
 
 
 def _runtime_default_gateways_for_interface(interface_name: str) -> list[str]:
+    """Perform runtime default gateways for interface.
+
+    Args:
+        interface_name: Host network-interface name affected by the operation.
+    """
     gateways: list[str] = []
     for prefix in (["ip", "route"], ["ip", "-6", "route"]):
         try:
@@ -6447,6 +7582,11 @@ def _runtime_default_gateways_for_interface(interface_name: str) -> list[str]:
 
 
 def _management_default_gateways_for_target(target: dict[str, str]) -> list[str]:
+    """Perform management default gateways for target.
+
+    Args:
+        target: Target resource or location affected by the operation.
+    """
     target_networks = _target_networks(target)
     if "gateway" in target or "ipv6_gateway" in target:
         configured = [target.get(key, "").strip() for key in ("gateway", "ipv6_gateway")]
@@ -6462,6 +7602,11 @@ def _management_default_gateways_for_target(target: dict[str, str]) -> list[str]
 
 
 def _apply_wan_target_routes(parsed: dict[str, list[dict[str, str]]]) -> int:
+    """Perform apply WAN target routes.
+
+    Args:
+        parsed: Parsed consumed by apply WAN target routes.
+    """
     if shutil.which("ip") is None:
         print("ip command not found", file=sys.stderr)
         return 127
@@ -6520,6 +7665,13 @@ def _apply_wan_target_routes(parsed: dict[str, list[dict[str, str]]]) -> int:
 
 
 def _run_rule_replace(source_network: str, table_id: int, priority: int) -> int:
+    """Run rule replace.
+
+    Args:
+        source_network: Source network consumed by run rule replace.
+        table_id: Stable identifier of the associated table resource.
+        priority: Priority consumed by run rule replace.
+    """
     prefix = _rule_command_prefix(source_network)
     delete = _run([*prefix, "del", "priority", str(priority)])
     if delete.returncode not in {0, 2}:
@@ -6533,6 +7685,12 @@ def _run_rule_replace(source_network: str, table_id: int, priority: int) -> int:
 
 
 def _run_rule_priority_delete(prefix: list[str], priority: int) -> int:
+    """Run rule priority delete.
+
+    Args:
+        prefix: Prefix consumed by run rule priority delete.
+        priority: Priority consumed by run rule priority delete.
+    """
     result = _run([*prefix, "del", "priority", str(priority)])
     if result.returncode in {0, 2}:
         return 0
@@ -6542,6 +7700,9 @@ def _run_rule_priority_delete(prefix: list[str], priority: int) -> int:
 
 
 def _cleanup_wan_policy_rules() -> int:
+    """Perform cleanup WAN policy rules.
+
+    """
     prefixes = [["ip", "rule"], ["ip", "-6", "rule"]]
     for base_priority in (MANAGEMENT_ROUTE_RULE_PRIORITY, LAB_ROUTE_RULE_PRIORITY):
         for priority in range(base_priority, base_priority + ROUTE_RULE_PRIORITY_WINDOW):
@@ -6553,6 +7714,11 @@ def _cleanup_wan_policy_rules() -> int:
 
 
 def _apply_wan_policy_rules(parsed: dict[str, list[dict[str, str]]]) -> int:
+    """Perform apply WAN policy rules.
+
+    Args:
+        parsed: Parsed consumed by apply WAN policy rules.
+    """
     if shutil.which("ip") is None:
         print("ip command not found", file=sys.stderr)
         return 127
@@ -6582,6 +7748,12 @@ def _apply_wan_policy_rules(parsed: dict[str, list[dict[str, str]]]) -> int:
 
 
 def _run_route_delete(destination: str, interface_name: str) -> int:
+    """Run route delete.
+
+    Args:
+        destination: Destination object or location receiving the result.
+        interface_name: Host network-interface name affected by the operation.
+    """
     command = [*_route_command_prefix(destination), "del", destination, "dev", interface_name, "table", str(LAB_ROUTE_TABLE_ID)]
     result = _run(command)
     print(result.stdout, end="")
@@ -6592,6 +7764,11 @@ def _run_route_delete(destination: str, interface_name: str) -> int:
 
 
 def _apply_wan_routes_and_qdiscs(parsed: dict[str, list[dict[str, str]]]) -> int:
+    """Perform apply WAN routes and qdiscs.
+
+    Args:
+        parsed: Parsed consumed by apply WAN routes and qdiscs.
+    """
     if shutil.which("ip") is None:
         print("ip command not found", file=sys.stderr)
         return 127
@@ -6648,6 +7825,9 @@ def _apply_wan_routes_and_qdiscs(parsed: dict[str, list[dict[str, str]]]) -> int
 
 
 def _install_wan_nat_service() -> None:
+    """Perform install WAN nat service.
+
+    """
     WAN_NAT_SERVICE_PATH.write_text(
         "\n".join(
             [
@@ -6673,6 +7853,11 @@ def _install_wan_nat_service() -> None:
 
 
 def _apply_wan_nat(parsed: dict[str, list[dict[str, str]]]) -> int:
+    """Perform apply WAN nat.
+
+    Args:
+        parsed: Parsed consumed by apply WAN nat.
+    """
     nat_config = _render_wan_nat_config(parsed["nat_rules"])
     validation = _validate_wan_nat_config(nat_config)
     print(validation.stdout, end="")
@@ -6694,6 +7879,11 @@ def _apply_wan_nat(parsed: dict[str, list[dict[str, str]]]) -> int:
 
 
 def _wan_forwarding_required(parsed: dict[str, list[dict[str, str]]]) -> bool:
+    """Perform WAN forwarding required.
+
+    Args:
+        parsed: Parsed consumed by WAN forwarding required.
+    """
     enabled_nat = any(_wan_bool(rule.get("enabled", ""), default=True) for rule in parsed["nat_rules"])
     enabled_routes = any(_wan_bool(route.get("enabled", ""), default=True) for route in parsed["routes"])
     enabled_routing_rules = any(_wan_bool(rule.get("enabled", ""), default=True) for rule in parsed["routing_rules"])
@@ -6701,6 +7891,11 @@ def _wan_forwarding_required(parsed: dict[str, list[dict[str, str]]]) -> bool:
 
 
 def _apply_wan_forwarding(parsed: dict[str, list[dict[str, str]]]) -> int:
+    """Perform apply WAN forwarding.
+
+    Args:
+        parsed: Parsed consumed by apply WAN forwarding.
+    """
     value = "1" if _wan_forwarding_required(parsed) else "0"
     WAN_SYSCTL_PATH.write_text(f"net.ipv4.ip_forward = {value}\n", encoding="utf-8")
     os.chmod(WAN_SYSCTL_PATH, 0o644)
@@ -6711,6 +7906,12 @@ def _apply_wan_forwarding(parsed: dict[str, list[dict[str, str]]]) -> int:
 
 
 def _handle_wan(action: str, args: list[str]) -> int:
+    """Handle WAN.
+
+    Args:
+        action: Action consumed by handle WAN.
+        args: Parsed command-line options consumed by the operation.
+    """
     if len(args) != 1:
         print(f"wan {action} requires exactly one staged config path", file=sys.stderr)
         return 2
@@ -6777,6 +7978,9 @@ def _handle_wan(action: str, args: list[str]) -> int:
 
 
 def _install_firewall_service() -> None:
+    """Perform install firewall service.
+
+    """
     FIREWALL_SERVICE_PATH.write_text(
         "\n".join(
             [
@@ -6803,6 +8007,12 @@ def _install_firewall_service() -> None:
 
 
 def _handle_firewall(action: str, args: list[str]) -> int:
+    """Handle firewall.
+
+    Args:
+        action: Action consumed by handle firewall.
+        args: Parsed command-line options consumed by the operation.
+    """
     if len(args) != 1:
         print(f"firewall {action} requires exactly one staged config path", file=sys.stderr)
         return 2
@@ -6835,6 +8045,11 @@ def _handle_firewall(action: str, args: list[str]) -> int:
 
 
 def _validate_vcf_backups_config_path(path_value: str) -> Path:
+    """Validate VCF backups config path.
+
+    Args:
+        path_value: Candidate path value to validate.
+    """
     path = Path(_validate_path(path_value)).resolve()
     if path.suffix != ".conf":
         raise ValueError("VCF backups config path must end with .conf")
@@ -6846,6 +8061,11 @@ def _validate_vcf_backups_config_path(path_value: str) -> Path:
 
 
 def _vcf_backups_config_values(path: Path) -> dict[str, str | bool]:
+    """Perform VCF backups config values.
+
+    Args:
+        path: Filesystem path read, validated, or updated by the operation.
+    """
     values: dict[str, str | bool] = {
         "enabled": False,
         "username": "",
@@ -6878,6 +8098,11 @@ def _vcf_backups_config_values(path: Path) -> dict[str, str | bool]:
 
 
 def _vcf_backups_config_errors(path: Path) -> list[str]:
+    """Perform VCF backups config errors.
+
+    Args:
+        path: Filesystem path read, validated, or updated by the operation.
+    """
     errors: list[str] = []
     try:
         text = path.read_text(encoding="utf-8")
@@ -6912,6 +8137,12 @@ def _vcf_backups_config_errors(path: Path) -> list[str]:
 
 
 def _ensure_vcf_backups_user(username: str, storage_path: Path) -> int:
+    """Ensure VCF backups user.
+
+    Args:
+        username: Atlaso account name associated with the operation.
+        storage_path: Filesystem path used for storage.
+    """
     if shutil.which("id") is None:
         print("id command not found", file=sys.stderr)
         return 127
@@ -6922,6 +8153,14 @@ def _ensure_vcf_backups_user(username: str, storage_path: Path) -> int:
 
 
 def _prepare_vcf_backups_storage(username: str, storage_path: Path, remote_directory: str, chroot_enabled: bool) -> int:
+    """Perform prepare VCF backups storage.
+
+    Args:
+        username: Atlaso account name associated with the operation.
+        storage_path: Filesystem path used for storage.
+        remote_directory: Remote directory consumed by prepare VCF backups storage.
+        chroot_enabled: Whether chroot is enabled.
+    """
     storage_path.mkdir(parents=True, exist_ok=True)
     _chown_path(storage_path, 0, 0)
     os.chmod(storage_path, 0o755)
@@ -6944,6 +8183,9 @@ def _prepare_vcf_backups_storage(username: str, storage_path: Path, remote_direc
 
 
 def _install_vcf_backups_sshd_include() -> int:
+    """Perform install VCF backups sshd include.
+
+    """
     config_path = Path("/etc/ssh/sshd_config")
     include_line = "Include /etc/ssh/sshd_config.d/*.conf"
     try:
@@ -6958,6 +8200,9 @@ def _install_vcf_backups_sshd_include() -> int:
 
 
 def _validate_sshd_config() -> subprocess.CompletedProcess[str]:
+    """Validate sshd config.
+
+    """
     sshd = shutil.which("sshd")
     if sshd is not None:
         return _run([sshd, "-t"])
@@ -6969,6 +8214,12 @@ def _validate_sshd_config() -> subprocess.CompletedProcess[str]:
 
 
 def _handle_vcf_backups(action: str, args: list[str]) -> int:
+    """Handle VCF backups.
+
+    Args:
+        action: Action consumed by handle VCF backups.
+        args: Parsed command-line options consumed by the operation.
+    """
     if len(args) != 1:
         print(f"vcf-backups {action} requires exactly one staged config path", file=sys.stderr)
         return 2
@@ -7050,6 +8301,11 @@ def _handle_vcf_backups(action: str, args: list[str]) -> int:
 
 
 def _validate_vcf_depot_config_path(path_value: str) -> Path:
+    """Validate VCF depot config path.
+
+    Args:
+        path_value: Candidate path value to validate.
+    """
     path = Path(_validate_path(path_value)).resolve()
     if path.suffix != ".conf":
         raise ValueError("VCF Offline Depot nginx config path must end with .conf")
@@ -7061,6 +8317,12 @@ def _validate_vcf_depot_config_path(path_value: str) -> Path:
 
 
 def _nginx_directive(text: str, directive: str) -> list[str]:
+    """Perform nginx directive.
+
+    Args:
+        text: Text content consumed by the operation.
+        directive: Directive consumed by nginx directive.
+    """
     values: list[str] = []
     for match in re.finditer(rf"^\s*{re.escape(directive)}\s+([^;]+);", text, flags=re.MULTILINE):
         values.append(match.group(1).strip())
@@ -7068,6 +8330,13 @@ def _nginx_directive(text: str, directive: str) -> list[str]:
 
 
 def _vcf_depot_config_value(text: str, prefix: str, default: str = "") -> str:
+    """Perform VCF depot config value.
+
+    Args:
+        text: Text content consumed by the operation.
+        prefix: Prefix consumed by VCF depot config value.
+        default: Default consumed by VCF depot config value.
+    """
     for line in text.splitlines():
         stripped = line.strip()
         if stripped.startswith(prefix):
@@ -7076,6 +8345,11 @@ def _vcf_depot_config_value(text: str, prefix: str, default: str = "") -> str:
 
 
 def _vcf_depot_auth_required(text: str) -> bool:
+    """Perform VCF depot auth required.
+
+    Args:
+        text: Text content consumed by the operation.
+    """
     prefix = "# Atlaso VCF Offline Depot unauthenticated access:"
     unauthenticated = _vcf_depot_config_value(text, prefix, "")
     if unauthenticated.lower() in {"1", "true", "yes", "on"}:
@@ -7086,15 +8360,30 @@ def _vcf_depot_auth_required(text: str) -> bool:
 
 
 def _vcf_depot_auth_username(text: str) -> str:
+    """Perform VCF depot auth username.
+
+    Args:
+        text: Text content consumed by the operation.
+    """
     return _vcf_depot_config_value(text, "# Atlaso VCF Offline Depot user:", VCF_DEPOT_DEFAULT_USERNAME) or VCF_DEPOT_DEFAULT_USERNAME
 
 
 def _vcf_depot_prod_alias_path(alias: str) -> Path:
+    """Perform VCF depot prod alias path.
+
+    Args:
+        alias: Alias consumed by VCF depot prod alias path.
+    """
     normalized = alias.strip().removesuffix("$1").rstrip("/")
     return Path(normalized)
 
 
 def _listen_address_and_port(value: str) -> tuple[str, int]:
+    """Perform listen address and port.
+
+    Args:
+        value: Candidate value consumed by listen address and port.
+    """
     parts = value.split()
     listen = parts[0] if parts else ""
     if listen.startswith("[") and "]:" in listen:
@@ -7120,6 +8409,11 @@ def _listen_address_and_port(value: str) -> tuple[str, int]:
 
 
 def _vcf_depot_config_errors(path: Path) -> list[str]:
+    """Perform VCF depot config errors.
+
+    Args:
+        path: Filesystem path read, validated, or updated by the operation.
+    """
     try:
         text = path.read_text(encoding="utf-8")
     except OSError as exc:
@@ -7218,6 +8512,11 @@ def _vcf_depot_config_errors(path: Path) -> list[str]:
 
 
 def _ensure_vcf_depot_user(username: str) -> int:
+    """Ensure VCF depot user.
+
+    Args:
+        username: Atlaso account name associated with the operation.
+    """
     try:
         pwd.getpwnam(username)
     except KeyError:
@@ -7227,6 +8526,11 @@ def _ensure_vcf_depot_user(username: str) -> int:
 
 
 def _shadow_hash_for_user(username: str) -> str:
+    """Perform shadow hash for user.
+
+    Args:
+        username: Atlaso account name associated with the operation.
+    """
     try:
         text = VCF_DEPOT_SHADOW_PATH.read_text(encoding="utf-8")
     except OSError as exc:
@@ -7242,6 +8546,11 @@ def _shadow_hash_for_user(username: str) -> str:
 
 
 def _write_vcf_depot_htpasswd(username: str) -> int:
+    """Write VCF depot htpasswd.
+
+    Args:
+        username: Atlaso account name associated with the operation.
+    """
     try:
         password_hash = _shadow_hash_for_user(username)
         _write_vcf_depot_htpasswd_entry(username, password_hash)
@@ -7252,6 +8561,12 @@ def _write_vcf_depot_htpasswd(username: str) -> int:
 
 
 def _write_vcf_depot_htpasswd_entry(username: str, password_hash: str) -> None:
+    """Write VCF depot htpasswd entry.
+
+    Args:
+        username: Atlaso account name associated with the operation.
+        password_hash: Password hash consumed by write VCF depot htpasswd entry.
+    """
     temp_path: Path | None = None
     try:
         VCF_DEPOT_HTPASSWD_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -7281,6 +8596,9 @@ def _write_vcf_depot_htpasswd_entry(username: str, password_hash: str) -> None:
 
 
 def _refresh_existing_vcf_depot_htpasswd() -> int:
+    """Perform refresh existing VCF depot htpasswd.
+
+    """
     if not VCF_DEPOT_HTPASSWD_PATH.is_file():
         return 0
     try:
@@ -7299,6 +8617,9 @@ def _refresh_existing_vcf_depot_htpasswd() -> int:
 
 
 def _remove_vcf_depot_htpasswd() -> None:
+    """Remove VCF depot htpasswd.
+
+    """
     try:
         VCF_DEPOT_HTPASSWD_PATH.unlink(missing_ok=True)
     except OSError:
@@ -7306,6 +8627,11 @@ def _remove_vcf_depot_htpasswd() -> None:
 
 
 def _prepare_vcf_depot_web_tree(text: str) -> None:
+    """Perform prepare VCF depot web tree.
+
+    Args:
+        text: Text content consumed by the operation.
+    """
     for alias in _nginx_directive(text, "alias"):
         path = _vcf_depot_prod_alias_path(alias)
         if path != VCF_DEPOT_PROD_PATH:
@@ -7328,6 +8654,12 @@ def _prepare_vcf_depot_web_tree(text: str) -> None:
 
 
 def _safe_extract_archive(archive_path: Path, destination: Path) -> None:
+    """Return a safe extract archive.
+
+    Args:
+        archive_path: Filesystem path used for archive.
+        destination: Destination object or location receiving the result.
+    """
     destination_resolved = destination.resolve()
     if destination.exists():
         shutil.rmtree(destination)
@@ -7341,6 +8673,11 @@ def _safe_extract_archive(archive_path: Path, destination: Path) -> None:
 
 
 def _prepare_vcf_download_tool_tree(extraction_dir: Path) -> None:
+    """Perform prepare VCF download tool tree.
+
+    Args:
+        extraction_dir: Filesystem path associated with extraction dir.
+    """
     for root, dirs, files in os.walk(extraction_dir):
         root_path = Path(root)
         if root_path.is_symlink():
@@ -7359,6 +8696,11 @@ def _prepare_vcf_download_tool_tree(extraction_dir: Path) -> None:
 
 
 def _find_vcf_download_tool_binary(extraction_dir: Path) -> Path:
+    """Perform find VCF download tool binary.
+
+    Args:
+        extraction_dir: Filesystem path associated with extraction dir.
+    """
     for candidate in [extraction_dir / "vcf-download-tool", extraction_dir / "bin" / "vcf-download-tool"]:
         if candidate.is_file():
             return candidate
@@ -7369,11 +8711,21 @@ def _find_vcf_download_tool_binary(extraction_dir: Path) -> Path:
 
 
 def _parse_vcf_download_tool_version(output: str) -> str:
+    """Parse VCF download tool version.
+
+    Args:
+        output: Candidate output to parse.
+    """
     match = re.search(r"\b\d+(?:\.\d+){2,}(?:[-+][A-Za-z0-9._-]+)?\b", output or "")
     return match.group(0) if match else ""
 
 
 def _vcf_download_tool_version(tool_path: Path) -> str:
+    """Perform VCF download tool version.
+
+    Args:
+        tool_path: Filesystem path used for tool.
+    """
     try:
         completed = _run_vcfdt_user_command([str(tool_path), "--version"])
     except (KeyError, OSError):
@@ -7382,6 +8734,11 @@ def _vcf_download_tool_version(tool_path: Path) -> str:
 
 
 def _remove_retired_vcf_download_tool_tree(path: Path) -> None:
+    """Remove retired VCF download tool tree.
+
+    Args:
+        path: Filesystem path read, validated, or updated by the operation.
+    """
     for attempt in range(3):
         try:
             shutil.rmtree(path)
@@ -7396,6 +8753,11 @@ def _remove_retired_vcf_download_tool_tree(path: Path) -> None:
 
 
 def _replace_vcf_download_tool_runtime(tool_home: Path) -> tuple[Path, Path]:
+    """Perform replace VCF download tool runtime.
+
+    Args:
+        tool_home: Filesystem path associated with tool home.
+    """
     runtime_tool_home = VCF_DEPOT_RUNTIME_TOOL_DIR
     runtime_parent = runtime_tool_home.parent
     runtime_parent.mkdir(parents=True, exist_ok=True)
@@ -7464,6 +8826,11 @@ def _replace_vcf_download_tool_runtime(tool_home: Path) -> tuple[Path, Path]:
 
 
 def _stage_vcf_download_tool_archive(archive_path: Path) -> int:
+    """Perform stage VCF download tool archive.
+
+    Args:
+        archive_path: Filesystem path used for archive.
+    """
     extraction_dir = VCF_DEPOT_TOOL_DIR / "extracted"
     try:
         _safe_extract_archive(archive_path, extraction_dir)
@@ -7512,6 +8879,9 @@ def _stage_vcf_download_tool_archive(archive_path: Path) -> int:
 
 
 def _reset_vcf_download_tool_runtime() -> int:
+    """Perform reset VCF download tool runtime.
+
+    """
     for directory in [VCF_DEPOT_TOOL_DIR, VCF_DEPOT_RUNTIME_TOOL_DIR]:
         if directory.exists():
             shutil.rmtree(directory)
@@ -7532,9 +8902,19 @@ def _reset_vcf_download_tool_runtime() -> int:
 
 
 def _parse_software_depot_id(output: str) -> str:
+    """Parse software depot identifier.
+
+    Args:
+        output: Candidate output to parse.
+    """
     uuid_pattern = r"\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b"
 
     def unique_candidate(candidates: list[str]) -> str:
+        """Perform unique candidate.
+
+        Args:
+            candidates: Candidates consumed by unique candidate.
+        """
         unique = list(dict.fromkeys(candidate.strip() for candidate in candidates if candidate.strip()))
         return unique[0] if len(unique) == 1 else ""
 
@@ -7567,6 +8947,9 @@ def _parse_software_depot_id(output: str) -> str:
 
 
 def _generate_vcf_download_tool_software_depot_id() -> int:
+    """Generate VCF download tool software depot identifier.
+
+    """
     wrapper_path = VCF_DEPOT_RUNTIME_TOOL_DIR / "vcf-download-tool"
     if not wrapper_path.is_file():
         print(f"VCF Download Tool executable does not exist: {wrapper_path}", file=sys.stderr)
@@ -7629,6 +9012,9 @@ def _generate_vcf_download_tool_software_depot_id() -> int:
 
 
 def _read_vcf_download_tool_software_depot_id() -> int:
+    """Read VCF download tool software depot identifier.
+
+    """
     wrapper_path = VCF_DEPOT_RUNTIME_TOOL_DIR / "vcf-download-tool"
     if not wrapper_path.is_file():
         print(f"VCF Download Tool executable does not exist: {wrapper_path}", file=sys.stderr)
@@ -7663,6 +9049,11 @@ def _read_vcf_download_tool_software_depot_id() -> int:
 
 
 def _apply_vcf_download_tool_ceip_choice(choice: str) -> int:
+    """Perform apply VCF download tool ceip choice.
+
+    Args:
+        choice: Choice consumed by apply VCF download tool ceip choice.
+    """
     normalized = choice.strip().upper()
     if normalized not in {"ENABLE", "DISABLE"}:
         print("vcf-offline-depot apply-ceip requires ENABLE or DISABLE", file=sys.stderr)
@@ -7683,10 +9074,20 @@ def _apply_vcf_download_tool_ceip_choice(choice: str) -> int:
 
 
 def _vcf_download_tool_home(tool_path: Path) -> Path:
+    """Perform VCF download tool home.
+
+    Args:
+        tool_path: Filesystem path used for tool.
+    """
     return tool_path.parent.parent if tool_path.parent.name == "bin" else tool_path.parent
 
 
 def _validate_vcf_depot_properties_path(raw_path: str) -> Path:
+    """Validate VCF depot properties path.
+
+    Args:
+        raw_path: Filesystem path used for raw.
+    """
     path = Path(raw_path).resolve()
     apply_dir = VCF_DEPOT_APPLY_DIR.resolve()
     if not path.is_relative_to(apply_dir):
@@ -7699,6 +9100,11 @@ def _validate_vcf_depot_properties_path(raw_path: str) -> Path:
 
 
 def _apply_vcf_download_tool_properties(properties_path: Path) -> int:
+    """Perform apply VCF download tool properties.
+
+    Args:
+        properties_path: Filesystem path used for properties.
+    """
     extraction_dir = VCF_DEPOT_TOOL_DIR / "extracted"
     try:
         tool_path = _find_vcf_download_tool_binary(extraction_dir)
@@ -7744,10 +9150,21 @@ def _apply_vcf_download_tool_properties(properties_path: Path) -> int:
 
 
 def shlex_quote(value: str) -> str:
+    """Perform shlex quote.
+
+    Args:
+        value: Candidate value consumed by shlex quote.
+    """
     return "'" + value.replace("'", "'\"'\"'") + "'"
 
 
 def _handle_vcf_offline_depot(action: str, args: list[str]) -> int:
+    """Handle VCF offline depot.
+
+    Args:
+        action: Action consumed by handle VCF offline depot.
+        args: Parsed command-line options consumed by the operation.
+    """
     if action == "reset-tool":
         if args:
             print("vcf-offline-depot reset-tool does not accept arguments", file=sys.stderr)
@@ -7858,6 +9275,11 @@ def _handle_vcf_offline_depot(action: str, args: list[str]) -> int:
 
 
 def _load_appliance_update_config(path: Path) -> dict:
+    """Load appliance update config.
+
+    Args:
+        path: Filesystem path read, validated, or updated by the operation.
+    """
     with path.open("r", encoding="utf-8") as handle:
         payload = json.load(handle)
     if not isinstance(payload, dict):
@@ -7866,6 +9288,11 @@ def _load_appliance_update_config(path: Path) -> dict:
 
 
 def _load_appliance_update_credentials(args: list[str]) -> dict[str, dict[str, str]]:
+    """Load appliance update credentials.
+
+    Args:
+        args: Parsed command-line options consumed by the operation.
+    """
     if len(args) < 2:
         return {}
     path = Path(args[1])
@@ -7883,6 +9310,12 @@ def _load_appliance_update_credentials(args: list[str]) -> dict[str, dict[str, s
 
 
 def _appliance_update_config_errors(payload: dict, *, require_streams: bool = True) -> list[str]:
+    """Perform appliance update config errors.
+
+    Args:
+        payload: Validated request or task payload consumed by the operation.
+        require_streams: Whether require streams applies to the operation.
+    """
     errors: list[str] = []
     selected = payload.get("selected_streams")
     if not isinstance(selected, list) or (require_streams and not selected):
@@ -7976,12 +9409,22 @@ def _appliance_update_config_errors(payload: dict, *, require_streams: bool = Tr
 
 
 def _appliance_update_python() -> str:
+    """Perform appliance update python.
+
+    """
     return str(ATLASO_VENV_PYTHON_PATH if ATLASO_VENV_PYTHON_PATH.exists() else sys.executable)
 
 
 def _command_payload(
     command: list[str], *, success_codes: set[int] | None = None, env: dict[str, str] | None = None
 ) -> dict:
+    """Perform command payload.
+
+    Args:
+        command: Command and arguments to execute.
+        success_codes: Success codes consumed by command payload.
+        env: Environment variables supplied to the child process.
+    """
     result = _run(command, env=env) if env is not None else _run(command)
     success_codes = success_codes or {0}
     stdout = result.stdout[-4000:]
@@ -8005,6 +9448,11 @@ def _command_payload(
 
 
 def _url_origin(url: str) -> tuple[str, str, int | None]:
+    """Perform URL origin.
+
+    Args:
+        url: URL contacted or emitted by the operation.
+    """
     parsed = urlparse(url)
     port = parsed.port
     if port is None:
@@ -8014,10 +9462,25 @@ def _url_origin(url: str) -> tuple[str, str, int | None]:
 
 class _UpdateRedirectHandler(HTTPRedirectHandler):
     def __init__(self, *, authenticated_origin: tuple[str, str, int | None] | None) -> None:
+        """Perform init.
+
+        Args:
+            authenticated_origin: Authenticated origin consumed by init.
+        """
         super().__init__()
         self.authenticated_origin = authenticated_origin
 
     def redirect_request(self, req, fp, code, msg, headers, newurl):  # type: ignore[no-untyped-def]
+        """Perform redirect request.
+
+        Args:
+            req: Req consumed by redirect request.
+            fp: Fp consumed by redirect request.
+            code: Code consumed by redirect request.
+            msg: Msg consumed by redirect request.
+            headers: Headers consumed by redirect request.
+            newurl: Newurl consumed by redirect request.
+        """
         redirect_url = urljoin(req.full_url, newurl)
         source_origin = _url_origin(req.full_url)
         target_origin = _url_origin(redirect_url)
@@ -8029,6 +9492,12 @@ class _UpdateRedirectHandler(HTTPRedirectHandler):
 
 
 def _fetch_http_bytes(url: str, credential: dict[str, str] | None = None) -> bytes:
+    """Perform fetch HTTP bytes.
+
+    Args:
+        url: URL contacted or emitted by the operation.
+        credential: Credential consumed by fetch HTTP bytes.
+    """
     parsed = urlparse(url)
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
         raise ValueError(f"unsupported update URL: {url}")
@@ -8046,11 +9515,23 @@ def _fetch_http_bytes(url: str, credential: dict[str, str] | None = None) -> byt
 
 
 def _source_credential(source: dict, credentials: dict[str, dict[str, str]]) -> dict[str, str] | None:
+    """Perform source credential.
+
+    Args:
+        source: Source object or location from which data is obtained.
+        credentials: Credentials consumed by source credential.
+    """
     credential = credentials.get(str(source.get("id") or ""))
     return credential if isinstance(credential, dict) and str(credential.get("secret") or "") else None
 
 
 def _enabled_sources(payload: dict, kind: str) -> list[dict]:
+    """Perform enabled sources.
+
+    Args:
+        payload: Validated request or task payload consumed by the operation.
+        kind: Kind consumed by enabled sources.
+    """
     definitions = payload.get("source_definitions") or []
     return [
         source for source in definitions
@@ -8059,6 +9540,11 @@ def _enabled_sources(payload: dict, kind: str) -> list[dict]:
 
 
 def _atlaso_manifest_sources(payload: dict) -> list[tuple[str, dict]]:
+    """Perform atlaso manifest sources.
+
+    Args:
+        payload: Validated request or task payload consumed by the operation.
+    """
     definitions = _enabled_sources(payload, "atlaso")
     pairs: list[tuple[str, dict]] = []
     for source in definitions:
@@ -8078,10 +9564,19 @@ def _atlaso_manifest_sources(payload: dict) -> list[tuple[str, dict]]:
 
 
 def _current_python_abi() -> str:
+    """Perform current python abi.
+
+    """
     return f"cp{sys.version_info.major}{sys.version_info.minor}"
 
 
 def _validated_update_https_url(value: object, label: str) -> str:
+    """Perform validated update HTTPS URL.
+
+    Args:
+        value: Candidate value consumed by validated update HTTPS URL.
+        label: Human-readable label used to identify the result.
+    """
     url = str(value or "").strip()
     parsed = urlparse(url)
     if parsed.scheme != "https" or not parsed.netloc or parsed.username or parsed.password:
@@ -8090,6 +9585,12 @@ def _validated_update_https_url(value: object, label: str) -> str:
 
 
 def _validated_update_timestamp(value: object, label: str) -> str:
+    """Perform validated update timestamp.
+
+    Args:
+        value: Candidate value consumed by validated update timestamp.
+        label: Human-readable label used to identify the result.
+    """
     timestamp = str(value or "").strip()
     try:
         parsed = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
@@ -8101,6 +9602,13 @@ def _validated_update_timestamp(value: object, label: str) -> str:
 
 
 def _verify_signed_update_document(raw_document: bytes, raw_signature: bytes, *, kind: str) -> dict:
+    """Perform verify signed update document.
+
+    Args:
+        raw_document: Raw document consumed by verify signed update document.
+        raw_signature: Raw signature consumed by verify signed update document.
+        kind: Kind consumed by verify signed update document.
+    """
     try:
         signature_document = json.loads(raw_signature.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
@@ -8156,6 +9664,11 @@ def _verify_signed_update_document(raw_document: bytes, raw_signature: bytes, *,
 
 
 def _validate_channel_manifest(channel: dict) -> dict:
+    """Validate channel manifest.
+
+    Args:
+        channel: Candidate channel to validate.
+    """
     if channel.get("schema_version") != 2 or channel.get("kind") != "atlaso-channel":
         raise ValueError("Atlaso channel manifest schema is unsupported")
     if channel.get("channel") not in {"stable", "preview", "development"}:
@@ -8172,6 +9685,11 @@ def _validate_channel_manifest(channel: dict) -> dict:
 
 
 def _validate_release_manifest(release: dict) -> dict:
+    """Validate release manifest.
+
+    Args:
+        release: Candidate release to validate.
+    """
     if release.get("schema_version") != 2 or release.get("kind") != "atlaso-release":
         raise ValueError("Atlaso release manifest schema is unsupported")
     updater_protocol = release.get("updater_protocol")
@@ -8227,6 +9745,13 @@ def _validate_release_manifest(release: dict) -> dict:
 def _credential_for_related_url(
     source_url: str, target_url: str, credential: dict[str, str] | None
 ) -> dict[str, str] | None:
+    """Perform credential for related URL.
+
+    Args:
+        source_url: URL used for source.
+        target_url: URL used for target.
+        credential: Credential consumed by credential for related URL.
+    """
     if not credential:
         return None
     source = urlparse(source_url)
@@ -8237,6 +9762,12 @@ def _credential_for_related_url(
 def _download_signed_release(
     channel_url: str, credential: dict[str, str] | None = None
 ) -> tuple[dict, dict, dict[str, str] | None]:
+    """Perform download signed release.
+
+    Args:
+        channel_url: URL used for channel.
+        credential: Credential consumed by download signed release.
+    """
     raw_channel = _fetch_http_bytes(channel_url, credential)
     raw_channel_signature = _fetch_http_bytes(f"{channel_url}.sig", credential)
     channel = _validate_channel_manifest(
@@ -8260,6 +9791,12 @@ def _download_signed_release(
 def _download_signed_release_from_sources(
     payload: dict, credentials: dict[str, dict[str, str]]
 ) -> tuple[dict, dict, str, dict[str, str] | None]:
+    """Perform download signed release from sources.
+
+    Args:
+        payload: Validated request or task payload consumed by the operation.
+        credentials: Credentials consumed by download signed release from sources.
+    """
     failures: list[str] = []
     for channel_url, source in _atlaso_manifest_sources(payload):
         credential = _source_credential(source, credentials)
@@ -8272,6 +9809,9 @@ def _download_signed_release_from_sources(
 
 
 def _restore_atlaso_venv_permissions() -> None:
+    """Perform restore atlaso venv permissions.
+
+    """
     venv = ATLASO_VENV_PYTHON_PATH.parents[1]
     if not venv.exists():
         return
@@ -8291,6 +9831,11 @@ def _restore_atlaso_venv_permissions() -> None:
 
 
 def _write_update_info(info: dict) -> None:
+    """Write update info.
+
+    Args:
+        info: Info consumed by write update info.
+    """
     APPLIANCE_UPDATE_INFO_PATH.parent.mkdir(parents=True, exist_ok=True)
     tmp_path = APPLIANCE_UPDATE_INFO_PATH.with_suffix(".tmp")
     tmp_path.write_text(json.dumps(info, indent=2, sort_keys=True) + "\n", encoding="utf-8")
@@ -8299,14 +9844,30 @@ def _write_update_info(info: dict) -> None:
 
 
 def _powershell_encoded_command(script: str) -> str:
+    """Perform powershell encoded command.
+
+    Args:
+        script: Script consumed by powershell encoded command.
+    """
     return base64.b64encode(script.encode("utf-16-le")).decode("ascii")
 
 
 def _powershell_literal(value: str) -> str:
+    """Perform powershell literal.
+
+    Args:
+        value: Candidate value consumed by powershell literal.
+    """
     return "'" + value.replace("'", "''") + "'"
 
 
 def _sync_appliance_update_sources(payload: dict, credentials: dict[str, dict[str, str]] | None = None) -> dict:
+    """Perform sync appliance update sources.
+
+    Args:
+        payload: Validated request or task payload consumed by the operation.
+        credentials: Credentials consumed by sync appliance update sources.
+    """
     credentials = credentials or {}
     definitions = payload.get("source_definitions") or []
     if not isinstance(definitions, list):
@@ -8315,6 +9876,12 @@ def _sync_appliance_update_sources(payload: dict, credentials: dict[str, dict[st
     source_results: list[dict] = []
 
     def record_source_result(source: dict, *, success: bool) -> None:
+        """Perform record source result.
+
+        Args:
+            source: Source object or location from which data is obtained.
+            success: Whether success applies to the operation.
+        """
         source_results.append(
             {
                 "id": source.get("id"),
@@ -8469,6 +10036,12 @@ def _sync_appliance_update_sources(payload: dict, credentials: dict[str, dict[st
 
 
 def _check_appliance_update(payload: dict, credentials: dict[str, dict[str, str]] | None = None) -> dict:
+    """Check appliance update.
+
+    Args:
+        payload: Validated request or task payload consumed by the operation.
+        credentials: Credentials consumed by check appliance update.
+    """
     credentials = credentials or {}
     selected = set(payload.get("selected_streams") or [])
     sources = payload.get("sources") or {}
@@ -8525,6 +10098,12 @@ def _check_appliance_update(payload: dict, credentials: dict[str, dict[str, str]
 
 
 def _apply_powershell_modules(payload: dict, credentials: dict[str, dict[str, str]] | None = None) -> list[dict]:
+    """Perform apply powershell modules.
+
+    Args:
+        payload: Validated request or task payload consumed by the operation.
+        credentials: Credentials consumed by apply powershell modules.
+    """
     credentials = credentials or {}
     sources = payload.get("sources") or {}
     default_repository = str(sources.get("powershell_repository_name") or "").strip()
@@ -8588,6 +10167,9 @@ def _apply_powershell_modules(payload: dict, credentials: dict[str, dict[str, st
 
 
 def _active_release_metadata() -> tuple[Path, dict]:
+    """Perform active release metadata.
+
+    """
     if not ATLASO_CURRENT_LINK.is_symlink():
         raise ValueError("Install a signed Atlaso release before applying Photon OS updates")
     release_root = ATLASO_CURRENT_LINK.resolve()
@@ -8602,6 +10184,9 @@ def _active_release_metadata() -> tuple[Path, dict]:
 
 
 def _candidate_photon_python_abi() -> tuple[dict, str]:
+    """Perform candidate photon python abi.
+
+    """
     tdnf = _command_path("tdnf") or "tdnf"
     command = _command_payload([tdnf, "repoquery", "python3"])
     if not command["success"]:
@@ -8623,6 +10208,9 @@ def _candidate_photon_python_abi() -> tuple[dict, str]:
 
 
 def _photon_python_compatibility() -> dict:
+    """Perform photon python compatibility.
+
+    """
     try:
         _release_root, metadata = _active_release_metadata()
     except ValueError as exc:
@@ -8652,6 +10240,11 @@ def _photon_python_compatibility() -> dict:
 
 
 def _rebuild_active_release_for_python(previous_abi: str) -> tuple[list[dict], bool]:
+    """Perform rebuild active release for python.
+
+    Args:
+        previous_abi: Previous abi restored or compared by the operation.
+    """
     current_abi = _current_python_abi()
     if current_abi == previous_abi:
         return [], False
@@ -8685,6 +10278,12 @@ def _rebuild_active_release_for_python(previous_abi: str) -> tuple[list[dict], b
 
 
 def _safe_extract_release(bundle_path: Path, destination: Path) -> None:
+    """Return a safe extract release.
+
+    Args:
+        bundle_path: Filesystem path used for bundle.
+        destination: Destination object or location receiving the result.
+    """
     with tarfile.open(bundle_path, "r:gz") as archive:
         for member in archive.getmembers():
             member_path = PurePosixPath(member.name)
@@ -8694,6 +10293,12 @@ def _safe_extract_release(bundle_path: Path, destination: Path) -> None:
 
 
 def _validate_release_content(release: dict, root: Path) -> None:
+    """Validate release content.
+
+    Args:
+        release: Candidate release to validate.
+        root: Repository or filesystem root searched by the operation.
+    """
     expected = release["content_hashes"]
     actual_files = {
         path.relative_to(root).as_posix(): path
@@ -8711,6 +10316,12 @@ def _validate_release_content(release: dict, root: Path) -> None:
 
 
 def _install_release_venv(release_root: Path, abi: str) -> list[dict]:
+    """Perform install release venv.
+
+    Args:
+        release_root: Filesystem path associated with release root.
+        abi: Abi consumed by install release venv.
+    """
     wheelhouse = release_root / "wheelhouse" / abi
     lock_path = wheelhouse / "requirements-wheelhouse.lock"
     application_wheels = sorted((release_root / "packages").glob("atlaso-*.whl"))
@@ -8783,6 +10394,12 @@ def _install_release_venv(release_root: Path, abi: str) -> list[dict]:
 
 
 def _atomic_symlink(target: Path, link: Path) -> None:
+    """Perform atomic symlink.
+
+    Args:
+        target: Target resource or location affected by the operation.
+        link: Filesystem path associated with link.
+    """
     temporary = link.with_name(f".{link.name}.tmp")
     temporary.unlink(missing_ok=True)
     temporary.symlink_to(target)
@@ -8790,6 +10407,9 @@ def _atomic_symlink(target: Path, link: Path) -> None:
 
 
 def _active_release_root() -> Path:
+    """Perform active release root.
+
+    """
     if not ATLASO_CURRENT_LINK.is_symlink():
         raise ValueError("Atlaso current release link is missing")
     if not ATLASO_VENV_LINK.is_symlink():
@@ -8801,6 +10421,11 @@ def _active_release_root() -> Path:
 
 
 def _sqlite_backup(destination: Path) -> None:
+    """Perform sqlite backup.
+
+    Args:
+        destination: Destination object or location receiving the result.
+    """
     destination.parent.mkdir(parents=True, exist_ok=True)
     if not ATLASO_DATABASE_PATH.exists():
         return
@@ -8816,6 +10441,11 @@ def _sqlite_backup(destination: Path) -> None:
 
 
 def _restore_sqlite_backup(source: Path) -> None:
+    """Perform restore sqlite backup.
+
+    Args:
+        source: Source object or location from which data is obtained.
+    """
     if not source.exists():
         return
     for suffix in ("", "-wal", "-shm"):
@@ -8824,11 +10454,22 @@ def _restore_sqlite_backup(source: Path) -> None:
 
 
 def _service_command(action: str, *units: str) -> dict:
+    """Perform service command.
+
+    Args:
+        action: Action consumed by service command.
+        *units: Additional positional arguments accepted by the callable.
+    """
     systemctl = _command_path("systemctl") or "systemctl"
     return _command_payload([systemctl, action, *units])
 
 
 def _wait_for_atlaso_health(timeout_seconds: int = 60) -> dict:
+    """Perform wait for atlaso health.
+
+    Args:
+        timeout_seconds: Timeout duration in seconds.
+    """
     deadline = time.monotonic() + timeout_seconds
     error = ""
     while time.monotonic() < deadline:
@@ -8855,6 +10496,12 @@ def _wait_for_atlaso_health(timeout_seconds: int = 60) -> dict:
 
 
 def _install_release_owned_files(release_root: Path, backup_root: Path) -> list[tuple[Path | None, Path]]:
+    """Perform install release owned files.
+
+    Args:
+        release_root: Filesystem path associated with release root.
+        backup_root: Filesystem path associated with backup root.
+    """
     owned = [
         (release_root / "bin/atlaso-helper", Path("/opt/atlaso/bin/atlaso-helper"), 0o755),
         (release_root / "THIRD_PARTY_NOTICES.md", ATLASO_NOTICE_PATH, 0o644),
@@ -8899,6 +10546,11 @@ def _install_release_owned_files(release_root: Path, backup_root: Path) -> list[
 
 
 def _restore_release_owned_files(backups: list[tuple[Path | None, Path]]) -> None:
+    """Perform restore release owned files.
+
+    Args:
+        backups: Filesystem path associated with backups.
+    """
     for backup, destination in backups:
         if backup is None:
             destination.unlink(missing_ok=True)
@@ -8907,6 +10559,11 @@ def _restore_release_owned_files(backups: list[tuple[Path | None, Path]]) -> Non
 
 
 def _set_release_maintenance(enabled: bool) -> dict:
+    """Perform set release maintenance.
+
+    Args:
+        enabled: Whether the associated resource or behavior is enabled.
+    """
     if enabled:
         ATLASO_UPDATE_MAINTENANCE_PATH.parent.mkdir(parents=True, exist_ok=True)
         ATLASO_UPDATE_MAINTENANCE_PATH.touch(mode=0o644, exist_ok=True)
@@ -8936,6 +10593,11 @@ def _set_release_maintenance(enabled: bool) -> dict:
 
 
 def _write_release_finalizer(payload: dict) -> None:
+    """Write release finalizer.
+
+    Args:
+        payload: Validated request or task payload consumed by the operation.
+    """
     ATLASO_UPDATE_FINALIZER_PATH.parent.mkdir(parents=True, exist_ok=True)
     temporary = ATLASO_UPDATE_FINALIZER_PATH.with_suffix(".tmp")
     temporary.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
@@ -8944,6 +10606,12 @@ def _write_release_finalizer(payload: dict) -> None:
 
 
 def _prune_old_releases(*, current: Path, previous: Path) -> None:
+    """Perform prune old releases.
+
+    Args:
+        current: Filesystem path associated with current.
+        previous: Filesystem path associated with previous.
+    """
     keep = {current.resolve(), previous.resolve()}
     for path in ATLASO_RELEASES_DIR.iterdir():
         if not path.is_dir() or path.resolve() in keep:
@@ -8954,6 +10622,12 @@ def _prune_old_releases(*, current: Path, previous: Path) -> None:
 def _apply_atlaso_release(
     payload: dict, credentials: dict[str, dict[str, str]] | None = None
 ) -> tuple[dict, dict, list[dict]]:
+    """Perform apply atlaso release.
+
+    Args:
+        payload: Validated request or task payload consumed by the operation.
+        credentials: Credentials consumed by apply atlaso release.
+    """
     credentials = credentials or {}
     channel, release, release_manifest_url, release_credential = _download_signed_release_from_sources(payload, credentials)
     bundle = release["bundle"]
@@ -9147,6 +10821,12 @@ def _apply_atlaso_release(
 
 
 def _apply_appliance_update(payload: dict, credentials: dict[str, dict[str, str]] | None = None) -> dict:
+    """Perform apply appliance update.
+
+    Args:
+        payload: Validated request or task payload consumed by the operation.
+        credentials: Credentials consumed by apply appliance update.
+    """
     credentials = credentials or {}
     selected = set(payload.get("selected_streams") or [])
     commands: list[dict] = []
@@ -9241,6 +10921,9 @@ def _apply_appliance_update(payload: dict, credentials: dict[str, dict[str, str]
 
 
 def _restart_atlaso_service_after_update() -> int:
+    """Perform restart atlaso service after update.
+
+    """
     systemctl = _command_path("systemctl")
     if systemctl is None:
         print("systemctl command not found", file=sys.stderr)
@@ -9268,6 +10951,11 @@ def _restart_atlaso_service_after_update() -> int:
 
 
 def _console_unit_state(unit: str) -> dict[str, object] | None:
+    """Perform console unit state.
+
+    Args:
+        unit: Unit consumed by console unit state.
+    """
     load_state = _run(["systemctl", "show", "--property=LoadState", "--value", unit])
     if load_state.returncode != 0 or load_state.stdout.strip() == "not-found":
         return None
@@ -9283,6 +10971,11 @@ def _console_unit_state(unit: str) -> dict[str, object] | None:
 
 
 def _write_console_service_state(payload: dict[str, object]) -> None:
+    """Write console service state.
+
+    Args:
+        payload: Validated request or task payload consumed by the operation.
+    """
     CONSOLE_STATE_DIR.mkdir(parents=True, exist_ok=True)
     os.chmod(CONSOLE_STATE_DIR, 0o700)
     temporary = CONSOLE_SERVICE_STATE_PATH.with_suffix(".json.tmp")
@@ -9292,6 +10985,9 @@ def _write_console_service_state(payload: dict[str, object]) -> None:
 
 
 def _disable_console_managed_services() -> int:
+    """Perform disable console managed services.
+
+    """
     if CONSOLE_SERVICE_STATE_PATH.exists():
         print(json.dumps({"console": "maintenance isolation already enabled", "state_path": str(CONSOLE_SERVICE_STATE_PATH)}, sort_keys=True))
         return 0
@@ -9321,6 +11017,9 @@ def _disable_console_managed_services() -> int:
 
 
 def _restore_console_managed_services() -> int:
+    """Perform restore console managed services.
+
+    """
     if not CONSOLE_SERVICE_STATE_PATH.exists():
         print(json.dumps({"console": "maintenance isolation is not enabled"}, sort_keys=True))
         return 0
@@ -9366,6 +11065,12 @@ def _restore_console_managed_services() -> int:
 
 
 def _handle_console(action: str, args: list[str]) -> int:
+    """Handle console.
+
+    Args:
+        action: Action consumed by handle console.
+        args: Parsed command-line options consumed by the operation.
+    """
     if args:
         print(f"console {action} does not accept a path", file=sys.stderr)
         return 2
@@ -9391,6 +11096,11 @@ def _handle_console(action: str, args: list[str]) -> int:
 
 
 def _esx_storage_safe_slug(value: object) -> str:
+    """Perform ESX storage safe slug.
+
+    Args:
+        value: Candidate value consumed by ESX storage safe slug.
+    """
     slug = re.sub(r"[^a-z0-9]+", "-", str(value or "").strip().lower()).strip("-")
     if not slug:
         raise ValueError("ESX Storage names must contain at least one letter or number")
@@ -9398,6 +11108,11 @@ def _esx_storage_safe_slug(value: object) -> str:
 
 
 def _esx_storage_config_path(value: str) -> Path:
+    """Perform ESX storage config path.
+
+    Args:
+        value: Candidate value consumed by ESX storage config path.
+    """
     path = Path(value).resolve(strict=True)
     root = ESX_STORAGE_APPLY_DIR.resolve(strict=True)
     if not path.is_relative_to(root) or path.name != "atlaso-esx-storage.json":
@@ -9406,6 +11121,11 @@ def _esx_storage_config_path(value: str) -> Path:
 
 
 def _esx_storage_manifest(path: Path) -> dict[str, object]:
+    """Perform ESX storage manifest.
+
+    Args:
+        path: Filesystem path read, validated, or updated by the operation.
+    """
     payload = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(payload, dict):
         raise ValueError("ESX Storage manifest must be a JSON object")
@@ -9413,6 +11133,11 @@ def _esx_storage_manifest(path: Path) -> dict[str, object]:
 
 
 def _esx_storage_manifest_hash(payload: dict[str, object]) -> str:
+    """Perform ESX storage manifest hash.
+
+    Args:
+        payload: Validated request or task payload consumed by the operation.
+    """
     desired = dict(payload)
     desired.pop("format_authorizations", None)
     encoded = json.dumps(desired, sort_keys=True, separators=(",", ":")).encode("utf-8")
@@ -9420,6 +11145,9 @@ def _esx_storage_manifest_hash(payload: dict[str, object]) -> str:
 
 
 def _esx_storage_by_id_map() -> dict[str, str]:
+    """Perform ESX storage by identifier map.
+
+    """
     result: dict[str, str] = {}
     root = Path("/dev/disk/by-id")
     if not root.is_dir():
@@ -9438,6 +11166,9 @@ def _esx_storage_by_id_map() -> dict[str, str]:
 
 
 def _esx_storage_os_devices() -> set[str]:
+    """Perform ESX storage operating-system devices.
+
+    """
     findmnt = _command_path("findmnt")
     lsblk = _command_path("lsblk")
     if findmnt is None or lsblk is None:
@@ -9451,6 +11182,9 @@ def _esx_storage_os_devices() -> set[str]:
 
 
 def _esx_storage_inventory() -> list[dict[str, object]]:
+    """Perform ESX storage inventory.
+
+    """
     lsblk = _command_path("lsblk")
     if lsblk is None:
         raise ValueError("lsblk is required for ESX Storage disk inventory")
@@ -9476,6 +11210,12 @@ def _esx_storage_inventory() -> list[dict[str, object]]:
     inventory: list[dict[str, object]] = []
 
     def walk(item: dict[str, object], parent_disk: str = "") -> None:
+        """Perform walk.
+
+        Args:
+            item: Item consumed by walk.
+            parent_disk: Parent disk consumed by walk.
+        """
         device_path = str(item.get("path") or "")
         device_type = str(item.get("type") or "")
         disk_path = device_path if device_type == "disk" else parent_disk
@@ -9531,6 +11271,11 @@ def _esx_storage_inventory() -> list[dict[str, object]]:
 
 
 def _esx_storage_blank_disk_errors(entry: dict[str, object]) -> list[str]:
+    """Perform ESX storage blank disk errors.
+
+    Args:
+        entry: Entry consumed by ESX storage blank disk errors.
+    """
     errors: list[str] = []
     if str(entry.get("type")) != "disk":
         errors.append("not a whole disk")
@@ -9553,6 +11298,13 @@ def _esx_storage_blank_disk_errors(entry: dict[str, object]) -> list[str]:
 
 
 def _esx_storage_disk_is_initialized(entry: dict[str, object], *, label: str, mount_path: Path) -> bool:
+    """Perform ESX storage disk is initialized.
+
+    Args:
+        entry: Entry consumed by ESX storage disk is initialized.
+        label: Human-readable label used to identify the result.
+        mount_path: Filesystem path used for mount.
+    """
     return (
         str(entry.get("filesystem_type") or "") == "ext4"
         and str(entry.get("filesystem_label") or "") == label
@@ -9568,6 +11320,11 @@ def _esx_storage_disk_is_initialized(entry: dict[str, object], *, label: str, mo
 
 
 def _esx_storage_reserved_mount_owner(value: str) -> str:
+    """Perform ESX storage reserved mount owner.
+
+    Args:
+        value: Candidate value consumed by ESX storage reserved mount owner.
+    """
     raw = value.strip()
     if not raw.startswith("/"):
         return ""
@@ -9579,6 +11336,12 @@ def _esx_storage_reserved_mount_owner(value: str) -> str:
 
 
 def _esx_storage_manifest_errors(payload: dict[str, object], *, require_authorization: bool = False) -> list[str]:
+    """Perform ESX storage manifest errors.
+
+    Args:
+        payload: Validated request or task payload consumed by the operation.
+        require_authorization: Whether require authorization applies to the operation.
+    """
     errors: list[str] = []
     if payload.get("schema_version") != 1:
         errors.append("ESX Storage schema_version must be 1")
@@ -9648,6 +11411,11 @@ def _esx_storage_manifest_errors(payload: dict[str, object], *, require_authoriz
 
 
 def _esx_storage_replace_managed_fstab(lines: list[str]) -> None:
+    """Perform ESX storage replace managed fstab.
+
+    Args:
+        lines: Source or output lines being parsed.
+    """
     existing = ESX_STORAGE_FSTAB_PATH.read_text(encoding="utf-8") if ESX_STORAGE_FSTAB_PATH.exists() else ""
     pattern = re.compile(
         rf"(?ms)^\s*{re.escape(ESX_STORAGE_FSTAB_BEGIN)}\s*$.*?^\s*{re.escape(ESX_STORAGE_FSTAB_END)}\s*$\n?"
@@ -9658,6 +11426,11 @@ def _esx_storage_replace_managed_fstab(lines: list[str]) -> None:
 
 
 def _esx_storage_write_runtime_config(payload: dict[str, object]) -> None:
+    """Perform ESX storage write runtime config.
+
+    Args:
+        payload: Validated request or task payload consumed by the operation.
+    """
     enabled_shares = [share for share in payload.get("shares", []) if isinstance(share, dict) and share.get("enabled")]
     root_clients: list[str] = []
     export_lines: list[str] = []
@@ -9695,6 +11468,13 @@ manage-gids=y
 
 
 def _esx_storage_bind_mount_matches(findmnt: str, source: Path, target: Path) -> bool:
+    """Perform ESX storage bind mount matches.
+
+    Args:
+        findmnt: Findmnt consumed by ESX storage bind mount matches.
+        source: Source object or location from which data is obtained.
+        target: Target resource or location affected by the operation.
+    """
     mounted = _run([findmnt, "-n", "--mountpoint", str(target)])
     if mounted.returncode != 0:
         return False
@@ -9706,6 +11486,11 @@ def _esx_storage_bind_mount_matches(findmnt: str, source: Path, target: Path) ->
 
 
 def _esx_storage_apply(payload: dict[str, object]) -> dict[str, object]:
+    """Perform ESX storage apply.
+
+    Args:
+        payload: Validated request or task payload consumed by the operation.
+    """
     inventory = _esx_storage_inventory()
     inventory_by_id = {str(item.get("stable_device_id") or ""): item for item in inventory}
     fstab_lines: list[str] = []
@@ -9843,6 +11628,12 @@ def _esx_storage_apply(payload: dict[str, object]) -> dict[str, object]:
 
 
 def _handle_esx_storage(action: str, args: list[str]) -> int:
+    """Handle ESX storage.
+
+    Args:
+        action: Action consumed by handle ESX storage.
+        args: Parsed command-line options consumed by the operation.
+    """
     if action == "inventory":
         try:
             print(json.dumps(_esx_storage_inventory(), sort_keys=True, separators=(",", ":")))
@@ -9899,6 +11690,12 @@ def _handle_esx_storage(action: str, args: list[str]) -> int:
 
 
 def _handle_automation(action: str, args: list[str]) -> int:
+    """Handle automation.
+
+    Args:
+        action: Action consumed by handle automation.
+        args: Parsed command-line options consumed by the operation.
+    """
     if action != "run" or len(args) < 3:
         print("automation run requires script path, interpreter, timeout seconds, and optional arguments after --", file=sys.stderr)
         return 2
@@ -10028,6 +11825,11 @@ def _handle_automation(action: str, args: list[str]) -> int:
 
 
 def _schedule_appliance_power(action: str) -> int:
+    """Perform schedule appliance power.
+
+    Args:
+        action: Action consumed by schedule appliance power.
+    """
     systemctl = _command_path("systemctl")
     systemd_run = shutil.which("systemd-run")
     if systemctl is None:
@@ -10054,6 +11856,12 @@ def _schedule_appliance_power(action: str) -> int:
 
 
 def _handle_appliance_power(action: str, args: list[str]) -> int:
+    """Handle appliance power.
+
+    Args:
+        action: Action consumed by handle appliance power.
+        args: Parsed command-line options consumed by the operation.
+    """
     if args:
         print(f"appliance-power {action} does not accept a path", file=sys.stderr)
         return 2
@@ -10061,6 +11869,12 @@ def _handle_appliance_power(action: str, args: list[str]) -> int:
 
 
 def _handle_appliance_update(action: str, args: list[str]) -> int:
+    """Handle appliance update.
+
+    Args:
+        action: Action consumed by handle appliance update.
+        args: Parsed command-line options consumed by the operation.
+    """
     try:
         config_path = _validate_appliance_update_config_path(args[0])
         payload = _load_appliance_update_config(config_path)
@@ -10112,6 +11926,11 @@ def _handle_appliance_update(action: str, args: list[str]) -> int:
 
 
 def main(argv: list[str]) -> int:
+    """Run the command-line entry point.
+
+    Args:
+        argv: Command-line arguments to parse, or ``None`` to use the process arguments.
+    """
     if len(argv) < 3:
         return _usage()
 

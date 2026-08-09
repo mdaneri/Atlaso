@@ -77,6 +77,11 @@ VERSION_PATHS = {
 def _version_path(root: Path, source: str) -> Path:
     """Resolve a configured version source within a checkout.
 
+    Args:
+        root: Repository or filesystem root searched by the operation.
+        source: Source object or location from which data is obtained.
+
+
     Raises:
         VersionError: If the operation encounters an invalid state.
     """
@@ -100,6 +105,11 @@ def _version_path(root: Path, source: str) -> Path:
 def _read_text(root: Path, source: str) -> str:
     """Read a configured version source as UTF-8 text.
 
+    Args:
+        root: Repository or filesystem root searched by the operation.
+        source: Source object or location from which data is obtained.
+
+
     Raises:
         VersionError: If the operation encounters an invalid state.
     """
@@ -112,6 +122,10 @@ def _read_text(root: Path, source: str) -> str:
 
 def read_project_version(root: Path) -> Version:
     """Read the canonical Python project version from `pyproject.toml`.
+
+    Args:
+        root: Repository or filesystem root searched by the operation.
+
 
     Raises:
         VersionError: If the operation encounters an invalid state.
@@ -136,6 +150,10 @@ def read_project_version(root: Path) -> Version:
 def read_project_name(root: Path) -> str:
     """Read the canonical distribution name from `pyproject.toml`.
 
+    Args:
+        root: Repository or filesystem root searched by the operation.
+
+
     Raises:
         VersionError: If the operation encounters an invalid state.
     """
@@ -153,12 +171,20 @@ def read_project_name(root: Path) -> str:
 
 
 def normalize_distribution_name(value: str) -> str:
-    """Return the canonical comparison form defined for Python distributions."""
+    """Return the canonical comparison form defined for Python distributions.
+
+    Args:
+        value: Candidate value consumed by normalize distribution name.
+    """
     return NORMALIZED_DISTRIBUTION_SEPARATOR_RE.sub("-", value).casefold()
 
 
 def read_versions(root: Path) -> dict[str, Version]:
     """Read every synchronized Atlaso version source.
+
+    Args:
+        root: Repository or filesystem root searched by the operation.
+
 
     Raises:
         VersionError: If the operation encounters an invalid state.
@@ -192,6 +218,10 @@ def read_versions(root: Path) -> dict[str, Version]:
 def consistent_version(root: Path) -> Version:
     """Return the shared version after verifying every source agrees.
 
+    Args:
+        root: Repository or filesystem root searched by the operation.
+
+
     Raises:
         VersionError: If the operation encounters an invalid state.
     """
@@ -204,12 +234,21 @@ def consistent_version(root: Path) -> Version:
 
 
 def expected_version(base_root: Path) -> Version:
-    """Return the next patch expected from the base checkout."""
+    """Return the next patch expected from the base checkout.
+
+    Args:
+        base_root: Filesystem path associated with base root.
+    """
     return consistent_version(base_root).next_patch()
 
 
 def allowed_pr_versions(base_root: Path, target_root: Path | None = None) -> set[Version]:
-    """Return versions permitted for a pull request checkout."""
+    """Return versions permitted for a pull request checkout.
+
+    Args:
+        base_root: Filesystem path associated with base root.
+        target_root: Filesystem path associated with target root.
+    """
     base = consistent_version(base_root)
     allowed = {base.next_patch()}
     if target_root is not None and normalize_distribution_name(
@@ -223,6 +262,11 @@ def allowed_pr_versions(base_root: Path, target_root: Path | None = None) -> set
 
 def check(root: Path, base_root: Path | None = None) -> Version:
     """Validate synchronized sources and optional pull-request version policy.
+
+    Args:
+        root: Repository or filesystem root searched by the operation.
+        base_root: Filesystem path associated with base root.
+
 
     Returns:
         The consistent repository version.
@@ -264,6 +308,12 @@ def bump(
     target_version: Version | None = None,
 ) -> tuple[Version, bool]:
     """Update every synchronized source to an allowed patch version.
+
+    Args:
+        root: Repository or filesystem root searched by the operation.
+        base_root: Filesystem path associated with base root.
+        target_version: Target version consumed by bump.
+
 
     Returns:
         The resulting version and whether any source changed.
@@ -313,6 +363,10 @@ def bump(
 
 def main(argv: list[str] | None = None) -> int:
     """Run the command-line entry point.
+
+    Args:
+        argv: Command-line arguments to parse, or ``None`` to use the process arguments.
+
 
     Returns:
         Process exit code.

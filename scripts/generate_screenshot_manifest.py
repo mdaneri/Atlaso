@@ -378,6 +378,10 @@ SPECIAL = {
 def documentation_page(stem: str) -> str:
     """Return documentation page.
 
+    Args:
+        stem: Stem consumed by documentation page.
+
+
     Raises:
         ValueError: If an input value is invalid.
     """
@@ -392,7 +396,11 @@ def documentation_page(stem: str) -> str:
 
 
 def clean_entry(stem: str) -> tuple[str, str, str, str]:
-    """Return clean entry."""
+    """Return clean entry.
+
+    Args:
+        stem: Stem consumed by clean entry.
+    """
     suffix = "-clean-responsive" if stem.endswith("-clean-responsive") else "-clean-desktop"
     slug = stem.removesuffix(suffix)
     route, title = ROUTES[slug]

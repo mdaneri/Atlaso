@@ -141,7 +141,11 @@ def test_vmware_ovf_customizer_rejects_incomplete_ipv4_pairs():
 
 
 def test_vmware_ovf_customizer_supports_disabled_auto_and_static_ipv6(tmp_path):
-    """Verify that vmware ovf customizer supports disabled auto and static ipv6."""
+    """Verify that vmware ovf customizer supports disabled auto and static ipv6.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
     customizer = load_customizer()
     customizer.NETWORKD_PATH = tmp_path / "management.network"
     properties = customizer.parse_ovf_environment(OVF_ENV)
@@ -204,7 +208,11 @@ def test_vmware_ovf_customizer_rejects_contradictory_or_incomplete_ipv6():
 
 
 def test_vmware_ovf_customizer_renders_family_specific_management_firewall(tmp_path):
-    """Verify that vmware ovf customizer renders family specific management firewall."""
+    """Verify that vmware ovf customizer renders family specific management firewall.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
     customizer = load_customizer()
     customizer.FIREWALL_CONFIG_PATH = tmp_path / "atlaso.nft"
     properties = customizer.parse_ovf_environment(OVF_ENV)
@@ -220,13 +228,23 @@ def test_vmware_ovf_customizer_renders_family_specific_management_firewall(tmp_p
 
 
 def test_vmware_ovf_customizer_configures_and_validates_root_ssh(tmp_path, monkeypatch):
-    """Verify that vmware ovf customizer configures and validates root ssh."""
+    """Verify that vmware ovf customizer configures and validates root ssh.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+    """
     customizer = load_customizer()
     customizer.SSHD_ROOT_LOGIN_CONFIG_PATH = tmp_path / "sshd_config.d" / "atlaso-root-login.conf"
     commands = []
 
     def fake_run(command, **kwargs):
-        """Return fake run."""
+        """Return fake run.
+
+        Args:
+            command: Command and arguments to execute.
+            **kwargs: Additional keyword arguments accepted by the callable.
+        """
         commands.append(command)
         return type("Result", (), {"returncode": 0})()
 
@@ -260,7 +278,11 @@ def test_vmware_ovf_customizer_requires_static_network_properties_only_for_stati
 
 
 def test_vmware_ovf_customizer_renders_initial_firewall_for_ovf_subnet(tmp_path):
-    """Verify that vmware ovf customizer renders initial firewall for ovf subnet."""
+    """Verify that vmware ovf customizer renders initial firewall for ovf subnet.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
     customizer = load_customizer()
     firewall_path = tmp_path / "atlaso.nft"
     customizer.FIREWALL_CONFIG_PATH = firewall_path
@@ -277,7 +299,11 @@ def test_vmware_ovf_customizer_renders_initial_firewall_for_ovf_subnet(tmp_path)
 
 
 def test_vmware_ovf_customizer_renders_dhcp_network_and_interface_scoped_firewall(tmp_path):
-    """Verify that vmware ovf customizer renders dhcp network and interface scoped firewall."""
+    """Verify that vmware ovf customizer renders dhcp network and interface scoped firewall.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
     customizer = load_customizer()
     customizer.NETWORKD_PATH = tmp_path / "00-atlaso-mgmt.network"
     customizer.FIREWALL_CONFIG_PATH = tmp_path / "atlaso.nft"
@@ -298,7 +324,11 @@ def test_vmware_ovf_customizer_renders_dhcp_network_and_interface_scoped_firewal
 
 
 def test_vmware_ovf_customizer_rotates_clone_specific_env_secrets(tmp_path):
-    """Verify that vmware ovf customizer rotates clone specific env secrets."""
+    """Verify that vmware ovf customizer rotates clone specific env secrets.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
     customizer = load_customizer()
     customizer.ENV_PATH = tmp_path / "atlaso.env"
     customizer.NETWORKD_PATH = tmp_path / "00-atlaso-mgmt.network"

@@ -58,7 +58,11 @@ def problem_response(
 
 
 def install_problem_handlers(app: FastAPI) -> None:
-    """Handle install problem handlers."""
+    """Handle install problem handlers.
+
+    Args:
+        app: App consumed by install problem handlers.
+    """
     @app.exception_handler(HTTPException)
     async def http_exception_handler(request: Request, exc: HTTPException) -> JSONResponse | RedirectResponse:
         """Return http exception handler.

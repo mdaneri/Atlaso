@@ -6,13 +6,22 @@ from atlaso.app.adapters.system import SystemAdapter
 
 
 def test_esx_storage_inventory_executes_read_only_helper_during_dry_run(monkeypatch):
-    """Verify that esx storage inventory executes read only helper during dry run."""
+    """Verify that esx storage inventory executes read only helper during dry run.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+    """
     import atlaso.app.adapters.system as system_adapter
 
     commands: list[list[str]] = []
 
     def fake_run(command, **_kwargs):
-        """Return fake run."""
+        """Return fake run.
+
+        Args:
+            command: Command and arguments to execute.
+            **_kwargs: Additional keyword arguments accepted by the callable.
+        """
         commands.append(command)
         return subprocess.CompletedProcess(command, 0, '[{"device_path":"/dev/sde"}]', "")
 
@@ -28,13 +37,22 @@ def test_esx_storage_inventory_executes_read_only_helper_during_dry_run(monkeypa
 
 
 def test_real_appliance_power_action_uses_sudo_helper(monkeypatch):
-    """Verify that real appliance power action uses sudo helper."""
+    """Verify that real appliance power action uses sudo helper.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+    """
     import atlaso.app.adapters.system as system_adapter
 
     commands: list[list[str]] = []
 
     def fake_run(command, **_kwargs):
-        """Return fake run."""
+        """Return fake run.
+
+        Args:
+            command: Command and arguments to execute.
+            **_kwargs: Additional keyword arguments accepted by the callable.
+        """
         commands.append(command)
         return subprocess.CompletedProcess(command, 0, "scheduled\n", "")
 
@@ -55,13 +73,22 @@ def test_real_appliance_power_action_uses_sudo_helper(monkeypatch):
 
 
 def test_real_vcf_depot_software_id_readback_uses_fixed_helper_action(monkeypatch):
-    """Verify that real vcf depot software id readback uses fixed helper action."""
+    """Verify that real vcf depot software id readback uses fixed helper action.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+    """
     import atlaso.app.adapters.system as system_adapter
 
     commands: list[list[str]] = []
 
     def fake_run(command, **_kwargs):
-        """Return fake run."""
+        """Return fake run.
+
+        Args:
+            command: Command and arguments to execute.
+            **_kwargs: Additional keyword arguments accepted by the callable.
+        """
         commands.append(command)
         return subprocess.CompletedProcess(command, 0, '{"software_depot_id":"safe-id"}', "")
 
@@ -90,13 +117,24 @@ def test_appliance_power_action_rejects_unknown_action():
 
 
 def test_real_dhcp_leases_use_unprivileged_helper_first(monkeypatch):
-    """Verify that real dhcp leases use unprivileged helper first."""
+    """Verify that real dhcp leases use unprivileged helper first.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+    """
     import atlaso.app.adapters.system as system_adapter
 
     commands: list[list[str]] = []
 
     def fake_run(command, check, capture_output, text):
-        """Return fake run."""
+        """Return fake run.
+
+        Args:
+            command: Command and arguments to execute.
+            check: Whether a nonzero command status raises an exception.
+            capture_output: Whether to capture the child process output.
+            text: Text content consumed by the operation.
+        """
         commands.append(command)
         return subprocess.CompletedProcess(
             command,
@@ -117,13 +155,22 @@ def test_real_dhcp_leases_use_unprivileged_helper_first(monkeypatch):
 
 
 def test_real_ntpd_logs_use_privileged_fixed_helper_action(monkeypatch):
-    """Verify that real ntpd logs use privileged fixed helper action."""
+    """Verify that real ntpd logs use privileged fixed helper action.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+    """
     import atlaso.app.adapters.system as system_adapter
 
     commands: list[list[str]] = []
 
     def fake_run(command, **kwargs):
-        """Return fake run."""
+        """Return fake run.
+
+        Args:
+            command: Command and arguments to execute.
+            **kwargs: Additional keyword arguments accepted by the callable.
+        """
         commands.append(command)
         return subprocess.CompletedProcess(command, 0, "ntpd ready\n", "")
 
@@ -138,13 +185,22 @@ def test_real_ntpd_logs_use_privileged_fixed_helper_action(monkeypatch):
 
 
 def test_real_ldap_logs_use_privileged_fixed_helper_action(monkeypatch):
-    """Verify that real ldap logs use privileged fixed helper action."""
+    """Verify that real ldap logs use privileged fixed helper action.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+    """
     import atlaso.app.adapters.system as system_adapter
 
     commands: list[list[str]] = []
 
     def fake_run(command, **kwargs):
-        """Return fake run."""
+        """Return fake run.
+
+        Args:
+            command: Command and arguments to execute.
+            **kwargs: Additional keyword arguments accepted by the callable.
+        """
         commands.append(command)
         return subprocess.CompletedProcess(command, 0, "slapd ready\n", "")
 
@@ -159,13 +215,22 @@ def test_real_ldap_logs_use_privileged_fixed_helper_action(monkeypatch):
 
 
 def test_managed_ldap_authentication_password_uses_stdin_not_argv(monkeypatch):
-    """Verify that managed ldap authentication password uses stdin not argv."""
+    """Verify that managed ldap authentication password uses stdin not argv.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+    """
     import atlaso.app.adapters.system as system_adapter
 
     captured: dict[str, object] = {}
 
     def fake_run(command, **kwargs):
-        """Return fake run."""
+        """Return fake run.
+
+        Args:
+            command: Command and arguments to execute.
+            **kwargs: Additional keyword arguments accepted by the callable.
+        """
         captured["command"] = command
         captured["input"] = kwargs.get("input")
         return subprocess.CompletedProcess(command, 0, "", "")
@@ -182,13 +247,22 @@ def test_managed_ldap_authentication_password_uses_stdin_not_argv(monkeypatch):
 
 
 def test_real_dnsmasq_logs_use_privileged_fixed_helper_action(monkeypatch):
-    """Verify that real dnsmasq logs use privileged fixed helper action."""
+    """Verify that real dnsmasq logs use privileged fixed helper action.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+    """
     import atlaso.app.adapters.system as system_adapter
 
     commands: list[list[str]] = []
 
     def fake_run(command, **kwargs):
-        """Return fake run."""
+        """Return fake run.
+
+        Args:
+            command: Command and arguments to execute.
+            **kwargs: Additional keyword arguments accepted by the callable.
+        """
         commands.append(command)
         return subprocess.CompletedProcess(command, 0, "dnsmasq ready\n", "")
 
@@ -203,13 +277,22 @@ def test_real_dnsmasq_logs_use_privileged_fixed_helper_action(monkeypatch):
 
 
 def test_real_nginx_logs_use_privileged_fixed_helper_action(monkeypatch):
-    """Verify that real nginx logs use privileged fixed helper action."""
+    """Verify that real nginx logs use privileged fixed helper action.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+    """
     import atlaso.app.adapters.system as system_adapter
 
     commands: list[list[str]] = []
 
     def fake_run(command, **kwargs):
-        """Return fake run."""
+        """Return fake run.
+
+        Args:
+            command: Command and arguments to execute.
+            **kwargs: Additional keyword arguments accepted by the callable.
+        """
         commands.append(command)
         return subprocess.CompletedProcess(command, 0, "nginx ready\n", "")
 
@@ -224,13 +307,22 @@ def test_real_nginx_logs_use_privileged_fixed_helper_action(monkeypatch):
 
 
 def test_real_nginx_http_logs_use_privileged_fixed_helper_actions(monkeypatch):
-    """Verify that real nginx http logs use privileged fixed helper actions."""
+    """Verify that real nginx http logs use privileged fixed helper actions.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+    """
     import atlaso.app.adapters.system as system_adapter
 
     commands: list[list[str]] = []
 
     def fake_run(command, **kwargs):
-        """Return fake run."""
+        """Return fake run.
+
+        Args:
+            command: Command and arguments to execute.
+            **kwargs: Additional keyword arguments accepted by the callable.
+        """
         commands.append(command)
         return subprocess.CompletedProcess(command, 0, "http request\n", "")
 
@@ -246,13 +338,22 @@ def test_real_nginx_http_logs_use_privileged_fixed_helper_actions(monkeypatch):
 
 
 def test_real_ntpd_capabilities_use_unprivileged_fixed_helper_action(monkeypatch):
-    """Verify that real ntpd capabilities use unprivileged fixed helper action."""
+    """Verify that real ntpd capabilities use unprivileged fixed helper action.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+    """
     import atlaso.app.adapters.system as system_adapter
 
     commands: list[list[str]] = []
 
     def fake_run(command, **kwargs):
-        """Return fake run."""
+        """Return fake run.
+
+        Args:
+            command: Command and arguments to execute.
+            **kwargs: Additional keyword arguments accepted by the callable.
+        """
         commands.append(command)
         return subprocess.CompletedProcess(command, 0, '{"nts": false}\n', "")
 
@@ -265,13 +366,24 @@ def test_real_ntpd_capabilities_use_unprivileged_fixed_helper_action(monkeypatch
 
 
 def test_real_dhcp_leases_fall_back_to_sudo_helper(monkeypatch):
-    """Verify that real dhcp leases fall back to sudo helper."""
+    """Verify that real dhcp leases fall back to sudo helper.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+    """
     import atlaso.app.adapters.system as system_adapter
 
     commands: list[list[str]] = []
 
     def fake_run(command, check, capture_output, text):
-        """Return fake run."""
+        """Return fake run.
+
+        Args:
+            command: Command and arguments to execute.
+            check: Whether a nonzero command status raises an exception.
+            capture_output: Whether to capture the child process output.
+            text: Text content consumed by the operation.
+        """
         commands.append(command)
         if command[0] == SystemAdapter.HELPER_PATH:
             return subprocess.CompletedProcess(command, 1, "", "permission denied\n")
@@ -296,11 +408,22 @@ def test_real_dhcp_leases_fall_back_to_sudo_helper(monkeypatch):
 
 
 def test_real_dhcp_leases_sudo_password_error_becomes_operator_guidance(monkeypatch):
-    """Verify that real dhcp leases sudo password error becomes operator guidance."""
+    """Verify that real dhcp leases sudo password error becomes operator guidance.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+    """
     import atlaso.app.adapters.system as system_adapter
 
     def fake_run(command, check, capture_output, text):
-        """Return fake run."""
+        """Return fake run.
+
+        Args:
+            command: Command and arguments to execute.
+            check: Whether a nonzero command status raises an exception.
+            capture_output: Whether to capture the child process output.
+            text: Text content consumed by the operation.
+        """
         if command[0] == SystemAdapter.HELPER_PATH:
             return subprocess.CompletedProcess(command, 1, "", "permission denied\n")
         return subprocess.CompletedProcess(command, 1, "", "sudo: a password is required\n")
@@ -316,13 +439,22 @@ def test_real_dhcp_leases_sudo_password_error_becomes_operator_guidance(monkeypa
 
 
 def test_networkd_dhcp_dns_executes_read_only_helper_during_dry_run(monkeypatch):
-    """Verify that networkd dhcp dns executes read only helper during dry run."""
+    """Verify that networkd dhcp dns executes read only helper during dry run.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+    """
     import atlaso.app.adapters.system as system_adapter
 
     commands: list[list[str]] = []
 
     def fake_run(command, **_kwargs):
-        """Return fake run."""
+        """Return fake run.
+
+        Args:
+            command: Command and arguments to execute.
+            **_kwargs: Additional keyword arguments accepted by the callable.
+        """
         commands.append(command)
         return subprocess.CompletedProcess(command, 0, '{"interface":"eth0","ifindex":2,"servers":["192.168.167.2"]}\n', "")
 
@@ -336,13 +468,24 @@ def test_networkd_dhcp_dns_executes_read_only_helper_during_dry_run(monkeypatch)
 
 
 def test_real_vcf_backup_apply_uses_sudo_helper(monkeypatch):
-    """Verify that real vcf backup apply uses sudo helper."""
+    """Verify that real vcf backup apply uses sudo helper.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+    """
     import atlaso.app.adapters.system as system_adapter
 
     commands: list[list[str]] = []
 
     def fake_run(command, check, capture_output, text):
-        """Return fake run."""
+        """Return fake run.
+
+        Args:
+            command: Command and arguments to execute.
+            check: Whether a nonzero command status raises an exception.
+            capture_output: Whether to capture the child process output.
+            text: Text content consumed by the operation.
+        """
         commands.append(command)
         return subprocess.CompletedProcess(command, 0, '{"vcf_backups": "apply complete"}\n', "")
 
@@ -365,13 +508,22 @@ def test_real_vcf_backup_apply_uses_sudo_helper(monkeypatch):
 
 
 def test_real_ldap_apply_uses_constrained_helper(monkeypatch):
-    """Verify that real ldap apply uses constrained helper."""
+    """Verify that real ldap apply uses constrained helper.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+    """
     import atlaso.app.adapters.system as system_adapter
 
     commands: list[list[str]] = []
 
     def fake_run(command, **_kwargs):
-        """Return fake run."""
+        """Return fake run.
+
+        Args:
+            command: Command and arguments to execute.
+            **_kwargs: Additional keyword arguments accepted by the callable.
+        """
         commands.append(command)
         return subprocess.CompletedProcess(command, 0, '{"ldap":"apply complete"}\n', "")
 
@@ -386,13 +538,22 @@ def test_real_ldap_apply_uses_constrained_helper(monkeypatch):
 
 
 def test_real_local_user_authentication_passes_password_only_on_stdin(monkeypatch):
-    """Verify that real local user authentication passes password only on stdin."""
+    """Verify that real local user authentication passes password only on stdin.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+    """
     import atlaso.app.adapters.system as system_adapter
 
     calls: list[tuple[list[str], str | None]] = []
 
     def fake_run(command, **kwargs):
-        """Return fake run."""
+        """Return fake run.
+
+        Args:
+            command: Command and arguments to execute.
+            **kwargs: Additional keyword arguments accepted by the callable.
+        """
         calls.append((command, kwargs.get("input")))
         return subprocess.CompletedProcess(command, 0, "", "")
 

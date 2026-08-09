@@ -332,7 +332,11 @@ APPROVED_SERVICES = set(SERVICE_STATE_IDS) | {"vcf-offline-depot"}
 
 
 def backing_systemd_unit_active(unit: str) -> bool | None:
-    """Return backing systemd unit active."""
+    """Return backing systemd unit active.
+
+    Args:
+        unit: Unit consumed by backing systemd unit active.
+    """
     if get_settings().dry_run_system_adapters:
         return None
     result = SystemAdapter().service_status(unit)
@@ -655,7 +659,12 @@ def appliance_settings_response(db: Session, app_settings: Settings) -> Settings
 
 
 def assign_firewall_rule_values(rule: FirewallRule, values: dict) -> FirewallRule:
-    """Return assign firewall rule values."""
+    """Return assign firewall rule values.
+
+    Args:
+        rule: Rule consumed by assign firewall rule values.
+        values: Candidate values consumed by assign firewall rule values.
+    """
     rule.name = values["name"].strip()
     rule.direction = values.get("direction", "input")
     rule.action = values.get("action", "accept")
@@ -887,6 +896,14 @@ def login_for_api(
     Authenticates a local Atlaso account and returns a one-time API bearer token. No bearer token is
     required for this exchange; treat the username, password, and returned token as sensitive and
     never place real values in shared URLs, logs, examples, or screenshots.
+
+    Args:
+        payload: Validated request or task payload consumed by the operation.
+        request: Incoming HTTP request carrying the operation context.
+        username: Atlaso account name associated with the operation.
+        password: Password consumed by login for API.
+        db: Active database session used by the operation.
+        settings: Current Atlaso settings used to configure the operation.
     """
     user = authenticate_user(db, username, password)
     if not user:
@@ -908,6 +925,9 @@ def get_me(identity: Annotated[Identity, Depends(require_scope("read:dashboard")
 
     Requires the `read:dashboard` API scope. This read-only operation does not change saved desired
     state or appliance runtime state.
+
+    Args:
+        identity: Authenticated identity authorizing the operation.
     """
     return IdentityResponse(
         username=identity.username,
@@ -927,6 +947,10 @@ def list_api_tokens(
 
     Requires the `read:dashboard` API scope. This read-only operation does not change saved desired
     state or appliance runtime state.
+
+    Args:
+        identity: Authenticated identity authorizing the operation.
+        db: Active database session used by the operation.
     """
     query = select(ApiToken).order_by(desc(ApiToken.created_at))
     if not identity.has_role("admin"):
@@ -952,6 +976,12 @@ def create_api_token(
     Requires the `read:dashboard` API scope. The operation changes saved Atlaso application state;
     any appliance host enforcement remains subject to the documented apply or task boundary for the
     resource.
+
+    Args:
+        payload: Validated request or task payload consumed by the operation.
+        identity: Authenticated identity authorizing the operation.
+        db: Active database session used by the operation.
+        settings: Current Atlaso settings used to configure the operation.
     """
     user = db.get(User, identity.user_id)
     if not user:
@@ -969,6 +999,11 @@ def get_api_token(
 
     Requires the `read:dashboard` API scope. This read-only operation does not change saved desired
     state or appliance runtime state.
+
+    Args:
+        token_id: Stable identifier of the associated token resource.
+        identity: Authenticated identity authorizing the operation.
+        db: Active database session used by the operation.
     """
     token = db.get(ApiToken, token_id)
     if not token or (not identity.has_role("admin") and token.owner_user_id != identity.user_id):
@@ -1012,6 +1047,11 @@ def delete_api_token(
     Requires the `read:dashboard` API scope. Removal or revocation takes effect in Atlaso
     application state; appliance host changes remain subject to the documented apply boundary for
     the resource.
+
+    Args:
+        token_id: Stable identifier of the associated token resource.
+        identity: Authenticated identity authorizing the operation.
+        db: Active database session used by the operation.
     """
     token = db.get(ApiToken, token_id)
     if not token or (not identity.has_role("admin") and token.owner_user_id != identity.user_id):
@@ -1031,6 +1071,11 @@ def revoke_api_token(
     Requires the `read:dashboard` API scope. The operation changes saved Atlaso application state;
     any appliance host enforcement remains subject to the documented apply or task boundary for the
     resource.
+
+    Args:
+        token_id: Stable identifier of the associated token resource.
+        identity: Authenticated identity authorizing the operation.
+        db: Active database session used by the operation.
     """
     token = db.get(ApiToken, token_id)
     if not token or (not identity.has_role("admin") and token.owner_user_id != identity.user_id):
@@ -1048,6 +1093,11 @@ def get_dashboard(
 
     Requires the `read:dashboard` API scope. This read-only operation does not change saved desired
     state or appliance runtime state.
+
+    Args:
+        identity: Authenticated identity authorizing the operation.
+        db: Active database session used by the operation.
+        settings: Current Atlaso settings used to configure the operation.
     """
     services = db.execute(select(ServiceState).order_by(ServiceState.display_name)).scalars().all()
     interfaces = db.execute(select(PhysicalInterface).order_by(PhysicalInterface.name)).scalars().all()
@@ -1088,6 +1138,11 @@ def get_monitor(
 
     Requires the `read:monitoring` API scope. This read-only operation does not change saved desired
     state or appliance runtime state.
+
+    Args:
+        identity: Authenticated identity authorizing the operation.
+        db: Active database session used by the operation.
+        hours: Hours consumed by get monitor.
     """
     return MonitorResponse(**monitor_payload(db, hours=hours))
 
@@ -1106,6 +1161,10 @@ def list_physical_interfaces(
 
     Requires the `read:interfaces` API scope. This read-only operation does not change saved desired
     state or appliance runtime state.
+
+    Args:
+        identity: Authenticated identity authorizing the operation.
+        db: Active database session used by the operation.
     """
     return [PhysicalInterfaceResponse.model_validate(row) for row in db.execute(select(PhysicalInterface)).scalars().all()]
 
@@ -1125,6 +1184,11 @@ def get_physical_interface(
 
     Requires the `read:interfaces` API scope. This read-only operation does not change saved desired
     state or appliance runtime state.
+
+    Args:
+        name: Stable name identifying the resource or operation.
+        identity: Authenticated identity authorizing the operation.
+        db: Active database session used by the operation.
     """
     interface = db.execute(select(PhysicalInterface).where(PhysicalInterface.name == name)).scalar_one_or_none()
     if not interface:
@@ -1148,6 +1212,12 @@ def update_physical_interface(
 
     Requires the `write:interfaces` API scope. The operation updates saved Atlaso state and does not
     bypass the documented global Appliance Apply or service lifecycle boundary.
+
+    Args:
+        name: Stable name identifying the resource or operation.
+        payload: Validated request or task payload consumed by the operation.
+        identity: Authenticated identity authorizing the operation.
+        db: Active database session used by the operation.
     """
     interface = db.execute(select(PhysicalInterface).where(PhysicalInterface.name == name)).scalar_one_or_none()
     if not interface:
@@ -1271,6 +1341,11 @@ def enable_physical_interface(
     Requires the `write:interfaces` API scope. The operation changes saved Atlaso application state;
     any appliance host enforcement remains subject to the documented apply or task boundary for the
     resource.
+
+    Args:
+        name: Stable name identifying the resource or operation.
+        identity: Authenticated identity authorizing the operation.
+        db: Active database session used by the operation.
     """
     return update_physical_interface(name, {"admin_state": "up"}, identity, db)
 
@@ -1286,6 +1361,11 @@ def disable_physical_interface(
     Requires the `write:interfaces` API scope. The operation changes saved Atlaso application state;
     any appliance host enforcement remains subject to the documented apply or task boundary for the
     resource.
+
+    Args:
+        name: Stable name identifying the resource or operation.
+        identity: Authenticated identity authorizing the operation.
+        db: Active database session used by the operation.
     """
     return update_physical_interface(name, {"admin_state": "down"}, identity, db)
 
@@ -1300,6 +1380,10 @@ def refresh_physical_interfaces(
     Requires the `write:interfaces` API scope. The operation changes saved Atlaso application state;
     any appliance host enforcement remains subject to the documented apply or task boundary for the
     resource.
+
+    Args:
+        identity: Authenticated identity authorizing the operation.
+        db: Active database session used by the operation.
     """
     interfaces, discovered_count = sync_host_physical_interfaces(db)
     record_audit(
@@ -1321,6 +1405,10 @@ def list_vlans(
 
     Requires the `read:vlans` API scope. This read-only operation does not change saved desired
     state or appliance runtime state.
+
+    Args:
+        identity: Authenticated identity authorizing the operation.
+        db: Active database session used by the operation.
     """
     return [VlanResponse.model_validate(row) for row in db.execute(select(VlanInterface)).scalars().all()]
 
@@ -1336,6 +1424,11 @@ def create_vlan(
     Requires the `write:vlans` API scope. The operation changes saved Atlaso application state; any
     appliance host enforcement remains subject to the documented apply or task boundary for the
     resource.
+
+    Args:
+        payload: Validated request or task payload consumed by the operation.
+        identity: Authenticated identity authorizing the operation.
+        db: Active database session used by the operation.
     """
     values = validate_vlan_api_payload(payload, db)
     vlan = VlanInterface(name=f"{values['parent_interface']}.{values['vlan_id']}", **values)
@@ -1356,6 +1449,11 @@ def get_vlan(
 
     Requires the `read:vlans` API scope. This read-only operation does not change saved desired
     state or appliance runtime state.
+
+    Args:
+        vlan_id: Stable identifier of the associated VLAN resource.
+        identity: Authenticated identity authorizing the operation.
+        db: Active database session used by the operation.
     """
     vlan = db.get(VlanInterface, vlan_id)
     if not vlan:
@@ -1374,6 +1472,12 @@ def update_vlan(
 
     Requires the `write:vlans` API scope. The operation updates saved Atlaso state and does not
     bypass the documented global Appliance Apply or service lifecycle boundary.
+
+    Args:
+        vlan_id: Stable identifier of the associated VLAN resource.
+        payload: Validated request or task payload consumed by the operation.
+        identity: Authenticated identity authorizing the operation.
+        db: Active database session used by the operation.
     """
     vlan = db.get(VlanInterface, vlan_id)
     if not vlan:
@@ -1398,6 +1502,11 @@ def delete_vlan(
 
     Requires the `write:vlans` API scope. Removal or revocation takes effect in Atlaso application
     state; appliance host changes remain subject to the documented apply boundary for the resource.
+
+    Args:
+        vlan_id: Stable identifier of the associated VLAN resource.
+        identity: Authenticated identity authorizing the operation.
+        db: Active database session used by the operation.
     """
     vlan = db.get(VlanInterface, vlan_id)
     if not vlan:
@@ -1415,6 +1524,11 @@ def enable_vlan(vlan_id: Annotated[int, ApiPath(description='Unique identifier o
     Requires the `write:vlans` API scope. The operation changes saved Atlaso application state; any
     appliance host enforcement remains subject to the documented apply or task boundary for the
     resource.
+
+    Args:
+        vlan_id: Stable identifier of the associated VLAN resource.
+        identity: Authenticated identity authorizing the operation.
+        db: Active database session used by the operation.
     """
     vlan = db.get(VlanInterface, vlan_id)
     if not vlan:
@@ -1439,6 +1553,11 @@ def disable_vlan(vlan_id: Annotated[int, ApiPath(description='Unique identifier 
     Requires the `write:vlans` API scope. The operation changes saved Atlaso application state; any
     appliance host enforcement remains subject to the documented apply or task boundary for the
     resource.
+
+    Args:
+        vlan_id: Stable identifier of the associated VLAN resource.
+        identity: Authenticated identity authorizing the operation.
+        db: Active database session used by the operation.
     """
     vlan = db.get(VlanInterface, vlan_id)
     if not vlan:
@@ -1456,6 +1575,11 @@ def apply_vlan(vlan_id: Annotated[int, ApiPath(description='Unique identifier of
 
     Requires the `write:vlans` API scope. The action runs through the endpoint's existing audited
     adapter or task boundary; inspect the returned state before treating the operation as complete.
+
+    Args:
+        vlan_id: Stable identifier of the associated VLAN resource.
+        identity: Authenticated identity authorizing the operation.
+        db: Active database session used by the operation.
     """
     vlan = get_vlan(vlan_id, identity, db)
     record_audit(db, actor=identity.username, action="apply_vlan_dry_run", resource_type="vlan", resource_id=str(vlan_id))
@@ -1468,13 +1592,21 @@ def list_routes(identity: Annotated[Identity, Depends(require_scope("read:routes
 
     Requires the `read:routes` API scope. This read-only operation does not change saved desired
     state or appliance runtime state.
+
+    Args:
+        identity: Authenticated identity authorizing the operation.
+        db: Active database session used by the operation.
     """
     rows = db.execute(select(Route).options(selectinload(Route.wan_policy)).order_by(Route.destination_cidr)).scalars().all()
     return [route_response(row) for row in rows]
 
 
 def route_response(route: Route) -> RouteResponse:
-    """Return route response."""
+    """Return route response.
+
+    Args:
+        route: Route consumed by route response.
+    """
     return RouteResponse(
         id=route.id,
         destination_cidr=route.destination_cidr,
@@ -1542,6 +1674,11 @@ def create_route(payload: RouteCreate, identity: Annotated[Identity, Depends(req
     Requires the `write:routes` API scope. The operation changes saved Atlaso application state; any
     appliance host enforcement remains subject to the documented apply or task boundary for the
     resource.
+
+    Args:
+        payload: Validated request or task payload consumed by the operation.
+        identity: Authenticated identity authorizing the operation.
+        db: Active database session used by the operation.
     """
     validate_route_payload(payload, db)
     route = Route(**payload.model_dump())
@@ -1558,6 +1695,11 @@ def get_route(route_id: Annotated[int, ApiPath(description='Unique identifier of
 
     Requires the `read:routes` API scope. This read-only operation does not change saved desired
     state or appliance runtime state.
+
+    Args:
+        route_id: Stable identifier of the associated route resource.
+        identity: Authenticated identity authorizing the operation.
+        db: Active database session used by the operation.
     """
     route = db.execute(select(Route).options(selectinload(Route.wan_policy)).where(Route.id == route_id)).scalar_one_or_none()
     if not route:
@@ -1571,6 +1713,12 @@ def update_route(route_id: Annotated[int, ApiPath(description='Unique identifier
 
     Requires the `write:routes` API scope. The operation updates saved Atlaso state and does not
     bypass the documented global Appliance Apply or service lifecycle boundary.
+
+    Args:
+        route_id: Stable identifier of the associated route resource.
+        payload: Validated request or task payload consumed by the operation.
+        identity: Authenticated identity authorizing the operation.
+        db: Active database session used by the operation.
     """
     route = db.get(Route, route_id)
     if not route:
@@ -1589,6 +1737,11 @@ def delete_route(route_id: Annotated[int, ApiPath(description='Unique identifier
 
     Requires the `write:routes` API scope. Removal or revocation takes effect in Atlaso application
     state; appliance host changes remain subject to the documented apply boundary for the resource.
+
+    Args:
+        route_id: Stable identifier of the associated route resource.
+        identity: Authenticated identity authorizing the operation.
+        db: Active database session used by the operation.
     """
     route = db.get(Route, route_id)
     if not route:
@@ -1606,6 +1759,11 @@ def enable_route(route_id: Annotated[int, ApiPath(description='Unique identifier
     Requires the `write:routes` API scope. The operation changes saved Atlaso application state; any
     appliance host enforcement remains subject to the documented apply or task boundary for the
     resource.
+
+    Args:
+        route_id: Stable identifier of the associated route resource.
+        identity: Authenticated identity authorizing the operation.
+        db: Active database session used by the operation.
     """
     route = db.get(Route, route_id)
     if not route:
@@ -1623,6 +1781,11 @@ def disable_route(route_id: Annotated[int, ApiPath(description='Unique identifie
     Requires the `write:routes` API scope. The operation changes saved Atlaso application state; any
     appliance host enforcement remains subject to the documented apply or task boundary for the
     resource.
+
+    Args:
+        route_id: Stable identifier of the associated route resource.
+        identity: Authenticated identity authorizing the operation.
+        db: Active database session used by the operation.
     """
     route = db.get(Route, route_id)
     if not route:
@@ -1645,6 +1808,12 @@ def assign_route_wan_policy(
     Requires the `write:routes` API scope. The operation changes saved Atlaso application state; any
     appliance host enforcement remains subject to the documented apply or task boundary for the
     resource.
+
+    Args:
+        route_id: Stable identifier of the associated route resource.
+        wan_policy_id: Stable identifier of the associated WAN policy resource.
+        identity: Authenticated identity authorizing the operation.
+        db: Active database session used by the operation.
     """
     route = db.get(Route, route_id)
     policy = db.get(WanPolicy, wan_policy_id)
@@ -1662,6 +1831,11 @@ def clear_route_wan_policy(route_id: Annotated[int, ApiPath(description='Unique 
 
     Requires the `write:routes` API scope. Removal or revocation takes effect in Atlaso application
     state; appliance host changes remain subject to the documented apply boundary for the resource.
+
+    Args:
+        route_id: Stable identifier of the associated route resource.
+        identity: Authenticated identity authorizing the operation.
+        db: Active database session used by the operation.
     """
     route = db.get(Route, route_id)
     if not route:
@@ -1678,6 +1852,10 @@ def list_wan_policies(identity: Annotated[Identity, Depends(require_scope("read:
 
     Requires the `read:wan` API scope. This read-only operation does not change saved desired state
     or appliance runtime state.
+
+    Args:
+        identity: Authenticated identity authorizing the operation.
+        db: Active database session used by the operation.
     """
     return [WanPolicyResponse.model_validate(row) for row in db.execute(select(WanPolicy).order_by(WanPolicy.name)).scalars().all()]
 
@@ -1689,6 +1867,11 @@ def create_wan_policy(payload: WanPolicyCreate, identity: Annotated[Identity, De
     Requires the `write:wan` API scope. The operation changes saved Atlaso application state; any
     appliance host enforcement remains subject to the documented apply or task boundary for the
     resource.
+
+    Args:
+        payload: Validated request or task payload consumed by the operation.
+        identity: Authenticated identity authorizing the operation.
+        db: Active database session used by the operation.
     """
     policy = WanPolicy(**payload.model_dump())
     db.add(policy)
@@ -1704,6 +1887,11 @@ def get_wan_policy(policy_id: Annotated[int, ApiPath(description='Unique identif
 
     Requires the `read:wan` API scope. This read-only operation does not change saved desired state
     or appliance runtime state.
+
+    Args:
+        policy_id: Stable identifier of the associated policy resource.
+        identity: Authenticated identity authorizing the operation.
+        db: Active database session used by the operation.
     """
     policy = db.get(WanPolicy, policy_id)
     if not policy:
@@ -1717,6 +1905,12 @@ def update_wan_policy(policy_id: Annotated[int, ApiPath(description='Unique iden
 
     Requires the `write:wan` API scope. The operation updates saved Atlaso state and does not bypass
     the documented global Appliance Apply or service lifecycle boundary.
+
+    Args:
+        policy_id: Stable identifier of the associated policy resource.
+        payload: Validated request or task payload consumed by the operation.
+        identity: Authenticated identity authorizing the operation.
+        db: Active database session used by the operation.
     """
     policy = db.get(WanPolicy, policy_id)
     if not policy:
@@ -1735,6 +1929,11 @@ def delete_wan_policy(policy_id: Annotated[int, ApiPath(description='Unique iden
 
     Requires the `write:wan` API scope. Removal or revocation takes effect in Atlaso application
     state; appliance host changes remain subject to the documented apply boundary for the resource.
+
+    Args:
+        policy_id: Stable identifier of the associated policy resource.
+        identity: Authenticated identity authorizing the operation.
+        db: Active database session used by the operation.
     """
     policy = db.get(WanPolicy, policy_id)
     if not policy:
@@ -1801,6 +2000,10 @@ def list_nat_rules(identity: Annotated[Identity, Depends(require_scope("read:wan
 
     Requires the `read:wan` API scope. This read-only operation does not change saved desired state
     or appliance runtime state.
+
+    Args:
+        identity: Authenticated identity authorizing the operation.
+        db: Active database session used by the operation.
     """
     rows = db.execute(select(NatRule).order_by(NatRule.priority, NatRule.name)).scalars().all()
     return [NatRuleResponse.model_validate(row) for row in rows]
@@ -1813,6 +2016,11 @@ def create_nat_rule(payload: NatRuleCreate, identity: Annotated[Identity, Depend
     Requires the `write:wan` API scope. The operation changes saved Atlaso application state; any
     appliance host enforcement remains subject to the documented apply or task boundary for the
     resource.
+
+    Args:
+        payload: Validated request or task payload consumed by the operation.
+        identity: Authenticated identity authorizing the operation.
+        db: Active database session used by the operation.
     """
     validate_nat_rule_payload(payload, db)
     rule = NatRule(**payload.model_dump())
@@ -1833,6 +2041,11 @@ def get_nat_rule(rule_id: Annotated[int, ApiPath(description='Unique identifier 
 
     Requires the `read:wan` API scope. This read-only operation does not change saved desired state
     or appliance runtime state.
+
+    Args:
+        rule_id: Stable identifier of the associated rule resource.
+        identity: Authenticated identity authorizing the operation.
+        db: Active database session used by the operation.
     """
     rule = db.get(NatRule, rule_id)
     if not rule:
@@ -1846,6 +2059,12 @@ def update_nat_rule(rule_id: Annotated[int, ApiPath(description='Unique identifi
 
     Requires the `write:wan` API scope. The operation updates saved Atlaso state and does not bypass
     the documented global Appliance Apply or service lifecycle boundary.
+
+    Args:
+        rule_id: Stable identifier of the associated rule resource.
+        payload: Validated request or task payload consumed by the operation.
+        identity: Authenticated identity authorizing the operation.
+        db: Active database session used by the operation.
     """
     rule = db.get(NatRule, rule_id)
     if not rule:
@@ -1869,6 +2088,11 @@ def delete_nat_rule(rule_id: Annotated[int, ApiPath(description='Unique identifi
 
     Requires the `write:wan` API scope. Removal or revocation takes effect in Atlaso application
     state; appliance host changes remain subject to the documented apply boundary for the resource.
+
+    Args:
+        rule_id: Stable identifier of the associated rule resource.
+        identity: Authenticated identity authorizing the operation.
+        db: Active database session used by the operation.
     """
     rule = db.get(NatRule, rule_id)
     if not rule:
@@ -1885,6 +2109,10 @@ def get_wan_status(identity: Annotated[Identity, Depends(require_scope("read:wan
 
     Requires the `read:wan` API scope. This read-only operation does not change saved desired state
     or appliance runtime state.
+
+    Args:
+        identity: Authenticated identity authorizing the operation.
+        db: Active database session used by the operation.
     """
     routes = db.execute(select(Route).where(Route.wan_policy_id.is_not(None))).scalars().all()
     nat_rules = db.execute(select(NatRule).where(NatRule.enabled.is_(True))).scalars().all()
@@ -2055,6 +2283,10 @@ def get_dns_status(identity: Annotated[Identity, Depends(require_scope("read:dns
 
     Requires the `read:dns` API scope. This read-only operation does not change saved desired state
     or appliance runtime state.
+
+    Args:
+        identity: Authenticated identity authorizing the operation.
+        db: Active database session used by the operation.
     """
     settings = get_dns_settings_row(db)
     service = db.execute(select(ServiceState).where(ServiceState.service == "dns")).scalar_one_or_none()
@@ -2077,6 +2309,10 @@ def get_dns_settings(identity: Annotated[Identity, Depends(require_scope("read:d
 
     Requires the `read:dns` API scope. This read-only operation does not change saved desired state
     or appliance runtime state.
+
+    Args:
+        identity: Authenticated identity authorizing the operation.
+        db: Active database session used by the operation.
     """
     return DnsSettingsResponse(
         **dns_settings_to_dict(
@@ -2096,6 +2332,11 @@ def update_dns_settings(
 
     Requires the `write:dns` API scope. The operation updates saved Atlaso state and does not bypass
     the documented global Appliance Apply or service lifecycle boundary.
+
+    Args:
+        payload: Validated request or task payload consumed by the operation.
+        identity: Authenticated identity authorizing the operation.
+        db: Active database session used by the operation.
     """
     settings = get_dns_settings_row(db)
     for key, value in payload.model_dump().items():
@@ -2137,6 +2378,10 @@ def list_dns_records(identity: Annotated[Identity, Depends(require_scope("read:d
 
     Requires the `read:dns` API scope. This read-only operation does not change saved desired state
     or appliance runtime state.
+
+    Args:
+        identity: Authenticated identity authorizing the operation.
+        db: Active database session used by the operation.
     """
     return [DnsRecordResponse.model_validate(row) for row in db.execute(select(DnsRecord).order_by(DnsRecord.hostname)).scalars().all()]
 
@@ -2152,6 +2397,11 @@ def create_dns_record(
     Requires the `write:dns` API scope. The operation changes saved Atlaso application state; any
     appliance host enforcement remains subject to the documented apply or task boundary for the
     resource.
+
+    Args:
+        payload: Validated request or task payload consumed by the operation.
+        identity: Authenticated identity authorizing the operation.
+        db: Active database session used by the operation.
     """
     hostname = payload.hostname.strip().lower()
     record_type = payload.record_type.strip().upper()
@@ -2200,6 +2450,12 @@ def update_dns_record(
 
     Requires the `write:dns` API scope. The operation updates saved Atlaso state and does not bypass
     the documented global Appliance Apply or service lifecycle boundary.
+
+    Args:
+        record_id: Stable identifier of the associated record resource.
+        payload: Validated request or task payload consumed by the operation.
+        identity: Authenticated identity authorizing the operation.
+        db: Active database session used by the operation.
     """
     record = db.get(DnsRecord, record_id)
     if not record:
@@ -2249,6 +2505,11 @@ def import_dns_hosts_file(
     Requires the `write:dns` API scope. The operation changes saved Atlaso application state; any
     appliance host enforcement remains subject to the documented apply or task boundary for the
     resource.
+
+    Args:
+        payload: Validated request or task payload consumed by the operation.
+        identity: Authenticated identity authorizing the operation.
+        db: Active database session used by the operation.
     """
     parsed_records, errors = parse_hosts_records(payload.hosts_text)
     dns_settings = get_dns_settings_row(db)
@@ -2315,6 +2576,11 @@ def delete_dns_record(
 
     Requires the `write:dns` API scope. Removal or revocation takes effect in Atlaso application
     state; appliance host changes remain subject to the documented apply boundary for the resource.
+
+    Args:
+        record_id: Stable identifier of the associated record resource.
+        identity: Authenticated identity authorizing the operation.
+        db: Active database session used by the operation.
     """
     record = db.get(DnsRecord, record_id)
     if not record:
@@ -2387,6 +2653,10 @@ def validate_dns_config(identity: Annotated[Identity, Depends(require_scope("rea
 
     Requires the `read:dns` API scope. The request is evaluated without persisting desired state or
     mutating appliance runtime state.
+
+    Args:
+        identity: Authenticated identity authorizing the operation.
+        db: Active database session used by the operation.
     """
     return dnsmasq_validation_response(db)
 
@@ -2403,6 +2673,10 @@ def apply_dns_config(identity: Annotated[Identity, Depends(require_scope("write:
 
     Requires the `write:dns` API scope. The action runs through the endpoint's existing audited
     adapter or task boundary; inspect the returned state before treating the operation as complete.
+
+    Args:
+        identity: Authenticated identity authorizing the operation.
+        db: Active database session used by the operation.
     """
     validation = dnsmasq_validation_response(db)
     if not validation.valid:
@@ -2427,6 +2701,9 @@ def get_dns_logs(identity: Annotated[Identity, Depends(require_scope("read:dns")
 
     Requires the `read:dns` API scope. This read-only operation does not change saved desired state
     or appliance runtime state.
+
+    Args:
+        identity: Authenticated identity authorizing the operation.
     """
     return ["dry-run log source for dnsmasq", "Host journal reading is reserved for the provisioned appliance."]
 
@@ -2437,6 +2714,10 @@ def get_dhcp_status(identity: Annotated[Identity, Depends(require_scope("read:dh
 
     Requires the `read:dhcp` API scope. This read-only operation does not change saved desired state
     or appliance runtime state.
+
+    Args:
+        identity: Authenticated identity authorizing the operation.
+        db: Active database session used by the operation.
     """
     settings = get_dhcp_settings_row(db)
     first_scope = db.execute(select(DhcpScope).order_by(DhcpScope.name)).scalars().first()
@@ -2459,6 +2740,10 @@ def get_dhcp_settings(identity: Annotated[Identity, Depends(require_scope("read:
 
     Requires the `read:dhcp` API scope. This read-only operation does not change saved desired state
     or appliance runtime state.
+
+    Args:
+        identity: Authenticated identity authorizing the operation.
+        db: Active database session used by the operation.
     """
     return DhcpSettingsResponse.model_validate(get_dhcp_settings_row(db))
 
@@ -2473,6 +2758,11 @@ def update_dhcp_settings(
 
     Requires the `write:dhcp` API scope. The operation updates saved Atlaso state and does not
     bypass the documented global Appliance Apply or service lifecycle boundary.
+
+    Args:
+        payload: Validated request or task payload consumed by the operation.
+        identity: Authenticated identity authorizing the operation.
+        db: Active database session used by the operation.
     """
     settings = get_dhcp_settings_row(db)
     for key, value in payload.model_dump().items():
@@ -2490,6 +2780,10 @@ def list_dhcp_scopes(identity: Annotated[Identity, Depends(require_scope("read:d
 
     Requires the `read:dhcp` API scope. This read-only operation does not change saved desired state
     or appliance runtime state.
+
+    Args:
+        identity: Authenticated identity authorizing the operation.
+        db: Active database session used by the operation.
     """
     return [DhcpScopeResponse.model_validate(row) for row in db.execute(select(DhcpScope).order_by(DhcpScope.name)).scalars().all()]
 
@@ -2505,6 +2799,11 @@ def create_dhcp_scope(
     Requires the `write:dhcp` API scope. The operation changes saved Atlaso application state; any
     appliance host enforcement remains subject to the documented apply or task boundary for the
     resource.
+
+    Args:
+        payload: Validated request or task payload consumed by the operation.
+        identity: Authenticated identity authorizing the operation.
+        db: Active database session used by the operation.
     """
     scope = DhcpScope(**payload.model_dump())
     db.add(scope)
@@ -2529,6 +2828,12 @@ def update_dhcp_scope(
 
     Requires the `write:dhcp` API scope. The operation updates saved Atlaso state and does not
     bypass the documented global Appliance Apply or service lifecycle boundary.
+
+    Args:
+        scope_id: Stable identifier of the associated scope resource.
+        payload: Validated request or task payload consumed by the operation.
+        identity: Authenticated identity authorizing the operation.
+        db: Active database session used by the operation.
     """
     scope = db.get(DhcpScope, scope_id)
     if not scope:
@@ -2558,6 +2863,11 @@ def delete_dhcp_scope(
 
     Requires the `write:dhcp` API scope. Removal or revocation takes effect in Atlaso application
     state; appliance host changes remain subject to the documented apply boundary for the resource.
+
+    Args:
+        scope_id: Stable identifier of the associated scope resource.
+        identity: Authenticated identity authorizing the operation.
+        db: Active database session used by the operation.
     """
     scope = db.get(DhcpScope, scope_id)
     if not scope:
@@ -2576,6 +2886,10 @@ def list_dhcp_options(identity: Annotated[Identity, Depends(require_scope("read:
 
     Requires the `read:dhcp` API scope. This read-only operation does not change saved desired state
     or appliance runtime state.
+
+    Args:
+        identity: Authenticated identity authorizing the operation.
+        db: Active database session used by the operation.
     """
     return [DhcpOptionResponse.model_validate(row) for row in db.execute(select(DhcpOption).order_by(DhcpOption.scope_id, DhcpOption.option_code)).scalars().all()]
 
@@ -2591,6 +2905,11 @@ def create_dhcp_option(
     Requires the `write:dhcp` API scope. The operation changes saved Atlaso application state; any
     appliance host enforcement remains subject to the documented apply or task boundary for the
     resource.
+
+    Args:
+        payload: Validated request or task payload consumed by the operation.
+        identity: Authenticated identity authorizing the operation.
+        db: Active database session used by the operation.
     """
     if payload.scope_id is not None and not db.get(DhcpScope, payload.scope_id):
         raise HTTPException(status_code=404, detail="DHCP IP zone not found")
@@ -2613,6 +2932,12 @@ def update_dhcp_option(
 
     Requires the `write:dhcp` API scope. The operation updates saved Atlaso state and does not
     bypass the documented global Appliance Apply or service lifecycle boundary.
+
+    Args:
+        option_id: Stable identifier of the associated option resource.
+        payload: Validated request or task payload consumed by the operation.
+        identity: Authenticated identity authorizing the operation.
+        db: Active database session used by the operation.
     """
     option = db.get(DhcpOption, option_id)
     if not option:
@@ -2638,6 +2963,11 @@ def delete_dhcp_option(
 
     Requires the `write:dhcp` API scope. Removal or revocation takes effect in Atlaso application
     state; appliance host changes remain subject to the documented apply boundary for the resource.
+
+    Args:
+        option_id: Stable identifier of the associated option resource.
+        identity: Authenticated identity authorizing the operation.
+        db: Active database session used by the operation.
     """
     option = db.get(DhcpOption, option_id)
     if not option:
@@ -2654,6 +2984,10 @@ def list_dhcp_reservations(identity: Annotated[Identity, Depends(require_scope("
 
     Requires the `read:dhcp` API scope. This read-only operation does not change saved desired state
     or appliance runtime state.
+
+    Args:
+        identity: Authenticated identity authorizing the operation.
+        db: Active database session used by the operation.
     """
     return [DhcpReservationResponse.model_validate(row) for row in db.execute(select(DhcpReservation).order_by(DhcpReservation.hostname)).scalars().all()]
 
@@ -2664,6 +2998,9 @@ def list_dhcp_leases(identity: Annotated[Identity, Depends(require_scope("read:d
 
     Requires the `read:dhcp` API scope. This read-only operation does not change saved desired state
     or appliance runtime state.
+
+    Args:
+        identity: Authenticated identity authorizing the operation.
     """
     result = SystemAdapter().read_dhcp_leases()
     if result.returncode != 0:
@@ -2682,6 +3019,11 @@ def create_dhcp_reservation(
     Requires the `write:dhcp` API scope. The operation changes saved Atlaso application state; any
     appliance host enforcement remains subject to the documented apply or task boundary for the
     resource.
+
+    Args:
+        payload: Validated request or task payload consumed by the operation.
+        identity: Authenticated identity authorizing the operation.
+        db: Active database session used by the operation.
     """
     reservation = DhcpReservation(**payload.model_dump())
     db.add(reservation)
@@ -2703,6 +3045,11 @@ def delete_dhcp_reservation(
 
     Requires the `write:dhcp` API scope. Removal or revocation takes effect in Atlaso application
     state; appliance host changes remain subject to the documented apply boundary for the resource.
+
+    Args:
+        reservation_id: Stable identifier of the associated reservation resource.
+        identity: Authenticated identity authorizing the operation.
+        db: Active database session used by the operation.
     """
     reservation = db.get(DhcpReservation, reservation_id)
     if not reservation:
@@ -2719,6 +3066,10 @@ def validate_dhcp_config(identity: Annotated[Identity, Depends(require_scope("re
 
     Requires the `read:dhcp` API scope. The request is evaluated without persisting desired state or
     mutating appliance runtime state.
+
+    Args:
+        identity: Authenticated identity authorizing the operation.
+        db: Active database session used by the operation.
     """
     return dnsmasq_validation_response(db)
 
@@ -2735,6 +3086,10 @@ def apply_dhcp_config(identity: Annotated[Identity, Depends(require_scope("write
 
     Requires the `write:dhcp` API scope. The action runs through the endpoint's existing audited
     adapter or task boundary; inspect the returned state before treating the operation as complete.
+
+    Args:
+        identity: Authenticated identity authorizing the operation.
+        db: Active database session used by the operation.
     """
     validation = dnsmasq_validation_response(db)
     if not validation.valid:
@@ -2759,6 +3114,9 @@ def get_dhcp_logs(identity: Annotated[Identity, Depends(require_scope("read:dhcp
 
     Requires the `read:dhcp` API scope. This read-only operation does not change saved desired state
     or appliance runtime state.
+
+    Args:
+        identity: Authenticated identity authorizing the operation.
     """
     return ["dry-run log source for dnsmasq DHCP leases", "Host lease files are read only on provisioned appliances."]
 
@@ -2769,6 +3127,10 @@ def get_firewall_status(identity: Annotated[Identity, Depends(require_scope("rea
 
     Requires the `read:firewall` API scope. This read-only operation does not change saved desired
     state or appliance runtime state.
+
+    Args:
+        identity: Authenticated identity authorizing the operation.
+        db: Active database session used by the operation.
     """
     settings = get_firewall_settings(db)
     service = db.execute(select(ServiceState).where(ServiceState.service == "firewall")).scalar_one_or_none()
@@ -2788,6 +3150,10 @@ def get_firewall_settings_api(identity: Annotated[Identity, Depends(require_scop
 
     Requires the `read:firewall` API scope. This read-only operation does not change saved desired
     state or appliance runtime state.
+
+    Args:
+        identity: Authenticated identity authorizing the operation.
+        db: Active database session used by the operation.
     """
     return FirewallSettingsResponse.model_validate(get_firewall_settings(db))
 
@@ -2802,6 +3168,11 @@ def update_firewall_settings_api(
 
     Requires the `write:firewall` API scope. The operation updates saved Atlaso state and does not
     bypass the documented global Appliance Apply or service lifecycle boundary.
+
+    Args:
+        payload: Validated request or task payload consumed by the operation.
+        identity: Authenticated identity authorizing the operation.
+        db: Active database session used by the operation.
     """
     settings = get_firewall_settings(db)
     values = payload.model_dump()
@@ -2823,6 +3194,10 @@ def list_firewall_rules(identity: Annotated[Identity, Depends(require_scope("rea
 
     Requires the `read:firewall` API scope. This read-only operation does not change saved desired
     state or appliance runtime state.
+
+    Args:
+        identity: Authenticated identity authorizing the operation.
+        db: Active database session used by the operation.
     """
     return [FirewallRuleResponse.model_validate(row) for row in db.execute(select(FirewallRule).order_by(FirewallRule.priority, FirewallRule.name)).scalars().all()]
 
@@ -2850,6 +3225,11 @@ def create_firewall_rule_api(
     Requires the `write:firewall` API scope. The operation changes saved Atlaso application state;
     any appliance host enforcement remains subject to the documented apply or task boundary for the
     resource.
+
+    Args:
+        payload: Validated request or task payload consumed by the operation.
+        identity: Authenticated identity authorizing the operation.
+        db: Active database session used by the operation.
     """
     rule = assign_firewall_rule_values(FirewallRule(), payload.model_dump())
     errors = validate_firewall_rule(rule, firewall_groups_for_api_validation(db), require_group_addresses=True)
@@ -2877,6 +3257,12 @@ def update_firewall_rule_api(
 
     Requires the `write:firewall` API scope. The operation updates saved Atlaso state and does not
     bypass the documented global Appliance Apply or service lifecycle boundary.
+
+    Args:
+        rule_id: Stable identifier of the associated rule resource.
+        payload: Validated request or task payload consumed by the operation.
+        identity: Authenticated identity authorizing the operation.
+        db: Active database session used by the operation.
     """
     rule = db.get(FirewallRule, rule_id)
     if not rule:
@@ -2907,6 +3293,11 @@ def delete_firewall_rule_api(
     Requires the `write:firewall` API scope. Removal or revocation takes effect in Atlaso
     application state; appliance host changes remain subject to the documented apply boundary for
     the resource.
+
+    Args:
+        rule_id: Stable identifier of the associated rule resource.
+        identity: Authenticated identity authorizing the operation.
+        db: Active database session used by the operation.
     """
     rule = db.get(FirewallRule, rule_id)
     if not rule:
@@ -2923,6 +3314,10 @@ def validate_firewall(identity: Annotated[Identity, Depends(require_scope("read:
 
     Requires the `read:firewall` API scope. This read-only operation does not change saved desired
     state or appliance runtime state.
+
+    Args:
+        identity: Authenticated identity authorizing the operation.
+        db: Active database session used by the operation.
     """
     settings, _rules, config_preview, errors = firewall_validation_payload(db)
     adapter = SystemAdapter()
@@ -2952,6 +3347,10 @@ def apply_firewall(identity: Annotated[Identity, Depends(require_scope("write:fi
 
     Requires the `write:firewall` API scope. The action runs through the endpoint's existing audited
     adapter or task boundary; inspect the returned state before treating the operation as complete.
+
+    Args:
+        identity: Authenticated identity authorizing the operation.
+        db: Active database session used by the operation.
     """
     validation = validate_firewall(identity, db)
     apply_result = SystemAdapter().apply_firewall_config(validation.config_path)
@@ -2967,6 +3366,9 @@ def get_firewall_logs(identity: Annotated[Identity, Depends(require_scope("read:
 
     Requires the `read:firewall` API scope. This read-only operation does not change saved desired
     state or appliance runtime state.
+
+    Args:
+        identity: Authenticated identity authorizing the operation.
     """
     return ["dry-run log source for nftables", "Host nftables logs are not read in development mode."]
 
@@ -2977,6 +3379,10 @@ def list_services(identity: Annotated[Identity, Depends(require_scope("read:serv
 
     Requires the `read:services` API scope. This read-only operation does not change saved desired
     state or appliance runtime state.
+
+    Args:
+        identity: Authenticated identity authorizing the operation.
+        db: Active database session used by the operation.
     """
     rows = db.execute(select(ServiceState).where(ServiceState.service.in_(SERVICE_STATE_IDS)).order_by(ServiceState.display_name)).scalars().all()
     return [service_state_response(row, db) for row in rows]
@@ -2988,6 +3394,11 @@ def get_service(service: Annotated[str, ApiPath(description='Path value for serv
 
     Requires the `read:services` API scope. This read-only operation does not change saved desired
     state or appliance runtime state.
+
+    Args:
+        service: Atlaso or host service affected by the operation.
+        identity: Authenticated identity authorizing the operation.
+        db: Active database session used by the operation.
     """
     if service not in SERVICE_STATE_IDS:
         raise HTTPException(status_code=404, detail="Service not found")
@@ -3044,6 +3455,11 @@ def start_service(service: Annotated[str, ApiPath(description='Path value for se
 
     Requires the `write:services` API scope. The action runs through the endpoint's existing audited
     adapter or task boundary; inspect the returned state before treating the operation as complete.
+
+    Args:
+        service: Atlaso or host service affected by the operation.
+        identity: Authenticated identity authorizing the operation.
+        db: Active database session used by the operation.
     """
     return service_action(service, "start", identity, db)
 
@@ -3054,6 +3470,11 @@ def stop_service(service: Annotated[str, ApiPath(description='Path value for ser
 
     Requires the `write:services` API scope. The action runs through the endpoint's existing audited
     adapter or task boundary; inspect the returned state before treating the operation as complete.
+
+    Args:
+        service: Atlaso or host service affected by the operation.
+        identity: Authenticated identity authorizing the operation.
+        db: Active database session used by the operation.
     """
     return service_action(service, "stop", identity, db)
 
@@ -3064,6 +3485,11 @@ def restart_service(service: Annotated[str, ApiPath(description='Path value for 
 
     Requires the `write:services` API scope. The action runs through the endpoint's existing audited
     adapter or task boundary; inspect the returned state before treating the operation as complete.
+
+    Args:
+        service: Atlaso or host service affected by the operation.
+        identity: Authenticated identity authorizing the operation.
+        db: Active database session used by the operation.
     """
     return service_action(service, "restart", identity, db)
 
@@ -3075,6 +3501,11 @@ def enable_service(service: Annotated[str, ApiPath(description='Path value for s
     Requires the `write:services` API scope. The operation changes saved Atlaso application state;
     any appliance host enforcement remains subject to the documented apply or task boundary for the
     resource.
+
+    Args:
+        service: Atlaso or host service affected by the operation.
+        identity: Authenticated identity authorizing the operation.
+        db: Active database session used by the operation.
     """
     return service_action(service, "enable", identity, db)
 
@@ -3086,6 +3517,11 @@ def disable_service(service: Annotated[str, ApiPath(description='Path value for 
     Requires the `write:services` API scope. The operation changes saved Atlaso application state;
     any appliance host enforcement remains subject to the documented apply or task boundary for the
     resource.
+
+    Args:
+        service: Atlaso or host service affected by the operation.
+        identity: Authenticated identity authorizing the operation.
+        db: Active database session used by the operation.
     """
     return service_action(service, "disable", identity, db)
 
@@ -3096,6 +3532,10 @@ def get_service_logs(service: Annotated[str, ApiPath(description='Path value for
 
     Requires the `read:logs` API scope. This read-only operation does not change saved desired state
     or appliance runtime state.
+
+    Args:
+        service: Atlaso or host service affected by the operation.
+        identity: Authenticated identity authorizing the operation.
     """
     if service not in APPROVED_SERVICES:
         raise HTTPException(status_code=404, detail="Log source is not approved")
@@ -3108,6 +3548,9 @@ def list_logs(identity: Annotated[Identity, Depends(require_scope("read:logs"))]
 
     Requires the `read:logs` API scope. This read-only operation does not change saved desired state
     or appliance runtime state.
+
+    Args:
+        identity: Authenticated identity authorizing the operation.
     """
     return ["system", "atlaso", "dnsmasq", "ldap", "ntp", "nginx", "openssh", "nftables"]
 
@@ -3118,6 +3561,10 @@ def get_log_source(source: Annotated[str, ApiPath(description='Path value for so
 
     Requires the `read:logs` API scope. This read-only operation does not change saved desired state
     or appliance runtime state.
+
+    Args:
+        source: Source object or location from which data is obtained.
+        identity: Authenticated identity authorizing the operation.
     """
     if source not in {"system", "atlaso", "dnsmasq", "ldap", "ntp", "nginx", "openssh", "nftables"}:
         raise HTTPException(status_code=404, detail="Log source is not approved")
@@ -3139,6 +3586,16 @@ def list_audit_events(
 
     Requires the `read:audit` API scope. This read-only operation does not change saved desired
     state or appliance runtime state.
+
+    Args:
+        identity: Authenticated identity authorizing the operation.
+        db: Active database session used by the operation.
+        user: User record or identity affected by the operation.
+        action: Action consumed by list audit events.
+        resource_type: Resource type consumed by list audit events.
+        success: Success consumed by list audit events.
+        start_time: Start time consumed by list audit events.
+        end_time: End time consumed by list audit events.
     """
     query = select(AuditEvent)
     if user:
@@ -3162,6 +3619,10 @@ def list_jobs(identity: Annotated[Identity, Depends(require_scope("read:dashboar
 
     Requires the `read:dashboard` API scope. This read-only operation does not change saved desired
     state or appliance runtime state.
+
+    Args:
+        identity: Authenticated identity authorizing the operation.
+        db: Active database session used by the operation.
     """
     return [JobResponse.model_validate(row) for row in db.execute(select(Job).order_by(desc(Job.created_at))).scalars().all()]
 
@@ -3173,6 +3634,10 @@ def create_job(identity: Annotated[Identity, Depends(require_scope("admin:all"))
     Requires the `admin:all` API scope. The operation changes saved Atlaso application state; any
     appliance host enforcement remains subject to the documented apply or task boundary for the
     resource.
+
+    Args:
+        identity: Authenticated identity authorizing the operation.
+        db: Active database session used by the operation.
     """
     job = Job(id=f"job_{uuid4().hex[:12]}", type="manual-placeholder", created_by=identity.username)
     db.add(job)
@@ -3188,6 +3653,11 @@ def get_job(job_id: Annotated[str, ApiPath(description='Unique identifier of the
 
     Requires the `read:dashboard` API scope. This read-only operation does not change saved desired
     state or appliance runtime state.
+
+    Args:
+        job_id: Stable identifier of the associated job resource.
+        identity: Authenticated identity authorizing the operation.
+        db: Active database session used by the operation.
     """
     job = db.get(Job, job_id)
     if not job:
@@ -3202,6 +3672,11 @@ def cancel_job(job_id: Annotated[str, ApiPath(description='Unique identifier of 
     Requires the `admin:all` API scope. The operation changes saved Atlaso application state; any
     appliance host enforcement remains subject to the documented apply or task boundary for the
     resource.
+
+    Args:
+        job_id: Stable identifier of the associated job resource.
+        identity: Authenticated identity authorizing the operation.
+        db: Active database session used by the operation.
     """
     job = db.get(Job, job_id)
     if not job:
@@ -3241,6 +3716,11 @@ def get_app_settings(
 
     Requires the `read:dashboard` API scope. This read-only operation does not change saved desired
     state or appliance runtime state.
+
+    Args:
+        identity: Authenticated identity authorizing the operation.
+        db: Active database session used by the operation.
+        settings: Current Atlaso settings used to configure the operation.
     """
     return appliance_settings_response(db, settings)
 
@@ -3256,6 +3736,12 @@ def update_app_settings(
 
     Requires the `admin:all` API scope. The operation updates saved Atlaso state and does not bypass
     the documented global Appliance Apply or service lifecycle boundary.
+
+    Args:
+        payload: Validated request or task payload consumed by the operation.
+        identity: Authenticated identity authorizing the operation.
+        db: Active database session used by the operation.
+        settings: Current Atlaso settings used to configure the operation.
     """
     desired = get_appliance_settings(db)
     desired.fqdn = normalize_fqdn(payload.appliance_fqdn)
@@ -3296,6 +3782,10 @@ def get_vcf_backups_status(
 
     Requires the `read:vcf-backups` API scope. This read-only operation does not change saved
     desired state or appliance runtime state.
+
+    Args:
+        identity: Authenticated identity authorizing the operation.
+        db: Active database session used by the operation.
     """
     settings = get_vcf_backup_settings(db)
     row = db.execute(select(ServiceState).where(ServiceState.service == "vcf-backups")).scalar_one_or_none()
@@ -3380,7 +3870,12 @@ def esx_storage_state(db: Session) -> tuple[EsxStorageSettings, list[EsxStorageV
 
 
 def esx_share_response(share: EsxNfsShare, manifest: dict[str, Any]) -> EsxNfsShareResponse:
-    """Return esx share response."""
+    """Return esx share response.
+
+    Args:
+        share: Share consumed by ESX share response.
+        manifest: Manifest consumed by ESX share response.
+    """
     rendered = next(item for item in manifest["shares"] if item["id"] == share.id)
     return EsxNfsShareResponse(
         id=share.id,
@@ -3425,6 +3920,10 @@ def get_esx_storage_status(
 
     Requires the `read:esx-storage` API scope. This read-only operation does not change saved
     desired state or appliance runtime state.
+
+    Args:
+        identity: Authenticated identity authorizing the operation.
+        db: Active database session used by the operation.
     """
     settings, volumes, shares, _interfaces, manifest = esx_storage_state(db)
     return EsxStorageStatusResponse(
@@ -3450,6 +3949,11 @@ def update_esx_storage_settings(
 
     Requires the `write:esx-storage` API scope. The request is evaluated without persisting desired
     state or mutating appliance runtime state.
+
+    Args:
+        payload: Validated request or task payload consumed by the operation.
+        identity: Authenticated identity authorizing the operation.
+        db: Active database session used by the operation.
     """
     row = get_esx_storage_settings(db)
     previous_hostname = row.hostname
@@ -3474,6 +3978,10 @@ def get_esx_storage_disks(
 
     Requires the `read:esx-storage` API scope. This read-only operation does not change saved
     desired state or appliance runtime state.
+
+    Args:
+        identity: Authenticated identity authorizing the operation.
+        db: Active database session used by the operation.
     """
     result = SystemAdapter().esx_storage_inventory()
     if result.returncode:
@@ -3495,6 +4003,10 @@ def get_esx_storage_volumes(
 
     Requires the `read:esx-storage` API scope. This read-only operation does not change saved
     desired state or appliance runtime state.
+
+    Args:
+        identity: Authenticated identity authorizing the operation.
+        db: Active database session used by the operation.
     """
     return [EsxStorageVolumeResponse.model_validate(row) for row in db.execute(select(EsxStorageVolume).order_by(EsxStorageVolume.name)).scalars().all()]
 
@@ -3510,6 +4022,11 @@ def create_esx_storage_volume(
     Requires the `write:esx-storage` API scope. The operation changes saved Atlaso application
     state; any appliance host enforcement remains subject to the documented apply or task boundary
     for the resource.
+
+    Args:
+        payload: Validated request or task payload consumed by the operation.
+        identity: Authenticated identity authorizing the operation.
+        db: Active database session used by the operation.
     """
     name = payload.name.strip()
     if payload.source_type == "blank_disk" and not payload.stable_device_id.startswith("/dev/disk/by-id/"):
@@ -3576,6 +4093,12 @@ def update_esx_storage_volume(
 
     Requires the `write:esx-storage` API scope. The operation updates saved Atlaso state and does
     not bypass the documented global Appliance Apply or service lifecycle boundary.
+
+    Args:
+        volume_id: Stable identifier of the associated volume resource.
+        payload: Validated request or task payload consumed by the operation.
+        identity: Authenticated identity authorizing the operation.
+        db: Active database session used by the operation.
     """
     row = db.get(EsxStorageVolume, volume_id)
     if row is None:
@@ -3608,6 +4131,10 @@ def get_esx_nfs_shares(
 
     Requires the `read:esx-storage` API scope. This read-only operation does not change saved
     desired state or appliance runtime state.
+
+    Args:
+        identity: Authenticated identity authorizing the operation.
+        db: Active database session used by the operation.
     """
     _settings, _volumes, shares, _interfaces, manifest = esx_storage_state(db)
     return [esx_share_response(row, manifest) for row in shares]
@@ -3615,6 +4142,11 @@ def get_esx_nfs_shares(
 
 def apply_esx_share_payload(row: EsxNfsShare, payload: EsxNfsShareCreate | EsxNfsShareUpdate) -> None:
     """Update esx share payload.
+
+    Args:
+        row: Persistent database row affected by the operation.
+        payload: Validated request or task payload consumed by the operation.
+
 
     Raises:
         HTTPException: If the request cannot be fulfilled.
@@ -3647,6 +4179,11 @@ def create_esx_nfs_share(
     Requires the `write:esx-storage` API scope. The operation changes saved Atlaso application
     state; any appliance host enforcement remains subject to the documented apply or task boundary
     for the resource.
+
+    Args:
+        payload: Validated request or task payload consumed by the operation.
+        identity: Authenticated identity authorizing the operation.
+        db: Active database session used by the operation.
     """
     if db.get(EsxStorageVolume, payload.volume_id) is None:
         raise HTTPException(status_code=422, detail="Selected ESX Storage volume does not exist.")
@@ -3676,6 +4213,12 @@ def update_esx_nfs_share(
 
     Requires the `write:esx-storage` API scope. The operation updates saved Atlaso state and does
     not bypass the documented global Appliance Apply or service lifecycle boundary.
+
+    Args:
+        share_id: Stable identifier of the associated share resource.
+        payload: Validated request or task payload consumed by the operation.
+        identity: Authenticated identity authorizing the operation.
+        db: Active database session used by the operation.
     """
     row = db.get(EsxNfsShare, share_id)
     if row is None:
@@ -3701,6 +4244,11 @@ def delete_esx_nfs_share(
     Requires the `write:esx-storage` API scope. Removal or revocation takes effect in Atlaso
     application state; appliance host changes remain subject to the documented apply boundary for
     the resource.
+
+    Args:
+        share_id: Stable identifier of the associated share resource.
+        identity: Authenticated identity authorizing the operation.
+        db: Active database session used by the operation.
     """
     row = db.get(EsxNfsShare, share_id)
     if row is None:
@@ -3786,6 +4334,10 @@ def get_vcf_offline_depot_status(
 
     Requires the `read:repository` API scope. This read-only operation does not change saved desired
     state or appliance runtime state.
+
+    Args:
+        identity: Authenticated identity authorizing the operation.
+        db: Active database session used by the operation.
     """
     return build_vcf_offline_depot_status(db)
 
@@ -3804,6 +4356,10 @@ def get_repository_status_alias(
 
     Requires the `read:repository` API scope. This read-only operation does not change saved desired
     state or appliance runtime state.
+
+    Args:
+        identity: Authenticated identity authorizing the operation.
+        db: Active database session used by the operation.
     """
     return build_vcf_offline_depot_status(db)
 
@@ -3822,6 +4378,10 @@ def get_vcf_private_registry_status(
 
     Requires the `read:vcf-registry` API scope. This read-only operation does not change saved
     desired state or appliance runtime state.
+
+    Args:
+        identity: Authenticated identity authorizing the operation.
+        db: Active database session used by the operation.
     """
     settings = get_vcf_private_registry_settings(db)
     bundles = db.execute(select(VcfRegistryBundle).order_by(VcfRegistryBundle.name)).scalars().all()
@@ -3890,6 +4450,10 @@ def list_esxi_custom_variables(
 
     Requires the `read:esxi-pxe` API scope. This read-only operation does not change saved desired
     state or appliance runtime state.
+
+    Args:
+        identity: Authenticated identity authorizing the operation.
+        db: Active database session used by the operation.
     """
     return [EsxiCustomVariableResponse(**row) for row in custom_variable_definitions(db)]
 
@@ -3911,6 +4475,11 @@ def create_esxi_custom_variable(
     Requires the `write:esxi-pxe` API scope. The operation changes saved Atlaso application state;
     any appliance host enforcement remains subject to the documented apply or task boundary for the
     resource.
+
+    Args:
+        payload: Validated request or task payload consumed by the operation.
+        identity: Authenticated identity authorizing the operation.
+        db: Active database session used by the operation.
     """
     try:
         variable = save_custom_variable_definition(
@@ -3951,6 +4520,12 @@ def update_esxi_custom_variable(
 
     Requires the `write:esxi-pxe` API scope. The operation updates saved Atlaso state and does not
     bypass the documented global Appliance Apply or service lifecycle boundary.
+
+    Args:
+        variable_name: Filesystem path associated with variable name.
+        payload: Validated request or task payload consumed by the operation.
+        identity: Authenticated identity authorizing the operation.
+        db: Active database session used by the operation.
     """
     if variable_name not in {row["name"] for row in custom_variable_definitions(db)}:
         raise HTTPException(status_code=404, detail="Custom variable not found")
@@ -3994,6 +4569,11 @@ def delete_esxi_custom_variable(
     Requires the `write:esxi-pxe` API scope. Removal or revocation takes effect in Atlaso
     application state; appliance host changes remain subject to the documented apply boundary for
     the resource.
+
+    Args:
+        variable_name: Filesystem path associated with variable name.
+        identity: Authenticated identity authorizing the operation.
+        db: Active database session used by the operation.
     """
     if not delete_custom_variable_definition(db, variable_name):
         raise HTTPException(status_code=404, detail="Custom variable not found")
@@ -4022,6 +4602,10 @@ def list_esxi_kickstarts(
 
     Requires the `read:esxi-pxe` API scope. This read-only operation does not change saved desired
     state or appliance runtime state.
+
+    Args:
+        identity: Authenticated identity authorizing the operation.
+        db: Active database session used by the operation.
     """
     rows = db.execute(select(EsxiKickstart).order_by(EsxiKickstart.name)).scalars().all()
     return [_kickstart_response(row, identity) for row in rows]
@@ -4045,6 +4629,12 @@ def create_esxi_kickstart(
     Requires the `write:esxi-pxe` API scope. The operation changes saved Atlaso application state;
     any appliance host enforcement remains subject to the documented apply or task boundary for the
     resource.
+
+    Args:
+        payload: Validated request or task payload consumed by the operation.
+        identity: Authenticated identity authorizing the operation.
+        db: Active database session used by the operation.
+        settings: Current Atlaso settings used to configure the operation.
     """
     kickstart = EsxiKickstart(name=normalize_kickstart_name(payload.name), content="", content_hash="", enabled=payload.enabled)
     db.add(kickstart)
@@ -4080,6 +4670,11 @@ def get_esxi_kickstart(
 
     Requires the `read:esxi-pxe` API scope. This read-only operation does not change saved desired
     state or appliance runtime state.
+
+    Args:
+        kickstart_id: Stable identifier of the associated kickstart resource.
+        identity: Authenticated identity authorizing the operation.
+        db: Active database session used by the operation.
     """
     kickstart = db.get(EsxiKickstart, kickstart_id)
     if not kickstart:
@@ -4104,6 +4699,13 @@ def update_esxi_kickstart(
 
     Requires the `write:esxi-pxe` API scope. The operation updates saved Atlaso state and does not
     bypass the documented global Appliance Apply or service lifecycle boundary.
+
+    Args:
+        kickstart_id: Stable identifier of the associated kickstart resource.
+        payload: Validated request or task payload consumed by the operation.
+        identity: Authenticated identity authorizing the operation.
+        db: Active database session used by the operation.
+        settings: Current Atlaso settings used to configure the operation.
     """
     kickstart = db.get(EsxiKickstart, kickstart_id)
     if not kickstart:
@@ -4141,6 +4743,11 @@ def delete_esxi_kickstart(
     Requires the `write:esxi-pxe` API scope. Removal or revocation takes effect in Atlaso
     application state; appliance host changes remain subject to the documented apply boundary for
     the resource.
+
+    Args:
+        kickstart_id: Stable identifier of the associated kickstart resource.
+        identity: Authenticated identity authorizing the operation.
+        db: Active database session used by the operation.
     """
     kickstart = db.get(EsxiKickstart, kickstart_id)
     if not kickstart:
@@ -4173,6 +4780,12 @@ def duplicate_esxi_kickstart(
     Requires the `write:esxi-pxe` API scope. The operation changes saved Atlaso application state;
     any appliance host enforcement remains subject to the documented apply or task boundary for the
     resource.
+
+    Args:
+        kickstart_id: Stable identifier of the associated kickstart resource.
+        identity: Authenticated identity authorizing the operation.
+        payload: Validated request or task payload consumed by the operation.
+        db: Active database session used by the operation.
     """
     source = db.get(EsxiKickstart, kickstart_id)
     if not source:
@@ -4215,6 +4828,12 @@ def validate_esxi_kickstart(
 
     Requires the `read:esxi-pxe` API scope. The request is evaluated without persisting desired
     state or mutating appliance runtime state.
+
+    Args:
+        kickstart_id: Stable identifier of the associated kickstart resource.
+        identity: Authenticated identity authorizing the operation.
+        db: Active database session used by the operation.
+        settings: Current Atlaso settings used to configure the operation.
     """
     kickstart = db.get(EsxiKickstart, kickstart_id)
     if not kickstart:
@@ -4248,6 +4867,11 @@ def preview_esxi_kickstart(
 
     Requires the `read:esxi-pxe` API scope. This read-only operation does not change saved desired
     state or appliance runtime state.
+
+    Args:
+        kickstart_id: Stable identifier of the associated kickstart resource.
+        identity: Authenticated identity authorizing the operation.
+        db: Active database session used by the operation.
     """
     kickstart = db.get(EsxiKickstart, kickstart_id)
     if not kickstart:
@@ -4271,6 +4895,11 @@ def download_esxi_kickstart(
 
     Requires the `write:esxi-pxe` API scope. This read-only operation does not change saved desired
     state or appliance runtime state.
+
+    Args:
+        kickstart_id: Stable identifier of the associated kickstart resource.
+        identity: Authenticated identity authorizing the operation.
+        db: Active database session used by the operation.
     """
     kickstart = db.get(EsxiKickstart, kickstart_id)
     if not kickstart:
@@ -4304,6 +4933,15 @@ async def upload_esxi_kickstart(
     Requires the `write:esxi-pxe` API scope. The operation changes saved Atlaso application state;
     any appliance host enforcement remains subject to the documented apply or task boundary for the
     resource.
+
+    Args:
+        identity: Authenticated identity authorizing the operation.
+        upload_file: Upload file consumed by upload ESXi kickstart.
+        name: Stable name identifying the resource or operation.
+        description: Operator-facing purpose or context for the resource.
+        enabled: Whether the associated resource or behavior is enabled.
+        db: Active database session used by the operation.
+        settings: Current Atlaso settings used to configure the operation.
     """
     raw = await upload_file.read()
     content = decode_kickstart_upload(raw, max_bytes=settings.esxi_kickstart_max_bytes)
@@ -4340,6 +4978,9 @@ def list_esxi_installer_isos(
 
     Requires the `read:esxi-pxe` API scope. This read-only operation does not change saved desired
     state or appliance runtime state.
+
+    Args:
+        identity: Authenticated identity authorizing the operation.
     """
     return [EsxiInstallerIsoResponse(**row) for row in installer_iso_inventory()]
 
@@ -4362,6 +5003,12 @@ async def upload_esxi_installer_iso(
     Requires the `write:esxi-pxe` API scope. The operation changes saved Atlaso application state;
     any appliance host enforcement remains subject to the documented apply or task boundary for the
     resource.
+
+    Args:
+        identity: Authenticated identity authorizing the operation.
+        upload_file: Upload file consumed by upload ESXi installer ISO.
+        db: Active database session used by the operation.
+        settings: Current Atlaso settings used to configure the operation.
     """
     try:
         iso = await store_installer_iso_upload(upload_file, max_bytes=settings.esxi_installer_iso_max_bytes)
@@ -4386,6 +5033,10 @@ def list_esxi_pxe_hosts(
 
     Requires the `read:esxi-pxe` API scope. This read-only operation does not change saved desired
     state or appliance runtime state.
+
+    Args:
+        identity: Authenticated identity authorizing the operation.
+        db: Active database session used by the operation.
     """
     rows = db.execute(select(EsxiPxeHost).options(selectinload(EsxiPxeHost.kickstart)).order_by(EsxiPxeHost.hostname)).scalars().all()
     return [EsxiPxeHostResponse(**host_to_dict(row)) for row in rows]
@@ -4408,6 +5059,11 @@ def create_esxi_pxe_host(
     Requires the `write:esxi-pxe` API scope. The operation changes saved Atlaso application state;
     any appliance host enforcement remains subject to the documented apply or task boundary for the
     resource.
+
+    Args:
+        payload: Validated request or task payload consumed by the operation.
+        identity: Authenticated identity authorizing the operation.
+        db: Active database session used by the operation.
     """
     if payload.kickstart_id and not db.get(EsxiKickstart, payload.kickstart_id):
         raise HTTPException(status_code=404, detail="Kickstart not found")
@@ -4460,6 +5116,12 @@ def update_esxi_pxe_host(
 
     Requires the `write:esxi-pxe` API scope. The operation updates saved Atlaso state and does not
     bypass the documented global Appliance Apply or service lifecycle boundary.
+
+    Args:
+        host_id: Stable identifier of the associated host resource.
+        payload: Validated request or task payload consumed by the operation.
+        identity: Authenticated identity authorizing the operation.
+        db: Active database session used by the operation.
     """
     host = db.get(EsxiPxeHost, host_id)
     if not host:
@@ -4634,6 +5296,10 @@ def get_ldap_settings(
 
     Requires the `read:ldap` API scope. This read-only operation does not change saved desired state
     or appliance runtime state.
+
+    Args:
+        identity: Authenticated identity authorizing the operation.
+        db: Active database session used by the operation.
     """
     return _ldap_settings_response(db)
 
@@ -4647,6 +5313,10 @@ def get_ldap_health(
 
     Requires the `read:ldap` API scope. This read-only operation does not change saved desired state
     or appliance runtime state.
+
+    Args:
+        identity: Authenticated identity authorizing the operation.
+        db: Active database session used by the operation.
     """
     response = _ldap_settings_response(db)
     organizations = _ldap_organizations(db)
@@ -4684,6 +5354,11 @@ def update_ldap_settings(
 
     Requires the `write:ldap` API scope. The operation updates saved Atlaso state and does not
     bypass the documented global Appliance Apply or service lifecycle boundary.
+
+    Args:
+        payload: Validated request or task payload consumed by the operation.
+        identity: Authenticated identity authorizing the operation.
+        db: Active database session used by the operation.
     """
     settings = _ldap_settings_row(db)
     settings.enabled = payload.enabled
@@ -4729,6 +5404,10 @@ def list_ldap_organizations(
 
     Requires the `read:ldap` API scope. This read-only operation does not change saved desired state
     or appliance runtime state.
+
+    Args:
+        identity: Authenticated identity authorizing the operation.
+        db: Active database session used by the operation.
     """
     return [LdapOrganizationResponse(**ldap_organization_to_dict(row)) for row in _ldap_organizations(db)]
 
@@ -4750,6 +5429,11 @@ def create_ldap_organization(
     Requires the `write:ldap` API scope. The operation changes saved Atlaso application state; any
     appliance host enforcement remains subject to the documented apply or task boundary for the
     resource.
+
+    Args:
+        payload: Validated request or task payload consumed by the operation.
+        identity: Authenticated identity authorizing the operation.
+        db: Active database session used by the operation.
     """
     try:
         slug = normalize_ldap_slug(payload.slug or payload.name)
@@ -4787,6 +5471,12 @@ def update_ldap_organization(
 
     Requires the `write:ldap` API scope. The operation updates saved Atlaso state and does not
     bypass the documented global Appliance Apply or service lifecycle boundary.
+
+    Args:
+        organization_id: Stable identifier of the associated organization resource.
+        payload: Validated request or task payload consumed by the operation.
+        identity: Authenticated identity authorizing the operation.
+        db: Active database session used by the operation.
     """
     organization = db.get(LdapOrganization, organization_id)
     if organization is None:
@@ -4825,6 +5515,11 @@ def delete_ldap_organization(
 
     Requires the `write:ldap` API scope. Removal or revocation takes effect in Atlaso application
     state; appliance host changes remain subject to the documented apply boundary for the resource.
+
+    Args:
+        organization_id: Stable identifier of the associated organization resource.
+        identity: Authenticated identity authorizing the operation.
+        db: Active database session used by the operation.
     """
     organization = db.get(LdapOrganization, organization_id)
     if organization is None:
@@ -4851,6 +5546,11 @@ def rotate_ldap_bind_credential(
     Requires the `write:ldap` API scope. The operation changes saved Atlaso application state; any
     appliance host enforcement remains subject to the documented apply or task boundary for the
     resource.
+
+    Args:
+        organization_id: Stable identifier of the associated organization resource.
+        identity: Authenticated identity authorizing the operation.
+        db: Active database session used by the operation.
     """
     organization = db.get(LdapOrganization, organization_id)
     if organization is None:
@@ -4872,6 +5572,11 @@ def list_ldap_users(
 
     Requires the `read:ldap` API scope. This read-only operation does not change saved desired state
     or appliance runtime state.
+
+    Args:
+        organization_id: Stable identifier of the associated organization resource.
+        identity: Authenticated identity authorizing the operation.
+        db: Active database session used by the operation.
     """
     rows = db.execute(select(LdapUser).where(LdapUser.organization_id == organization_id).order_by(LdapUser.uid)).scalars().all()
     return [LdapUserResponse(**ldap_user_to_dict(row)) for row in rows]
@@ -4879,6 +5584,11 @@ def list_ldap_users(
 
 def _apply_ldap_user_payload(user: LdapUser, payload: LdapUserCreate) -> None:
     """Update ldap user payload.
+
+    Args:
+        user: User record or identity affected by the operation.
+        payload: Validated request or task payload consumed by the operation.
+
 
     Raises:
         HTTPException: If the request cannot be fulfilled.
@@ -4914,6 +5624,12 @@ def create_ldap_user(
     Requires the `write:ldap` API scope. The operation changes saved Atlaso application state; any
     appliance host enforcement remains subject to the documented apply or task boundary for the
     resource.
+
+    Args:
+        organization_id: Stable identifier of the associated organization resource.
+        payload: Validated request or task payload consumed by the operation.
+        identity: Authenticated identity authorizing the operation.
+        db: Active database session used by the operation.
     """
     organization = db.get(LdapOrganization, organization_id)
     if organization is None:
@@ -4946,6 +5662,12 @@ def update_ldap_user(
 
     Requires the `write:ldap` API scope. The operation updates saved Atlaso state and does not
     bypass the documented global Appliance Apply or service lifecycle boundary.
+
+    Args:
+        user_id: Stable identifier of the associated user resource.
+        payload: Validated request or task payload consumed by the operation.
+        identity: Authenticated identity authorizing the operation.
+        db: Active database session used by the operation.
     """
     user = db.get(LdapUser, user_id)
     if user is None:
@@ -4976,6 +5698,12 @@ def reset_ldap_user_password(
     Requires the `write:ldap` API scope. The operation changes saved Atlaso application state; any
     appliance host enforcement remains subject to the documented apply or task boundary for the
     resource.
+
+    Args:
+        user_id: Stable identifier of the associated user resource.
+        payload: Validated request or task payload consumed by the operation.
+        identity: Authenticated identity authorizing the operation.
+        db: Active database session used by the operation.
     """
     user = db.get(LdapUser, user_id)
     if user is None:
@@ -5000,6 +5728,11 @@ def unlock_ldap_user(
     Requires the `write:ldap` API scope. The operation changes saved Atlaso application state; any
     appliance host enforcement remains subject to the documented apply or task boundary for the
     resource.
+
+    Args:
+        user_id: Stable identifier of the associated user resource.
+        identity: Authenticated identity authorizing the operation.
+        db: Active database session used by the operation.
     """
     user = db.get(LdapUser, user_id)
     if user is None:
@@ -5020,6 +5753,11 @@ def delete_ldap_user(
 
     Requires the `write:ldap` API scope. Removal or revocation takes effect in Atlaso application
     state; appliance host changes remain subject to the documented apply boundary for the resource.
+
+    Args:
+        user_id: Stable identifier of the associated user resource.
+        identity: Authenticated identity authorizing the operation.
+        db: Active database session used by the operation.
     """
     user = db.get(LdapUser, user_id)
     if user is None:
@@ -5074,6 +5812,11 @@ def list_ldap_groups(
 
     Requires the `read:ldap` API scope. This read-only operation does not change saved desired state
     or appliance runtime state.
+
+    Args:
+        organization_id: Stable identifier of the associated organization resource.
+        identity: Authenticated identity authorizing the operation.
+        db: Active database session used by the operation.
     """
     rows = (
         db.execute(
@@ -5133,6 +5876,12 @@ def create_ldap_group(
     Requires the `write:ldap` API scope. The operation changes saved Atlaso application state; any
     appliance host enforcement remains subject to the documented apply or task boundary for the
     resource.
+
+    Args:
+        organization_id: Stable identifier of the associated organization resource.
+        payload: Validated request or task payload consumed by the operation.
+        identity: Authenticated identity authorizing the operation.
+        db: Active database session used by the operation.
     """
     organization = db.get(LdapOrganization, organization_id)
     if organization is None:
@@ -5172,6 +5921,12 @@ def update_ldap_group(
 
     Requires the `write:ldap` API scope. The operation updates saved Atlaso state and does not
     bypass the documented global Appliance Apply or service lifecycle boundary.
+
+    Args:
+        group_id: Stable identifier of the associated group resource.
+        payload: Validated request or task payload consumed by the operation.
+        identity: Authenticated identity authorizing the operation.
+        db: Active database session used by the operation.
     """
     group = db.get(LdapGroup, group_id)
     if group is None:
@@ -5205,6 +5960,11 @@ def delete_ldap_group(
 
     Requires the `write:ldap` API scope. Removal or revocation takes effect in Atlaso application
     state; appliance host changes remain subject to the documented apply boundary for the resource.
+
+    Args:
+        group_id: Stable identifier of the associated group resource.
+        identity: Authenticated identity authorizing the operation.
+        db: Active database session used by the operation.
     """
     group = db.get(LdapGroup, group_id)
     if group is None:
@@ -5225,6 +5985,11 @@ def get_ldap_vcf_bundle(
 
     Requires the `read:ldap` API scope. This read-only operation does not change saved desired state
     or appliance runtime state.
+
+    Args:
+        organization_id: Stable identifier of the associated organization resource.
+        identity: Authenticated identity authorizing the operation.
+        db: Active database session used by the operation.
     """
     organization = db.get(LdapOrganization, organization_id)
     if organization is None:
@@ -5236,7 +6001,11 @@ def get_ldap_vcf_bundle(
 
 
 def _sanitize_vcf_ldap_settings(payload: dict[str, Any]) -> dict[str, Any]:
-    """Return sanitize vcf ldap settings."""
+    """Return sanitize vcf ldap settings.
+
+    Args:
+        payload: Validated request or task payload consumed by the operation.
+    """
     sanitized = json.loads(json.dumps(payload))
     defined = sanitized.get("definedSettings")
     if isinstance(defined, dict) and "password" in defined:
@@ -5260,6 +6029,12 @@ def inspect_ldap_vcf_connection(
 
     Requires the `write:ldap` API scope. The request is evaluated without persisting desired state
     or mutating appliance runtime state.
+
+    Args:
+        organization_id: Stable identifier of the associated organization resource.
+        payload: Validated request or task payload consumed by the operation.
+        identity: Authenticated identity authorizing the operation.
+        db: Active database session used by the operation.
     """
     organization = db.get(LdapOrganization, organization_id)
     if organization is None:
@@ -5321,6 +6096,12 @@ def configure_ldap_vcf_connection(
     Requires the `write:ldap` API scope. The operation changes saved Atlaso application state; any
     appliance host enforcement remains subject to the documented apply or task boundary for the
     resource.
+
+    Args:
+        organization_id: Stable identifier of the associated organization resource.
+        payload: Validated request or task payload consumed by the operation.
+        identity: Authenticated identity authorizing the operation.
+        db: Active database session used by the operation.
     """
     organization = db.get(LdapOrganization, organization_id)
     if organization is None:
@@ -5394,6 +6175,11 @@ def export_ldap_recovery(
     Requires the `write:ldap` API scope. The operation changes saved Atlaso application state; any
     appliance host enforcement remains subject to the documented apply or task boundary for the
     resource.
+
+    Args:
+        payload: Validated request or task payload consumed by the operation.
+        identity: Authenticated identity authorizing the operation.
+        db: Active database session used by the operation.
     """
     timestamp = utcnow().strftime("%Y%m%dT%H%M%SZ")
     plain_path = Path(LDAP_RECOVERY_DIR) / f"ldap-recovery-{timestamp}.tar.gz"
@@ -5432,6 +6218,12 @@ async def stage_ldap_recovery_import(
     Requires the `write:ldap` API scope. The operation changes saved Atlaso application state; any
     appliance host enforcement remains subject to the documented apply or task boundary for the
     resource.
+
+    Args:
+        identity: Authenticated identity authorizing the operation.
+        archive: Archive consumed by stage LDAP recovery import.
+        passphrase: Passphrase consumed by stage LDAP recovery import.
+        db: Active database session used by the operation.
     """
     encrypted = await archive.read()
     try:
@@ -5485,7 +6277,12 @@ def add_placeholder_resource_routes() -> None:
                 Query(description="Stable scaffolded resource name returned by this compatibility endpoint."),
             ] = prefix,
         ) -> dict[str, str]:
-            """Return the scaffolded compatibility resource status."""
+            """Return the scaffolded compatibility resource status.
+
+            Args:
+                identity: Authenticated identity authorizing the operation.
+                resource: Resource consumed by placeholder.
+            """
             return {"resource": resource, "status": "scaffolded", "mode": "dry-run"}
 
         operation_name = f"get{tag.replace(' ', '').replace('/', '')}Status"

@@ -176,6 +176,10 @@ class MonitorSnapshot:
 def ensure_aware(value: datetime) -> datetime:
     """Ensure aware.
 
+    Args:
+        value: Candidate value consumed by ensure aware.
+
+
     Returns:
         The ensure aware result.
     """
@@ -186,6 +190,10 @@ def ensure_aware(value: datetime) -> datetime:
 
 def parse_proc_stat_cpu(text: str) -> CpuCounters | None:
     """Parse proc stat cpu.
+
+    Args:
+        text: Text content consumed by the operation.
+
 
     Returns:
         The parsed proc stat cpu.
@@ -204,6 +212,10 @@ def parse_proc_stat_cpu(text: str) -> CpuCounters | None:
 
 def parse_proc_stat_cpus(text: str) -> list[CpuCoreCounters]:
     """Parse proc stat cpus.
+
+    Args:
+        text: Text content consumed by the operation.
+
 
     Returns:
         The parsed proc stat cpus.
@@ -226,7 +238,12 @@ def parse_proc_stat_cpus(text: str) -> list[CpuCoreCounters]:
 
 
 def cpu_percent(previous: CpuCounters | None, current: CpuCounters | None) -> float | None:
-    """Return cpu percent."""
+    """Return cpu percent.
+
+    Args:
+        previous: Previous consumed by CPU percent.
+        current: Current consumed by CPU percent.
+    """
     if previous is None or current is None:
         return None
     total_delta = current.total - previous.total
@@ -238,6 +255,10 @@ def cpu_percent(previous: CpuCounters | None, current: CpuCounters | None) -> fl
 
 def parse_loadavg(text: str) -> tuple[float | None, float | None, float | None]:
     """Parse loadavg.
+
+    Args:
+        text: Text content consumed by the operation.
+
 
     Returns:
         The parsed loadavg.
@@ -256,6 +277,10 @@ def parse_loadavg(text: str) -> tuple[float | None, float | None, float | None]:
 
 def parse_meminfo(text: str) -> dict[str, int]:
     """Parse meminfo.
+
+    Args:
+        text: Text content consumed by the operation.
+
 
     Returns:
         The parsed meminfo.
@@ -278,6 +303,10 @@ def parse_meminfo(text: str) -> dict[str, int]:
 
 def parse_net_dev(text: str) -> list[NetworkCounters]:
     """Parse net dev.
+
+    Args:
+        text: Text content consumed by the operation.
+
 
     Returns:
         The parsed net dev.
@@ -312,6 +341,10 @@ def parse_net_dev(text: str) -> list[NetworkCounters]:
 def parse_diskstats(text: str) -> dict[str, DiskCounters]:
     """Parse diskstats.
 
+    Args:
+        text: Text content consumed by the operation.
+
+
     Returns:
         The parsed diskstats.
     """
@@ -335,7 +368,13 @@ def parse_diskstats(text: str) -> dict[str, DiskCounters]:
 
 
 def rate_per_second(previous_value: int, current_value: int, elapsed_seconds: float) -> float | None:
-    """Return rate per second."""
+    """Return rate per second.
+
+    Args:
+        previous_value: Previous value restored or compared by the operation.
+        current_value: Current value inspected by the operation.
+        elapsed_seconds: Elapsed duration in seconds.
+    """
     if elapsed_seconds <= 0 or current_value < previous_value:
         return None
     return round((current_value - previous_value) / elapsed_seconds, 2)
@@ -350,13 +389,23 @@ class SystemMetricsCollector:
         settings: Settings maintained by this systemmetricscollector.
     """
     def __init__(self, *, proc_path: Path | None = None, sys_path: Path | None = None, settings: Settings | None = None) -> None:
-        """Initialize the system metrics collector."""
+        """Initialize the system metrics collector.
+
+        Args:
+            proc_path: Filesystem path used for proc.
+            sys_path: Filesystem path used for sys.
+            settings: Current Atlaso settings used to configure the operation.
+        """
         self.proc_path = proc_path or Path("/proc")
         self.sys_path = sys_path or Path("/sys")
         self.settings = settings or get_settings()
 
     def collect(self, sampled_at: datetime | None = None) -> MonitorSnapshot:
-        """Return collect."""
+        """Return collect.
+
+        Args:
+            sampled_at: Sampled at consumed by collect.
+        """
         sampled_at = sampled_at or utcnow()
         cpu, cpus = self._read_cpu()
         memory = self._read_memory()
@@ -524,6 +573,10 @@ class SystemMetricsCollector:
     @staticmethod
     def _run_text(command: list[str]) -> str:
         """Run text.
+
+        Args:
+            command: Command and arguments to execute.
+
 
         Returns:
             The run text result.
@@ -726,7 +779,11 @@ def monitor_payload(db: Session, *, hours: int = 6, collector: SystemMetricsColl
 
 
 def _cpu_cores(samples: list[MonitorSample]) -> list[dict[str, Any]]:
-    """Return cpu cores."""
+    """Return cpu cores.
+
+    Args:
+        samples: Samples consumed by CPU cores.
+    """
     by_name: dict[str, list[MonitorCpuSample]] = {}
     for sample in samples:
         for row in sample.cpu_samples:
@@ -745,7 +802,11 @@ def _cpu_cores(samples: list[MonitorSample]) -> list[dict[str, Any]]:
 
 
 def _summary(samples: list[MonitorSample]) -> dict[str, Any]:
-    """Return summary."""
+    """Return summary.
+
+    Args:
+        samples: Samples consumed by summary.
+    """
     latest = samples[-1] if samples else None
     latest_networks = latest.network_samples if latest else []
     latest_disks = latest.disk_samples if latest else []
@@ -785,7 +846,11 @@ def _summary(samples: list[MonitorSample]) -> dict[str, Any]:
 
 
 def _network_totals(samples: list[MonitorSample]) -> list[dict[str, Any]]:
-    """Return network totals."""
+    """Return network totals.
+
+    Args:
+        samples: Samples consumed by network totals.
+    """
     rows: list[dict[str, Any]] = []
     for sample in samples:
         rows.append(
@@ -799,7 +864,11 @@ def _network_totals(samples: list[MonitorSample]) -> list[dict[str, Any]]:
 
 
 def _networks(samples: list[MonitorSample]) -> list[dict[str, Any]]:
-    """Return networks."""
+    """Return networks.
+
+    Args:
+        samples: Samples consumed by networks.
+    """
     by_name: dict[str, list[MonitorNetworkSample]] = {}
     for sample in samples:
         for row in sample.network_samples:
@@ -832,7 +901,11 @@ def _networks(samples: list[MonitorSample]) -> list[dict[str, Any]]:
 
 
 def _disk_totals(samples: list[MonitorSample]) -> list[dict[str, Any]]:
-    """Return disk totals."""
+    """Return disk totals.
+
+    Args:
+        samples: Samples consumed by disk totals.
+    """
     rows: list[dict[str, Any]] = []
     for sample in samples:
         devices = _disk_rates_by_device(sample)
@@ -847,7 +920,11 @@ def _disk_totals(samples: list[MonitorSample]) -> list[dict[str, Any]]:
 
 
 def _disk_rates_by_device(sample: MonitorSample) -> dict[str, dict[str, float | None]]:
-    """Return disk rates by device."""
+    """Return disk rates by device.
+
+    Args:
+        sample: Sample consumed by disk rates by device.
+    """
     devices: dict[str, dict[str, float | None]] = {}
     for row in sorted(sample.disk_samples, key=lambda item: (item.device, item.mount_point)):
         if row.filesystem in VIRTUAL_FILESYSTEMS:
@@ -864,7 +941,11 @@ def _disk_rates_by_device(sample: MonitorSample) -> dict[str, dict[str, float | 
 
 
 def _disk_devices(samples: list[MonitorSample]) -> list[dict[str, Any]]:
-    """Return disk devices."""
+    """Return disk devices.
+
+    Args:
+        samples: Samples consumed by disk devices.
+    """
     by_device: dict[str, list[dict[str, Any]]] = {}
     for sample in samples:
         for device, rates in _disk_rates_by_device(sample).items():
@@ -890,7 +971,11 @@ def _disk_devices(samples: list[MonitorSample]) -> list[dict[str, Any]]:
 
 
 def _disks(samples: list[MonitorSample]) -> list[dict[str, Any]]:
-    """Return disks."""
+    """Return disks.
+
+    Args:
+        samples: Samples consumed by disks.
+    """
     by_mount: dict[str, list[MonitorDiskSample]] = {}
     for sample in samples:
         for row in sample.disk_samples:
@@ -933,7 +1018,11 @@ class MonitorSampler:
         interval_seconds: Interval duration in seconds.
     """
     def __init__(self, *, interval_seconds: int | None = None) -> None:
-        """Initialize the monitor sampler."""
+        """Initialize the monitor sampler.
+
+        Args:
+            interval_seconds: Interval duration in seconds.
+        """
         settings = get_settings()
         self.interval_seconds = max(5, interval_seconds or settings.monitor_sample_interval_seconds)
         self._stop = threading.Event()

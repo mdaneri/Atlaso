@@ -44,6 +44,11 @@ def current_python_abi() -> str:
 def _required_text(payload: dict[str, Any], key: str) -> str:
     """Return required text.
 
+    Args:
+        payload: Validated request or task payload consumed by the operation.
+        key: Stable key identifying the setting, secret, or mapping entry.
+
+
     Raises:
         ReleaseManifestError: If the operation encounters an invalid state.
     """
@@ -55,6 +60,11 @@ def _required_text(payload: dict[str, Any], key: str) -> str:
 
 def _https_url(payload: dict[str, Any], key: str) -> str:
     """Return https url.
+
+    Args:
+        payload: Validated request or task payload consumed by the operation.
+        key: Stable key identifying the setting, secret, or mapping entry.
+
 
     Raises:
         ReleaseManifestError: If the operation encounters an invalid state.
@@ -69,6 +79,11 @@ def _https_url(payload: dict[str, Any], key: str) -> str:
 def _sha256(payload: dict[str, Any], key: str) -> str:
     """Return sha256.
 
+    Args:
+        payload: Validated request or task payload consumed by the operation.
+        key: Stable key identifying the setting, secret, or mapping entry.
+
+
     Raises:
         ReleaseManifestError: If the operation encounters an invalid state.
     """
@@ -80,6 +95,11 @@ def _sha256(payload: dict[str, Any], key: str) -> str:
 
 def _timestamp(payload: dict[str, Any], key: str) -> str:
     """Return timestamp.
+
+    Args:
+        payload: Validated request or task payload consumed by the operation.
+        key: Stable key identifying the setting, secret, or mapping entry.
+
 
     Raises:
         ReleaseManifestError: If the operation encounters an invalid state.
@@ -96,6 +116,10 @@ def _timestamp(payload: dict[str, Any], key: str) -> str:
 
 def validate_channel_manifest(payload: dict[str, Any]) -> dict[str, Any]:
     """Validate channel manifest.
+
+    Args:
+        payload: Validated request or task payload consumed by the operation.
+
 
     Returns:
         The validate channel manifest result.
@@ -123,6 +147,10 @@ def validate_channel_manifest(payload: dict[str, Any]) -> dict[str, Any]:
 
 def validate_release_manifest(payload: dict[str, Any]) -> dict[str, Any]:
     """Validate release manifest.
+
+    Args:
+        payload: Validated request or task payload consumed by the operation.
+
 
     Returns:
         The validate release manifest result.
@@ -187,6 +215,10 @@ def validate_release_manifest(payload: dict[str, Any]) -> dict[str, Any]:
 def inventory_version_tuple(value: str) -> tuple[int, int, int, int]:
     """Return inventory version tuple.
 
+    Args:
+        value: Candidate value consumed by inventory version tuple.
+
+
     Raises:
         ReleaseManifestError: If the operation encounters an invalid state.
     """
@@ -198,6 +230,10 @@ def inventory_version_tuple(value: str) -> tuple[int, int, int, int]:
 
 def validate_inventory_release_manifest(payload: dict[str, Any]) -> dict[str, Any]:
     """Validate inventory release manifest.
+
+    Args:
+        payload: Validated request or task payload consumed by the operation.
+
 
     Returns:
         The validate inventory release manifest result.
@@ -258,6 +294,10 @@ def validate_inventory_release_manifest(payload: dict[str, Any]) -> dict[str, An
 def signature_document(raw_signature: bytes) -> dict[str, str]:
     """Return signature document.
 
+    Args:
+        raw_signature: Raw signature consumed by signature document.
+
+
     Raises:
         ReleaseManifestError: If the operation encounters an invalid state.
     """
@@ -288,6 +328,13 @@ def verify_signed_json(
     document_kind: str,
 ) -> dict[str, Any]:
     """Validate signed json.
+
+    Args:
+        raw_document: Raw document consumed by verify signed JSON.
+        raw_signature: Raw signature consumed by verify signed JSON.
+        trust_dir: Filesystem path associated with trust dir.
+        document_kind: Document kind consumed by verify signed JSON.
+
 
     Returns:
         The verify signed json result.

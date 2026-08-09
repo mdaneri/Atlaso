@@ -37,12 +37,21 @@ class SystemAdapter:
     HELPER_PATH = "/opt/atlaso/bin/atlaso-helper"
 
     def __init__(self, dry_run: bool | None = None) -> None:
-        """Initialize the system adapter."""
+        """Initialize the system adapter.
+
+        Args:
+            dry_run: Whether to report planned actions without mutating host state.
+        """
         settings = get_settings()
         self.dry_run = settings.dry_run_system_adapters if dry_run is None else dry_run
 
     def apply_wan_policy(self, interface_name: str, policy_name: str) -> AdapterResult:
         """Update wan policy.
+
+        Args:
+            interface_name: Host network-interface name affected by the operation.
+            policy_name: Policy name consumed by apply WAN policy.
+
 
         Returns:
             The apply wan policy result.
@@ -52,6 +61,10 @@ class SystemAdapter:
     def clear_wan_policy(self, interface_name: str) -> AdapterResult:
         """Remove wan policy.
 
+        Args:
+            interface_name: Host network-interface name affected by the operation.
+
+
         Returns:
             The clear wan policy result.
         """
@@ -60,6 +73,10 @@ class SystemAdapter:
     def validate_wan_config(self, config_path: str) -> AdapterResult:
         """Validate wan config.
 
+        Args:
+            config_path: Filesystem path containing the operation configuration.
+
+
         Returns:
             The validate wan config result.
         """
@@ -67,6 +84,10 @@ class SystemAdapter:
 
     def apply_wan_config(self, config_path: str) -> AdapterResult:
         """Update wan config.
+
+        Args:
+            config_path: Filesystem path containing the operation configuration.
+
 
         Returns:
             The apply wan config result.
@@ -82,11 +103,20 @@ class SystemAdapter:
         return self._helper_result("staging", "prepare", path, dry_run_message="dry-run: apply staging ownership repair command recorded")
 
     def service_action(self, service: str, action: str) -> AdapterResult:
-        """Return service action."""
+        """Return service action.
+
+        Args:
+            service: Atlaso or host service affected by the operation.
+            action: Action consumed by service action.
+        """
         return self._record_only_result(["systemctl", action, service], f"dry-run: service {action} recorded for {service}")
 
     def service_status(self, unit: str) -> AdapterResult:
-        """Return service status."""
+        """Return service status.
+
+        Args:
+            unit: Unit consumed by service status.
+        """
         command = ["systemctl", "is-active", unit, "&&", "systemctl", "is-enabled", unit]
         if self.dry_run:
             return AdapterResult(command=command, dry_run=True, stdout=json.dumps({"active": "unknown", "enabled": "unknown"}))
@@ -112,6 +142,10 @@ class SystemAdapter:
     def validate_dnsmasq_config(self, config_path: str) -> AdapterResult:
         """Validate dnsmasq config.
 
+        Args:
+            config_path: Filesystem path containing the operation configuration.
+
+
         Returns:
             The validate dnsmasq config result.
         """
@@ -120,6 +154,10 @@ class SystemAdapter:
     def validate_local_users_config(self, config_path: str) -> AdapterResult:
         """Validate local users config.
 
+        Args:
+            config_path: Filesystem path containing the operation configuration.
+
+
         Returns:
             The validate local users config result.
         """
@@ -127,6 +165,10 @@ class SystemAdapter:
 
     def apply_local_users_config(self, config_path: str) -> AdapterResult:
         """Update local users config.
+
+        Args:
+            config_path: Filesystem path containing the operation configuration.
+
 
         Returns:
             The apply local users config result.
@@ -150,13 +192,21 @@ class SystemAdapter:
         )
 
     def local_users_status(self, config_path: str) -> AdapterResult:
-        """Return local users status."""
+        """Return local users status.
+
+        Args:
+            config_path: Filesystem path containing the operation configuration.
+        """
         if self.dry_run:
             return AdapterResult(command=["atlaso-helper", "local-users", "status", config_path], dry_run=True, stdout='{"users":[],"status":"dry-run"}')
         return self._helper_result("local-users", "status", config_path, dry_run_message="dry-run: local users status command recorded")
 
     def apply_dnsmasq_config(self, config_path: str) -> AdapterResult:
         """Update dnsmasq config.
+
+        Args:
+            config_path: Filesystem path containing the operation configuration.
+
 
         Returns:
             The apply dnsmasq config result.
@@ -170,6 +220,10 @@ class SystemAdapter:
     def validate_esxi_pxe_config(self, config_path: str) -> AdapterResult:
         """Validate esxi pxe config.
 
+        Args:
+            config_path: Filesystem path containing the operation configuration.
+
+
         Returns:
             The validate esxi pxe config result.
         """
@@ -177,6 +231,10 @@ class SystemAdapter:
 
     def apply_esxi_pxe_config(self, config_path: str) -> AdapterResult:
         """Update esxi pxe config.
+
+        Args:
+            config_path: Filesystem path containing the operation configuration.
+
 
         Returns:
             The apply esxi pxe config result.
@@ -195,6 +253,10 @@ class SystemAdapter:
     def validate_esx_storage_config(self, config_path: str) -> AdapterResult:
         """Validate esx storage config.
 
+        Args:
+            config_path: Filesystem path containing the operation configuration.
+
+
         Returns:
             The validate esx storage config result.
         """
@@ -202,6 +264,10 @@ class SystemAdapter:
 
     def apply_esx_storage_config(self, config_path: str) -> AdapterResult:
         """Update esx storage config.
+
+        Args:
+            config_path: Filesystem path containing the operation configuration.
+
 
         Returns:
             The apply esx storage config result.
@@ -244,7 +310,11 @@ class SystemAdapter:
         return helper_result
 
     def read_networkd_dhcp_dns(self, interface_name: str) -> AdapterResult:
-        """Return networkd dhcp dns."""
+        """Return networkd dhcp dns.
+
+        Args:
+            interface_name: Host network-interface name affected by the operation.
+        """
         return self._helper_result(
             "network",
             "dhcp-dns",
@@ -258,6 +328,10 @@ class SystemAdapter:
     def apply_ca_config(self, config_path: str) -> AdapterResult:
         """Update ca config.
 
+        Args:
+            config_path: Filesystem path containing the operation configuration.
+
+
         Returns:
             The apply ca config result.
         """
@@ -265,6 +339,10 @@ class SystemAdapter:
 
     def validate_ca_config(self, config_path: str) -> AdapterResult:
         """Validate ca config.
+
+        Args:
+            config_path: Filesystem path containing the operation configuration.
+
 
         Returns:
             The validate ca config result.
@@ -274,6 +352,10 @@ class SystemAdapter:
     def apply_kms_config(self, config_path: str) -> AdapterResult:
         """Update kms config.
 
+        Args:
+            config_path: Filesystem path containing the operation configuration.
+
+
         Returns:
             The apply kms config result.
         """
@@ -281,6 +363,10 @@ class SystemAdapter:
 
     def validate_kms_config(self, config_path: str) -> AdapterResult:
         """Validate kms config.
+
+        Args:
+            config_path: Filesystem path containing the operation configuration.
+
 
         Returns:
             The validate kms config result.
@@ -290,6 +376,10 @@ class SystemAdapter:
     def apply_ldap_config(self, config_path: str) -> AdapterResult:
         """Update ldap config.
 
+        Args:
+            config_path: Filesystem path containing the operation configuration.
+
+
         Returns:
             The apply ldap config result.
         """
@@ -297,6 +387,10 @@ class SystemAdapter:
 
     def validate_ldap_config(self, config_path: str) -> AdapterResult:
         """Validate ldap config.
+
+        Args:
+            config_path: Filesystem path containing the operation configuration.
+
 
         Returns:
             The validate ldap config result.
@@ -332,6 +426,10 @@ class SystemAdapter:
     def export_ldap_recovery(self, archive_path: str) -> AdapterResult:
         """Serialize ldap recovery.
 
+        Args:
+            archive_path: Filesystem path used for archive.
+
+
         Returns:
             The export ldap recovery result.
         """
@@ -340,6 +438,10 @@ class SystemAdapter:
     def apply_ntpd_config(self, config_path: str) -> AdapterResult:
         """Update ntpd config.
 
+        Args:
+            config_path: Filesystem path containing the operation configuration.
+
+
         Returns:
             The apply ntpd config result.
         """
@@ -347,6 +449,10 @@ class SystemAdapter:
 
     def validate_ntpd_config(self, config_path: str) -> AdapterResult:
         """Validate ntpd config.
+
+        Args:
+            config_path: Filesystem path containing the operation configuration.
+
 
         Returns:
             The validate ntpd config result.
@@ -438,6 +544,10 @@ class SystemAdapter:
     def apply_network_config(self, config_path: str) -> AdapterResult:
         """Update network config.
 
+        Args:
+            config_path: Filesystem path containing the operation configuration.
+
+
         Returns:
             The apply network config result.
         """
@@ -445,6 +555,10 @@ class SystemAdapter:
 
     def validate_network_config(self, config_path: str) -> AdapterResult:
         """Validate network config.
+
+        Args:
+            config_path: Filesystem path containing the operation configuration.
+
 
         Returns:
             The validate network config result.
@@ -454,6 +568,10 @@ class SystemAdapter:
     def apply_appliance_settings_config(self, config_path: str) -> AdapterResult:
         """Update appliance settings config.
 
+        Args:
+            config_path: Filesystem path containing the operation configuration.
+
+
         Returns:
             The apply appliance settings config result.
         """
@@ -461,6 +579,10 @@ class SystemAdapter:
 
     def validate_appliance_settings_config(self, config_path: str) -> AdapterResult:
         """Validate appliance settings config.
+
+        Args:
+            config_path: Filesystem path containing the operation configuration.
+
 
         Returns:
             The validate appliance settings config result.
@@ -477,7 +599,11 @@ class SystemAdapter:
         )
 
     def sign_web_terminal_key(self, request_path: str) -> AdapterResult:
-        """Return sign web terminal key."""
+        """Return sign web terminal key.
+
+        Args:
+            request_path: Filesystem path used for request.
+        """
         return self._helper_result(
             "web-terminal",
             "sign",
@@ -490,6 +616,10 @@ class SystemAdapter:
     def apply_firewall_config(self, config_path: str) -> AdapterResult:
         """Update firewall config.
 
+        Args:
+            config_path: Filesystem path containing the operation configuration.
+
+
         Returns:
             The apply firewall config result.
         """
@@ -497,6 +627,10 @@ class SystemAdapter:
 
     def validate_firewall_config(self, config_path: str) -> AdapterResult:
         """Validate firewall config.
+
+        Args:
+            config_path: Filesystem path containing the operation configuration.
+
 
         Returns:
             The validate firewall config result.
@@ -506,6 +640,10 @@ class SystemAdapter:
     def apply_vcf_backup_config(self, config_path: str) -> AdapterResult:
         """Update vcf backup config.
 
+        Args:
+            config_path: Filesystem path containing the operation configuration.
+
+
         Returns:
             The apply vcf backup config result.
         """
@@ -513,6 +651,10 @@ class SystemAdapter:
 
     def validate_vcf_backup_config(self, config_path: str) -> AdapterResult:
         """Validate vcf backup config.
+
+        Args:
+            config_path: Filesystem path containing the operation configuration.
+
 
         Returns:
             The validate vcf backup config result.
@@ -522,6 +664,10 @@ class SystemAdapter:
     def validate_vcf_private_registry_config(self, config_path: str) -> AdapterResult:
         """Validate vcf private registry config.
 
+        Args:
+            config_path: Filesystem path containing the operation configuration.
+
+
         Returns:
             The validate vcf private registry config result.
         """
@@ -530,17 +676,29 @@ class SystemAdapter:
     def apply_vcf_private_registry_config(self, config_path: str) -> AdapterResult:
         """Update vcf private registry config.
 
+        Args:
+            config_path: Filesystem path containing the operation configuration.
+
+
         Returns:
             The apply vcf private registry config result.
         """
         return self._record_only_result(["atlaso-helper", "vcf-private-registry", "apply", config_path], "dry-run: VCF private registry apply command recorded")
 
     def relocate_vcf_private_registry_bundles(self, config_path: str) -> AdapterResult:
-        """Return relocate vcf private registry bundles."""
+        """Return relocate vcf private registry bundles.
+
+        Args:
+            config_path: Filesystem path containing the operation configuration.
+        """
         return self._record_only_result(["atlaso-helper", "vcf-private-registry", "relocate-bundles", config_path], "dry-run: VCF private registry bundle relocation command recorded")
 
     def validate_vcf_offline_depot_config(self, config_path: str) -> AdapterResult:
         """Validate vcf offline depot config.
+
+        Args:
+            config_path: Filesystem path containing the operation configuration.
+
 
         Returns:
             The validate vcf offline depot config result.
@@ -548,7 +706,11 @@ class SystemAdapter:
         return self._helper_result("vcf-offline-depot", "validate", config_path, dry_run_message="dry-run: VCF Offline Depot validation command recorded")
 
     def stage_vcf_offline_depot_tool(self, archive_path: str) -> AdapterResult:
-        """Return stage vcf offline depot tool."""
+        """Return stage vcf offline depot tool.
+
+        Args:
+            archive_path: Filesystem path used for archive.
+        """
         helper_archive_path = str(Path(archive_path).resolve()) if not archive_path.startswith("/") else archive_path
         return self._helper_result("vcf-offline-depot", "stage-tool", helper_archive_path, dry_run_message="dry-run: VCF Download Tool extraction command recorded")
 
@@ -582,11 +744,19 @@ class SystemAdapter:
         )
 
     def sync_vcf_offline_depot(self, config_path: str) -> AdapterResult:
-        """Return sync vcf offline depot."""
+        """Return sync vcf offline depot.
+
+        Args:
+            config_path: Filesystem path containing the operation configuration.
+        """
         return self._helper_result("vcf-offline-depot", "sync", config_path, dry_run_message="dry-run: VCF Offline Depot sync command recorded")
 
     def apply_vcf_offline_depot_application_properties(self, properties_path: str) -> AdapterResult:
         """Update vcf offline depot application properties.
+
+        Args:
+            properties_path: Filesystem path used for properties.
+
 
         Returns:
             The apply vcf offline depot application properties result.
@@ -600,6 +770,10 @@ class SystemAdapter:
 
     def apply_vcf_offline_depot_ceip(self, enabled: bool) -> AdapterResult:
         """Update vcf offline depot ceip.
+
+        Args:
+            enabled: Whether the associated resource or behavior is enabled.
+
 
         Returns:
             The apply vcf offline depot ceip result.
@@ -615,6 +789,10 @@ class SystemAdapter:
     def apply_vcf_offline_depot_https_config(self, config_path: str) -> AdapterResult:
         """Update vcf offline depot https config.
 
+        Args:
+            config_path: Filesystem path containing the operation configuration.
+
+
         Returns:
             The apply vcf offline depot https config result.
         """
@@ -622,6 +800,10 @@ class SystemAdapter:
 
     def validate_public_services_config(self, config_path: str) -> AdapterResult:
         """Validate public services config.
+
+        Args:
+            config_path: Filesystem path containing the operation configuration.
+
 
         Returns:
             The validate public services config result.
@@ -631,6 +813,10 @@ class SystemAdapter:
     def apply_public_services_config(self, config_path: str) -> AdapterResult:
         """Update public services config.
 
+        Args:
+            config_path: Filesystem path containing the operation configuration.
+
+
         Returns:
             The apply public services config result.
         """
@@ -638,6 +824,11 @@ class SystemAdapter:
 
     def check_appliance_update_config(self, config_path: str, credentials_path: str = "") -> AdapterResult:
         """Check appliance update config.
+
+        Args:
+            config_path: Filesystem path containing the operation configuration.
+            credentials_path: Filesystem path used for credentials.
+
 
         Returns:
             The check appliance update config result.
@@ -648,6 +839,11 @@ class SystemAdapter:
     def apply_appliance_update_config(self, config_path: str, credentials_path: str = "") -> AdapterResult:
         """Update appliance update config.
 
+        Args:
+            config_path: Filesystem path containing the operation configuration.
+            credentials_path: Filesystem path used for credentials.
+
+
         Returns:
             The apply appliance update config result.
         """
@@ -655,12 +851,21 @@ class SystemAdapter:
         return self._helper_result("appliance-update", "apply", *args, dry_run_message="dry-run: appliance update apply command recorded")
 
     def sync_appliance_update_sources(self, config_path: str, credentials_path: str = "") -> AdapterResult:
-        """Return sync appliance update sources."""
+        """Return sync appliance update sources.
+
+        Args:
+            config_path: Filesystem path containing the operation configuration.
+            credentials_path: Filesystem path used for credentials.
+        """
         args = [config_path, credentials_path] if credentials_path else [config_path]
         return self._helper_result("appliance-update", "sync-sources", *args, dry_run_message="dry-run: software source synchronization recorded")
 
     def restart_appliance_after_update(self, config_path: str) -> AdapterResult:
-        """Return restart appliance after update."""
+        """Return restart appliance after update.
+
+        Args:
+            config_path: Filesystem path containing the operation configuration.
+        """
         return self._helper_result("appliance-update", "restart-service", config_path, dry_run_message="dry-run: Atlaso service restart command recorded")
 
     def run_automation_script(
@@ -698,7 +903,11 @@ class SystemAdapter:
         )
 
     def schedule_appliance_power(self, action: str) -> AdapterResult:
-        """Return schedule appliance power."""
+        """Return schedule appliance power.
+
+        Args:
+            action: Action consumed by schedule appliance power.
+        """
         if action not in {"reboot", "shutdown"}:
             return AdapterResult(
                 command=["atlaso-helper", "appliance-power", action],
@@ -715,6 +924,11 @@ class SystemAdapter:
 
     def _record_only_result(self, command: list[str], stdout: str) -> AdapterResult:
         """Persist only result.
+
+        Args:
+            command: Command and arguments to execute.
+            stdout: Stdout consumed by record only result.
+
 
         Returns:
             The record only result result.
@@ -744,7 +958,7 @@ class SystemAdapter:
             input_text: Untrusted input text to parse or validate.
             dry_run_returncode: Dry run returncode supplied by the caller.
             execute_in_dry_run: Execute in dry run supplied by the caller.
-            args: Parsed command-line arguments.
+            *args: Parsed command-line arguments.
         """
         display_command = ["atlaso-helper", group, action, *args]
         if self.dry_run and not execute_in_dry_run:

@@ -22,7 +22,11 @@ from atlaso.app.services.release_updates import validate_release_manifest, verif
 
 
 def canonical_json(payload: dict) -> bytes:
-    """Return canonical json."""
+    """Return canonical json.
+
+    Args:
+        payload: Validated request or task payload consumed by the operation.
+    """
     return (json.dumps(payload, indent=2, sort_keys=True) + "\n").encode("utf-8")
 
 

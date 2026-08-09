@@ -56,7 +56,12 @@ MAX_SCRIPT_ARGUMENTS_BYTES = 16 * 1024
 
 
 def normalize_script_content(content: str, interpreter: str) -> str:
-    """Return the canonical source stored and staged for a managed script."""
+    """Return the canonical source stored and staged for a managed script.
+
+    Args:
+        content: Content processed or persisted by the operation.
+        interpreter: Candidate interpreter to normalize.
+    """
     normalized = content.removeprefix("\ufeff").replace("\r\n", "\n").replace("\r", "\n")
     first_line = normalized.split("\n", 1)[0].strip()
     if interpreter == "bash" and first_line.startswith("!/"):
@@ -66,6 +71,11 @@ def normalize_script_content(content: str, interpreter: str) -> str:
 
 def json_object(raw_value: str, *, label: str = "configuration") -> dict[str, Any]:
     """Return json object.
+
+    Args:
+        raw_value: Raw value consumed by JSON object.
+        label: Human-readable label used to identify the result.
+
 
     Raises:
         ValueError: If an input value is invalid.
@@ -96,6 +106,10 @@ def bind_managed_script_vault_scope(db: Session, config: dict[str, Any]) -> None
 
 def _parse_powershell_arguments(raw_value: str) -> list[str]:
     """Parse powershell arguments.
+
+    Args:
+        raw_value: Candidate raw value to parse.
+
 
     Returns:
         The parsed powershell arguments.
@@ -160,6 +174,11 @@ def _parse_powershell_arguments(raw_value: str) -> list[str]:
 def parse_script_arguments(raw_value: str, interpreter: str = "bash") -> list[str]:
     """Parse script arguments.
 
+    Args:
+        raw_value: Candidate raw value to parse.
+        interpreter: Candidate interpreter to parse.
+
+
     Returns:
         The parsed script arguments.
 
@@ -187,6 +206,13 @@ def parse_script_arguments(raw_value: str, interpreter: str = "bash") -> list[st
 
 def _field_values(expression: str, minimum: int, maximum: int, *, sunday_alias: bool = False) -> set[int]:
     """Return field values.
+
+    Args:
+        expression: Expression consumed by field values.
+        minimum: Minimum consumed by field values.
+        maximum: Maximum consumed by field values.
+        sunday_alias: Whether sunday alias applies to the operation.
+
 
     Raises:
         ValueError: If an input value is invalid.
@@ -216,6 +242,10 @@ def _field_values(expression: str, minimum: int, maximum: int, *, sunday_alias: 
 
 def parse_cron_expression(expression: str) -> tuple[set[int], set[int], set[int], set[int], set[int]]:
     """Parse cron expression.
+
+    Args:
+        expression: Candidate expression to parse.
+
 
     Returns:
         The parsed cron expression.
@@ -296,7 +326,11 @@ def validate_schedule_values(
 
 
 def _aware_utc(value: datetime) -> datetime:
-    """Return aware utc."""
+    """Return aware utc.
+
+    Args:
+        value: Candidate value consumed by aware utc.
+    """
     if value.tzinfo is None:
         return value.replace(tzinfo=timezone.utc)
     return value.astimezone(timezone.utc)
@@ -304,6 +338,12 @@ def _aware_utc(value: datetime) -> datetime:
 
 def next_cron_run(expression: str, timezone_name: str, *, after: datetime) -> datetime:
     """Return next cron run.
+
+    Args:
+        expression: Expression consumed by next cron run.
+        timezone_name: Timezone name consumed by next cron run.
+        after: After consumed by next cron run.
+
 
     Raises:
         ValueError: If an input value is invalid.
@@ -328,7 +368,12 @@ def next_cron_run(expression: str, timezone_name: str, *, after: datetime) -> da
 
 
 def next_schedule_run(schedule: Schedule, *, after: datetime) -> datetime | None:
-    """Return next schedule run."""
+    """Return next schedule run.
+
+    Args:
+        schedule: Schedule consumed by next schedule run.
+        after: After consumed by next schedule run.
+    """
     if not schedule.enabled:
         return None
     if schedule.schedule_kind == "once":

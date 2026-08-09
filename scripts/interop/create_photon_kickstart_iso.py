@@ -40,7 +40,12 @@ def parse_args() -> argparse.Namespace:
 
 
 def iso_record_exists(iso, *, iso_path: str) -> bool:
-    """Return iso record exists."""
+    """Return iso record exists.
+
+    Args:
+        iso: Iso consumed by ISO record exists.
+        iso_path: Filesystem path used for ISO.
+    """
     try:
         iso.get_record(iso_path=iso_path)
     except Exception:
@@ -49,7 +54,13 @@ def iso_record_exists(iso, *, iso_path: str) -> bool:
 
 
 def remove_file_if_present(iso, *, iso_path: str, rr_name: str) -> None:
-    """Remove file if present."""
+    """Remove file if present.
+
+    Args:
+        iso: Iso consumed by remove file if present.
+        iso_path: Filesystem path used for ISO.
+        rr_name: Rr name consumed by remove file if present.
+    """
     rr_path = f"{iso_path.rsplit('/', 1)[0].lower()}/{rr_name}"
     for lookup in ({"iso_path": iso_path}, {"rr_path": rr_path}):
         try:
@@ -62,6 +73,13 @@ def remove_file_if_present(iso, *, iso_path: str, rr_name: str) -> None:
 
 def replace_text_file(iso, *, iso_path: str, rr_name: str, text: str) -> None:
     """Handle replace text file.
+
+    Args:
+        iso: Iso consumed by replace text file.
+        iso_path: Filesystem path used for ISO.
+        rr_name: Rr name consumed by replace text file.
+        text: Text content consumed by the operation.
+
 
     Raises:
         ValueError: If an input value is invalid.
@@ -77,6 +95,10 @@ def replace_text_file(iso, *, iso_path: str, rr_name: str, text: str) -> None:
 
 def replace_grub_config(iso) -> str:
     """Return replace grub config.
+
+    Args:
+        iso: Iso consumed by replace grub config.
+
 
     Raises:
         RuntimeError: If the operation cannot be completed safely.

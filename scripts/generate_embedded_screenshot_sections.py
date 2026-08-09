@@ -92,7 +92,11 @@ ROUTE_TITLES = {
 
 
 def route_title(route: str) -> str:
-    """Return route title."""
+    """Return route title.
+
+    Args:
+        route: Route consumed by route title.
+    """
     if route in ROUTE_TITLES:
         return ROUTE_TITLES[route]
     path, separator, fragment = route.partition("#")
@@ -103,7 +107,11 @@ def route_title(route: str) -> str:
 
 
 def figure(entry: dict[str, object]) -> list[str]:
-    """Return figure."""
+    """Return figure.
+
+    Args:
+        entry: Entry consumed by figure.
+    """
     path = Path(str(entry["path"]))
     return [
         f"![{entry['alt']}](../assets/screenshots/{path.name})",
@@ -115,6 +123,10 @@ def figure(entry: dict[str, object]) -> list[str]:
 
 def remove_generated_sections(text: str) -> str:
     """Remove generated sections.
+
+    Args:
+        text: Text content consumed by the operation.
+
 
     Returns:
         The remove generated sections result.
@@ -132,6 +144,11 @@ def remove_generated_sections(text: str) -> str:
 
 def insert_after_intro(text: str, section: str) -> str:
     """Create after intro.
+
+    Args:
+        text: Text content consumed by the operation.
+        section: Section consumed by insert after intro.
+
 
     Returns:
         The insert after intro result.

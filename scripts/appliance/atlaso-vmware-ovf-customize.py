@@ -59,7 +59,11 @@ def utc_now() -> str:
 
 
 def log(message: str) -> None:
-    """Handle log."""
+    """Handle log.
+
+    Args:
+        message: Human-readable message associated with the operation.
+    """
     line = f"{utc_now()} {message}\n"
     try:
         LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -71,7 +75,12 @@ def log(message: str) -> None:
 
 
 def attr_value(element: ET.Element, local_name: str) -> str:
-    """Return attr value."""
+    """Return attr value.
+
+    Args:
+        element: Element consumed by attr value.
+        local_name: Local name consumed by attr value.
+    """
     for key, value in element.attrib.items():
         if key == local_name or key.endswith(f"}}{local_name}"):
             return value
@@ -80,6 +89,10 @@ def attr_value(element: ET.Element, local_name: str) -> str:
 
 def parse_ovf_environment(xml_text: str) -> dict[str, str]:
     """Parse ovf environment.
+
+    Args:
+        xml_text: Candidate xml text to parse.
+
 
     Returns:
         The parsed ovf environment.
@@ -99,12 +112,20 @@ def parse_ovf_environment(xml_text: str) -> dict[str, str]:
 
 
 def split_list(value: str) -> list[str]:
-    """Return split list."""
+    """Return split list.
+
+    Args:
+        value: Candidate value consumed by split list.
+    """
     return [item.strip() for item in re.split(r"[\s,;]+", value or "") if item.strip()]
 
 
 def validate_fqdn(value: str) -> str:
     """Validate fqdn.
+
+    Args:
+        value: Candidate value consumed by validate FQDN.
+
 
     Returns:
         The validate fqdn result.
@@ -122,6 +143,11 @@ def validate_fqdn(value: str) -> str:
 
 def validate_dns_servers(value: str, *, required: bool = False) -> list[str]:
     """Validate dns servers.
+
+    Args:
+        value: Candidate value consumed by validate DNS servers.
+        required: Whether required applies to the operation.
+
 
     Returns:
         The validate dns servers result.
@@ -143,6 +169,12 @@ def validate_dns_servers(value: str, *, required: bool = False) -> list[str]:
 def parse_boolean_property(properties: dict[str, str], key: str, *, default: bool = False) -> bool:
     """Parse boolean property.
 
+    Args:
+        properties: Candidate properties to parse.
+        key: Stable key identifying the setting, secret, or mapping entry.
+        default: Whether default applies to the operation.
+
+
     Returns:
         The parsed boolean property.
 
@@ -161,6 +193,10 @@ def parse_boolean_property(properties: dict[str, str], key: str, *, default: boo
 
 def validate_properties(properties: dict[str, str]) -> dict[str, object]:
     """Validate properties.
+
+    Args:
+        properties: Candidate properties to validate.
+
 
     Returns:
         The validate properties result.
@@ -244,7 +280,11 @@ def validate_properties(properties: dict[str, str]) -> dict[str, object]:
 
 
 def redacted_summary(config: dict[str, object]) -> dict[str, object]:
-    """Return redacted summary."""
+    """Return redacted summary.
+
+    Args:
+        config: Validated configuration consumed by the operation.
+    """
     return {
         "applied_at": utc_now(),
         "management_mode": config["management_mode"],
@@ -278,7 +318,11 @@ def read_ovf_environment() -> str:
 
 
 def quote_env_value(value: object) -> str:
-    """Return quote env value."""
+    """Return quote env value.
+
+    Args:
+        value: Candidate value consumed by quote env value.
+    """
     text = str(value)
     escaped = text.replace("\\", "\\\\").replace('"', '\\"').replace("$", "\\$")
     return f'"{escaped}"'
@@ -331,7 +375,11 @@ def write_env_file(path: Path, updates: dict[str, object]) -> None:
 
 
 def write_networkd_config(config: dict[str, object]) -> None:
-    """Persist networkd config."""
+    """Persist networkd config.
+
+    Args:
+        config: Validated configuration consumed by the operation.
+    """
     lines = ["[Match]", f"Name={DEFAULT_INTERFACE}", "", "[Network]"]
     if config["management_mode"] == "dhcp":
         lines.append("DHCP=ipv4")
@@ -354,7 +402,11 @@ def write_networkd_config(config: dict[str, object]) -> None:
 
 
 def write_resolv_conf(config: dict[str, object]) -> None:
-    """Persist resolv conf."""
+    """Persist resolv conf.
+
+    Args:
+        config: Validated configuration consumed by the operation.
+    """
     if not config["dns_servers"]:
         return
     RESOLV_CONF_PATH.write_text("".join(f"nameserver {server}\n" for server in config["dns_servers"]), encoding="utf-8")
@@ -362,7 +414,11 @@ def write_resolv_conf(config: dict[str, object]) -> None:
 
 
 def write_nginx_management_server_name(config: dict[str, object]) -> None:
-    """Persist nginx management server name."""
+    """Persist nginx management server name.
+
+    Args:
+        config: Validated configuration consumed by the operation.
+    """
     if not NGINX_MANAGEMENT_PATH.exists():
         return
     text = NGINX_MANAGEMENT_PATH.read_text(encoding="utf-8")
@@ -372,7 +428,11 @@ def write_nginx_management_server_name(config: dict[str, object]) -> None:
 
 
 def write_initial_firewall_config(config: dict[str, object]) -> None:
-    """Persist initial firewall config."""
+    """Persist initial firewall config.
+
+    Args:
+        config: Validated configuration consumed by the operation.
+    """
     management_rules = []
     source_cidr = str(config["management_source_cidr"])
     management_rules.append(
@@ -431,7 +491,11 @@ def set_password(username: str, password: str) -> None:
 
 
 def set_hostname(fqdn: str) -> None:
-    """Update hostname."""
+    """Update hostname.
+
+    Args:
+        fqdn: Fqdn consumed by set hostname.
+    """
     hostnamectl = shutil.which("hostnamectl")
     if hostnamectl:
         subprocess.run([hostnamectl, "set-hostname", fqdn], check=True)
@@ -444,6 +508,10 @@ def set_hostname(fqdn: str) -> None:
 
 def configure_root_ssh(enabled: bool) -> None:
     """Update root ssh.
+
+    Args:
+        enabled: Whether the associated resource or behavior is enabled.
+
 
     Raises:
         OvfCustomizationError: If the operation encounters an invalid state.
@@ -472,6 +540,11 @@ def configure_root_ssh(enabled: bool) -> None:
 
 def apply_customization(config: dict[str, object], *, dry_run: bool = False) -> dict[str, object]:
     """Update customization.
+
+    Args:
+        config: Validated configuration consumed by the operation.
+        dry_run: Whether to report planned actions without mutating host state.
+
 
     Returns:
         The apply customization result.
@@ -513,6 +586,10 @@ def apply_customization(config: dict[str, object], *, dry_run: bool = False) -> 
 
 def main(argv: list[str] | None = None) -> int:
     """Run the command-line entry point.
+
+    Args:
+        argv: Command-line arguments to parse, or ``None`` to use the process arguments.
+
 
     Returns:
         The main result.

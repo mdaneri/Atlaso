@@ -21,7 +21,11 @@ SHA256 = "a" * 64
 
 
 def event(**overrides: object) -> str:
-    """Return event."""
+    """Return event.
+
+    Args:
+        **overrides: Additional keyword arguments accepted by the callable.
+    """
     value: dict[str, object] = {
         "schema_version": 1,
         "timestamp": "2026-07-28T00:00:00Z",
@@ -102,7 +106,12 @@ def test_trace_validator_summarizes_only_allowlisted_metadata() -> None:
     ],
 )
 def test_trace_validator_fails_closed(overrides: dict[str, object], message: str) -> None:
-    """Verify that trace validator fails closed."""
+    """Verify that trace validator fails closed.
+
+    Args:
+        overrides: Overrides supplied to the test scenario.
+        message: Human-readable message associated with the operation.
+    """
     with pytest.raises(TraceValidationError, match=message):
         validate_trace([event(**overrides)])
 
@@ -132,7 +141,11 @@ def test_contract_validator_rejects_duplicate_allowlist_values() -> None:
 
 
 def test_documented_validator_runs_from_outside_the_checkout(tmp_path: Path) -> None:
-    """Verify that documented validator runs from outside the checkout."""
+    """Verify that documented validator runs from outside the checkout.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
     root = Path(__file__).resolve().parents[1]
     trace = tmp_path / "trace.jsonl"
     trace.write_text(event(), encoding="utf-8")

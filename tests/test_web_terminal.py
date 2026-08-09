@@ -153,7 +153,11 @@ def test_terminal_replay_removes_historic_cursor_position_queries():
 
 
 def test_selected_listener_header_is_accepted_only_from_loopback_proxy(monkeypatch):
-    """Verify that selected listener header is accepted only from loopback proxy."""
+    """Verify that selected listener header is accepted only from loopback proxy.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+    """
     monkeypatch.setattr(web_terminal, "get_settings", lambda: SimpleNamespace(environment="appliance"))
     headers = {"x-atlaso-listener-address": "192.168.87.32"}
 

@@ -47,7 +47,11 @@ class LocalDepotEndpoint:
 
 
 def sanitize_remote_depot(payload: dict[str, Any]) -> dict[str, Any]:
-    """Return sanitize remote depot."""
+    """Return sanitize remote depot.
+
+    Args:
+        payload: Validated request or task payload consumed by the operation.
+    """
     configuration = payload.get("depotConfiguration") or {}
     account = payload.get("offlineAccount") or {}
     return {
@@ -62,7 +66,12 @@ def sanitize_remote_depot(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 def depot_matches(remote: dict[str, Any], local: LocalDepotEndpoint) -> bool:
-    """Return depot matches."""
+    """Return depot matches.
+
+    Args:
+        remote: Remote consumed by depot matches.
+        local: Local consumed by depot matches.
+    """
     sanitized = sanitize_remote_depot(remote)
     remote_url = sanitized["url"].rstrip("/").lower()
     return bool(
@@ -127,12 +136,21 @@ class VcfDepotApiClient:
         return self
 
     def __exit__(self, *_args: object) -> None:
-        """Exit the managed context without suppressing exceptions."""
+        """Exit the managed context without suppressing exceptions.
+
+        Args:
+            *_args: Additional positional arguments accepted by the callable.
+        """
         self.client.close()
 
     @staticmethod
     def _raise(response: httpx.Response, message: str) -> None:
         """Handle raise.
+
+        Args:
+            response: HTTP or command response being inspected.
+            message: Human-readable message associated with the operation.
+
 
         Raises:
             VcfDepotTargetError: If the operation encounters an invalid state.

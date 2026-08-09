@@ -55,7 +55,11 @@ LOCK_POLICIES = (
 
 
 def _pip_update_block(lines: list[str]) -> list[str]:
-    """Return pip update block."""
+    """Return pip update block.
+
+    Args:
+        lines: Source or output lines being parsed.
+    """
     start = next(
         (
             index
@@ -78,7 +82,11 @@ def _pip_update_block(lines: list[str]) -> list[str]:
 
 
 def _lock_command(lines: list[str]) -> list[str]:
-    """Return lock command."""
+    """Return lock command.
+
+    Args:
+        lines: Source or output lines being parsed.
+    """
     command_line = next(
         (line.removeprefix("#    ") for line in lines if line.startswith("#    pip-compile ")),
         "",
@@ -88,6 +96,10 @@ def _lock_command(lines: list[str]) -> list[str]:
 
 def validate(root: Path = ROOT) -> list[str]:
     """Validate operation.
+
+    Args:
+        root: Repository or filesystem root searched by the operation.
+
 
     Returns:
         The validate result.

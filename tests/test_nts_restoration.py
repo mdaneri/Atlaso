@@ -12,7 +12,11 @@ from atlaso.app.services.settings_archive import export_settings_archive, restor
 
 
 def test_nts_restoration_reenables_only_canonical_defaults_once(client):
-    """Verify that nts restoration reenables only canonical defaults once."""
+    """Verify that nts restoration reenables only canonical defaults once.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
     import atlaso.app.database as database
 
     with database.SessionLocal() as db:
@@ -118,7 +122,11 @@ def test_nts_restoration_reenables_only_canonical_defaults_once(client):
 
 
 def test_fresh_nts_defaults_are_marked_without_restoration_audit(client):
-    """Verify that fresh nts defaults are marked without restoration audit."""
+    """Verify that fresh nts defaults are marked without restoration audit.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
     import atlaso.app.database as database
 
     with database.SessionLocal() as db:
@@ -131,7 +139,11 @@ def test_fresh_nts_defaults_are_marked_without_restoration_audit(client):
 
 
 def test_settings_archive_round_trips_enabled_nts_and_drops_disabled_server_certificate(client):
-    """Verify that settings archive round trips enabled nts and drops disabled server certificate."""
+    """Verify that settings archive round trips enabled nts and drops disabled server certificate.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
     import atlaso.app.database as database
 
     with database.SessionLocal() as db:
