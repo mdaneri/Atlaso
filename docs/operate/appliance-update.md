@@ -94,8 +94,12 @@ a running package client.
 
 The compact synchronization icon exposes **Synchronize repositories** on hover and to assistive technology. It
 explicitly writes only Atlaso-owned tdnf and PowerShell client configuration through an audited **Appliance Update
-repository sync** task. **Saved, not synchronized** means the
+repository sync** task. Starting synchronization keeps the Update Sources workspace in place and refreshes only the
+shared **Recent update tasks** grid while the task runs. **Saved, not synchronized** means the
 desired repository is stored in Atlaso but has not yet been validated or written into its appliance package client.
+After repository synchronization fails, Atlaso disables the check and install actions while an affected Photon OS or
+PowerShell Modules stream is selected. Streams that do not depend on the failed package synchronization remain
+available when selected independently.
 Source details also show when synchronization succeeded or failed. Signed Atlaso sources are read directly, are checked
 during each update, and do not configure pip or report package-client synchronization state.
 

@@ -155,6 +155,33 @@ def test_powershell_update_requires_synchronized_referenced_repository(client):
     ]
 
 
+def test_photon_update_is_blocked_after_repository_sync_failure(client):
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import UpdateSource
+
+    login(client)
+    with SessionLocal() as db:
+        source = db.execute(select(UpdateSource).where(UpdateSource.kind == "photon")).scalars().first()
+        source_name = source.name
+        source.validation_status = "invalid"
+        db.commit()
+
+    page = client.get("/appliance-update")
+    csrf = csrf_from_page(page.text)
+    response = client.post(
+        "/appliance-update/check",
+        headers={"Accept": "application/json"},
+        data={"csrf": csrf, "selected_streams": ["photon_os"]},
+    )
+
+    assert 'value="photon_os"' in page.text
+    assert 'data-appliance-update-source-sync-ready="false"' in page.text
+    assert response.status_code == 422
+    assert response.json()["errors"] == [
+        f"Synchronize Photon repository {source_name} before checking or installing Photon OS updates."
+    ]
+
+
 def test_appliance_update_settings_validate_urls(client):
     login(client)
     page = client.get("/appliance-update")
@@ -509,6 +536,23 @@ def test_source_sync_is_queued_and_records_validation_status(client):
     assert ">invalid<" not in page.text
 
 
+def test_source_sync_json_submission_queues_without_page_render(client):
+    login(client)
+    page = client.get("/appliance-update")
+    csrf = csrf_from_page(page.text)
+
+    response = client.post(
+        "/appliance-update/source-sync",
+        data={"csrf": csrf},
+        headers={"Accept": "application/json"},
+    )
+
+    assert response.status_code == 202
+    assert response.json()["status"] == "pending"
+    assert response.json()["mode"] == "source_sync"
+    assert response.json()["job_id"].startswith("job_")
+
+
 def test_software_source_and_managed_module_lifecycle(client):
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import ManagedPackage, UpdateSource
@@ -542,7 +586,8 @@ def test_software_source_and_managed_module_lifecycle(client):
     assert grouped_page.text.index('data-tab-target="appliance-update-streams"') < grouped_page.text.index('data-tab-target="appliance-update-sources"')
     assert "Synchronize repositories" in grouped_page.text
     assert grouped_page.text.count('class="appliance-update-source-actions"') == 1
-    assert 'class="button secondary icon-button" type="submit" aria-label="Synchronize repositories" title="Synchronize repositories"' in grouped_page.text
+    assert 'action="/appliance-update/source-sync" data-appliance-update-source-sync-form' in grouped_page.text
+    assert 'class="button secondary icon-button" type="submit" aria-label="Synchronize repositories" title="Synchronize repositories" data-appliance-update-source-sync-action' in grouped_page.text
     assert grouped_page.text.count("Synchronize repositories") >= 2
     assert 'class="muted appliance-update-source-intro"' in grouped_page.text
     assert 'data-appliance-update-validation-panel' in grouped_page.text
@@ -836,6 +881,28 @@ def test_helper_rejects_unsynchronized_powershell_repository():
         "PowerShell repository PSGallery is not synchronized; run Synchronize repositories before checking or installing managed modules."
     ]
     payload["source_definitions"][0]["validation_status"] = "valid"
+    assert helper._appliance_update_config_errors(payload, require_streams=True) == []
+
+
+def test_helper_rejects_photon_stream_after_repository_sync_failure():
+    helper = load_helper_module()
+    payload = {
+        "selected_streams": ["photon_os"],
+        "sources": {"photon_source": "System Photon repositories"},
+        "source_definitions": [
+            {
+                "kind": "photon",
+                "name": "System Photon repositories",
+                "enabled": True,
+                "validation_status": "invalid",
+            }
+        ],
+    }
+
+    assert helper._appliance_update_config_errors(payload, require_streams=True) == [
+        "Photon repository System Photon repositories is not synchronized; run Synchronize repositories before checking or installing Photon OS updates."
+    ]
+    payload["source_definitions"][0]["validation_status"] = "not_checked"
     assert helper._appliance_update_config_errors(payload, require_streams=True) == []
 
 

@@ -12319,16 +12319,12 @@ function taskStatusActive(status) {
   return ["pending", "running"].includes(String(status || ""));
 }
 
-function setApplianceUpdateActionsDisabled(disabled) {
+function setApplianceUpdateActionsDisabled(disabled, { busy = disabled } = {}) {
   const form = document.querySelector("[data-appliance-update-submit-form]");
   if (!(form instanceof HTMLFormElement)) {
     return;
   }
-  if (disabled) {
-    form.setAttribute("aria-busy", "true");
-  } else {
-    form.removeAttribute("aria-busy");
-  }
+  form.toggleAttribute("aria-busy", busy);
   form.querySelectorAll("[data-appliance-update-action]").forEach((button) => {
     if (button instanceof HTMLButtonElement) {
       button.disabled = disabled;
@@ -12336,12 +12332,58 @@ function setApplianceUpdateActionsDisabled(disabled) {
   });
 }
 
+function setApplianceUpdateSourceSyncDisabled(disabled) {
+  const form = document.querySelector("[data-appliance-update-source-sync-form]");
+  if (!(form instanceof HTMLFormElement)) {
+    return;
+  }
+  form.toggleAttribute("aria-busy", disabled);
+  const button = form.querySelector("[data-appliance-update-source-sync-action]");
+  if (button instanceof HTMLButtonElement) {
+    button.disabled = disabled;
+  }
+}
+
+function updateApplianceUpdateSourceSyncState(task) {
+  if (!task || task.is_step || task.result?.mode !== "source_sync" || taskStatusActive(task.status)) {
+    return;
+  }
+  const ready = task.status === "succeeded";
+  document.querySelectorAll('[data-appliance-update-source-sync-required="true"]').forEach((input) => {
+    if (input instanceof HTMLInputElement) {
+      input.dataset.applianceUpdateSourceSyncReady = ready ? "true" : "false";
+    }
+  });
+}
+
+function selectedUnsynchronizedUpdateStreams() {
+  const form = document.querySelector("[data-appliance-update-submit-form]");
+  if (!(form instanceof HTMLFormElement)) {
+    return [];
+  }
+  return [...form.querySelectorAll('[name="selected_streams"]:checked')]
+    .filter((input) => input instanceof HTMLInputElement
+      && input.dataset.applianceUpdateSourceSyncRequired === "true"
+      && input.dataset.applianceUpdateSourceSyncReady !== "true")
+    .map((input) => input.dataset.applianceUpdateStreamLabel || input.value);
+}
+
 function updateApplianceUpdateActions(tasks = atlasoTasks) {
   const page = document.querySelector("[data-tasks-page]");
   if (page?.dataset.taskType !== "appliance-update") {
     return;
   }
-  setApplianceUpdateActionsDisabled(tasks.some((task) => !task.is_step && taskStatusActive(task.status)));
+  const active = tasks.some((task) => !task.is_step && taskStatusActive(task.status));
+  const unsynchronized = selectedUnsynchronizedUpdateStreams();
+  setApplianceUpdateActionsDisabled(active || unsynchronized.length > 0, { busy: active });
+  setApplianceUpdateSourceSyncDisabled(active);
+  const status = document.querySelector("[data-appliance-update-action-status]");
+  if (status instanceof HTMLElement) {
+    status.textContent = unsynchronized.length
+      ? `Synchronize the repositories for ${unsynchronized.join(" and ")} before checking or installing updates.`
+      : "";
+    status.classList.toggle("hidden", unsynchronized.length === 0);
+  }
 }
 
 function taskById(taskId) {
@@ -12471,13 +12513,17 @@ function applyTasksStatusPayload(payload, { reopen = false } = {}) {
     count.className = `status-pill ${active ? "warn" : "muted"}`;
   }
   const selected = payload.selected_task || taskById(queryId);
+  updateApplianceUpdateSourceSyncState(selected);
   if (selected && (reopen || document.getElementById("task-detail-modal")?.open)) {
     renderTaskDetail(selected);
     if (reopen) {
       openTaskDetail(selected);
     }
   }
-  updateApplianceUpdateActions(atlasoTasks);
+  const actionTasks = selected && !atlasoTasks.some((task) => task.id === selected.id)
+    ? [...atlasoTasks, selected]
+    : atlasoTasks;
+  updateApplianceUpdateActions(actionTasks);
   window.clearTimeout(atlasoTasksRefreshTimer);
   if (atlasoTasks.some((task) => taskStatusActive(task.status))) {
     atlasoTasksRefreshTimer = window.setTimeout(() => refreshTasksPage().catch(() => {}), 2000);
@@ -13020,6 +13066,9 @@ function initializeApplianceUpdateSubmission() {
     return;
   }
   updateApplianceUpdateActions();
+  form.querySelectorAll('[name="selected_streams"]').forEach((input) => {
+    input.addEventListener("change", () => updateApplianceUpdateActions());
+  });
   form.addEventListener("submit", async (event) => {
     const submitter = event.submitter;
     if (!(submitter instanceof HTMLButtonElement)) {
@@ -13027,6 +13076,7 @@ function initializeApplianceUpdateSubmission() {
     }
     event.preventDefault();
     setApplianceUpdateActionsDisabled(true);
+    setApplianceUpdateSourceSyncDisabled(true);
     try {
       const response = await fetch(submitter.formAction, {
         method: "POST",
@@ -13048,6 +13098,43 @@ function initializeApplianceUpdateSubmission() {
     } catch (error) {
       updateApplianceUpdateActions();
       showTransientGridError(error instanceof Error ? error.message : "Unable to start the appliance update task.");
+    }
+  });
+}
+
+function initializeApplianceUpdateSourceSync() {
+  const form = document.querySelector("[data-appliance-update-source-sync-form]");
+  if (!(form instanceof HTMLFormElement)) {
+    return;
+  }
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    setApplianceUpdateActionsDisabled(true);
+    setApplianceUpdateSourceSyncDisabled(true);
+    try {
+      const response = await fetch(form.action, {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { Accept: "application/json" },
+        body: new FormData(form),
+      });
+      const payload = await response.json();
+      if (!response.ok) {
+        throw new Error(payload.detail || "Unable to synchronize the update repositories.");
+      }
+      atlasoNewTaskId = payload.job_id || "";
+      atlasoSelectedTaskId = atlasoNewTaskId;
+      const page = document.querySelector("[data-tasks-page]");
+      if (page instanceof HTMLElement) {
+        page.dataset.selectedTaskId = atlasoNewTaskId;
+      }
+      if (atlasoTasksTable && atlasoTasksTable.getPage() !== 1) {
+        await atlasoTasksTable.setPage(1);
+      }
+      await refreshTasksPage();
+    } catch (error) {
+      updateApplianceUpdateActions();
+      showTransientGridError(error instanceof Error ? error.message : "Unable to synchronize the update repositories.");
     }
   });
 }
@@ -20493,6 +20580,7 @@ document.addEventListener("DOMContentLoaded", initializeVcfRegistryBundlesTable)
 document.addEventListener("DOMContentLoaded", initializeVcfDepotProfilesTable);
 document.addEventListener("DOMContentLoaded", initializeTasksPage);
 document.addEventListener("DOMContentLoaded", initializeApplianceUpdateSubmission);
+document.addEventListener("DOMContentLoaded", initializeApplianceUpdateSourceSync);
 document.addEventListener("DOMContentLoaded", initializeServerTime);
 document.addEventListener("DOMContentLoaded", initializeFirewallRulesTable);
 document.addEventListener("DOMContentLoaded", initializeManagedFirewallRulesTable);

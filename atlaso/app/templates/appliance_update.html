@@ -15,9 +15,9 @@
         <h2>Update Sources</h2>
       </div>
       <div class="appliance-update-source-actions">
-        <form method="post" action="/appliance-update/source-sync">
+        <form method="post" action="/appliance-update/source-sync" data-appliance-update-source-sync-form>
           <input type="hidden" name="csrf" value="{{ csrf_token }}">
-          <span class="field-label"><button class="button secondary icon-button" type="submit" aria-label="Synchronize repositories" title="Synchronize repositories"><span aria-hidden="true">↻</span></button><button class="help-icon" type="button" data-help="Writes the desired repository state saved through the source wizard to the appliance package clients through an audited maintenance task. Atlaso validates enabled sources before updating its owned tdnf and PowerShell configuration. Signed Atlaso release sources are read directly and do not modify a package client.">i</button></span>
+          <span class="field-label"><button class="button secondary icon-button" type="submit" aria-label="Synchronize repositories" title="Synchronize repositories" data-appliance-update-source-sync-action><span aria-hidden="true">↻</span></button><button class="help-icon" type="button" data-help="Writes the desired repository state saved through the source wizard to the appliance package clients through an audited maintenance task. Atlaso validates enabled sources before updating its owned tdnf and PowerShell configuration. Signed Atlaso release sources are read directly and do not modify a package client.">i</button></span>
         </form>
         <span class="status-pill {{ 'warn' if system_adapter_dry_run else 'good' }}">{{ "dry-run" if system_adapter_dry_run else "real" }}</span>
       </div>
@@ -162,13 +162,14 @@
           <h2>Update Streams</h2>
           <p class="muted appliance-update-action-guidance">Checking is read-only. Installing runs the selected maintenance streams.</p>
           <p class="muted appliance-update-schedule-guidance">For recurring maintenance, <a class="text-link" href="/automation">schedule update checks or installations in Automation</a>.</p>
+          <p id="appliance-update-action-status" class="muted appliance-update-action-guidance hidden" role="status" data-appliance-update-action-status></p>
         </div>
         <div class="apply-change-set-actions">
-          <button class="button secondary appliance-update-action" type="submit" formaction="/appliance-update/check" title="Check the selected streams without installing changes" data-appliance-update-action>
+          <button class="button secondary appliance-update-action" type="submit" formaction="/appliance-update/check" title="Check the selected streams without installing changes" aria-describedby="appliance-update-action-status" data-appliance-update-action>
             <svg class="button-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
             <span>Check for updates</span>
           </button>
-          <button class="button primary appliance-update-action" type="submit" formaction="/appliance-update/run" title="Install updates from the selected streams" data-appliance-update-action>
+          <button class="button primary appliance-update-action" type="submit" formaction="/appliance-update/run" title="Install updates from the selected streams" aria-describedby="appliance-update-action-status" data-appliance-update-action>
             <svg class="button-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>
             <span>Install updates</span>
           </button>
@@ -184,6 +185,9 @@
                 name="selected_streams"
                 value="{{ stream.id }}"
                 {{ "checked" if stream_checked else "" }}
+                data-appliance-update-source-sync-required="{{ 'true' if stream.source_sync_required else 'false' }}"
+                data-appliance-update-source-sync-ready="{{ 'true' if stream.source_sync_ready else 'false' }}"
+                data-appliance-update-stream-label="{{ stream.label }}"
               >
               <span>
                 <strong>{{ stream.label }}</strong>

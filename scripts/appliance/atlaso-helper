@@ -7796,6 +7796,20 @@ def _appliance_update_config_errors(payload: dict, *, require_streams: bool = Tr
             errors.append(
                 f"PowerShell repository {repository} is not synchronized; run Synchronize repositories before checking or installing managed modules."
             )
+    if "photon_os" in (selected or []):
+        source_definitions = payload.get("source_definitions")
+        unsynchronized_photon = [
+            str(source.get("name") or "configured Photon repositories").strip()
+            for source in source_definitions
+            if isinstance(source, dict)
+            and source.get("kind") == "photon"
+            and source.get("enabled") is True
+            and source.get("validation_status") == "invalid"
+        ] if isinstance(source_definitions, list) else []
+        for repository in sorted(unsynchronized_photon):
+            errors.append(
+                f"Photon repository {repository} is not synchronized; run Synchronize repositories before checking or installing Photon OS updates."
+            )
     policy = payload.get("policy") or {}
     if not isinstance(policy, dict):
         errors.append("policy must be an object.")

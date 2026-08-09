@@ -188,6 +188,7 @@ from atlaso.app.services.update_sources import (
     effective_update_settings,
     managed_package_rows,
     source_rows,
+    unsynchronized_photon_repositories,
     unsynchronized_powershell_repositories,
     update_source_payload,
     update_source_settings,
@@ -8517,7 +8518,21 @@ def appliance_update_context(db: Session) -> dict[str, Any]:
         "photon_repository_summary": photon_repository_summary(),
         "photon_repository_rows": min(max(len(photon_repositories), 2), 8),
         "atlaso_channels": sorted(ATLASO_CHANNELS),
-        "update_streams": [{"id": stream, "label": UPDATE_STREAM_LABELS[stream]} for stream in UPDATE_STREAMS],
+        "update_streams": [
+            {
+                "id": stream,
+                "label": UPDATE_STREAM_LABELS[stream],
+                "source_sync_required": stream in {"photon_os", "powershell_modules"},
+                "source_sync_ready": not (
+                    unsynchronized_photon_repositories(settings)
+                    if stream == "photon_os"
+                    else unsynchronized_powershell_repositories(settings)
+                    if stream == "powershell_modules"
+                    else []
+                ),
+            }
+            for stream in UPDATE_STREAMS
+        ],
         "default_atlaso_manifest_url": DEFAULT_ATLASO_MANIFEST_URL,
         "current_version_info": current_version_info(),
         "appliance_update_manifest_preview": manifest_preview,
@@ -10792,11 +10807,14 @@ def sync_appliance_update_sources(
     csrf: str = Form(...),
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
-) -> HTMLResponse:
+) -> HTMLResponse | JSONResponse:
     verify_csrf(request, csrf)
     require_admin_identity(identity)
+    wants_json = "application/json" in request.headers.get("accept", "")
     errors = [error for source in source_rows(db) if source.enabled for error in validate_update_source(source)]
     if errors:
+        if wants_json:
+            return JSONResponse({"status": "error", "errors": errors, "detail": " ".join(errors)}, status_code=422)
         return render(
             request,
             "appliance_update.html",
@@ -10824,6 +10842,11 @@ def sync_appliance_update_sources(
         resource_type="job",
         resource_id=job.id,
     )
+    if wants_json:
+        return JSONResponse(
+            {"status": JobStatus.PENDING.value, "job_id": job.id, "mode": "source_sync"},
+            status_code=202,
+        )
     return render(
         request,
         "appliance_update.html",
@@ -10862,6 +10885,11 @@ def submit_appliance_update(
         for repository in unsynchronized_powershell_repositories(settings):
             errors.append(
                 f"Synchronize PowerShell repository {repository} before checking or installing its managed modules."
+            )
+    if "photon_os" in selected:
+        for repository in unsynchronized_photon_repositories(settings):
+            errors.append(
+                f"Synchronize Photon repository {repository} before checking or installing Photon OS updates."
             )
     if errors:
         if wants_json:

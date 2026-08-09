@@ -128,6 +128,20 @@ def unsynchronized_powershell_repositories(settings: dict[str, Any]) -> list[str
     return sorted(referenced - synchronized)
 
 
+def unsynchronized_photon_repositories(settings: dict[str, Any]) -> list[str]:
+    definitions = settings.get("source_definitions")
+    if not isinstance(definitions, list):
+        return []
+    return sorted(
+        str(source.get("name") or "configured Photon repositories").strip()
+        for source in definitions
+        if isinstance(source, dict)
+        and source.get("kind") == "photon"
+        and source.get("enabled") is True
+        and source.get("validation_status") == "invalid"
+    )
+
+
 def update_source_credentials(db: Session) -> dict[str, dict[str, str]]:
     """Return decrypted credentials for the protected helper runtime channel only."""
     credentials: dict[str, dict[str, str]] = {}
