@@ -188,6 +188,8 @@ from atlaso.app.services.update_sources import (
     effective_update_settings,
     managed_package_rows,
     source_rows,
+    unsynchronized_photon_repositories,
+    unsynchronized_powershell_repositories,
     update_source_payload,
     update_source_settings,
     validate_update_source,
@@ -8602,7 +8604,19 @@ def appliance_update_context(db: Session) -> dict[str, Any]:
     packages = managed_package_rows(db)
     source_payloads = [update_source_payload(source) for source in sources]
     powershell_sources = [source for source in sources if source.kind == "powershell"]
-    powershell_packages = [package for package in packages if package.ecosystem == "powershell"]
+    powershell_packages = [
+        {
+            "id": package.id,
+            "name": package.name,
+            "source_id": package.source_id,
+            "source_name": package.source.name if package.source is not None else "Unavailable repository",
+            "policy": package.policy,
+            "target_version": package.target_version,
+            "enabled": package.enabled,
+        }
+        for package in packages
+        if package.ecosystem == "powershell"
+    ]
     selected = list(UPDATE_STREAMS)
     manifest_preview = render_update_manifest(selected_streams=selected, settings=settings, actor="preview")
     photon_repositories = photon_repository_details()
@@ -8621,7 +8635,21 @@ def appliance_update_context(db: Session) -> dict[str, Any]:
         "photon_repository_summary": photon_repository_summary(),
         "photon_repository_rows": min(max(len(photon_repositories), 2), 8),
         "atlaso_channels": sorted(ATLASO_CHANNELS),
-        "update_streams": [{"id": stream, "label": UPDATE_STREAM_LABELS[stream]} for stream in UPDATE_STREAMS],
+        "update_streams": [
+            {
+                "id": stream,
+                "label": UPDATE_STREAM_LABELS[stream],
+                "source_sync_required": stream in {"photon_os", "powershell_modules"},
+                "source_sync_ready": not (
+                    unsynchronized_photon_repositories(settings)
+                    if stream == "photon_os"
+                    else unsynchronized_powershell_repositories(settings)
+                    if stream == "powershell_modules"
+                    else []
+                ),
+            }
+            for stream in UPDATE_STREAMS
+        ],
         "default_atlaso_manifest_url": DEFAULT_ATLASO_MANIFEST_URL,
         "current_version_info": current_version_info(),
         "appliance_update_manifest_preview": manifest_preview,
@@ -9135,6 +9163,23 @@ def execute_appliance_update_job(
             Path(credentials_path).unlink(missing_ok=True)
 
     succeeded = all(result.returncode == 0 for result in results)
+    source_results: list[dict[str, Any]] = []
+    if mode == "source_sync":
+        for result in results:
+            if result.dry_run:
+                continue
+            for line in reversed(result.stdout.splitlines()):
+                try:
+                    helper_payload = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(helper_payload, dict) and isinstance(helper_payload.get("source_results"), list):
+                    source_results.extend(
+                        source_result
+                        for source_result in helper_payload["source_results"]
+                        if isinstance(source_result, dict)
+                    )
+                break
     finalizer = read_appliance_file(APPLIANCE_UPDATE_FINALIZER_PATH)
     release_transaction: dict[str, Any] = {}
     if finalizer.get("available"):
@@ -9162,6 +9207,7 @@ def execute_appliance_update_job(
         "config_path": config_path,
         "config_preview": manifest_preview,
         "release_transaction": release_transaction,
+        "source_results": source_results,
     }
 
 
@@ -9230,18 +9276,25 @@ def aggregate_appliance_update_results(
 def complete_appliance_update_task(db: Session, *, job: Job, update_result: dict[str, Any]) -> Job:
     now = utcnow()
     if update_result.get("mode") == "source_sync":
+        reported_results = {
+            str(result.get("id")): result
+            for result in update_result.get("source_results", [])
+            if isinstance(result, dict) and result.get("id") is not None
+        }
         for source in db.execute(
             select(UpdateSource).where(
                 UpdateSource.enabled.is_(True),
                 UpdateSource.kind.in_(["photon", "powershell"]),
             )
         ).scalars().all():
-            source.validation_status = "valid" if update_result["success"] else "invalid"
+            reported = reported_results.get(str(source.id))
+            source_succeeded = bool(reported.get("success")) if reported is not None else bool(update_result["success"])
+            source.validation_status = "valid" if source_succeeded else "invalid"
             source.validation_message = (
                 "Source definition validated in dry-run; host package clients were not changed."
-                if update_result["success"] and update_result.get("dry_run")
+                if source_succeeded and update_result.get("dry_run")
                 else "Repository synchronized with its appliance package client."
-                if update_result["success"]
+                if source_succeeded
                 else "Source synchronization failed. Review the task output."
             )
             source.validated_at = now
@@ -9251,7 +9304,7 @@ def complete_appliance_update_task(db: Session, *, job: Job, update_result: dict
     job.finished_at = now
     job.progress_percent = 100
     job.result = json.dumps(update_result, indent=2)
-    job.error = None if update_result["success"] else "One or more appliance update steps reported a failure."
+    job.error = None if update_result["success"] else appliance_update_failure_message(update_result)
     db.add(job)
     db.commit()
     should_log_final_result = not update_result.get("restart_after_commit")
@@ -9294,6 +9347,19 @@ def complete_appliance_update_task(db: Session, *, job: Job, update_result: dict
             log_appliance_update_failures(job.id, update_result)
         log_appliance_update_submission(job.id, update_result)
     return job
+
+
+def appliance_update_failure_message(update_result: dict[str, Any]) -> str:
+    explicit = str(update_result.get("error") or "").strip()
+    if explicit:
+        return apply_output_excerpt(explicit, limit=2000)
+    for command in update_result.get("commands", []):
+        if not isinstance(command, dict) or int(command.get("returncode") or 0) == 0:
+            continue
+        detail = str(command.get("stderr") or "").strip()
+        if detail:
+            return apply_output_excerpt(detail, limit=2000)
+    return "One or more appliance update steps reported a failure."
 
 
 def appliance_update_exception_result(
@@ -10788,17 +10854,25 @@ def create_managed_update_package(
 ) -> Response:
     verify_csrf(request, csrf)
     require_admin_identity(identity)
+    wizard_request = request.headers.get("X-Atlaso-Wizard") == "1"
     package = ManagedPackage(ecosystem="powershell", name="", source_id=source_id)
     errors = _managed_package_from_form(package, name=name, source_id=source_id, policy=policy, target_version=target_version, enabled=enabled == "on", db=db)
     if errors:
+        if wizard_request:
+            return JSONResponse({"status": "error", "detail": " ".join(errors), "errors": errors}, status_code=422)
         return render(request, "appliance_update.html", {"identity": identity, **appliance_update_context(db), "update_error": " ".join(errors)}, status_code=422)
     db.add(package)
     try:
         db.commit()
     except IntegrityError:
         db.rollback()
-        return render(request, "appliance_update.html", {"identity": identity, **appliance_update_context(db), "update_error": "This PowerShell module is already managed."}, status_code=409)
+        message = "This PowerShell module is already managed."
+        if wizard_request:
+            return JSONResponse({"status": "error", "detail": message, "errors": [message]}, status_code=409)
+        return render(request, "appliance_update.html", {"identity": identity, **appliance_update_context(db), "update_error": message}, status_code=409)
     record_audit(db, actor=identity.username, action="create_managed_package", resource_type="managed_package", resource_id=str(package.id), detail=f"ecosystem=powershell; name={package.name}")
+    if wizard_request:
+        return JSONResponse({"status": "saved", "package": {"id": package.id}})
     return RedirectResponse("/appliance-update#managed-packages", status_code=303)
 
 
@@ -10818,12 +10892,15 @@ def update_managed_update_package(
 ) -> Response:
     verify_csrf(request, csrf)
     require_admin_identity(identity)
+    wizard_request = request.headers.get("X-Atlaso-Wizard") == "1"
     package = db.get(ManagedPackage, package_id)
     if package is None or package.ecosystem != "powershell":
         raise HTTPException(status_code=404, detail="Managed PowerShell module not found.")
     errors = _managed_package_from_form(package, name=name, source_id=source_id, policy=policy, target_version=target_version, enabled=(enabled == "on") if enabled_present is not None else package.enabled, db=db)
     if errors:
         db.rollback()
+        if wizard_request:
+            return JSONResponse({"status": "error", "detail": " ".join(errors), "errors": errors}, status_code=422)
         if request.headers.get("X-Atlaso-Autosave") == "1":
             return JSONResponse({"status": "error", "errors": errors}, status_code=422)
         return render(request, "appliance_update.html", {"identity": identity, **appliance_update_context(db), "update_error": " ".join(errors)}, status_code=422)
@@ -10833,12 +10910,16 @@ def update_managed_update_package(
     except IntegrityError:
         db.rollback()
         message = "This PowerShell module is already managed."
+        if wizard_request:
+            return JSONResponse({"status": "error", "detail": message, "errors": [message]}, status_code=409)
         if request.headers.get("X-Atlaso-Autosave") == "1":
             return JSONResponse({"status": "error", "errors": [message]}, status_code=409)
         return render(request, "appliance_update.html", {"identity": identity, **appliance_update_context(db), "update_error": message}, status_code=409)
     record_audit(db, actor=identity.username, action="update_managed_package", resource_type="managed_package", resource_id=str(package.id), detail=f"ecosystem=powershell; name={package.name}")
     if request.headers.get("X-Atlaso-Autosave") == "1":
         return JSONResponse({"status": "saved", "saved_at": utcnow().isoformat()})
+    if wizard_request:
+        return JSONResponse({"status": "saved", "package": {"id": package.id}})
     return RedirectResponse("/appliance-update#managed-packages", status_code=303)
 
 
@@ -10868,11 +10949,14 @@ def sync_appliance_update_sources(
     csrf: str = Form(...),
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
-) -> HTMLResponse:
+) -> HTMLResponse | JSONResponse:
     verify_csrf(request, csrf)
     require_admin_identity(identity)
+    wants_json = "application/json" in request.headers.get("accept", "")
     errors = [error for source in source_rows(db) if source.enabled for error in validate_update_source(source)]
     if errors:
+        if wants_json:
+            return JSONResponse({"status": "error", "errors": errors, "detail": " ".join(errors)}, status_code=422)
         return render(
             request,
             "appliance_update.html",
@@ -10900,6 +10984,11 @@ def sync_appliance_update_sources(
         resource_type="job",
         resource_id=job.id,
     )
+    if wants_json:
+        return JSONResponse(
+            {"status": JobStatus.PENDING.value, "job_id": job.id, "mode": "source_sync"},
+            status_code=202,
+        )
     return render(
         request,
         "appliance_update.html",
@@ -10934,6 +11023,16 @@ def submit_appliance_update(
         errors.append("Configure a signed Atlaso release repository before selecting Atlaso Release.")
     if "powershell_modules" in selected and not str(settings.get("powershell_repository_url") or "").strip():
         errors.append("Configure an enabled PowerShell repository before selecting PowerShell Modules.")
+    if "powershell_modules" in selected:
+        for repository in unsynchronized_powershell_repositories(settings):
+            errors.append(
+                f"Synchronize PowerShell repository {repository} before checking or installing its managed modules."
+            )
+    if "photon_os" in selected:
+        for repository in unsynchronized_photon_repositories(settings):
+            errors.append(
+                f"Synchronize Photon repository {repository} before checking or installing Photon OS updates."
+            )
     if errors:
         if wants_json:
             return JSONResponse({"status": "error", "errors": errors, "detail": " ".join(errors)}, status_code=422)

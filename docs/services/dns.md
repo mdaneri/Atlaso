@@ -36,6 +36,11 @@ With **Authoritative** off, each managed domain renders as `local=/domain/`. Atl
 forwards other queries to the configured upstream or conditional forwarders. Existing newline-delimited `domain` API
 values remain supported.
 
+When the management interface uses DHCP and no upstream is saved explicitly, Atlaso uses the non-loopback DNS servers
+from that interface's active systemd-networkd lease. This lease fallback remains authoritative after the appliance
+resolver has been redirected to local dnsmasq and `resolvectl` therefore reports only `127.0.0.1`; applying DNS must not
+regenerate dnsmasq without the DHCP-provided forwarders.
+
 With **Authoritative** on, every managed forward domain renders as `auth-zone=domain`. dnsmasq has service-level
 authoritative settings, so all managed zones share one primary nameserver, SOA administrator, TTL, refresh, retry,
 expiry, and serial. v1 does not configure secondary nameservers, AXFR, or a separate DNS server. Generated reverse zones

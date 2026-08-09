@@ -70,6 +70,8 @@ def test_appliance_update_page_and_dry_run_job(client):
     assert 'data-task-grid-height="100%"' in page.text
     assert 'id="tasks-table" class="tabulator-shell"' in page.text
     assert 'class="tab-panel active appliance-update-stream-panel"' in page.text
+    assert page.text.count("data-appliance-update-shared-history") == 1
+    assert page.text.index("data-appliance-update-shared-history") > page.text.index('id="appliance-update-streams"')
     assert "The same task grid used by Tasks" in page.text
     assert "Last Update" not in page.text
     assert 'data-tab-target="appliance-update-streams" aria-controls="appliance-update-streams" aria-selected="true"' in page.text
@@ -134,6 +136,58 @@ def test_appliance_update_page_and_dry_run_job(client):
     assert "atlaso-helper appliance-update check /var/lib/atlaso/apply/appliance-update/atlaso-update.json" in command_lines
     assert "atlaso-helper appliance-update apply /var/lib/atlaso/apply/appliance-update/atlaso-update.json" in command_lines
     assert "atlaso-helper appliance-update restart-service /var/lib/atlaso/apply/appliance-update/atlaso-update.json" in command_lines
+
+
+def test_powershell_update_requires_synchronized_referenced_repository(client):
+    login(client)
+    page = client.get("/appliance-update")
+    csrf = csrf_from_page(page.text)
+
+    response = client.post(
+        "/appliance-update/check",
+        headers={"Accept": "application/json"},
+        data={"csrf": csrf, "selected_streams": ["powershell_modules"]},
+    )
+
+    assert response.status_code == 422
+    assert response.json()["errors"] == [
+        "Synchronize PowerShell repository PSGallery before checking or installing its managed modules."
+    ]
+
+
+def test_photon_update_requires_synchronized_managed_repository(client):
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import UpdateSource
+
+    login(client)
+    with SessionLocal() as db:
+        source = UpdateSource(
+            kind="photon",
+            name="Managed Photon",
+            url="https://packages.example.test/photon",
+            enabled=True,
+            settings_json=json.dumps({"managed": True, "gpgcheck": True, "tls_verify": True}),
+            validation_status="not_checked",
+        )
+        db.add(source)
+        db.flush()
+        source_name = source.name
+        db.commit()
+
+    page = client.get("/appliance-update")
+    csrf = csrf_from_page(page.text)
+    response = client.post(
+        "/appliance-update/check",
+        headers={"Accept": "application/json"},
+        data={"csrf": csrf, "selected_streams": ["photon_os"]},
+    )
+
+    assert 'value="photon_os"' in page.text
+    assert 'data-appliance-update-source-sync-ready="false"' in page.text
+    assert response.status_code == 422
+    assert response.json()["errors"] == [
+        f"Synchronize Photon repository {source_name} before checking or installing Photon OS updates."
+    ]
 
 
 def test_appliance_update_settings_validate_urls(client):
@@ -490,6 +544,113 @@ def test_source_sync_is_queued_and_records_validation_status(client):
     assert ">invalid<" not in page.text
 
 
+def test_source_sync_preserves_per_repository_results(client):
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job, JobStatus, UpdateSource
+    from atlaso.app.ui import complete_appliance_update_task
+
+    with SessionLocal() as db:
+        sources = db.execute(
+            select(UpdateSource).where(UpdateSource.kind == "powershell").order_by(UpdateSource.id)
+        ).scalars().all()
+        succeeded_source = sources[0]
+        failed_source = UpdateSource(
+            kind="powershell",
+            name="UnavailableGallery",
+            url="https://unavailable.example.test/api/v2",
+            enabled=True,
+            settings_json=json.dumps({"trusted": False}),
+            validation_status="not_checked",
+        )
+        db.add(failed_source)
+        db.flush()
+        job = Job(
+            id="job_partial_source_sync",
+            type="appliance-update",
+            status=JobStatus.RUNNING.value,
+            created_by="admin",
+            result="{}",
+        )
+        db.add(job)
+        db.flush()
+        complete_appliance_update_task(
+            db,
+            job=job,
+            update_result={
+                "mode": "source_sync",
+                "status": JobStatus.FAILED.value,
+                "success": False,
+                "dry_run": False,
+                "commands": [],
+                "source_results": [
+                    {"id": succeeded_source.id, "kind": "powershell", "name": succeeded_source.name, "success": True},
+                    {"id": failed_source.id, "kind": "powershell", "name": failed_source.name, "success": False},
+                ],
+            },
+        )
+        db.refresh(succeeded_source)
+        db.refresh(failed_source)
+        assert succeeded_source.validation_status == "valid"
+        assert failed_source.validation_status == "invalid"
+        assert "synchronized" in succeeded_source.validation_message
+        assert "failed" in failed_source.validation_message
+
+
+def test_source_sync_json_submission_queues_without_page_render(client):
+    login(client)
+    page = client.get("/appliance-update")
+    csrf = csrf_from_page(page.text)
+
+    response = client.post(
+        "/appliance-update/source-sync",
+        data={"csrf": csrf},
+        headers={"Accept": "application/json"},
+    )
+
+    assert response.status_code == 202
+    assert response.json()["status"] == "pending"
+    assert response.json()["mode"] == "source_sync"
+    assert response.json()["job_id"].startswith("job_")
+
+
+def test_source_sync_helper_results_are_promoted_to_task_result(client, monkeypatch):
+    import atlaso.app.ui as ui
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import UpdateSource
+    from atlaso.app.services.update_sources import effective_update_settings
+
+    with SessionLocal() as db:
+        settings = effective_update_settings(db)
+        source = db.execute(select(UpdateSource).where(UpdateSource.kind == "powershell")).scalars().first()
+        source_result = {"id": source.id, "kind": "powershell", "name": source.name, "success": True}
+
+    class SourceSyncAdapter:
+        dry_run = False
+
+        def sync_appliance_update_sources(self, config_path: str) -> AdapterResult:
+            return AdapterResult(
+                command=["atlaso-helper", "appliance-update", "sync-sources", config_path],
+                dry_run=False,
+                stdout=json.dumps({"status": "succeeded", "commands": [], "source_results": [source_result]}),
+                stderr="",
+                returncode=0,
+            )
+
+    monkeypatch.setattr(ui, "SystemAdapter", lambda: SourceSyncAdapter())
+    monkeypatch.setattr(ui, "stage_appliance_apply_config", lambda _path, _preview: "atlaso-update.json")
+
+    result = ui.execute_appliance_update_job(
+        selected_stream_ids=[],
+        settings=settings,
+        actor="admin",
+        mode="source_sync",
+    )
+
+    assert result["success"] is True
+    assert result["source_results"] == [source_result]
+
+
 def test_software_source_and_managed_module_lifecycle(client):
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import ManagedPackage, UpdateSource
@@ -523,8 +684,9 @@ def test_software_source_and_managed_module_lifecycle(client):
     assert grouped_page.text.index('data-tab-target="appliance-update-streams"') < grouped_page.text.index('data-tab-target="appliance-update-sources"')
     assert "Synchronize repositories" in grouped_page.text
     assert grouped_page.text.count('class="appliance-update-source-actions"') == 1
-    assert 'class="button secondary icon-button"' in grouped_page.text
-    assert 'aria-label="Synchronize repositories"' in grouped_page.text
+    assert 'action="/appliance-update/source-sync" data-appliance-update-source-sync-form' in grouped_page.text
+    assert 'class="button secondary icon-button" type="submit" aria-label="Synchronize repositories" title="Synchronize repositories" data-appliance-update-source-sync-action' in grouped_page.text
+    assert grouped_page.text.count("Synchronize repositories") >= 2
     assert 'class="muted appliance-update-source-intro"' in grouped_page.text
     assert 'data-appliance-update-validation-panel' in grouped_page.text
     assert "Staged update manifest" in grouped_page.text
@@ -543,7 +705,10 @@ def test_software_source_and_managed_module_lifecycle(client):
     assert "data-managed-package-wizard-open" in managed_module_tabs
     assert "VCF.PowerCLI" in grouped_page.text
     assert "Private.PowerCLI.Tools" in grouped_page.text
-    assert "one tab per module" in grouped_page.text
+    assert 'data-update-source-section="managed-modules"' in grouped_page.text
+    assert "<strong>POWERSHELL</strong> · managed modules" in grouped_page.text
+    assert "Saved, not synchronized" in grouped_page.text
+    assert "saved in Atlaso but has not been validated or written" in grouped_page.text
     assert "data-add-powershell-repository" not in grouped_page.text
     assert 'data-update-source-group="powershell"' in grouped_page.text
     assert 'aria-label="powershell repositories"' in grouped_page.text
@@ -564,6 +729,22 @@ def test_software_source_and_managed_module_lifecycle(client):
     assert "window.AtlasoUiPatterns.createWizard({" in app_js
     assert 'form.action = source?.id ? `${createAction}/${source.id}` : createAction;' in app_js
     assert "if (source) populateSource(source);" in app_js
+    assert 'form.action = editing ? `${defaultAction}/${managedPackage.id}` : defaultAction;' in app_js
+    assert 'wizard.open({ launcher, context: managedPackage });' in app_js
+    assert '"X-Atlaso-Wizard": "1"' in app_js
+    assert 'throw new Error(payload.detail || "The managed PowerShell module could not be saved.");' in app_js
+    assert 'window.history.replaceState(null, "", "/appliance-update#update-sources");' in app_js
+    assert 'window.history.replaceState(null, "", "/appliance-update#managed-packages");' in app_js
+    source_wizard_js = app_js.split("function initializeApplianceUpdateSourceWizard()", 1)[1].split(
+        "function initializeManagedPackageWizard()", 1
+    )[0]
+    package_wizard_js = app_js.split("function initializeManagedPackageWizard()", 1)[1].split(
+        "function initializeEsxStorageTables()", 1
+    )[0]
+    assert 'window.location.assign("/appliance-update#update-sources")' not in source_wizard_js
+    assert 'window.location.assign("/appliance-update#managed-packages")' not in package_wizard_js
+    assert "window.location.reload();" in source_wizard_js
+    assert "window.location.reload();" in package_wizard_js
     app_css = Path("atlaso/app/static/app.css").read_text(encoding="utf-8")
     assert ".detail-rail .detail-panel {\n  position: static;" in app_css
     assert ".detail-rail {\n  position: sticky;\n  top: 22px;" in app_css
@@ -582,13 +763,18 @@ def test_software_source_and_managed_module_lifecycle(client):
     )
     assert '<input name="name"' not in private_source_panel
     assert 'data-autosave-form' not in private_source_panel
-    assert 'class="source-editor-options"' in grouped_page.text
-    assert 'class="source-option-grid"' in grouped_page.text
-    assert 'class="source-editor-footer"' in grouped_page.text
+    assert 'data-managed-package-readonly' in grouped_page.text
+    assert 'data-managed-package-mode="create"' in grouped_page.text
+    assert 'data-managed-package-mode="edit"' in grouped_page.text
+    assert 'aria-label="Edit Private.PowerCLI.Tools module"' in grouped_page.text
+    assert 'aria-label="Delete Private.PowerCLI.Tools module"' in grouped_page.text
+    assert 'class="source-readonly-view" data-managed-package-readonly' in grouped_page.text
+    assert 'data-managed-package-form' not in grouped_page.text
+    assert 'class="apply-unit-card source-editor-form managed-package-editor"' not in grouped_page.text
+    assert "Changes save automatically." not in grouped_page.text
     assert "Repository behavior" in grouped_page.text
     assert "Module behavior" in grouped_page.text
-    assert 'class="source-option-grid managed-package-option-grid"' in grouped_page.text
-    assert 'class="apply-unit-card source-editor-form managed-package-editor"' in grouped_page.text
+    assert "1.2.3" in grouped_page.text
     assert "appliance-update-task-card" not in app_css
     assert ".appliance-update-history .tabulator-row.task-grid-new-task" in app_css
     assert ".source-editor-grid {\n  display: grid;" in app_css
@@ -647,6 +833,30 @@ def test_software_source_and_managed_module_lifecycle(client):
         assert module["repository_name"] == "PrivateGallery"
         assert module["target_version"] == "1.2.3"
 
+    rejected_wizard_edit = client.post(
+        f"/appliance-update/packages/{package_id}",
+        data={
+            "csrf": csrf,
+            "name": "VCF.PowerCLI",
+            "source_id": str(source_id),
+            "policy": "latest",
+            "enabled_present": "1",
+            "enabled": "on",
+        },
+        headers={"X-Atlaso-Wizard": "1", "Accept": "application/json"},
+    )
+    assert rejected_wizard_edit.status_code == 409
+    assert rejected_wizard_edit.json() == {
+        "status": "error",
+        "detail": "This PowerShell module is already managed.",
+        "errors": ["This PowerShell module is already managed."],
+    }
+    with SessionLocal() as db:
+        package = db.get(ManagedPackage, package_id)
+        assert package.name == "Private.PowerCLI.Tools"
+        assert package.policy == "pinned"
+        assert package.target_version == "1.2.3"
+
     changed_to_latest = client.post(
         f"/appliance-update/packages/{package_id}",
         data={
@@ -658,9 +868,10 @@ def test_software_source_and_managed_module_lifecycle(client):
             "enabled_present": "1",
             "enabled": "on",
         },
-        follow_redirects=False,
+        headers={"X-Atlaso-Wizard": "1", "Accept": "application/json"},
     )
-    assert changed_to_latest.status_code == 303
+    assert changed_to_latest.status_code == 200
+    assert changed_to_latest.json() == {"status": "saved", "package": {"id": package_id}}
     with SessionLocal() as db:
         package = db.get(ManagedPackage, package_id)
         assert package.policy == "latest"
@@ -743,6 +954,55 @@ def test_helper_rejects_retired_python_library_stream():
         require_streams=True,
     )
     assert errors == ["unsupported update stream python_libraries."]
+
+
+def test_helper_rejects_unsynchronized_powershell_repository():
+    helper = load_helper_module()
+    payload = {
+        "selected_streams": ["powershell_modules"],
+        "sources": {
+            "powershell_repository_name": "PSGallery",
+            "powershell_repository_url": "https://www.powershellgallery.com/api/v21",
+        },
+        "powershell_modules": [{"name": "VCF.PowerCLI", "repository_name": "PSGallery"}],
+        "source_definitions": [
+            {
+                "kind": "powershell",
+                "name": "PSGallery",
+                "enabled": True,
+                "validation_status": "not_checked",
+            }
+        ],
+    }
+
+    assert helper._appliance_update_config_errors(payload, require_streams=True) == [
+        "PowerShell repository PSGallery is not synchronized; run Synchronize repositories before checking or installing managed modules."
+    ]
+    payload["source_definitions"][0]["validation_status"] = "valid"
+    assert helper._appliance_update_config_errors(payload, require_streams=True) == []
+
+
+def test_helper_rejects_unsynchronized_managed_photon_repository():
+    helper = load_helper_module()
+    payload = {
+        "selected_streams": ["photon_os"],
+        "sources": {"photon_source": "System Photon repositories"},
+        "source_definitions": [
+            {
+                "kind": "photon",
+                "name": "System Photon repositories",
+                "enabled": True,
+                "settings": {"managed": True},
+                "validation_status": "not_checked",
+            }
+        ],
+    }
+
+    assert helper._appliance_update_config_errors(payload, require_streams=True) == [
+        "Photon repository System Photon repositories is not synchronized; run Synchronize repositories before checking or installing Photon OS updates."
+    ]
+    payload["source_definitions"][0]["validation_status"] = "valid"
+    assert helper._appliance_update_config_errors(payload, require_streams=True) == []
 
 
 def test_helper_redacts_repository_credentials_from_package_client_output(monkeypatch):
@@ -833,6 +1093,123 @@ def test_helper_syncs_only_owned_photon_and_powershell_sources(monkeypatch, tmp_
     assert "[internal-photon]" in photon_path.read_text(encoding="utf-8")
     assert "gpgcheck=1" in photon_path.read_text(encoding="utf-8")
     assert json.loads(state_path.read_text(encoding="utf-8")) == {"powershell_repositories": []}
+
+
+def test_helper_reports_unresolvable_powershell_repository_host(monkeypatch, tmp_path):
+    import socket
+
+    helper = load_helper_module()
+    state_path = tmp_path / "update-sources.json"
+    monkeypatch.setattr(helper, "UPDATE_SOURCE_STATE_PATH", state_path)
+    monkeypatch.setattr(helper, "_command_path", lambda _name: "/usr/bin/pwsh")
+    monkeypatch.setattr(
+        helper.socket,
+        "getaddrinfo",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(socket.gaierror(-2, "Name or service not known")),
+    )
+
+    result = helper._sync_appliance_update_sources(
+        {
+            "source_definitions": [
+                {
+                    "kind": "powershell",
+                    "name": "PSGallery",
+                    "url": "https://www.powershellgallery.com/api/v2",
+                    "enabled": True,
+                    "settings": {"trusted": False},
+                }
+            ]
+        }
+    )
+
+    assert result["status"] == "failed"
+    assert result["commands"][0]["command"] == ["resolve", "www.powershellgallery.com"]
+    assert result["error"].startswith("PowerShell repository PSGallery host www.powershellgallery.com could not be resolved:")
+
+
+def test_helper_source_sync_probes_powershell_repository_endpoint(monkeypatch, tmp_path):
+    import base64
+
+    helper = load_helper_module()
+    scripts = []
+    monkeypatch.setattr(helper, "UPDATE_SOURCE_STATE_PATH", tmp_path / "update-sources.json")
+    monkeypatch.setattr(helper, "ATLASO_POWERSHELL_HOME", tmp_path / "powershell-home")
+    monkeypatch.setattr(helper, "_command_path", lambda _name: "/usr/bin/pwsh")
+    monkeypatch.setattr(helper.socket, "getaddrinfo", lambda *_args, **_kwargs: [(None, None, None, None, None)])
+
+    def fail_invalid_endpoint(command, *, success_codes=None, env=None):
+        scripts.append(base64.b64decode(command[-1]).decode("utf-16-le"))
+        return {
+            "command": command,
+            "returncode": 1,
+            "success": False,
+            "stdout": "",
+            "stderr": "No match was found for the specified search criteria and repository name PSGallery.",
+        }
+
+    monkeypatch.setattr(helper, "_command_payload", fail_invalid_endpoint)
+    result = helper._sync_appliance_update_sources(
+        {
+            "source_definitions": [
+                {
+                    "id": 1,
+                    "kind": "powershell",
+                    "name": "PSGallery",
+                    "url": "https://www.powershellgallery.com/api/v21",
+                    "enabled": True,
+                    "settings": {"trusted": False},
+                }
+            ]
+        }
+    )
+
+    assert result["status"] == "failed"
+    assert result["error"].startswith("No match was found")
+    assert result["source_results"] == [
+        {"id": 1, "kind": "powershell", "name": "PSGallery", "success": False}
+    ]
+    assert "Set-PSRepository" in scripts[0]
+    assert "Find-Module -Repository $name" in scripts[0]
+    assert "https://www.powershellgallery.com/api/v21" in scripts[0]
+
+
+def test_appliance_update_failure_message_uses_actionable_command_stderr():
+    from atlaso.app.ui import appliance_update_failure_message
+
+    message = appliance_update_failure_message(
+        {
+            "success": False,
+            "commands": [
+                {
+                    "command": ["resolve", "www.powershellgallery.com"],
+                    "returncode": 1,
+                    "stderr": "PowerShell repository PSGallery host www.powershellgallery.com could not be resolved.",
+                }
+            ],
+        }
+    )
+
+    assert message == "PowerShell repository PSGallery host www.powershellgallery.com could not be resolved."
+
+
+def test_helper_promotes_source_sync_failure_to_stderr(monkeypatch, tmp_path, capsys):
+    helper = load_helper_module()
+    config_path = tmp_path / "atlaso-update.json"
+    config_path.write_text("{}\n", encoding="utf-8")
+    message = "PowerShell repository PSGallery host www.powershellgallery.com could not be resolved."
+    monkeypatch.setattr(helper, "_validate_appliance_update_config_path", lambda _path: config_path)
+    monkeypatch.setattr(helper, "_load_appliance_update_config", lambda _path: {"source_definitions": []})
+    monkeypatch.setattr(helper, "_load_appliance_update_credentials", lambda _args: {})
+    monkeypatch.setattr(helper, "_appliance_update_config_errors", lambda _payload, require_streams: [])
+    monkeypatch.setattr(
+        helper,
+        "_sync_appliance_update_sources",
+        lambda _payload, _credentials: {"status": "failed", "commands": [], "error": message},
+    )
+
+    assert helper._handle_appliance_update("sync-sources", [str(config_path)]) == 1
+    captured = capsys.readouterr()
+    assert message in captured.err
 
 
 def test_helper_uses_each_modules_bound_powershell_repository(monkeypatch, tmp_path):

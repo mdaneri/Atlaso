@@ -16,6 +16,7 @@ import hmac
 import os
 import re
 import shutil
+import socket
 import sqlite3
 import subprocess
 import sys
@@ -7931,6 +7932,41 @@ def _appliance_update_config_errors(payload: dict, *, require_streams: bool = Tr
         )
     ):
         errors.append("powershell_modules must be a list of module objects with names and repositories.")
+    if "powershell_modules" in (selected or []) and isinstance(powershell_modules, list):
+        referenced_repositories = {
+            str(item.get("repository_name") or powershell_repository_name).strip()
+            for item in powershell_modules
+            if isinstance(item, dict) and str(item.get("repository_name") or powershell_repository_name).strip()
+        }
+        source_definitions = payload.get("source_definitions")
+        synchronized_repositories = {
+            str(source.get("name") or "").strip()
+            for source in source_definitions
+            if isinstance(source, dict)
+            and source.get("kind") == "powershell"
+            and source.get("enabled") is True
+            and source.get("validation_status") == "valid"
+        } if isinstance(source_definitions, list) else set()
+        for repository in sorted(referenced_repositories - synchronized_repositories):
+            errors.append(
+                f"PowerShell repository {repository} is not synchronized; run Synchronize repositories before checking or installing managed modules."
+            )
+    if "photon_os" in (selected or []):
+        source_definitions = payload.get("source_definitions")
+        unsynchronized_photon = [
+            str(source.get("name") or "configured Photon repositories").strip()
+            for source in source_definitions
+            if isinstance(source, dict)
+            and source.get("kind") == "photon"
+            and source.get("enabled") is True
+            and isinstance(source.get("settings"), dict)
+            and source["settings"].get("managed") is True
+            and source.get("validation_status") != "valid"
+        ] if isinstance(source_definitions, list) else []
+        for repository in sorted(unsynchronized_photon):
+            errors.append(
+                f"Photon repository {repository} is not synchronized; run Synchronize repositories before checking or installing Photon OS updates."
+            )
     policy = payload.get("policy") or {}
     if not isinstance(policy, dict):
         errors.append("policy must be an object.")
@@ -8276,6 +8312,17 @@ def _sync_appliance_update_sources(payload: dict, credentials: dict[str, dict[st
     if not isinstance(definitions, list):
         raise ValueError("source_definitions must be a list")
     commands: list[dict] = []
+    source_results: list[dict] = []
+
+    def record_source_result(source: dict, *, success: bool) -> None:
+        source_results.append(
+            {
+                "id": source.get("id"),
+                "kind": str(source.get("kind") or ""),
+                "name": str(source.get("name") or ""),
+                "success": success,
+            }
+        )
 
     managed_photon = [
         source
@@ -8318,6 +8365,8 @@ def _sync_appliance_update_sources(payload: dict, credentials: dict[str, dict[st
         photon_path.write_text("\n\n".join(sections) + "\n", encoding="utf-8")
         photon_path.chmod(0o600 if any(_source_credential(source, credentials) for source in managed_photon) else 0o644)
         commands.append({"command": ["write", str(photon_path)], "returncode": 0, "success": True, "stdout": f"wrote {len(managed_photon)} managed Photon repositories", "stderr": ""})
+        for source in managed_photon:
+            record_source_result(source, success=True)
     elif photon_path.exists():
         photon_path.unlink()
         commands.append({"command": ["remove", str(photon_path)], "returncode": 0, "success": True, "stdout": "removed managed Photon repository file", "stderr": ""})
@@ -8336,6 +8385,7 @@ def _sync_appliance_update_sources(payload: dict, credentials: dict[str, dict[st
             continue
         if pwsh is None:
             commands.append({"command": ["pwsh"], "returncode": 127, "success": False, "stdout": "", "stderr": "pwsh command not found"})
+            record_source_result(source, success=False)
             continue
         name = str(source.get("name") or "").strip()
         url = str(source.get("url") or "").strip()
@@ -8345,22 +8395,47 @@ def _sync_appliance_update_sources(payload: dict, credentials: dict[str, dict[st
         if parsed.scheme not in {"http", "https"} or not parsed.netloc:
             raise ValueError(f"PowerShell source {name} must use an HTTP(S) URL")
         current_powershell_names.add(name)
+        host = str(parsed.hostname or "").strip()
+        try:
+            socket.getaddrinfo(
+                host,
+                parsed.port or (443 if parsed.scheme == "https" else 80),
+                type=socket.SOCK_STREAM,
+            )
+        except socket.gaierror as exc:
+            commands.append(
+                {
+                    "command": ["resolve", host],
+                    "returncode": 1,
+                    "success": False,
+                    "stdout": "",
+                    "stderr": f"PowerShell repository {name} host {host} could not be resolved: {exc}",
+                }
+            )
+            record_source_result(source, success=False)
+            continue
         trusted = bool((source.get("settings") or {}).get("trusted")) if isinstance(source.get("settings"), dict) else False
         policy = "Trusted" if trusted else "Untrusted"
+        credential = _source_credential(source, credentials)
         script = (
             '$ErrorActionPreference = "Stop"; '
             f"$name = {_powershell_literal(name)}; $url = {_powershell_literal(url)}; "
+            "$credentialArgs = if ($env:LF_REPO_SECRET) { $credential = New-Object System.Management.Automation.PSCredential($env:LF_REPO_USER, (ConvertTo-SecureString $env:LF_REPO_SECRET -AsPlainText -Force)); @{Credential=$credential} } else { @{} }; "
             "$existing = Get-PSRepository -Name $name -ErrorAction SilentlyContinue; "
             f"if ($existing) {{ Set-PSRepository -Name $name -SourceLocation $url -InstallationPolicy {policy} }} "
             f"else {{ Register-PSRepository -Name $name -SourceLocation $url -InstallationPolicy {policy} }}; "
-            "Get-PSRepository -Name $name | Select-Object Name,SourceLocation,InstallationPolicy | ConvertTo-Json -Compress"
+            "$probe = Find-Module -Repository $name @credentialArgs -ErrorAction Stop | Select-Object -First 1; "
+            "Get-PSRepository -Name $name | Select-Object Name,SourceLocation,InstallationPolicy,@{Name='ProbeSucceeded';Expression={$true}} | ConvertTo-Json -Compress"
         )
-        commands.append(
-            _command_payload(
-                [pwsh, "-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", _powershell_encoded_command(script)],
-                env=_appliance_update_powershell_environment(),
-            )
+        env = _appliance_update_powershell_environment()
+        if credential:
+            env.update({"LF_REPO_USER": str(credential.get("username") or ""), "LF_REPO_SECRET": str(credential["secret"])})
+        command = _command_payload(
+            [pwsh, "-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", _powershell_encoded_command(script)],
+            env=env,
         )
+        commands.append(command)
+        record_source_result(source, success=bool(command.get("success")))
     if pwsh is not None:
         for name in sorted(previous_powershell_names - current_powershell_names):
             script = (
@@ -8382,7 +8457,15 @@ def _sync_appliance_update_sources(payload: dict, credentials: dict[str, dict[st
         encoding="utf-8",
     )
     UPDATE_SOURCE_STATE_PATH.chmod(0o600)
-    return {"status": "succeeded" if all(command.get("success") for command in commands) else "failed", "commands": commands}
+    failed_commands = [command for command in commands if not command.get("success")]
+    result = {
+        "status": "failed" if failed_commands else "succeeded",
+        "commands": commands,
+        "source_results": source_results,
+    }
+    if failed_commands:
+        result["error"] = str(failed_commands[0].get("stderr") or failed_commands[0].get("stdout") or "Repository synchronization failed.").strip()
+    return result
 
 
 def _check_appliance_update(payload: dict, credentials: dict[str, dict[str, str]] | None = None) -> dict:
@@ -10018,6 +10101,8 @@ def _handle_appliance_update(action: str, args: list[str]) -> int:
             print(str(exc), file=sys.stderr)
             return 1
         print(json.dumps(result, indent=2, sort_keys=True))
+        if result.get("status") != "succeeded" and result.get("error"):
+            print(str(result["error"]), file=sys.stderr)
         return 0 if result.get("status") == "succeeded" else 1
     if action == "restart-service":
         return _restart_atlaso_service_after_update()

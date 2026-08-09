@@ -12346,16 +12346,12 @@ function taskStatusActive(status) {
   return ["pending", "running"].includes(String(status || ""));
 }
 
-function setApplianceUpdateActionsDisabled(disabled) {
+function setApplianceUpdateActionsDisabled(disabled, { busy = disabled } = {}) {
   const form = document.querySelector("[data-appliance-update-submit-form]");
   if (!(form instanceof HTMLFormElement)) {
     return;
   }
-  if (disabled) {
-    form.setAttribute("aria-busy", "true");
-  } else {
-    form.removeAttribute("aria-busy");
-  }
+  form.toggleAttribute("aria-busy", busy);
   form.querySelectorAll("[data-appliance-update-action]").forEach((button) => {
     if (button instanceof HTMLButtonElement) {
       button.disabled = disabled;
@@ -12363,12 +12359,71 @@ function setApplianceUpdateActionsDisabled(disabled) {
   });
 }
 
+function setApplianceUpdateSourceSyncDisabled(disabled) {
+  const form = document.querySelector("[data-appliance-update-source-sync-form]");
+  if (!(form instanceof HTMLFormElement)) {
+    return;
+  }
+  form.toggleAttribute("aria-busy", disabled);
+  const button = form.querySelector("[data-appliance-update-source-sync-action]");
+  if (button instanceof HTMLButtonElement) {
+    button.disabled = disabled;
+  }
+}
+
+function updateApplianceUpdateSourceSyncState(task) {
+  if (
+    !task
+    || task.id !== atlasoNewTaskId
+    || task.is_step
+    || task.result?.mode !== "source_sync"
+    || taskStatusActive(task.status)
+  ) {
+    return;
+  }
+  document.querySelectorAll('[data-appliance-update-source-sync-required="true"]').forEach((input) => {
+    if (input instanceof HTMLInputElement) {
+      const stream = input.value;
+      const kind = stream === "photon_os" ? "photon" : stream === "powershell_modules" ? "powershell" : "";
+      const results = Array.isArray(task.result?.source_results)
+        ? task.result.source_results.filter((result) => result?.kind === kind)
+        : [];
+      const ready = results.length
+        ? results.every((result) => result.success === true)
+        : task.status === "succeeded";
+      input.dataset.applianceUpdateSourceSyncReady = ready ? "true" : "false";
+    }
+  });
+}
+
+function selectedUnsynchronizedUpdateStreams() {
+  const form = document.querySelector("[data-appliance-update-submit-form]");
+  if (!(form instanceof HTMLFormElement)) {
+    return [];
+  }
+  return [...form.querySelectorAll('[name="selected_streams"]:checked')]
+    .filter((input) => input instanceof HTMLInputElement
+      && input.dataset.applianceUpdateSourceSyncRequired === "true"
+      && input.dataset.applianceUpdateSourceSyncReady !== "true")
+    .map((input) => input.dataset.applianceUpdateStreamLabel || input.value);
+}
+
 function updateApplianceUpdateActions(tasks = atlasoTasks) {
   const page = document.querySelector("[data-tasks-page]");
   if (page?.dataset.taskType !== "appliance-update") {
     return;
   }
-  setApplianceUpdateActionsDisabled(tasks.some((task) => !task.is_step && taskStatusActive(task.status)));
+  const active = tasks.some((task) => !task.is_step && taskStatusActive(task.status));
+  const unsynchronized = selectedUnsynchronizedUpdateStreams();
+  setApplianceUpdateActionsDisabled(active || unsynchronized.length > 0, { busy: active });
+  setApplianceUpdateSourceSyncDisabled(active);
+  const status = document.querySelector("[data-appliance-update-action-status]");
+  if (status instanceof HTMLElement) {
+    status.textContent = unsynchronized.length
+      ? `Synchronize the repositories for ${unsynchronized.join(" and ")} before checking or installing updates.`
+      : "";
+    status.classList.toggle("hidden", unsynchronized.length === 0);
+  }
 }
 
 function taskById(taskId) {
@@ -12498,13 +12553,17 @@ function applyTasksStatusPayload(payload, { reopen = false } = {}) {
     count.className = `status-pill ${active ? "warn" : "muted"}`;
   }
   const selected = payload.selected_task || taskById(queryId);
+  updateApplianceUpdateSourceSyncState(selected);
   if (selected && (reopen || document.getElementById("task-detail-modal")?.open)) {
     renderTaskDetail(selected);
     if (reopen) {
       openTaskDetail(selected);
     }
   }
-  updateApplianceUpdateActions(atlasoTasks);
+  const actionTasks = selected && !atlasoTasks.some((task) => task.id === selected.id)
+    ? [...atlasoTasks, selected]
+    : atlasoTasks;
+  updateApplianceUpdateActions(actionTasks);
   window.clearTimeout(atlasoTasksRefreshTimer);
   if (atlasoTasks.some((task) => taskStatusActive(task.status))) {
     atlasoTasksRefreshTimer = window.setTimeout(() => refreshTasksPage().catch(() => {}), 2000);
@@ -13047,6 +13106,9 @@ function initializeApplianceUpdateSubmission() {
     return;
   }
   updateApplianceUpdateActions();
+  form.querySelectorAll('[name="selected_streams"]').forEach((input) => {
+    input.addEventListener("change", () => updateApplianceUpdateActions());
+  });
   form.addEventListener("submit", async (event) => {
     const submitter = event.submitter;
     if (!(submitter instanceof HTMLButtonElement)) {
@@ -13054,6 +13116,7 @@ function initializeApplianceUpdateSubmission() {
     }
     event.preventDefault();
     setApplianceUpdateActionsDisabled(true);
+    setApplianceUpdateSourceSyncDisabled(true);
     try {
       const response = await fetch(submitter.formAction, {
         method: "POST",
@@ -13075,6 +13138,43 @@ function initializeApplianceUpdateSubmission() {
     } catch (error) {
       updateApplianceUpdateActions();
       showTransientGridError(error instanceof Error ? error.message : "Unable to start the appliance update task.");
+    }
+  });
+}
+
+function initializeApplianceUpdateSourceSync() {
+  const form = document.querySelector("[data-appliance-update-source-sync-form]");
+  if (!(form instanceof HTMLFormElement)) {
+    return;
+  }
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    setApplianceUpdateActionsDisabled(true);
+    setApplianceUpdateSourceSyncDisabled(true);
+    try {
+      const response = await fetch(form.action, {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { Accept: "application/json" },
+        body: new FormData(form),
+      });
+      const payload = await response.json();
+      if (!response.ok) {
+        throw new Error(payload.detail || "Unable to synchronize the update repositories.");
+      }
+      atlasoNewTaskId = payload.job_id || "";
+      atlasoSelectedTaskId = atlasoNewTaskId;
+      const page = document.querySelector("[data-tasks-page]");
+      if (page instanceof HTMLElement) {
+        page.dataset.selectedTaskId = atlasoNewTaskId;
+      }
+      if (atlasoTasksTable && atlasoTasksTable.getPage() !== 1) {
+        await atlasoTasksTable.setPage(1);
+      }
+      await refreshTasksPage();
+    } catch (error) {
+      updateApplianceUpdateActions();
+      showTransientGridError(error instanceof Error ? error.message : "Unable to synchronize the update repositories.");
     }
   });
 }
@@ -18453,26 +18553,6 @@ function initializeAutomationTables() {
 
 }
 
-function initializeManagedPackagePolicies() {
-  document.querySelectorAll("[data-managed-package-form]").forEach((form) => {
-    const policy = form.querySelector("[data-managed-package-policy]");
-    const target = form.querySelector("[data-managed-package-target]");
-    const targetLabel = form.querySelector("[data-managed-package-target-label]");
-    if (!(policy instanceof HTMLSelectElement) || !(target instanceof HTMLInputElement)) return;
-    const updateTargetState = () => {
-      const usesLatest = policy.value === "latest";
-      if (usesLatest) target.value = "";
-      target.disabled = usesLatest;
-      target.required = !usesLatest;
-      target.placeholder = usesLatest ? "Resolved from repository" : "Required for pinned policy";
-      target.setAttribute("aria-disabled", usesLatest ? "true" : "false");
-      targetLabel?.classList.toggle("muted", usesLatest);
-    };
-    policy.addEventListener("change", updateTargetState);
-    updateTargetState();
-  });
-}
-
 function initializeApplianceUpdateSourceWizard() {
   const form = document.querySelector("[data-appliance-update-source-form]");
   const dialog = document.getElementById("appliance-update-source-dialog");
@@ -18632,7 +18712,8 @@ function initializeApplianceUpdateSourceWizard() {
       } catch {
         // Reloading the page still shows the saved repository when storage is unavailable.
       }
-      window.location.assign("/appliance-update#update-sources");
+      window.history.replaceState(null, "", "/appliance-update#update-sources");
+      window.location.reload();
       return { valid: true };
     },
   });
@@ -18656,15 +18737,18 @@ function initializeApplianceUpdateSourceWizard() {
 function initializeManagedPackageWizard() {
   const form = document.querySelector("[data-managed-package-create-form]");
   const dialog = document.getElementById("managed-package-dialog");
-  const launcher = document.querySelector("[data-managed-package-wizard-open]");
+  const launchers = [...document.querySelectorAll("[data-managed-package-wizard-open]")];
   if (
     !(form instanceof HTMLFormElement)
     || !(dialog instanceof HTMLDialogElement)
-    || !(launcher instanceof HTMLButtonElement)
+    || !launchers.length
     || !window.AtlasoUiPatterns
   ) {
     return;
   }
+  const defaultAction = form.action;
+  const dialogTitle = document.getElementById("managed-package-dialog-title");
+  const submit = form.querySelector("[data-atlaso-wizard-submit]");
   const policy = form.querySelector("[data-managed-package-create-policy]");
   const target = form.querySelector("[data-managed-package-create-target]");
   const targetLabel = form.querySelector("[data-managed-package-create-target-label]");
@@ -18686,12 +18770,27 @@ function initializeManagedPackageWizard() {
       { id: "identity", title: "Choose the managed module", description: "Enter the exact module name and select its registered PowerShell repository." },
       { id: "policy", title: "Choose version resolution", description: "Pin an exact version or follow the latest version published by the repository." },
       { id: "enablement", title: "Choose desired availability", description: "Decide whether update checks and installation runs include this module." },
-      { id: "review", title: "Review module creation", description: "Confirm the desired update state before saving it." },
+      { id: "review", title: "Review module changes", description: "Confirm the desired update state before saving it." },
     ],
-    discardTitle: "Discard managed module?",
+    discardTitle: "Discard module changes?",
     discardMessage: "The module identity and version policy entered in this wizard will be lost.",
-    onOpen: () => {
+    onOpen: ({ context: managedPackage }) => {
       form.reset();
+      const editing = managedPackage && managedPackage.id;
+      form.action = editing ? `${defaultAction}/${managedPackage.id}` : defaultAction;
+      if (dialogTitle instanceof HTMLElement) {
+        dialogTitle.textContent = editing ? "Edit managed PowerShell module" : "Add managed PowerShell module";
+      }
+      if (submit instanceof HTMLButtonElement) {
+        submit.textContent = editing ? "Save module changes" : "Create managed module";
+      }
+      if (editing) {
+        form.elements.name.value = managedPackage.name || "";
+        form.elements.source_id.value = String(managedPackage.source_id || "");
+        form.elements.policy.value = managedPackage.policy || "pinned";
+        form.elements.target_version.value = managedPackage.target_version || "";
+        form.elements.enabled.checked = Boolean(managedPackage.enabled);
+      }
       updateTargetState();
     },
     validateStep: (state) => validateAtlasoWizardStep(state),
@@ -18704,8 +18803,56 @@ function initializeManagedPackageWizard() {
         { label: "Desired state", field: "enabled" },
       ]);
     },
+    onSubmit: async () => {
+      const response = await fetch(form.action, {
+        method: "POST",
+        body: new FormData(form),
+        credentials: "same-origin",
+        headers: {
+          Accept: "application/json",
+          "X-Atlaso-Wizard": "1",
+        },
+      });
+      const responseText = await response.text();
+      let payload = {};
+      try {
+        payload = responseText ? JSON.parse(responseText) : {};
+      } catch (_error) {
+        payload = {};
+      }
+      if (!response.ok) {
+        throw new Error(payload.detail || "The managed PowerShell module could not be saved.");
+      }
+      if (!payload.package?.id) {
+        throw new Error("The server did not return the saved managed PowerShell module.");
+      }
+      try {
+        window.localStorage.setItem("atlaso:appliance-update:workspace-tab", "appliance-update-sources");
+        window.localStorage.setItem(
+          "atlaso:appliance-update:powershell-module-tab",
+          `powershell-module-${payload.package.id}`,
+        );
+      } catch {
+        // Reloading the page still shows the saved module when storage is unavailable.
+      }
+      window.history.replaceState(null, "", "/appliance-update#managed-packages");
+      window.location.reload();
+      return { valid: true };
+    },
   });
-  launcher.addEventListener("click", () => wizard.open({ launcher }));
+  launchers.forEach((launcher) => {
+    launcher.addEventListener("click", () => {
+      let managedPackage = null;
+      if (launcher.dataset.managedPackage) {
+        try {
+          managedPackage = JSON.parse(launcher.dataset.managedPackage);
+        } catch (_error) {
+          return;
+        }
+      }
+      wizard.open({ launcher, context: managedPackage });
+    });
+  });
 }
 
 function initializeEsxStorageTables() {
@@ -20464,7 +20611,6 @@ document.addEventListener("DOMContentLoaded", initializeLdapDirectoryTables);
 document.addEventListener("DOMContentLoaded", initializeLdapPasswordModal);
 document.addEventListener("DOMContentLoaded", initializeLdapBindSecretModal);
 document.addEventListener("DOMContentLoaded", initializeAutomationTables);
-document.addEventListener("DOMContentLoaded", initializeManagedPackagePolicies);
 document.addEventListener("DOMContentLoaded", initializeApplianceUpdateSourceWizard);
 document.addEventListener("DOMContentLoaded", initializeManagedPackageWizard);
 document.addEventListener("DOMContentLoaded", () => initializeNtpSettings());
@@ -20474,6 +20620,7 @@ document.addEventListener("DOMContentLoaded", initializeVcfRegistryBundlesTable)
 document.addEventListener("DOMContentLoaded", initializeVcfDepotProfilesTable);
 document.addEventListener("DOMContentLoaded", initializeTasksPage);
 document.addEventListener("DOMContentLoaded", initializeApplianceUpdateSubmission);
+document.addEventListener("DOMContentLoaded", initializeApplianceUpdateSourceSync);
 document.addEventListener("DOMContentLoaded", initializeServerTime);
 document.addEventListener("DOMContentLoaded", initializeFirewallRulesTable);
 document.addEventListener("DOMContentLoaded", initializeManagedFirewallRulesTable);

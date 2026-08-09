@@ -92,22 +92,48 @@ repository** from the icon actions at the right of **Repository identity** to re
 current values. Creating or editing through the wizard saves desired state only: it does not install packages or change
 a running package client.
 
-**Synchronize repositories** explicitly writes only Atlaso-owned tdnf and PowerShell client configuration. Source
-details show whether that synchronization has not run, succeeded, or failed. Signed Atlaso sources are read directly,
-are checked during each update, and do not configure pip or report package-client synchronization state.
+The compact synchronization icon exposes **Synchronize repositories** on hover and to assistive technology. It
+explicitly writes only Atlaso-owned tdnf and PowerShell client configuration through an audited **Appliance Update
+repository sync** task. Starting synchronization keeps the Update Sources workspace in place and refreshes only the
+shared **Recent update tasks** grid while the task runs. **Saved, not synchronized** means the
+desired repository is stored in Atlaso but has not yet been validated or written into its appliance package client.
+Atlaso records synchronization results per repository. A managed Photon repository must have a successful result before
+Photon OS checks or installation can use it, including immediately after the repository is created or edited. When one
+repository fails, other repositories that synchronized successfully remain ready. Atlaso disables the check and install
+actions only while a selected stream still depends on an unsynchronized repository. Selecting an older task for detail
+never changes current readiness; only completion of the synchronization task just submitted from the page updates the
+actions in place. Streams that do not depend on the failed package synchronization remain available independently.
+Source details also show when synchronization succeeded or failed. Signed Atlaso sources are read directly, are checked
+during each update, and do not configure pip or report package-client synchronization state.
+
+Synchronization resolves each enabled PowerShell repository host before invoking PowerShellGet. A DNS failure names the
+repository and unresolved host directly in the task error instead of presenting PowerShellGet's generic invalid-URI
+message or only an aggregate step failure. It also performs a repository lookup after registration, so a reachable host
+with an invalid API path fails synchronization. PowerShell module checks and installations require every referenced
+repository to have a successful synchronization result; saved edits cannot silently reuse stale package-client state.
 
 Each source detail presents repository identity first, then its location or discovered runtime data, followed by
 read-only **Repository behavior** values. Desired-state guidance and synchronization state remain together in a
 separated footer. The accessible edit and delete icon actions stay together in the identity header.
+After a successful create or edit, Atlaso reloads the server-rendered source details while preserving the Update Sources
+workspace and selected repository tab, so the read-only values immediately match the saved desired state.
 
-Managed PowerShell module editors follow the same hierarchy: module identity and version policy first, then a grouped
-**Module behavior** switch and a separated autosave/delete footer. The **+ Module** launcher opens a reviewed wizard for
-module identity, version resolution, enablement, and final confirmation; saving it does not install the module. The
-Update Streams workspace keeps the shared Tasks
-grid, server-scoped to Appliance Update tasks. It preserves the standard sorting, filtering, component tree, progress,
+The peer **POWERSHELL · managed modules** disclosure uses the same section spacing, count badge, read-only detail
+hierarchy, and tab treatment as the repository disclosures. Each module tab presents identity, repository, version
+policy, target version, and desired state without implying inline editing. **Edit module** and **Delete module** remain
+together in the identity header. Both **+ Module** and **Edit module** open the shared reviewed wizard for module
+identity, version resolution, enablement, and final confirmation; saving it does not install the module.
+Server-side validation failures remain in the open wizard with the attempted values intact so an administrator can
+correct the entry without rebuilding it.
+Successful module saves use the same preserved-workspace reload so the read-only module detail immediately reflects the
+new policy and state.
+
+A single
+shared Tasks grid remains below both Appliance Update tab panels, so recent work stays visible from Update Streams and
+Update Sources. It is server-scoped to Appliance Update tasks and preserves standard sorting, filtering, progress,
 row menu, and detail behavior. Because the embedded endpoint is already scoped to Appliance Update, the Task / Component
 column is fixed there; the full Tasks page retains its editable component filter. The grid expands through the remaining
-Update Streams workspace height rather than using a compact fixed-height embed. This table replaces the former Last
+workspace height rather than using a compact fixed-height embed. This table replaces the former Last
 Update rail and submission-result cards. Checks and installations submit asynchronously: only grid data refreshes, the
 new task is highlighted, expanded stream rows stay expanded, and both action buttons remain disabled until that task
 succeeds, fails, or is cancelled. Parent rows identify **Appliance Update check**, **Appliance Update install**, or

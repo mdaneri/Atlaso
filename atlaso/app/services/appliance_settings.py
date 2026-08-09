@@ -2,6 +2,7 @@ import json
 import re
 import subprocess
 from ipaddress import ip_address, ip_interface
+from pathlib import Path
 from typing import Any
 
 from atlaso.app.models import ApplianceSettings, PhysicalInterface, VlanInterface
@@ -22,6 +23,8 @@ MANAGEMENT_UI_PORT = 8000
 MANAGEMENT_UI_PUBLIC_HTTP_PORT = 80
 MANAGEMENT_UI_PUBLIC_HTTPS_PORT = 443
 MANAGEMENT_UI_UPSTREAM_HOST = "127.0.0.1"
+SYSTEMD_NETWORK_LEASES_DIR = Path("/run/systemd/netif/leases")
+SYS_CLASS_NET_DIR = Path("/sys/class/net")
 
 HOSTNAME_PATTERN = re.compile(r"^(?=.{1,253}$)([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
 

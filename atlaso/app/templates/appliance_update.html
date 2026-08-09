@@ -15,9 +15,9 @@
         <h2>Update Sources</h2>
       </div>
       <div class="appliance-update-source-actions">
-        <form method="post" action="/appliance-update/source-sync">
+        <form method="post" action="/appliance-update/source-sync" data-appliance-update-source-sync-form>
           <input type="hidden" name="csrf" value="{{ csrf_token }}">
-          <span class="field-label"><button class="button secondary icon-button" type="submit" aria-label="Synchronize repositories" title="Synchronize repositories">↻</button><button class="help-icon" type="button" data-help="Writes the desired repository state saved through the source wizard to the appliance package clients through an audited maintenance task. Atlaso validates enabled sources before updating its owned tdnf and PowerShell configuration. Signed Atlaso release sources are read directly and do not modify a package client.">i</button></span>
+          <span class="field-label"><button class="button secondary icon-button" type="submit" aria-label="Synchronize repositories" title="Synchronize repositories" data-appliance-update-source-sync-action><span aria-hidden="true">↻</span></button><button class="help-icon" type="button" data-help="Writes the desired repository state saved through the source wizard to the appliance package clients through an audited maintenance task. Atlaso validates enabled sources before updating its owned tdnf and PowerShell configuration. Signed Atlaso release sources are read directly and do not modify a package client.">i</button></span>
         </form>
         <span class="status-pill {{ 'warn' if system_adapter_dry_run else 'good' }}">{{ "dry-run" if system_adapter_dry_run else "real" }}</span>
       </div>
@@ -85,7 +85,7 @@
                         {% elif source.validation_status == 'invalid' %}
                           <span class="source-validation-state"><span class="status-pill error">Synchronization failed</span><button class="help-icon" type="button" data-help="{{ source.validation_message or 'The last repository synchronization failed. Review its task output before retrying.' }}">i</button></span>
                         {% else %}
-                          <span class="source-validation-state"><span class="status-pill muted">Not synchronized</span><button class="help-icon" type="button" data-help="{{ source.validation_message or 'Run Synchronize repositories to validate and write this repository into its appliance package client.' }}">i</button></span>
+                          <span class="source-validation-state"><span class="status-pill muted">Saved, not synchronized</span><button class="help-icon" type="button" data-help="{{ source.validation_message or 'The desired repository is saved in Atlaso but has not been validated or written to its appliance package client. Select Synchronize repositories above to create the audited synchronization task.' }}">i</button></span>
                         {% endif %}
                       </div>
                     </div>
@@ -97,48 +97,57 @@
           </div>
         </details>
       {% endfor %}
-    </div>
-    <details id="managed-packages" class="apply-unit-card config-diff update-source-details managed-package-details">
-      <summary>
-        <span><strong>Managed PowerShell Modules</strong> · one tab per module</span>
-        <span class="status-pill muted">{{ powershell_packages|length }} modules</span>
-      </summary>
-      <div class="managed-package-content">
-        <p class="muted">Select a module tab to edit its repository and version policy, or open the final tab to add another module.</p>
+      <details id="managed-packages" class="apply-unit-card config-diff update-source-details managed-package-details" data-update-source-section="managed-modules">
+        <summary>
+          <span><strong>POWERSHELL</strong> · managed modules</span>
+          <span class="status-pill muted">{{ powershell_packages|length }} configured</span>
+        </summary>
+        <div class="managed-package-content">
+        <p class="muted">Open a configured module to inspect it, or use guided setup to add another module.</p>
         <div class="tab-buttons zone-tabs" role="tablist" aria-label="Managed PowerShell modules" data-tab-storage-key="atlaso:appliance-update:powershell-module-tab">
           {% for package in powershell_packages %}
             <button class="tab-button {{ 'active' if loop.first else '' }}" type="button" role="tab" data-tab-target="powershell-module-{{ package.id }}" aria-controls="powershell-module-{{ package.id }}" {% if loop.first %}aria-selected="true"{% else %}aria-selected="false"{% endif %}>{{ package.name }}</button>
           {% endfor %}
-          <button class="tab-button" type="button" data-managed-package-wizard-open {{ 'disabled' if not powershell_sources else '' }}>+ Module</button>
+          <button class="tab-button" type="button" data-managed-package-wizard-open data-managed-package-mode="create" {{ 'disabled' if not powershell_sources else '' }}>+ Module</button>
         </div>
         <div class="tab-panels">
           {% for package in powershell_packages %}
             <div id="powershell-module-{{ package.id }}" class="tab-panel {{ 'active' if loop.first else '' }}" role="tabpanel" {{ 'hidden' if not loop.first else '' }}>
-              <form class="apply-unit-card source-editor-form managed-package-editor" action="/appliance-update/packages/{{ package.id }}" method="post" data-autosave-form data-autosave-status-id="managed-package-status-{{ package.id }}" data-managed-package-form>
-                <input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="enabled_present" value="1">
-                <div class="source-editor-grid">
-                  <label><span class="field-label"><span>Module name</span><button class="help-icon" type="button" data-help="Exact PowerShell module name passed to Find-Module and Install-Module.">i</button></span><input name="name" value="{{ package.name }}" required autocomplete="off"></label>
-                  <label><span class="field-label"><span>Repository</span><button class="help-icon" type="button" data-help="Registered PowerShell repository used to resolve and install this module. Configure repositories in the PowerShell source tabs above.">i</button></span><select name="source_id">{% for source in powershell_sources %}<option value="{{ source.id }}" {{ 'selected' if package.source_id == source.id else '' }}>{{ source.name }}{{ '' if source.enabled else ' (disabled)' }}</option>{% endfor %}</select></label>
-                  <label><span class="field-label"><span>Version policy</span><button class="help-icon" type="button" data-help="Pinned installs the exact target version. Latest resolves the newest version exposed by the selected repository.">i</button></span><select name="policy" data-managed-package-policy><option value="pinned" {{ 'selected' if package.policy == 'pinned' else '' }}>Pinned</option><option value="latest" {{ 'selected' if package.policy == 'latest' else '' }}>Latest</option></select></label>
-                  <label data-managed-package-target-label><span class="field-label"><span>Target version</span><button class="help-icon" type="button" data-help="Required for pinned policy. Latest resolves the repository version and disables this field.">i</button></span><input name="target_version" value="{{ package.target_version }}" autocomplete="off" data-managed-package-target></label>
-                </div>
-                <fieldset class="source-editor-options">
-                  <legend>Module behavior</legend>
-                  <div class="source-option-grid managed-package-option-grid">
-                    <label class="switch-field source-option"><span class="field-label"><span>Module enabled</span><button class="help-icon" type="button" data-help="Includes this module in PowerShell update checks and installation runs.">i</button></span><input class="switch-input" type="checkbox" name="enabled" {{ 'checked' if package.enabled else '' }}><span class="switch-track" aria-hidden="true"></span></label>
+              <div class="source-readonly-view" data-managed-package-readonly>
+                <section class="source-readonly-section" aria-labelledby="powershell-module-{{ package.id }}-identity">
+                  <div class="source-readonly-heading">
+                    <h3 id="powershell-module-{{ package.id }}-identity">Module identity</h3>
+                    <div class="source-editor-actions" aria-label="Module actions">
+                      <button class="button secondary icon-button" type="button" data-managed-package-wizard-open data-managed-package-mode="edit" data-managed-package='{{ package|tojson|forceescape }}' aria-label="Edit {{ package.name }} module" title="Edit module"><svg class="button-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg></button>
+                      <button class="button danger icon-button" type="submit" form="delete-managed-package-{{ package.id }}" aria-label="Delete {{ package.name }} module" title="Delete module"><svg class="button-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="m19 6-1 14H6L5 6"/><path d="M10 11v5M14 11v5"/></svg></button>
+                    </div>
                   </div>
-                </fieldset>
-                <div class="source-editor-footer">
-                  <p id="managed-package-status-{{ package.id }}" class="autosave-status" data-state="idle">Changes save automatically.</p>
-                  <button class="button danger compact" type="submit" form="delete-managed-package-{{ package.id }}">Delete module</button>
-                </div>
-              </form>
+                  <div class="settings-list source-readonly-list">
+                    <div><span>Module name</span><strong>{{ package.name }}</strong></div>
+                    <div><span>Repository</span><strong>{{ package.source_name }}</strong></div>
+                  </div>
+                </section>
+                <section class="source-readonly-section" aria-labelledby="powershell-module-{{ package.id }}-version">
+                  <h3 id="powershell-module-{{ package.id }}-version">Version policy</h3>
+                  <div class="settings-list source-readonly-list">
+                    <div><span>Resolution</span><strong>{{ package.policy|capitalize }}</strong></div>
+                    <div><span>Target version</span><strong>{{ package.target_version if package.policy == 'pinned' else 'Latest available' }}</strong></div>
+                  </div>
+                </section>
+                <section class="source-readonly-section" aria-labelledby="powershell-module-{{ package.id }}-behavior">
+                  <h3 id="powershell-module-{{ package.id }}-behavior">Module behavior</h3>
+                  <div class="settings-list source-readonly-list">
+                    <div><span>Module state</span><strong><span class="status-pill {{ 'good' if package.enabled else 'muted' }}">{{ 'Enabled' if package.enabled else 'Disabled' }}</span></strong></div>
+                  </div>
+                </section>
+              </div>
               <form id="delete-managed-package-{{ package.id }}" class="hidden" action="/appliance-update/packages/{{ package.id }}/delete" method="post" data-confirm-modal data-confirm-title="Stop managing {{ package.name }}?" data-confirm-message="This removes the module from future update checks and runs. It does not uninstall an already installed module from the appliance." data-confirm-label="Delete managed module"><input type="hidden" name="csrf" value="{{ csrf_token }}"></form>
             </div>
           {% endfor %}
         </div>
-      </div>
-    </details>
+        </div>
+      </details>
+    </div>
 
       </div>
       <div id="appliance-update-streams" class="tab-panel active appliance-update-stream-panel" role="tabpanel">
@@ -153,13 +162,14 @@
           <h2>Update Streams</h2>
           <p class="muted appliance-update-action-guidance">Checking is read-only. Installing runs the selected maintenance streams.</p>
           <p class="muted appliance-update-schedule-guidance">For recurring maintenance, <a class="text-link" href="/automation">schedule update checks or installations in Automation</a>.</p>
+          <p id="appliance-update-action-status" class="muted appliance-update-action-guidance hidden" role="status" data-appliance-update-action-status></p>
         </div>
         <div class="apply-change-set-actions">
-          <button class="button secondary appliance-update-action" type="submit" formaction="/appliance-update/check" title="Check the selected streams without installing changes" data-appliance-update-action>
+          <button class="button secondary appliance-update-action" type="submit" formaction="/appliance-update/check" title="Check the selected streams without installing changes" aria-describedby="appliance-update-action-status" data-appliance-update-action>
             <svg class="button-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
             <span>Check for updates</span>
           </button>
-          <button class="button primary appliance-update-action" type="submit" formaction="/appliance-update/run" title="Install updates from the selected streams" data-appliance-update-action>
+          <button class="button primary appliance-update-action" type="submit" formaction="/appliance-update/run" title="Install updates from the selected streams" aria-describedby="appliance-update-action-status" data-appliance-update-action>
             <svg class="button-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>
             <span>Install updates</span>
           </button>
@@ -175,6 +185,9 @@
                 name="selected_streams"
                 value="{{ stream.id }}"
                 {{ "checked" if stream_checked else "" }}
+                data-appliance-update-source-sync-required="{{ 'true' if stream.source_sync_required else 'false' }}"
+                data-appliance-update-source-sync-ready="{{ 'true' if stream.source_sync_ready else 'false' }}"
+                data-appliance-update-stream-label="{{ stream.label }}"
               >
               <span>
                 <strong>{{ stream.label }}</strong>
@@ -190,10 +203,14 @@
       </div>
     </form>
 
+      </div>
+    </div>
+
+    <div data-appliance-update-shared-history>
     {% set task_grid_class = "appliance-update-history task-grid-section" %}
     {% set task_grid_title = "Recent update tasks" %}
     {% set task_grid_title_id = "appliance-update-history-title" %}
-    {% set task_grid_description = "The same task grid used by Tasks, scoped to Appliance Update checks, installations, and repository synchronizations." %}
+    {% set task_grid_description = "The same task grid used by Tasks, scoped to Appliance Update checks, installations, and repository synchronizations. It remains visible for both workspaces above." %}
     {% set task_grid_rows = recent_update_tasks %}
     {% set task_grid_component_options = task_component_filter_options %}
     {% set task_grid_type = "appliance-update" %}
@@ -204,8 +221,6 @@
     {% set task_grid_empty_message = "No Appliance Update tasks have been recorded yet." %}
     {% include "partials/task_grid.html" %}
     {% include "partials/task_modals.html" %}
-
-      </div>
     </div>
   </div>
 
@@ -337,6 +352,7 @@
   "Create managed module"
 ) %}
   <input type="hidden" name="csrf" value="{{ csrf_token }}">
+  <input type="hidden" name="enabled_present" value="1">
   <section class="vcf-sddc-step-page" data-atlaso-wizard-step="identity">
     {% if powershell_sources %}
     <div class="form-stack">

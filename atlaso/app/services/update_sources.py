@@ -107,6 +107,43 @@ def effective_update_settings(db: Session, *, stored: dict[str, str] | None = No
     }
 
 
+def unsynchronized_powershell_repositories(settings: dict[str, Any]) -> list[str]:
+    modules = settings.get("powershell_modules")
+    referenced = {
+        str(module.get("repository_name") or "").strip()
+        for module in modules
+        if isinstance(module, dict) and str(module.get("repository_name") or "").strip()
+    } if isinstance(modules, list) else set()
+    definitions = settings.get("source_definitions")
+    if not isinstance(definitions, list):
+        return sorted(referenced)
+    synchronized = {
+        str(source.get("name") or "").strip()
+        for source in definitions
+        if isinstance(source, dict)
+        and source.get("kind") == "powershell"
+        and source.get("enabled") is True
+        and source.get("validation_status") == "valid"
+    }
+    return sorted(referenced - synchronized)
+
+
+def unsynchronized_photon_repositories(settings: dict[str, Any]) -> list[str]:
+    definitions = settings.get("source_definitions")
+    if not isinstance(definitions, list):
+        return []
+    return sorted(
+        str(source.get("name") or "configured Photon repositories").strip()
+        for source in definitions
+        if isinstance(source, dict)
+        and source.get("kind") == "photon"
+        and source.get("enabled") is True
+        and isinstance(source.get("settings"), dict)
+        and source["settings"].get("managed") is True
+        and source.get("validation_status") != "valid"
+    )
+
+
 def update_source_credentials(db: Session) -> dict[str, dict[str, str]]:
     """Return decrypted credentials for the protected helper runtime channel only."""
     credentials: dict[str, dict[str, str]] = {}
