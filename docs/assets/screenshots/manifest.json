@@ -870,6 +870,34 @@
       "sensitive_data_reviewed": true
     },
     {
+      "path": "assets/screenshots/ntp-clean-desktop.webp",
+      "route": "/ntp",
+      "state": "clean",
+      "viewport": "1600x1000",
+      "source_commit": "d4b407eb37f7+working-tree",
+      "atlaso_version": "0.9.88",
+      "caption": "NTP and NTS in the verified clean-appliance desktop state.",
+      "alt": "Atlaso NTP and NTS page in the clean-appliance desktop viewport.",
+      "capture_method": "codex-in-app-browser",
+      "documentation_page": "services/ntp.md",
+      "brand_variant": "light",
+      "sensitive_data_reviewed": true
+    },
+    {
+      "path": "assets/screenshots/ntp-clean-responsive.webp",
+      "route": "/ntp",
+      "state": "clean",
+      "viewport": "900x1200",
+      "source_commit": "d4b407eb37f7+working-tree",
+      "atlaso_version": "0.9.88",
+      "caption": "NTP and NTS in the verified clean-appliance responsive state.",
+      "alt": "Atlaso NTP and NTS page in the clean-appliance responsive viewport.",
+      "capture_method": "codex-in-app-browser",
+      "documentation_page": "services/ntp.md",
+      "brand_variant": "light",
+      "sensitive_data_reviewed": true
+    },
+    {
       "path": "assets/screenshots/physical-interfaces-clean-desktop.webp",
       "route": "/physical-interfaces",
       "state": "clean",

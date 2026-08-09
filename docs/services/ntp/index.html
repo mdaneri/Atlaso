@@ -29,7 +29,7 @@
     
     
       
-        <title>NTP - Atlaso Documentation</title>
+        <title>NTP and NTS - Atlaso Documentation</title>
       
     
     
@@ -87,7 +87,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#ntp" class="md-skip">
+        <a href="#ntp-and-nts" class="md-skip">
           Skip to content
         </a>
       
@@ -122,7 +122,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              NTP
+              NTP and NTS
             
           </span>
         </div>
@@ -1424,7 +1424,7 @@
   <span class="md-ellipsis">
     
   
-  NTP
+  NTP and NTS
 
     
   </span>
@@ -1448,7 +1448,7 @@
   <span class="md-ellipsis">
     
   
-  NTP
+  NTP and NTS
 
     
   </span>
@@ -1481,6 +1481,17 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
+  <a href="#interface-overview" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Interface overview
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#configure-time-service" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -1499,6 +1510,34 @@
       </span>
     </span>
   </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#additional-verified-states" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Additional verified states
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Additional verified states">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#ntp-and-nts_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        NTP and NTS
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
   
 </li>
       
@@ -3030,6 +3069,17 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
+  <a href="#interface-overview" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Interface overview
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#configure-time-service" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -3048,6 +3098,34 @@
       </span>
     </span>
   </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#additional-verified-states" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Additional verified states
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Additional verified states">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#ntp-and-nts_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        NTP and NTS
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
   
 </li>
       
@@ -3175,31 +3253,53 @@
   
 
 
-<h1 id="ntp">NTP<a class="headerlink" href="#ntp" title="Permanent link">&para;</a></h1>
-<p>Open <strong>NTP</strong> to configure appliance time sources and service behavior owned by NTPsec. Atlaso supports ordinary NTP;
-NTS is disabled.</p>
+<h1 id="ntp-and-nts">NTP and NTS<a class="headerlink" href="#ntp-and-nts" title="Permanent link">&para;</a></h1>
+<p>Open <strong>NTP and NTS</strong> to configure appliance time sources, service behavior, and network time security settings owned by
+NTPsec.</p>
 <!-- BEGIN GENERATED INTERFACE OVERVIEW -->
+<h2 id="interface-overview">Interface overview<a class="headerlink" href="#interface-overview" title="Permanent link">&para;</a></h2>
+<p>This verified appliance view provides visual orientation before you begin.</p>
+<p><img alt="Atlaso NTP and NTS page in the clean-appliance desktop viewport." src="../../assets/screenshots/ntp-clean-desktop.webp" /></p>
+<p><em>Figure: NTP and NTS in the verified clean-appliance desktop state.</em></p>
 <!-- END GENERATED INTERFACE OVERVIEW -->
 
 <h2 id="configure-time-service">Configure time service<a class="headerlink" href="#configure-time-service" title="Permanent link">&para;</a></h2>
 <ol>
 <li>Select <strong>Add source here</strong> and use the reviewed source wizard to enter the endpoint and a full-width multiline
    description.</li>
-<li>Configure desired enablement in the wizard. Existing source enablement remains directly editable in the grid.
+<li>Configure NTS and desired enablement in the wizard only when the source and certificate trust are available.
+   Existing source enablement remains directly editable in the grid.
    Editing a source updates that row; source names are unique after hostname, address, and optional-port normalization.
    Rename or remove an existing row before reusing its source name.</li>
-<li>Review warnings about source reachability or incomplete settings.</li>
+<li>Review warnings about source reachability or incomplete security settings.</li>
 <li>Inspect the rendered NTPsec preview.</li>
-<li>Submit the NTPsec unit through <a href="../../operate/appliance-apply/">Appliance Apply</a>.</li>
+<li>Submit the NTPsec unit through <a href="../../operate/appliance-apply/">Appliance Apply</a>. In NTS server mode, Atlaso always
+   includes Certificate Authority first so missing or stale runtime certificate files are repaired; the CA does not
+   need a public portal interface for this internal certificate deployment. If managed LDAP is active, Atlaso also
+   includes any changed CA, DNS/DHCP, Firewall, and Managed LDAP dependency units in the same task.</li>
 </ol>
-<p>Appliance Settings does not own time enforcement. DNS/DHCP also does not apply NTP configuration.</p>
-<p>Atlaso normalizes legacy NTS flags off, rejects NTS directives, and removes legacy NTP certificate and cookie material
-during NTP apply. Firewall apply opens UDP/123 only; it does not open the NTS-KE TCP/4460 listener.</p>
+<p>Appliance Settings does not own time enforcement. DNS/DHCP also does not apply NTP configuration.
+Web Terminal enablement and interface autosave are isolated to Appliance Settings and never change NTP/NTS sources,
+server mode, certificate ownership, rendered configuration, or NTP apply selection.</p>
+<p>Atlaso disables NTS controls when the installed NTPsec binary explicitly reports that NTS is unsupported. If the
+capability check itself is temporarily unavailable, Atlaso preserves existing NTS desired-state flags and keeps the
+controls disabled until detection succeeds. Validation blocks appliance apply while an enabled source or server mode
+still requests NTS and capability remains unknown.</p>
+<p>After upgrading from the release that removed NTS, Atlaso runs <code>ntp_nts_restoration_v1</code> once. It re-enables and
+normalizes only the canonical Cloudflare and Netnod default rows and records a value-free system audit. Custom sources
+remain unchanged, and NTS server mode stays off until an administrator enables it. Turning server mode off removes the
+managed <code>ntp:nts</code> certificate record; the next NTP apply removes deployed server certificate, key, and cookie material
+while leaving authenticated upstream client sources enabled.</p>
 <h2 id="verify">Verify<a class="headerlink" href="#verify" title="Permanent link">&para;</a></h2>
 <p>After the task succeeds, confirm the service is active and the appliance has selected a valid peer. Allow normal
 settling time before treating an initial unsynchronized state as failure. Restore the previous sources and reapply if
 the selected configuration cannot synchronize.</p>
 <!-- BEGIN GENERATED ADDITIONAL SCREENSHOTS -->
+<h2 id="additional-verified-states">Additional verified states<a class="headerlink" href="#additional-verified-states" title="Permanent link">&para;</a></h2>
+<p>These captures show responsive layouts and useful operational states referenced by this page.</p>
+<h3 id="ntp-and-nts_1">NTP and NTS<a class="headerlink" href="#ntp-and-nts_1" title="Permanent link">&para;</a></h3>
+<p><img alt="Atlaso NTP and NTS page in the clean-appliance responsive viewport." src="../../assets/screenshots/ntp-clean-responsive.webp" /></p>
+<p><em>Figure: NTP and NTS in the verified clean-appliance responsive state.</em></p>
 <!-- END GENERATED ADDITIONAL SCREENSHOTS -->
 
 
