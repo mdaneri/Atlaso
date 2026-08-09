@@ -17,14 +17,28 @@ LOCK_ENTRY_RE = re.compile(r"^([A-Za-z0-9_.-]+)==([^\\\s]+)")
 
 
 def normalize_name(value: str) -> str:
+    """Normalize name.
+
+    Returns:
+        The normalize name result.
+    """
     return re.sub(r"[-_.]+", "-", value).lower()
 
 
 def markdown(value: str) -> str:
+    """Return markdown."""
     return value.replace("|", "\\|").replace("\n", " ").strip()
 
 
 def locked_packages(path: Path) -> dict[str, tuple[str, str]]:
+    """Return locked packages.
+
+    Args:
+        path: Filesystem or URL path to read, validate, or update.
+
+    Raises:
+        ValueError: If an input value is invalid.
+    """
     entries: dict[str, tuple[str, str]] = {}
     for raw_line in path.read_text(encoding="utf-8").splitlines():
         match = LOCK_ENTRY_RE.match(raw_line.strip())
@@ -41,6 +55,7 @@ def locked_packages(path: Path) -> dict[str, tuple[str, str]]:
 
 
 def license_from_metadata(metadata) -> str:
+    """Return license from metadata."""
     expression = (metadata.get("License-Expression") or "").strip()
     if expression:
         return expression
@@ -54,6 +69,7 @@ def license_from_metadata(metadata) -> str:
 
 
 def source_from_metadata(metadata) -> str:
+    """Return source from metadata."""
     homepage = (metadata.get("Home-page") or "").strip()
     if homepage:
         return homepage
@@ -70,6 +86,11 @@ def source_from_metadata(metadata) -> str:
 
 
 def wheel_records(wheelhouse: Path, expected: dict[str, tuple[str, str]]) -> dict[str, dict[str, str]]:
+    """Return wheel records.
+
+    Raises:
+        ValueError: If an input value is invalid.
+    """
     records: dict[str, dict[str, str]] = {}
     for wheel in sorted(wheelhouse.glob("*.whl")):
         with zipfile.ZipFile(wheel) as archive:
@@ -113,6 +134,11 @@ def wheel_records(wheelhouse: Path, expected: dict[str, tuple[str, str]]) -> dic
 def installed_python_records(
     environment: Path, expected: dict[str, tuple[str, str]] | None = None
 ) -> dict[str, dict[str, str]]:
+    """Return installed python records.
+
+    Raises:
+        ValueError: If an input value is invalid.
+    """
     records: dict[str, dict[str, str]] = {}
     metadata_paths = {
         metadata_path
@@ -155,6 +181,14 @@ def installed_python_records(
 
 
 def rpm_records(path: Path) -> list[dict[str, str]]:
+    """Return rpm records.
+
+    Args:
+        path: Filesystem or URL path to read, validate, or update.
+
+    Raises:
+        ValueError: If an input value is invalid.
+    """
     records: list[dict[str, str]] = []
     for line in path.read_text(encoding="utf-8").splitlines():
         name, version, license_name, source = (part.strip() for part in line.split("\t", 3))
@@ -167,6 +201,11 @@ def rpm_records(path: Path) -> list[dict[str, str]]:
 
 
 def vendored_records(config_path: Path) -> list[dict[str, str]]:
+    """Return vendored records.
+
+    Raises:
+        ValueError: If an input value is invalid.
+    """
     config = json.loads(config_path.read_text(encoding="utf-8"))
     records = config.get("vendored_components")
     if not isinstance(records, list) or not records:
@@ -185,6 +224,11 @@ def vendored_records(config_path: Path) -> list[dict[str, str]]:
 
 
 def render_section(title: str, records: list[dict[str, str]], *, notice_column: bool = False) -> list[str]:
+    """Render section.
+
+    Returns:
+        The rendered section.
+    """
     lines = [f"## {title}", ""]
     header = "| Component | Version | License | Source |"
     divider = "| --- | --- | --- | --- |"
@@ -202,6 +246,15 @@ def render_section(title: str, records: list[dict[str, str]], *, notice_column: 
 
 
 def generate_notice(*, output: Path, version: str, python_records: dict[str, dict[str, str]], vendored: list[dict[str, str]], rpms: list[dict[str, str]] | None) -> None:
+    """Build notice.
+
+    Args:
+        output: Destination for generated content.
+        version: Version identifier to validate or publish.
+        python_records: Python records supplied by the caller.
+        vendored: Vendored supplied by the caller.
+        rpms: Rpms supplied by the caller.
+    """
     lines = [
         "# Atlaso Third-Party Notices",
         "",
@@ -219,6 +272,15 @@ def generate_notice(*, output: Path, version: str, python_records: dict[str, dic
 
 
 def main() -> int:
+    """Run the command-line entry point.
+
+    Returns:
+        The main result.
+
+    Raises:
+        SystemExit: If the operation encounters an invalid state.
+        ValueError: If an input value is invalid.
+    """
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--version", required=True)
     parser.add_argument("--output", type=Path, required=True)

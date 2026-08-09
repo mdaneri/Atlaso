@@ -1,3 +1,5 @@
+"""Test lifecycle test behavior."""
+
 from __future__ import annotations
 
 import argparse
@@ -10,6 +12,7 @@ import pytest
 
 
 def load_lifecycle_module():
+    """Return lifecycle module."""
     path = Path(__file__).resolve().parents[1] / "scripts" / "interop" / "lifecycle_test.py"
     spec = importlib.util.spec_from_file_location("lifecycle_test_module", path)
     assert spec and spec.loader
@@ -20,6 +23,7 @@ def load_lifecycle_module():
 
 
 def load_network_boot_lifecycle_module():
+    """Return network boot lifecycle module."""
     path = Path(__file__).resolve().parents[1] / "scripts" / "interop" / "network_boot_lifecycle.py"
     spec = importlib.util.spec_from_file_location("network_boot_lifecycle_module", path)
     assert spec and spec.loader
@@ -30,6 +34,7 @@ def load_network_boot_lifecycle_module():
 
 
 def test_network_boot_lifecycle_extracts_csrf_without_password_query_login():
+    """Verify that network boot lifecycle extracts csrf without password query login."""
     lifecycle = load_network_boot_lifecycle_module()
     assert lifecycle.csrf_from_page('<input type="hidden" name="csrf" value="csrf-158">') == "csrf-158"
     source = Path(lifecycle.__file__).read_text(encoding="utf-8")
@@ -38,6 +43,12 @@ def test_network_boot_lifecycle_extracts_csrf_without_password_query_login():
 
 
 def write_baseline(path: Path, *, fingerprint: str = "abc123") -> None:
+    """Persist baseline.
+
+    Args:
+        path: Filesystem or URL path to read, validate, or update.
+        fingerprint: Fingerprint supplied by the caller.
+    """
     path.write_text(
         """
 {
@@ -64,6 +75,7 @@ def write_baseline(path: Path, *, fingerprint: str = "abc123") -> None:
 
 
 def test_restored_certificate_baseline_check_matches_fingerprint(tmp_path):
+    """Verify that restored certificate baseline check matches fingerprint."""
     lifecycle = load_lifecycle_module()
     baseline = tmp_path / "result.json"
     write_baseline(baseline)
@@ -86,6 +98,7 @@ def test_restored_certificate_baseline_check_matches_fingerprint(tmp_path):
 
 
 def test_restored_certificate_baseline_check_rejects_changed_fingerprint(tmp_path):
+    """Verify that restored certificate baseline check rejects changed fingerprint."""
     lifecycle = load_lifecycle_module()
     baseline = tmp_path / "result.json"
     write_baseline(baseline)
@@ -107,6 +120,7 @@ def test_restored_certificate_baseline_check_rejects_changed_fingerprint(tmp_pat
 
 
 def test_wan_policy_payload_sets_loss_without_changing_latency_baseline():
+    """Verify that wan policy payload sets loss without changing latency baseline."""
     lifecycle = load_lifecycle_module()
 
     payload = lifecycle.wan_policy_payload(packet_loss_percent=100.0)
@@ -119,13 +133,23 @@ def test_wan_policy_payload_sets_loss_without_changing_latency_baseline():
 
 
 def test_set_lifecycle_wan_policy_updates_duplicate_restored_rows():
+    """Verify that set lifecycle wan policy updates duplicate restored rows."""
     lifecycle = load_lifecycle_module()
 
     class FakeClient:
+        """Represent fake client."""
         def __init__(self) -> None:
+            """Initialize the fake client."""
             self.patched: list[tuple[str, dict[str, object]]] = []
 
         def json_request(self, method: str, path: str, json_body=None):  # type: ignore[no-untyped-def]
+            """Return json request.
+
+            Args:
+                method: HTTP or protocol method to invoke.
+                path: Filesystem or URL path to read, validate, or update.
+                json_body: Json body supplied by the caller.
+            """
             if method == "GET" and path == "/api/v1/wan/policies":
                 return [
                     {"id": 1, "name": "Lifecycle WAN"},
@@ -146,6 +170,7 @@ def test_set_lifecycle_wan_policy_updates_duplicate_restored_rows():
 
 
 def test_appliance_health_checks_version_before_authentication(monkeypatch):
+    """Verify that appliance health checks version before authentication."""
     lifecycle = load_lifecycle_module()
     calls: list[tuple[str, str]] = []
     version_payload = {
@@ -156,22 +181,43 @@ def test_appliance_health_checks_version_before_authentication(monkeypatch):
     }
 
     class FakeClient:
+        """Represent fake client."""
         base_url = "https://192.0.2.10"
 
         def request(self, method, path):  # type: ignore[no-untyped-def]
+            """Return request.
+
+            Args:
+                method: HTTP or protocol method to invoke.
+                path: Filesystem or URL path to read, validate, or update.
+            """
             calls.append((method, path))
             return 200, "{}", {}
 
         def json_request(self, method, path):  # type: ignore[no-untyped-def]
+            """Return json request.
+
+            Args:
+                method: HTTP or protocol method to invoke.
+                path: Filesystem or URL path to read, validate, or update.
+            """
             calls.append((method, path))
             assert path == "/api/v1/dashboard"
             return {"services": []}
 
     class AnonymousVersionClient:
+        """Represent anonymous version client."""
         def __init__(self, base_url):  # type: ignore[no-untyped-def]
+            """Initialize the anonymous version client."""
             assert base_url == FakeClient.base_url
 
         def json_request(self, method, path):  # type: ignore[no-untyped-def]
+            """Return json request.
+
+            Args:
+                method: HTTP or protocol method to invoke.
+                path: Filesystem or URL path to read, validate, or update.
+            """
             calls.append((method, path))
             assert path == "/api/v1/version"
             return version_payload
@@ -192,6 +238,7 @@ def test_appliance_health_checks_version_before_authentication(monkeypatch):
 
 
 def test_routing_wan_only_plan_and_routing_rule_payload():
+    """Verify that routing wan only plan and routing rule payload."""
     lifecycle = load_lifecycle_module()
     args = lifecycle.parse_args(["--password", "test", "--routing-wan-only", "--plan-only"])
 
@@ -210,6 +257,7 @@ def test_routing_wan_only_plan_and_routing_rule_payload():
 
 
 def test_oidc_only_plan_is_focused_and_mutually_exclusive():
+    """Verify that oidc only plan is focused and mutually exclusive."""
     lifecycle = load_lifecycle_module()
     args = lifecycle.parse_args(["--password", "test", "--oidc-only", "--plan-only"])
 
@@ -233,6 +281,7 @@ def test_oidc_only_plan_is_focused_and_mutually_exclusive():
 
 
 def test_full_lifecycle_plan_includes_passwordless_web_terminal_acceptance():
+    """Verify that full lifecycle plan includes passwordless web terminal acceptance."""
     lifecycle = load_lifecycle_module()
     args = lifecycle.parse_args(["--password", "test", "--plan-only"])
 
@@ -251,11 +300,13 @@ def test_full_lifecycle_plan_includes_passwordless_web_terminal_acceptance():
 
 
 def test_release_database_identity_uses_privileged_appliance_command(monkeypatch):
+    """Verify that release database identity uses privileged appliance command."""
     lifecycle = load_lifecycle_module()
     args = lifecycle.parse_args(["--password", "test", "--ssh-password", "test", "--plan-only"])
     captured: dict[str, str] = {}
 
     def fake_ssh_command(host, command_args, command, *, role):  # type: ignore[no-untyped-def]
+        """Return fake ssh command."""
         captured.update(host=host, command=command, role=role)
         return {
             "returncode": 0,
@@ -282,6 +333,7 @@ def test_release_database_identity_uses_privileged_appliance_command(monkeypatch
 
 
 def test_esx_storage_lifecycle_plan_is_dual_stack_and_format_is_explicit():
+    """Verify that esx storage lifecycle plan is dual stack and format is explicit."""
     lifecycle = load_lifecycle_module()
     args = lifecycle.parse_args(
         [
@@ -310,19 +362,36 @@ def test_esx_storage_lifecycle_plan_is_dual_stack_and_format_is_explicit():
 
 
 def test_apply_units_requires_and_submits_esx_format_confirmation(monkeypatch):
+    """Verify that apply units requires and submits esx format confirmation."""
     lifecycle = load_lifecycle_module()
 
     class FakeClient:
+        """Represent fake client."""
         def __init__(self) -> None:
+            """Initialize the fake client."""
             self.form = []
 
         def request(self, method, path, **kwargs):  # type: ignore[no-untyped-def]
+            """Return request.
+
+            Args:
+                method: HTTP or protocol method to invoke.
+                path: Filesystem or URL path to read, validate, or update.
+                kwargs: Additional keyword arguments forwarded to the wrapped call.
+            """
             if method == "GET":
                 return 200, '<input type="hidden" name="csrf" value="token">', {}
             self.form = kwargs["form"]
             return 202, json.dumps({"job_id": "job-1", "status_url": "/tasks/job-1/status"}), {}
 
         def json_request(self, method, path, **_kwargs):  # type: ignore[no-untyped-def]
+            """Return json request.
+
+            Args:
+                method: HTTP or protocol method to invoke.
+                path: Filesystem or URL path to read, validate, or update.
+                _kwargs: Additional keyword arguments accepted by the test double.
+            """
             if path == "/appliance-apply/review":
                 return {
                     "units": [
@@ -345,6 +414,7 @@ def test_apply_units_requires_and_submits_esx_format_confirmation(monkeypatch):
 
 
 def test_authoritative_dns_lifecycle_probe_covers_authority_reverse_nxdomain_and_recursion():
+    """Verify that authoritative dns lifecycle probe covers authority reverse nxdomain and recursion."""
     import base64
 
     lifecycle = load_lifecycle_module()
@@ -370,13 +440,26 @@ def test_authoritative_dns_lifecycle_probe_covers_authority_reverse_nxdomain_and
 
 
 def test_apply_units_retries_once_when_desired_state_drifts(monkeypatch):
+    """Verify that apply units retries once when desired state drifts."""
     lifecycle = load_lifecycle_module()
 
     class FakeClient:
+        """Represent fake client."""
         def __init__(self) -> None:
+            """Initialize the fake client."""
             self.submissions = 0
 
         def request(self, method, path, **_kwargs):
+            """Return request.
+
+            Args:
+                method: HTTP or protocol method to invoke.
+                path: Filesystem or URL path to read, validate, or update.
+                _kwargs: Additional keyword arguments accepted by the test double.
+
+            Raises:
+                AssertionError: If an expected invariant is not satisfied.
+            """
             if method == "GET" and path == "/appliance-apply":
                 return 200, '<input type="hidden" name="csrf" value="token">', {}
             if method == "POST" and path == "/appliance-apply":
@@ -391,6 +474,16 @@ def test_apply_units_retries_once_when_desired_state_drifts(monkeypatch):
             raise AssertionError(f"unexpected request {method} {path}")
 
         def json_request(self, method, path, **_kwargs):
+            """Return json request.
+
+            Args:
+                method: HTTP or protocol method to invoke.
+                path: Filesystem or URL path to read, validate, or update.
+                _kwargs: Additional keyword arguments accepted by the test double.
+
+            Raises:
+                AssertionError: If an expected invariant is not satisfied.
+            """
             assert method == "GET"
             if path == "/tasks/job_1/status":
                 return {
@@ -415,6 +508,7 @@ def test_apply_units_retries_once_when_desired_state_drifts(monkeypatch):
 
 
 def test_routing_probe_commands_cover_block_allow_and_route_role_paths():
+    """Verify that routing probe commands cover block allow and route role paths."""
     lifecycle = load_lifecycle_module()
     args = lifecycle.parse_args(["--password", "test"])
 
@@ -432,12 +526,14 @@ def test_routing_probe_commands_cover_block_allow_and_route_role_paths():
 
 
 def test_host_state_checks_verify_vcf_trust_runtime_dependencies(monkeypatch):
+    """Verify that host state checks verify vcf trust runtime dependencies."""
     lifecycle = load_lifecycle_module()
     args = lifecycle.parse_args(["--password", "test"])
     captured = {}
     execution_contexts = {}
 
     def fake_run_host_checks(_args, checks, *, appliance_as_root=True):
+        """Return fake run host checks."""
         captured.update(checks)
         execution_contexts.update({name: appliance_as_root for name in checks})
         return checks
@@ -472,6 +568,7 @@ def test_host_state_checks_verify_vcf_trust_runtime_dependencies(monkeypatch):
 
 
 def test_managed_ldap_lifecycle_check_sends_directory_password_only_through_stdin(monkeypatch):
+    """Verify that managed ldap lifecycle check sends directory password only through stdin."""
     lifecycle = load_lifecycle_module()
     args = lifecycle.parse_args(
         [
@@ -486,6 +583,7 @@ def test_managed_ldap_lifecycle_check_sends_directory_password_only_through_stdi
     captured = {}
 
     def fake_run(command, **kwargs):
+        """Return fake run."""
         captured["command"] = command
         captured["input"] = kwargs.get("input")
         return lifecycle.subprocess.CompletedProcess(command, 0, "", "")
@@ -502,6 +600,7 @@ def test_managed_ldap_lifecycle_check_sends_directory_password_only_through_stdi
 
 
 def test_appliance_user_ssh_command_does_not_wrap_with_sudo(monkeypatch):
+    """Verify that appliance user ssh command does not wrap with sudo."""
     lifecycle = load_lifecycle_module()
     args = lifecycle.parse_args(
         [
@@ -516,6 +615,7 @@ def test_appliance_user_ssh_command_does_not_wrap_with_sudo(monkeypatch):
     captured = {}
 
     def fake_run(command, **_kwargs):
+        """Return fake run."""
         captured["command"] = command
         return lifecycle.subprocess.CompletedProcess(command, 0, "ok\n", "")
 
@@ -535,6 +635,7 @@ def test_appliance_user_ssh_command_does_not_wrap_with_sudo(monkeypatch):
 
 
 def test_esxi_pxe_payload_uses_dhcp_lifecycle_host():
+    """Verify that esxi pxe payload uses dhcp lifecycle host."""
     lifecycle = load_lifecycle_module()
     args = lifecycle.parse_args(["--password", "test", "--pxe-test-mode", "esxi", "--pxe-client-mac", "00:50:56:20:01:02"])
 
@@ -547,6 +648,7 @@ def test_esxi_pxe_payload_uses_dhcp_lifecycle_host():
 
 
 def test_configure_esxi_pxe_selects_dhcp_scope_and_proves_reservation():
+    """Verify that configure esxi pxe selects dhcp scope and proves reservation."""
     lifecycle = load_lifecycle_module()
     args = lifecycle.parse_args(
         [
@@ -562,11 +664,23 @@ def test_configure_esxi_pxe_selects_dhcp_scope_and_proves_reservation():
     )
 
     class FakeClient:
+        """Represent fake client."""
         def __init__(self):
+            """Initialize the fake client."""
             self.boot_form = []
             self.host_payload = {}
 
         def request(self, method, path, **kwargs):
+            """Return request.
+
+            Args:
+                method: HTTP or protocol method to invoke.
+                path: Filesystem or URL path to read, validate, or update.
+                kwargs: Additional keyword arguments forwarded to the wrapped call.
+
+            Raises:
+                AssertionError: If an expected invariant is not satisfied.
+            """
             if method == "GET" and path == "/esxi-pxe":
                 return 200, '<input type="hidden" name="csrf" value="token">', {}
             if method == "POST" and path == "/esxi-pxe/boot-settings":
@@ -581,6 +695,17 @@ def test_configure_esxi_pxe_selects_dhcp_scope_and_proves_reservation():
             raise AssertionError(f"unexpected request {method} {path}")
 
         def json_request(self, method, path, json_body=None, **_kwargs):
+            """Return json request.
+
+            Args:
+                method: HTTP or protocol method to invoke.
+                path: Filesystem or URL path to read, validate, or update.
+                json_body: Json body supplied by the caller.
+                _kwargs: Additional keyword arguments accepted by the test double.
+
+            Raises:
+                AssertionError: If an expected invariant is not satisfied.
+            """
             if method == "GET" and path == "/api/v1/dhcp/scopes":
                 return [
                     {

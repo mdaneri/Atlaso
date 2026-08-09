@@ -1,3 +1,5 @@
+"""Test photon image behavior."""
+
 from pathlib import Path
 
 import hashlib
@@ -15,6 +17,7 @@ import pytest
 
 
 def load_lifecycle_runner():
+    """Return lifecycle runner."""
     path = Path("scripts/interop/lifecycle_test.py")
     spec = importlib.util.spec_from_file_location("lifecycle_test", path)
     assert spec and spec.loader
@@ -25,10 +28,16 @@ def load_lifecycle_runner():
 
 
 def sha256(path: str) -> str:
+    """Return sha256.
+
+    Args:
+        path: Filesystem or URL path to read, validate, or update.
+    """
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
 
 def test_photon_image_installs_fixed_size_atlaso_grub_branding():
+    """Verify that photon image installs fixed size atlaso grub branding."""
     background = Path("image/common/boot/grub/atlaso.png").read_bytes()
     photon_logo = Path("image/common/boot/grub/photon-os-logo.png").read_bytes()
     theme = Path("image/common/boot/grub/theme.txt").read_text(encoding="utf-8")
@@ -52,6 +61,7 @@ def test_photon_image_installs_fixed_size_atlaso_grub_branding():
 
 
 def test_inventory_linux_release_package_is_reproducible_and_deployable(tmp_path):
+    """Verify that inventory linux release package is reproducible and deployable."""
     path = Path("scripts/build_inventory_linux_package.py")
     spec = importlib.util.spec_from_file_location("build_inventory_linux_package", path)
     assert spec and spec.loader
@@ -273,6 +283,7 @@ def test_inventory_linux_release_package_is_reproducible_and_deployable(tmp_path
 
 
 def test_windows_inventory_linux_build_selects_one_distribution_and_native_cache():
+    """Verify that windows inventory linux build selects one distribution and native cache."""
     wrapper = Path("scripts/windows/common/Build-AtlasoInventoryLinux.ps1").read_text(
         encoding="utf-8"
     )
@@ -301,6 +312,7 @@ def test_windows_inventory_linux_build_selects_one_distribution_and_native_cache
 
 
 def test_wsl_build_state_errors_are_non_mutating_and_actionable():
+    """Verify that wsl build state errors are non mutating and actionable."""
     module = Path("scripts/windows/common/Atlaso.WslBuild.psm1").read_text(
         encoding="utf-8"
     )
@@ -317,6 +329,7 @@ def test_wsl_build_state_errors_are_non_mutating_and_actionable():
 
 
 def test_wsl_build_module_behavior():
+    """Verify that wsl build module behavior."""
     pwsh = shutil.which("pwsh")
     if pwsh is None:
         pytest.skip("PowerShell 7 is not available")
@@ -341,6 +354,7 @@ def test_wsl_build_module_behavior():
 
 
 def test_wsl_build_contract_and_setup_are_pinned_idempotent_and_non_destructive():
+    """Verify that wsl build contract and setup are pinned idempotent and non destructive."""
     contract = json.loads(
         Path("image/inventory-linux/wsl-build-contract.json").read_text(
             encoding="utf-8"
@@ -392,6 +406,7 @@ def test_wsl_build_contract_and_setup_are_pinned_idempotent_and_non_destructive(
 
 
 def test_photon_wrappers_do_not_build_inventory_linux():
+    """Verify that photon wrappers do not build inventory linux."""
     for path in (
         "scripts/windows/hyperv/build-photon-image.ps1",
         "scripts/windows/vmware/build-photon-image.ps1",
@@ -402,6 +417,7 @@ def test_photon_wrappers_do_not_build_inventory_linux():
 
 
 def test_inventory_linux_retries_uncertain_reboot_acknowledgments():
+    """Verify that inventory linux retries uncertain reboot acknowledgments."""
     client = Path(
         "image/inventory-linux/external/overlay/usr/bin/atlaso-inventory"
     ).read_text(encoding="utf-8")
@@ -413,6 +429,7 @@ def test_inventory_linux_retries_uncertain_reboot_acknowledgments():
 
 
 def test_inventory_linux_shell_hardware_console_and_reboot_fixtures():
+    """Verify that inventory linux shell hardware console and reboot fixtures."""
     if os.name == "nt":
         return
     completed = subprocess.run(
@@ -430,6 +447,7 @@ def test_inventory_linux_shell_hardware_console_and_reboot_fixtures():
 
 
 def test_inventory_linux_retries_capacity_responses_with_bounded_backoff():
+    """Verify that inventory linux retries capacity responses with bounded backoff."""
     client = Path(
         "image/inventory-linux/external/overlay/usr/bin/atlaso-inventory"
     ).read_text(encoding="utf-8")
@@ -442,6 +460,7 @@ def test_inventory_linux_retries_capacity_responses_with_bounded_backoff():
 
 
 def test_photon_provisioning_management_network_matches_eth0_only():
+    """Verify that photon provisioning management network matches eth0 only."""
     script = Path("image/common/scripts/provision-atlaso.sh").read_text(encoding="utf-8")
     main = Path("atlaso/app/main.py").read_text(encoding="utf-8")
     seed = Path("atlaso/app/seed.py").read_text(encoding="utf-8")
@@ -459,6 +478,7 @@ def test_photon_provisioning_management_network_matches_eth0_only():
 
 
 def test_photon_provisioning_installs_default_nginx_management_proxy():
+    """Verify that photon provisioning installs default nginx management proxy."""
     script = Path("image/common/scripts/provision-atlaso.sh").read_text(encoding="utf-8")
     bootstrap = Path("scripts/appliance/atlaso-bootstrap-https").read_text(encoding="utf-8")
     systemd_unit = Path("image/hyperv/systemd/atlaso.service").read_text(encoding="utf-8")
@@ -597,6 +617,7 @@ def test_photon_provisioning_installs_default_nginx_management_proxy():
 
 
 def test_photon_provisioning_prepares_attached_data_disks():
+    """Verify that photon provisioning prepares attached data disks."""
     provision = Path("image/common/scripts/provision-atlaso.sh").read_text(encoding="utf-8")
     mount_script = Path("scripts/appliance/atlaso-mount-data-disks").read_text(encoding="utf-8")
     hyperv_unit = Path("image/hyperv/systemd/atlaso.service").read_text(encoding="utf-8")
@@ -648,6 +669,7 @@ def test_photon_provisioning_prepares_attached_data_disks():
 
 
 def test_bundled_ipxe_bootloaders_have_provenance_and_expected_hashes():
+    """Verify that bundled ipxe bootloaders have provenance and expected hashes."""
     readme = Path("third_party/ipxe/README.md").read_text(encoding="utf-8")
     copying = Path("third_party/ipxe/COPYING").read_text(encoding="utf-8")
     gpl = Path("third_party/ipxe/COPYING.GPLv2").read_text(encoding="utf-8")
@@ -667,6 +689,7 @@ def test_bundled_ipxe_bootloaders_have_provenance_and_expected_hashes():
 
 
 def test_packer_templates_stage_shared_appliance_assets():
+    """Verify that packer templates stage shared appliance assets."""
     for template_path in (
         Path("image/hyperv/atlaso-photon.pkr.hcl"),
         Path("image/vmware-workstation/atlaso-photon.pkr.hcl"),
@@ -680,6 +703,7 @@ def test_packer_templates_stage_shared_appliance_assets():
 
 
 def test_vmware_packer_build_uses_two_compacted_payload_disks():
+    """Verify that vmware packer build uses two compacted payload disks."""
     template = Path("image/vmware-workstation/atlaso-photon.pkr.hcl").read_text(encoding="utf-8")
     kickstart = Path("image/hyperv/http/photon-ks.json.pkrtpl").read_text(encoding="utf-8")
     wrapper = Path("scripts/windows/vmware/build-photon-image.ps1").read_text(encoding="utf-8")
@@ -697,6 +721,7 @@ def test_vmware_packer_build_uses_two_compacted_payload_disks():
 
 
 def test_photon_kickstart_uses_deterministic_build_time_sshd_service():
+    """Verify that photon kickstart uses deterministic build time sshd service."""
     build_module = Path("scripts/windows/common/Atlaso.PhotonImage.psm1").read_text(encoding="utf-8")
 
     disable_socket = "'systemctl disable sshd.socket'"
@@ -708,6 +733,7 @@ def test_photon_kickstart_uses_deterministic_build_time_sshd_service():
 
 
 def test_packer_build_uses_atlaso_management_network_by_default():
+    """Verify that packer build uses atlaso management network by default."""
     template = Path("image/hyperv/atlaso-photon.pkr.hcl").read_text(encoding="utf-8")
     docs = Path("image/hyperv/README.md").read_text(encoding="utf-8")
     root_docs = Path("docs/reference/full-technical-reference.md").read_text(encoding="utf-8")
@@ -797,6 +823,7 @@ def test_packer_build_uses_atlaso_management_network_by_default():
 
 
 def test_photon_image_optional_pip_global_index_configuration():
+    """Verify that photon image optional pip global index configuration."""
     wrapper = Path("scripts/windows/hyperv/build-photon-image.ps1").read_text(encoding="utf-8")
     build_module = Path("scripts/windows/common/Atlaso.PhotonImage.psm1").read_text(encoding="utf-8")
     template = Path("image/hyperv/atlaso-photon.pkr.hcl").read_text(encoding="utf-8")
@@ -873,6 +900,7 @@ def test_photon_image_optional_pip_global_index_configuration():
 
 
 def test_vmware_builder_uses_nat_gateway_dns_by_default():
+    """Verify that vmware builder uses nat gateway dns by default."""
     wrapper = Path("scripts/windows/vmware/build-photon-image.ps1").read_text(encoding="utf-8")
     docs = Path("image/vmware-workstation/README.md").read_text(encoding="utf-8")
 
@@ -890,6 +918,7 @@ def test_vmware_builder_uses_nat_gateway_dns_by_default():
 
 
 def test_lifecycle_hyperv_script_uses_separate_vm_set_by_default():
+    """Verify that lifecycle hyperv script uses separate vm set by default."""
     script = Path("scripts/windows/hyperv/run-lifecycle-test.ps1").read_text(encoding="utf-8")
     wrapper = Path("scripts/windows/hyperv/invoke-lifecycle-test.ps1").read_text(encoding="utf-8")
     runner = Path("scripts/interop/lifecycle_test.py").read_text(encoding="utf-8")
@@ -948,6 +977,7 @@ def test_lifecycle_hyperv_script_uses_separate_vm_set_by_default():
 
 
 def test_create_atlaso_test_vm_wrapper_is_safe_and_simple():
+    """Verify that create atlaso test vm wrapper is safe and simple."""
     script = Path("scripts/windows/hyperv/create-atlaso-test-vm.ps1").read_text(encoding="utf-8")
     vm_script = Path("scripts/windows/hyperv/create-atlaso-vm.ps1").read_text(encoding="utf-8")
     docs = Path("image/hyperv/README.md").read_text(encoding="utf-8")
@@ -1000,6 +1030,7 @@ def test_create_atlaso_test_vm_wrapper_is_safe_and_simple():
 
 
 def test_windows_script_names_use_provider_tokens():
+    """Verify that windows script names use provider tokens."""
     script_paths = {
         path.relative_to("scripts/windows").as_posix()
         for path in Path("scripts/windows").rglob("*.ps1")
@@ -1045,6 +1076,7 @@ def test_windows_script_names_use_provider_tokens():
 
 
 def test_windows_documentation_requires_powershell_7():
+    """Verify that windows documentation requires powershell 7."""
     documentation_paths = [
         Path("README.md"),
         *Path("clients").rglob("*.md"),
@@ -1066,6 +1098,7 @@ def test_windows_documentation_requires_powershell_7():
 
 
 def test_create_atlaso_vmware_test_vm_wrapper_uses_common_helpers():
+    """Verify that create atlaso vmware test vm wrapper uses common helpers."""
     script = Path("scripts/windows/vmware/create-atlaso-test-vm.ps1").read_text(encoding="utf-8")
     vm_script = Path("scripts/windows/vmware/create-atlaso-vm.ps1").read_text(encoding="utf-8")
     nics_script = Path("scripts/windows/vmware/set-test-nics.ps1").read_text(encoding="utf-8")
@@ -1173,6 +1206,7 @@ def test_create_atlaso_vmware_test_vm_wrapper_uses_common_helpers():
 
 
 def test_vmware_deploy_wheel_supports_password_backed_noninteractive_deploy():
+    """Verify that vmware deploy wheel supports password backed noninteractive deploy."""
     script = Path("scripts/windows/vmware/deploy-wheel.ps1").read_text(encoding="utf-8")
     readme = Path("docs/reference/full-technical-reference.md").read_text(encoding="utf-8")
 
@@ -1224,6 +1258,7 @@ def test_vmware_deploy_wheel_supports_password_backed_noninteractive_deploy():
 
 
 def test_lifecycle_hyperv_script_does_not_cleanup_without_explicit_flag():
+    """Verify that lifecycle hyperv script does not cleanup without explicit flag."""
     script = Path("scripts/windows/hyperv/run-lifecycle-test.ps1").read_text(encoding="utf-8")
 
     assert "[switch]$CleanupCreatedLab" in script
@@ -1234,6 +1269,7 @@ def test_lifecycle_hyperv_script_does_not_cleanup_without_explicit_flag():
 
 
 def test_lifecycle_single_command_wrapper_prepares_runs_and_cleans_up_by_default():
+    """Verify that lifecycle single command wrapper prepares runs and cleans up by default."""
     script = Path("scripts/windows/hyperv/invoke-lifecycle-test.ps1").read_text(encoding="utf-8")
 
     assert "DefaultParameterSetName = 'Run'" in script
@@ -1263,6 +1299,7 @@ def test_lifecycle_single_command_wrapper_prepares_runs_and_cleans_up_by_default
 
 
 def test_lifecycle_cleanup_scripts_are_scoped_to_atlaso_assets():
+    """Verify that lifecycle cleanup scripts are scoped to atlaso assets."""
     switch_script = Path("scripts/windows/hyperv/create-switches.ps1").read_text(encoding="utf-8")
     network_script = Path("scripts/windows/hyperv/remove-lifecycle-networks.ps1").read_text(encoding="utf-8")
     vm_script = Path("scripts/windows/hyperv/remove-lifecycle-vms.ps1").read_text(encoding="utf-8")
@@ -1281,6 +1318,7 @@ def test_lifecycle_cleanup_scripts_are_scoped_to_atlaso_assets():
 
 
 def test_vmware_lifecycle_cleanup_only_removes_existing_lifecycle_vms():
+    """Verify that vmware lifecycle cleanup only removes existing lifecycle vms."""
     wrapper = Path("scripts/windows/vmware/invoke-lifecycle-test.ps1").read_text(encoding="utf-8")
     cleanup_script = Path("scripts/windows/vmware/remove-lifecycle-vms.ps1").read_text(encoding="utf-8")
     docs = Path("docs/reference/vmware-workstation-lifecycle-testing.md").read_text(encoding="utf-8")
@@ -1305,6 +1343,7 @@ def test_vmware_lifecycle_cleanup_only_removes_existing_lifecycle_vms():
 
 
 def test_lifecycle_hyperv_script_finds_alpine_ips_and_pins_plink_hostkeys():
+    """Verify that lifecycle hyperv script finds alpine ips and pins plink hostkeys."""
     script = Path("scripts/windows/hyperv/run-lifecycle-test.ps1").read_text(encoding="utf-8")
 
     assert "[string]$ApplianceSshUser = 'admin'" in script
@@ -1326,6 +1365,7 @@ def test_lifecycle_hyperv_script_finds_alpine_ips_and_pins_plink_hostkeys():
 
 
 def test_lifecycle_vmware_script_supports_routing_wan_only_and_esxi_pxe_install():
+    """Verify that lifecycle vmware script supports routing wan only and esxi pxe install."""
     wrapper = Path("scripts/windows/vmware/invoke-lifecycle-test.ps1").read_text(encoding="utf-8")
     runner = Path("scripts/windows/vmware/run-lifecycle-test.ps1").read_text(encoding="utf-8")
 
@@ -1412,6 +1452,7 @@ def test_lifecycle_vmware_script_supports_routing_wan_only_and_esxi_pxe_install(
 
 
 def test_lifecycle_hyperv_script_seeds_alpine_clients_for_ssh():
+    """Verify that lifecycle hyperv script seeds alpine clients for ssh."""
     script = Path("scripts/windows/hyperv/run-lifecycle-test.ps1").read_text(encoding="utf-8")
 
     assert "[string]$ClientSshUser = 'alpine'" in script
@@ -1424,6 +1465,7 @@ def test_lifecycle_hyperv_script_seeds_alpine_clients_for_ssh():
 
 
 def test_nocloud_seed_helper_writes_client_cloud_init_contract():
+    """Verify that nocloud seed helper writes client cloud init contract."""
     script = Path("scripts/interop/create_nocloud_seed_iso.py").read_text(encoding="utf-8")
 
     assert 'vol_ident="cidata"' in script
@@ -1438,6 +1480,7 @@ def test_nocloud_seed_helper_writes_client_cloud_init_contract():
 
 
 def test_prepare_tiny_linux_client_downloads_verifies_and_converts_alpine():
+    """Verify that prepare tiny linux client downloads verifies and converts alpine."""
     script = Path("scripts/windows/hyperv/prepare-tiny-linux-client.ps1").read_text(encoding="utf-8")
 
     assert "dl-cdn.alpinelinux.org/alpine/latest-stable/releases/cloud" in script
@@ -1448,6 +1491,7 @@ def test_prepare_tiny_linux_client_downloads_verifies_and_converts_alpine():
 
 
 def test_lifecycle_runner_plan_includes_ca_and_global_apply_units():
+    """Verify that lifecycle runner plan includes ca and global apply units."""
     module = load_lifecycle_runner()
     args = module.parse_args(
         [
@@ -1489,6 +1533,7 @@ def test_lifecycle_runner_plan_includes_ca_and_global_apply_units():
 
 
 def test_lifecycle_runner_uses_supported_network_roles():
+    """Verify that lifecycle runner uses supported network roles."""
     script = Path("scripts/interop/lifecycle_test.py").read_text(encoding="utf-8")
 
     assert '"mode": "access", "role": "access"' in script
@@ -1499,6 +1544,7 @@ def test_lifecycle_runner_uses_supported_network_roles():
 
 
 def test_lifecycle_runner_supports_alpine_doas_and_plink_hostkeys():
+    """Verify that lifecycle runner supports alpine doas and plink hostkeys."""
     script = Path("scripts/interop/lifecycle_test.py").read_text(encoding="utf-8")
 
     assert "--client-a-hostkey" in script
@@ -1510,6 +1556,7 @@ def test_lifecycle_runner_supports_alpine_doas_and_plink_hostkeys():
 
 
 def test_lifecycle_runner_covers_ca_vcf_backups_wan_noise_and_console_summary():
+    """Verify that lifecycle runner covers ca vcf backups wan noise and console summary."""
     script = Path("scripts/interop/lifecycle_test.py").read_text(encoding="utf-8")
 
     assert "direct_dns_a_query_command" in script
@@ -1575,6 +1622,7 @@ def test_lifecycle_runner_covers_ca_vcf_backups_wan_noise_and_console_summary():
 
 
 def test_lifecycle_runner_summarizes_apply_validation_html():
+    """Verify that lifecycle runner summarizes apply validation html."""
     module = load_lifecycle_runner()
     summary = module.summarize_html_response(
         """
@@ -1598,6 +1646,7 @@ def test_lifecycle_runner_summarizes_apply_validation_html():
 
 
 def test_lifecycle_roadmap_splits_pester_and_pytest_ownership():
+    """Verify that lifecycle roadmap splits pester and pytest ownership."""
     doc = Path("docs/reference/hyperv-lifecycle-testing.md").read_text(encoding="utf-8")
 
     assert "Invoke-Pester tests/pester/HyperVLifecycle.Tests.ps1" in doc

@@ -1,3 +1,5 @@
+"""Implement update sources service behavior."""
+
 from __future__ import annotations
 
 import json
@@ -16,6 +18,11 @@ ATLASO_CHANNELS = {"stable", "preview", "development"}
 
 
 def update_source_settings(source: UpdateSource) -> dict[str, Any]:
+    """Update source settings.
+
+    Returns:
+        The update source settings result.
+    """
     try:
         payload = json.loads(source.settings_json or "{}")
     except json.JSONDecodeError:
@@ -24,6 +31,11 @@ def update_source_settings(source: UpdateSource) -> dict[str, Any]:
 
 
 def validate_http_url(value: str, *, label: str, required: bool) -> list[str]:
+    """Validate http url.
+
+    Returns:
+        The validate http url result.
+    """
     normalized = value.strip()
     if not normalized:
         return [f"{label} is required."] if required else []
@@ -36,6 +48,11 @@ def validate_http_url(value: str, *, label: str, required: bool) -> list[str]:
 
 
 def validate_update_source(source: UpdateSource) -> list[str]:
+    """Validate update source.
+
+    Returns:
+        The validate update source result.
+    """
     if source.kind not in UPDATE_SOURCE_KINDS:
         return ["Unsupported update source kind."]
     settings = update_source_settings(source)
@@ -56,6 +73,7 @@ def validate_update_source(source: UpdateSource) -> list[str]:
 
 
 def atlaso_manifest_url(source: UpdateSource) -> str:
+    """Return atlaso manifest url."""
     base = source.url.strip()
     if not base:
         return ""
@@ -66,14 +84,30 @@ def atlaso_manifest_url(source: UpdateSource) -> str:
 
 
 def source_rows(db: Session) -> list[UpdateSource]:
+    """Return source rows.
+
+    Args:
+        db: Active database session.
+    """
     return db.execute(select(UpdateSource).order_by(UpdateSource.kind, UpdateSource.priority, UpdateSource.name)).scalars().all()
 
 
 def managed_package_rows(db: Session) -> list[ManagedPackage]:
+    """Return managed package rows.
+
+    Args:
+        db: Active database session.
+    """
     return db.execute(select(ManagedPackage).order_by(ManagedPackage.ecosystem, ManagedPackage.name)).scalars().all()
 
 
 def effective_update_settings(db: Session, *, stored: dict[str, str] | None = None) -> dict[str, Any]:
+    """Return effective update settings.
+
+    Args:
+        db: Active database session.
+        stored: Stored supplied by the caller.
+    """
     stored = stored or {}
     sources = [source for source in source_rows(db) if source.enabled]
     photon = next((source for source in sources if source.kind == "photon"), None)
@@ -164,6 +198,7 @@ def update_source_credentials(db: Session) -> dict[str, dict[str, str]]:
 
 
 def default_source_settings(kind: str) -> dict[str, Any]:
+    """Return default source settings."""
     return {
         "photon": {"managed": True, "gpgcheck": True, "gpgkey": "", "tls_verify": True},
         "powershell": {"trusted": False},
@@ -172,6 +207,11 @@ def default_source_settings(kind: str) -> dict[str, Any]:
 
 
 def validate_managed_package(package: ManagedPackage) -> list[str]:
+    """Validate managed package.
+
+    Returns:
+        The validate managed package result.
+    """
     errors: list[str] = []
     if package.ecosystem != "powershell":
         errors.append("Only PowerShell modules are supported as operator-managed packages.")
@@ -189,6 +229,11 @@ def validate_managed_package(package: ManagedPackage) -> list[str]:
 
 
 def update_source_payload(source: UpdateSource) -> dict[str, Any]:
+    """Update source payload.
+
+    Returns:
+        The update source payload result.
+    """
     return {
         "id": source.id,
         "kind": source.kind,

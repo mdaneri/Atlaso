@@ -1,3 +1,5 @@
+"""Define Atlaso's persistent SQLAlchemy domain models."""
+
 from datetime import datetime, timezone
 from enum import StrEnum
 from uuid import uuid4
@@ -21,10 +23,12 @@ from atlaso.app.database import Base
 
 
 def utcnow() -> datetime:
+    """Return the current timezone-aware UTC time."""
     return datetime.now(timezone.utc)
 
 
 def _job_vcf_depot_operation_default(context) -> bool:
+    """Return job vcf depot operation default."""
     return str(context.get_current_parameters().get("type") or "") in {
         "vcf-depot-download",
         "vcf-depot-software-id",
@@ -32,6 +36,7 @@ def _job_vcf_depot_operation_default(context) -> bool:
 
 
 class Role(StrEnum):
+    """Represent role."""
     ADMIN = "admin"
     NETWORK_ADMIN = "network-admin"
     SERVICE_ADMIN = "service-admin"
@@ -40,6 +45,7 @@ class Role(StrEnum):
 
 
 class JobStatus(StrEnum):
+    """Represent job status."""
     PENDING = "pending"
     RUNNING = "running"
     SUCCEEDED = "succeeded"
@@ -49,6 +55,7 @@ class JobStatus(StrEnum):
 
 
 class User(Base):
+    """Represent user."""
     __tablename__ = "users"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -75,6 +82,7 @@ class User(Base):
 
 
 class ApiToken(Base):
+    """Represent api token."""
     __tablename__ = "api_tokens"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -99,6 +107,7 @@ class ApiToken(Base):
 
 
 class AuditEvent(Base):
+    """Represent audit event."""
     __tablename__ = "audit_events"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -113,6 +122,7 @@ class AuditEvent(Base):
 
 
 class PhysicalInterface(Base):
+    """Represent physical interface."""
     __tablename__ = "physical_interfaces"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -142,6 +152,7 @@ class PhysicalInterface(Base):
 
 
 class VlanInterface(Base):
+    """Represent vlan interface."""
     __tablename__ = "vlan_interfaces"
     __table_args__ = (UniqueConstraint("parent_interface", "vlan_id", name="uq_vlan_parent_id"),)
 
@@ -157,6 +168,7 @@ class VlanInterface(Base):
 
 
 class WanPolicy(Base):
+    """Represent wan policy."""
     __tablename__ = "wan_policies"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -175,6 +187,7 @@ class WanPolicy(Base):
 
 
 class Route(Base):
+    """Represent route."""
     __tablename__ = "routes"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -190,6 +203,7 @@ class Route(Base):
 
 
 class RoutingRule(Base):
+    """Represent routing rule."""
     __tablename__ = "routing_rules"
     __table_args__ = (UniqueConstraint("name", name="uq_routing_rule_name"),)
 
@@ -205,6 +219,7 @@ class RoutingRule(Base):
 
 
 class NatRule(Base):
+    """Represent nat rule."""
     __tablename__ = "nat_rules"
     __table_args__ = (UniqueConstraint("name", name="uq_nat_rule_name"),)
 
@@ -221,6 +236,7 @@ class NatRule(Base):
 
 
 class ServiceState(Base):
+    """Represent service state."""
     __tablename__ = "service_states"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -233,6 +249,7 @@ class ServiceState(Base):
 
 
 class MonitorSample(Base):
+    """Represent monitor sample."""
     __tablename__ = "monitor_samples"
     __table_args__ = (Index("ix_monitor_samples_sampled_at_id", "sampled_at", "id"),)
 
@@ -257,6 +274,7 @@ class MonitorSample(Base):
 
 
 class MonitorCpuSample(Base):
+    """Represent monitor cpu sample."""
     __tablename__ = "monitor_cpu_samples"
     __table_args__ = (Index("ix_monitor_cpu_sample_cpu", "sample_id", "cpu_name"),)
 
@@ -271,6 +289,7 @@ class MonitorCpuSample(Base):
 
 
 class MonitorNetworkSample(Base):
+    """Represent monitor network sample."""
     __tablename__ = "monitor_network_samples"
     __table_args__ = (Index("ix_monitor_network_sample_interface", "sample_id", "interface_name"),)
 
@@ -293,6 +312,7 @@ class MonitorNetworkSample(Base):
 
 
 class MonitorDiskSample(Base):
+    """Represent monitor disk sample."""
     __tablename__ = "monitor_disk_samples"
     __table_args__ = (Index("ix_monitor_disk_sample_mount", "sample_id", "mount_point"),)
 
@@ -314,6 +334,7 @@ class MonitorDiskSample(Base):
 
 
 class ApplianceSettings(Base):
+    """Represent appliance settings."""
     __tablename__ = "appliance_settings"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -330,6 +351,7 @@ class ApplianceSettings(Base):
 
 
 class NtpSettings(Base):
+    """Represent ntp settings."""
     __tablename__ = "ntp_settings"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -354,6 +376,7 @@ class NtpSettings(Base):
 
 
 class FirewallSettings(Base):
+    """Represent firewall settings."""
     __tablename__ = "firewall_settings"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -370,6 +393,7 @@ class FirewallSettings(Base):
 
 
 class FirewallRule(Base):
+    """Represent firewall rule."""
     __tablename__ = "firewall_rules"
     __table_args__ = (UniqueConstraint("name", name="uq_firewall_rule_name"),)
 
@@ -390,6 +414,7 @@ class FirewallRule(Base):
 
 
 class DnsSettings(Base):
+    """Represent dns settings."""
     __tablename__ = "dns_settings"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -419,6 +444,7 @@ class DnsSettings(Base):
 
 
 class DnsRecord(Base):
+    """Represent dns record."""
     __tablename__ = "dns_records"
     __table_args__ = (UniqueConstraint("hostname", "record_type", "address", name="uq_dns_record_hostname_type_address"),)
 
@@ -433,6 +459,7 @@ class DnsRecord(Base):
 
 
 class DhcpSettings(Base):
+    """Represent dhcp settings."""
     __tablename__ = "dhcp_settings"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -449,6 +476,7 @@ class DhcpSettings(Base):
 
 
 class DhcpScope(Base):
+    """Represent dhcp scope."""
     __tablename__ = "dhcp_scopes"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -469,6 +497,7 @@ class DhcpScope(Base):
 
 
 class DhcpOption(Base):
+    """Represent dhcp option."""
     __tablename__ = "dhcp_options"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -482,6 +511,7 @@ class DhcpOption(Base):
 
 
 class DhcpReservation(Base):
+    """Represent dhcp reservation."""
     __tablename__ = "dhcp_reservations"
     __table_args__ = (UniqueConstraint("mac_address", name="uq_dhcp_reservation_mac"),)
 
@@ -495,6 +525,7 @@ class DhcpReservation(Base):
 
 
 class CaSettings(Base):
+    """Represent ca settings."""
     __tablename__ = "ca_settings"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -526,6 +557,7 @@ class CaSettings(Base):
 
 
 class CaProfile(Base):
+    """Represent ca profile."""
     __tablename__ = "ca_profiles"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -546,6 +578,7 @@ class CaProfile(Base):
 
 
 class CaCertificate(Base):
+    """Represent ca certificate."""
     __tablename__ = "ca_certificates"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -578,6 +611,7 @@ class CaCertificate(Base):
 
 
 class KmsSettings(Base):
+    """Represent kms settings."""
     __tablename__ = "kms_settings"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -599,6 +633,7 @@ class KmsSettings(Base):
 
 
 class KmsClient(Base):
+    """Represent kms client."""
     __tablename__ = "kms_clients"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -619,6 +654,7 @@ class KmsClient(Base):
 
 
 class KmsKey(Base):
+    """Represent kms key."""
     __tablename__ = "kms_keys"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -638,6 +674,7 @@ class KmsKey(Base):
 
 
 class LdapSettings(Base):
+    """Represent ldap settings."""
     __tablename__ = "ldap_settings"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -668,6 +705,7 @@ class LdapSettings(Base):
 
 
 class LdapOrganization(Base):
+    """Represent ldap organization."""
     __tablename__ = "ldap_organizations"
     __table_args__ = (
         UniqueConstraint("slug", name="uq_ldap_organization_slug"),
@@ -705,6 +743,7 @@ class LdapOrganization(Base):
 
 
 class LdapUser(Base):
+    """Represent ldap user."""
     __tablename__ = "ldap_users"
     __table_args__ = (UniqueConstraint("organization_id", "uid", name="uq_ldap_user_org_uid"),)
 
@@ -732,6 +771,7 @@ class LdapUser(Base):
 
 
 class LdapGroup(Base):
+    """Represent ldap group."""
     __tablename__ = "ldap_groups"
     __table_args__ = (UniqueConstraint("organization_id", "name", name="uq_ldap_group_org_name"),)
 
@@ -757,6 +797,7 @@ class LdapGroup(Base):
 
 
 class LdapGroupMembership(Base):
+    """Represent ldap group membership."""
     __tablename__ = "ldap_group_memberships"
     __table_args__ = (
         UniqueConstraint("group_id", "member_user_id", name="uq_ldap_group_member_user"),
@@ -784,6 +825,7 @@ class LdapGroupMembership(Base):
 
 
 class OidcProviderSettings(Base):
+    """Represent oidc provider settings."""
     __tablename__ = "oidc_provider_settings"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -803,6 +845,7 @@ class OidcProviderSettings(Base):
 
 
 class OidcClient(Base):
+    """Represent oidc client."""
     __tablename__ = "oidc_clients"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -834,6 +877,7 @@ class OidcClient(Base):
 
 
 class OidcClientRedirectUri(Base):
+    """Represent oidc client redirect uri."""
     __tablename__ = "oidc_client_redirect_uris"
     __table_args__ = (
         UniqueConstraint("oidc_client_id", "kind", "uri", name="uq_oidc_client_redirect_uri"),
@@ -849,6 +893,7 @@ class OidcClientRedirectUri(Base):
 
 
 class OidcGroupMapping(Base):
+    """Represent oidc group mapping."""
     __tablename__ = "oidc_group_mappings"
     __table_args__ = (
         CheckConstraint(
@@ -890,6 +935,7 @@ class OidcGroupMapping(Base):
 
 
 class OidcSubject(Base):
+    """Represent oidc subject."""
     __tablename__ = "oidc_subjects"
     __table_args__ = (
         CheckConstraint(
@@ -917,6 +963,7 @@ class OidcSubject(Base):
 
 
 class OidcSigningKey(Base):
+    """Represent oidc signing key."""
     __tablename__ = "oidc_signing_keys"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -985,6 +1032,7 @@ class OidcAuthorizationCode(Base):
 
 
 class LdapRecoveryArchive(Base):
+    """Represent ldap recovery archive."""
     __tablename__ = "ldap_recovery_archives"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -999,6 +1047,7 @@ class LdapRecoveryArchive(Base):
 
 
 class VcfBackupSettings(Base):
+    """Represent vcf backup settings."""
     __tablename__ = "vcf_backup_settings"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -1019,6 +1068,7 @@ class VcfBackupSettings(Base):
 
 
 class EsxStorageSettings(Base):
+    """Represent esx storage settings."""
     __tablename__ = "esx_storage_settings"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -1028,6 +1078,7 @@ class EsxStorageSettings(Base):
 
 
 class EsxStorageVolume(Base):
+    """Represent esx storage volume."""
     __tablename__ = "esx_storage_volumes"
     __table_args__ = (
         UniqueConstraint("name", name="uq_esx_storage_volume_name"),
@@ -1055,6 +1106,7 @@ class EsxStorageVolume(Base):
 
 
 class EsxNfsShare(Base):
+    """Represent esx nfs share."""
     __tablename__ = "esx_nfs_shares"
     __table_args__ = (UniqueConstraint("datastore_name", name="uq_esx_nfs_share_datastore_name"),)
 
@@ -1075,6 +1127,7 @@ class EsxNfsShare(Base):
 
 
 class VcfTrustTarget(Base):
+    """Represent vcf trust target."""
     __tablename__ = "vcf_trust_targets"
     __table_args__ = (UniqueConstraint("address", "api_port", name="uq_vcf_trust_target_address_api_port"),)
 
@@ -1096,6 +1149,7 @@ class VcfTrustTarget(Base):
 
 
 class VcfPrivateRegistrySettings(Base):
+    """Represent vcf private registry settings."""
     __tablename__ = "vcf_private_registry_settings"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -1115,6 +1169,7 @@ class VcfPrivateRegistrySettings(Base):
 
 
 class VcfOfflineDepotSettings(Base):
+    """Represent vcf offline depot settings."""
     __tablename__ = "vcf_offline_depot_settings"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -1136,6 +1191,7 @@ class VcfOfflineDepotSettings(Base):
 
 
 class VcfDepotDownloadProfile(Base):
+    """Represent vcf depot download profile."""
     __tablename__ = "vcf_depot_download_profiles"
     __table_args__ = (UniqueConstraint("name", name="uq_vcf_depot_download_profile_name"),)
 
@@ -1159,6 +1215,7 @@ class VcfDepotDownloadProfile(Base):
 
 
 class UpdateSource(Base):
+    """Represent update source."""
     __tablename__ = "update_sources"
     __table_args__ = (UniqueConstraint("kind", "name", name="uq_update_source_kind_name"),)
 
@@ -1178,6 +1235,7 @@ class UpdateSource(Base):
 
 
 class ManagedPackage(Base):
+    """Represent managed package."""
     __tablename__ = "managed_packages"
     __table_args__ = (UniqueConstraint("ecosystem", "name", name="uq_managed_package_ecosystem_name"),)
 
@@ -1195,6 +1253,7 @@ class ManagedPackage(Base):
 
 
 class AutomationScript(Base):
+    """Represent automation script."""
     __tablename__ = "automation_scripts"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -1212,6 +1271,7 @@ class AutomationScript(Base):
 
 
 class AutomationScriptRevision(Base):
+    """Represent automation script revision."""
     __tablename__ = "automation_script_revisions"
     __table_args__ = (UniqueConstraint("script_id", "revision", name="uq_automation_script_revision"),)
 
@@ -1230,6 +1290,7 @@ class AutomationScriptRevision(Base):
 
 
 class Schedule(Base):
+    """Represent schedule."""
     __tablename__ = "schedules"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -1250,6 +1311,7 @@ class Schedule(Base):
 
 
 class VcfRegistryBundle(Base):
+    """Represent vcf registry bundle."""
     __tablename__ = "vcf_registry_bundles"
     __table_args__ = (UniqueConstraint("name", name="uq_vcf_registry_bundle_name"),)
 
@@ -1265,6 +1327,7 @@ class VcfRegistryBundle(Base):
 
 
 class Vault(Base):
+    """Represent vault."""
     __tablename__ = "vaults"
     __table_args__ = (UniqueConstraint("name", name="uq_vault_name"),)
 
@@ -1283,6 +1346,7 @@ class Vault(Base):
 
 
 class VaultEntry(Base):
+    """Represent vault entry."""
     __tablename__ = "vault_entries"
     __table_args__ = (
         UniqueConstraint("vault_id", "key", name="uq_vault_entry_vault_key"),
@@ -1312,6 +1376,7 @@ class VaultEntry(Base):
 
 
 class EsxiKickstart(Base):
+    """Represent esxi kickstart."""
     __tablename__ = "esxi_kickstarts"
     __table_args__ = (UniqueConstraint("name", name="uq_esxi_kickstart_name"),)
 
@@ -1331,6 +1396,7 @@ class EsxiKickstart(Base):
 
 
 class EsxiKickstartVaultBinding(Base):
+    """Represent esxi kickstart vault binding."""
     __tablename__ = "esxi_kickstart_vault_bindings"
 
     kickstart_id: Mapped[int] = mapped_column(
@@ -1343,6 +1409,7 @@ class EsxiKickstartVaultBinding(Base):
 
 
 class EsxiPxeHost(Base):
+    """Represent esxi pxe host."""
     __tablename__ = "esxi_pxe_hosts"
     __table_args__ = (UniqueConstraint("mac_address", name="uq_esxi_pxe_host_mac"),)
 
@@ -1361,6 +1428,7 @@ class EsxiPxeHost(Base):
 
 
 class NetworkBootEnvironment(Base):
+    """Represent network boot environment."""
     __tablename__ = "network_boot_environments"
 
     key: Mapped[str] = mapped_column(String(40), primary_key=True)
@@ -1372,6 +1440,7 @@ class NetworkBootEnvironment(Base):
 
 
 class NetworkBootMedia(Base):
+    """Represent network boot media."""
     __tablename__ = "network_boot_media"
     __table_args__ = (
         UniqueConstraint("environment_key", "version", name="uq_network_boot_media_environment_version"),
@@ -1394,6 +1463,7 @@ class NetworkBootMedia(Base):
 
 
 class NetworkBootDiscoveredHost(Base):
+    """Represent network boot discovered host."""
     __tablename__ = "network_boot_discovered_hosts"
     __table_args__ = (
         UniqueConstraint("identity_key", name="uq_network_boot_discovered_host_identity"),
@@ -1425,6 +1495,7 @@ class NetworkBootDiscoveredHost(Base):
 
 
 class NetworkBootInventoryReport(Base):
+    """Represent network boot inventory report."""
     __tablename__ = "network_boot_inventory_reports"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -1444,6 +1515,7 @@ class NetworkBootInventoryReport(Base):
 
 
 class NetworkBootInventorySession(Base):
+    """Represent network boot inventory session."""
     __tablename__ = "network_boot_inventory_sessions"
 
     id: Mapped[str] = mapped_column(String(40), primary_key=True)
@@ -1462,6 +1534,7 @@ class NetworkBootInventorySession(Base):
 
 
 class NetworkBootInventoryCommand(Base):
+    """Represent network boot inventory command."""
     __tablename__ = "network_boot_inventory_commands"
 
     id: Mapped[str] = mapped_column(String(40), primary_key=True)
@@ -1483,6 +1556,7 @@ class NetworkBootInventoryCommand(Base):
 
 
 class NetworkBootHostBootOverride(Base):
+    """Represent network boot host boot override."""
     __tablename__ = "network_boot_host_boot_overrides"
 
     host_id: Mapped[int] = mapped_column(
@@ -1501,6 +1575,7 @@ class NetworkBootHostBootOverride(Base):
 
 
 class Job(Base):
+    """Represent job."""
     __tablename__ = "jobs"
     __table_args__ = (
         Index(
@@ -1549,6 +1624,7 @@ class Job(Base):
 
 
 class JobStep(Base):
+    """Represent job step."""
     __tablename__ = "job_steps"
     __table_args__ = (UniqueConstraint("job_id", "component_key", name="uq_job_step_component"),)
 
@@ -1569,6 +1645,7 @@ class JobStep(Base):
 
 
 class Setting(Base):
+    """Represent setting."""
     __tablename__ = "settings"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)

@@ -1,3 +1,5 @@
+"""Test appliance helper behavior."""
+
 import base64
 import importlib.machinery
 import importlib.util
@@ -20,6 +22,7 @@ HELPER_PATH = Path(__file__).resolve().parents[1] / "scripts" / "appliance" / "a
 
 
 def load_helper_module():
+    """Return helper module."""
     loader = importlib.machinery.SourceFileLoader("atlaso_helper", str(HELPER_PATH))
     spec = importlib.util.spec_from_loader("atlaso_helper", loader)
     assert spec is not None
@@ -29,10 +32,12 @@ def load_helper_module():
 
 
 def test_appliance_power_helper_schedules_reboot(monkeypatch):
+    """Verify that appliance power helper schedules reboot."""
     helper = load_helper_module()
     commands: list[list[str]] = []
 
     def fake_run(command: list[str]) -> subprocess.CompletedProcess[str]:
+        """Return fake run."""
         commands.append(command)
         return subprocess.CompletedProcess(command, 0, "scheduled\n", "")
 
@@ -49,10 +54,12 @@ def test_appliance_power_helper_schedules_reboot(monkeypatch):
 
 
 def test_appliance_power_helper_maps_shutdown_to_poweroff(monkeypatch):
+    """Verify that appliance power helper maps shutdown to poweroff."""
     helper = load_helper_module()
     commands: list[list[str]] = []
 
     def fake_run(command: list[str]) -> subprocess.CompletedProcess[str]:
+        """Return fake run."""
         commands.append(command)
         return subprocess.CompletedProcess(command, 0, "", "")
 
@@ -65,6 +72,7 @@ def test_appliance_power_helper_maps_shutdown_to_poweroff(monkeypatch):
 
 
 def test_appliance_power_helper_fails_closed_without_systemd_run(monkeypatch, capsys):
+    """Verify that appliance power helper fails closed without systemd run."""
     helper = load_helper_module()
     commands: list[list[str]] = []
     monkeypatch.setattr(helper, "_command_path", lambda command: "/usr/bin/systemctl" if command == "systemctl" else None)
@@ -77,6 +85,7 @@ def test_appliance_power_helper_fails_closed_without_systemd_run(monkeypatch, ca
 
 
 def ldap_payload(*, enabled: bool = False) -> dict:
+    """Return ldap payload."""
     suffix = "dc=org-a,dc=ldap,dc=atlaso,dc=internal"
     user_dn = f"uid=operator,ou=users,{suffix}"
     return {
@@ -149,6 +158,7 @@ def ldap_payload(*, enabled: bool = False) -> dict:
 
 
 def test_ldap_helper_renders_separate_mdb_acl_overlays_and_configurable_listeners():
+    """Verify that ldap helper renders separate mdb acl overlays and configurable listeners."""
     helper = load_helper_module()
     payload = ldap_payload()
 
@@ -183,6 +193,7 @@ def test_ldap_helper_renders_separate_mdb_acl_overlays_and_configurable_listener
 
 @pytest.mark.parametrize("action", ["validate", "apply"])
 def test_ldap_helper_removes_invalid_apply_payload(monkeypatch, tmp_path, capsys, action):
+    """Verify that ldap helper removes invalid apply payload."""
     helper = load_helper_module()
     apply_dir = tmp_path / "apply" / "ldap"
     apply_dir.mkdir(parents=True)
@@ -197,6 +208,7 @@ def test_ldap_helper_removes_invalid_apply_payload(monkeypatch, tmp_path, capsys
 
 
 def test_plaintext_only_ldap_validation_does_not_require_tls_files(monkeypatch):
+    """Verify that plaintext only ldap validation does not require tls files."""
     helper = load_helper_module()
     payload = ldap_payload(enabled=True)
     payload["service"].update({"ldaps_enabled": False, "ldap_enabled": True, "ldap_port": 1389})
@@ -209,6 +221,7 @@ def test_plaintext_only_ldap_validation_does_not_require_tls_files(monkeypatch):
 
 
 def test_ldap_render_can_use_isolated_validation_data_root(tmp_path):
+    """Verify that ldap render can use isolated validation data root."""
     helper = load_helper_module()
     payload = ldap_payload()
     config = helper._render_ldap_slapd_config(payload, state_root=tmp_path / "validation-data")
@@ -218,6 +231,7 @@ def test_ldap_render_can_use_isolated_validation_data_root(tmp_path):
 
 
 def test_ldap_render_can_use_isolated_validation_runtime_root(tmp_path):
+    """Verify that ldap render can use isolated validation runtime root."""
     helper = load_helper_module()
     payload = ldap_payload()
     runtime_root = tmp_path / "validation-run"
@@ -230,6 +244,7 @@ def test_ldap_render_can_use_isolated_validation_runtime_root(tmp_path):
 
 
 def test_ldap_runtime_directory_is_created_for_first_apply(monkeypatch, tmp_path):
+    """Verify that ldap runtime directory is created for first apply."""
     helper = load_helper_module()
     runtime_dir = tmp_path / "run" / "openldap"
     ownership: list[tuple[Path, str, str]] = []
@@ -250,6 +265,7 @@ def test_ldap_runtime_directory_is_created_for_first_apply(monkeypatch, tmp_path
 
 
 def test_ldap_reconcile_clears_lock_for_every_enabled_user(monkeypatch):
+    """Verify that ldap reconcile clears lock for every enabled user."""
     helper = load_helper_module()
     payload = ldap_payload(enabled=True)
     organization = payload["organizations"][0]
@@ -266,6 +282,7 @@ def test_ldap_reconcile_clears_lock_for_every_enabled_user(monkeypatch):
 
 
 def test_ldap_recovery_restores_slapd_ownership(monkeypatch, tmp_path):
+    """Verify that ldap recovery restores slapd ownership."""
     helper = load_helper_module()
     payload = ldap_payload(enabled=True)
     suffix = payload["organizations"][0]["suffix_dn"]
@@ -302,6 +319,7 @@ def test_ldap_recovery_restores_slapd_ownership(monkeypatch, tmp_path):
     ownership: list[tuple[Path, str, str]] = []
 
     def fake_run(command: list[str]) -> subprocess.CompletedProcess[str]:
+        """Return fake run."""
         if Path(command[0]).name == "slapadd":
             (data_dir / "data.mdb").write_text("restored", encoding="utf-8")
         return subprocess.CompletedProcess(command, 0, "", "")
@@ -318,6 +336,7 @@ def test_ldap_recovery_restores_slapd_ownership(monkeypatch, tmp_path):
 
 
 def test_ldap_apply_removes_only_obsolete_managed_data_directories(monkeypatch, tmp_path):
+    """Verify that ldap apply removes only obsolete managed data directories."""
     helper = load_helper_module()
     state_dir = tmp_path / "ldap-state"
     desired_dir = state_dir / "org-a"
@@ -339,6 +358,7 @@ def test_ldap_apply_removes_only_obsolete_managed_data_directories(monkeypatch, 
 
 
 def test_ldap_listener_dropin_overrides_photon_hard_coded_plaintext_listener(monkeypatch, tmp_path):
+    """Verify that ldap listener dropin overrides photon hard coded plaintext listener."""
     helper = load_helper_module()
     dropin_dir = tmp_path / "slapd.service.d"
     dropin_path = dropin_dir / "atlaso.conf"
@@ -359,6 +379,7 @@ def test_ldap_listener_dropin_overrides_photon_hard_coded_plaintext_listener(mon
 
 
 def test_ldap_listener_dropin_supports_custom_ldaps_and_opt_in_plaintext_ports(monkeypatch, tmp_path):
+    """Verify that ldap listener dropin supports custom ldaps and opt in plaintext ports."""
     helper = load_helper_module()
     dropin_dir = tmp_path / "slapd.service.d"
     dropin_path = dropin_dir / "atlaso.conf"
@@ -379,6 +400,7 @@ def test_ldap_listener_dropin_supports_custom_ldaps_and_opt_in_plaintext_ports(m
 
 
 def test_ldap_private_key_is_group_readable_only_for_slapd(monkeypatch, tmp_path):
+    """Verify that ldap private key is group readable only for slapd."""
     helper = load_helper_module()
     key_path = tmp_path / "server.key"
     key_path.write_text("private", encoding="utf-8")
@@ -395,6 +417,7 @@ def test_ldap_private_key_is_group_readable_only_for_slapd(monkeypatch, tmp_path
 
 
 def test_kms_private_key_reconciles_upgrade_identity_before_granting_access(monkeypatch, tmp_path):
+    """Verify that kms private key reconciles upgrade identity before granting access."""
     helper = load_helper_module()
     key_path = tmp_path / "server.key"
     key_path.write_text("private", encoding="utf-8")
@@ -403,16 +426,27 @@ def test_kms_private_key_reconciles_upgrade_identity_before_granting_access(monk
     ownership: list[tuple[Path, int, int]] = []
 
     def fake_group(_name):
+        """Return fake group.
+
+        Raises:
+            KeyError: If a required mapping entry is absent.
+        """
         if not identity_created["group"]:
             raise KeyError
         return SimpleNamespace(gr_gid=1002)
 
     def fake_account(_name):
+        """Return fake account.
+
+        Raises:
+            KeyError: If a required mapping entry is absent.
+        """
         if not identity_created["account"]:
             raise KeyError
         return SimpleNamespace(pw_uid=1001)
 
     def fake_run(command):
+        """Return fake run."""
         commands.append(command)
         if str(command[0]).endswith("groupadd"):
             identity_created["group"] = True
@@ -439,10 +473,12 @@ def test_kms_private_key_reconciles_upgrade_identity_before_granting_access(monk
 
 
 def test_ldap_directory_queries_disable_ldif_wrapping(monkeypatch):
+    """Verify that ldap directory queries disable ldif wrapping."""
     helper = load_helper_module()
     commands: list[list[str]] = []
 
     def fake_run(command: list[str]):
+        """Return fake run."""
         commands.append(command)
         return subprocess.CompletedProcess(command, 0, "", "")
 
@@ -456,6 +492,7 @@ def test_ldap_directory_queries_disable_ldif_wrapping(monkeypatch):
 
 
 def test_ldap_helper_rejects_missing_service_account_mapping_and_group_cycle():
+    """Verify that ldap helper rejects missing service account mapping and group cycle."""
     helper = load_helper_module()
     payload = ldap_payload()
     payload["organizations"][0]["vcf_settings"]["definedSettings"]["userAttributes"].pop("serviceAccount")
@@ -482,6 +519,7 @@ def test_ldap_helper_rejects_missing_service_account_mapping_and_group_cycle():
 
 
 def kms_config_text(managed_root: Path, *, enabled: bool = True, database_path: Path | None = None) -> str:
+    """Return kms config text."""
     database_path = database_path or Path("/var/lib/atlaso/kmip/store.db")
     return json.dumps(
         {
@@ -533,6 +571,16 @@ def network_config_text(
     dual_stack: bool = False,
     management_gateway: str = "",
 ) -> str:
+    """Return network config text.
+
+    Args:
+        eth2_mode: Eth2 mode supplied by the caller.
+        eth2_admin_state: Eth2 admin state supplied by the caller.
+        include_vlan: Include vlan supplied by the caller.
+        include_removed_vlan: Include removed vlan supplied by the caller.
+        dual_stack: Dual stack supplied by the caller.
+        management_gateway: Management gateway supplied by the caller.
+    """
     lines = [
         "[physical_interfaces]",
         "interface=eth0",
@@ -581,6 +629,7 @@ def network_config_text(
 
 
 def public_services_config_text() -> str:
+    """Return public services config text."""
     return "\n".join(
         [
             "# Managed by Atlaso. Local changes may be overwritten.",
@@ -605,6 +654,7 @@ def public_services_config_text() -> str:
 
 
 def public_services_ca_https_config_text(cert_path: Path, key_path: Path) -> str:
+    """Return public services ca https config text."""
     return "\n".join(
         [
             "# Managed by Atlaso. Local changes may be overwritten.",
@@ -661,6 +711,7 @@ def public_services_ca_https_config_text(cert_path: Path, key_path: Path) -> str
 
 
 def public_services_ip_https_depot_config_text(cert_path: Path, key_path: Path) -> str:
+    """Return public services ip https depot config text."""
     return "\n".join(
         [
             "# Managed by Atlaso. Local changes may be overwritten.",
@@ -700,6 +751,7 @@ def public_services_ip_https_depot_config_text(cert_path: Path, key_path: Path) 
 
 
 def test_public_services_helper_validates_staged_nginx_config(monkeypatch, tmp_path, capsys):
+    """Verify that public services helper validates staged nginx config."""
     helper = load_helper_module()
     apply_dir = tmp_path / "apply" / "public-services"
     apply_dir.mkdir(parents=True)
@@ -716,6 +768,7 @@ def test_public_services_helper_validates_staged_nginx_config(monkeypatch, tmp_p
 
 
 def test_public_services_helper_allows_ip_scoped_depot_https_paths(monkeypatch, tmp_path, capsys):
+    """Verify that public services helper allows ip scoped depot https paths."""
     helper = load_helper_module()
     apply_dir = tmp_path / "apply" / "public-services"
     managed_root = tmp_path / "managed"
@@ -739,6 +792,7 @@ def test_public_services_helper_allows_ip_scoped_depot_https_paths(monkeypatch, 
 
 
 def test_public_services_helper_validates_ca_https_sni_config(monkeypatch, tmp_path, capsys):
+    """Verify that public services helper validates ca https sni config."""
     helper = load_helper_module()
     apply_dir = tmp_path / "apply" / "public-services"
     managed_root = tmp_path / "managed"
@@ -761,6 +815,7 @@ def test_public_services_helper_validates_ca_https_sni_config(monkeypatch, tmp_p
 
 
 def test_nginx_site_conflict_detects_duplicate_sni_name_on_same_listener(monkeypatch, tmp_path):
+    """Verify that nginx site conflict detects duplicate sni name on same listener."""
     helper = load_helper_module()
     sites_dir = tmp_path / "sites.d"
     sites_dir.mkdir()
@@ -790,6 +845,7 @@ def test_nginx_site_conflict_detects_duplicate_sni_name_on_same_listener(monkeyp
 
 
 def test_nginx_listen_parser_requires_brackets_for_ipv6_literals():
+    """Verify that nginx listen parser requires brackets for ipv6 literals."""
     helper = load_helper_module()
 
     assert helper._listen_address_and_port("[fd87::254]:443 ssl") == ("fd87::254", 443)
@@ -798,6 +854,7 @@ def test_nginx_listen_parser_requires_brackets_for_ipv6_literals():
 
 
 def test_public_services_helper_rejects_broad_root_and_registry_proxy(monkeypatch, tmp_path, capsys):
+    """Verify that public services helper rejects broad root and registry proxy."""
     helper = load_helper_module()
     apply_dir = tmp_path / "apply" / "public-services"
     apply_dir.mkdir(parents=True)
@@ -817,6 +874,7 @@ def test_public_services_helper_rejects_broad_root_and_registry_proxy(monkeypatc
 
 
 def test_public_services_helper_apply_installs_site(monkeypatch, tmp_path, capsys):
+    """Verify that public services helper apply installs site."""
     helper = load_helper_module()
     apply_dir = tmp_path / "apply" / "public-services"
     apply_dir.mkdir(parents=True)
@@ -827,6 +885,12 @@ def test_public_services_helper_apply_installs_site(monkeypatch, tmp_path, capsy
     calls: list[tuple[Path, str]] = []
 
     def fake_install(path, text):
+        """Return fake install.
+
+        Args:
+            path: Filesystem or URL path to read, validate, or update.
+            text: Text to parse, render, or persist.
+        """
         calls.append((path, text))
         return 0
 
@@ -851,6 +915,16 @@ def wan_config_text(
     ipv6_route: bool = False,
     ipv6_only_target: bool = False,
 ) -> str:
+    """Return wan config text.
+
+    Args:
+        bad_nat_source: Bad nat source supplied by the caller.
+        bad_target: Bad target supplied by the caller.
+        wan_mode: Wan mode supplied by the caller.
+        target_role: Target role supplied by the caller.
+        ipv6_route: Ipv6 route supplied by the caller.
+        ipv6_only_target: Ipv6 only target supplied by the caller.
+    """
     source = "not-a-cidr" if bad_nat_source else "192.168.50.0/24"
     outbound = "eth9" if bad_target else "eth1.20"
     ipv4_cidr = "" if ipv6_only_target else "192.168.20.1/24"
@@ -900,6 +974,7 @@ def wan_config_text(
 
 
 def esxi_pxe_manifest(http_root: Path, *, enabled: bool = True, stale_id: int = 99, iso_root: Path | None = None) -> dict:
+    """Return esxi pxe manifest."""
     content = "install\nnetwork --bootproto=dhcp\nrootpw VMware01!\nreboot\n%firstboot\n%end\n"
     content_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
     kickstart_http_path = f"/pxe/esxi/ks/{content_hash[:12]}.cfg"
@@ -975,6 +1050,7 @@ def esxi_pxe_manifest(http_root: Path, *, enabled: bool = True, stale_id: int = 
 
 
 def test_esxi_pxe_helper_validates_network_boot_media_hashes(monkeypatch, tmp_path):
+    """Verify that esxi pxe helper validates network boot media hashes."""
     helper = load_helper_module()
     media_root = tmp_path / "media"
     http_root = tmp_path / "http"
@@ -1012,6 +1088,14 @@ def test_esxi_pxe_helper_validates_network_boot_media_hashes(monkeypatch, tmp_pa
     original_read_bytes = Path.read_bytes
 
     def reject_artifact_read_bytes(path):
+        """Return reject artifact read bytes.
+
+        Args:
+            path: Filesystem or URL path to read, validate, or update.
+
+        Raises:
+            AssertionError: If an expected invariant is not satisfied.
+        """
         if path == artifact:
             raise AssertionError("Network Boot artifacts must be hashed as a stream.")
         return original_read_bytes(path)
@@ -1030,6 +1114,7 @@ def test_esxi_pxe_helper_accepts_verified_shredos_digest_directory(
     monkeypatch,
     tmp_path,
 ):
+    """Verify that esxi pxe helper accepts verified shredos digest directory."""
     helper = load_helper_module()
     media_root = tmp_path / "media"
     http_root = tmp_path / "http"
@@ -1094,6 +1179,7 @@ def test_esxi_pxe_helper_accepts_verified_shredos_digest_directory(
 
 
 def test_esxi_pxe_helper_activates_and_disables_network_boot_media(monkeypatch, tmp_path):
+    """Verify that esxi pxe helper activates and disables network boot media."""
     helper = load_helper_module()
     media_root = tmp_path / "media"
     http_root = tmp_path / "http"
@@ -1120,6 +1206,7 @@ def test_esxi_pxe_helper_activates_and_disables_network_boot_media(monkeypatch, 
 
 
 def ca_payload_text(root_dir: Path) -> str:
+    """Return ca payload text."""
     root_cert = "-----BEGIN CERTIFICATE-----\nroot\n-----END CERTIFICATE-----\n"
     cert = "-----BEGIN CERTIFICATE-----\nleaf\n-----END CERTIFICATE-----\n"
     key = "-----BEGIN PRIVATE KEY-----\nkey\n-----END PRIVATE KEY-----\n"
@@ -1154,6 +1241,7 @@ def ca_payload_text(root_dir: Path) -> str:
 
 
 def test_network_helper_validates_vlan_parent_must_be_trunk(tmp_path):
+    """Verify that network helper validates vlan parent must be trunk."""
     helper = load_helper_module()
     config_path = tmp_path / "atlaso-network.conf"
     config_path.write_text(network_config_text(eth2_mode="access"), encoding="utf-8")
@@ -1164,6 +1252,7 @@ def test_network_helper_validates_vlan_parent_must_be_trunk(tmp_path):
 
 
 def test_network_helper_accepts_valid_vlan_config(tmp_path):
+    """Verify that network helper accepts valid vlan config."""
     helper = load_helper_module()
     config_path = tmp_path / "atlaso-network.conf"
     config_path.write_text(network_config_text(), encoding="utf-8")
@@ -1172,6 +1261,7 @@ def test_network_helper_accepts_valid_vlan_config(tmp_path):
 
 
 def test_network_helper_validates_explicit_management_gateway(tmp_path):
+    """Verify that network helper validates explicit management gateway."""
     helper = load_helper_module()
     valid = tmp_path / "valid-gateway.conf"
     valid.write_text(network_config_text(management_gateway="192.168.49.254"), encoding="utf-8")
@@ -1189,6 +1279,7 @@ def test_network_helper_validates_explicit_management_gateway(tmp_path):
 
 
 def test_network_helper_renders_explicit_management_gateway_without_runtime_fallback(monkeypatch, tmp_path):
+    """Verify that network helper renders explicit management gateway without runtime fallback."""
     helper = load_helper_module()
     config_path = tmp_path / "management-gateway.conf"
     config_path.write_text(network_config_text(management_gateway="192.168.49.254"), encoding="utf-8")
@@ -1205,6 +1296,7 @@ def test_network_helper_renders_explicit_management_gateway_without_runtime_fall
 
 
 def test_network_helper_rejects_static_management_without_ipv4(tmp_path):
+    """Verify that network helper rejects static management without ipv4."""
     helper = load_helper_module()
     config_path = tmp_path / "atlaso-network.conf"
     config_path.write_text(network_config_text().replace("  ip_cidr=192.168.49.1/24", "  ip_cidr=", 1), encoding="utf-8")
@@ -1215,6 +1307,7 @@ def test_network_helper_rejects_static_management_without_ipv4(tmp_path):
 
 
 def test_network_helper_requires_eth0_management(tmp_path):
+    """Verify that network helper requires eth0 management."""
     helper = load_helper_module()
     config_path = tmp_path / "atlaso-network.conf"
     config_path.write_text(network_config_text().replace("interface=eth0", "interface=eth1", 1), encoding="utf-8")
@@ -1225,6 +1318,7 @@ def test_network_helper_requires_eth0_management(tmp_path):
 
 
 def test_network_helper_renders_dual_stack_networkd_addresses(tmp_path):
+    """Verify that network helper renders dual stack networkd addresses."""
     helper = load_helper_module()
     config_path = tmp_path / "atlaso-network.conf"
     config_path.write_text(network_config_text(dual_stack=True), encoding="utf-8")
@@ -1242,6 +1336,7 @@ def test_network_helper_renders_dual_stack_networkd_addresses(tmp_path):
 
 
 def test_network_helper_replaces_stale_preserved_management_gateway(monkeypatch, tmp_path):
+    """Verify that network helper replaces stale preserved management gateway."""
     helper = load_helper_module()
     config_path = tmp_path / "atlaso-network.conf"
     config_path.write_text(
@@ -1270,6 +1365,7 @@ def test_network_helper_replaces_stale_preserved_management_gateway(monkeypatch,
     )
 
     def fake_run(command: list[str]) -> subprocess.CompletedProcess[str]:
+        """Return fake run."""
         if command == ["ip", "route", "show", "default", "dev", "eth0"]:
             return subprocess.CompletedProcess(command, 0, "default via 192.168.1.1 dev eth0\n", "")
         return subprocess.CompletedProcess(command, 0, "", "")
@@ -1288,6 +1384,7 @@ def test_network_helper_replaces_stale_preserved_management_gateway(monkeypatch,
 
 
 def test_network_helper_omits_management_policy_rule_without_default_gateway(monkeypatch, tmp_path):
+    """Verify that network helper omits management policy rule without default gateway."""
     helper = load_helper_module()
     config_path = tmp_path / "atlaso-network.conf"
     config_path.write_text(
@@ -1309,6 +1406,7 @@ def test_network_helper_omits_management_policy_rule_without_default_gateway(mon
 
 
 def test_network_helper_renders_management_dhcp_networkd(tmp_path):
+    """Verify that network helper renders management dhcp networkd."""
     helper = load_helper_module()
     config_path = tmp_path / "atlaso-network.conf"
     config_path.write_text(
@@ -1341,6 +1439,7 @@ def test_network_helper_renders_management_dhcp_networkd(tmp_path):
 
 
 def test_network_helper_preserves_automatic_ipv6_for_management(tmp_path):
+    """Verify that network helper preserves automatic ipv6 for management."""
     helper = load_helper_module()
     config_path = tmp_path / "atlaso-network.conf"
     config_path.write_text(
@@ -1373,6 +1472,7 @@ def test_network_helper_preserves_automatic_ipv6_for_management(tmp_path):
 
 
 def test_network_helper_renders_static_management_ipv6_gateway_in_main_and_table_100(tmp_path):
+    """Verify that network helper renders static management ipv6 gateway in main and table 100."""
     helper = load_helper_module()
     config_path = tmp_path / "atlaso-network.conf"
     config_path.write_text(
@@ -1409,6 +1509,11 @@ def test_network_helper_renders_static_management_ipv6_gateway_in_main_and_table
 
 
 def test_wan_helper_rejects_config_outside_apply_dir(tmp_path):
+    """Verify that wan helper rejects config outside apply dir.
+
+    Raises:
+        AssertionError: If an expected invariant is not satisfied.
+    """
     helper = load_helper_module()
     config_path = tmp_path / "atlaso-wan.conf"
     config_path.write_text(wan_config_text(), encoding="utf-8")
@@ -1422,6 +1527,7 @@ def test_wan_helper_rejects_config_outside_apply_dir(tmp_path):
 
 
 def test_wan_helper_validates_routes_nat_and_netem(tmp_path):
+    """Verify that wan helper validates routes nat and netem."""
     helper = load_helper_module()
     config_path = tmp_path / "atlaso-wan.conf"
     config_path.write_text(wan_config_text(), encoding="utf-8")
@@ -1433,6 +1539,7 @@ def test_wan_helper_validates_routes_nat_and_netem(tmp_path):
 
 
 def test_wan_helper_rejects_bad_nat_source_and_target(tmp_path):
+    """Verify that wan helper rejects bad nat source and target."""
     helper = load_helper_module()
     bad_source = tmp_path / "bad-source.conf"
     bad_source.write_text(wan_config_text(bad_nat_source=True), encoding="utf-8")
@@ -1444,6 +1551,7 @@ def test_wan_helper_rejects_bad_nat_source_and_target(tmp_path):
 
 
 def test_wan_helper_rejects_route_wan_mode(tmp_path):
+    """Verify that wan helper rejects route wan mode."""
     helper = load_helper_module()
     config_path = tmp_path / "route-mode.conf"
     config_path.write_text(wan_config_text(wan_mode="route"), encoding="utf-8")
@@ -1452,6 +1560,7 @@ def test_wan_helper_rejects_route_wan_mode(tmp_path):
 
 
 def test_wan_helper_ignores_disabled_routing_rule_missing_targets(tmp_path):
+    """Verify that wan helper ignores disabled routing rule missing targets."""
     helper = load_helper_module()
     config_path = tmp_path / "disabled-routing-rule.conf"
     config_path.write_text(
@@ -1474,6 +1583,7 @@ def test_wan_helper_ignores_disabled_routing_rule_missing_targets(tmp_path):
 
 
 def test_wan_helper_rejects_enabled_routing_rule_missing_targets(tmp_path):
+    """Verify that wan helper rejects enabled routing rule missing targets."""
     helper = load_helper_module()
     config_path = tmp_path / "enabled-routing-rule.conf"
     config_path.write_text(
@@ -1498,6 +1608,7 @@ def test_wan_helper_rejects_enabled_routing_rule_missing_targets(tmp_path):
 
 
 def test_wan_helper_allows_nat_on_access_role_target(tmp_path):
+    """Verify that wan helper allows nat on access role target."""
     helper = load_helper_module()
     config_path = tmp_path / "nat-access-target.conf"
     config_path.write_text(wan_config_text(target_role="access"), encoding="utf-8")
@@ -1506,6 +1617,7 @@ def test_wan_helper_allows_nat_on_access_role_target(tmp_path):
 
 
 def test_wan_helper_accepts_ipv6_routes_and_rejects_ipv6_only_nat_targets(tmp_path):
+    """Verify that wan helper accepts ipv6 routes and rejects ipv6 only nat targets."""
     helper = load_helper_module()
     ipv6_route = tmp_path / "ipv6-route.conf"
     ipv6_route.write_text(wan_config_text(ipv6_route=True), encoding="utf-8")
@@ -1517,6 +1629,7 @@ def test_wan_helper_accepts_ipv6_routes_and_rejects_ipv6_only_nat_targets(tmp_pa
     commands: list[list[str]] = []
 
     def fake_run(command: list[str]) -> subprocess.CompletedProcess[str]:
+        """Return fake run."""
         commands.append(command)
         return subprocess.CompletedProcess(command, 0, "", "")
 
@@ -1528,6 +1641,7 @@ def test_wan_helper_accepts_ipv6_routes_and_rejects_ipv6_only_nat_targets(tmp_pa
 
 
 def test_wan_helper_cleans_managed_policy_rule_windows_before_apply(tmp_path):
+    """Verify that wan helper cleans managed policy rule windows before apply."""
     helper = load_helper_module()
     config_path = tmp_path / "policy-rules.conf"
     config_path.write_text(wan_config_text(), encoding="utf-8")
@@ -1535,6 +1649,7 @@ def test_wan_helper_cleans_managed_policy_rule_windows_before_apply(tmp_path):
     commands: list[list[str]] = []
 
     def fake_run(command: list[str]) -> subprocess.CompletedProcess[str]:
+        """Return fake run."""
         commands.append(command)
         return subprocess.CompletedProcess(command, 0, "", "")
 
@@ -1550,6 +1665,7 @@ def test_wan_helper_cleans_managed_policy_rule_windows_before_apply(tmp_path):
 
 
 def test_wan_helper_preserves_management_default_gateway(monkeypatch, tmp_path):
+    """Verify that wan helper preserves management default gateway."""
     helper = load_helper_module()
     networkd_dir = tmp_path / "systemd-network"
     networkd_dir.mkdir()
@@ -1592,6 +1708,7 @@ def test_wan_helper_preserves_management_default_gateway(monkeypatch, tmp_path):
     commands: list[list[str]] = []
 
     def fake_run(command: list[str]) -> subprocess.CompletedProcess[str]:
+        """Return fake run."""
         commands.append(command)
         return subprocess.CompletedProcess(command, 0, "", "")
 
@@ -1606,6 +1723,7 @@ def test_wan_helper_preserves_management_default_gateway(monkeypatch, tmp_path):
 
 
 def test_wan_helper_replaces_stale_preserved_management_gateway_with_runtime_gateway(monkeypatch, tmp_path):
+    """Verify that wan helper replaces stale preserved management gateway with runtime gateway."""
     helper = load_helper_module()
     management_network = tmp_path / "00-atlaso-mgmt.network"
     management_network.write_text(
@@ -1646,6 +1764,7 @@ def test_wan_helper_replaces_stale_preserved_management_gateway_with_runtime_gat
     commands: list[list[str]] = []
 
     def fake_run(command: list[str]) -> subprocess.CompletedProcess[str]:
+        """Return fake run."""
         commands.append(command)
         if command == ["ip", "route", "show", "default", "dev", "eth0"]:
             return subprocess.CompletedProcess(command, 0, "default via 192.168.1.1 dev eth0\n", "")
@@ -1665,6 +1784,7 @@ def test_wan_helper_replaces_stale_preserved_management_gateway_with_runtime_gat
 
 
 def test_wan_helper_skips_management_policy_rule_without_usable_gateway(monkeypatch, tmp_path):
+    """Verify that wan helper skips management policy rule without usable gateway."""
     helper = load_helper_module()
     config_path = tmp_path / "management-without-gateway.conf"
     config_path.write_text(
@@ -1688,6 +1808,7 @@ def test_wan_helper_skips_management_policy_rule_without_usable_gateway(monkeypa
     commands: list[list[str]] = []
 
     def fake_run(command: list[str]) -> subprocess.CompletedProcess[str]:
+        """Return fake run."""
         commands.append(command)
         if command[:4] == ["ip", "route", "del", "default"]:
             return subprocess.CompletedProcess(command, 2, "", "RTNETLINK answers: No such process\n")
@@ -1708,6 +1829,7 @@ def test_wan_helper_skips_management_policy_rule_without_usable_gateway(monkeypa
 
 
 def test_wan_helper_does_not_delete_dhcp_management_default(monkeypatch, tmp_path):
+    """Verify that wan helper does not delete dhcp management default."""
     helper = load_helper_module()
     config_path = tmp_path / "dhcp-management.conf"
     config_path.write_text(
@@ -1732,6 +1854,7 @@ def test_wan_helper_does_not_delete_dhcp_management_default(monkeypatch, tmp_pat
     commands: list[list[str]] = []
 
     def fake_run(command: list[str]) -> subprocess.CompletedProcess[str]:
+        """Return fake run."""
         commands.append(command)
         return subprocess.CompletedProcess(command, 0, "", "")
 
@@ -1744,6 +1867,7 @@ def test_wan_helper_does_not_delete_dhcp_management_default(monkeypatch, tmp_pat
 
 
 def test_wan_helper_gives_management_ownership_of_duplicate_vlan_network(monkeypatch, tmp_path):
+    """Verify that wan helper gives management ownership of duplicate vlan network."""
     helper = load_helper_module()
     config_path = tmp_path / "duplicate-management-vlan.conf"
     config_path.write_text(
@@ -1773,6 +1897,7 @@ def test_wan_helper_gives_management_ownership_of_duplicate_vlan_network(monkeyp
     commands: list[list[str]] = []
 
     def fake_run(command: list[str]) -> subprocess.CompletedProcess[str]:
+        """Return fake run."""
         commands.append(command)
         if command == ["ip", "route", "show", "default", "dev", "eth0"]:
             return subprocess.CompletedProcess(command, 0, "default via 192.168.1.1 dev eth0\n", "")
@@ -1791,6 +1916,7 @@ def test_wan_helper_gives_management_ownership_of_duplicate_vlan_network(monkeyp
 
 
 def test_staging_prepare_repairs_apply_directory_ownership(monkeypatch, tmp_path):
+    """Verify that staging prepare repairs apply directory ownership."""
     helper = load_helper_module()
     apply_root = tmp_path / "apply"
     config_path = apply_root / "wan" / "atlaso-wan.conf"
@@ -1811,6 +1937,7 @@ def test_staging_prepare_repairs_apply_directory_ownership(monkeypatch, tmp_path
 
 
 def test_esxi_pxe_helper_validates_and_writes_generated_kickstarts(monkeypatch, tmp_path):
+    """Verify that esxi pxe helper validates and writes generated kickstarts."""
     helper = load_helper_module()
     http_root = tmp_path / "pxe" / "http" / "esxi" / "ks"
     http_base = http_root.parent
@@ -1953,6 +2080,7 @@ def test_esxi_pxe_helper_validates_and_writes_generated_kickstarts(monkeypatch, 
 
 
 def test_esxi_pxe_helper_writes_http_ipxe_script_without_profiles(monkeypatch, tmp_path):
+    """Verify that esxi pxe helper writes http ipxe script without profiles."""
     helper = load_helper_module()
     http_root = tmp_path / "pxe" / "http" / "esxi" / "ks"
     http_base = http_root.parent
@@ -2023,6 +2151,7 @@ def test_esxi_pxe_helper_writes_http_ipxe_script_without_profiles(monkeypatch, t
 
 
 def test_esxi_pxe_helper_does_not_copy_host_artifact_to_default_fallback(monkeypatch, tmp_path):
+    """Verify that esxi pxe helper does not copy host artifact to default fallback."""
     helper = load_helper_module()
     http_root = tmp_path / "pxe" / "http" / "esxi" / "ks"
     http_base = http_root.parent
@@ -2097,6 +2226,7 @@ def test_esxi_pxe_helper_does_not_copy_host_artifact_to_default_fallback(monkeyp
 
 
 def test_esxi_pxe_helper_rejects_disabled_kickstart_references(monkeypatch, tmp_path):
+    """Verify that esxi pxe helper rejects disabled kickstart references."""
     helper = load_helper_module()
     http_root = tmp_path / "pxe" / "http" / "esxi" / "ks"
     http_base = http_root.parent
@@ -2124,6 +2254,7 @@ def test_esxi_pxe_helper_rejects_disabled_kickstart_references(monkeypatch, tmp_
 
 
 def test_esxi_boot_cfg_rewrite_uses_http_prefix_and_kickstart():
+    """Verify that esxi boot cfg rewrite uses http prefix and kickstart."""
     helper = load_helper_module()
     source = "\n".join(
         [
@@ -2160,6 +2291,7 @@ def test_esxi_boot_cfg_rewrite_uses_http_prefix_and_kickstart():
 
 
 def test_esxi_uefi_bootloader_must_come_from_iso_efi_boot(tmp_path):
+    """Verify that esxi uefi bootloader must come from iso efi boot."""
     helper = load_helper_module()
     image_root = tmp_path / "image"
     (image_root / "random").mkdir(parents=True)
@@ -2175,6 +2307,11 @@ def test_esxi_uefi_bootloader_must_come_from_iso_efi_boot(tmp_path):
 
 
 def test_ca_helper_rejects_config_outside_apply_dir(tmp_path):
+    """Verify that ca helper rejects config outside apply dir.
+
+    Raises:
+        AssertionError: If an expected invariant is not satisfied.
+    """
     helper = load_helper_module()
     config_path = tmp_path / "atlaso-ca.json"
     config_path.write_text(ca_payload_text(tmp_path / "etc" / "atlaso"), encoding="utf-8")
@@ -2188,6 +2325,7 @@ def test_ca_helper_rejects_config_outside_apply_dir(tmp_path):
 
 
 def test_ca_helper_validates_and_writes_managed_files(monkeypatch, tmp_path):
+    """Verify that ca helper validates and writes managed files."""
     helper = load_helper_module()
     apply_dir = tmp_path / "apply" / "ca"
     managed_root = tmp_path / "etc" / "atlaso"
@@ -2214,6 +2352,7 @@ def test_ca_helper_validates_and_writes_managed_files(monkeypatch, tmp_path):
 
 
 def test_ca_helper_preserves_slapd_access_when_rewriting_ldap_key(monkeypatch, tmp_path):
+    """Verify that ca helper preserves slapd access when rewriting ldap key."""
     helper = load_helper_module()
     apply_dir = tmp_path / "apply" / "ca"
     managed_root = tmp_path / "etc" / "atlaso"
@@ -2228,6 +2367,13 @@ def test_ca_helper_preserves_slapd_access_when_rewriting_ldap_key(monkeypatch, t
     real_chmod = helper.os.chmod
 
     def track_ldap_key_mode(path, mode, **kwargs):
+        """Handle track ldap key mode.
+
+        Args:
+            path: Filesystem or URL path to read, validate, or update.
+            mode: Operating mode selected for the workflow.
+            kwargs: Additional keyword arguments forwarded to the wrapped call.
+        """
         real_chmod(path, mode, **kwargs)
         if Path(path) == ldap_key_path:
             modes.append((Path(path), mode))
@@ -2247,6 +2393,7 @@ def test_ca_helper_preserves_slapd_access_when_rewriting_ldap_key(monkeypatch, t
 
 
 def test_ca_helper_preserves_ntpd_access_when_rewriting_nts_key(monkeypatch, tmp_path):
+    """Verify that ca helper preserves ntpd access when rewriting nts key."""
     helper = load_helper_module()
     apply_dir = tmp_path / "apply" / "ca"
     managed_root = tmp_path / "etc" / "atlaso"
@@ -2262,6 +2409,13 @@ def test_ca_helper_preserves_ntpd_access_when_rewriting_nts_key(monkeypatch, tmp
     real_chmod = helper.os.chmod
 
     def track_nts_key_mode(path, mode, **kwargs):
+        """Handle track nts key mode.
+
+        Args:
+            path: Filesystem or URL path to read, validate, or update.
+            mode: Operating mode selected for the workflow.
+            kwargs: Additional keyword arguments forwarded to the wrapped call.
+        """
         real_chmod(path, mode, **kwargs)
         if Path(path) == ntp_key_path:
             modes.append((Path(path), mode))
@@ -2281,6 +2435,7 @@ def test_ca_helper_preserves_ntpd_access_when_rewriting_nts_key(monkeypatch, tmp
 
 
 def test_ca_helper_removes_stale_crl_when_publication_is_empty(monkeypatch, tmp_path):
+    """Verify that ca helper removes stale crl when publication is empty."""
     helper = load_helper_module()
     apply_dir = tmp_path / "apply" / "ca"
     managed_root = tmp_path / "etc" / "atlaso"
@@ -2303,6 +2458,7 @@ def test_ca_helper_removes_stale_crl_when_publication_is_empty(monkeypatch, tmp_
 
 
 def test_ca_helper_allows_csr_certificate_without_private_key(monkeypatch, tmp_path):
+    """Verify that ca helper allows csr certificate without private key."""
     helper = load_helper_module()
     apply_dir = tmp_path / "apply" / "ca"
     managed_root = tmp_path / "etc" / "atlaso"
@@ -2335,6 +2491,7 @@ def test_ca_helper_allows_csr_certificate_without_private_key(monkeypatch, tmp_p
 
 
 def test_ca_helper_rejects_key_path_without_private_key(monkeypatch, tmp_path):
+    """Verify that ca helper rejects key path without private key."""
     helper = load_helper_module()
     apply_dir = tmp_path / "apply" / "ca"
     managed_root = tmp_path / "etc" / "atlaso"
@@ -2354,6 +2511,7 @@ def test_ca_helper_rejects_key_path_without_private_key(monkeypatch, tmp_path):
 
 @pytest.mark.parametrize("action", ["validate", "apply"])
 def test_ca_helper_removes_invalid_apply_payload(monkeypatch, tmp_path, capsys, action):
+    """Verify that ca helper removes invalid apply payload."""
     helper = load_helper_module()
     apply_dir = tmp_path / "apply" / "ca"
     managed_root = tmp_path / "etc" / "atlaso"
@@ -2372,6 +2530,7 @@ def test_ca_helper_removes_invalid_apply_payload(monkeypatch, tmp_path, capsys, 
 
 
 def test_wan_helper_apply_routes_nat_and_netem(monkeypatch, tmp_path):
+    """Verify that wan helper apply routes nat and netem."""
     helper = load_helper_module()
     apply_dir = tmp_path / "apply" / "wan"
     apply_dir.mkdir(parents=True)
@@ -2384,10 +2543,12 @@ def test_wan_helper_apply_routes_nat_and_netem(monkeypatch, tmp_path):
     input_commands: list[tuple[list[str], str]] = []
 
     def fake_run(command: list[str]) -> subprocess.CompletedProcess[str]:
+        """Return fake run."""
         commands.append(command)
         return subprocess.CompletedProcess(command, 0, "", "")
 
     def fake_run_with_input(command: list[str], input_text: str) -> subprocess.CompletedProcess[str]:
+        """Return fake run with input."""
         input_commands.append((command, input_text))
         return subprocess.CompletedProcess(command, 0, "", "")
 
@@ -2415,6 +2576,7 @@ def test_wan_helper_apply_routes_nat_and_netem(monkeypatch, tmp_path):
 
 
 def test_automation_helper_gives_powershell_private_writable_xdg_home(monkeypatch, tmp_path):
+    """Verify that automation helper gives powershell private writable xdg home."""
     helper = load_helper_module()
     script_root = tmp_path / "scripts"
     run_root = tmp_path / "runs"
@@ -2425,6 +2587,7 @@ def test_automation_helper_gives_powershell_private_writable_xdg_home(monkeypatc
     wrapper_source = ""
 
     def fake_run(command: list[str]) -> subprocess.CompletedProcess[str]:
+        """Return fake run."""
         nonlocal wrapper_source
         commands.append(command)
         wrapper_source = Path(command[-3]).read_text(encoding="utf-8")
@@ -2457,15 +2620,18 @@ def test_automation_helper_gives_powershell_private_writable_xdg_home(monkeypatc
 
 
 def test_real_mutating_helper_action_escapes_service_mount_namespace(monkeypatch, tmp_path, capsys):
+    """Verify that real mutating helper action escapes service mount namespace."""
     helper = load_helper_module()
     config_path = tmp_path / "atlaso.conf"
     config_path.write_text("# staged dnsmasq config\n", encoding="utf-8")
     commands: list[list[str]] = []
 
     def fake_which(command: str) -> str | None:
+        """Return fake which."""
         return "/usr/bin/systemd-run" if command == "systemd-run" else None
 
     def fake_run(command: list[str]) -> subprocess.CompletedProcess[str]:
+        """Return fake run."""
         commands.append(command)
         return subprocess.CompletedProcess(command, 0, "child helper output\n", "")
 
@@ -2493,6 +2659,7 @@ def test_real_mutating_helper_action_escapes_service_mount_namespace(monkeypatch
 
 
 def test_powercli_helper_actions_receive_writable_root_configuration_environment(monkeypatch, tmp_path):
+    """Verify that powercli helper actions receive writable root configuration environment."""
     helper = load_helper_module()
     config_path = tmp_path / "atlaso-settings.json"
     config_path.write_text("{}\n", encoding="utf-8")
@@ -2527,6 +2694,7 @@ def test_powercli_helper_actions_receive_writable_root_configuration_environment
 
 
 def test_appliance_update_receives_writable_powershell_environment(monkeypatch, tmp_path):
+    """Verify that appliance update receives writable powershell environment."""
     helper = load_helper_module()
     config_path = tmp_path / "atlaso-update.json"
     config_path.write_text("{}\n", encoding="utf-8")
@@ -2565,6 +2733,7 @@ def test_appliance_update_receives_writable_powershell_environment(monkeypatch, 
 
 
 def test_network_helper_renders_systemd_networkd_files(tmp_path):
+    """Verify that network helper renders systemd networkd files."""
     helper = load_helper_module()
     config_path = tmp_path / "atlaso-network.conf"
     config_path.write_text(network_config_text(), encoding="utf-8")
@@ -2588,6 +2757,7 @@ def test_network_helper_renders_systemd_networkd_files(tmp_path):
 
 
 def test_network_helper_keeps_admin_down_physical_links_unmanaged(tmp_path):
+    """Verify that network helper keeps admin down physical links unmanaged."""
     helper = load_helper_module()
     config_path = tmp_path / "atlaso-network.conf"
     config_path.write_text(network_config_text(eth2_mode="access", eth2_admin_state="down", include_vlan=False), encoding="utf-8")
@@ -2601,6 +2771,7 @@ def test_network_helper_keeps_admin_down_physical_links_unmanaged(tmp_path):
 
 
 def test_network_helper_installs_networkd_files_and_reconfigures_non_management(monkeypatch, tmp_path):
+    """Verify that network helper installs networkd files and reconfigures non management."""
     helper = load_helper_module()
     config_path = tmp_path / "atlaso-network.conf"
     config_path.write_text(network_config_text(), encoding="utf-8")
@@ -2614,10 +2785,12 @@ def test_network_helper_installs_networkd_files_and_reconfigures_non_management(
     stdin_commands: list[tuple[list[str], str]] = []
 
     def fake_run(command: list[str]) -> subprocess.CompletedProcess[str]:
+        """Return fake run."""
         commands.append(command)
         return subprocess.CompletedProcess(command, 0, "", "")
 
     def fake_run_with_input(command: list[str], stdin_text: str) -> subprocess.CompletedProcess[str]:
+        """Return fake run with input."""
         stdin_commands.append((command, stdin_text))
         return subprocess.CompletedProcess(command, 0, "", "")
 
@@ -2645,6 +2818,7 @@ def test_network_helper_installs_networkd_files_and_reconfigures_non_management(
 
 
 def test_network_helper_sets_admin_down_links_down_after_reload(monkeypatch, tmp_path):
+    """Verify that network helper sets admin down links down after reload."""
     helper = load_helper_module()
     config_path = tmp_path / "atlaso-network.conf"
     config_path.write_text(network_config_text(eth2_mode="access", eth2_admin_state="down", include_vlan=False), encoding="utf-8")
@@ -2653,9 +2827,11 @@ def test_network_helper_sets_admin_down_links_down_after_reload(monkeypatch, tmp
     commands: list[list[str]] = []
 
     def fake_which(command: str) -> str | None:
+        """Return fake which."""
         return f"/usr/bin/{command}" if command in {"networkctl", "ip"} else None
 
     def fake_run(command: list[str]) -> subprocess.CompletedProcess[str]:
+        """Return fake run."""
         commands.append(command)
         return subprocess.CompletedProcess(command, 0, "", "")
 
@@ -2674,12 +2850,14 @@ def test_network_helper_sets_admin_down_links_down_after_reload(monkeypatch, tmp
 
 
 def test_network_helper_sets_vlan_ip_after_link_up_and_flush(monkeypatch, tmp_path):
+    """Verify that network helper sets vlan ip after link up and flush."""
     helper = load_helper_module()
     config_path = tmp_path / "atlaso-network.conf"
     config_path.write_text(network_config_text(), encoding="utf-8")
     commands: list[list[str]] = []
 
     def fake_run(command: list[str]) -> subprocess.CompletedProcess[str]:
+        """Return fake run."""
         commands.append(command)
         return subprocess.CompletedProcess(command, 0, "", "")
 
@@ -2700,12 +2878,14 @@ def test_network_helper_sets_vlan_ip_after_link_up_and_flush(monkeypatch, tmp_pa
 
 
 def test_network_helper_deletes_removed_vlan_links(monkeypatch, tmp_path):
+    """Verify that network helper deletes removed vlan links."""
     helper = load_helper_module()
     config_path = tmp_path / "atlaso-network.conf"
     config_path.write_text(network_config_text(include_vlan=False, include_removed_vlan=True), encoding="utf-8")
     commands: list[list[str]] = []
 
     def fake_run(command: list[str]) -> subprocess.CompletedProcess[str]:
+        """Return fake run."""
         commands.append(command)
         if command[:5] == ["ip", "-j", "-d", "link", "show"]:
             return subprocess.CompletedProcess(command, 0, '[{"linkinfo":{"info_kind":"vlan"}}]', "")
@@ -2722,11 +2902,13 @@ def test_network_helper_deletes_removed_vlan_links(monkeypatch, tmp_path):
 
 
 def test_network_helper_refuses_to_delete_non_vlan_link(monkeypatch, tmp_path):
+    """Verify that network helper refuses to delete non vlan link."""
     helper = load_helper_module()
     config_path = tmp_path / "atlaso-network.conf"
     config_path.write_text(network_config_text(include_vlan=False, include_removed_vlan=True), encoding="utf-8")
 
     def fake_run(command: list[str]) -> subprocess.CompletedProcess[str]:
+        """Return fake run."""
         if command[:5] == ["ip", "-j", "-d", "link", "show"]:
             return subprocess.CompletedProcess(command, 0, '[{"linkinfo":{"info_kind":"dummy"}}]', "")
         return subprocess.CompletedProcess(command, 0, "", "")
@@ -2738,6 +2920,7 @@ def test_network_helper_refuses_to_delete_non_vlan_link(monkeypatch, tmp_path):
 
 
 def test_kms_helper_rejects_config_outside_apply_dir(tmp_path):
+    """Verify that kms helper rejects config outside apply dir."""
     helper = load_helper_module()
     config_path = tmp_path / "server.json"
     config_path.write_text(kms_config_text(tmp_path), encoding="utf-8")
@@ -2746,6 +2929,7 @@ def test_kms_helper_rejects_config_outside_apply_dir(tmp_path):
 
 
 def test_kms_helper_validates_disabled_staged_config(monkeypatch, tmp_path):
+    """Verify that kms helper validates disabled staged config."""
     helper = load_helper_module()
     apply_dir = tmp_path / "apply" / "kms"
     state_dir = tmp_path / "state" / "kms"
@@ -2778,6 +2962,14 @@ def test_kms_helper_rejects_coerced_json_types(
     value,
     expected,
 ):
+    """Verify that kms helper rejects coerced json types.
+
+    Args:
+        tmp_path: Filesystem path for the tmp.
+        path: Filesystem or URL path to read, validate, or update.
+        value: Value to process.
+        expected: Expected supplied by the caller.
+    """
     helper = load_helper_module()
     payload = json.loads(kms_config_text(tmp_path))
     target = payload
@@ -2791,6 +2983,7 @@ def test_kms_helper_rejects_coerced_json_types(
 
 
 def test_kms_helper_blocks_nonempty_legacy_store(monkeypatch, tmp_path):
+    """Verify that kms helper blocks nonempty legacy store."""
     helper = load_helper_module()
     apply_dir = tmp_path / "apply" / "kms"
     state_dir = tmp_path / "state" / "kmip"
@@ -2832,6 +3025,7 @@ def test_kms_helper_blocks_nonempty_legacy_store(monkeypatch, tmp_path):
 
 
 def test_kms_helper_apply_installs_atlaso_kmip_service(monkeypatch, tmp_path):
+    """Verify that kms helper apply installs atlaso kmip service."""
     helper = load_helper_module()
     apply_dir = tmp_path / "apply" / "kms"
     state_dir = tmp_path / "state" / "kmip"
@@ -2869,10 +3063,12 @@ def test_kms_helper_apply_installs_atlaso_kmip_service(monkeypatch, tmp_path):
     ownership: list[tuple[Path, int, int]] = []
 
     def fake_run(command):
+        """Return fake run."""
         commands.append(command)
         return subprocess.CompletedProcess(command, 0, "", "")
 
     def fake_run_with_input(command, input_text):
+        """Return fake run with input."""
         credential_inputs.append((command, input_text))
         return subprocess.CompletedProcess(command, 0, "encrypted-machine-credential\n", "")
 
@@ -2937,22 +3133,34 @@ def test_kms_apply_reconciles_service_identity_for_upgraded_appliance(
     monkeypatch,
     tmp_path,
 ):
+    """Verify that kms apply reconciles service identity for upgraded appliance."""
     helper = load_helper_module()
     state_dir = tmp_path / "state" / "kmip"
     commands: list[list[str]] = []
     identity_created = {"group": False, "account": False}
 
     def fake_group(name):
+        """Return fake group.
+
+        Raises:
+            KeyError: If a required mapping entry is absent.
+        """
         if name == helper.KMS_SERVICE_USER and identity_created["group"]:
             return SimpleNamespace(gr_gid=1002)
         raise KeyError(name)
 
     def fake_account(name):
+        """Return fake account.
+
+        Raises:
+            KeyError: If a required mapping entry is absent.
+        """
         if name == helper.KMS_SERVICE_USER and identity_created["account"]:
             return SimpleNamespace(pw_uid=1001)
         raise KeyError(name)
 
     def fake_run(command):
+        """Return fake run."""
         commands.append(command)
         if command[0].endswith("groupadd"):
             identity_created["group"] = True
@@ -2989,6 +3197,7 @@ def test_kms_apply_reconciles_service_identity_for_upgraded_appliance(
 
 
 def test_dnsmasq_helper_validates_staged_config(monkeypatch, tmp_path):
+    """Verify that dnsmasq helper validates staged config."""
     helper = load_helper_module()
     apply_dir = tmp_path / "apply" / "dnsmasq"
     apply_dir.mkdir(parents=True)
@@ -2997,6 +3206,7 @@ def test_dnsmasq_helper_validates_staged_config(monkeypatch, tmp_path):
     commands: list[list[str]] = []
 
     def fake_run(command: list[str]) -> subprocess.CompletedProcess[str]:
+        """Return fake run."""
         commands.append(command)
         return subprocess.CompletedProcess(command, 0, "dnsmasq: syntax check OK.\n", "")
 
@@ -3010,6 +3220,7 @@ def test_dnsmasq_helper_validates_staged_config(monkeypatch, tmp_path):
 
 
 def test_dnsmasq_helper_rejects_missing_required_dhcp_upstream(monkeypatch, tmp_path, capsys):
+    """Verify that dnsmasq helper rejects missing required dhcp upstream."""
     helper = load_helper_module()
     apply_dir = tmp_path / "apply" / "dnsmasq"
     apply_dir.mkdir(parents=True)
@@ -3029,6 +3240,7 @@ def test_dnsmasq_helper_rejects_missing_required_dhcp_upstream(monkeypatch, tmp_
 
 
 def test_dnsmasq_helper_accepts_rendered_required_dhcp_upstream(monkeypatch, tmp_path):
+    """Verify that dnsmasq helper accepts rendered required dhcp upstream."""
     helper = load_helper_module()
     apply_dir = tmp_path / "apply" / "dnsmasq"
     apply_dir.mkdir(parents=True)
@@ -3040,6 +3252,7 @@ def test_dnsmasq_helper_accepts_rendered_required_dhcp_upstream(monkeypatch, tmp
     commands: list[list[str]] = []
 
     def fake_run(command: list[str]) -> subprocess.CompletedProcess[str]:
+        """Return fake run."""
         commands.append(command)
         return subprocess.CompletedProcess(command, 0, "dnsmasq: syntax check OK.\n", "")
 
@@ -3052,6 +3265,7 @@ def test_dnsmasq_helper_accepts_rendered_required_dhcp_upstream(monkeypatch, tmp
 
 
 def test_networkd_dhcp_dns_reads_only_requested_interface_lease(monkeypatch, tmp_path):
+    """Verify that networkd dhcp dns reads only requested interface lease."""
     helper = load_helper_module()
     interface_dir = tmp_path / "sys" / "class" / "net"
     lease_dir = tmp_path / "run" / "systemd" / "netif" / "leases"
@@ -3078,6 +3292,7 @@ def test_networkd_dhcp_dns_reads_only_requested_interface_lease(monkeypatch, tmp
 
 
 def test_dnsmasq_helper_prepares_dnssec_trust_anchors(monkeypatch, tmp_path):
+    """Verify that dnsmasq helper prepares dnssec trust anchors."""
     helper = load_helper_module()
     apply_dir = tmp_path / "apply" / "dnsmasq"
     anchor_source = tmp_path / "usr" / "share" / "dnsmasq" / "trust-anchors.conf"
@@ -3090,6 +3305,7 @@ def test_dnsmasq_helper_prepares_dnssec_trust_anchors(monkeypatch, tmp_path):
     commands: list[list[str]] = []
 
     def fake_run(command: list[str]) -> subprocess.CompletedProcess[str]:
+        """Return fake run."""
         commands.append(command)
         if command == ["/usr/sbin/dnsmasq", "--version"]:
             return subprocess.CompletedProcess(command, 0, "Compile time options: DNSSEC\n", "")
@@ -3111,6 +3327,7 @@ def test_dnsmasq_helper_prepares_dnssec_trust_anchors(monkeypatch, tmp_path):
 
 
 def test_dnsmasq_helper_rejects_dnssec_when_package_lacks_support(monkeypatch, tmp_path, capsys):
+    """Verify that dnsmasq helper rejects dnssec when package lacks support."""
     helper = load_helper_module()
     apply_dir = tmp_path / "apply" / "dnsmasq"
     apply_dir.mkdir(parents=True)
@@ -3118,6 +3335,7 @@ def test_dnsmasq_helper_rejects_dnssec_when_package_lacks_support(monkeypatch, t
     config_path.write_text("dnssec\n", encoding="utf-8")
 
     def fake_run(command: list[str]) -> subprocess.CompletedProcess[str]:
+        """Return fake run."""
         return subprocess.CompletedProcess(command, 0, "Compile time options: no-DNSSEC\n", "")
 
     monkeypatch.setattr(helper, "DNSMASQ_APPLY_DIR", apply_dir)
@@ -3131,6 +3349,7 @@ def test_dnsmasq_helper_rejects_dnssec_when_package_lacks_support(monkeypatch, t
 
 
 def test_dnsmasq_helper_apply_installs_config_dropin_and_enables_service(monkeypatch, tmp_path):
+    """Verify that dnsmasq helper apply installs config dropin and enables service."""
     helper = load_helper_module()
     apply_dir = tmp_path / "apply" / "dnsmasq"
     state_dir = tmp_path / "var" / "lib" / "atlaso" / "dnsmasq"
@@ -3161,6 +3380,7 @@ def test_dnsmasq_helper_apply_installs_config_dropin_and_enables_service(monkeyp
     commands: list[list[str]] = []
 
     def fake_run(command: list[str]) -> subprocess.CompletedProcess[str]:
+        """Return fake run."""
         commands.append(command)
         return subprocess.CompletedProcess(command, 0, "", "")
 
@@ -3192,6 +3412,7 @@ def test_dnsmasq_helper_apply_installs_config_dropin_and_enables_service(monkeyp
 
 
 def test_dnsmasq_helper_apply_creates_allowlisted_tftp_root(monkeypatch, tmp_path):
+    """Verify that dnsmasq helper apply creates allowlisted tftp root."""
     helper = load_helper_module()
     apply_dir = tmp_path / "apply" / "dnsmasq"
     state_dir = tmp_path / "var" / "lib" / "atlaso" / "dnsmasq"
@@ -3205,6 +3426,7 @@ def test_dnsmasq_helper_apply_creates_allowlisted_tftp_root(monkeypatch, tmp_pat
     chowned: list[Path] = []
 
     def fake_run(command: list[str]) -> subprocess.CompletedProcess[str]:
+        """Return fake run."""
         commands.append(command)
         return subprocess.CompletedProcess(command, 0, "", "")
 
@@ -3227,6 +3449,7 @@ def test_dnsmasq_helper_apply_creates_allowlisted_tftp_root(monkeypatch, tmp_pat
 
 
 def test_dnsmasq_helper_apply_rejects_unexpected_tftp_root(monkeypatch, tmp_path, capsys):
+    """Verify that dnsmasq helper apply rejects unexpected tftp root."""
     helper = load_helper_module()
     apply_dir = tmp_path / "apply" / "dnsmasq"
     allowed_root = tmp_path / "var" / "lib" / "atlaso" / "pxe" / "tftp"
@@ -3237,6 +3460,7 @@ def test_dnsmasq_helper_apply_rejects_unexpected_tftp_root(monkeypatch, tmp_path
     commands: list[list[str]] = []
 
     def fake_run(command: list[str]) -> subprocess.CompletedProcess[str]:
+        """Return fake run."""
         commands.append(command)
         return subprocess.CompletedProcess(command, 0, "", "")
 
@@ -3254,10 +3478,12 @@ def test_dnsmasq_helper_apply_rejects_unexpected_tftp_root(monkeypatch, tmp_path
 
 
 def test_dnsmasq_helper_reload_restarts_service(monkeypatch):
+    """Verify that dnsmasq helper reload restarts service."""
     helper = load_helper_module()
     commands: list[list[str]] = []
 
     def fake_run(command: list[str]) -> subprocess.CompletedProcess[str]:
+        """Return fake run."""
         commands.append(command)
         return subprocess.CompletedProcess(command, 0, "", "")
 
@@ -3272,6 +3498,7 @@ def test_dnsmasq_helper_reload_restarts_service(monkeypatch):
 
 
 def test_dnsmasq_helper_reads_allowlisted_lease_file(monkeypatch, tmp_path, capsys):
+    """Verify that dnsmasq helper reads allowlisted lease file."""
     helper = load_helper_module()
     state_dir = tmp_path / "var" / "lib" / "atlaso" / "dnsmasq"
     state_dir.mkdir(parents=True)
@@ -3288,6 +3515,7 @@ def test_dnsmasq_helper_reads_allowlisted_lease_file(monkeypatch, tmp_path, caps
 
 
 def test_dnsmasq_helper_missing_lease_file_is_empty_success(monkeypatch, tmp_path, capsys):
+    """Verify that dnsmasq helper missing lease file is empty success."""
     helper = load_helper_module()
     state_dir = tmp_path / "var" / "lib" / "atlaso" / "dnsmasq"
     state_dir.mkdir(parents=True)
@@ -3302,6 +3530,7 @@ def test_dnsmasq_helper_missing_lease_file_is_empty_success(monkeypatch, tmp_pat
 
 
 def test_dnsmasq_helper_rejects_lease_paths_outside_allowlisted_state(monkeypatch, tmp_path, capsys):
+    """Verify that dnsmasq helper rejects lease paths outside allowlisted state."""
     helper = load_helper_module()
     state_dir = tmp_path / "var" / "lib" / "atlaso" / "dnsmasq"
     outside_file = tmp_path / "elsewhere" / "dhcp.leases"
@@ -3318,6 +3547,13 @@ def test_dnsmasq_helper_rejects_lease_paths_outside_allowlisted_state(monkeypatc
 
 
 def local_users_json(*, username: str = "sync-user", enabled: bool = True, password: str | None = "BridgeStrong1!") -> str:
+    """Return local users json.
+
+    Args:
+        username: Account name used for authentication or lookup.
+        enabled: Whether the requested behavior is enabled.
+        password: Password supplied for the immediate authenticated operation.
+    """
     row = {
         "username": username,
         "role": "viewer",
@@ -3333,6 +3569,7 @@ def local_users_json(*, username: str = "sync-user", enabled: bool = True, passw
 
 
 def test_local_users_helper_validates_staged_config(monkeypatch, tmp_path, capsys):
+    """Verify that local users helper validates staged config."""
     helper = load_helper_module()
     apply_dir = tmp_path / "apply" / "local-users"
     apply_dir.mkdir(parents=True)
@@ -3349,6 +3586,7 @@ def test_local_users_helper_validates_staged_config(monkeypatch, tmp_path, capsy
 
 
 def test_local_users_helper_rejects_reserved_username(monkeypatch, tmp_path, capsys):
+    """Verify that local users helper rejects reserved username."""
     helper = load_helper_module()
     apply_dir = tmp_path / "apply" / "local-users"
     apply_dir.mkdir(parents=True)
@@ -3364,6 +3602,7 @@ def test_local_users_helper_rejects_reserved_username(monkeypatch, tmp_path, cap
 
 @pytest.mark.parametrize("action", ["validate", "apply"])
 def test_local_users_helper_removes_invalid_apply_payload(monkeypatch, tmp_path, capsys, action):
+    """Verify that local users helper removes invalid apply payload."""
     helper = load_helper_module()
     apply_dir = tmp_path / "apply" / "local-users"
     apply_dir.mkdir(parents=True)
@@ -3378,6 +3617,7 @@ def test_local_users_helper_removes_invalid_apply_payload(monkeypatch, tmp_path,
 
 
 def test_local_users_helper_creates_deletes_and_sets_password_without_leaking(monkeypatch, tmp_path, capsys):
+    """Verify that local users helper creates deletes and sets password without leaking."""
     helper = load_helper_module()
     apply_dir = tmp_path / "apply" / "local-users"
     home_base = tmp_path / "users"
@@ -3405,12 +3645,14 @@ def test_local_users_helper_creates_deletes_and_sets_password_without_leaking(mo
     stdin_values: list[str] = []
 
     def fake_run(command: list[str]) -> subprocess.CompletedProcess[str]:
+        """Return fake run."""
         commands.append(command)
         if command == ["id", "sync-user"]:
             return subprocess.CompletedProcess(command, 1, "", "")
         return subprocess.CompletedProcess(command, 0, "", "")
 
     def fake_run_with_input(command: list[str], input_text: str) -> subprocess.CompletedProcess[str]:
+        """Return fake run with input."""
         commands.append(command)
         stdin_values.append(input_text)
         return subprocess.CompletedProcess(command, 0, "", "")
@@ -3441,16 +3683,25 @@ def test_local_users_helper_creates_deletes_and_sets_password_without_leaking(mo
 
 
 def test_local_users_helper_authenticates_shadow_password_without_leaking(monkeypatch, capsys):
+    """Verify that local users helper authenticates shadow password without leaking."""
     helper = load_helper_module()
 
     class FakeCrypt:
+        """Represent fake crypt."""
         argtypes = None
         restype = None
 
         def __call__(self, password: bytes, password_hash: bytes) -> bytes:
+            """Return call.
+
+            Args:
+                password: Password supplied for the immediate authenticated operation.
+                password_hash: Password hash supplied by the caller.
+            """
             return password_hash if password == b"Depot-user1!" else b"$6$not-a-match"
 
     class FakeCryptLibrary:
+        """Represent fake crypt library."""
         crypt = FakeCrypt()
 
     monkeypatch.setattr(helper, "_shadow_hash_for_user", lambda username: "$6$rounds=5000$valid-hash")
@@ -3471,22 +3722,32 @@ def test_local_users_helper_authenticates_shadow_password_without_leaking(monkey
 
 
 def test_ldap_helper_authenticates_with_mode_0600_password_file_and_redacts(monkeypatch, tmp_path, capsys):
+    """Verify that ldap helper authenticates with mode 0600 password file and redacts."""
     helper = load_helper_module()
     seen: dict[str, object] = {}
 
     class ManagedTemporaryFile:
+        """Represent managed temporary file."""
         def __init__(self, **_kwargs):
+            """Initialize the managed temporary file."""
             self.path = tmp_path / "ldap-password"
             self.handle = self.path.open("w", encoding="utf-8")
             self.name = str(self.path)
 
         def __enter__(self):
+            """Enter the managed context.
+
+            Returns:
+                The enter result.
+            """
             return self.handle
 
         def __exit__(self, *_args):
+            """Exit the managed context without suppressing exceptions."""
             self.handle.close()
 
     def fake_run(command, **_kwargs):
+        """Return fake run."""
         password_path = Path(command[command.index("-y") + 1])
         seen["command"] = command
         seen["mode"] = stat.S_IMODE(password_path.stat().st_mode)
@@ -3496,6 +3757,12 @@ def test_ldap_helper_authenticates_with_mode_0600_password_file_and_redacts(monk
     real_chmod = helper.os.chmod
 
     def capture_chmod(path, mode):
+        """Handle capture chmod.
+
+        Args:
+            path: Filesystem or URL path to read, validate, or update.
+            mode: Operating mode selected for the workflow.
+        """
         seen["chmod"] = (Path(path), mode)
         real_chmod(path, mode)
 
@@ -3524,6 +3791,7 @@ def test_ldap_helper_authenticates_with_mode_0600_password_file_and_redacts(monk
 
 
 def test_local_users_helper_authentication_rejects_locked_missing_and_unsupported_hashes(monkeypatch):
+    """Verify that local users helper authentication rejects locked missing and unsupported hashes."""
     helper = load_helper_module()
 
     for error in (
@@ -3531,6 +3799,11 @@ def test_local_users_helper_authentication_rejects_locked_missing_and_unsupporte
         "VCF Offline Depot OS user is missing.",
     ):
         def reject_shadow(username: str, message: str = error) -> str:
+            """Return reject shadow.
+
+            Raises:
+                ValueError: If an input value is invalid.
+            """
             raise ValueError(message)
 
         monkeypatch.setattr(helper, "_shadow_hash_for_user", reject_shadow)
@@ -3538,10 +3811,17 @@ def test_local_users_helper_authentication_rejects_locked_missing_and_unsupporte
         assert helper.main(["atlaso-helper", "local-users", "authenticate", "--real", "vcf-depot"]) == 1
 
     class UnsupportedCrypt:
+        """Represent unsupported crypt."""
         argtypes = None
         restype = None
 
         def __call__(self, password: bytes, password_hash: bytes) -> bytes:
+            """Return call.
+
+            Args:
+                password: Password supplied for the immediate authenticated operation.
+                password_hash: Password hash supplied by the caller.
+            """
             return b"*0"
 
     monkeypatch.setattr(helper, "_shadow_hash_for_user", lambda username: "$y$unsupported")
@@ -3552,6 +3832,7 @@ def test_local_users_helper_authentication_rejects_locked_missing_and_unsupporte
 
 
 def test_local_users_helper_refreshes_existing_depot_htpasswd_and_fails_closed(monkeypatch, tmp_path):
+    """Verify that local users helper refreshes existing depot htpasswd and fails closed."""
     helper = load_helper_module()
     htpasswd_path = tmp_path / "nginx" / "htpasswd" / "vcf-offline-depot.htpasswd"
     htpasswd_path.parent.mkdir(parents=True)
@@ -3566,6 +3847,11 @@ def test_local_users_helper_refreshes_existing_depot_htpasswd_and_fails_closed(m
     assert htpasswd_path.read_text(encoding="utf-8") == "vcf-depot:$6$fresh\n"
 
     def locked_user(username: str) -> str:
+        """Return locked user.
+
+        Raises:
+            ValueError: If an input value is invalid.
+        """
         raise ValueError("locked")
 
     monkeypatch.setattr(helper, "_shadow_hash_for_user", locked_user)
@@ -3574,6 +3860,7 @@ def test_local_users_helper_refreshes_existing_depot_htpasswd_and_fails_closed(m
 
 
 def test_local_users_helper_applies_per_user_shell(monkeypatch, tmp_path):
+    """Verify that local users helper applies per user shell."""
     helper = load_helper_module()
     apply_dir = tmp_path / "apply" / "local-users"
     home_base = tmp_path / "users"
@@ -3590,6 +3877,7 @@ def test_local_users_helper_applies_per_user_shell(monkeypatch, tmp_path):
     commands: list[list[str]] = []
 
     def fake_run(command: list[str]) -> subprocess.CompletedProcess[str]:
+        """Return fake run."""
         commands.append(command)
         return subprocess.CompletedProcess(command, 0, "", "")
 
@@ -3605,6 +3893,7 @@ def test_local_users_helper_applies_per_user_shell(monkeypatch, tmp_path):
 
 
 def test_local_users_helper_keeps_admin_role_sudo_capable(monkeypatch, tmp_path):
+    """Verify that local users helper keeps admin role sudo capable."""
     helper = load_helper_module()
     apply_dir = tmp_path / "apply" / "local-users"
     home_base = tmp_path / "users"
@@ -3621,6 +3910,7 @@ def test_local_users_helper_keeps_admin_role_sudo_capable(monkeypatch, tmp_path)
     commands: list[list[str]] = []
 
     def fake_run(command: list[str]) -> subprocess.CompletedProcess[str]:
+        """Return fake run."""
         commands.append(command)
         return subprocess.CompletedProcess(command, 0, "", "")
 
@@ -3637,6 +3927,7 @@ def test_local_users_helper_keeps_admin_role_sudo_capable(monkeypatch, tmp_path)
 
 
 def test_local_users_helper_removes_wheel_on_admin_downgrade(monkeypatch, tmp_path):
+    """Verify that local users helper removes wheel on admin downgrade."""
     helper = load_helper_module()
     apply_dir = tmp_path / "apply" / "local-users"
     home_base = tmp_path / "users"
@@ -3653,6 +3944,7 @@ def test_local_users_helper_removes_wheel_on_admin_downgrade(monkeypatch, tmp_pa
     commands: list[list[str]] = []
 
     def fake_run(command: list[str]) -> subprocess.CompletedProcess[str]:
+        """Return fake run."""
         commands.append(command)
         if command == ["id", "-nG", "downgraded-user"]:
             return subprocess.CompletedProcess(command, 0, "downgraded-user wheel", "")
@@ -3670,6 +3962,7 @@ def test_local_users_helper_removes_wheel_on_admin_downgrade(monkeypatch, tmp_pa
 
 
 def test_local_users_helper_allows_powershell_shell(monkeypatch, tmp_path, capsys):
+    """Verify that local users helper allows powershell shell."""
     helper = load_helper_module()
     apply_dir = tmp_path / "apply" / "local-users"
     apply_dir.mkdir(parents=True)
@@ -3686,6 +3979,7 @@ def test_local_users_helper_allows_powershell_shell(monkeypatch, tmp_path, capsy
 
 
 def test_local_users_helper_unlock_request_resets_passwd_and_faillock(monkeypatch, tmp_path):
+    """Verify that local users helper unlock request resets passwd and faillock."""
     helper = load_helper_module()
     apply_dir = tmp_path / "apply" / "local-users"
     home_base = tmp_path / "users"
@@ -3702,6 +3996,7 @@ def test_local_users_helper_unlock_request_resets_passwd_and_faillock(monkeypatc
     commands: list[list[str]] = []
 
     def fake_run(command: list[str]) -> subprocess.CompletedProcess[str]:
+        """Return fake run."""
         commands.append(command)
         return subprocess.CompletedProcess(command, 0, "", "")
 
@@ -3719,6 +4014,7 @@ def test_local_users_helper_unlock_request_resets_passwd_and_faillock(monkeypatc
 
 
 def test_local_users_helper_status_reports_faillock_blocked(monkeypatch, tmp_path, capsys):
+    """Verify that local users helper status reports faillock blocked."""
     helper = load_helper_module()
     apply_dir = tmp_path / "apply" / "local-users"
     apply_dir.mkdir(parents=True)
@@ -3726,6 +4022,7 @@ def test_local_users_helper_status_reports_faillock_blocked(monkeypatch, tmp_pat
     config_path.write_text(local_users_json(password=None), encoding="utf-8")
 
     def fake_run(command: list[str]) -> subprocess.CompletedProcess[str]:
+        """Return fake run."""
         if command == ["id", "sync-user"]:
             return subprocess.CompletedProcess(command, 0, "", "")
         if command == ["passwd", "-S", "sync-user"]:
@@ -3746,6 +4043,7 @@ def test_local_users_helper_status_reports_faillock_blocked(monkeypatch, tmp_pat
 
 
 def test_local_users_helper_status_does_not_block_on_zero_faillock_failures(monkeypatch, tmp_path, capsys):
+    """Verify that local users helper status does not block on zero faillock failures."""
     helper = load_helper_module()
     apply_dir = tmp_path / "apply" / "local-users"
     apply_dir.mkdir(parents=True)
@@ -3753,6 +4051,7 @@ def test_local_users_helper_status_does_not_block_on_zero_faillock_failures(monk
     config_path.write_text(local_users_json(password=None), encoding="utf-8")
 
     def fake_run(command: list[str]) -> subprocess.CompletedProcess[str]:
+        """Return fake run."""
         if command == ["id", "sync-user"]:
             return subprocess.CompletedProcess(command, 0, "", "")
         if command == ["passwd", "-S", "sync-user"]:
@@ -3772,6 +4071,7 @@ def test_local_users_helper_status_does_not_block_on_zero_faillock_failures(monk
 
 
 def vcf_backups_config_text(*, enabled: bool = True) -> str:
+    """Return vcf backups config text."""
     if not enabled:
         return "\n".join(
             [
@@ -3812,6 +4112,7 @@ def vcf_backups_config_text(*, enabled: bool = True) -> str:
 
 
 def test_vcf_backups_helper_validates_staged_config(monkeypatch, tmp_path, capsys):
+    """Verify that vcf backups helper validates staged config."""
     helper = load_helper_module()
     apply_dir = tmp_path / "apply" / "vcf-backups"
     apply_dir.mkdir(parents=True)
@@ -3827,6 +4128,7 @@ def test_vcf_backups_helper_validates_staged_config(monkeypatch, tmp_path, capsy
 
 
 def test_vcf_backups_helper_rejects_unmanaged_config(tmp_path):
+    """Verify that vcf backups helper rejects unmanaged config."""
     helper = load_helper_module()
     config_path = tmp_path / "atlaso-vcf-backups-sshd.conf"
     config_path.write_text("Match User root\n", encoding="utf-8")
@@ -3837,6 +4139,7 @@ def test_vcf_backups_helper_rejects_unmanaged_config(tmp_path):
 
 
 def test_vcf_backups_helper_apply_installs_sshd_dropin_and_storage(monkeypatch, tmp_path):
+    """Verify that vcf backups helper apply installs sshd dropin and storage."""
     helper = load_helper_module()
     apply_dir = tmp_path / "apply" / "vcf-backups"
     config_dir = tmp_path / "etc" / "ssh" / "sshd_config.d"
@@ -3851,6 +4154,7 @@ def test_vcf_backups_helper_apply_installs_sshd_dropin_and_storage(monkeypatch, 
     commands: list[list[str]] = []
 
     def fake_run(command: list[str]) -> subprocess.CompletedProcess[str]:
+        """Return fake run."""
         commands.append(command)
         return subprocess.CompletedProcess(command, 0, "", "")
 
@@ -3859,6 +4163,7 @@ def test_vcf_backups_helper_apply_installs_sshd_dropin_and_storage(monkeypatch, 
     monkeypatch.setattr(helper, "VCF_BACKUPS_CONFIG_PATH", config_dir / "atlaso-vcf-backups.conf")
     monkeypatch.setattr(helper, "VCF_BACKUPS_AUTHORIZED_KEYS_DIR", atlaso_ssh_dir)
     def fake_path(value):
+        """Return fake path."""
         if value == "/etc/ssh/sshd_config":
             return sshd_config
         if value == "/mnt/atlaso-vcf-backups":
@@ -3884,6 +4189,7 @@ def test_vcf_backups_helper_apply_installs_sshd_dropin_and_storage(monkeypatch, 
 
 
 def test_vcf_backups_helper_apply_requires_existing_os_user(monkeypatch, tmp_path, capsys):
+    """Verify that vcf backups helper apply requires existing os user."""
     helper = load_helper_module()
     apply_dir = tmp_path / "apply" / "vcf-backups"
     apply_dir.mkdir(parents=True)
@@ -3891,6 +4197,7 @@ def test_vcf_backups_helper_apply_requires_existing_os_user(monkeypatch, tmp_pat
     config_path.write_text(vcf_backups_config_text(), encoding="utf-8")
 
     def fake_run(command: list[str]) -> subprocess.CompletedProcess[str]:
+        """Return fake run."""
         if command == ["id", "vcf-backup"]:
             return subprocess.CompletedProcess(command, 1, "", "")
         return subprocess.CompletedProcess(command, 0, "", "")
@@ -3905,6 +4212,7 @@ def test_vcf_backups_helper_apply_requires_existing_os_user(monkeypatch, tmp_pat
 
 
 def test_vcf_offline_depot_helper_applies_nginx_site(monkeypatch, tmp_path):
+    """Verify that vcf offline depot helper applies nginx site."""
     helper = load_helper_module()
     apply_dir = tmp_path / "apply" / "vcf-offline-depot"
     managed_root = tmp_path / "etc" / "atlaso"
@@ -3985,6 +4293,7 @@ def test_vcf_offline_depot_helper_applies_nginx_site(monkeypatch, tmp_path):
     commands: list[list[str]] = []
 
     def fake_run(command: list[str]) -> subprocess.CompletedProcess[str]:
+        """Return fake run."""
         commands.append(command)
         return subprocess.CompletedProcess(command, 0, "", "")
 
@@ -4012,6 +4321,7 @@ def test_vcf_offline_depot_helper_applies_nginx_site(monkeypatch, tmp_path):
 
 
 def test_vcf_offline_depot_helper_uses_browser_session_or_basic_auth_for_authenticated_site(monkeypatch, tmp_path):
+    """Verify that vcf offline depot helper uses browser session or basic auth for authenticated site."""
     helper = load_helper_module()
     apply_dir = tmp_path / "apply" / "vcf-offline-depot"
     managed_root = tmp_path / "etc" / "atlaso"
@@ -4161,6 +4471,7 @@ def test_vcf_offline_depot_helper_uses_browser_session_or_basic_auth_for_authent
 
 
 def test_vcf_offline_depot_helper_prepares_prod_tree_permissions(monkeypatch, tmp_path):
+    """Verify that vcf offline depot helper prepares prod tree permissions."""
     helper = load_helper_module()
     prod_path = tmp_path / "depot" / "PROD"
     nested_dir = prod_path / "COMP"
@@ -4180,6 +4491,7 @@ def test_vcf_offline_depot_helper_prepares_prod_tree_permissions(monkeypatch, tm
 
 
 def test_vcf_offline_depot_helper_rejects_broad_nginx_root(monkeypatch, tmp_path, capsys):
+    """Verify that vcf offline depot helper rejects broad nginx root."""
     helper = load_helper_module()
     apply_dir = tmp_path / "apply" / "vcf-offline-depot"
     managed_root = tmp_path / "etc" / "atlaso"
@@ -4218,6 +4530,7 @@ def test_vcf_offline_depot_helper_rejects_broad_nginx_root(monkeypatch, tmp_path
 
 
 def test_vcf_offline_depot_helper_extracts_vcfdt_tool(monkeypatch, tmp_path, capsys):
+    """Verify that vcf offline depot helper extracts vcfdt tool."""
     helper = load_helper_module()
     archive_path = tmp_path / "vcf-download-tool-9.1.0.test.tar.gz"
     payload = b"#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then echo 'vcf-download-tool 9.1.0.0100.25429019'; else echo software depot id 8c9506c6-7bdf-44d5-b2e9-50d829d66b99; fi\n"
@@ -4275,6 +4588,7 @@ def test_vcf_offline_depot_helper_extracts_vcfdt_tool(monkeypatch, tmp_path, cap
 
 
 def test_vcf_offline_depot_helper_renews_runtime_when_retired_tree_stays_busy(monkeypatch, tmp_path, capsys):
+    """Verify that vcf offline depot helper renews runtime when retired tree stays busy."""
     helper = load_helper_module()
     archive_path = tmp_path / "vcf-download-tool-9.1.0.renew.tar.gz"
     tool_payload = b"#!/bin/sh\necho 'vcf-download-tool 9.1.0'\n"
@@ -4301,6 +4615,16 @@ def test_vcf_offline_depot_helper_renews_runtime_when_retired_tree_stays_busy(mo
     real_rmtree = helper.shutil.rmtree
 
     def busy_rmtree(path, *args, **kwargs):
+        """Return busy rmtree.
+
+        Args:
+            path: Filesystem or URL path to read, validate, or update.
+            args: Parsed command-line arguments.
+            kwargs: Additional keyword arguments forwarded to the wrapped call.
+
+        Raises:
+            OSError: If the operating-system operation fails.
+        """
         if Path(path).name.startswith(".active-tool.retired-"):
             raise OSError(39, "Directory not empty", str(path))
         return real_rmtree(path, *args, **kwargs)
@@ -4319,6 +4643,7 @@ def test_vcf_offline_depot_helper_renews_runtime_when_retired_tree_stays_busy(mo
 
 
 def test_vcf_offline_depot_helper_preserves_root_level_runtime_executable(monkeypatch, tmp_path, capsys):
+    """Verify that vcf offline depot helper preserves root level runtime executable."""
     helper = load_helper_module()
     archive_path = tmp_path / "vcf-download-tool-9.1.0.root.tar.gz"
     payload = b"#!/bin/sh\necho 'vcf-download-tool 9.1.0'\n"
@@ -4350,6 +4675,7 @@ def test_vcf_offline_depot_helper_preserves_root_level_runtime_executable(monkey
 
 
 def test_vcf_offline_depot_helper_resets_staged_and_active_tool_trees(monkeypatch, tmp_path, capsys):
+    """Verify that vcf offline depot helper resets staged and active tool trees."""
     helper = load_helper_module()
     tool_dir = tmp_path / "opt" / "atlaso" / "vcf-download-tool"
     runtime_tool_dir = tmp_path / "var" / "lib" / "atlaso" / "vcfDownloadTool" / "active-tool"
@@ -4373,11 +4699,13 @@ def test_vcf_offline_depot_helper_resets_staged_and_active_tool_trees(monkeypatc
 
 
 def test_vcf_offline_depot_helper_prepares_atlaso_vcfdt_home(monkeypatch, tmp_path):
+    """Verify that vcf offline depot helper prepares atlaso vcfdt home."""
     helper = load_helper_module()
     state_home = tmp_path / "var" / "lib" / "atlaso"
     chowned: list[tuple[Path, int, int]] = []
 
     class Account:
+        """Represent account."""
         pw_dir = str(state_home)
         pw_uid = 1200
         pw_gid = 1200
@@ -4396,6 +4724,7 @@ def test_vcf_offline_depot_helper_prepares_atlaso_vcfdt_home(monkeypatch, tmp_pa
 
 
 def test_vcf_offline_depot_helper_generates_software_depot_id(monkeypatch, tmp_path, capsys):
+    """Verify that vcf offline depot helper generates software depot id."""
     helper = load_helper_module()
     runtime_tool_dir = tmp_path / "var" / "lib" / "atlaso" / "vcfDownloadTool" / "active-tool"
     wrapper = runtime_tool_dir / "vcf-download-tool"
@@ -4412,6 +4741,7 @@ def test_vcf_offline_depot_helper_generates_software_depot_id(monkeypatch, tmp_p
     commands: list[tuple[list[str], str]] = []
 
     def fake_run_vcfdt(command: list[str], *, input_text: str | None = None) -> subprocess.CompletedProcess[str]:
+        """Return fake run vcfdt."""
         commands.append((command, input_text or ""))
         if "generate" in command:
             return subprocess.CompletedProcess(command, 0, "Initialized request 11111111-1111-1111-1111-111111111111\n", "")
@@ -4441,6 +4771,7 @@ def test_vcf_offline_depot_helper_generates_software_depot_id(monkeypatch, tmp_p
 
 
 def test_vcf_offline_depot_helper_rejects_ambiguous_uuid_only_output():
+    """Verify that vcf offline depot helper rejects ambiguous uuid only output."""
     helper = load_helper_module()
 
     assert (
@@ -4452,6 +4783,7 @@ def test_vcf_offline_depot_helper_rejects_ambiguous_uuid_only_output():
 
 
 def test_vcf_offline_depot_helper_invalidates_stored_id_when_readback_fails(monkeypatch, tmp_path, capsys):
+    """Verify that vcf offline depot helper invalidates stored id when readback fails."""
     helper = load_helper_module()
     runtime_tool_dir = tmp_path / "var" / "lib" / "atlaso" / "vcfDownloadTool" / "active-tool"
     wrapper = runtime_tool_dir / "vcf-download-tool"
@@ -4467,6 +4799,7 @@ def test_vcf_offline_depot_helper_invalidates_stored_id_when_readback_fails(monk
         credential_path.write_text("non-secret-fixture", encoding="utf-8")
 
     def fake_run_vcfdt(command: list[str], *, input_text: str | None = None) -> subprocess.CompletedProcess[str]:
+        """Return fake run vcfdt."""
         if "generate" in command:
             return subprocess.CompletedProcess(command, 0, "Software depot ID generated.\n", "")
         return subprocess.CompletedProcess(command, 5, "", "readback failed")
@@ -4482,6 +4815,7 @@ def test_vcf_offline_depot_helper_invalidates_stored_id_when_readback_fails(monk
 
 
 def test_vcf_offline_depot_helper_preserves_credentials_when_generation_fails(monkeypatch, tmp_path, capsys):
+    """Verify that vcf offline depot helper preserves credentials when generation fails."""
     helper = load_helper_module()
     runtime_tool_dir = tmp_path / "var" / "lib" / "atlaso" / "vcfDownloadTool" / "active-tool"
     wrapper = runtime_tool_dir / "vcf-download-tool"
@@ -4509,10 +4843,12 @@ def test_vcf_offline_depot_helper_preserves_credentials_when_generation_fails(mo
 
 
 def test_vcf_offline_depot_generate_software_depot_id_main_allows_no_path(monkeypatch):
+    """Verify that vcf offline depot generate software depot id main allows no path."""
     helper = load_helper_module()
     calls: list[tuple[str, list[str]]] = []
 
     def fake_handle(action: str, args: list[str]) -> int:
+        """Return fake handle."""
         calls.append((action, args))
         return 0
 
@@ -4524,6 +4860,7 @@ def test_vcf_offline_depot_generate_software_depot_id_main_allows_no_path(monkey
 
 
 def test_vcf_offline_depot_helper_reads_software_depot_id_without_mutation(monkeypatch, tmp_path, capsys):
+    """Verify that vcf offline depot helper reads software depot id without mutation."""
     helper = load_helper_module()
     runtime_tool_dir = tmp_path / "var" / "lib" / "atlaso" / "vcfDownloadTool" / "active-tool"
     wrapper = runtime_tool_dir / "vcf-download-tool"
@@ -4533,6 +4870,7 @@ def test_vcf_offline_depot_helper_reads_software_depot_id_without_mutation(monke
     commands: list[list[str]] = []
 
     def fake_run_vcfdt(command: list[str], *, input_text: str | None = None) -> subprocess.CompletedProcess[str]:
+        """Return fake run vcfdt."""
         commands.append(command)
         return subprocess.CompletedProcess(
             command,
@@ -4554,6 +4892,7 @@ def test_vcf_offline_depot_helper_reads_software_depot_id_without_mutation(monke
 
 
 def test_vcf_offline_depot_read_software_depot_id_main_allows_no_path(monkeypatch):
+    """Verify that vcf offline depot read software depot id main allows no path."""
     helper = load_helper_module()
     calls: list[tuple[str, list[str]]] = []
 
@@ -4565,6 +4904,7 @@ def test_vcf_offline_depot_read_software_depot_id_main_allows_no_path(monkeypatc
 
 
 def test_vcf_offline_depot_helper_applies_vcfdt_application_properties(monkeypatch, tmp_path, capsys):
+    """Verify that vcf offline depot helper applies vcfdt application properties."""
     helper = load_helper_module()
     apply_dir = tmp_path / "apply" / "vcf-offline-depot"
     properties_path = apply_dir / "application-prodv2.properties"
@@ -4579,6 +4919,7 @@ def test_vcf_offline_depot_helper_applies_vcfdt_application_properties(monkeypat
     chmodded: list[tuple[Path, int]] = []
 
     class Account:
+        """Represent account."""
         pw_uid = 1200
         pw_gid = 1200
 
@@ -4614,6 +4955,7 @@ def test_vcf_offline_depot_helper_applies_vcfdt_application_properties(monkeypat
 
 
 def test_vcf_offline_depot_helper_removes_disabled_nginx_site(monkeypatch, tmp_path):
+    """Verify that vcf offline depot helper removes disabled nginx site."""
     helper = load_helper_module()
     apply_dir = tmp_path / "apply" / "vcf-offline-depot"
     site_dir = tmp_path / "sites.d"
@@ -4626,6 +4968,7 @@ def test_vcf_offline_depot_helper_removes_disabled_nginx_site(monkeypatch, tmp_p
     commands: list[list[str]] = []
 
     def fake_run(command: list[str]) -> subprocess.CompletedProcess[str]:
+        """Return fake run."""
         commands.append(command)
         return subprocess.CompletedProcess(command, 0, "", "")
 
@@ -4644,6 +4987,7 @@ def test_vcf_offline_depot_helper_removes_disabled_nginx_site(monkeypatch, tmp_p
 
 
 def patch_appliance_settings_nginx_paths(monkeypatch, helper, tmp_path):
+    """Return patch appliance settings nginx paths."""
     nginx_include = tmp_path / "nginx" / "conf.d" / "atlaso.conf"
     nginx_main = tmp_path / "nginx" / "nginx.conf"
     nginx_sites = tmp_path / "nginx" / "sites.d"
@@ -4701,6 +5045,21 @@ def appliance_settings_json(
     web_terminal_interfaces: list[str] | None = None,
     web_terminal_addresses: list[str] | None = None,
 ) -> str:
+    """Return appliance settings json.
+
+    Args:
+        resolver_mode: Resolver mode supplied by the caller.
+        resolver_servers: Resolver servers supplied by the caller.
+        local_dns_enabled: Local dns enabled supplied by the caller.
+        management_https_enabled: Management https enabled supplied by the caller.
+        management_https_cert_path: Filesystem path for the management https cert.
+        management_https_key_path: Filesystem path for the management https key.
+        root_ssh_enabled: Root ssh enabled supplied by the caller.
+        vmware_ceip_enabled: Vmware ceip enabled supplied by the caller.
+        web_terminal_enabled: Web terminal enabled supplied by the caller.
+        web_terminal_interfaces: Web terminal interfaces supplied by the caller.
+        web_terminal_addresses: Web terminal addresses supplied by the caller.
+    """
     import json
 
     payload = {
@@ -4737,6 +5096,16 @@ def ntpd_config_text(
     nts_server_cert_path: str = "",
     nts_server_key_path: str = "",
 ) -> str:
+    """Return ntpd config text.
+
+    Args:
+        enabled: Whether the requested behavior is enabled.
+        server: Server supplied by the caller.
+        listen_address: Address on which the service should listen.
+        allow_clients: Allow clients supplied by the caller.
+        nts_server_cert_path: Filesystem path for the nts server cert.
+        nts_server_key_path: Filesystem path for the nts server key.
+    """
     restrict_lines = ["restrict default kod limited nomodify noquery"]
     if allow_clients != "any":
         restrict_lines = ["restrict default ignore"]
@@ -4769,6 +5138,7 @@ def ntpd_config_text(
 
 
 def test_appliance_settings_helper_validates_staged_json(monkeypatch, tmp_path):
+    """Verify that appliance settings helper validates staged json."""
     helper = load_helper_module()
     apply_dir = tmp_path / "apply" / "appliance-settings"
     apply_dir.mkdir(parents=True)
@@ -4781,12 +5151,14 @@ def test_appliance_settings_helper_validates_staged_json(monkeypatch, tmp_path):
 
 
 def test_powercli_ceip_uses_all_users_scope_and_verifies_choice(monkeypatch):
+    """Verify that powercli ceip uses all users scope and verifies choice."""
     import base64
 
     helper = load_helper_module()
     captured = {}
 
     def fake_run(command):
+        """Return fake run."""
         captured["command"] = command
         return subprocess.CompletedProcess(command, 0, '{"Scope":"AllUsers","ParticipateInCEIP":true}\n', "")
 
@@ -4803,6 +5175,7 @@ def test_powercli_ceip_uses_all_users_scope_and_verifies_choice(monkeypatch):
 
 
 def test_powercli_ceip_skips_when_product_is_not_installed(monkeypatch):
+    """Verify that powercli ceip skips when product is not installed."""
     helper = load_helper_module()
     monkeypatch.setattr(helper.shutil, "which", lambda name: "/usr/bin/pwsh" if name == "pwsh" else None)
     monkeypatch.setattr(
@@ -4815,6 +5188,7 @@ def test_powercli_ceip_skips_when_product_is_not_installed(monkeypatch):
 
 
 def test_vcfdt_ceip_writes_service_owned_runtime_flag(monkeypatch, tmp_path):
+    """Verify that vcfdt ceip writes service owned runtime flag."""
     helper = load_helper_module()
     runtime_tool_dir = tmp_path / "active-tool"
     tool = runtime_tool_dir / "vcf-download-tool"
@@ -4834,12 +5208,14 @@ def test_vcfdt_ceip_writes_service_owned_runtime_flag(monkeypatch, tmp_path):
 
 
 def test_vcfdt_apply_ceip_rejects_unset_choice():
+    """Verify that vcfdt apply ceip rejects unset choice."""
     helper = load_helper_module()
 
     assert helper._apply_vcf_download_tool_ceip_choice("NOT_PROVIDED") == 2
 
 
 def test_appliance_settings_helper_requires_https_cert_files(tmp_path):
+    """Verify that appliance settings helper requires https cert files."""
     helper = load_helper_module()
     config_path = tmp_path / "atlaso-settings.json"
     config_path.write_text(appliance_settings_json(management_https_enabled=True), encoding="utf-8")
@@ -4851,6 +5227,7 @@ def test_appliance_settings_helper_requires_https_cert_files(tmp_path):
 
 
 def test_appliance_settings_helper_requires_https_and_management_for_web_terminal(tmp_path):
+    """Verify that appliance settings helper requires https and management for web terminal."""
     helper = load_helper_module()
     config_path = tmp_path / "atlaso-settings.json"
     config_path.write_text(
@@ -4870,6 +5247,7 @@ def test_appliance_settings_helper_requires_https_and_management_for_web_termina
 
 
 def test_web_terminal_helper_installs_ca_trust_and_disables_without_deleting_ca(monkeypatch, tmp_path):
+    """Verify that web terminal helper installs ca trust and disables without deleting ca."""
     helper = load_helper_module()
     ssh_dir = tmp_path / "ssh" / "sshd_config.d"
     ssh_main = tmp_path / "ssh" / "sshd_config"
@@ -4884,6 +5262,7 @@ def test_web_terminal_helper_installs_ca_trust_and_disables_without_deleting_ca(
     commands: list[list[str]] = []
 
     def fake_run(command: list[str]) -> subprocess.CompletedProcess[str]:
+        """Return fake run."""
         commands.append(command)
         if "-t" in command and "-f" in command:
             key_path = Path(command[command.index("-f") + 1])
@@ -4921,6 +5300,7 @@ def test_web_terminal_helper_installs_ca_trust_and_disables_without_deleting_ca(
 
 
 def test_web_terminal_helper_signs_short_lived_restricted_certificate_for_non_wheel_user(monkeypatch, tmp_path, capsys):
+    """Verify that web terminal helper signs short lived restricted certificate for non wheel user."""
     helper = load_helper_module()
     request_dir = tmp_path / "requests"
     request_dir.mkdir()
@@ -4942,6 +5322,7 @@ def test_web_terminal_helper_signs_short_lived_restricted_certificate_for_non_wh
     commands: list[list[str]] = []
 
     def fake_run(command: list[str]) -> subprocess.CompletedProcess[str]:
+        """Return fake run."""
         commands.append(command)
         public_path = Path(command[-1])
         public_path.with_name("session-cert.pub").write_text(
@@ -4979,6 +5360,7 @@ def test_web_terminal_helper_signs_short_lived_restricted_certificate_for_non_wh
 
 
 def test_public_services_helper_rejects_management_routes_in_terminal_listener(tmp_path):
+    """Verify that public services helper rejects management routes in terminal listener."""
     helper = load_helper_module()
     config_path = tmp_path / "public-services.conf"
     config_path.write_text(
@@ -5008,6 +5390,7 @@ server {
 
 
 def test_appliance_settings_helper_rejects_invalid_json(tmp_path):
+    """Verify that appliance settings helper rejects invalid json."""
     helper = load_helper_module()
     config_path = tmp_path / "atlaso-settings.json"
     config_path.write_text('{"fqdn": "bad name"}', encoding="utf-8")
@@ -5019,6 +5402,7 @@ def test_appliance_settings_helper_rejects_invalid_json(tmp_path):
 
 
 def test_appliance_settings_helper_accepts_dhcp_resolver_mode(tmp_path):
+    """Verify that appliance settings helper accepts dhcp resolver mode."""
     helper = load_helper_module()
     config_path = tmp_path / "atlaso-settings.json"
     config_path.write_text(
@@ -5032,6 +5416,7 @@ def test_appliance_settings_helper_accepts_dhcp_resolver_mode(tmp_path):
 
 
 def test_appliance_settings_helper_writes_management_nginx_proxy(monkeypatch, tmp_path):
+    """Verify that appliance settings helper writes management nginx proxy."""
     helper = load_helper_module()
     apply_dir = tmp_path / "apply" / "appliance-settings"
     managed_root = tmp_path / "etc" / "atlaso"
@@ -5081,6 +5466,7 @@ def test_appliance_settings_helper_writes_management_nginx_proxy(monkeypatch, tm
     commands: list[list[str]] = []
 
     def fake_run(command: list[str]) -> subprocess.CompletedProcess[str]:
+        """Return fake run."""
         commands.append(command)
         return subprocess.CompletedProcess(command, 0, "", "")
 
@@ -5146,6 +5532,7 @@ def test_appliance_settings_helper_writes_management_nginx_proxy(monkeypatch, tm
 
 
 def test_appliance_settings_helper_writes_http_management_proxy_without_https(monkeypatch, tmp_path):
+    """Verify that appliance settings helper writes http management proxy without https."""
     helper = load_helper_module()
     apply_dir = tmp_path / "apply" / "appliance-settings"
     dropin_dir = tmp_path / "systemd" / "atlaso.service.d"
@@ -5156,6 +5543,7 @@ def test_appliance_settings_helper_writes_http_management_proxy_without_https(mo
     commands: list[list[str]] = []
 
     def fake_run(command: list[str]) -> subprocess.CompletedProcess[str]:
+        """Return fake run."""
         commands.append(command)
         return subprocess.CompletedProcess(command, 0, "", "")
 
@@ -5198,6 +5586,7 @@ def test_appliance_settings_helper_writes_http_management_proxy_without_https(mo
 
 
 def test_appliance_settings_helper_applies_local_resolver_without_timesyncd(monkeypatch, tmp_path):
+    """Verify that appliance settings helper applies local resolver without timesyncd."""
     helper = load_helper_module()
     apply_dir = tmp_path / "apply" / "appliance-settings"
     networkd_dir = tmp_path / "etc" / "systemd" / "network"
@@ -5225,6 +5614,7 @@ def test_appliance_settings_helper_applies_local_resolver_without_timesyncd(monk
     commands: list[list[str]] = []
 
     def fake_run(command: list[str]) -> subprocess.CompletedProcess[str]:
+        """Return fake run."""
         commands.append(command)
         return subprocess.CompletedProcess(command, 0, "", "")
 
@@ -5257,6 +5647,7 @@ def test_appliance_settings_helper_applies_local_resolver_without_timesyncd(monk
 
 
 def test_appliance_settings_helper_applies_external_resolver_without_catchall(monkeypatch, tmp_path):
+    """Verify that appliance settings helper applies external resolver without catchall."""
     helper = load_helper_module()
     apply_dir = tmp_path / "apply" / "appliance-settings"
     networkd_dir = tmp_path / "etc" / "systemd" / "network"
@@ -5277,6 +5668,7 @@ def test_appliance_settings_helper_applies_external_resolver_without_catchall(mo
     commands: list[list[str]] = []
 
     def fake_run(command: list[str]) -> subprocess.CompletedProcess[str]:
+        """Return fake run."""
         commands.append(command)
         return subprocess.CompletedProcess(command, 0, "", "")
 
@@ -5308,6 +5700,7 @@ def test_appliance_settings_helper_applies_external_resolver_without_catchall(mo
 
 
 def test_ntpd_helper_rejects_invalid_staged_config(monkeypatch, tmp_path):
+    """Verify that ntpd helper rejects invalid staged config."""
     helper = load_helper_module()
     apply_dir = tmp_path / "apply" / "ntpd"
     apply_dir.mkdir(parents=True)
@@ -5324,6 +5717,7 @@ def test_ntpd_helper_rejects_invalid_staged_config(monkeypatch, tmp_path):
 
 
 def test_ntpd_helper_accepts_source_ports_and_rejects_invalid_or_nts_ip_sources(monkeypatch, tmp_path):
+    """Verify that ntpd helper accepts source ports and rejects invalid or nts ip sources."""
     helper = load_helper_module()
     monkeypatch.setattr(helper, "_ntpd_supports_nts", lambda: True)
     valid_config = tmp_path / "valid-ntp.conf"
@@ -5349,6 +5743,7 @@ def test_ntpd_helper_accepts_source_ports_and_rejects_invalid_or_nts_ip_sources(
 
 
 def test_ntpd_helper_apply_installs_config_and_switches_from_timesyncd(monkeypatch, tmp_path):
+    """Verify that ntpd helper apply installs config and switches from timesyncd."""
     helper = load_helper_module()
     apply_dir = tmp_path / "apply" / "ntpd"
     config_path = apply_dir / "atlaso-ntp.conf"
@@ -5365,6 +5760,7 @@ def test_ntpd_helper_apply_installs_config_and_switches_from_timesyncd(monkeypat
     commands: list[list[str]] = []
 
     def fake_run(command: list[str]) -> subprocess.CompletedProcess[str]:
+        """Return fake run."""
         commands.append(command)
         return subprocess.CompletedProcess(command, 0, "", "")
 
@@ -5400,6 +5796,7 @@ def test_ntpd_helper_apply_installs_config_and_switches_from_timesyncd(monkeypat
 
 
 def test_ntpd_helper_apply_grants_ntp_group_read_to_nts_key(monkeypatch, tmp_path):
+    """Verify that ntpd helper apply grants ntp group read to nts key."""
     helper = load_helper_module()
     apply_dir = tmp_path / "apply" / "ntpd"
     managed_root = tmp_path / "etc" / "atlaso"
@@ -5421,9 +5818,11 @@ def test_ntpd_helper_apply_grants_ntp_group_read_to_nts_key(monkeypatch, tmp_pat
     chown_calls: list[tuple[Path, int, int]] = []
 
     class NTPsecGroup:
+        """Represent ntpsec group."""
         gr_gid = 44
 
     def fake_run(command: list[str]) -> subprocess.CompletedProcess[str]:
+        """Return fake run."""
         commands.append(command)
         return subprocess.CompletedProcess(command, 0, "", "")
 
@@ -5454,6 +5853,7 @@ def test_ntpd_helper_apply_grants_ntp_group_read_to_nts_key(monkeypatch, tmp_pat
 
 
 def test_ntpd_helper_rejects_missing_nts_certificate_files(monkeypatch, tmp_path):
+    """Verify that ntpd helper rejects missing nts certificate files."""
     helper = load_helper_module()
     apply_dir = tmp_path / "apply" / "ntpd"
     config_path = apply_dir / "atlaso-ntp.conf"
@@ -5475,6 +5875,7 @@ def test_ntpd_helper_rejects_missing_nts_certificate_files(monkeypatch, tmp_path
 
 
 def test_ntpd_helper_requires_complete_allowlisted_nts_server_directives(monkeypatch, tmp_path):
+    """Verify that ntpd helper requires complete allowlisted nts server directives."""
     helper = load_helper_module()
     monkeypatch.setattr(helper, "_ntpd_supports_nts", lambda: True)
 
@@ -5507,6 +5908,7 @@ def test_ntpd_helper_requires_complete_allowlisted_nts_server_directives(monkeyp
 
 
 def test_ntpd_helper_rejects_nts_when_installed_binary_lacks_support(monkeypatch, tmp_path):
+    """Verify that ntpd helper rejects nts when installed binary lacks support."""
     helper = load_helper_module()
     apply_dir = tmp_path / "apply" / "ntpd"
     config_path = apply_dir / "atlaso-ntp.conf"
@@ -5521,6 +5923,7 @@ def test_ntpd_helper_rejects_nts_when_installed_binary_lacks_support(monkeypatch
 
 
 def test_ntpd_helper_rejects_remote_control_or_blocked_time_service(monkeypatch, tmp_path):
+    """Verify that ntpd helper rejects remote control or blocked time service."""
     helper = load_helper_module()
     apply_dir = tmp_path / "apply" / "ntpd"
     config_path = apply_dir / "atlaso-ntp.conf"
@@ -5540,6 +5943,7 @@ def test_ntpd_helper_rejects_remote_control_or_blocked_time_service(monkeypatch,
 
 
 def test_ntpd_helper_logs_reads_fixed_systemd_unit(monkeypatch, capsys):
+    """Verify that ntpd helper logs reads fixed systemd unit."""
     helper = load_helper_module()
     commands: list[list[str]] = []
     monkeypatch.setattr(helper.shutil, "which", lambda command: "/usr/bin/journalctl" if command == "journalctl" else None)
@@ -5555,6 +5959,7 @@ def test_ntpd_helper_logs_reads_fixed_systemd_unit(monkeypatch, capsys):
 
 
 def test_ldap_helper_logs_reads_fixed_systemd_unit(monkeypatch, capsys):
+    """Verify that ldap helper logs reads fixed systemd unit."""
     helper = load_helper_module()
     commands: list[list[str]] = []
     monkeypatch.setattr(helper.shutil, "which", lambda command: "/usr/bin/journalctl" if command == "journalctl" else None)
@@ -5572,6 +5977,7 @@ def test_ldap_helper_logs_reads_fixed_systemd_unit(monkeypatch, capsys):
 
 
 def test_dnsmasq_helper_logs_reads_fixed_systemd_unit(monkeypatch, capsys):
+    """Verify that dnsmasq helper logs reads fixed systemd unit."""
     helper = load_helper_module()
     commands: list[list[str]] = []
     monkeypatch.setattr(helper.shutil, "which", lambda command: "/usr/bin/journalctl" if command == "journalctl" else None)
@@ -5587,12 +5993,14 @@ def test_dnsmasq_helper_logs_reads_fixed_systemd_unit(monkeypatch, capsys):
 
 
 def test_nginx_helper_logs_reads_fixed_systemd_unit(monkeypatch, capsys):
+    """Verify that nginx helper logs reads fixed systemd unit."""
     helper = load_helper_module()
     commands: list[list[str]] = []
 
     monkeypatch.setattr(helper.shutil, "which", lambda command: "/usr/bin/journalctl" if command == "journalctl" else None)
 
     def fake_run(command, **_kwargs):
+        """Return fake run."""
         commands.append(command)
         return subprocess.CompletedProcess(command, 0, "nginx ready\n", "")
 
@@ -5604,6 +6012,7 @@ def test_nginx_helper_logs_reads_fixed_systemd_unit(monkeypatch, capsys):
 
 
 def test_nginx_helper_reads_only_fixed_http_log_files(monkeypatch, tmp_path, capsys):
+    """Verify that nginx helper reads only fixed http log files."""
     helper = load_helper_module()
     access_log = tmp_path / "access.log"
     error_log = tmp_path / "error.log"
@@ -5621,6 +6030,7 @@ def test_nginx_helper_reads_only_fixed_http_log_files(monkeypatch, tmp_path, cap
 
 
 def test_ntpd_helper_capabilities_reports_supported_nts(monkeypatch, capsys):
+    """Verify that ntpd helper capabilities reports supported nts."""
     helper = load_helper_module()
     monkeypatch.setattr(helper.shutil, "which", lambda command: {"ntpd": "/usr/sbin/ntpd", "rpm": "/usr/bin/rpm"}.get(command))
     monkeypatch.setattr(
@@ -5634,10 +6044,17 @@ def test_ntpd_helper_capabilities_reports_supported_nts(monkeypatch, capsys):
 
 
 def test_ntpd_helper_capabilities_reports_unsupported_identity(monkeypatch, capsys):
+    """Verify that ntpd helper capabilities reports unsupported identity."""
     helper = load_helper_module()
     monkeypatch.setattr(helper.shutil, "which", lambda command: {"ntpd": "/usr/sbin/ntpd", "rpm": "/usr/bin/rpm"}.get(command))
 
     def fake_run(command, timeout=None):
+        """Return fake run.
+
+        Args:
+            command: Command and arguments to execute or validate.
+            timeout: Maximum time to wait for completion.
+        """
         if "--version" in command:
             return subprocess.CompletedProcess(command, 0, "ntpd 4.2.8p15\n", "")
         return subprocess.CompletedProcess(command, 1, "", f"package {command[-1]} is not installed\n")
@@ -5651,6 +6068,7 @@ def test_ntpd_helper_capabilities_reports_unsupported_identity(monkeypatch, caps
 
 
 def test_ntpd_helper_capabilities_returns_unknown_when_version_probe_fails(monkeypatch, capsys):
+    """Verify that ntpd helper capabilities returns unknown when version probe fails."""
     helper = load_helper_module()
     monkeypatch.setattr(helper.shutil, "which", lambda command: "/usr/sbin/ntpd" if command == "ntpd" else None)
     monkeypatch.setattr(
@@ -5667,11 +6085,22 @@ def test_ntpd_helper_capabilities_returns_unknown_when_version_probe_fails(monke
 
 @pytest.mark.parametrize("failed_probe", ["rpm", "second-version"])
 def test_ntpd_helper_capabilities_returns_unknown_when_identity_probe_fails(monkeypatch, capsys, failed_probe):
+    """Verify that ntpd helper capabilities returns unknown when identity probe fails."""
     helper = load_helper_module()
     monkeypatch.setattr(helper.shutil, "which", lambda command: {"ntpd": "/usr/sbin/ntpd", "rpm": "/usr/bin/rpm"}.get(command))
     version_calls = 0
 
     def fake_run(command, timeout=None):
+        """Return fake run.
+
+        Args:
+            command: Command and arguments to execute or validate.
+            timeout: Maximum time to wait for completion.
+
+        Raises:
+            OSError: If the operating-system operation fails.
+            TimeoutExpired: If the operation encounters an invalid state.
+        """
         nonlocal version_calls
         if "--version" in command:
             version_calls += 1
@@ -5692,10 +6121,17 @@ def test_ntpd_helper_capabilities_returns_unknown_when_identity_probe_fails(monk
 
 
 def test_ntpd_helper_requires_photon_package_and_ntpsec_binary_identity(monkeypatch):
+    """Verify that ntpd helper requires photon package and ntpsec binary identity."""
     helper = load_helper_module()
     monkeypatch.setattr(helper.shutil, "which", lambda command: {"ntpd": "/usr/sbin/ntpd", "rpm": "/usr/bin/rpm"}.get(command))
 
     def fake_run(command, timeout=None):
+        """Return fake run.
+
+        Args:
+            command: Command and arguments to execute or validate.
+            timeout: Maximum time to wait for completion.
+        """
         if command[-2:] in (["-q", "ntpsec"], ["-q", "python3-ntp"]):
             return subprocess.CompletedProcess(command, 1, "", f"package {command[-1]} is not installed\n")
         return subprocess.CompletedProcess(command, 0, "ntpd 4.2.8p15\n", "")
@@ -5710,6 +6146,7 @@ def test_ntpd_helper_requires_photon_package_and_ntpsec_binary_identity(monkeypa
 
 
 def test_ntpd_helper_disabled_apply_stops_ntpd_without_installing_config(monkeypatch, tmp_path):
+    """Verify that ntpd helper disabled apply stops ntpd without installing config."""
     helper = load_helper_module()
     apply_dir = tmp_path / "apply" / "ntpd"
     config_path = apply_dir / "atlaso-ntp.conf"
@@ -5719,6 +6156,7 @@ def test_ntpd_helper_disabled_apply_stops_ntpd_without_installing_config(monkeyp
     commands: list[list[str]] = []
 
     def fake_run(command: list[str]) -> subprocess.CompletedProcess[str]:
+        """Return fake run."""
         commands.append(command)
         return subprocess.CompletedProcess(command, 0, "", "")
 
@@ -5733,6 +6171,7 @@ def test_ntpd_helper_disabled_apply_stops_ntpd_without_installing_config(monkeyp
 
 
 def test_ntpd_helper_disabled_apply_allows_empty_upstream_list(monkeypatch, tmp_path):
+    """Verify that ntpd helper disabled apply allows empty upstream list."""
     helper = load_helper_module()
     apply_dir = tmp_path / "apply" / "ntpd"
     config_path = apply_dir / "atlaso-ntp.conf"
@@ -5742,6 +6181,7 @@ def test_ntpd_helper_disabled_apply_allows_empty_upstream_list(monkeypatch, tmp_
     commands: list[list[str]] = []
 
     def fake_run(command: list[str]) -> subprocess.CompletedProcess[str]:
+        """Return fake run."""
         commands.append(command)
         return subprocess.CompletedProcess(command, 0, "", "")
 
@@ -5756,10 +6196,17 @@ def test_ntpd_helper_disabled_apply_allows_empty_upstream_list(monkeypatch, tmp_
 
 
 def test_ntpd_helper_status_reads_peers_variables_and_nts(monkeypatch, capsys):
+    """Verify that ntpd helper status reads peers variables and nts."""
     helper = load_helper_module()
     commands: list[tuple[list[str], float | None]] = []
 
     def fake_run(command: list[str], *, timeout: float | None = None) -> subprocess.CompletedProcess[str]:
+        """Return fake run.
+
+        Args:
+            command: Command and arguments to execute or validate.
+            timeout: Maximum time to wait for completion.
+        """
         commands.append((command, timeout))
         return subprocess.CompletedProcess(command, 0, f"{' '.join(command[2:])} ok\n", "")
 
@@ -5781,9 +6228,19 @@ def test_ntpd_helper_status_reads_peers_variables_and_nts(monkeypatch, capsys):
 
 
 def test_ntpd_helper_status_reports_timeout_without_blocking(monkeypatch, capsys):
+    """Verify that ntpd helper status reports timeout without blocking."""
     helper = load_helper_module()
 
     def fake_run(command: list[str], *, timeout: float | None = None) -> subprocess.CompletedProcess[str]:
+        """Return fake run.
+
+        Args:
+            command: Command and arguments to execute or validate.
+            timeout: Maximum time to wait for completion.
+
+        Raises:
+            TimeoutExpired: If the operation encounters an invalid state.
+        """
         raise subprocess.TimeoutExpired(command, timeout)
 
     monkeypatch.setattr(helper.shutil, "which", lambda command: "/usr/bin/ntpq" if command == "ntpq" else None)
@@ -5798,11 +6255,13 @@ def test_ntpd_helper_status_reports_timeout_without_blocking(monkeypatch, capsys
 
 
 def test_appliance_settings_hostname_fallback_writes_etc_hostname(monkeypatch, tmp_path):
+    """Verify that appliance settings hostname fallback writes etc hostname."""
     helper = load_helper_module()
     hostname_path = tmp_path / "hostname"
     commands: list[list[str]] = []
 
     def fake_run(command: list[str]) -> subprocess.CompletedProcess[str]:
+        """Return fake run."""
         commands.append(command)
         return subprocess.CompletedProcess(command, 0, "", "")
 
@@ -5817,16 +6276,24 @@ def test_appliance_settings_hostname_fallback_writes_etc_hostname(monkeypatch, t
 
 
 def test_esx_storage_existing_bind_mount_is_recognized_by_inode(monkeypatch):
+    """Verify that esx storage existing bind mount is recognized by inode."""
     helper = load_helper_module()
     source = Path("/mnt/atlaso-esx-storage/data/share")
     target = Path("/srv/atlaso/esx-storage/share")
     commands: list[list[str]] = []
 
     def fake_run(command: list[str]) -> subprocess.CompletedProcess[str]:
+        """Return fake run."""
         commands.append(command)
         return subprocess.CompletedProcess(command, 0, str(target), "")
 
     def fake_stat(path: os.PathLike[str], *, follow_symlinks: bool = True) -> SimpleNamespace:
+        """Return fake stat.
+
+        Args:
+            path: Filesystem or URL path to read, validate, or update.
+            follow_symlinks: Follow symlinks supplied by the caller.
+        """
         assert follow_symlinks is True
         assert Path(path) in {source, target}
         return SimpleNamespace(st_dev=2049, st_ino=8192)
@@ -5839,6 +6306,7 @@ def test_esx_storage_existing_bind_mount_is_recognized_by_inode(monkeypatch):
 
 
 def test_esx_storage_rejects_wrong_mount_at_bind_target(monkeypatch):
+    """Verify that esx storage rejects wrong mount at bind target."""
     helper = load_helper_module()
     source = Path("/mnt/atlaso-esx-storage/data/share")
     target = Path("/srv/atlaso/esx-storage/share")

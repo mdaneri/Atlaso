@@ -29,6 +29,7 @@ from atlaso.app.kmip.ttlv import (
 
 
 class Tag(IntEnum):
+    """Represent tag."""
     ACTIVATION_DATE = 0x420001
     ATTRIBUTE = 0x420008
     ATTRIBUTE_NAME = 0x42000A
@@ -70,6 +71,7 @@ class Tag(IntEnum):
 
 
 class Operation(IntEnum):
+    """Represent operation."""
     CREATE = 0x00000001
     LOCATE = 0x00000008
     GET = 0x0000000A
@@ -81,11 +83,13 @@ class Operation(IntEnum):
 
 
 class ResultStatus(IntEnum):
+    """Represent result status."""
     SUCCESS = 0
     OPERATION_FAILED = 1
 
 
 class ResultReason(IntEnum):
+    """Represent result reason."""
     ITEM_NOT_FOUND = 1
     INVALID_MESSAGE = 4
     OPERATION_NOT_SUPPORTED = 5
@@ -96,6 +100,7 @@ class ResultReason(IntEnum):
 
 
 class QueryFunction(IntEnum):
+    """Represent query function."""
     OPERATIONS = 1
     OBJECTS = 2
     SERVER_INFORMATION = 3
@@ -123,11 +128,17 @@ ATTRIBUTE_TAGS = {
 
 @dataclass(frozen=True)
 class ProtocolFailure(Exception):
+    """Represent protocol failure."""
     reason: ResultReason
     message: str
 
 
 def _value(node: Ttlv, expected_type: TtlvType) -> int | bool | str | bytes:
+    """Return value.
+
+    Raises:
+        ProtocolFailure: If the operation encounters an invalid state.
+    """
     if node.type is not expected_type:
         raise ProtocolFailure(ResultReason.INVALID_FIELD, "A KMIP field has the wrong TTLV type.")
     assert not isinstance(node.value, tuple)
@@ -135,6 +146,11 @@ def _value(node: Ttlv, expected_type: TtlvType) -> int | bool | str | bytes:
 
 
 def _integer_value(node: Ttlv, expected_type: TtlvType = TtlvType.INTEGER) -> int:
+    """Return integer value.
+
+    Raises:
+        ProtocolFailure: If the operation encounters an invalid state.
+    """
     value = _value(node, expected_type)
     if isinstance(value, bool) or not isinstance(value, int):
         raise ProtocolFailure(ResultReason.INVALID_FIELD, "A KMIP numeric field is invalid.")
@@ -142,6 +158,11 @@ def _integer_value(node: Ttlv, expected_type: TtlvType = TtlvType.INTEGER) -> in
 
 
 def _text_value(node: Ttlv) -> str:
+    """Return text value.
+
+    Raises:
+        ProtocolFailure: If the operation encounters an invalid state.
+    """
     value = _value(node, TtlvType.TEXT_STRING)
     if not isinstance(value, str):
         raise ProtocolFailure(ResultReason.INVALID_FIELD, "A KMIP text field is invalid.")
@@ -149,6 +170,11 @@ def _text_value(node: Ttlv) -> str:
 
 
 def _required_child(node: Ttlv, tag: Tag) -> Ttlv:
+    """Return required child.
+
+    Raises:
+        ProtocolFailure: If the operation encounters an invalid state.
+    """
     try:
         child = node.child(tag)
     except TtlvError as exc:
@@ -158,6 +184,11 @@ def _required_child(node: Ttlv, tag: Tag) -> Ttlv:
 
 
 def _protocol_version(node: Ttlv) -> tuple[int, int]:
+    """Return protocol version.
+
+    Raises:
+        ProtocolFailure: If the operation encounters an invalid state.
+    """
     if node.type is not TtlvType.STRUCTURE:
         raise ProtocolFailure(ResultReason.INVALID_FIELD, "Protocol Version must be a structure.")
     try:
@@ -170,6 +201,7 @@ def _protocol_version(node: Ttlv) -> tuple[int, int]:
 
 
 def _version_node() -> Ttlv:
+    """Return version node."""
     return structure(
         Tag.PROTOCOL_VERSION,
         integer(Tag.PROTOCOL_VERSION_MAJOR, 1),
@@ -178,6 +210,7 @@ def _version_node() -> Ttlv:
 
 
 def _attribute(name: str, value: Ttlv) -> Ttlv:
+    """Return attribute."""
     return structure(
         Tag.ATTRIBUTE,
         text_string(Tag.ATTRIBUTE_NAME, name),
@@ -186,6 +219,11 @@ def _attribute(name: str, value: Ttlv) -> Ttlv:
 
 
 def _metadata_attribute(name: str, metadata: StoredKey) -> Ttlv:
+    """Return metadata attribute.
+
+    Raises:
+        ProtocolFailure: If the operation encounters an invalid state.
+    """
     if name == "Cryptographic Algorithm":
         value = enumeration(Tag.ATTRIBUTE_VALUE, CRYPTOGRAPHIC_ALGORITHM_AES)
     elif name == "Cryptographic Length":
@@ -226,6 +264,14 @@ def _metadata_attribute(name: str, metadata: StoredKey) -> Ttlv:
 
 
 def _parse_name(node: Ttlv) -> str:
+    """Parse name.
+
+    Returns:
+        The parsed name.
+
+    Raises:
+        ProtocolFailure: If the operation encounters an invalid state.
+    """
     if node.type is not TtlvType.STRUCTURE:
         raise ProtocolFailure(ResultReason.INVALID_FIELD, "Name must be a structure.")
     try:
@@ -252,6 +298,14 @@ def _parse_template_attributes(
     *,
     allowed_names: set[str],
 ) -> dict[str, int | str]:
+    """Parse template attributes.
+
+    Returns:
+        The parsed template attributes.
+
+    Raises:
+        ProtocolFailure: If the operation encounters an invalid state.
+    """
     if template.type is not TtlvType.STRUCTURE:
         raise ProtocolFailure(ResultReason.INVALID_FIELD, "Template Attribute must be a structure.")
     try:
@@ -285,6 +339,11 @@ def _parse_template_attributes(
 
 
 def _unique_identifier(payload: Ttlv) -> str:
+    """Return unique identifier.
+
+    Raises:
+        ProtocolFailure: If the operation encounters an invalid state.
+    """
     value = _text_value(_required_child(payload, Tag.UNIQUE_IDENTIFIER))
     if not value:
         raise ProtocolFailure(ResultReason.INVALID_FIELD, "Unique Identifier must not be empty.")
@@ -295,9 +354,18 @@ class KmipDispatcher:
     """Dispatch the exact candidate operation set inside one provider namespace."""
 
     def __init__(self, store: WrappedKeyStore) -> None:
+        """Initialize the kmip dispatcher."""
         self.store = store
 
     def _create(self, provider_id: str, payload: Ttlv) -> list[Ttlv]:
+        """Create operation.
+
+        Returns:
+            The create result.
+
+        Raises:
+            ProtocolFailure: If the operation encounters an invalid state.
+        """
         try:
             assert_only_tags(payload, {Tag.OBJECT_TYPE, Tag.TEMPLATE_ATTRIBUTE})
         except TtlvError as exc:
@@ -336,6 +404,11 @@ class KmipDispatcher:
         ]
 
     def _activate(self, provider_id: str, payload: Ttlv) -> list[Ttlv]:
+        """Return activate.
+
+        Raises:
+            ProtocolFailure: If the operation encounters an invalid state.
+        """
         try:
             assert_only_tags(payload, {Tag.UNIQUE_IDENTIFIER})
         except TtlvError as exc:
@@ -345,6 +418,11 @@ class KmipDispatcher:
         return [text_string(Tag.UNIQUE_IDENTIFIER, key_id)]
 
     def _get(self, provider_id: str, payload: Ttlv) -> list[Ttlv]:
+        """Return operation.
+
+        Raises:
+            ProtocolFailure: If the operation encounters an invalid state.
+        """
         try:
             assert_only_tags(payload, {Tag.UNIQUE_IDENTIFIER, Tag.KEY_FORMAT_TYPE})
         except TtlvError as exc:
@@ -385,6 +463,11 @@ class KmipDispatcher:
             mutable[:] = b"\0" * len(mutable)
 
     def _get_attribute_list(self, provider_id: str, payload: Ttlv) -> list[Ttlv]:
+        """Return attribute list.
+
+        Raises:
+            ProtocolFailure: If the operation encounters an invalid state.
+        """
         try:
             assert_only_tags(payload, {Tag.UNIQUE_IDENTIFIER})
         except TtlvError as exc:
@@ -411,6 +494,11 @@ class KmipDispatcher:
         ]
 
     def _get_attributes(self, provider_id: str, payload: Ttlv) -> list[Ttlv]:
+        """Return attributes.
+
+        Raises:
+            ProtocolFailure: If the operation encounters an invalid state.
+        """
         try:
             assert_only_tags(payload, {Tag.UNIQUE_IDENTIFIER, Tag.ATTRIBUTE_NAME})
         except TtlvError as exc:
@@ -441,6 +529,11 @@ class KmipDispatcher:
         ]
 
     def _locate(self, provider_id: str, payload: Ttlv) -> list[Ttlv]:
+        """Return locate.
+
+        Raises:
+            ProtocolFailure: If the operation encounters an invalid state.
+        """
         try:
             assert_only_tags(payload, {Tag.MAXIMUM_RESPONSE_SIZE, Tag.ATTRIBUTE})
         except TtlvError as exc:
@@ -483,6 +576,11 @@ class KmipDispatcher:
 
     @staticmethod
     def _query(payload: Ttlv) -> list[Ttlv]:
+        """Return query.
+
+        Raises:
+            ProtocolFailure: If the operation encounters an invalid state.
+        """
         try:
             assert_only_tags(payload, {Tag.QUERY_FUNCTION})
         except TtlvError as exc:
@@ -512,6 +610,11 @@ class KmipDispatcher:
 
     @staticmethod
     def _discover_versions(payload: Ttlv) -> list[Ttlv]:
+        """Return discover versions.
+
+        Raises:
+            ProtocolFailure: If the operation encounters an invalid state.
+        """
         try:
             assert_only_tags(payload, {Tag.PROTOCOL_VERSION})
         except TtlvError as exc:
@@ -533,6 +636,11 @@ class KmipDispatcher:
         operation: Operation,
         payload: Ttlv,
     ) -> list[Ttlv]:
+        """Return dispatch operation.
+
+        Raises:
+            ProtocolFailure: If the operation encounters an invalid state.
+        """
         if payload.type is not TtlvType.STRUCTURE:
             raise ProtocolFailure(ResultReason.INVALID_FIELD, "Request Payload must be a structure.")
         handlers = {
@@ -551,6 +659,7 @@ class KmipDispatcher:
 
     @staticmethod
     def _failed_batch(operation_value: int, failure: ProtocolFailure) -> Ttlv:
+        """Return failed batch."""
         return structure(
             Tag.BATCH_ITEM,
             enumeration(Tag.OPERATION, operation_value),
@@ -560,6 +669,15 @@ class KmipDispatcher:
         )
 
     def dispatch(self, provider_id: str, request: Ttlv) -> Ttlv:
+        """Return dispatch.
+
+        Args:
+            provider_id: Identifier of the provider.
+            request: Incoming HTTP request.
+
+        Raises:
+            ProtocolFailure: If the operation encounters an invalid state.
+        """
         if request.tag != Tag.REQUEST_MESSAGE or request.type is not TtlvType.STRUCTURE:
             raise ProtocolFailure(ResultReason.INVALID_MESSAGE, "Root TTLV must be Request Message.")
         try:

@@ -1,3 +1,5 @@
+"""Implement vcf backups service behavior."""
+
 from ipaddress import ip_address
 
 from atlaso.app.models import User, VcfBackupSettings
@@ -12,12 +14,14 @@ VCF_BACKUP_DEFAULT_USERNAME = "vcf-backup"
 
 
 def vcf_backup_remote_directory(settings: VcfBackupSettings) -> str:
+    """Return vcf backup remote directory."""
     if settings.chroot_enabled:
         return VCF_BACKUP_REMOTE_DIRECTORY
     return settings.storage_path.rstrip("/") or VCF_BACKUP_DEFAULT_VOLUME_MOUNT
 
 
 def vcf_backup_settings_to_dict(settings: VcfBackupSettings) -> dict:
+    """Return vcf backup settings to dict."""
     return {
         "id": settings.id,
         "enabled": settings.enabled,
@@ -38,6 +42,7 @@ def vcf_backup_settings_to_dict(settings: VcfBackupSettings) -> dict:
 
 
 def vcf_backup_service_state(settings: VcfBackupSettings, *, sshd_active: bool | None = None) -> dict[str, object]:
+    """Return vcf backup service state."""
     desired_enabled = bool(settings.enabled)
     running = bool(sshd_active) if sshd_active is not None else desired_enabled
     if running and desired_enabled:
@@ -66,6 +71,11 @@ def vcf_backup_service_state(settings: VcfBackupSettings, *, sshd_active: bool |
 
 
 def validate_vcf_backup_state(settings: VcfBackupSettings, users: list[User], interface_names: set[str] | None = None) -> list[str]:
+    """Validate vcf backup state.
+
+    Returns:
+        The validate vcf backup state result.
+    """
     errors: list[str] = []
     user_by_id = {user.id: user for user in users}
     selected_user = user_by_id.get(settings.sftp_user_id or -1)
@@ -103,6 +113,11 @@ def validate_vcf_backup_state(settings: VcfBackupSettings, users: list[User], in
 
 
 def render_vcf_backup_config(settings: VcfBackupSettings) -> str:
+    """Render vcf backup config.
+
+    Returns:
+        The rendered vcf backup config.
+    """
     username = settings.sftp_user.username if settings.sftp_user else "select-a-atlaso-user"
     remote_directory = vcf_backup_remote_directory(settings)
     common_header = [

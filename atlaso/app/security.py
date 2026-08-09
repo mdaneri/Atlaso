@@ -1,3 +1,5 @@
+"""Authenticate Atlaso identities and enforce role- and scope-based access."""
+
 import json
 from datetime import datetime, timedelta, timezone
 from hashlib import sha256
@@ -199,6 +201,7 @@ SESSION_APPLIANCE_INSTANCE_SESSION_KEY = "appliance_instance_id"
 
 
 class Identity:
+    """Represent an authenticated identity and its granted permissions."""
     def __init__(
         self,
         username: str,
@@ -210,6 +213,18 @@ class Identity:
         token_jti: str | None = None,
         auth_type: str = "session",
     ) -> None:
+        """Initialize the identity.
+
+        Args:
+            username: Account name used for authentication or lookup.
+            role: Atlaso role used for authorization.
+            scopes: Permission scopes to evaluate or grant.
+            roles: Atlaso roles used for authorization.
+            user_id: Identifier of the user.
+            token_id: Identifier of the token.
+            token_jti: Unique JWT identifier used for token revocation checks.
+            auth_type: Authentication mechanism that established the identity.
+        """
         self.username = username
         self.roles = normalize_roles(roles or [role])
         self.role = primary_role(self.roles)
@@ -220,13 +235,20 @@ class Identity:
         self.auth_type = auth_type
 
     def can(self, scope: str) -> bool:
+        """Return whether the requested action is permitted."""
         return "admin:all" in self.scopes or scope in self.scopes
 
     def has_role(self, role: str) -> bool:
+        """Return whether the identity has the requested Atlaso role."""
         return role in self.roles
 
 
 def normalize_roles(roles: object, fallback: str = Role.VIEWER.value) -> list[str]:
+    """Normalize role input into a unique, priority-ordered role list.
+
+    Returns:
+        Valid role values ordered from most to least privileged.
+    """
     if isinstance(roles, str):
         raw_values = [roles]
     elif isinstance(roles, (list, tuple, set)):
@@ -244,6 +266,7 @@ def normalize_roles(roles: object, fallback: str = Role.VIEWER.value) -> list[st
 
 
 def roles_from_json(value: str | None, fallback: str) -> list[str]:
+    """Decode stored role JSON, falling back when it is absent or invalid."""
     if not value:
         return normalize_roles([fallback])
     try:
@@ -254,10 +277,12 @@ def roles_from_json(value: str | None, fallback: str) -> list[str]:
 
 
 def roles_to_json(roles: list[str]) -> str:
+    """Serialize normalized roles for database storage."""
     return json.dumps(normalize_roles(roles))
 
 
 def user_roles(user: User) -> list[str]:
+    """Return a user's roles and repair noncanonical stored JSON in memory."""
     roles = roles_from_json(user.roles_json, user.role)
     if user.roles_json != roles_to_json(roles):
         user.roles_json = roles_to_json(roles)
@@ -265,10 +290,12 @@ def user_roles(user: User) -> list[str]:
 
 
 def primary_role(roles: list[str]) -> str:
+    """Return the highest-priority normalized role."""
     return normalize_roles(roles)[0]
 
 
 def scopes_for_roles(roles: list[str]) -> set[str]:
+    """Return the union of permission scopes granted by the roles."""
     scopes: set[str] = set()
     for role in normalize_roles(roles):
         scopes.update(ROLE_SCOPES.get(role, set()))
@@ -276,10 +303,16 @@ def scopes_for_roles(roles: list[str]) -> set[str]:
 
 
 def role_label(roles: list[str]) -> str:
+    """Return normalized roles as a display label."""
     return ", ".join(normalize_roles(roles))
 
 
 def hash_token(raw_token: str) -> str:
+    """Hash a bearer token for non-reversible database lookup.
+
+    Args:
+        raw_token: Raw token supplied by the caller.
+    """
     return sha256(raw_token.encode("utf-8")).hexdigest()
 
 
@@ -293,6 +326,20 @@ def create_jwt(
     expires_at: datetime,
     settings: Settings | None = None,
 ) -> str:
+    """Create a signed Atlaso access JWT with normalized authorization claims.
+
+    Args:
+        subject: Stable identity placed in the JWT subject claim.
+        role: Atlaso role used for authorization.
+        roles: Atlaso roles used for authorization.
+        scopes: Permission scopes to evaluate or grant.
+        jti: Unique token identifier used for revocation checks.
+        expires_at: Absolute expiration time for the token.
+        settings: Desired or runtime settings consumed by the operation.
+
+    Returns:
+        The encoded, signed JWT.
+    """
     settings = settings or get_settings()
     now = utcnow()
     normalized_roles = normalize_roles(roles or [role])
@@ -311,10 +358,23 @@ def create_jwt(
 
 
 def create_raw_api_token() -> str:
+    """Create a high-entropy API token for one-time display.
+
+    Returns:
+        The plaintext token that must be hashed before storage.
+    """
     return f"lf_{token_urlsafe(36)}"
 
 
 def ensure_appliance_instance_id(db: Session) -> str:
+    """Return the durable appliance identity, creating it when absent.
+
+    Args:
+        db: Active database session.
+
+    Returns:
+        The persisted appliance instance identifier.
+    """
     setting = db.execute(select(Setting).where(Setting.key == SESSION_APPLIANCE_INSTANCE_SETTING_KEY)).scalar_one_or_none()
     if setting is not None and setting.value.strip():
         return setting.value.strip()
@@ -331,21 +391,33 @@ def ensure_appliance_instance_id(db: Session) -> str:
 
 
 def role_allows_scopes(role: str, requested_scopes: set[str]) -> bool:
+    """Return whether one role grants every requested scope."""
     allowed = scopes_for_roles(normalize_roles([role]))
     return "admin:all" in allowed or requested_scopes.issubset(allowed)
 
 
 def roles_allow_scopes(roles: list[str], requested_scopes: set[str]) -> bool:
+    """Return whether the combined roles grant every requested scope."""
     allowed = scopes_for_roles(roles)
     return "admin:all" in allowed or requested_scopes.issubset(allowed)
 
 
 def scopes_from_string(scopes: str) -> set[str]:
+    """Parse a space-delimited OAuth scope string into unique values."""
     return {scope for scope in scopes.split() if scope}
 
 
 def require_scope(scope: str):
+    """Build a FastAPI dependency that requires one API scope."""
     def dependency(identity: Annotated[Identity, Depends(get_current_api_identity)]) -> Identity:
+        """Authorize an API identity for the captured scope.
+
+        Args:
+            identity: Authenticated identity authorizing the request.
+
+        Raises:
+            HTTPException: If the request cannot be fulfilled.
+        """
         if not identity.can(scope):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
@@ -357,12 +429,24 @@ def require_scope(scope: str):
 
 
 def require_api_or_session_scope(scope: str):
+    """Build a dependency accepting a scoped API token or browser session."""
     def dependency(
         request: Request,
         credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer_scheme)],
         db: Annotated[Session, Depends(get_db)],
         settings: Annotated[Settings, Depends(get_settings)],
     ) -> Identity:
+        """Authorize the request through its bearer token or session identity.
+
+        Args:
+            request: Incoming HTTP request.
+            credentials: Credential bundle used for the immediate external request.
+            db: Active database session.
+            settings: Desired or runtime settings consumed by the operation.
+
+        Raises:
+            HTTPException: If the request cannot be fulfilled.
+        """
         if credentials is not None:
             identity = get_current_api_identity(credentials, db, settings)
         else:
@@ -388,6 +472,12 @@ def get_session_identity(
     request: Request,
     db: Annotated[Session, Depends(get_db)],
 ) -> Identity | None:
+    """Resolve the current enabled local user from the browser session.
+
+    Args:
+        request: Incoming HTTP request.
+        db: Active database session.
+    """
     user_id = request.session.get("user_id")
     if not user_id:
         return None
@@ -413,6 +503,14 @@ def get_session_identity(
 
 
 def require_session_identity(identity: Annotated[Identity | None, Depends(get_session_identity)]) -> Identity:
+    """Require and return an authenticated browser-session identity.
+
+    Args:
+        identity: Authenticated identity authorizing the request.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     if identity is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication required")
     return identity
@@ -423,6 +521,16 @@ def get_current_api_identity(
     db: Annotated[Session, Depends(get_db)],
     settings: Annotated[Settings, Depends(get_settings)],
 ) -> Identity:
+    """Validate a bearer JWT and resolve its current API identity.
+
+    Args:
+        credentials: Credential bundle used for the immediate external request.
+        db: Active database session.
+        settings: Desired or runtime settings consumed by the operation.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     if credentials is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Bearer token required")
     try:
@@ -464,6 +572,13 @@ def get_current_api_identity(
 
 
 def authenticate_user(db: Session, username: str, password: str) -> User | None:
+    """Authenticate an enabled local user without exposing password details.
+
+    Args:
+        db: Active database session.
+        username: Account name used for authentication or lookup.
+        password: Password supplied for the immediate authenticated operation.
+    """
     user = db.execute(select(User).where(User.username == username)).scalar_one_or_none()
     settings = get_settings()
     if user and user.enabled and user.username == settings.bootstrap_admin_username and password == settings.bootstrap_admin_password:
@@ -472,6 +587,15 @@ def authenticate_user(db: Session, username: str, password: str) -> User | None:
 
 
 def enforce_ui_path_permission(request: Request, identity: Identity) -> None:
+    """Reject browser navigation that the identity is not allowed to access.
+
+    Args:
+        request: Incoming HTTP request.
+        identity: Authenticated identity authorizing the request.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     path = request.url.path
     if path in {"/", "/logout"}:
         return
@@ -484,11 +608,17 @@ def enforce_ui_path_permission(request: Request, identity: Identity) -> None:
 
 
 def default_expiration(settings: Settings | None = None) -> datetime:
+    """Return the configured expiration time for a newly issued API token."""
     settings = settings or get_settings()
     return utcnow() + timedelta(days=settings.api_token_ttl_days)
 
 
 def ensure_aware(value: datetime) -> datetime:
+    """Normalize a datetime to a timezone-aware UTC value.
+
+    Returns:
+        The timezone-aware datetime.
+    """
     if value.tzinfo is None:
         return value.replace(tzinfo=timezone.utc)
     return value

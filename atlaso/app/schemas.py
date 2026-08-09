@@ -1,3 +1,5 @@
+"""Define validated request and response schemas for the Atlaso API."""
+
 from datetime import datetime
 from typing import Annotated, Any, Literal
 

@@ -1,3 +1,5 @@
+"""Implement public services service behavior."""
+
 from __future__ import annotations
 
 from ipaddress import ip_address
@@ -27,6 +29,7 @@ ESXI_PXE_HTTP_BASE = "/var/lib/atlaso/pxe/http/esxi"
 
 
 def public_service_interface_entries(interfaces: list[PhysicalInterface], vlans: list[VlanInterface]) -> list[dict[str, Any]]:
+    """Return public service interface entries."""
     entries: list[dict[str, Any]] = []
     for interface in interfaces:
         if interface.oper_state == "missing":
@@ -48,6 +51,16 @@ def public_services_for_address(
     vcf_registry_settings: VcfPrivateRegistrySettings,
     oidc_settings: OidcProviderSettings | None = None,
 ) -> list[dict[str, Any]]:
+    """Return public services for address.
+
+    Args:
+        address: Network address of the target service or interface.
+        ca_settings: Ca settings supplied by the caller.
+        esxi_pxe_boot: Esxi pxe boot supplied by the caller.
+        vcf_depot_settings: Vcf depot settings supplied by the caller.
+        vcf_registry_settings: Vcf registry settings supplied by the caller.
+        oidc_settings: Oidc settings supplied by the caller.
+    """
     normalized = _normalize_address(address)
     services: list[dict[str, Any]] = []
     if (
@@ -150,6 +163,17 @@ def public_service_entries(
     vcf_registry_settings: VcfPrivateRegistrySettings,
     oidc_settings: OidcProviderSettings | None = None,
 ) -> list[dict[str, Any]]:
+    """Return public service entries.
+
+    Args:
+        interfaces: Interfaces available to or selected by the operation.
+        vlans: VLAN desired-state rows available to the operation.
+        ca_settings: Ca settings supplied by the caller.
+        esxi_pxe_boot: Esxi pxe boot supplied by the caller.
+        vcf_depot_settings: Vcf depot settings supplied by the caller.
+        vcf_registry_settings: Vcf registry settings supplied by the caller.
+        oidc_settings: Oidc settings supplied by the caller.
+    """
     entries: list[dict[str, Any]] = []
     for entry in public_service_interface_entries(interfaces, vlans):
         if entry["role"] == "management":
@@ -186,6 +210,26 @@ def render_public_services_nginx_config(
     oidc_certificate_path: str = "",
     oidc_key_path: str = "",
 ) -> str:
+    """Render public services nginx config.
+
+    Args:
+        entries: Entries supplied by the caller.
+        upstream_host: Hostname or address of the upstream service.
+        upstream_port: Port of the upstream service.
+        http_port: Http port supplied by the caller.
+        https_port: Https port supplied by the caller.
+        ca_certificate_path: Filesystem path for the ca certificate.
+        ca_key_path: Filesystem path for the ca key.
+        depot_store_path: Filesystem path for the depot store.
+        esxi_http_base: Esxi http base supplied by the caller.
+        terminal_certificate_path: Filesystem path for the terminal certificate.
+        terminal_key_path: Filesystem path for the terminal key.
+        oidc_certificate_path: Filesystem path for the oidc certificate.
+        oidc_key_path: Filesystem path for the oidc key.
+
+    Returns:
+        The rendered public services nginx config.
+    """
     lines = [
         "# Managed by Atlaso. Local changes may be overwritten.",
         "# IP-scoped public service front door for non-management interfaces.",
@@ -268,6 +312,17 @@ def _oidc_https_server_lines(
     upstream_port: int,
     https_port: int,
 ) -> list[str]:
+    """Return oidc https server lines.
+
+    Args:
+        address: Network address of the target service or interface.
+        hostname: DNS hostname of the target resource.
+        certificate_path: Filesystem path for the certificate.
+        key_path: Filesystem path for the key.
+        upstream_host: Hostname or address of the upstream service.
+        upstream_port: Port of the upstream service.
+        https_port: Https port supplied by the caller.
+    """
     return [
         "",
         "server {",
@@ -296,6 +351,17 @@ def _ca_https_server_lines(
     upstream_port: int,
     https_port: int,
 ) -> list[str]:
+    """Return ca https server lines.
+
+    Args:
+        address: Network address of the target service or interface.
+        hostname: DNS hostname of the target resource.
+        ca_certificate_path: Filesystem path for the ca certificate.
+        ca_key_path: Filesystem path for the ca key.
+        upstream_host: Hostname or address of the upstream service.
+        upstream_port: Port of the upstream service.
+        https_port: Https port supplied by the caller.
+    """
     return [
         "",
         "server {",
@@ -344,6 +410,20 @@ def _ip_scoped_https_server_lines(
     depot_http_username: str,
     web_terminal: bool = False,
 ) -> list[str]:
+    """Return ip scoped https server lines.
+
+    Args:
+        address: Network address of the target service or interface.
+        ca_certificate_path: Filesystem path for the ca certificate.
+        ca_key_path: Filesystem path for the ca key.
+        upstream_host: Hostname or address of the upstream service.
+        upstream_port: Port of the upstream service.
+        https_port: Https port supplied by the caller.
+        depot_store_path: Filesystem path for the depot store.
+        depot_auth_required: Depot auth required supplied by the caller.
+        depot_http_username: Depot http username supplied by the caller.
+        web_terminal: Web terminal supplied by the caller.
+    """
     return [
         "",
         "server {",
@@ -389,6 +469,7 @@ def _ip_scoped_https_server_lines(
 
 
 def _terminal_proxy_locations(upstream_host: str, upstream_port: int, *, include_static: bool = True) -> list[str]:
+    """Return terminal proxy locations."""
     paths = ["= /login", "= /logout", "= /terminal", "= /terminal/tickets"]
     if include_static:
         paths.append("^~ /static/")
@@ -416,6 +497,16 @@ def _terminal_https_server_lines(
     upstream_port: int,
     https_port: int,
 ) -> list[str]:
+    """Return terminal https server lines.
+
+    Args:
+        address: Network address of the target service or interface.
+        certificate_path: Filesystem path for the certificate.
+        key_path: Filesystem path for the key.
+        upstream_host: Hostname or address of the upstream service.
+        upstream_port: Port of the upstream service.
+        https_port: Https port supplied by the caller.
+    """
     return [
         "",
         "server {",
@@ -439,6 +530,15 @@ def _depot_https_location_lines(
     auth_required: bool,
     http_username: str,
 ) -> list[str]:
+    """Return depot https location lines.
+
+    Args:
+        upstream_host: Hostname or address of the upstream service.
+        upstream_port: Port of the upstream service.
+        depot_store_path: Filesystem path for the depot store.
+        auth_required: Auth required supplied by the caller.
+        http_username: Http username supplied by the caller.
+    """
     return [
         f"  # Atlaso VCF Offline Depot user: {http_username}" if auth_required else "  # Atlaso VCF Offline Depot unauthenticated access: true",
         "  location = /PROD {",
@@ -537,6 +637,15 @@ def _depot_https_location_lines(
 
 
 def _esxi_pxe_http_server_lines(address: str, upstream_host: str, upstream_port: int, http_port: int, esxi_http_base: str) -> list[str]:
+    """Return esxi pxe http server lines.
+
+    Args:
+        address: Network address of the target service or interface.
+        upstream_host: Hostname or address of the upstream service.
+        upstream_port: Port of the upstream service.
+        http_port: Http port supplied by the caller.
+        esxi_http_base: Esxi http base supplied by the caller.
+    """
     return [
         "",
         "server {",
@@ -582,6 +691,7 @@ def _esxi_pxe_http_server_lines(address: str, upstream_host: str, upstream_port:
 
 
 def _entries_for_target(name: str, role: str, *cidrs: str | None) -> list[dict[str, str]]:
+    """Return entries for target."""
     entries: list[dict[str, str]] = []
     normalized_role = normalize_interface_role(role)
     for cidr in cidrs:
@@ -593,6 +703,7 @@ def _entries_for_target(name: str, role: str, *cidrs: str | None) -> list[dict[s
 
 
 def _address_from_cidr(value: str | None) -> str:
+    """Return address from cidr."""
     if not value:
         return ""
     try:
@@ -602,6 +713,11 @@ def _address_from_cidr(value: str | None) -> str:
 
 
 def _normalize_address(value: str) -> str:
+    """Normalize address.
+
+    Returns:
+        The normalize address result.
+    """
     try:
         return str(ip_address(value.strip().strip("[]"))).lower()
     except ValueError:
@@ -609,10 +725,12 @@ def _normalize_address(value: str) -> str:
 
 
 def _normalized_addresses(value: str | None) -> set[str]:
+    """Return normalized addresses."""
     return {_normalize_address(address) for address in split_addresses(value)}
 
 
 def _service_dns_names(*values: str | None) -> list[str]:
+    """Return service dns names."""
     names: list[str] = []
     seen: set[str] = set()
     for value in values:
@@ -625,6 +743,7 @@ def _service_dns_names(*values: str | None) -> list[str]:
 
 
 def _service_port(service: dict[str, Any], default: int) -> int:
+    """Return service port."""
     try:
         return int(service.get("port") or default)
     except (TypeError, ValueError):
@@ -632,6 +751,7 @@ def _service_port(service: dict[str, Any], default: int) -> int:
 
 
 def _nginx_server_name(address: str) -> str:
+    """Return nginx server name."""
     normalized = _normalize_address(address)
     try:
         parsed = ip_address(normalized)
@@ -649,6 +769,16 @@ def _proxy_location(
     extra_directives: list[str] | None = None,
     preserve_host_port: bool = False,
 ) -> list[str]:
+    """Return proxy location.
+
+    Args:
+        path: Filesystem or URL path to read, validate, or update.
+        upstream_host: Hostname or address of the upstream service.
+        upstream_port: Port of the upstream service.
+        forwarded_proto: Forwarded proto supplied by the caller.
+        extra_directives: Extra directives supplied by the caller.
+        preserve_host_port: Preserve host port supplied by the caller.
+    """
     return [
         f"  location {path} {{",
         *(extra_directives or []),

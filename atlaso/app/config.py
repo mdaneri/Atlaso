@@ -1,3 +1,5 @@
+"""Implement config behavior."""
+
 from functools import lru_cache
 from pathlib import Path
 
@@ -6,6 +8,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
+    """Define environment-backed Atlaso application settings."""
     app_name: str = "Atlaso"
     appliance_hostname: str = "atlaso"
     environment: str = "development"
@@ -47,4 +50,5 @@ class Settings(BaseSettings):
 
 @lru_cache
 def get_settings() -> Settings:
+    """Return settings."""
     return Settings()

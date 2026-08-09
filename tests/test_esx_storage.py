@@ -1,3 +1,5 @@
+"""Test esx storage behavior."""
+
 import importlib.machinery
 import importlib.util
 import json
@@ -22,6 +24,7 @@ HELPER_PATH = Path(__file__).resolve().parents[1] / "scripts" / "appliance" / "a
 
 
 def load_helper_module():
+    """Return helper module."""
     loader = importlib.machinery.SourceFileLoader("atlaso_esx_storage_helper", str(HELPER_PATH))
     spec = importlib.util.spec_from_loader("atlaso_esx_storage_helper", loader)
     assert spec is not None
@@ -31,6 +34,7 @@ def load_helper_module():
 
 
 def state(*, families: str = "ipv4\nipv6", ipv4_clients: str = "192.168.87.11/32", ipv6_clients: str = "2001:db8:87::11/128"):
+    """Return state."""
     settings = EsxStorageSettings(enabled=True, hostname="nfs.atlaso.internal")
     settings.id = 1
     volume = EsxStorageVolume(
@@ -64,11 +68,17 @@ def state(*, families: str = "ipv4\nipv6", ipv4_clients: str = "192.168.87.11/32
 
 
 def render(**kwargs):
+    """Render operation.
+
+    Returns:
+        The render result.
+    """
     settings, volumes, shares, interfaces = state(**kwargs)
     return render_manifest(settings, volumes, shares, interfaces, dns_enabled=True, dns_naming_mode="ip")
 
 
 def test_dual_stack_share_renders_equal_family_endpoints_and_commands():
+    """Verify that dual stack share renders equal family endpoints and commands."""
     manifest = render()
     share = manifest["shares"][0]
 
@@ -91,6 +101,7 @@ def test_dual_stack_share_renders_equal_family_endpoints_and_commands():
 
 
 def test_powercli_command_escapes_single_quoted_values():
+    """Verify that powercli command escapes single quoted values."""
     command = powercli_connection_command(
         version="3",
         hostname="nfs.example.test",
@@ -104,6 +115,7 @@ def test_powercli_command_escapes_single_quoted_values():
 
 
 def test_ipv4_only_and_ipv6_only_do_not_create_implicit_fallback():
+    """Verify that ipv4 only and ipv6 only do not create implicit fallback."""
     ipv4 = render(families="ipv4")
     ipv6 = render(families="ipv6")
 
@@ -116,11 +128,13 @@ def test_ipv4_only_and_ipv6_only_do_not_create_implicit_fallback():
 
 
 def test_mixed_family_client_allowlist_is_rejected():
+    """Verify that mixed family client allowlist is rejected."""
     manifest = render(ipv4_clients="2001:db8::10/128")
     assert any("does not match the enabled IPV4 family" in message for message in manifest["validation"]["errors"])
 
 
 def test_empty_client_lists_explicitly_allow_any_client_per_enabled_family():
+    """Verify that empty client lists explicitly allow any client per enabled family."""
     manifest = render(ipv4_clients="", ipv6_clients="")
     share = manifest["shares"][0]
 
@@ -133,6 +147,7 @@ def test_empty_client_lists_explicitly_allow_any_client_per_enabled_family():
 
 
 def test_dns_records_include_canonical_alias_and_both_address_families():
+    """Verify that dns records include canonical alias and both address families."""
     records = desired_dns_records(render())
     assert records[:2] == [{
         "hostname": "nfs.atlaso.internal",
@@ -147,6 +162,7 @@ def test_dns_records_include_canonical_alias_and_both_address_families():
 
 
 def test_firewall_rules_are_family_specific_and_match_preferred_protocol():
+    """Verify that firewall rules are family specific and match preferred protocol."""
     manifest = render()
     rules = firewall_rule_specs(manifest)
     assert {rule["source_expression"] for rule in rules} == {
@@ -160,6 +176,7 @@ def test_firewall_rules_are_family_specific_and_match_preferred_protocol():
 
 
 def test_blank_disk_inventory_rejects_every_destructive_risk_and_claim():
+    """Verify that blank disk inventory rejects every destructive risk and claim."""
     eligible = normalize_disk_inventory_entry(
         {
             "stable_device_id": "/dev/disk/by-id/wwn-0x1234",
@@ -189,6 +206,11 @@ def test_blank_disk_inventory_rejects_every_destructive_risk_and_claim():
 
 
 def test_mounted_ext4_inventory_rejects_vcf_backup_and_depot_mounts():
+    """Verify that mounted ext4 inventory rejects vcf backup and depot mounts.
+
+    Raises:
+        AssertionError: If an expected invariant is not satisfied.
+    """
     for mount_path, owner in [
         ("/mnt/atlaso-vcf-backups", "VCF Backups"),
         ("/mnt/atlaso-vcf-offline-depot", "VCF Offline Depot / VCFDT"),
@@ -215,6 +237,7 @@ def test_mounted_ext4_inventory_rejects_vcf_backup_and_depot_mounts():
 
 
 def test_desired_state_rejects_existing_volume_on_vcf_managed_mount():
+    """Verify that desired state rejects existing volume on vcf managed mount."""
     settings, volumes, shares, interfaces = state()
     volumes[0].source_type = "mounted_ext4"
     volumes[0].stable_device_id = ""
@@ -226,6 +249,7 @@ def test_desired_state_rejects_existing_volume_on_vcf_managed_mount():
 
 
 def test_format_authorization_is_job_manifest_and_device_bound():
+    """Verify that format authorization is job manifest and device bound."""
     manifest = render()
     authorization = format_authorization(
         job_id="job-123",
@@ -239,11 +263,13 @@ def test_format_authorization_is_job_manifest_and_device_bound():
 
 
 def test_export_paths_reject_root_children_and_siblings_remain_valid():
+    """Verify that export paths reject root children and siblings remain valid."""
     assert share_paths_overlap("datastores", "datastores/esx") is True
     assert share_paths_overlap("datastores/esx-a", "datastores/esx-b") is False
 
 
 def test_helper_requires_job_scoped_format_authorization_for_apply():
+    """Verify that helper requires job scoped format authorization for apply."""
     helper = load_helper_module()
     manifest = render()
     assert helper._esx_storage_manifest_errors(manifest, require_authorization=False) == []
@@ -263,6 +289,7 @@ def test_helper_requires_job_scoped_format_authorization_for_apply():
 
 
 def test_helper_rejects_existing_volume_on_vcf_managed_mount():
+    """Verify that helper rejects existing volume on vcf managed mount."""
     helper = load_helper_module()
     manifest = render()
     manifest["volumes"][0].update(
@@ -278,6 +305,7 @@ def test_helper_rejects_existing_volume_on_vcf_managed_mount():
 
 
 def test_helper_blank_disk_revalidation_rejects_partition_mount_lvm_raid_and_os_relationship():
+    """Verify that helper blank disk revalidation rejects partition mount lvm raid and os relationship."""
     helper = load_helper_module()
     errors = helper._esx_storage_blank_disk_errors(
         {
@@ -307,6 +335,7 @@ def test_helper_blank_disk_revalidation_rejects_partition_mount_lvm_raid_and_os_
 
 
 def test_helper_inventory_prefers_uuid_mount_and_keeps_all_mountpoints(monkeypatch):
+    """Verify that helper inventory prefers uuid mount and keeps all mountpoints."""
     helper = load_helper_module()
     lsblk_payload = {
         "blockdevices": [{
@@ -348,6 +377,7 @@ def test_helper_inventory_prefers_uuid_mount_and_keeps_all_mountpoints(monkeypat
 
 
 def test_helper_initialized_disk_retry_accepts_expected_mount_among_bind_mounts():
+    """Verify that helper initialized disk retry accepts expected mount among bind mounts."""
     helper = load_helper_module()
     entry = {
         "filesystem_type": "ext4",
@@ -375,6 +405,7 @@ def test_helper_initialized_disk_retry_accepts_expected_mount_among_bind_mounts(
 
 
 def api_token(client, scopes: list[str]) -> str:
+    """Return api token."""
     response = client.post(
         "/api/v1/auth/login?username=admin&password=atlaso-admin",
         json={"name": "esx storage test", "scopes": scopes},
@@ -384,6 +415,7 @@ def api_token(client, scopes: list[str]) -> str:
 
 
 def test_esx_storage_page_and_dual_stack_api_contract(client):
+    """Verify that esx storage page and dual stack api contract."""
     page = client.get("/login")
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
     assert client.post(
@@ -595,6 +627,7 @@ def test_esx_storage_page_and_dual_stack_api_contract(client):
 
 
 def test_esx_storage_write_scope_is_enforced(client):
+    """Verify that esx storage write scope is enforced."""
     token = api_token(client, ["read:esx-storage"])
     response = client.post(
         "/api/v1/esx-storage/volumes",

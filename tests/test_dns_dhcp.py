@@ -1,3 +1,5 @@
+"""Test dns dhcp behavior."""
+
 from ipaddress import ip_address
 import re
 
@@ -32,6 +34,11 @@ from atlaso.app.services.dnsmasq import (
 
 
 def create_token(client, scopes):
+    """Create token.
+
+    Returns:
+        The created token.
+    """
     response = client.post(
         "/api/v1/auth/login?username=admin&password=atlaso-admin",
         json={"name": "dns dhcp test token", "scopes": scopes},
@@ -41,6 +48,7 @@ def create_token(client, scopes):
 
 
 def test_dnsmasq_renderer_binds_dhcp_to_sitea_interface_only():
+    """Verify that dnsmasq renderer binds dhcp to sitea interface only."""
     dns_settings = DnsSettings(
         enabled=True,
         listen_interface="eth1\neth2",
@@ -113,6 +121,7 @@ def test_dnsmasq_renderer_binds_dhcp_to_sitea_interface_only():
 
 
 def test_dnsmasq_renderer_excludes_records_owned_by_disabled_domains():
+    """Verify that dnsmasq renderer excludes records owned by disabled domains."""
     config = render_dnsmasq_config(
         dns_settings=DnsSettings(
             enabled=True,
@@ -133,6 +142,7 @@ def test_dnsmasq_renderer_excludes_records_owned_by_disabled_domains():
 
 
 def test_dnsmasq_renderer_emits_shared_authoritative_zones_and_generated_glue():
+    """Verify that dnsmasq renderer emits shared authoritative zones and generated glue."""
     settings = DnsSettings(
         enabled=True,
         listen_interface="eth1\neth2",
@@ -167,6 +177,7 @@ def test_dnsmasq_renderer_emits_shared_authoritative_zones_and_generated_glue():
 
 
 def test_authoritative_validation_rejects_bad_identity_timers_and_conflicting_glue():
+    """Verify that authoritative validation rejects bad identity timers and conflicting glue."""
     settings = DnsSettings(
         enabled=True,
         listen_interface="eth1",
@@ -196,6 +207,7 @@ def test_authoritative_validation_rejects_bad_identity_timers_and_conflicting_gl
 
 
 def test_authoritative_zone_file_round_trip_ignores_matching_structural_records():
+    """Verify that authoritative zone file round trip ignores matching structural records."""
     settings = DnsSettings(
         listen_address="192.168.50.1\n2001:db8::53",
         domain="atlaso.internal",
@@ -235,6 +247,7 @@ def test_authoritative_zone_file_round_trip_ignores_matching_structural_records(
 
 
 def test_dnsmasq_renderer_uses_dhcp_upstreams_when_desired_upstreams_empty():
+    """Verify that dnsmasq renderer uses dhcp upstreams when desired upstreams empty."""
     config = render_dnsmasq_config(
         dns_settings=DnsSettings(
             enabled=True,
@@ -259,6 +272,7 @@ def test_dnsmasq_renderer_uses_dhcp_upstreams_when_desired_upstreams_empty():
 
 
 def test_dnsmasq_validation_fails_closed_when_required_dhcp_upstream_is_unavailable():
+    """Verify that dnsmasq validation fails closed when required dhcp upstream is unavailable."""
     settings = DnsSettings(enabled=True, upstream_servers="")
 
     errors = validate_dns_settings(
@@ -273,6 +287,7 @@ def test_dnsmasq_validation_fails_closed_when_required_dhcp_upstream_is_unavaila
 
 
 def test_dnsmasq_renderer_filters_unusable_configured_upstreams():
+    """Verify that dnsmasq renderer filters unusable configured upstreams."""
     settings = DnsSettings(
         enabled=True,
         listen_interface="eth1",
@@ -295,6 +310,7 @@ def test_dnsmasq_renderer_filters_unusable_configured_upstreams():
 
 
 def test_ntp_renderer_supports_nts_sources_server_and_hardening():
+    """Verify that ntp renderer supports nts sources server and hardening."""
     settings = NtpSettings(
         enabled=True,
         hostname="ntp.atlaso.internal",
@@ -335,6 +351,7 @@ def test_ntp_renderer_supports_nts_sources_server_and_hardening():
 
 
 def test_ntp_default_server_fallback_uses_nts_sources():
+    """Verify that ntp default server fallback uses nts sources."""
     settings = NtpSettings(
         hostname="ntp.atlaso.internal",
         upstream_servers=NTP_DEFAULT_UPSTREAM_SERVERS,
@@ -367,6 +384,7 @@ def test_ntp_default_server_fallback_uses_nts_sources():
 
 
 def test_ntp_custom_server_fallback_remains_plain_ntp():
+    """Verify that ntp custom server fallback remains plain ntp."""
     settings = NtpSettings(upstream_servers="time.google.com", upstream_sources_json="")
 
     sources = ntp_upstream_sources(settings)
@@ -383,6 +401,7 @@ def test_ntp_custom_server_fallback_remains_plain_ntp():
 
 
 def test_ntp_rejects_nts_source_ip_and_renders_disabled_state_without_servers():
+    """Verify that ntp rejects nts source ip and renders disabled state without servers."""
     invalid = NtpSettings(
         enabled=True,
         hostname="ntp.atlaso.internal",
@@ -406,6 +425,7 @@ def test_ntp_rejects_nts_source_ip_and_renders_disabled_state_without_servers():
 
 
 def test_ntp_sources_accept_addresses_fqdns_and_optional_ports():
+    """Verify that ntp sources accept addresses fqdns and optional ports."""
     settings = NtpSettings(
         enabled=True,
         hostname="ntp.atlaso.internal",
@@ -435,6 +455,7 @@ def test_ntp_sources_accept_addresses_fqdns_and_optional_ports():
 
 
 def test_ntp_sources_reject_invalid_identity_port_and_nts_ip():
+    """Verify that ntp sources reject invalid identity port and nts ip."""
     settings = NtpSettings(
         enabled=True,
         hostname="ntp.atlaso.internal",
@@ -460,6 +481,7 @@ def test_ntp_sources_reject_invalid_identity_port_and_nts_ip():
 
 
 def test_dnsmasq_renderer_supports_dnssec_rebind_logging_and_extended_records():
+    """Verify that dnsmasq renderer supports dnssec rebind logging and extended records."""
     dns_settings = DnsSettings(
         enabled=True,
         listen_interface="eth1",
@@ -501,6 +523,7 @@ def test_dnsmasq_renderer_supports_dnssec_rebind_logging_and_extended_records():
 
 
 def test_zone_file_round_trips_mx_srv_standard_rdata_order():
+    """Verify that zone file round trips mx srv standard rdata order."""
     records = [
         {
             "host_label": "@",
@@ -554,6 +577,7 @@ def test_zone_file_round_trips_mx_srv_standard_rdata_order():
 
 
 def test_dnsmasq_renderer_keeps_configured_upstreams_over_dhcp_fallback():
+    """Verify that dnsmasq renderer keeps configured upstreams over dhcp fallback."""
     config = render_dnsmasq_config(
         dns_settings=DnsSettings(
             enabled=True,
@@ -574,6 +598,7 @@ def test_dnsmasq_renderer_keeps_configured_upstreams_over_dhcp_fallback():
 
 
 def test_dnsmasq_renderer_supports_ipv6_dhcp_zones():
+    """Verify that dnsmasq renderer supports ipv6 dhcp zones."""
     scope = DhcpScope(
         name="IPv6Lab",
         address_family="ipv6",
@@ -611,6 +636,7 @@ def test_dnsmasq_renderer_supports_ipv6_dhcp_zones():
 
 
 def test_dhcp_range_expression_supports_ipv4_prefix_suffix_syntax():
+    """Verify that dhcp range expression supports ipv4 prefix suffix syntax."""
     scope_24 = DhcpScope(
         name="Site24",
         site_address="192.168.87.1",
@@ -646,6 +672,7 @@ def test_dhcp_range_expression_supports_ipv4_prefix_suffix_syntax():
 
 
 def test_dhcp_range_expression_supports_full_ipv4_ranges_and_single_addresses():
+    """Verify that dhcp range expression supports full ipv4 ranges and single addresses."""
     scope = DhcpScope(
         name="SiteFull",
         site_address="192.168.87.1",
@@ -664,6 +691,7 @@ def test_dhcp_range_expression_supports_full_ipv4_ranges_and_single_addresses():
 
 
 def test_dhcp_range_expression_supports_full_ipv6_ranges_and_single_addresses():
+    """Verify that dhcp range expression supports full ipv6 ranges and single addresses."""
     scope = DhcpScope(
         name="IPv6Full",
         address_family="ipv6",
@@ -683,6 +711,7 @@ def test_dhcp_range_expression_supports_full_ipv6_ranges_and_single_addresses():
 
 
 def test_dns_conditional_forwarders_accept_multiple_servers_per_domain():
+    """Verify that dns conditional forwarders accept multiple servers per domain."""
     forwarders = split_conditional_forwarders("sddc.internal=192.168.10.10,192.168.10.11")
 
     assert forwarders == [
@@ -705,6 +734,7 @@ def test_dns_conditional_forwarders_accept_multiple_servers_per_domain():
 
 
 def test_dnsmasq_renderer_only_marks_dhcp_authoritative_when_dhcp_enabled():
+    """Verify that dnsmasq renderer only marks dhcp authoritative when dhcp enabled."""
     dns_settings = DnsSettings(domain="atlaso.internal", authoritative=True)
     dhcp_settings = DhcpSettings(enabled=False, authoritative=True)
 
@@ -720,6 +750,7 @@ def test_dnsmasq_renderer_only_marks_dhcp_authoritative_when_dhcp_enabled():
 
 
 def test_dnsmasq_renderer_adds_esxi_pxe_boot_options():
+    """Verify that dnsmasq renderer adds esxi pxe boot options."""
     pxe_scope = DhcpScope(
         id=50,
         name="PXE",
@@ -791,6 +822,7 @@ def test_dnsmasq_renderer_adds_esxi_pxe_boot_options():
 
 
 def test_dnsmasq_lease_parser_tracks_active_and_expired_leases():
+    """Verify that dnsmasq lease parser tracks active and expired leases."""
     leases = parse_dnsmasq_leases(
         "1893456000 02:15:5d:00:20:30 192.168.50.130 api-client.atlaso.internal 01:02:15:5d:00:20:30\n"
         "1 02:15:5d:00:20:31 192.168.50.131 old.atlaso.internal *"
@@ -803,6 +835,7 @@ def test_dnsmasq_lease_parser_tracks_active_and_expired_leases():
 
 
 def test_disabled_dhcp_allows_blank_reset_defaults():
+    """Verify that disabled dhcp allows blank reset defaults."""
     errors = validate_dhcp_settings(
         DhcpSettings(
             enabled=False,
@@ -819,6 +852,7 @@ def test_disabled_dhcp_allows_blank_reset_defaults():
 
 
 def test_dnsmasq_renderer_supports_multiple_dhcp_ip_zones():
+    """Verify that dnsmasq renderer supports multiple dhcp ip zones."""
     dns_settings = DnsSettings(listen_interface="eth1", domain="atlaso.internal")
     dhcp_settings = DhcpSettings(enabled=True, authoritative=True)
     config = render_dnsmasq_config(
@@ -864,6 +898,7 @@ def test_dnsmasq_renderer_supports_multiple_dhcp_ip_zones():
 
 
 def test_dns_reverse_records_include_ipv4_and_ipv6_only():
+    """Verify that dns reverse records include ipv4 and ipv6 only."""
     records = dns_reverse_records(
         [
             DnsRecord(hostname="app.atlaso.internal", record_type="A", address="192.168.50.10"),
@@ -879,6 +914,7 @@ def test_dns_reverse_records_include_ipv4_and_ipv6_only():
 
 
 def test_dns_dhcp_validation_reports_bad_addresses():
+    """Verify that dns dhcp validation reports bad addresses."""
     dns_settings = DnsSettings(
         listen_interface="eth1",
         listen_address="bad-ip",
@@ -912,6 +948,7 @@ def test_dns_dhcp_validation_reports_bad_addresses():
 
 
 def test_dns_listen_target_validation_rejects_trunks_and_unknown_targets():
+    """Verify that dns listen target validation rejects trunks and unknown targets."""
     settings = DnsSettings(enabled=True, listen_interface="eth1\neth2\nmissing", domain="atlaso.internal")
 
     errors = validate_dns_listen_targets(settings, {"eth1"})
@@ -922,6 +959,7 @@ def test_dns_listen_target_validation_rejects_trunks_and_unknown_targets():
 
 
 def test_dhcp_bind_target_validation_accepts_access_physical_and_vlans():
+    """Verify that dhcp bind target validation accepts access physical and vlans."""
     physical = [
         PhysicalInterface(name="eth0", mode="access", ip_cidr="192.168.49.1/24", mac_address="00:00:00:00:00:01"),
         PhysicalInterface(name="eth1", mode="trunk", ip_cidr="192.168.60.1/24", mac_address="00:00:00:00:00:02"),
@@ -959,6 +997,7 @@ def test_dhcp_bind_target_validation_accepts_access_physical_and_vlans():
 
 
 def test_dhcp_bind_target_validation_rejects_trunks_missing_ip_and_unknown_targets():
+    """Verify that dhcp bind target validation rejects trunks missing ip and unknown targets."""
     errors = validate_dhcp_bind_targets(
         DhcpSettings(enabled=True),
         [
@@ -975,6 +1014,7 @@ def test_dhcp_bind_target_validation_rejects_trunks_missing_ip_and_unknown_targe
 
 
 def test_dns_domain_warnings_flag_local_domains_for_vcf():
+    """Verify that dns domain warnings flag local domains for vcf."""
     assert dns_domain_warnings(["atlaso.internal"]) == []
 
     warnings = dns_domain_warnings(["atlaso.local", "vcf.internal"])
@@ -989,6 +1029,7 @@ def test_dns_domain_warnings_flag_local_domains_for_vcf():
 
 
 def test_dns_record_validation_distinguishes_ipv4_and_ipv6():
+    """Verify that dns record validation distinguishes ipv4 and ipv6."""
     assert validate_dns_record("app.atlaso.internal", "A", "192.168.50.10") == []
     assert validate_dns_record("ipv6.atlaso.internal", "AAAA", "2001:db8::10") == []
     assert validate_dns_record("www.atlaso.internal", "CNAME", "app.atlaso.internal") == []
@@ -1003,6 +1044,7 @@ def test_dns_record_validation_distinguishes_ipv4_and_ipv6():
 
 
 def test_hosts_file_parser_supports_aliases_comments_and_ipv6():
+    """Verify that hosts file parser supports aliases comments and ipv6."""
     records, errors = parse_hosts_records(
         """
         # comment
@@ -1019,6 +1061,7 @@ def test_hosts_file_parser_supports_aliases_comments_and_ipv6():
 
 
 def test_dns_api_requires_scope_and_returns_config_preview(client):
+    """Verify that dns api requires scope and returns config preview."""
     token = create_token(client, ["read:dashboard"])
     denied = client.get("/api/v1/dns/status", headers={"Authorization": f"Bearer {token}"})
     assert denied.status_code == 403
@@ -1113,6 +1156,7 @@ def test_dns_api_requires_scope_and_returns_config_preview(client):
 
 
 def test_dns_api_exposes_read_only_authoritative_settings_and_advances_serial(client):
+    """Verify that dns api exposes read only authoritative settings and advances serial."""
     dns_token = create_token(client, ["read:dns", "write:dns"])
     headers = {"Authorization": f"Bearer {dns_token}"}
     initial = client.get("/api/v1/dns/settings", headers=headers)
@@ -1151,6 +1195,7 @@ def test_dns_api_exposes_read_only_authoritative_settings_and_advances_serial(cl
 
 
 def test_dns_api_update_rejects_duplicate_record(client):
+    """Verify that dns api update rejects duplicate record."""
     dns_token = create_token(client, ["read:dns", "write:dns"])
     first = client.post(
         "/api/v1/dns/records",
@@ -1182,6 +1227,7 @@ def test_dns_api_update_rejects_duplicate_record(client):
 
 
 def test_dns_hosts_import_replaces_existing_records(client):
+    """Verify that dns hosts import replaces existing records."""
     dns_token = create_token(client, ["read:dns", "write:dns"])
     response = client.post(
         "/api/v1/dns/records/import",
@@ -1204,6 +1250,7 @@ def test_dns_hosts_import_replaces_existing_records(client):
 
 
 def test_dhcp_api_scope_and_reservations(client):
+    """Verify that dhcp api scope and reservations."""
     dhcp_token = create_token(client, ["read:dhcp", "write:dhcp", "read:dns"])
     status = client.get("/api/v1/dhcp/status", headers={"Authorization": f"Bearer {dhcp_token}"})
     assert status.status_code == 200
@@ -1286,9 +1333,11 @@ def test_dhcp_api_scope_and_reservations(client):
 
 
 def test_dhcp_api_leases_reflect_helper_output(client, monkeypatch):
+    """Verify that dhcp api leases reflect helper output."""
     from atlaso.app.adapters.system import AdapterResult
 
     def fake_read_dhcp_leases(self):
+        """Return fake read dhcp leases."""
         return AdapterResult(
             command=["sudo", "-n", "/opt/atlaso/bin/atlaso-helper", "dnsmasq", "leases", "--real"],
             dry_run=False,

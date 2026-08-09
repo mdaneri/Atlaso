@@ -1,3 +1,5 @@
+"""Test vaults behavior."""
+
 import json
 from pathlib import Path
 
@@ -6,6 +8,7 @@ from sqlalchemy import select
 
 
 def login(client):
+    """Handle login."""
     page = client.get("/login")
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
     response = client.post(
@@ -17,10 +20,12 @@ def login(client):
 
 
 def csrf_from_page(text: str) -> str:
+    """Return csrf from page."""
     return text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
 
 
 def test_vault_ui_encrypts_masks_and_explicitly_reveals_password(client):
+    """Verify that vault ui encrypts masks and explicitly reveals password."""
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import AuditEvent, Vault, VaultEntry
 
@@ -86,6 +91,7 @@ def test_vault_ui_encrypts_masks_and_explicitly_reveals_password(client):
 
 
 def test_vault_delete_blocks_enabled_kickstart_marker_dependencies(client):
+    """Verify that vault delete blocks enabled kickstart marker dependencies."""
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import EsxiKickstart, Vault
     from atlaso.app.services.esxi_pxe import content_hash
@@ -144,6 +150,7 @@ def test_vault_delete_blocks_enabled_kickstart_marker_dependencies(client):
 
 
 def test_vault_ui_copies_entry_without_returning_plaintext(client):
+    """Verify that vault ui copies entry without returning plaintext."""
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import AuditEvent, Vault, VaultEntry
     from atlaso.app.secrets import decrypt_secret
@@ -211,6 +218,7 @@ def test_vault_ui_copies_entry_without_returning_plaintext(client):
 
 
 def test_vault_service_rejects_unsupported_types(client):
+    """Verify that vault service rejects unsupported types."""
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import Vault
     from atlaso.app.services.vaults import VaultEntryInput, upsert_vault_entry
@@ -242,6 +250,7 @@ def test_vault_service_rejects_unsupported_types(client):
     ],
 )
 def test_vault_uri_validation_rejects_unsupported_or_unsafe_values(uris, message):
+    """Verify that vault uri validation rejects unsupported or unsafe values."""
     from atlaso.app.services.vaults import normalize_vault_uris
 
     with pytest.raises(ValueError, match=message):
@@ -249,6 +258,7 @@ def test_vault_uri_validation_rejects_unsupported_or_unsafe_values(uris, message
 
 
 def test_vault_cli_fails_closed_and_reads_only_scoped_credential(tmp_path, monkeypatch, capsys):
+    """Verify that vault cli fails closed and reads only scoped credential."""
     from atlaso.app import vault_cli
 
     monkeypatch.delenv("CREDENTIALS_DIRECTORY", raising=False)
@@ -268,6 +278,7 @@ def test_vault_cli_fails_closed_and_reads_only_scoped_credential(tmp_path, monke
 
 
 def test_dynamic_kickstart_derives_exact_vault_scope_without_caching(client):
+    """Verify that dynamic kickstart derives exact vault scope without caching."""
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import EsxiKickstart, EsxiKickstartVaultBinding, EsxiPxeHost, Vault
     from atlaso.app.services.esxi_pxe import content_hash
@@ -356,6 +367,7 @@ def test_dynamic_kickstart_derives_exact_vault_scope_without_caching(client):
     ],
 )
 def test_kickstart_save_rejects_missing_unsupported_and_malformed_vault_markers(client, marker, case_name):
+    """Verify that kickstart save rejects missing unsupported and malformed vault markers."""
     login(client)
     page = client.get("/esxi-pxe")
     csrf = csrf_from_page(page.text)
@@ -376,6 +388,7 @@ def test_kickstart_save_rejects_missing_unsupported_and_malformed_vault_markers(
 
 
 def test_kickstart_marker_parser_handles_adversarial_braces_without_regex_backtracking():
+    """Verify that kickstart marker parser handles adversarial braces without regex backtracking."""
     from atlaso.app.services.esxi_pxe import kickstart_template_variables
 
     names, invalid = kickstart_template_variables("{{{{" + (" " * 100_000) + "}}}}")
@@ -385,6 +398,7 @@ def test_kickstart_marker_parser_handles_adversarial_braces_without_regex_backtr
 
 
 def test_kickstart_json_errors_do_not_expose_database_exception_details(client):
+    """Verify that kickstart json errors do not expose database exception details."""
     login(client)
     page = client.get("/esxi-pxe")
     csrf = csrf_from_page(page.text)
@@ -406,6 +420,7 @@ def test_kickstart_json_errors_do_not_expose_database_exception_details(client):
 
 
 def test_kickstart_completion_and_save_validate_metadata_without_decrypting(client, monkeypatch):
+    """Verify that kickstart completion and save validate metadata without decrypting."""
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import Vault
     from atlaso.app.services.vaults import VaultEntryInput, upsert_vault_entry
@@ -456,6 +471,7 @@ def test_kickstart_completion_and_save_validate_metadata_without_decrypting(clie
 
 
 def test_vault_javascript_uses_shared_grid_wizard_and_timed_eye():
+    """Verify that vault javascript uses shared grid wizard and timed eye."""
     source = Path("atlaso/app/static/app.js").read_text()
     css = Path("atlaso/app/static/app.css").read_text()
     base_template = Path("atlaso/app/templates/base.html").read_text()
@@ -569,6 +585,7 @@ def test_vault_javascript_uses_shared_grid_wizard_and_timed_eye():
 
 
 def test_vmware_wheel_deploy_exposes_fail_closed_vault_shell_commands():
+    """Verify that vmware wheel deploy exposes fail closed vault shell commands."""
     deploy = Path("scripts/windows/vmware/deploy-wheel.ps1").read_text(encoding="utf-8")
     assert 'ln -sfn "$venv/bin/atlaso-vault" /usr/local/bin/atlaso-vault' in deploy
     assert 'ln -sfn "$venv/bin/atlaso-vault" /usr/bin/atlaso-vault' in deploy
@@ -579,6 +596,7 @@ def test_vmware_wheel_deploy_exposes_fail_closed_vault_shell_commands():
 
 
 def test_remote_vault_uri_launch_uses_one_use_server_side_ticket(client, monkeypatch):
+    """Verify that remote vault uri launch uses one use server side ticket."""
     from types import SimpleNamespace
     from urllib.parse import parse_qs, urlsplit
 
@@ -712,6 +730,11 @@ def test_remote_vault_uri_launch_uses_one_use_server_side_ticket(client, monkeyp
     assert replay.status_code == 400
 
     def unavailable_target(*_args):
+        """Handle unavailable target.
+
+        Raises:
+            ConnectionRefusedError: If the operation encounters an invalid state.
+        """
         raise ConnectionRefusedError(10061, "Connection refused by remote host")
 
     monkeypatch.setattr(web_terminal, "_probe_remote_ssh_host", unavailable_target)
@@ -726,6 +749,7 @@ def test_remote_vault_uri_launch_uses_one_use_server_side_ticket(client, monkeyp
 
 
 def test_remote_vault_uri_authenticates_server_side_after_rechecking_host_key(client, monkeypatch):
+    """Verify that remote vault uri authenticates server side after rechecking host key."""
     from atlaso.app import web_terminal
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import Vault
@@ -751,47 +775,74 @@ def test_remote_vault_uri_authenticates_server_side_after_rechecking_host_key(cl
         entry_id = entry.id
 
     class FakeHostKey:
+        """Represent fake host key."""
         @staticmethod
         def asbytes():
+            """Return asbytes."""
             return b"verified-host-key"
 
     class FakeChannel:
+        """Represent fake channel."""
         def __init__(self):
+            """Initialize the fake channel."""
             self.pty = None
             self.shell_invoked = False
 
         def get_pty(self, **kwargs):
+            """Return pty."""
             self.pty = kwargs
 
         def invoke_shell(self):
+            """Run shell."""
             self.shell_invoked = True
 
     class FakeTransport:
+        """Represent fake transport."""
         def __init__(self, _socket):
+            """Initialize the fake transport."""
             self.channel = FakeChannel()
             self.authentication = None
             self.closed = False
 
         def start_client(self, timeout):
+            """Handle start client.
+
+            Args:
+                timeout: Maximum time to wait for completion.
+            """
             assert timeout == 10
 
         @staticmethod
         def get_remote_server_key():
+            """Return remote server key."""
             return FakeHostKey()
 
         def auth_password(self, username, password):
+            """Handle auth password.
+
+            Args:
+                username: Account name used for authentication or lookup.
+                password: Password supplied for the immediate authenticated operation.
+            """
             self.authentication = (username, password)
 
         def open_session(self, timeout):
+            """Return open session.
+
+            Args:
+                timeout: Maximum time to wait for completion.
+            """
             assert timeout == 10
             return self.channel
 
         def close(self):
+            """Handle close."""
             self.closed = True
 
     transports = []
 
     def fake_transport(sock):
+        """Return fake transport."""
         transport = FakeTransport(sock)
         transports.append(transport)
         return transport
@@ -821,6 +872,7 @@ def test_remote_vault_uri_authenticates_server_side_after_rechecking_host_key(cl
 
 
 def test_vcf_import_discovers_sddc_manager_and_installer_passwords():
+    """Verify that vcf import discovers sddc manager and installer passwords."""
     import httpx
 
     from atlaso.app.services.vcf_vault_import import (
@@ -829,18 +881,29 @@ def test_vcf_import_discovers_sddc_manager_and_installer_passwords():
     )
 
     class FakeClient:
+        """Represent fake client."""
         def __init__(self, payloads):
+            """Initialize the fake client."""
             self.payloads = payloads
 
         def get(self, path, **_kwargs):
+            """Return operation.
+
+            Args:
+                path: Filesystem or URL path to read, validate, or update.
+                _kwargs: Additional keyword arguments accepted by the test double.
+            """
             return httpx.Response(200, json=self.payloads[path])
 
     class FakeApi:
+        """Represent fake api."""
         def __init__(self, payloads):
+            """Initialize the fake api."""
             self.client = FakeClient(payloads)
 
         @staticmethod
         def _raise(response, _message):
+            """Handle raise."""
             assert response.is_success
 
     sddc = _sddc_manager_candidates(
@@ -887,6 +950,7 @@ def test_vcf_import_discovers_sddc_manager_and_installer_passwords():
 
 
 def test_settings_archive_excludes_and_restore_clears_vaults(client):
+    """Verify that settings archive excludes and restore clears vaults."""
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import Vault
     from atlaso.app.services.settings_archive import export_settings_archive, restore_settings_archive
@@ -916,6 +980,7 @@ def test_settings_archive_excludes_and_restore_clears_vaults(client):
 
 
 def test_worker_stages_selected_vault_and_redacts_captured_output(client, monkeypatch):
+    """Verify that worker stages selected vault and redacts captured output."""
     from atlaso.app.adapters.system import AdapterResult, SystemAdapter
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import AutomationScript, Job, Vault
@@ -926,6 +991,16 @@ def test_worker_stages_selected_vault_and_redacts_captured_output(client, monkey
     captured = {}
 
     def fake_run(_self, script_path, interpreter, timeout_seconds, arguments, vault_path):
+        """Return fake run.
+
+        Args:
+            _self:  self supplied by the caller.
+            script_path: Filesystem path for the script.
+            interpreter: Interpreter supplied by the caller.
+            timeout_seconds: Maximum time to wait, in seconds.
+            arguments: Arguments supplied by the caller.
+            vault_path: Filesystem path for the vault.
+        """
         captured["vault_path"] = vault_path
         captured["payload"] = json.loads(Path(vault_path).read_text(encoding="utf-8"))
         return AdapterResult(
@@ -989,6 +1064,7 @@ def test_worker_stages_selected_vault_and_redacts_captured_output(client, monkey
 
 
 def test_worker_rejects_reused_vault_id_before_decrypting(client, monkeypatch):
+    """Verify that worker rejects reused vault id before decrypting."""
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import AutomationScript, Job, Vault
     from atlaso.app.services.automation import create_script_revision
@@ -1046,6 +1122,7 @@ def test_worker_rejects_reused_vault_id_before_decrypting(client, monkeypatch):
 
 
 def test_vcf_helper_inspection_returns_metadata_and_import_encrypts_value(client, monkeypatch):
+    """Verify that vcf helper inspection returns metadata and import encrypts value."""
     from atlaso.app import ui
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import Vault, VaultEntry
@@ -1103,6 +1180,7 @@ def test_vcf_helper_inspection_returns_metadata_and_import_encrypts_value(client
 
 
 def test_vcf_helper_vault_picker_resolves_password_only_on_server(client, monkeypatch):
+    """Verify that vcf helper vault picker resolves password only on server."""
     from atlaso.app import ui
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import AuditEvent, Vault
@@ -1165,6 +1243,7 @@ def test_vcf_helper_vault_picker_resolves_password_only_on_server(client, monkey
     captured = {}
 
     def discover(**kwargs):
+        """Return discover."""
         captured.update(kwargs)
         return [
             VcfPasswordCandidate(
@@ -1210,6 +1289,7 @@ def test_vcf_helper_vault_picker_resolves_password_only_on_server(client, monkey
 
 
 def test_vcf_helper_vault_picker_never_loads_password_into_browser_state():
+    """Verify that vcf helper vault picker never loads password into browser state."""
     source = Path("atlaso/app/static/app.js").read_text(encoding="utf-8")
     picker = source.split("function initializeVcfVaultCredentialPickers()", 1)[1].split(
         "function initializeVcfTrustForm()", 1

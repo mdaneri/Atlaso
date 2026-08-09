@@ -49,14 +49,17 @@ FQDN_PATTERN = re.compile(r"^(?=.{1,253}$)(?!-)[A-Za-z0-9-]{1,63}(?<!-)(\.(?!-)[
 
 
 class OvfCustomizationError(ValueError):
+    """Report a ovf customization error."""
     pass
 
 
 def utc_now() -> str:
+    """Return utc now."""
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
 def log(message: str) -> None:
+    """Handle log."""
     line = f"{utc_now()} {message}\n"
     try:
         LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -68,6 +71,7 @@ def log(message: str) -> None:
 
 
 def attr_value(element: ET.Element, local_name: str) -> str:
+    """Return attr value."""
     for key, value in element.attrib.items():
         if key == local_name or key.endswith(f"}}{local_name}"):
             return value
@@ -75,6 +79,11 @@ def attr_value(element: ET.Element, local_name: str) -> str:
 
 
 def parse_ovf_environment(xml_text: str) -> dict[str, str]:
+    """Parse ovf environment.
+
+    Returns:
+        The parsed ovf environment.
+    """
     if not xml_text.strip():
         return {}
     root = ET.fromstring(xml_text)
@@ -90,10 +99,19 @@ def parse_ovf_environment(xml_text: str) -> dict[str, str]:
 
 
 def split_list(value: str) -> list[str]:
+    """Return split list."""
     return [item.strip() for item in re.split(r"[\s,;]+", value or "") if item.strip()]
 
 
 def validate_fqdn(value: str) -> str:
+    """Validate fqdn.
+
+    Returns:
+        The validate fqdn result.
+
+    Raises:
+        OvfCustomizationError: If the operation encounters an invalid state.
+    """
     fqdn = value.strip().lower().rstrip(".")
     if not fqdn or "." not in fqdn or not FQDN_PATTERN.match(fqdn):
         raise OvfCustomizationError("atlaso.fqdn must be a fully qualified DNS name")
@@ -103,6 +121,14 @@ def validate_fqdn(value: str) -> str:
 
 
 def validate_dns_servers(value: str, *, required: bool = False) -> list[str]:
+    """Validate dns servers.
+
+    Returns:
+        The validate dns servers result.
+
+    Raises:
+        OvfCustomizationError: If the operation encounters an invalid state.
+    """
     servers = split_list(value)
     if required and not servers:
         raise OvfCustomizationError("atlaso.dns_servers must include at least one DNS server")
@@ -115,6 +141,14 @@ def validate_dns_servers(value: str, *, required: bool = False) -> list[str]:
 
 
 def parse_boolean_property(properties: dict[str, str], key: str, *, default: bool = False) -> bool:
+    """Parse boolean property.
+
+    Returns:
+        The parsed boolean property.
+
+    Raises:
+        OvfCustomizationError: If the operation encounters an invalid state.
+    """
     value = properties.get(key, "").strip().lower()
     if not value:
         return default
@@ -126,6 +160,14 @@ def parse_boolean_property(properties: dict[str, str], key: str, *, default: boo
 
 
 def validate_properties(properties: dict[str, str]) -> dict[str, object]:
+    """Validate properties.
+
+    Returns:
+        The validate properties result.
+
+    Raises:
+        OvfCustomizationError: If the operation encounters an invalid state.
+    """
     missing = sorted(key for key in REQUIRED_PROPERTIES if not properties.get(key, "").strip())
     if missing:
         raise OvfCustomizationError(f"Missing required OVF properties: {', '.join(missing)}")
@@ -202,6 +244,7 @@ def validate_properties(properties: dict[str, str]) -> dict[str, object]:
 
 
 def redacted_summary(config: dict[str, object]) -> dict[str, object]:
+    """Return redacted summary."""
     return {
         "applied_at": utc_now(),
         "management_mode": config["management_mode"],
@@ -220,6 +263,7 @@ def redacted_summary(config: dict[str, object]) -> dict[str, object]:
 
 
 def read_ovf_environment() -> str:
+    """Return ovf environment."""
     commands = [
         ["vmware-rpctool", "info-get guestinfo.ovfEnv"],
         ["vmtoolsd", "--cmd", "info-get guestinfo.ovfEnv"],
@@ -234,16 +278,27 @@ def read_ovf_environment() -> str:
 
 
 def quote_env_value(value: object) -> str:
+    """Return quote env value."""
     text = str(value)
     escaped = text.replace("\\", "\\\\").replace('"', '\\"').replace("$", "\\$")
     return f'"{escaped}"'
 
 
 def generate_secret_key() -> str:
+    """Build secret key.
+
+    Returns:
+        The generate secret key result.
+    """
     return secrets.token_urlsafe(48)
 
 
 def read_env_file(path: Path) -> dict[str, str]:
+    """Return env file.
+
+    Args:
+        path: Filesystem or URL path to read, validate, or update.
+    """
     values: dict[str, str] = {}
     if not path.exists():
         return values
@@ -257,6 +312,12 @@ def read_env_file(path: Path) -> dict[str, str]:
 
 
 def write_env_file(path: Path, updates: dict[str, object]) -> None:
+    """Persist env file.
+
+    Args:
+        path: Filesystem or URL path to read, validate, or update.
+        updates: Updates supplied by the caller.
+    """
     values = read_env_file(path)
     values.update({key: str(value) for key, value in updates.items()})
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -270,6 +331,7 @@ def write_env_file(path: Path, updates: dict[str, object]) -> None:
 
 
 def write_networkd_config(config: dict[str, object]) -> None:
+    """Persist networkd config."""
     lines = ["[Match]", f"Name={DEFAULT_INTERFACE}", "", "[Network]"]
     if config["management_mode"] == "dhcp":
         lines.append("DHCP=ipv4")
@@ -292,6 +354,7 @@ def write_networkd_config(config: dict[str, object]) -> None:
 
 
 def write_resolv_conf(config: dict[str, object]) -> None:
+    """Persist resolv conf."""
     if not config["dns_servers"]:
         return
     RESOLV_CONF_PATH.write_text("".join(f"nameserver {server}\n" for server in config["dns_servers"]), encoding="utf-8")
@@ -299,6 +362,7 @@ def write_resolv_conf(config: dict[str, object]) -> None:
 
 
 def write_nginx_management_server_name(config: dict[str, object]) -> None:
+    """Persist nginx management server name."""
     if not NGINX_MANAGEMENT_PATH.exists():
         return
     text = NGINX_MANAGEMENT_PATH.read_text(encoding="utf-8")
@@ -308,6 +372,7 @@ def write_nginx_management_server_name(config: dict[str, object]) -> None:
 
 
 def write_initial_firewall_config(config: dict[str, object]) -> None:
+    """Persist initial firewall config."""
     management_rules = []
     source_cidr = str(config["management_source_cidr"])
     management_rules.append(
@@ -356,10 +421,17 @@ table inet atlaso {{
 
 
 def set_password(username: str, password: str) -> None:
+    """Update password.
+
+    Args:
+        username: Account name used for authentication or lookup.
+        password: Password supplied for the immediate authenticated operation.
+    """
     subprocess.run(["chpasswd"], input=f"{username}:{password}\n", text=True, check=True)
 
 
 def set_hostname(fqdn: str) -> None:
+    """Update hostname."""
     hostnamectl = shutil.which("hostnamectl")
     if hostnamectl:
         subprocess.run([hostnamectl, "set-hostname", fqdn], check=True)
@@ -371,6 +443,11 @@ def set_hostname(fqdn: str) -> None:
 
 
 def configure_root_ssh(enabled: bool) -> None:
+    """Update root ssh.
+
+    Raises:
+        OvfCustomizationError: If the operation encounters an invalid state.
+    """
     SSHD_ROOT_LOGIN_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
     previous = SSHD_ROOT_LOGIN_CONFIG_PATH.read_text(encoding="utf-8") if SSHD_ROOT_LOGIN_CONFIG_PATH.exists() else None
     lines = [
@@ -394,6 +471,11 @@ def configure_root_ssh(enabled: bool) -> None:
 
 
 def apply_customization(config: dict[str, object], *, dry_run: bool = False) -> dict[str, object]:
+    """Update customization.
+
+    Returns:
+        The apply customization result.
+    """
     summary = redacted_summary(config)
     if dry_run:
         return summary
@@ -430,6 +512,11 @@ def apply_customization(config: dict[str, object], *, dry_run: bool = False) -> 
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Run the command-line entry point.
+
+    Returns:
+        The main result.
+    """
     parser = argparse.ArgumentParser(description="Apply Atlaso VMware OVF deployment properties.")
     parser.add_argument("--ovf-env-file", default="", help="Read OVF environment XML from a file instead of VMware Tools.")
     parser.add_argument("--dry-run", action="store_true", help="Validate and print the redacted summary without changing the host.")

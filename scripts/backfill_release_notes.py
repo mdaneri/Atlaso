@@ -37,6 +37,7 @@ CATEGORY_TITLES = (
 
 @dataclass(frozen=True)
 class ReleaseNotePlan:
+    """Represent release note plan."""
     tag: str
     previous_tag: str
     original_body: str
@@ -51,6 +52,14 @@ def run(
     input_text: str | None = None,
     check: bool = True,
 ) -> subprocess.CompletedProcess[str]:
+    """Run operation.
+
+    Returns:
+        The run result.
+
+    Raises:
+        SystemExit: If the operation encounters an invalid state.
+    """
     result = subprocess.run(
         command,
         cwd=ROOT,
@@ -65,6 +74,11 @@ def run(
 
 
 def gh_json(arguments: list[str], *, payload: dict[str, Any] | None = None) -> Any:
+    """Return gh json.
+
+    Raises:
+        SystemExit: If the operation encounters an invalid state.
+    """
     command = ["gh", *arguments]
     input_text = None
     if payload is not None:
@@ -78,6 +92,11 @@ def gh_json(arguments: list[str], *, payload: dict[str, Any] | None = None) -> A
 
 
 def repository_name(explicit: str | None) -> str:
+    """Return repository name.
+
+    Raises:
+        SystemExit: If the operation encounters an invalid state.
+    """
     repository = explicit or os.environ.get("GITHUB_REPOSITORY", "").strip()
     if not repository:
         repository = run(
@@ -89,6 +108,14 @@ def repository_name(explicit: str | None) -> str:
 
 
 def parse_tag(tag: str) -> tuple[int, int, int]:
+    """Parse tag.
+
+    Returns:
+        The parsed tag.
+
+    Raises:
+        SystemExit: If the operation encounters an invalid state.
+    """
     match = SEMVER_TAG_RE.fullmatch(tag)
     if match is None:
         raise SystemExit(f"release tag must use vX.Y.Z semantic versioning; found {tag!r}")
@@ -96,6 +123,11 @@ def parse_tag(tag: str) -> tuple[int, int, int]:
 
 
 def load_releases(repository: str) -> list[dict[str, Any]]:
+    """Return releases.
+
+    Raises:
+        SystemExit: If the operation encounters an invalid state.
+    """
     pages = gh_json(
         [
             "api",
@@ -115,6 +147,7 @@ def load_releases(repository: str) -> list[dict[str, Any]]:
 
 
 def published_semver_releases(releases: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Return published semver releases."""
     published: list[dict[str, Any]] = []
     for release in releases:
         tag = release.get("tag_name")
@@ -129,6 +162,11 @@ def published_semver_releases(releases: list[dict[str, Any]]) -> list[dict[str, 
 
 
 def tag_commit(repository: str, tag: str) -> str:
+    """Return tag commit.
+
+    Raises:
+        SystemExit: If the operation encounters an invalid state.
+    """
     reference = gh_json(["api", f"repos/{repository}/git/ref/tags/{tag}"])
     if not isinstance(reference, dict) or not isinstance(reference.get("object"), dict):
         raise SystemExit(f"{tag} did not resolve to a GitHub tag object")
@@ -150,6 +188,11 @@ def tag_commit(repository: str, tag: str) -> str:
 
 
 def pull_request_labels(repository: str, number: int) -> set[str]:
+    """Return pull request labels.
+
+    Raises:
+        SystemExit: If the operation encounters an invalid state.
+    """
     response = gh_json(["api", f"repos/{repository}/pulls/{number}"])
     labels = response.get("labels") if isinstance(response, dict) else None
     if not isinstance(labels, list):
@@ -163,6 +206,7 @@ def pull_request_labels(repository: str, number: int) -> set[str]:
 
 
 def release_category(labels: set[str]) -> str:
+    """Return release category."""
     if "dependencies" in labels:
         return "Dependency updates"
     if "enhancement" in labels:
@@ -175,6 +219,7 @@ def release_category(labels: set[str]) -> str:
 
 
 def trailing_pull_request_number(repository: str, line: str) -> int | None:
+    """Return trailing pull request number."""
     match = re.search(
         rf"https://github\.com/{re.escape(repository)}/pull/(?P<number>[0-9]+)\s*$",
         line,
@@ -184,6 +229,11 @@ def trailing_pull_request_number(repository: str, line: str) -> int | None:
 
 
 def group_generated_notes(repository: str, body: str) -> str:
+    """Return group generated notes.
+
+    Raises:
+        SystemExit: If the operation encounters an invalid state.
+    """
     lines = body.strip().splitlines()
     try:
         changes_index = lines.index("## What's Changed")
@@ -243,6 +293,11 @@ def group_generated_notes(repository: str, body: str) -> str:
 
 
 def generated_notes(repository: str, tag: str, previous_tag: str) -> str:
+    """Return generated notes.
+
+    Raises:
+        SystemExit: If the operation encounters an invalid state.
+    """
     response = gh_json(
         ["api", "--method", "POST", f"repos/{repository}/releases/generate-notes"],
         payload={
@@ -257,15 +312,22 @@ def generated_notes(repository: str, tag: str, previous_tag: str) -> str:
 
 
 def comparable_notes(notes: str) -> str:
+    """Return comparable notes."""
     without_comment = RELEASE_NOTES_COMMENT_RE.sub("", notes).strip()
     return "\n".join(line.rstrip() for line in without_comment.splitlines() if line.strip())
 
 
 def normalized_body(body: str) -> str:
+    """Return normalized body."""
     return body.replace("\r\n", "\n").replace("\r", "\n").strip()
 
 
 def release_identity(release: dict[str, Any]) -> dict[str, Any]:
+    """Return release identity.
+
+    Raises:
+        SystemExit: If the operation encounters an invalid state.
+    """
     assets = release.get("assets", [])
     if not isinstance(assets, list):
         raise SystemExit(f"{release.get('tag_name', 'release')} contains an invalid asset list")
@@ -295,6 +357,11 @@ def plan_updates(
     repository: str,
     start_tag: str,
 ) -> list[ReleaseNotePlan]:
+    """Return plan updates.
+
+    Raises:
+        SystemExit: If the operation encounters an invalid state.
+    """
     parse_tag(start_tag)
     ordered = published_semver_releases(releases)
     tags = [str(release["tag_name"]) for release in ordered]
@@ -339,6 +406,7 @@ def plan_updates(
 
 
 def print_plans(plans: list[ReleaseNotePlan]) -> None:
+    """Handle print plans."""
     for plan in plans:
         print(f"### {plan.tag} from {plan.previous_tag} [{plan.action}]")
         print()
@@ -347,6 +415,7 @@ def print_plans(plans: list[ReleaseNotePlan]) -> None:
 
 
 def edit_release_body(repository: str, tag: str, body: str) -> None:
+    """Handle edit release body."""
     run(
         ["gh", "release", "edit", tag, "--repo", repository, "--notes-file", "-"],
         input_text=body,
@@ -354,6 +423,11 @@ def edit_release_body(repository: str, tag: str, body: str) -> None:
 
 
 def release_by_tag(repository: str, tag: str) -> dict[str, Any]:
+    """Return release by tag.
+
+    Raises:
+        SystemExit: If the operation encounters an invalid state.
+    """
     release = gh_json(["api", f"repos/{repository}/releases/tags/{tag}"])
     if not isinstance(release, dict):
         raise SystemExit(f"GitHub returned an invalid release after updating {tag}")
@@ -361,6 +435,11 @@ def release_by_tag(repository: str, tag: str) -> dict[str, Any]:
 
 
 def apply_plans(plans: list[ReleaseNotePlan], *, repository: str) -> None:
+    """Update plans.
+
+    Raises:
+        SystemExit: If the operation encounters an invalid state.
+    """
     for plan in plans:
         if plan.action == "unchanged":
             continue
@@ -382,6 +461,14 @@ def apply_plans(plans: list[ReleaseNotePlan], *, repository: str) -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Run the command-line entry point.
+
+    Returns:
+        The main result.
+
+    Raises:
+        SystemExit: If the operation encounters an invalid state.
+    """
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--start-tag", required=True, help="Oldest published vX.Y.Z release to inspect.")
     parser.add_argument("--repo", help="GitHub repository in owner/name form; defaults to the current repository.")

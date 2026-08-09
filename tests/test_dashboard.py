@@ -1,3 +1,5 @@
+"""Test dashboard behavior."""
+
 import json
 from datetime import timedelta
 
@@ -5,6 +7,7 @@ from sqlalchemy import select
 
 
 def login(client):
+    """Handle login."""
     page = client.get("/login")
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
     response = client.post(
@@ -16,6 +19,7 @@ def login(client):
 
 
 def controlled_units(*, invalid_changed: bool = False, valid_changed: bool = False):
+    """Return controlled units."""
     return [
         {
             "id": "appliance_settings",
@@ -37,6 +41,7 @@ def controlled_units(*, invalid_changed: bool = False, valid_changed: bool = Fal
 
 
 def test_dashboard_data_requires_session_and_preserves_public_api_contract(client):
+    """Verify that dashboard data requires session and preserves public api contract."""
     private = client.get("/dashboard/data", follow_redirects=False)
     assert private.status_code == 303
     assert private.headers["location"] == "/login?next=/dashboard/data"
@@ -76,6 +81,7 @@ def test_dashboard_data_requires_session_and_preserves_public_api_contract(clien
 
 
 def test_dashboard_setup_exit_healthy_and_needs_attention_states(client, monkeypatch):
+    """Verify that dashboard setup exit healthy and needs attention states."""
     from atlaso.app import ui
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import Job, JobStatus, utcnow
@@ -124,6 +130,7 @@ def test_dashboard_setup_exit_healthy_and_needs_attention_states(client, monkeyp
 
 
 def test_dashboard_successful_appliance_apply_resolves_retried_units(client, monkeypatch):
+    """Verify that dashboard successful appliance apply resolves retried units."""
     from atlaso.app import ui
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import Job, JobStatus, utcnow
@@ -180,6 +187,7 @@ def test_dashboard_successful_appliance_apply_resolves_retried_units(client, mon
 
 
 def test_dashboard_unrelated_success_does_not_resolve_apply_failure(client, monkeypatch):
+    """Verify that dashboard unrelated success does not resolve apply failure."""
     from atlaso.app import ui
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import Job, JobStatus, utcnow
@@ -232,6 +240,7 @@ def test_dashboard_unrelated_success_does_not_resolve_apply_failure(client, monk
 
 
 def test_dashboard_attention_priority_pending_separation_and_false_positive_filters(client, monkeypatch):
+    """Verify that dashboard attention priority pending separation and false positive filters."""
     from atlaso.app import ui
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import Job, JobStatus, PhysicalInterface, ServiceState, utcnow
@@ -305,6 +314,7 @@ def test_dashboard_attention_priority_pending_separation_and_false_positive_filt
 
 
 def test_dashboard_failed_task_window_and_activity_merge_are_safe(client, monkeypatch):
+    """Verify that dashboard failed task window and activity merge are safe."""
     from atlaso.app import ui
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import AuditEvent, Job, JobStatus, utcnow
@@ -373,11 +383,13 @@ def test_dashboard_failed_task_window_and_activity_merge_are_safe(client, monkey
 
 
 def test_dashboard_apply_summary_disables_reconciliation(monkeypatch):
+    """Verify that dashboard apply summary disables reconciliation."""
     from atlaso.app import ui
 
     calls = []
 
     def fake_units(_db, *, reconcile=True):
+        """Return fake units."""
         calls.append(reconcile)
         return controlled_units()
 
@@ -387,10 +399,16 @@ def test_dashboard_apply_summary_disables_reconciliation(monkeypatch):
 
 
 def test_dashboard_snapshot_does_not_call_desired_state_reconcilers(client, monkeypatch):
+    """Verify that dashboard snapshot does not call desired state reconcilers."""
     from atlaso.app import ui
     from atlaso.app.database import SessionLocal
 
     def unexpected_reconciliation(*_args, **_kwargs):
+        """Handle unexpected reconciliation.
+
+        Raises:
+            AssertionError: If an expected invariant is not satisfied.
+        """
         raise AssertionError("dashboard refresh entered a desired-state reconciliation path")
 
     for helper_name in (
@@ -411,6 +429,7 @@ def test_dashboard_snapshot_does_not_call_desired_state_reconcilers(client, monk
 
 
 def test_dashboard_html_removes_old_inventory_and_javascript_refresh_is_resilient(client):
+    """Verify that dashboard html removes old inventory and javascript refresh is resilient."""
     from pathlib import Path
 
     login(client)

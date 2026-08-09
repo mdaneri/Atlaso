@@ -30,6 +30,14 @@ GIT_RELEASE_USER_EMAIL = "41898282+github-actions[bot]@users.noreply.github.com"
 
 
 def run(command: list[str], *, check: bool = True) -> subprocess.CompletedProcess[str]:
+    """Run operation.
+
+    Returns:
+        The run result.
+
+    Raises:
+        SystemExit: If the operation encounters an invalid state.
+    """
     result = subprocess.run(command, cwd=ROOT, check=False, capture_output=True, text=True)
     if check and result.returncode != 0:
         raise SystemExit(result.stderr.strip() or result.stdout.strip() or f"{command[0]} failed")
@@ -37,6 +45,11 @@ def run(command: list[str], *, check: bool = True) -> subprocess.CompletedProces
 
 
 def sha256(path: Path) -> str:
+    """Return sha256.
+
+    Args:
+        path: Filesystem or URL path to read, validate, or update.
+    """
     with path.open("rb") as stream:
         return hashlib.file_digest(stream, "sha256").hexdigest()
 
@@ -47,6 +60,11 @@ def verify_manifest(
     *,
     trusted_key: Path,
 ) -> dict:
+    """Validate manifest.
+
+    Returns:
+        The verify manifest result.
+    """
     raw_manifest = manifest_path.read_bytes()
     raw_signature = signature_path.read_bytes()
     signature = signature_document(raw_signature)
@@ -62,6 +80,12 @@ def verify_manifest(
 
 
 def atomic_write(path: Path, content: bytes) -> None:
+    """Handle atomic write.
+
+    Args:
+        path: Filesystem or URL path to read, validate, or update.
+        content: Document or file content to process.
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_name(f".{path.name}.tmp")
     temporary.write_bytes(content)
@@ -77,6 +101,19 @@ def publish_pages(
     manifest: dict,
     apply: bool = True,
 ) -> str:
+    """Return publish pages.
+
+    Args:
+        site_root: Site root supplied by the caller.
+        manifest_path: Filesystem path for the manifest.
+        signature_path: Filesystem path for the signature.
+        trusted_key: Trusted key supplied by the caller.
+        manifest: Manifest supplied by the caller.
+        apply: Apply supplied by the caller.
+
+    Raises:
+        SystemExit: If the operation encounters an invalid state.
+    """
     version = str(manifest["version"])
     raw_manifest = manifest_path.read_bytes()
     raw_signature = signature_path.read_bytes()
@@ -123,6 +160,14 @@ def publish_pages(
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Run the command-line entry point.
+
+    Returns:
+        The main result.
+
+    Raises:
+        SystemExit: If the operation encounters an invalid state.
+    """
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--commit", required=True)
     parser.add_argument("--assets", type=Path, required=True)

@@ -25,21 +25,36 @@ class VersionError(ValueError):
 
 @dataclass(frozen=True, order=True)
 class Version:
+    """Represent a three-part semantic version."""
     major: int
     minor: int
     patch: int
 
     @classmethod
     def parse(cls, value: str, *, source: str = "version") -> Version:
+        """Parse an exact three-part semantic version.
+
+        Args:
+            value: Candidate `X.Y.Z` version text.
+            source: Human-readable source named in validation errors.
+
+        Returns:
+            The parsed semantic version.
+
+        Raises:
+            VersionError: If the operation encounters an invalid state.
+        """
         match = SEMVER_RE.fullmatch(value.strip())
         if match is None:
             raise VersionError(f"{source} must use X.Y.Z semantic versioning; found {value!r}")
         return cls(*(int(part) for part in match.groups()))
 
     def next_patch(self) -> Version:
+        """Return the next patch version in the same release line."""
         return Version(self.major, self.minor, self.patch + 1)
 
     def __str__(self) -> str:
+        """Return the canonical `X.Y.Z` representation."""
         return f"{self.major}.{self.minor}.{self.patch}"
 
 
@@ -54,6 +69,11 @@ VERSION_PATHS = {
 
 
 def _version_path(root: Path, source: str) -> Path:
+    """Resolve a configured version source within a checkout.
+
+    Raises:
+        VersionError: If the operation encounters an invalid state.
+    """
     configured = root / VERSION_PATHS[source]
     if configured.is_file() or source == "Python project":
         return configured
@@ -72,6 +92,11 @@ def _version_path(root: Path, source: str) -> Path:
 
 
 def _read_text(root: Path, source: str) -> str:
+    """Read a configured version source as UTF-8 text.
+
+    Raises:
+        VersionError: If the operation encounters an invalid state.
+    """
     path = _version_path(root, source)
     try:
         return path.read_text(encoding="utf-8")
@@ -80,6 +105,11 @@ def _read_text(root: Path, source: str) -> str:
 
 
 def read_project_version(root: Path) -> Version:
+    """Read the canonical Python project version from `pyproject.toml`.
+
+    Raises:
+        VersionError: If the operation encounters an invalid state.
+    """
     root = root.resolve()
     path = root / VERSION_PATHS["Python project"]
     project_text = _read_text(root, "Python project")
@@ -98,6 +128,11 @@ def read_project_version(root: Path) -> Version:
 
 
 def read_project_name(root: Path) -> str:
+    """Read the canonical distribution name from `pyproject.toml`.
+
+    Raises:
+        VersionError: If the operation encounters an invalid state.
+    """
     root = root.resolve()
     path = root / VERSION_PATHS["Python project"]
     try:
@@ -117,6 +152,11 @@ def normalize_distribution_name(value: str) -> str:
 
 
 def read_versions(root: Path) -> dict[str, Version]:
+    """Read every synchronized Atlaso version source.
+
+    Raises:
+        VersionError: If the operation encounters an invalid state.
+    """
     root = root.resolve()
     project_version = read_project_version(root)
 
@@ -144,6 +184,11 @@ def read_versions(root: Path) -> dict[str, Version]:
 
 
 def consistent_version(root: Path) -> Version:
+    """Return the shared version after verifying every source agrees.
+
+    Raises:
+        VersionError: If the operation encounters an invalid state.
+    """
     versions = read_versions(root)
     unique = set(versions.values())
     if len(unique) != 1:
@@ -153,10 +198,12 @@ def consistent_version(root: Path) -> Version:
 
 
 def expected_version(base_root: Path) -> Version:
+    """Return the next patch expected from the base checkout."""
     return consistent_version(base_root).next_patch()
 
 
 def allowed_pr_versions(base_root: Path, target_root: Path | None = None) -> set[Version]:
+    """Return versions permitted for a pull request checkout."""
     base = consistent_version(base_root)
     allowed = {base.next_patch()}
     if target_root is not None and normalize_distribution_name(
@@ -169,6 +216,14 @@ def allowed_pr_versions(base_root: Path, target_root: Path | None = None) -> set
 
 
 def check(root: Path, base_root: Path | None = None) -> Version:
+    """Validate synchronized sources and optional pull-request version policy.
+
+    Returns:
+        The consistent repository version.
+
+    Raises:
+        VersionError: If the operation encounters an invalid state.
+    """
     current = consistent_version(root)
     if base_root is not None:
         allowed = allowed_pr_versions(base_root, root)
@@ -179,6 +234,17 @@ def check(root: Path, base_root: Path | None = None) -> Version:
 
 
 def _replace_version(path: Path, pattern: re.Pattern[str], version: Version, source: str) -> None:
+    """Handle replace version.
+
+    Args:
+        path: Filesystem or URL path to read, validate, or update.
+        pattern: Source-specific pattern matching exactly one version.
+        version: Version identifier to validate or publish.
+        source: Source path, address, or record to process.
+
+    Raises:
+        VersionError: If the operation encounters an invalid state.
+    """
     text = path.read_text(encoding="utf-8")
     updated, count = pattern.subn(rf"\g<1>{version}\g<2>", text, count=1)
     if count != 1:
@@ -191,6 +257,14 @@ def bump(
     base_root: Path | None = None,
     target_version: Version | None = None,
 ) -> tuple[Version, bool]:
+    """Update every synchronized source to an allowed patch version.
+
+    Returns:
+        The resulting version and whether any source changed.
+
+    Raises:
+        VersionError: If the operation encounters an invalid state.
+    """
     root = root.resolve()
     current = consistent_version(root)
     if target_version is not None:
@@ -232,6 +306,14 @@ def bump(
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Run the command-line entry point.
+
+    Returns:
+        Process exit code.
+
+    Raises:
+        VersionError: If the operation encounters an invalid state.
+    """
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("command", choices=("bump", "check", "get", "project-get"))
     parser.add_argument("--root", type=Path, default=ROOT, help="Repository checkout to inspect or update.")

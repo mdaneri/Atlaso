@@ -1,3 +1,5 @@
+"""Test release publication behavior."""
+
 from __future__ import annotations
 
 import importlib.util
@@ -16,6 +18,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def load_script(module_name: str, filename: str):
+    """Return script."""
     spec = importlib.util.spec_from_file_location(module_name, ROOT / "scripts" / filename)
     assert spec is not None
     assert spec.loader is not None
@@ -36,10 +39,18 @@ def completed(
     stdout: str = "",
     stderr: str = "",
 ) -> subprocess.CompletedProcess[str]:
+    """Return completed."""
     return subprocess.CompletedProcess(command, returncode, stdout, stderr)
 
 
 def write_valid_vmware_ovf(path: Path, os_disk: str, tools_disk: str) -> None:
+    """Persist valid vmware ovf.
+
+    Args:
+        path: Filesystem or URL path to read, validate, or update.
+        os_disk: Os disk supplied by the caller.
+        tools_disk: Tools disk supplied by the caller.
+    """
     path.write_text(
         f"""<?xml version="1.0" encoding="UTF-8"?>
 <Envelope xmlns="http://schemas.dmtf.org/ovf/envelope/1"
@@ -76,6 +87,7 @@ def release_fixture(
     notes: str = "",
     release_id: int,
 ) -> dict[str, object]:
+    """Return release fixture."""
     suffix = f"\n\n{notes}" if notes else ""
     return {
         "id": release_id,
@@ -101,12 +113,14 @@ def test_publish_release_requests_generated_notes_and_keeps_provenance(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ):
+    """Verify that publish release requests generated notes and keeps provenance."""
     commit = "a" * 40
     asset = tmp_path / "release-manifest.json"
     asset.write_text("{}", encoding="utf-8")
     calls: list[list[str]] = []
 
     def fake_run(command: list[str], *, check: bool = True):
+        """Return fake run."""
         calls.append(command)
         if command == ["python", "scripts/version.py", "get"]:
             return completed(command, stdout="0.9.30\n")
@@ -134,6 +148,7 @@ def test_publish_release_requests_generated_notes_and_keeps_provenance(
 
 
 def test_vmware_release_assets_require_two_manifest_verified_vmdks(tmp_path: Path):
+    """Verify that vmware release assets require two manifest verified vmdks."""
     ovf = tmp_path / "Atlaso-Photon.ovf"
     os_disk = tmp_path / "Atlaso-Photon-disk1.vmdk"
     tools_disk = tmp_path / "Atlaso-Photon-disk2.vmdk"
@@ -159,6 +174,7 @@ def test_vmware_release_assets_require_two_manifest_verified_vmdks(tmp_path: Pat
 
 
 def test_vmware_release_assets_reject_invalid_empty_disk_topology(tmp_path: Path):
+    """Verify that vmware release assets reject invalid empty disk topology."""
     ovf = tmp_path / "Atlaso-Photon.ovf"
     os_disk = tmp_path / "Atlaso-Photon-disk1.vmdk"
     tools_disk = tmp_path / "Atlaso-Photon-disk2.vmdk"
@@ -172,6 +188,7 @@ def test_vmware_release_assets_reject_invalid_empty_disk_topology(tmp_path: Path
 
 
 def test_vmware_release_assets_accept_byte_equivalent_ova(tmp_path: Path):
+    """Verify that vmware release assets accept byte equivalent ova."""
     ovf = tmp_path / "Atlaso-Photon.ovf"
     os_disk = tmp_path / "Atlaso-Photon-disk1.vmdk"
     tools_disk = tmp_path / "Atlaso-Photon-disk2.vmdk"
@@ -202,6 +219,7 @@ def test_release_recovery_accepts_manifest_verified_vmware_assets(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ):
+    """Verify that release recovery accepts manifest verified vmware assets."""
     commit = "a" * 40
     core = tmp_path / "core"
     remote = tmp_path / "remote"
@@ -226,6 +244,11 @@ def test_release_recovery_accepts_manifest_verified_vmware_assets(
     )
 
     def fake_run(command: list[str], *, check: bool = True):
+        """Return fake run.
+
+        Raises:
+            AssertionError: If an expected invariant is not satisfied.
+        """
         if command == ["python", "scripts/version.py", "get"]:
             return completed(command, stdout="0.9.71\n")
         if command[-1] == "refs/tags/v0.9.71":
@@ -248,6 +271,7 @@ def test_release_recovery_accepts_manifest_verified_vmware_assets(
 
 
 def test_release_note_categories_keep_dependencies_out_of_enhancements():
+    """Verify that release note categories keep dependencies out of enhancements."""
     text = (ROOT / ".github" / "release.yml").read_text(encoding="utf-8")
     titles = re.findall(r"^\s+- title: (.+)$", text, flags=re.MULTILINE)
     assert titles == [
@@ -266,6 +290,7 @@ def test_release_note_categories_keep_dependencies_out_of_enhancements():
 def test_historical_generated_notes_use_pull_request_labels(
     monkeypatch: pytest.MonkeyPatch,
 ):
+    """Verify that historical generated notes use pull request labels."""
     generated_body = """\
 ## What's Changed
 * Add a feature by @example in https://github.com/mdaneri/Atlaso/pull/10
@@ -284,6 +309,7 @@ def test_historical_generated_notes_use_pull_request_labels(
     }
 
     def fake_gh_json(arguments: list[str], *, payload=None):
+        """Return fake gh json."""
         if arguments[-1].endswith("/releases/generate-notes"):
             assert payload == {
                 "tag_name": "v0.9.18",
@@ -313,6 +339,7 @@ def test_historical_generated_notes_use_pull_request_labels(
 
 
 def test_comparable_notes_ignores_generator_comment_and_blank_lines():
+    """Verify that comparable notes ignores generator comment and blank lines."""
     github_notes = """\
 <!-- Release notes generated using configuration in .github/release.yml at v0.9.30 -->
 
@@ -339,6 +366,7 @@ def test_comparable_notes_ignores_generator_comment_and_blank_lines():
 
 
 def test_already_configured_generated_notes_are_preserved():
+    """Verify that already configured generated notes are preserved."""
     body = """\
 <!-- Release notes generated using configuration in .github/release.yml at v0.9.30 -->
 
@@ -354,6 +382,7 @@ def test_already_configured_generated_notes_are_preserved():
 def test_historical_notes_select_the_trailing_repository_pull_request(
     monkeypatch: pytest.MonkeyPatch,
 ):
+    """Verify that historical notes select the trailing repository pull request."""
     body = """\
 ## What's Changed
 * Document https://github.com/mdaneri/Atlaso/pull/999 by @example in https://github.com/mdaneri/Atlaso/pull/10
@@ -363,6 +392,7 @@ def test_historical_notes_select_the_trailing_repository_pull_request(
     requested: list[int] = []
 
     def fake_pull_request_labels(repository: str, number: int) -> set[str]:
+        """Return fake pull request labels."""
         assert repository == "mdaneri/Atlaso"
         requested.append(number)
         return {"documentation"}
@@ -382,6 +412,7 @@ def test_historical_notes_select_the_trailing_repository_pull_request(
 def test_backfill_selects_published_range_and_previous_release(
     monkeypatch: pytest.MonkeyPatch,
 ):
+    """Verify that backfill selects published range and previous release."""
     commits = {
         "v0.9.17": "1" * 40,
         "v0.9.18": "2" * 40,
@@ -400,6 +431,7 @@ def test_backfill_selects_published_range_and_previous_release(
     )
 
     def fake_generated(_repository: str, tag: str, previous_tag: str) -> str:
+        """Return fake generated."""
         generated.append((tag, previous_tag))
         return f"## Changes in {tag}"
 
@@ -422,6 +454,7 @@ def test_backfill_selects_published_range_and_previous_release(
 def test_backfill_refuses_custom_or_mismatched_release_text(
     monkeypatch: pytest.MonkeyPatch,
 ):
+    """Verify that backfill refuses custom or mismatched release text."""
     commit = "5" * 40
     releases = [
         release_fixture("v0.9.17", "4" * 40, release_id=17),
@@ -458,6 +491,7 @@ def test_backfill_refuses_custom_or_mismatched_release_text(
 def test_backfill_apply_updates_legacy_body_and_skips_matching_notes(
     monkeypatch: pytest.MonkeyPatch,
 ):
+    """Verify that backfill apply updates legacy body and skips matching notes."""
     first_release = release_fixture("v0.9.18", "7" * 40, release_id=18)
     second_release = release_fixture(
         "v0.9.19",
@@ -487,6 +521,7 @@ def test_backfill_apply_updates_legacy_body_and_skips_matching_notes(
     edits: list[tuple[str, str]] = []
 
     def fake_edit(_repository: str, tag: str, body: str) -> None:
+        """Handle fake edit."""
         edits.append((tag, body))
 
     updated = dict(first_release)
@@ -507,6 +542,7 @@ def test_backfill_apply_updates_legacy_body_and_skips_matching_notes(
 def test_backfill_apply_verifies_release_identity(
     monkeypatch: pytest.MonkeyPatch,
 ):
+    """Verify that backfill apply verifies release identity."""
     release = release_fixture("v0.9.18", "9" * 40, release_id=18)
     body = "Signed appliance release built from `" + ("9" * 40) + "`.\n\n## Generated notes"
     plan = backfill_release_notes.ReleaseNotePlan(
@@ -536,6 +572,7 @@ def test_backfill_apply_verifies_release_identity(
 def test_backfill_apply_refuses_body_changed_after_preflight(
     monkeypatch: pytest.MonkeyPatch,
 ):
+    """Verify that backfill apply refuses body changed after preflight."""
     release = release_fixture("v0.9.18", "a" * 40, release_id=18)
     body = "Signed appliance release built from `" + ("a" * 40) + "`.\n\n## Generated notes"
     plan = backfill_release_notes.ReleaseNotePlan(
@@ -564,6 +601,7 @@ def test_backfill_apply_refuses_body_changed_after_preflight(
 def test_backfill_preview_is_read_only_and_preflight_failure_blocks_apply(
     monkeypatch: pytest.MonkeyPatch,
 ):
+    """Verify that backfill preview is read only and preflight failure blocks apply."""
     plan = backfill_release_notes.ReleaseNotePlan(
         tag="v0.9.18",
         previous_tag="v0.9.17",

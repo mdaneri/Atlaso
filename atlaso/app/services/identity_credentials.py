@@ -1,3 +1,5 @@
+"""Implement identity credentials service behavior."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -20,6 +22,7 @@ from atlaso.app.services.ldap import ldap_user_dn
 
 @dataclass(frozen=True)
 class VerifiedIdentity:
+    """Represent verified identity."""
     source: str
     source_record_id: int
     username: str
@@ -30,6 +33,16 @@ class VerifiedIdentity:
 
 
 def verify_local_credentials(db: Session, username: str, password: str) -> VerifiedIdentity | None:
+    """Validate local credentials.
+
+    Args:
+        db: Active database session.
+        username: Account name used for authentication or lookup.
+        password: Password supplied for the immediate authenticated operation.
+
+    Returns:
+        The verify local credentials result.
+    """
     normalized_username = username.strip()
     user = db.execute(
         select(User).where(
@@ -68,6 +81,17 @@ def verify_managed_ldap_credentials(
     username: str,
     password: str,
 ) -> VerifiedIdentity | None:
+    """Validate managed ldap credentials.
+
+    Args:
+        db: Active database session.
+        organization_id: Identifier of the organization.
+        username: Account name used for authentication or lookup.
+        password: Password supplied for the immediate authenticated operation.
+
+    Returns:
+        The verify managed ldap credentials result.
+    """
     source_settings = db.execute(select(LdapSettings)).scalar_one_or_none()
     if source_settings is None or not source_settings.enabled:
         return None
@@ -110,6 +134,18 @@ def verify_credentials(
     password: str,
     organization_id: int | None = None,
 ) -> VerifiedIdentity | None:
+    """Validate credentials.
+
+    Args:
+        db: Active database session.
+        source: Source path, address, or record to process.
+        username: Account name used for authentication or lookup.
+        password: Password supplied for the immediate authenticated operation.
+        organization_id: Identifier of the organization.
+
+    Returns:
+        The verify credentials result.
+    """
     if source == "local":
         if organization_id is not None:
             return None
@@ -130,6 +166,18 @@ def verify_credentials(
 
 
 def ensure_oidc_subject(db: Session, identity: VerifiedIdentity) -> OidcSubject:
+    """Ensure oidc subject.
+
+    Args:
+        db: Active database session.
+        identity: Authenticated identity authorizing the request.
+
+    Returns:
+        The ensure oidc subject result.
+
+    Raises:
+        ValueError: If an input value is invalid.
+    """
     if identity.source == "local":
         query = select(OidcSubject).where(OidcSubject.local_user_id == identity.source_record_id)
     elif identity.source == "managed_ldap":

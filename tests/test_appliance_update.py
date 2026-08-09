@@ -1,3 +1,5 @@
+"""Test appliance update behavior."""
+
 import importlib.machinery
 import importlib.util
 import json
@@ -10,6 +12,7 @@ from atlaso.app.adapters.system import AdapterResult
 
 
 def login(client):
+    """Return login."""
     page = client.get("/login")
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
     response = client.post(
@@ -22,10 +25,12 @@ def login(client):
 
 
 def csrf_from_page(page_text: str) -> str:
+    """Return csrf from page."""
     return page_text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
 
 
 def load_helper_module():
+    """Return helper module."""
     helper_path = Path(__file__).resolve().parents[1] / "scripts" / "appliance" / "atlaso-helper"
     loader = importlib.machinery.SourceFileLoader("atlaso_helper_update", str(helper_path))
     spec = importlib.util.spec_from_loader("atlaso_helper_update", loader)
@@ -36,6 +41,7 @@ def load_helper_module():
 
 
 def test_appliance_update_page_and_dry_run_job(client):
+    """Verify that appliance update page and dry run job."""
     login(client)
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import UpdateSource
@@ -191,6 +197,7 @@ def test_photon_update_requires_synchronized_managed_repository(client):
 
 
 def test_appliance_update_settings_validate_urls(client):
+    """Verify that appliance update settings validate urls."""
     login(client)
     page = client.get("/appliance-update")
     csrf = csrf_from_page(page.text)
@@ -208,6 +215,7 @@ def test_appliance_update_settings_validate_urls(client):
 
 
 def test_appliance_update_settings_reject_embedded_credentials(client):
+    """Verify that appliance update settings reject embedded credentials."""
     login(client)
     page = client.get("/appliance-update")
     csrf = csrf_from_page(page.text)
@@ -225,12 +233,19 @@ def test_appliance_update_settings_reject_embedded_credentials(client):
 
 
 def test_appliance_update_real_helper_failure_is_logged(client, monkeypatch, caplog):
+    """Verify that appliance update real helper failure is logged."""
     import atlaso.app.ui as ui
 
     class FailingUpdateAdapter:
+        """Represent failing update adapter."""
         dry_run = False
 
         def check_appliance_update_config(self, config_path: str) -> AdapterResult:
+            """Check appliance update config.
+
+            Returns:
+                The check appliance update config result.
+            """
             return AdapterResult(
                 command=["atlaso-helper", "appliance-update", "check", config_path],
                 dry_run=False,
@@ -270,14 +285,21 @@ def test_appliance_update_real_helper_failure_is_logged(client, monkeypatch, cap
 
 
 def test_appliance_update_staging_exception_records_failed_job_and_logs(client, monkeypatch, caplog):
+    """Verify that appliance update staging exception records failed job and logs."""
     import atlaso.app.ui as ui
 
     class RealUpdateAdapter:
+        """Represent real update adapter."""
         dry_run = False
 
     monkeypatch.setattr(ui, "SystemAdapter", lambda: RealUpdateAdapter())
 
     def fail_stage(_path: str, _preview: str) -> str:
+        """Return fail stage.
+
+        Raises:
+            PermissionError: If the operation lacks the required permission.
+        """
         raise PermissionError("staging ownership repair failed")
 
     monkeypatch.setattr(ui, "stage_appliance_apply_config", fail_stage)
@@ -312,6 +334,7 @@ def test_appliance_update_staging_exception_records_failed_job_and_logs(client, 
 
 
 def test_appliance_update_check_runs_every_child_after_failure(client, monkeypatch):
+    """Verify that appliance update check runs every child after failure."""
     import atlaso.app.ui as ui
 
     from atlaso.app.database import SessionLocal
@@ -324,6 +347,7 @@ def test_appliance_update_check_runs_every_child_after_failure(client, monkeypat
     calls = []
 
     def fake_execute(**kwargs):
+        """Return fake execute."""
         stream = kwargs["selected_stream_ids"][0]
         calls.append(stream)
         succeeded = stream != "atlaso_release"
@@ -376,6 +400,7 @@ def test_appliance_update_check_runs_every_child_after_failure(client, monkeypat
 
 
 def test_appliance_update_install_skips_photon_after_earlier_failure(client, monkeypatch):
+    """Verify that appliance update install skips photon after earlier failure."""
     import atlaso.app.ui as ui
 
     from atlaso.app.database import SessionLocal
@@ -388,6 +413,7 @@ def test_appliance_update_install_skips_photon_after_earlier_failure(client, mon
     calls = []
 
     def fake_execute(**kwargs):
+        """Return fake execute."""
         stream = kwargs["selected_stream_ids"][0]
         calls.append(stream)
         succeeded = stream != "atlaso_release"
@@ -441,6 +467,7 @@ def test_appliance_update_install_skips_photon_after_earlier_failure(client, mon
 
 
 def test_appliance_update_service_version_helpers():
+    """Verify that appliance update service version helpers."""
     from atlaso.app.services.appliance_update import redact_url_userinfo, version_with_git
 
     assert version_with_git("0.1.0", "abcdef1234567890") == "0.1.0+gabcdef123456"
@@ -449,6 +476,7 @@ def test_appliance_update_service_version_helpers():
 
 
 def test_current_version_info_has_public_branch_wheel_label(monkeypatch):
+    """Verify that current version info has public branch wheel label."""
     import atlaso
     import atlaso.app.services.appliance_update as appliance_update
 
@@ -465,6 +493,7 @@ def test_current_version_info_has_public_branch_wheel_label(monkeypatch):
 
 
 def test_current_version_info_has_installed_checksum_fallback(monkeypatch):
+    """Verify that current version info has installed checksum fallback."""
     import atlaso
     import atlaso.app.services.appliance_update as appliance_update
 
@@ -480,6 +509,7 @@ def test_current_version_info_has_installed_checksum_fallback(monkeypatch):
 
 
 def test_atlaso_repository_url_derives_channel_manifest(client):
+    """Verify that atlaso repository url derives channel manifest."""
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import UpdateSource
     from atlaso.app.services.update_sources import effective_update_settings
@@ -496,6 +526,7 @@ def test_atlaso_repository_url_derives_channel_manifest(client):
 
 
 def test_runtime_photon_source_details(tmp_path):
+    """Verify that runtime photon source details."""
     from atlaso.app.services import appliance_update
 
     (tmp_path / "photon.repo").write_text(
@@ -516,6 +547,7 @@ def test_runtime_photon_source_details(tmp_path):
     assert "photon | Photon 5 release | baseurl=https://packages.example.test" in appliance_update.photon_repository_summary(tmp_path)
 
 def test_source_sync_is_queued_and_records_validation_status(client):
+    """Verify that source sync is queued and records validation status."""
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import Job, UpdateSource
     from atlaso.app.worker import run_worker_once
@@ -652,6 +684,7 @@ def test_source_sync_helper_results_are_promoted_to_task_result(client, monkeypa
 
 
 def test_software_source_and_managed_module_lifecycle(client):
+    """Verify that software source and managed module lifecycle."""
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import ManagedPackage, UpdateSource
     from atlaso.app.services.update_sources import effective_update_settings
@@ -885,6 +918,7 @@ def test_software_source_and_managed_module_lifecycle(client):
 
 
 def test_effective_update_settings_preserves_all_enabled_repository_sources(client):
+    """Verify that effective update settings preserves all enabled repository sources."""
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import UpdateSource
     from atlaso.app.services.update_sources import effective_update_settings
@@ -925,6 +959,7 @@ def test_effective_update_settings_preserves_all_enabled_repository_sources(clie
 
 
 def test_source_credentials_use_protected_runtime_channel_without_manifest_disclosure(client):
+    """Verify that source credentials use protected runtime channel without manifest disclosure."""
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import UpdateSource
     from atlaso.app.secrets import encrypt_secret
@@ -948,6 +983,7 @@ def test_source_credentials_use_protected_runtime_channel_without_manifest_discl
 
 
 def test_helper_rejects_retired_python_library_stream():
+    """Verify that helper rejects retired python library stream."""
     helper = load_helper_module()
     errors = helper._appliance_update_config_errors(
         {"selected_streams": ["python_libraries"], "sources": {}},
@@ -1006,6 +1042,7 @@ def test_helper_rejects_unsynchronized_managed_photon_repository():
 
 
 def test_helper_redacts_repository_credentials_from_package_client_output(monkeypatch):
+    """Verify that helper redacts repository credentials from package client output."""
     from types import SimpleNamespace
 
     helper = load_helper_module()
@@ -1033,12 +1070,18 @@ def test_helper_redacts_repository_credentials_from_package_client_output(monkey
 
 
 def test_helper_falls_back_to_next_signed_atlaso_release_source(monkeypatch):
+    """Verify that helper falls back to next signed atlaso release source."""
     helper = load_helper_module()
     attempted = []
     expected_channel = {"channel": "preview", "release_manifest_url": "https://backup.example.test/release.json"}
     expected_manifest = {"version": "0.9.0", "git_commit": "a" * 40}
 
     def fake_release(url, credential=None):
+        """Return fake release.
+
+        Raises:
+            OSError: If the operating-system operation fails.
+        """
         attempted.append((url, credential))
         if "primary" in url:
             raise OSError("primary unavailable")
@@ -1071,6 +1114,7 @@ def test_helper_falls_back_to_next_signed_atlaso_release_source(monkeypatch):
 
 
 def test_helper_syncs_only_owned_photon_and_powershell_sources(monkeypatch, tmp_path):
+    """Verify that helper syncs only owned photon and powershell sources."""
     helper = load_helper_module()
     photon_path = tmp_path / "atlaso-managed.repo"
     state_path = tmp_path / "update-sources.json"
@@ -1213,6 +1257,7 @@ def test_helper_promotes_source_sync_failure_to_stderr(monkeypatch, tmp_path, ca
 
 
 def test_helper_uses_each_modules_bound_powershell_repository(monkeypatch, tmp_path):
+    """Verify that helper uses each modules bound powershell repository."""
     import base64
 
     helper = load_helper_module()
@@ -1223,6 +1268,7 @@ def test_helper_uses_each_modules_bound_powershell_repository(monkeypatch, tmp_p
     monkeypatch.setattr(helper, "_command_path", lambda _name: "/usr/bin/pwsh")
 
     def fake_command(command, *, success_codes=None, env=None):
+        """Return fake command."""
         scripts.append(base64.b64decode(command[-1]).decode("utf-16-le"))
         environments.append(env)
         return {"command": command, "returncode": 0, "success": True, "stdout": "", "stderr": ""}
@@ -1244,12 +1290,14 @@ def test_helper_uses_each_modules_bound_powershell_repository(monkeypatch, tmp_p
 
 
 def test_helper_normalizes_system_powershell_module_permissions_after_install(monkeypatch, tmp_path):
+    """Verify that helper normalizes system powershell module permissions after install."""
     helper = load_helper_module()
     powershell_root = tmp_path / "powershell"
     module_root = powershell_root / "Modules"
     commands = []
 
     def fake_command(command, *, success_codes=None, env=None):
+        """Return fake command."""
         commands.append(command)
         return {"command": command, "returncode": 0, "success": True, "stdout": "", "stderr": ""}
 
@@ -1279,6 +1327,7 @@ def test_helper_normalizes_system_powershell_module_permissions_after_install(mo
 
 
 def test_helper_reasserts_global_ceip_after_powercli_install(monkeypatch, tmp_path):
+    """Verify that helper reasserts global ceip after powercli install."""
     import base64
 
     helper = load_helper_module()
@@ -1286,6 +1335,7 @@ def test_helper_reasserts_global_ceip_after_powercli_install(monkeypatch, tmp_pa
     monkeypatch.setattr(helper, "ATLASO_POWERSHELL_HOME", tmp_path / "powershell-home")
 
     def fake_command(command, *, success_codes=None, env=None):
+        """Return fake command."""
         if command[0].endswith("pwsh"):
             scripts.append(base64.b64decode(command[-1]).decode("utf-16-le"))
         return {"command": command, "returncode": 0, "success": True, "stdout": "", "stderr": ""}
@@ -1314,11 +1364,13 @@ def test_helper_reasserts_global_ceip_after_powercli_install(monkeypatch, tmp_pa
 
 
 def test_helper_reports_powershell_permission_normalization_failure(monkeypatch, tmp_path):
+    """Verify that helper reports powershell permission normalization failure."""
     helper = load_helper_module()
     powershell_root = tmp_path / "powershell"
     module_root = powershell_root / "Modules"
 
     def fake_command(command, *, success_codes=None, env=None):
+        """Return fake command."""
         failed = command[:3] == ["/usr/bin/chmod", "-R", "a+rX,go-w"]
         return {
             "command": command,
@@ -1366,6 +1418,7 @@ def test_helper_reports_powershell_permission_normalization_failure(monkeypatch,
 
 
 def test_helper_runs_managed_script_in_unprivileged_systemd_sandbox(monkeypatch, tmp_path):
+    """Verify that helper runs managed script in unprivileged systemd sandbox."""
     from types import SimpleNamespace
 
     helper = load_helper_module()
@@ -1383,6 +1436,7 @@ def test_helper_runs_managed_script_in_unprivileged_systemd_sandbox(monkeypatch,
     captured = {}
 
     def fake_run(command):
+        """Return fake run."""
         captured["command"] = command
         return SimpleNamespace(returncode=0, stdout="completed\n", stderr="")
 
@@ -1401,6 +1455,7 @@ def test_helper_runs_managed_script_in_unprivileged_systemd_sandbox(monkeypatch,
 
 
 def test_helper_loads_scoped_vault_credential_and_redacts_output(monkeypatch, tmp_path, capsys):
+    """Verify that helper loads scoped vault credential and redacts output."""
     from types import SimpleNamespace
 
     helper = load_helper_module()
@@ -1427,6 +1482,7 @@ def test_helper_loads_scoped_vault_credential_and_redacts_output(monkeypatch, tm
     commands = []
 
     def fake_run(command):
+        """Return fake run."""
         commands.append(command)
         return SimpleNamespace(returncode=0, stdout="password=VMware1!\n", stderr="")
 
@@ -1442,6 +1498,11 @@ def test_helper_loads_scoped_vault_credential_and_redacts_output(monkeypatch, tm
 
 
 def test_helper_rejects_appliance_update_config_outside_apply_dir(tmp_path):
+    """Verify that helper rejects appliance update config outside apply dir.
+
+    Raises:
+        AssertionError: If an expected invariant is not satisfied.
+    """
     helper = load_helper_module()
     config_path = tmp_path / "atlaso-update.json"
     config_path.write_text("{}", encoding="utf-8")
@@ -1455,6 +1516,7 @@ def test_helper_rejects_appliance_update_config_outside_apply_dir(tmp_path):
 
 
 def test_helper_rejects_unsigned_v1_release_manifest(monkeypatch, tmp_path, capsys):
+    """Verify that helper rejects unsigned v1 release manifest."""
     helper = load_helper_module()
     apply_dir = tmp_path / "apply" / "appliance-update"
     apply_dir.mkdir(parents=True)
@@ -1471,6 +1533,7 @@ def test_helper_rejects_unsigned_v1_release_manifest(monkeypatch, tmp_path, caps
     monkeypatch.setattr(helper, "APPLIANCE_UPDATE_APPLY_DIR", apply_dir)
 
     def fake_fetch(url: str, _credential=None) -> bytes:
+        """Return fake fetch."""
         if url.endswith("manifest.json"):
             return json.dumps(
                 {
@@ -1490,6 +1553,7 @@ def test_helper_rejects_unsigned_v1_release_manifest(monkeypatch, tmp_path, caps
 
 
 def test_helper_rejects_credentialed_update_urls(tmp_path, capsys):
+    """Verify that helper rejects credentialed update urls."""
     helper = load_helper_module()
     apply_dir = tmp_path / "apply" / "appliance-update"
     apply_dir.mkdir(parents=True)
@@ -1511,10 +1575,12 @@ def test_helper_rejects_credentialed_update_urls(tmp_path, capsys):
 
 
 def test_helper_writes_failed_update_info_for_failed_commands(monkeypatch):
+    """Verify that helper writes failed update info for failed commands."""
     helper = load_helper_module()
     written = {}
 
     def fake_command_payload(command, *, success_codes=None):
+        """Return fake command payload."""
         return {"command": command, "returncode": 1, "success": False, "stdout": "", "stderr": "failed"}
 
     monkeypatch.setattr(helper, "_command_payload", fake_command_payload)
@@ -1531,12 +1597,14 @@ def test_helper_writes_failed_update_info_for_failed_commands(monkeypatch):
 
 
 def test_helper_queries_photon_python_without_unsupported_latest_limit(monkeypatch):
+    """Verify that helper queries photon python without unsupported latest limit."""
     helper = load_helper_module()
     captured = {}
 
     monkeypatch.setattr(helper, "_command_path", lambda command: f"/usr/bin/{command}")
 
     def fake_command_payload(command, **_kwargs):
+        """Return fake command payload."""
         captured["command"] = command
         return {
             "command": command,

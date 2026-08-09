@@ -1,3 +1,5 @@
+"""Implement oidc service behavior."""
+
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
@@ -75,20 +77,28 @@ OIDC_CLIENT_SECRET_HASHER = PasswordHasher(
 
 
 class OidcConfigurationError(ValueError):
+    """Report a oidc configuration error."""
     pass
 
 
 class OidcConflictError(RuntimeError):
+    """Report a oidc conflict error."""
     pass
 
 
 def _aware(value: datetime) -> datetime:
+    """Return aware."""
     if value.tzinfo is None:
         return value.replace(tzinfo=timezone.utc)
     return value
 
 
 def _appliance_settings(db: Session) -> ApplianceSettings:
+    """Return appliance settings.
+
+    Args:
+        db: Active database session.
+    """
     row = db.execute(select(ApplianceSettings)).scalar_one_or_none()
     if row is None:
         row = ApplianceSettings()
@@ -103,6 +113,7 @@ def expected_issuer_url(
     hostname: str = OIDC_DEFAULT_HOSTNAME,
     port: int = OIDC_DEFAULT_PORT,
 ) -> str:
+    """Return expected issuer url."""
     fqdn = normalize_fqdn(provider.hostname if provider is not None else hostname)
     if not fqdn:
         return ""
@@ -112,6 +123,14 @@ def expected_issuer_url(
 
 
 def normalize_issuer_url(value: str) -> str:
+    """Normalize issuer url.
+
+    Returns:
+        The normalize issuer url result.
+
+    Raises:
+        OidcConfigurationError: If the operation encounters an invalid state.
+    """
     candidate = value.strip()
     try:
         parsed = urlsplit(candidate)
@@ -144,6 +163,14 @@ def normalize_issuer_url(value: str) -> str:
 
 
 def ensure_provider_settings(db: Session) -> OidcProviderSettings:
+    """Ensure provider settings.
+
+    Args:
+        db: Active database session.
+
+    Returns:
+        The ensure provider settings result.
+    """
     row = db.execute(select(OidcProviderSettings)).scalar_one_or_none()
     if row is None:
         row = OidcProviderSettings()
@@ -159,6 +186,11 @@ def ensure_provider_settings(db: Session) -> OidcProviderSettings:
 
 
 def active_signing_key(db: Session) -> OidcSigningKey | None:
+    """Return active signing key.
+
+    Args:
+        db: Active database session.
+    """
     return db.execute(
         select(OidcSigningKey).where(
             OidcSigningKey.status == "active",
@@ -173,6 +205,16 @@ def provider_validation_errors(
     *,
     require_active_key: bool = True,
 ) -> list[str]:
+    """Return provider validation errors.
+
+    Args:
+        db: Active database session.
+        provider: Provider supplied by the caller.
+        require_active_key: Require active key supplied by the caller.
+
+    Raises:
+        ValueError: If an input value is invalid.
+    """
     provider = provider or ensure_provider_settings(db)
     errors: list[str] = []
     try:
@@ -283,6 +325,11 @@ def provider_validation_errors(
 
 
 def _valid_oidc_listener_targets(db: Session) -> dict[str, list[str]]:
+    """Return valid oidc listener targets.
+
+    Args:
+        db: Active database session.
+    """
     physical = db.execute(
         select(PhysicalInterface).order_by(PhysicalInterface.name)
     ).scalars().all()
@@ -293,6 +340,7 @@ def _valid_oidc_listener_targets(db: Session) -> dict[str, list[str]]:
     targets: dict[str, list[str]] = {}
 
     def addresses(*cidrs: str | None) -> list[str]:
+        """Return addresses."""
         values: list[str] = []
         for cidr in cidrs:
             if not cidr:
@@ -336,6 +384,12 @@ def _valid_oidc_listener_targets(db: Session) -> dict[str, list[str]]:
 
 
 def _management_https_is_applied(db: Session, appliance: ApplianceSettings) -> bool:
+    """Return management https is applied.
+
+    Args:
+        db: Active database session.
+        appliance: Appliance supplied by the caller.
+    """
     row = db.execute(
         select(Setting).where(Setting.key == "appliance_apply.baselines.v1")
     ).scalar_one_or_none()
@@ -356,7 +410,6 @@ def _management_https_is_applied(db: Session, appliance: ApplianceSettings) -> b
 
 def _management_certificate_error(db: Session, appliance: ApplianceSettings) -> str:
     """Return a public-safe readiness error for the applied management certificate."""
-
     fqdn = normalize_fqdn(appliance.fqdn)
     certificate = db.execute(
         select(CaCertificate).where(CaCertificate.managed_owner == "appliance:https")
@@ -396,6 +449,11 @@ def _management_certificate_error(db: Session, appliance: ApplianceSettings) -> 
 
 
 def _applied_management_certificate_fingerprint(db: Session) -> str:
+    """Return applied management certificate fingerprint.
+
+    Args:
+        db: Active database session.
+    """
     row = db.execute(
         select(Setting).where(Setting.key == "appliance_apply.baselines.v1")
     ).scalar_one_or_none()
@@ -417,6 +475,14 @@ def _applied_management_certificate_fingerprint(db: Session) -> str:
 
 
 def validate_enabled_provider_at_startup(db: Session) -> None:
+    """Validate enabled provider at startup.
+
+    Args:
+        db: Active database session.
+
+    Raises:
+        RuntimeError: If the operation cannot be completed safely.
+    """
     provider = db.execute(select(OidcProviderSettings)).scalar_one_or_none()
     if provider is None or not provider.enabled:
         return
@@ -430,6 +496,7 @@ def validate_enabled_provider_at_startup(db: Session) -> None:
 
 
 def issuer_endpoint_urls(issuer_url: str) -> dict[str, str]:
+    """Return issuer endpoint urls."""
     issuer = normalize_issuer_url(issuer_url)
     return {
         "issuer": issuer,
@@ -443,6 +510,14 @@ def issuer_endpoint_urls(issuer_url: str) -> dict[str, str]:
 
 
 def discovery_document(db: Session) -> dict[str, object]:
+    """Return discovery document.
+
+    Args:
+        db: Active database session.
+
+    Raises:
+        OidcConfigurationError: If the operation encounters an invalid state.
+    """
     if not OIDC_AUTHORIZATION_FLOW_AVAILABLE:
         raise OidcConfigurationError("OIDC provider is disabled.")
     provider = ensure_provider_settings(db)
@@ -489,6 +564,15 @@ def discovery_document(db: Session) -> dict[str, object]:
 
 
 def jwks_document(db: Session, *, now: datetime | None = None) -> dict[str, list[dict[str, object]]]:
+    """Return jwks document.
+
+    Args:
+        db: Active database session.
+        now: Current timezone-aware time used for deterministic evaluation.
+
+    Raises:
+        OidcConfigurationError: If the operation encounters an invalid state.
+    """
     if not OIDC_AUTHORIZATION_FLOW_AVAILABLE:
         raise OidcConfigurationError("OIDC provider is disabled.")
     provider = ensure_provider_settings(db)
@@ -517,6 +601,20 @@ def generate_signing_key(
     rotate: bool,
     now: datetime | None = None,
 ) -> tuple[OidcSigningKey, OidcSigningKey | None]:
+    """Build signing key.
+
+    Args:
+        db: Active database session.
+        rotate: Rotate supplied by the caller.
+        now: Current timezone-aware time used for deterministic evaluation.
+
+    Returns:
+        The generate signing key result.
+
+    Raises:
+        OidcConflictError: If the operation encounters an invalid state.
+        RuntimeError: If the operation cannot be completed safely.
+    """
     current_time = now or utcnow()
     provider = ensure_provider_settings(db)
     previous = active_signing_key(db)
@@ -575,6 +673,16 @@ def delete_retired_signing_key(
     *,
     now: datetime | None = None,
 ) -> None:
+    """Remove retired signing key.
+
+    Args:
+        db: Active database session.
+        row: Database or collection row to process.
+        now: Current timezone-aware time used for deterministic evaluation.
+
+    Raises:
+        OidcConflictError: If the operation encounters an invalid state.
+    """
     if row.status == "active" or row.active_slot is not None:
         raise OidcConflictError("The active OIDC signing key cannot be deleted; rotate it first.")
     if row.status != "retired" or row.publish_until is None:
@@ -588,6 +696,7 @@ def delete_retired_signing_key(
 
 
 def signing_key_to_dict(row: OidcSigningKey) -> dict[str, object]:
+    """Return signing key to dict."""
     public_jwk = json.loads(row.public_jwk_json)
     return {
         "id": row.id,
@@ -603,18 +712,34 @@ def signing_key_to_dict(row: OidcSigningKey) -> dict[str, object]:
 
 
 def generate_client_id() -> str:
+    """Build client id.
+
+    Returns:
+        The generate client id result.
+    """
     return f"lf_oidc_{token_urlsafe(24)}"
 
 
 def generate_client_secret() -> str:
+    """Build client secret.
+
+    Returns:
+        The generate client secret result.
+    """
     return token_urlsafe(48)
 
 
 def hash_client_secret(raw_secret: str) -> str:
+    """Return hash client secret."""
     return OIDC_CLIENT_SECRET_HASHER.hash(raw_secret)
 
 
 def verify_client_secret(secret_hash: str, raw_secret: str) -> bool:
+    """Validate client secret.
+
+    Returns:
+        The verify client secret result.
+    """
     try:
         return OIDC_CLIENT_SECRET_HASHER.verify(secret_hash, raw_secret)
     except (InvalidHashError, VerificationError, VerifyMismatchError):
@@ -622,6 +747,14 @@ def verify_client_secret(secret_hash: str, raw_secret: str) -> bool:
 
 
 def normalize_allowed_scopes(scopes: list[str]) -> list[str]:
+    """Normalize allowed scopes.
+
+    Returns:
+        The normalize allowed scopes result.
+
+    Raises:
+        OidcConfigurationError: If the operation encounters an invalid state.
+    """
     normalized: list[str] = []
     for scope in scopes:
         value = scope.strip()
@@ -636,6 +769,14 @@ def normalize_allowed_scopes(scopes: list[str]) -> list[str]:
 
 
 def validate_redirect_uri(uri: str, *, allow_loopback: bool) -> str:
+    """Validate redirect uri.
+
+    Returns:
+        The validate redirect uri result.
+
+    Raises:
+        OidcConfigurationError: If the operation encounters an invalid state.
+    """
     if not uri or uri != uri.strip():
         raise OidcConfigurationError("Redirect URIs must not be blank or contain surrounding whitespace.")
     if "*" in uri:
@@ -674,6 +815,14 @@ def validate_redirect_uri_list(
     allow_loopback: bool,
     required: bool,
 ) -> list[str]:
+    """Validate redirect uri list.
+
+    Returns:
+        The validate redirect uri list result.
+
+    Raises:
+        OidcConfigurationError: If the operation encounters an invalid state.
+    """
     if required and not values:
         raise OidcConfigurationError("At least one exact redirect URI is required.")
     normalized = [validate_redirect_uri(value, allow_loopback=allow_loopback) for value in values]
@@ -683,6 +832,15 @@ def validate_redirect_uri_list(
 
 
 def get_client(db: Session, client_id: int) -> OidcClient:
+    """Return client.
+
+    Args:
+        db: Active database session.
+        client_id: Identifier of the client.
+
+    Raises:
+        OidcConfigurationError: If the operation encounters an invalid state.
+    """
     row = db.execute(
         select(OidcClient)
         .where(OidcClient.id == client_id)
@@ -708,6 +866,28 @@ def create_client(
     authorization_code_lifetime_seconds: int,
     enabled: bool,
 ) -> tuple[OidcClient, str]:
+    """Create client.
+
+    Args:
+        db: Active database session.
+        name: Name of the target object.
+        description: Human-readable description of the resource.
+        organization_id: Identifier of the organization.
+        redirect_uris: Redirect uris supplied by the caller.
+        post_logout_redirect_uris: Post logout redirect uris supplied by the caller.
+        allowed_scopes: Allowed scopes supplied by the caller.
+        allow_loopback_redirects: Allow loopback redirects supplied by the caller.
+        access_token_lifetime_seconds: Access token lifetime seconds supplied by the caller.
+        id_token_lifetime_seconds: Id token lifetime seconds supplied by the caller.
+        authorization_code_lifetime_seconds: Authorization code lifetime seconds supplied by the caller.
+        enabled: Whether the requested behavior is enabled.
+
+    Returns:
+        The created client.
+
+    Raises:
+        OidcConfigurationError: If the operation encounters an invalid state.
+    """
     normalized_name = name.strip()
     if not normalized_name:
         raise OidcConfigurationError("OIDC client name is required.")
@@ -770,6 +950,29 @@ def update_client(
     authorization_code_lifetime_seconds: int,
     enabled: bool,
 ) -> OidcClient:
+    """Update client.
+
+    Args:
+        db: Active database session.
+        row: Database or collection row to process.
+        name: Name of the target object.
+        description: Human-readable description of the resource.
+        organization_id: Identifier of the organization.
+        redirect_uris: Redirect uris supplied by the caller.
+        post_logout_redirect_uris: Post logout redirect uris supplied by the caller.
+        allowed_scopes: Allowed scopes supplied by the caller.
+        allow_loopback_redirects: Allow loopback redirects supplied by the caller.
+        access_token_lifetime_seconds: Access token lifetime seconds supplied by the caller.
+        id_token_lifetime_seconds: Id token lifetime seconds supplied by the caller.
+        authorization_code_lifetime_seconds: Authorization code lifetime seconds supplied by the caller.
+        enabled: Whether the requested behavior is enabled.
+
+    Returns:
+        The update client result.
+
+    Raises:
+        OidcConfigurationError: If the operation encounters an invalid state.
+    """
     normalized_name = name.strip()
     if not normalized_name:
         raise OidcConfigurationError("OIDC client name is required.")
@@ -822,6 +1025,12 @@ def update_client(
 
 
 def rotate_client_secret(db: Session, row: OidcClient) -> str:
+    """Return rotate client secret.
+
+    Args:
+        db: Active database session.
+        row: Database or collection row to process.
+    """
     raw_secret = generate_client_secret()
     row.client_secret_hash = hash_client_secret(raw_secret)
     row.updated_at = utcnow()
@@ -831,6 +1040,7 @@ def rotate_client_secret(db: Session, row: OidcClient) -> str:
 
 
 def oidc_client_to_dict(row: OidcClient) -> dict[str, object]:
+    """Return oidc client to dict."""
     redirects = [item.uri for item in row.redirect_uris if item.kind == "redirect"]
     logout_redirects = [item.uri for item in row.redirect_uris if item.kind == "post_logout"]
     return {
@@ -855,6 +1065,11 @@ def oidc_client_to_dict(row: OidcClient) -> dict[str, object]:
 
 
 def list_clients(db: Session) -> list[OidcClient]:
+    """Return clients.
+
+    Args:
+        db: Active database session.
+    """
     return list(
         db.execute(
             select(OidcClient)
@@ -866,7 +1081,6 @@ def list_clients(db: Session) -> list[OidcClient]:
 
 def integration_export(db: Session, row: OidcClient) -> dict[str, object]:
     """Build a public-metadata-only relying-party configuration document."""
-
     provider = ensure_provider_settings(db)
     urls = issuer_endpoint_urls(provider.issuer_url)
     client = oidc_client_to_dict(row)
@@ -889,11 +1103,21 @@ def integration_export(db: Session, row: OidcClient) -> dict[str, object]:
 
 
 def managed_ldap_source_enabled(db: Session) -> bool:
+    """Return managed ldap source enabled.
+
+    Args:
+        db: Active database session.
+    """
     settings = db.execute(select(LdapSettings)).scalar_one_or_none()
     return bool(settings and settings.enabled)
 
 
 def enabled_login_organizations(db: Session) -> list[LdapOrganization]:
+    """Return enabled login organizations.
+
+    Args:
+        db: Active database session.
+    """
     if not managed_ldap_source_enabled(db):
         return []
     return list(
@@ -941,6 +1165,13 @@ def identity_permitted_for_client(
     client: OidcClient,
     identity: VerifiedIdentity,
 ) -> bool:
+    """Return identity permitted for client.
+
+    Args:
+        db: Active database session.
+        client: Client used to invoke the external or application interface.
+        identity: Authenticated identity authorizing the request.
+    """
     if not client.enabled:
         return False
     if client.organization_id is not None:
@@ -974,6 +1205,15 @@ def _mapping_key(
     organization_id: int | None,
     oidc_client_id: int | None,
 ) -> str:
+    """Return mapping key.
+
+    Args:
+        source_type: Source type supplied by the caller.
+        local_role: Local role supplied by the caller.
+        ldap_group_id: Identifier of the ldap group.
+        organization_id: Identifier of the organization.
+        oidc_client_id: Identifier of the oidc client.
+    """
     scope = f"client:{oidc_client_id}" if oidc_client_id is not None else "default"
     if source_type == "local_role":
         return f"{scope}:local_role:{local_role.casefold()}"
@@ -981,6 +1221,14 @@ def _mapping_key(
 
 
 def _normalize_external_group_name(value: str) -> str:
+    """Normalize external group name.
+
+    Returns:
+        The normalize external group name result.
+
+    Raises:
+        OidcConfigurationError: If the operation encounters an invalid state.
+    """
     normalized = value.strip()
     if (
         not normalized
@@ -994,6 +1242,11 @@ def _normalize_external_group_name(value: str) -> str:
 
 
 def list_group_mappings(db: Session) -> list[OidcGroupMapping]:
+    """Return group mappings.
+
+    Args:
+        db: Active database session.
+    """
     return list(
         db.execute(
             select(OidcGroupMapping)
@@ -1014,6 +1267,7 @@ def list_group_mappings(db: Session) -> list[OidcGroupMapping]:
 
 
 def group_mapping_to_dict(row: OidcGroupMapping) -> dict[str, object]:
+    """Return group mapping to dict."""
     source_name = (
         row.local_role
         if row.source_type == "local_role"
@@ -1036,6 +1290,7 @@ def group_mapping_to_dict(row: OidcGroupMapping) -> dict[str, object]:
 
 
 def _mapping_source_key(row: OidcGroupMapping) -> str:
+    """Return mapping source key."""
     if row.source_type == "local_role":
         return f"local_role:{row.local_role.casefold()}"
     return f"ldap_group:{row.ldap_group_id}"
@@ -1048,6 +1303,14 @@ def _effective_mapping_rows(
     source: str,
     organization_id: int | None,
 ) -> dict[str, OidcGroupMapping]:
+    """Return effective mapping rows.
+
+    Args:
+        db: Active database session.
+        client: Client used to invoke the external or application interface.
+        source: Source path, address, or record to process.
+        organization_id: Identifier of the organization.
+    """
     rows = list_group_mappings(db)
     relevant: list[OidcGroupMapping]
     if source == "local":
@@ -1080,6 +1343,11 @@ def _effective_mapping_rows(
 
 
 def _validate_effective_mapping_rows(rows: dict[str, OidcGroupMapping]) -> None:
+    """Validate effective mapping rows.
+
+    Raises:
+        OidcConfigurationError: If the operation encounters an invalid state.
+    """
     names: dict[str, str] = {}
     for source_key, row in rows.items():
         normalized_name = row.external_group_name.casefold()
@@ -1093,6 +1361,11 @@ def _validate_effective_mapping_rows(rows: dict[str, OidcGroupMapping]) -> None:
 
 
 def validate_all_mapping_contexts(db: Session) -> None:
+    """Validate all mapping contexts.
+
+    Args:
+        db: Active database session.
+    """
     clients = list_clients(db)
     _validate_effective_mapping_rows(
         _effective_mapping_rows(
@@ -1146,6 +1419,24 @@ def create_group_mapping(
     external_group_name: str,
     validate_effective_contexts: bool = True,
 ) -> OidcGroupMapping:
+    """Create group mapping.
+
+    Args:
+        db: Active database session.
+        source_type: Source type supplied by the caller.
+        local_role: Local role supplied by the caller.
+        ldap_group_id: Identifier of the ldap group.
+        oidc_client_id: Identifier of the oidc client.
+        external_group_name: External group name supplied by the caller.
+        validate_effective_contexts: Validate effective contexts supplied by the caller.
+
+    Returns:
+        The created group mapping.
+
+    Raises:
+        OidcConfigurationError: If the operation encounters an invalid state.
+        OidcConflictError: If the operation encounters an invalid state.
+    """
     client = get_client(db, oidc_client_id) if oidc_client_id is not None else None
     normalized_role = local_role.strip().casefold()
     organization_id: int | None = None
@@ -1219,6 +1510,21 @@ def update_group_mapping(
     oidc_client_id: int | None,
     external_group_name: str,
 ) -> OidcGroupMapping:
+    """Update group mapping.
+
+    Args:
+        db: Active database session.
+        row: Database or collection row to process.
+        oidc_client_id: Identifier of the oidc client.
+        external_group_name: External group name supplied by the caller.
+
+    Returns:
+        The update group mapping result.
+
+    Raises:
+        OidcConfigurationError: If the operation encounters an invalid state.
+        OidcConflictError: If the operation encounters an invalid state.
+    """
     client = get_client(db, oidc_client_id) if oidc_client_id is not None else None
     if row.source_type == "local_role":
         if client is not None and client.organization_id is not None:
@@ -1272,6 +1578,12 @@ def update_group_mapping(
 
 
 def _resolved_enabled_ldap_group_ids(db: Session, user: LdapUser) -> set[int]:
+    """Return resolved enabled ldap group ids.
+
+    Args:
+        db: Active database session.
+        user: Local or directory user affected by the operation.
+    """
     groups = {
         row.id: row
         for row in db.execute(
@@ -1318,6 +1630,16 @@ def mapped_external_groups(
     client: OidcClient,
     identity: VerifiedIdentity,
 ) -> list[str]:
+    """Return mapped external groups.
+
+    Args:
+        db: Active database session.
+        client: Client used to invoke the external or application interface.
+        identity: Authenticated identity authorizing the request.
+
+    Raises:
+        OidcConfigurationError: If the operation encounters an invalid state.
+    """
     effective = _effective_mapping_rows(
         db,
         client=client,
@@ -1356,6 +1678,14 @@ def scoped_identity_claims(
     identity: VerifiedIdentity,
     scopes: str,
 ) -> dict[str, object]:
+    """Return scoped identity claims.
+
+    Args:
+        db: Active database session.
+        client: Client used to invoke the external or application interface.
+        identity: Authenticated identity authorizing the request.
+        scopes: Permission scopes to evaluate or grant.
+    """
     granted = set(scopes.split())
     claims: dict[str, object] = {}
     if "profile" in granted:
@@ -1378,6 +1708,11 @@ def scoped_identity_claims(
 
 
 def list_subjects(db: Session) -> list[dict[str, object]]:
+    """Return subjects.
+
+    Args:
+        db: Active database session.
+    """
     local_users = {row.id: row for row in db.execute(select(User)).scalars().all()}
     ldap_users = {
         row.id: row
@@ -1415,6 +1750,14 @@ def list_subjects(db: Session) -> list[dict[str, object]]:
 
 
 def protocol_provider(db: Session) -> OidcProviderSettings:
+    """Return protocol provider.
+
+    Args:
+        db: Active database session.
+
+    Raises:
+        OidcConfigurationError: If the operation encounters an invalid state.
+    """
     provider = ensure_provider_settings(db)
     if not provider.enabled:
         raise OidcConfigurationError("OIDC provider is disabled.")
@@ -1425,14 +1768,22 @@ def protocol_provider(db: Session) -> OidcProviderSettings:
 
 
 def _token_hash(value: str) -> str:
+    """Return token hash."""
     return sha256(value.encode("utf-8")).hexdigest()
 
 
 def _new_opaque_value() -> str:
+    """Return new opaque value."""
     return token_urlsafe(48)
 
 
 def client_by_public_id(db: Session, client_id: str) -> OidcClient | None:
+    """Return client by public id.
+
+    Args:
+        db: Active database session.
+        client_id: Identifier of the client.
+    """
     return db.execute(
         select(OidcClient).where(OidcClient.client_id == client_id).options(
             selectinload(OidcClient.redirect_uris), selectinload(OidcClient.organization)
@@ -1445,6 +1796,24 @@ def begin_authorization(
     nonce: str, code_challenge: str, browser_session_id: str, prompt: str,
     max_age: int | None, login_hint: str,
 ) -> OidcAuthorizationTransaction:
+    """Return begin authorization.
+
+    Args:
+        db: Active database session.
+        client_id: Identifier of the client.
+        redirect_uri: Redirect uri supplied by the caller.
+        scope: Permission or resource scope to evaluate.
+        state: Lifecycle or job state to persist.
+        nonce: Nonce supplied by the caller.
+        code_challenge: Code challenge supplied by the caller.
+        browser_session_id: Identifier of the browser session.
+        prompt: Prompt supplied by the caller.
+        max_age: Max age supplied by the caller.
+        login_hint: Login hint supplied by the caller.
+
+    Raises:
+        OidcConfigurationError: If the operation encounters an invalid state.
+    """
     protocol_provider(db)
     client = client_by_public_id(db, client_id)
     if client is None or not client.enabled or (client.organization and not client.organization.enabled):
@@ -1489,6 +1858,19 @@ def issue_authorization_code(
     db: Session, *, transaction: OidcAuthorizationTransaction, identity: VerifiedIdentity,
     request_browser_session_id: str, authenticated_browser_session_id: str, auth_time: datetime,
 ) -> str:
+    """Return issue authorization code.
+
+    Args:
+        db: Active database session.
+        transaction: Transaction supplied by the caller.
+        identity: Authenticated identity authorizing the request.
+        request_browser_session_id: Identifier of the request browser session.
+        authenticated_browser_session_id: Identifier of the authenticated browser session.
+        auth_time: Auth time supplied by the caller.
+
+    Raises:
+        OidcConfigurationError: If the operation encounters an invalid state.
+    """
     if (
         _aware(transaction.expires_at) <= utcnow()
         or transaction.browser_session_id != request_browser_session_id
@@ -1554,6 +1936,18 @@ def issue_authorization_code(
 
 def redeem_authorization_code(db: Session, *, raw_code: str, client: OidcClient, redirect_uri: str, verifier: str) -> OidcAuthorizationCode:
     # UPDATE ... RETURNING is the atomic one-use boundary even under concurrent requests.
+    """Return redeem authorization code.
+
+    Args:
+        db: Active database session.
+        raw_code: Raw code supplied by the caller.
+        client: Client used to invoke the external or application interface.
+        redirect_uri: Redirect uri supplied by the caller.
+        verifier: Verifier supplied by the caller.
+
+    Raises:
+        OidcConfigurationError: If the operation encounters an invalid state.
+    """
     if not OIDC_PKCE_RE.fullmatch(verifier):
         raise OidcConfigurationError("Invalid authorization code.")
     challenge = _base64url_sha256(verifier)
@@ -1570,10 +1964,21 @@ def redeem_authorization_code(db: Session, *, raw_code: str, client: OidcClient,
 
 
 def _base64url_sha256(value: str) -> str:
+    """Return base64url sha256."""
     return base64.urlsafe_b64encode(sha256(value.encode("ascii")).digest()).rstrip(b"=").decode("ascii")
 
 
 def _sign_token(db: Session, claims: dict[str, object], typ: str) -> str:
+    """Return sign token.
+
+    Args:
+        db: Active database session.
+        claims: Claims supplied by the caller.
+        typ: Typ supplied by the caller.
+
+    Raises:
+        OidcConfigurationError: If the operation encounters an invalid state.
+    """
     key = active_signing_key(db)
     if key is None or key.algorithm != OIDC_SIGNING_ALGORITHM:
         raise OidcConfigurationError("OIDC signing key unavailable.")
@@ -1582,6 +1987,16 @@ def _sign_token(db: Session, claims: dict[str, object], typ: str) -> str:
 
 
 def issue_tokens(db: Session, *, code: OidcAuthorizationCode, client: OidcClient) -> dict[str, object]:
+    """Return issue tokens.
+
+    Args:
+        db: Active database session.
+        code: Code supplied by the caller.
+        client: Client used to invoke the external or application interface.
+
+    Raises:
+        OidcConfigurationError: If the operation encounters an invalid state.
+    """
     provider = protocol_provider(db)
     subject = db.get(OidcSubject, code.subject_id)
     if subject is None:
@@ -1632,6 +2047,14 @@ def issue_tokens(db: Session, *, code: OidcAuthorizationCode, client: OidcClient
 def identity_from_source(
     db: Session, *, source: str, source_record_id: int, organization_id: int | None
 ) -> VerifiedIdentity | None:
+    """Return identity from source.
+
+    Args:
+        db: Active database session.
+        source: Source path, address, or record to process.
+        source_record_id: Identifier of the source record.
+        organization_id: Identifier of the organization.
+    """
     if source == "local":
         user = db.get(User, source_record_id)
         if user is None or not user.enabled or user.auth_provider != "local" or organization_id is not None:
@@ -1676,6 +2099,19 @@ def identity_from_source(
 def validate_bearer_token(
     db: Session, raw_token: str, *, expected_typ: str
 ) -> dict[str, object]:
+    """Validate bearer token.
+
+    Args:
+        db: Active database session.
+        raw_token: Raw token supplied by the caller.
+        expected_typ: Expected typ supplied by the caller.
+
+    Returns:
+        The validate bearer token result.
+
+    Raises:
+        OidcConfigurationError: If the operation encounters an invalid state.
+    """
     if not raw_token or raw_token.count(".") != 2:
         raise OidcConfigurationError("Invalid token.")
     try:
@@ -1729,6 +2165,18 @@ def validate_userinfo_claims(
     db: Session,
     claims: dict[str, object],
 ) -> tuple[OidcSubject, VerifiedIdentity, OidcClient]:
+    """Validate userinfo claims.
+
+    Args:
+        db: Active database session.
+        claims: Claims supplied by the caller.
+
+    Returns:
+        The validate userinfo claims result.
+
+    Raises:
+        OidcConfigurationError: If the operation encounters an invalid state.
+    """
     client = client_by_public_id(db, str(claims.get("client_id") or ""))
     if client is None or not client.enabled:
         raise OidcConfigurationError("Invalid token.")

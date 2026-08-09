@@ -1,3 +1,5 @@
+"""Test ui compliance behavior."""
+
 import ast
 import re
 from pathlib import Path
@@ -9,6 +11,11 @@ MATRIX = ROOT / "docs" / "project" / "ui-compliance-matrix.md"
 
 
 def _html_routes(path: Path) -> set[str]:
+    """Return html routes.
+
+    Args:
+        path: Filesystem or URL path to read, validate, or update.
+    """
     tree = ast.parse(path.read_text(encoding="utf-8"))
     routes: set[str] = set()
     for node in ast.walk(tree):
@@ -35,6 +42,7 @@ def _html_routes(path: Path) -> set[str]:
 
 
 def test_ui_compliance_matrix_covers_every_html_route_and_template():
+    """Verify that ui compliance matrix covers every html route and template."""
     matrix = MATRIX.read_text(encoding="utf-8")
     routes = _html_routes(ROOT / "atlaso" / "app" / "ui.py")
     routes.update(_html_routes(ROOT / "atlaso" / "app" / "web_terminal.py"))
@@ -52,6 +60,7 @@ def test_ui_compliance_matrix_covers_every_html_route_and_template():
 
 
 def test_ui_compliance_matrix_covers_every_stable_dialog():
+    """Verify that ui compliance matrix covers every stable dialog."""
     matrix = MATRIX.read_text(encoding="utf-8")
     dialog_ids: set[str] = set()
     resource_wizard_ids: set[str] = set()
@@ -68,6 +77,7 @@ def test_ui_compliance_matrix_covers_every_stable_dialog():
 
 
 def test_every_shared_wizard_dialog_has_an_accessible_description():
+    """Verify that every shared wizard dialog has an accessible description."""
     for template in TEMPLATES.rglob("*.html"):
         source = template.read_text(encoding="utf-8")
         for match in re.finditer(r"<dialog\b(?P<attributes>[^>]*)>", source):
@@ -82,6 +92,7 @@ def test_every_shared_wizard_dialog_has_an_accessible_description():
 
 
 def test_ui_compliance_remediation_keeps_explicit_actions_and_focus_return():
+    """Verify that ui compliance remediation keeps explicit actions and focus return."""
     template_source = "\n".join(
         template.read_text(encoding="utf-8") for template in TEMPLATES.rglob("*.html")
     )
@@ -108,6 +119,7 @@ def test_ui_compliance_remediation_keeps_explicit_actions_and_focus_return():
 
 
 def test_automation_collections_have_truthful_server_fallbacks():
+    """Verify that automation collections have truthful server fallbacks."""
     source = (TEMPLATES / "automation.html").read_text(encoding="utf-8")
     for grid_id, fallback_id in (
         ("automation-schedules-table", "automation-schedules-fallback"),
@@ -130,6 +142,7 @@ def test_automation_collections_have_truthful_server_fallbacks():
 
 
 def test_every_autosave_form_has_a_nearby_status_target():
+    """Verify that every autosave form has a nearby status target."""
     autosave_count = 0
     for template in TEMPLATES.rglob("*.html"):
         source = template.read_text(encoding="utf-8")

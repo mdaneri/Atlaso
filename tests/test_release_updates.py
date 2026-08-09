@@ -1,3 +1,5 @@
+"""Test release updates behavior."""
+
 from __future__ import annotations
 
 import base64
@@ -27,10 +29,12 @@ KEY_ID = "test-release-key"
 
 
 def canonical(payload: dict) -> bytes:
+    """Return canonical."""
     return (json.dumps(payload, indent=2, sort_keys=True) + "\n").encode()
 
 
 def release_payload() -> dict:
+    """Return release payload."""
     return {
         "schema_version": 2,
         "kind": "atlaso-release",
@@ -51,6 +55,7 @@ def release_payload() -> dict:
 
 
 def inventory_payload() -> dict:
+    """Return inventory payload."""
     return {
         "schema_version": 1,
         "kind": "atlaso-inventory-linux-release",
@@ -69,6 +74,7 @@ def inventory_payload() -> dict:
 
 
 def signed(payload: dict, private_key: Ed25519PrivateKey) -> tuple[bytes, bytes]:
+    """Return signed."""
     raw = canonical(payload)
     signature = canonical(
         {
@@ -82,6 +88,7 @@ def signed(payload: dict, private_key: Ed25519PrivateKey) -> tuple[bytes, bytes]
 
 @pytest.fixture
 def trust(tmp_path):
+    """Return trust."""
     private_key = Ed25519PrivateKey.generate()
     public_key = private_key.public_key().public_bytes(
         serialization.Encoding.PEM,
@@ -94,6 +101,7 @@ def trust(tmp_path):
 
 
 def test_signed_release_verification_fails_closed(trust):
+    """Verify that signed release verification fails closed."""
     private_key, trust_dir = trust
     raw, signature = signed(release_payload(), private_key)
 
@@ -111,6 +119,7 @@ def test_signed_release_verification_fails_closed(trust):
 
 
 def test_channel_pointer_must_match_named_key(trust):
+    """Verify that channel pointer must match named key."""
     private_key, trust_dir = trust
     channel = {
         "schema_version": 2,
@@ -138,6 +147,7 @@ def test_channel_pointer_must_match_named_key(trust):
 
 
 def test_signed_inventory_release_verification_detects_tampering(trust):
+    """Verify that signed inventory release verification detects tampering."""
     private_key, trust_dir = trust
     raw, signature = signed(inventory_payload(), private_key)
     assert verify_signed_json(
@@ -176,6 +186,7 @@ def test_signed_inventory_release_verification_detects_tampering(trust):
     ],
 )
 def test_inventory_release_manifest_fails_closed(mutation, message):
+    """Verify that inventory release manifest fails closed."""
     payload = inventory_payload()
     for key, value in mutation.items():
         if key == "package":
@@ -187,6 +198,7 @@ def test_inventory_release_manifest_fails_closed(mutation, message):
 
 
 def test_inventory_version_order_includes_revision():
+    """Verify that inventory version order includes revision."""
     assert inventory_version_tuple("2026.05.1+8") > inventory_version_tuple("2026.05.1+7")
     assert inventory_version_tuple("2026.06.0+1") > inventory_version_tuple("2026.05.99+99")
 
@@ -201,6 +213,7 @@ def test_inventory_version_order_includes_revision():
     ],
 )
 def test_release_manifest_requires_complete_v2_interface(field, value, message):
+    """Verify that release manifest requires complete v2 interface."""
     payload = release_payload()
     payload[field] = value
     with pytest.raises(ReleaseManifestError, match=message):
@@ -208,6 +221,7 @@ def test_release_manifest_requires_complete_v2_interface(field, value, message):
 
 
 def test_release_manifest_rejects_non_appliance_python_abi():
+    """Verify that release manifest rejects non appliance python abi."""
     payload = release_payload()
     payload["supported_python_abis"] = ["cp313"]
     with pytest.raises(ReleaseManifestError, match="supported_python_abis"):
@@ -215,6 +229,7 @@ def test_release_manifest_rejects_non_appliance_python_abi():
 
 
 def test_release_workflows_use_successful_main_sha_and_promote_without_rebuilding():
+    """Verify that release workflows use successful main sha and promote without rebuilding."""
     publication = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
     inventory = (ROOT / ".github/workflows/inventory-linux-release.yml").read_text(
         encoding="utf-8"
@@ -279,6 +294,7 @@ def test_release_workflows_use_successful_main_sha_and_promote_without_rebuildin
 
 
 def test_idempotent_publisher_refuses_existing_tag_for_another_commit(monkeypatch, tmp_path):
+    """Verify that idempotent publisher refuses existing tag for another commit."""
     spec = importlib.util.spec_from_file_location("publish_release", ROOT / "scripts/publish_release.py")
     assert spec and spec.loader
     module = importlib.util.module_from_spec(spec)
@@ -290,6 +306,11 @@ def test_idempotent_publisher_refuses_existing_tag_for_another_commit(monkeypatc
     existing = "b" * 40
 
     def fake_run(command, *, check=True):
+        """Return fake run.
+
+        Raises:
+            AssertionError: If an expected invariant is not satisfied.
+        """
         import subprocess
 
         if command[:3] == ["git", "ls-remote", "--tags"]:
@@ -310,6 +331,7 @@ def test_idempotent_publisher_creates_annotated_tag_without_global_git_identity(
     monkeypatch,
     tmp_path,
 ):
+    """Verify that idempotent publisher creates annotated tag without global git identity."""
     spec = importlib.util.spec_from_file_location("publish_release", ROOT / "scripts/publish_release.py")
     assert spec and spec.loader
     module = importlib.util.module_from_spec(spec)
@@ -321,6 +343,7 @@ def test_idempotent_publisher_creates_annotated_tag_without_global_git_identity(
     commands: list[list[str]] = []
 
     def fake_run(command, *, check=True):
+        """Return fake run."""
         import subprocess
 
         commands.append(command)
@@ -351,6 +374,7 @@ def test_idempotent_publisher_creates_annotated_tag_without_global_git_identity(
 
 
 def test_deterministic_release_archive_normalizes_metadata(tmp_path):
+    """Verify that deterministic release archive normalizes metadata."""
     spec = importlib.util.spec_from_file_location("build_release_bundle", ROOT / "scripts/build_release_bundle.py")
     assert spec and spec.loader
     module = importlib.util.module_from_spec(spec)
@@ -369,6 +393,7 @@ def test_deterministic_release_archive_normalizes_metadata(tmp_path):
 
 
 def test_abi_wheelhouse_lock_covers_exact_checked_in_versions(monkeypatch, tmp_path):
+    """Verify that abi wheelhouse lock covers exact checked in versions."""
     spec = importlib.util.spec_from_file_location(
         "write_wheelhouse_lock",
         ROOT / "scripts/write_wheelhouse_lock.py",
@@ -399,6 +424,7 @@ def test_abi_wheelhouse_lock_covers_exact_checked_in_versions(monkeypatch, tmp_p
 
 
 def test_helper_offline_install_uses_only_locked_wheelhouse(monkeypatch, tmp_path):
+    """Verify that helper offline install uses only locked wheelhouse."""
     from tests.test_appliance_update import load_helper_module
 
     helper = load_helper_module()
@@ -414,6 +440,7 @@ def test_helper_offline_install_uses_only_locked_wheelhouse(monkeypatch, tmp_pat
     captured: list[tuple[list[str], dict[str, str]]] = []
 
     def fake_command(command, *, success_codes=None, env=None):
+        """Return fake command."""
         captured.append((command, env or {}))
         if command[1:3] == ["-m", "venv"]:
             (Path(command[-1]) / "bin").mkdir(parents=True)
@@ -433,6 +460,7 @@ def test_helper_offline_install_uses_only_locked_wheelhouse(monkeypatch, tmp_pat
 
 
 def test_photon_candidate_abi_uses_python_nevra_and_transaction_is_test_only(monkeypatch):
+    """Verify that photon candidate abi uses python nevra and transaction is test only."""
     from tests.test_appliance_update import load_helper_module
 
     helper = load_helper_module()
@@ -457,6 +485,7 @@ def test_photon_candidate_abi_uses_python_nevra_and_transaction_is_test_only(mon
 
 
 def test_helper_rejects_unsafe_release_archive(tmp_path):
+    """Verify that helper rejects unsafe release archive."""
     from tests.test_appliance_update import load_helper_module
 
     helper = load_helper_module()
@@ -471,6 +500,7 @@ def test_helper_rejects_unsafe_release_archive(tmp_path):
 
 
 def test_sqlite_backup_restores_database_identity(monkeypatch, tmp_path):
+    """Verify that sqlite backup restores database identity."""
     import sqlite3
     from tests.test_appliance_update import load_helper_module
 
@@ -501,6 +531,7 @@ def test_sqlite_backup_restores_database_identity(monkeypatch, tmp_path):
 
 
 def test_worker_restart_uses_matching_root_release_finalizer(client, monkeypatch, tmp_path):
+    """Verify that worker restart uses matching root release finalizer."""
     from atlaso.app import worker
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import Job
@@ -542,6 +573,7 @@ def test_worker_restart_uses_matching_root_release_finalizer(client, monkeypatch
 
 
 def test_worker_restart_fails_update_parent_after_children_commit(client, monkeypatch, tmp_path):
+    """Verify that worker restart fails update parent after children commit."""
     from atlaso.app import worker
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import Job
@@ -589,6 +621,7 @@ def test_worker_restart_fails_update_parent_after_children_commit(client, monkey
 
 
 def test_worker_restart_removes_interrupted_network_boot_upload(client, monkeypatch):
+    """Verify that worker restart removes interrupted network boot upload."""
     from atlaso.app import worker
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import Job
@@ -614,6 +647,7 @@ def test_worker_restart_removes_interrupted_network_boot_upload(client, monkeypa
 
 
 def test_worker_restart_keeps_release_finalizer_scoped_to_its_child(client, monkeypatch, tmp_path):
+    """Verify that worker restart keeps release finalizer scoped to its child."""
     from sqlalchemy import select
 
     from atlaso.app import worker
@@ -674,6 +708,7 @@ def test_worker_restart_keeps_release_finalizer_scoped_to_its_child(client, monk
 
 @pytest.mark.parametrize("failure_stage", ["database_migration", "symlink_switch", "service_health"])
 def test_failed_candidate_restores_previous_release_and_database(monkeypatch, tmp_path, failure_stage):
+    """Verify that failed candidate restores previous release and database."""
     import sqlite3
     from tests.test_appliance_update import load_helper_module
 
@@ -690,6 +725,7 @@ def test_failed_candidate_restores_previous_release_and_database(monkeypatch, tm
     database = tmp_path / "atlaso.db"
 
     def set_identity(value: str) -> None:
+        """Update identity."""
         connection = sqlite3.connect(database)
         try:
             connection.execute("create table if not exists identity(value text)")
@@ -700,6 +736,7 @@ def test_failed_candidate_restores_previous_release_and_database(monkeypatch, tm
             connection.close()
 
     def get_identity() -> str:
+        """Return identity."""
         connection = sqlite3.connect(database)
         try:
             return connection.execute("select value from identity").fetchone()[0]
@@ -745,6 +782,11 @@ def test_failed_candidate_restores_previous_release_and_database(monkeypatch, tm
     monkeypatch.setattr(helper, "ATLASO_UPDATE_FINALIZER_PATH", tmp_path / "finalizer.json")
 
     def replace_symlink(target: Path, link: Path) -> None:
+        """Handle replace symlink.
+
+        Raises:
+            OSError: If the operating-system operation fails.
+        """
         if failure_stage == "symlink_switch" and target.name == "0.9.0":
             set_identity("after")
             raise OSError("injected symlink switch failure")
@@ -760,6 +802,7 @@ def test_failed_candidate_restores_previous_release_and_database(monkeypatch, tm
     monkeypatch.setattr(helper, "_fetch_http_bytes", lambda *_args: bundle_bytes)
 
     def install_venv(root: Path, _abi: str):
+        """Return install venv."""
         (root / ".venv").mkdir()
         return [{"command": ["offline-install"], "returncode": 0, "success": True, "stdout": "", "stderr": ""}]
 
@@ -768,6 +811,7 @@ def test_failed_candidate_restores_previous_release_and_database(monkeypatch, tm
     migration_injected = False
 
     def service_command(action, *units):
+        """Return service command."""
         nonlocal migration_injected
         if (
             failure_stage == "database_migration"
@@ -800,6 +844,7 @@ def test_failed_candidate_restores_previous_release_and_database(monkeypatch, tm
     health_attempts = iter([True] if failure_stage == "symlink_switch" else [False, True])
 
     def health():
+        """Return health."""
         success = next(health_attempts)
         if not success and failure_stage == "service_health":
             set_identity("after")
@@ -829,6 +874,7 @@ def test_pre_switch_release_failures_leave_previous_release_and_database_untouch
     tmp_path,
     failure_stage,
 ):
+    """Verify that pre switch release failures leave previous release and database untouched."""
     from tests.test_appliance_update import load_helper_module
 
     helper = load_helper_module()
@@ -924,6 +970,7 @@ def test_pre_switch_release_failures_leave_previous_release_and_database_untouch
 
 
 def test_failed_revalidation_does_not_delete_an_existing_release(monkeypatch, tmp_path):
+    """Verify that failed revalidation does not delete an existing release."""
     from tests.test_appliance_update import load_helper_module
 
     helper = load_helper_module()
@@ -972,6 +1019,7 @@ def test_failed_revalidation_does_not_delete_an_existing_release(monkeypatch, tm
 
 
 def test_authenticated_release_redirect_rejects_another_origin():
+    """Verify that authenticated release redirect rejects another origin."""
     from tests.test_appliance_update import load_helper_module
 
     helper = load_helper_module()
@@ -991,6 +1039,7 @@ def test_authenticated_release_redirect_rejects_another_origin():
 
 
 def test_authenticated_release_redirect_preserves_same_origin_authorization():
+    """Verify that authenticated release redirect preserves same origin authorization."""
     from tests.test_appliance_update import load_helper_module
 
     helper = load_helper_module()
@@ -1012,6 +1061,7 @@ def test_authenticated_release_redirect_preserves_same_origin_authorization():
 
 
 def test_release_redirect_rejects_https_downgrade_without_credentials():
+    """Verify that release redirect rejects https downgrade without credentials."""
     from tests.test_appliance_update import load_helper_module
 
     helper = load_helper_module()

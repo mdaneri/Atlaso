@@ -23,6 +23,7 @@ DECLARATION_HASH_RE = re.compile(r"^# atlaso-declarations-sha256: ([0-9a-f]{64})
 
 
 def locked_names(lines: list[str]) -> set[str]:
+    """Return locked names."""
     return {
         canonicalize_name(match.group(1))
         for line in lines
@@ -31,6 +32,11 @@ def locked_names(lines: list[str]) -> set[str]:
 
 
 def main() -> int:
+    """Run the command-line entry point.
+
+    Returns:
+        The main result.
+    """
     project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"]
     declared = {canonicalize_name(Requirement(value).name) for value in project["dependencies"]}
     lines = LOCK_PATH.read_text(encoding="utf-8").splitlines()

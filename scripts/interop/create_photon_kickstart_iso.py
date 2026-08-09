@@ -25,6 +25,11 @@ GRUB_CONFIG_TARGETS = (
 
 
 def parse_args() -> argparse.Namespace:
+    """Parse args.
+
+    Returns:
+        The parsed args.
+    """
     parser = argparse.ArgumentParser(
         description="Create a Photon ISO with photon-ks.json and an auto-install GRUB entry embedded."
     )
@@ -35,6 +40,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def iso_record_exists(iso, *, iso_path: str) -> bool:
+    """Return iso record exists."""
     try:
         iso.get_record(iso_path=iso_path)
     except Exception:
@@ -43,6 +49,7 @@ def iso_record_exists(iso, *, iso_path: str) -> bool:
 
 
 def remove_file_if_present(iso, *, iso_path: str, rr_name: str) -> None:
+    """Remove file if present."""
     rr_path = f"{iso_path.rsplit('/', 1)[0].lower()}/{rr_name}"
     for lookup in ({"iso_path": iso_path}, {"rr_path": rr_path}):
         try:
@@ -54,6 +61,11 @@ def remove_file_if_present(iso, *, iso_path: str, rr_name: str) -> None:
 
 
 def replace_text_file(iso, *, iso_path: str, rr_name: str, text: str) -> None:
+    """Handle replace text file.
+
+    Raises:
+        ValueError: If an input value is invalid.
+    """
     parent_iso_path = iso_path.rsplit("/", 1)[0]
     if not iso_record_exists(iso, iso_path=parent_iso_path):
         raise ValueError(f"ISO parent path is missing: {parent_iso_path}")
@@ -64,6 +76,11 @@ def replace_text_file(iso, *, iso_path: str, rr_name: str, text: str) -> None:
 
 
 def replace_grub_config(iso) -> str:
+    """Return replace grub config.
+
+    Raises:
+        RuntimeError: If the operation cannot be completed safely.
+    """
     failures = []
     for iso_path, rr_name in GRUB_CONFIG_TARGETS:
         try:
@@ -79,6 +96,11 @@ def replace_grub_config(iso) -> str:
 
 
 def unlink_with_retry(path: Path) -> None:
+    """Handle unlink with retry.
+
+    Args:
+        path: Filesystem or URL path to read, validate, or update.
+    """
     for attempt in range(10):
         try:
             path.unlink()
@@ -90,6 +112,11 @@ def unlink_with_retry(path: Path) -> None:
 
 
 def main() -> int:
+    """Run the command-line entry point.
+
+    Returns:
+        The main result.
+    """
     try:
         import pycdlib
     except ImportError:

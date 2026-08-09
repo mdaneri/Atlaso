@@ -1,3 +1,5 @@
+"""Test networking behavior."""
+
 import json
 import logging
 
@@ -17,10 +19,12 @@ from atlaso.app.services.networking import (
 
 
 def test_wan_is_not_an_interface_role_alias():
+    """Verify that wan is not an interface role alias."""
     assert normalize_interface_role("wan") == "unused"
 
 
 def test_parse_linux_ip_interfaces_skips_loopback_and_vlans():
+    """Verify that parse linux ip interfaces skips loopback and vlans."""
     payload = json.dumps(
         [
             {"ifname": "lo", "link_type": "loopback", "address": "00:00:00:00:00:00"},
@@ -55,6 +59,7 @@ def test_parse_linux_ip_interfaces_skips_loopback_and_vlans():
 
 
 def test_reconcile_host_inventory_replaces_seed_but_preserves_user_desired_state():
+    """Verify that reconcile host inventory replaces seed but preserves user desired state."""
     seed = PhysicalInterface(
         name="eth0",
         mac_address="old",
@@ -115,6 +120,7 @@ def test_reconcile_host_inventory_replaces_seed_but_preserves_user_desired_state
 
 
 def test_reconcile_host_inventory_keeps_seed_non_management_down():
+    """Verify that reconcile host inventory keeps seed non management down."""
     reconciled = reconcile_host_physical_interfaces(
         [],
         [
@@ -139,6 +145,7 @@ def test_reconcile_host_inventory_keeps_seed_non_management_down():
 
 
 def test_reconcile_host_inventory_tracks_renumbered_nics_by_mac():
+    """Verify that reconcile host inventory tracks renumbered nics by mac."""
     removed = PhysicalInterface(
         name="eth1",
         mac_address="00:15:5d:01:1d:14",
@@ -191,6 +198,7 @@ def test_reconcile_host_inventory_tracks_renumbered_nics_by_mac():
 
 
 def test_sync_host_inventory_cleans_removed_nic_bindings_and_retargets_survivors(monkeypatch, tmp_path, caplog):
+    """Verify that sync host inventory cleans removed nic bindings and retargets survivors."""
     from sqlalchemy import select
 
     import atlaso.app.database as database
@@ -210,6 +218,7 @@ def test_sync_host_inventory_cleans_removed_nic_bindings_and_retargets_survivors
     database.init_db()
 
     def fake_discover():
+        """Return fake discover."""
         return [
             HostPhysicalInterface(
                 name="eth1",
@@ -328,6 +337,7 @@ def test_sync_host_inventory_cleans_removed_nic_bindings_and_retargets_survivors
 
 
 def test_sync_host_inventory_commits_two_nic_name_swap(monkeypatch, tmp_path):
+    """Verify that sync host inventory commits two nic name swap."""
     from sqlalchemy import select
 
     import atlaso.app.database as database
@@ -350,6 +360,7 @@ def test_sync_host_inventory_commits_two_nic_name_swap(monkeypatch, tmp_path):
     mac_b = "00:15:5d:01:1d:15"
 
     def fake_discover():
+        """Return fake discover."""
         return [
             HostPhysicalInterface(
                 name="eth1",
@@ -420,6 +431,7 @@ def test_sync_host_inventory_commits_two_nic_name_swap(monkeypatch, tmp_path):
 
 
 def test_startup_host_inventory_refreshes_appliance_seed_without_apply_job(monkeypatch, tmp_path):
+    """Verify that startup host inventory refreshes appliance seed without apply job."""
     from sqlalchemy import select
 
     import atlaso.app.database as database
@@ -442,6 +454,7 @@ def test_startup_host_inventory_refreshes_appliance_seed_without_apply_job(monke
     database.init_db()
 
     def fake_discover():
+        """Return fake discover."""
         return [
             HostPhysicalInterface(
                 name="ens192",
@@ -472,6 +485,7 @@ def test_startup_host_inventory_refreshes_appliance_seed_without_apply_job(monke
 
 
 def test_appliance_seed_preserves_ovf_auto_ipv6_and_root_ssh(monkeypatch, tmp_path):
+    """Verify that appliance seed preserves ovf auto ipv6 and root ssh."""
     from sqlalchemy import select
 
     import atlaso.app.database as database
@@ -505,6 +519,7 @@ def test_appliance_seed_preserves_ovf_auto_ipv6_and_root_ssh(monkeypatch, tmp_pa
 
 
 def test_render_network_config_includes_physical_roles_for_networkd_apply():
+    """Verify that render network config includes physical roles for networkd apply."""
     config = render_network_config(
         interfaces=[
             PhysicalInterface(
@@ -524,6 +539,7 @@ def test_render_network_config_includes_physical_roles_for_networkd_apply():
 
 
 def test_render_network_config_includes_management_dhcp_method():
+    """Verify that render network config includes management dhcp method."""
     config = render_network_config(
         interfaces=[
             PhysicalInterface(
@@ -544,6 +560,7 @@ def test_render_network_config_includes_management_dhcp_method():
 
 
 def test_render_network_config_persists_automatic_ipv6_state():
+    """Verify that render network config persists automatic ipv6 state."""
     config = render_network_config(
         interfaces=[
             PhysicalInterface(
@@ -564,6 +581,7 @@ def test_render_network_config_persists_automatic_ipv6_state():
 
 
 def test_render_network_config_persists_optional_management_ipv6_gateway():
+    """Verify that render network config persists optional management ipv6 gateway."""
     config = render_network_config(
         interfaces=[
             PhysicalInterface(
@@ -584,6 +602,7 @@ def test_render_network_config_persists_optional_management_ipv6_gateway():
 
 
 def test_validate_network_state_rejects_ipv6_cidr_while_disabled():
+    """Verify that validate network state rejects ipv6 cidr while disabled."""
     errors = validate_network_state(
         interfaces=[
             PhysicalInterface(
@@ -612,6 +631,7 @@ def test_validate_network_state_rejects_ipv6_cidr_while_disabled():
     ],
 )
 def test_validate_network_state_rejects_invalid_management_ipv6_gateway(gateway, message):
+    """Verify that validate network state rejects invalid management ipv6 gateway."""
     errors = validate_network_state(
         interfaces=[
             PhysicalInterface(
@@ -634,6 +654,7 @@ def test_validate_network_state_rejects_invalid_management_ipv6_gateway(gateway,
 
 
 def test_validate_network_state_accepts_link_local_management_ipv6_gateway():
+    """Verify that validate network state accepts link local management ipv6 gateway."""
     errors = validate_network_state(
         interfaces=[
             PhysicalInterface(
@@ -656,6 +677,7 @@ def test_validate_network_state_accepts_link_local_management_ipv6_gateway():
 
 
 def test_validate_network_state_rejects_static_management_without_ipv4():
+    """Verify that validate network state rejects static management without ipv4."""
     errors = validate_network_state(
         interfaces=[
             PhysicalInterface(
@@ -674,6 +696,7 @@ def test_validate_network_state_rejects_static_management_without_ipv4():
 
 
 def test_validate_network_state_requires_eth0_management():
+    """Verify that validate network state requires eth0 management."""
     errors = validate_network_state(
         interfaces=[
             PhysicalInterface(
@@ -692,6 +715,7 @@ def test_validate_network_state_requires_eth0_management():
 
 
 def test_render_network_config_includes_dual_stack_physical_and_vlan_cidrs():
+    """Verify that render network config includes dual stack physical and vlan cidrs."""
     config = render_network_config(
         interfaces=[
             PhysicalInterface(

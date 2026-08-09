@@ -18,6 +18,11 @@ ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 
 
 def _format_duration(seconds: float) -> str:
+    """Render duration.
+
+    Returns:
+        The format duration result.
+    """
     total = max(0, int(seconds))
     hours, remainder = divmod(total, 3600)
     minutes, seconds = divmod(remainder, 60)
@@ -29,6 +34,14 @@ def _format_duration(seconds: float) -> str:
 
 
 def _format_size(size: int) -> str:
+    """Render size.
+
+    Returns:
+        The format size result.
+
+    Raises:
+        AssertionError: If an expected invariant is not satisfied.
+    """
     value = float(max(0, size))
     for unit in ("B", "KiB", "MiB", "GiB", "TiB"):
         if value < 1024 or unit == "TiB":
@@ -38,6 +51,11 @@ def _format_size(size: int) -> str:
 
 
 def _directory_size(path: Path) -> str:
+    """Return directory size.
+
+    Args:
+        path: Filesystem or URL path to read, validate, or update.
+    """
     try:
         total = 0
         for root, _directories, files in os.walk(path):
@@ -52,6 +70,12 @@ def _directory_size(path: Path) -> str:
 
 
 def _failure_tail(path: Path, line_limit: int) -> list[str]:
+    """Return failure tail.
+
+    Args:
+        path: Filesystem or URL path to read, validate, or update.
+        line_limit: Line limit supplied by the caller.
+    """
     try:
         text = path.read_bytes().decode("utf-8", errors="replace")
     except OSError as exc:
@@ -69,6 +93,18 @@ def run(
     heartbeat_seconds: float,
     failure_tail_lines: int,
 ) -> int:
+    """Run operation.
+
+    Args:
+        command: Command and arguments to execute or validate.
+        label: Human-readable label used in validation output.
+        cache_dir: Cache dir supplied by the caller.
+        heartbeat_seconds: Heartbeat seconds supplied by the caller.
+        failure_tail_lines: Failure tail lines supplied by the caller.
+
+    Returns:
+        The run result.
+    """
     started = time.monotonic()
     print(
         f"==> Atlaso appliance: {label} started "
@@ -86,6 +122,7 @@ def run(
         )
 
     def forward_signal(signum: int, _frame: object) -> None:
+        """Handle forward signal."""
         try:
             if os.name == "posix":
                 os.killpg(process.pid, signum)
@@ -136,6 +173,11 @@ def run(
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Run the command-line entry point.
+
+    Returns:
+        The main result.
+    """
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--label", required=True, help="Operator-facing operation name.")
     parser.add_argument("--cache-dir", type=Path, default=Path("/var/cache/tdnf"))

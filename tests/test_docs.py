@@ -1,3 +1,5 @@
+"""Test docs behavior."""
+
 import json
 from pathlib import Path
 
@@ -7,6 +9,7 @@ from scripts.overlay_docs_site import overlay
 
 
 def test_documentation_overlay_preserves_release_repository(tmp_path: Path) -> None:
+    """Verify that documentation overlay preserves release repository."""
     pages = tmp_path / "pages"
     built = tmp_path / "built"
     (pages / "updates").mkdir(parents=True)
@@ -28,6 +31,7 @@ def test_documentation_overlay_preserves_release_repository(tmp_path: Path) -> N
 
 
 def test_checked_in_screenshot_manifest_is_valid() -> None:
+    """Verify that checked in screenshot manifest is valid."""
     assert validate_screenshots() == []
 
 
@@ -35,6 +39,7 @@ def test_embedded_screenshot_generation_is_idempotent(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
+    """Verify that embedded screenshot generation is idempotent."""
     docs = tmp_path / "docs"
     page = docs / "operate" / "example.md"
     page.parent.mkdir(parents=True)
@@ -98,6 +103,7 @@ def test_embedded_screenshot_generation_is_idempotent(
 
 
 def test_appliance_apply_operator_guide_stays_task_focused() -> None:
+    """Verify that appliance apply operator guide stays task focused."""
     root = Path(__file__).resolve().parents[1]
     operator_page = (root / "docs" / "operate" / "appliance-apply.md").read_text(encoding="utf-8")
     technical_page = (root / "docs" / "reference" / "appliance-apply-technical.md").read_text(encoding="utf-8")

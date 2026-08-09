@@ -1,3 +1,5 @@
+"""Implement vcf sddc deployment service behavior."""
+
 from __future__ import annotations
 
 import hashlib
@@ -27,36 +29,49 @@ DISK_PROVISIONING_MODES = {"thin", "thick"}
 
 
 class VcfSddcDeploymentError(RuntimeError):
+    """Report a vcf sddc deployment error."""
     pass
 
 
 class VcfSddcDeploymentCancelled(VcfSddcDeploymentError):
+    """Represent vcf sddc deployment cancelled."""
     pass
 
 
 class VcfSddcPostImportError(VcfSddcDeploymentError):
+    """Report a vcf sddc post import error."""
     def __init__(self, message: str, vm_result: dict[str, str]) -> None:
+        """Initialize the vcf sddc post import error."""
         super().__init__(message)
         self.vm_result = vm_result
 
 
 def _check_cancelled(cancelled: CancelCheck | None) -> None:
+    """Check cancelled.
+
+    Raises:
+        VcfSddcDeploymentCancelled: If the operation encounters an invalid state.
+    """
     if cancelled and cancelled():
         raise VcfSddcDeploymentCancelled("SDDC Manager deployment was cancelled.")
 
 
 class _LeaseProgress:
+    """Represent lease progress."""
     def __init__(self, lease: Any) -> None:
+        """Initialize the lease progress."""
         self.lease = lease
         self.value = 0
         self.lock = threading.Lock()
 
     def update(self, percent: int) -> None:
+        """Update operation."""
         with self.lock:
             self.value = max(self.value, max(0, min(99, int(percent))))
             self.lease.HttpNfcLeaseProgress(self.value)
 
     def heartbeat(self, stop_event: threading.Event) -> None:
+        """Handle heartbeat."""
         while not stop_event.wait(5):
             try:
                 self.update(self.value)
@@ -66,6 +81,7 @@ class _LeaseProgress:
 
 @dataclass(frozen=True)
 class OvfProperty:
+    """Represent ovf property."""
     key: str
     value_type: str
     label: str
@@ -78,6 +94,7 @@ class OvfProperty:
 
 @dataclass(frozen=True)
 class OvaDescriptor:
+    """Represent ova descriptor."""
     path: str
     relative_path: str
     filename: str
@@ -90,16 +107,26 @@ class OvaDescriptor:
     files: list[dict[str, Any]]
 
     def public_dict(self) -> dict[str, Any]:
+        """Return public dict."""
         payload = asdict(self)
         payload["properties"] = [asdict(item) for item in self.properties]
         return payload
 
 
 def _attribute(element: ET.Element, name: str) -> str:
+    """Return attribute."""
     return str(element.attrib.get(f"{OVF}{name}") or element.attrib.get(name) or "")
 
 
 def normalize_ova_path(value: str | Path, *, root: Path = SDDC_MANAGER_OVA_ROOT) -> Path:
+    """Normalize ova path.
+
+    Returns:
+        The normalize ova path result.
+
+    Raises:
+        VcfSddcDeploymentError: If the operation encounters an invalid state.
+    """
     root_resolved = root.resolve()
     candidate = Path(value)
     if not candidate.is_absolute():
@@ -113,6 +140,11 @@ def normalize_ova_path(value: str | Path, *, root: Path = SDDC_MANAGER_OVA_ROOT)
 
 
 def inspect_ova(value: str | Path, *, root: Path = SDDC_MANAGER_OVA_ROOT) -> OvaDescriptor:
+    """Return inspect ova.
+
+    Raises:
+        VcfSddcDeploymentError: If the operation encounters an invalid state.
+    """
     path = normalize_ova_path(value, root=root)
     try:
         with tarfile.open(path, "r") as archive:
@@ -176,6 +208,7 @@ def inspect_ova(value: str | Path, *, root: Path = SDDC_MANAGER_OVA_ROOT) -> Ova
 
 
 def ova_inventory(*, root: Path = SDDC_MANAGER_OVA_ROOT) -> list[dict[str, Any]]:
+    """Return ova inventory."""
     if not root.exists():
         return []
     rows: list[dict[str, Any]] = []
@@ -188,6 +221,11 @@ def ova_inventory(*, root: Path = SDDC_MANAGER_OVA_ROOT) -> list[dict[str, Any]]
 
 
 def validate_ova_manifest(descriptor: OvaDescriptor, *, progress: Progress | None = None, cancelled: CancelCheck | None = None) -> None:
+    """Validate ova manifest.
+
+    Raises:
+        VcfSddcDeploymentError: If the operation encounters an invalid state.
+    """
     algorithms = {"SHA1": "sha1", "SHA256": "sha256", "SHA512": "sha512"}
     path = Path(descriptor.path)
     with tarfile.open(path, "r") as archive:
@@ -227,6 +265,7 @@ def validate_ova_manifest(descriptor: OvaDescriptor, *, progress: Progress | Non
 
 
 def _fingerprint_tls_context() -> ssl.SSLContext:
+    """Return fingerprint tls context."""
     context = ssl.create_default_context()
     context.minimum_version = ssl.TLSVersion.TLSv1_2
     context.check_hostname = False
@@ -235,6 +274,13 @@ def _fingerprint_tls_context() -> ssl.SSLContext:
 
 
 def tls_sha256_fingerprint(address: str, port: int = 443, *, timeout: float = 10.0) -> str:
+    """Return tls sha256 fingerprint.
+
+    Args:
+        address: Network address of the target service or interface.
+        port: TCP or UDP port of the target service.
+        timeout: Maximum time to wait for completion.
+    """
     context = _fingerprint_tls_context()
     with socket.create_connection((address, port), timeout=timeout) as sock:
         with context.wrap_socket(sock, server_hostname=address) as wrapped:
@@ -244,6 +290,16 @@ def tls_sha256_fingerprint(address: str, port: int = 443, *, timeout: float = 10
 
 
 def _wait_task(task: Any, *, timeout: float = 900.0, cancelled: CancelCheck | None = None) -> Any:
+    """Return wait task.
+
+    Args:
+        task: Task supplied by the caller.
+        timeout: Maximum time to wait for completion.
+        cancelled: Callback that reports whether cancellation was requested.
+
+    Raises:
+        VcfSddcDeploymentError: If the operation encounters an invalid state.
+    """
     started = time.monotonic()
     while str(task.info.state) not in {"success", "error"}:
         _check_cancelled(cancelled)
@@ -258,6 +314,7 @@ def _wait_task(task: Any, *, timeout: float = 900.0, cancelled: CancelCheck | No
 
 
 def _safe_vsphere_message(exc: Exception) -> str:
+    """Return safe vsphere message."""
     message = str(getattr(exc, "msg", "") or getattr(exc, "localizedMessage", "") or "")
     if not message:
         fault_message = getattr(exc, "faultMessage", None)
@@ -271,6 +328,18 @@ def _safe_vsphere_message(exc: Exception) -> str:
 
 
 def connect_vsphere(address: str, username: str, password: str, *, port: int = 443, expected_fingerprint: str = "") -> Any:
+    """Return connect vsphere.
+
+    Args:
+        address: Network address of the target service or interface.
+        username: Account name used for authentication or lookup.
+        password: Password supplied for the immediate authenticated operation.
+        port: TCP or UDP port of the target service.
+        expected_fingerprint: Certificate fingerprint explicitly confirmed by the operator.
+
+    Raises:
+        VcfSddcDeploymentError: If the operation encounters an invalid state.
+    """
     from pyVim.connect import SmartConnect
 
     if expected_fingerprint and tls_sha256_fingerprint(address, port).upper() != expected_fingerprint.upper():
@@ -285,6 +354,7 @@ def connect_vsphere(address: str, username: str, password: str, *, port: int = 4
 
 
 def _walk_inventory(content: Any, vim_types: list[Any]) -> list[Any]:
+    """Return walk inventory."""
     view = content.viewManager.CreateContainerView(content.rootFolder, vim_types, True)
     try:
         return list(view.view)
@@ -293,6 +363,11 @@ def _walk_inventory(content: Any, vim_types: list[Any]) -> list[Any]:
 
 
 def _format_bytes(value: int) -> str:
+    """Render bytes.
+
+    Returns:
+        The format bytes result.
+    """
     units = ("bytes", "KiB", "MiB", "GiB", "TiB")
     amount = float(max(0, value))
     for unit in units:
@@ -303,6 +378,7 @@ def _format_bytes(value: int) -> str:
 
 
 def _datastore_free_space_bytes(datastore: Any) -> int | None:
+    """Return datastore free space bytes."""
     summary = getattr(datastore, "summary", None)
     value = getattr(summary, "freeSpace", None)
     if value is None:
@@ -314,6 +390,11 @@ def _datastore_free_space_bytes(datastore: Any) -> int | None:
 
 
 def _ensure_datastore_free_space(datastore: Any, required_bytes: int) -> None:
+    """Ensure datastore free space.
+
+    Raises:
+        VcfSddcDeploymentError: If the operation encounters an invalid state.
+    """
     free_space = _datastore_free_space_bytes(datastore)
     if free_space is None:
         return
@@ -328,6 +409,14 @@ def _ensure_datastore_free_space(datastore: Any, required_bytes: int) -> None:
 
 
 def normalize_disk_provisioning(value: str) -> str:
+    """Normalize disk provisioning.
+
+    Returns:
+        The normalize disk provisioning result.
+
+    Raises:
+        VcfSddcDeploymentError: If the operation encounters an invalid state.
+    """
     normalized = str(value or "thin").strip()
     if normalized not in DISK_PROVISIONING_MODES:
         raise VcfSddcDeploymentError("Disk provisioning must be thin or thick.")
@@ -335,6 +424,7 @@ def normalize_disk_provisioning(value: str) -> str:
 
 
 def _ova_file_item_sizes(file_items: list[Any], archive: tarfile.TarFile) -> tuple[dict[str, int], int]:
+    """Return ova file item sizes."""
     member_sizes: dict[str, int] = {}
     required_bytes = 0
     for item in file_items:
@@ -350,6 +440,11 @@ def _ova_file_item_sizes(file_items: list[Any], archive: tarfile.TarFile) -> tup
 
 
 def _lease_imported_entity(lease: Any) -> Any:
+    """Return lease imported entity.
+
+    Raises:
+        VcfSddcDeploymentError: If the operation encounters an invalid state.
+    """
     entity = getattr(getattr(lease, "info", None), "entity", None)
     if entity is None:
         raise VcfSddcDeploymentError("vSphere completed the OVA import but did not return the imported VM reference.")
@@ -357,6 +452,7 @@ def _lease_imported_entity(lease: Any) -> Any:
 
 
 def _datastore_row(item: Any) -> dict[str, Any]:
+    """Return datastore row."""
     free_space = _datastore_free_space_bytes(item)
     summary = getattr(item, "summary", None)
     try:
@@ -374,6 +470,15 @@ def _datastore_row(item: Any) -> dict[str, Any]:
 
 
 def vsphere_inventory(address: str, username: str, password: str, *, port: int = 443, expected_fingerprint: str = "") -> dict[str, Any]:
+    """Return vsphere inventory.
+
+    Args:
+        address: Network address of the target service or interface.
+        username: Account name used for authentication or lookup.
+        password: Password supplied for the immediate authenticated operation.
+        port: TCP or UDP port of the target service.
+        expected_fingerprint: Certificate fingerprint explicitly confirmed by the operator.
+    """
     from pyVim.connect import Disconnect
     from pyVmomi import vim
 
@@ -399,6 +504,11 @@ def vsphere_inventory(address: str, username: str, password: str, *, port: int =
 
 
 def _find_object(content: Any, vim_type: Any, object_id: str, label: str) -> Any:
+    """Return object.
+
+    Raises:
+        VcfSddcDeploymentError: If the operation encounters an invalid state.
+    """
     for item in _walk_inventory(content, [vim_type]):
         if str(item._moId) == object_id:
             return item
@@ -418,6 +528,23 @@ def _upload_member(
     progress: Progress | None,
     cancelled: CancelCheck | None = None,
 ) -> None:
+    """Handle upload member.
+
+    Args:
+        url: URL of the target resource or service.
+        source: Source path, address, or record to process.
+        size: Size supplied by the caller.
+        endpoint: Endpoint supplied by the caller.
+        name: Name of the target object.
+        transferred: Transferred supplied by the caller.
+        total: Total supplied by the caller.
+        lease: Lease supplied by the caller.
+        progress: Progress supplied by the caller.
+        cancelled: Callback that reports whether cancellation was requested.
+
+    Raises:
+        VcfSddcDeploymentError: If the operation encounters an invalid state.
+    """
     parsed = urlsplit(url)
     hostname = endpoint if parsed.hostname in {"*", ""} else str(parsed.hostname)
     netloc = hostname if not parsed.port else f"{hostname}:{parsed.port}"
@@ -487,6 +614,31 @@ def deploy_ova(
     power_on: bool = True,
     cancelled: CancelCheck | None = None,
 ) -> dict[str, str]:
+    """Return deploy ova.
+
+    Args:
+        descriptor: Descriptor supplied by the caller.
+        endpoint: Endpoint supplied by the caller.
+        username: Account name used for authentication or lookup.
+        password: Password supplied for the immediate authenticated operation.
+        resource_pool_id: Identifier of the resource pool.
+        datastore_id: Identifier of the datastore.
+        network_ids: Network ids supplied by the caller.
+        vm_name: Vm name supplied by the caller.
+        property_values: Property values supplied by the caller.
+        folder_id: Identifier of the folder.
+        host_id: Identifier of the host.
+        port: TCP or UDP port of the target service.
+        progress: Progress supplied by the caller.
+        expected_fingerprint: Certificate fingerprint explicitly confirmed by the operator.
+        disk_provisioning: Disk provisioning supplied by the caller.
+        power_on: Power on supplied by the caller.
+        cancelled: Callback that reports whether cancellation was requested.
+
+    Raises:
+        VcfSddcDeploymentError: If the operation encounters an invalid state.
+        VcfSddcPostImportError: If the operation encounters an invalid state.
+    """
     from pyVim.connect import Disconnect
     from pyVmomi import vim
 

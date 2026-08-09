@@ -1,3 +1,5 @@
+"""Test oidc behavior."""
+
 import base64
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
@@ -11,6 +13,7 @@ from sqlalchemy import select, text
 
 
 def _admin_headers(client) -> dict[str, str]:
+    """Return admin headers."""
     response = client.post(
         "/api/v1/auth/login?username=admin&password=atlaso-admin",
         json={"name": "oidc administration", "scopes": ["admin:all"]},
@@ -20,6 +23,12 @@ def _admin_headers(client) -> dict[str, str]:
 
 
 def _set_applied_management_https(db, fqdn: str = "atlaso.example.test") -> None:
+    """Update applied management https.
+
+    Args:
+        db: Active database session.
+        fqdn: Fully qualified domain name to validate or use.
+    """
     from cryptography import x509
     from cryptography.hazmat.primitives import hashes, serialization
     from cryptography.hazmat.primitives.asymmetric import rsa
@@ -104,6 +113,13 @@ def _set_oidc_service_ready(
     *,
     certificate_hostname: str | None = None,
 ) -> None:
+    """Update oidc service ready.
+
+    Args:
+        db: Active database session.
+        hostname: DNS hostname of the target resource.
+        certificate_hostname: Certificate hostname supplied by the caller.
+    """
     from cryptography import x509
     from cryptography.hazmat.primitives import hashes, serialization
     from cryptography.hazmat.primitives.asymmetric import rsa
@@ -188,6 +204,11 @@ def _configure_protocol_client(
     redirect_uri: str = "https://rp.example.test/callback?case=A%2Fb",
     post_logout_redirect_uri: str = "https://rp.example.test/logout",
 ) -> tuple[str, str]:
+    """Update protocol client.
+
+    Returns:
+        The configure protocol client result.
+    """
     from atlaso.app.database import SessionLocal
     from atlaso.app.services import oidc
 
@@ -216,6 +237,7 @@ def _configure_protocol_client(
 
 
 def _authorization_parameters(client_id: str, verifier: str, **overrides: str) -> dict[str, str]:
+    """Return authorization parameters."""
     challenge = base64.urlsafe_b64encode(
         hashlib.sha256(verifier.encode("ascii")).digest()
     ).rstrip(b"=").decode("ascii")
@@ -237,6 +259,7 @@ def _authorization_parameters(client_id: str, verifier: str, **overrides: str) -
 
 
 def _start_login(client, params: dict[str, str]) -> tuple[str, str, str]:
+    """Return start login."""
     response = client.get("https://testserver/identity/authorize", params=params)
     assert response.status_code == 200, response.text
     transaction = re.search(r'name="transaction" value="([^"]+)"', response.text)
@@ -248,6 +271,13 @@ def _start_login(client, params: dict[str, str]) -> tuple[str, str, str]:
 
 
 def _finish_local_login(client, transaction: str, csrf: str):
+    """Return finish local login.
+
+    Args:
+        client: Client used to invoke the external or application interface.
+        transaction: Transaction supplied by the caller.
+        csrf: Validated CSRF token authorizing the request.
+    """
     return client.post(
         "https://testserver/identity/authorize",
         data={
@@ -265,6 +295,16 @@ def _exchange_code(
     client, *, client_id: str, secret: str, code: str, verifier: str,
     redirect_uri: str = "https://rp.example.test/callback?case=A%2Fb",
 ):
+    """Return exchange code.
+
+    Args:
+        client: Client used to invoke the external or application interface.
+        client_id: Identifier of the client.
+        secret: Secret supplied by the caller.
+        code: Code supplied by the caller.
+        verifier: Verifier supplied by the caller.
+        redirect_uri: Redirect uri supplied by the caller.
+    """
     credentials = base64.b64encode(f"{client_id}:{secret}".encode("utf-8")).decode("ascii")
     return client.post(
         "https://testserver/identity/token",
@@ -279,12 +319,14 @@ def _exchange_code(
 
 
 def _jwt_claims(token: str) -> dict[str, object]:
+    """Return jwt claims."""
     segment = token.split(".")[1]
     padded = segment + ("=" * (-len(segment) % 4))
     return json.loads(base64.urlsafe_b64decode(padded))
 
 
 def test_oidc_public_documents_require_complete_protocol_readiness(client):
+    """Verify that oidc public documents require complete protocol readiness."""
     assert client.get("/identity/.well-known/openid-configuration").status_code == 404
     assert client.get("/identity/jwks").status_code == 404
 
@@ -319,6 +361,7 @@ def test_oidc_public_documents_require_complete_protocol_readiness(client):
 
 
 def test_oidc_forwarded_https_rejects_management_listener(client):
+    """Verify that oidc forwarded https rejects management listener."""
     from starlette.requests import Request
 
     from atlaso.app.database import SessionLocal
@@ -366,6 +409,7 @@ def test_oidc_forwarded_https_rejects_management_listener(client):
 
 
 def test_oidc_readiness_requires_oidc_service_certificate(client):
+    """Verify that oidc readiness requires oidc service certificate."""
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import CaCertificate
     from atlaso.app.services import oidc
@@ -386,6 +430,7 @@ def test_oidc_readiness_requires_oidc_service_certificate(client):
 
 
 def test_oidc_readiness_rejects_missing_listener(client):
+    """Verify that oidc readiness rejects missing listener."""
     from atlaso.app.database import SessionLocal
     from atlaso.app.services import oidc
 
@@ -400,6 +445,7 @@ def test_oidc_readiness_rejects_missing_listener(client):
 
 
 def test_oidc_confidential_client_secret_is_argon2_and_shown_only_once(client):
+    """Verify that oidc confidential client secret is argon2 and shown only once."""
     headers = _admin_headers(client)
     created = client.post(
         "/api/v1/oidc/clients",
@@ -453,6 +499,7 @@ def test_oidc_confidential_client_secret_is_argon2_and_shown_only_once(client):
 
 
 def test_oidc_client_update_preserves_generated_identity_and_export_is_redacted(client):
+    """Verify that oidc client update preserves generated identity and export is redacted."""
     headers = _admin_headers(client)
     created = client.post(
         "/api/v1/oidc/clients",
@@ -502,6 +549,7 @@ def test_oidc_client_update_preserves_generated_identity_and_export_is_redacted(
 
 
 def test_oidc_operational_redaction_covers_authenticated_urls_and_protocol_values():
+    """Verify that oidc operational redaction covers authenticated urls and protocol values."""
     from atlaso.app.operational_logging import redact_operational_text
 
     original = (
@@ -519,6 +567,7 @@ def test_oidc_operational_redaction_covers_authenticated_urls_and_protocol_value
 
 
 def test_retired_signing_key_cannot_be_deleted_before_overlap(client):
+    """Verify that retired signing key cannot be deleted before overlap."""
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import OidcSigningKey
 
@@ -547,6 +596,11 @@ def test_retired_signing_key_cannot_be_deleted_before_overlap(client):
 
 
 def test_oidc_redirect_validation_rejects_wildcards_fragments_and_nonliteral_loopback():
+    """Verify that oidc redirect validation rejects wildcards fragments and nonliteral loopback.
+
+    Raises:
+        AssertionError: If an expected invariant is not satisfied.
+    """
     from atlaso.app.services.oidc import OidcConfigurationError, validate_redirect_uri
 
     invalid = [
@@ -569,6 +623,7 @@ def test_oidc_redirect_validation_rejects_wildcards_fragments_and_nonliteral_loo
 
 
 def test_oidc_rsa_key_is_encrypted_and_rotation_keeps_public_overlap(client, monkeypatch):
+    """Verify that oidc rsa key is encrypted and rotation keeps public overlap."""
     from atlaso.app import services
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import ApplianceSettings, OidcProviderSettings, OidcSigningKey
@@ -606,6 +661,7 @@ def test_oidc_rsa_key_is_encrypted_and_rotation_keeps_public_overlap(client, mon
 
 
 def test_oidc_subject_is_stable_across_metadata_changes_and_new_after_recreation(client):
+    """Verify that oidc subject is stable across metadata changes and new after recreation."""
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import OidcSubject, User
     from atlaso.app.services.identity_credentials import VerifiedIdentity, ensure_oidc_subject
@@ -634,6 +690,7 @@ def test_oidc_subject_is_stable_across_metadata_changes_and_new_after_recreation
 
 
 def test_sqlite_foreign_keys_are_enabled(client):
+    """Verify that sqlite foreign keys are enabled."""
     from atlaso.app.database import SessionLocal
 
     with SessionLocal() as db:
@@ -641,6 +698,7 @@ def test_sqlite_foreign_keys_are_enabled(client):
 
 
 def test_managed_ldap_credential_service_checks_persisted_scope_before_helper(client, monkeypatch):
+    """Verify that managed ldap credential service checks persisted scope before helper."""
     from atlaso.app.adapters.system import AdapterResult
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import LdapOrganization, LdapSettings, LdapUser
@@ -649,7 +707,14 @@ def test_managed_ldap_credential_service_checks_persisted_scope_before_helper(cl
     calls: list[tuple[str, str]] = []
 
     class AuthenticationAdapter:
+        """Represent authentication adapter."""
         def authenticate_ldap_user(self, user_dn: str, password: str) -> AdapterResult:
+            """Return authenticate ldap user.
+
+            Args:
+                user_dn: User dn supplied by the caller.
+                password: Password supplied for the immediate authenticated operation.
+            """
             calls.append((user_dn, password))
             return AdapterResult(
                 command=["atlaso-helper", "ldap", "authenticate", user_dn],
@@ -708,6 +773,7 @@ def test_managed_ldap_credential_service_checks_persisted_scope_before_helper(cl
 
 
 def test_oidc_backup_restore_preserves_subject_client_mapping_and_encrypted_key(client):
+    """Verify that oidc backup restore preserves subject client mapping and encrypted key."""
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import OidcClient, OidcGroupMapping, OidcSigningKey, OidcSubject, User
     from atlaso.app.services.identity_credentials import VerifiedIdentity, ensure_oidc_subject
@@ -770,6 +836,7 @@ def test_oidc_backup_restore_preserves_subject_client_mapping_and_encrypted_key(
 
 
 def test_oidc_backup_restore_validates_the_final_effective_mapping_set(client):
+    """Verify that oidc backup restore validates the final effective mapping set."""
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import OidcClient, OidcGroupMapping
     from atlaso.app.services.oidc import create_group_mapping, update_group_mapping
@@ -841,6 +908,7 @@ def test_oidc_backup_restore_validates_the_final_effective_mapping_set(client):
 
 
 def test_openid_connect_page_exposes_authorization_code_oidc_ui(client):
+    """Verify that openid connect page exposes authorization code oidc ui."""
     login = client.get("/login")
     csrf = login.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
     signed_in = client.post(
@@ -921,6 +989,7 @@ def test_openid_connect_page_exposes_authorization_code_oidc_ui(client):
 
 
 def test_authentication_ui_deletes_bound_client_before_ldap_organization(client):
+    """Verify that authentication ui deletes bound client before ldap organization."""
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import LdapOrganization, OidcClient
     from atlaso.app.services.oidc import create_client
@@ -986,13 +1055,21 @@ def test_authentication_ui_deletes_bound_client_before_ldap_organization(client)
 def test_unbound_clients_require_validated_source_and_bound_clients_hide_selector(
     client, monkeypatch
 ):
+    """Verify that unbound clients require validated source and bound clients hide selector."""
     from atlaso.app.adapters.system import AdapterResult
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import LdapOrganization, LdapSettings, LdapUser
     from atlaso.app.services import identity_credentials
 
     class AuthenticationAdapter:
+        """Represent authentication adapter."""
         def authenticate_ldap_user(self, user_dn: str, password: str) -> AdapterResult:
+            """Return authenticate ldap user.
+
+            Args:
+                user_dn: User dn supplied by the caller.
+                password: Password supplied for the immediate authenticated operation.
+            """
             return AdapterResult(
                 command=["atlaso-helper", "ldap", "authenticate", user_dn],
                 dry_run=False,
@@ -1114,6 +1191,7 @@ def test_unbound_clients_require_validated_source_and_bound_clients_hide_selecto
 
 
 def test_local_role_mappings_override_defaults_reject_collisions_and_filter_scopes(client):
+    """Verify that local role mappings override defaults reject collisions and filter scopes."""
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import OidcClient
 
@@ -1238,6 +1316,7 @@ def test_local_role_mappings_override_defaults_reject_collisions_and_filter_scop
 
 
 def test_group_mapping_delete_rejects_a_revealed_effective_name_collision(client):
+    """Verify that group mapping delete rejects a revealed effective name collision."""
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import OidcClient, OidcGroupMapping
     from atlaso.app.services.oidc import create_group_mapping, update_group_mapping
@@ -1323,6 +1402,7 @@ def test_group_mapping_delete_rejects_a_revealed_effective_name_collision(client
 def test_ldap_nested_cycle_mappings_emit_only_external_names_and_revalidate_source(
     client, monkeypatch
 ):
+    """Verify that ldap nested cycle mappings emit only external names and revalidate source."""
     from atlaso.app.adapters.system import AdapterResult
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import (
@@ -1336,7 +1416,14 @@ def test_ldap_nested_cycle_mappings_emit_only_external_names_and_revalidate_sour
     from atlaso.app.services.oidc import create_group_mapping
 
     class AuthenticationAdapter:
+        """Represent authentication adapter."""
         def authenticate_ldap_user(self, user_dn: str, password: str) -> AdapterResult:
+            """Return authenticate ldap user.
+
+            Args:
+                user_dn: User dn supplied by the caller.
+                password: Password supplied for the immediate authenticated operation.
+            """
             return AdapterResult(
                 command=["atlaso-helper", "ldap", "authenticate", user_dn],
                 dry_run=False,
@@ -1484,6 +1571,7 @@ def test_ldap_nested_cycle_mappings_emit_only_external_names_and_revalidate_sour
 
 
 def test_authorization_code_local_flow_rotates_session_and_rejects_replay(client):
+    """Verify that authorization code local flow rotates session and rejects replay."""
     from joserfc import jwt
     from joserfc.jwk import RSAKey
     from atlaso.app.database import SessionLocal
@@ -1558,6 +1646,7 @@ def test_authorization_code_local_flow_rotates_session_and_rejects_replay(client
 
 
 def test_client_policy_edit_invalidates_pending_authorization(client):
+    """Verify that client policy edit invalidates pending authorization."""
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import OidcAuthorizationTransaction, OidcClient
 
@@ -1590,6 +1679,7 @@ def test_client_policy_edit_invalidates_pending_authorization(client):
 
 
 def test_authorization_rejects_substitution_downgrade_and_inexact_redirect(client):
+    """Verify that authorization rejects substitution downgrade and inexact redirect."""
     client_id, _secret = _configure_protocol_client()
     verifier = "p" * 64
     params = _authorization_parameters(client_id, verifier)
@@ -1621,6 +1711,7 @@ def test_authorization_rejects_substitution_downgrade_and_inexact_redirect(clien
 
 
 def test_token_endpoint_requires_basic_exact_redirect_and_pkce(client):
+    """Verify that token endpoint requires basic exact redirect and pkce."""
     client_id, secret = _configure_protocol_client()
     verifier = "k" * 64
     transaction, csrf, _cookie = _start_login(
@@ -1669,6 +1760,7 @@ def test_token_endpoint_requires_basic_exact_redirect_and_pkce(client):
 
 
 def test_prompt_none_max_age_and_login_hint_is_prefill_only(client):
+    """Verify that prompt none max age and login hint is prefill only."""
     from atlaso.app.oidc import OIDC_SESSION_COOKIE, _session_serializer
 
     client_id, _secret = _configure_protocol_client()
@@ -1727,6 +1819,7 @@ def test_prompt_none_max_age_and_login_hint_is_prefill_only(client):
 
 
 def test_userinfo_revalidates_client_subject_and_local_identity_state(client):
+    """Verify that userinfo revalidates client subject and local identity state."""
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import OidcClient, User
 
@@ -1767,6 +1860,7 @@ def test_userinfo_revalidates_client_subject_and_local_identity_state(client):
 
 
 def test_userinfo_rejects_algorithm_and_kid_confusion(client):
+    """Verify that userinfo rejects algorithm and kid confusion."""
     client_id, secret = _configure_protocol_client()
     verifier = "s" * 64
     transaction, csrf, _cookie = _start_login(
@@ -1794,6 +1888,7 @@ def test_userinfo_rejects_algorithm_and_kid_confusion(client):
 
 
 def test_logout_requires_valid_hint_and_exact_registered_redirect(client):
+    """Verify that logout requires valid hint and exact registered redirect."""
     from atlaso.app.oidc import OIDC_SESSION_COOKIE
 
     operator_login = client.get("/login")
@@ -1847,13 +1942,21 @@ def test_logout_requires_valid_hint_and_exact_registered_redirect(client):
 
 
 def test_fixed_organization_managed_ldap_flow_never_creates_operator_session(client, monkeypatch):
+    """Verify that fixed organization managed ldap flow never creates operator session."""
     from atlaso.app.adapters.system import AdapterResult
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import LdapOrganization, LdapSettings, LdapUser
     from atlaso.app.services import identity_credentials
 
     class AuthenticationAdapter:
+        """Represent authentication adapter."""
         def authenticate_ldap_user(self, user_dn: str, password: str) -> AdapterResult:
+            """Return authenticate ldap user.
+
+            Args:
+                user_dn: User dn supplied by the caller.
+                password: Password supplied for the immediate authenticated operation.
+            """
             return AdapterResult(
                 command=["atlaso-helper", "ldap", "authenticate", user_dn],
                 dry_run=False,
@@ -1924,6 +2027,7 @@ def test_fixed_organization_managed_ldap_flow_never_creates_operator_session(cli
 
 
 def test_concurrent_code_redemption_has_at_most_one_success(client):
+    """Verify that concurrent code redemption has at most one success."""
     client_id, secret = _configure_protocol_client()
     verifier = "w" * 64
     transaction, csrf, _cookie = _start_login(
@@ -1933,6 +2037,7 @@ def test_concurrent_code_redemption_has_at_most_one_success(client):
     code = parse_qs(urlsplit(login.headers["location"]).query)["code"][0]
 
     def redeem() -> int:
+        """Return redeem."""
         return _exchange_code(
             client, client_id=client_id, secret=secret, code=code, verifier=verifier
         ).status_code
@@ -1943,6 +2048,7 @@ def test_concurrent_code_redemption_has_at_most_one_success(client):
 
 
 def test_oidc_login_throttle_is_bounded_and_never_persists_password(client):
+    """Verify that oidc login throttle is bounded and never persists password."""
     from atlaso.app.oidc import OIDC_LOGIN_BUCKET_LIMIT, _OIDC_LOGIN_BUCKETS
     from atlaso.app.database import SessionLocal
 
@@ -1980,6 +2086,7 @@ def test_oidc_login_throttle_is_bounded_and_never_persists_password(client):
 
 
 def test_oidc_login_throttle_survives_browser_session_renewal(client):
+    """Verify that oidc login throttle survives browser session renewal."""
     from atlaso.app.oidc import OIDC_SESSION_COOKIE
 
     client_id, _secret = _configure_protocol_client()
@@ -2017,6 +2124,7 @@ def test_oidc_login_throttle_survives_browser_session_renewal(client):
 
 
 def test_begin_authorization_purges_expired_transactions_and_codes(client):
+    """Verify that begin authorization purges expired transactions and codes."""
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import OidcAuthorizationCode, OidcAuthorizationTransaction, utcnow
 

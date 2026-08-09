@@ -1,3 +1,5 @@
+"""Test vcf private registry behavior."""
+
 from atlaso.app.models import VcfPrivateRegistrySettings, VcfRegistryBundle
 from atlaso.app.services.vcf_private_registry import (
     render_harbor_config,
@@ -7,6 +9,7 @@ from atlaso.app.services.vcf_private_registry import (
 
 
 def test_vcf_private_registry_harbor_preview_redacts_secrets():
+    """Verify that vcf private registry harbor preview redacts secrets."""
     settings = VcfPrivateRegistrySettings(
         hostname="registry.atlaso.internal",
         listen_interface="eth2",
@@ -25,6 +28,7 @@ def test_vcf_private_registry_harbor_preview_redacts_secrets():
 
 
 def test_vcf_private_registry_relocation_preview_uses_imgpkg():
+    """Verify that vcf private registry relocation preview uses imgpkg."""
     settings = VcfPrivateRegistrySettings(
         hostname="registry.atlaso.internal",
         harbor_project="vcf-supervisor-services",
@@ -45,6 +49,7 @@ def test_vcf_private_registry_relocation_preview_uses_imgpkg():
 
 
 def test_vcf_private_registry_validation_errors_and_warnings():
+    """Verify that vcf private registry validation errors and warnings."""
     settings = VcfPrivateRegistrySettings(
         enabled=True,
         hostname="registry.atlaso.local",

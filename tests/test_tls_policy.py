@@ -1,3 +1,5 @@
+"""Test tls policy behavior."""
+
 from __future__ import annotations
 
 import ssl
@@ -7,6 +9,7 @@ from atlaso.app.services import ldap, vcf_sddc_deployment
 
 
 def test_kms_context_requires_tls_1_2_or_newer(monkeypatch, tmp_path):
+    """Verify that kms context requires tls 1 2 or newer."""
     certificate_path = tmp_path / "server.crt"
     private_key_path = tmp_path / "server.key"
     ca_path = tmp_path / "ca.crt"
@@ -14,15 +17,19 @@ def test_kms_context_requires_tls_1_2_or_newer(monkeypatch, tmp_path):
         path.write_text("test fixture", encoding="utf-8")
 
     class FakeContext:
+        """Represent fake context."""
         def __init__(self, protocol):
+            """Initialize the fake context."""
             self.protocol = protocol
             self.minimum_version = None
             self.verify_mode = None
 
         def load_cert_chain(self, _certificate_path, _private_key_path):
+            """Return cert chain."""
             return None
 
         def load_verify_locations(self, *, cafile):
+            """Return verify locations."""
             return None
 
     monkeypatch.setattr(kmip_server.ssl, "SSLContext", FakeContext)
@@ -46,6 +53,7 @@ def test_kms_context_requires_tls_1_2_or_newer(monkeypatch, tmp_path):
 
 
 def test_vcf_automation_fingerprint_context_requires_tls_1_2_without_ca_verification():
+    """Verify that vcf automation fingerprint context requires tls 1 2 without ca verification."""
     context = ldap._fingerprint_tls_context()
 
     assert context.minimum_version == ssl.TLSVersion.TLSv1_2
@@ -54,6 +62,7 @@ def test_vcf_automation_fingerprint_context_requires_tls_1_2_without_ca_verifica
 
 
 def test_vsphere_fingerprint_context_requires_tls_1_2_without_ca_verification():
+    """Verify that vsphere fingerprint context requires tls 1 2 without ca verification."""
     context = vcf_sddc_deployment._fingerprint_tls_context()
 
     assert context.minimum_version == ssl.TLSVersion.TLSv1_2

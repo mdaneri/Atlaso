@@ -16,6 +16,11 @@ PIN_RE = re.compile(r"^([A-Za-z0-9_.-]+)==([^\s\\]+)")
 
 
 def sha256(path: Path) -> str:
+    """Return sha256.
+
+    Args:
+        path: Filesystem or URL path to read, validate, or update.
+    """
     digest = hashlib.sha256()
     with path.open("rb") as handle:
         for block in iter(lambda: handle.read(1024 * 1024), b""):
@@ -24,6 +29,11 @@ def sha256(path: Path) -> str:
 
 
 def locked_versions(path: Path) -> dict[str, str]:
+    """Return locked versions.
+
+    Args:
+        path: Filesystem or URL path to read, validate, or update.
+    """
     versions: dict[str, str] = {}
     for line in path.read_text(encoding="utf-8").splitlines():
         match = PIN_RE.match(line)
@@ -33,6 +43,14 @@ def locked_versions(path: Path) -> dict[str, str]:
 
 
 def main() -> int:
+    """Run the command-line entry point.
+
+    Returns:
+        The main result.
+
+    Raises:
+        SystemExit: If the operation encounters an invalid state.
+    """
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--wheelhouse", type=Path, required=True)
     parser.add_argument("--source-lock", type=Path, default=ROOT / "requirements-appliance.lock")

@@ -1,3 +1,5 @@
+"""Test network boot behavior."""
+
 import hashlib
 import io
 import json
@@ -93,6 +95,7 @@ from atlaso.app.services.esxi_pxe import (
 
 @pytest.fixture()
 def db_session(client):
+    """Handle db session."""
     from atlaso.app.database import SessionLocal
 
     with SessionLocal() as db:
@@ -100,6 +103,11 @@ def db_session(client):
 
 
 def create_api_token(client, scopes):
+    """Create api token.
+
+    Returns:
+        The created api token.
+    """
     response = client.post(
         "/api/v1/auth/login?username=admin&password=atlaso-admin",
         json={"name": "network boot tests", "scopes": scopes},
@@ -109,7 +117,9 @@ def create_api_token(client, scopes):
 
 
 def use_test_shredos_extractor(monkeypatch):
+    """Handle use test shredos extractor."""
     def extract(archive, destination):
+        """Return extract."""
         target = destination / "shredos"
         target.write_bytes(archive.read_bytes())
         target.chmod(0o644)
@@ -119,6 +129,7 @@ def use_test_shredos_extractor(monkeypatch):
 
 
 def login_session(client):
+    """Return login session."""
     page = client.get("/login")
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
     response = client.post(
@@ -139,6 +150,7 @@ def set_applied_pxe_runtime(
     artifacts=None,
     environments=None,
 ):
+    """Update applied pxe runtime."""
     setting = db_session.execute(
         select(Setting).where(Setting.key == "appliance_apply.baselines.v1")
     ).scalar_one_or_none()
@@ -165,6 +177,7 @@ def set_applied_pxe_runtime(
 
 
 def test_network_boot_catalog_identifies_authoritative_download_sources(db_session):
+    """Verify that network boot catalog identifies authoritative download sources."""
     from atlaso.app.services.network_boot import catalog_rows
 
     sources = {
@@ -196,6 +209,7 @@ def test_network_boot_catalog_identifies_authoritative_download_sources(db_sessi
 def test_network_boot_catalog_distinguishes_installed_media_from_active_readiness(
     db_session,
 ):
+    """Verify that network boot catalog distinguishes installed media from active readiness."""
     from atlaso.app.services.network_boot import catalog_rows
 
     record_verified_media(
@@ -221,6 +235,7 @@ def inventory_report(
     dmi_uuid="4c4c4544-004b-4d10-8052-cac04f4c5132",
     boot_mac="52:54:00:12:34:56",
 ):
+    """Return inventory report."""
     return {
         "schema_version": 1,
         "boot_interface": "eth0",
@@ -274,6 +289,7 @@ def inventory_report(
 
 
 def inventory_report_v2():
+    """Return inventory report v2."""
     payload = inventory_report()
     payload["schema_version"] = 2
     payload["system"].update(
@@ -377,6 +393,7 @@ def inventory_report_v2():
 
 
 def test_network_boot_api_accepts_scoped_ui_session_and_requires_csrf(client):
+    """Verify that network boot api accepts scoped ui session and requires csrf."""
     csrf = login_session(client)
 
     assert client.get("/api/v1/network-boot/environments").status_code == 200
@@ -400,6 +417,7 @@ def test_network_boot_api_accepts_scoped_ui_session_and_requires_csrf(client):
 
 
 def test_network_boot_available_versions_endpoint_uses_read_scope(client, monkeypatch):
+    """Verify that network boot available versions endpoint uses read scope."""
     login_session(client)
     expected = [
         {
@@ -418,6 +436,7 @@ def test_network_boot_available_versions_endpoint_uses_read_scope(client, monkey
 
 
 def test_network_boot_mutation_endpoints_persist_jobs_commands_profiles_and_audits(client):
+    """Verify that network boot mutation endpoints persist jobs commands profiles and audits."""
     raw_token = create_api_token(client, ["read:pxe", "write:pxe"])
     api_headers = {"Authorization": f"Bearer {raw_token}"}
 
@@ -566,6 +585,7 @@ def test_network_boot_mutation_endpoints_persist_jobs_commands_profiles_and_audi
 
 
 def test_api_schedules_and_claims_esxi_inventory_boot_override(client):
+    """Verify that api schedules and claims esxi inventory boot override."""
     raw_token = create_api_token(client, ["read:pxe", "write:pxe"])
     from atlaso.app.database import SessionLocal
 
@@ -617,22 +637,36 @@ def test_api_schedules_and_claims_esxi_inventory_boot_override(client):
 
 
 def test_wake_on_lan_packet_and_distinct_broadcast_delivery():
+    """Verify that wake on lan packet and distinct broadcast delivery."""
     packet = wake_on_lan_packet("52:54:00:12:34:56")
     assert packet == (b"\xff" * 6) + (bytes.fromhex("525400123456") * 16)
 
     calls = []
 
     class FakeSocket:
+        """Represent fake socket."""
         def __enter__(self):
+            """Enter the managed context.
+
+            Returns:
+                The enter result.
+            """
             return self
 
         def __exit__(self, *_args):
+            """Exit the managed context without suppressing exceptions.
+
+            Returns:
+                The exit result.
+            """
             return None
 
         def setsockopt(self, *args):
+            """Handle setsockopt."""
             calls.append(("setsockopt", args))
 
         def sendto(self, payload, target):
+            """Handle sendto."""
             calls.append(("sendto", payload, target))
 
     targets = send_wake_on_lan(
@@ -650,19 +684,37 @@ def test_wake_on_lan_packet_and_distinct_broadcast_delivery():
 
 
 def test_wake_on_lan_preserves_targets_sent_before_udp_failure():
+    """Verify that wake on lan preserves targets sent before udp failure."""
     calls = []
 
     class FakeSocket:
+        """Represent fake socket."""
         def __enter__(self):
+            """Enter the managed context.
+
+            Returns:
+                The enter result.
+            """
             return self
 
         def __exit__(self, *_args):
+            """Exit the managed context without suppressing exceptions.
+
+            Returns:
+                The exit result.
+            """
             return None
 
         def setsockopt(self, *_args):
+            """Return setsockopt."""
             return None
 
         def sendto(self, _payload, target):
+            """Handle sendto.
+
+            Raises:
+                OSError: If the operating-system operation fails.
+            """
             calls.append(target)
             if len(calls) == 2:
                 raise OSError("test second broadcast failed")
@@ -680,17 +732,35 @@ def test_wake_on_lan_preserves_targets_sent_before_udp_failure():
 
 
 def test_wake_on_lan_preserves_retryable_error_before_any_delivery():
+    """Verify that wake on lan preserves retryable error before any delivery."""
     class FakeSocket:
+        """Represent fake socket."""
         def __enter__(self):
+            """Enter the managed context.
+
+            Returns:
+                The enter result.
+            """
             return self
 
         def __exit__(self, *_args):
+            """Exit the managed context without suppressing exceptions.
+
+            Returns:
+                The exit result.
+            """
             return None
 
         def setsockopt(self, *_args):
+            """Return setsockopt."""
             return None
 
         def sendto(self, *_args):
+            """Handle sendto.
+
+            Raises:
+                OSError: If the operating-system operation fails.
+            """
             raise OSError("test first broadcast failed")
 
     with pytest.raises(OSError, match="test first broadcast failed") as captured:
@@ -705,6 +775,7 @@ def test_wake_on_lan_preserves_retryable_error_before_any_delivery():
 def test_wake_broadcast_targets_use_applied_ipv4_network_boot_scopes(
     db_session,
 ):
+    """Verify that wake broadcast targets use applied ipv4 network boot scopes."""
     set_applied_pxe_runtime(
         db_session,
         boot={
@@ -733,11 +804,13 @@ def test_wake_broadcast_targets_use_applied_ipv4_network_boot_scopes(
     ],
 )
 def test_wake_on_lan_rejects_invalid_inputs(mac_address, targets, message):
+    """Verify that wake on lan rejects invalid inputs."""
     with pytest.raises(ValueError, match=message):
         send_wake_on_lan(mac_address, targets)
 
 
 def test_wake_endpoints_send_server_owned_macs_and_audit(client, monkeypatch):
+    """Verify that wake endpoints send server owned macs and audit."""
     raw_token = create_api_token(client, ["read:pxe", "write:pxe"])
     headers = {"Authorization": f"Bearer {raw_token}"}
     inventory_session = client.post("/pxe/inventory/sessions").json()
@@ -777,6 +850,7 @@ def test_wake_endpoints_send_server_owned_macs_and_audit(client, monkeypatch):
     )
 
     def capture(mac_address, targets):
+        """Return capture."""
         with SessionLocal() as db:
             pending = db.execute(
                 select(AuditEvent)
@@ -831,6 +905,7 @@ def test_wake_endpoint_returns_recoverable_conflict_and_audits_failure(
     client,
     monkeypatch,
 ):
+    """Verify that wake endpoint returns recoverable conflict and audits failure."""
     raw_token = create_api_token(client, ["write:pxe"])
     inventory_session = client.post("/pxe/inventory/sessions").json()
     submitted = client.post(
@@ -869,6 +944,7 @@ def test_wake_endpoint_reports_udp_send_failure_as_retryable_service_error(
     client,
     monkeypatch,
 ):
+    """Verify that wake endpoint reports udp send failure as retryable service error."""
     raw_token = create_api_token(client, ["write:pxe"])
     inventory_session = client.post("/pxe/inventory/sessions").json()
     submitted = client.post(
@@ -909,6 +985,7 @@ def test_wake_endpoint_reports_udp_send_failure_as_retryable_service_error(
 
 
 def test_wake_endpoint_reports_and_audits_partial_udp_delivery(client, monkeypatch):
+    """Verify that wake endpoint reports and audits partial udp delivery."""
     raw_token = create_api_token(client, ["write:pxe"])
     inventory_session = client.post("/pxe/inventory/sessions").json()
     submitted = client.post(
@@ -977,6 +1054,7 @@ def test_wake_endpoint_reports_and_audits_partial_udp_delivery(client, monkeypat
 
 
 def test_report_download_is_exact_self_contained_and_rejects_cross_host(client):
+    """Verify that report download is exact self contained and rejects cross host."""
     raw_token = create_api_token(client, ["read:pxe"])
     headers = {"Authorization": f"Bearer {raw_token}"}
     first_session = client.post("/pxe/inventory/sessions").json()
@@ -1060,6 +1138,7 @@ def test_report_download_is_exact_self_contained_and_rejects_cross_host(client):
 
 
 def test_remove_discovered_host_cleans_inventory_and_preserves_esxi_state(client):
+    """Verify that remove discovered host cleans inventory and preserves esxi state."""
     raw_token = create_api_token(client, ["write:pxe"])
     headers = {"Authorization": f"Bearer {raw_token}"}
     inventory_session = client.post("/pxe/inventory/sessions").json()
@@ -1116,6 +1195,7 @@ def test_remove_discovered_host_cleans_inventory_and_preserves_esxi_state(client
 
 
 def test_host_management_requires_scopes_and_returns_missing_resources(client):
+    """Verify that host management requires scopes and returns missing resources."""
     read_token = create_api_token(client, ["read:pxe"])
     write_token = create_api_token(client, ["write:pxe"])
     read_headers = {"Authorization": f"Bearer {read_token}"}
@@ -1150,6 +1230,7 @@ def test_remove_discovered_host_rolls_back_cleanup_when_audit_fails(
     client,
     monkeypatch,
 ):
+    """Verify that remove discovered host rolls back cleanup when audit fails."""
     raw_token = create_api_token(client, ["write:pxe"])
     inventory_session = client.post("/pxe/inventory/sessions").json()
     submitted = client.post(
@@ -1179,6 +1260,7 @@ def test_remove_discovered_host_rolls_back_cleanup_when_audit_fails(
 
 
 def test_media_downloads_queue_fifo_and_only_deduplicate_same_source(client):
+    """Verify that media downloads queue fifo and only deduplicate same source."""
     raw_token = create_api_token(client, ["write:pxe"])
     headers = {"Authorization": f"Bearer {raw_token}"}
 
@@ -1227,12 +1309,14 @@ def test_media_downloads_queue_fifo_and_only_deduplicate_same_source(client):
 
 
 def test_concurrent_duplicate_media_download_admission_is_atomic(client, monkeypatch):
+    """Verify that concurrent duplicate media download admission is atomic."""
     original_active_media_job = network_boot_api._active_media_job
     barrier = threading.Barrier(2)
     call_lock = threading.Lock()
     initial_calls = 0
 
     def synchronized_active_media_job(*args, **kwargs):
+        """Return synchronized active media job."""
         nonlocal initial_calls
         result = original_active_media_job(*args, **kwargs)
         with call_lock:
@@ -1251,6 +1335,7 @@ def test_concurrent_duplicate_media_download_admission_is_atomic(client, monkeyp
     from atlaso.app.database import SessionLocal
 
     def queue_download(index):
+        """Return queue download."""
         request = SimpleNamespace(
             state=SimpleNamespace(request_id=f"concurrent-download-{index}")
         )
@@ -1287,6 +1372,7 @@ def test_concurrent_duplicate_media_download_admission_is_atomic(client, monkeyp
 
 
 def test_inventory_report_is_bounded_and_uses_mac_for_placeholder_uuid():
+    """Verify that inventory report is bounded and uses mac for placeholder uuid."""
     payload = inventory_report(dmi_uuid="00000000-0000-0000-0000-000000000000")
     normalized = normalize_inventory_report(payload)
     assert normalized["system"]["dmi_uuid"] == ""
@@ -1298,6 +1384,7 @@ def test_inventory_report_is_bounded_and_uses_mac_for_placeholder_uuid():
 
 
 def test_inventory_report_v1_normalizes_to_v2_compatibility_shape():
+    """Verify that inventory report v1 normalizes to v2 compatibility shape."""
     normalized = normalize_inventory_report(inventory_report())
 
     assert normalized["schema_version"] == 2
@@ -1314,6 +1401,7 @@ def test_inventory_report_v1_normalizes_to_v2_compatibility_shape():
 
 
 def test_complete_inventory_report_v2_normalizes_all_structured_hardware():
+    """Verify that complete inventory report v2 normalizes all structured hardware."""
     payload = inventory_report_v2()
 
     normalized = normalize_inventory_report(payload)
@@ -1342,6 +1430,7 @@ def test_complete_inventory_report_v2_normalizes_all_structured_hardware():
     ),
 )
 def test_inventory_report_rejects_collection_count_limits(field, limit):
+    """Verify that inventory report rejects collection count limits."""
     payload = inventory_report_v2()
     payload[field] = [{}] * (limit + 1)
 
@@ -1350,6 +1439,7 @@ def test_inventory_report_rejects_collection_count_limits(field, limit):
 
 
 def test_inventory_report_rejects_dimm_string_and_report_size_limits():
+    """Verify that inventory report rejects dimm string and report size limits."""
     payload = inventory_report_v2()
     payload["memory"]["dimms"] = [{}] * (NETWORK_BOOT_MAX_DIMMS + 1)
     with pytest.raises(ValueError, match=f"at most {NETWORK_BOOT_MAX_DIMMS}"):
@@ -1367,6 +1457,7 @@ def test_inventory_report_rejects_dimm_string_and_report_size_limits():
 
 
 def test_inventory_report_rejects_normalized_report_size_limit():
+    """Verify that inventory report rejects normalized report size limit."""
     payload = inventory_report_v2()
     payload["interfaces"] = [{}] * NETWORK_BOOT_MAX_INTERFACES
     payload["disks"] = [{}] * NETWORK_BOOT_MAX_DISKS
@@ -1396,6 +1487,7 @@ def test_inventory_report_rejects_normalized_report_size_limit():
     ),
 )
 def test_inventory_report_rejects_malformed_hardware(mutation, message):
+    """Verify that inventory report rejects malformed hardware."""
     payload = inventory_report_v2()
     mutation(payload)
 
@@ -1404,6 +1496,7 @@ def test_inventory_report_rejects_malformed_hardware(mutation, message):
 
 
 def test_inventory_report_retains_complete_normalized_v2_json(db_session):
+    """Verify that inventory report retains complete normalized v2 json."""
     session, _token = issue_inventory_session(db_session)
     payload = inventory_report_v2()
 
@@ -1417,6 +1510,7 @@ def test_inventory_report_retains_complete_normalized_v2_json(db_session):
 
 
 def test_inventory_report_ignores_optional_placeholder_interface_macs():
+    """Verify that inventory report ignores optional placeholder interface macs."""
     payload = inventory_report()
     payload["interfaces"].append(
         {
@@ -1439,6 +1533,7 @@ def test_inventory_report_ignores_optional_placeholder_interface_macs():
 
 
 def test_uuid_with_disjoint_macs_is_flagged_as_collision(db_session):
+    """Verify that uuid with disjoint macs is flagged as collision."""
     first_session, _token = issue_inventory_session(db_session)
     first, _report = store_inventory_report(
         db_session,
@@ -1457,6 +1552,7 @@ def test_uuid_with_disjoint_macs_is_flagged_as_collision(db_session):
 
 
 def test_dmi_only_report_rejects_ambiguous_collision_candidates(db_session):
+    """Verify that dmi only report rejects ambiguous collision candidates."""
     dmi_uuid = "4c4c4544-004b-4d10-8052-cac04f4c5100"
     for mac in ("52:54:00:12:34:56", "52:54:00:aa:bb:cc"):
         session, _token = issue_inventory_session(db_session)
@@ -1488,6 +1584,7 @@ def test_dmi_only_report_rejects_ambiguous_collision_candidates(db_session):
 
 
 def test_dmi_only_report_preserves_single_candidate_macs(db_session):
+    """Verify that dmi only report preserves single candidate macs."""
     dmi_uuid = "4c4c4544-004b-4d10-8052-cac04f4c5100"
     expected_mac = "52:54:00:12:34:56"
     first_session, _token = issue_inventory_session(db_session)
@@ -1523,6 +1620,7 @@ def test_dmi_only_report_preserves_single_candidate_macs(db_session):
 
 
 def test_inventory_retains_latest_and_ten_previous_reports(db_session):
+    """Verify that inventory retains latest and ten previous reports."""
     host_id = None
     for index in range(NETWORK_BOOT_REPORTS_PER_HOST + 3):
         session, _token = issue_inventory_session(db_session)
@@ -1542,6 +1640,7 @@ def test_inventory_retains_latest_and_ten_previous_reports(db_session):
 
 
 def test_inventory_prunes_global_hosts_reports_and_sessions(db_session, monkeypatch):
+    """Verify that inventory prunes global hosts reports and sessions."""
     monkeypatch.setattr(network_boot, "NETWORK_BOOT_MAX_HOSTS", 2)
     monkeypatch.setattr(network_boot, "NETWORK_BOOT_MAX_REPORTS", 2)
     monkeypatch.setattr(network_boot, "NETWORK_BOOT_MAX_SESSIONS", 2)
@@ -1565,6 +1664,7 @@ def test_inventory_prunes_global_hosts_reports_and_sessions(db_session, monkeypa
 
 
 def test_inventory_storage_pruning_preserves_live_hosts(db_session, monkeypatch):
+    """Verify that inventory storage pruning preserves live hosts."""
     monkeypatch.setattr(network_boot, "NETWORK_BOOT_MAX_HOSTS", 2)
     monkeypatch.setattr(network_boot, "NETWORK_BOOT_MAX_REPORTS", 2)
 
@@ -1611,6 +1711,7 @@ def test_inventory_session_cap_preserves_live_and_command_sessions(
     db_session,
     monkeypatch,
 ):
+    """Verify that inventory session cap preserves live and command sessions."""
     monkeypatch.setattr(network_boot, "NETWORK_BOOT_MAX_SESSIONS", 2)
     live, _token = issue_inventory_session(db_session)
     live_host, _report = store_inventory_report(
@@ -1641,6 +1742,7 @@ def test_inventory_session_cap_preserves_live_and_command_sessions(
 
 
 def test_issuing_inventory_session_prunes_expired_sessions(db_session):
+    """Verify that issuing inventory session prunes expired sessions."""
     expired, _token = issue_inventory_session(db_session)
     expired.expires_at = utcnow() - timedelta(seconds=1)
     db_session.commit()
@@ -1653,6 +1755,7 @@ def test_issuing_inventory_session_prunes_expired_sessions(db_session):
 
 
 def test_public_inventory_session_binds_identity_and_rejects_replay(client):
+    """Verify that public inventory session binds identity and rejects replay."""
     session_response = client.post("/pxe/inventory/sessions")
     assert session_response.status_code == 201
     assert session_response.headers["cache-control"] == "no-store"
@@ -1675,11 +1778,17 @@ def test_public_inventory_session_binds_identity_and_rejects_replay(client):
 
 
 def test_public_inventory_report_marks_live_capacity_as_retryable(client, monkeypatch):
+    """Verify that public inventory report marks live capacity as retryable."""
     session_response = client.post("/pxe/inventory/sessions")
     assert session_response.status_code == 201
     token = session_response.json()["access_token"]
 
     def capacity_error(*_args, **_kwargs):
+        """Handle capacity error.
+
+        Raises:
+            ValueError: If an input value is invalid.
+        """
         raise ValueError(
             "Inventory storage capacity is occupied by live clients; retry later."
         )
@@ -1696,6 +1805,7 @@ def test_public_inventory_report_marks_live_capacity_as_retryable(client, monkey
 
 
 def test_public_inventory_report_logs_sanitized_validation_reason(client, caplog):
+    """Verify that public inventory report logs sanitized validation reason."""
     session_response = client.post("/pxe/inventory/sessions")
     assert session_response.status_code == 201
     token = session_response.json()["access_token"]
@@ -1719,6 +1829,7 @@ def test_media_upload_is_staged_as_a_durable_verification_job(
     monkeypatch,
     tmp_path,
 ):
+    """Verify that media upload is staged as a durable verification job."""
     monkeypatch.setattr(
         "atlaso.app.api.network_boot.network_boot_upload_path",
         lambda job_id: tmp_path / job_id / "artifact",
@@ -1753,6 +1864,7 @@ def test_deleting_inactive_media_cleans_environment_upload_staging(
     monkeypatch,
     tmp_path,
 ):
+    """Verify that deleting inactive media cleans environment upload staging."""
     import atlaso.app.worker as worker
 
     media_root = tmp_path / "media"
@@ -1852,6 +1964,7 @@ def test_deleting_enabled_desired_or_active_media_is_blocked(
     client,
     db_session,
 ):
+    """Verify that deleting enabled desired or active media is blocked."""
     media = record_verified_media(
         db_session,
         environment_key="memtest86plus",
@@ -1895,6 +2008,7 @@ def test_deleting_enabled_desired_or_active_media_is_blocked(
 
 
 def test_inventory_session_stores_only_token_hash_and_expires(db_session):
+    """Verify that inventory session stores only token hash and expires."""
     session, token = issue_inventory_session(db_session)
     assert token not in session.token_hash
     assert len(session.token_hash) == 64
@@ -1906,6 +2020,7 @@ def test_inventory_session_stores_only_token_hash_and_expires(db_session):
 
 
 def test_inventory_identity_heartbeat_and_one_time_reboot(db_session):
+    """Verify that inventory identity heartbeat and one time reboot."""
     session, token = issue_inventory_session(db_session)
     host, _report = store_inventory_report(
         db_session,
@@ -1940,6 +2055,7 @@ def test_inventory_identity_heartbeat_and_one_time_reboot(db_session):
 
 
 def test_stale_inventory_session_is_offline_and_reboot_conflicts(db_session):
+    """Verify that stale inventory session is offline and reboot conflicts."""
     session, _token = issue_inventory_session(db_session)
     host, _report = store_inventory_report(
         db_session,
@@ -1956,6 +2072,7 @@ def test_stale_inventory_session_is_offline_and_reboot_conflicts(db_session):
 def test_settings_archive_keeps_desired_environment_but_excludes_media_and_history(
     db_session,
 ):
+    """Verify that settings archive keeps desired environment but excludes media and history."""
     from atlaso.app.services.settings_archive import export_settings_archive
 
     states = {row.key: row for row in ensure_environment_rows(db_session)}
@@ -1989,6 +2106,7 @@ def test_settings_archive_keeps_desired_environment_but_excludes_media_and_histo
 def test_settings_restore_and_factory_reset_preserve_installed_media_metadata(
     db_session,
 ):
+    """Verify that settings restore and factory reset preserve installed media metadata."""
     from atlaso.app.services.settings_archive import (
         export_settings_archive,
         factory_reset_desired_state,
@@ -2026,6 +2144,7 @@ def test_settings_restore_and_factory_reset_preserve_installed_media_metadata(
 
 
 def test_legacy_settings_restore_clears_unarchived_network_boot_state(db_session):
+    """Verify that legacy settings restore clears unarchived network boot state."""
     from atlaso.app.services.settings_archive import (
         export_settings_archive,
         restore_settings_archive,
@@ -2058,6 +2177,7 @@ def test_legacy_settings_restore_clears_unarchived_network_boot_state(db_session
 
 
 def test_generic_pxe_scopes_do_not_follow_legacy_esxi_scope(client):
+    """Verify that generic pxe scopes do not follow legacy esxi scope."""
     legacy = create_api_token(client, ["read:esxi-pxe"])
     denied = client.get(
         "/api/v1/network-boot/hosts",
@@ -2074,6 +2194,7 @@ def test_generic_pxe_scopes_do_not_follow_legacy_esxi_scope(client):
 
 
 def test_unknown_host_defaults_to_inventory_and_shredos_has_cancel_guard(db_session):
+    """Verify that unknown host defaults to inventory and shredos has cancel guard."""
     states = {row.key: row for row in ensure_environment_rows(db_session)}
     inventory = record_verified_media(
         db_session,
@@ -2120,6 +2241,7 @@ def test_unknown_host_defaults_to_inventory_and_shredos_has_cancel_guard(db_sess
 
 
 def test_active_media_remains_available_until_disable_is_applied(db_session):
+    """Verify that active media remains available until disable is applied."""
     states = {row.key: row for row in ensure_environment_rows(db_session)}
     inventory = record_verified_media(
         db_session,
@@ -2146,6 +2268,7 @@ def test_media_file_remains_available_until_disable_is_applied(
     monkeypatch,
     tmp_path,
 ):
+    """Verify that media file remains available until disable is applied."""
     states = {row.key: row for row in ensure_environment_rows(db_session)}
     installed = tmp_path / "inventory" / "2026.05.1"
     installed.mkdir(parents=True)
@@ -2184,6 +2307,7 @@ def test_same_version_shredos_repair_serves_applied_snapshot_until_apply(
     monkeypatch,
     tmp_path,
 ):
+    """Verify that same version shredos repair serves applied snapshot until apply."""
     environment_root = tmp_path / "shredos"
     applied = environment_root / "2025.11"
     replacement = environment_root / (
@@ -2266,6 +2390,7 @@ def test_explicit_invalid_runtime_preview_does_not_fall_back_to_desired_media(
     db_session,
     tmp_path,
 ):
+    """Verify that explicit invalid runtime preview does not fall back to desired media."""
     installed = tmp_path / "shredos" / "2025.11"
     installed.mkdir(parents=True)
     media = record_verified_media(
@@ -2327,11 +2452,21 @@ def test_prune_superseded_shredos_media_waits_for_applied_manifest(
     db_session,
     tmp_path,
 ):
+    """Verify that prune superseded shredos media waits for applied manifest."""
     media_root = tmp_path / "media"
     environment_root = media_root / "shredos"
     version = "2025.11"
 
     def write_snapshot(path: Path, digest: str) -> dict:
+        """Persist snapshot.
+
+        Args:
+            path: Filesystem or URL path to read, validate, or update.
+            digest: Digest supplied by the caller.
+
+        Returns:
+            The write snapshot result.
+        """
         path.mkdir(parents=True)
         manifest = {
             "kind": "atlaso-network-boot-media",
@@ -2421,6 +2556,7 @@ def test_prune_superseded_shredos_media_waits_for_applied_manifest(
 
 @pytest.mark.parametrize("environment_key", ["gparted", "clonezilla"])
 def test_debian_live_media_uses_fetch_with_implicit_dhcp(environment_key):
+    """Verify that debian live media uses fetch with implicit dhcp."""
     manifest = network_boot._media_boot_manifest(
         environment_key,
         "1.0",
@@ -2436,6 +2572,7 @@ def test_debian_live_media_uses_fetch_with_implicit_dhcp(environment_key):
 
 @pytest.mark.parametrize("environment_key", ["gparted", "clonezilla"])
 def test_debian_live_chain_normalizes_existing_media_arguments(environment_key):
+    """Verify that debian live chain normalizes existing media arguments."""
     media = NetworkBootMedia(
         environment_key=environment_key,
         version="1.0",
@@ -2466,6 +2603,7 @@ def test_debian_live_chain_normalizes_existing_media_arguments(environment_key):
 
 
 def test_public_rate_limit_prunes_expired_client_keys():
+    """Verify that public rate limit prunes expired client keys."""
     network_boot_api._rate_windows.clear()
     network_boot_api._rate_windows["menu:192.0.2.1"] = deque([time.monotonic() - 120])
     request = StarletteRequest(
@@ -2486,6 +2624,7 @@ def test_public_rate_limit_prunes_expired_client_keys():
 
 
 def test_unknown_host_defaults_to_local_when_inventory_is_inactive(db_session):
+    """Verify that unknown host defaults to local when inventory is inactive."""
     ensure_environment_rows(db_session)
     db_session.commit()
 
@@ -2501,6 +2640,7 @@ def test_unknown_host_defaults_to_local_when_inventory_is_inactive(db_session):
 def test_boot_menu_uses_the_verified_secondary_listener_origin(
     db_session,
 ):
+    """Verify that boot menu uses the verified secondary listener origin."""
     states = {row.key: row for row in ensure_environment_rows(db_session)}
     inventory = record_verified_media(
         db_session,
@@ -2550,6 +2690,7 @@ def test_boot_menu_uses_the_verified_secondary_listener_origin(
 
 
 def test_known_enabled_esxi_mac_becomes_timed_default(db_session):
+    """Verify that known enabled esxi mac becomes timed default."""
     host = EsxiPxeHost(
         hostname="esx01.atlaso.internal",
         mac_address="52:54:00:12:34:56",
@@ -2617,6 +2758,7 @@ def test_esxi_menu_executes_the_firmware_loader(
     firmware,
     expected_lines,
 ):
+    """Verify that esxi menu executes the firmware loader."""
     host = EsxiPxeHost(
         hostname="esx01.atlaso.internal",
         mac_address="52:54:00:12:34:56",
@@ -2650,6 +2792,7 @@ def test_esxi_menu_executes_the_firmware_loader(
 
 
 def test_known_esxi_host_can_claim_one_time_inventory_boot(db_session):
+    """Verify that known esxi host can claim one time inventory boot."""
     states = {row.key: row for row in ensure_environment_rows(db_session)}
     inventory = record_verified_media(
         db_session,
@@ -2739,6 +2882,7 @@ def test_fixed_catalog_resolves_expected_stable_branch(
     source,
     expected_version,
 ):
+    """Verify that fixed catalog resolves expected stable branch."""
     monkeypatch.setattr(
         "atlaso.app.services.network_boot._fetch_https_text",
         lambda *_args, **_kwargs: source,
@@ -2747,9 +2891,15 @@ def test_fixed_catalog_resolves_expected_stable_branch(
 
 
 def test_available_network_boot_versions_cache_and_stale_fallback(monkeypatch):
+    """Verify that available network boot versions cache and stale fallback."""
     versions = {entry.key: f"version-{entry.key}" for entry in network_boot.ENVIRONMENT_CATALOG}
 
     def resolve(key):
+        """Return operation.
+
+        Raises:
+            ValueError: If an input value is invalid.
+        """
         if key == "shredos":
             raise ValueError("source unavailable")
         return {"version": versions[key]}
@@ -2784,6 +2934,7 @@ def test_available_network_boot_versions_cache_and_stale_fallback(monkeypatch):
 
 
 def test_shredos_requires_published_full_iso_digest(monkeypatch):
+    """Verify that shredos requires published full iso digest."""
     payload = {
         "tag_name": "v2025.11_31_x86-64_0.42",
         "draft": False,
@@ -2819,6 +2970,7 @@ def test_shredos_requires_published_full_iso_digest(monkeypatch):
 
 
 def test_shredos_iso_extracts_only_allowlisted_kernel(tmp_path):
+    """Verify that shredos iso extracts only allowlisted kernel."""
     archive = tmp_path / "shredos.iso"
     iso = pycdlib.PyCdlib()
     iso.new(interchange_level=3, joliet=3, rock_ridge="1.09")
@@ -2851,6 +3003,7 @@ def test_shredos_iso_extracts_only_allowlisted_kernel(tmp_path):
 
 @pytest.mark.parametrize("mode", ["missing", "invalid"])
 def test_shredos_iso_rejects_missing_or_invalid_kernel(tmp_path, mode):
+    """Verify that shredos iso rejects missing or invalid kernel."""
     archive = tmp_path / "shredos.iso"
     if mode == "missing":
         iso = pycdlib.PyCdlib()
@@ -2877,6 +3030,7 @@ def test_shredos_iso_rejects_missing_or_invalid_kernel(tmp_path, mode):
 
 
 def test_inventory_linux_resolves_signed_dedicated_release_package(monkeypatch):
+    """Verify that inventory linux resolves signed dedicated release package."""
     payload = {
         "version": "2026.05.1+8",
         "package": {
@@ -2889,6 +3043,7 @@ def test_inventory_linux_resolves_signed_dedicated_release_package(monkeypatch):
     requests = []
 
     def fetch(url, **_kwargs):
+        """Return operation."""
         requests.append(url)
         return b"signed document" if url.endswith("manifest.json") else b"signature"
 
@@ -2916,7 +3071,13 @@ def test_inventory_linux_resolves_signed_dedicated_release_package(monkeypatch):
 
 
 def test_inventory_linux_missing_release_is_actionable(monkeypatch):
+    """Verify that inventory linux missing release is actionable."""
     def missing(url, **_kwargs):
+        """Handle missing.
+
+        Raises:
+            HTTPError: If the operation encounters an invalid state.
+        """
         raise HTTPError(url, 404, "Not Found", {}, None)
 
     monkeypatch.setattr(network_boot, "_fetch_https_bytes", missing)
@@ -2929,6 +3090,7 @@ def test_inventory_linux_package_upload_installs_verified_immutable_media(
     monkeypatch,
     tmp_path,
 ):
+    """Verify that inventory linux package upload installs verified immutable media."""
     kernel = b"inventory kernel"
     initrd = b"inventory initramfs"
     source_manifest = {
@@ -2970,6 +3132,11 @@ def test_inventory_linux_package_upload_installs_verified_immutable_media(
     replacements = []
 
     def assert_same_filesystem_staging(source, target):
+        """Check same filesystem staging.
+
+        Returns:
+            The assert same filesystem staging result.
+        """
         replacements.append((source.resolve(), Path(target).resolve()))
         assert source.resolve().is_relative_to(environment_root)
         return original_replace(source, target)
@@ -3001,6 +3168,7 @@ def test_inventory_linux_package_rejects_signed_size_mismatch(
     monkeypatch,
     tmp_path,
 ):
+    """Verify that inventory linux package rejects signed size mismatch."""
     kernel = b"inventory kernel"
     initrd = b"inventory initramfs"
     version = "2026.05.1+8"
@@ -3045,6 +3213,7 @@ def test_inventory_linux_package_rejects_signed_size_mismatch(
 
 
 def test_boot_media_archive_rejects_traversal(tmp_path):
+    """Verify that boot media archive rejects traversal."""
     archive = tmp_path / "media.zip"
     with zipfile.ZipFile(archive, "w") as rows:
         rows.writestr("../escape", b"bad")
@@ -3058,6 +3227,7 @@ def test_boot_media_archive_rejects_traversal(tmp_path):
 
 
 def test_boot_media_downloader_rejects_https_downgrade_redirect():
+    """Verify that boot media downloader rejects https downgrade redirect."""
     handler = _BoundedHttpsRedirectHandler(max_redirects=5)
     with pytest.raises(ValueError, match="redirected away from HTTPS"):
         handler.redirect_request(
@@ -3071,17 +3241,23 @@ def test_boot_media_downloader_rejects_https_downgrade_redirect():
 
 
 def test_boot_media_downloader_rejects_declared_oversize(monkeypatch, tmp_path):
+    """Verify that boot media downloader rejects declared oversize."""
     class FakeResponse:
+        """Represent fake response."""
         headers = {"Content-Length": "11"}
 
         def geturl(self):
+            """Return geturl."""
             return "https://example.test/media"
 
         def close(self):
+            """Return close."""
             return None
 
     class FakeOpener:
+        """Represent fake opener."""
         def open(self, *_args, **_kwargs):
+            """Return open."""
             return FakeResponse()
 
     monkeypatch.setattr(
@@ -3096,31 +3272,48 @@ def test_boot_media_downloader_rejects_declared_oversize(monkeypatch, tmp_path):
 
 
 def test_boot_media_downloader_retries_transient_open_failure(monkeypatch, tmp_path):
+    """Verify that boot media downloader retries transient open failure."""
     class FakeResponse:
+        """Represent fake response."""
         headers = {"Content-Length": "5"}
 
         def geturl(self):
+            """Return geturl."""
             return "https://mirror.example.test/media"
 
         def read(self, _size):
+            """Return operation."""
             if getattr(self, "_read", False):
                 return b""
             self._read = True
             return b"media"
 
         def close(self):
+            """Return close."""
             return None
 
         def __enter__(self):
+            """Enter the managed context.
+
+            Returns:
+                The enter result.
+            """
             return self
 
         def __exit__(self, *_args):
+            """Exit the managed context without suppressing exceptions."""
             self.close()
 
     attempts = 0
 
     class FakeOpener:
+        """Represent fake opener."""
         def open(self, *_args, **_kwargs):
+            """Return open.
+
+            Raises:
+                URLError: If the operation encounters an invalid state.
+            """
             nonlocal attempts
             attempts += 1
             if attempts == 1:
@@ -3147,6 +3340,7 @@ def test_boot_media_downloader_retries_transient_open_failure(monkeypatch, tmp_p
 
 
 def test_checksum_filename_accepts_publisher_relative_path():
+    """Verify that checksum filename accepts publisher relative path."""
     digest = "a" * 64
 
     assert checksum_for_filename(
@@ -3159,6 +3353,7 @@ def test_bundled_inventory_registration_defers_active_version_until_apply(
     db_session,
     tmp_path,
 ):
+    """Verify that bundled inventory registration defers active version until apply."""
     version = "2026.05.1"
     installed = tmp_path / "inventory" / version
     installed.mkdir(parents=True)
@@ -3201,6 +3396,7 @@ def test_bundled_inventory_registration_records_and_selects_latest_revision(
     db_session,
     tmp_path,
 ):
+    """Verify that bundled inventory registration records and selects latest revision."""
     artifacts = {
         "bzImage": b"inventory kernel",
         "rootfs.cpio.gz": b"inventory initramfs",
@@ -3249,6 +3445,7 @@ def test_bundled_inventory_registration_preserves_explicit_reset_state(
     db_session,
     tmp_path,
 ):
+    """Verify that bundled inventory registration preserves explicit reset state."""
     version = "2026.05.1"
     installed = tmp_path / "inventory" / version
     installed.mkdir(parents=True)
@@ -3291,6 +3488,7 @@ def test_failed_inventory_package_replacement_preserves_active_bundled_media(
     monkeypatch,
     tmp_path,
 ):
+    """Verify that failed inventory package replacement preserves active bundled media."""
     version = "2026.05.1"
     installed = tmp_path / "inventory" / version
     installed.mkdir(parents=True)
@@ -3333,6 +3531,11 @@ def test_failed_inventory_package_replacement_preserves_active_bundled_media(
     )
 
     def fail_download(*_args, **_kwargs):
+        """Handle fail download.
+
+        Raises:
+            ValueError: If an input value is invalid.
+        """
         raise ValueError("simulated acquisition failure")
 
     monkeypatch.setattr(BoundedHttpsDownloader, "download", fail_download)
@@ -3355,6 +3558,7 @@ def test_cancelled_media_worker_cannot_overwrite_terminal_status(
     monkeypatch,
     tmp_path,
 ):
+    """Verify that cancelled media worker cannot overwrite terminal status."""
     from atlaso.app import worker
 
     media = record_verified_media(
@@ -3391,6 +3595,7 @@ def test_cancelled_media_worker_cannot_overwrite_terminal_status(
     )
 
     def cancel_during_sync(*_args, cancelled, **_kwargs):
+        """Return cancel during sync."""
         job.status = JobStatus.CANCELLED.value
         db_session.add(job)
         db_session.commit()
@@ -3418,6 +3623,7 @@ def test_deferred_unchanged_media_rollback_preserves_installed_files(
     db_session,
     tmp_path,
 ):
+    """Verify that deferred unchanged media rollback preserves installed files."""
     installed = tmp_path / "installed"
     installed.mkdir()
     artifact = installed / "shredos"
@@ -3444,6 +3650,7 @@ def test_deferred_unchanged_media_rollback_preserves_installed_files(
 
 
 def test_signed_checksum_rejects_wrong_fingerprint(monkeypatch, tmp_path):
+    """Verify that signed checksum rejects wrong fingerprint."""
     files = []
     for name in ("checksums", "signature", "key"):
         path = tmp_path / name
@@ -3478,6 +3685,7 @@ def test_signed_checksum_rejects_wrong_fingerprint(monkeypatch, tmp_path):
 
 
 def test_inventory_linux_build_enables_reproducible_mode():
+    """Verify that inventory linux build enables reproducible mode."""
     repository_root = Path(__file__).resolve().parents[1]
     defconfig = (
         repository_root
@@ -3501,6 +3709,7 @@ def test_installed_media_paths_are_selected_only_from_fixed_environment_root(
     monkeypatch,
     tmp_path,
 ):
+    """Verify that installed media paths are selected only from fixed environment root."""
     environment_root = tmp_path / "memtest86plus"
     installed = environment_root / "8.10"
     installed.mkdir(parents=True)
@@ -3525,6 +3734,7 @@ def test_installed_media_paths_are_selected_only_from_fixed_environment_root(
 
 
 def test_media_file_selection_uses_allowlist_without_following_symlinks(tmp_path):
+    """Verify that media file selection uses allowlist without following symlinks."""
     root = tmp_path / "media"
     nested = root / "live"
     nested.mkdir(parents=True)
@@ -3554,6 +3764,15 @@ def _write_test_media_cache(
     content: bytes,
     artifact_sha256: str,
 ) -> None:
+    """Persist test media cache.
+
+    Args:
+        directory: Directory supplied by the caller.
+        environment: Environment supplied by the caller.
+        version: Version identifier to validate or publish.
+        content: Document or file content to process.
+        artifact_sha256: Artifact sha256 supplied by the caller.
+    """
     directory.mkdir(parents=True)
     artifact = directory / "artifact.bin"
     artifact.write_bytes(content)
@@ -3579,6 +3798,7 @@ def test_interrupted_media_swap_recovery_restores_database_version(
     monkeypatch,
     tmp_path,
 ):
+    """Verify that interrupted media swap recovery restores database version."""
     media_root = tmp_path / "media"
     environment = "memtest86plus"
     version = "2025.11"
@@ -3651,6 +3871,7 @@ def test_interrupted_media_swap_recovery_finalizes_committed_version(
     db_session,
     tmp_path,
 ):
+    """Verify that interrupted media swap recovery finalizes committed version."""
     media_root = tmp_path / "media"
     environment = "memtest86plus"
     version = "2025.11"
@@ -3703,6 +3924,7 @@ def test_recovery_removes_uncommitted_digest_directory_for_valid_old_row(
     db_session,
     tmp_path,
 ):
+    """Verify that recovery removes uncommitted digest directory for valid old row."""
     media_root = tmp_path / "media"
     environment = "memtest86plus"
     version = "2025.11"
@@ -3762,6 +3984,7 @@ def test_interrupted_new_media_install_recovery_removes_uncommitted_version(
     db_session,
     tmp_path,
 ):
+    """Verify that interrupted new media install recovery removes uncommitted version."""
     media_root = tmp_path / "media"
     environment = "memtest86plus"
     version = "2025.12"
@@ -3794,6 +4017,7 @@ def test_application_startup_recovers_media_swaps_before_registering_or_serving(
     client,
     monkeypatch,
 ):
+    """Verify that application startup recovers media swaps before registering or serving."""
     from starlette.testclient import TestClient
 
     from atlaso.app import main
@@ -3802,10 +4026,21 @@ def test_application_startup_recovers_media_swaps_before_registering_or_serving(
     original_register = main.register_bundled_inventory_media
 
     def recover(_db):
+        """Return recover."""
         calls.append("recover")
         return 0
 
     def register(db, *args, **kwargs):
+        """Create operation.
+
+        Args:
+            db: Active database session.
+            args: Parsed command-line arguments.
+            kwargs: Additional keyword arguments forwarded to the wrapped call.
+
+        Returns:
+            The register result.
+        """
         calls.append("register")
         return original_register(db, *args, **kwargs)
 
@@ -3822,6 +4057,7 @@ def test_application_startup_recovers_media_swaps_before_registering_or_serving(
 
 
 def test_media_swap_recovery_lock_serializes_callers(tmp_path):
+    """Verify that media swap recovery lock serializes callers."""
     from threading import Event, Thread
 
     media_root = tmp_path / "media"
@@ -3831,11 +4067,13 @@ def test_media_swap_recovery_lock_serializes_callers(tmp_path):
     second_acquired = Event()
 
     def first_caller():
+        """Handle first caller."""
         with network_boot._MediaSwapRecoveryLock(media_root):
             first_acquired.set()
             assert release_first.wait(timeout=2)
 
     def second_caller():
+        """Handle second caller."""
         assert first_acquired.wait(timeout=2)
         with network_boot._MediaSwapRecoveryLock(media_root):
             second_acquired.set()
@@ -3859,6 +4097,7 @@ def test_media_recovery_sweeps_only_inactive_prejournal_staging(
     db_session,
     tmp_path,
 ):
+    """Verify that media recovery sweeps only inactive prejournal staging."""
     media_root = tmp_path / "media"
     environment_root = media_root / "shredos"
     environment_root.mkdir(parents=True)
@@ -3888,6 +4127,7 @@ def test_media_staging_lease_serializes_marker_publication_with_recovery(
     monkeypatch,
     tmp_path,
 ):
+    """Verify that media staging lease serializes marker publication with recovery."""
     media_root = tmp_path / "media"
     environment_root = media_root / "shredos"
     environment_root.mkdir(parents=True)
@@ -3897,16 +4137,27 @@ def test_media_staging_lease_serializes_marker_publication_with_recovery(
     original_open = network_boot.os.open
 
     class RecordingLock:
+        """Represent recording lock."""
         def __init__(self, root):
+            """Initialize the recording lock."""
             assert root == media_root
 
         def acquire(self):
+            """Handle acquire."""
             events.append("recovery-lock:acquire")
 
         def release(self):
+            """Handle release."""
             events.append("recovery-lock:release")
 
     def recording_open(path, flags, mode=0o777):
+        """Return recording open.
+
+        Args:
+            path: Filesystem or URL path to read, validate, or update.
+            flags: Flags supplied by the caller.
+            mode: Operating mode selected for the workflow.
+        """
         if Path(path).name == ".atlaso-staging.lock":
             assert events == ["recovery-lock:acquire"]
             events.append("staging-marker:open")
@@ -3928,6 +4179,7 @@ def test_media_sync_fsyncs_tree_and_published_directory_before_database_record(
     monkeypatch,
     tmp_path,
 ):
+    """Verify that media sync fsyncs tree and published directory before database record."""
     media_root = tmp_path / "media"
     media_root.mkdir()
     content = b"durable replacement"
@@ -3938,14 +4190,18 @@ def test_media_sync_fsyncs_tree_and_published_directory_before_database_record(
     use_test_shredos_extractor(monkeypatch)
 
     class RecordingLock:
+        """Represent recording lock."""
         def __init__(self, _media_root):
+            """Initialize the recording lock."""
             self.held = False
 
         def acquire(self):
+            """Handle acquire."""
             self.held = True
             events.append("lock:acquire")
 
         def release(self):
+            """Handle release."""
             assert self.held
             events.append("lock:release")
             self.held = False
@@ -3962,14 +4218,25 @@ def test_media_sync_fsyncs_tree_and_published_directory_before_database_record(
     )
 
     def fake_download(_self, url, destination, **_kwargs):
+        """Return fake download."""
         destination.write_bytes(content)
         return url, digest
 
     def record(db, **kwargs):
+        """Persist operation.
+
+        Args:
+            db: Active database session.
+            kwargs: Additional keyword arguments forwarded to the wrapped call.
+
+        Returns:
+            The record result.
+        """
         events.append("record")
         return original_record(db, **kwargs)
 
     def commit():
+        """Return commit."""
         events.append("commit")
         return original_commit()
 
@@ -4021,6 +4288,7 @@ def test_media_sync_revalidates_and_repairs_corrupt_cached_artifacts(
     monkeypatch,
     tmp_path,
 ):
+    """Verify that media sync revalidates and repairs corrupt cached artifacts."""
     media_root = tmp_path / "media"
     installed = media_root / "shredos" / "2025.11"
     installed.mkdir(parents=True)
@@ -4066,6 +4334,7 @@ def test_media_sync_revalidates_and_repairs_corrupt_cached_artifacts(
     )
 
     def fake_download(_self, url, destination, **_kwargs):
+        """Return fake download."""
         destination.write_bytes(replacement)
         return url, replacement_sha256
 
@@ -4102,6 +4371,7 @@ def test_media_sync_replaces_verified_legacy_shredos_image_cache(
     monkeypatch,
     tmp_path,
 ):
+    """Verify that media sync replaces verified legacy shredos image cache."""
     media_root = tmp_path / "media"
     installed = media_root / "shredos" / "2025.11"
     installed.mkdir(parents=True)
@@ -4171,6 +4441,7 @@ def test_media_sync_replaces_verified_legacy_shredos_image_cache(
     )
 
     def fake_download(_self, url, destination, **_kwargs):
+        """Return fake download."""
         destination.write_bytes(replacement)
         return url, replacement_sha256
 
@@ -4288,6 +4559,7 @@ def test_media_sync_verifies_uploaded_artifact_without_downloading_it(
     monkeypatch,
     tmp_path,
 ):
+    """Verify that media sync verifies uploaded artifact without downloading it."""
     uploaded = tmp_path / "uploaded.iso"
     uploaded.write_bytes(b"operator supplied asset")
     digest = hashlib.sha256(uploaded.read_bytes()).hexdigest()
@@ -4303,6 +4575,11 @@ def test_media_sync_verifies_uploaded_artifact_without_downloading_it(
     )
 
     def reject_download(*_args, **_kwargs):
+        """Handle reject download.
+
+        Raises:
+            AssertionError: If an expected invariant is not satisfied.
+        """
         raise AssertionError("The uploaded release asset must not be downloaded again.")
 
     monkeypatch.setattr(BoundedHttpsDownloader, "download", reject_download)
@@ -4324,6 +4601,7 @@ def test_media_sync_verifies_uploaded_artifact_without_downloading_it(
 
 
 def test_network_boot_upload_path_rejects_untrusted_job_identifiers(tmp_path):
+    """Verify that network boot upload path rejects untrusted job identifiers."""
     valid = "job_" + ("a" * 32)
     assert network_boot_upload_path(valid, upload_root=tmp_path) == (
         tmp_path.resolve() / valid / "artifact"
@@ -4338,6 +4616,7 @@ def test_cancelling_pending_media_upload_removes_staged_artifact(
     monkeypatch,
     tmp_path,
 ):
+    """Verify that cancelling pending media upload removes staged artifact."""
     monkeypatch.setattr(network_boot, "NETWORK_BOOT_UPLOAD_ROOT", tmp_path)
     job = Job(
         id="job_" + ("c" * 32),
@@ -4372,6 +4651,7 @@ def test_ui_cancelling_pending_media_upload_removes_staged_artifact(
     monkeypatch,
     tmp_path,
 ):
+    """Verify that ui cancelling pending media upload removes staged artifact."""
     monkeypatch.setattr(network_boot, "NETWORK_BOOT_UPLOAD_ROOT", tmp_path)
     job = Job(
         id="job_" + ("d" * 32),

@@ -1,3 +1,5 @@
+"""Implement ldap service behavior."""
+
 from __future__ import annotations
 
 import base64
@@ -50,6 +52,7 @@ LDAP_PENDING_RECOVERY_PAYLOADS: dict[int, bytes] = {}
 
 @dataclass(frozen=True)
 class VcfLdapInspection:
+    """Represent vcf ldap inspection."""
     target_url: str
     organization_id: str
     organization_name: str
@@ -60,20 +63,31 @@ class VcfLdapInspection:
 
 
 class VcfLdapError(RuntimeError):
+    """Report a vcf ldap error."""
     pass
 
 
 def split_ldap_values(value: str | None) -> list[str]:
+    """Return split ldap values."""
     if not value:
         return []
     return list(dict.fromkeys(item.strip() for item in value.replace(",", "\n").splitlines() if item.strip()))
 
 
 def utcnow() -> datetime:
+    """Return the current timezone-aware UTC time."""
     return datetime.now(timezone.utc)
 
 
 def normalize_ldap_slug(value: str) -> str:
+    """Normalize ldap slug.
+
+    Returns:
+        The normalize ldap slug result.
+
+    Raises:
+        ValueError: If an input value is invalid.
+    """
     normalized = re.sub(r"[^a-z0-9]+", "-", value.strip().lower()).strip("-")
     if not normalized or not LDAP_SLUG_PATTERN.fullmatch(normalized):
         raise ValueError("Organization slug must start with a letter and contain only lowercase letters, numbers, and hyphens.")
@@ -81,11 +95,20 @@ def normalize_ldap_slug(value: str) -> str:
 
 
 def default_organization_suffix(slug: str) -> str:
+    """Return default organization suffix."""
     normalized = normalize_ldap_slug(slug)
     return f"dc={normalized},dc=ldap,dc=atlaso,dc=internal"
 
 
 def normalize_dn(value: str) -> str:
+    """Normalize dn.
+
+    Returns:
+        The normalize dn result.
+
+    Raises:
+        ValueError: If an input value is invalid.
+    """
     parts = [part.strip() for part in value.strip().split(",")]
     if len(parts) < 2 or any(not part for part in parts):
         raise ValueError("Enter a complete LDAP distinguished name with at least two components.")
@@ -95,30 +118,37 @@ def normalize_dn(value: str) -> str:
 
 
 def users_base_dn(organization: LdapOrganization) -> str:
+    """Return users base dn."""
     return f"ou=users,{organization.suffix_dn}"
 
 
 def groups_base_dn(organization: LdapOrganization) -> str:
+    """Return groups base dn."""
     return f"ou=groups,{organization.suffix_dn}"
 
 
 def service_accounts_base_dn(organization: LdapOrganization) -> str:
+    """Return service accounts base dn."""
     return f"ou=service-accounts,{organization.suffix_dn}"
 
 
 def system_base_dn(organization: LdapOrganization) -> str:
+    """Return system base dn."""
     return f"ou=system,{organization.suffix_dn}"
 
 
 def ldap_user_dn(user: LdapUser) -> str:
+    """Return ldap user dn."""
     return f"uid={user.uid},{users_base_dn(user.organization)}"
 
 
 def ldap_group_dn(group: LdapGroup) -> str:
+    """Return ldap group dn."""
     return f"cn={escape_dn_value(group.name)},{groups_base_dn(group.organization)}"
 
 
 def escape_dn_value(value: str) -> str:
+    """Return escape dn value."""
     escaped = value.replace("\\", "\\\\").replace(",", "\\,").replace("+", "\\+").replace('"', '\\"')
     escaped = escaped.replace("<", "\\<").replace(">", "\\>").replace(";", "\\;").replace("=", "\\=")
     if escaped.startswith(" ") or escaped.startswith("#"):
@@ -129,6 +159,11 @@ def escape_dn_value(value: str) -> str:
 
 
 def ensure_organization_bind_secret(organization: LdapOrganization) -> str:
+    """Ensure organization bind secret.
+
+    Returns:
+        The ensure organization bind secret result.
+    """
     if not organization.bind_dn:
         organization.bind_dn = f"uid=vcf-bind,{service_accounts_base_dn(organization)}"
     if not organization.bind_password_encrypted:
@@ -139,6 +174,7 @@ def ensure_organization_bind_secret(organization: LdapOrganization) -> str:
 
 
 def rotate_organization_bind_secret(organization: LdapOrganization) -> str:
+    """Return rotate organization bind secret."""
     secret = token_urlsafe(32)
     organization.bind_password_encrypted = encrypt_secret(secret)
     organization.updated_at = utcnow()
@@ -146,12 +182,23 @@ def rotate_organization_bind_secret(organization: LdapOrganization) -> str:
 
 
 def organization_bind_secret(organization: LdapOrganization) -> str:
+    """Return organization bind secret."""
     if not organization.bind_password_encrypted:
         return ""
     return decrypt_secret(organization.bind_password_encrypted)
 
 
 def stage_ldap_user_password(user: LdapUser, password: str, settings: LdapSettings) -> None:
+    """Handle stage ldap user password.
+
+    Args:
+        user: Local or directory user affected by the operation.
+        password: Password supplied for the immediate authenticated operation.
+        settings: Desired or runtime settings consumed by the operation.
+
+    Raises:
+        ValueError: If an input value is invalid.
+    """
     errors = validate_ldap_password(password, user.uid, settings)
     if errors:
         raise ValueError(" ".join(errors))
@@ -163,15 +210,18 @@ def stage_ldap_user_password(user: LdapUser, password: str, settings: LdapSettin
 
 
 def has_pending_ldap_password(user: LdapUser) -> bool:
+    """Return whether pending ldap password."""
     return user.id is not None and user.id in LDAP_PENDING_PASSWORDS
 
 
 def clear_pending_ldap_password(user: LdapUser) -> None:
+    """Remove pending ldap password."""
     if user.id is not None:
         LDAP_PENDING_PASSWORDS.pop(user.id, None)
 
 
 def invalidate_ldap_user_password_for_uid_change(user: LdapUser, new_uid: str) -> None:
+    """Handle invalidate ldap user password for uid change."""
     if user.uid == new_uid or has_pending_ldap_password(user):
         return
     if user.password_status == "applied" or user.password_applied_at is not None:
@@ -181,6 +231,7 @@ def invalidate_ldap_user_password_for_uid_change(user: LdapUser, new_uid: str) -
 
 
 def mark_ldap_apply_complete(users: list[LdapUser]) -> None:
+    """Handle mark ldap apply complete."""
     applied_at = utcnow()
     for user in users:
         if has_pending_ldap_password(user):
@@ -194,6 +245,11 @@ def mark_ldap_apply_complete(users: list[LdapUser]) -> None:
 
 
 def stage_ldap_recovery_payload(archive: LdapRecoveryArchive, payload: bytes) -> dict[str, Any]:
+    """Return stage ldap recovery payload.
+
+    Raises:
+        ValueError: If an input value is invalid.
+    """
     manifest = validate_ldap_recovery_payload(payload)
     if archive.id is None:
         raise ValueError("LDAP recovery archive must be persisted before staging.")
@@ -202,11 +258,20 @@ def stage_ldap_recovery_payload(archive: LdapRecoveryArchive, payload: bytes) ->
 
 
 def clear_ldap_recovery_payload(archive: LdapRecoveryArchive) -> None:
+    """Remove ldap recovery payload."""
     if archive.id is not None:
         LDAP_PENDING_RECOVERY_PAYLOADS.pop(archive.id, None)
 
 
 def validate_ldap_recovery_payload(payload: bytes) -> dict[str, Any]:
+    """Validate ldap recovery payload.
+
+    Returns:
+        The validate ldap recovery payload result.
+
+    Raises:
+        ValueError: If an input value is invalid.
+    """
     try:
         with tarfile.open(fileobj=io.BytesIO(payload), mode="r:gz") as archive:
             members = archive.getmembers()
@@ -228,6 +293,16 @@ def validate_ldap_recovery_payload(payload: bytes) -> dict[str, Any]:
 
 
 def validate_ldap_password(password: str, username: str, settings: LdapSettings) -> list[str]:
+    """Validate ldap password.
+
+    Args:
+        password: Password supplied for the immediate authenticated operation.
+        username: Account name used for authentication or lookup.
+        settings: Desired or runtime settings consumed by the operation.
+
+    Returns:
+        The validate ldap password result.
+    """
     errors: list[str] = []
     min_length = max(8, settings.min_password_length or 14)
     if len(password) < min_length:
@@ -246,6 +321,7 @@ def validate_ldap_password(password: str, username: str, settings: LdapSettings)
 
 
 def ldap_settings_to_dict(settings: LdapSettings) -> dict[str, Any]:
+    """Return ldap settings to dict."""
     return {
         "id": settings.id,
         "enabled": settings.enabled,
@@ -279,6 +355,7 @@ def ldap_settings_to_dict(settings: LdapSettings) -> dict[str, Any]:
 
 
 def ldap_organization_to_dict(organization: LdapOrganization, *, reveal_bind_secret: str = "") -> dict[str, Any]:
+    """Return ldap organization to dict."""
     data = {
         "id": organization.id,
         "name": organization.name,
@@ -309,6 +386,7 @@ def ldap_organization_to_dict(organization: LdapOrganization, *, reveal_bind_sec
 
 
 def ldap_user_to_dict(user: LdapUser) -> dict[str, Any]:
+    """Return ldap user to dict."""
     return {
         "id": user.id,
         "organization_id": user.organization_id,
@@ -329,6 +407,7 @@ def ldap_user_to_dict(user: LdapUser) -> dict[str, Any]:
 
 
 def ldap_group_to_dict(group: LdapGroup) -> dict[str, Any]:
+    """Return ldap group to dict."""
     members: list[dict[str, Any]] = []
     for membership in group.members:
         if membership.member_user is not None:
@@ -363,6 +442,7 @@ def ldap_group_to_dict(group: LdapGroup) -> dict[str, Any]:
 
 
 def _group_edges(groups: list[LdapGroup]) -> dict[int, set[int]]:
+    """Return group edges."""
     return {
         group.id: {
             membership.member_group_id
@@ -375,6 +455,11 @@ def _group_edges(groups: list[LdapGroup]) -> dict[int, set[int]]:
 
 
 def validate_group_cycles(groups: list[LdapGroup]) -> list[str]:
+    """Validate group cycles.
+
+    Returns:
+        The validate group cycles result.
+    """
     names = {group.id: group.name for group in groups}
     edges = _group_edges(groups)
     errors: list[str] = []
@@ -382,6 +467,12 @@ def validate_group_cycles(groups: list[LdapGroup]) -> list[str]:
     visited: set[int] = set()
 
     def visit(group_id: int, path: list[int]) -> None:
+        """Handle visit.
+
+        Args:
+            group_id: Identifier of the group.
+            path: Filesystem or URL path to read, validate, or update.
+        """
         if group_id in visiting:
             cycle = path[path.index(group_id) :] + [group_id] if group_id in path else [group_id, group_id]
             label = " -> ".join(names.get(item, str(item)) for item in cycle)
@@ -408,6 +499,18 @@ def validate_ldap_state(
     ca_ready: bool = False,
     recovery_staged: bool = False,
 ) -> tuple[list[str], list[str]]:
+    """Validate ldap state.
+
+    Args:
+        settings: Desired or runtime settings consumed by the operation.
+        organizations: Organizations supplied by the caller.
+        available_interfaces: Available interfaces supplied by the caller.
+        ca_ready: Ca ready supplied by the caller.
+        recovery_staged: Recovery staged supplied by the caller.
+
+    Returns:
+        The validate ldap state result.
+    """
     errors: list[str] = []
     warnings: list[str] = []
     if settings.hostname.strip().lower().endswith(".local"):
@@ -499,6 +602,7 @@ def validate_ldap_state(
 
 
 def vcf_ldap_settings(settings: LdapSettings, organization: LdapOrganization, *, include_password: bool) -> dict[str, Any]:
+    """Return vcf ldap settings."""
     use_ldaps = bool(settings.ldaps_enabled)
     hostname = settings.hostname or LDAP_DEFAULT_HOSTNAME
     defined_settings: dict[str, Any] = {
@@ -559,6 +663,7 @@ def ldap_apply_payload(
     include_secrets: bool,
     recovery_archive: LdapRecoveryArchive | None = None,
 ) -> dict[str, Any]:
+    """Return ldap apply payload."""
     organization_rows: list[dict[str, Any]] = []
     for organization in organizations:
         users = []
@@ -603,6 +708,11 @@ def render_ldap_preview(
     *,
     recovery_archive: LdapRecoveryArchive | None = None,
 ) -> str:
+    """Render ldap preview.
+
+    Returns:
+        The rendered ldap preview.
+    """
     return json.dumps(
         ldap_apply_payload(settings, organizations, include_secrets=False, recovery_archive=recovery_archive),
         indent=2,
@@ -616,6 +726,11 @@ def render_ldap_apply_config(
     *,
     recovery_archive: LdapRecoveryArchive | None = None,
 ) -> str:
+    """Render ldap apply config.
+
+    Returns:
+        The rendered ldap apply config.
+    """
     return json.dumps(
         ldap_apply_payload(settings, organizations, include_secrets=True, recovery_archive=recovery_archive),
         indent=2,
@@ -629,6 +744,7 @@ def manual_vcf_bundle(
     *,
     root_ca_pem: str,
 ) -> dict[str, Any]:
+    """Return manual vcf bundle."""
     use_ldaps = bool(settings.ldaps_enabled)
     endpoint_port = settings.port if use_ldaps else settings.ldap_port
     hostname = settings.hostname or LDAP_DEFAULT_HOSTNAME
@@ -655,6 +771,11 @@ def manual_vcf_bundle(
 
 
 def _recovery_fernet(passphrase: str, salt: bytes) -> Fernet:
+    """Return recovery fernet.
+
+    Raises:
+        ValueError: If an input value is invalid.
+    """
     if len(passphrase) < 12:
         raise ValueError("Recovery passphrase must be at least 12 characters.")
     key = PBKDF2HMAC(
@@ -667,6 +788,7 @@ def _recovery_fernet(passphrase: str, salt: bytes) -> Fernet:
 
 
 def encrypt_recovery_payload(payload: bytes, passphrase: str, *, salt: bytes | None = None) -> bytes:
+    """Return encrypt recovery payload."""
     salt = salt or token_urlsafe(18).encode("ascii")
     envelope = {
         "format": "atlaso-ldap-recovery-v1",
@@ -677,6 +799,11 @@ def encrypt_recovery_payload(payload: bytes, passphrase: str, *, salt: bytes | N
 
 
 def decrypt_recovery_payload(encrypted: bytes, passphrase: str) -> bytes:
+    """Return decrypt recovery payload.
+
+    Raises:
+        ValueError: If an input value is invalid.
+    """
     try:
         envelope = json.loads(encrypted.decode("utf-8"))
         if envelope.get("format") != "atlaso-ldap-recovery-v1":
@@ -690,10 +817,19 @@ def decrypt_recovery_payload(encrypted: bytes, passphrase: str) -> bytes:
 
 
 def recovery_sha256(content: bytes) -> str:
+    """Return recovery sha256."""
     return sha256(content).hexdigest()
 
 
 def normalize_vcf_target_url(value: str) -> str:
+    """Normalize vcf target url.
+
+    Returns:
+        The normalize vcf target url result.
+
+    Raises:
+        ValueError: If an input value is invalid.
+    """
     raw = value.strip()
     if "://" not in raw:
         raw = f"https://{raw}"
@@ -705,6 +841,7 @@ def normalize_vcf_target_url(value: str) -> str:
 
 
 def _fingerprint_tls_context() -> ssl.SSLContext:
+    """Return fingerprint tls context."""
     context = ssl.create_default_context()
     context.minimum_version = ssl.TLSVersion.TLSv1_2
     context.check_hostname = False
@@ -713,6 +850,15 @@ def _fingerprint_tls_context() -> ssl.SSLContext:
 
 
 def tls_sha256_fingerprint(target_url: str, *, timeout_seconds: float = 10) -> str:
+    """Return tls sha256 fingerprint.
+
+    Args:
+        target_url: URL for the target.
+        timeout_seconds: Maximum time to wait, in seconds.
+
+    Raises:
+        VcfLdapError: If the operation encounters an invalid state.
+    """
     parsed = urlsplit(normalize_vcf_target_url(target_url))
     context = _fingerprint_tls_context()
     try:
@@ -726,6 +872,7 @@ def tls_sha256_fingerprint(target_url: str, *, timeout_seconds: float = 10) -> s
 
 
 class VcfAutomationLdapClient:
+    """Represent vcf automation ldap client."""
     API_VERSION = "9.1.0"
 
     def __init__(
@@ -738,6 +885,16 @@ class VcfAutomationLdapClient:
         confirmed_tls_fingerprint: str,
         timeout_seconds: float = 30,
     ) -> None:
+        """Initialize the vcf automation ldap client.
+
+        Args:
+            target_url: URL for the target.
+            username: Account name used for authentication or lookup.
+            password: Password supplied for the immediate authenticated operation.
+            organization_id: Identifier of the organization.
+            confirmed_tls_fingerprint: Confirmed tls fingerprint supplied by the caller.
+            timeout_seconds: Maximum time to wait, in seconds.
+        """
         self.target_url = normalize_vcf_target_url(target_url)
         self.username = username
         self.password = password
@@ -748,6 +905,7 @@ class VcfAutomationLdapClient:
 
     @property
     def headers(self) -> dict[str, str]:
+        """Return headers."""
         headers = {
             "Accept": f"application/json;version={self.API_VERSION}",
             "Content-Type": "application/json",
@@ -758,6 +916,11 @@ class VcfAutomationLdapClient:
         return headers
 
     def _client(self) -> httpx.Client:
+        """Return client.
+
+        Raises:
+            VcfLdapError: If the operation encounters an invalid state.
+        """
         fingerprint = tls_sha256_fingerprint(self.target_url)
         if not self.confirmed_tls_fingerprint or fingerprint != self.confirmed_tls_fingerprint:
             raise VcfLdapError("The VCF Automation TLS certificate does not match the confirmed fingerprint.")
@@ -765,6 +928,11 @@ class VcfAutomationLdapClient:
 
     @staticmethod
     def _raise(response: httpx.Response, message: str) -> None:
+        """Handle raise.
+
+        Raises:
+            VcfLdapError: If the operation encounters an invalid state.
+        """
         if response.is_success:
             return
         detail = ""
@@ -776,6 +944,11 @@ class VcfAutomationLdapClient:
         raise VcfLdapError(f"{message}: HTTP {response.status_code}{f' - {detail}' if detail else ''}")
 
     def authenticate(self) -> dict[str, Any]:
+        """Return authenticate.
+
+        Raises:
+            VcfLdapError: If the operation encounters an invalid state.
+        """
         basic = base64.b64encode(f"{self.username}:{self.password}".encode("utf-8")).decode("ascii")
         with self._client() as client:
             response = client.post(
@@ -802,6 +975,7 @@ class VcfAutomationLdapClient:
             return {}
 
     def get_settings(self) -> dict[str, Any]:
+        """Return settings."""
         if not self.token:
             self.authenticate()
         with self._client() as client:
@@ -810,6 +984,11 @@ class VcfAutomationLdapClient:
         return response.json()
 
     def configure(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """Update operation.
+
+        Returns:
+            The configure result.
+        """
         if not self.token:
             self.authenticate()
         wire_payload = dict(payload)
@@ -820,6 +999,7 @@ class VcfAutomationLdapClient:
         return response.json() if response.content else {}
 
     def test(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """Return test."""
         if not self.token:
             self.authenticate()
         wire_payload = dict(payload)
@@ -830,6 +1010,7 @@ class VcfAutomationLdapClient:
         return response.json() if response.content else {}
 
     def search_users(self, query: str = "") -> list[dict[str, Any]]:
+        """Return search users."""
         if not self.token:
             self.authenticate()
         with self._client() as client:
@@ -839,6 +1020,7 @@ class VcfAutomationLdapClient:
         return payload if isinstance(payload, list) else []
 
     def search_groups(self, query: str = "") -> list[dict[str, Any]]:
+        """Return search groups."""
         if not self.token:
             self.authenticate()
         with self._client() as client:

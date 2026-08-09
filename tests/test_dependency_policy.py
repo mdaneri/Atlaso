@@ -1,3 +1,5 @@
+"""Test dependency policy behavior."""
+
 import io
 import json
 from pathlib import Path
@@ -13,6 +15,7 @@ from scripts.compile_requirements import (
 
 
 def write_valid_policy(root: Path) -> None:
+    """Persist valid policy."""
     dependabot = root / ".github" / "dependabot.yml"
     dependabot.parent.mkdir(parents=True)
     dependabot.write_text(
@@ -61,6 +64,7 @@ updates:
 
 
 def test_dependency_policy_accepts_all_generated_locks(tmp_path: Path) -> None:
+    """Verify that dependency policy accepts all generated locks."""
     write_valid_policy(tmp_path)
 
     assert validate(tmp_path) == []
@@ -69,6 +73,7 @@ def test_dependency_policy_accepts_all_generated_locks(tmp_path: Path) -> None:
 def test_dependency_policy_rejects_missing_dependabot_cooldown(
     tmp_path: Path,
 ) -> None:
+    """Verify that dependency policy rejects missing dependabot cooldown."""
     write_valid_policy(tmp_path)
     dependabot = tmp_path / ".github" / "dependabot.yml"
     dependabot.write_text(
@@ -80,6 +85,7 @@ def test_dependency_policy_rejects_missing_dependabot_cooldown(
 
 
 def test_dependency_policy_rejects_lock_without_upload_cutoff(tmp_path: Path) -> None:
+    """Verify that dependency policy rejects lock without upload cutoff."""
     write_valid_policy(tmp_path)
     path = tmp_path / "requirements-appliance.lock"
     path.write_text(
@@ -95,6 +101,7 @@ def test_dependency_policy_rejects_lock_without_upload_cutoff(tmp_path: Path) ->
 
 
 def test_dependency_policy_rejects_unhashed_pin(tmp_path: Path) -> None:
+    """Verify that dependency policy rejects unhashed pin."""
     write_valid_policy(tmp_path)
     path = tmp_path / "requirements-docs.lock"
     path.write_text(
@@ -111,6 +118,7 @@ def test_dependency_policy_rejects_unhashed_pin(tmp_path: Path) -> None:
 
 
 def test_dependency_policy_rejects_non_exact_requirement(tmp_path: Path) -> None:
+    """Verify that dependency policy rejects non exact requirement."""
     write_valid_policy(tmp_path)
     path = tmp_path / "requirements-release-tools.lock"
     path.write_text(
@@ -130,6 +138,7 @@ def test_dependency_policy_rejects_non_exact_requirement(tmp_path: Path) -> None
 
 
 def test_lock_compiler_applies_upload_cutoff_to_every_target() -> None:
+    """Verify that lock compiler applies upload cutoff to every target."""
     for target in LOCK_TARGETS:
         command = _compile_command(target, upgrade=False)
 
@@ -143,6 +152,7 @@ def test_lock_compiler_applies_upload_cutoff_to_every_target() -> None:
 
 
 def test_lock_compiler_adds_upgrade_only_when_requested() -> None:
+    """Verify that lock compiler adds upgrade only when requested."""
     target = LOCK_TARGETS[0]
 
     assert "--upgrade" not in _compile_command(target, upgrade=False)
@@ -150,6 +160,11 @@ def test_lock_compiler_adds_upgrade_only_when_requested() -> None:
 
 
 def test_index_validation_requires_https_without_embedded_credentials() -> None:
+    """Verify that index validation requires https without embedded credentials.
+
+    Raises:
+        AssertionError: If an expected invariant is not satisfied.
+    """
     assert _validated_index_url("https://example.invalid/simple/") == (
         "https://example.invalid/simple"
     )
@@ -167,6 +182,11 @@ def test_index_validation_requires_https_without_embedded_credentials() -> None:
 
 
 def test_index_metadata_check_rejects_missing_upload_times(monkeypatch) -> None:
+    """Verify that index metadata check rejects missing upload times.
+
+    Raises:
+        AssertionError: If an expected invariant is not satisfied.
+    """
     payload = {"files": [{"filename": "pip.whl"}]}
     monkeypatch.setattr(
         "urllib.request.urlopen",
@@ -182,6 +202,7 @@ def test_index_metadata_check_rejects_missing_upload_times(monkeypatch) -> None:
 
 
 def test_index_metadata_check_accepts_complete_upload_times(monkeypatch) -> None:
+    """Verify that index metadata check accepts complete upload times."""
     payload = {
         "files": [
             {
@@ -201,6 +222,7 @@ def test_index_metadata_check_accepts_complete_upload_times(monkeypatch) -> None
 def test_compile_environment_ignores_unverified_package_sources(
     monkeypatch,
 ) -> None:
+    """Verify that compile environment ignores unverified package sources."""
     monkeypatch.setenv("PIP_INDEX_URL", "https://mirror.invalid/simple")
     monkeypatch.setenv("PIP_EXTRA_INDEX_URL", "https://extra.invalid/simple")
     monkeypatch.setenv("PIP_FIND_LINKS", "https://files.invalid/")

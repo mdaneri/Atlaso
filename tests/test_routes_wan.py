@@ -1,8 +1,11 @@
+"""Test routes wan behavior."""
+
 from atlaso.app.models import NatRule, Route, RoutingRule
 from atlaso.app.services.routes_wan import render_wan_config, validate_nat_source, validate_wan_state
 
 
 def test_render_wan_config_uses_ipv6_route_commands():
+    """Verify that render wan config uses ipv6 route commands."""
     route = Route(
         destination_cidr="2001:db8:100::/64",
         gateway="2001:db8:50::fe",
@@ -33,6 +36,7 @@ def test_render_wan_config_uses_ipv6_route_commands():
 
 
 def test_render_wan_config_keeps_management_and_lab_route_tables_separate():
+    """Verify that render wan config keeps management and lab route tables separate."""
     config = render_wan_config(
         [Route(destination_cidr="0.0.0.0/0", gateway="172.20.0.254", interface_name="eth1", metric=100, enabled=True)],
         targets=[
@@ -71,6 +75,7 @@ def test_render_wan_config_keeps_management_and_lab_route_tables_separate():
 
 
 def test_render_wan_config_emits_dual_stack_management_defaults_in_main_and_table_100():
+    """Verify that render wan config emits dual stack management defaults in main and table 100."""
     config = render_wan_config(
         [],
         targets=[
@@ -95,6 +100,7 @@ def test_render_wan_config_emits_dual_stack_management_defaults_in_main_and_tabl
 
 
 def test_render_wan_config_gives_management_ownership_of_duplicate_vlan_network():
+    """Verify that render wan config gives management ownership of duplicate vlan network."""
     config = render_wan_config(
         [],
         targets=[
@@ -128,6 +134,7 @@ def test_render_wan_config_gives_management_ownership_of_duplicate_vlan_network(
 
 
 def test_render_wan_config_keeps_gatewayless_management_on_main_table():
+    """Verify that render wan config keeps gatewayless management on main table."""
     config = render_wan_config(
         [],
         targets=[
@@ -150,6 +157,7 @@ def test_render_wan_config_keeps_gatewayless_management_on_main_table():
 
 
 def test_validate_wan_state_rejects_ipv6_nat_sources_and_gateway_family_mismatch():
+    """Verify that validate wan state rejects ipv6 nat sources and gateway family mismatch."""
     groups = [
         {"id": "any", "name": "Any", "entries": ["any"]},
         {"id": "custom:dual", "name": "Dual", "entries": ["192.168.50.0/24", "2001:db8:50::/64"]},
@@ -165,6 +173,7 @@ def test_validate_wan_state_rejects_ipv6_nat_sources_and_gateway_family_mismatch
 
 
 def test_validate_wan_state_rejects_management_routing_rule_targets():
+    """Verify that validate wan state rejects management routing rule targets."""
     rule = RoutingRule(name="mgmt transit", source_interface="eth0", destination_interface="eth1", priority=100, enabled=True)
 
     errors = validate_wan_state([], [], {"eth1"}, [], {"eth1"}, [], [rule], {"eth1"})

@@ -36,6 +36,11 @@ if str(PROJECT_ROOT) not in sys.path:
 
 
 def main() -> int:
+    """Run the command-line entry point.
+
+    Returns:
+        The main result.
+    """
     print(f"python={platform.python_version()} executable={sys.executable}")
     if sys.version_info[:2] != (3, 14):
         print("Photon compatibility requires Python 3.14", file=sys.stderr)

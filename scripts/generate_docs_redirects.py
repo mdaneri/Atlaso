@@ -14,6 +14,7 @@ SITE = ROOT / "site" / "docs"
 
 
 def output_path(source: Path) -> Path:
+    """Return output path."""
     relative = source.relative_to(DOCS)
     if relative.name == "index.md":
         return SITE / relative.with_suffix(".html")
@@ -21,6 +22,11 @@ def output_path(source: Path) -> Path:
 
 
 def main() -> int:
+    """Run the command-line entry point.
+
+    Returns:
+        The main result.
+    """
     count = 0
     for source in sorted(DOCS.rglob("*.md")):
         meta, _, _ = parse_front_matter(source, source.read_text(encoding="utf-8"))

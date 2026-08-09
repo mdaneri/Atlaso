@@ -1,3 +1,5 @@
+"""Test kmip protocol behavior."""
+
 from __future__ import annotations
 
 import uuid
@@ -28,6 +30,7 @@ from atlaso.app.kmip.ttlv import (
 
 
 def dispatcher(tmp_path: Path) -> tuple[KmipDispatcher, str]:
+    """Return dispatcher."""
     provider_id = str(uuid.uuid4())
     store = WrappedKeyStore(
         tmp_path / "store.db",
@@ -38,6 +41,7 @@ def dispatcher(tmp_path: Path) -> tuple[KmipDispatcher, str]:
 
 
 def request(operation: int, *payload: Ttlv) -> Ttlv:
+    """Return request."""
     return structure(
         Tag.REQUEST_MESSAGE,
         structure(
@@ -58,16 +62,19 @@ def request(operation: int, *payload: Ttlv) -> Ttlv:
 
 
 def batch_item(response: Ttlv) -> Ttlv:
+    """Return batch item."""
     return response.children(Tag.BATCH_ITEM)[0]
 
 
 def response_payload(response: Ttlv) -> Ttlv:
+    """Return response payload."""
     payload = batch_item(response).child(Tag.RESPONSE_PAYLOAD)
     assert payload is not None
     return payload
 
 
 def result_status(response: Ttlv) -> int:
+    """Return result status."""
     node = batch_item(response).child(Tag.RESULT_STATUS)
     assert node is not None
     assert isinstance(node.value, int)
@@ -75,6 +82,11 @@ def result_status(response: Ttlv) -> int:
 
 
 def create_request() -> Ttlv:
+    """Create request.
+
+    Returns:
+        The created request.
+    """
     return request(
         Operation.CREATE,
         enumeration(Tag.OBJECT_TYPE, OBJECT_TYPE_SYMMETRIC_KEY),
@@ -100,6 +112,7 @@ def create_request() -> Ttlv:
 
 
 def name_attribute(value: str) -> Ttlv:
+    """Return name attribute."""
     return structure(
         Tag.ATTRIBUTE,
         text_string(Tag.ATTRIBUTE_NAME, "Name"),
@@ -112,6 +125,7 @@ def name_attribute(value: str) -> Ttlv:
 
 
 def created_key_id(service: KmipDispatcher, provider_id: str) -> str:
+    """Return created key id."""
     response = service.dispatch(provider_id, create_request())
     assert result_status(response) == ResultStatus.SUCCESS
     node = response_payload(response).child(Tag.UNIQUE_IDENTIFIER)
@@ -121,6 +135,7 @@ def created_key_id(service: KmipDispatcher, provider_id: str) -> str:
 
 
 def test_create_activate_get_round_trip_returns_only_active_key(tmp_path: Path) -> None:
+    """Verify that create activate get round trip returns only active key."""
     service, provider_id = dispatcher(tmp_path)
     key_id = created_key_id(service, provider_id)
 
@@ -157,6 +172,7 @@ def test_create_activate_get_round_trip_returns_only_active_key(tmp_path: Path) 
 
 
 def test_cross_provider_get_does_not_reveal_key_existence(tmp_path: Path) -> None:
+    """Verify that cross provider get does not reveal key existence."""
     service, provider_id = dispatcher(tmp_path)
     key_id = created_key_id(service, provider_id)
 
@@ -172,6 +188,7 @@ def test_cross_provider_get_does_not_reveal_key_existence(tmp_path: Path) -> Non
 
 
 def test_query_and_discover_versions_expose_only_bounded_contract(tmp_path: Path) -> None:
+    """Verify that query and discover versions expose only bounded contract."""
     service, provider_id = dispatcher(tmp_path)
 
     query = service.dispatch(
@@ -208,6 +225,7 @@ def test_query_and_discover_versions_expose_only_bounded_contract(tmp_path: Path
 
 
 def test_unsupported_and_destructive_operations_fail_closed(tmp_path: Path) -> None:
+    """Verify that unsupported and destructive operations fail closed."""
     service, provider_id = dispatcher(tmp_path)
 
     response = service.dispatch(provider_id, request(0x14))
@@ -220,6 +238,7 @@ def test_unsupported_and_destructive_operations_fail_closed(tmp_path: Path) -> N
 
 
 def test_get_attributes_and_locate_stay_inside_provider(tmp_path: Path) -> None:
+    """Verify that get attributes and locate stay inside provider."""
     service, provider_id = dispatcher(tmp_path)
     key_id = created_key_id(service, provider_id)
     service.dispatch(
@@ -252,6 +271,7 @@ def test_get_attributes_and_locate_stay_inside_provider(tmp_path: Path) -> None:
 
 
 def test_name_and_activation_date_are_persisted_attributes(tmp_path: Path) -> None:
+    """Verify that name and activation date are persisted attributes."""
     service, provider_id = dispatcher(tmp_path)
     create = create_request()
     template = create.children(Tag.BATCH_ITEM)[0].child(Tag.REQUEST_PAYLOAD).child(
@@ -308,6 +328,7 @@ def test_name_and_activation_date_are_persisted_attributes(tmp_path: Path) -> No
 
 
 def test_create_rejects_algorithm_or_length_outside_contract(tmp_path: Path) -> None:
+    """Verify that create rejects algorithm or length outside contract."""
     service, provider_id = dispatcher(tmp_path)
     invalid = request(
         Operation.CREATE,
@@ -334,6 +355,7 @@ def test_create_rejects_algorithm_or_length_outside_contract(tmp_path: Path) -> 
 
 
 def test_raw_key_material_is_never_accepted_as_request_input(tmp_path: Path) -> None:
+    """Verify that raw key material is never accepted as request input."""
     service, provider_id = dispatcher(tmp_path)
 
     response = service.dispatch(

@@ -1,3 +1,5 @@
+"""Implement automation service behavior."""
+
 from __future__ import annotations
 
 import hashlib
@@ -63,6 +65,11 @@ def normalize_script_content(content: str, interpreter: str) -> str:
 
 
 def json_object(raw_value: str, *, label: str = "configuration") -> dict[str, Any]:
+    """Return json object.
+
+    Raises:
+        ValueError: If an input value is invalid.
+    """
     try:
         payload = json.loads(raw_value or "{}")
     except json.JSONDecodeError as exc:
@@ -73,6 +80,12 @@ def json_object(raw_value: str, *, label: str = "configuration") -> dict[str, An
 
 
 def bind_managed_script_vault_scope(db: Session, config: dict[str, Any]) -> None:
+    """Handle bind managed script vault scope.
+
+    Args:
+        db: Active database session.
+        config: Configuration values consumed by the operation.
+    """
     vault_id = int(config.get("vault_id") or 0)
     if not vault_id:
         config.pop("vault_scope", None)
@@ -82,6 +95,14 @@ def bind_managed_script_vault_scope(db: Session, config: dict[str, Any]) -> None
 
 
 def _parse_powershell_arguments(raw_value: str) -> list[str]:
+    """Parse powershell arguments.
+
+    Returns:
+        The parsed powershell arguments.
+
+    Raises:
+        ValueError: If an input value is invalid.
+    """
     arguments: list[str] = []
     current: list[str] = []
     quote: str | None = None
@@ -137,6 +158,14 @@ def _parse_powershell_arguments(raw_value: str) -> list[str]:
 
 
 def parse_script_arguments(raw_value: str, interpreter: str = "bash") -> list[str]:
+    """Parse script arguments.
+
+    Returns:
+        The parsed script arguments.
+
+    Raises:
+        ValueError: If an input value is invalid.
+    """
     if interpreter == "powershell":
         arguments = _parse_powershell_arguments(raw_value)
     else:
@@ -157,6 +186,11 @@ def parse_script_arguments(raw_value: str, interpreter: str = "bash") -> list[st
 
 
 def _field_values(expression: str, minimum: int, maximum: int, *, sunday_alias: bool = False) -> set[int]:
+    """Return field values.
+
+    Raises:
+        ValueError: If an input value is invalid.
+    """
     values: set[int] = set()
     for part in expression.split(","):
         part = part.strip()
@@ -181,6 +215,14 @@ def _field_values(expression: str, minimum: int, maximum: int, *, sunday_alias: 
 
 
 def parse_cron_expression(expression: str) -> tuple[set[int], set[int], set[int], set[int], set[int]]:
+    """Parse cron expression.
+
+    Returns:
+        The parsed cron expression.
+
+    Raises:
+        ValueError: If an input value is invalid.
+    """
     fields = expression.split()
     if len(fields) != 5:
         raise ValueError("Cron expression must contain five fields: minute hour day month weekday.")
@@ -201,6 +243,19 @@ def validate_schedule_values(
     run_once_at: datetime | None,
     timezone_name: str,
 ) -> list[str]:
+    """Validate schedule values.
+
+    Args:
+        task_type: Task type supplied by the caller.
+        task_config_json: Task config json supplied by the caller.
+        schedule_kind: Schedule kind supplied by the caller.
+        cron_expression: Cron expression supplied by the caller.
+        run_once_at: Run once at supplied by the caller.
+        timezone_name: Timezone name supplied by the caller.
+
+    Returns:
+        The validate schedule values result.
+    """
     errors: list[str] = []
     if task_type not in SCHEDULE_TASK_TYPES:
         errors.append("Choose a supported scheduled task type.")
@@ -241,12 +296,18 @@ def validate_schedule_values(
 
 
 def _aware_utc(value: datetime) -> datetime:
+    """Return aware utc."""
     if value.tzinfo is None:
         return value.replace(tzinfo=timezone.utc)
     return value.astimezone(timezone.utc)
 
 
 def next_cron_run(expression: str, timezone_name: str, *, after: datetime) -> datetime:
+    """Return next cron run.
+
+    Raises:
+        ValueError: If an input value is invalid.
+    """
     minute, hour, day, month, weekday = parse_cron_expression(expression)
     zone = ZoneInfo(timezone_name)
     candidate = _aware_utc(after).replace(second=0, microsecond=0) + timedelta(minutes=1)
@@ -267,6 +328,7 @@ def next_cron_run(expression: str, timezone_name: str, *, after: datetime) -> da
 
 
 def next_schedule_run(schedule: Schedule, *, after: datetime) -> datetime | None:
+    """Return next schedule run."""
     if not schedule.enabled:
         return None
     if schedule.schedule_kind == "once":
@@ -278,6 +340,12 @@ def next_schedule_run(schedule: Schedule, *, after: datetime) -> datetime | None
 
 
 def enabled_script_revision(db: Session, revision_id: int) -> AutomationScriptRevision | None:
+    """Return enabled script revision.
+
+    Args:
+        db: Active database session.
+        revision_id: Identifier of the revision.
+    """
     revision = db.get(AutomationScriptRevision, revision_id)
     return revision if revision is not None and revision.enabled else None
 
@@ -291,6 +359,22 @@ def create_script_revision(
     timeout_seconds: int,
     actor: str,
 ) -> AutomationScriptRevision:
+    """Create script revision.
+
+    Args:
+        db: Active database session.
+        script: Script supplied by the caller.
+        interpreter: Interpreter supplied by the caller.
+        content: Document or file content to process.
+        timeout_seconds: Maximum time to wait, in seconds.
+        actor: Authenticated identity attributed to the audit record.
+
+    Returns:
+        The created script revision.
+
+    Raises:
+        ValueError: If an input value is invalid.
+    """
     if interpreter not in SCRIPT_INTERPRETERS:
         raise ValueError("Interpreter must be bash, python, or powershell.")
     normalized_content = normalize_script_content(content, interpreter)
@@ -320,6 +404,17 @@ def create_script_revision(
 
 
 def enqueue_schedule_now(db: Session, *, schedule: Schedule, actor: str, now: datetime | None = None) -> Job:
+    """Return enqueue schedule now.
+
+    Args:
+        db: Active database session.
+        schedule: Schedule supplied by the caller.
+        actor: Authenticated identity attributed to the audit record.
+        now: Current timezone-aware time used for deterministic evaluation.
+
+    Raises:
+        ValueError: If an input value is invalid.
+    """
     current = _aware_utc(now or utcnow())
     active = (
         active_vcf_depot_operation_job(db)
@@ -394,6 +489,12 @@ def enqueue_schedule_now(db: Session, *, schedule: Schedule, actor: str, now: da
 
 
 def enqueue_due_schedules(db: Session, *, now: datetime | None = None) -> list[Job]:
+    """Return enqueue due schedules.
+
+    Args:
+        db: Active database session.
+        now: Current timezone-aware time used for deterministic evaluation.
+    """
     current = _aware_utc(now or utcnow())
     due = db.execute(
         select(Schedule)

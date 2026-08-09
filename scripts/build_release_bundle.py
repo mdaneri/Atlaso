@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+"""Provide the build release bundle repository utility."""
+
 from __future__ import annotations
 
 import argparse
@@ -39,10 +41,20 @@ SYSTEMD_FILES = (
 def run(
     command: list[str], *, cwd: Path = ROOT, env: dict[str, str] | None = None
 ) -> subprocess.CompletedProcess[str]:
+    """Run operation.
+
+    Returns:
+        The run result.
+    """
     return subprocess.run(command, cwd=cwd, env=env, check=False, capture_output=True, text=True)
 
 
 def git_value(args: list[str]) -> str:
+    """Return git value.
+
+    Raises:
+        SystemExit: If the operation encounters an invalid state.
+    """
     result = run(["git", *args])
     if result.returncode != 0:
         raise SystemExit(result.stderr.strip() or f"git {' '.join(args)} failed")
@@ -50,6 +62,11 @@ def git_value(args: list[str]) -> str:
 
 
 def project_version() -> str:
+    """Return project version.
+
+    Raises:
+        SystemExit: If the operation encounters an invalid state.
+    """
     match = re.search(r'^version\s*=\s*"([^"]+)"', (ROOT / "pyproject.toml").read_text(encoding="utf-8"), re.MULTILINE)
     if match is None:
         raise SystemExit("pyproject.toml does not define [project].version")
@@ -57,6 +74,11 @@ def project_version() -> str:
 
 
 def sha256(path: Path) -> str:
+    """Return sha256.
+
+    Args:
+        path: Filesystem or URL path to read, validate, or update.
+    """
     digest = hashlib.sha256()
     with path.open("rb") as handle:
         for block in iter(lambda: handle.read(1024 * 1024), b""):
@@ -65,10 +87,19 @@ def sha256(path: Path) -> str:
 
 
 def canonical_json(payload: dict) -> bytes:
+    """Return canonical json."""
     return (json.dumps(payload, indent=2, sort_keys=True) + "\n").encode("utf-8")
 
 
 def load_signing_key(path: Path) -> Ed25519PrivateKey:
+    """Return signing key.
+
+    Args:
+        path: Filesystem or URL path to read, validate, or update.
+
+    Raises:
+        SystemExit: If the operation encounters an invalid state.
+    """
     key = serialization.load_pem_private_key(path.read_bytes(), password=None)
     if not isinstance(key, Ed25519PrivateKey):
         raise SystemExit("release signing key must be an Ed25519 private key")
@@ -76,6 +107,13 @@ def load_signing_key(path: Path) -> Ed25519PrivateKey:
 
 
 def write_signature(path: Path, *, key_id: str, signature: bytes) -> None:
+    """Persist signature.
+
+    Args:
+        path: Filesystem or URL path to read, validate, or update.
+        key_id: Identifier of the key.
+        signature: Signature supplied by the caller.
+    """
     path.write_bytes(
         canonical_json(
             {
@@ -88,6 +126,7 @@ def write_signature(path: Path, *, key_id: str, signature: bytes) -> None:
 
 
 def copy_source(target: Path) -> None:
+    """Handle copy source."""
     shutil.copytree(
         ROOT,
         target,
@@ -108,6 +147,14 @@ def copy_source(target: Path) -> None:
 
 
 def build_application_wheel(target: Path, *, commit: str, built_at: str) -> Path:
+    """Build application wheel.
+
+    Returns:
+        The built application wheel.
+
+    Raises:
+        SystemExit: If the operation encounters an invalid state.
+    """
     source = target / "source"
     copy_source(source)
     (source / "atlaso/_build.py").write_text(
@@ -153,7 +200,9 @@ def build_application_wheel(target: Path, *, commit: str, built_at: str) -> Path
 
 
 def deterministic_tar_gz(source: Path, output: Path) -> None:
+    """Handle deterministic tar gz."""
     def normalized(info: tarfile.TarInfo) -> tarfile.TarInfo:
+        """Return normalized."""
         info.uid = 0
         info.gid = 0
         info.uname = "root"
@@ -171,6 +220,14 @@ def deterministic_tar_gz(source: Path, output: Path) -> None:
 
 
 def main() -> int:
+    """Run the command-line entry point.
+
+    Returns:
+        The main result.
+
+    Raises:
+        SystemExit: If the operation encounters an invalid state.
+    """
     parser = argparse.ArgumentParser(description="Build a signed, offline Atlaso appliance release bundle.")
     parser.add_argument("--wheelhouses", type=Path, required=True, help="Directory containing the cp314 wheelhouse.")
     parser.add_argument("--lock", type=Path, default=ROOT / "requirements-appliance.lock")

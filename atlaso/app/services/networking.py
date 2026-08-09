@@ -1,3 +1,5 @@
+"""Implement networking service behavior."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -41,6 +43,7 @@ VLAN_ROLES = ["access", "management", "services", "storage", "route"]
 
 @dataclass(frozen=True)
 class HostPhysicalInterface:
+    """Represent host physical interface."""
     name: str
     mac_address: str
     driver: str | None
@@ -53,6 +56,11 @@ class HostPhysicalInterface:
 
 
 def normalize_interface_mode(mode: str | None) -> str:
+    """Normalize interface mode.
+
+    Returns:
+        The normalize interface mode result.
+    """
     value = (mode or "unused").strip().lower()
     if value == "routed":
         return "access"
@@ -62,6 +70,11 @@ def normalize_interface_mode(mode: str | None) -> str:
 
 
 def normalize_interface_role(role: str | None) -> str:
+    """Normalize interface role.
+
+    Returns:
+        The normalize interface role result.
+    """
     value = (role or "unused").strip().lower()
     if value in {"management", "access", "route", "services", "storage", "unused"}:
         return value
@@ -69,11 +82,17 @@ def normalize_interface_role(role: str | None) -> str:
 
 
 def normalize_ipv4_method(value: str | None) -> str:
+    """Normalize ipv4 method.
+
+    Returns:
+        The normalize ipv4 method result.
+    """
     method = (value or "static").strip().lower()
     return method if method in IPV4_METHODS else "static"
 
 
 def physical_interface_to_dict(interface: PhysicalInterface, vlan_count: int = 0) -> dict:
+    """Return physical interface to dict."""
     role = normalize_interface_role(interface.role)
     return {
         "id": interface.id,
@@ -106,6 +125,7 @@ def physical_interface_to_dict(interface: PhysicalInterface, vlan_count: int = 0
 
 
 def vlan_interface_to_dict(vlan: VlanInterface, parent_missing: bool = False) -> dict:
+    """Return vlan interface to dict."""
     role = normalize_interface_role(vlan.role)
     return {
         "id": vlan.id,
@@ -122,6 +142,7 @@ def vlan_interface_to_dict(vlan: VlanInterface, parent_missing: bool = False) ->
 
 
 def trunk_parent_option(interface: PhysicalInterface) -> dict[str, str | int]:
+    """Return trunk parent option."""
     label_parts = [interface.name, "trunk"]
     if interface.inventory_source == "host":
         label_parts.append("host NIC")
@@ -135,6 +156,11 @@ def trunk_parent_option(interface: PhysicalInterface) -> dict[str, str | int]:
 
 
 def _read_text(path: Path) -> str:
+    """Return text.
+
+    Args:
+        path: Filesystem or URL path to read, validate, or update.
+    """
     try:
         return path.read_text(encoding="utf-8").strip()
     except OSError:
@@ -142,6 +168,7 @@ def _read_text(path: Path) -> str:
 
 
 def _interface_driver(sysfs_interface: Path) -> str | None:
+    """Return interface driver."""
     driver_path = sysfs_interface / "device" / "driver"
     try:
         return driver_path.resolve().name
@@ -150,6 +177,7 @@ def _interface_driver(sysfs_interface: Path) -> str | None:
 
 
 def _interface_speed(sysfs_interface: Path) -> str | None:
+    """Return interface speed."""
     speed = _read_text(sysfs_interface / "speed")
     if not speed or speed.startswith("-"):
         return None
@@ -157,6 +185,7 @@ def _interface_speed(sysfs_interface: Path) -> str | None:
 
 
 def _host_ip_cidr(row: dict, family: str) -> str | None:
+    """Return host ip cidr."""
     candidates = row.get("addr_info") or []
     for address in candidates:
         if address.get("family") != family:
@@ -171,6 +200,11 @@ def _host_ip_cidr(row: dict, family: str) -> str | None:
 
 
 def parse_linux_ip_interfaces(payload: str, *, sysfs_base: Path = Path("/sys/class/net")) -> list[HostPhysicalInterface]:
+    """Parse linux ip interfaces.
+
+    Returns:
+        The parsed linux ip interfaces.
+    """
     try:
         rows = json.loads(payload)
     except json.JSONDecodeError:
@@ -207,6 +241,7 @@ def parse_linux_ip_interfaces(payload: str, *, sysfs_base: Path = Path("/sys/cla
 
 
 def discover_host_physical_interfaces() -> list[HostPhysicalInterface]:
+    """Return discover host physical interfaces."""
     try:
         completed = subprocess.run(
             ["ip", "-j", "address", "show"],
@@ -222,10 +257,12 @@ def discover_host_physical_interfaces() -> list[HostPhysicalInterface]:
 
 
 def _mac_key(value: str | None) -> str:
+    """Return mac key."""
     return (value or "").strip().lower()
 
 
 def _missing_interface_name(interface: PhysicalInterface, used_names: set[str]) -> str:
+    """Return missing interface name."""
     mac = "".join(character for character in _mac_key(interface.mac_address) if character.isalnum())
     suffix = mac[-10:] or str(interface.id or interface.name or "nic")
     base = f"missing_{suffix}"[:50]
@@ -239,6 +276,7 @@ def _missing_interface_name(interface: PhysicalInterface, used_names: set[str]) 
 
 
 def _replace_interface_tokens(value: str | None, renames: dict[str, str]) -> str:
+    """Return replace interface tokens."""
     if not value:
         return value or ""
     tokens = [token.strip() for token in value.replace(",", "\n").splitlines() if token.strip()]
@@ -248,6 +286,7 @@ def _replace_interface_tokens(value: str | None, renames: dict[str, str]) -> str
 
 
 def _address_from_cidr(value: str | None) -> str:
+    """Return address from cidr."""
     if not value:
         return ""
     try:
@@ -257,6 +296,7 @@ def _address_from_cidr(value: str | None) -> str:
 
 
 def _cidr_validation_error(label: str, value: str | None, version: int) -> str | None:
+    """Return cidr validation error."""
     if not value:
         return None
     family = "IPv4" if version == 4 else "IPv6"
@@ -270,6 +310,16 @@ def _cidr_validation_error(label: str, value: str | None, version: int) -> str |
 
 
 def _set_setting_value(db: Session, key: str, value: str) -> Setting:
+    """Update setting value.
+
+    Args:
+        db: Active database session.
+        key: Stable setting, vault, or mapping key.
+        value: Value to process.
+
+    Returns:
+        The set setting value result.
+    """
     setting = db.execute(select(Setting).where(Setting.key == key)).scalar_one_or_none()
     if setting is None:
         setting = Setting(key=key, value=value)
@@ -281,6 +331,11 @@ def _set_setting_value(db: Session, key: str, value: str) -> Setting:
 
 
 def _remove_interface_tokens(value: str | None, targets: set[str]) -> tuple[str, list[str]]:
+    """Remove interface tokens.
+
+    Returns:
+        The remove interface tokens result.
+    """
     if not value:
         return "", []
     kept: list[str] = []
@@ -297,6 +352,7 @@ def _remove_interface_tokens(value: str | None, targets: set[str]) -> tuple[str,
 
 
 def _disable_service_without_bind(settings: object, label: str, details: list[str]) -> None:
+    """Handle disable service without bind."""
     if not bool(getattr(settings, "enabled", False)):
         return
     if _remove_interface_tokens(getattr(settings, "listen_interface", ""), set())[0]:
@@ -308,6 +364,15 @@ def _disable_service_without_bind(settings: object, label: str, details: list[st
 
 
 def _cleanup_missing_interface_references(db: Session, missing_renames: dict[str, str]) -> list[str]:
+    """Remove missing interface references.
+
+    Args:
+        db: Active database session.
+        missing_renames: Missing renames supplied by the caller.
+
+    Returns:
+        The cleanup missing interface references result.
+    """
     if not missing_renames:
         return []
     details: list[str] = []
@@ -471,6 +536,12 @@ def _cleanup_missing_interface_references(db: Session, missing_renames: dict[str
 
 
 def _retarget_interface_references(db: Session, renames: dict[str, str]) -> None:
+    """Handle retarget interface references.
+
+    Args:
+        db: Active database session.
+        renames: Renames supplied by the caller.
+    """
     if not renames:
         return
     expanded_renames = dict(renames)
@@ -526,6 +597,15 @@ def _rename_interface(
     used_names: set[str],
     renames: dict[str, str],
 ) -> None:
+    """Handle rename interface.
+
+    Args:
+        interface: Interface supplied by the caller.
+        new_name: New name supplied by the caller.
+        by_name: By name supplied by the caller.
+        used_names: Used names supplied by the caller.
+        renames: Renames supplied by the caller.
+    """
     old_name = interface.name
     if old_name == new_name:
         return
@@ -538,6 +618,7 @@ def _rename_interface(
 
 
 def _physical_interface_name_changes(interfaces: list[PhysicalInterface]) -> list[tuple[PhysicalInterface, str, str]]:
+    """Return physical interface name changes."""
     changes: list[tuple[PhysicalInterface, str, str]] = []
     for interface in interfaces:
         state = inspect(interface)
@@ -554,6 +635,12 @@ def _physical_interface_name_changes(interfaces: list[PhysicalInterface]) -> lis
 
 
 def _flush_physical_interface_name_changes(db: Session, changes: list[tuple[PhysicalInterface, str, str]]) -> None:
+    """Handle flush physical interface name changes.
+
+    Args:
+        db: Active database session.
+        changes: Changes supplied by the caller.
+    """
     if not changes:
         return
     used_names = {new_name for _interface, _old_name, new_name in changes}
@@ -576,6 +663,7 @@ def reconcile_host_physical_interfaces(
     *,
     renames: dict[str, str] | None = None,
 ) -> list[PhysicalInterface]:
+    """Return reconcile host physical interfaces."""
     now = utcnow()
     by_name = {interface.name: interface for interface in interfaces}
     mac_counts: dict[str, int] = {}
@@ -675,6 +763,11 @@ def reconcile_host_physical_interfaces(
 
 
 def sync_host_physical_interfaces(db: Session) -> tuple[list[PhysicalInterface], int]:
+    """Return sync host physical interfaces.
+
+    Args:
+        db: Active database session.
+    """
     discovered = discover_host_physical_interfaces()
     interfaces = db.execute(select(PhysicalInterface).order_by(PhysicalInterface.name)).scalars().all()
     renames: dict[str, str] = {}
@@ -721,6 +814,11 @@ def render_network_config(
     interfaces: list[PhysicalInterface],
     vlans: list[VlanInterface],
 ) -> str:
+    """Render network config.
+
+    Returns:
+        The rendered network config.
+    """
     lines = [
         "# Managed by Atlaso. Local changes may be overwritten.",
         "# Dry-run preview of desired Linux network state.",
@@ -772,6 +870,11 @@ def validate_network_state(
     interfaces: list[PhysicalInterface],
     vlans: list[VlanInterface],
 ) -> list[str]:
+    """Validate network state.
+
+    Returns:
+        The validate network state result.
+    """
     errors: list[str] = []
     interface_names = {interface.name for interface in interfaces}
     management_interfaces = [interface for interface in interfaces if interface.oper_state != "missing" and normalize_interface_role(interface.role) == "management"]

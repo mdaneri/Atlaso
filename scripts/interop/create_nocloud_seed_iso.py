@@ -10,6 +10,11 @@ from pathlib import Path
 
 
 def parse_args() -> argparse.Namespace:
+    """Parse args.
+
+    Returns:
+        The parsed args.
+    """
     parser = argparse.ArgumentParser(description="Create a NoCloud cidata ISO.")
     parser.add_argument("--output", required=True)
     parser.add_argument("--hostname", required=True)
@@ -20,6 +25,11 @@ def parse_args() -> argparse.Namespace:
 
 
 def cloud_init_files(args: argparse.Namespace) -> dict[str, str]:
+    """Return cloud init files.
+
+    Raises:
+        ValueError: If an input value is invalid.
+    """
     if not args.public_key and not args.password:
         raise ValueError("Either --public-key or --password is required for client SSH access.")
 
@@ -95,11 +105,17 @@ ethernets:
 
 
 def add_file(iso, name: str, content: str, iso_name: str) -> None:  # type: ignore[no-untyped-def]
+    """Create file."""
     data = content.encode("utf-8")
     iso.add_fp(io.BytesIO(data), len(data), iso_path=f"/{iso_name}.;1", joliet_path=f"/{name}")
 
 
 def main() -> int:
+    """Run the command-line entry point.
+
+    Returns:
+        The main result.
+    """
     try:
         import pycdlib
     except ImportError:

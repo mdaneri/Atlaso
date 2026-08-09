@@ -15,6 +15,7 @@ SCALE = 2
 
 
 def _font(size: int, *, bold: bool = False) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
+    """Return font."""
     candidates = (
         Path("C:/Windows/Fonts/segoeuib.ttf" if bold else "C:/Windows/Fonts/segoeui.ttf"),
         Path("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf" if bold else "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"),
@@ -26,11 +27,27 @@ def _font(size: int, *, bold: bool = False) -> ImageFont.FreeTypeFont | ImageFon
 
 
 def _centered(draw: ImageDraw.ImageDraw, y: int, text: str, font: ImageFont.ImageFont, fill: str) -> None:
+    """Handle centered.
+
+    Args:
+        draw: Draw supplied by the caller.
+        y: Y supplied by the caller.
+        text: Text to parse, render, or persist.
+        font: Font supplied by the caller.
+        fill: Fill supplied by the caller.
+    """
     box = draw.textbbox((0, 0), text, font=font)
     draw.text(((WIDTH * SCALE - (box[2] - box[0])) / 2, y * SCALE), text, font=font, fill=fill)
 
 
 def _scaled_asset(path: Path, max_width: int, max_height: int) -> Image.Image:
+    """Return scaled asset.
+
+    Args:
+        path: Filesystem or URL path to read, validate, or update.
+        max_width: Max width supplied by the caller.
+        max_height: Max height supplied by the caller.
+    """
     asset = Image.open(path).convert("RGBA")
     alpha_box = asset.getchannel("A").point(lambda alpha: 255 if alpha >= 16 else 0).getbbox()
     if alpha_box:
@@ -49,6 +66,7 @@ def _scaled_asset(path: Path, max_width: int, max_height: int) -> Image.Image:
 
 
 def generate(output: Path, photon_logo_path: Path, brand_icon_path: Path) -> None:
+    """Build operation."""
     width = WIDTH * SCALE
     height = HEIGHT * SCALE
     image = Image.new("RGB", (width, height), "#071A3A")
@@ -110,6 +128,11 @@ def generate(output: Path, photon_logo_path: Path, brand_icon_path: Path) -> Non
 
 
 def main() -> int:
+    """Run the command-line entry point.
+
+    Returns:
+        The main result.
+    """
     parser = argparse.ArgumentParser()
     parser.add_argument("output", type=Path)
     parser.add_argument(

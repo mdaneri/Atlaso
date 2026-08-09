@@ -1,3 +1,5 @@
+"""Test version behavior."""
+
 from __future__ import annotations
 
 import importlib.util
@@ -24,6 +26,16 @@ def write_version_sources(
     product: str = "Atlaso",
     distribution_name: str | None = None,
 ) -> None:
+    """Persist version sources.
+
+    Args:
+        root: Root directory that bounds filesystem access.
+        project: Project supplied by the caller.
+        runtime: Runtime supplied by the caller.
+        powershell: Powershell supplied by the caller.
+        product: Product supplied by the caller.
+        distribution_name: Distribution name supplied by the caller.
+    """
     runtime = project if runtime is None else runtime
     powershell = project if powershell is None else powershell
     package = product.lower()
@@ -44,15 +56,18 @@ def write_version_sources(
 
 @pytest.mark.parametrize("value", ["1", "1.2", "1.2.3.4", "v1.2.3", "1.2.3-alpha", "01.2.3"])
 def test_version_rejects_non_semver_values(value):
+    """Verify that version rejects non semver values."""
     with pytest.raises(versioning.VersionError, match="X.Y.Z"):
         versioning.Version.parse(value)
 
 
 def test_next_patch_handles_multi_digit_patch():
+    """Verify that next patch handles multi digit patch."""
     assert str(versioning.Version.parse("12.34.99").next_patch()) == "12.34.100"
 
 
 def test_read_project_version_accepts_crlf_without_other_version_sources(tmp_path):
+    """Verify that read project version accepts crlf without other version sources."""
     (tmp_path / "pyproject.toml").write_bytes(
         b'[project]\r\nname = "atlaso"\r\nversion = "1.2.3"\r\n'
     )
@@ -61,6 +76,7 @@ def test_read_project_version_accepts_crlf_without_other_version_sources(tmp_pat
 
 
 def test_read_project_version_reports_invalid_toml(tmp_path):
+    """Verify that read project version reports invalid toml."""
     (tmp_path / "pyproject.toml").write_text('[project]\nversion = "1.2.3"\nbroken = [\n', encoding="utf-8")
 
     with pytest.raises(versioning.VersionError, match="contains invalid TOML"):
@@ -68,6 +84,7 @@ def test_read_project_version_reports_invalid_toml(tmp_path):
 
 
 def test_check_rejects_inconsistent_sources(tmp_path):
+    """Verify that check rejects inconsistent sources."""
     write_version_sources(tmp_path, "0.1.0", runtime="0.1.1")
 
     with pytest.raises(versioning.VersionError, match="version sources disagree"):
@@ -75,6 +92,7 @@ def test_check_rejects_inconsistent_sources(tmp_path):
 
 
 def test_bump_synchronizes_all_sources_from_base(tmp_path):
+    """Verify that bump synchronizes all sources from base."""
     base = tmp_path / "base"
     target = tmp_path / "target"
     write_version_sources(base, "0.1.9")
@@ -96,6 +114,7 @@ def test_bump_synchronizes_all_sources_from_base(tmp_path):
 
 
 def test_bump_is_idempotent_when_target_is_expected_patch(tmp_path):
+    """Verify that bump is idempotent when target is expected patch."""
     base = tmp_path / "base"
     target = tmp_path / "target"
     write_version_sources(base, "2.4.6")
@@ -107,6 +126,7 @@ def test_bump_is_idempotent_when_target_is_expected_patch(tmp_path):
 
 
 def test_bump_uses_explicit_target_version(tmp_path):
+    """Verify that bump uses explicit target version."""
     write_version_sources(tmp_path, "2.4.6")
 
     bumped, changed = versioning.bump(
@@ -119,6 +139,7 @@ def test_bump_uses_explicit_target_version(tmp_path):
 
 
 def test_bump_explicit_current_version_is_idempotent(tmp_path):
+    """Verify that bump explicit current version is idempotent."""
     write_version_sources(tmp_path, "2.4.6")
 
     bumped, changed = versioning.bump(
@@ -131,6 +152,7 @@ def test_bump_explicit_current_version_is_idempotent(tmp_path):
 
 
 def test_bump_rejects_explicit_target_beyond_next_patch(tmp_path):
+    """Verify that bump rejects explicit target beyond next patch."""
     write_version_sources(tmp_path, "2.4.6")
 
     with pytest.raises(versioning.VersionError, match="next patch 2.4.7"):
@@ -143,6 +165,7 @@ def test_bump_rejects_explicit_target_beyond_next_patch(tmp_path):
 
 
 def test_bump_rejects_explicit_version_with_base_root(tmp_path):
+    """Verify that bump rejects explicit version with base root."""
     base = tmp_path / "base"
     target = tmp_path / "target"
     write_version_sources(base, "2.4.6")
@@ -157,6 +180,7 @@ def test_bump_rejects_explicit_version_with_base_root(tmp_path):
 
 
 def test_main_bump_accepts_explicit_version(tmp_path, capsys):
+    """Verify that main bump accepts explicit version."""
     write_version_sources(tmp_path, "2.4.6")
 
     result = versioning.main(["bump", "--root", str(tmp_path), "--version", "2.4.7"])
@@ -167,6 +191,7 @@ def test_main_bump_accepts_explicit_version(tmp_path, capsys):
 
 
 def test_main_rejects_invalid_explicit_version(tmp_path, capsys):
+    """Verify that main rejects invalid explicit version."""
     write_version_sources(tmp_path, "2.4.6")
 
     result = versioning.main(["bump", "--root", str(tmp_path), "--version", "v2.5"])
@@ -177,6 +202,7 @@ def test_main_rejects_invalid_explicit_version(tmp_path, capsys):
 
 
 def test_powershell_wrapper_delegates_to_version_script():
+    """Verify that powershell wrapper delegates to version script."""
     wrapper = POWERSHELL_WRAPPER.read_text(encoding="utf-8")
 
     assert "ValidatePattern" in wrapper
@@ -187,6 +213,7 @@ def test_powershell_wrapper_delegates_to_version_script():
 
 
 def test_check_discovers_version_sources_when_product_paths_change(tmp_path):
+    """Verify that check discovers version sources when product paths change."""
     base = tmp_path / "base"
     target = tmp_path / "target"
     write_version_sources(base, "0.9.17", product="Previous")
@@ -196,6 +223,7 @@ def test_check_discovers_version_sources_when_product_paths_change(tmp_path):
 
 
 def test_bump_writes_discovered_version_sources_when_product_paths_change(tmp_path):
+    """Verify that bump writes discovered version sources when product paths change."""
     base = tmp_path / "base"
     target = tmp_path / "target"
     write_version_sources(
@@ -216,6 +244,7 @@ def test_bump_writes_discovered_version_sources_when_product_paths_change(tmp_pa
 
 
 def test_check_allows_project_rename_to_retain_base_version(tmp_path):
+    """Verify that check allows project rename to retain base version."""
     base = tmp_path / "base"
     target = tmp_path / "target"
     write_version_sources(base, "0.9.18", product="Previous")
@@ -230,6 +259,7 @@ def test_check_allows_project_rename_to_retain_base_version(tmp_path):
 def test_check_does_not_treat_normalized_distribution_spelling_as_rename(
     tmp_path, equivalent_name
 ):
+    """Verify that check does not treat normalized distribution spelling as rename."""
     base = tmp_path / "base"
     target = tmp_path / "target"
     write_version_sources(base, "0.9.18", distribution_name="atlas-o")
@@ -244,6 +274,7 @@ def test_check_does_not_treat_normalized_distribution_spelling_as_rename(
 
 
 def test_check_allows_approved_pre_ga_release_line_transition(tmp_path):
+    """Verify that check allows approved pre ga release line transition."""
     base = tmp_path / "base"
     target = tmp_path / "target"
     write_version_sources(base, "0.1.11")
@@ -255,6 +286,7 @@ def test_check_allows_approved_pre_ga_release_line_transition(tmp_path):
 
 
 def test_bump_rejects_unexpected_target_version(tmp_path):
+    """Verify that bump rejects unexpected target version."""
     base = tmp_path / "base"
     target = tmp_path / "target"
     write_version_sources(base, "2.4.6")
@@ -265,6 +297,7 @@ def test_bump_rejects_unexpected_target_version(tmp_path):
 
 
 def test_check_requires_an_allowed_version_above_base(tmp_path):
+    """Verify that check requires an allowed version above base."""
     base = tmp_path / "base"
     target = tmp_path / "target"
     write_version_sources(base, "0.8.4")

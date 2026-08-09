@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+"""Provide the build inventory linux package repository utility."""
+
 from __future__ import annotations
 
 import argparse
@@ -14,11 +16,21 @@ INVENTORY_VERSION_RE = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+\+[0-9]+$")
 
 
 def sha256(path: Path) -> str:
+    """Return sha256.
+
+    Args:
+        path: Filesystem or URL path to read, validate, or update.
+    """
     with path.open("rb") as stream:
         return hashlib.file_digest(stream, "sha256").hexdigest()
 
 
 def package_inventory_linux(source: Path, output: Path) -> Path:
+    """Return package inventory linux.
+
+    Raises:
+        SystemExit: If the operation encounters an invalid state.
+    """
     manifest_path = source / "manifest.json"
     try:
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -62,6 +74,11 @@ def package_inventory_linux(source: Path, output: Path) -> Path:
 
 
 def main() -> int:
+    """Run the command-line entry point.
+
+    Returns:
+        The main result.
+    """
     parser = argparse.ArgumentParser(description="Build the reproducible Atlaso Inventory Linux release package.")
     parser.add_argument("--source", type=Path, default=ROOT / "image/inventory-linux/output")
     parser.add_argument("--output", type=Path, default=ROOT / "dist/inventory-linux")

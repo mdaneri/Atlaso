@@ -1,3 +1,5 @@
+"""Implement vcf depot target service behavior."""
+
 from __future__ import annotations
 
 import time
@@ -15,25 +17,30 @@ SUPPORTED_ROLES = {"VcfInstaller", "SddcManager"}
 
 
 class VcfDepotTargetError(RuntimeError):
+    """Report a vcf depot target error."""
     pass
 
 
 class VcfDepotTargetPartialError(VcfDepotTargetError):
+    """Report a vcf depot target partial error."""
     pass
 
 
 @dataclass(frozen=True)
 class LocalDepotEndpoint:
+    """Represent local depot endpoint."""
     hostname: str
     port: int
     url: str
     username: str
 
     def sanitized(self) -> dict[str, Any]:
+        """Return sanitized."""
         return {"hostname": self.hostname, "port": self.port, "url": self.url, "username": self.username}
 
 
 def sanitize_remote_depot(payload: dict[str, Any]) -> dict[str, Any]:
+    """Return sanitize remote depot."""
     configuration = payload.get("depotConfiguration") or {}
     account = payload.get("offlineAccount") or {}
     return {
@@ -48,6 +55,7 @@ def sanitize_remote_depot(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 def depot_matches(remote: dict[str, Any], local: LocalDepotEndpoint) -> bool:
+    """Return depot matches."""
     sanitized = sanitize_remote_depot(remote)
     remote_url = sanitized["url"].rstrip("/").lower()
     return bool(
@@ -60,7 +68,21 @@ def depot_matches(remote: dict[str, Any], local: LocalDepotEndpoint) -> bool:
 
 
 class VcfDepotApiClient:
+    """Represent vcf depot api client."""
     def __init__(self, address: str, username: str, password: str, *, port: int = 443, timeout: float = 30.0, expected_fingerprint: str = ""):
+        """Initialize the vcf depot api client.
+
+        Args:
+            address: Network address of the target service or interface.
+            username: Account name used for authentication or lookup.
+            password: Password supplied for the immediate authenticated operation.
+            port: TCP or UDP port of the target service.
+            timeout: Maximum time to wait for completion.
+            expected_fingerprint: Certificate fingerprint explicitly confirmed by the operator.
+
+        Raises:
+            VcfDepotTargetError: If the operation encounters an invalid state.
+        """
         if expected_fingerprint and tls_sha256_fingerprint(address, port).upper() != expected_fingerprint.upper():
             raise VcfDepotTargetError("The VCF appliance TLS certificate changed after confirmation.")
         normalized = address.strip().strip("[]")
@@ -75,6 +97,14 @@ class VcfDepotApiClient:
         self.password = password
 
     def __enter__(self) -> "VcfDepotApiClient":
+        """Enter the managed context.
+
+        Returns:
+            The enter result.
+
+        Raises:
+            VcfDepotTargetError: If the operation encounters an invalid state.
+        """
         response = self.client.post("/v1/tokens", json={"username": self.username, "password": self.password})
         self._raise(response, "VCF API authentication failed")
         token = str(response.json().get("accessToken") or "")
@@ -84,10 +114,16 @@ class VcfDepotApiClient:
         return self
 
     def __exit__(self, *_args: object) -> None:
+        """Exit the managed context without suppressing exceptions."""
         self.client.close()
 
     @staticmethod
     def _raise(response: httpx.Response, message: str) -> None:
+        """Handle raise.
+
+        Raises:
+            VcfDepotTargetError: If the operation encounters an invalid state.
+        """
         if response.is_success:
             return
         detail = ""
@@ -99,6 +135,11 @@ class VcfDepotApiClient:
         raise VcfDepotTargetError(f"{message} ({response.status_code}{': ' + detail if detail else ''})")
 
     def appliance_info(self) -> dict[str, str]:
+        """Return appliance info.
+
+        Raises:
+            VcfDepotTargetError: If the operation encounters an invalid state.
+        """
         response = self.client.get("/v1/system/appliance-info")
         self._raise(response, "Could not read VCF appliance information")
         payload = response.json()
@@ -111,11 +152,21 @@ class VcfDepotApiClient:
         return {"role": role, "version": version}
 
     def depot_settings(self) -> dict[str, Any]:
+        """Return depot settings."""
         response = self.client.get("/v1/system/settings/depot")
         self._raise(response, "Could not read VCF depot settings")
         return dict(response.json())
 
     def update_depot(self, local: LocalDepotEndpoint, password: str) -> dict[str, Any]:
+        """Update depot.
+
+        Args:
+            local: Local supplied by the caller.
+            password: Password supplied for the immediate authenticated operation.
+
+        Returns:
+            The update depot result.
+        """
         response = self.client.put(
             "/v1/system/settings/depot",
             json={
@@ -131,17 +182,28 @@ class VcfDepotApiClient:
         return dict(response.json())
 
     def sync_info(self) -> dict[str, Any]:
+        """Return sync info."""
         response = self.client.get("/v1/system/settings/depot/depot-sync-info")
         self._raise(response, "Could not read VCF depot sync status")
         return dict(response.json())
 
     def start_sync(self) -> dict[str, Any]:
+        """Return start sync."""
         response = self.client.patch("/v1/system/settings/depot/depot-sync-info")
         self._raise(response, "VCF rejected the depot metadata sync request")
         return dict(response.json())
 
 
 def inspect_target_depot(address: str, api_username: str, api_password: str, *, port: int = 443, expected_fingerprint: str = "") -> dict[str, Any]:
+    """Return inspect target depot.
+
+    Args:
+        address: Network address of the target service or interface.
+        api_username: Api username supplied by the caller.
+        api_password: Api password supplied by the caller.
+        port: TCP or UDP port of the target service.
+        expected_fingerprint: Certificate fingerprint explicitly confirmed by the operator.
+    """
     with VcfDepotApiClient(address, api_username, api_password, port=port, expected_fingerprint=expected_fingerprint) as api:
         return {"appliance": api.appliance_info(), "depot": sanitize_remote_depot(api.depot_settings())}
 
@@ -160,6 +222,28 @@ def configure_target_depot(
     port: int = 443,
     expected_fingerprint: str = "",
 ) -> dict[str, Any]:
+    """Update target depot.
+
+    Args:
+        address: Network address of the target service or interface.
+        api_username: Api username supplied by the caller.
+        api_password: Api password supplied by the caller.
+        local: Local supplied by the caller.
+        depot_password: Depot password supplied by the caller.
+        replace_existing: Replace existing supplied by the caller.
+        timeout: Maximum time to wait for completion.
+        poll_interval: Poll interval supplied by the caller.
+        progress: Progress supplied by the caller.
+        port: TCP or UDP port of the target service.
+        expected_fingerprint: Certificate fingerprint explicitly confirmed by the operator.
+
+    Returns:
+        The configure target depot result.
+
+    Raises:
+        VcfDepotTargetError: If the operation encounters an invalid state.
+        VcfDepotTargetPartialError: If the operation encounters an invalid state.
+    """
     with VcfDepotApiClient(address, api_username, api_password, port=port, expected_fingerprint=expected_fingerprint) as api:
         appliance = api.appliance_info()
         current = api.depot_settings()

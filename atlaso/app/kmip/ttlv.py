@@ -18,6 +18,7 @@ class TtlvError(ValueError):
 
 
 class TtlvType(IntEnum):
+    """Represent ttlv type."""
     STRUCTURE = 0x01
     INTEGER = 0x02
     LONG_INTEGER = 0x03
@@ -32,11 +33,17 @@ class TtlvType(IntEnum):
 
 @dataclass(frozen=True)
 class Ttlv:
+    """Represent ttlv."""
     tag: int
     type: TtlvType
     value: tuple["Ttlv", ...] | int | bool | str | bytes
 
     def children(self, tag: int | None = None) -> list["Ttlv"]:
+        """Return children.
+
+        Raises:
+            TtlvError: If the operation encounters an invalid state.
+        """
         if self.type is not TtlvType.STRUCTURE:
             raise TtlvError("TTLV node is not a structure.")
         values = list(self.value)
@@ -44,6 +51,11 @@ class Ttlv:
         return values if tag is None else [item for item in values if item.tag == tag]
 
     def child(self, tag: int, *, required: bool = True) -> "Ttlv | None":
+        """Return child.
+
+        Raises:
+            TtlvError: If the operation encounters an invalid state.
+        """
         matches = self.children(tag)
         if len(matches) > 1:
             raise TtlvError(f"TTLV tag {tag:#08x} must not be duplicated.")
@@ -55,34 +67,46 @@ class Ttlv:
 
 
 def structure(tag: int, *children: Ttlv) -> Ttlv:
+    """Return structure."""
     return Ttlv(tag, TtlvType.STRUCTURE, tuple(children))
 
 
 def integer(tag: int, value: int) -> Ttlv:
+    """Return integer."""
     return Ttlv(tag, TtlvType.INTEGER, value)
 
 
 def enumeration(tag: int, value: int) -> Ttlv:
+    """Return enumeration."""
     return Ttlv(tag, TtlvType.ENUMERATION, value)
 
 
 def boolean(tag: int, value: bool) -> Ttlv:
+    """Return boolean."""
     return Ttlv(tag, TtlvType.BOOLEAN, value)
 
 
 def text_string(tag: int, value: str) -> Ttlv:
+    """Return text string."""
     return Ttlv(tag, TtlvType.TEXT_STRING, value)
 
 
 def byte_string(tag: int, value: bytes) -> Ttlv:
+    """Return byte string."""
     return Ttlv(tag, TtlvType.BYTE_STRING, value)
 
 
 def date_time(tag: int, value: int) -> Ttlv:
+    """Return date time."""
     return Ttlv(tag, TtlvType.DATE_TIME, value)
 
 
 def _encoded_value(node: Ttlv) -> bytes:
+    """Return encoded value.
+
+    Raises:
+        TtlvError: If the operation encounters an invalid state.
+    """
     if node.type is TtlvType.STRUCTURE:
         children = node.value
         if not isinstance(children, tuple) or not all(isinstance(item, Ttlv) for item in children):
@@ -112,6 +136,14 @@ def _encoded_value(node: Ttlv) -> bytes:
 
 
 def encode(node: Ttlv) -> bytes:
+    """Serialize operation.
+
+    Returns:
+        The encode result.
+
+    Raises:
+        TtlvError: If the operation encounters an invalid state.
+    """
     if node.tag < 0x420000 or node.tag > 0x42FFFF:
         raise TtlvError("Only standard KMIP tags are supported.")
     value = _encoded_value(node)
@@ -124,6 +156,7 @@ def encode(node: Ttlv) -> bytes:
 
 @dataclass
 class _DecodeState:
+    """Represent decode state."""
     nodes: int = 0
 
 
@@ -134,6 +167,14 @@ def _decode_one(
     depth: int,
     state: _DecodeState,
 ) -> tuple[Ttlv, int]:
+    """Deserialize one.
+
+    Returns:
+        The decode one result.
+
+    Raises:
+        TtlvError: If the operation encounters an invalid state.
+    """
     if depth > MAX_NESTING_DEPTH:
         raise TtlvError("TTLV nesting exceeds the maximum depth.")
     if offset + 8 > len(data):
@@ -199,6 +240,14 @@ def _decode_one(
 
 
 def decode(data: bytes) -> Ttlv:
+    """Deserialize operation.
+
+    Returns:
+        The decode result.
+
+    Raises:
+        TtlvError: If the operation encounters an invalid state.
+    """
     if not data:
         raise TtlvError("TTLV message is empty.")
     if len(data) > MAX_MESSAGE_BYTES + 8:
@@ -210,6 +259,11 @@ def decode(data: bytes) -> Ttlv:
 
 
 def assert_only_tags(node: Ttlv, allowed: Iterable[int]) -> None:
+    """Check only tags.
+
+    Raises:
+        TtlvError: If the operation encounters an invalid state.
+    """
     allowed_set = set(allowed)
     unexpected = sorted({child.tag for child in node.children()} - allowed_set)
     if unexpected:

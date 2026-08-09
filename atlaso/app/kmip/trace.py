@@ -76,6 +76,7 @@ class TraceSummary:
     result_statuses: dict[str, int]
 
     def to_dict(self) -> dict[str, object]:
+        """Return to dict."""
         return {
             "contract_id": self.contract_id,
             "contract_sha256": self.contract_sha256,
@@ -88,6 +89,14 @@ class TraceSummary:
 
 
 def validate_contract(contract: dict[str, Any]) -> dict[str, Any]:
+    """Validate contract.
+
+    Returns:
+        The validate contract result.
+
+    Raises:
+        TraceValidationError: If the operation encounters an invalid state.
+    """
     if set(contract) != CONTRACT_FIELDS:
         missing = sorted(CONTRACT_FIELDS - contract.keys())
         extra = sorted(contract.keys() - CONTRACT_FIELDS)
@@ -156,6 +165,14 @@ def validate_contract(contract: dict[str, Any]) -> dict[str, Any]:
 
 
 def load_contract(path: Path = CONTRACT_PATH) -> dict[str, Any]:
+    """Return contract.
+
+    Args:
+        path: Filesystem or URL path to read, validate, or update.
+
+    Raises:
+        TraceValidationError: If the operation encounters an invalid state.
+    """
     contract = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(contract, dict):
         raise TraceValidationError("KMIP contract must be a JSON object.")
@@ -163,10 +180,16 @@ def load_contract(path: Path = CONTRACT_PATH) -> dict[str, Any]:
 
 
 def _normalized_field(value: str) -> str:
+    """Return normalized field."""
     return "".join(character for character in value.casefold() if character.isalnum())
 
 
 def _reject_secret_fields(value: Any, *, location: str) -> None:
+    """Handle reject secret fields.
+
+    Raises:
+        TraceValidationError: If the operation encounters an invalid state.
+    """
     if isinstance(value, dict):
         for key, child in value.items():
             normalized = _normalized_field(str(key))
@@ -181,6 +204,11 @@ def _reject_secret_fields(value: Any, *, location: str) -> None:
 
 
 def _require_sha256(value: object, *, field: str, line: int) -> str:
+    """Return require sha256.
+
+    Raises:
+        TraceValidationError: If the operation encounters an invalid state.
+    """
     text = str(value)
     if len(text) != 64 or any(character not in "0123456789abcdef" for character in text):
         raise TraceValidationError(f"line {line}: {field} must be a lowercase SHA-256 digest.")
@@ -193,6 +221,11 @@ def _validate_event(
     contract: dict[str, Any],
     line: int,
 ) -> None:
+    """Validate event.
+
+    Raises:
+        TraceValidationError: If the operation encounters an invalid state.
+    """
     _reject_secret_fields(event, location=f"line {line}")
     missing = sorted(REQUIRED_FIELDS - event.keys())
     extra = sorted(event.keys() - REQUIRED_FIELDS)
@@ -266,6 +299,14 @@ def validate_trace(
     contract: dict[str, Any] | None = None,
     contract_bytes: bytes | None = None,
 ) -> TraceSummary:
+    """Validate trace.
+
+    Returns:
+        The validate trace result.
+
+    Raises:
+        TraceValidationError: If the operation encounters an invalid state.
+    """
     selected_contract = validate_contract(contract) if contract is not None else load_contract()
     events: list[dict[str, Any]] = []
     for line_number, raw_line in enumerate(lines, start=1):
@@ -299,6 +340,11 @@ def validate_trace(
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Run the command-line entry point.
+
+    Returns:
+        The main result.
+    """
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("trace", type=Path, help="Redacted JSONL trace to validate.")
     parser.add_argument(

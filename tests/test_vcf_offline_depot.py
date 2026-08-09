@@ -1,3 +1,5 @@
+"""Test vcf offline depot behavior."""
+
 import io
 import tarfile
 
@@ -18,15 +20,18 @@ from atlaso.app.services.vcf_offline_depot import (
 
 
 def test_staged_vcf_download_tool_version_uses_validated_archive_name():
+    """Verify that staged vcf download tool version uses validated archive name."""
     assert staged_vcf_download_tool_version("/var/lib/atlaso/vcf-download-tool-9.1.0.0100.25429019.tar.gz") == "9.1.0.0100.25429019"
     assert staged_vcf_download_tool_version("/var/lib/atlaso/not-vcfdt-9.1.0.tar.gz") == ""
 
 
 def depot_http_user(*, enabled: bool = True) -> User:
+    """Return depot http user."""
     return User(id=1, username="vcf-depot", role="viewer", enabled=enabled)
 
 
 def test_vcf_depot_start_requires_correct_credential_kind_without_blocking_apply(tmp_path):
+    """Verify that vcf depot start requires correct credential kind without blocking apply."""
     archive = tmp_path / "vcf-download-tool-9.1.0.test.tar.gz"
     archive.write_bytes(b"not-a-real-archive")
     settings = VcfOfflineDepotSettings(
@@ -83,6 +88,7 @@ def test_vcf_depot_start_requires_correct_credential_kind_without_blocking_apply
 
 
 def test_vcf_depot_application_properties_does_not_scan_uploaded_tool_archive(tmp_path):
+    """Verify that vcf depot application properties does not scan uploaded tool archive."""
     archive = tmp_path / "vcf-download-tool-9.1.0.test.tar.gz"
     properties = b"spring.profiles.active=depot\nlcm.depot.adapter.host=archive.example.test\n"
     with tarfile.open(archive, "w:gz") as bundle:
@@ -99,6 +105,7 @@ def test_vcf_depot_application_properties_does_not_scan_uploaded_tool_archive(tm
 
 
 def test_vcf_depot_application_properties_skips_nested_archive_members(tmp_path):
+    """Verify that vcf depot application properties skips nested archive members."""
     archive = tmp_path / "vcf-download-tool-9.1.0.test.tar.gz"
     properties = b"spring.profiles.active=depot\nlcm.depot.adapter.host=nested-archive.example.test\n"
     with tarfile.open(archive, "w:gz") as bundle:
@@ -115,6 +122,7 @@ def test_vcf_depot_application_properties_skips_nested_archive_members(tmp_path)
 
 
 def test_vcf_depot_application_properties_falls_back_when_archive_member_is_missing(tmp_path, monkeypatch):
+    """Verify that vcf depot application properties falls back when archive member is missing."""
     archive = tmp_path / "vcf-download-tool-9.1.0.test.tar.gz"
     with tarfile.open(archive, "w:gz") as bundle:
         payload = b"9.1.0"
@@ -131,6 +139,7 @@ def test_vcf_depot_application_properties_falls_back_when_archive_member_is_miss
 
 
 def test_vcf_depot_validation_uses_documented_component_catalog(tmp_path):
+    """Verify that vcf depot validation uses documented component catalog."""
     archive = tmp_path / "vcf-download-tool-9.1.0.test.tar.gz"
     archive.write_bytes(b"not-a-real-archive")
     settings = VcfOfflineDepotSettings(
@@ -172,6 +181,7 @@ def test_vcf_depot_validation_uses_documented_component_catalog(tmp_path):
 
 
 def test_vcf_depot_validation_uses_esx_disabled_platform_catalog(tmp_path):
+    """Verify that vcf depot validation uses esx disabled platform catalog."""
     archive = tmp_path / "vcf-download-tool-9.1.0.test.tar.gz"
     archive.write_bytes(b"not-a-real-archive")
     settings = VcfOfflineDepotSettings(
@@ -232,6 +242,7 @@ def test_vcf_depot_validation_uses_esx_disabled_platform_catalog(tmp_path):
 
 
 def test_vcf_depot_validation_allows_https_only_without_vcfdt_upload():
+    """Verify that vcf depot validation allows https only without vcfdt upload."""
     settings = VcfOfflineDepotSettings(
         enabled=True,
         hostname="depot.atlaso.internal",
@@ -251,6 +262,7 @@ def test_vcf_depot_validation_allows_https_only_without_vcfdt_upload():
 
 
 def test_vcf_depot_validation_requires_user_unless_unauthenticated_access_is_enabled():
+    """Verify that vcf depot validation requires user unless unauthenticated access is enabled."""
     settings = VcfOfflineDepotSettings(
         enabled=True,
         hostname="depot.atlaso.internal",
@@ -275,6 +287,7 @@ def test_vcf_depot_validation_requires_user_unless_unauthenticated_access_is_ena
 
 
 def test_vcf_depot_nginx_config_renders_atlaso_auth_request_by_default():
+    """Verify that vcf depot nginx config renders atlaso auth request by default."""
     settings = VcfOfflineDepotSettings(
         enabled=True,
         hostname="depot.atlaso.internal",
@@ -317,6 +330,7 @@ def test_vcf_depot_nginx_config_renders_atlaso_auth_request_by_default():
 
 
 def test_vcf_depot_validation_rejects_management_role_interfaces():
+    """Verify that vcf depot validation rejects management role interfaces."""
     settings = VcfOfflineDepotSettings(
         enabled=True,
         hostname="depot.atlaso.internal",
@@ -336,6 +350,7 @@ def test_vcf_depot_validation_rejects_management_role_interfaces():
 
 
 def test_vcf_depot_parses_generated_software_depot_id():
+    """Verify that vcf depot parses generated software depot id."""
     assert parse_software_depot_id("Software Depot ID: 8c9506c6-7bdf-44d5-b2e9-50d829d66b99\n") == "8c9506c6-7bdf-44d5-b2e9-50d829d66b99"
     assert parse_software_depot_id("Use activation code for software depot id LF-DEPOT-9-1-001\n") == "LF-DEPOT-9-1-001"
     assert (
@@ -350,6 +365,7 @@ def test_vcf_depot_parses_generated_software_depot_id():
 
 
 def test_vcf_depot_generates_software_depot_id_from_extracted_tool(tmp_path, monkeypatch):
+    """Verify that vcf depot generates software depot id from extracted tool."""
     archive_path = tmp_path / "vcf-download-tool-9.1.0.test.tar.gz"
     payload = b"placeholder executable"
     with tarfile.open(archive_path, "w:gz") as archive:
@@ -361,6 +377,7 @@ def test_vcf_depot_generates_software_depot_id_from_extracted_tool(tmp_path, mon
     commands = []
 
     def fake_run(command, **kwargs):
+        """Return fake run."""
         commands.append(command)
         assert command[0] == str((tmp_path / "active-tool" / "bin" / "vcf-download-tool").resolve())
         assert kwargs["cwd"] == str((tmp_path / "active-tool" / "bin").resolve())
@@ -395,6 +412,7 @@ def test_vcf_depot_generates_software_depot_id_from_extracted_tool(tmp_path, mon
 
 
 def test_vcf_depot_software_depot_id_generation_handles_truncated_archive(tmp_path):
+    """Verify that vcf depot software depot id generation handles truncated archive."""
     archive_path = tmp_path / "vcf-download-tool-9.1.0.test.tar.gz"
     archive_path.write_bytes(b"\x1f\x8b\x08\x00truncated")
 
@@ -405,6 +423,7 @@ def test_vcf_depot_software_depot_id_generation_handles_truncated_archive(tmp_pa
 
 
 def test_vcf_depot_command_preview_uses_staged_secret_paths():
+    """Verify that vcf depot command preview uses staged secret paths."""
     settings = VcfOfflineDepotSettings(
         hostname="depot.atlaso.internal",
         depot_store_path="/mnt/atlaso-vcf-offline-depot",
@@ -450,6 +469,7 @@ def test_vcf_depot_command_preview_uses_staged_secret_paths():
 
 
 def test_vcf_depot_download_profiles_use_activation_code_when_no_token_is_staged():
+    """Verify that vcf depot download profiles use activation code when no token is staged."""
     settings = VcfOfflineDepotSettings(
         hostname="depot.atlaso.internal",
         depot_store_path="/mnt/atlaso-vcf-offline-depot",
@@ -473,6 +493,7 @@ def test_vcf_depot_download_profiles_use_activation_code_when_no_token_is_staged
 
 
 def test_vcf_depot_download_profiles_use_the_preferred_staged_credential():
+    """Verify that vcf depot download profiles use the preferred staged credential."""
     settings = VcfOfflineDepotSettings(
         hostname="depot.atlaso.internal",
         depot_store_path="/mnt/atlaso-vcf-offline-depot",
@@ -507,6 +528,7 @@ def test_vcf_depot_download_profiles_use_the_preferred_staged_credential():
 
 
 def test_vcf_depot_command_preview_supports_patch_only_profiles():
+    """Verify that vcf depot command preview supports patch only profiles."""
     settings = VcfOfflineDepotSettings(
         hostname="depot.atlaso.internal",
         depot_store_path="/mnt/atlaso-vcf-offline-depot",
@@ -536,6 +558,7 @@ def test_vcf_depot_command_preview_supports_patch_only_profiles():
 
 
 def test_vcf_depot_nginx_preview_uses_ca_paths_and_static_file_directives():
+    """Verify that vcf depot nginx preview uses ca paths and static file directives."""
     settings = VcfOfflineDepotSettings(
         enabled=True,
         hostname="depot.atlaso.internal",
@@ -583,6 +606,7 @@ def test_vcf_depot_nginx_preview_uses_ca_paths_and_static_file_directives():
 
 
 def test_vcf_depot_nginx_preview_brackets_ipv6_listeners():
+    """Verify that vcf depot nginx preview brackets ipv6 listeners."""
     settings = VcfOfflineDepotSettings(
         enabled=True,
         hostname="depot.atlaso.internal",

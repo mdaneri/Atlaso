@@ -1,3 +1,5 @@
+"""Implement dnsmasq service behavior."""
+
 import json
 import re
 import shlex
@@ -20,6 +22,7 @@ DNS_AUTHORITATIVE_EXPIRE_DEFAULT = 1209600
 
 
 def _dhcp_scope_network(scope: DhcpScope):
+    """Return dhcp scope network."""
     try:
         return ip_network(f"{scope.site_address}/{scope.prefix_length}", strict=False)
     except ValueError:
@@ -27,6 +30,14 @@ def _dhcp_scope_network(scope: DhcpScope):
 
 
 def _parse_compact_ipv4_endpoint(value: str, start: IPv4Address) -> IPv4Address:
+    """Parse compact ipv4 endpoint.
+
+    Returns:
+        The parsed compact ipv4 endpoint.
+
+    Raises:
+        ValueError: If an input value is invalid.
+    """
     parts = value.split(".")
     if not 1 <= len(parts) <= 4 or any(not part.isdigit() for part in parts):
         raise ValueError
@@ -38,6 +49,11 @@ def _parse_compact_ipv4_endpoint(value: str, start: IPv4Address) -> IPv4Address:
 
 
 def parse_dhcp_range_expression(scope: DhcpScope) -> tuple[list[str], list[tuple[object, object]]]:
+    """Parse dhcp range expression.
+
+    Returns:
+        The parsed dhcp range expression.
+    """
     errors: list[str] = []
     ranges: list[tuple[object, object]] = []
     label = f"DHCP IP zone {scope.name}"
@@ -83,6 +99,7 @@ def parse_dhcp_range_expression(scope: DhcpScope) -> tuple[list[str], list[tuple
 
 
 def compact_dhcp_range_expression(scope: DhcpScope) -> str:
+    """Return compact dhcp range expression."""
     errors, ranges = parse_dhcp_range_expression(scope)
     if errors or not ranges:
         return (scope.range_expression or "").strip()
@@ -90,16 +107,19 @@ def compact_dhcp_range_expression(scope: DhcpScope) -> str:
 
 
 def split_servers(raw: str | None) -> list[str]:
+    """Return split servers."""
     if not raw:
         return []
     return [item.strip() for item in raw.replace(",", "\n").splitlines() if item.strip()]
 
 
 def join_servers(servers: list[str]) -> str:
+    """Return join servers."""
     return "\n".join(server.strip() for server in servers if server.strip())
 
 
 def split_conditional_forwarders(raw: str | None) -> list[dict[str, str]]:
+    """Return split conditional forwarders."""
     if not raw:
         return []
     forwarders: list[dict[str, str]] = []
@@ -126,6 +146,7 @@ def split_conditional_forwarders(raw: str | None) -> list[dict[str, str]]:
 
 
 def join_conditional_forwarders(forwarders: list[dict[str, str]]) -> str:
+    """Return join conditional forwarders."""
     grouped: dict[str, list[str]] = {}
     for forwarder in forwarders:
         domain = str(forwarder.get("domain", "")).strip().strip(".").lower()
@@ -138,46 +159,59 @@ def join_conditional_forwarders(forwarders: list[dict[str, str]]) -> str:
 
 
 def split_interfaces(raw: str | None) -> list[str]:
+    """Return split interfaces."""
     if not raw:
         return []
     return _ordered_unique([item.strip() for item in raw.replace(",", "\n").splitlines() if item.strip()])
 
 
 def join_interfaces(interfaces: list[str]) -> str:
+    """Return join interfaces."""
     return "\n".join(split_interfaces("\n".join(interfaces)))
 
 
 def split_addresses(raw: str | None) -> list[str]:
+    """Return split addresses."""
     if not raw:
         return []
     return _ordered_unique([item.strip() for item in raw.replace(",", "\n").splitlines() if item.strip()])
 
 
 def join_addresses(addresses: list[str]) -> str:
+    """Return join addresses."""
     return "\n".join(split_addresses("\n".join(addresses)))
 
 
 def split_domains(raw: str | None) -> list[str]:
+    """Return split domains."""
     if not raw:
         return []
     return _ordered_unique([item.strip().strip(".").lower() for item in raw.replace(",", "\n").splitlines() if item.strip()])
 
 
 def join_domains(domains: list[str]) -> str:
+    """Return join domains."""
     return "\n".join(split_domains("\n".join(domains)))
 
 
 def authoritative_server_name(settings: DnsSettings) -> str:
+    """Return authoritative server name."""
     domains = split_domains(settings.domain) or ["atlaso.internal"]
     return (settings.authoritative_server or f"ns1.{domains[0]}").strip().strip(".").lower()
 
 
 def authoritative_contact_name(settings: DnsSettings) -> str:
+    """Return authoritative contact name."""
     domains = split_domains(settings.domain) or ["atlaso.internal"]
     return (settings.authoritative_contact or f"hostmaster.{domains[0]}").strip().strip(".").lower()
 
 
 def ensure_dns_authoritative_defaults(settings: DnsSettings, *, now: datetime | None = None) -> bool:
+    """Ensure dns authoritative defaults.
+
+    Returns:
+        The ensure dns authoritative defaults result.
+    """
     changed = False
     if not (settings.authoritative_server or "").strip():
         settings.authoritative_server = authoritative_server_name(settings)
@@ -204,6 +238,7 @@ def ensure_dns_authoritative_defaults(settings: DnsSettings, *, now: datetime | 
 
 
 def authoritative_zone_metadata(settings: DnsSettings, domain: str) -> dict[str, object]:
+    """Return authoritative zone metadata."""
     server = authoritative_server_name(settings)
     zone = domain.strip().strip(".").lower()
     owner = f"{server}."
@@ -225,6 +260,11 @@ def authoritative_zone_metadata(settings: DnsSettings, domain: str) -> dict[str,
 
 
 def record_data(record: DnsRecord) -> dict[str, object]:
+    """Persist data.
+
+    Returns:
+        The record data result.
+    """
     raw_data = (record.record_data_json or "").strip()
     if raw_data:
         try:
@@ -237,11 +277,13 @@ def record_data(record: DnsRecord) -> dict[str, object]:
 
 
 def dump_dns_record_data(record_type: str, address: str, data: dict[str, object] | None = None) -> str:
+    """Return dump dns record data."""
     payload = data if data is not None else dns_record_data_from_value(record_type, address)
     return json.dumps(payload, separators=(",", ":"), sort_keys=True) if payload else ""
 
 
 def dns_record_data_from_value(record_type: str, value: str) -> dict[str, object]:
+    """Return dns record data from value."""
     normalized_type = record_type.strip().upper()
     text = value.strip()
     if normalized_type == "SRV":
@@ -268,6 +310,7 @@ def dns_record_data_from_value(record_type: str, value: str) -> dict[str, object
 
 
 def _split_record_value(value: str) -> list[str]:
+    """Return split record value."""
     try:
         parts = shlex.split(value.replace(",", " "))
     except ValueError:
@@ -276,15 +319,22 @@ def _split_record_value(value: str) -> list[str]:
 
 
 def _record_data_value(data: dict[str, object], key: str, fallback: str = "") -> str:
+    """Persist data value.
+
+    Returns:
+        The record data value result.
+    """
     return str(data.get(key) or fallback).strip()
 
 
 def _quote_dnsmasq_text(value: str) -> str:
+    """Return quote dnsmasq text."""
     escaped = value.replace("\\", "\\\\").replace('"', '\\"')
     return f'"{escaped}"'
 
 
 def dns_record_value_for_zone_file(record_type: str, value: str, data: dict[str, object] | None = None) -> str:
+    """Return dns record value for zone file."""
     normalized_type = record_type.strip().upper()
     payload = data or dns_record_data_from_value(normalized_type, value)
     if normalized_type == "MX":
@@ -301,6 +351,7 @@ def dns_record_value_for_zone_file(record_type: str, value: str, data: dict[str,
 
 
 def dns_record_value_from_zone_file(record_type: str, value: str) -> str:
+    """Return dns record value from zone file."""
     normalized_type = record_type.strip().upper()
     parts = _split_record_value(value)
     if normalized_type == "MX" and len(parts) >= 2:
@@ -311,6 +362,11 @@ def dns_record_value_from_zone_file(record_type: str, value: str) -> str:
 
 
 def parse_hosts_records(hosts_text: str) -> tuple[list[dict[str, str | bool | None]], list[str]]:
+    """Parse hosts records.
+
+    Returns:
+        The parsed hosts records.
+    """
     records: list[dict[str, str | bool | None]] = []
     errors: list[str] = []
     seen: dict[tuple[str, str], str] = {}
@@ -350,6 +406,11 @@ def parse_hosts_records(hosts_text: str) -> tuple[list[dict[str, str | bool | No
 
 
 def render_hosts_records(records: list[DnsRecord]) -> str:
+    """Render hosts records.
+
+    Returns:
+        The rendered hosts records.
+    """
     lines = [
         "# Atlaso hosts editor",
         "# Format: <ip-address> <hostname> [alias ...]",
@@ -361,6 +422,11 @@ def render_hosts_records(records: list[DnsRecord]) -> str:
 
 
 def render_zone_hosts_records(records: list[dict]) -> str:
+    """Render zone hosts records.
+
+    Returns:
+        The rendered zone hosts records.
+    """
     lines = [
         "# Atlaso hosts import",
         "# Format: <ip-address> <hostname> [alias ...]",
@@ -372,6 +438,11 @@ def render_zone_hosts_records(records: list[dict]) -> str:
 
 
 def render_zone_file(domain: str, records: list[dict], dns_settings: DnsSettings | None = None) -> str:
+    """Render zone file.
+
+    Returns:
+        The rendered zone file.
+    """
     metadata = authoritative_zone_metadata(dns_settings, domain) if dns_settings and dns_settings.authoritative else None
     ttl = int(metadata["ttl"]) if metadata else DNS_AUTHORITATIVE_TTL_DEFAULT
     lines = [
@@ -408,6 +479,7 @@ def render_zone_file(domain: str, records: list[dict], dns_settings: DnsSettings
 
 
 def _zone_logical_lines(zone_text: str) -> list[tuple[int, str]]:
+    """Return zone logical lines."""
     lines: list[tuple[int, str]] = []
     buffer: list[str] = []
     start_line = 0
@@ -431,6 +503,7 @@ def _zone_logical_lines(zone_text: str) -> list[tuple[int, str]]:
 
 
 def _absolute_zone_name(value: str, origin: str) -> str:
+    """Return absolute zone name."""
     normalized = value.strip().lower()
     if normalized == "@":
         return origin
@@ -444,6 +517,11 @@ def parse_zone_records(
     domain: str,
     dns_settings: DnsSettings | None = None,
 ) -> tuple[list[dict[str, str | bool | None]], list[str]]:
+    """Parse zone records.
+
+    Returns:
+        The parsed zone records.
+    """
     records: list[dict[str, str | bool | None]] = []
     errors: list[str] = []
     origin = domain.strip().strip(".").lower()
@@ -546,6 +624,7 @@ def parse_zone_records(
 
 
 def dns_reverse_records(records: list[DnsRecord]) -> list[dict[str, str]]:
+    """Return dns reverse records."""
     reverse_records: list[dict[str, str]] = []
     for record in records:
         record_type = record.record_type.upper()
@@ -572,6 +651,7 @@ def dns_reverse_records(records: list[DnsRecord]) -> list[dict[str, str]]:
 
 
 def dns_settings_to_dict(settings: DnsSettings, conditional_forwarders: str | None = None) -> dict:
+    """Return dns settings to dict."""
     return {
         "id": settings.id,
         "enabled": settings.enabled,
@@ -600,6 +680,7 @@ def dns_settings_to_dict(settings: DnsSettings, conditional_forwarders: str | No
 
 
 def effective_dns_upstream_servers(settings: DnsSettings, fallback_servers: list[str] | None = None) -> list[str]:
+    """Return effective dns upstream servers."""
     configured = _usable_upstream_servers(split_servers(settings.upstream_servers))
     if configured:
         return configured
@@ -607,6 +688,7 @@ def effective_dns_upstream_servers(settings: DnsSettings, fallback_servers: list
 
 
 def dhcp_dns_upstream_required(settings: DnsSettings, management_interface: dict[str, object]) -> bool:
+    """Return dhcp dns upstream required."""
     return bool(
         settings.enabled
         and management_interface.get("ipv4_method") == "dhcp"
@@ -615,6 +697,7 @@ def dhcp_dns_upstream_required(settings: DnsSettings, management_interface: dict
 
 
 def dhcp_settings_to_scope(settings: DhcpSettings) -> dict:
+    """Return dhcp settings to scope."""
     return {
         "id": 0,
         "name": "SiteA",
@@ -632,6 +715,7 @@ def dhcp_settings_to_scope(settings: DhcpSettings) -> dict:
 
 
 def dhcp_scope_to_dict(scope: DhcpScope) -> dict:
+    """Return dhcp scope to dict."""
     return {
         "id": scope.id,
         "name": scope.name,
@@ -650,6 +734,7 @@ def dhcp_scope_to_dict(scope: DhcpScope) -> dict:
 
 
 def dhcp_option_to_dict(option: DhcpOption) -> dict:
+    """Return dhcp option to dict."""
     return {
         "id": option.id,
         "scope_id": option.scope_id if option.scope_id is not None else "__global__",
@@ -661,6 +746,11 @@ def dhcp_option_to_dict(option: DhcpOption) -> dict:
 
 
 def parse_dnsmasq_leases(raw_text: str, now: datetime | None = None) -> list[dict]:
+    """Parse dnsmasq leases.
+
+    Returns:
+        The parsed dnsmasq leases.
+    """
     current_time = now or datetime.now(timezone.utc)
     leases: list[dict] = []
     for line in raw_text.splitlines():
@@ -701,6 +791,18 @@ def validate_dns_settings(
     fallback_upstream_servers: list[str] | None = None,
     require_dhcp_upstream: bool = False,
 ) -> list[str]:
+    """Validate dns settings.
+
+    Args:
+        settings: Desired or runtime settings consumed by the operation.
+        records: DNS, database, or protocol records to process.
+        conditional_forwarders: Conditional forwarders supplied by the caller.
+        fallback_upstream_servers: Fallback upstream servers supplied by the caller.
+        require_dhcp_upstream: Require dhcp upstream supplied by the caller.
+
+    Returns:
+        The validate dns settings result.
+    """
     errors: list[str] = []
     if settings.enabled and not split_interfaces(settings.listen_interface):
         errors.append("DNS must listen on at least one interface.")
@@ -815,6 +917,11 @@ def validate_authoritative_dns_record(
 
 
 def validate_dns_listen_targets(settings: DnsSettings, available_interface_names: set[str]) -> list[str]:
+    """Validate dns listen targets.
+
+    Returns:
+        The validate dns listen targets result.
+    """
     errors: list[str] = []
     if not settings.enabled:
         return errors
@@ -831,12 +938,15 @@ def validate_dns_listen_targets(settings: DnsSettings, available_interface_names
 
 
 def dhcp_bind_target_names(physical_interfaces: list[PhysicalInterface], vlan_interfaces: list[VlanInterface]) -> set[str]:
+    """Return dhcp bind target names."""
     return set(dhcp_bind_target_families(physical_interfaces, vlan_interfaces))
 
 
 def dhcp_bind_target_families(physical_interfaces: list[PhysicalInterface], vlan_interfaces: list[VlanInterface]) -> dict[str, set[str]]:
+    """Return dhcp bind target families."""
     names: dict[str, set[str]] = {}
     def add(name: str, family: str) -> None:
+        """Create operation."""
         names.setdefault(name, set()).add(family)
 
     for interface in physical_interfaces:
@@ -860,6 +970,11 @@ def dhcp_bind_target_families(physical_interfaces: list[PhysicalInterface], vlan
 
 
 def validate_dhcp_bind_targets(settings: DhcpSettings, scopes: list[DhcpScope], available_interface_names: set[str] | dict[str, set[str]]) -> list[str]:
+    """Validate dhcp bind targets.
+
+    Returns:
+        The validate dhcp bind targets result.
+    """
     errors: list[str] = []
     if not settings.enabled:
         return errors
@@ -890,6 +1005,7 @@ def validate_dhcp_bind_targets(settings: DhcpSettings, scopes: list[DhcpScope], 
 
 
 def dns_domain_warnings(domains: list[str]) -> list[str]:
+    """Return dns domain warnings."""
     warnings: list[str] = []
     for domain in split_domains("\n".join(domains)):
         if domain.endswith(".local"):
@@ -902,6 +1018,11 @@ def dns_domain_warnings(domains: list[str]) -> list[str]:
 
 
 def validate_dns_record(hostname: str, record_type: str, address: str, data: dict[str, object] | None = None) -> list[str]:
+    """Validate dns record.
+
+    Returns:
+        The validate dns record result.
+    """
     errors: list[str] = []
     normalized_type = record_type.strip().upper()
     if normalized_type not in DNS_RECORD_TYPES:
@@ -979,6 +1100,11 @@ def validate_dhcp_settings(
     scopes: list[DhcpScope] | None = None,
     options: list[DhcpOption] | None = None,
 ) -> list[str]:
+    """Validate dhcp settings.
+
+    Returns:
+        The validate dhcp settings result.
+    """
     errors: list[str] = []
     if not settings.enabled:
         return errors
@@ -1012,6 +1138,11 @@ def validate_dhcp_settings(
 
 
 def validate_dhcp_scope(scope: DhcpScope) -> tuple[list[str], object | None]:
+    """Validate dhcp scope.
+
+    Returns:
+        The validate dhcp scope result.
+    """
     errors: list[str] = []
     label = f"DHCP IP zone {scope.name}"
     family = dhcp_scope_address_family(scope)
@@ -1053,6 +1184,23 @@ def render_dnsmasq_config(
     require_dhcp_upstream: bool = False,
     esxi_pxe_boot: dict | None = None,
 ) -> str:
+    """Render dnsmasq config.
+
+    Args:
+        dns_settings: DNS service settings that constrain the operation.
+        dns_records: Dns records supplied by the caller.
+        dhcp_settings: Dhcp settings supplied by the caller.
+        dhcp_reservations: Dhcp reservations supplied by the caller.
+        dhcp_scopes: Dhcp scopes supplied by the caller.
+        dhcp_options: Dhcp options supplied by the caller.
+        conditional_forwarders: Conditional forwarders supplied by the caller.
+        fallback_upstream_servers: Fallback upstream servers supplied by the caller.
+        require_dhcp_upstream: Require dhcp upstream supplied by the caller.
+        esxi_pxe_boot: Esxi pxe boot supplied by the caller.
+
+    Returns:
+        The rendered dnsmasq config.
+    """
     ensure_dns_authoritative_defaults(dns_settings)
     domains = split_domains(dns_settings.domain) or ["atlaso.internal"]
     disabled_domains = [
@@ -1344,6 +1492,7 @@ def render_dnsmasq_config(
 
 
 def reservation_dns_record(reservation: DhcpReservation, scopes: list[DhcpScope]) -> tuple[str, str, str] | None:
+    """Return reservation dns record."""
     try:
         reserved_ip = ip_address(reservation.ip_address)
     except ValueError:
@@ -1359,11 +1508,17 @@ def reservation_dns_record(reservation: DhcpReservation, scopes: list[DhcpScope]
 
 
 def dnsmasq_test_command(config_path: str) -> list[str]:
+    """Return dnsmasq test command."""
     normalized_path = str(PurePosixPath(config_path))
     return ["dnsmasq", "--test", f"--conf-file={normalized_path}"]
 
 
 def _validate_ip(value: str, label: str, errors: list[str], *, version: int | None = None):
+    """Validate ip.
+
+    Returns:
+        The validate ip result.
+    """
     try:
         parsed = ip_address(value)
     except ValueError:
@@ -1376,6 +1531,7 @@ def _validate_ip(value: str, label: str, errors: list[str], *, version: int | No
 
 
 def _usable_upstream_servers(servers: list[str]) -> list[str]:
+    """Return usable upstream servers."""
     filtered: list[str] = []
     seen: set[str] = set()
     for server in servers:
@@ -1393,6 +1549,7 @@ def _usable_upstream_servers(servers: list[str]) -> list[str]:
 
 
 def _valid_cidr(value: str | None, *, version: int | None = None) -> bool:
+    """Return valid cidr."""
     if not value:
         return False
     try:
@@ -1405,6 +1562,7 @@ def _valid_cidr(value: str | None, *, version: int | None = None) -> bool:
 
 
 def dhcp_scope_address_family(scope: DhcpScope) -> str:
+    """Return dhcp scope address family."""
     family = str(getattr(scope, "address_family", "") or "").strip().lower()
     if family in {"ipv4", "ipv6"}:
         return family
@@ -1415,6 +1573,7 @@ def dhcp_scope_address_family(scope: DhcpScope) -> str:
 
 
 def _dnsmasq_ipv6_option_address(value: str) -> str:
+    """Return dnsmasq ipv6 option address."""
     address = value.strip()
     if not address:
         return ""
@@ -1422,6 +1581,7 @@ def _dnsmasq_ipv6_option_address(value: str) -> str:
 
 
 def _is_ip_address(value: str) -> bool:
+    """Return whether ip address."""
     try:
         ip_address(value)
     except ValueError:
@@ -1430,11 +1590,13 @@ def _is_ip_address(value: str) -> bool:
 
 
 def _valid_dns_hostname(value: str) -> bool:
+    """Return valid dns hostname."""
     normalized = value.strip().strip(".").lower()
     return bool(normalized and DNS_HOSTNAME_PATTERN.fullmatch(normalized))
 
 
 def _validate_forwarder_server(value: str, label: str, errors: list[str]) -> None:
+    """Validate forwarder server."""
     server = value.strip()
     if "#" in server:
         server, port = server.rsplit("#", 1)
@@ -1444,6 +1606,7 @@ def _validate_forwarder_server(value: str, label: str, errors: list[str]) -> Non
 
 
 def _zone_hostname(host: str, origin: str) -> str:
+    """Return zone hostname."""
     raw = host.strip().lower()
     absolute = raw.endswith(".")
     normalized = raw.strip(".")
@@ -1457,6 +1620,7 @@ def _zone_hostname(host: str, origin: str) -> str:
 
 
 def _reverse_zone_for_address(value) -> str:
+    """Return reverse zone for address."""
     if value.version == 4:
         octets = str(value).split(".")
         return f"{octets[2]}.{octets[1]}.{octets[0]}.in-addr.arpa"
@@ -1465,6 +1629,7 @@ def _reverse_zone_for_address(value) -> str:
 
 
 def _legacy_scope(settings: DhcpSettings) -> DhcpScope:
+    """Return legacy scope."""
     return DhcpScope(
         id=0,
         name="SiteA",
@@ -1483,11 +1648,13 @@ def _legacy_scope(settings: DhcpSettings) -> DhcpScope:
 
 
 def dnsmasq_tag(value: str) -> str:
+    """Return dnsmasq tag."""
     normalized = "".join(character.lower() if character.isalnum() else "-" for character in value.strip())
     return normalized.strip("-") or "scope"
 
 
 def _scope_for_ip(value, scopes: list[DhcpScope]) -> DhcpScope | None:
+    """Return scope for ip."""
     for scope in scopes:
         if scope.enabled is False:
             continue
@@ -1501,6 +1668,7 @@ def _scope_for_ip(value, scopes: list[DhcpScope]) -> DhcpScope | None:
 
 
 def _ordered_unique(values: list[str]) -> list[str]:
+    """Return ordered unique."""
     seen: set[str] = set()
     result: list[str] = []
     for value in values:

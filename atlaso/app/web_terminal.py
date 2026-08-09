@@ -1,3 +1,5 @@
+"""Manage bounded, reattachable web-terminal sessions and SSH transport."""
+
 from __future__ import annotations
 
 import asyncio
@@ -63,6 +65,7 @@ MAX_OUTPUT_BACKLOG = 1024 * 1024
 
 @dataclass
 class TerminalTicket:
+    """Represent terminal ticket."""
     user_id: int
     username: str
     csrf_token: str
@@ -76,6 +79,7 @@ class TerminalTicket:
 
 @dataclass
 class RemoteTerminalLaunch:
+    """Represent remote terminal launch."""
     user_id: int
     entry_id: int
     uri_index: int
@@ -85,6 +89,7 @@ class RemoteTerminalLaunch:
 
 @dataclass
 class ActiveTerminalSession:
+    """Represent active terminal session."""
     user_id: int
     username: str
     display_username: str
@@ -112,15 +117,22 @@ _pending_sessions: set[tuple[int, str]] = set()
 
 
 def _ticket_digest(raw: str) -> str:
+    """Return ticket digest."""
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
 def _ssh_fingerprint(key: paramiko.PKey) -> str:
+    """Return ssh fingerprint."""
     digest = hashlib.sha256(key.asbytes()).digest()
     return f"SHA256:{base64.b64encode(digest).decode('ascii').rstrip('=')}"
 
 
 def _remote_entry_target(entry: VaultEntry, uri_index: int) -> tuple[str, int, str]:
+    """Return remote entry target.
+
+    Raises:
+        ValueError: If an input value is invalid.
+    """
     uris = vault_entry_uris(entry)
     if uri_index < 1 or uri_index > len(uris):
         raise ValueError("The selected vault URI does not exist.")
@@ -133,6 +145,7 @@ def _remote_entry_target(entry: VaultEntry, uri_index: int) -> tuple[str, int, s
 
 
 def _probe_remote_ssh_host(hostname: str, port: int) -> str:
+    """Return probe remote ssh host."""
     sock = socket.create_connection((hostname, port), timeout=10)
     transport = paramiko.Transport(sock)
     try:
@@ -145,10 +158,16 @@ def _probe_remote_ssh_host(hostname: str, port: int) -> str:
 def _terminal_replay_output(output: bytearray) -> bytes:
     # Replaying an old cursor-position query makes xterm answer it again into the
     # live shell, where PowerShell renders the response as text such as `12;40R`.
+    """Return terminal replay output."""
     return re.sub(rb"\x1b\[\??6n", b"", bytes(output))
 
 
 def _settings_row(db: Session) -> ApplianceSettings:
+    """Return settings row.
+
+    Args:
+        db: Active database session.
+    """
     row = db.execute(select(ApplianceSettings)).scalar_one_or_none()
     if row is None:
         row = ApplianceSettings()
@@ -159,6 +178,11 @@ def _settings_row(db: Session) -> ApplianceSettings:
 
 
 def _terminal_network_state(db: Session) -> tuple[ApplianceSettings, list[str], list[str], list[str]]:
+    """Return terminal network state.
+
+    Args:
+        db: Active database session.
+    """
     desired = _settings_row(db)
     interfaces = db.execute(select(PhysicalInterface).order_by(PhysicalInterface.name)).scalars().all()
     vlans = db.execute(select(VlanInterface).order_by(VlanInterface.parent_interface, VlanInterface.vlan_id)).scalars().all()
@@ -174,6 +198,7 @@ def _terminal_network_state(db: Session) -> tuple[ApplianceSettings, list[str], 
 
 
 def _helper_applied() -> bool:
+    """Return helper applied."""
     result = SystemAdapter().web_terminal_status()
     if result.returncode != 0 or result.dry_run:
         return False
@@ -188,6 +213,7 @@ def _helper_applied() -> bool:
 
 
 def _normalized_listener(value: str) -> str:
+    """Return normalized listener."""
     candidate = value.strip().strip("[]")
     try:
         return str(ipaddress.ip_address(candidate))
@@ -196,6 +222,7 @@ def _normalized_listener(value: str) -> str:
 
 
 def _request_uses_selected_listener(headers: object, server_host: str, allowed_addresses: list[str]) -> bool:
+    """Return request uses selected listener."""
     if get_settings().environment != "appliance":
         return True
     try:
@@ -208,17 +235,20 @@ def _request_uses_selected_listener(headers: object, server_host: str, allowed_a
 
 
 def _request_is_https(headers: object, scheme: str) -> bool:
+    """Return request is https."""
     if get_settings().environment != "appliance":
         return True
     return str(headers.get("x-forwarded-proto", scheme)).lower() == "https"  # type: ignore[attr-defined]
 
 
 def _active_session_for_user(user_id: int) -> ActiveTerminalSession | None:
+    """Return active session for user."""
     with _session_lock:
         return next((session for (session_user_id, _browser_id), session in _sessions.items() if session_user_id == user_id), None)
 
 
 def revoke_user_terminal_sessions(user_id: int, reason: str = "Web SSH access revoked") -> None:
+    """Handle revoke user terminal sessions."""
     with _ticket_lock:
         stale_tickets = [digest for digest, ticket in _tickets.items() if ticket.user_id == user_id]
         for digest in stale_tickets:
@@ -243,6 +273,7 @@ def revoke_user_terminal_sessions(user_id: int, reason: str = "Web SSH access re
 
 
 def _reserve_new_session(key: tuple[int, str]) -> bool:
+    """Return reserve new session."""
     with _session_lock:
         if key in _sessions:
             return True
@@ -253,11 +284,13 @@ def _reserve_new_session(key: tuple[int, str]) -> bool:
 
 
 def _release_session_reservation(key: tuple[int, str]) -> None:
+    """Handle release session reservation."""
     with _session_lock:
         _pending_sessions.discard(key)
 
 
 def _user_has_terminal_permission(user: User | None) -> bool:
+    """Return user has terminal permission."""
     return bool(
         user
         and user.enabled
@@ -267,6 +300,7 @@ def _user_has_terminal_permission(user: User | None) -> bool:
 
 
 def _user_can_access_terminal(user: User | None) -> bool:
+    """Return user can access terminal."""
     return bool(_user_has_terminal_permission(user) and (user.shell or "/sbin/nologin") != "/sbin/nologin")
 
 
@@ -275,6 +309,16 @@ def _terminal_page_context(
     identity,
     db: Session,
 ) -> tuple[dict[str, object], bool]:
+    """Return terminal page context.
+
+    Args:
+        request: Incoming HTTP request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     user = db.get(User, int(identity.user_id))
     desired, selected, addresses, management_addresses = _terminal_network_state(db)
     if desired.web_terminal_enabled and not _user_has_terminal_permission(user):
@@ -324,6 +368,16 @@ def terminal_page(
     identity=Depends(get_session_identity),
     db: Session = Depends(get_db),
 ) -> HTMLResponse | RedirectResponse:
+    """Handle the terminal page endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+    """
     if identity is None:
         return RedirectResponse("/login?next=/terminal", status_code=303)
     context, public_listener = _terminal_page_context(request, identity, db)
@@ -353,6 +407,19 @@ def remote_terminal_page(
     identity=Depends(get_session_identity),
     db: Session = Depends(get_db),
 ) -> HTMLResponse | RedirectResponse:
+    """Handle the remote terminal page endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     if identity is None:
         return RedirectResponse("/login?next=/terminal/remote", status_code=303)
     if not identity.has_role("admin"):
@@ -376,6 +443,24 @@ async def create_remote_terminal_launch(
     identity=Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> JSONResponse:
+    """Handle the create remote terminal launch endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        vault_id: Identifier of the vault.
+        entry_id: Identifier of the entry.
+        uri_index: Uri index supplied by the caller.
+        confirmed_fingerprint: Confirmed fingerprint supplied by the caller.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     if not identity.has_role("admin"):
         raise HTTPException(status_code=403, detail="Administrator role required")
     if not csrf or csrf != request.session.get("csrf_token"):
@@ -462,6 +547,23 @@ def create_terminal_ticket(
     identity=Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> JSONResponse:
+    """Handle the create terminal ticket endpoint.
+
+    Args:
+        request: Incoming HTTP request.
+        csrf: Validated CSRF token authorizing the request.
+        browser_session_id: Identifier of the browser session.
+        takeover: Takeover supplied by the caller.
+        remote_launch: Remote launch supplied by the caller.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The endpoint response.
+
+    Raises:
+        HTTPException: If the request cannot be fulfilled.
+    """
     user = db.get(User, int(identity.user_id))
     if not _user_can_access_terminal(user):
         raise HTTPException(status_code=403, detail="Web SSH access is not enabled for this user")
@@ -533,6 +635,7 @@ def create_terminal_ticket(
 
 
 def _consume_ticket(raw: str, user_id: int, username: str, csrf_token: str) -> TerminalTicket | None:
+    """Return consume ticket."""
     now = datetime.now(timezone.utc)
     with _ticket_lock:
         ticket = _tickets.pop(_ticket_digest(raw), None)
@@ -546,6 +649,11 @@ def _consume_ticket(raw: str, user_id: int, username: str, csrf_token: str) -> T
 
 
 def _open_ssh_channel(username: str, session_id: str, cols: int, rows: int) -> tuple[paramiko.Transport, paramiko.Channel]:
+    """Return open ssh channel.
+
+    Raises:
+        RuntimeError: If the operation cannot be completed safely.
+    """
     private_key = Ed25519PrivateKey.generate()
     private_text = private_key.private_bytes(
         serialization.Encoding.PEM,
@@ -592,6 +700,18 @@ def _open_remote_ssh_channel(
     cols: int,
     rows: int,
 ) -> tuple[paramiko.Transport, paramiko.Channel, str]:
+    """Return open remote ssh channel.
+
+    Args:
+        entry_id: Identifier of the entry.
+        uri_index: Uri index supplied by the caller.
+        expected_fingerprint: Certificate fingerprint explicitly confirmed by the operator.
+        cols: Cols supplied by the caller.
+        rows: Database or collection rows to process.
+
+    Raises:
+        RuntimeError: If the operation cannot be completed safely.
+    """
     with SessionLocal() as db:
         entry = db.get(VaultEntry, entry_id)
         if entry is None:
@@ -615,6 +735,12 @@ def _open_remote_ssh_channel(
 
 
 async def _detach_websocket(session: ActiveTerminalSession, websocket: WebSocket) -> None:
+    """Handle detach websocket.
+
+    Args:
+        session: Active database or protocol session.
+        websocket: Websocket supplied by the caller.
+    """
     async with session.send_lock:
         if session.websocket is websocket:
             session.websocket = None
@@ -622,6 +748,11 @@ async def _detach_websocket(session: ActiveTerminalSession, websocket: WebSocket
 
 
 async def _terminal_session_reader(session: ActiveTerminalSession) -> None:
+    """Handle terminal session reader.
+
+    Args:
+        session: Active database or protocol session.
+    """
     try:
         if hasattr(session.channel, "settimeout"):
             session.channel.settimeout(1.0)
@@ -686,6 +817,12 @@ async def _terminal_session_reader(session: ActiveTerminalSession) -> None:
 
 
 async def _terminate_terminal_session(session: ActiveTerminalSession, reason: str) -> None:
+    """Handle terminate terminal session.
+
+    Args:
+        session: Active database or protocol session.
+        reason: Reason supplied by the caller.
+    """
     session.close_reason = reason
     session.channel.close()
     session.transport.close()
@@ -697,6 +834,13 @@ async def _terminate_terminal_session(session: ActiveTerminalSession, reason: st
 
 
 async def _attach_terminal_session(session: ActiveTerminalSession, websocket: WebSocket, *, resumed: bool) -> None:
+    """Handle attach terminal session.
+
+    Args:
+        session: Active database or protocol session.
+        websocket: Websocket supplied by the caller.
+        resumed: Resumed supplied by the caller.
+    """
     previous: WebSocket | None = None
     async with session.send_lock:
         previous = session.websocket
@@ -723,6 +867,14 @@ async def _attach_terminal_session(session: ActiveTerminalSession, websocket: We
 
 @router.websocket("/terminal/ws")
 async def terminal_websocket(websocket: WebSocket) -> None:
+    """Handle the terminal websocket endpoint.
+
+    Args:
+        websocket: Websocket supplied by the caller.
+
+    Raises:
+        RuntimeError: If the operation cannot be completed safely.
+    """
     user_id = websocket.session.get("user_id")
     csrf_token = str(websocket.session.get("csrf_token") or "")
     with SessionLocal() as db:

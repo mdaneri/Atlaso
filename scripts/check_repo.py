@@ -154,11 +154,17 @@ REQUIRED_POLICY_MARKERS = {
 
 @dataclass(frozen=True)
 class Finding:
+    """Represent finding."""
     path: Path
     message: str
     line: int | None = None
 
     def render(self) -> str:
+        """Render operation.
+
+        Returns:
+            The render result.
+        """
         display = self.path.relative_to(ROOT) if self.path.is_absolute() else self.path
         if self.line is None:
             return f"{display}: {self.message}"
@@ -166,6 +172,11 @@ class Finding:
 
 
 def relative_path(path: Path) -> Path:
+    """Return relative path.
+
+    Args:
+        path: Filesystem or URL path to read, validate, or update.
+    """
     try:
         return path.resolve().relative_to(ROOT)
     except ValueError:
@@ -173,6 +184,11 @@ def relative_path(path: Path) -> Path:
 
 
 def should_skip(path: Path) -> bool:
+    """Return whether skip.
+
+    Args:
+        path: Filesystem or URL path to read, validate, or update.
+    """
     rel = relative_path(path)
     if any(part in SKIP_PARTS or part.startswith(".venv") for part in rel.parts):
         return True
@@ -180,10 +196,16 @@ def should_skip(path: Path) -> bool:
 
 
 def is_checkable(path: Path) -> bool:
+    """Return whether checkable.
+
+    Args:
+        path: Filesystem or URL path to read, validate, or update.
+    """
     return path.suffix.lower() in TEXT_SUFFIXES
 
 
 def collect_files(paths: list[str]) -> list[Path]:
+    """Return collect files."""
     if paths:
         candidates: list[Path] = []
         for raw in paths:
@@ -205,6 +227,11 @@ def collect_files(paths: list[str]) -> list[Path]:
 
 
 def read_text(path: Path) -> tuple[str | None, Finding | None]:
+    """Return text.
+
+    Args:
+        path: Filesystem or URL path to read, validate, or update.
+    """
     try:
         data = path.read_bytes()
     except OSError as exc:
@@ -218,10 +245,20 @@ def read_text(path: Path) -> tuple[str | None, Finding | None]:
 
 
 def line_for_offset(text: str, offset: int) -> int:
+    """Return line for offset."""
     return text.count("\n", 0, offset) + 1
 
 
 def check_common_text(path: Path, text: str) -> list[Finding]:
+    """Check common text.
+
+    Args:
+        path: Filesystem or URL path to read, validate, or update.
+        text: Text to parse, render, or persist.
+
+    Returns:
+        The check common text result.
+    """
     findings: list[Finding] = []
     for index, line in enumerate(text.splitlines(), start=1):
         if line.startswith("<<<<<<< ") or line == "=======" or line.startswith(">>>>>>> "):
@@ -230,6 +267,15 @@ def check_common_text(path: Path, text: str) -> list[Finding]:
 
 
 def check_python(path: Path, text: str) -> list[Finding]:
+    """Check python.
+
+    Args:
+        path: Filesystem or URL path to read, validate, or update.
+        text: Text to parse, render, or persist.
+
+    Returns:
+        The check python result.
+    """
     try:
         ast.parse(text, filename=str(path))
     except SyntaxError as exc:
@@ -238,6 +284,15 @@ def check_python(path: Path, text: str) -> list[Finding]:
 
 
 def check_json(path: Path, text: str) -> list[Finding]:
+    """Check json.
+
+    Args:
+        path: Filesystem or URL path to read, validate, or update.
+        text: Text to parse, render, or persist.
+
+    Returns:
+        The check json result.
+    """
     try:
         json.loads(text)
     except json.JSONDecodeError as exc:
@@ -246,6 +301,15 @@ def check_json(path: Path, text: str) -> list[Finding]:
 
 
 def check_toml(path: Path, text: str) -> list[Finding]:
+    """Check toml.
+
+    Args:
+        path: Filesystem or URL path to read, validate, or update.
+        text: Text to parse, render, or persist.
+
+    Returns:
+        The check toml result.
+    """
     try:
         tomllib.loads(text)
     except tomllib.TOMLDecodeError as exc:
@@ -254,6 +318,15 @@ def check_toml(path: Path, text: str) -> list[Finding]:
 
 
 def check_jinja(path: Path, text: str) -> list[Finding]:
+    """Check jinja.
+
+    Args:
+        path: Filesystem or URL path to read, validate, or update.
+        text: Text to parse, render, or persist.
+
+    Returns:
+        The check jinja result.
+    """
     try:
         from jinja2 import Environment
         from jinja2.exceptions import TemplateSyntaxError
@@ -269,6 +342,7 @@ def check_jinja(path: Path, text: str) -> list[Finding]:
 
 
 def strip_css_noise(text: str) -> str:
+    """Return strip css noise."""
     text = re.sub(r"/\*.*?\*/", "", text, flags=re.DOTALL)
     text = re.sub(r'"(?:\\.|[^"\\])*"', '""', text)
     text = re.sub(r"'(?:\\.|[^'\\])*'", "''", text)
@@ -276,6 +350,15 @@ def strip_css_noise(text: str) -> str:
 
 
 def check_css(path: Path, text: str) -> list[Finding]:
+    """Check css.
+
+    Args:
+        path: Filesystem or URL path to read, validate, or update.
+        text: Text to parse, render, or persist.
+
+    Returns:
+        The check css result.
+    """
     findings: list[Finding] = []
     stack: list[tuple[str, int]] = []
     pairs = {"{": "}", "(": ")", "[": "]"}
@@ -294,6 +377,14 @@ def check_css(path: Path, text: str) -> list[Finding]:
 
 
 def check_javascript(path: Path) -> list[Finding]:
+    """Check javascript.
+
+    Args:
+        path: Filesystem or URL path to read, validate, or update.
+
+    Returns:
+        The check javascript result.
+    """
     node = shutil.which("node")
     if node is None:
         return [Finding(path, "Node.js is required for JavaScript syntax checks")]
@@ -312,6 +403,12 @@ def check_javascript(path: Path) -> list[Finding]:
 
 
 def markdown_link_target_exists(path: Path, target: str) -> bool:
+    """Return markdown link target exists.
+
+    Args:
+        path: Filesystem or URL path to read, validate, or update.
+        target: Resource targeted by the operation.
+    """
     target = target.strip()
     if target.startswith("<") and target.endswith(">"):
         target = target[1:-1].strip()
@@ -325,6 +422,15 @@ def markdown_link_target_exists(path: Path, target: str) -> bool:
 
 
 def check_markdown(path: Path, text: str) -> list[Finding]:
+    """Check markdown.
+
+    Args:
+        path: Filesystem or URL path to read, validate, or update.
+        text: Text to parse, render, or persist.
+
+    Returns:
+        The check markdown result.
+    """
     findings: list[Finding] = []
     in_fence = False
     fence_line: int | None = None
@@ -345,6 +451,14 @@ def check_markdown(path: Path, text: str) -> list[Finding]:
 
 
 def check_file(path: Path) -> list[Finding]:
+    """Check file.
+
+    Args:
+        path: Filesystem or URL path to read, validate, or update.
+
+    Returns:
+        The check file result.
+    """
     text, error = read_text(path)
     if error is not None:
         return [error]
@@ -485,6 +599,15 @@ def check_ui_pattern_foundation(root: Path) -> list[Finding]:
 
 
 def check_xmlish_svg(path: Path, text: str) -> list[Finding]:
+    """Check xmlish svg.
+
+    Args:
+        path: Filesystem or URL path to read, validate, or update.
+        text: Text to parse, render, or persist.
+
+    Returns:
+        The check xmlish svg result.
+    """
     import xml.etree.ElementTree as ET
 
     try:
@@ -495,6 +618,11 @@ def check_xmlish_svg(path: Path, text: str) -> list[Finding]:
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Run the command-line entry point.
+
+    Returns:
+        The main result.
+    """
     parser = argparse.ArgumentParser(description="Run Atlaso repository checks.")
     parser.add_argument("paths", nargs="*", help="Optional files or directories to check.")
     args = parser.parse_args(argv)

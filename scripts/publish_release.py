@@ -24,6 +24,14 @@ RASD_NAMESPACE = "http://schemas.dmtf.org/wbem/wscim/1/cim-schema/2/CIM_Resource
 
 
 def run(command: list[str], *, check: bool = True) -> subprocess.CompletedProcess[str]:
+    """Run operation.
+
+    Returns:
+        The run result.
+
+    Raises:
+        SystemExit: If the operation encounters an invalid state.
+    """
     result = subprocess.run(command, cwd=ROOT, check=False, capture_output=True, text=True)
     if check and result.returncode != 0:
         raise SystemExit(result.stderr.strip() or result.stdout.strip() or f"{command[0]} failed")
@@ -31,6 +39,11 @@ def run(command: list[str], *, check: bool = True) -> subprocess.CompletedProces
 
 
 def sha256(path: Path) -> str:
+    """Return sha256.
+
+    Args:
+        path: Filesystem or URL path to read, validate, or update.
+    """
     digest = hashlib.sha256()
     with path.open("rb") as handle:
         for block in iter(lambda: handle.read(1024 * 1024), b""):
@@ -39,11 +52,21 @@ def sha256(path: Path) -> str:
 
 
 def version() -> str:
+    """Return version."""
     result = run(["python", "scripts/version.py", "get"])
     return result.stdout.strip()
 
 
 def verify_vmware_ovf_topology(path: Path, asset_names: set[str]) -> None:
+    """Validate vmware ovf topology.
+
+    Args:
+        path: Filesystem or URL path to read, validate, or update.
+        asset_names: Asset names supplied by the caller.
+
+    Raises:
+        SystemExit: If the operation encounters an invalid state.
+    """
     namespaces = {"ovf": OVF_NAMESPACE, "rasd": RASD_NAMESPACE}
     try:
         root = ET.parse(path).getroot()
@@ -114,6 +137,11 @@ def verify_vmware_ovf_topology(path: Path, asset_names: set[str]) -> None:
 
 
 def verify_vmware_release_assets(directory: Path, names: set[str]) -> None:
+    """Validate vmware release assets.
+
+    Raises:
+        SystemExit: If the operation encounters an invalid state.
+    """
     manifests = sorted(name for name in names if name.lower().endswith(".mf"))
     descriptors = sorted(name for name in names if name.lower().endswith(".ovf"))
     disks = sorted(name for name in names if name.lower().endswith(".vmdk"))
@@ -161,6 +189,14 @@ def verify_vmware_release_assets(directory: Path, names: set[str]) -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Run the command-line entry point.
+
+    Returns:
+        The main result.
+
+    Raises:
+        SystemExit: If the operation encounters an invalid state.
+    """
     parser = argparse.ArgumentParser()
     parser.add_argument("--commit", required=True)
     parser.add_argument("--assets", type=Path, required=True)

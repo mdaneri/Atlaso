@@ -24,16 +24,31 @@ IMAGE_RE = re.compile(r"!\[[^\]]+\]\(([^)]+)\)")
 
 @dataclass(frozen=True)
 class Finding:
+    """Represent finding."""
     path: Path
     message: str
     line: int | None = None
 
     def render(self) -> str:
+        """Render operation.
+
+        Returns:
+            The render result.
+        """
         path = self.path.relative_to(ROOT)
         return f"{path}:{self.line}: {self.message}" if self.line else f"{path}: {self.message}"
 
 
 def parse_front_matter(path: Path, text: str) -> tuple[dict[str, object], str, list[Finding]]:
+    """Parse front matter.
+
+    Args:
+        path: Filesystem or URL path to read, validate, or update.
+        text: Text to parse, render, or persist.
+
+    Returns:
+        The parsed front matter.
+    """
     findings: list[Finding] = []
     lines = text.splitlines()
     if not lines or lines[0] != "---":
@@ -70,6 +85,7 @@ def parse_front_matter(path: Path, text: str) -> tuple[dict[str, object], str, l
 
 
 def headings(text: str) -> list[tuple[int, int, str]]:
+    """Return headings."""
     result: list[tuple[int, int, str]] = []
     in_fence = False
     for number, line in enumerate(text.splitlines(), start=1):
@@ -85,12 +101,18 @@ def headings(text: str) -> list[tuple[int, int, str]]:
 
 
 def slug(value: str) -> str:
+    """Return slug."""
     value = re.sub(r"<[^>]+>", "", value)
     value = re.sub(r"[^\w\s-]", "", value.lower())
     return re.sub(r"[-\s]+", "-", value).strip("-")
 
 
 def anchors(path: Path) -> set[str]:
+    """Return anchors.
+
+    Args:
+        path: Filesystem or URL path to read, validate, or update.
+    """
     text = path.read_text(encoding="utf-8")
     _, body, _ = parse_front_matter(path, text) if path.is_relative_to(DOCS) else ({}, text, [])
     counts: dict[str, int] = {}
@@ -104,6 +126,7 @@ def anchors(path: Path) -> set[str]:
 
 
 def nav_paths(value: object) -> set[str]:
+    """Return nav paths."""
     result: set[str] = set()
     if isinstance(value, str):
         result.add(value)
@@ -117,6 +140,15 @@ def nav_paths(value: object) -> set[str]:
 
 
 def validate_page(path: Path, nav: set[str]) -> tuple[dict[str, object], list[Finding]]:
+    """Validate page.
+
+    Args:
+        path: Filesystem or URL path to read, validate, or update.
+        nav: Nav supplied by the caller.
+
+    Returns:
+        The validate page result.
+    """
     text = path.read_text(encoding="utf-8")
     meta, body, findings = parse_front_matter(path, text)
     for field in ("title", "description", "audience", "status"):
@@ -150,6 +182,14 @@ def validate_page(path: Path, nav: set[str]) -> tuple[dict[str, object], list[Fi
 
 
 def validate_links(path: Path) -> list[Finding]:
+    """Validate links.
+
+    Args:
+        path: Filesystem or URL path to read, validate, or update.
+
+    Returns:
+        The validate links result.
+    """
     findings: list[Finding] = []
     text = path.read_text(encoding="utf-8")
     in_fence = False
@@ -177,6 +217,14 @@ def validate_links(path: Path) -> list[Finding]:
 
 
 def webp_dimensions(path: Path) -> tuple[int, int]:
+    """Return webp dimensions.
+
+    Args:
+        path: Filesystem or URL path to read, validate, or update.
+
+    Raises:
+        ValueError: If an input value is invalid.
+    """
     data = path.read_bytes()
     if len(data) < 30 or data[:4] != b"RIFF" or data[8:12] != b"WEBP":
         raise ValueError("invalid WebP header")
@@ -201,6 +249,11 @@ def webp_dimensions(path: Path) -> tuple[int, int]:
 
 
 def webp_has_metadata(path: Path) -> bool:
+    """Return webp has metadata.
+
+    Args:
+        path: Filesystem or URL path to read, validate, or update.
+    """
     data = path.read_bytes()
     offset = 12
     while offset + 8 <= len(data):
@@ -213,6 +266,11 @@ def webp_has_metadata(path: Path) -> bool:
 
 
 def validate_screenshots() -> list[Finding]:
+    """Validate screenshots.
+
+    Returns:
+        The validate screenshots result.
+    """
     manifest_path = DOCS / "assets" / "screenshots" / "manifest.json"
     if not manifest_path.is_file():
         return [Finding(manifest_path, "screenshot manifest is missing")]
@@ -304,6 +362,11 @@ def validate_screenshots() -> list[Finding]:
 
 
 def main() -> int:
+    """Run the command-line entry point.
+
+    Returns:
+        The main result.
+    """
     config = tomllib.loads(CONFIG.read_text(encoding="utf-8"))
     nav = nav_paths(config["project"]["nav"])
     findings: list[Finding] = []

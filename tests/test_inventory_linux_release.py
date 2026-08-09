@@ -1,3 +1,5 @@
+"""Test inventory linux release behavior."""
+
 from __future__ import annotations
 
 import importlib.util
@@ -18,6 +20,7 @@ KEY_ID = "inventory-test-key"
 
 
 def load_script(module_name: str, filename: str):
+    """Return script."""
     spec = importlib.util.spec_from_file_location(module_name, ROOT / "scripts" / filename)
     assert spec and spec.loader
     module = importlib.util.module_from_spec(spec)
@@ -32,6 +35,7 @@ publisher = load_script("publish_inventory_linux_release_test", "publish_invento
 
 @pytest.fixture
 def signing_key(tmp_path: Path) -> tuple[Path, Path]:
+    """Return signing key."""
     private = Ed25519PrivateKey.generate()
     private_path = tmp_path / "private.pem"
     public_path = tmp_path / "public.pem"
@@ -52,6 +56,7 @@ def signing_key(tmp_path: Path) -> tuple[Path, Path]:
 
 
 def inventory_package(root: Path, version: str) -> Path:
+    """Return inventory package."""
     package = root / f"atlaso-inventory-linux-{version}.zip"
     with zipfile.ZipFile(package, "w") as archive:
         archive.writestr(
@@ -74,6 +79,11 @@ def build_assets(
     version: str = "2026.05.1+8",
     commit: str = "a" * 40,
 ) -> Path:
+    """Build assets.
+
+    Returns:
+        The built assets.
+    """
     root.mkdir(parents=True, exist_ok=True)
     package = inventory_package(root, version)
     output = root / "release"
@@ -103,10 +113,12 @@ def completed(
     stdout: str = "",
     stderr: str = "",
 ) -> subprocess.CompletedProcess[str]:
+    """Return completed."""
     return subprocess.CompletedProcess(command, returncode, stdout, stderr)
 
 
 def test_inventory_release_metadata_is_deterministic_and_exact(signing_key, tmp_path):
+    """Verify that inventory release metadata is deterministic and exact."""
     private_path, public_path = signing_key
     first = build_assets(tmp_path / "first", private_path)
     second = build_assets(tmp_path / "second", private_path)
@@ -128,6 +140,7 @@ def test_inventory_release_metadata_is_deterministic_and_exact(signing_key, tmp_
 
 
 def test_inventory_pages_advance_monotonically_and_are_idempotent(signing_key, tmp_path):
+    """Verify that inventory pages advance monotonically and are idempotent."""
     private_path, public_path = signing_key
     site = tmp_path / "site"
     newest = build_assets(tmp_path / "newest", private_path)
@@ -191,12 +204,14 @@ def test_inventory_pages_advance_monotonically_and_are_idempotent(signing_key, t
 
 
 def test_inventory_publisher_creates_final_non_latest_release(signing_key, tmp_path, monkeypatch):
+    """Verify that inventory publisher creates final non latest release."""
     private_path, public_path = signing_key
     commit = "a" * 40
     assets = build_assets(tmp_path / "assets", private_path, commit=commit)
     commands: list[list[str]] = []
 
     def fake_run(command: list[str], *, check: bool = True):
+        """Return fake run."""
         commands.append(command)
         if command[:3] == ["git", "ls-remote", "--tags"]:
             return completed(command)
@@ -225,10 +240,16 @@ def test_inventory_publisher_creates_final_non_latest_release(signing_key, tmp_p
 
 
 def test_inventory_publisher_rejects_tag_collision(signing_key, tmp_path, monkeypatch):
+    """Verify that inventory publisher rejects tag collision."""
     private_path, public_path = signing_key
     assets = build_assets(tmp_path / "assets", private_path)
 
     def fake_run(command: list[str], *, check: bool = True):
+        """Return fake run.
+
+        Raises:
+            AssertionError: If an expected invariant is not satisfied.
+        """
         if command[:3] == ["git", "ls-remote", "--tags"]:
             return completed(
                 command,
@@ -253,12 +274,18 @@ def test_inventory_publisher_rejects_tag_collision(signing_key, tmp_path, monkey
 
 
 def test_inventory_publisher_accepts_byte_identical_existing_assets(signing_key, tmp_path, monkeypatch):
+    """Verify that inventory publisher accepts byte identical existing assets."""
     private_path, public_path = signing_key
     commit = "a" * 40
     assets = build_assets(tmp_path / "assets", private_path, commit=commit)
     asset_names = [path.name for path in assets.iterdir() if path.is_file()]
 
     def fake_run(command: list[str], *, check: bool = True):
+        """Return fake run.
+
+        Raises:
+            AssertionError: If an expected invariant is not satisfied.
+        """
         if command[:3] == ["git", "ls-remote", "--tags"]:
             return completed(command, stdout=f"{commit}\t{command[-1]}\n")
         if command[:3] == ["gh", "release", "view"]:
@@ -297,11 +324,17 @@ def test_inventory_publisher_accepts_byte_identical_existing_assets(signing_key,
 
 
 def test_inventory_publisher_rejects_existing_asset_collision(signing_key, tmp_path, monkeypatch):
+    """Verify that inventory publisher rejects existing asset collision."""
     private_path, public_path = signing_key
     commit = "a" * 40
     assets = build_assets(tmp_path / "assets", private_path, commit=commit)
 
     def fake_run(command: list[str], *, check: bool = True):
+        """Return fake run.
+
+        Raises:
+            AssertionError: If an expected invariant is not satisfied.
+        """
         if command[:3] == ["git", "ls-remote", "--tags"]:
             return completed(command, stdout=f"{commit}\t{command[-1]}\n")
         if command[:3] == ["gh", "release", "view"]:

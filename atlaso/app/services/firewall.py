@@ -1,3 +1,5 @@
+"""Implement firewall service behavior."""
+
 from ipaddress import ip_network
 import json
 import re
@@ -43,6 +45,7 @@ ATLASO_LEGACY_SERVICE_FIREWALL_RULE_NAMES = {"mgmt-console"}
 
 
 def firewall_settings_to_dict(settings: FirewallSettings) -> dict:
+    """Return firewall settings to dict."""
     return {
         "id": settings.id,
         "enabled": settings.enabled,
@@ -59,6 +62,7 @@ def firewall_settings_to_dict(settings: FirewallSettings) -> dict:
 
 
 def firewall_rule_to_dict(rule: FirewallRule) -> dict:
+    """Return firewall rule to dict."""
     return {
         "id": rule.id,
         "name": rule.name,
@@ -79,6 +83,11 @@ def firewall_rule_to_dict(rule: FirewallRule) -> dict:
 
 
 def validate_firewall_settings(settings: FirewallSettings) -> list[str]:
+    """Validate firewall settings.
+
+    Returns:
+        The validate firewall settings result.
+    """
     errors: list[str] = []
     for field_name, value in [
         ("Default input policy", settings.default_input_policy),
@@ -91,6 +100,11 @@ def validate_firewall_settings(settings: FirewallSettings) -> list[str]:
 
 
 def validate_firewall_rule(rule: FirewallRule, source_groups: list[dict] | None = None, *, require_group_addresses: bool = False) -> list[str]:
+    """Validate firewall rule.
+
+    Returns:
+        The validate firewall rule result.
+    """
     errors: list[str] = []
     if not rule.name.strip():
         errors.append("Rule name is required.")
@@ -120,6 +134,7 @@ def dhcp_firewall_rules(
     dhcp_settings: DhcpSettings,
     scopes: list[DhcpScope],
 ) -> list[FirewallRule]:
+    """Return dhcp firewall rules."""
     if not dhcp_settings.enabled:
         return []
     generated_rules: list[FirewallRule] = []
@@ -166,6 +181,28 @@ def managed_service_firewall_rules(
     oidc_settings: OidcProviderSettings | None = None,
     esx_storage_rules: list[dict[str, str]] | None = None,
 ) -> list[FirewallRule]:
+    """Return managed service firewall rules.
+
+    Args:
+        dns_settings: DNS service settings that constrain the operation.
+        dhcp_settings: Dhcp settings supplied by the caller.
+        dhcp_scopes: Dhcp scopes supplied by the caller.
+        ca_settings: Ca settings supplied by the caller.
+        ca_portal_interfaces: Ca portal interfaces supplied by the caller.
+        kms_settings: Kms settings supplied by the caller.
+        ntp_settings: Ntp settings supplied by the caller.
+        vcf_backup_settings: Vcf backup settings supplied by the caller.
+        vcf_depot_settings: Vcf depot settings supplied by the caller.
+        vcf_registry_settings: Vcf registry settings supplied by the caller.
+        esxi_pxe_boot: Esxi pxe boot supplied by the caller.
+        interface_networks: Interface networks supplied by the caller.
+        source_groups: Firewall source groups available to the rule.
+        source_group_assignments: Source group assignments supplied by the caller.
+        web_terminal_interfaces: Web terminal interfaces supplied by the caller.
+        ldap_settings: Ldap settings supplied by the caller.
+        oidc_settings: Oidc settings supplied by the caller.
+        esx_storage_rules: Esx storage rules supplied by the caller.
+    """
     source_groups_by_id = {str(group.get("id", "")): group for group in source_groups or []}
     source_group_assignments = source_group_assignments or {}
     rules = [
@@ -404,6 +441,7 @@ def managed_service_firewall_rules(
 
 
 def routing_firewall_targets(interfaces: list[PhysicalInterface], vlans: list[VlanInterface]) -> list[dict]:
+    """Return routing firewall targets."""
     targets: list[dict] = []
     for interface in interfaces:
         if interface.oper_state == "missing" or normalize_interface_mode(interface.mode) == "trunk":
@@ -429,6 +467,7 @@ def managed_routing_firewall_rules(
     vlans: list[VlanInterface],
     routing_rules: list[RoutingRule] | None = None,
 ) -> list[FirewallRule]:
+    """Return managed routing firewall rules."""
     targets = routing_firewall_targets(interfaces, vlans)
     targets_by_name = {target["name"]: target for target in targets}
     management_targets = [target for target in targets if target["role"] == "management"]
@@ -503,6 +542,7 @@ def managed_routing_firewall_rules(
 
 
 def firewall_source_group_state(raw_json: str, interface_networks: dict[str, str]) -> dict:
+    """Return firewall source group state."""
     saved: dict = {}
     if raw_json.strip():
         try:
@@ -536,6 +576,11 @@ def firewall_source_group_state(raw_json: str, interface_networks: dict[str, str
 
 
 def validate_firewall_source_groups(groups: list[dict]) -> list[str]:
+    """Validate firewall source groups.
+
+    Returns:
+        The validate firewall source groups result.
+    """
     errors: list[str] = []
     groups_by_id = {str(group.get("id", "")): group for group in groups}
     names: dict[str, str] = {}
@@ -572,11 +617,13 @@ def validate_firewall_source_groups(groups: list[dict]) -> list[str]:
 
 
 def source_group_to_rule_source(group: dict | None, source_groups_by_id: dict[str, dict] | None = None) -> str:
+    """Return source group to rule source."""
     sources = _expand_source_group_entries(group, source_groups_by_id or {})
     return "\n".join(sources or ["any"])
 
 
 def firewall_interface_networks(interfaces: list[PhysicalInterface], vlans: list[VlanInterface]) -> dict[str, list[str]]:
+    """Return firewall interface networks."""
     networks: dict[str, list[str]] = {}
     for interface in interfaces:
         if interface.oper_state == "missing":
@@ -598,6 +645,7 @@ def ca_portal_firewall_interfaces(
     vlans: list[VlanInterface],
     interface_networks: dict[str, list[str]],
 ) -> list[str]:
+    """Return ca portal firewall interfaces."""
     targets: list[str] = []
     for interface in interfaces:
         if interface.oper_state == "missing" or interface.name not in interface_networks:
@@ -621,6 +669,15 @@ def effective_firewall_rules(
     replace_atlaso_dns_rules: bool = False,
     replace_atlaso_service_rules: bool = False,
 ) -> list[FirewallRule]:
+    """Return effective firewall rules.
+
+    Args:
+        rules: Rules supplied by the caller.
+        generated_rules: Generated rules supplied by the caller.
+        replace_atlaso_dhcp_rules: Replace atlaso dhcp rules supplied by the caller.
+        replace_atlaso_dns_rules: Replace atlaso dns rules supplied by the caller.
+        replace_atlaso_service_rules: Replace atlaso service rules supplied by the caller.
+    """
     generated_rules = generated_rules or []
     if not generated_rules and not replace_atlaso_dhcp_rules and not replace_atlaso_dns_rules and not replace_atlaso_service_rules:
         return rules
@@ -636,6 +693,7 @@ def effective_firewall_rules(
 
 
 def is_atlaso_managed_firewall_rule(rule: FirewallRule) -> bool:
+    """Return whether atlaso managed firewall rule."""
     normalized_name = rule.name.strip().lower()
     description = (rule.description or "").strip()
     return (
@@ -649,12 +707,14 @@ def is_atlaso_managed_firewall_rule(rule: FirewallRule) -> bool:
 
 
 def is_atlaso_dhcp_firewall_rule(rule: FirewallRule) -> bool:
+    """Return whether atlaso dhcp firewall rule."""
     normalized_name = rule.name.strip().lower()
     description = (rule.description or "").strip()
     return normalized_name in ATLASO_LEGACY_DHCP_FIREWALL_RULE_NAMES or ATLASO_DHCP_FIREWALL_RULE_MARKER in description
 
 
 def is_atlaso_dns_firewall_rule(rule: FirewallRule) -> bool:
+    """Return whether atlaso dns firewall rule."""
     normalized_name = rule.name.strip().lower()
     description = (rule.description or "").strip()
     protocol = rule.protocol.strip().lower()
@@ -679,6 +739,20 @@ def validate_firewall_state(
     replace_atlaso_dns_rules: bool = False,
     replace_atlaso_service_rules: bool = False,
 ) -> list[str]:
+    """Validate firewall state.
+
+    Args:
+        settings: Desired or runtime settings consumed by the operation.
+        rules: Rules supplied by the caller.
+        generated_rules: Generated rules supplied by the caller.
+        source_groups: Firewall source groups available to the rule.
+        replace_atlaso_dhcp_rules: Replace atlaso dhcp rules supplied by the caller.
+        replace_atlaso_dns_rules: Replace atlaso dns rules supplied by the caller.
+        replace_atlaso_service_rules: Replace atlaso service rules supplied by the caller.
+
+    Returns:
+        The validate firewall state result.
+    """
     errors = validate_firewall_settings(settings)
     seen_names: set[str] = set()
     for rule in effective_firewall_rules(
@@ -706,6 +780,21 @@ def render_nftables_config(
     replace_atlaso_service_rules: bool = False,
     management_source_cidr: str | None = None,
 ) -> str:
+    """Render nftables config.
+
+    Args:
+        settings: Desired or runtime settings consumed by the operation.
+        rules: Rules supplied by the caller.
+        generated_rules: Generated rules supplied by the caller.
+        source_groups: Firewall source groups available to the rule.
+        replace_atlaso_dhcp_rules: Replace atlaso dhcp rules supplied by the caller.
+        replace_atlaso_dns_rules: Replace atlaso dns rules supplied by the caller.
+        replace_atlaso_service_rules: Replace atlaso service rules supplied by the caller.
+        management_source_cidr: Management source cidr supplied by the caller.
+
+    Returns:
+        The rendered nftables config.
+    """
     lines = [
         "# Managed by Atlaso. Local changes may be overwritten.",
         "# nftables firewall state for Photon OS appliance images.",
@@ -764,6 +853,11 @@ def render_nftables_config(
 
 
 def _render_rule(rule: FirewallRule, source_groups_by_id: dict[str, dict] | None = None) -> str:
+    """Render rule.
+
+    Returns:
+        The rendered rule.
+    """
     source_groups_by_id = source_groups_by_id or {}
     parts: list[str] = []
     if rule.interface_name.strip():
@@ -789,6 +883,7 @@ def _render_rule(rule: FirewallRule, source_groups_by_id: dict[str, dict] | None
 
 
 def _rule_family_variants(rule: FirewallRule, source_groups_by_id: dict[str, dict]) -> list[FirewallRule]:
+    """Return rule family variants."""
     source = _rule_address_value(rule.source, source_groups_by_id)
     destination = _rule_address_value(rule.destination, source_groups_by_id)
     source_by_family = _address_values_by_family(source)
@@ -822,6 +917,11 @@ def _rule_family_variants(rule: FirewallRule, source_groups_by_id: dict[str, dic
 
 
 def _validate_ports(raw_ports: str) -> list[str]:
+    """Validate ports.
+
+    Returns:
+        The validate ports result.
+    """
     errors: list[str] = []
     for item in raw_ports.replace(",", "\n").splitlines():
         value = item.strip()
@@ -837,10 +937,12 @@ def _validate_ports(raw_ports: str) -> list[str]:
 
 
 def _valid_port(value: str) -> bool:
+    """Return valid port."""
     return value.isdigit() and 1 <= int(value) <= 65535
 
 
 def _address_expr(direction: str, value: str) -> str:
+    """Return address expr."""
     values = _split_address_values(value)
     family = "ip6" if ip_network(values[0], strict=False).version == 6 else "ip"
     if len(values) == 1:
@@ -849,6 +951,11 @@ def _address_expr(direction: str, value: str) -> str:
 
 
 def _render_ports(raw_ports: str) -> str:
+    """Render ports.
+
+    Returns:
+        The rendered ports.
+    """
     ports = [item.strip().replace("-", "-") for item in raw_ports.replace(",", "\n").splitlines() if item.strip()]
     if not ports:
         return ""
@@ -858,6 +965,7 @@ def _render_ports(raw_ports: str) -> str:
 
 
 def _safe_comment(value: str) -> str:
+    """Return safe comment."""
     return value.replace('"', "'").strip()
 
 
@@ -871,6 +979,17 @@ def _service_firewall_rule(
     ports: str,
     priority: int,
 ) -> FirewallRule:
+    """Return service firewall rule.
+
+    Args:
+        name: Name of the target object.
+        service: Atlaso service affected by the operation.
+        interface_name: Linux interface name of the network target.
+        source: Source path, address, or record to process.
+        protocol: Protocol supplied by the caller.
+        ports: Ports supplied by the caller.
+        priority: Ordering priority assigned to the item.
+    """
     return FirewallRule(
         name=name,
         direction="input",
@@ -896,6 +1015,17 @@ def _routing_firewall_rule(
     priority: int,
     description: str,
 ) -> FirewallRule:
+    """Return routing firewall rule.
+
+    Args:
+        name: Name of the target object.
+        action: Operation to perform on the target resource.
+        source_interface: Source interface supplied by the caller.
+        source_networks: Source networks supplied by the caller.
+        destination_networks: Destination networks supplied by the caller.
+        priority: Ordering priority assigned to the item.
+        description: Human-readable description of the resource.
+    """
     return FirewallRule(
         name=name,
         direction="forward",
@@ -918,6 +1048,15 @@ def _managed_rule_source(
     source_groups_by_id: dict[str, dict],
     assignments: dict[str, str],
 ) -> str:
+    """Return managed rule source.
+
+    Args:
+        rule_name: Rule name supplied by the caller.
+        interface_name: Linux interface name of the network target.
+        interface_networks: Interface networks supplied by the caller.
+        source_groups_by_id: Identifier of the source groups by.
+        assignments: Assignments supplied by the caller.
+    """
     group_id = assignments.get(rule_name, FIREWALL_ANY_SOURCE_GROUP_ID)
     group = source_groups_by_id.get(group_id) or source_groups_by_id.get(FIREWALL_ANY_SOURCE_GROUP_ID)
     if group:
@@ -931,6 +1070,7 @@ def dns_firewall_rules(
     source_groups_by_id: dict[str, dict] | None = None,
     assignments: dict[str, str] | None = None,
 ) -> list[FirewallRule]:
+    """Return dns firewall rules."""
     if not dns_settings.enabled:
         return []
     source_groups_by_id = source_groups_by_id or {}
@@ -959,6 +1099,7 @@ def dns_firewall_rules(
 
 
 def _scope_network(scope: DhcpScope) -> str:
+    """Return scope network."""
     try:
         return str(ip_network(f"{scope.site_address.strip()}/{scope.prefix_length}", strict=False))
     except ValueError:
@@ -966,6 +1107,7 @@ def _scope_network(scope: DhcpScope) -> str:
 
 
 def _network_from_cidr(value: str | None) -> str:
+    """Return network from cidr."""
     if not value:
         return ""
     try:
@@ -975,6 +1117,7 @@ def _network_from_cidr(value: str | None) -> str:
 
 
 def _networks_from_cidrs(*values: str | None) -> list[str]:
+    """Return networks from cidrs."""
     networks: list[str] = []
     for value in values:
         network = _network_from_cidr(value)
@@ -984,11 +1127,13 @@ def _networks_from_cidrs(*values: str | None) -> list[str]:
 
 
 def _slug(value: str) -> str:
+    """Return slug."""
     slug = re.sub(r"[^a-z0-9]+", "-", value.strip().lower()).strip("-")
     return slug or "dhcp-scope"
 
 
 def _ordered_unique(values: list[str]) -> list[str]:
+    """Return ordered unique."""
     ordered: list[str] = []
     for value in values:
         if value and value not in ordered:
@@ -997,6 +1142,15 @@ def _ordered_unique(values: list[str]) -> list[str]:
 
 
 def _source_group(group_id: str, name: str, entries: list[str], description: str, *, builtin: bool = False) -> dict:
+    """Return source group.
+
+    Args:
+        group_id: Identifier of the group.
+        name: Name of the target object.
+        entries: Entries supplied by the caller.
+        description: Human-readable description of the resource.
+        builtin: Builtin supplied by the caller.
+    """
     normalized_entries = _source_group_entries({"entries": entries}, ["any"])
     return {
         "id": group_id,
@@ -1009,6 +1163,7 @@ def _source_group(group_id: str, name: str, entries: list[str], description: str
 
 
 def _source_group_entries(group: dict | None, default_entries: list[str]) -> list[str]:
+    """Return source group entries."""
     group = group or {}
     raw_entries = group.get("entries")
     if raw_entries is None:
@@ -1031,18 +1186,22 @@ def _source_group_entries(group: dict | None, default_entries: list[str]) -> lis
 
 
 def _split_source_group_entry_values(value: str) -> list[str]:
+    """Return split source group entry values."""
     return [item.strip() for item in re.split(r"[\n,]+", value) if item.strip()]
 
 
 def _looks_like_source_group_reference(value: str) -> bool:
+    """Return looks like source group reference."""
     return value.strip().startswith("@") or value.strip().lower().startswith(FIREWALL_SOURCE_GROUP_REFERENCE_PREFIX)
 
 
 def _source_group_name_index(groups: dict[str, dict]) -> dict[str, str]:
+    """Return source group name index."""
     return {str(group.get("name", "")).strip().lower(): group_id for group_id, group in groups.items() if str(group.get("name", "")).strip()}
 
 
 def _source_group_reference_target(value: str, groups_by_id: dict[str, dict], names: dict[str, str] | None = None) -> str:
+    """Return source group reference target."""
     item = value.strip()
     if item.lower().startswith(FIREWALL_SOURCE_GROUP_REFERENCE_PREFIX):
         group_id = item[len(FIREWALL_SOURCE_GROUP_REFERENCE_PREFIX):]
@@ -1054,6 +1213,7 @@ def _source_group_reference_target(value: str, groups_by_id: dict[str, dict], na
 
 
 def _expand_source_group_entries(group: dict | None, groups_by_id: dict[str, dict], stack: tuple[str, ...] = ()) -> list[str]:
+    """Return expand source group entries."""
     entries = _source_group_entries(group, ["any"])
     expanded: list[str] = []
     seen: set[str] = set()
@@ -1081,9 +1241,20 @@ def _expand_source_group_entries(group: dict | None, groups_by_id: dict[str, dic
 
 
 def _validate_source_group_cycles(groups: list[dict], groups_by_id: dict[str, dict], names: dict[str, str]) -> list[str]:
+    """Validate source group cycles.
+
+    Returns:
+        The validate source group cycles result.
+    """
     errors: list[str] = []
 
     def visit(group_id: str, path: list[str]) -> None:
+        """Handle visit.
+
+        Args:
+            group_id: Identifier of the group.
+            path: Filesystem or URL path to read, validate, or update.
+        """
         if group_id in path:
             cycle_ids = [*path[path.index(group_id):], group_id]
             cycle_names = [str(groups_by_id[item].get("name") or item) for item in cycle_ids if item in groups_by_id]
@@ -1105,6 +1276,7 @@ def _validate_source_group_cycles(groups: list[dict], groups_by_id: dict[str, di
 
 
 def _rule_address_value(value: str, source_groups_by_id: dict[str, dict]) -> str:
+    """Return rule address value."""
     raw_value = value.strip()
     if not raw_value:
         return "any"
@@ -1115,6 +1287,11 @@ def _rule_address_value(value: str, source_groups_by_id: dict[str, dict]) -> str
 
 
 def _validate_rule_address_value(label: str, value: str, source_groups_by_id: dict[str, dict], names: dict[str, str]) -> list[str]:
+    """Validate rule address value.
+
+    Returns:
+        The validate rule address value result.
+    """
     raw_value = value.strip()
     if not raw_value:
         return []
@@ -1128,6 +1305,11 @@ def _validate_rule_address_value(label: str, value: str, source_groups_by_id: di
 
 
 def _validate_rule_group_reference(label: str, value: str, source_groups_by_id: dict[str, dict]) -> str:
+    """Validate rule group reference.
+
+    Returns:
+        The validate rule group reference result.
+    """
     raw_value = value.strip()
     if raw_value.lower() == "any":
         return ""
@@ -1139,10 +1321,12 @@ def _validate_rule_group_reference(label: str, value: str, source_groups_by_id: 
 
 
 def _split_address_values(value: str) -> list[str]:
+    """Return split address values."""
     return [item.strip().lower() for item in re.split(r"[\n,]+", value) if item.strip()]
 
 
 def _address_values_by_family(value: str) -> dict[int, list[str]]:
+    """Return address values by family."""
     family_values: dict[int, list[str]] = {4: [], 6: []}
     for item in _split_address_values(value):
         if item == "any":
@@ -1157,6 +1341,11 @@ def _address_values_by_family(value: str) -> dict[int, list[str]]:
 
 
 def _validate_address_value(label: str, value: str) -> list[str]:
+    """Validate address value.
+
+    Returns:
+        The validate address value result.
+    """
     normalized_values = _split_address_values(value)
     if not normalized_values:
         return []

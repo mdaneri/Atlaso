@@ -13,6 +13,7 @@ GALLERY = ROOT / "docs" / "reference" / "interface-gallery.md"
 
 
 def route_title(route: str) -> str:
+    """Return route title."""
     if route == "vmware-console":
         return "VMware console"
     path, separator, fragment = route.partition("#")
@@ -25,6 +26,7 @@ def route_title(route: str) -> str:
 
 
 def main() -> None:
+    """Run the command-line entry point."""
     payload = json.loads(MANIFEST.read_text(encoding="utf-8"))
     grouped: dict[str, list[dict[str, object]]] = defaultdict(list)
     for screenshot in payload["screenshots"]:

@@ -1,3 +1,5 @@
+"""Implement secrets behavior."""
+
 from __future__ import annotations
 
 import base64
@@ -14,11 +16,13 @@ ENCRYPTED_VALUE_PREFIX = "fernet:v1:"
 
 @dataclass(frozen=True)
 class SecretKeyStatus:
+    """Represent secret key status."""
     dedicated: bool
     source: str
 
 
 def secret_key_status(settings: Settings | None = None) -> SecretKeyStatus:
+    """Return secret key status."""
     settings = settings or get_settings()
     if settings.secrets_key:
         return SecretKeyStatus(dedicated=True, source="ATLASO_SECRETS_KEY")
@@ -26,6 +30,7 @@ def secret_key_status(settings: Settings | None = None) -> SecretKeyStatus:
 
 
 def _fernet(settings: Settings | None = None) -> Fernet:
+    """Return fernet."""
     settings = settings or get_settings()
     source = settings.secrets_key or settings.secret_key
     key = base64.urlsafe_b64encode(sha256(source.encode("utf-8")).digest())
@@ -33,6 +38,7 @@ def _fernet(settings: Settings | None = None) -> Fernet:
 
 
 def encrypt_secret(value: str, settings: Settings | None = None) -> str:
+    """Return encrypt secret."""
     if not value:
         return ""
     token = _fernet(settings).encrypt(value.encode("utf-8")).decode("ascii")
@@ -40,6 +46,11 @@ def encrypt_secret(value: str, settings: Settings | None = None) -> str:
 
 
 def decrypt_secret(value: str, settings: Settings | None = None) -> str:
+    """Return decrypt secret.
+
+    Raises:
+        ValueError: If an input value is invalid.
+    """
     if not value:
         return ""
     token = value.removeprefix(ENCRYPTED_VALUE_PREFIX)

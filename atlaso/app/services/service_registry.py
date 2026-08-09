@@ -1,3 +1,5 @@
+"""Implement service registry service behavior."""
+
 SERVICE_STATE_DEFAULTS = [
     {"service": "routing", "display_name": "Routing", "running": True, "enabled": True, "health": "healthy"},
     {"service": "firewall", "display_name": "Firewall", "running": True, "enabled": True, "health": "healthy"},

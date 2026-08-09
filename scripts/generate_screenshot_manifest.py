@@ -376,6 +376,11 @@ SPECIAL = {
 
 
 def documentation_page(stem: str) -> str:
+    """Return documentation page.
+
+    Raises:
+        ValueError: If an input value is invalid.
+    """
     matches = [
         page
         for page, prefixes in DOCUMENTATION_PAGES.items()
@@ -387,6 +392,7 @@ def documentation_page(stem: str) -> str:
 
 
 def clean_entry(stem: str) -> tuple[str, str, str, str]:
+    """Return clean entry."""
     suffix = "-clean-responsive" if stem.endswith("-clean-responsive") else "-clean-desktop"
     slug = stem.removesuffix(suffix)
     route, title = ROUTES[slug]
@@ -397,6 +403,11 @@ def clean_entry(stem: str) -> tuple[str, str, str, str]:
 
 
 def metadata(path: Path) -> dict[str, object]:
+    """Return metadata.
+
+    Args:
+        path: Filesystem or URL path to read, validate, or update.
+    """
     stem = path.stem
     if stem in SPECIAL:
         route, state, caption, alt = SPECIAL[stem]
@@ -432,6 +443,7 @@ def metadata(path: Path) -> dict[str, object]:
 
 
 def main() -> None:
+    """Run the command-line entry point."""
     screenshots = [metadata(path) for path in sorted(SCREENSHOTS.glob("*.webp"))]
     MANIFEST.write_text(
         json.dumps({"schema_version": 1, "screenshots": screenshots}, indent=2) + "\n",
