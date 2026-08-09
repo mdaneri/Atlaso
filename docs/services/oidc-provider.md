@@ -14,10 +14,6 @@ reviewable phases. Phase 4 completes its administration and lifecycle surfaces. 
 service-owned issuer, an addressed access or routed listener, its applied CA-managed certificate, an active RS256 key,
 and protocol readiness.
 
-OIDC discovery, authorization, token, user-info, and key endpoints under `/identity` are protocol routes documented in
-this guide. They remain operational and are intentionally absent from Swagger; only OIDC administration operations
-under `/api/v1` belong to the generated REST contract.
-
 <!-- BEGIN GENERATED INTERFACE OVERVIEW -->
 ## Interface overview
 
@@ -28,6 +24,10 @@ This verified appliance view provides visual orientation before you begin.
 *Figure: OIDC provider status and issuer information with service settings in the right column.*
 
 <!-- END GENERATED INTERFACE OVERVIEW -->
+
+OIDC discovery, authorization, token, user-info, and key endpoints under `/identity` are protocol routes documented in
+this guide. They remain operational and are intentionally absent from Swagger; only OIDC administration operations
+under `/api/v1` belong to the generated REST contract.
 
 ## Architecture and trust boundaries
 

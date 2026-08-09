@@ -13,9 +13,6 @@ Open `/api/docs` on an Atlaso appliance for the interactive Swagger interface or
 machine-readable schema is available at `/openapi.json` and is also the canonical application-readiness endpoint. Only
 the supported `/api/v1` REST contract appears in these interfaces.
 
-For token creation, safe command examples, scopes, errors, request IDs, locking, and mutation boundaries, start with
-[Use the Atlaso API](../operate/api.md). This page remains the generated-contract reference.
-
 <!-- BEGIN GENERATED INTERFACE OVERVIEW -->
 ## Interface overview
 
@@ -26,6 +23,9 @@ This verified appliance view provides visual orientation before you begin.
 *Figure: Swagger API reference in the verified clean-appliance desktop state.*
 
 <!-- END GENERATED INTERFACE OVERVIEW -->
+
+For token creation, safe command examples, scopes, errors, request IDs, locking, and mutation boundaries, start with
+[Use the Atlaso API](../operate/api.md). This page remains the generated-contract reference.
 
 ## Use the interface
 

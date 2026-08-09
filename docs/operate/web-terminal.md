@@ -13,10 +13,6 @@ appears under **Operations > Web terminal** on management after it is enabled in
 changes are applied. Selected additional listeners expose it through the Public Services portal instead of the admin
 shell.
 
-The `/terminal` page, ticket exchange, and WebSocket endpoints are browser and terminal protocol routes documented in
-this guide. They remain operational and are intentionally absent from Swagger rather than being `/api/v1` client
-contracts.
-
 <!-- BEGIN GENERATED INTERFACE OVERVIEW -->
 ## Interface overview
 
@@ -27,6 +23,10 @@ This verified appliance view provides visual orientation before you begin.
 *Figure: Web terminal connected to the verified Photon appliance in the desktop viewport.*
 
 <!-- END GENERATED INTERFACE OVERVIEW -->
+
+The `/terminal` page, ticket exchange, and WebSocket endpoints are browser and terminal protocol routes documented in
+this guide. They remain operational and are intentionally absent from Swagger rather than being `/api/v1` client
+contracts.
 
 Opening **Web terminal** while the feature is globally disabled keeps the authenticated Atlaso application shell and
 shows an unavailable status with links to **Appliance Settings** and pending appliance changes. The browser page does
