@@ -162,10 +162,44 @@ def test_managed_script_wizard_reports_a_malformed_bash_shebang(client):
     )
 
     assert response.status_code == 422
-    assert response.json()["detail"] == "A Bash shebang must start with #!; add the missing # or remove the shebang line."
+    assert response.json()["detail"] == "Managed script source is invalid. Review the interpreter and source, then try again."
     with SessionLocal() as db:
         assert db.execute(
             select(AutomationScript).where(AutomationScript.name == "malformed-shebang")
+        ).scalar_one_or_none() is None
+
+
+@pytest.mark.parametrize("wizard_request", [True, False])
+def test_managed_script_source_validation_does_not_expose_backend_error(client, monkeypatch, wizard_request):
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import AutomationScript
+
+    login(client)
+    csrf = csrf_from_page(client.get("/automation").text)
+
+    def fail_source_validation(*_args, **_kwargs):
+        raise ValueError("private source validation detail")
+
+    monkeypatch.setattr("atlaso.app.ui.normalize_script_content", fail_source_validation)
+    headers = {"X-Atlaso-Wizard": "1", "Accept": "application/json"} if wizard_request else {}
+    response = client.post(
+        "/automation/scripts",
+        data={
+            "csrf": csrf,
+            "name": "source-validation-failure",
+            "interpreter": "bash",
+            "timeout_seconds": "120",
+            "content": "#!/bin/bash\ndate",
+        },
+        headers=headers,
+    )
+
+    assert response.status_code == 422
+    assert "Managed script source is invalid. Review the interpreter and source, then try again." in response.text
+    assert "private source validation detail" not in response.text
+    with SessionLocal() as db:
+        assert db.execute(
+            select(AutomationScript).where(AutomationScript.name == "source-validation-failure")
         ).scalar_one_or_none() is None
 
 
