@@ -246,16 +246,29 @@ class Identity:
         self.auth_type = auth_type
 
     def can(self, scope: str) -> bool:
-        """Return whether the requested action is permitted."""
+        """Return whether the requested action is permitted.
+
+        Args:
+            scope: Scope consumed by can.
+        """
         return "admin:all" in self.scopes or scope in self.scopes
 
     def has_role(self, role: str) -> bool:
-        """Return whether the identity has the requested Atlaso role."""
+        """Return whether the identity has the requested Atlaso role.
+
+        Args:
+            role: Role consumed by has role.
+        """
         return role in self.roles
 
 
 def normalize_roles(roles: object, fallback: str = Role.VIEWER.value) -> list[str]:
     """Normalize role input into a unique, priority-ordered role list.
+
+    Args:
+        roles: Normalized Atlaso roles granted or required by the operation.
+        fallback: Candidate fallback to normalize.
+
 
     Returns:
         Valid role values ordered from most to least privileged.
@@ -277,7 +290,12 @@ def normalize_roles(roles: object, fallback: str = Role.VIEWER.value) -> list[st
 
 
 def roles_from_json(value: str | None, fallback: str) -> list[str]:
-    """Decode stored role JSON, falling back when it is absent or invalid."""
+    """Decode stored role JSON, falling back when it is absent or invalid.
+
+    Args:
+        value: Candidate value consumed by roles from JSON.
+        fallback: Fallback consumed by roles from JSON.
+    """
     if not value:
         return normalize_roles([fallback])
     try:
@@ -288,12 +306,20 @@ def roles_from_json(value: str | None, fallback: str) -> list[str]:
 
 
 def roles_to_json(roles: list[str]) -> str:
-    """Serialize normalized roles for database storage."""
+    """Serialize normalized roles for database storage.
+
+    Args:
+        roles: Normalized Atlaso roles granted or required by the operation.
+    """
     return json.dumps(normalize_roles(roles))
 
 
 def user_roles(user: User) -> list[str]:
-    """Return a user's roles and repair noncanonical stored JSON in memory."""
+    """Return a user's roles and repair noncanonical stored JSON in memory.
+
+    Args:
+        user: User record or identity affected by the operation.
+    """
     roles = roles_from_json(user.roles_json, user.role)
     if user.roles_json != roles_to_json(roles):
         user.roles_json = roles_to_json(roles)
@@ -301,12 +327,20 @@ def user_roles(user: User) -> list[str]:
 
 
 def primary_role(roles: list[str]) -> str:
-    """Return the highest-priority normalized role."""
+    """Return the highest-priority normalized role.
+
+    Args:
+        roles: Normalized Atlaso roles granted or required by the operation.
+    """
     return normalize_roles(roles)[0]
 
 
 def scopes_for_roles(roles: list[str]) -> set[str]:
-    """Return the union of permission scopes granted by the roles."""
+    """Return the union of permission scopes granted by the roles.
+
+    Args:
+        roles: Normalized Atlaso roles granted or required by the operation.
+    """
     scopes: set[str] = set()
     for role in normalize_roles(roles):
         scopes.update(ROLE_SCOPES.get(role, set()))
@@ -314,7 +348,11 @@ def scopes_for_roles(roles: list[str]) -> set[str]:
 
 
 def role_label(roles: list[str]) -> str:
-    """Return normalized roles as a display label."""
+    """Return normalized roles as a display label.
+
+    Args:
+        roles: Normalized Atlaso roles granted or required by the operation.
+    """
     return ", ".join(normalize_roles(roles))
 
 
@@ -402,24 +440,42 @@ def ensure_appliance_instance_id(db: Session) -> str:
 
 
 def role_allows_scopes(role: str, requested_scopes: set[str]) -> bool:
-    """Return whether one role grants every requested scope."""
+    """Return whether one role grants every requested scope.
+
+    Args:
+        role: Role consumed by role allows scopes.
+        requested_scopes: Requested scopes consumed by role allows scopes.
+    """
     allowed = scopes_for_roles(normalize_roles([role]))
     return "admin:all" in allowed or requested_scopes.issubset(allowed)
 
 
 def roles_allow_scopes(roles: list[str], requested_scopes: set[str]) -> bool:
-    """Return whether the combined roles grant every requested scope."""
+    """Return whether the combined roles grant every requested scope.
+
+    Args:
+        roles: Normalized Atlaso roles granted or required by the operation.
+        requested_scopes: Requested scopes consumed by roles allow scopes.
+    """
     allowed = scopes_for_roles(roles)
     return "admin:all" in allowed or requested_scopes.issubset(allowed)
 
 
 def scopes_from_string(scopes: str) -> set[str]:
-    """Parse a space-delimited OAuth scope string into unique values."""
+    """Parse a space-delimited OAuth scope string into unique values.
+
+    Args:
+        scopes: Normalized authorization scopes granted or required by the operation.
+    """
     return {scope for scope in scopes.split() if scope}
 
 
 def require_scope(scope: str):
-    """Build a FastAPI dependency that requires one API scope."""
+    """Build a FastAPI dependency that requires one API scope.
+
+    Args:
+        scope: Scope consumed by require scope.
+    """
     def dependency(identity: Annotated[Identity, Depends(get_current_api_identity)]) -> Identity:
         """Authorize an API identity for the captured scope.
 
@@ -440,7 +496,11 @@ def require_scope(scope: str):
 
 
 def require_api_or_session_scope(scope: str):
-    """Build a dependency accepting a scoped API token or browser session."""
+    """Build a dependency accepting a scoped API token or browser session.
+
+    Args:
+        scope: Scope consumed by require API or session scope.
+    """
     def dependency(
         request: Request,
         credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer_scheme)],
@@ -619,13 +679,21 @@ def enforce_ui_path_permission(request: Request, identity: Identity) -> None:
 
 
 def default_expiration(settings: Settings | None = None) -> datetime:
-    """Return the configured expiration time for a newly issued API token."""
+    """Return the configured expiration time for a newly issued API token.
+
+    Args:
+        settings: Current Atlaso settings used to configure the operation.
+    """
     settings = settings or get_settings()
     return utcnow() + timedelta(days=settings.api_token_ttl_days)
 
 
 def ensure_aware(value: datetime) -> datetime:
     """Normalize a datetime to a timezone-aware UTC value.
+
+    Args:
+        value: Candidate value consumed by ensure aware.
+
 
     Returns:
         The timezone-aware datetime.

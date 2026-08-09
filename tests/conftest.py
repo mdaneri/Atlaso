@@ -9,7 +9,12 @@ from starlette.testclient import TestClient
 
 @pytest.fixture()
 def client(tmp_path, monkeypatch) -> Generator[TestClient, None, None]:
-    """Return client."""
+    """Return client.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+    """
     db_path = tmp_path / "atlaso-test.db"
     monkeypatch.setenv("ATLASO_DATABASE_URL", f"sqlite:///{db_path}")
     monkeypatch.setenv("ATLASO_SECRET_KEY", "test-secret-key-with-enough-length")

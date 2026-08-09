@@ -43,7 +43,12 @@ class VcfPasswordCandidate:
 
 
 def _segment(value: object, fallback: str = "password") -> str:
-    """Return segment."""
+    """Return segment.
+
+    Args:
+        value: Candidate value consumed by segment.
+        fallback: Fallback consumed by segment.
+    """
     normalized = re.sub(r"[^a-z0-9_]+", "_", str(value or "").strip().lower()).strip("_")
     if not normalized:
         normalized = fallback
@@ -53,7 +58,11 @@ def _segment(value: object, fallback: str = "password") -> str:
 
 
 def _usable_password(value: object) -> str:
-    """Return usable password."""
+    """Return usable password.
+
+    Args:
+        value: Candidate value consumed by usable password.
+    """
     password = str(value or "")
     if not password or re.fullmatch(r"[*xX•]+", password):
         return ""
@@ -62,6 +71,10 @@ def _usable_password(value: object) -> str:
 
 def _sddc_manager_candidates(api: VcfDepotApiClient) -> list[VcfPasswordCandidate]:
     """Return sddc manager candidates.
+
+    Args:
+        api: Api consumed by SDDC manager candidates.
+
 
     Raises:
         VcfDepotTargetError: If the operation encounters an invalid state.
@@ -135,6 +148,10 @@ def _installer_password_nodes(value: object, path: tuple[str, ...] = ()) -> list
 
 def _vcf_installer_candidates(api: VcfDepotApiClient) -> list[VcfPasswordCandidate]:
     """Return vcf installer candidates.
+
+    Args:
+        api: Api consumed by VCF installer candidates.
+
 
     Raises:
         VcfDepotTargetError: If the operation encounters an invalid state.

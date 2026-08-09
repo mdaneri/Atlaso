@@ -36,7 +36,11 @@ KMS_DNS_RECORD_DESCRIPTION = "Atlaso app-owned KMS/KMIP endpoint record."
 
 
 def split_csv(value: str | None) -> list[str]:
-    """Return split csv."""
+    """Return split csv.
+
+    Args:
+        value: Candidate value consumed by split csv.
+    """
     if not value:
         return []
     items: list[str] = []
@@ -48,12 +52,20 @@ def split_csv(value: str | None) -> list[str]:
 
 
 def join_csv(values: list[str]) -> str:
-    """Return join csv."""
+    """Return join csv.
+
+    Args:
+        values: Candidate values consumed by join csv.
+    """
     return ",".join(split_csv(",".join(values)))
 
 
 def kms_client_fingerprints(value: str | None) -> list[str]:
-    """Return kms client fingerprints."""
+    """Return kms client fingerprints.
+
+    Args:
+        value: Candidate value consumed by KMS client fingerprints.
+    """
     fingerprints: list[str] = []
     for item in split_csv(value):
         normalized = item.casefold()
@@ -64,6 +76,10 @@ def kms_client_fingerprints(value: str | None) -> list[str]:
 
 def ensure_kms_provider_id(settings: KmsSettings) -> bool:
     """Ensure kms provider id.
+
+    Args:
+        settings: Current Atlaso settings used to configure the operation.
+
 
     Returns:
         The ensure kms provider id result.
@@ -78,7 +94,11 @@ def ensure_kms_provider_id(settings: KmsSettings) -> bool:
 
 
 def kms_client_to_dict(client: KmsClient) -> dict:
-    """Return kms client to dict."""
+    """Return kms client to dict.
+
+    Args:
+        client: Client consumed by KMS client to dict.
+    """
     fingerprints = kms_client_fingerprints(client.certificate_fingerprint)
     return {
         "id": client.id,
@@ -95,7 +115,11 @@ def kms_client_to_dict(client: KmsClient) -> dict:
 
 
 def kms_key_to_dict(key: KmsKey) -> dict:
-    """Return kms key to dict."""
+    """Return kms key to dict.
+
+    Args:
+        key: Stable key identifying the setting, secret, or mapping entry.
+    """
     return {
         "id": key.id,
         "name": key.name,
@@ -118,6 +142,12 @@ def render_kms_config(
     keys: list[KmsKey],
 ) -> str:
     """Render kms config.
+
+    Args:
+        settings: Current Atlaso settings used to configure the operation.
+        clients: Clients consumed by render KMS config.
+        keys: Keys consumed by render KMS config.
+
 
     Returns:
         The rendered kms config.
@@ -177,6 +207,12 @@ def validate_kms_state(
     keys: list[KmsKey],
 ) -> list[str]:
     """Validate kms state.
+
+    Args:
+        settings: Current Atlaso settings used to configure the operation.
+        clients: Candidate clients to validate.
+        keys: Candidate keys to validate.
+
 
     Returns:
         The validate kms state result.

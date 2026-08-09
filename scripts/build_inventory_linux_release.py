@@ -23,7 +23,11 @@ INVENTORY_VERSION_RE = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+\+[0-9]+$")
 
 
 def canonical_json(payload: dict) -> bytes:
-    """Return canonical json."""
+    """Return canonical json.
+
+    Args:
+        payload: Validated request or task payload consumed by the operation.
+    """
     return (json.dumps(payload, indent=2, sort_keys=True) + "\n").encode("utf-8")
 
 
@@ -81,6 +85,10 @@ def package_version(path: Path) -> str:
 
 def main(argv: list[str] | None = None) -> int:
     """Run the command-line entry point.
+
+    Args:
+        argv: Command-line arguments to parse, or ``None`` to use the process arguments.
+
 
     Returns:
         The main result.

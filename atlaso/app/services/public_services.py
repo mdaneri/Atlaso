@@ -29,7 +29,12 @@ ESXI_PXE_HTTP_BASE = "/var/lib/atlaso/pxe/http/esxi"
 
 
 def public_service_interface_entries(interfaces: list[PhysicalInterface], vlans: list[VlanInterface]) -> list[dict[str, Any]]:
-    """Return public service interface entries."""
+    """Return public service interface entries.
+
+    Args:
+        interfaces: Interfaces consumed by public service interface entries.
+        vlans: Vlans consumed by public service interface entries.
+    """
     entries: list[dict[str, Any]] = []
     for interface in interfaces:
         if interface.oper_state == "missing":
@@ -469,7 +474,13 @@ def _ip_scoped_https_server_lines(
 
 
 def _terminal_proxy_locations(upstream_host: str, upstream_port: int, *, include_static: bool = True) -> list[str]:
-    """Return terminal proxy locations."""
+    """Return terminal proxy locations.
+
+    Args:
+        upstream_host: Upstream host consumed by terminal proxy locations.
+        upstream_port: Upstream port consumed by terminal proxy locations.
+        include_static: Whether include static applies to the operation.
+    """
     paths = ["= /login", "= /logout", "= /terminal", "= /terminal/tickets"]
     if include_static:
         paths.append("^~ /static/")
@@ -691,7 +702,13 @@ def _esxi_pxe_http_server_lines(address: str, upstream_host: str, upstream_port:
 
 
 def _entries_for_target(name: str, role: str, *cidrs: str | None) -> list[dict[str, str]]:
-    """Return entries for target."""
+    """Return entries for target.
+
+    Args:
+        name: Stable name identifying the resource or operation.
+        role: Role consumed by entries for target.
+        *cidrs: Additional positional arguments accepted by the callable.
+    """
     entries: list[dict[str, str]] = []
     normalized_role = normalize_interface_role(role)
     for cidr in cidrs:
@@ -703,7 +720,11 @@ def _entries_for_target(name: str, role: str, *cidrs: str | None) -> list[dict[s
 
 
 def _address_from_cidr(value: str | None) -> str:
-    """Return address from cidr."""
+    """Return address from cidr.
+
+    Args:
+        value: Candidate value consumed by address from CIDR.
+    """
     if not value:
         return ""
     try:
@@ -715,6 +736,10 @@ def _address_from_cidr(value: str | None) -> str:
 def _normalize_address(value: str) -> str:
     """Normalize address.
 
+    Args:
+        value: Candidate value consumed by normalize address.
+
+
     Returns:
         The normalize address result.
     """
@@ -725,12 +750,20 @@ def _normalize_address(value: str) -> str:
 
 
 def _normalized_addresses(value: str | None) -> set[str]:
-    """Return normalized addresses."""
+    """Return normalized addresses.
+
+    Args:
+        value: Candidate value consumed by normalized addresses.
+    """
     return {_normalize_address(address) for address in split_addresses(value)}
 
 
 def _service_dns_names(*values: str | None) -> list[str]:
-    """Return service dns names."""
+    """Return service dns names.
+
+    Args:
+        *values: Additional positional arguments accepted by the callable.
+    """
     names: list[str] = []
     seen: set[str] = set()
     for value in values:
@@ -743,7 +776,12 @@ def _service_dns_names(*values: str | None) -> list[str]:
 
 
 def _service_port(service: dict[str, Any], default: int) -> int:
-    """Return service port."""
+    """Return service port.
+
+    Args:
+        service: Atlaso or host service affected by the operation.
+        default: Default consumed by service port.
+    """
     try:
         return int(service.get("port") or default)
     except (TypeError, ValueError):
@@ -751,7 +789,11 @@ def _service_port(service: dict[str, Any], default: int) -> int:
 
 
 def _nginx_server_name(address: str) -> str:
-    """Return nginx server name."""
+    """Return nginx server name.
+
+    Args:
+        address: Network address contacted or validated by the operation.
+    """
     normalized = _normalize_address(address)
     try:
         parsed = ip_address(normalized)

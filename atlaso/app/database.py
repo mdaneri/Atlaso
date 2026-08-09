@@ -36,7 +36,12 @@ SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, expi
 
 @event.listens_for(Engine, "connect")
 def _enable_sqlite_foreign_keys(dbapi_connection, _connection_record) -> None:
-    """Handle enable sqlite foreign keys."""
+    """Handle enable sqlite foreign keys.
+
+    Args:
+        dbapi_connection: Dbapi connection consumed by enable sqlite foreign keys.
+        _connection_record: Connection record consumed by enable sqlite foreign keys.
+    """
     if dbapi_connection.__class__.__module__.split(".", 1)[0] != "sqlite3":
         return
     cursor = dbapi_connection.cursor()

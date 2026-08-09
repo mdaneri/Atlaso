@@ -15,7 +15,12 @@ SCALE = 2
 
 
 def _font(size: int, *, bold: bool = False) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
-    """Return font."""
+    """Return font.
+
+    Args:
+        size: Size consumed by font.
+        bold: Whether bold applies to the operation.
+    """
     candidates = (
         Path("C:/Windows/Fonts/segoeuib.ttf" if bold else "C:/Windows/Fonts/segoeui.ttf"),
         Path("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf" if bold else "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"),
@@ -66,7 +71,13 @@ def _scaled_asset(path: Path, max_width: int, max_height: int) -> Image.Image:
 
 
 def generate(output: Path, photon_logo_path: Path, brand_icon_path: Path) -> None:
-    """Build operation."""
+    """Build operation.
+
+    Args:
+        output: Filesystem path associated with output.
+        photon_logo_path: Filesystem path used for photon logo.
+        brand_icon_path: Filesystem path used for brand icon.
+    """
     width = WIDTH * SCALE
     height = HEIGHT * SCALE
     image = Image.new("RGB", (width, height), "#071A3A")

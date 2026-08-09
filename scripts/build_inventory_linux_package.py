@@ -28,6 +28,11 @@ def sha256(path: Path) -> str:
 def package_inventory_linux(source: Path, output: Path) -> Path:
     """Return package inventory linux.
 
+    Args:
+        source: Source object or location from which data is obtained.
+        output: Filesystem path associated with output.
+
+
     Raises:
         SystemExit: If the operation encounters an invalid state.
     """

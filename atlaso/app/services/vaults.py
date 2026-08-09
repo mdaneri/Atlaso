@@ -52,7 +52,11 @@ class VaultEntryInput:
 
 
 def vault_scope_identity(vault: Vault) -> str:
-    """Return a stable identity that does not survive SQLite primary-key reuse."""
+    """Return a stable identity that does not survive SQLite primary-key reuse.
+
+    Args:
+        vault: Vault consumed by vault scope identity.
+    """
     created_at = vault.created_at
     if created_at.tzinfo is None:
         created_at = created_at.replace(tzinfo=timezone.utc)
@@ -63,6 +67,10 @@ def vault_scope_identity(vault: Vault) -> str:
 
 def normalize_vault_key(value: str) -> str:
     """Normalize vault key.
+
+    Args:
+        value: Candidate value consumed by normalize vault key.
+
 
     Returns:
         The normalize vault key result.
@@ -83,6 +91,10 @@ def normalize_vault_key(value: str) -> str:
 def vault_marker_name(value: str) -> str:
     """Return vault marker name.
 
+    Args:
+        value: Candidate value consumed by vault marker name.
+
+
     Raises:
         ValueError: If an input value is invalid.
     """
@@ -96,6 +108,10 @@ def vault_marker_name(value: str) -> str:
 
 def normalize_vault_uris(values: list[str] | tuple[str, ...]) -> tuple[str, ...]:
     """Normalize vault uris.
+
+    Args:
+        values: Candidate values consumed by normalize vault uris.
+
 
     Returns:
         The normalize vault uris result.
@@ -132,7 +148,11 @@ def normalize_vault_uris(values: list[str] | tuple[str, ...]) -> tuple[str, ...]
 
 
 def vault_entry_uris(entry: VaultEntry) -> tuple[str, ...]:
-    """Return vault entry uris."""
+    """Return vault entry uris.
+
+    Args:
+        entry: Entry consumed by vault entry uris.
+    """
     try:
         values = json.loads(entry.uris_json or "[]")
     except json.JSONDecodeError:
@@ -147,6 +167,10 @@ def vault_entry_uris(entry: VaultEntry) -> tuple[str, ...]:
 
 def parse_vault_uris_json(value: str) -> tuple[str, ...]:
     """Parse vault uris json.
+
+    Args:
+        value: Candidate value consumed by parse vault uris JSON.
+
 
     Returns:
         The parsed vault uris json.
@@ -165,6 +189,11 @@ def parse_vault_uris_json(value: str) -> tuple[str, ...]:
 
 def validate_entry_input(entry: VaultEntryInput, *, require_value: bool = True) -> VaultEntryInput:
     """Validate entry input.
+
+    Args:
+        entry: Candidate entry to validate.
+        require_value: Whether require value applies to the operation.
+
 
     Returns:
         The validate entry input result.
@@ -442,7 +471,11 @@ def kickstart_vault_values_for_markers(db: Session, marker_names: set[str]) -> d
 
 
 def vault_entry_metadata(entry: VaultEntry) -> dict[str, object]:
-    """Return vault entry metadata."""
+    """Return vault entry metadata.
+
+    Args:
+        entry: Entry consumed by vault entry metadata.
+    """
     return {
         "id": entry.id,
         "key": entry.key,
@@ -460,7 +493,12 @@ def vault_entry_metadata(entry: VaultEntry) -> dict[str, object]:
 
 
 def redact_secret_values(text: str, values: dict[str, str] | list[str]) -> str:
-    """Return redact secret values."""
+    """Return redact secret values.
+
+    Args:
+        text: Text content consumed by the operation.
+        values: Candidate values consumed by redact secret values.
+    """
     result = text
     candidates = values.values() if isinstance(values, dict) else values
     for value in sorted({item for item in candidates if item}, key=len, reverse=True):

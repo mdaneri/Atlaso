@@ -72,6 +72,11 @@ class LoggingPreferences:
 def _normalize_level(value: str | None, *, default: str = "INFO") -> str:
     """Normalize level.
 
+    Args:
+        value: Candidate value consumed by normalize level.
+        default: Candidate default to normalize.
+
+
     Returns:
         The normalize level result.
     """
@@ -82,6 +87,10 @@ def _normalize_level(value: str | None, *, default: str = "INFO") -> str:
 def _normalize_bool(value: str | None) -> bool:
     """Normalize bool.
 
+    Args:
+        value: Candidate value consumed by normalize bool.
+
+
     Returns:
         The normalize bool result.
     """
@@ -90,6 +99,10 @@ def _normalize_bool(value: str | None) -> bool:
 
 def _normalize_port(value: str | int | None) -> int:
     """Normalize port.
+
+    Args:
+        value: Candidate value consumed by normalize port.
+
 
     Returns:
         The normalize port result.
@@ -104,6 +117,10 @@ def _normalize_port(value: str | int | None) -> int:
 def _normalize_protocol(value: str | None) -> str:
     """Normalize protocol.
 
+    Args:
+        value: Candidate value consumed by normalize protocol.
+
+
     Returns:
         The normalize protocol result.
     """
@@ -113,6 +130,10 @@ def _normalize_protocol(value: str | None) -> str:
 
 def _normalize_facility(value: str | None) -> str:
     """Normalize facility.
+
+    Args:
+        value: Candidate value consumed by normalize facility.
+
 
     Returns:
         The normalize facility result.
@@ -238,7 +259,11 @@ def save_logging_preferences(
 
 
 def logging_preferences_to_dict(preferences: LoggingPreferences) -> dict[str, Any]:
-    """Return logging preferences to dict."""
+    """Return logging preferences to dict.
+
+    Args:
+        preferences: Preferences consumed by logging preferences to dict.
+    """
     return {
         "level": preferences.level,
         "levels": LOG_LEVELS,
@@ -254,17 +279,29 @@ def logging_preferences_to_dict(preferences: LoggingPreferences) -> dict[str, An
 
 
 def _handler_is_file(handler: logging.Handler) -> bool:
-    """Return handler is file."""
+    """Return handler is file.
+
+    Args:
+        handler: Handler consumed by handler is file.
+    """
     return bool(getattr(handler, "_atlaso_file_handler", False))
 
 
 def _handler_is_syslog(handler: logging.Handler) -> bool:
-    """Return handler is syslog."""
+    """Return handler is syslog.
+
+    Args:
+        handler: Handler consumed by handler is syslog.
+    """
     return bool(getattr(handler, "_atlaso_syslog_handler", False))
 
 
 def _remove_handlers(predicate) -> None:
-    """Remove handlers."""
+    """Remove handlers.
+
+    Args:
+        predicate: Predicate consumed by remove handlers.
+    """
     root_logger = logging.getLogger()
     for handler in list(root_logger.handlers):
         if not predicate(handler):
@@ -274,12 +311,21 @@ def _remove_handlers(predicate) -> None:
 
 
 def _level_number(level: str) -> int:
-    """Return level number."""
+    """Return level number.
+
+    Args:
+        level: Level consumed by level number.
+    """
     return int(getattr(logging, _normalize_level(level), logging.INFO))
 
 
 def _ensure_file_handler(log_path: Path, level: int) -> None:
-    """Ensure file handler."""
+    """Ensure file handler.
+
+    Args:
+        log_path: Filesystem path used for log.
+        level: Level consumed by ensure file handler.
+    """
     root_logger = logging.getLogger()
     for handler in list(root_logger.handlers):
         if not _handler_is_file(handler):
@@ -299,6 +345,10 @@ def _ensure_file_handler(log_path: Path, level: int) -> None:
 
 def _ensure_syslog_handler(preferences: LoggingPreferences) -> bool:
     """Ensure syslog handler.
+
+    Args:
+        preferences: Preferences consumed by ensure syslog handler.
+
 
     Returns:
         The ensure syslog handler result.
@@ -351,7 +401,11 @@ def configure_operational_logging(db: Session | None = None) -> LoggingPreferenc
 
 
 def redact_operational_text(value: str | None) -> str:
-    """Return redact operational text."""
+    """Return redact operational text.
+
+    Args:
+        value: Candidate value consumed by redact operational text.
+    """
     lines: list[str] = []
     in_private_key = False
     for line in (value or "").splitlines():
@@ -382,7 +436,11 @@ def redact_operational_text(value: str | None) -> str:
 
 
 def log_audit_event(event: Any) -> None:
-    """Handle log audit event."""
+    """Handle log audit event.
+
+    Args:
+        event: Event consumed by log audit event.
+    """
     detail = redact_operational_text(getattr(event, "detail", "") or "").replace("\n", " | ")
     resource_id = getattr(event, "resource_id", None) or ""
     request_id = getattr(event, "request_id", None) or ""

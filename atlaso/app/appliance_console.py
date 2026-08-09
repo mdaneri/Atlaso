@@ -185,7 +185,13 @@ def _console_status_failure(
     started_at: float,
     now: float | None = None,
 ) -> tuple[str, bool]:
-    """Return console status failure."""
+    """Return console status failure.
+
+    Args:
+        exc: Exception that caused the current failure path.
+        started_at: Started at consumed by console status failure.
+        now: Current UTC time used for deterministic lifecycle evaluation.
+    """
     current = time.monotonic() if now is None else now
     if isinstance(exc, ConsoleNetworkInventoryUnavailable) and current - started_at < CONSOLE_STARTUP_GRACE_SECONDS:
         return "Initializing appliance networking...", False
@@ -344,12 +350,21 @@ def _read_text(path: Path, fallback: str = "") -> str:
 
 
 def _first_display_line(value: str, fallback: str = "") -> str:
-    """Return first display line."""
+    """Return first display line.
+
+    Args:
+        value: Candidate value consumed by first display line.
+        fallback: Fallback consumed by first display line.
+    """
     return next((line.strip() for line in value.splitlines() if line.strip()), fallback)
 
 
 def _systemd_unit_states(units: list[str]) -> dict[str, dict[str, str]]:
-    """Return systemd unit states."""
+    """Return systemd unit states.
+
+    Args:
+        units: Units consumed by systemd unit states.
+    """
     try:
         result = _run(
             [
@@ -461,7 +476,12 @@ def _load_status(
     values: tuple[float, float, float] | None = None,
     cpu_count: int | None = None,
 ) -> tuple[str, str]:
-    """Return status."""
+    """Return status.
+
+    Args:
+        values: Candidate values consumed by load status.
+        cpu_count: Number of CPU entries.
+    """
     try:
         one, five, fifteen = values if values is not None else os.getloadavg()
     except (AttributeError, OSError):
@@ -481,7 +501,11 @@ def _package_version() -> str:
 
 
 def _architecture_label(machine: str | None = None) -> str:
-    """Return architecture label."""
+    """Return architecture label.
+
+    Args:
+        machine: Machine consumed by architecture label.
+    """
     reported = (machine if machine is not None else platform.machine()).strip().lower()
     aliases = {
         "x86_64": "amd64",
@@ -523,7 +547,12 @@ def _management_interface(db: Any) -> PhysicalInterface:
 
 
 def _fallback_gateway(interface_name: str, version: int = 4) -> str:
-    """Return fallback gateway."""
+    """Return fallback gateway.
+
+    Args:
+        interface_name: Host network-interface name affected by the operation.
+        version: Atlaso or artifact version being validated or produced.
+    """
     try:
         result = _run(["ip", "-6" if version == 6 else "-4", "route", "show", "default", "dev", interface_name], timeout=2)
     except (OSError, subprocess.TimeoutExpired):
@@ -533,7 +562,12 @@ def _fallback_gateway(interface_name: str, version: int = 4) -> str:
 
 
 def _fallback_cidr(interface_name: str, version: int = 4) -> str:
-    """Return fallback cidr."""
+    """Return fallback cidr.
+
+    Args:
+        interface_name: Host network-interface name affected by the operation.
+        version: Atlaso or artifact version being validated or produced.
+    """
     try:
         result = _run(["ip", "-6" if version == 6 else "-4", "-o", "addr", "show", "dev", interface_name, "scope", "global"], timeout=2)
     except (OSError, subprocess.TimeoutExpired):
@@ -544,7 +578,11 @@ def _fallback_cidr(interface_name: str, version: int = 4) -> str:
 
 
 def _fallback_dns_servers(interface_name: str) -> tuple[str, ...]:
-    """Return fallback dns servers."""
+    """Return fallback dns servers.
+
+    Args:
+        interface_name: Host network-interface name affected by the operation.
+    """
     candidates: list[str] = []
     try:
         result = _run(["resolvectl", "dns", interface_name], timeout=2)
@@ -580,7 +618,14 @@ def management_urls(
     *,
     https_enabled: bool = True,
 ) -> tuple[str, ...]:
-    """Return management urls."""
+    """Return management urls.
+
+    Args:
+        fqdn: Fqdn consumed by management urls.
+        ipv4_cidr: Ipv4 cidr consumed by management urls.
+        ipv6_cidr: Ipv6 cidr consumed by management urls.
+        https_enabled: Whether HTTPS is enabled.
+    """
     scheme = "https" if https_enabled else "http"
     urls: list[str] = []
     if fqdn:
@@ -687,6 +732,12 @@ def authenticate_root(password: str) -> bool:
 def validate_management_values(ipv4_method: str, ipv4_cidr: str, gateway: str) -> tuple[str, str, str]:
     """Validate management values.
 
+    Args:
+        ipv4_method: Candidate IPv4 method to validate.
+        ipv4_cidr: Candidate IPv4 CIDR to validate.
+        gateway: Candidate gateway to validate.
+
+
     Returns:
         The validate management values result.
 
@@ -721,6 +772,12 @@ def validate_management_values(ipv4_method: str, ipv4_cidr: str, gateway: str) -
 
 def validate_ipv6_management_values(ipv6_mode: str, ipv6_cidr: str, ipv6_gateway: str) -> tuple[str, str, str]:
     """Validate ipv6 management values.
+
+    Args:
+        ipv6_mode: Candidate IPv6 mode to validate.
+        ipv6_cidr: Candidate IPv6 CIDR to validate.
+        ipv6_gateway: Candidate IPv6 gateway to validate.
+
 
     Returns:
         The validate ipv6 management values result.
@@ -761,6 +818,10 @@ def validate_ipv6_management_values(ipv6_mode: str, ipv6_cidr: str, ipv6_gateway
 def validate_dns_servers(raw: str) -> list[str]:
     """Validate dns servers.
 
+    Args:
+        raw: Candidate raw to validate.
+
+
     Returns:
         The validate dns servers result.
 
@@ -780,6 +841,11 @@ def validate_dns_servers(raw: str) -> list[str]:
 
 def _captured_apply_payload(units: list[dict[str, Any]], selected_ids: set[str]) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     """Return captured apply payload.
+
+    Args:
+        units: Units consumed by captured apply payload.
+        selected_ids: Stable identifiers of the associated selected resources.
+
 
     Raises:
         ConsoleOperationError: If the operation encounters an invalid state.
@@ -819,7 +885,11 @@ def _captured_apply_payload(units: list[dict[str, Any]], selected_ids: set[str])
 
 
 def _console_unit_hashes(unit_ids: set[str]) -> dict[str, str]:
-    """Return console unit hashes."""
+    """Return console unit hashes.
+
+    Args:
+        unit_ids: Stable identifiers of the associated unit resources.
+    """
     from atlaso.app.ui import appliance_apply_units
 
     with SessionLocal() as db:
@@ -847,6 +917,11 @@ def _ensure_no_active_apply() -> None:
 def _submit_console_apply(required_ids: set[str], *, changed_dependents: dict[str, str] | None = None) -> str:
     # Imported lazily so read-only status remains available even if the web stack has a startup issue.
     """Return submit console apply.
+
+    Args:
+        required_ids: Stable identifiers of the associated required resources.
+        changed_dependents: Changed dependents consumed by submit console apply.
+
 
     Raises:
         ConsoleOperationError: If the operation encounters an invalid state.
@@ -987,6 +1062,10 @@ def configure_management(
 def configure_dns(raw_servers: str) -> str:
     """Update dns.
 
+    Args:
+        raw_servers: Raw servers consumed by configure DNS.
+
+
     Returns:
         The configure dns result.
 
@@ -1007,6 +1086,10 @@ def configure_dns(raw_servers: str) -> str:
 
 def configure_firewall(enabled: bool) -> str:
     """Update firewall.
+
+    Args:
+        enabled: Whether the associated resource or behavior is enabled.
+
 
     Returns:
         The configure firewall result.
@@ -1034,6 +1117,10 @@ def configure_firewall(enabled: bool) -> str:
 def set_maintenance_isolation(enabled: bool) -> dict[str, Any]:
     """Update maintenance isolation.
 
+    Args:
+        enabled: Whether the associated resource or behavior is enabled.
+
+
     Returns:
         The set maintenance isolation result.
     """
@@ -1054,6 +1141,10 @@ def set_maintenance_isolation(enabled: bool) -> dict[str, Any]:
 
 def schedule_power(action: str) -> str:
     """Return schedule power.
+
+    Args:
+        action: Action consumed by schedule power.
+
 
     Raises:
         ConsoleOperationError: If the operation encounters an invalid state.
@@ -1124,6 +1215,10 @@ def schedule_power(action: str) -> str:
 def record_console_shell(action: str) -> None:
     """Persist console shell.
 
+    Args:
+        action: Action consumed by record console shell.
+
+
     Raises:
         ValueError: If an input value is invalid.
     """
@@ -1151,7 +1246,11 @@ class CursesConsole:
         message_error: Message error maintained by this cursesconsole.
     """
     def __init__(self, stdscr: Any) -> None:
-        """Initialize the curses console."""
+        """Initialize the curses console.
+
+        Args:
+            stdscr: Stdscr consumed by init.
+        """
         import curses
 
         self.curses = curses
@@ -1233,7 +1332,11 @@ class CursesConsole:
 
     @staticmethod
     def _recovery_redraws(now: float) -> list[float]:
-        """Bounded redraw window for late tty writes while systemd jobs settle."""
+        """Bounded redraw window for late tty writes while systemd jobs settle.
+
+        Args:
+            now: Current UTC time used for deterministic lifecycle evaluation.
+        """
         return [now + 1, now + 3, now + 8]
 
     def _safe_add(self, y: int, x: int, text: str, attr: int = 0, width: int | None = None) -> None:
@@ -1256,7 +1359,12 @@ class CursesConsole:
             pass
 
     def _fill_line(self, y: int, attr: int) -> None:
-        """Handle fill line."""
+        """Handle fill line.
+
+        Args:
+            y: Y consumed by fill line.
+            attr: Attr consumed by fill line.
+        """
         _, width = self.stdscr.getmaxyx()
         self._safe_add(y, 0, " " * width, attr, width + 1)
 
@@ -1369,13 +1477,22 @@ class CursesConsole:
 
     @staticmethod
     def _service_grid_fits(height: int, service_count: int) -> bool:
-        """Keep the full grid above the message and footer rows."""
+        """Keep the full grid above the message and footer rows.
+
+        Args:
+            height: Height consumed by service grid fits.
+            service_count: Number of service entries.
+        """
         grid_last_row = 20 + ((service_count + 1) // 2)
         message_row = height - 2
         return grid_last_row < message_row
 
     def _service_attr(self, service: ServiceStatus) -> int:
-        """Return service attr."""
+        """Return service attr.
+
+        Args:
+            service: Atlaso or host service affected by the operation.
+        """
         curses = self.curses
         if service.runtime_label == "failed":
             return curses.color_pair(7) | curses.A_BOLD
@@ -1390,7 +1507,11 @@ class CursesConsole:
         return curses.color_pair(6)
 
     def _load_attr(self, severity: str) -> int:
-        """Return attr."""
+        """Return attr.
+
+        Args:
+            severity: Severity consumed by load attr.
+        """
         curses = self.curses
         return {
             "warning": curses.color_pair(6) | curses.A_BOLD,
@@ -1399,13 +1520,22 @@ class CursesConsole:
 
     @staticmethod
     def _service_cell(service: ServiceStatus, width: int) -> str:
-        """Return service cell."""
+        """Return service cell.
+
+        Args:
+            service: Atlaso or host service affected by the operation.
+            width: Width consumed by service cell.
+        """
         label_width = min(21, max(width - 3, 1))
         return f"{service.label:<{label_width}} {service.display_label}"[: max(width - 1, 1)].rstrip()
 
     @staticmethod
     def _service_summary(services: tuple[ServiceStatus, ...]) -> str:
-        """Return service summary."""
+        """Return service summary.
+
+        Args:
+            services: Services consumed by service summary.
+        """
         counts = {label: sum(service.runtime_label == label for service in services) for label in ("running", "failed", "stopped", "unavailable")}
         firewall = next((service.enabled_label for service in services if service.label == "Firewall"), "unavailable")
         return (
@@ -1423,7 +1553,16 @@ class CursesConsole:
         mode: str | None = None,
         auxiliary: tuple[str, str] | None = None,
     ) -> str:
-        """Format management state with stable columns for the current tty width."""
+        """Format management state with stable columns for the current tty width.
+
+        Args:
+            label: Human-readable label used to identify the result.
+            value: Candidate value consumed by network table row.
+            screen_width: Screen width consumed by network table row.
+            gateway: Gateway consumed by network table row.
+            mode: Mode consumed by network table row.
+            auxiliary: Auxiliary consumed by network table row.
+        """
         content_width = max(screen_width - 8, 1)
         label_width = 10
         if gateway is not None or mode is not None:
@@ -1449,7 +1588,12 @@ class CursesConsole:
         return f"{label:<{label_width}}{value}"[:content_width].rstrip()
 
     def _draw_footer(self, height: int, width: int) -> None:
-        """Handle draw footer."""
+        """Handle draw footer.
+
+        Args:
+            height: Height consumed by draw footer.
+            width: Width consumed by draw footer.
+        """
         curses = self.curses
         self._fill_line(height - 1, curses.color_pair(3))
         self._safe_add(height - 1, 1, "<F1> Help", curses.color_pair(3) | curses.A_BOLD)
@@ -1528,7 +1672,13 @@ class CursesConsole:
                     return
 
     def _draw_dialog_title(self, window: Any, title: str, box_width: int) -> None:
-        """Handle draw dialog title."""
+        """Handle draw dialog title.
+
+        Args:
+            window: Window consumed by draw dialog title.
+            title: Title consumed by draw dialog title.
+            box_width: Box width consumed by draw dialog title.
+        """
         framed_title = f" {title} "
         window.addnstr(
             0,
@@ -1539,7 +1689,13 @@ class CursesConsole:
         )
 
     def _dialog(self, title: str, lines: list[str], options: list[str]) -> int:
-        """Return dialog."""
+        """Return dialog.
+
+        Args:
+            title: Title consumed by dialog.
+            lines: Source or output lines being parsed.
+            options: Options controlling the operation.
+        """
         curses = self.curses
         height, width = self.stdscr.getmaxyx()
         box_width = min(max(max([len(title), *[len(line) for line in lines], *[len(option) for option in options]]) + 8, 48), width - 4)
@@ -1580,7 +1736,14 @@ class CursesConsole:
                 return len(options) - 1
 
     def _prompt(self, title: str, label: str, initial: str = "", *, secret: bool = False) -> str | None:
-        """Return prompt."""
+        """Return prompt.
+
+        Args:
+            title: Title consumed by prompt.
+            label: Human-readable label used to identify the result.
+            initial: Initial consumed by prompt.
+            secret: Whether secret applies to the operation.
+        """
         curses = self.curses
         height, width = self.stdscr.getmaxyx()
         box_width = min(max(len(label) + 8, 64), width - 4)
@@ -1640,7 +1803,14 @@ class CursesConsole:
                 value, cursor = self._edit_prompt_text(value, cursor, key)
 
     def _edit_prompt_text(self, value: str, cursor: int, key: str | int, *, limit: int = 500) -> tuple[str, int]:
-        """Edit password text using decoded characters from curses.get_wch()."""
+        """Edit password text using decoded characters from curses.get_wch().
+
+        Args:
+            value: Candidate value consumed by edit prompt text.
+            cursor: Cursor consumed by edit prompt text.
+            key: Stable key identifying the setting, secret, or mapping entry.
+            limit: Limit consumed by edit prompt text.
+        """
         if isinstance(key, str):
             if key in {"\b", "\x7f"} and cursor > 0:
                 return value[: cursor - 1] + value[cursor:], cursor - 1
@@ -1650,7 +1820,14 @@ class CursesConsole:
         return self._edit_text(value, cursor, key, limit=limit)
 
     def _edit_text(self, value: str, cursor: int, key: int, *, limit: int = 500) -> tuple[str, int]:
-        """Return edit text."""
+        """Return edit text.
+
+        Args:
+            value: Candidate value consumed by edit text.
+            cursor: Cursor consumed by edit text.
+            key: Stable key identifying the setting, secret, or mapping entry.
+            limit: Limit consumed by edit text.
+        """
         curses = self.curses
         if key == curses.KEY_LEFT:
             return value, max(cursor - 1, 0)
@@ -1669,7 +1846,11 @@ class CursesConsole:
         return value, cursor
 
     def _management_form(self, status: ConsoleStatus) -> tuple[str, str, str, str, str, str, str] | None:
-        """Return management form."""
+        """Return management form.
+
+        Args:
+            status: Lifecycle or operation status to record or evaluate.
+        """
         curses = self.curses
         height, width = self.stdscr.getmaxyx()
         box_height = min(20, height - 2)
@@ -1704,7 +1885,11 @@ class CursesConsole:
         modes = {"ipv4_method": ("dhcp", "static"), "ipv6_mode": ("disabled", "automatic", "static")}
 
         def enabled(name: str) -> bool:
-            """Return enabled."""
+            """Return enabled.
+
+            Args:
+                name: Stable name identifying the resource or operation.
+            """
             if name in {"ipv4_cidr", "gateway"}:
                 return values["ipv4_method"] == "static"
             if name in {"ipv6_cidr", "ipv6_gateway"}:
@@ -1712,7 +1897,11 @@ class CursesConsole:
             return True
 
         def move(delta: int) -> None:
-            """Handle move."""
+            """Handle move.
+
+            Args:
+                delta: Delta consumed by move.
+            """
             nonlocal selected
             for _ in order:
                 selected = (selected + delta) % len(order)
@@ -1837,7 +2026,12 @@ class CursesConsole:
         return authenticated
 
     def _apply_action(self, operation: Callable[[], str | dict[str, Any] | None], success: str) -> None:
-        """Update action."""
+        """Update action.
+
+        Args:
+            operation: Operation consumed by apply action.
+            success: Success consumed by apply action.
+        """
         try:
             result = operation()
             suffix = f" ({result})" if isinstance(result, str) else ""
@@ -1853,6 +2047,11 @@ class CursesConsole:
 
     def _run_interactive(self, command: list[str], label: str) -> int | None:
         """Run interactive.
+
+        Args:
+            command: Command and arguments to execute.
+            label: Human-readable label used to identify the result.
+
 
         Returns:
             The run interactive result.

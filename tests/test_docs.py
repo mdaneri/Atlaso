@@ -9,7 +9,11 @@ from scripts.overlay_docs_site import overlay
 
 
 def test_documentation_overlay_preserves_release_repository(tmp_path: Path) -> None:
-    """Verify that documentation overlay preserves release repository."""
+    """Verify that documentation overlay preserves release repository.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
     pages = tmp_path / "pages"
     built = tmp_path / "built"
     (pages / "updates").mkdir(parents=True)
@@ -39,7 +43,12 @@ def test_embedded_screenshot_generation_is_idempotent(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
-    """Verify that embedded screenshot generation is idempotent."""
+    """Verify that embedded screenshot generation is idempotent.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+    """
     docs = tmp_path / "docs"
     page = docs / "operate" / "example.md"
     page.parent.mkdir(parents=True)

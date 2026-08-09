@@ -91,7 +91,11 @@ def parse_front_matter(path: Path, text: str) -> tuple[dict[str, object], str, l
 
 
 def headings(text: str) -> list[tuple[int, int, str]]:
-    """Return headings."""
+    """Return headings.
+
+    Args:
+        text: Text content consumed by the operation.
+    """
     result: list[tuple[int, int, str]] = []
     in_fence = False
     for number, line in enumerate(text.splitlines(), start=1):
@@ -107,7 +111,11 @@ def headings(text: str) -> list[tuple[int, int, str]]:
 
 
 def slug(value: str) -> str:
-    """Return slug."""
+    """Return slug.
+
+    Args:
+        value: Candidate value consumed by slug.
+    """
     value = re.sub(r"<[^>]+>", "", value)
     value = re.sub(r"[^\w\s-]", "", value.lower())
     return re.sub(r"[-\s]+", "-", value).strip("-")
@@ -132,7 +140,11 @@ def anchors(path: Path) -> set[str]:
 
 
 def nav_paths(value: object) -> set[str]:
-    """Return nav paths."""
+    """Return nav paths.
+
+    Args:
+        value: Candidate value consumed by nav paths.
+    """
     result: set[str] = set()
     if isinstance(value, str):
         result.add(value)

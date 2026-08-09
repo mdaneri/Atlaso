@@ -93,6 +93,10 @@ def request_form(
 def csrf_from_page(page: str) -> str:
     """Return csrf from page.
 
+    Args:
+        page: Page consumed by CSRF from page.
+
+
     Raises:
         RuntimeError: If the operation cannot be completed safely.
     """

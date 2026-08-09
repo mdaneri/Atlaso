@@ -23,7 +23,11 @@ DECLARATION_HASH_RE = re.compile(r"^# atlaso-declarations-sha256: ([0-9a-f]{64})
 
 
 def locked_names(lines: list[str]) -> set[str]:
-    """Return locked names."""
+    """Return locked names.
+
+    Args:
+        lines: Source or output lines being parsed.
+    """
     return {
         canonicalize_name(match.group(1))
         for line in lines

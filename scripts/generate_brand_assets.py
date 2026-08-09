@@ -16,7 +16,12 @@ WHITE = "#FFFFFF"
 
 
 def _font(size: int, *, bold: bool = False) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
-    """Return font."""
+    """Return font.
+
+    Args:
+        size: Size consumed by font.
+        bold: Whether bold applies to the operation.
+    """
     candidates = (
         Path("C:/Windows/Fonts/segoeuib.ttf" if bold else "C:/Windows/Fonts/segoeui.ttf"),
         Path(
@@ -59,7 +64,12 @@ def _fit_font(
 
 
 def generate_social_preview(output: Path, icon_path: Path) -> None:
-    """Build social preview."""
+    """Build social preview.
+
+    Args:
+        output: Filesystem path associated with output.
+        icon_path: Filesystem path used for icon.
+    """
     image = Image.new("RGB", (1200, 630), NAVY)
     draw = ImageDraw.Draw(image)
 

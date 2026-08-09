@@ -56,7 +56,11 @@ class ManagedCertificateSpec:
 
 
 def split_multiline(value: str | None) -> list[str]:
-    """Return split multiline."""
+    """Return split multiline.
+
+    Args:
+        value: Comma- or newline-delimited text to normalize into unique entries.
+    """
     if not value:
         return []
     items: list[str] = []
@@ -73,6 +77,10 @@ def managed_certificate_for_owner(db: Session, owner: str) -> CaCertificate | No
     Older appliances can contain duplicate owner rows. Treat the newest row as
     canonical so read-only status and preview paths remain available while the
     managed-certificate reconciliation converges the desired state.
+
+    Args:
+        db: Active database session used to query certificate records.
+        owner: Stable managed-owner identifier assigned to the certificate.
     """
     return db.execute(
         select(CaCertificate)
@@ -82,12 +90,21 @@ def managed_certificate_for_owner(db: Session, owner: str) -> CaCertificate | No
 
 
 def join_multiline(values: list[str]) -> str:
-    """Return join multiline."""
+    """Return join multiline.
+
+    Args:
+        values: Entries to normalize and serialize as newline-delimited text.
+    """
     return "\n".join(split_multiline("\n".join(values)))
 
 
 def ca_service_state(settings: CaSettings) -> dict[str, object]:
-    """Return ca service state."""
+    """Return ca service state.
+
+    Args:
+        settings: Saved CA settings whose desired enablement and root material determine service
+            health.
+    """
     desired_enabled = bool(settings.enabled)
     has_material = bool(settings.root_certificate_pem and settings.root_private_key_encrypted)
     running = desired_enabled and has_material
@@ -113,18 +130,31 @@ def ca_service_state(settings: CaSettings) -> dict[str, object]:
 
 
 def safe_certificate_name(value: str) -> str:
-    """Return safe certificate name."""
+    """Return safe certificate name.
+
+    Args:
+        value: Operator-provided certificate name to make safe for filesystem use.
+    """
     safe = SAFE_NAME_PATTERN.sub("-", value.strip()).strip("-")
     return safe or "certificate"
 
 
 def _hash_algorithm(name: str) -> hashes.HashAlgorithm:
-    """Return hash algorithm."""
+    """Return hash algorithm.
+
+    Args:
+        name: Configured digest name; unsupported values fall back to SHA-256.
+    """
     return {"sha384": hashes.SHA384(), "sha512": hashes.SHA512()}.get(name.lower(), hashes.SHA256())
 
 
 def _private_key(algorithm: str, key_size: int):
-    """Return private key."""
+    """Return private key.
+
+    Args:
+        algorithm: Key algorithm name, currently RSA or ECDSA.
+        key_size: Requested RSA key size or ECDSA curve size in bits.
+    """
     if algorithm.upper() == "ECDSA":
         curve = ec.SECP521R1() if key_size >= 521 else ec.SECP384R1() if key_size >= 384 else ec.SECP256R1()
         return ec.generate_private_key(curve)
@@ -144,11 +174,11 @@ def _subject(
 
     Args:
         common_name: Certificate subject common name.
-        organization: Managed identity organization affected by the operation.
-        organizational_unit: Organizational unit supplied by the caller.
-        country: Country supplied by the caller.
-        state: Lifecycle or job state to persist.
-        locality: Locality supplied by the caller.
+        organization: X.509 subject organization, defaulting to Atlaso when empty.
+        organizational_unit: Optional X.509 subject organizational unit.
+        country: Optional two-letter X.509 subject country code.
+        state: Optional X.509 subject state or province.
+        locality: Optional X.509 subject locality or city.
     """
     parts = [
         x509.NameAttribute(NameOID.COMMON_NAME, common_name),
@@ -166,7 +196,11 @@ def _subject(
 
 
 def _pem_private_key(private_key) -> str:
-    """Return pem private key."""
+    """Return pem private key.
+
+    Args:
+        private_key: Cryptography private-key object to serialize as unencrypted PKCS#8 PEM.
+    """
     return private_key.private_bytes(
         encoding=serialization.Encoding.PEM,
         format=serialization.PrivateFormat.PKCS8,
@@ -175,17 +209,29 @@ def _pem_private_key(private_key) -> str:
 
 
 def _pem_public_cert(certificate: x509.Certificate) -> str:
-    """Return pem public cert."""
+    """Return pem public cert.
+
+    Args:
+        certificate: Parsed X.509 certificate to serialize as PEM.
+    """
     return certificate.public_bytes(serialization.Encoding.PEM).decode("utf-8")
 
 
 def _fingerprint(certificate: x509.Certificate) -> str:
-    """Return fingerprint."""
+    """Return fingerprint.
+
+    Args:
+        certificate: Parsed X.509 certificate whose SHA-256 fingerprint is required.
+    """
     return certificate.fingerprint(hashes.SHA256()).hex()
 
 
 def _load_root(settings: CaSettings) -> tuple[x509.Certificate, object]:
     """Return root.
+
+    Args:
+        settings: Saved CA settings containing the root certificate and encrypted private key.
+
 
     Raises:
         ValueError: If an input value is invalid.
@@ -200,6 +246,11 @@ def _load_root(settings: CaSettings) -> tuple[x509.Certificate, object]:
 
 def generate_crl_pem(settings: CaSettings, certificates: list[CaCertificate]) -> str:
     """Build crl pem.
+
+    Args:
+        settings: Saved CA settings containing the root signing material.
+        certificates: Issued certificate records from which revoked serial numbers are collected.
+
 
     Returns:
         The generate crl pem result.
@@ -235,7 +286,7 @@ def ensure_default_ca_profiles(db: Session) -> bool:
     """Ensure default ca profiles.
 
     Args:
-        db: Active database session.
+        db: Active database session in which missing built-in profiles are created.
 
     Returns:
         The ensure default ca profiles result.
@@ -279,6 +330,10 @@ def ensure_default_ca_profiles(db: Session) -> bool:
 
 def ensure_root_ca_material(settings: CaSettings) -> bool:
     """Ensure root ca material.
+
+    Args:
+        settings: Saved CA settings to populate with generated root certificate material.
+
 
     Returns:
         The ensure root ca material result.
@@ -333,12 +388,21 @@ def ensure_root_ca_material(settings: CaSettings) -> bool:
 
 
 def _certificate_profile(profiles: list[CaProfile], certificate: CaCertificate) -> CaProfile | None:
-    """Return certificate profile."""
+    """Return certificate profile.
+
+    Args:
+        profiles: Available CA profiles indexed by the certificate's profile identifier.
+        certificate: Certificate record whose issuing profile is required.
+    """
     return next((profile for profile in profiles if profile.id == certificate.profile_id), None)
 
 
 def _extended_key_usage(value: str) -> x509.ExtendedKeyUsage | None:
-    """Return extended key usage."""
+    """Return extended key usage.
+
+    Args:
+        value: Comma- or newline-delimited extended-key-usage names from a CA profile.
+    """
     usages = []
     for item in split_multiline(value):
         normalized = item.strip()
@@ -350,7 +414,11 @@ def _extended_key_usage(value: str) -> x509.ExtendedKeyUsage | None:
 
 
 def _key_usage(value: str) -> x509.KeyUsage:
-    """Return key usage."""
+    """Return key usage.
+
+    Args:
+        value: Comma- or newline-delimited key-usage names from a CA profile.
+    """
     usages = {item.strip() for item in split_multiline(value)}
     return x509.KeyUsage(
         digital_signature="digitalSignature" in usages,
@@ -366,7 +434,11 @@ def _key_usage(value: str) -> x509.KeyUsage:
 
 
 def certificate_needs_issue(certificate: CaCertificate) -> bool:
-    """Return certificate needs issue."""
+    """Return certificate needs issue.
+
+    Args:
+        certificate: Certificate record inspected for missing or stale issued material.
+    """
     if certificate.status != "issued":
         return True
     if not certificate.certificate_pem:
@@ -380,6 +452,10 @@ def certificate_needs_issue(certificate: CaCertificate) -> bool:
 def ensure_aware(value: datetime) -> datetime:
     """Ensure aware.
 
+    Args:
+        value: Datetime to normalize, treating a naive value as UTC.
+
+
     Returns:
         The ensure aware result.
     """
@@ -389,7 +465,13 @@ def ensure_aware(value: datetime) -> datetime:
 
 
 def issue_certificate(settings: CaSettings, profiles: list[CaProfile], certificate: CaCertificate) -> bool:
-    """Return issue certificate."""
+    """Return issue certificate.
+
+    Args:
+        settings: Saved CA settings containing the root signing material.
+        profiles: Available CA profiles used to select issuance constraints.
+        certificate: Desired certificate record to issue and update in place.
+    """
     if not certificate.enabled or certificate.status == "revoked" or not certificate_needs_issue(certificate):
         return False
     profile = _certificate_profile(profiles, certificate)
@@ -460,10 +542,10 @@ def ensure_managed_certificate_rows(
     """Ensure managed certificate rows.
 
     Args:
-        db: Active database session.
-        settings: Desired or runtime settings consumed by the operation.
-        profiles: Profiles supplied by the caller.
-        specs: Specs supplied by the caller.
+        db: Active database session used to reconcile managed certificate records.
+        settings: Saved CA settings controlling whether managed certificates are enabled.
+        profiles: Available CA profiles used to resolve each desired specification.
+        specs: Desired managed-certificate specifications keyed by stable owner identity.
 
     Returns:
         The ensure managed certificate rows result.
@@ -521,10 +603,10 @@ def ensure_ca_issued_state(
     """Ensure ca issued state.
 
     Args:
-        db: Active database session.
-        settings: Desired or runtime settings consumed by the operation.
-        profiles: Profiles supplied by the caller.
-        certificates: Certificates supplied by the caller.
+        db: Active database session used to persist issuance changes.
+        settings: Saved CA settings containing root signing material and lifecycle policy.
+        profiles: Available CA profiles used to issue desired certificates.
+        certificates: Certificate records to inspect and issue when required.
 
     Returns:
         The ensure ca issued state result.
@@ -539,7 +621,11 @@ def ensure_ca_issued_state(
 
 
 def ca_profile_to_dict(profile: CaProfile) -> dict:
-    """Return ca profile to dict."""
+    """Return ca profile to dict.
+
+    Args:
+        profile: CA profile to serialize for API or UI consumption.
+    """
     return {
         "id": profile.id,
         "name": profile.name,
@@ -556,12 +642,20 @@ def ca_profile_to_dict(profile: CaProfile) -> dict:
 
 
 def ca_certificate_can_edit(certificate: CaCertificate) -> bool:
-    """Return ca certificate can edit."""
+    """Return ca certificate can edit.
+
+    Args:
+        certificate: Certificate record whose managed and issuance state controls editability.
+    """
     return not certificate.managed_owner and certificate.status == "planned" and not certificate.certificate_pem
 
 
 def ca_certificate_can_delete(certificate: CaCertificate) -> bool:
-    """Return ca certificate can delete."""
+    """Return ca certificate can delete.
+
+    Args:
+        certificate: Certificate record whose managed status controls deletion.
+    """
     return not certificate.managed_owner
 
 
@@ -573,6 +667,13 @@ def validate_ca_certificate_request(
     ip_addresses: str,
 ) -> list[str]:
     """Validate ca certificate request.
+
+    Args:
+        profile: CA profile whose subject and SAN constraints must be enforced.
+        common_name: Requested certificate subject common name.
+        subject_alt_names: Requested DNS subject-alternative names.
+        ip_addresses: Requested IP-address subject-alternative names.
+
 
     Returns:
         The validate ca certificate request result.
@@ -597,7 +698,11 @@ def validate_ca_certificate_request(
 
 
 def ca_certificate_to_dict(certificate: CaCertificate) -> dict:
-    """Return ca certificate to dict."""
+    """Return ca certificate to dict.
+
+    Args:
+        certificate: Certificate record to serialize for API or UI consumption.
+    """
     can_export_certificate = certificate.status == "issued" and bool(certificate.certificate_pem)
     return {
         "id": certificate.id,
@@ -633,6 +738,12 @@ def render_ca_config(
     certificates: list[CaCertificate],
 ) -> str:
     """Render ca config.
+
+    Args:
+        settings: Saved CA settings to expose to the constrained appliance helper.
+        profiles: CA profiles included in the staged desired-state configuration.
+        certificates: Certificate records included in the staged desired-state configuration.
+
 
     Returns:
         The rendered ca config.
@@ -681,6 +792,13 @@ def render_ca_config(
 
 def render_ca_apply_payload(settings: CaSettings, certificates: list[CaCertificate], *, include_private_keys: bool) -> str:
     """Render ca apply payload.
+
+    Args:
+        settings: Saved CA settings represented in the reviewed apply payload.
+        certificates: Certificate records represented in the reviewed apply payload.
+        include_private_keys: Whether the constrained helper payload may contain private-key
+            material required for deployment.
+
 
     Returns:
         The rendered ca apply payload.
@@ -743,6 +861,13 @@ def validate_ca_state(
     certificates: list[CaCertificate],
 ) -> list[str]:
     """Validate ca state.
+
+    Args:
+        settings: Saved CA settings to validate before staging or apply.
+        profiles: CA profiles whose names, algorithms, and validity constraints are validated.
+        certificates: Certificate records whose profile references and requested names are
+            validated.
+
 
     Returns:
         The validate ca state result.

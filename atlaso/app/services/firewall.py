@@ -45,7 +45,11 @@ ATLASO_LEGACY_SERVICE_FIREWALL_RULE_NAMES = {"mgmt-console"}
 
 
 def firewall_settings_to_dict(settings: FirewallSettings) -> dict:
-    """Return firewall settings to dict."""
+    """Return firewall settings to dict.
+
+    Args:
+        settings: Current Atlaso settings used to configure the operation.
+    """
     return {
         "id": settings.id,
         "enabled": settings.enabled,
@@ -62,7 +66,11 @@ def firewall_settings_to_dict(settings: FirewallSettings) -> dict:
 
 
 def firewall_rule_to_dict(rule: FirewallRule) -> dict:
-    """Return firewall rule to dict."""
+    """Return firewall rule to dict.
+
+    Args:
+        rule: Rule consumed by firewall rule to dict.
+    """
     return {
         "id": rule.id,
         "name": rule.name,
@@ -85,6 +93,10 @@ def firewall_rule_to_dict(rule: FirewallRule) -> dict:
 def validate_firewall_settings(settings: FirewallSettings) -> list[str]:
     """Validate firewall settings.
 
+    Args:
+        settings: Current Atlaso settings used to configure the operation.
+
+
     Returns:
         The validate firewall settings result.
     """
@@ -101,6 +113,12 @@ def validate_firewall_settings(settings: FirewallSettings) -> list[str]:
 
 def validate_firewall_rule(rule: FirewallRule, source_groups: list[dict] | None = None, *, require_group_addresses: bool = False) -> list[str]:
     """Validate firewall rule.
+
+    Args:
+        rule: Candidate rule to validate.
+        source_groups: Candidate source groups to validate.
+        require_group_addresses: Whether require group addresses applies to the operation.
+
 
     Returns:
         The validate firewall rule result.
@@ -134,7 +152,12 @@ def dhcp_firewall_rules(
     dhcp_settings: DhcpSettings,
     scopes: list[DhcpScope],
 ) -> list[FirewallRule]:
-    """Return dhcp firewall rules."""
+    """Return dhcp firewall rules.
+
+    Args:
+        dhcp_settings: Dhcp settings consumed by dhcp firewall rules.
+        scopes: Normalized authorization scopes granted or required by the operation.
+    """
     if not dhcp_settings.enabled:
         return []
     generated_rules: list[FirewallRule] = []
@@ -441,7 +464,12 @@ def managed_service_firewall_rules(
 
 
 def routing_firewall_targets(interfaces: list[PhysicalInterface], vlans: list[VlanInterface]) -> list[dict]:
-    """Return routing firewall targets."""
+    """Return routing firewall targets.
+
+    Args:
+        interfaces: Interfaces consumed by routing firewall targets.
+        vlans: Vlans consumed by routing firewall targets.
+    """
     targets: list[dict] = []
     for interface in interfaces:
         if interface.oper_state == "missing" or normalize_interface_mode(interface.mode) == "trunk":
@@ -467,7 +495,13 @@ def managed_routing_firewall_rules(
     vlans: list[VlanInterface],
     routing_rules: list[RoutingRule] | None = None,
 ) -> list[FirewallRule]:
-    """Return managed routing firewall rules."""
+    """Return managed routing firewall rules.
+
+    Args:
+        interfaces: Interfaces consumed by managed routing firewall rules.
+        vlans: Vlans consumed by managed routing firewall rules.
+        routing_rules: Routing rules consumed by managed routing firewall rules.
+    """
     targets = routing_firewall_targets(interfaces, vlans)
     targets_by_name = {target["name"]: target for target in targets}
     management_targets = [target for target in targets if target["role"] == "management"]
@@ -542,7 +576,12 @@ def managed_routing_firewall_rules(
 
 
 def firewall_source_group_state(raw_json: str, interface_networks: dict[str, str]) -> dict:
-    """Return firewall source group state."""
+    """Return firewall source group state.
+
+    Args:
+        raw_json: Raw json consumed by firewall source group state.
+        interface_networks: Interface networks consumed by firewall source group state.
+    """
     saved: dict = {}
     if raw_json.strip():
         try:
@@ -577,6 +616,10 @@ def firewall_source_group_state(raw_json: str, interface_networks: dict[str, str
 
 def validate_firewall_source_groups(groups: list[dict]) -> list[str]:
     """Validate firewall source groups.
+
+    Args:
+        groups: Candidate groups to validate.
+
 
     Returns:
         The validate firewall source groups result.
@@ -617,13 +660,23 @@ def validate_firewall_source_groups(groups: list[dict]) -> list[str]:
 
 
 def source_group_to_rule_source(group: dict | None, source_groups_by_id: dict[str, dict] | None = None) -> str:
-    """Return source group to rule source."""
+    """Return source group to rule source.
+
+    Args:
+        group: Group consumed by source group to rule source.
+        source_groups_by_id: Stable identifier of the associated source groups by resource.
+    """
     sources = _expand_source_group_entries(group, source_groups_by_id or {})
     return "\n".join(sources or ["any"])
 
 
 def firewall_interface_networks(interfaces: list[PhysicalInterface], vlans: list[VlanInterface]) -> dict[str, list[str]]:
-    """Return firewall interface networks."""
+    """Return firewall interface networks.
+
+    Args:
+        interfaces: Interfaces consumed by firewall interface networks.
+        vlans: Vlans consumed by firewall interface networks.
+    """
     networks: dict[str, list[str]] = {}
     for interface in interfaces:
         if interface.oper_state == "missing":
@@ -645,7 +698,13 @@ def ca_portal_firewall_interfaces(
     vlans: list[VlanInterface],
     interface_networks: dict[str, list[str]],
 ) -> list[str]:
-    """Return ca portal firewall interfaces."""
+    """Return ca portal firewall interfaces.
+
+    Args:
+        interfaces: Interfaces consumed by CA portal firewall interfaces.
+        vlans: Vlans consumed by CA portal firewall interfaces.
+        interface_networks: Interface networks consumed by CA portal firewall interfaces.
+    """
     targets: list[str] = []
     for interface in interfaces:
         if interface.oper_state == "missing" or interface.name not in interface_networks:
@@ -693,7 +752,11 @@ def effective_firewall_rules(
 
 
 def is_atlaso_managed_firewall_rule(rule: FirewallRule) -> bool:
-    """Return whether atlaso managed firewall rule."""
+    """Return whether atlaso managed firewall rule.
+
+    Args:
+        rule: Rule consumed by is atlaso managed firewall rule.
+    """
     normalized_name = rule.name.strip().lower()
     description = (rule.description or "").strip()
     return (
@@ -707,14 +770,22 @@ def is_atlaso_managed_firewall_rule(rule: FirewallRule) -> bool:
 
 
 def is_atlaso_dhcp_firewall_rule(rule: FirewallRule) -> bool:
-    """Return whether atlaso dhcp firewall rule."""
+    """Return whether atlaso dhcp firewall rule.
+
+    Args:
+        rule: Rule consumed by is atlaso dhcp firewall rule.
+    """
     normalized_name = rule.name.strip().lower()
     description = (rule.description or "").strip()
     return normalized_name in ATLASO_LEGACY_DHCP_FIREWALL_RULE_NAMES or ATLASO_DHCP_FIREWALL_RULE_MARKER in description
 
 
 def is_atlaso_dns_firewall_rule(rule: FirewallRule) -> bool:
-    """Return whether atlaso dns firewall rule."""
+    """Return whether atlaso dns firewall rule.
+
+    Args:
+        rule: Rule consumed by is atlaso DNS firewall rule.
+    """
     normalized_name = rule.name.strip().lower()
     description = (rule.description or "").strip()
     protocol = rule.protocol.strip().lower()
@@ -855,6 +926,11 @@ def render_nftables_config(
 def _render_rule(rule: FirewallRule, source_groups_by_id: dict[str, dict] | None = None) -> str:
     """Render rule.
 
+    Args:
+        rule: Rule consumed by render rule.
+        source_groups_by_id: Stable identifier of the associated source groups by resource.
+
+
     Returns:
         The rendered rule.
     """
@@ -883,7 +959,12 @@ def _render_rule(rule: FirewallRule, source_groups_by_id: dict[str, dict] | None
 
 
 def _rule_family_variants(rule: FirewallRule, source_groups_by_id: dict[str, dict]) -> list[FirewallRule]:
-    """Return rule family variants."""
+    """Return rule family variants.
+
+    Args:
+        rule: Rule consumed by rule family variants.
+        source_groups_by_id: Stable identifier of the associated source groups by resource.
+    """
     source = _rule_address_value(rule.source, source_groups_by_id)
     destination = _rule_address_value(rule.destination, source_groups_by_id)
     source_by_family = _address_values_by_family(source)
@@ -919,6 +1000,10 @@ def _rule_family_variants(rule: FirewallRule, source_groups_by_id: dict[str, dic
 def _validate_ports(raw_ports: str) -> list[str]:
     """Validate ports.
 
+    Args:
+        raw_ports: Candidate raw ports to validate.
+
+
     Returns:
         The validate ports result.
     """
@@ -937,12 +1022,21 @@ def _validate_ports(raw_ports: str) -> list[str]:
 
 
 def _valid_port(value: str) -> bool:
-    """Return valid port."""
+    """Return valid port.
+
+    Args:
+        value: Candidate value consumed by valid port.
+    """
     return value.isdigit() and 1 <= int(value) <= 65535
 
 
 def _address_expr(direction: str, value: str) -> str:
-    """Return address expr."""
+    """Return address expr.
+
+    Args:
+        direction: Direction consumed by address expr.
+        value: Candidate value consumed by address expr.
+    """
     values = _split_address_values(value)
     family = "ip6" if ip_network(values[0], strict=False).version == 6 else "ip"
     if len(values) == 1:
@@ -952,6 +1046,10 @@ def _address_expr(direction: str, value: str) -> str:
 
 def _render_ports(raw_ports: str) -> str:
     """Render ports.
+
+    Args:
+        raw_ports: Raw ports consumed by render ports.
+
 
     Returns:
         The rendered ports.
@@ -965,7 +1063,11 @@ def _render_ports(raw_ports: str) -> str:
 
 
 def _safe_comment(value: str) -> str:
-    """Return safe comment."""
+    """Return safe comment.
+
+    Args:
+        value: Candidate value consumed by safe comment.
+    """
     return value.replace('"', "'").strip()
 
 
@@ -1070,7 +1172,14 @@ def dns_firewall_rules(
     source_groups_by_id: dict[str, dict] | None = None,
     assignments: dict[str, str] | None = None,
 ) -> list[FirewallRule]:
-    """Return dns firewall rules."""
+    """Return dns firewall rules.
+
+    Args:
+        dns_settings: Dns settings consumed by DNS firewall rules.
+        interface_networks: Interface networks consumed by DNS firewall rules.
+        source_groups_by_id: Stable identifier of the associated source groups by resource.
+        assignments: Assignments consumed by DNS firewall rules.
+    """
     if not dns_settings.enabled:
         return []
     source_groups_by_id = source_groups_by_id or {}
@@ -1099,7 +1208,11 @@ def dns_firewall_rules(
 
 
 def _scope_network(scope: DhcpScope) -> str:
-    """Return scope network."""
+    """Return scope network.
+
+    Args:
+        scope: Scope consumed by scope network.
+    """
     try:
         return str(ip_network(f"{scope.site_address.strip()}/{scope.prefix_length}", strict=False))
     except ValueError:
@@ -1107,7 +1220,11 @@ def _scope_network(scope: DhcpScope) -> str:
 
 
 def _network_from_cidr(value: str | None) -> str:
-    """Return network from cidr."""
+    """Return network from cidr.
+
+    Args:
+        value: Candidate value consumed by network from CIDR.
+    """
     if not value:
         return ""
     try:
@@ -1117,7 +1234,11 @@ def _network_from_cidr(value: str | None) -> str:
 
 
 def _networks_from_cidrs(*values: str | None) -> list[str]:
-    """Return networks from cidrs."""
+    """Return networks from cidrs.
+
+    Args:
+        *values: Additional positional arguments accepted by the callable.
+    """
     networks: list[str] = []
     for value in values:
         network = _network_from_cidr(value)
@@ -1127,13 +1248,21 @@ def _networks_from_cidrs(*values: str | None) -> list[str]:
 
 
 def _slug(value: str) -> str:
-    """Return slug."""
+    """Return slug.
+
+    Args:
+        value: Candidate value consumed by slug.
+    """
     slug = re.sub(r"[^a-z0-9]+", "-", value.strip().lower()).strip("-")
     return slug or "dhcp-scope"
 
 
 def _ordered_unique(values: list[str]) -> list[str]:
-    """Return ordered unique."""
+    """Return ordered unique.
+
+    Args:
+        values: Candidate values consumed by ordered unique.
+    """
     ordered: list[str] = []
     for value in values:
         if value and value not in ordered:
@@ -1163,7 +1292,12 @@ def _source_group(group_id: str, name: str, entries: list[str], description: str
 
 
 def _source_group_entries(group: dict | None, default_entries: list[str]) -> list[str]:
-    """Return source group entries."""
+    """Return source group entries.
+
+    Args:
+        group: Group consumed by source group entries.
+        default_entries: Default entries consumed by source group entries.
+    """
     group = group or {}
     raw_entries = group.get("entries")
     if raw_entries is None:
@@ -1186,22 +1320,40 @@ def _source_group_entries(group: dict | None, default_entries: list[str]) -> lis
 
 
 def _split_source_group_entry_values(value: str) -> list[str]:
-    """Return split source group entry values."""
+    """Return split source group entry values.
+
+    Args:
+        value: Candidate value consumed by split source group entry values.
+    """
     return [item.strip() for item in re.split(r"[\n,]+", value) if item.strip()]
 
 
 def _looks_like_source_group_reference(value: str) -> bool:
-    """Return looks like source group reference."""
+    """Return looks like source group reference.
+
+    Args:
+        value: Candidate value consumed by looks like source group reference.
+    """
     return value.strip().startswith("@") or value.strip().lower().startswith(FIREWALL_SOURCE_GROUP_REFERENCE_PREFIX)
 
 
 def _source_group_name_index(groups: dict[str, dict]) -> dict[str, str]:
-    """Return source group name index."""
+    """Return source group name index.
+
+    Args:
+        groups: Groups consumed by source group name index.
+    """
     return {str(group.get("name", "")).strip().lower(): group_id for group_id, group in groups.items() if str(group.get("name", "")).strip()}
 
 
 def _source_group_reference_target(value: str, groups_by_id: dict[str, dict], names: dict[str, str] | None = None) -> str:
-    """Return source group reference target."""
+    """Return source group reference target.
+
+    Args:
+        value: Candidate value consumed by source group reference target.
+        groups_by_id: Stable identifier of the associated groups by resource.
+        names: Names consumed by source group reference target.
+    """
     item = value.strip()
     if item.lower().startswith(FIREWALL_SOURCE_GROUP_REFERENCE_PREFIX):
         group_id = item[len(FIREWALL_SOURCE_GROUP_REFERENCE_PREFIX):]
@@ -1213,7 +1365,13 @@ def _source_group_reference_target(value: str, groups_by_id: dict[str, dict], na
 
 
 def _expand_source_group_entries(group: dict | None, groups_by_id: dict[str, dict], stack: tuple[str, ...] = ()) -> list[str]:
-    """Return expand source group entries."""
+    """Return expand source group entries.
+
+    Args:
+        group: Group consumed by expand source group entries.
+        groups_by_id: Stable identifier of the associated groups by resource.
+        stack: Stack consumed by expand source group entries.
+    """
     entries = _source_group_entries(group, ["any"])
     expanded: list[str] = []
     seen: set[str] = set()
@@ -1242,6 +1400,12 @@ def _expand_source_group_entries(group: dict | None, groups_by_id: dict[str, dic
 
 def _validate_source_group_cycles(groups: list[dict], groups_by_id: dict[str, dict], names: dict[str, str]) -> list[str]:
     """Validate source group cycles.
+
+    Args:
+        groups: Candidate groups to validate.
+        groups_by_id: Stable identifier of the associated groups by resource.
+        names: Candidate names to validate.
+
 
     Returns:
         The validate source group cycles result.
@@ -1276,7 +1440,12 @@ def _validate_source_group_cycles(groups: list[dict], groups_by_id: dict[str, di
 
 
 def _rule_address_value(value: str, source_groups_by_id: dict[str, dict]) -> str:
-    """Return rule address value."""
+    """Return rule address value.
+
+    Args:
+        value: Candidate value consumed by rule address value.
+        source_groups_by_id: Stable identifier of the associated source groups by resource.
+    """
     raw_value = value.strip()
     if not raw_value:
         return "any"
@@ -1288,6 +1457,13 @@ def _rule_address_value(value: str, source_groups_by_id: dict[str, dict]) -> str
 
 def _validate_rule_address_value(label: str, value: str, source_groups_by_id: dict[str, dict], names: dict[str, str]) -> list[str]:
     """Validate rule address value.
+
+    Args:
+        label: Human-readable label used to identify the result.
+        value: Candidate value consumed by validate rule address value.
+        source_groups_by_id: Stable identifier of the associated source groups by resource.
+        names: Candidate names to validate.
+
 
     Returns:
         The validate rule address value result.
@@ -1307,6 +1483,12 @@ def _validate_rule_address_value(label: str, value: str, source_groups_by_id: di
 def _validate_rule_group_reference(label: str, value: str, source_groups_by_id: dict[str, dict]) -> str:
     """Validate rule group reference.
 
+    Args:
+        label: Human-readable label used to identify the result.
+        value: Candidate value consumed by validate rule group reference.
+        source_groups_by_id: Stable identifier of the associated source groups by resource.
+
+
     Returns:
         The validate rule group reference result.
     """
@@ -1321,12 +1503,20 @@ def _validate_rule_group_reference(label: str, value: str, source_groups_by_id: 
 
 
 def _split_address_values(value: str) -> list[str]:
-    """Return split address values."""
+    """Return split address values.
+
+    Args:
+        value: Candidate value consumed by split address values.
+    """
     return [item.strip().lower() for item in re.split(r"[\n,]+", value) if item.strip()]
 
 
 def _address_values_by_family(value: str) -> dict[int, list[str]]:
-    """Return address values by family."""
+    """Return address values by family.
+
+    Args:
+        value: Candidate value consumed by address values by family.
+    """
     family_values: dict[int, list[str]] = {4: [], 6: []}
     for item in _split_address_values(value):
         if item == "any":
@@ -1342,6 +1532,11 @@ def _address_values_by_family(value: str) -> dict[int, list[str]]:
 
 def _validate_address_value(label: str, value: str) -> list[str]:
     """Validate address value.
+
+    Args:
+        label: Human-readable label used to identify the result.
+        value: Candidate value consumed by validate address value.
+
 
     Returns:
         The validate address value result.

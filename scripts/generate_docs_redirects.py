@@ -14,7 +14,11 @@ SITE = ROOT / "site" / "docs"
 
 
 def output_path(source: Path) -> Path:
-    """Return output path."""
+    """Return output path.
+
+    Args:
+        source: Source object or location from which data is obtained.
+    """
     relative = source.relative_to(DOCS)
     if relative.name == "index.md":
         return SITE / relative.with_suffix(".html")

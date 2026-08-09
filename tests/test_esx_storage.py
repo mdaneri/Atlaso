@@ -34,7 +34,13 @@ def load_helper_module():
 
 
 def state(*, families: str = "ipv4\nipv6", ipv4_clients: str = "192.168.87.11/32", ipv6_clients: str = "2001:db8:87::11/128"):
-    """Return state."""
+    """Return state.
+
+    Args:
+        families: Families supplied to the test scenario.
+        ipv4_clients: Ipv4 clients supplied to the test scenario.
+        ipv6_clients: Ipv6 clients supplied to the test scenario.
+    """
     settings = EsxStorageSettings(enabled=True, hostname="nfs.atlaso.internal")
     settings.id = 1
     volume = EsxStorageVolume(
@@ -69,6 +75,10 @@ def state(*, families: str = "ipv4\nipv6", ipv4_clients: str = "192.168.87.11/32
 
 def render(**kwargs):
     """Render operation.
+
+    Args:
+        **kwargs: Additional keyword arguments accepted by the callable.
+
 
     Returns:
         The render result.
@@ -335,7 +345,11 @@ def test_helper_blank_disk_revalidation_rejects_partition_mount_lvm_raid_and_os_
 
 
 def test_helper_inventory_prefers_uuid_mount_and_keeps_all_mountpoints(monkeypatch):
-    """Verify that helper inventory prefers uuid mount and keeps all mountpoints."""
+    """Verify that helper inventory prefers uuid mount and keeps all mountpoints.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+    """
     helper = load_helper_module()
     lsblk_payload = {
         "blockdevices": [{
@@ -405,7 +419,12 @@ def test_helper_initialized_disk_retry_accepts_expected_mount_among_bind_mounts(
 
 
 def api_token(client, scopes: list[str]) -> str:
-    """Return api token."""
+    """Return api token.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+        scopes: Normalized authorization scopes granted or required by the operation.
+    """
     response = client.post(
         "/api/v1/auth/login?username=admin&password=atlaso-admin",
         json={"name": "esx storage test", "scopes": scopes},
@@ -415,7 +434,11 @@ def api_token(client, scopes: list[str]) -> str:
 
 
 def test_esx_storage_page_and_dual_stack_api_contract(client):
-    """Verify that esx storage page and dual stack api contract."""
+    """Verify that esx storage page and dual stack api contract.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
     page = client.get("/login")
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
     assert client.post(
@@ -627,7 +650,11 @@ def test_esx_storage_page_and_dual_stack_api_contract(client):
 
 
 def test_esx_storage_write_scope_is_enforced(client):
-    """Verify that esx storage write scope is enforced."""
+    """Verify that esx storage write scope is enforced.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
     token = api_token(client, ["read:esx-storage"])
     response = client.post(
         "/api/v1/esx-storage/volumes",

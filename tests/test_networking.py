@@ -198,7 +198,13 @@ def test_reconcile_host_inventory_tracks_renumbered_nics_by_mac():
 
 
 def test_sync_host_inventory_cleans_removed_nic_bindings_and_retargets_survivors(monkeypatch, tmp_path, caplog):
-    """Verify that sync host inventory cleans removed nic bindings and retargets survivors."""
+    """Verify that sync host inventory cleans removed nic bindings and retargets survivors.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+        caplog: Pytest fixture used to capture emitted log records.
+    """
     from sqlalchemy import select
 
     import atlaso.app.database as database
@@ -337,7 +343,12 @@ def test_sync_host_inventory_cleans_removed_nic_bindings_and_retargets_survivors
 
 
 def test_sync_host_inventory_commits_two_nic_name_swap(monkeypatch, tmp_path):
-    """Verify that sync host inventory commits two nic name swap."""
+    """Verify that sync host inventory commits two nic name swap.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
     from sqlalchemy import select
 
     import atlaso.app.database as database
@@ -431,7 +442,12 @@ def test_sync_host_inventory_commits_two_nic_name_swap(monkeypatch, tmp_path):
 
 
 def test_startup_host_inventory_refreshes_appliance_seed_without_apply_job(monkeypatch, tmp_path):
-    """Verify that startup host inventory refreshes appliance seed without apply job."""
+    """Verify that startup host inventory refreshes appliance seed without apply job.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
     from sqlalchemy import select
 
     import atlaso.app.database as database
@@ -485,7 +501,12 @@ def test_startup_host_inventory_refreshes_appliance_seed_without_apply_job(monke
 
 
 def test_appliance_seed_preserves_ovf_auto_ipv6_and_root_ssh(monkeypatch, tmp_path):
-    """Verify that appliance seed preserves ovf auto ipv6 and root ssh."""
+    """Verify that appliance seed preserves ovf auto ipv6 and root ssh.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
     from sqlalchemy import select
 
     import atlaso.app.database as database
@@ -631,7 +652,12 @@ def test_validate_network_state_rejects_ipv6_cidr_while_disabled():
     ],
 )
 def test_validate_network_state_rejects_invalid_management_ipv6_gateway(gateway, message):
-    """Verify that validate network state rejects invalid management ipv6 gateway."""
+    """Verify that validate network state rejects invalid management ipv6 gateway.
+
+    Args:
+        gateway: Gateway supplied to the test scenario.
+        message: Human-readable message associated with the operation.
+    """
     errors = validate_network_state(
         interfaces=[
             PhysicalInterface(

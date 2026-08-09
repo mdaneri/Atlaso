@@ -81,7 +81,11 @@ def refresh_startup_host_inventory(db: Session, *, environment: str) -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Manage application startup and shutdown."""
+    """Manage application startup and shutdown.
+
+    Args:
+        app: App consumed by lifespan.
+    """
     settings = get_settings()
     cleanup_transient_secret_staging_files()
     configure_logging()

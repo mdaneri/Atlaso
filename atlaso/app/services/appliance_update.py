@@ -99,7 +99,11 @@ DEFAULT_UPDATE_SETTINGS = {
     "powershell_repository_url": "",
 }
 def _git_value(args: list[str]) -> str:
-    """Return git value."""
+    """Return git value.
+
+    Args:
+        args: Parsed command-line options consumed by the operation.
+    """
     try:
         result = subprocess.run(["git", *args], cwd=Path(__file__).resolve().parents[3], check=False, capture_output=True, text=True)
     except OSError:
@@ -147,7 +151,12 @@ def current_version_info() -> dict[str, str]:
 
 
 def version_with_git(base_version: str, git_commit: str) -> str:
-    """Return version with git."""
+    """Return version with git.
+
+    Args:
+        base_version: Base version consumed by version with git.
+        git_commit: Git commit consumed by version with git.
+    """
     normalized = base_version.strip()
     if not normalized:
         normalized = "0.0.0"
@@ -159,6 +168,10 @@ def version_with_git(base_version: str, git_commit: str) -> str:
 
 def update_settings_from_json(raw_value: str) -> dict[str, Any]:
     """Update settings from json.
+
+    Args:
+        raw_value: Raw value consumed by update settings from JSON.
+
 
     Returns:
         The update settings from json result.
@@ -180,6 +193,10 @@ def update_settings_from_json(raw_value: str) -> dict[str, Any]:
 def update_settings_to_json(settings: dict[str, Any]) -> str:
     """Update settings to json.
 
+    Args:
+        settings: Current Atlaso settings used to configure the operation.
+
+
     Returns:
         The update settings to json result.
     """
@@ -191,6 +208,11 @@ def update_settings_to_json(settings: dict[str, Any]) -> str:
 
 def validate_update_url(value: str, label: str) -> list[str]:
     """Validate update url.
+
+    Args:
+        value: Candidate value consumed by validate update URL.
+        label: Human-readable label used to identify the result.
+
 
     Returns:
         The validate update url result.
@@ -208,6 +230,10 @@ def validate_update_url(value: str, label: str) -> list[str]:
 def validate_update_settings(settings: dict[str, Any]) -> list[str]:
     """Validate update settings.
 
+    Args:
+        settings: Current Atlaso settings used to configure the operation.
+
+
     Returns:
         The validate update settings result.
     """
@@ -221,14 +247,22 @@ def validate_update_settings(settings: dict[str, Any]) -> list[str]:
 
 
 def selected_update_streams(raw_streams: list[str] | tuple[str, ...]) -> list[str]:
-    """Return selected update streams."""
+    """Return selected update streams.
+
+    Args:
+        raw_streams: Raw streams consumed by selected update streams.
+    """
     normalized = set(raw_streams)
     selected = [stream for stream in UPDATE_STREAMS if stream in normalized]
     return selected
 
 
 def redact_url_userinfo(value: str) -> str:
-    """Return redact url userinfo."""
+    """Return redact url userinfo.
+
+    Args:
+        value: Candidate value consumed by redact URL userinfo.
+    """
     parsed = urlparse(value or "")
     if not parsed.scheme or not parsed.netloc or not (parsed.username or parsed.password):
         return value
@@ -288,6 +322,11 @@ def render_update_manifest(
 def update_result_excerpt(value: str, *, limit: int = 4000) -> str:
     """Update result excerpt.
 
+    Args:
+        value: Candidate value consumed by update result excerpt.
+        limit: Limit consumed by update result excerpt.
+
+
     Returns:
         The update result excerpt result.
     """
@@ -299,6 +338,10 @@ def update_result_excerpt(value: str, *, limit: int = 4000) -> str:
 
 def parse_latest_update_result(job: Job | None) -> dict[str, Any] | None:
     """Parse latest update result.
+
+    Args:
+        job: Background job record affected by the operation.
+
 
     Returns:
         The parsed latest update result.
@@ -313,7 +356,11 @@ def parse_latest_update_result(job: Job | None) -> dict[str, Any] | None:
 
 
 def read_appliance_file(path_value: str) -> dict[str, Any]:
-    """Return appliance file."""
+    """Return appliance file.
+
+    Args:
+        path_value: Path value consumed by read appliance file.
+    """
     path = Path(path_value)
     try:
         text = path.read_text(encoding="utf-8")
@@ -323,7 +370,11 @@ def read_appliance_file(path_value: str) -> dict[str, Any]:
 
 
 def photon_repository_details(repository_dir: Path | None = None) -> list[dict[str, str]]:
-    """Return photon repository details."""
+    """Return photon repository details.
+
+    Args:
+        repository_dir: Filesystem path associated with repository dir.
+    """
     directory = repository_dir or PHOTON_REPOSITORY_DIR
     rows: list[dict[str, str]] = []
     try:
@@ -361,7 +412,11 @@ def photon_repository_details(repository_dir: Path | None = None) -> list[dict[s
 
 
 def photon_repository_summary(repository_dir: Path | None = None) -> str:
-    """Return photon repository summary."""
+    """Return photon repository summary.
+
+    Args:
+        repository_dir: Filesystem path associated with repository dir.
+    """
     rows = photon_repository_details(repository_dir)
     if not rows:
         return f"No enabled repositories found in {repository_dir or PHOTON_REPOSITORY_DIR}"

@@ -42,12 +42,20 @@ class StorageInterface:
 
 
 def rpcbind_required(shares: Iterable[EsxNfsShare]) -> bool:
-    """Return whether an enabled NFS 3 share requires rpcbind at runtime."""
+    """Return whether an enabled NFS 3 share requires rpcbind at runtime.
+
+    Args:
+        shares: Shares consumed by rpcbind required.
+    """
     return any(share.enabled is not False and share.preferred_nfs_version == "3" for share in shares)
 
 
 def split_lines(value: str | Iterable[str] | None) -> list[str]:
-    """Return split lines."""
+    """Return split lines.
+
+    Args:
+        value: Candidate value consumed by split lines.
+    """
     if value is None:
         return []
     values = value if not isinstance(value, str) else value.replace(",", "\n").splitlines()
@@ -56,6 +64,10 @@ def split_lines(value: str | Iterable[str] | None) -> list[str]:
 
 def storage_slug(value: str) -> str:
     """Return storage slug.
+
+    Args:
+        value: Candidate value consumed by storage slug.
+
 
     Raises:
         ValueError: If an input value is invalid.
@@ -68,6 +80,10 @@ def storage_slug(value: str) -> str:
 
 def normalize_relative_path(value: str) -> str:
     """Normalize relative path.
+
+    Args:
+        value: Candidate value consumed by normalize relative path.
+
 
     Returns:
         The normalize relative path result.
@@ -85,7 +101,12 @@ def normalize_relative_path(value: str) -> str:
 
 
 def share_paths_overlap(left: str, right: str) -> bool:
-    """Return share paths overlap."""
+    """Return share paths overlap.
+
+    Args:
+        left: Left consumed by share paths overlap.
+        right: Right consumed by share paths overlap.
+    """
     left_parts = PurePosixPath(normalize_relative_path(left)).parts
     right_parts = PurePosixPath(normalize_relative_path(right)).parts
     common = min(len(left_parts), len(right_parts))
@@ -93,7 +114,11 @@ def share_paths_overlap(left: str, right: str) -> bool:
 
 
 def reserved_mount_owner(value: str) -> str:
-    """Return the appliance service that exclusively owns a mounted path."""
+    """Return the appliance service that exclusively owns a mounted path.
+
+    Args:
+        value: Candidate value consumed by reserved mount owner.
+    """
     raw = value.strip()
     if not raw.startswith("/"):
         return ""
@@ -106,7 +131,11 @@ def reserved_mount_owner(value: str) -> str:
 
 
 def validate_mounted_volume_path(value: str) -> str:
-    """Validate an existing ext4 mount before it can be claimed by ESX Storage."""
+    """Validate an existing ext4 mount before it can be claimed by ESX Storage.
+
+    Args:
+        value: Candidate value consumed by validate mounted volume path.
+    """
     mount_path = value.strip()
     if not PurePosixPath(mount_path or ".").is_absolute():
         raise ValueError("An existing ext4 volume requires its absolute mount path.")
@@ -118,6 +147,10 @@ def validate_mounted_volume_path(value: str) -> str:
 
 def normalize_families(value: str | Iterable[str]) -> list[str]:
     """Normalize families.
+
+    Args:
+        value: Candidate value consumed by normalize families.
+
 
     Returns:
         The normalize families result.
@@ -134,6 +167,11 @@ def normalize_families(value: str | Iterable[str]) -> list[str]:
 
 def validate_clients(values: str | Iterable[str], family: str) -> list[str]:
     """Validate clients.
+
+    Args:
+        values: Candidate values consumed by validate clients.
+        family: Candidate family to validate.
+
 
     Returns:
         The validate clients result.
@@ -155,7 +193,12 @@ def validate_clients(values: str | Iterable[str], family: str) -> list[str]:
 
 
 def valid_clients_or_empty(values: str | Iterable[str], family: str) -> list[str]:
-    """Return valid clients or empty."""
+    """Return valid clients or empty.
+
+    Args:
+        values: Candidate values consumed by valid clients or empty.
+        family: Family consumed by valid clients or empty.
+    """
     try:
         return validate_clients(values, family)
     except ValueError:
@@ -163,12 +206,22 @@ def valid_clients_or_empty(values: str | Iterable[str], family: str) -> list[str
 
 
 def effective_clients(values: str | Iterable[str], family: str) -> list[str]:
-    """Return the configured allowlist, or the explicit any-client network."""
+    """Return the configured allowlist, or the explicit any-client network.
+
+    Args:
+        values: Candidate values consumed by effective clients.
+        family: Family consumed by effective clients.
+    """
     return valid_clients_or_empty(values, family) or [ANY_CLIENT_NETWORK[family]]
 
 
 def interface_addresses(interface: StorageInterface, family: str) -> list[str]:
-    """Return interface addresses."""
+    """Return interface addresses.
+
+    Args:
+        interface: Network interface affected or inspected by the operation.
+        family: Family consumed by interface addresses.
+    """
     values = interface.ipv4 if family == "ipv4" else interface.ipv6
     result: list[str] = []
     for value in values:
@@ -180,7 +233,13 @@ def interface_addresses(interface: StorageInterface, family: str) -> list[str]:
 
 
 def target_token(address: str, naming_mode: str, interface_name: str) -> str:
-    """Return target token."""
+    """Return target token.
+
+    Args:
+        address: Network address contacted or validated by the operation.
+        naming_mode: Naming mode consumed by target token.
+        interface_name: Host network-interface name affected by the operation.
+    """
     if naming_mode == "interface":
         return storage_slug(interface_name)
     parsed = ip_address(address)
@@ -191,6 +250,11 @@ def target_token(address: str, naming_mode: str, interface_name: str) -> str:
 
 def target_hostname(service_hostname: str, token: str) -> str:
     """Return target hostname.
+
+    Args:
+        service_hostname: Service hostname consumed by target hostname.
+        token: Credential or token value consumed by the operation.
+
 
     Raises:
         ValueError: If an input value is invalid.
@@ -209,14 +273,25 @@ def target_hostname(service_hostname: str, token: str) -> str:
 
 
 def share_remote_path(share: EsxNfsShare | dict[str, Any]) -> str:
-    """Return share remote path."""
+    """Return share remote path.
+
+    Args:
+        share: Share consumed by share remote path.
+    """
     version = share.preferred_nfs_version if isinstance(share, EsxNfsShare) else str(share["preferred_nfs_version"])
     slug = storage_slug(share.datastore_name if isinstance(share, EsxNfsShare) else str(share["datastore_name"]))
     return f"/{slug}" if version == "4.1" else f"{ESX_STORAGE_EXPORT_ROOT}/{slug}"
 
 
 def connection_command(*, version: str, hostname: str, remote_path: str, datastore_name: str) -> str:
-    """Return connection command."""
+    """Return connection command.
+
+    Args:
+        version: Atlaso or artifact version being validated or produced.
+        hostname: DNS hostname contacted, validated, or configured by the operation.
+        remote_path: Filesystem path used for remote.
+        datastore_name: Datastore name consumed by connection command.
+    """
     if version == "4.1":
         return f"esxcli storage nfs41 add --hosts={hostname} --share={remote_path} --volume-name={datastore_name}"
     return f"esxcli storage nfs add --host={hostname} --share={remote_path} --volume-name={datastore_name}"
@@ -225,11 +300,22 @@ def connection_command(*, version: str, hostname: str, remote_path: str, datasto
 def powercli_connection_command(*, version: str, hostname: str, remote_path: str, datastore_name: str) -> str:
     """Return powercli connection command.
 
+    Args:
+        version: Atlaso or artifact version being validated or produced.
+        hostname: DNS hostname contacted, validated, or configured by the operation.
+        remote_path: Filesystem path used for remote.
+        datastore_name: Datastore name consumed by powercli connection command.
+
+
     Raises:
         ValueError: If an input value is invalid.
     """
     def quote(value: str) -> str:
-        """Return quote."""
+        """Return quote.
+
+        Args:
+            value: Candidate value consumed by quote.
+        """
         return "'" + value.replace("'", "''") + "'"
 
     file_system_version = {"3": "NFS", "4.1": "NFS41"}.get(version)
@@ -455,17 +541,32 @@ def render_manifest(
 
 
 def manifest_json(manifest: dict[str, Any]) -> str:
-    """Return manifest json."""
+    """Return manifest json.
+
+    Args:
+        manifest: Manifest consumed by manifest JSON.
+    """
     return json.dumps(manifest, indent=2, sort_keys=True) + "\n"
 
 
 def manifest_hash(manifest: dict[str, Any]) -> str:
-    """Return manifest hash."""
+    """Return manifest hash.
+
+    Args:
+        manifest: Manifest consumed by manifest hash.
+    """
     return sha256(json.dumps(manifest, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
 
 def format_authorization(*, job_id: str, manifest: dict[str, Any], volume: dict[str, Any], confirmation: str) -> dict[str, str]:
     """Render authorization.
+
+    Args:
+        job_id: Stable identifier of the associated job resource.
+        manifest: Manifest consumed by format authorization.
+        volume: Volume consumed by format authorization.
+        confirmation: Confirmation consumed by format authorization.
+
 
     Returns:
         The format authorization result.
@@ -487,7 +588,11 @@ def format_authorization(*, job_id: str, manifest: dict[str, Any], volume: dict[
 
 
 def desired_dns_records(manifest: dict[str, Any]) -> list[dict[str, str]]:
-    """Return desired dns records."""
+    """Return desired dns records.
+
+    Args:
+        manifest: Manifest consumed by desired DNS records.
+    """
     target_records: list[dict[str, str]] = []
     canonical_records: list[dict[str, str]] = []
     for share in manifest.get("shares", []):
@@ -506,7 +611,11 @@ def desired_dns_records(manifest: dict[str, Any]) -> list[dict[str, str]]:
 
 
 def firewall_rule_specs(manifest: dict[str, Any]) -> list[dict[str, str]]:
-    """Return firewall rule specs."""
+    """Return firewall rule specs.
+
+    Args:
+        manifest: Manifest consumed by firewall rule specs.
+    """
     rules: list[dict[str, str]] = []
     for share in manifest.get("shares", []):
         if not share.get("enabled"):
@@ -530,6 +639,11 @@ def firewall_rule_specs(manifest: dict[str, Any]) -> list[dict[str, str]]:
 
 def normalize_disk_inventory_entry(entry: dict[str, Any], *, claimed_ids: set[str] | None = None) -> dict[str, Any]:
     """Normalize disk inventory entry.
+
+    Args:
+        entry: Candidate entry to normalize.
+        claimed_ids: Stable identifiers of the associated claimed resources.
+
 
     Returns:
         The normalize disk inventory entry result.
@@ -583,7 +697,12 @@ def normalize_disk_inventory_entry(entry: dict[str, Any], *, claimed_ids: set[st
 
 
 def parse_disk_inventory_output(stdout: str, *, claimed_ids: set[str] | None = None) -> list[dict[str, Any]]:
-    """Parse the helper envelope and return normalized, safety-qualified candidates."""
+    """Parse the helper envelope and return normalized, safety-qualified candidates.
+
+    Args:
+        stdout: Candidate stdout to parse.
+        claimed_ids: Stable identifiers of the associated claimed resources.
+    """
     lines = [line for line in (stdout or "").splitlines() if line.strip()]
     if not lines:
         return []
@@ -600,7 +719,14 @@ def select_inventory_candidate(
     stable_device_id: str,
     mount_path: str,
 ) -> dict[str, Any]:
-    """Resolve a submitted volume to the exact eligible helper inventory row."""
+    """Resolve a submitted volume to the exact eligible helper inventory row.
+
+    Args:
+        inventory: Inventory consumed by select inventory candidate.
+        source_type: Source type consumed by select inventory candidate.
+        stable_device_id: Stable identifier of the associated stable device resource.
+        mount_path: Filesystem path used for mount.
+    """
     stable_id = stable_device_id.strip()
     mounted_path = mount_path.strip()
     matches = [

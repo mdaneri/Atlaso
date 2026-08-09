@@ -835,7 +835,13 @@ def require_vcf_helper_write(identity: Identity) -> None:
 
 
 def roles_from_form(primary_role_value: str = "", roles: list[str] | None = None, roles_text: str = "") -> list[str]:
-    """Return roles from form."""
+    """Return roles from form.
+
+    Args:
+        primary_role_value: Primary role value consumed by roles from form.
+        roles: Normalized Atlaso roles granted or required by the operation.
+        roles_text: Roles text consumed by roles from form.
+    """
     values: list[str] = []
     if roles_text.strip():
         values.extend(roles_text.replace(",", "\n").splitlines())
@@ -861,7 +867,12 @@ def require_monitoring_read(identity: Identity) -> None:
 
 
 def local_user_os_statuses(users: list[User], policy: dict[str, bool | int]) -> dict[str, dict[str, Any]]:
-    """Return local user os statuses."""
+    """Return local user os statuses.
+
+    Args:
+        users: Users consumed by local user operating-system statuses.
+        policy: Policy consumed by local user operating-system statuses.
+    """
     statuses: dict[str, dict[str, Any]] = {}
     adapter = SystemAdapter()
     if adapter.dry_run or not hasattr(adapter, "local_users_status"):
@@ -901,7 +912,13 @@ def local_user_os_statuses(users: list[User], policy: dict[str, bool | int]) -> 
 
 
 def user_to_dict(user: User, current_user_id: int | None = None, os_status: dict[str, Any] | None = None) -> dict:
-    """Return user to dict."""
+    """Return user to dict.
+
+    Args:
+        user: User record or identity affected by the operation.
+        current_user_id: Current user identifier inspected by the operation.
+        os_status: Operating-system status consumed by user to dict.
+    """
     os_state = str((os_status or {}).get("state") or "status unavailable")
     os_detail = str((os_status or {}).get("detail") or "")
     return {
@@ -1117,14 +1134,23 @@ def get_ca_settings_row(db: Session) -> CaSettings:
 
 
 def ca_service_cert_paths(service_dir: str, certificate_name: str) -> tuple[str, str, str]:
-    """Return ca service cert paths."""
+    """Return ca service cert paths.
+
+    Args:
+        service_dir: Service dir consumed by CA service cert paths.
+        certificate_name: Certificate name consumed by CA service cert paths.
+    """
     safe_name = safe_certificate_name(certificate_name)
     base = f"/etc/atlaso/{service_dir}/certs/{safe_name}"
     return f"{base}.crt", f"{base}.key", f"{base}-chain.pem"
 
 
 def ntp_nts_certificate_paths(settings: NtpSettings) -> tuple[str, str, str]:
-    """Return ntp nts certificate paths."""
+    """Return ntp nts certificate paths.
+
+    Args:
+        settings: Current Atlaso settings used to configure the operation.
+    """
     hostname = normalize_dns_hostname(settings.hostname or NTP_DEFAULT_HOSTNAME)
     return ca_service_cert_paths("ntp", hostname)
 
@@ -1147,7 +1173,11 @@ def remove_ntp_nts_certificate_rows(db: Session) -> int:
 
 
 def kms_client_common_name(client: KmsClient) -> str:
-    """Return kms client common name."""
+    """Return kms client common name.
+
+    Args:
+        client: Client consumed by KMS client common name.
+    """
     match = re.search(r"(?:^|,)CN=([^,]+)", client.certificate_subject or "")
     return match.group(1).strip() if match else client.name
 
@@ -1570,7 +1600,11 @@ def get_vcf_offline_depot_settings_row(
 
 
 def address_from_cidr(value: str | None) -> str:
-    """Return address from cidr."""
+    """Return address from cidr.
+
+    Args:
+        value: Candidate value consumed by address from CIDR.
+    """
     if not value:
         return ""
     try:
@@ -1580,7 +1614,11 @@ def address_from_cidr(value: str | None) -> str:
 
 
 def prefix_from_cidr(value: str | None) -> int | None:
-    """Return prefix from cidr."""
+    """Return prefix from cidr.
+
+    Args:
+        value: Candidate value consumed by prefix from CIDR.
+    """
     if not value:
         return None
     try:
@@ -1590,7 +1628,13 @@ def prefix_from_cidr(value: str | None) -> int | None:
 
 
 def cidr_for_family(value: str, version: int, label: str) -> Response | str:
-    """Return cidr for family."""
+    """Return cidr for family.
+
+    Args:
+        value: Candidate value consumed by CIDR for family.
+        version: Atlaso or artifact version being validated or produced.
+        label: Human-readable label used to identify the result.
+    """
     candidate = value.strip()
     if not candidate:
         return ""
@@ -1605,7 +1649,12 @@ def cidr_for_family(value: str, version: int, label: str) -> Response | str:
 
 
 def interface_addresses_from_cidrs(ipv4_cidr: str | None, ipv6_cidr: str | None) -> list[str]:
-    """Return interface addresses from cidrs."""
+    """Return interface addresses from cidrs.
+
+    Args:
+        ipv4_cidr: Ipv4 cidr consumed by interface addresses from cidrs.
+        ipv6_cidr: Ipv6 cidr consumed by interface addresses from cidrs.
+    """
     addresses: list[str] = []
     for cidr in (ipv4_cidr, ipv6_cidr):
         address = address_from_cidr(cidr)
@@ -1759,7 +1808,11 @@ def vcf_depot_service_bind_options(db: Session) -> list[dict[str, Any]]:
 
 
 def _network_from_cidr(value: str | None):
-    """Return network from cidr."""
+    """Return network from cidr.
+
+    Args:
+        value: Candidate value consumed by network from CIDR.
+    """
     if not value:
         return None
     try:
@@ -1769,7 +1822,11 @@ def _network_from_cidr(value: str | None):
 
 
 def _address_family_from_scope(scope: DhcpScope) -> int:
-    """Return address family from scope."""
+    """Return address family from scope.
+
+    Args:
+        scope: Scope consumed by address family from scope.
+    """
     return 6 if str(scope.address_family or "").strip().lower() == "ipv6" else 4
 
 
@@ -1783,7 +1840,12 @@ def _interface_option_by_name(db: Session) -> dict[str, dict[str, Any]]:
 
 
 def _derive_addresses_for_interfaces(selected_interfaces: list[str], options_by_name: dict[str, dict[str, Any]]) -> str:
-    """Return derive addresses for interfaces."""
+    """Return derive addresses for interfaces.
+
+    Args:
+        selected_interfaces: Selected interfaces consumed by derive addresses for interfaces.
+        options_by_name: Options by name consumed by derive addresses for interfaces.
+    """
     derived: list[str] = []
     for interface_name in selected_interfaces:
         option = options_by_name.get(interface_name)
@@ -1796,7 +1858,13 @@ def _derive_addresses_for_interfaces(selected_interfaces: list[str], options_by_
 
 
 def _replace_interface_selection(raw_value: str | None, old_name: str, new_name: str) -> str:
-    """Return replace interface selection."""
+    """Return replace interface selection.
+
+    Args:
+        raw_value: Raw value consumed by replace interface selection.
+        old_name: Old name consumed by replace interface selection.
+        new_name: New name consumed by replace interface selection.
+    """
     interfaces = split_interfaces(raw_value)
     if old_name != new_name:
         interfaces = [new_name if item == old_name else item for item in interfaces]
@@ -1804,7 +1872,13 @@ def _replace_interface_selection(raw_value: str | None, old_name: str, new_name:
 
 
 def _rebase_address_in_network(value: str, old_network, new_network) -> str:
-    """Return rebase address in network."""
+    """Return rebase address in network.
+
+    Args:
+        value: Candidate value consumed by rebase address in network.
+        old_network: Old network consumed by rebase address in network.
+        new_network: New network consumed by rebase address in network.
+    """
     if not value or old_network is None or new_network is None or old_network.version != new_network.version:
         return value
     try:
@@ -1820,7 +1894,12 @@ def _rebase_address_in_network(value: str, old_network, new_network) -> str:
 
 
 def _address_in_network(value: str | None, network) -> bool:
-    """Return address in network."""
+    """Return address in network.
+
+    Args:
+        value: Candidate value consumed by address in network.
+        network: Network consumed by address in network.
+    """
     if not value or network is None:
         return False
     try:
@@ -1870,7 +1949,12 @@ def refresh_interface_dependent_addresses(
     changed: list[str] = []
 
     def update_listener_rows(model, label: str) -> None:
-        """Update listener rows."""
+        """Update listener rows.
+
+        Args:
+            model: Model consumed by update listener rows.
+            label: Human-readable label used to identify the result.
+        """
         for row in db.execute(select(model)).scalars().all():
             selected = split_interfaces(getattr(row, "listen_interface", ""))
             if old_name not in selected and new_name not in selected:
@@ -1904,7 +1988,12 @@ def refresh_interface_dependent_addresses(
     ntp_bound = bool(ntp_settings and ntp_settings.enabled and new_name in split_interfaces(ntp_settings.listen_interface))
 
     def update_dhcp_scope(scope: DhcpScope | DhcpSettings, label: str) -> None:
-        """Update dhcp scope."""
+        """Update dhcp scope.
+
+        Args:
+            scope: Scope consumed by update dhcp scope.
+            label: Human-readable label used to identify the result.
+        """
         if getattr(scope, "interface_name", "") != old_name:
             return
         family = _address_family_from_scope(scope) if isinstance(scope, DhcpScope) else 4
@@ -2120,19 +2209,32 @@ def resolve_service_bind_targets(
 
 
 def primary_listen_address(raw_address: str | None) -> str:
-    """Return primary listen address."""
+    """Return primary listen address.
+
+    Args:
+        raw_address: Raw address consumed by primary listen address.
+    """
     addresses = split_addresses(raw_address)
     return addresses[0] if addresses else ""
 
 
 def primary_listen_interface(raw_interface: str | None) -> str:
-    """Return primary listen interface."""
+    """Return primary listen interface.
+
+    Args:
+        raw_interface: Raw interface consumed by primary listen interface.
+    """
     interfaces = split_interfaces(raw_interface)
     return interfaces[0] if interfaces else ""
 
 
 def service_bind_label(raw_interface: str | None, raw_address: str | None) -> str:
-    """Return service bind label."""
+    """Return service bind label.
+
+    Args:
+        raw_interface: Raw interface consumed by service bind label.
+        raw_address: Raw address consumed by service bind label.
+    """
     interfaces = split_interfaces(raw_interface)
     addresses = split_addresses(raw_address)
     if not interfaces and not addresses:
@@ -2143,7 +2245,11 @@ def service_bind_label(raw_interface: str | None, raw_address: str | None) -> st
 
 
 def backing_systemd_unit_active(unit: str) -> bool | None:
-    """Return backing systemd unit active."""
+    """Return backing systemd unit active.
+
+    Args:
+        unit: Unit consumed by backing systemd unit active.
+    """
     if get_settings().dry_run_system_adapters:
         return None
     result = SystemAdapter().service_status(unit)
@@ -2192,7 +2298,11 @@ def vcf_backup_context(db: Session, *, reconcile: bool = True) -> dict:
 
 
 def ntpd_capabilities_payload(result: AdapterResult) -> dict[str, Any]:
-    """Return ntpd capabilities payload."""
+    """Return ntpd capabilities payload.
+
+    Args:
+        result: Operation result being inspected or returned.
+    """
     if result.returncode != 0:
         return {}
     text = result.stdout or ""
@@ -2394,7 +2504,11 @@ def appliance_dns_record_conflict(db: Session, fqdn: str) -> bool:
 
 
 def appliance_domain_from_fqdn(fqdn: str) -> str:
-    """Return appliance domain from fqdn."""
+    """Return appliance domain from fqdn.
+
+    Args:
+        fqdn: Fqdn consumed by appliance domain from FQDN.
+    """
     normalized = normalize_fqdn(fqdn)
     parts = normalized.split(".", 1)
     return parts[1] if len(parts) == 2 else ""
@@ -2402,6 +2516,11 @@ def appliance_domain_from_fqdn(fqdn: str) -> str:
 
 def ensure_dns_domain_for_appliance_settings(dns_settings: DnsSettings, fqdn: str) -> bool:
     """Ensure dns domain for appliance settings.
+
+    Args:
+        dns_settings: Dns settings consumed by ensure DNS domain for appliance settings.
+        fqdn: Fqdn consumed by ensure DNS domain for appliance settings.
+
 
     Returns:
         The ensure dns domain for appliance settings result.
@@ -2794,6 +2913,11 @@ def store_pasted_vcf_depot_secret(
 def store_uploaded_vcf_depot_archive(settings: VcfOfflineDepotSettings, archive_file: UploadFile | None) -> str | None:
     """Persist uploaded vcf depot archive.
 
+    Args:
+        settings: Current Atlaso settings used to configure the operation.
+        archive_file: Archive file consumed by store uploaded VCF depot archive.
+
+
     Returns:
         The store uploaded vcf depot archive result.
 
@@ -2938,7 +3062,11 @@ def generate_and_store_vcf_software_depot_id(db: Session, settings: VcfOfflineDe
 
 
 def helper_json_payloads(output: str) -> list[dict[str, Any]]:
-    """Return helper json payloads."""
+    """Return helper json payloads.
+
+    Args:
+        output: Output consumed by helper JSON payloads.
+    """
     payloads: list[dict[str, Any]] = []
     decoder = json.JSONDecoder()
     text = output or ""
@@ -2963,7 +3091,12 @@ def helper_json_payloads(output: str) -> list[dict[str, Any]]:
 
 
 def helper_json_payload_with_key(output: str, key: str) -> dict[str, Any]:
-    """Return helper json payload with key."""
+    """Return helper json payload with key.
+
+    Args:
+        output: Output consumed by helper JSON payload with key.
+        key: Stable key identifying the setting, secret, or mapping entry.
+    """
     for payload in reversed(helper_json_payloads(output)):
         if key in payload:
             return payload
@@ -3396,7 +3529,11 @@ def vcf_private_registry_context(db: Session, *, reconcile: bool = True) -> dict
 
 
 def vcf_depot_tool_installed(settings: VcfOfflineDepotSettings) -> bool:
-    """Return vcf depot tool installed."""
+    """Return vcf depot tool installed.
+
+    Args:
+        settings: Current Atlaso settings used to configure the operation.
+    """
     if get_settings().environment == "appliance":
         runtime_home = filesystem_path(VCF_DEPOT_RUNTIME_TOOL_DIR)
         return bool(settings.tool_archive_path) and any(
@@ -3546,7 +3683,11 @@ def vcf_offline_depot_context(db: Session, *, reconcile: bool = True) -> dict:
 
 
 def vcf_depot_secret_snapshot(context: dict[str, Any]) -> str:
-    """Return vcf depot secret snapshot."""
+    """Return vcf depot secret snapshot.
+
+    Args:
+        context: Operation context providing related state and metadata.
+    """
     token_state = context["vcf_depot_download_token"]
     activation_state = context["vcf_depot_activation_code"]
     return "\n".join(
@@ -3562,7 +3703,11 @@ def vcf_depot_secret_snapshot(context: dict[str, Any]) -> str:
 
 
 def vcf_depot_tool_snapshot(context: dict[str, Any]) -> str:
-    """Return vcf depot tool snapshot."""
+    """Return vcf depot tool snapshot.
+
+    Args:
+        context: Operation context providing related state and metadata.
+    """
     settings = context["vcf_depot_settings"]
     archive_path = Path(settings.tool_archive_path) if settings.tool_archive_path else None
     archive_name = archive_path.name if archive_path else "not staged"
@@ -3590,7 +3735,11 @@ def vcf_depot_tool_snapshot(context: dict[str, Any]) -> str:
 
 
 def vcf_depot_application_properties_snapshot(context: dict[str, Any]) -> str:
-    """Return vcf depot application properties snapshot."""
+    """Return vcf depot application properties snapshot.
+
+    Args:
+        context: Operation context providing related state and metadata.
+    """
     properties = context["vcf_depot_application_properties"]
     content = str(properties.get("content") or "").strip()
     if not content:
@@ -3607,7 +3756,12 @@ def vcf_depot_application_properties_snapshot(context: dict[str, Any]) -> str:
 
 
 def vcf_depot_command_entry(command: list[str], *, dry_run: bool) -> dict[str, Any]:
-    """Return vcf depot command entry."""
+    """Return vcf depot command entry.
+
+    Args:
+        command: Command and arguments to execute.
+        dry_run: Whether to report planned actions without mutating host state.
+    """
     resolved = [
         f"{VCF_DEPOT_RUNTIME_TOOL_DIR}/bin/vcf-download-tool" if value == "vcf-download-tool" else value
         for value in command
@@ -3623,13 +3777,22 @@ def vcf_depot_command_entry(command: list[str], *, dry_run: bool) -> dict[str, A
 
 
 def vcf_depot_runtime_secret_path(staged_path: str) -> Path:
-    """Return vcf depot runtime secret path."""
+    """Return vcf depot runtime secret path.
+
+    Args:
+        staged_path: Filesystem path used for staged.
+    """
     name = Path(staged_path).name
     return filesystem_path(VCF_DEPOT_VDT_LOG_PATH.parent.parent / "secrets" / name)
 
 
 def vcf_depot_runtime_command(command: list[str], tool_path: Path) -> list[str]:
-    """Return vcf depot runtime command."""
+    """Return vcf depot runtime command.
+
+    Args:
+        command: Command and arguments to execute.
+        tool_path: Filesystem path used for tool.
+    """
     runtime_command: list[str] = []
     for arg in command:
         if arg == "vcf-download-tool":
@@ -3645,6 +3808,10 @@ def vcf_depot_runtime_command(command: list[str], tool_path: Path) -> list[str]:
 
 def resolve_vcf_download_tool(settings: VcfOfflineDepotSettings) -> Path:
     """Return vcf download tool.
+
+    Args:
+        settings: Current Atlaso settings used to configure the operation.
+
 
     Raises:
         FileNotFoundError: If a required file does not exist.
@@ -3665,7 +3832,11 @@ def resolve_vcf_download_tool(settings: VcfOfflineDepotSettings) -> Path:
 
 
 def vcf_download_tool_home(tool_path: Path) -> Path:
-    """Return vcf download tool home."""
+    """Return vcf download tool home.
+
+    Args:
+        tool_path: Filesystem path used for tool.
+    """
     return tool_path.parent.parent if tool_path.parent.name == "bin" else tool_path.parent
 
 
@@ -3751,7 +3922,11 @@ def prepare_vcf_depot_runtime(settings: VcfOfflineDepotSettings, db: Session) ->
 
 
 def append_vcf_depot_log(text: str) -> None:
-    """Handle append vcf depot log."""
+    """Handle append vcf depot log.
+
+    Args:
+        text: Text content consumed by the operation.
+    """
     vdt_log_path = filesystem_path(VCF_DEPOT_VDT_LOG_PATH)
     vdt_log_path.parent.mkdir(parents=True, exist_ok=True)
     with vdt_log_path.open("a", encoding="utf-8", errors="replace") as handle:
@@ -3761,17 +3936,32 @@ def append_vcf_depot_log(text: str) -> None:
 
 
 def vcf_depot_task_log_path(job_id: str, profile_name: str = "") -> Path:
-    """Return vcf depot task log path."""
+    """Return vcf depot task log path.
+
+    Args:
+        job_id: Stable identifier of the associated job resource.
+        profile_name: Profile name consumed by VCF depot task log path.
+    """
     return filesystem_path(vcf_depot_task_log_reference(job_id, profile_name))
 
 
 def append_vcf_depot_task_log(job_id: str, profile_name: str, text: str) -> None:
-    """Handle append vcf depot task log."""
+    """Handle append vcf depot task log.
+
+    Args:
+        job_id: Stable identifier of the associated job resource.
+        profile_name: Profile name consumed by append VCF depot task log.
+        text: Text content consumed by the operation.
+    """
     append_vcf_depot_log(text)
 
 
 def resolve_vcf_depot_download_mode_flags(*flags: str | None) -> tuple[bool, bool, bool]:
     """Return vcf depot download mode flags.
+
+    Args:
+        *flags: Additional positional arguments accepted by the callable.
+
 
     Raises:
         HTTPException: If the request cannot be fulfilled.
@@ -3839,7 +4029,12 @@ def vcf_depot_download_preflight(
 
 
 def archive_vcf_depot_task_log(job_id: str, profile_name: str) -> Path:
-    """Return archive vcf depot task log."""
+    """Return archive vcf depot task log.
+
+    Args:
+        job_id: Stable identifier of the associated job resource.
+        profile_name: Profile name consumed by archive VCF depot task log.
+    """
     active_log_path = filesystem_path(VCF_DEPOT_VDT_LOG_PATH)
     task_log_path = vcf_depot_task_log_path(job_id, profile_name)
     task_log_path.parent.mkdir(parents=True, exist_ok=True)
@@ -3850,6 +4045,11 @@ def archive_vcf_depot_task_log(job_id: str, profile_name: str) -> Path:
 
 def run_vcf_depot_download_job(job_id: str, profile_id: int) -> None:
     """Run vcf depot download job.
+
+    Args:
+        job_id: Stable identifier of the associated job resource.
+        profile_id: Stable identifier of the associated profile resource.
+
 
     Raises:
         RuntimeError: If the operation cannot be completed safely.
@@ -4116,7 +4316,14 @@ def managed_firewall_rule_rows(
     source_groups: list[dict] | None = None,
     assignments: dict[str, str] | None = None,
 ) -> list[dict]:
-    """Return managed firewall rule rows."""
+    """Return managed firewall rule rows.
+
+    Args:
+        generated_rules: Generated rules consumed by managed firewall rule rows.
+        replaced_rules: Replaced rules consumed by managed firewall rule rows.
+        source_groups: Source groups consumed by managed firewall rule rows.
+        assignments: Assignments consumed by managed firewall rule rows.
+    """
     rows: list[dict] = []
     replaced_by_name: dict[str, list[FirewallRule]] = {}
     source_groups_by_id = {str(group["id"]): group for group in source_groups or []}
@@ -4152,7 +4359,11 @@ def managed_firewall_rule_rows(
 
 
 def managed_replaced_firewall_rule_row(rule: FirewallRule) -> dict:
-    """Return managed replaced firewall rule row."""
+    """Return managed replaced firewall rule row.
+
+    Args:
+        rule: Rule consumed by managed replaced firewall rule row.
+    """
     return {
         **firewall_rule_to_dict(rule),
         "id": f"replaced:{rule.id or rule.name}",
@@ -4382,7 +4593,11 @@ def public_portal_links_context(db: Session) -> dict[str, str]:
 
 
 def _url_host(value: str) -> str:
-    """Return url host."""
+    """Return url host.
+
+    Args:
+        value: Candidate value consumed by URL host.
+    """
     host = (value or "").strip().strip(".")
     if not host:
         return ""
@@ -4412,7 +4627,11 @@ def _absolute_public_url(scheme: str, host: str, path: str, *, port: int | None 
 
 
 def _public_service_hostname(service: dict[str, Any]) -> str:
-    """Return public service hostname."""
+    """Return public service hostname.
+
+    Args:
+        service: Atlaso or host service affected by the operation.
+    """
     for value in service.get("dns_names") or []:
         candidate = str(value or "").strip().strip(".")
         if candidate:
@@ -4421,7 +4640,13 @@ def _public_service_hostname(service: dict[str, Any]) -> str:
 
 
 def public_service_link_variants(service: dict[str, Any], binding: dict[str, str], *, esxi_pxe_boot: dict[str, Any]) -> dict[str, str]:
-    """Return public service link variants."""
+    """Return public service link variants.
+
+    Args:
+        service: Atlaso or host service affected by the operation.
+        binding: Binding consumed by public service link variants.
+        esxi_pxe_boot: Esxi pxe boot consumed by public service link variants.
+    """
     service_id = str(service.get("id") or "")
     address = str(binding.get("address") or "")
     hostname = _public_service_hostname(service) or address
@@ -4452,7 +4677,11 @@ def public_service_link_variants(service: dict[str, Any], binding: dict[str, str
 
 
 def safe_login_next(value: str | None) -> str:
-    """Return safe login next."""
+    """Return safe login next.
+
+    Args:
+        value: Candidate value consumed by safe login next.
+    """
     target = (value or "").strip()
     if not target.startswith("/") or target.startswith("//") or "\\" in target:
         return "/"
@@ -4476,7 +4705,11 @@ def request_host_name(request: Request) -> str:
 
 
 def interface_address(raw_cidr: str | None) -> str:
-    """Return interface address."""
+    """Return interface address.
+
+    Args:
+        raw_cidr: Raw cidr consumed by interface address.
+    """
     if not raw_cidr:
         return ""
     try:
@@ -4686,7 +4919,11 @@ def is_ca_portal_host(request: Request, db: Session) -> bool:
 
 
 def ca_request_to_dict(certificate: CaCertificate) -> dict[str, Any]:
-    """Return ca request to dict."""
+    """Return ca request to dict.
+
+    Args:
+        certificate: Certificate record or parsed certificate being processed.
+    """
     return {
         "id": certificate.id,
         "common_name": certificate.common_name,
@@ -5057,7 +5294,11 @@ def wan_routing_targets(db: Session) -> list[dict[str, str]]:
 
 
 def wan_nat_targets_from_route_targets(targets: list[dict[str, str]]) -> list[dict[str, str]]:
-    """Return wan nat targets from route targets."""
+    """Return wan nat targets from route targets.
+
+    Args:
+        targets: Targets consumed by WAN nat targets from route targets.
+    """
     return [target for target in targets if target.get("ip_cidr")]
 
 
@@ -5304,7 +5545,12 @@ def dhcp_scope_grid_defaults(
 
 
 def lease_matches_current_dhcp_scope(lease: dict[str, Any], scopes: list[DhcpScope]) -> bool:
-    """Return lease matches current dhcp scope."""
+    """Return lease matches current dhcp scope.
+
+    Args:
+        lease: Lease consumed by lease matches current dhcp scope.
+        scopes: Normalized authorization scopes granted or required by the operation.
+    """
     try:
         lease_address = ip_address(str(lease.get("ip_address") or ""))
     except ValueError:
@@ -5319,12 +5565,22 @@ def lease_matches_current_dhcp_scope(lease: dict[str, Any], scopes: list[DhcpSco
 
 
 def filter_current_dhcp_leases(leases: list[dict[str, Any]], scopes: list[DhcpScope]) -> list[dict[str, Any]]:
-    """Return filter current dhcp leases."""
+    """Return filter current dhcp leases.
+
+    Args:
+        leases: Leases consumed by filter current dhcp leases.
+        scopes: Normalized authorization scopes granted or required by the operation.
+    """
     return [lease for lease in leases if lease_matches_current_dhcp_scope(lease, scopes)]
 
 
 def generated_esxi_pxe_dhcp_options(esxi_boot: dict[str, Any], scopes: list[DhcpScope]) -> list[dict[str, str]]:
-    """Return generated esxi pxe dhcp options."""
+    """Return generated esxi pxe dhcp options.
+
+    Args:
+        esxi_boot: Esxi boot consumed by generated ESXi PXE dhcp options.
+        scopes: Normalized authorization scopes granted or required by the operation.
+    """
     if not esxi_boot or not esxi_boot.get("enabled"):
         return []
     rows: list[dict[str, str]] = []
@@ -5360,11 +5616,22 @@ def generated_esxi_pxe_dhcp_options(esxi_boot: dict[str, Any], scopes: list[Dhcp
 
     host_bootfiles = list(esxi_boot.get("host_bootfiles") or [])
     def add(applies_to: str, flow: str, line: str, note: str) -> None:
-        """Create operation."""
+        """Create operation.
+
+        Args:
+            applies_to: Applies to consumed by add.
+            flow: Flow consumed by add.
+            line: Source or output line being parsed.
+            note: Note consumed by add.
+        """
         rows.append({"applies_to": applies_to, "flow": flow, "line": line, "note": note})
 
     def scope_http_base(address: str) -> str:
-        """Return scope http base."""
+        """Return scope http base.
+
+        Args:
+            address: Network address contacted or validated by the operation.
+        """
         if not address:
             return ""
         host = f"[{address}]" if ":" in address and not address.startswith("[") else address
@@ -5406,7 +5673,11 @@ def generated_esxi_pxe_dhcp_options(esxi_boot: dict[str, Any], scopes: list[Dhcp
 
 
 def dhcp_scope_network_any(scope: DhcpScope):
-    """Return dhcp scope network any."""
+    """Return dhcp scope network any.
+
+    Args:
+        scope: Scope consumed by dhcp scope network any.
+    """
     try:
         return ip_network(f"{scope.site_address}/{scope.prefix_length}", strict=False)
     except ValueError:
@@ -5414,7 +5685,12 @@ def dhcp_scope_network_any(scope: DhcpScope):
 
 
 def dhcp_scope_name_for_ip(value: str | None, scopes: list[DhcpScope]) -> str:
-    """Return dhcp scope name for ip."""
+    """Return dhcp scope name for ip.
+
+    Args:
+        value: Candidate value consumed by dhcp scope name for IP.
+        scopes: Normalized authorization scopes granted or required by the operation.
+    """
     try:
         address = ip_address(str(value or "").strip())
     except ValueError:
@@ -5427,7 +5703,12 @@ def dhcp_scope_name_for_ip(value: str | None, scopes: list[DhcpScope]) -> str:
 
 
 def dhcp_reservation_payload(reservation: DhcpReservation, scopes: list[DhcpScope] | None = None) -> dict:
-    """Return dhcp reservation payload."""
+    """Return dhcp reservation payload.
+
+    Args:
+        reservation: Reservation consumed by dhcp reservation payload.
+        scopes: Normalized authorization scopes granted or required by the operation.
+    """
     return {
         "id": reservation.id,
         "hostname": reservation.hostname,
@@ -5440,7 +5721,12 @@ def dhcp_reservation_payload(reservation: DhcpReservation, scopes: list[DhcpScop
 
 
 def dhcp_lease_payload(lease: dict[str, Any], scopes: list[DhcpScope] | None = None) -> dict[str, str]:
-    """Return dhcp lease payload."""
+    """Return dhcp lease payload.
+
+    Args:
+        lease: Lease consumed by dhcp lease payload.
+        scopes: Normalized authorization scopes granted or required by the operation.
+    """
     expires_at = lease.get("expires_at")
     ip_address_value = str(lease.get("ip_address") or "")
     return {
@@ -5455,12 +5741,20 @@ def dhcp_lease_payload(lease: dict[str, Any], scopes: list[DhcpScope] | None = N
 
 
 def dhcp_option_scope_choices(scopes: list[DhcpScope]) -> list[dict]:
-    """Return dhcp option scope choices."""
+    """Return dhcp option scope choices.
+
+    Args:
+        scopes: Normalized authorization scopes granted or required by the operation.
+    """
     return [{"id": "__global__", "label": "Global defaults"}, *[{"id": scope.id, "label": scope.name} for scope in scopes]]
 
 
 def parse_dhcp_option_scope_id(raw_value: str) -> int | None:
     """Parse dhcp option scope id.
+
+    Args:
+        raw_value: Candidate raw value to parse.
+
 
     Returns:
         The parsed dhcp option scope id.
@@ -5505,7 +5799,11 @@ def ensure_dns_for_dhcp_reservation(db: Session, reservation: DhcpReservation, a
 
 
 def desired_dns_records_for_listen_addresses(raw_addresses: str | None) -> dict[str, str]:
-    """Return desired dns records for listen addresses."""
+    """Return desired dns records for listen addresses.
+
+    Args:
+        raw_addresses: Raw addresses consumed by desired DNS records for listen addresses.
+    """
     desired: dict[str, str] = {}
     for selected_address in split_addresses(raw_addresses):
         try:
@@ -5523,7 +5821,13 @@ CA_PORTAL_DNS_DESCRIPTION = "Created from Certificate Authority portal endpoint.
 
 
 def service_dns_target_token(strategy: str, interface_name: str, address: str) -> str:
-    """Return service dns target token."""
+    """Return service dns target token.
+
+    Args:
+        strategy: Strategy consumed by service DNS target token.
+        interface_name: Host network-interface name affected by the operation.
+        address: Network address contacted or validated by the operation.
+    """
     if strategy == "ip":
         try:
             parsed = ip_address(address)
@@ -5537,7 +5841,12 @@ def service_dns_target_token(strategy: str, interface_name: str, address: str) -
 
 
 def service_target_hostname(hostname: str, target_token: str) -> str:
-    """Return service target hostname."""
+    """Return service target hostname.
+
+    Args:
+        hostname: DNS hostname contacted, validated, or configured by the operation.
+        target_token: Target token consumed by service target hostname.
+    """
     normalized = normalize_dns_hostname(hostname)
     if "." not in normalized:
         return normalized
@@ -5605,7 +5914,11 @@ def service_interface_dns_targets(
 
 
 def summarize_dns_actions(actions: list[str]) -> str | None:
-    """Return summarize dns actions."""
+    """Return summarize dns actions.
+
+    Args:
+        actions: Actions consumed by summarize DNS actions.
+    """
     if not actions:
         return None
     if "conflict" in actions:
@@ -6281,12 +6594,24 @@ def available_dns_listen_addresses(
     listen_options: list[dict[str, str]],
     vlan_interfaces: list[VlanInterface],
 ) -> list[dict[str, str]]:
-    """Return available dns listen addresses."""
+    """Return available dns listen addresses.
+
+    Args:
+        dns_settings: Dns settings consumed by available DNS listen addresses.
+        dhcp_settings: Dhcp settings consumed by available DNS listen addresses.
+        listen_options: Listen options consumed by available DNS listen addresses.
+        vlan_interfaces: Vlan interfaces consumed by available DNS listen addresses.
+    """
     choices: list[dict[str, str]] = []
     seen: set[str] = set()
 
     def add(address: str | None, source: str) -> None:
-        """Create operation."""
+        """Create operation.
+
+        Args:
+            address: Network address contacted or validated by the operation.
+            source: Source object or location from which data is obtained.
+        """
         for item in split_addresses(address):
             if item not in seen:
                 seen.add(item)
@@ -6308,12 +6633,22 @@ def available_dns_listen_addresses(
 
 
 def available_service_listen_addresses(current_addresses: str | None, listen_options: list[dict[str, str]]) -> list[dict[str, str]]:
-    """Return available service listen addresses."""
+    """Return available service listen addresses.
+
+    Args:
+        current_addresses: Current addresses inspected by the operation.
+        listen_options: Listen options consumed by available service listen addresses.
+    """
     choices: list[dict[str, str]] = []
     seen: set[str] = set()
 
     def add(address: str | None, source: str) -> None:
-        """Create operation."""
+        """Create operation.
+
+        Args:
+            address: Network address contacted or validated by the operation.
+            source: Source object or location from which data is obtained.
+        """
         for item in split_addresses(address):
             if item not in seen:
                 seen.add(item)
@@ -6327,7 +6662,13 @@ def available_service_listen_addresses(current_addresses: str | None, listen_opt
 
 
 def dns_records_by_domain(records: list[DnsRecord], domains: list[str], dns_settings: DnsSettings | None = None) -> list[dict]:
-    """Return dns records by domain."""
+    """Return dns records by domain.
+
+    Args:
+        records: Persistent or reported records processed by the operation.
+        domains: Domains consumed by DNS records by domain.
+        dns_settings: Dns settings consumed by DNS records by domain.
+    """
     groups = [{"domain": domain, "records": []} for domain in domains]
     group_map = {group["domain"]: group for group in groups}
     for record in records:
@@ -6342,7 +6683,11 @@ def dns_records_by_domain(records: list[DnsRecord], domains: list[str], dns_sett
 
 
 def ipv4_address_or_none(value: str | None) -> IPv4Address | None:
-    """Return ipv4 address or none."""
+    """Return ipv4 address or none.
+
+    Args:
+        value: Candidate value consumed by IPv4 address or none.
+    """
     try:
         address = ip_address((value or "").strip())
     except ValueError:
@@ -6351,7 +6696,11 @@ def ipv4_address_or_none(value: str | None) -> IPv4Address | None:
 
 
 def ip_address_or_none(value: str | None) -> IPv4Address | IPv6Address | None:
-    """Return ip address or none."""
+    """Return ip address or none.
+
+    Args:
+        value: Candidate value consumed by IP address or none.
+    """
     try:
         return ip_address((value or "").strip())
     except ValueError:
@@ -6359,7 +6708,12 @@ def ip_address_or_none(value: str | None) -> IPv4Address | IPv6Address | None:
 
 
 def ipv4_range(start: str | None, end: str | None) -> set[IPv4Address]:
-    """Return ipv4 range."""
+    """Return ipv4 range.
+
+    Args:
+        start: Start consumed by IPv4 range.
+        end: End consumed by IPv4 range.
+    """
     start_address = ipv4_address_or_none(start)
     end_address = ipv4_address_or_none(end)
     if not start_address or not end_address:
@@ -6372,7 +6726,11 @@ def ipv4_range(start: str | None, end: str | None) -> set[IPv4Address]:
 
 
 def dhcp_scope_network(scope: DhcpScope) -> IPv4Network | None:
-    """Return dhcp scope network."""
+    """Return dhcp scope network.
+
+    Args:
+        scope: Scope consumed by dhcp scope network.
+    """
     site_address = ipv4_address_or_none(scope.site_address)
     if not site_address:
         return None
@@ -6383,7 +6741,14 @@ def dhcp_scope_network(scope: DhcpScope) -> IPv4Network | None:
 
 
 def dns_record_suggested_ipv4(records: list[DnsRecord], domain: str, dhcp_scopes: list[DhcpScope], dhcp_reservations: list[DhcpReservation]) -> str:
-    """Return dns record suggested ipv4."""
+    """Return dns record suggested ipv4.
+
+    Args:
+        records: Persistent or reported records processed by the operation.
+        domain: Domain consumed by DNS record suggested IPv4.
+        dhcp_scopes: Dhcp scopes consumed by DNS record suggested IPv4.
+        dhcp_reservations: Dhcp reservations consumed by DNS record suggested IPv4.
+    """
     domain_records = [record for record in records if matching_domain(record.hostname, [domain]) == domain]
     used_addresses = {
         address
@@ -6436,7 +6801,13 @@ def dns_record_suggested_ipv4(records: list[DnsRecord], domain: str, dhcp_scopes
 
 
 def vcf_sddc_dhcp_assignment_scope(scope: DhcpScope, records: list[DnsRecord], reservations: list[DhcpReservation]) -> dict[str, Any] | None:
-    """Return vcf sddc dhcp assignment scope."""
+    """Return vcf sddc dhcp assignment scope.
+
+    Args:
+        scope: Scope consumed by VCF SDDC dhcp assignment scope.
+        records: Persistent or reported records processed by the operation.
+        reservations: Reservations consumed by VCF SDDC dhcp assignment scope.
+    """
     if not scope.enabled or scope.address_family.strip().lower() != "ipv4":
         return None
     network = dhcp_scope_network(scope)
@@ -6558,7 +6929,11 @@ def validate_vlan_form_values(
 
 
 def reverse_records_by_zone(records: list[dict[str, str]]) -> list[dict]:
-    """Return reverse records by zone."""
+    """Return reverse records by zone.
+
+    Args:
+        records: Persistent or reported records processed by the operation.
+    """
     groups: dict[str, dict] = {}
     for record in records:
         group = groups.setdefault(record["zone"], {"zone": record["zone"], "records": []})
@@ -6567,7 +6942,12 @@ def reverse_records_by_zone(records: list[dict[str, str]]) -> list[dict]:
 
 
 def matching_domain(hostname: str, domains: list[str]) -> str | None:
-    """Return matching domain."""
+    """Return matching domain.
+
+    Args:
+        hostname: DNS hostname contacted, validated, or configured by the operation.
+        domains: Domains consumed by matching domain.
+    """
     normalized = hostname.strip().strip(".").lower()
     for domain in sorted(domains, key=len, reverse=True):
         if normalized == domain or normalized.endswith(f".{domain}"):
@@ -6576,7 +6956,12 @@ def matching_domain(hostname: str, domains: list[str]) -> str | None:
 
 
 def dns_record_payload(record: DnsRecord, domain: str) -> dict:
-    """Return dns record payload."""
+    """Return dns record payload.
+
+    Args:
+        record: Persistent or reported record affected by the operation.
+        domain: Domain consumed by DNS record payload.
+    """
     hostname = record.hostname.strip().strip(".").lower()
     suffix = f".{domain}"
     if hostname == domain:
@@ -6600,7 +6985,11 @@ def dns_record_payload(record: DnsRecord, domain: str) -> dict:
 
 
 def dns_record_reverse_status(record: DnsRecord) -> dict[str, str]:
-    """Return dns record reverse status."""
+    """Return dns record reverse status.
+
+    Args:
+        record: Persistent or reported record affected by the operation.
+    """
     record_type = record.record_type.strip().upper()
     if record_type not in {"A", "AAAA"}:
         return {
@@ -6636,6 +7025,11 @@ def dns_record_reverse_status(record: DnsRecord) -> dict[str, str]:
 def normalize_dns_hostname(hostname: str, domain: str | None = None) -> str:
     """Normalize dns hostname.
 
+    Args:
+        hostname: DNS hostname contacted, validated, or configured by the operation.
+        domain: Candidate domain to normalize.
+
+
     Returns:
         The normalize dns hostname result.
     """
@@ -6649,13 +7043,21 @@ def normalize_dns_hostname(hostname: str, domain: str | None = None) -> str:
 
 
 def dns_domains_for_settings(settings: DnsSettings) -> list[str]:
-    """Return dns domains for settings."""
+    """Return dns domains for settings.
+
+    Args:
+        settings: Current Atlaso settings used to configure the operation.
+    """
     active = split_domains(settings.domain) or ["atlaso.internal"]
     return split_domains("\n".join([*active, *split_domains(settings.disabled_domains)]))
 
 
 def dns_domain_descriptions(settings: DnsSettings) -> dict[str, str]:
-    """Return dns domain descriptions."""
+    """Return dns domain descriptions.
+
+    Args:
+        settings: Current Atlaso settings used to configure the operation.
+    """
     try:
         payload = json.loads(settings.domain_descriptions_json or "{}")
     except (json.JSONDecodeError, TypeError):
@@ -6670,7 +7072,13 @@ def dns_domain_descriptions(settings: DnsSettings) -> dict[str, str]:
 
 
 def save_dns_domain_description(settings: DnsSettings, domain: str, description: str) -> None:
-    """Persist dns domain description."""
+    """Persist dns domain description.
+
+    Args:
+        settings: Current Atlaso settings used to configure the operation.
+        domain: Domain consumed by save DNS domain description.
+        description: Operator-facing purpose or context for the resource.
+    """
     descriptions = dns_domain_descriptions(settings)
     normalized_domain = domain.strip().strip(".").lower()
     normalized_description = description.strip()
@@ -6686,12 +7094,22 @@ def save_dns_domain_description(settings: DnsSettings, domain: str, description:
 
 
 def save_dns_domains(settings: DnsSettings, domains: list[str]) -> None:
-    """Persist dns domains."""
+    """Persist dns domains.
+
+    Args:
+        settings: Current Atlaso settings used to configure the operation.
+        domains: Domains consumed by save DNS domains.
+    """
     settings.domain = join_domains(domains) or "atlaso.internal"
 
 
 def save_disabled_dns_domains(settings: DnsSettings, domains: list[str]) -> None:
-    """Persist disabled dns domains."""
+    """Persist disabled dns domains.
+
+    Args:
+        settings: Current Atlaso settings used to configure the operation.
+        domains: Domains consumed by save disabled DNS domains.
+    """
     settings.disabled_domains = join_domains(domains)
 
 
@@ -6738,6 +7156,10 @@ VCF_HELPER_DEFAULT_TARGET = "vcf-9.1"
 def normalize_vcf_helper_target(target: str) -> str:
     """Normalize vcf helper target.
 
+    Args:
+        target: Target resource or location affected by the operation.
+
+
     Returns:
         The normalize vcf helper target result.
     """
@@ -6745,7 +7167,11 @@ def normalize_vcf_helper_target(target: str) -> str:
 
 
 def vcf_helper_target_components(target: str) -> list[dict[str, str]]:
-    """Return vcf helper target components."""
+    """Return vcf helper target components.
+
+    Args:
+        target: Target resource or location affected by the operation.
+    """
     normalized_target = normalize_vcf_helper_target(target)
     hosts = VCF_HELPER_TARGET_HOSTS.get(normalized_target)
     if hosts is None:
@@ -6759,12 +7185,25 @@ def vcf_helper_target_component_map() -> dict[str, list[dict[str, str]]]:
 
 
 def vcf_generated_host_label(base_host: str, prefix: str, suffix: str) -> str:
-    """Return vcf generated host label."""
+    """Return vcf generated host label.
+
+    Args:
+        base_host: Base host consumed by VCF generated host label.
+        prefix: Prefix consumed by VCF generated host label.
+        suffix: Suffix consumed by VCF generated host label.
+    """
     return f"{prefix.strip().lower()}{base_host}{suffix.strip().lower()}"
 
 
 def vcf_generated_fqdn_preview(domain: str, prefix: str = "", suffix: str = "", target: str = VCF_HELPER_DEFAULT_TARGET) -> list[dict[str, str]]:
-    """Return vcf generated fqdn preview."""
+    """Return vcf generated fqdn preview.
+
+    Args:
+        domain: Domain consumed by VCF generated FQDN preview.
+        prefix: Prefix consumed by VCF generated FQDN preview.
+        suffix: Suffix consumed by VCF generated FQDN preview.
+        target: Target resource or location affected by the operation.
+    """
     return [
         {
             "host": component["host"],
@@ -6804,7 +7243,11 @@ def occupied_vcf_helper_addresses(record_type: str, db: Session) -> set[IPv4Addr
 
 
 def vcf_helper_existing_address_records(records: list[DnsRecord]) -> dict[str, list[str]]:
-    """Return vcf helper existing address records."""
+    """Return vcf helper existing address records.
+
+    Args:
+        records: Persistent or reported records processed by the operation.
+    """
     addresses: dict[str, list[str]] = {}
     for record in records:
         if record.record_type.strip().upper() not in {"A", "AAAA"}:
@@ -6821,7 +7264,12 @@ def vcf_helper_start_network(
     start_ipv4: str,
     network_prefix: str = "",
 ) -> tuple[IPv4Address | IPv6Address | None, IPv4Network | IPv6Network | None, str | None]:
-    """Return vcf helper start network."""
+    """Return vcf helper start network.
+
+    Args:
+        start_ipv4: Start ipv4 consumed by VCF helper start network.
+        network_prefix: Network prefix consumed by VCF helper start network.
+    """
     candidate = start_ipv4.strip()
     if "/" not in candidate and network_prefix.strip():
         candidate = f"{candidate}/{network_prefix.strip().removeprefix('/')}"
@@ -6851,7 +7299,13 @@ def next_available_vcf_address(
     occupied: set[IPv4Address | IPv6Address],
     network: IPv4Network | IPv6Network,
 ) -> IPv4Address | IPv6Address | None:
-    """Return next available vcf address."""
+    """Return next available vcf address.
+
+    Args:
+        candidate: Candidate consumed by next available VCF address.
+        occupied: Occupied consumed by next available VCF address.
+        network: Network consumed by next available VCF address.
+    """
     current = int(candidate)
     last_host = int(network.broadcast_address) - 1 if isinstance(candidate, IPv4Address) else int(network.broadcast_address)
     while current <= last_host:
@@ -7195,7 +7649,11 @@ def vcf_sddc_helper_context(db: Session) -> dict[str, Any]:
 
 
 def _job_payload(job: Job) -> dict[str, Any]:
-    """Return job payload."""
+    """Return job payload.
+
+    Args:
+        job: Background job record affected by the operation.
+    """
     try:
         return dict(json.loads(job.result or "{}"))
     except (json.JSONDecodeError, TypeError, ValueError):
@@ -7247,7 +7705,7 @@ def _update_job(job: Job, db: Session, percent: int, state: str, **values: Any) 
         db: Active database session.
         percent: Completion percentage to record for the job.
         state: Lifecycle or job state to persist.
-        values: Values to normalize, validate, or persist.
+        **values: Values to normalize, validate, or persist.
     """
     payload = _job_payload(job)
     payload.update(values)
@@ -7265,14 +7723,19 @@ def _update_cancelable_job(job: Job, db: Session, percent: int, state: str, **va
         db: Active database session.
         percent: Completion percentage to record for the job.
         state: Lifecycle or job state to persist.
-        values: Values to normalize, validate, or persist.
+        **values: Values to normalize, validate, or persist.
     """
     _raise_if_job_cancelled(job, db)
     _update_job(job, db, percent, state, **values)
 
 
 def _redact_task_value(value: Any, *, key: str = "") -> Any:
-    """Return redact task value."""
+    """Return redact task value.
+
+    Args:
+        value: Candidate value consumed by redact task value.
+        key: Stable key identifying the setting, secret, or mapping entry.
+    """
     if key and TASK_SECRET_KEY_RE.search(key):
         return "[redacted]"
     if isinstance(value, dict):
@@ -7287,12 +7750,20 @@ def _redact_task_value(value: Any, *, key: str = "") -> Any:
 
 
 def _task_failure_messages(value: Any) -> list[str]:
-    """Return task failure messages."""
+    """Return task failure messages.
+
+    Args:
+        value: Candidate value consumed by task failure messages.
+    """
     messages: list[str] = []
     message_keys = {"error", "errors", "detail", "message", "reason", "stderr"}
 
     def add_message(candidate: Any) -> None:
-        """Create message."""
+        """Create message.
+
+        Args:
+            candidate: Candidate consumed by add message.
+        """
         if isinstance(candidate, str):
             message = candidate.strip()
             if message and message not in messages:
@@ -7302,7 +7773,11 @@ def _task_failure_messages(value: Any) -> list[str]:
                 add_message(item)
 
     def collect(candidate: Any) -> None:
-        """Handle collect."""
+        """Handle collect.
+
+        Args:
+            candidate: Candidate consumed by collect.
+        """
         if isinstance(candidate, dict):
             successful_command = candidate.get("returncode") == 0 or candidate.get("success") is True
             for item_key, item_value in candidate.items():
@@ -7320,7 +7795,11 @@ def _task_failure_messages(value: Any) -> list[str]:
 
 
 def _task_status_pill(status_value: str) -> str:
-    """Return task status pill."""
+    """Return task status pill.
+
+    Args:
+        status_value: Status value consumed by task status pill.
+    """
     if status_value in {JobStatus.SUCCEEDED.value, "no-op"}:
         return "good"
     if status_value in FAILED_JOB_STATUSES:
@@ -7333,7 +7812,11 @@ def _task_status_pill(status_value: str) -> str:
 
 
 def _task_console_output(result: dict[str, Any]) -> str:
-    """Return task console output."""
+    """Return task console output.
+
+    Args:
+        result: Operation result being inspected or returned.
+    """
     stdout, stderr = _task_console_streams(result)
     sections: list[str] = []
     if stdout:
@@ -7344,7 +7827,11 @@ def _task_console_output(result: dict[str, Any]) -> str:
 
 
 def _task_console_streams(result: dict[str, Any]) -> tuple[str, str]:
-    """Return task console streams."""
+    """Return task console streams.
+
+    Args:
+        result: Operation result being inspected or returned.
+    """
     return (
         _strip_task_action_metadata(result.get("stdout")),
         _strip_task_action_metadata(result.get("stderr")),
@@ -7352,7 +7839,11 @@ def _task_console_streams(result: dict[str, Any]) -> tuple[str, str]:
 
 
 def _strip_task_action_metadata(value: Any) -> str:
-    """Remove helper execution envelopes while preserving script output."""
+    """Remove helper execution envelopes while preserving script output.
+
+    Args:
+        value: Candidate value consumed by strip task action metadata.
+    """
     text = str(value or "").strip()
     decoder = json.JSONDecoder()
     while text.startswith("{"):
@@ -7367,7 +7858,11 @@ def _strip_task_action_metadata(value: Any) -> str:
 
 
 def _task_type_label(job_type: str) -> str:
-    """Return task type label."""
+    """Return task type label.
+
+    Args:
+        job_type: Job type consumed by task type label.
+    """
     labels = {
         "appliance-apply": "Appliance Apply",
         "appliance-reboot": "Appliance Reboot",
@@ -7384,7 +7879,11 @@ def _task_type_label(job_type: str) -> str:
 
 
 def _appliance_update_task_label(mode: str) -> str:
-    """Return appliance update task label."""
+    """Return appliance update task label.
+
+    Args:
+        mode: Mode consumed by appliance update task label.
+    """
     return {
         "check": "Appliance Update check",
         "run": "Appliance Update install",
@@ -7398,7 +7897,11 @@ APPLIANCE_UPDATE_TASK_MODES_BY_LABEL = {
 
 
 def _appliance_update_mode_filter_clause(mode: str) -> Any:
-    """Return appliance update mode filter clause."""
+    """Return appliance update mode filter clause.
+
+    Args:
+        mode: Mode consumed by appliance update mode filter clause.
+    """
     mode_patterns = (f'"mode":"{mode}"', f'"mode": "{mode}"')
     return and_(
         Job.type == "appliance-update",
@@ -7410,7 +7913,12 @@ def _appliance_update_mode_filter_clause(mode: str) -> Any:
 
 
 def _task_row_type_label(job: Job, result: dict[str, Any]) -> str:
-    """Return task row type label."""
+    """Return task row type label.
+
+    Args:
+        job: Background job record affected by the operation.
+        result: Operation result being inspected or returned.
+    """
     if job.type != "appliance-update":
         return _task_type_label(job.type)
     mode = str(result.get("mode") or "")
@@ -7425,7 +7933,11 @@ def _task_row_type_label(job: Job, result: dict[str, Any]) -> str:
 
 
 def _task_time_label(value: datetime | None) -> str:
-    """Return task time label."""
+    """Return task time label.
+
+    Args:
+        value: Candidate value consumed by task time label.
+    """
     if not value:
         return ""
     return value.isoformat()
@@ -7459,7 +7971,11 @@ def _can_cancel_task(job: Job, identity: Identity | None = None) -> bool:
 
 
 def _job_step_payload(step: JobStep) -> dict[str, Any]:
-    """Return job step payload."""
+    """Return job step payload.
+
+    Args:
+        step: Step consumed by job step payload.
+    """
     if not step.result:
         return {}
     try:
@@ -7522,7 +8038,11 @@ def _task_row(job: Job, identity: Identity | None = None) -> dict[str, Any]:
 
 
 def _job_step_row(step: JobStep) -> dict[str, Any]:
-    """Return job step row."""
+    """Return job step row.
+
+    Args:
+        step: Step consumed by job step row.
+    """
     result = _redact_task_value(_job_step_payload(step))
     error = _redact_task_value(step.error or "")
     error_messages = _task_failure_messages(result)
@@ -7562,6 +8082,10 @@ def _job_step_row(step: JobStep) -> dict[str, Any]:
 
 def _task_filter_clauses(raw_filters: str) -> list[Any]:
     """Return task filter clauses.
+
+    Args:
+        raw_filters: Raw filters consumed by task filter clauses.
+
 
     Raises:
         HTTPException: If the request cannot be fulfilled.
@@ -7733,7 +8257,12 @@ def run_vcf_target_depot_job(
             local = _local_depot_endpoint(db)
 
             def update(percent: int, state: str) -> None:
-                """Update operation."""
+                """Update operation.
+
+                Args:
+                    percent: Percent consumed by update.
+                    state: Current lifecycle state consumed by the operation.
+                """
                 _update_cancelable_job(job, db, percent, state)
 
             outcome = configure_target_depot(
@@ -7783,7 +8312,12 @@ def run_vcf_target_depot_job(
 
 
 def queue_vcf_target_depot_job(job_id: str, **kwargs: Any) -> None:
-    """Handle queue vcf target depot job."""
+    """Handle queue vcf target depot job.
+
+    Args:
+        job_id: Stable identifier of the associated job resource.
+        **kwargs: Additional keyword arguments accepted by the callable.
+    """
     threading.Thread(
         target=run_vcf_target_depot_job,
         kwargs={"job_id": job_id, **kwargs},
@@ -7899,7 +8433,12 @@ def _configure_deployed_target_depot(
     local = _local_depot_endpoint(db)
 
     def update(percent: int, state: str) -> None:
-        """Update operation."""
+        """Update operation.
+
+        Args:
+            percent: Percent consumed by update.
+            state: Current lifecycle state consumed by the operation.
+        """
         _update_cancelable_job(job, db, min(99, 90 + int(percent / 10)), f"depot-{state}")
 
     return configure_target_depot(
@@ -7996,7 +8535,12 @@ def run_vcf_sddc_deployment_job(
         db.commit()
 
         def update(percent: int, state: str) -> None:
-            """Update operation."""
+            """Update operation.
+
+            Args:
+                percent: Percent consumed by update.
+                state: Current lifecycle state consumed by the operation.
+            """
             _update_cancelable_job(job, db, percent, state)
 
         def cancelled() -> bool:
@@ -8064,7 +8608,12 @@ def run_vcf_sddc_deployment_job(
                 tls_fingerprint = tls_sha256_fingerprint(target_address, 443)
 
                 def trust_update(percent: int, state: str) -> None:
-                    """Handle trust update."""
+                    """Handle trust update.
+
+                    Args:
+                        percent: Percent consumed by trust update.
+                        state: Current lifecycle state consumed by the operation.
+                    """
                     _update_cancelable_job(job, db, 90 + int(percent / 12), f"trust-{state}")
 
                 trust_result = _execute_deployed_target_trust(
@@ -8129,7 +8678,12 @@ def run_vcf_sddc_deployment_job(
 
 
 def queue_vcf_sddc_deployment_job(job_id: str, **kwargs: Any) -> None:
-    """Handle queue vcf sddc deployment job."""
+    """Handle queue vcf sddc deployment job.
+
+    Args:
+        job_id: Stable identifier of the associated job resource.
+        **kwargs: Additional keyword arguments accepted by the callable.
+    """
     threading.Thread(
         target=run_vcf_sddc_deployment_job,
         kwargs={"job_id": job_id, **kwargs},
@@ -8207,7 +8761,12 @@ def run_vcf_trust_job(job_id: str, target_id: int, credentials: VcfTrustCredenti
         db.commit()
 
         def update(percent: int, state: str) -> None:
-            """Update operation."""
+            """Update operation.
+
+            Args:
+                percent: Percent consumed by update.
+                state: Current lifecycle state consumed by the operation.
+            """
             _raise_if_job_cancelled(job, db)
             job.progress_percent = percent
             job.result = sanitized_result(
@@ -8318,6 +8877,10 @@ def queue_vcf_trust_job(job_id: str, target_id: int, credentials: VcfTrustCreden
 def _normalize_vcf_trust_address(address: str) -> tuple[str, list[str]]:
     """Normalize vcf trust address.
 
+    Args:
+        address: Network address contacted or validated by the operation.
+
+
     Returns:
         The normalize vcf trust address result.
     """
@@ -8424,13 +8987,23 @@ def save_appliance_apply_baselines(db: Session, baselines: dict[str, dict[str, A
 
 
 def appliance_snapshot_hash(payload: dict[str, Any]) -> str:
-    """Return appliance snapshot hash."""
+    """Return appliance snapshot hash.
+
+    Args:
+        payload: Validated request or task payload consumed by the operation.
+    """
     encoded = json.dumps(payload, sort_keys=True, default=str, separators=(",", ":")).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
 
 
 def config_diff_for_unit(unit_id: str, current_preview: str, baseline: dict[str, Any] | None) -> str:
-    """Return config diff for unit."""
+    """Return config diff for unit.
+
+    Args:
+        unit_id: Stable identifier of the associated unit resource.
+        current_preview: Current preview inspected by the operation.
+        baseline: Baseline consumed by config diff for unit.
+    """
     if not baseline or not baseline.get("config_preview"):
         return ""
     previous_preview = str(baseline.get("config_preview") or "")
@@ -8488,7 +9061,11 @@ def network_management_signature(config_preview: str) -> dict[str, str]:
 
 
 def management_address_label(signature: dict[str, str]) -> str:
-    """Return management address label."""
+    """Return management address label.
+
+    Args:
+        signature: Signature consumed by management address label.
+    """
     if signature.get("ip_cidr"):
         return signature["ip_cidr"]
     if signature.get("ipv4_method") == "dhcp":
@@ -8553,7 +9130,13 @@ def appliance_apply_connection_warnings(
     current_preview: str,
     baseline: dict[str, Any] | None,
 ) -> list[str]:
-    """Return appliance apply connection warnings."""
+    """Return appliance apply connection warnings.
+
+    Args:
+        unit_id: Stable identifier of the associated unit resource.
+        current_preview: Current preview inspected by the operation.
+        baseline: Baseline consumed by appliance apply connection warnings.
+    """
     previous_preview = str((baseline or {}).get("config_preview") or "")
     if not previous_preview:
         return []
@@ -8659,7 +9242,12 @@ def successful_network_apply_vlan_entries(db: Session, baseline: dict[str, Any] 
 
 
 def removed_network_vlan_entries(current_preview: str, applied_entries: list[dict[str, str]]) -> list[dict[str, str]]:
-    """Return removed network vlan entries."""
+    """Return removed network vlan entries.
+
+    Args:
+        current_preview: Current preview inspected by the operation.
+        applied_entries: Applied entries consumed by removed network VLAN entries.
+    """
     current_names = {entry.get("name", "") for entry in network_vlan_entries_from_config(current_preview)}
     removed: list[dict[str, str]] = []
     for entry in applied_entries:
@@ -8698,7 +9286,12 @@ def local_usernames_from_config(config_preview: str) -> list[str]:
 
 
 def removed_local_usernames(users: list[User], baseline: dict[str, Any] | None) -> list[str]:
-    """Return removed local usernames."""
+    """Return removed local usernames.
+
+    Args:
+        users: Users consumed by removed local usernames.
+        baseline: Baseline consumed by removed local usernames.
+    """
     current = {user.username.strip().lower() for user in users}
     previous = local_usernames_from_config(str((baseline or {}).get("config_preview") or ""))
     return [username for username in previous if username not in current]
@@ -8755,7 +9348,12 @@ def wan_route_entries_from_config(config_preview: str) -> list[dict[str, str]]:
 
 
 def removed_wan_route_entries(current_preview: str, baseline: dict[str, Any] | None) -> list[dict[str, str]]:
-    """Return removed wan route entries."""
+    """Return removed wan route entries.
+
+    Args:
+        current_preview: Current preview inspected by the operation.
+        baseline: Baseline consumed by removed WAN route entries.
+    """
     baseline_preview = str((baseline or {}).get("config_preview") or "")
     current_keys = {
         (entry.get("destination_cidr", ""), entry.get("interface", ""))
@@ -9550,7 +10148,12 @@ def appliance_apply_status(db: Session, unit_id: str) -> dict[str, Any]:
 
 
 def appliance_apply_status_from_unit(unit: dict[str, Any], *, sidebar_pending_apply_count: int | None = None) -> dict[str, Any]:
-    """Return appliance apply status from unit."""
+    """Return appliance apply status from unit.
+
+    Args:
+        unit: Unit consumed by appliance apply status from unit.
+        sidebar_pending_apply_count: Number of sidebar pending apply entries.
+    """
     if unit["validation_errors"]:
         state = "needs attention"
         pill = "warn"
@@ -9565,7 +10168,11 @@ def appliance_apply_status_from_unit(unit: dict[str, Any], *, sidebar_pending_ap
 
 
 def appliance_apply_client_status(status: dict[str, Any]) -> dict[str, Any]:
-    """Return only the JSON-safe apply metadata needed by autosave clients."""
+    """Return only the JSON-safe apply metadata needed by autosave clients.
+
+    Args:
+        status: Lifecycle or operation status to record or evaluate.
+    """
     return {
         "id": status.get("id", ""),
         "label": status.get("label", "Appliance component"),
@@ -9692,12 +10299,20 @@ def appliance_apply_context(db: Session) -> dict[str, Any]:
 
 
 def dashboard_appliance_apply_units(db: Session) -> list[dict[str, Any]]:
-    """Project desired-state status without running apply-time reconciliation."""
+    """Project desired-state status without running apply-time reconciliation.
+
+    Args:
+        db: Active database session used by the operation.
+    """
     return appliance_apply_units(db, reconcile=False)
 
 
 def _dashboard_iso(value: datetime | None) -> str:
-    """Return dashboard iso."""
+    """Return dashboard iso.
+
+    Args:
+        value: Candidate value consumed by dashboard ISO.
+    """
     if value is None:
         return ""
     if value.tzinfo is None:
@@ -9706,7 +10321,11 @@ def _dashboard_iso(value: datetime | None) -> str:
 
 
 def _dashboard_activity_outcome(status_value: str) -> tuple[str, str]:
-    """Return dashboard activity outcome."""
+    """Return dashboard activity outcome.
+
+    Args:
+        status_value: Status value consumed by dashboard activity outcome.
+    """
     normalized = str(status_value or "").strip().lower()
     if normalized in {JobStatus.SUCCEEDED.value, "success"}:
         return "Succeeded", "good"
@@ -9720,7 +10339,11 @@ def _dashboard_activity_outcome(status_value: str) -> tuple[str, str]:
 
 
 def _appliance_apply_selected_unit_ids(job: Job) -> set[str]:
-    """Return appliance apply selected unit ids."""
+    """Return appliance apply selected unit ids.
+
+    Args:
+        job: Background job record affected by the operation.
+    """
     payload = _job_payload(job)
     selected = {str(unit_id) for unit_id in payload.get("selected_units", []) if str(unit_id)}
     if selected:
@@ -9733,7 +10356,11 @@ def _appliance_apply_selected_unit_ids(job: Job) -> set[str]:
 
 
 def _appliance_apply_unresolved_unit_ids(job: Job) -> set[str]:
-    """Return appliance apply unresolved unit ids."""
+    """Return appliance apply unresolved unit ids.
+
+    Args:
+        job: Background job record affected by the operation.
+    """
     payload = _job_payload(job)
     selected = _appliance_apply_selected_unit_ids(job)
     succeeded = {
@@ -9745,7 +10372,12 @@ def _appliance_apply_unresolved_unit_ids(job: Job) -> set[str]:
 
 
 def _appliance_apply_failure_is_resolved(job: Job, successful_applies: list[Job]) -> bool:
-    """Return appliance apply failure is resolved."""
+    """Return appliance apply failure is resolved.
+
+    Args:
+        job: Background job record affected by the operation.
+        successful_applies: Successful applies consumed by appliance apply failure is resolved.
+    """
     unresolved_units = _appliance_apply_unresolved_unit_ids(job)
     if not unresolved_units:
         return False
@@ -9757,7 +10389,11 @@ def _appliance_apply_failure_is_resolved(job: Job, successful_applies: list[Job]
 
 
 def dashboard_snapshot(db: Session) -> dict[str, Any]:
-    """Build the private operator dashboard without exposing task or audit details."""
+    """Build the private operator dashboard without exposing task or audit details.
+
+    Args:
+        db: Active database session used by the operation.
+    """
     generated_at = utcnow()
     units = dashboard_appliance_apply_units(db)
     changed_units = [unit for unit in units if unit["changed"]]
@@ -10978,7 +11614,11 @@ def complete_appliance_update_task(db: Session, *, job: Job, update_result: dict
 
 
 def appliance_update_failure_message(update_result: dict[str, Any]) -> str:
-    """Handle appliance update failure message."""
+    """Handle appliance update failure message.
+
+    Args:
+        update_result: Update result consumed by appliance update failure message.
+    """
     explicit = str(update_result.get("error") or "").strip()
     if explicit:
         return apply_output_excerpt(explicit, limit=2000)
@@ -11039,7 +11679,11 @@ def appliance_update_exception_result(
 
 
 def adapter_result_to_payload(result: Any) -> dict[str, Any]:
-    """Return adapter result to payload."""
+    """Return adapter result to payload.
+
+    Args:
+        result: Operation result being inspected or returned.
+    """
     return {
         "command": result.command,
         "command_line": " ".join(result.command),
@@ -11053,6 +11697,11 @@ def adapter_result_to_payload(result: Any) -> dict[str, Any]:
 def apply_output_excerpt(value: str, *, limit: int = 2400) -> str:
     """Update output excerpt.
 
+    Args:
+        value: Candidate value consumed by apply output excerpt.
+        limit: Limit consumed by apply output excerpt.
+
+
     Returns:
         The apply output excerpt result.
     """
@@ -11063,7 +11712,12 @@ def apply_output_excerpt(value: str, *, limit: int = 2400) -> str:
 
 
 def log_appliance_update_failures(job_id: str, update_result: dict[str, Any]) -> None:
-    """Handle log appliance update failures."""
+    """Handle log appliance update failures.
+
+    Args:
+        job_id: Stable identifier of the associated job resource.
+        update_result: Update result consumed by log appliance update failures.
+    """
     for command in update_result.get("commands", []):
         if int(command.get("returncode") or 0) == 0:
             continue
@@ -11080,7 +11734,12 @@ def log_appliance_update_failures(job_id: str, update_result: dict[str, Any]) ->
 
 
 def log_appliance_update_submission(job_id: str, update_result: dict[str, Any]) -> None:
-    """Handle log appliance update submission."""
+    """Handle log appliance update submission.
+
+    Args:
+        job_id: Stable identifier of the associated job resource.
+        update_result: Update result consumed by log appliance update submission.
+    """
     APPLIANCE_UPDATE_LOGGER.info(
         "Appliance update task %s completed status=%s mode=%s streams=%s dry_run=%s config_path=%s",
         job_id,
@@ -11113,7 +11772,11 @@ LOG_LINE_OPTIONS = {100, 200, 500}
 
 
 def normalized_log_line_count(value: int) -> int:
-    """Return normalized log line count."""
+    """Return normalized log line count.
+
+    Args:
+        value: Candidate value consumed by normalized log line count.
+    """
     return value if value in LOG_LINE_OPTIONS else 100
 
 
@@ -11194,7 +11857,11 @@ def journal_log_source(
 
 
 def dnsmasq_log_category(line: str) -> str:
-    """Return dnsmasq log category."""
+    """Return dnsmasq log category.
+
+    Args:
+        line: Source or output line being parsed.
+    """
     if re.search(r"\bdnsmasq-dhcp(?:\[\d+\])?:", line):
         return "dhcp"
     if re.search(r"\bdnsmasq-tftp(?:\[\d+\])?:", line):
@@ -11203,7 +11870,11 @@ def dnsmasq_log_category(line: str) -> str:
 
 
 def log_sources_context(*, max_lines: int = 100) -> list[dict[str, Any]]:
-    """Return log sources context."""
+    """Return log sources context.
+
+    Args:
+        max_lines: Max lines consumed by log sources context.
+    """
     line_count = normalized_log_line_count(max_lines)
     adapter = SystemAdapter()
     dnsmasq_logs = adapter.read_dnsmasq_logs()
@@ -11312,7 +11983,11 @@ def audit_event_rows_context(db: Session, *, limit: int = 500) -> list[dict[str,
 
 
 def appliance_apply_failure_summaries(unit_results: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Return appliance apply failure summaries."""
+    """Return appliance apply failure summaries.
+
+    Args:
+        unit_results: Unit results consumed by appliance apply failure summaries.
+    """
     summaries: list[dict[str, Any]] = []
     for unit in unit_results:
         failed_commands = []
@@ -11339,7 +12014,12 @@ def appliance_apply_failure_summaries(unit_results: list[dict[str, Any]]) -> lis
 
 
 def log_appliance_apply_failures(job_id: str, unit_results: list[dict[str, Any]]) -> None:
-    """Handle log appliance apply failures."""
+    """Handle log appliance apply failures.
+
+    Args:
+        job_id: Stable identifier of the associated job resource.
+        unit_results: Unit results consumed by log appliance apply failures.
+    """
     for failure in appliance_apply_failure_summaries(unit_results):
         for command in failure["commands"]:
             APPLY_LOGGER.error(
@@ -11483,6 +12163,11 @@ def cleanup_transient_secret_staging_files() -> None:
 def execute_appliance_apply_unit(unit: dict[str, Any], *, adapter: SystemAdapter | None = None) -> dict[str, Any]:
     """Run appliance apply unit.
 
+    Args:
+        unit: Unit consumed by execute appliance apply unit.
+        adapter: Adapter consumed by execute appliance apply unit.
+
+
     Returns:
         The execute appliance apply unit result.
 
@@ -11495,6 +12180,10 @@ def execute_appliance_apply_unit(unit: dict[str, Any], *, adapter: SystemAdapter
 
     def run_adapter_steps(steps: list[Any]) -> list[Any]:
         """Run adapter steps.
+
+        Args:
+            steps: Steps consumed by run adapter steps.
+
 
         Returns:
             The run adapter steps result.
@@ -11923,6 +12612,10 @@ def root(
 def _format_file_size(size: int) -> str:
     """Render file size.
 
+    Args:
+        size: Size consumed by format file size.
+
+
     Returns:
         The format file size result.
     """
@@ -11936,6 +12629,10 @@ def _format_file_size(size: int) -> str:
 
 def _format_byte_rate(value: float | int | None) -> str:
     """Render byte rate.
+
+    Args:
+        value: Candidate value consumed by format byte rate.
+
 
     Returns:
         The format byte rate result.
@@ -12014,7 +12711,11 @@ def public_depot_redirect() -> RedirectResponse:
 
 
 def safe_depot_login_next(value: str | None) -> str:
-    """Return safe depot login next."""
+    """Return safe depot login next.
+
+    Args:
+        value: Candidate value consumed by safe depot login next.
+    """
     target = (value or "").strip()
     if target == "/PROD" or target.startswith("/PROD/"):
         return target
@@ -12260,7 +12961,11 @@ def public_terminal_login_response(
 
 
 def local_user_has_web_terminal_access(user: User | None) -> bool:
-    """Return local user has web terminal access."""
+    """Return local user has web terminal access.
+
+    Args:
+        user: User record or identity affected by the operation.
+    """
     return bool(
         user
         and user.enabled
@@ -14317,7 +15022,11 @@ def active_vcf_depot_execution_job(db: Session) -> Job | None:
 
 
 def vcf_depot_execution_conflict_detail(job: Job) -> str:
-    """Return vcf depot execution conflict detail."""
+    """Return vcf depot execution conflict detail.
+
+    Args:
+        job: Background job record affected by the operation.
+    """
     return (
         f"{_task_type_label(job.type)} task {job.id} is already {job.status}. "
         "Wait for it to finish before starting another VCFDT operation."
@@ -14326,6 +15035,11 @@ def vcf_depot_execution_conflict_detail(job: Job) -> str:
 
 def run_appliance_apply_job(job_id: str, *, force_real: bool = False) -> None:
     """Run appliance apply job.
+
+    Args:
+        job_id: Stable identifier of the associated job resource.
+        force_real: Whether force real applies to the operation.
+
 
     Raises:
         ApplianceApplyJobError: If the operation encounters an invalid state.
@@ -14637,7 +15351,11 @@ def ensure_vcf_depot_software_id_task_steps(db: Session, job: Job) -> list[JobSt
 
 
 def run_vcf_depot_software_id_job(job_id: str) -> None:
-    """Run vcf depot software id job."""
+    """Run vcf depot software id job.
+
+    Args:
+        job_id: Stable identifier of the associated job resource.
+    """
     with SessionLocal() as db:
         job = db.scalar(select(Job).options(selectinload(Job.steps)).where(Job.id == job_id))
         if job is None or job.type != "vcf-depot-software-id" or job.status != JobStatus.PENDING.value:
@@ -15030,6 +15748,13 @@ def routes_wan(
 def parse_int_form_value(value: str, field_label: str, *, default: int = 0, minimum: int | None = None) -> int | Response:
     """Parse int form value.
 
+    Args:
+        value: Candidate value consumed by parse int form value.
+        field_label: Candidate field label to parse.
+        default: Candidate default to parse.
+        minimum: Candidate minimum to parse.
+
+
     Returns:
         The parsed int form value.
     """
@@ -15047,6 +15772,12 @@ def parse_int_form_value(value: str, field_label: str, *, default: int = 0, mini
 
 def parse_optional_int_form_value(value: str, field_label: str, *, minimum: int | None = None) -> int | None | Response:
     """Parse optional int form value.
+
+    Args:
+        value: Candidate value consumed by parse optional int form value.
+        field_label: Candidate field label to parse.
+        minimum: Candidate minimum to parse.
+
 
     Returns:
         The parsed optional int form value.
@@ -15999,13 +16730,22 @@ def persist_firewall_source_group_state(db: Session, state: dict) -> None:
 
 
 def _source_group_entries_from_form(form) -> list[str]:
-    """Return source group entries from form."""
+    """Return source group entries from form.
+
+    Args:
+        form: Form consumed by source group entries from form.
+    """
     values = [str(item).strip() for item in form.getlist("group_entries") if str(item).strip()]
     return values or ["any"]
 
 
 def _firewall_source_group_id(name: str, groups: list[dict]) -> str:
-    """Return firewall source group id."""
+    """Return firewall source group id.
+
+    Args:
+        name: Stable name identifying the resource or operation.
+        groups: Groups consumed by firewall source group identifier.
+    """
     base = re.sub(r"[^a-z0-9]+", "-", name.strip().lower()).strip("-") or "group"
     existing = {str(group.get("id", "")) for group in groups}
     candidate = f"custom:{base}"
@@ -16017,7 +16757,11 @@ def _firewall_source_group_id(name: str, groups: list[dict]) -> str:
 
 
 def _normalized_firewall_source_group(group: dict) -> dict:
-    """Return normalized firewall source group."""
+    """Return normalized firewall source group.
+
+    Args:
+        group: Group consumed by normalized firewall source group.
+    """
     entries = [str(item).strip() for item in (group.get("entries") or group.get("sources") or []) if str(item).strip()] or ["any"]
     normalized_entries = []
     for entry in entries:
@@ -16038,7 +16782,13 @@ def _normalized_firewall_source_group(group: dict) -> dict:
 
 
 def _strip_deleted_source_group_references(groups: list[dict], deleted_group_id: str, deleted_group_name: str) -> list[dict]:
-    """Return strip deleted source group references."""
+    """Return strip deleted source group references.
+
+    Args:
+        groups: Groups consumed by strip deleted source group references.
+        deleted_group_id: Stable identifier of the associated deleted group resource.
+        deleted_group_name: Deleted group name consumed by strip deleted source group references.
+    """
     stripped: list[dict] = []
     deleted_ref = f"{FIREWALL_SOURCE_GROUP_REFERENCE_PREFIX}{deleted_group_id}"
     deleted_name_ref = f"@{deleted_group_name}".strip().lower()
@@ -18265,7 +19015,13 @@ def create_dhcp_reservation_from_ui(
 
 
 def _lease_hostname_or_default(hostname: str, mac_address: str, *, prefix: str = "lease") -> str:
-    """Return lease hostname or default."""
+    """Return lease hostname or default.
+
+    Args:
+        hostname: DNS hostname contacted, validated, or configured by the operation.
+        mac_address: Mac address consumed by lease hostname or default.
+        prefix: Prefix consumed by lease hostname or default.
+    """
     normalized = hostname.strip().strip(".").lower()
     if normalized and normalized != "-":
         return normalized
@@ -19355,6 +20111,10 @@ def update_ca_settings_from_ui(
 def parse_ca_profile_id(raw_value: str | int | None) -> int | None:
     """Parse ca profile id.
 
+    Args:
+        raw_value: Candidate raw value to parse.
+
+
     Returns:
         The parsed ca profile id.
     """
@@ -20041,7 +20801,12 @@ LDAP_SYNTHETIC_GROUPS = (
 
 
 def _unique_ldap_synthetic_name(base: str, existing: set[str]) -> str:
-    """Return unique ldap synthetic name."""
+    """Return unique ldap synthetic name.
+
+    Args:
+        base: Base consumed by unique LDAP synthetic name.
+        existing: Existing consumed by unique LDAP synthetic name.
+    """
     candidate = base
     suffix = 2
     while candidate.lower() in existing:
@@ -20052,7 +20817,11 @@ def _unique_ldap_synthetic_name(base: str, existing: set[str]) -> str:
 
 
 def _synthetic_ldap_password(settings: LdapSettings) -> str:
-    """Return synthetic ldap password."""
+    """Return synthetic ldap password.
+
+    Args:
+        settings: Current Atlaso settings used to configure the operation.
+    """
     length = max(14, settings.min_password_length)
     return ("Aa1!" + (uuid4().hex * 8))[:length]
 
@@ -21543,6 +22312,10 @@ def update_ntp_settings_from_ui(
 def parse_kms_owner_client_id(raw_value: str | int | None) -> int | None:
     """Parse kms owner client id.
 
+    Args:
+        raw_value: Candidate raw value to parse.
+
+
     Returns:
         The parsed kms owner client id.
     """
@@ -22096,6 +22869,12 @@ async def _vcf_helper_json(request: Request) -> dict[str, Any]:
 def _confirmed_tls_fingerprint(address: str, port: int, confirmed: str) -> tuple[str, JSONResponse | None]:
     """Return confirmed tls fingerprint.
 
+    Args:
+        address: Network address contacted or validated by the operation.
+        port: Network port contacted, validated, or configured by the operation.
+        confirmed: Confirmed consumed by confirmed TLS fingerprint.
+
+
     Raises:
         HTTPException: If the request cannot be fulfilled.
     """
@@ -22118,6 +22897,11 @@ def _confirmed_tls_fingerprint(address: str, port: int, confirmed: str) -> tuple
 
 def _split_vcf_endpoint_address_port(raw_address: Any, raw_port: Any = None) -> tuple[str, int]:
     """Return split vcf endpoint address port.
+
+    Args:
+        raw_address: Raw address consumed by split VCF endpoint address port.
+        raw_port: Raw port consumed by split VCF endpoint address port.
+
 
     Raises:
         HTTPException: If the request cannot be fulfilled.
@@ -22382,6 +23166,11 @@ async def import_vcf_passwords_to_vault(
 
 def _validate_vcf_sddc_property_values(descriptor: Any, values: dict[str, str]) -> list[str]:
     """Validate vcf sddc property values.
+
+    Args:
+        descriptor: Candidate descriptor to validate.
+        values: Candidate values consumed by validate VCF SDDC property values.
+
 
     Returns:
         The validate vcf sddc property values result.
@@ -25293,7 +26082,11 @@ def openid_connect(
 
 
 def api_token_grid_row(token: ApiToken) -> dict[str, Any]:
-    """Return api token grid row."""
+    """Return api token grid row.
+
+    Args:
+        token: Credential or token value consumed by the operation.
+    """
     active = bool(token.enabled and not token.revoked_at)
     return {
         "id": token.id,
@@ -26834,7 +27627,11 @@ def legacy_ldap_users_redirect() -> RedirectResponse:
 
 
 def service_state_status_row(service: ServiceState) -> dict[str, object]:
-    """Return service state status row."""
+    """Return service state status row.
+
+    Args:
+        service: Atlaso or host service affected by the operation.
+    """
     row = {
         "id": service.id,
         "service": service.service,
@@ -26868,14 +27665,23 @@ def service_state_status_row(service: ServiceState) -> dict[str, object]:
 
 
 def service_state_to_grid_row(service: ServiceState) -> dict[str, object]:
-    """Return service state to grid row."""
+    """Return service state to grid row.
+
+    Args:
+        service: Atlaso or host service affected by the operation.
+    """
     row = service_state_status_row(service)
     row.pop("health", None)
     return row
 
 
 def dnsmasq_backed_service_grid_row(service: ServiceState, enabled: bool) -> dict[str, object]:
-    """Return dnsmasq backed service grid row."""
+    """Return dnsmasq backed service grid row.
+
+    Args:
+        service: Atlaso or host service affected by the operation.
+        enabled: Whether the associated resource or behavior is enabled.
+    """
     row = service_state_to_grid_row(service)
     if not get_settings().dry_run_system_adapters:
         active = backing_systemd_unit_active("dnsmasq.service")
@@ -27144,7 +27950,12 @@ def esxi_pxe_page_context(
 
 
 def esxi_kickstart_grid_payload(kickstart: EsxiKickstart, *, include_content: bool) -> dict[str, Any]:
-    """Return esxi kickstart grid payload."""
+    """Return esxi kickstart grid payload.
+
+    Args:
+        kickstart: Kickstart consumed by ESXi kickstart grid payload.
+        include_content: Whether include content applies to the operation.
+    """
     payload = kickstart_to_dict(kickstart, include_content=include_content)
     for field in ("created_at", "updated_at", "last_rendered_at", "last_applied_at"):
         value = payload[field]

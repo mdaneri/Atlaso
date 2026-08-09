@@ -43,6 +43,12 @@ def run(
 ) -> subprocess.CompletedProcess[str]:
     """Run operation.
 
+    Args:
+        command: Command and arguments to execute.
+        cwd: Working directory in which to execute the command.
+        env: Environment variables supplied to the child process.
+
+
     Returns:
         The run result.
     """
@@ -51,6 +57,10 @@ def run(
 
 def git_value(args: list[str]) -> str:
     """Return git value.
+
+    Args:
+        args: Parsed command-line options consumed by the operation.
+
 
     Raises:
         SystemExit: If the operation encounters an invalid state.
@@ -87,7 +97,11 @@ def sha256(path: Path) -> str:
 
 
 def canonical_json(payload: dict) -> bytes:
-    """Return canonical json."""
+    """Return canonical json.
+
+    Args:
+        payload: Validated request or task payload consumed by the operation.
+    """
     return (json.dumps(payload, indent=2, sort_keys=True) + "\n").encode("utf-8")
 
 
@@ -126,7 +140,11 @@ def write_signature(path: Path, *, key_id: str, signature: bytes) -> None:
 
 
 def copy_source(target: Path) -> None:
-    """Handle copy source."""
+    """Handle copy source.
+
+    Args:
+        target: Target resource or location affected by the operation.
+    """
     shutil.copytree(
         ROOT,
         target,
@@ -148,6 +166,12 @@ def copy_source(target: Path) -> None:
 
 def build_application_wheel(target: Path, *, commit: str, built_at: str) -> Path:
     """Build application wheel.
+
+    Args:
+        target: Target resource or location affected by the operation.
+        commit: Commit consumed by build application wheel.
+        built_at: Built at consumed by build application wheel.
+
 
     Returns:
         The built application wheel.
@@ -200,9 +224,18 @@ def build_application_wheel(target: Path, *, commit: str, built_at: str) -> Path
 
 
 def deterministic_tar_gz(source: Path, output: Path) -> None:
-    """Handle deterministic tar gz."""
+    """Handle deterministic tar gz.
+
+    Args:
+        source: Source object or location from which data is obtained.
+        output: Filesystem path associated with output.
+    """
     def normalized(info: tarfile.TarInfo) -> tarfile.TarInfo:
-        """Return normalized."""
+        """Return normalized.
+
+        Args:
+            info: Info consumed by normalized.
+        """
         info.uid = 0
         info.gid = 0
         info.uname = "root"

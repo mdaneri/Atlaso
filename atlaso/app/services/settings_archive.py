@@ -192,7 +192,12 @@ def _utc_iso() -> str:
 
 
 def _row_to_dict(row: object, *, exclude: set[str] | None = None) -> dict[str, Any]:
-    """Return row to dict."""
+    """Return row to dict.
+
+    Args:
+        row: Persistent database row affected by the operation.
+        exclude: Exclude consumed by row to dict.
+    """
     excluded = {"id", "created_at", "updated_at", *(exclude or set())}
     payload: dict[str, Any] = {}
     for column in row.__table__.columns:
@@ -819,7 +824,11 @@ def desired_state_counts(db: Session) -> dict[str, int]:
 
 
 def archive_summary(archive: dict[str, Any]) -> dict[str, Any]:
-    """Return archive summary."""
+    """Return archive summary.
+
+    Args:
+        archive: Archive consumed by archive summary.
+    """
     _validate_archive(archive)
     data = archive["data"]
     table_counts = {key: len(value) for key, value in data.items() if isinstance(value, list)}
@@ -882,6 +891,10 @@ def _disable_startup_example_seed(db: Session) -> None:
 
 def _validate_archive(archive: dict[str, Any]) -> None:
     """Validate archive.
+
+    Args:
+        archive: Candidate archive to validate.
+
 
     Raises:
         ValueError: If an input value is invalid.
@@ -1037,7 +1050,13 @@ def _restore_schedules(db: Session, rows: list[dict[str, Any]]) -> int:
 
 
 def _model_kwargs(model: type, row: dict[str, Any], *, exclude: set[str] | None = None) -> dict[str, Any]:
-    """Return model kwargs."""
+    """Return model kwargs.
+
+    Args:
+        model: Model consumed by model kwargs.
+        row: Persistent database row affected by the operation.
+        exclude: Exclude consumed by model kwargs.
+    """
     excluded = {"id", "created_at", "updated_at", *(exclude or set())}
     column_names = {column.name for column in model.__table__.columns if not isinstance(column.type, SqlDateTime)}
     return {key: value for key, value in row.items() if key in column_names and key not in excluded}

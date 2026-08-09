@@ -55,13 +55,22 @@ def test_root_ca_info_rejects_disabled_ca():
 
 
 def test_execute_vcf_trust_is_idempotent_without_restart(monkeypatch):
-    """Verify that execute vcf trust is idempotent without restart."""
+    """Verify that execute vcf trust is idempotent without restart.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+    """
     _settings, ca = root_ca()
 
     class FakeApi:
         """Represent fake api."""
         def __init__(self, *_args, **_kwargs):
-            """Initialize the fake api."""
+            """Initialize the fake api.
+
+            Args:
+                *_args: Additional positional arguments accepted by the callable.
+                **_kwargs: Additional keyword arguments accepted by the callable.
+            """
             pass
 
         def __enter__(self):
@@ -74,6 +83,10 @@ def test_execute_vcf_trust_is_idempotent_without_restart(monkeypatch):
 
         def __exit__(self, *_args):
             """Exit the managed context without suppressing exceptions.
+
+            Args:
+                *_args: Additional positional arguments accepted by the callable.
+
 
             Returns:
                 The exit result.
@@ -102,14 +115,23 @@ def test_execute_vcf_trust_is_idempotent_without_restart(monkeypatch):
 
 
 def test_execute_vcf_trust_imports_and_verifies_sddc_manager_without_ssh(monkeypatch):
-    """Verify that execute vcf trust imports and verifies sddc manager without ssh."""
+    """Verify that execute vcf trust imports and verifies sddc manager without ssh.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+    """
     _settings, ca = root_ca()
     certificates: list[dict[str, str]] = []
 
     class FakeApi:
         """Represent fake api."""
         def __init__(self, *_args, **_kwargs):
-            """Initialize the fake api."""
+            """Initialize the fake api.
+
+            Args:
+                *_args: Additional positional arguments accepted by the callable.
+                **_kwargs: Additional keyword arguments accepted by the callable.
+            """
             pass
 
         def __enter__(self):
@@ -122,6 +144,10 @@ def test_execute_vcf_trust_imports_and_verifies_sddc_manager_without_ssh(monkeyp
 
         def __exit__(self, *_args):
             """Exit the managed context without suppressing exceptions.
+
+            Args:
+                *_args: Additional positional arguments accepted by the callable.
+
 
             Returns:
                 The exit result.
@@ -137,7 +163,11 @@ def test_execute_vcf_trust_imports_and_verifies_sddc_manager_without_ssh(monkeyp
             return certificates
 
         def add_trusted_certificate(self, pem):
-            """Create trusted certificate."""
+            """Create trusted certificate.
+
+            Args:
+                pem: Pem supplied to the test scenario.
+            """
             certificates.append({"certificate": pem})
 
     monkeypatch.setattr(vcf_trust, "VcfApiClient", FakeApi)
@@ -160,14 +190,23 @@ def test_execute_vcf_trust_imports_and_verifies_sddc_manager_without_ssh(monkeyp
 
 
 def test_execute_vcf_trust_installer_import_does_not_restart(monkeypatch):
-    """Verify that execute vcf trust installer import does not restart."""
+    """Verify that execute vcf trust installer import does not restart.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+    """
     _settings, ca = root_ca()
     certificates: list[dict[str, str]] = []
 
     class FakeApi:
         """Represent fake api."""
         def __init__(self, *_args, **_kwargs):
-            """Initialize the fake api."""
+            """Initialize the fake api.
+
+            Args:
+                *_args: Additional positional arguments accepted by the callable.
+                **_kwargs: Additional keyword arguments accepted by the callable.
+            """
             pass
 
         def __enter__(self):
@@ -180,6 +219,10 @@ def test_execute_vcf_trust_installer_import_does_not_restart(monkeypatch):
 
         def __exit__(self, *_args):
             """Exit the managed context without suppressing exceptions.
+
+            Args:
+                *_args: Additional positional arguments accepted by the callable.
+
 
             Returns:
                 The exit result.
@@ -195,7 +238,11 @@ def test_execute_vcf_trust_installer_import_does_not_restart(monkeypatch):
             return certificates
 
         def add_trusted_certificate(self, pem):
-            """Create trusted certificate."""
+            """Create trusted certificate.
+
+            Args:
+                pem: Pem supplied to the test scenario.
+            """
             certificates.append({"certificate": pem})
 
     monkeypatch.setattr(vcf_trust, "VcfApiClient", FakeApi)
@@ -267,7 +314,11 @@ def test_vcf_api_client_brackets_ipv6_literal():
 
 
 def test_vcf_api_client_rejects_changed_tls_fingerprint(monkeypatch):
-    """Verify that vcf api client rejects changed tls fingerprint."""
+    """Verify that vcf api client rejects changed tls fingerprint.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+    """
     monkeypatch.setattr(vcf_trust, "tls_sha256_fingerprint", lambda _address, _port: "AA:BB")
 
     with pytest.raises(vcf_trust.VcfTrustError, match="TLS certificate changed"):

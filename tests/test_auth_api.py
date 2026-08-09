@@ -6,6 +6,11 @@ from datetime import datetime, timedelta, timezone
 def create_token(client, scopes=None):
     """Create token.
 
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+        scopes: Normalized authorization scopes granted or required by the operation.
+
+
     Returns:
         The created token.
     """
@@ -20,14 +25,23 @@ def create_token(client, scopes=None):
 
 
 def test_unauthenticated_api_requests_are_rejected(client):
-    """Verify that unauthenticated api requests are rejected."""
+    """Verify that unauthenticated api requests are rejected.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
     response = client.get("/api/v1/dashboard")
     assert response.status_code == 401
     assert response.json()["error_code"] == "HTTP_ERROR"
 
 
 def test_appliance_version_api_is_unauthenticated(client, monkeypatch):
-    """Verify that appliance version api is unauthenticated."""
+    """Verify that appliance version api is unauthenticated.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+    """
     import atlaso.app.api.v1 as api_v1
 
     monkeypatch.setattr(api_v1, "__version__", "0.9.87+g0123456789ab")
@@ -46,13 +60,21 @@ def test_appliance_version_api_is_unauthenticated(client, monkeypatch):
 
 
 def test_invalid_jwt_is_rejected(client):
-    """Verify that invalid jwt is rejected."""
+    """Verify that invalid jwt is rejected.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
     response = client.get("/api/v1/dashboard", headers={"Authorization": "Bearer invalid"})
     assert response.status_code == 401
 
 
 def test_api_login_creates_token_and_me_works(client):
-    """Verify that api login creates token and me works."""
+    """Verify that api login creates token and me works.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
     token, metadata = create_token(client)
     assert metadata["name"] == "test token"
     assert "raw_token" not in metadata
@@ -64,7 +86,11 @@ def test_api_login_creates_token_and_me_works(client):
 
 
 def test_api_token_is_shown_only_once_in_list(client):
-    """Verify that api token is shown only once in list."""
+    """Verify that api token is shown only once in list.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
     token, _metadata = create_token(client)
     response = client.get("/api/v1/api-tokens", headers={"Authorization": f"Bearer {token}"})
     assert response.status_code == 200
@@ -73,7 +99,11 @@ def test_api_token_is_shown_only_once_in_list(client):
 
 
 def test_settings_api_updates_root_ssh_desired_state(client):
-    """Verify that settings api updates root ssh desired state."""
+    """Verify that settings api updates root ssh desired state.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
     token, _metadata = create_token(client, scopes=["admin:all", "read:dashboard"])
 
     response = client.patch(
@@ -95,7 +125,11 @@ def test_settings_api_updates_root_ssh_desired_state(client):
 
 
 def test_physical_interface_api_persists_optional_ipv6_enabled_state(client):
-    """Verify that physical interface api persists optional ipv6 enabled state."""
+    """Verify that physical interface api persists optional ipv6 enabled state.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
     token, _metadata = create_token(client, scopes=["read:interfaces", "write:interfaces"])
     headers = {"Authorization": f"Bearer {token}"}
     interfaces = client.get("/api/v1/interfaces/physical", headers=headers)
@@ -183,7 +217,11 @@ def test_physical_interface_api_persists_optional_ipv6_enabled_state(client):
 
 
 def test_scope_restrictions_are_enforced(client):
-    """Verify that scope restrictions are enforced."""
+    """Verify that scope restrictions are enforced.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
     token, _metadata = create_token(client, scopes=["read:dashboard"])
     response = client.post(
         "/api/v1/wan/policies",
@@ -197,7 +235,11 @@ def test_scope_restrictions_are_enforced(client):
 
 
 def test_monitor_api_requires_monitoring_scope(client):
-    """Verify that monitor api requires monitoring scope."""
+    """Verify that monitor api requires monitoring scope.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
     token, _metadata = create_token(client, scopes=["read:monitoring"])
 
     response = client.get("/api/v1/monitor?hours=24", headers={"Authorization": f"Bearer {token}"})
@@ -212,7 +254,11 @@ def test_monitor_api_requires_monitoring_scope(client):
 
 
 def test_sufficient_scopes_allow_wan_policy_creation_and_audit(client):
-    """Verify that sufficient scopes allow wan policy creation and audit."""
+    """Verify that sufficient scopes allow wan policy creation and audit.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
     token, _metadata = create_token(client, scopes=["read:dashboard", "read:wan", "write:wan", "read:audit"])
     response = client.post(
         "/api/v1/wan/policies",
@@ -228,7 +274,11 @@ def test_sufficient_scopes_allow_wan_policy_creation_and_audit(client):
 
 
 def test_api_rejects_route_wan_mode(client):
-    """Verify that api rejects route wan mode."""
+    """Verify that api rejects route wan mode.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
     token, _metadata = create_token(client, scopes=["read:routes", "write:routes"])
     response = client.post(
         "/api/v1/routes",
@@ -247,7 +297,11 @@ def test_api_rejects_route_wan_mode(client):
 
 
 def test_api_allows_nat_on_access_interface(client):
-    """Verify that api allows nat on access interface."""
+    """Verify that api allows nat on access interface.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
     token, _metadata = create_token(client, scopes=["read:wan", "write:wan"])
     response = client.post(
         "/api/v1/nat/rules",
@@ -267,7 +321,11 @@ def test_api_allows_nat_on_access_interface(client):
 
 
 def test_revoked_token_is_rejected(client):
-    """Verify that revoked token is rejected."""
+    """Verify that revoked token is rejected.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
     token, metadata = create_token(client, scopes=["read:dashboard"])
     revoke = client.post(f"/api/v1/api-tokens/{metadata['id']}/revoke", headers={"Authorization": f"Bearer {token}"})
     assert revoke.status_code == 200
@@ -277,7 +335,11 @@ def test_revoked_token_is_rejected(client):
 
 
 def test_expired_token_request_is_rejected(client):
-    """Verify that expired token request is rejected."""
+    """Verify that expired token request is rejected.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
     expires = (datetime.now(timezone.utc) - timedelta(minutes=1)).isoformat()
     response = client.post(
         "/api/v1/auth/login?username=admin&password=atlaso-admin",

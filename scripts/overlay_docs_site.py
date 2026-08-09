@@ -11,6 +11,11 @@ from pathlib import Path
 def overlay(built_docs: Path, pages_root: Path) -> None:
     """Handle overlay.
 
+    Args:
+        built_docs: Filesystem path associated with built docs.
+        pages_root: Filesystem path associated with pages root.
+
+
     Raises:
         ValueError: If an input value is invalid.
     """

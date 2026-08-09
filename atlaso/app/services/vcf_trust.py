@@ -53,12 +53,20 @@ class RootCaInfo:
 
 
 def colon_fingerprint(raw: bytes) -> str:
-    """Return colon fingerprint."""
+    """Return colon fingerprint.
+
+    Args:
+        raw: Raw consumed by colon fingerprint.
+    """
     return ":".join(f"{value:02X}" for value in raw)
 
 
 def root_ca_info(settings: CaSettings) -> RootCaInfo:
     """Return root ca info.
+
+    Args:
+        settings: Current Atlaso settings used to configure the operation.
+
 
     Raises:
         VcfTrustError: If the operation encounters an invalid state.
@@ -91,6 +99,10 @@ def root_ca_info(settings: CaSettings) -> RootCaInfo:
 
 def pem_fingerprint(pem: str) -> str:
     """Return pem fingerprint.
+
+    Args:
+        pem: Pem consumed by PEM fingerprint.
+
 
     Raises:
         VcfTrustError: If the operation encounters an invalid state.
@@ -170,12 +182,21 @@ class VcfApiClient:
         return self
 
     def __exit__(self, *_args: object) -> None:
-        """Exit the managed context without suppressing exceptions."""
+        """Exit the managed context without suppressing exceptions.
+
+        Args:
+            *_args: Additional positional arguments accepted by the callable.
+        """
         self.client.close()
 
     @staticmethod
     def _raise(response: httpx.Response, message: str) -> None:
         """Handle raise.
+
+        Args:
+            response: HTTP or command response being inspected.
+            message: Human-readable message associated with the operation.
+
 
         Raises:
             VcfTrustError: If the operation encounters an invalid state.
@@ -216,7 +237,11 @@ class VcfApiClient:
         return list(payload.get("elements") or [])
 
     def add_trusted_certificate(self, pem: str) -> None:
-        """Create trusted certificate."""
+        """Create trusted certificate.
+
+        Args:
+            pem: Pem consumed by add trusted certificate.
+        """
         response = self.client.post(
             "/v1/sddc-manager/trusted-certificates",
             json={"certificate": pem, "certificateUsageType": "TRUSTED_FOR_OUTBOUND"},
@@ -225,7 +250,12 @@ class VcfApiClient:
 
 
 def find_trusted_certificate(certificates: list[dict[str, Any]], fingerprint: str) -> dict[str, Any] | None:
-    """Return trusted certificate."""
+    """Return trusted certificate.
+
+    Args:
+        certificates: Certificates consumed by find trusted certificate.
+        fingerprint: Fingerprint consumed by find trusted certificate.
+    """
     for item in certificates:
         pem = str(item.get("certificate") or "")
         if not pem:
@@ -317,7 +347,7 @@ def sanitized_result(*, address: str, port: int, ca: RootCaInfo, state: str, **v
         port: TCP or UDP port of the target service.
         ca: Ca supplied by the caller.
         state: Lifecycle or job state to persist.
-        values: Values to normalize, validate, or persist.
+        **values: Values to normalize, validate, or persist.
     """
     return json.dumps(
         {

@@ -90,7 +90,11 @@ _MAX_MEDIA_FILES = 256
 
 
 def _media_job_config(job: Job) -> dict[str, Any]:
-    """Return media job config."""
+    """Return media job config.
+
+    Args:
+        job: Background job record affected by the operation.
+    """
     try:
         payload = json.loads(job.task_config_json or "{}")
     except (json.JSONDecodeError, TypeError):
@@ -128,7 +132,11 @@ def _active_media_job(
 
 
 def _installed_media_directory(media: Any) -> Path | None:
-    """Return installed media directory."""
+    """Return installed media directory.
+
+    Args:
+        media: Media consumed by installed media directory.
+    """
     environment_root = _MEDIA_ENVIRONMENT_ROOTS.get(media.environment_key)
     if environment_root is None or not environment_root.is_dir():
         return None
@@ -153,7 +161,13 @@ def _allowlisted_media_file(
     requested_path: str,
     allowed_paths: set[str],
 ) -> Path | None:
-    """Return allowlisted media file."""
+    """Return allowlisted media file.
+
+    Args:
+        root: Repository or filesystem root searched by the operation.
+        requested_path: Filesystem path used for requested.
+        allowed_paths: Allowed paths consumed by allowlisted media file.
+    """
     normalized = requested_path.replace("\\", "/")
     parts = normalized.split("/")
     if (
@@ -270,6 +284,10 @@ def list_network_boot_environments(
 
     Uses the authentication posture documented for this endpoint. This read-only operation does not
     change saved desired state or appliance runtime state.
+
+    Args:
+        _identity: Authenticated identity authorizing the operation.
+        db: Active database session used by the operation.
     """
     return catalog_rows(db)
 
@@ -282,6 +300,9 @@ def list_available_network_boot_versions(
 
     Uses the authentication posture documented for this endpoint. This read-only operation does not
     change saved desired state or appliance runtime state.
+
+    Args:
+        _identity: Authenticated identity authorizing the operation.
     """
     return available_network_boot_versions()
 
@@ -298,6 +319,13 @@ def update_network_boot_environment(
 
     Uses the authentication posture documented for this endpoint. The operation updates saved Atlaso
     state and does not bypass the documented global Appliance Apply or service lifecycle boundary.
+
+    Args:
+        environment_key: Filesystem path associated with environment key.
+        payload: Validated request or task payload consumed by the operation.
+        request: Incoming HTTP request carrying the operation context.
+        identity: Authenticated identity authorizing the operation.
+        db: Active database session used by the operation.
     """
     if not isinstance(payload.get("enabled"), bool):
         raise HTTPException(status_code=422, detail="enabled must be a boolean.")
@@ -335,6 +363,12 @@ def sync_network_boot_environment(
     Uses the authentication posture documented for this endpoint. The action runs through the
     endpoint's existing audited adapter or task boundary; inspect the returned state before treating
     the operation as complete.
+
+    Args:
+        environment_key: Filesystem path associated with environment key.
+        request: Incoming HTTP request carrying the operation context.
+        identity: Authenticated identity authorizing the operation.
+        db: Active database session used by the operation.
     """
     rows = {row["key"]: row for row in catalog_rows(db)}
     if environment_key not in rows:
@@ -421,6 +455,13 @@ async def upload_network_boot_environment(
     Uses the authentication posture documented for this endpoint. The operation changes saved Atlaso
     application state; any appliance host enforcement remains subject to the documented apply or
     task boundary for the resource.
+
+    Args:
+        environment_key: Filesystem path associated with environment key.
+        request: Incoming HTTP request carrying the operation context.
+        artifact: Artifact consumed by upload network boot environment.
+        identity: Authenticated identity authorizing the operation.
+        db: Active database session used by the operation.
     """
     rows = {row["key"]: row for row in catalog_rows(db)}
     if environment_key not in rows:
@@ -520,6 +561,13 @@ def remove_network_boot_media(
     Uses the authentication posture documented for this endpoint. Removal or revocation takes effect
     in Atlaso application state; appliance host changes remain subject to the documented apply
     boundary for the resource.
+
+    Args:
+        environment_key: Filesystem path associated with environment key.
+        version: Atlaso or artifact version being validated or produced.
+        request: Incoming HTTP request carrying the operation context.
+        identity: Authenticated identity authorizing the operation.
+        db: Active database session used by the operation.
     """
     if environment_key == "inventory":
         raise HTTPException(status_code=422, detail="Bundled Inventory Linux cannot be removed.")
@@ -609,6 +657,10 @@ def list_discovered_hosts(
 
     Uses the authentication posture documented for this endpoint. This read-only operation does not
     change saved desired state or appliance runtime state.
+
+    Args:
+        _identity: Authenticated identity authorizing the operation.
+        db: Active database session used by the operation.
     """
     rows = db.execute(
         select(NetworkBootDiscoveredHost).order_by(
@@ -630,6 +682,11 @@ def get_discovered_host(
 
     Uses the authentication posture documented for this endpoint. This read-only operation does not
     change saved desired state or appliance runtime state.
+
+    Args:
+        host_id: Stable identifier of the associated host resource.
+        _identity: Authenticated identity authorizing the operation.
+        db: Active database session used by the operation.
     """
     host = db.get(NetworkBootDiscoveredHost, host_id)
     if host is None:
@@ -647,6 +704,11 @@ def get_discovered_host_history(
 
     Uses the authentication posture documented for this endpoint. This read-only operation does not
     change saved desired state or appliance runtime state.
+
+    Args:
+        host_id: Stable identifier of the associated host resource.
+        _identity: Authenticated identity authorizing the operation.
+        db: Active database session used by the operation.
     """
     if db.get(NetworkBootDiscoveredHost, host_id) is None:
         raise HTTPException(status_code=404, detail="Discovered host not found.")
@@ -664,6 +726,12 @@ def download_discovered_host_report(
 
     Uses the authentication posture documented for this endpoint. This read-only operation does not
     change saved desired state or appliance runtime state.
+
+    Args:
+        host_id: Stable identifier of the associated host resource.
+        report_id: Stable identifier of the associated report resource.
+        _identity: Authenticated identity authorizing the operation.
+        db: Active database session used by the operation.
     """
     host = db.get(NetworkBootDiscoveredHost, host_id)
     report = db.get(NetworkBootInventoryReport, report_id)
@@ -717,6 +785,12 @@ def remove_discovered_host(
     Uses the authentication posture documented for this endpoint. Removal or revocation takes effect
     in Atlaso application state; appliance host changes remain subject to the documented apply
     boundary for the resource.
+
+    Args:
+        host_id: Stable identifier of the associated host resource.
+        request: Incoming HTTP request carrying the operation context.
+        identity: Authenticated identity authorizing the operation.
+        db: Active database session used by the operation.
     """
     host = db.get(NetworkBootDiscoveredHost, host_id)
     if host is None:
@@ -896,6 +970,12 @@ def wake_discovered_host(
     Uses the authentication posture documented for this endpoint. The action runs through the
     endpoint's existing audited adapter or task boundary; inspect the returned state before treating
     the operation as complete.
+
+    Args:
+        host_id: Stable identifier of the associated host resource.
+        request: Incoming HTTP request carrying the operation context.
+        identity: Authenticated identity authorizing the operation.
+        db: Active database session used by the operation.
     """
     host = db.get(NetworkBootDiscoveredHost, host_id)
     if host is None:
@@ -922,6 +1002,12 @@ def reboot_discovered_host(
     Uses the authentication posture documented for this endpoint. The action runs through the
     endpoint's existing audited adapter or task boundary; inspect the returned state before treating
     the operation as complete.
+
+    Args:
+        host_id: Stable identifier of the associated host resource.
+        request: Incoming HTTP request carrying the operation context.
+        identity: Authenticated identity authorizing the operation.
+        db: Active database session used by the operation.
     """
     host = db.get(NetworkBootDiscoveredHost, host_id)
     if host is None:
@@ -962,6 +1048,11 @@ def get_inventory_command_status(
 
     Uses the authentication posture documented for this endpoint. This read-only operation does not
     change saved desired state or appliance runtime state.
+
+    Args:
+        command_id: Stable identifier of the associated command resource.
+        _identity: Authenticated identity authorizing the operation.
+        db: Active database session used by the operation.
     """
     command = db.get(NetworkBootInventoryCommand, command_id)
     if command is None:
@@ -994,6 +1085,12 @@ def wake_esxi_host_reference(
     Uses the authentication posture documented for this endpoint. The action runs through the
     endpoint's existing audited adapter or task boundary; inspect the returned state before treating
     the operation as complete.
+
+    Args:
+        host_id: Stable identifier of the associated host resource.
+        request: Incoming HTTP request carrying the operation context.
+        identity: Authenticated identity authorizing the operation.
+        db: Active database session used by the operation.
     """
     host = db.get(EsxiPxeHost, host_id)
     if host is None:
@@ -1023,6 +1120,12 @@ def boot_esxi_host_into_inventory_once(
     Uses the authentication posture documented for this endpoint. The operation changes saved Atlaso
     application state; any appliance host enforcement remains subject to the documented apply or
     task boundary for the resource.
+
+    Args:
+        host_id: Stable identifier of the associated host resource.
+        request: Incoming HTTP request carrying the operation context.
+        identity: Authenticated identity authorizing the operation.
+        db: Active database session used by the operation.
     """
     host = db.get(EsxiPxeHost, host_id)
     if host is None or not host.enabled:
@@ -1081,6 +1184,13 @@ def promote_discovered_host(
     Uses the authentication posture documented for this endpoint. The operation changes saved Atlaso
     application state; any appliance host enforcement remains subject to the documented apply or
     task boundary for the resource.
+
+    Args:
+        host_id: Stable identifier of the associated host resource.
+        payload: Validated request or task payload consumed by the operation.
+        request: Incoming HTTP request carrying the operation context.
+        identity: Authenticated identity authorizing the operation.
+        db: Active database session used by the operation.
     """
     discovered = db.get(NetworkBootDiscoveredHost, host_id)
     if discovered is None:

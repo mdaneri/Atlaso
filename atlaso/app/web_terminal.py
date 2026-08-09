@@ -156,18 +156,31 @@ _pending_sessions: set[tuple[int, str]] = set()
 
 
 def _ticket_digest(raw: str) -> str:
-    """Return ticket digest."""
+    """Return ticket digest.
+
+    Args:
+        raw: Raw consumed by ticket digest.
+    """
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
 def _ssh_fingerprint(key: paramiko.PKey) -> str:
-    """Return ssh fingerprint."""
+    """Return ssh fingerprint.
+
+    Args:
+        key: Stable key identifying the setting, secret, or mapping entry.
+    """
     digest = hashlib.sha256(key.asbytes()).digest()
     return f"SHA256:{base64.b64encode(digest).decode('ascii').rstrip('=')}"
 
 
 def _remote_entry_target(entry: VaultEntry, uri_index: int) -> tuple[str, int, str]:
     """Return remote entry target.
+
+    Args:
+        entry: Entry consumed by remote entry target.
+        uri_index: Uri index consumed by remote entry target.
+
 
     Raises:
         ValueError: If an input value is invalid.
@@ -184,7 +197,12 @@ def _remote_entry_target(entry: VaultEntry, uri_index: int) -> tuple[str, int, s
 
 
 def _probe_remote_ssh_host(hostname: str, port: int) -> str:
-    """Return probe remote ssh host."""
+    """Return probe remote ssh host.
+
+    Args:
+        hostname: DNS hostname contacted, validated, or configured by the operation.
+        port: Network port contacted, validated, or configured by the operation.
+    """
     sock = socket.create_connection((hostname, port), timeout=10)
     transport = paramiko.Transport(sock)
     try:
@@ -197,7 +215,11 @@ def _probe_remote_ssh_host(hostname: str, port: int) -> str:
 def _terminal_replay_output(output: bytearray) -> bytes:
     # Replaying an old cursor-position query makes xterm answer it again into the
     # live shell, where PowerShell renders the response as text such as `12;40R`.
-    """Return terminal replay output."""
+    """Return terminal replay output.
+
+    Args:
+        output: Output consumed by terminal replay output.
+    """
     return re.sub(rb"\x1b\[\??6n", b"", bytes(output))
 
 
@@ -252,7 +274,11 @@ def _helper_applied() -> bool:
 
 
 def _normalized_listener(value: str) -> str:
-    """Return normalized listener."""
+    """Return normalized listener.
+
+    Args:
+        value: Candidate value consumed by normalized listener.
+    """
     candidate = value.strip().strip("[]")
     try:
         return str(ipaddress.ip_address(candidate))
@@ -261,7 +287,13 @@ def _normalized_listener(value: str) -> str:
 
 
 def _request_uses_selected_listener(headers: object, server_host: str, allowed_addresses: list[str]) -> bool:
-    """Return request uses selected listener."""
+    """Return request uses selected listener.
+
+    Args:
+        headers: Headers consumed by request uses selected listener.
+        server_host: Server host consumed by request uses selected listener.
+        allowed_addresses: Allowed addresses consumed by request uses selected listener.
+    """
     if get_settings().environment != "appliance":
         return True
     try:
@@ -274,20 +306,34 @@ def _request_uses_selected_listener(headers: object, server_host: str, allowed_a
 
 
 def _request_is_https(headers: object, scheme: str) -> bool:
-    """Return request is https."""
+    """Return request is https.
+
+    Args:
+        headers: Headers consumed by request is HTTPS.
+        scheme: Scheme consumed by request is HTTPS.
+    """
     if get_settings().environment != "appliance":
         return True
     return str(headers.get("x-forwarded-proto", scheme)).lower() == "https"  # type: ignore[attr-defined]
 
 
 def _active_session_for_user(user_id: int) -> ActiveTerminalSession | None:
-    """Return active session for user."""
+    """Return active session for user.
+
+    Args:
+        user_id: Stable identifier of the associated user resource.
+    """
     with _session_lock:
         return next((session for (session_user_id, _browser_id), session in _sessions.items() if session_user_id == user_id), None)
 
 
 def revoke_user_terminal_sessions(user_id: int, reason: str = "Web SSH access revoked") -> None:
-    """Handle revoke user terminal sessions."""
+    """Handle revoke user terminal sessions.
+
+    Args:
+        user_id: Stable identifier of the associated user resource.
+        reason: Reason consumed by revoke user terminal sessions.
+    """
     with _ticket_lock:
         stale_tickets = [digest for digest, ticket in _tickets.items() if ticket.user_id == user_id]
         for digest in stale_tickets:
@@ -312,7 +358,11 @@ def revoke_user_terminal_sessions(user_id: int, reason: str = "Web SSH access re
 
 
 def _reserve_new_session(key: tuple[int, str]) -> bool:
-    """Return reserve new session."""
+    """Return reserve new session.
+
+    Args:
+        key: Stable key identifying the setting, secret, or mapping entry.
+    """
     with _session_lock:
         if key in _sessions:
             return True
@@ -323,13 +373,21 @@ def _reserve_new_session(key: tuple[int, str]) -> bool:
 
 
 def _release_session_reservation(key: tuple[int, str]) -> None:
-    """Handle release session reservation."""
+    """Handle release session reservation.
+
+    Args:
+        key: Stable key identifying the setting, secret, or mapping entry.
+    """
     with _session_lock:
         _pending_sessions.discard(key)
 
 
 def _user_has_terminal_permission(user: User | None) -> bool:
-    """Return user has terminal permission."""
+    """Return user has terminal permission.
+
+    Args:
+        user: User record or identity affected by the operation.
+    """
     return bool(
         user
         and user.enabled
@@ -339,7 +397,11 @@ def _user_has_terminal_permission(user: User | None) -> bool:
 
 
 def _user_can_access_terminal(user: User | None) -> bool:
-    """Return user can access terminal."""
+    """Return user can access terminal.
+
+    Args:
+        user: User record or identity affected by the operation.
+    """
     return bool(_user_has_terminal_permission(user) and (user.shell or "/sbin/nologin") != "/sbin/nologin")
 
 
@@ -674,7 +736,14 @@ def create_terminal_ticket(
 
 
 def _consume_ticket(raw: str, user_id: int, username: str, csrf_token: str) -> TerminalTicket | None:
-    """Return consume ticket."""
+    """Return consume ticket.
+
+    Args:
+        raw: Raw consumed by consume ticket.
+        user_id: Stable identifier of the associated user resource.
+        username: Atlaso account name associated with the operation.
+        csrf_token: Csrf token consumed by consume ticket.
+    """
     now = datetime.now(timezone.utc)
     with _ticket_lock:
         ticket = _tickets.pop(_ticket_digest(raw), None)
@@ -689,6 +758,13 @@ def _consume_ticket(raw: str, user_id: int, username: str, csrf_token: str) -> T
 
 def _open_ssh_channel(username: str, session_id: str, cols: int, rows: int) -> tuple[paramiko.Transport, paramiko.Channel]:
     """Return open ssh channel.
+
+    Args:
+        username: Atlaso account name associated with the operation.
+        session_id: Stable identifier of the associated session resource.
+        cols: Cols consumed by open SSH channel.
+        rows: Rows consumed by open SSH channel.
+
 
     Raises:
         RuntimeError: If the operation cannot be completed safely.

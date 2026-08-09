@@ -26,12 +26,20 @@ def test_staged_vcf_download_tool_version_uses_validated_archive_name():
 
 
 def depot_http_user(*, enabled: bool = True) -> User:
-    """Return depot http user."""
+    """Return depot http user.
+
+    Args:
+        enabled: Whether the associated resource or behavior is enabled.
+    """
     return User(id=1, username="vcf-depot", role="viewer", enabled=enabled)
 
 
 def test_vcf_depot_start_requires_correct_credential_kind_without_blocking_apply(tmp_path):
-    """Verify that vcf depot start requires correct credential kind without blocking apply."""
+    """Verify that vcf depot start requires correct credential kind without blocking apply.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
     archive = tmp_path / "vcf-download-tool-9.1.0.test.tar.gz"
     archive.write_bytes(b"not-a-real-archive")
     settings = VcfOfflineDepotSettings(
@@ -88,7 +96,11 @@ def test_vcf_depot_start_requires_correct_credential_kind_without_blocking_apply
 
 
 def test_vcf_depot_application_properties_does_not_scan_uploaded_tool_archive(tmp_path):
-    """Verify that vcf depot application properties does not scan uploaded tool archive."""
+    """Verify that vcf depot application properties does not scan uploaded tool archive.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
     archive = tmp_path / "vcf-download-tool-9.1.0.test.tar.gz"
     properties = b"spring.profiles.active=depot\nlcm.depot.adapter.host=archive.example.test\n"
     with tarfile.open(archive, "w:gz") as bundle:
@@ -105,7 +117,11 @@ def test_vcf_depot_application_properties_does_not_scan_uploaded_tool_archive(tm
 
 
 def test_vcf_depot_application_properties_skips_nested_archive_members(tmp_path):
-    """Verify that vcf depot application properties skips nested archive members."""
+    """Verify that vcf depot application properties skips nested archive members.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
     archive = tmp_path / "vcf-download-tool-9.1.0.test.tar.gz"
     properties = b"spring.profiles.active=depot\nlcm.depot.adapter.host=nested-archive.example.test\n"
     with tarfile.open(archive, "w:gz") as bundle:
@@ -122,7 +138,12 @@ def test_vcf_depot_application_properties_skips_nested_archive_members(tmp_path)
 
 
 def test_vcf_depot_application_properties_falls_back_when_archive_member_is_missing(tmp_path, monkeypatch):
-    """Verify that vcf depot application properties falls back when archive member is missing."""
+    """Verify that vcf depot application properties falls back when archive member is missing.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+    """
     archive = tmp_path / "vcf-download-tool-9.1.0.test.tar.gz"
     with tarfile.open(archive, "w:gz") as bundle:
         payload = b"9.1.0"
@@ -139,7 +160,11 @@ def test_vcf_depot_application_properties_falls_back_when_archive_member_is_miss
 
 
 def test_vcf_depot_validation_uses_documented_component_catalog(tmp_path):
-    """Verify that vcf depot validation uses documented component catalog."""
+    """Verify that vcf depot validation uses documented component catalog.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
     archive = tmp_path / "vcf-download-tool-9.1.0.test.tar.gz"
     archive.write_bytes(b"not-a-real-archive")
     settings = VcfOfflineDepotSettings(
@@ -181,7 +206,11 @@ def test_vcf_depot_validation_uses_documented_component_catalog(tmp_path):
 
 
 def test_vcf_depot_validation_uses_esx_disabled_platform_catalog(tmp_path):
-    """Verify that vcf depot validation uses esx disabled platform catalog."""
+    """Verify that vcf depot validation uses esx disabled platform catalog.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
     archive = tmp_path / "vcf-download-tool-9.1.0.test.tar.gz"
     archive.write_bytes(b"not-a-real-archive")
     settings = VcfOfflineDepotSettings(
@@ -365,7 +394,12 @@ def test_vcf_depot_parses_generated_software_depot_id():
 
 
 def test_vcf_depot_generates_software_depot_id_from_extracted_tool(tmp_path, monkeypatch):
-    """Verify that vcf depot generates software depot id from extracted tool."""
+    """Verify that vcf depot generates software depot id from extracted tool.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+    """
     archive_path = tmp_path / "vcf-download-tool-9.1.0.test.tar.gz"
     payload = b"placeholder executable"
     with tarfile.open(archive_path, "w:gz") as archive:
@@ -377,7 +411,12 @@ def test_vcf_depot_generates_software_depot_id_from_extracted_tool(tmp_path, mon
     commands = []
 
     def fake_run(command, **kwargs):
-        """Return fake run."""
+        """Return fake run.
+
+        Args:
+            command: Command and arguments to execute.
+            **kwargs: Additional keyword arguments accepted by the callable.
+        """
         commands.append(command)
         assert command[0] == str((tmp_path / "active-tool" / "bin" / "vcf-download-tool").resolve())
         assert kwargs["cwd"] == str((tmp_path / "active-tool" / "bin").resolve())
@@ -412,7 +451,11 @@ def test_vcf_depot_generates_software_depot_id_from_extracted_tool(tmp_path, mon
 
 
 def test_vcf_depot_software_depot_id_generation_handles_truncated_archive(tmp_path):
-    """Verify that vcf depot software depot id generation handles truncated archive."""
+    """Verify that vcf depot software depot id generation handles truncated archive.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
     archive_path = tmp_path / "vcf-download-tool-9.1.0.test.tar.gz"
     archive_path.write_bytes(b"\x1f\x8b\x08\x00truncated")
 

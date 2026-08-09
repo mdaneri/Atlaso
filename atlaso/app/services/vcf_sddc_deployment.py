@@ -45,13 +45,22 @@ class VcfSddcPostImportError(VcfSddcDeploymentError):
         vm_result: Vm result maintained by this vcfsddcpostimporterror.
     """
     def __init__(self, message: str, vm_result: dict[str, str]) -> None:
-        """Initialize the vcf sddc post import error."""
+        """Initialize the vcf sddc post import error.
+
+        Args:
+            message: Human-readable message associated with the operation.
+            vm_result: Vm result consumed by init.
+        """
         super().__init__(message)
         self.vm_result = vm_result
 
 
 def _check_cancelled(cancelled: CancelCheck | None) -> None:
     """Check cancelled.
+
+    Args:
+        cancelled: Cancelled consumed by check cancelled.
+
 
     Raises:
         VcfSddcDeploymentCancelled: If the operation encounters an invalid state.
@@ -69,19 +78,31 @@ class _LeaseProgress:
         lock: Lock maintained by this leaseprogress.
     """
     def __init__(self, lease: Any) -> None:
-        """Initialize the lease progress."""
+        """Initialize the lease progress.
+
+        Args:
+            lease: Lease consumed by init.
+        """
         self.lease = lease
         self.value = 0
         self.lock = threading.Lock()
 
     def update(self, percent: int) -> None:
-        """Update operation."""
+        """Update operation.
+
+        Args:
+            percent: Percent consumed by update.
+        """
         with self.lock:
             self.value = max(self.value, max(0, min(99, int(percent))))
             self.lease.HttpNfcLeaseProgress(self.value)
 
     def heartbeat(self, stop_event: threading.Event) -> None:
-        """Handle heartbeat."""
+        """Handle heartbeat.
+
+        Args:
+            stop_event: Stop event consumed by heartbeat.
+        """
         while not stop_event.wait(5):
             try:
                 self.update(self.value)
@@ -148,12 +169,22 @@ class OvaDescriptor:
 
 
 def _attribute(element: ET.Element, name: str) -> str:
-    """Return attribute."""
+    """Return attribute.
+
+    Args:
+        element: Element consumed by attribute.
+        name: Stable name identifying the resource or operation.
+    """
     return str(element.attrib.get(f"{OVF}{name}") or element.attrib.get(name) or "")
 
 
 def normalize_ova_path(value: str | Path, *, root: Path = SDDC_MANAGER_OVA_ROOT) -> Path:
     """Normalize ova path.
+
+    Args:
+        value: Candidate value consumed by normalize ova path.
+        root: Repository or filesystem root searched by the operation.
+
 
     Returns:
         The normalize ova path result.
@@ -175,6 +206,11 @@ def normalize_ova_path(value: str | Path, *, root: Path = SDDC_MANAGER_OVA_ROOT)
 
 def inspect_ova(value: str | Path, *, root: Path = SDDC_MANAGER_OVA_ROOT) -> OvaDescriptor:
     """Return inspect ova.
+
+    Args:
+        value: Candidate value consumed by inspect ova.
+        root: Repository or filesystem root searched by the operation.
+
 
     Raises:
         VcfSddcDeploymentError: If the operation encounters an invalid state.
@@ -242,7 +278,11 @@ def inspect_ova(value: str | Path, *, root: Path = SDDC_MANAGER_OVA_ROOT) -> Ova
 
 
 def ova_inventory(*, root: Path = SDDC_MANAGER_OVA_ROOT) -> list[dict[str, Any]]:
-    """Return ova inventory."""
+    """Return ova inventory.
+
+    Args:
+        root: Repository or filesystem root searched by the operation.
+    """
     if not root.exists():
         return []
     rows: list[dict[str, Any]] = []
@@ -256,6 +296,12 @@ def ova_inventory(*, root: Path = SDDC_MANAGER_OVA_ROOT) -> list[dict[str, Any]]
 
 def validate_ova_manifest(descriptor: OvaDescriptor, *, progress: Progress | None = None, cancelled: CancelCheck | None = None) -> None:
     """Validate ova manifest.
+
+    Args:
+        descriptor: Candidate descriptor to validate.
+        progress: Candidate progress to validate.
+        cancelled: Candidate cancelled to validate.
+
 
     Raises:
         VcfSddcDeploymentError: If the operation encounters an invalid state.
@@ -348,7 +394,11 @@ def _wait_task(task: Any, *, timeout: float = 900.0, cancelled: CancelCheck | No
 
 
 def _safe_vsphere_message(exc: Exception) -> str:
-    """Return safe vsphere message."""
+    """Return safe vsphere message.
+
+    Args:
+        exc: Exception that caused the current failure path.
+    """
     message = str(getattr(exc, "msg", "") or getattr(exc, "localizedMessage", "") or "")
     if not message:
         fault_message = getattr(exc, "faultMessage", None)
@@ -388,7 +438,12 @@ def connect_vsphere(address: str, username: str, password: str, *, port: int = 4
 
 
 def _walk_inventory(content: Any, vim_types: list[Any]) -> list[Any]:
-    """Return walk inventory."""
+    """Return walk inventory.
+
+    Args:
+        content: Content processed or persisted by the operation.
+        vim_types: Vim types consumed by walk inventory.
+    """
     view = content.viewManager.CreateContainerView(content.rootFolder, vim_types, True)
     try:
         return list(view.view)
@@ -398,6 +453,10 @@ def _walk_inventory(content: Any, vim_types: list[Any]) -> list[Any]:
 
 def _format_bytes(value: int) -> str:
     """Render bytes.
+
+    Args:
+        value: Candidate value consumed by format bytes.
+
 
     Returns:
         The format bytes result.
@@ -412,7 +471,11 @@ def _format_bytes(value: int) -> str:
 
 
 def _datastore_free_space_bytes(datastore: Any) -> int | None:
-    """Return datastore free space bytes."""
+    """Return datastore free space bytes.
+
+    Args:
+        datastore: Datastore consumed by datastore free space bytes.
+    """
     summary = getattr(datastore, "summary", None)
     value = getattr(summary, "freeSpace", None)
     if value is None:
@@ -425,6 +488,11 @@ def _datastore_free_space_bytes(datastore: Any) -> int | None:
 
 def _ensure_datastore_free_space(datastore: Any, required_bytes: int) -> None:
     """Ensure datastore free space.
+
+    Args:
+        datastore: Datastore consumed by ensure datastore free space.
+        required_bytes: Required size in bytes.
+
 
     Raises:
         VcfSddcDeploymentError: If the operation encounters an invalid state.
@@ -445,6 +513,10 @@ def _ensure_datastore_free_space(datastore: Any, required_bytes: int) -> None:
 def normalize_disk_provisioning(value: str) -> str:
     """Normalize disk provisioning.
 
+    Args:
+        value: Candidate value consumed by normalize disk provisioning.
+
+
     Returns:
         The normalize disk provisioning result.
 
@@ -458,7 +530,12 @@ def normalize_disk_provisioning(value: str) -> str:
 
 
 def _ova_file_item_sizes(file_items: list[Any], archive: tarfile.TarFile) -> tuple[dict[str, int], int]:
-    """Return ova file item sizes."""
+    """Return ova file item sizes.
+
+    Args:
+        file_items: File items consumed by ova file item sizes.
+        archive: Archive consumed by ova file item sizes.
+    """
     member_sizes: dict[str, int] = {}
     required_bytes = 0
     for item in file_items:
@@ -476,6 +553,10 @@ def _ova_file_item_sizes(file_items: list[Any], archive: tarfile.TarFile) -> tup
 def _lease_imported_entity(lease: Any) -> Any:
     """Return lease imported entity.
 
+    Args:
+        lease: Lease consumed by lease imported entity.
+
+
     Raises:
         VcfSddcDeploymentError: If the operation encounters an invalid state.
     """
@@ -486,7 +567,11 @@ def _lease_imported_entity(lease: Any) -> Any:
 
 
 def _datastore_row(item: Any) -> dict[str, Any]:
-    """Return datastore row."""
+    """Return datastore row.
+
+    Args:
+        item: Item consumed by datastore row.
+    """
     free_space = _datastore_free_space_bytes(item)
     summary = getattr(item, "summary", None)
     try:
@@ -539,6 +624,13 @@ def vsphere_inventory(address: str, username: str, password: str, *, port: int =
 
 def _find_object(content: Any, vim_type: Any, object_id: str, label: str) -> Any:
     """Return object.
+
+    Args:
+        content: Content processed or persisted by the operation.
+        vim_type: Vim type consumed by find object.
+        object_id: Stable identifier of the associated object resource.
+        label: Human-readable label used to identify the result.
+
 
     Raises:
         VcfSddcDeploymentError: If the operation encounters an invalid state.

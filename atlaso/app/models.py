@@ -28,7 +28,11 @@ def utcnow() -> datetime:
 
 
 def _job_vcf_depot_operation_default(context) -> bool:
-    """Return job vcf depot operation default."""
+    """Return job vcf depot operation default.
+
+    Args:
+        context: Operation context providing related state and metadata.
+    """
     return str(context.get_current_parameters().get("type") or "") in {
         "vcf-depot-download",
         "vcf-depot-software-id",

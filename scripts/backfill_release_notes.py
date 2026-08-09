@@ -63,6 +63,12 @@ def run(
 ) -> subprocess.CompletedProcess[str]:
     """Run operation.
 
+    Args:
+        command: Command and arguments to execute.
+        input_text: Text supplied to the invoked command through standard input.
+        check: Whether a nonzero command status raises an exception.
+
+
     Returns:
         The run result.
 
@@ -85,6 +91,11 @@ def run(
 def gh_json(arguments: list[str], *, payload: dict[str, Any] | None = None) -> Any:
     """Return gh json.
 
+    Args:
+        arguments: Arguments consumed by gh JSON.
+        payload: Validated request or task payload consumed by the operation.
+
+
     Raises:
         SystemExit: If the operation encounters an invalid state.
     """
@@ -103,6 +114,10 @@ def gh_json(arguments: list[str], *, payload: dict[str, Any] | None = None) -> A
 def repository_name(explicit: str | None) -> str:
     """Return repository name.
 
+    Args:
+        explicit: Explicit consumed by repository name.
+
+
     Raises:
         SystemExit: If the operation encounters an invalid state.
     """
@@ -119,6 +134,10 @@ def repository_name(explicit: str | None) -> str:
 def parse_tag(tag: str) -> tuple[int, int, int]:
     """Parse tag.
 
+    Args:
+        tag: Candidate tag to parse.
+
+
     Returns:
         The parsed tag.
 
@@ -133,6 +152,10 @@ def parse_tag(tag: str) -> tuple[int, int, int]:
 
 def load_releases(repository: str) -> list[dict[str, Any]]:
     """Return releases.
+
+    Args:
+        repository: GitHub repository name or repository metadata being processed.
+
 
     Raises:
         SystemExit: If the operation encounters an invalid state.
@@ -156,7 +179,11 @@ def load_releases(repository: str) -> list[dict[str, Any]]:
 
 
 def published_semver_releases(releases: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Return published semver releases."""
+    """Return published semver releases.
+
+    Args:
+        releases: Releases consumed by published semver releases.
+    """
     published: list[dict[str, Any]] = []
     for release in releases:
         tag = release.get("tag_name")
@@ -172,6 +199,11 @@ def published_semver_releases(releases: list[dict[str, Any]]) -> list[dict[str, 
 
 def tag_commit(repository: str, tag: str) -> str:
     """Return tag commit.
+
+    Args:
+        repository: GitHub repository name or repository metadata being processed.
+        tag: Tag consumed by tag commit.
+
 
     Raises:
         SystemExit: If the operation encounters an invalid state.
@@ -199,6 +231,11 @@ def tag_commit(repository: str, tag: str) -> str:
 def pull_request_labels(repository: str, number: int) -> set[str]:
     """Return pull request labels.
 
+    Args:
+        repository: GitHub repository name or repository metadata being processed.
+        number: Number consumed by pull request labels.
+
+
     Raises:
         SystemExit: If the operation encounters an invalid state.
     """
@@ -215,7 +252,11 @@ def pull_request_labels(repository: str, number: int) -> set[str]:
 
 
 def release_category(labels: set[str]) -> str:
-    """Return release category."""
+    """Return release category.
+
+    Args:
+        labels: Labels consumed by release category.
+    """
     if "dependencies" in labels:
         return "Dependency updates"
     if "enhancement" in labels:
@@ -228,7 +269,12 @@ def release_category(labels: set[str]) -> str:
 
 
 def trailing_pull_request_number(repository: str, line: str) -> int | None:
-    """Return trailing pull request number."""
+    """Return trailing pull request number.
+
+    Args:
+        repository: GitHub repository name or repository metadata being processed.
+        line: Source or output line being parsed.
+    """
     match = re.search(
         rf"https://github\.com/{re.escape(repository)}/pull/(?P<number>[0-9]+)\s*$",
         line,
@@ -239,6 +285,11 @@ def trailing_pull_request_number(repository: str, line: str) -> int | None:
 
 def group_generated_notes(repository: str, body: str) -> str:
     """Return group generated notes.
+
+    Args:
+        repository: GitHub repository name or repository metadata being processed.
+        body: Document or response body processed by the operation.
+
 
     Raises:
         SystemExit: If the operation encounters an invalid state.
@@ -304,6 +355,12 @@ def group_generated_notes(repository: str, body: str) -> str:
 def generated_notes(repository: str, tag: str, previous_tag: str) -> str:
     """Return generated notes.
 
+    Args:
+        repository: GitHub repository name or repository metadata being processed.
+        tag: Tag consumed by generated notes.
+        previous_tag: Previous tag restored or compared by the operation.
+
+
     Raises:
         SystemExit: If the operation encounters an invalid state.
     """
@@ -321,18 +378,30 @@ def generated_notes(repository: str, tag: str, previous_tag: str) -> str:
 
 
 def comparable_notes(notes: str) -> str:
-    """Return comparable notes."""
+    """Return comparable notes.
+
+    Args:
+        notes: Notes consumed by comparable notes.
+    """
     without_comment = RELEASE_NOTES_COMMENT_RE.sub("", notes).strip()
     return "\n".join(line.rstrip() for line in without_comment.splitlines() if line.strip())
 
 
 def normalized_body(body: str) -> str:
-    """Return normalized body."""
+    """Return normalized body.
+
+    Args:
+        body: Document or response body processed by the operation.
+    """
     return body.replace("\r\n", "\n").replace("\r", "\n").strip()
 
 
 def release_identity(release: dict[str, Any]) -> dict[str, Any]:
     """Return release identity.
+
+    Args:
+        release: Release consumed by release identity.
+
 
     Raises:
         SystemExit: If the operation encounters an invalid state.
@@ -367,6 +436,12 @@ def plan_updates(
     start_tag: str,
 ) -> list[ReleaseNotePlan]:
     """Return plan updates.
+
+    Args:
+        releases: Releases consumed by plan updates.
+        repository: GitHub repository name or repository metadata being processed.
+        start_tag: Start tag consumed by plan updates.
+
 
     Raises:
         SystemExit: If the operation encounters an invalid state.
@@ -415,7 +490,11 @@ def plan_updates(
 
 
 def print_plans(plans: list[ReleaseNotePlan]) -> None:
-    """Handle print plans."""
+    """Handle print plans.
+
+    Args:
+        plans: Plans consumed by print plans.
+    """
     for plan in plans:
         print(f"### {plan.tag} from {plan.previous_tag} [{plan.action}]")
         print()
@@ -424,7 +503,13 @@ def print_plans(plans: list[ReleaseNotePlan]) -> None:
 
 
 def edit_release_body(repository: str, tag: str, body: str) -> None:
-    """Handle edit release body."""
+    """Handle edit release body.
+
+    Args:
+        repository: GitHub repository name or repository metadata being processed.
+        tag: Tag consumed by edit release body.
+        body: Document or response body processed by the operation.
+    """
     run(
         ["gh", "release", "edit", tag, "--repo", repository, "--notes-file", "-"],
         input_text=body,
@@ -433,6 +518,11 @@ def edit_release_body(repository: str, tag: str, body: str) -> None:
 
 def release_by_tag(repository: str, tag: str) -> dict[str, Any]:
     """Return release by tag.
+
+    Args:
+        repository: GitHub repository name or repository metadata being processed.
+        tag: Tag consumed by release by tag.
+
 
     Raises:
         SystemExit: If the operation encounters an invalid state.
@@ -445,6 +535,11 @@ def release_by_tag(repository: str, tag: str) -> dict[str, Any]:
 
 def apply_plans(plans: list[ReleaseNotePlan], *, repository: str) -> None:
     """Update plans.
+
+    Args:
+        plans: Plans consumed by apply plans.
+        repository: GitHub repository name or repository metadata being processed.
+
 
     Raises:
         SystemExit: If the operation encounters an invalid state.
@@ -471,6 +566,10 @@ def apply_plans(plans: list[ReleaseNotePlan], *, repository: str) -> None:
 
 def main(argv: list[str] | None = None) -> int:
     """Run the command-line entry point.
+
+    Args:
+        argv: Command-line arguments to parse, or ``None`` to use the process arguments.
+
 
     Returns:
         The main result.

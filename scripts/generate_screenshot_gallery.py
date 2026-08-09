@@ -13,7 +13,11 @@ GALLERY = ROOT / "docs" / "reference" / "interface-gallery.md"
 
 
 def route_title(route: str) -> str:
-    """Return route title."""
+    """Return route title.
+
+    Args:
+        route: Route consumed by route title.
+    """
     if route == "vmware-console":
         return "VMware console"
     path, separator, fragment = route.partition("#")

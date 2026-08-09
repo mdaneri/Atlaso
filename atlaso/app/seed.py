@@ -671,14 +671,22 @@ def seed_update_sources(db: Session) -> None:
 
 
 def _domain_from_fqdn(fqdn: str) -> str:
-    """Return domain from fqdn."""
+    """Return domain from fqdn.
+
+    Args:
+        fqdn: Fqdn consumed by domain from FQDN.
+    """
     normalized = normalize_fqdn(fqdn)
     parts = normalized.split(".", 1)
     return parts[1] if len(parts) == 2 else ""
 
 
 def _settings_lines(value: str) -> str:
-    """Return settings lines."""
+    """Return settings lines.
+
+    Args:
+        value: Candidate value consumed by settings lines.
+    """
     parts = [part.strip() for part in value.replace(",", "\n").replace(";", "\n").splitlines() if part.strip()]
     return "\n".join(parts)
 

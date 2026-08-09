@@ -87,7 +87,11 @@ class OidcConflictError(RuntimeError):
 
 
 def _aware(value: datetime) -> datetime:
-    """Return aware."""
+    """Return aware.
+
+    Args:
+        value: Candidate value consumed by aware.
+    """
     if value.tzinfo is None:
         return value.replace(tzinfo=timezone.utc)
     return value
@@ -113,7 +117,13 @@ def expected_issuer_url(
     hostname: str = OIDC_DEFAULT_HOSTNAME,
     port: int = OIDC_DEFAULT_PORT,
 ) -> str:
-    """Return expected issuer url."""
+    """Return expected issuer url.
+
+    Args:
+        provider: Provider consumed by expected issuer URL.
+        hostname: DNS hostname contacted, validated, or configured by the operation.
+        port: Network port contacted, validated, or configured by the operation.
+    """
     fqdn = normalize_fqdn(provider.hostname if provider is not None else hostname)
     if not fqdn:
         return ""
@@ -124,6 +134,10 @@ def expected_issuer_url(
 
 def normalize_issuer_url(value: str) -> str:
     """Normalize issuer url.
+
+    Args:
+        value: Candidate value consumed by normalize issuer URL.
+
 
     Returns:
         The normalize issuer url result.
@@ -340,7 +354,11 @@ def _valid_oidc_listener_targets(db: Session) -> dict[str, list[str]]:
     targets: dict[str, list[str]] = {}
 
     def addresses(*cidrs: str | None) -> list[str]:
-        """Return addresses."""
+        """Return addresses.
+
+        Args:
+            *cidrs: Additional positional arguments accepted by the callable.
+        """
         values: list[str] = []
         for cidr in cidrs:
             if not cidr:
@@ -409,7 +427,12 @@ def _management_https_is_applied(db: Session, appliance: ApplianceSettings) -> b
 
 
 def _management_certificate_error(db: Session, appliance: ApplianceSettings) -> str:
-    """Return a public-safe readiness error for the applied management certificate."""
+    """Return a public-safe readiness error for the applied management certificate.
+
+    Args:
+        db: Active database session used by the operation.
+        appliance: Appliance consumed by management certificate error.
+    """
     fqdn = normalize_fqdn(appliance.fqdn)
     certificate = db.execute(
         select(CaCertificate).where(CaCertificate.managed_owner == "appliance:https")
@@ -496,7 +519,11 @@ def validate_enabled_provider_at_startup(db: Session) -> None:
 
 
 def issuer_endpoint_urls(issuer_url: str) -> dict[str, str]:
-    """Return issuer endpoint urls."""
+    """Return issuer endpoint urls.
+
+    Args:
+        issuer_url: URL used for issuer.
+    """
     issuer = normalize_issuer_url(issuer_url)
     return {
         "issuer": issuer,
@@ -696,7 +723,11 @@ def delete_retired_signing_key(
 
 
 def signing_key_to_dict(row: OidcSigningKey) -> dict[str, object]:
-    """Return signing key to dict."""
+    """Return signing key to dict.
+
+    Args:
+        row: Persistent database row affected by the operation.
+    """
     public_jwk = json.loads(row.public_jwk_json)
     return {
         "id": row.id,
@@ -730,12 +761,21 @@ def generate_client_secret() -> str:
 
 
 def hash_client_secret(raw_secret: str) -> str:
-    """Return hash client secret."""
+    """Return hash client secret.
+
+    Args:
+        raw_secret: Raw secret consumed by hash client secret.
+    """
     return OIDC_CLIENT_SECRET_HASHER.hash(raw_secret)
 
 
 def verify_client_secret(secret_hash: str, raw_secret: str) -> bool:
     """Validate client secret.
+
+    Args:
+        secret_hash: Secret hash consumed by verify client secret.
+        raw_secret: Raw secret consumed by verify client secret.
+
 
     Returns:
         The verify client secret result.
@@ -748,6 +788,10 @@ def verify_client_secret(secret_hash: str, raw_secret: str) -> bool:
 
 def normalize_allowed_scopes(scopes: list[str]) -> list[str]:
     """Normalize allowed scopes.
+
+    Args:
+        scopes: Normalized authorization scopes granted or required by the operation.
+
 
     Returns:
         The normalize allowed scopes result.
@@ -770,6 +814,11 @@ def normalize_allowed_scopes(scopes: list[str]) -> list[str]:
 
 def validate_redirect_uri(uri: str, *, allow_loopback: bool) -> str:
     """Validate redirect uri.
+
+    Args:
+        uri: Candidate URI to validate.
+        allow_loopback: Whether loopback is permitted.
+
 
     Returns:
         The validate redirect uri result.
@@ -816,6 +865,12 @@ def validate_redirect_uri_list(
     required: bool,
 ) -> list[str]:
     """Validate redirect uri list.
+
+    Args:
+        values: Candidate values consumed by validate redirect URI list.
+        allow_loopback: Whether loopback is permitted.
+        required: Whether required applies to the operation.
+
 
     Returns:
         The validate redirect uri list result.
@@ -1040,7 +1095,11 @@ def rotate_client_secret(db: Session, row: OidcClient) -> str:
 
 
 def oidc_client_to_dict(row: OidcClient) -> dict[str, object]:
-    """Return oidc client to dict."""
+    """Return oidc client to dict.
+
+    Args:
+        row: Persistent database row affected by the operation.
+    """
     redirects = [item.uri for item in row.redirect_uris if item.kind == "redirect"]
     logout_redirects = [item.uri for item in row.redirect_uris if item.kind == "post_logout"]
     return {
@@ -1080,7 +1139,12 @@ def list_clients(db: Session) -> list[OidcClient]:
 
 
 def integration_export(db: Session, row: OidcClient) -> dict[str, object]:
-    """Build a public-metadata-only relying-party configuration document."""
+    """Build a public-metadata-only relying-party configuration document.
+
+    Args:
+        db: Active database session used by the operation.
+        row: Persistent database row affected by the operation.
+    """
     provider = ensure_provider_settings(db)
     urls = issuer_endpoint_urls(provider.issuer_url)
     client = oidc_client_to_dict(row)
@@ -1135,7 +1199,13 @@ def resolve_login_source(
     client: OidcClient,
     selection: str,
 ) -> tuple[str, int | None]:
-    """Resolve only a server-recognized source choice for this client."""
+    """Resolve only a server-recognized source choice for this client.
+
+    Args:
+        db: Active database session used by the operation.
+        client: Client consumed by resolve login source.
+        selection: Selection consumed by resolve login source.
+    """
     if client.organization_id is not None:
         if selection:
             raise OidcConfigurationError("Bound clients do not accept an organization selection.")
@@ -1223,6 +1293,10 @@ def _mapping_key(
 def _normalize_external_group_name(value: str) -> str:
     """Normalize external group name.
 
+    Args:
+        value: Candidate value consumed by normalize external group name.
+
+
     Returns:
         The normalize external group name result.
 
@@ -1267,7 +1341,11 @@ def list_group_mappings(db: Session) -> list[OidcGroupMapping]:
 
 
 def group_mapping_to_dict(row: OidcGroupMapping) -> dict[str, object]:
-    """Return group mapping to dict."""
+    """Return group mapping to dict.
+
+    Args:
+        row: Persistent database row affected by the operation.
+    """
     source_name = (
         row.local_role
         if row.source_type == "local_role"
@@ -1290,7 +1368,11 @@ def group_mapping_to_dict(row: OidcGroupMapping) -> dict[str, object]:
 
 
 def _mapping_source_key(row: OidcGroupMapping) -> str:
-    """Return mapping source key."""
+    """Return mapping source key.
+
+    Args:
+        row: Persistent database row affected by the operation.
+    """
     if row.source_type == "local_role":
         return f"local_role:{row.local_role.casefold()}"
     return f"ldap_group:{row.ldap_group_id}"
@@ -1344,6 +1426,10 @@ def _effective_mapping_rows(
 
 def _validate_effective_mapping_rows(rows: dict[str, OidcGroupMapping]) -> None:
     """Validate effective mapping rows.
+
+    Args:
+        rows: Candidate rows to validate.
+
 
     Raises:
         OidcConfigurationError: If the operation encounters an invalid state.
@@ -1768,7 +1854,11 @@ def protocol_provider(db: Session) -> OidcProviderSettings:
 
 
 def _token_hash(value: str) -> str:
-    """Return token hash."""
+    """Return token hash.
+
+    Args:
+        value: Candidate value consumed by token hash.
+    """
     return sha256(value.encode("utf-8")).hexdigest()
 
 
@@ -1964,7 +2054,11 @@ def redeem_authorization_code(db: Session, *, raw_code: str, client: OidcClient,
 
 
 def _base64url_sha256(value: str) -> str:
-    """Return base64url sha256."""
+    """Return base64url sha256.
+
+    Args:
+        value: Candidate value consumed by base64url sha256.
+    """
     return base64.urlsafe_b64encode(sha256(value.encode("ascii")).digest()).rstrip(b"=").decode("ascii")
 
 

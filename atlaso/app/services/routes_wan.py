@@ -16,12 +16,20 @@ LAB_ROUTE_TABLE_NAME = "atlaso_lab"
 
 
 def _bool_value(value: bool) -> str:
-    """Return bool value."""
+    """Return bool value.
+
+    Args:
+        value: Candidate value consumed by bool value.
+    """
     return "true" if value else "false"
 
 
 def wan_policy_to_dict(policy: WanPolicy) -> dict:
-    """Return wan policy to dict."""
+    """Return wan policy to dict.
+
+    Args:
+        policy: Policy consumed by WAN policy to dict.
+    """
     return {
         "id": policy.id,
         "name": policy.name,
@@ -38,7 +46,11 @@ def wan_policy_to_dict(policy: WanPolicy) -> dict:
 
 
 def route_to_dict(route: Route) -> dict:
-    """Return route to dict."""
+    """Return route to dict.
+
+    Args:
+        route: Route consumed by route to dict.
+    """
     return {
         "id": route.id,
         "destination_cidr": route.destination_cidr,
@@ -53,7 +65,11 @@ def route_to_dict(route: Route) -> dict:
 
 
 def nat_rule_to_dict(rule: NatRule) -> dict:
-    """Return nat rule to dict."""
+    """Return nat rule to dict.
+
+    Args:
+        rule: Rule consumed by nat rule to dict.
+    """
     return {
         "id": rule.id,
         "name": rule.name,
@@ -67,7 +83,11 @@ def nat_rule_to_dict(rule: NatRule) -> dict:
 
 
 def routing_rule_to_dict(rule: RoutingRule) -> dict:
-    """Return routing rule to dict."""
+    """Return routing rule to dict.
+
+    Args:
+        rule: Rule consumed by routing rule to dict.
+    """
     return {
         "id": rule.id,
         "name": rule.name,
@@ -81,7 +101,11 @@ def routing_rule_to_dict(rule: RoutingRule) -> dict:
 
 
 def generated_route_role_rules(targets: list[dict[str, str]]) -> list[dict]:
-    """Return generated route role rules."""
+    """Return generated route role rules.
+
+    Args:
+        targets: Targets consumed by generated route role rules.
+    """
     route_targets = [target for target in targets if target.get("role") == "route" and target.get("routing_domain") == "lab"]
     rows: list[dict] = []
     for source in route_targets:
@@ -104,7 +128,11 @@ def generated_route_role_rules(targets: list[dict[str, str]]) -> list[dict]:
 
 
 def wan_policy_summary(policy: WanPolicy | None) -> str:
-    """Return wan policy summary."""
+    """Return wan policy summary.
+
+    Args:
+        policy: Policy consumed by WAN policy summary.
+    """
     if policy is None:
         return "none"
     parts = [f"delay {policy.latency_ms}ms"]
@@ -124,7 +152,11 @@ def wan_policy_summary(policy: WanPolicy | None) -> str:
 
 
 def netem_args(policy: WanPolicy) -> list[str]:
-    """Return netem args."""
+    """Return netem args.
+
+    Args:
+        policy: Policy consumed by netem args.
+    """
     args = ["delay", f"{policy.latency_ms}ms"]
     if policy.jitter_ms:
         args.append(f"{policy.jitter_ms}ms")
@@ -143,6 +175,12 @@ def netem_args(policy: WanPolicy) -> list[str]:
 
 def validate_nat_source(value: str, source_group_ids: set[str] | None = None, source_groups: list[dict] | None = None) -> list[str]:
     """Validate nat source.
+
+    Args:
+        value: Candidate value consumed by validate nat source.
+        source_group_ids: Stable identifiers of the associated source group resources.
+        source_groups: Candidate source groups to validate.
+
 
     Returns:
         The validate nat source result.
@@ -283,12 +321,20 @@ def validate_wan_state(
 
 
 def _policy_by_id(policies: list[WanPolicy]) -> dict[int, WanPolicy]:
-    """Return policy by id."""
+    """Return policy by id.
+
+    Args:
+        policies: Policies consumed by policy by identifier.
+    """
     return {policy.id: policy for policy in policies}
 
 
 def _target_networks(target: dict[str, str]) -> list:
-    """Return target networks."""
+    """Return target networks.
+
+    Args:
+        target: Target resource or location affected by the operation.
+    """
     return [
         ip_network(target[cidr_key], strict=False)
         for cidr_key in ("ip_cidr", "ipv6_cidr")
@@ -297,7 +343,11 @@ def _target_networks(target: dict[str, str]) -> list:
 
 
 def _target_network_owners(targets: list[dict[str, str]]) -> dict[str, int]:
-    """Return target network owners."""
+    """Return target network owners.
+
+    Args:
+        targets: Targets consumed by target network owners.
+    """
     owners: dict[str, int] = {}
     for index, target in enumerate(targets):
         for network in _target_networks(target):
@@ -313,7 +363,12 @@ def _target_network_owners(targets: list[dict[str, str]]) -> dict[str, int]:
 
 
 def _nat_source_resolved(rule: NatRule, source_groups: list[dict] | None = None) -> str:
-    """Return nat source resolved."""
+    """Return nat source resolved.
+
+    Args:
+        rule: Rule consumed by nat source resolved.
+        source_groups: Source groups consumed by nat source resolved.
+    """
     source = rule.source.strip()
     if source.lower().startswith(FIREWALL_SOURCE_GROUP_REFERENCE_PREFIX):
         group_id = source[len(FIREWALL_SOURCE_GROUP_REFERENCE_PREFIX) :].strip()
@@ -324,7 +379,11 @@ def _nat_source_resolved(rule: NatRule, source_groups: list[dict] | None = None)
 
 
 def _nft_source_expr(source: str) -> str:
-    """Return nft source expr."""
+    """Return nft source expr.
+
+    Args:
+        source: Source object or location from which data is obtained.
+    """
     source_value = source.strip()
     if not source_value or source_value.lower() == "any":
         return ""

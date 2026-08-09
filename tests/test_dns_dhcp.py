@@ -36,6 +36,11 @@ from atlaso.app.services.dnsmasq import (
 def create_token(client, scopes):
     """Create token.
 
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+        scopes: Normalized authorization scopes granted or required by the operation.
+
+
     Returns:
         The created token.
     """
@@ -1061,7 +1066,11 @@ def test_hosts_file_parser_supports_aliases_comments_and_ipv6():
 
 
 def test_dns_api_requires_scope_and_returns_config_preview(client):
-    """Verify that dns api requires scope and returns config preview."""
+    """Verify that dns api requires scope and returns config preview.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
     token = create_token(client, ["read:dashboard"])
     denied = client.get("/api/v1/dns/status", headers={"Authorization": f"Bearer {token}"})
     assert denied.status_code == 403
@@ -1156,7 +1165,11 @@ def test_dns_api_requires_scope_and_returns_config_preview(client):
 
 
 def test_dns_api_exposes_read_only_authoritative_settings_and_advances_serial(client):
-    """Verify that dns api exposes read only authoritative settings and advances serial."""
+    """Verify that dns api exposes read only authoritative settings and advances serial.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
     dns_token = create_token(client, ["read:dns", "write:dns"])
     headers = {"Authorization": f"Bearer {dns_token}"}
     initial = client.get("/api/v1/dns/settings", headers=headers)
@@ -1195,7 +1208,11 @@ def test_dns_api_exposes_read_only_authoritative_settings_and_advances_serial(cl
 
 
 def test_dns_api_update_rejects_duplicate_record(client):
-    """Verify that dns api update rejects duplicate record."""
+    """Verify that dns api update rejects duplicate record.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
     dns_token = create_token(client, ["read:dns", "write:dns"])
     first = client.post(
         "/api/v1/dns/records",
@@ -1227,7 +1244,11 @@ def test_dns_api_update_rejects_duplicate_record(client):
 
 
 def test_dns_hosts_import_replaces_existing_records(client):
-    """Verify that dns hosts import replaces existing records."""
+    """Verify that dns hosts import replaces existing records.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
     dns_token = create_token(client, ["read:dns", "write:dns"])
     response = client.post(
         "/api/v1/dns/records/import",
@@ -1250,7 +1271,11 @@ def test_dns_hosts_import_replaces_existing_records(client):
 
 
 def test_dhcp_api_scope_and_reservations(client):
-    """Verify that dhcp api scope and reservations."""
+    """Verify that dhcp api scope and reservations.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
     dhcp_token = create_token(client, ["read:dhcp", "write:dhcp", "read:dns"])
     status = client.get("/api/v1/dhcp/status", headers={"Authorization": f"Bearer {dhcp_token}"})
     assert status.status_code == 200
@@ -1333,7 +1358,12 @@ def test_dhcp_api_scope_and_reservations(client):
 
 
 def test_dhcp_api_leases_reflect_helper_output(client, monkeypatch):
-    """Verify that dhcp api leases reflect helper output."""
+    """Verify that dhcp api leases reflect helper output.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+    """
     from atlaso.app.adapters.system import AdapterResult
 
     def fake_read_dhcp_leases(self):

@@ -9,7 +9,12 @@ LOCAL = service.LocalDepotEndpoint("depot.atlaso.internal", 443, "https://depot.
 
 
 def remote(host="old.example", status="DEPOT_CONNECTION_SUCCESSFUL"):
-    """Return remote."""
+    """Return remote.
+
+    Args:
+        host: Host supplied to the test scenario.
+        status: Lifecycle or operation status to record or evaluate.
+    """
     return {
         "offlineAccount": {"username": "vcf-depot", "status": status, "message": "Depot Status: Success"},
         "depotConfiguration": {"isOfflineDepot": True, "hostname": host, "port": 443, "url": f"https://{host}"},
@@ -26,7 +31,11 @@ def test_depot_sanitization_never_returns_passwords():
 
 
 def test_configure_target_updates_syncs_and_verifies(monkeypatch):
-    """Verify that configure target updates syncs and verifies."""
+    """Verify that configure target updates syncs and verifies.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+    """
     class FakeClient:
         """Represent fake client.
 
@@ -35,7 +44,12 @@ def test_configure_target_updates_syncs_and_verifies(monkeypatch):
             sync_calls: Sync calls captured or supplied by this test helper.
         """
         def __init__(self, *_args, **_kwargs):
-            """Initialize the fake client."""
+            """Initialize the fake client.
+
+            Args:
+                *_args: Additional positional arguments accepted by the callable.
+                **_kwargs: Additional keyword arguments accepted by the callable.
+            """
             self.current = remote()
             self.sync_calls = 0
 
@@ -49,6 +63,10 @@ def test_configure_target_updates_syncs_and_verifies(monkeypatch):
 
         def __exit__(self, *_args):
             """Exit the managed context without suppressing exceptions.
+
+            Args:
+                *_args: Additional positional arguments accepted by the callable.
+
 
             Returns:
                 The exit result.
@@ -90,11 +108,20 @@ def test_configure_target_updates_syncs_and_verifies(monkeypatch):
 
 
 def test_configure_target_requires_replacement_confirmation(monkeypatch):
-    """Verify that configure target requires replacement confirmation."""
+    """Verify that configure target requires replacement confirmation.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+    """
     class FakeClient:
         """Represent fake client."""
         def __init__(self, *_args, **_kwargs):
-            """Initialize the fake client."""
+            """Initialize the fake client.
+
+            Args:
+                *_args: Additional positional arguments accepted by the callable.
+                **_kwargs: Additional keyword arguments accepted by the callable.
+            """
             pass
 
         def __enter__(self):
@@ -107,6 +134,10 @@ def test_configure_target_requires_replacement_confirmation(monkeypatch):
 
         def __exit__(self, *_args):
             """Exit the managed context without suppressing exceptions.
+
+            Args:
+                *_args: Additional positional arguments accepted by the callable.
+
 
             Returns:
                 The exit result.

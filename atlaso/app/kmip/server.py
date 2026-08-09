@@ -161,6 +161,10 @@ def certificate_sha256(path: Path) -> str:
 def _fingerprint(value: object) -> str:
     """Return fingerprint.
 
+    Args:
+        value: Candidate value consumed by fingerprint.
+
+
     Raises:
         ConfigurationError: If the operation encounters an invalid state.
     """
@@ -174,6 +178,12 @@ def _fingerprint(value: object) -> str:
 
 def _exact_fields(value: dict[str, Any], expected: set[str], *, label: str) -> None:
     """Handle exact fields.
+
+    Args:
+        value: Candidate value consumed by exact fields.
+        expected: Expected consumed by exact fields.
+        label: Human-readable label used to identify the result.
+
 
     Raises:
         ConfigurationError: If the operation encounters an invalid state.
@@ -192,6 +202,11 @@ def _exact_fields(value: dict[str, Any], expected: set[str], *, label: str) -> N
 def _path(value: object, *, label: str) -> Path:
     """Return path.
 
+    Args:
+        value: Candidate value consumed by path.
+        label: Human-readable label used to identify the result.
+
+
     Raises:
         ConfigurationError: If the operation encounters an invalid state.
     """
@@ -206,6 +221,11 @@ def _path(value: object, *, label: str) -> Path:
 def _integer(value: object, *, label: str) -> int:
     """Return integer.
 
+    Args:
+        value: Candidate value consumed by integer.
+        label: Human-readable label used to identify the result.
+
+
     Raises:
         ConfigurationError: If the operation encounters an invalid state.
     """
@@ -216,6 +236,10 @@ def _integer(value: object, *, label: str) -> int:
 
 def _provider(value: object) -> Provider:
     """Return provider.
+
+    Args:
+        value: Candidate value consumed by provider.
+
 
     Raises:
         ConfigurationError: If the operation encounters an invalid state.
@@ -253,6 +277,10 @@ def _provider(value: object) -> Provider:
 
 def parse_config(document: object) -> ServiceConfig:
     """Parse config.
+
+    Args:
+        document: Candidate document to parse.
+
 
     Returns:
         The parsed config.
@@ -381,6 +409,10 @@ def load_config(path: Path) -> ServiceConfig:
 def tls_context(config: ServiceConfig) -> ssl.SSLContext:
     """Return tls context.
 
+    Args:
+        config: Validated configuration consumed by the operation.
+
+
     Raises:
         ConfigurationError: If the operation encounters an invalid state.
     """
@@ -418,7 +450,11 @@ class InteropTraceWriter:
 
     @staticmethod
     def _operation(item: Ttlv) -> tuple[str, int]:
-        """Return operation."""
+        """Return operation.
+
+        Args:
+            item: Item consumed by operation.
+        """
         node = item.child(Tag.OPERATION, required=False)
         value = node.value if node is not None else 0
         if isinstance(value, bool) or not isinstance(value, int):
@@ -431,7 +467,11 @@ class InteropTraceWriter:
 
     @staticmethod
     def _object_type(item: Ttlv) -> str | None:
-        """Return object type."""
+        """Return object type.
+
+        Args:
+            item: Item consumed by object type.
+        """
         stack = [item]
         while stack:
             node = stack.pop()
@@ -443,7 +483,11 @@ class InteropTraceWriter:
 
     @staticmethod
     def _attribute_names(item: Ttlv) -> list[str]:
-        """Return attribute names."""
+        """Return attribute names.
+
+        Args:
+            item: Item consumed by attribute names.
+        """
         names: set[str] = set()
         stack = [item]
         while stack:
@@ -460,7 +504,12 @@ class InteropTraceWriter:
         item: Ttlv,
         operation: str,
     ) -> tuple[str | None, int | None, str | None]:
-        """Return cryptographic parameters."""
+        """Return cryptographic parameters.
+
+        Args:
+            item: Item consumed by cryptographic parameters.
+            operation: Operation consumed by cryptographic parameters.
+        """
         if operation != "Create":
             return None, None, None
         values: dict[str, object] = {}
@@ -565,6 +614,11 @@ class InteropTraceWriter:
 def _receive_exact(sock: ssl.SSLSocket, size: int) -> bytes:
     """Return receive exact.
 
+    Args:
+        sock: Sock consumed by receive exact.
+        size: Size consumed by receive exact.
+
+
     Raises:
         TtlvError: If the operation encounters an invalid state.
     """
@@ -665,7 +719,13 @@ class KmipTcpServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
         dispatcher: KmipDispatcher,
         context: ssl.SSLContext,
     ) -> None:
-        """Initialize the kmip tcp server."""
+        """Initialize the kmip tcp server.
+
+        Args:
+            config: Validated configuration consumed by the operation.
+            dispatcher: Dispatcher consumed by init.
+            context: Operation context providing related state and metadata.
+        """
         self.config = config
         self.dispatcher = dispatcher
         self.context = context
@@ -746,6 +806,11 @@ class KmipTcpServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
 def build_server(config: ServiceConfig, *, secrets_key: str) -> KmipTcpServer:
     """Build server.
 
+    Args:
+        config: Validated configuration consumed by the operation.
+        secrets_key: Secrets key consumed by build server.
+
+
     Returns:
         The built server.
     """
@@ -760,6 +825,11 @@ def build_server(config: ServiceConfig, *, secrets_key: str) -> KmipTcpServer:
 
 def check_config(config: ServiceConfig, *, secrets_key: str) -> None:
     """Check config.
+
+    Args:
+        config: Validated configuration consumed by the operation.
+        secrets_key: Secrets key consumed by check config.
+
 
     Raises:
         ConfigurationError: If the operation encounters an invalid state.
@@ -795,6 +865,10 @@ def _load_secrets_key() -> str:
 
 def main(argv: list[str] | None = None) -> int:
     """Run the command-line entry point.
+
+    Args:
+        argv: Command-line arguments to parse, or ``None`` to use the process arguments.
+
 
     Returns:
         The main result.

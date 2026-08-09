@@ -93,6 +93,11 @@ class _KekEnvelope:
 def _validated_uuid(value: str, *, label: str) -> str:
     """Return validated uuid.
 
+    Args:
+        value: Candidate value consumed by validated UUID.
+        label: Human-readable label used to identify the result.
+
+
     Raises:
         ValueError: If an input value is invalid.
     """
@@ -103,7 +108,11 @@ def _validated_uuid(value: str, *, label: str) -> str:
 
 
 def _canonical_aad(metadata: StoredKey) -> bytes:
-    """Return canonical aad."""
+    """Return canonical aad.
+
+    Args:
+        metadata: Structured metadata associated with the artifact or operation.
+    """
     document = {
         "schema_version": STORE_SCHEMA_VERSION,
         "provider_id": metadata.provider_id,
@@ -122,6 +131,10 @@ def _canonical_aad(metadata: StoredKey) -> bytes:
 def _master_key(secrets_key: str) -> bytes:
     """Return master key.
 
+    Args:
+        secrets_key: Secrets key consumed by master key.
+
+
     Raises:
         KeyStoreError: If the operation encounters an invalid state.
     """
@@ -132,6 +145,11 @@ def _master_key(secrets_key: str) -> bytes:
 
 def _decode_envelope_value(envelope: dict[str, object], field: str) -> bytes:
     """Deserialize envelope value.
+
+    Args:
+        envelope: Envelope consumed by decode envelope value.
+        field: Field consumed by decode envelope value.
+
 
     Returns:
         The decode envelope value result.
@@ -284,6 +302,10 @@ def _load_or_create_kek(
 def _store_commitment(connection: sqlite3.Connection) -> str:
     """Persist commitment.
 
+    Args:
+        connection: Connection consumed by store commitment.
+
+
     Returns:
         The store commitment result.
     """
@@ -334,6 +356,12 @@ class WrappedKeyStore:
 
     def __init__(self, database_path: Path, kek_path: Path, *, secrets_key: str) -> None:
         """Initialize the wrapped key store.
+
+        Args:
+            database_path: Filesystem path used for database.
+            kek_path: Filesystem path used for kek.
+            secrets_key: Secrets key consumed by init.
+
 
         Raises:
             KeyStoreError: If the operation encounters an invalid state.
@@ -409,7 +437,11 @@ class WrappedKeyStore:
         os.chmod(self.database_path, 0o600)
 
     def _write_envelope(self, envelope: _KekEnvelope) -> None:
-        """Persist envelope."""
+        """Persist envelope.
+
+        Args:
+            envelope: Envelope consumed by write envelope.
+        """
         _write_kek_envelope(
             self.kek_path,
             master_key=bytes(self._master_key),
@@ -419,6 +451,10 @@ class WrappedKeyStore:
 
     def _verify_store_commitment(self, connection: sqlite3.Connection) -> None:
         """Validate store commitment.
+
+        Args:
+            connection: Connection consumed by verify store commitment.
+
 
         Raises:
             KeyStoreError: If the operation encounters an invalid state.
@@ -458,7 +494,11 @@ class WrappedKeyStore:
         )
 
     def _commit_mutation(self, connection: sqlite3.Connection) -> None:
-        """Handle commit mutation."""
+        """Handle commit mutation.
+
+        Args:
+            connection: Connection consumed by commit mutation.
+        """
         pending = _KekEnvelope(
             kek=bytes(self._kek),
             generation=self._envelope.generation,
@@ -489,6 +529,11 @@ class WrappedKeyStore:
 
     def create_key(self, provider_id: str, *, name: str | None = None) -> StoredKey:
         """Create key.
+
+        Args:
+            provider_id: Stable identifier of the associated provider resource.
+            name: Stable name identifying the resource or operation.
+
 
         Returns:
             The created key.
@@ -554,6 +599,12 @@ class WrappedKeyStore:
     ) -> sqlite3.Row:
         """Return row.
 
+        Args:
+            connection: Connection consumed by row.
+            provider_id: Stable identifier of the associated provider resource.
+            key_id: Stable identifier of the associated key resource.
+
+
         Raises:
             KeyNotFoundError: If the operation encounters an invalid state.
         """
@@ -574,7 +625,11 @@ class WrappedKeyStore:
 
     @staticmethod
     def _metadata(row: sqlite3.Row) -> StoredKey:
-        """Return metadata."""
+        """Return metadata.
+
+        Args:
+            row: Persistent database row affected by the operation.
+        """
         return StoredKey(
             provider_id=row["provider_id"],
             key_id=row["key_id"],
@@ -588,6 +643,10 @@ class WrappedKeyStore:
 
     def _decrypt_row(self, row: sqlite3.Row) -> tuple[StoredKey, bytes]:
         """Return decrypt row.
+
+        Args:
+            row: Persistent database row affected by the operation.
+
 
         Raises:
             KeyStoreError: If the operation encounters an invalid state.
@@ -609,14 +668,24 @@ class WrappedKeyStore:
         return metadata, plaintext
 
     def get_key(self, provider_id: str, key_id: str) -> tuple[StoredKey, bytes]:
-        """Return key."""
+        """Return key.
+
+        Args:
+            provider_id: Stable identifier of the associated provider resource.
+            key_id: Stable identifier of the associated key resource.
+        """
         with self._lock, self._connect() as connection:
             self._verify_store_commitment(connection)
             row = self._row(connection, provider_id, key_id)
             return self._decrypt_row(row)
 
     def get_metadata(self, provider_id: str, key_id: str) -> StoredKey:
-        """Return metadata."""
+        """Return metadata.
+
+        Args:
+            provider_id: Stable identifier of the associated provider resource.
+            key_id: Stable identifier of the associated key resource.
+        """
         with self._lock, self._connect() as connection:
             self._verify_store_commitment(connection)
             row = self._row(connection, provider_id, key_id)
@@ -627,6 +696,11 @@ class WrappedKeyStore:
 
     def activate_key(self, provider_id: str, key_id: str) -> StoredKey:
         """Return activate key.
+
+        Args:
+            provider_id: Stable identifier of the associated provider resource.
+            key_id: Stable identifier of the associated key resource.
+
 
         Raises:
             KeyStateError: If the operation encounters an invalid state.
@@ -688,6 +762,13 @@ class WrappedKeyStore:
         limit: int = 1024,
     ) -> list[str]:
         """Return locate keys.
+
+        Args:
+            provider_id: Stable identifier of the associated provider resource.
+            state: Current lifecycle state consumed by the operation.
+            name: Stable name identifying the resource or operation.
+            limit: Limit consumed by locate keys.
+
 
         Raises:
             ValueError: If an input value is invalid.

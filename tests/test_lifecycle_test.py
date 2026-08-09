@@ -75,7 +75,11 @@ def write_baseline(path: Path, *, fingerprint: str = "abc123") -> None:
 
 
 def test_restored_certificate_baseline_check_matches_fingerprint(tmp_path):
-    """Verify that restored certificate baseline check matches fingerprint."""
+    """Verify that restored certificate baseline check matches fingerprint.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
     lifecycle = load_lifecycle_module()
     baseline = tmp_path / "result.json"
     write_baseline(baseline)
@@ -98,7 +102,11 @@ def test_restored_certificate_baseline_check_matches_fingerprint(tmp_path):
 
 
 def test_restored_certificate_baseline_check_rejects_changed_fingerprint(tmp_path):
-    """Verify that restored certificate baseline check rejects changed fingerprint."""
+    """Verify that restored certificate baseline check rejects changed fingerprint.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
     lifecycle = load_lifecycle_module()
     baseline = tmp_path / "result.json"
     write_baseline(baseline)
@@ -174,7 +182,11 @@ def test_set_lifecycle_wan_policy_updates_duplicate_restored_rows():
 
 
 def test_appliance_health_checks_version_before_authentication(monkeypatch):
-    """Verify that appliance health checks version before authentication."""
+    """Verify that appliance health checks version before authentication.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+    """
     lifecycle = load_lifecycle_module()
     calls: list[tuple[str, str]] = []
     version_payload = {
@@ -216,7 +228,11 @@ def test_appliance_health_checks_version_before_authentication(monkeypatch):
     class AnonymousVersionClient:
         """Represent anonymous version client."""
         def __init__(self, base_url):  # type: ignore[no-untyped-def]
-            """Initialize the anonymous version client."""
+            """Initialize the anonymous version client.
+
+            Args:
+                base_url: URL used for base.
+            """
             assert base_url == FakeClient.base_url
 
         def json_request(self, method, path):  # type: ignore[no-untyped-def]
@@ -308,13 +324,24 @@ def test_full_lifecycle_plan_includes_passwordless_web_terminal_acceptance():
 
 
 def test_release_database_identity_uses_privileged_appliance_command(monkeypatch):
-    """Verify that release database identity uses privileged appliance command."""
+    """Verify that release database identity uses privileged appliance command.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+    """
     lifecycle = load_lifecycle_module()
     args = lifecycle.parse_args(["--password", "test", "--ssh-password", "test", "--plan-only"])
     captured: dict[str, str] = {}
 
     def fake_ssh_command(host, command_args, command, *, role):  # type: ignore[no-untyped-def]
-        """Return fake ssh command."""
+        """Return fake ssh command.
+
+        Args:
+            host: Host supplied to the test scenario.
+            command_args: Command args supplied to the test scenario.
+            command: Command and arguments to execute.
+            role: Role supplied to the test scenario.
+        """
         captured.update(host=host, command=command, role=role)
         return {
             "returncode": 0,
@@ -370,7 +397,11 @@ def test_esx_storage_lifecycle_plan_is_dual_stack_and_format_is_explicit():
 
 
 def test_apply_units_requires_and_submits_esx_format_confirmation(monkeypatch):
-    """Verify that apply units requires and submits esx format confirmation."""
+    """Verify that apply units requires and submits esx format confirmation.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+    """
     lifecycle = load_lifecycle_module()
 
     class FakeClient:
@@ -389,7 +420,7 @@ def test_apply_units_requires_and_submits_esx_format_confirmation(monkeypatch):
             Args:
                 method: HTTP or protocol method to invoke.
                 path: Filesystem or URL path to read, validate, or update.
-                kwargs: Additional keyword arguments forwarded to the wrapped call.
+                **kwargs: Additional keyword arguments forwarded to the wrapped call.
             """
             if method == "GET":
                 return 200, '<input type="hidden" name="csrf" value="token">', {}
@@ -402,7 +433,7 @@ def test_apply_units_requires_and_submits_esx_format_confirmation(monkeypatch):
             Args:
                 method: HTTP or protocol method to invoke.
                 path: Filesystem or URL path to read, validate, or update.
-                _kwargs: Additional keyword arguments accepted by the test double.
+                **_kwargs: Additional keyword arguments accepted by the test double.
             """
             if path == "/appliance-apply/review":
                 return {
@@ -452,7 +483,11 @@ def test_authoritative_dns_lifecycle_probe_covers_authority_reverse_nxdomain_and
 
 
 def test_apply_units_retries_once_when_desired_state_drifts(monkeypatch):
-    """Verify that apply units retries once when desired state drifts."""
+    """Verify that apply units retries once when desired state drifts.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+    """
     lifecycle = load_lifecycle_module()
 
     class FakeClient:
@@ -471,7 +506,7 @@ def test_apply_units_retries_once_when_desired_state_drifts(monkeypatch):
             Args:
                 method: HTTP or protocol method to invoke.
                 path: Filesystem or URL path to read, validate, or update.
-                _kwargs: Additional keyword arguments accepted by the test double.
+                **_kwargs: Additional keyword arguments accepted by the test double.
 
             Raises:
                 AssertionError: If an expected invariant is not satisfied.
@@ -495,7 +530,7 @@ def test_apply_units_retries_once_when_desired_state_drifts(monkeypatch):
             Args:
                 method: HTTP or protocol method to invoke.
                 path: Filesystem or URL path to read, validate, or update.
-                _kwargs: Additional keyword arguments accepted by the test double.
+                **_kwargs: Additional keyword arguments accepted by the test double.
 
             Raises:
                 AssertionError: If an expected invariant is not satisfied.
@@ -542,14 +577,24 @@ def test_routing_probe_commands_cover_block_allow_and_route_role_paths():
 
 
 def test_host_state_checks_verify_vcf_trust_runtime_dependencies(monkeypatch):
-    """Verify that host state checks verify vcf trust runtime dependencies."""
+    """Verify that host state checks verify vcf trust runtime dependencies.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+    """
     lifecycle = load_lifecycle_module()
     args = lifecycle.parse_args(["--password", "test"])
     captured = {}
     execution_contexts = {}
 
     def fake_run_host_checks(_args, checks, *, appliance_as_root=True):
-        """Return fake run host checks."""
+        """Return fake run host checks.
+
+        Args:
+            _args: Parsed command-line options consumed by the operation.
+            checks: Checks supplied to the test scenario.
+            appliance_as_root: Appliance as root supplied to the test scenario.
+        """
         captured.update(checks)
         execution_contexts.update({name: appliance_as_root for name in checks})
         return checks
@@ -584,7 +629,11 @@ def test_host_state_checks_verify_vcf_trust_runtime_dependencies(monkeypatch):
 
 
 def test_managed_ldap_lifecycle_check_sends_directory_password_only_through_stdin(monkeypatch):
-    """Verify that managed ldap lifecycle check sends directory password only through stdin."""
+    """Verify that managed ldap lifecycle check sends directory password only through stdin.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+    """
     lifecycle = load_lifecycle_module()
     args = lifecycle.parse_args(
         [
@@ -599,7 +648,12 @@ def test_managed_ldap_lifecycle_check_sends_directory_password_only_through_stdi
     captured = {}
 
     def fake_run(command, **kwargs):
-        """Return fake run."""
+        """Return fake run.
+
+        Args:
+            command: Command and arguments to execute.
+            **kwargs: Additional keyword arguments accepted by the callable.
+        """
         captured["command"] = command
         captured["input"] = kwargs.get("input")
         return lifecycle.subprocess.CompletedProcess(command, 0, "", "")
@@ -616,7 +670,11 @@ def test_managed_ldap_lifecycle_check_sends_directory_password_only_through_stdi
 
 
 def test_appliance_user_ssh_command_does_not_wrap_with_sudo(monkeypatch):
-    """Verify that appliance user ssh command does not wrap with sudo."""
+    """Verify that appliance user ssh command does not wrap with sudo.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+    """
     lifecycle = load_lifecycle_module()
     args = lifecycle.parse_args(
         [
@@ -631,7 +689,12 @@ def test_appliance_user_ssh_command_does_not_wrap_with_sudo(monkeypatch):
     captured = {}
 
     def fake_run(command, **_kwargs):
-        """Return fake run."""
+        """Return fake run.
+
+        Args:
+            command: Command and arguments to execute.
+            **_kwargs: Additional keyword arguments accepted by the callable.
+        """
         captured["command"] = command
         return lifecycle.subprocess.CompletedProcess(command, 0, "ok\n", "")
 
@@ -697,7 +760,7 @@ def test_configure_esxi_pxe_selects_dhcp_scope_and_proves_reservation():
             Args:
                 method: HTTP or protocol method to invoke.
                 path: Filesystem or URL path to read, validate, or update.
-                kwargs: Additional keyword arguments forwarded to the wrapped call.
+                **kwargs: Additional keyword arguments forwarded to the wrapped call.
 
             Raises:
                 AssertionError: If an expected invariant is not satisfied.
@@ -722,7 +785,7 @@ def test_configure_esxi_pxe_selects_dhcp_scope_and_proves_reservation():
                 method: HTTP or protocol method to invoke.
                 path: Filesystem or URL path to read, validate, or update.
                 json_body: Json body supplied by the caller.
-                _kwargs: Additional keyword arguments accepted by the test double.
+                **_kwargs: Additional keyword arguments accepted by the test double.
 
             Raises:
                 AssertionError: If an expected invariant is not satisfied.

@@ -12,9 +12,19 @@ class DocumentedAPIRoute(APIRoute):
     """Use an endpoint's explicit documentation as its success-response summary."""
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
-        """Initialize the documented apiroute."""
+        """Initialize the documented apiroute.
+
+        Args:
+            *args: Additional positional arguments accepted by the callable.
+            **kwargs: Additional keyword arguments accepted by the callable.
+        """
         endpoint = kwargs.get("endpoint")
         endpoint_doc = getdoc(endpoint) if endpoint is not None else None
+        if kwargs.get("description") is None and endpoint_doc:
+            public_description = endpoint_doc
+            for heading in ("Args", "Arguments", "Keyword Args", "Returns", "Yields", "Raises"):
+                public_description = public_description.split(f"\n\n{heading}:", maxsplit=1)[0]
+            kwargs["description"] = public_description.rstrip()
         if kwargs.get("response_description", "Successful Response") == "Successful Response" and endpoint_doc:
             first_paragraph = endpoint_doc.split("\n\n", maxsplit=1)[0].replace("\n", " ").strip()
             if kwargs.get("status_code") == 204:

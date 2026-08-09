@@ -96,7 +96,13 @@ def _compile_command(
     upgrade: bool,
     index_url: str = DEFAULT_INDEX_URL,
 ) -> list[str]:
-    """Return compile command."""
+    """Return compile command.
+
+    Args:
+        target: Target resource or location affected by the operation.
+        upgrade: Whether upgrade applies to the operation.
+        index_url: URL used for index.
+    """
     command = [
         sys.executable,
         "-m",
@@ -123,6 +129,10 @@ def _compile_command(
 def _validated_index_url(index_url: str) -> str:
     """Return validated index url.
 
+    Args:
+        index_url: URL used for index.
+
+
     Raises:
         RuntimeError: If the operation cannot be completed safely.
     """
@@ -136,6 +146,10 @@ def _validated_index_url(index_url: str) -> str:
 
 def _assert_index_provides_upload_times(index_url: str) -> None:
     """Check index provides upload times.
+
+    Args:
+        index_url: URL used for index.
+
 
     Raises:
         RuntimeError: If the operation cannot be completed safely.

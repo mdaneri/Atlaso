@@ -211,7 +211,11 @@ def is_checkable(path: Path) -> bool:
 
 
 def collect_files(paths: list[str]) -> list[Path]:
-    """Return collect files."""
+    """Return collect files.
+
+    Args:
+        paths: Paths consumed by collect files.
+    """
     if paths:
         candidates: list[Path] = []
         for raw in paths:
@@ -251,7 +255,12 @@ def read_text(path: Path) -> tuple[str | None, Finding | None]:
 
 
 def line_for_offset(text: str, offset: int) -> int:
-    """Return line for offset."""
+    """Return line for offset.
+
+    Args:
+        text: Text content consumed by the operation.
+        offset: Offset consumed by line for offset.
+    """
     return text.count("\n", 0, offset) + 1
 
 
@@ -348,7 +357,11 @@ def check_jinja(path: Path, text: str) -> list[Finding]:
 
 
 def strip_css_noise(text: str) -> str:
-    """Return strip css noise."""
+    """Return strip css noise.
+
+    Args:
+        text: Text content consumed by the operation.
+    """
     text = re.sub(r"/\*.*?\*/", "", text, flags=re.DOTALL)
     text = re.sub(r'"(?:\\.|[^"\\])*"', '""', text)
     text = re.sub(r"'(?:\\.|[^'\\])*'", "''", text)
@@ -492,7 +505,11 @@ def check_file(path: Path) -> list[Finding]:
 
 
 def check_agent_policy_gate(root: Path) -> list[Finding]:
-    """Require agent policy entry points and their non-negotiable markers."""
+    """Require agent policy entry points and their non-negotiable markers.
+
+    Args:
+        root: Repository or filesystem root searched by the operation.
+    """
     findings: list[Finding] = []
     for relative_path, markers in REQUIRED_POLICY_MARKERS.items():
         path = root / relative_path
@@ -510,7 +527,11 @@ def check_agent_policy_gate(root: Path) -> list[Finding]:
 
 
 def check_ui_pattern_foundation(root: Path) -> list[Finding]:
-    """Require new grids and every wizard to use the shared browser foundation."""
+    """Require new grids and every wizard to use the shared browser foundation.
+
+    Args:
+        root: Repository or filesystem root searched by the operation.
+    """
     findings: list[Finding] = []
     foundation_path = root / UI_PATTERN_FOUNDATION
     foundation_text, foundation_error = read_text(foundation_path)
@@ -625,6 +646,10 @@ def check_xmlish_svg(path: Path, text: str) -> list[Finding]:
 
 def main(argv: list[str] | None = None) -> int:
     """Run the command-line entry point.
+
+    Args:
+        argv: Command-line arguments to parse, or ``None`` to use the process arguments.
+
 
     Returns:
         The main result.
