@@ -101,6 +101,10 @@ durable job, and some save desired state only. Desired-state edits do not mutate
 desired state, not that the corresponding service is already applied. Follow returned job identifiers through the Jobs
 or Tasks interfaces and verify terminal results.
 
+Legacy `/api/v1/dns/apply`, `/api/v1/dhcp/apply`, and `/api/v1/firewall/apply` routes remain available for compatibility
+but are intentionally absent from Swagger because they predate the reviewed global workflow. New clients must save
+desired state and use `/appliance-apply`; do not build new automation around the legacy direct-apply routes.
+
 ## Troubleshoot clients
 
 - Confirm `/openapi.json` is reachable and every client URL begins with `/api/v1`.

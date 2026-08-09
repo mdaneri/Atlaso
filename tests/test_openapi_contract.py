@@ -8,6 +8,11 @@ from atlaso.app.web_terminal import router as web_terminal_router
 
 
 HTTP_METHODS = {"get", "post", "put", "patch", "delete", "head", "options", "trace"}
+LEGACY_DIRECT_APPLY_PATHS = {
+    "/api/v1/dns/apply",
+    "/api/v1/dhcp/apply",
+    "/api/v1/firewall/apply",
+}
 
 
 def iter_operations(schema: dict[str, Any]) -> Iterator[tuple[str, str, dict[str, Any]]]:
@@ -61,6 +66,14 @@ def test_non_versioned_protocol_and_ui_routes_remain_registered():
     assert "/pxe/boot.ipxe" in {route.path for route in network_boot_public_router.routes}
     assert "/terminal" in {route.path for route in web_terminal_router.routes}
     assert "/dashboard" in {route.path for route in ui_router.routes}
+
+
+def test_legacy_direct_apply_routes_remain_compatible_but_are_not_promoted(client):
+    schema = client.get("/openapi.json").json()
+
+    for path in LEGACY_DIRECT_APPLY_PATHS:
+        assert path not in schema["paths"]
+        assert client.post(path).status_code == 401
 
 
 def test_every_openapi_operation_has_detailed_documentation(client):

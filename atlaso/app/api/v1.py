@@ -2155,7 +2155,13 @@ def validate_dns_config(identity: Annotated[Identity, Depends(require_scope("rea
     return dnsmasq_validation_response(db)
 
 
-@router.post("/dns/apply", response_model=ConfigApplyResponse, tags=["DNS"], operation_id="applyDnsConfig")
+@router.post(
+    "/dns/apply",
+    response_model=ConfigApplyResponse,
+    tags=["DNS"],
+    operation_id="applyDnsConfig",
+    include_in_schema=False,
+)
 def apply_dns_config(identity: Annotated[Identity, Depends(require_scope("write:dns"))], db: Session = Depends(get_db)) -> ConfigApplyResponse:
     """Apply Dns Config.
 
@@ -2463,7 +2469,13 @@ def validate_dhcp_config(identity: Annotated[Identity, Depends(require_scope("re
     return dnsmasq_validation_response(db)
 
 
-@router.post("/dhcp/apply", response_model=ConfigApplyResponse, tags=["DHCP"], operation_id="applyDhcpConfig")
+@router.post(
+    "/dhcp/apply",
+    response_model=ConfigApplyResponse,
+    tags=["DHCP"],
+    operation_id="applyDhcpConfig",
+    include_in_schema=False,
+)
 def apply_dhcp_config(identity: Annotated[Identity, Depends(require_scope("write:dhcp"))], db: Session = Depends(get_db)) -> ConfigApplyResponse:
     """Apply Dhcp Config.
 
@@ -2659,7 +2671,13 @@ def validate_firewall(identity: Annotated[Identity, Depends(require_scope("read:
     )
 
 
-@router.post("/firewall/apply", response_model=ConfigApplyResponse, tags=["Firewall"], operation_id="applyFirewall")
+@router.post(
+    "/firewall/apply",
+    response_model=ConfigApplyResponse,
+    tags=["Firewall"],
+    operation_id="applyFirewall",
+    include_in_schema=False,
+)
 def apply_firewall(identity: Annotated[Identity, Depends(require_scope("write:firewall"))], db: Session = Depends(get_db)) -> ConfigApplyResponse:
     """Apply Firewall.
 

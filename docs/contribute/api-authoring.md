@@ -13,6 +13,10 @@ Every supported OpenAPI operation belongs under `/api/v1` and must be fully docu
 changes it. Browser pages and non-versioned service protocols remain operational with `include_in_schema=False`; their
 canonical service guides document those routes.
 
+The legacy DNS, DHCP, and firewall direct-apply routes are the only reviewed `/api/v1` exclusions. They remain hidden
+compatibility surfaces because they predate the global Appliance Apply boundary. Do not add another exclusion instead
+of documenting a new API or use those routes as a pattern for host mutation.
+
 ## Operation requirements
 
 Every new or changed `/api/v1` operation must provide, beside the route declaration:
