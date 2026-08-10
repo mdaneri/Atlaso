@@ -341,11 +341,43 @@ def write_json_atomic(path: Path, payload: dict[str, object], *, mode: int = 0o6
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
     try:
-        temporary.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        with temporary.open("w", encoding="utf-8") as handle:
+            handle.write(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+            handle.flush()
+            os.fsync(handle.fileno())
         os.chmod(temporary, mode)
         temporary.replace(path)
+        fsync_parent_directory(path)
     finally:
         temporary.unlink(missing_ok=True)
+
+
+def fsync_parent_directory(path: Path) -> None:
+    """Make a preceding atomic rename durable on supported filesystems.
+
+    Args:
+        path: Renamed destination whose parent directory must be synchronized.
+    """
+    flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+    try:
+        directory_fd = os.open(path.parent, flags)
+    except OSError:
+        if os.name == "nt":
+            return
+        raise
+    try:
+        os.fsync(directory_fd)
+    except OSError:
+        if os.name != "nt":
+            raise
+    finally:
+        os.close(directory_fd)
+
+
+def promote_pending_marker() -> None:
+    """Atomically and durably promote the redacted pending state to applied."""
+    PENDING_MARKER_PATH.replace(MARKER_PATH)
+    fsync_parent_directory(MARKER_PATH)
 
 
 def write_network_review(properties: dict[str, str], error: str) -> None:
@@ -440,7 +472,7 @@ def recover_pending_customization() -> int:
     while not MARKER_PATH.exists():
         try:
             clear_ovf_environment()
-            PENDING_MARKER_PATH.replace(MARKER_PATH)
+            promote_pending_marker()
         except (OvfCustomizationError, OSError, subprocess.CalledProcessError):
             if not logged_failure:
                 log(
@@ -456,10 +488,20 @@ def recover_pending_customization() -> int:
 
 def scrub_applied_ovf_environment() -> None:
     """Remove newly injected properties when a source disk was already customized."""
-    if not read_ovf_environment().strip():
-        return
     logged_failure = False
     while True:
+        answered, content = try_read_ovf_environment()
+        if not answered:
+            if not logged_failure:
+                log(
+                    "VMware OVF customization is retrying an inconclusive deployment-property read from an already "
+                    "initialized appliance."
+                )
+                logged_failure = True
+            time.sleep(OVF_ENVIRONMENT_POLL_SECONDS)
+            continue
+        if not content.strip():
+            return
         try:
             clear_ovf_environment()
             return
@@ -557,8 +599,8 @@ def redacted_summary(config: dict[str, object]) -> dict[str, object]:
     }
 
 
-def read_ovf_environment() -> str:
-    """Return ovf environment."""
+def try_read_ovf_environment() -> tuple[bool, str]:
+    """Return whether VMware Tools answered and the current OVF environment."""
     commands = [
         ["vmware-rpctool", "info-get guestinfo.ovfEnv"],
         ["vmtoolsd", "--cmd", "info-get guestinfo.ovfEnv"],
@@ -567,9 +609,15 @@ def read_ovf_environment() -> str:
         if shutil.which(command[0]) is None:
             continue
         result = subprocess.run(command, check=False, text=True, capture_output=True)
-        if result.returncode == 0 and result.stdout.strip():
-            return result.stdout
-    return ""
+        if result.returncode == 0:
+            return True, result.stdout
+    return False, ""
+
+
+def read_ovf_environment() -> str:
+    """Return OVF XML, collapsing an inconclusive read for the normal polling path."""
+    _answered, content = try_read_ovf_environment()
+    return content
 
 
 def clear_ovf_environment() -> None:
@@ -942,7 +990,7 @@ def apply_customization(config: dict[str, object], *, dry_run: bool = False) -> 
         lambda: write_json_atomic(PENDING_MARKER_PATH, summary),
     )
     run_initialization_layer("OVF credential scrub", clear_ovf_environment)
-    run_initialization_layer("applied marker", lambda: PENDING_MARKER_PATH.replace(MARKER_PATH))
+    run_initialization_layer("applied marker", promote_pending_marker)
     return summary
 
 

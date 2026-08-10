@@ -595,7 +595,7 @@ def test_vmware_ovf_customizer_marker_recovers_interrupted_review_cleanup(tmp_pa
     ):
         path.write_text("{}\n", encoding="utf-8")
     monkeypatch.setattr(customizer, "log", lambda _message: None)
-    monkeypatch.setattr(customizer, "read_ovf_environment", lambda: "")
+    monkeypatch.setattr(customizer, "try_read_ovf_environment", lambda: (True, ""))
 
     assert customizer.main([]) == 0
     assert customizer.MARKER_PATH.exists()
@@ -619,9 +619,11 @@ def test_vmware_ovf_customizer_marker_scrubs_properties_injected_into_reused_sou
     customizer.NETWORK_CORRECTION_PATH = tmp_path / "network-correction.json"
     customizer.MARKER_PATH.write_text("{}\n", encoding="utf-8")
     customizer.INITIALIZATION_LOCK_PATH.write_text("\n", encoding="utf-8")
-    monkeypatch.setattr(customizer, "read_ovf_environment", lambda: OVF_ENV)
+    reads = iter([(False, ""), (True, OVF_ENV)])
+    monkeypatch.setattr(customizer, "try_read_ovf_environment", lambda: next(reads))
     scrubbed = []
     monkeypatch.setattr(customizer, "clear_ovf_environment", lambda: scrubbed.append(True))
+    monkeypatch.setattr(customizer.time, "sleep", lambda seconds: None)
     messages = []
     monkeypatch.setattr(customizer, "log", messages.append)
 
@@ -632,6 +634,31 @@ def test_vmware_ovf_customizer_marker_scrubs_properties_injected_into_reused_sou
     assert not customizer.INITIALIZATION_LOCK_PATH.exists()
     assert "admin-secret" not in " ".join(messages)
     assert "root-secret1" not in " ".join(messages)
+    assert "inconclusive deployment-property read" in " ".join(messages)
+
+
+def test_vmware_ovf_customizer_durably_persists_atomic_marker_before_scrub(tmp_path, monkeypatch):
+    """Verify atomic marker writes synchronize file content and the rename directory.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+    """
+    customizer = load_customizer()
+    destination = tmp_path / "customization.pending"
+    fsync_calls = []
+    closed = []
+    directory_fd = 987
+    monkeypatch.setattr(customizer.os, "fsync", fsync_calls.append)
+    monkeypatch.setattr(customizer.os, "open", lambda path, flags: directory_fd)
+    monkeypatch.setattr(customizer.os, "close", closed.append)
+
+    customizer.write_json_atomic(destination, {"fqdn": "appliance.atlaso.internal"})
+
+    assert destination.exists()
+    assert len(fsync_calls) == 2
+    assert fsync_calls[-1] == directory_fd
+    assert closed == [directory_fd]
 
 
 def test_vmware_ovf_customizer_supports_disabled_auto_and_static_ipv6(tmp_path):
