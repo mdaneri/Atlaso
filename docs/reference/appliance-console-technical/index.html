@@ -3485,12 +3485,21 @@ logged.</p>
 <p>Static fields remain disabled unless their address family uses Static mode. A static IPv6 gateway must be within the
 configured prefix or link-local (<code>fe80::/10</code>) and cannot equal the interface address. Disabled or Automatic IPv6 clears
 stored static IPv6 address and gateway state.</p>
-<p>Network, DNS, and Firewall edits update desired state and create one synchronous global appliance-apply task with actor
-<code>console:root</code>. The management editor selects Network and Appliance Settings together, adding Firewall only when the
-address change affects its rendered validity. Other pending units remain unselected.</p>
+<p>Network, DNS, and Firewall edits update desired state and create two synchronous global appliance-apply tasks with actor
+<code>console:root</code>. The first selects Network and Firewall together for every management correction. This guarantees that
+the persisted nftables rules are regenerated from the corrected management CIDR instead of retaining an OVF-derived
+source restriction. Other pending units remain unselected.</p>
+<p>After the first task, the constrained console helper retries <code>atlaso-bootstrap-https.service</code> when
+<code>/var/lib/atlaso/first-boot-https.applied</code> is absent. The bootstrap marker is created only after CA apply produces the
+managed certificate/key and <code>nginx -t</code> succeeds. The helper validates nginx before reload, enables nginx and Atlaso,
+starts an inactive control plane, and requires five consecutive local readiness samples: HTTP 200 from uvicorn
+<code>/openapi.json</code> plus the applied nginx contract. HTTPS mode requires HTTP 308 and HTTPS <code>/openapi.json</code> 200; HTTP-only
+mode requires HTTP <code>/openapi.json</code> 200. Appliance Settings is then applied as the second task and the same idempotent
+readiness check runs again so its delayed Atlaso restart cannot produce a false success.</p>
 <p>The console rejects changes while another appliance-apply task is active. The selected helper path runs as a real local
-recovery action even when ordinary adapters use dry-run. Validation and apply failures remain pending for web review;
-the console never invokes unvalidated fallback commands.</p>
+recovery action even when ordinary adapters use dry-run. Validation, bootstrap, nginx, service, and readiness failures
+identify their stage and leave pending desired state for web review; the console never invokes unvalidated fallback
+commands.</p>
 <h2 id="maintenance-isolation">Maintenance isolation<a class="headerlink" href="#maintenance-isolation" title="Permanent link">&para;</a></h2>
 <p>Maintenance isolation stores the service enablement and activity snapshot at
 <code>/var/lib/atlaso/console/services.json</code>. It preserves:</p>
