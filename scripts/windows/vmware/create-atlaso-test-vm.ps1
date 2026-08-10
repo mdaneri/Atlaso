@@ -51,8 +51,9 @@ function Install-ApplianceRootCa {
         [int]$PollSeconds = 5
     )
 
-    $rootPemPath = Join-Path $env:TEMP "atlaso-$Name-root-ca.pem"
-    $rootCerPath = Join-Path $env:TEMP "atlaso-$Name-root-ca.cer"
+    $tempRoot = [System.IO.Path]::GetFullPath([System.IO.Path]::GetTempPath())
+    $rootPemPath = [System.IO.Path]::Combine($tempRoot, "atlaso-$Name-root-ca.pem")
+    $rootCerPath = [System.IO.Path]::Combine($tempRoot, "atlaso-$Name-root-ca.cer")
     $rootUrl = "http://$IpAddress/ca/downloads/root-ca.pem"
     $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
     $downloaded = $false
@@ -72,8 +73,12 @@ function Install-ApplianceRootCa {
         }
         catch {
             $lastError = $_.Exception.Message
-            if (Test-Path -LiteralPath $rootPemPath) {
-                Remove-Item -LiteralPath $rootPemPath -Force -ErrorAction SilentlyContinue
+            try {
+                # File.Delete is idempotent for a missing file and safely handles valid dotted/short Windows paths.
+                [System.IO.File]::Delete($rootPemPath)
+            }
+            catch {
+                # Best-effort cleanup must never mask the CA readiness error that triggered this retry.
             }
             if ((Get-Date) -lt $deadline) {
                 Write-Host "Atlaso root CA is not ready; retrying in $PollSeconds seconds." -ForegroundColor DarkGray
