@@ -4081,11 +4081,17 @@ def test_appliance_settings_apply_task_records_redacted_dry_run_command_evidence
     with caplog.at_level(logging.INFO, logger="atlaso.appliance_apply"):
         apply_response = client.post("/appliance-apply", data={"csrf": csrf, "selected_units": "appliance_settings"})
     assert_apply_redirect(apply_response)
-    assert "completed status=succeeded selected_units=appliance_settings" in caplog.text
-    assert "unit=appliance_settings status=succeeded" in caplog.text
-    assert "unit=appliance_settings command_index=1 returncode=0 dry_run=True" in caplog.text
-    assert "unit=appliance_settings command_index=2 returncode=0 dry_run=True" in caplog.text
-    assert "atlaso-helper appliance-settings validate" not in caplog.text
+    apply_logs = "\n".join(
+        record.getMessage()
+        for record in caplog.records
+        if record.name == "atlaso.appliance_apply"
+    )
+    assert "succeeded; desired-state and helper details omitted" in apply_logs
+    assert "selected_units" not in apply_logs
+    assert "unit=appliance_settings" not in apply_logs
+    assert "command_index" not in apply_logs
+    assert "returncode" not in apply_logs
+    assert "atlaso-helper appliance-settings validate" not in apply_logs
     assert "Appliance Settings" in apply_response.text
     assert "data-apply-progress-modal" not in apply_response.text
     with SessionLocal() as db:
@@ -10337,7 +10343,11 @@ def test_vsphere_key_provider_page_uses_shared_management_contract(client):
 
 
 def test_vsphere_key_provider_browser_routes_enforce_kms_scopes(client):
-    """Verify browser reads and mutations enforce the renamed KMS scope boundary."""
+    """Verify browser reads and mutations enforce the renamed KMS scope boundary.
+
+    Args:
+        client: HTTP test client used to exercise browser authorization.
+    """
     from sqlalchemy import select
 
     from atlaso.app.database import SessionLocal
@@ -10588,7 +10598,12 @@ def test_kms_apply_task_captures_current_desired_state(client):
 
 
 def test_successful_kms_apply_marks_disabled_provider_removal_applied(monkeypatch, tmp_path):
-    """Verify a successful real apply acknowledges disabled-provider runtime removal."""
+    """Verify a successful real apply acknowledges disabled-provider runtime removal.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace fixed staging paths.
+        tmp_path: Temporary directory provided for isolated staged files.
+    """
     from atlaso.app.adapters.system import AdapterResult
     from atlaso.app.models import VsphereKeyProvider
     from atlaso.app.ui import execute_appliance_apply_unit
@@ -10602,10 +10617,20 @@ def test_successful_kms_apply_marks_disabled_provider_removal_applied(monkeypatc
 
         @staticmethod
         def validate_kms_config(path):
+            """Return successful KMS validation.
+
+            Args:
+                path: Fixed staged KMS configuration path.
+            """
             return AdapterResult(["kms", "validate", path], False)
 
         @staticmethod
         def apply_kms_config(path):
+            """Return successful KMS apply.
+
+            Args:
+                path: Fixed staged KMS configuration path.
+            """
             return AdapterResult(["kms", "apply", path], False)
 
     config_path = tmp_path / "kms" / "server.json"

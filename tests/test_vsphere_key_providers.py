@@ -165,7 +165,11 @@ def test_provider_api_enforces_scopes_public_certificates_and_global_fingerprint
 
 
 def test_provider_readiness_tracks_every_trust_graph_mutation(client) -> None:
-    """Verify vCenter and certificate mutations make the provider desired state pending."""
+    """Verify vCenter and certificate mutations make the provider desired state pending.
+
+    Args:
+        client: HTTP test client used to exercise the public provider API.
+    """
     token = _token(client, ["read:kms", "write:kms"])
     headers = {"Authorization": f"Bearer {token}"}
     provider_id = client.post(

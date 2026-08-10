@@ -713,7 +713,13 @@ def test_status_seeds_authenticated_zero_for_configured_empty_provider(
     tmp_path: Path,
     capsys,
 ) -> None:
-    """Verify status distinguishes an authenticated empty namespace from unavailable evidence."""
+    """Verify status distinguishes an authenticated empty namespace from unavailable evidence.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace runtime configuration loaders.
+        tmp_path: Temporary directory provided for isolated KMIP state.
+        capsys: Pytest fixture capturing the status document.
+    """
     config = service_config(tmp_path, material(tmp_path))
     monkeypatch.setattr("atlaso.app.kmip.server.load_config", lambda _path: config)
     monkeypatch.setattr("atlaso.app.kmip.server._load_secrets_key", lambda: "appliance-secrets-key")

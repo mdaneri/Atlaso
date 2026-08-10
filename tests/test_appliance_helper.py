@@ -3739,7 +3739,13 @@ def test_kms_helper_status_fails_closed_when_store_material_cannot_be_authentica
     tmp_path,
     capsys,
 ):
-    """Verify missing runtime credentials never convert retained store state into zero counts."""
+    """Verify missing runtime credentials never convert retained store state into zero counts.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace fixed helper paths.
+        tmp_path: Temporary directory provided for isolated runtime state.
+        capsys: Pytest fixture capturing standard output and error streams.
+    """
     helper = load_helper_module()
     state_dir = tmp_path / "state"
     state_dir.mkdir()
@@ -3759,7 +3765,13 @@ def test_kms_helper_status_reports_empty_only_when_all_fixed_runtime_state_is_ab
     tmp_path,
     capsys,
 ):
-    """Verify a clean fixed runtime path provides trustworthy empty-store evidence."""
+    """Verify a clean fixed runtime path provides trustworthy empty-store evidence.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace fixed helper paths.
+        tmp_path: Temporary directory provided for isolated runtime state.
+        capsys: Pytest fixture capturing standard output and error streams.
+    """
     helper = load_helper_module()
     monkeypatch.setattr(helper, "KMS_STATE_DIR", tmp_path / "missing-state")
     monkeypatch.setattr(helper, "KMS_CONFIG_PATH", tmp_path / "missing-server.json")
