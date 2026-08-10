@@ -584,6 +584,10 @@ def test_photon_provisioning_installs_default_nginx_management_proxy():
     assert "proxy_set_header X-Forwarded-Proto https;" in bootstrap
     assert "proxy_set_header X-Forwarded-Proto http;" in bootstrap
     assert "proxy_set_header Upgrade $http_upgrade;" in bootstrap
+    assert "if not certificate.is_file() or not key.is_file():" in bootstrap
+    assert 'if nginx is None:' in bootstrap
+    assert bootstrap.index("if not certificate.is_file() or not key.is_file():") < bootstrap.index("MARKER_PATH.write_text")
+    assert bootstrap.index("validation = run([nginx, \"-t\"])") < bootstrap.index("MARKER_PATH.write_text")
     assert "nginx -t" in script
     assert "systemctl enable --now nginx" in script
     assert 'ATLASO_DRY_RUN_SYSTEM_ADAPTERS="${ATLASO_DRY_RUN_SYSTEM_ADAPTERS:-true}"' in script

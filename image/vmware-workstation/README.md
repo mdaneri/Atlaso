@@ -231,6 +231,12 @@ overrides when supplied, hostname, root password, optional root SSH state, and b
 records a redacted marker under `/var/lib/atlaso`. Passwords are consumed as deployment inputs and are not printed in
 the marker or customization log.
 
+If an administrator later corrects management networking from the tty1 console, Atlaso explicitly regenerates Network
+and Firewall state from the corrected CIDR, retries an unfinished first-boot HTTPS bootstrap, applies Appliance
+Settings, validates nginx, restores nginx and Atlaso when needed, and proves stable loopback HTTP/HTTPS readiness before
+the console reports success. The supported external check remains
+`https://<management-address>/openapi.json`.
+
 The OVF descriptor stores these as unqualified property IDs inside the `atlaso` product class. ESXi qualifies them once
 in the guest OVF environment as `atlaso.<property>`; do not repeat the class prefix in each property ID.
 
