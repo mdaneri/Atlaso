@@ -812,12 +812,20 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     xml_text = Path(args.ovf_env_file).read_text(encoding="utf-8") if args.ovf_env_file else read_ovf_environment()
-    properties = parse_ovf_environment(xml_text)
+    try:
+        properties = parse_ovf_environment(xml_text)
+    except ET.ParseError:
+        if args.dry_run:
+            log("VMware OVF customization failed validation: the OVF environment XML is malformed.")
+            return 2
+        properties = {}
+        log("Atlaso VMware OVF deployment properties are malformed; waiting with tty1 locked.")
     if not properties:
         if args.dry_run:
             log("No Atlaso VMware OVF properties found; image defaults remain unchanged.")
             return 0
         log("Atlaso VMware OVF deployment properties are unavailable; waiting with tty1 locked.")
+        malformed_logged = False
         while not properties:
             time.sleep(OVF_ENVIRONMENT_POLL_SECONDS)
             xml_text = (
@@ -825,7 +833,13 @@ def main(argv: list[str] | None = None) -> int:
                 if args.ovf_env_file
                 else read_ovf_environment()
             )
-            properties = parse_ovf_environment(xml_text)
+            try:
+                properties = parse_ovf_environment(xml_text)
+            except ET.ParseError:
+                if not malformed_logged:
+                    log("Atlaso VMware OVF deployment properties remain malformed; continuing to wait.")
+                    malformed_logged = True
+                continue
         log("Atlaso VMware OVF deployment properties are available; continuing initialization.")
 
     try:
@@ -836,7 +850,7 @@ def main(argv: list[str] | None = None) -> int:
             log(f"VMware OVF customization failed validation: {exc}")
             return 2
         return wait_for_network_review(properties, str(exc))
-    except (OvfCustomizationError, ET.ParseError) as exc:
+    except OvfCustomizationError as exc:
         log(f"VMware OVF customization failed validation: {exc}")
         return 2
 

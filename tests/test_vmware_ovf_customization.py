@@ -475,14 +475,17 @@ def test_vmware_ovf_customizer_waits_locked_for_delayed_ovf_properties(tmp_path,
     apply_attempts: list[dict[str, object]] = []
 
     def supply_ovf_properties(_seconds):
-        """Make VMware deployment properties available after observing the lock.
+        """Advance VMware properties from empty through malformed to valid XML.
 
         Args:
             _seconds: Requested polling delay, unused by the test.
         """
         lock_observations.append(customizer.INITIALIZATION_LOCK_PATH.exists())
         assert not customizer.MARKER_PATH.exists()
-        ovf_path.write_text(OVF_ENV, encoding="utf-8")
+        ovf_path.write_text(
+            "<Environment>" if len(lock_observations) == 1 else OVF_ENV,
+            encoding="utf-8",
+        )
 
     def apply_customization(config, *, dry_run=False):
         """Complete customization after delayed properties become available.
@@ -505,7 +508,7 @@ def test_vmware_ovf_customizer_waits_locked_for_delayed_ovf_properties(tmp_path,
     monkeypatch.setattr(customizer, "log", lambda _message: None)
 
     assert customizer.main(["--ovf-env-file", str(ovf_path)]) == 0
-    assert lock_observations == [True]
+    assert lock_observations == [True, True]
     assert len(apply_attempts) == 1
     assert customizer.MARKER_PATH.exists()
     assert not customizer.INITIALIZATION_LOCK_PATH.exists()
