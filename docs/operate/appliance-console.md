@@ -73,16 +73,24 @@ authorization result between menus.
 4. Enter static addresses and gateways only when the corresponding mode is **Static**.
 5. Enter external DNS servers.
 6. Review the values and submit the change.
-7. Wait for the global appliance-apply task to complete.
-8. Confirm that the console shows the expected management address and URL.
-9. Verify `https://<management-address>/openapi.json` from another machine.
+7. Wait while Atlaso applies corrected Network and Firewall state, retries unfinished first-boot HTTPS, applies
+   Appliance Settings, and verifies local application plus nginx readiness.
+8. Confirm that the console reports both appliance-apply task IDs and shows the expected management address and URL.
+9. Verify that `http://<management-address>/` redirects to HTTPS from another machine.
+10. Verify that `https://<management-address>/openapi.json` returns HTTP 200 from another machine.
 
 The editor supports IPv4 DHCP or static configuration. IPv6 can be disabled, automatic through RA/SLAAC, or static. A
 static IPv6 gateway must be on-link or link-local and cannot equal the interface address.
 
-The recovery action updates Atlaso desired state and submits one synchronous global appliance-apply task. It never
-falls back to unvalidated host commands. A validation or apply failure leaves the new desired state pending for review
-in the web UI.
+The recovery action updates Atlaso desired state and submits two synchronous, scoped global appliance-apply tasks. The
+first always applies Network and Firewall so stale management-source restrictions cannot survive an address correction.
+Atlaso then retries first-boot HTTPS only when its completion marker is absent, validates nginx before any reload, and
+ensures nginx and Atlaso are enabled and running. After the second task applies Appliance Settings, the console requires
+five stable local checks: application `/openapi.json` on port 8000 plus the applied nginx management mode. HTTPS mode
+requires the HTTP redirect and HTTPS `/openapi.json`; HTTP-only mode requires HTTP `/openapi.json`.
+
+It never falls back to unvalidated host commands. A validation, bootstrap, firewall, nginx, service, or readiness
+failure names the failing layer on the console and leaves unapplied desired state pending for review in the web UI.
 
 ## Isolate or restore appliance services
 
