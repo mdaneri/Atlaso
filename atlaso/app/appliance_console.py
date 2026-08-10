@@ -975,22 +975,6 @@ def _captured_apply_payload(units: list[dict[str, Any]], selected_ids: set[str])
     return selected, payload
 
 
-def _console_unit_hashes(unit_ids: set[str]) -> dict[str, str]:
-    """Return console unit hashes.
-
-    Args:
-        unit_ids: Stable identifiers of the associated unit resources.
-    """
-    from atlaso.app.ui import appliance_apply_units
-
-    with SessionLocal() as db:
-        return {
-            str(unit["id"]): str(unit["snapshot_hash"])
-            for unit in appliance_apply_units(db)
-            if unit["id"] in unit_ids
-        }
-
-
 def _ensure_no_active_apply() -> None:
     """Ensure no active apply.
 
@@ -1005,15 +989,12 @@ def _ensure_no_active_apply() -> None:
             raise ConsoleOperationError(f"Appliance apply task {active.id} is already {active.status}.")
 
 
-def _submit_console_apply(required_ids: set[str], *, changed_dependents: dict[str, str] | None = None) -> str:
+def _submit_console_apply(required_ids: set[str]) -> str:
     # Imported lazily so read-only status remains available even if the web stack has a startup issue.
     """Return submit console apply.
 
     Args:
         required_ids: Stable identifiers of the associated required resources.
-        changed_dependents: Changed dependents consumed by submit console apply.
-
-
     Raises:
         ConsoleOperationError: If the operation encounters an invalid state.
     """
@@ -1030,16 +1011,6 @@ def _submit_console_apply(required_ids: set[str], *, changed_dependents: dict[st
             raise ConsoleOperationError(f"Appliance apply task {active.id} is already {active.status}.")
         units = appliance_apply_units(db)
         selected_ids = set(required_ids)
-        if changed_dependents:
-            selected_ids.update(
-                str(unit["id"])
-                for unit in units
-                if (
-                    unit["id"] in changed_dependents
-                    and str(unit["snapshot_hash"]) != changed_dependents[unit["id"]]
-                    and not unit["validation_errors"]
-                )
-            )
         selected, payload = _captured_apply_payload(units, selected_ids)
         job_id = f"job_{uuid4().hex[:12]}"
         job = Job(
@@ -1094,6 +1065,29 @@ def _submit_console_apply(required_ids: set[str], *, changed_dependents: dict[st
     return job_id
 
 
+def _recover_management_plane(stage: str) -> None:
+    """Retry first-boot HTTPS and verify local management readiness.
+
+    Args:
+        stage: Operator-facing description of the completed correction phase.
+
+    Raises:
+        ConsoleOperationError: If the constrained recovery helper does not restore readiness.
+    """
+    try:
+        result = _run(
+            [str(HELPER_PATH), "console", "recover-management-plane", "--real"],
+            timeout=120,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise ConsoleOperationError(
+            f"{stage}, but management-plane recovery did not complete: {exc}"
+        ) from exc
+    if result.returncode != 0:
+        detail = (result.stderr or "the recovery helper returned no failure detail").strip()
+        raise ConsoleOperationError(f"{stage}, but management-plane recovery failed: {detail}")
+
+
 def configure_management(
     ipv4_method: str,
     ipv4_cidr: str,
@@ -1124,7 +1118,6 @@ def configure_management(
     mode, ipv6_cidr_value, ipv6_gateway_value = validate_ipv6_management_values(ipv6_mode, ipv6_cidr, ipv6_gateway)
     dns_servers = validate_dns_servers(raw_dns_servers)
     _ensure_no_active_apply()
-    dependent_hashes = _console_unit_hashes({"firewall"})
     with SessionLocal() as db:
         interface = _management_interface(db)
         settings = db.scalar(select(ApplianceSettings).order_by(ApplianceSettings.id))
@@ -1147,7 +1140,20 @@ def configure_management(
             resource_id=interface.name,
             detail=f"ipv4_method={method}; ipv6_mode={mode}; dns_servers={len(dns_servers)}",
         )
-    return _submit_console_apply({"network", "appliance_settings"}, changed_dependents=dependent_hashes)
+    network_job_id = _submit_console_apply({"network", "firewall"})
+    _recover_management_plane("Network and Firewall were applied")
+    settings_job_id = _submit_console_apply({"appliance_settings"})
+    _recover_management_plane("Appliance Settings were applied")
+    with SessionLocal() as db:
+        record_audit(
+            db,
+            actor=CONSOLE_ACTOR,
+            action="console_recover_management_plane",
+            resource_type="job",
+            resource_id=settings_job_id,
+            detail=f"network_job={network_job_id}; settings_job={settings_job_id}; readiness=verified",
+        )
+    return f"tasks {network_job_id} and {settings_job_id}"
 
 
 def configure_dns(raw_servers: str) -> str:

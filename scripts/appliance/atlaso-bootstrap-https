@@ -223,24 +223,29 @@ def main() -> int:
     if result != 0:
         return result
 
+    certificate = Path(cert_path)
     key = Path(key_path)
-    if key.exists():
-        try:
-            shutil.chown(key, user="root", group="atlaso")
-        except (LookupError, PermissionError):
-            pass
-        key.chmod(0o640)
+    if not certificate.is_file() or not key.is_file():
+        print("CA apply completed without the managed appliance HTTPS certificate and key")
+        return 2
+    try:
+        shutil.chown(key, user="root", group="atlaso")
+    except (LookupError, PermissionError):
+        pass
+    key.chmod(0o640)
 
     write_nginx_management_config(fqdn=fqdn, cert_path=cert_path, key_path=key_path)
     nginx = shutil.which("nginx")
-    if nginx:
-        validation = run([nginx, "-t"])
-        if validation.stdout:
-            print(validation.stdout, end="")
-        if validation.stderr:
-            print(validation.stderr, end="")
-        if validation.returncode != 0:
-            return validation.returncode
+    if nginx is None:
+        print("nginx is unavailable; first-boot HTTPS configuration was not validated")
+        return 2
+    validation = run([nginx, "-t"])
+    if validation.stdout:
+        print(validation.stdout, end="")
+    if validation.stderr:
+        print(validation.stderr, end="")
+    if validation.returncode != 0:
+        return validation.returncode
 
     fix_state_permissions()
     MARKER_PATH.write_text("Atlaso first-boot HTTPS bootstrap completed.\n", encoding="utf-8")

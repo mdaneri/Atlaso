@@ -241,6 +241,13 @@ A root-owned lock staged in the VMware image disables ordinary privileged tty1 a
 password applies. Non-network properties validate before network recovery is offered, and a later boot clears stale
 handshake files when the applied marker proves customization finished.
 
+If an administrator later corrects management networking from the tty1 console, Atlaso explicitly regenerates Network
+and Firewall state from the corrected CIDR, retries an unfinished first-boot HTTPS bootstrap, applies Appliance
+Settings, validates nginx, restores nginx and Atlaso when needed, and proves stable loopback readiness for the applied
+HTTP-only or HTTPS management mode before the console reports success. Check
+`https://<management-address>/openapi.json` when HTTPS is enabled or `http://<management-address>/openapi.json` in
+HTTP-only mode.
+
 The OVF descriptor stores these as unqualified property IDs inside the `atlaso` product class. ESXi qualifies them once
 in the guest OVF environment as `atlaso.<property>`; do not repeat the class prefix in each property ID.
 
