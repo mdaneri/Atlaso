@@ -307,7 +307,8 @@ same fail-closed initialization contract as an OVA deployment instead of leaving
 that only an OVF deployment normally supplies. Use `-FirstBootFqdn`, `-AdminPassword`, and `-RootPassword` to override
 the normal test-VM values; the lifecycle wrapper uses its existing admin-password input. Password values are written
 only to the guestinfo-backed VMX setting until successful first-boot consumption clears it; they are never printed in
-plan, result, or connection-summary output.
+plan, result, or connection-summary output. Raw-clone credential overrides must be at least 12 characters and cannot
+contain leading, trailing, XML control, or non-XML characters that would change during OVF attribute parsing.
 
 The VM's first virtual terminal runs the Atlaso recovery console; tty2 and later terminals retain Photon login prompts.
 Its normal 80x30 layout includes boot and runtime state for the appliance services, including Firewall desired state. F3

@@ -47,6 +47,15 @@ function New-AtlasoWorkstationOvfEnvironment {
             @{ Name = 'AdminPassword'; Value = $AdminPassword },
             @{ Name = 'RootPassword'; Value = $RootPassword }
         )) {
+        try {
+            [void][System.Xml.XmlConvert]::VerifyXmlChars($passwordInput.Value)
+        }
+        catch {
+            throw "$($passwordInput.Name) contains characters that cannot be represented in the OVF environment."
+        }
+        if ($passwordInput.Value -ne $passwordInput.Value.Trim() -or $passwordInput.Value -match '[\r\n\t]') {
+            throw "$($passwordInput.Name) cannot contain leading, trailing, or XML-normalized control whitespace."
+        }
         if ($passwordInput.Value.Length -lt 12) {
             throw "$($passwordInput.Name) must contain at least 12 characters for Atlaso first-boot customization."
         }

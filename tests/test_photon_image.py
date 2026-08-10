@@ -1236,6 +1236,9 @@ def test_vmware_raw_vmx_workflows_inject_complete_first_boot_ovf_environment_bef
     ):
         assert f"'{key}'" in helper
     assert "[System.Security.SecurityElement]::Escape($Value)" in helper
+    assert "[System.Xml.XmlConvert]::VerifyXmlChars($passwordInput.Value)" in helper
+    assert "$passwordInput.Value -ne $passwordInput.Value.Trim()" in helper
+    assert "$passwordInput.Value -match '[\\r\\n\\t]'" in helper
     assert "must contain at least 12 characters" in helper
     assert ".EndsWith('.local')" in helper
     assert "First-boot FQDN must not use .local." in helper
@@ -1256,6 +1259,9 @@ def test_vmware_raw_vmx_workflows_inject_complete_first_boot_ovf_environment_bef
         "Start-WorkstationVm -Path $vmx"
     )
     assert "[string]$AdminPassword = 'VMware01!Test'" in lifecycle
+    assert "$ApplianceGuestPassword = $AdminPassword" in lifecycle
+    assert "'--appliance-ssh-password', $ApplianceGuestPassword" in lifecycle
+    assert "-gp $SshPassword" not in lifecycle
     assert "[string]$AdminPassword = 'VMware01!Test'" in lifecycle_wrapper
     assert "[string]$SshPassword = 'VMware01!Test'" in lifecycle_wrapper
     assert "complete Atlaso first-boot OVF environment" in docs

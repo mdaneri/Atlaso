@@ -641,6 +641,8 @@ def test_managed_ldap_lifecycle_check_sends_directory_password_only_through_stdi
             "admin-secret",
             "--ssh-password",
             "ssh-secret",
+            "--appliance-ssh-password",
+            "appliance-secret",
             "--appliance-ssh-host",
             "192.0.2.10",
         ]
@@ -682,6 +684,8 @@ def test_appliance_user_ssh_command_does_not_wrap_with_sudo(monkeypatch):
             "test",
             "--ssh-password",
             "ssh-secret",
+            "--appliance-ssh-password",
+            "appliance-secret",
             "--appliance-ssh-host",
             "192.0.2.10",
         ]
@@ -709,6 +713,10 @@ def test_appliance_user_ssh_command_does_not_wrap_with_sudo(monkeypatch):
     )
 
     assert result["returncode"] == 0
+    assert lifecycle.ssh_password(args, "appliance") == "appliance-secret"
+    assert lifecycle.ssh_password(args, "client") == "ssh-secret"
+    assert captured["command"][4] == "appliance-secret"
+    assert "ssh-secret" not in captured["command"]
     assert captured["command"][-1] == "pwsh -NoLogo -NoProfile -NonInteractive -Command Get-Date"
     assert "sudo" not in captured["command"][-1]
 

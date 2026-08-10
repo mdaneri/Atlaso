@@ -91,6 +91,8 @@ normal ESXi or Workstation OVF deployment would provide. The lifecycle lab uses 
 disabled IPv6 and root SSH, a generated lab FQDN, and the existing lifecycle admin-password input for both required
 first-boot credential properties. The value is stored only in the clone's guestinfo-backed VMX setting and is excluded
 from plan and result artifacts. Invalid identity or password inputs fail before the runner creates the lab directories.
+After customization, appliance guest operations use that applied admin password while `-SshPassword` remains dedicated
+to the client VMs, so callers may continue to supply different appliance and client credentials.
 
 For focused deployed OIDC acceptance independent of the full service-network topology, pass `-OidcOnly`. The wrapper
 still clones the selected appliance, installs the exact branch wheel, proves appliance readiness, and runs the OIDC
@@ -133,6 +135,8 @@ That is the Workstation counterpart to `scripts/windows/hyperv/create-atlaso-tes
 vmnet only; pass `-IncludeLabNetworkAdapters` after creating the SiteA, WAN/SiteB, and trunk-like vmnets.
 The wrapper injects the same complete DHCP-first OVF environment before power-on; use `-FirstBootFqdn`,
 `-AdminPassword`, and `-RootPassword` when the default local test identity or credentials are not appropriate.
+Credential overrides must be at least 12 characters, contain no leading, trailing, tab, carriage-return, or newline
+whitespace, and contain only XML-representable characters so the OVF value round-trips unchanged.
 `-TrustRootCa` waits for the first-boot CA endpoint, removes partial downloads best-effort between retries, validates the
 self-signed Atlaso root CA, and imports it into the current-user Trusted Root store. The temporary-file cleanup remains
 idempotent for missing files and safely handles dotted user-profile directories and valid DOS 8.3 short paths, so a

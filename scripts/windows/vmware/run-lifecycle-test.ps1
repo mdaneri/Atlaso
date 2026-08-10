@@ -44,6 +44,7 @@ $repoRoot = Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..\..')
 if (-not $SshPassword) {
     $SshPassword = $AdminPassword
 }
+$ApplianceGuestPassword = $AdminPassword
 if ($RoutingWanOnly) {
     $SkipBackupRestoreTest = $true
 }
@@ -742,7 +743,7 @@ function Invoke-ApplianceGuestScript {
         [string]$Script
     )
 
-    & $resolvedVmrun -T ws -gu $ApplianceSshUser -gp $SshPassword runScriptInGuest $ApplianceVmx /bin/sh $Script | Out-Host
+    & $resolvedVmrun -T ws -gu $ApplianceSshUser -gp $ApplianceGuestPassword runScriptInGuest $ApplianceVmx /bin/sh $Script | Out-Host
     if ($LASTEXITCODE -ne 0) {
         throw "Appliance guest operation failed."
     }
@@ -785,11 +786,11 @@ function Sync-ApplianceHelperScript {
     }
     $guestTemp = "/tmp/atlaso-helper"
     if ($PSCmdlet.ShouldProcess($ApplianceVmx, "Sync Atlaso helper into appliance")) {
-        & $resolvedVmrun -T ws -gu $ApplianceSshUser -gp $SshPassword copyFileFromHostToGuest $ApplianceVmx $localHelper $guestTemp | Out-Host
+        & $resolvedVmrun -T ws -gu $ApplianceSshUser -gp $ApplianceGuestPassword copyFileFromHostToGuest $ApplianceVmx $localHelper $guestTemp | Out-Host
         if ($LASTEXITCODE -ne 0) {
             throw "Failed to copy Atlaso helper into the appliance with VMware guest operations."
         }
-        $quotedPassword = ConvertTo-GuestShellSingleQuote -Value $SshPassword
+        $quotedPassword = ConvertTo-GuestShellSingleQuote -Value $ApplianceGuestPassword
         $quotedTemp = ConvertTo-GuestShellSingleQuote -Value $guestTemp
         $script = "printf '%s\n' $quotedPassword | sudo -S install -o root -g root -m 0755 $quotedTemp /opt/atlaso/bin/atlaso-helper"
         Invoke-ApplianceGuestScript -ApplianceVmx $ApplianceVmx -Script $script
@@ -818,11 +819,11 @@ function Sync-ApplianceApplicationWheel {
 
     $guestWheel = "/tmp/$($wheel.Name)"
     if ($PSCmdlet.ShouldProcess($ApplianceVmx, "Install current Atlaso wheel into appliance")) {
-        & $resolvedVmrun -T ws -gu $ApplianceSshUser -gp $SshPassword copyFileFromHostToGuest $ApplianceVmx $wheel.FullName $guestWheel | Out-Host
+        & $resolvedVmrun -T ws -gu $ApplianceSshUser -gp $ApplianceGuestPassword copyFileFromHostToGuest $ApplianceVmx $wheel.FullName $guestWheel | Out-Host
         if ($LASTEXITCODE -ne 0) {
             throw "Failed to copy Atlaso wheel into the appliance with VMware guest operations."
         }
-        $quotedPassword = ConvertTo-GuestShellSingleQuote -Value $SshPassword
+        $quotedPassword = ConvertTo-GuestShellSingleQuote -Value $ApplianceGuestPassword
         $quotedWheel = ConvertTo-GuestShellSingleQuote -Value $guestWheel
         $script = "printf '%s\n' $quotedPassword | sudo -S /opt/atlaso/.venv/bin/python -m pip install --force-reinstall --no-deps $quotedWheel && printf '%s\n' $quotedPassword | sudo -S find /opt/atlaso/.venv -type d -exec chmod 0755 {} + && printf '%s\n' $quotedPassword | sudo -S find /opt/atlaso/.venv -type f -exec chmod 0644 {} + && printf '%s\n' $quotedPassword | sudo -S find /opt/atlaso/.venv/bin -type f -exec chmod 0755 {} + && printf '%s\n' $quotedPassword | sudo -S systemctl restart atlaso.service"
         Invoke-ApplianceGuestScript -ApplianceVmx $ApplianceVmx -Script $script
@@ -844,11 +845,11 @@ function Find-ApplianceEsxiIsoPath {
     $guestOutput = '/tmp/atlaso-esxi-iso.txt'
     $hostOutput = Join-Path $resultRoot 'appliance-esxi-iso.txt'
     $script = "find /mnt/atlaso-vcf-offline-depot/PROD/COMP/ESX_HOST -maxdepth 1 -type f -iname '*.iso' | head -n 1 > $guestOutput"
-    & $resolvedVmrun -T ws -gu $ApplianceSshUser -gp $SshPassword runScriptInGuest $ApplianceVmx /bin/sh $script 2>$null | Out-Null
+    & $resolvedVmrun -T ws -gu $ApplianceSshUser -gp $ApplianceGuestPassword runScriptInGuest $ApplianceVmx /bin/sh $script 2>$null | Out-Null
     if ($LASTEXITCODE -ne 0) {
         return ''
     }
-    & $resolvedVmrun -T ws -gu $ApplianceSshUser -gp $SshPassword copyFileFromGuestToHost $ApplianceVmx $guestOutput $hostOutput 2>$null | Out-Null
+    & $resolvedVmrun -T ws -gu $ApplianceSshUser -gp $ApplianceGuestPassword copyFileFromGuestToHost $ApplianceVmx $guestOutput $hostOutput 2>$null | Out-Null
     if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $hostOutput)) {
         return ''
     }
@@ -876,11 +877,11 @@ function Resolve-ApplianceEsxiIsoPath {
     $guestTemp = "/tmp/$leaf"
     $guestTarget = "/mnt/atlaso-vcf-offline-depot/PROD/COMP/ESX_HOST/$leaf"
     if ($PSCmdlet.ShouldProcess($guestTarget, "Stage ESXi installer ISO into appliance depot")) {
-        & $resolvedVmrun -T ws -gu $ApplianceSshUser -gp $SshPassword copyFileFromHostToGuest $ApplianceVmx $localIso.Path $guestTemp | Out-Host
+        & $resolvedVmrun -T ws -gu $ApplianceSshUser -gp $ApplianceGuestPassword copyFileFromHostToGuest $ApplianceVmx $localIso.Path $guestTemp | Out-Host
         if ($LASTEXITCODE -ne 0) {
             throw "Failed to copy ESXi installer ISO into the appliance with VMware guest operations."
         }
-        $quotedPassword = ConvertTo-GuestShellSingleQuote -Value $SshPassword
+        $quotedPassword = ConvertTo-GuestShellSingleQuote -Value $ApplianceGuestPassword
         $quotedTemp = ConvertTo-GuestShellSingleQuote -Value $guestTemp
         $quotedTarget = ConvertTo-GuestShellSingleQuote -Value $guestTarget
         $script = "printf '%s\n' $quotedPassword | sudo -S mkdir -p /mnt/atlaso-vcf-offline-depot/PROD/COMP/ESX_HOST && printf '%s\n' $quotedPassword | sudo -S mv $quotedTemp $quotedTarget && printf '%s\n' $quotedPassword | sudo -S chmod 0644 $quotedTarget"
@@ -1008,7 +1009,7 @@ try {
 
     Start-Sleep -Seconds 20
     if (-not $ApplianceIPAddress) {
-        $ApplianceIPAddress = Wait-GuestIPv4 -Path $applianceVmx -TimeoutSeconds 300 -GuestUser $ApplianceSshUser -GuestPassword $SshPassword -Name $applianceName
+        $ApplianceIPAddress = Wait-GuestIPv4 -Path $applianceVmx -TimeoutSeconds 300 -GuestUser $ApplianceSshUser -GuestPassword $ApplianceGuestPassword -Name $applianceName
         if (-not $ApplianceIPAddress) {
             throw "Timed out waiting for VMware Tools to report the appliance management IPv4 address."
         }
@@ -1022,7 +1023,7 @@ try {
     } | ConvertTo-Json -Depth 3 | Set-Content -LiteralPath (Join-Path $resultRoot 'discovered-appliance.json') -Encoding UTF8
     Sync-ApplianceHelperScript -ApplianceVmx $applianceVmx
     $applianceWheelPath = Sync-ApplianceApplicationWheel -ApplianceVmx $applianceVmx
-    $applianceHostKey = Get-PlinkHostKey -HostName $ApplianceIPAddress -UserName $ApplianceSshUser -Password $SshPassword
+    $applianceHostKey = Get-PlinkHostKey -HostName $ApplianceIPAddress -UserName $ApplianceSshUser -Password $ApplianceGuestPassword
     $clientAHost = ''
     $clientBHost = ''
     $clientAHostKey = ''
@@ -1047,6 +1048,7 @@ try {
         '--password', $AdminPassword,
         '--appliance-ssh-user', $ApplianceSshUser,
         '--client-ssh-user', $ClientSshUser,
+        '--appliance-ssh-password', $ApplianceGuestPassword,
         '--ssh-password', $SshPassword,
         '--vcf-backup-password', $VcfBackupPassword,
         '--site-interface', $SiteInterface,
