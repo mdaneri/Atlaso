@@ -3,7 +3,7 @@ title: vSphere Key Providers
 description: Manage isolated vSphere Key Provider namespaces and exact public-certificate trust for vCenter.
 audience:
   - operator
-  - security administrator
+status: current
 ---
 
 # vSphere Key Providers

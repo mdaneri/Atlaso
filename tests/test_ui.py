@@ -1402,6 +1402,31 @@ def test_complex_resource_wizard_grid_contracts_return_saved_rows_and_delete_wit
     trusted_vcenter = vcenter_response.json()["trusted_vcenter"]
     assert trusted_vcenter["provider_id"] == provider["id"]
 
+    invalid_vcenter = client.post(
+        "/vsphere-key-providers/trusted-vcenters",
+        data={
+            **vcenter_data,
+            "name": "Invalid wizard vCenter",
+            "hostname": "https://vcsa-wizard.atlaso.internal",
+        },
+        headers=headers,
+    )
+    assert invalid_vcenter.status_code == 400
+    assert invalid_vcenter.json()["detail"] == "The trusted vCenter details or public certificate are invalid."
+
+    invalid_certificate = client.post(
+        f"/vsphere-key-providers/trusted-vcenters/{trusted_vcenter['id']}/certificates",
+        data={
+            "provider_id": provider["id"],
+            "certificate_pem": "-----BEGIN PRIVATE KEY-----\nforbidden\n-----END PRIVATE KEY-----",
+            "csrf": csrf,
+        },
+        headers=headers,
+    )
+    assert invalid_certificate.status_code == 400
+    assert invalid_certificate.json()["detail"] == "The public certificate is invalid."
+    assert "forbidden" not in invalid_certificate.text
+
     scope_data = {
         "name": "WizardZone",
         "address_family": "ipv4",
@@ -3948,8 +3973,8 @@ def test_settings_management_https_requires_ca_managed_certificate(client):
         assert certificate.status == "issued"
 
 
-def test_appliance_settings_apply_task_records_dry_run_helper_commands(client, caplog):
-    """Verify that appliance settings apply task records dry run helper commands.
+def test_appliance_settings_apply_task_records_redacted_dry_run_command_evidence(client, caplog):
+    """Verify appliance apply logs redacted dry-run command evidence.
 
     Args:
         client: HTTP test client used to exercise the Atlaso application.
@@ -3981,7 +4006,9 @@ def test_appliance_settings_apply_task_records_dry_run_helper_commands(client, c
     assert_apply_redirect(apply_response)
     assert "completed status=succeeded selected_units=appliance_settings" in caplog.text
     assert "unit=appliance_settings status=succeeded" in caplog.text
-    assert "atlaso-helper appliance-settings validate" in caplog.text
+    assert "unit=appliance_settings command_index=1 returncode=0 dry_run=True" in caplog.text
+    assert "unit=appliance_settings command_index=2 returncode=0 dry_run=True" in caplog.text
+    assert "atlaso-helper appliance-settings validate" not in caplog.text
     assert "Appliance Settings" in apply_response.text
     assert "data-apply-progress-modal" not in apply_response.text
     with SessionLocal() as db:
@@ -8015,6 +8042,56 @@ def test_configure_logging_writes_main_app_log(tmp_path, monkeypatch):
             logging.getLogger().removeHandler(handler)
             handler.close()
     get_settings.cache_clear()
+
+
+def test_appliance_apply_logging_redacts_commands_and_helper_output(caplog):
+    """Verify appliance apply logging reports evidence without command or helper content.
+
+    Args:
+        caplog: Pytest log capture fixture.
+    """
+    import logging
+
+    from atlaso.app.ui import log_appliance_apply_failures, log_appliance_apply_submission
+
+    unit_results = [
+        {
+            "unit_id": "kms",
+            "label": "KMS",
+            "status": "failed",
+            "dry_run": False,
+            "validation_errors": [],
+            "validation_warnings": [],
+            "summary": "Apply failed.",
+            "commands": [
+                {
+                    "command_line": "atlaso-helper kms apply sensitive-command-value",
+                    "returncode": 2,
+                    "stdout": "sensitive-helper-stdout",
+                    "stderr": "sensitive-helper-stderr",
+                    "dry_run": False,
+                }
+            ],
+        }
+    ]
+
+    with caplog.at_level(logging.INFO, logger="atlaso.appliance_apply"):
+        log_appliance_apply_failures("job_redacted", unit_results)
+        log_appliance_apply_submission(
+            "job_redacted",
+            selected_units=["kms"],
+            skipped_changed_units=[],
+            unit_results=unit_results,
+            succeeded=False,
+        )
+
+    logged = caplog.text
+    assert "sensitive-command-value" not in logged
+    assert "sensitive-helper-stdout" not in logged
+    assert "sensitive-helper-stderr" not in logged
+    assert "command_index=1" in logged
+    assert "stderr_present=True" in logged
+    assert "stdout_present=True" in logged
 
 
 def test_record_audit_writes_redacted_operational_log(client, tmp_path, monkeypatch):

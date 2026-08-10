@@ -458,6 +458,8 @@ from atlaso.app.services.kms import (
 )
 from atlaso.app.services.vsphere_key_providers import (
     certificate_to_dict,
+    normalize_service_hostname as normalize_vsphere_service_hostname,
+    normalize_vcenter_hostname as normalize_vsphere_vcenter_hostname,
     parse_public_certificate,
     provider_rows,
     provider_to_dict,
@@ -12010,15 +12012,16 @@ def log_appliance_apply_failures(job_id: str, unit_results: list[dict[str, Any]]
         unit_results: Unit results consumed by log appliance apply failures.
     """
     for failure in appliance_apply_failure_summaries(unit_results):
-        for command in failure["commands"]:
+        for command_index, command in enumerate(failure["commands"], start=1):
             APPLY_LOGGER.error(
-                "Appliance apply task %s failed unit=%s command=%s returncode=%s stderr=%s stdout=%s",
+                "Appliance apply task %s failed unit=%s command_index=%s returncode=%s "
+                "stderr_present=%s stdout_present=%s",
                 job_id,
                 failure["label"],
-                command["command_line"],
+                command_index,
                 command["returncode"],
-                command["stderr"] or "",
-                command["stdout"] or "",
+                bool(command["stderr"]),
+                bool(command["stdout"]),
             )
 
 
@@ -12059,12 +12062,12 @@ def log_appliance_apply_submission(
             len(result["validation_warnings"]),
             apply_output_excerpt(summary_text, limit=600),
         )
-        for command in result["commands"]:
+        for command_index, command in enumerate(result["commands"], start=1):
             APPLY_LOGGER.info(
-                "Appliance apply task %s unit=%s command=%s returncode=%s dry_run=%s",
+                "Appliance apply task %s unit=%s command_index=%s returncode=%s dry_run=%s",
                 job_id,
                 result["unit_id"],
-                apply_output_excerpt(command["command_line"], limit=800),
+                command_index,
                 command["returncode"],
                 command["dry_run"],
             )
@@ -22002,19 +22005,12 @@ def download_vsphere_key_provider_server_chain(
 def update_kms_settings_from_ui(
     request: Request,
     enabled: str | None = Form(None),
-    backend: str = Form("atlaso-kmip"),
     listen_interfaces: list[str] = Form(default_factory=list),
     listen_addresses: list[str] = Form(default_factory=list),
     listen_interfaces_present: str | None = Form(None),
     listen_addresses_present: str | None = Form(None),
-    listen_interface: str = Form(""),
-    listen_address: str = Form(""),
     port: int = Form(5696),
     hostname: str = Form("kms.atlaso.internal"),
-    server_certificate: str | None = Form(None),
-    require_client_cert: str | None = Form(None),
-    allow_register: str | None = Form(None),
-    allow_destroy: str | None = Form(None),
     csrf: str = Form(...),
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
@@ -22024,19 +22020,12 @@ def update_kms_settings_from_ui(
     Args:
         request: Incoming HTTP request.
         enabled: Whether the requested behavior is enabled.
-        backend: Backend supplied by the caller.
         listen_interfaces: Interfaces on which the service should listen.
         listen_addresses: Addresses on which the service should listen.
         listen_interfaces_present: Whether the caller supplied listen interfaces.
         listen_addresses_present: Whether the caller supplied listen addresses.
-        listen_interface: Interface on which the service should listen.
-        listen_address: Address on which the service should listen.
         port: TCP or UDP port of the target service.
         hostname: DNS hostname of the target resource.
-        server_certificate: Server certificate supplied by the caller.
-        require_client_cert: Require client cert supplied by the caller.
-        allow_register: Allow register supplied by the caller.
-        allow_destroy: Allow destroy supplied by the caller.
         csrf: Validated CSRF token authorizing the request.
         identity: Authenticated identity authorizing the request.
         db: Active database session.
@@ -22049,8 +22038,8 @@ def update_kms_settings_from_ui(
     previous_hostname = settings.hostname
     selected_interfaces, selected_addresses = resolve_service_bind_targets(
         db,
-        [*listen_interfaces, listen_interface],
-        [*listen_addresses, listen_address],
+        listen_interfaces,
+        listen_addresses,
         current_interface=settings.listen_interface,
         current_address=settings.listen_address,
         listen_interfaces_present=listen_interfaces_present,
@@ -22061,7 +22050,13 @@ def update_kms_settings_from_ui(
     settings.listen_interface = selected_interfaces
     settings.listen_address = selected_addresses
     settings.port = port
-    settings.hostname = normalize_dns_hostname(hostname.strip() or "kms.atlaso.internal")
+    try:
+        settings.hostname = normalize_vsphere_service_hostname(hostname.strip() or "kms.atlaso.internal")
+    except ValueError:
+        raise HTTPException(
+            status_code=422,
+            detail="vSphere Key Provider hostname must be a valid fully qualified DNS name.",
+        ) from None
     settings.server_certificate = settings.hostname
     settings.ca_certificate_path = settings.ca_certificate_path.strip() or "/etc/atlaso/ca/root.crt"
     settings.database_path = KMS_DEFAULT_DATABASE_PATH
@@ -22319,17 +22314,17 @@ def create_vsphere_vcenter_from_ui(
     provider = db.get(VsphereKeyProvider, provider_id)
     if provider is None:
         raise HTTPException(status_code=404, detail="vSphere Key Provider not found.")
-    vcenter = VsphereTrustedVcenter(id=str(uuid4()), provider_id=provider.id, name=name.strip(), hostname=hostname.strip().casefold(), description=description.strip(), enabled=enabled == "on")
-    db.add(vcenter)
     try:
+        vcenter = VsphereTrustedVcenter(id=str(uuid4()), provider_id=provider.id, name=name.strip(), hostname=normalize_vsphere_vcenter_hostname(hostname), description=description.strip(), enabled=enabled == "on")
+        db.add(vcenter)
         db.flush()
         certificate = _attach_vsphere_public_certificate(db, vcenter, certificate_pem)
         if vcenter.enabled and certificate is None:
             raise ValueError("An enabled trusted vCenter requires a current public client certificate.")
         db.commit()
-    except ValueError as exc:
+    except ValueError:
         db.rollback()
-        return _vsphere_grid_error(request, identity, db, str(exc), 400)
+        return _vsphere_grid_error(request, identity, db, "The trusted vCenter details or public certificate are invalid.", 400)
     except IntegrityError:
         db.rollback()
         return _vsphere_grid_error(request, identity, db, "Trusted vCenter name or certificate fingerprint is already assigned.")
@@ -22373,19 +22368,19 @@ def edit_vsphere_vcenter_from_ui(
         raise HTTPException(status_code=404, detail="Trusted vCenter not found.")
     if vcenter.provider_id != provider_id:
         return _vsphere_grid_error(request, identity, db, "A trusted vCenter cannot move between provider namespaces.")
-    vcenter.name = name.strip()
-    vcenter.hostname = hostname.strip().casefold()
-    vcenter.description = description.strip()
-    vcenter.enabled = enabled == "on"
-    vcenter.updated_at = utcnow()
     try:
+        vcenter.name = name.strip()
+        vcenter.hostname = normalize_vsphere_vcenter_hostname(hostname)
+        vcenter.description = description.strip()
+        vcenter.enabled = enabled == "on"
+        vcenter.updated_at = utcnow()
         certificate = _attach_vsphere_public_certificate(db, vcenter, certificate_pem)
         if vcenter.enabled and not vcenter.certificates and certificate is None:
             raise ValueError("An enabled trusted vCenter requires a current public client certificate.")
         db.commit()
-    except ValueError as exc:
+    except ValueError:
         db.rollback()
-        return _vsphere_grid_error(request, identity, db, str(exc), 400)
+        return _vsphere_grid_error(request, identity, db, "The trusted vCenter details or public certificate are invalid.", 400)
     except IntegrityError:
         db.rollback()
         return _vsphere_grid_error(request, identity, db, "Trusted vCenter name or certificate fingerprint is already assigned.")
@@ -22453,9 +22448,9 @@ def add_vsphere_certificate_from_ui(
     try:
         certificate = _attach_vsphere_public_certificate(db, vcenter, certificate_pem)
         db.commit()
-    except ValueError as exc:
+    except ValueError:
         db.rollback()
-        return _vsphere_grid_error(request, identity, db, str(exc), 400)
+        return _vsphere_grid_error(request, identity, db, "The public certificate is invalid.", 400)
     except IntegrityError:
         db.rollback()
         return _vsphere_grid_error(request, identity, db, "Certificate fingerprint is already assigned.")

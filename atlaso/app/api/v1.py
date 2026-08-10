@@ -174,6 +174,8 @@ from atlaso.app.schemas import (
 from atlaso.app.services.kms import KMS_DEFAULT_CONFIG_PATH, join_csv
 from atlaso.app.services.vsphere_key_providers import (
     certificate_to_dict,
+    normalize_service_hostname,
+    normalize_vcenter_hostname,
     parse_public_certificate,
     provider_rows,
     provider_requires_appliance_apply,
@@ -271,7 +273,6 @@ from atlaso.app.services.dnsmasq import (
 )
 from atlaso.app.services.appliance_settings import (
     APPLIANCE_SETTINGS_STAGED_CONFIG_PATH,
-    HOSTNAME_PATTERN as APPLIANCE_HOSTNAME_PATTERN,
     appliance_settings_to_dict,
     management_dhcp_dns_context,
     management_interface_context,
@@ -6301,13 +6302,13 @@ def _normalize_vsphere_service_hostname(value: str) -> str:
     Returns:
         Canonical lowercase fully qualified DNS name.
     """
-    hostname = value.strip().casefold().rstrip(".")
-    if not APPLIANCE_HOSTNAME_PATTERN.fullmatch(hostname):
+    try:
+        return normalize_service_hostname(value)
+    except ValueError:
         raise HTTPException(
             status_code=422,
             detail="vSphere Key Provider hostname must be a valid fully qualified DNS name.",
-        )
-    return hostname
+        ) from None
 
 
 def _normalize_vsphere_vcenter_hostname(value: str) -> str:
@@ -6319,18 +6320,13 @@ def _normalize_vsphere_vcenter_hostname(value: str) -> str:
     Returns:
         Canonical IP address or lowercase fully qualified DNS name, or an empty string.
     """
-    hostname = value.strip().casefold().rstrip(".")
-    if not hostname:
-        return ""
     try:
-        return str(ip_address(hostname))
+        return normalize_vcenter_hostname(value)
     except ValueError:
-        if APPLIANCE_HOSTNAME_PATTERN.fullmatch(hostname):
-            return hostname
-    raise HTTPException(
-        status_code=422,
-        detail="Trusted vCenter hostname must be an IP address or valid fully qualified DNS name.",
-    )
+        raise HTTPException(
+            status_code=422,
+            detail="Trusted vCenter hostname must be an IP address or valid fully qualified DNS name.",
+        ) from None
 
 
 def _normalize_vsphere_listener_values(

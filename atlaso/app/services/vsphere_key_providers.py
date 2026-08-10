@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 import hashlib
+from ipaddress import ip_address
 import json
 import re
 from uuid import UUID
@@ -29,6 +30,7 @@ from atlaso.app.services.kms import (
     KMS_DEFAULT_KEK_PATH,
     KMS_SERVER_CERT_BASE,
 )
+from atlaso.app.services.appliance_settings import HOSTNAME_PATTERN
 from atlaso.app.services.ca import safe_certificate_name
 from atlaso.app.services.dnsmasq import split_addresses
 
@@ -41,6 +43,47 @@ PRIVATE_KEY_MARKERS = (
     "-----BEGIN EC PRIVATE KEY-----",
     "-----BEGIN DSA PRIVATE KEY-----",
 )
+
+
+def normalize_service_hostname(value: str) -> str:
+    """Return a canonical fully qualified DNS name for the shared listener.
+
+    Args:
+        value: Candidate public listener hostname.
+
+    Returns:
+        Canonical lowercase fully qualified DNS name.
+
+    Raises:
+        ValueError: If the value is not a fully qualified DNS name.
+    """
+    hostname = value.strip().casefold().rstrip(".")
+    if not HOSTNAME_PATTERN.fullmatch(hostname):
+        raise ValueError("vSphere Key Provider hostname must be a valid fully qualified DNS name.")
+    return hostname
+
+
+def normalize_vcenter_hostname(value: str) -> str:
+    """Return a canonical optional vCenter IP address or fully qualified DNS name.
+
+    Args:
+        value: Candidate trusted-vCenter network identifier.
+
+    Returns:
+        Canonical IP address or lowercase fully qualified DNS name, or an empty string.
+
+    Raises:
+        ValueError: If the value is neither an IP address nor a fully qualified DNS name.
+    """
+    hostname = value.strip().casefold().rstrip(".")
+    if not hostname:
+        return ""
+    try:
+        return str(ip_address(hostname))
+    except ValueError:
+        if HOSTNAME_PATTERN.fullmatch(hostname):
+            return hostname
+    raise ValueError("Trusted vCenter hostname must be an IP address or valid fully qualified DNS name.")
 
 
 def _aware(value: datetime) -> datetime:
