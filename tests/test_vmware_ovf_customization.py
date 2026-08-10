@@ -362,6 +362,84 @@ def test_vmware_ovf_customizer_keeps_waiter_after_corrected_apply_failure(tmp_pa
     assert not customizer.INITIALIZATION_LOCK_PATH.exists()
 
 
+def test_vmware_ovf_customizer_routes_initial_apply_failure_to_waiter(tmp_path, monkeypatch):
+    """Verify valid original networking retains a consumer when its first apply fails.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+        monkeypatch: Pytest helper used to replace first-boot state and actions.
+    """
+    customizer = load_customizer()
+    ovf_path = tmp_path / "ovf-env.xml"
+    ovf_path.write_text(OVF_ENV, encoding="utf-8")
+    customizer.NETWORK_REVIEW_PATH = tmp_path / "network-review.json"
+    customizer.NETWORK_CORRECTION_PATH = tmp_path / "network-correction.json"
+    customizer.MARKER_PATH = tmp_path / "customization.applied"
+    customizer.INITIALIZATION_LOCK_PATH = tmp_path / "initializing"
+    customizer.INITIALIZATION_LOCK_PATH.touch()
+    apply_attempts: list[dict[str, object]] = []
+    review_states: list[dict[str, object]] = []
+
+    def supply_correction(_seconds):
+        """Resubmit the already-valid management values to the retained waiter.
+
+        Args:
+            _seconds: Requested polling delay, unused by the test.
+        """
+        review_states.append(
+            json.loads(customizer.NETWORK_REVIEW_PATH.read_text(encoding="utf-8"))
+        )
+        customizer.write_json_atomic(
+            customizer.NETWORK_CORRECTION_PATH,
+            {
+                "version": 1,
+                "ipv4_method": "static",
+                "ipv4_cidr": "192.168.10.10/24",
+                "ipv4_gateway": "192.168.10.1",
+                "ipv6_mode": "disabled",
+                "ipv6_cidr": "",
+                "ipv6_gateway": "",
+                "dns_servers": "192.168.10.2,192.168.10.3",
+            },
+            mode=0o600,
+        )
+
+    def apply_customization(config, *, dry_run=False):
+        """Fail the original apply, then complete the waiter-owned retry.
+
+        Args:
+            config: Validated OVF customization values.
+            dry_run: Whether mutation should be suppressed.
+
+        Returns:
+            The safe customization summary written on retry.
+
+        Raises:
+            OvfCustomizationError: On the intentional original apply attempt.
+        """
+        assert dry_run is False
+        apply_attempts.append(config)
+        if len(apply_attempts) == 1:
+            raise customizer.OvfCustomizationError("Photon sshd configuration validation failed")
+        summary = customizer.redacted_summary(config)
+        customizer.write_json_atomic(customizer.MARKER_PATH, summary)
+        return summary
+
+    monkeypatch.setattr(customizer.time, "sleep", supply_correction)
+    monkeypatch.setattr(customizer, "apply_customization", apply_customization)
+    monkeypatch.setattr(customizer, "log", lambda _message: None)
+
+    assert customizer.main(["--ovf-env-file", str(ovf_path)]) == 0
+    assert len(apply_attempts) == 2
+    assert review_states[0]["state"] == "network_review"
+    assert "management network validated" in review_states[0]["error"]
+    assert "sshd" not in review_states[0]["error"]
+    assert customizer.MARKER_PATH.exists()
+    assert not customizer.NETWORK_REVIEW_PATH.exists()
+    assert not customizer.NETWORK_CORRECTION_PATH.exists()
+    assert not customizer.INITIALIZATION_LOCK_PATH.exists()
+
+
 def test_vmware_ovf_customizer_marker_recovers_interrupted_review_cleanup(tmp_path, monkeypatch):
     """Verify an applied marker clears stale review and tty1 lock on restart.
 

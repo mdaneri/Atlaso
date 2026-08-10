@@ -821,7 +821,6 @@ def main(argv: list[str] | None = None) -> int:
     try:
         non_network = validate_non_network_properties(properties)
         config = validate_properties(properties, non_network=non_network)
-        summary = apply_customization(config, dry_run=args.dry_run)
     except OvfManagementNetworkError as exc:
         if args.dry_run:
             log(f"VMware OVF customization failed validation: {exc}")
@@ -830,9 +829,18 @@ def main(argv: list[str] | None = None) -> int:
     except (OvfCustomizationError, ET.ParseError) as exc:
         log(f"VMware OVF customization failed validation: {exc}")
         return 2
-    except subprocess.CalledProcessError as exc:
-        log(f"VMware OVF customization command failed: {exc.cmd} exit_code={exc.returncode}")
-        return exc.returncode or 1
+
+    try:
+        summary = apply_customization(config, dry_run=args.dry_run)
+    except (OvfCustomizationError, OSError, subprocess.CalledProcessError) as exc:
+        log(f"VMware OVF customization could not finish after validation: {type(exc).__name__}")
+        if args.dry_run:
+            return 2
+        return wait_for_network_review(
+            properties,
+            "The management network validated, but first-time initialization did not finish. "
+            "Resolve the condition reported in the customization log, then submit the network review to retry.",
+        )
 
     if not args.dry_run:
         complete_first_boot_initialization()
