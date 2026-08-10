@@ -1209,6 +1209,23 @@ def test_create_atlaso_vmware_test_vm_wrapper_uses_common_helpers():
     assert "`-ServiceVmnetName`" in docs
 
 
+def test_create_atlaso_vmware_test_vm_root_ca_retry_cleanup_is_idempotent():
+    """Verify root CA retry cleanup handles missing files and dotted short temp paths."""
+    script = Path("scripts/windows/vmware/create-atlaso-test-vm.ps1").read_text(encoding="utf-8")
+    install_root_ca = script.split("function Install-ApplianceRootCa", 1)[1].split(
+        "function Write-ConnectionSummary", 1
+    )[0]
+
+    assert "[System.IO.Path]::GetFullPath([System.IO.Path]::GetTempPath())" in install_root_ca
+    assert '[System.IO.Path]::Combine($tempRoot, "atlaso-$Name-root-ca.pem")' in install_root_ca
+    assert "[System.IO.File]::Delete($rootPemPath)" in install_root_ca
+    assert "File.Delete is idempotent for a missing file" in install_root_ca
+    assert "valid dotted/short Windows paths" in install_root_ca
+    assert "Best-effort cleanup must never mask" in install_root_ca
+    assert "Test-Path -LiteralPath $rootPemPath" not in install_root_ca
+    assert "Remove-Item -LiteralPath $rootPemPath" not in install_root_ca
+
+
 def test_vmware_deploy_wheel_supports_password_backed_noninteractive_deploy():
     """Verify that vmware deploy wheel supports password backed noninteractive deploy."""
     script = Path("scripts/windows/vmware/deploy-wheel.ps1").read_text(encoding="utf-8")
