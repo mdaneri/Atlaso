@@ -440,6 +440,63 @@ def test_vmware_ovf_customizer_routes_initial_apply_failure_to_waiter(tmp_path, 
     assert not customizer.INITIALIZATION_LOCK_PATH.exists()
 
 
+def test_vmware_ovf_customizer_waits_locked_for_delayed_ovf_properties(tmp_path, monkeypatch):
+    """Verify an empty OVF environment never exposes image-build credentials.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+        monkeypatch: Pytest helper used to replace first-boot state and actions.
+    """
+    customizer = load_customizer()
+    ovf_path = tmp_path / "ovf-env.xml"
+    ovf_path.write_text("", encoding="utf-8")
+    customizer.MARKER_PATH = tmp_path / "customization.applied"
+    customizer.INITIALIZATION_LOCK_PATH = tmp_path / "initializing"
+    customizer.NETWORK_REVIEW_PATH = tmp_path / "network-review.json"
+    customizer.NETWORK_CORRECTION_PATH = tmp_path / "network-correction.json"
+    customizer.INITIALIZATION_LOCK_PATH.touch()
+    lock_observations: list[bool] = []
+    apply_attempts: list[dict[str, object]] = []
+
+    def supply_ovf_properties(_seconds):
+        """Make VMware deployment properties available after observing the lock.
+
+        Args:
+            _seconds: Requested polling delay, unused by the test.
+        """
+        lock_observations.append(customizer.INITIALIZATION_LOCK_PATH.exists())
+        assert not customizer.MARKER_PATH.exists()
+        ovf_path.write_text(OVF_ENV, encoding="utf-8")
+
+    def apply_customization(config, *, dry_run=False):
+        """Complete customization after delayed properties become available.
+
+        Args:
+            config: Validated OVF customization values.
+            dry_run: Whether mutation should be suppressed.
+
+        Returns:
+            The safe customization summary written to the marker.
+        """
+        assert dry_run is False
+        apply_attempts.append(config)
+        summary = customizer.redacted_summary(config)
+        customizer.write_json_atomic(customizer.MARKER_PATH, summary)
+        return summary
+
+    monkeypatch.setattr(customizer.time, "sleep", supply_ovf_properties)
+    monkeypatch.setattr(customizer, "apply_customization", apply_customization)
+    monkeypatch.setattr(customizer, "log", lambda _message: None)
+
+    assert customizer.main(["--ovf-env-file", str(ovf_path)]) == 0
+    assert lock_observations == [True]
+    assert len(apply_attempts) == 1
+    assert customizer.MARKER_PATH.exists()
+    assert not customizer.INITIALIZATION_LOCK_PATH.exists()
+    assert not customizer.NETWORK_REVIEW_PATH.exists()
+    assert not customizer.NETWORK_CORRECTION_PATH.exists()
+
+
 def test_vmware_ovf_customizer_marker_recovers_interrupted_review_cleanup(tmp_path, monkeypatch):
     """Verify an applied marker clears stale review and tty1 lock on restart.
 

@@ -52,6 +52,7 @@ NETWORK_CORRECTION_PATH = Path("/var/lib/atlaso/vmware-ovf-network-correction.js
 LOG_PATH = Path("/var/log/atlaso/vmware-ovf-customize.log")
 DEFAULT_INTERFACE = "eth0"
 NETWORK_REVIEW_POLL_SECONDS = 1.0
+OVF_ENVIRONMENT_POLL_SECONDS = 1.0
 FQDN_PATTERN = re.compile(r"^(?=.{1,253}$)(?!-)[A-Za-z0-9-]{1,63}(?<!-)(\.(?!-)[A-Za-z0-9-]{1,63}(?<!-))+$")
 
 
@@ -813,10 +814,19 @@ def main(argv: list[str] | None = None) -> int:
     xml_text = Path(args.ovf_env_file).read_text(encoding="utf-8") if args.ovf_env_file else read_ovf_environment()
     properties = parse_ovf_environment(xml_text)
     if not properties:
-        if not args.dry_run:
-            complete_first_boot_initialization()
-        log("No Atlaso VMware OVF properties found; using image defaults.")
-        return 0
+        if args.dry_run:
+            log("No Atlaso VMware OVF properties found; image defaults remain unchanged.")
+            return 0
+        log("Atlaso VMware OVF deployment properties are unavailable; waiting with tty1 locked.")
+        while not properties:
+            time.sleep(OVF_ENVIRONMENT_POLL_SECONDS)
+            xml_text = (
+                Path(args.ovf_env_file).read_text(encoding="utf-8")
+                if args.ovf_env_file
+                else read_ovf_environment()
+            )
+            properties = parse_ovf_environment(xml_text)
+        log("Atlaso VMware OVF deployment properties are available; continuing initialization.")
 
     try:
         non_network = validate_non_network_properties(properties)
