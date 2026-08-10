@@ -36,6 +36,24 @@ test("deduplicates an in-flight status request", async () => {
   await first;
 });
 
+test("queues a forced refresh behind an in-flight request", async () => {
+  let resolveRequest;
+  const forced = [];
+  const pending = new Promise((resolve) => { resolveRequest = resolve; });
+  const state = harness((force) => {
+    forced.push(force);
+    return forced.length === 1 ? pending : Promise.resolve({ active_task: null });
+  });
+
+  const first = state.controller.refresh();
+  state.controller.refreshImmediately();
+  resolveRequest({ active_task: null });
+  await first;
+  assert.equal(state.timers.at(-1).delay, 0);
+  await state.timers.at(-1).callback();
+  assert.deepEqual(forced, [false, true]);
+});
+
 test("backs off idle polling and keeps active polling prompt", async () => {
   const state = harness(async () => ({ active_task: null }));
   await state.controller.refresh();

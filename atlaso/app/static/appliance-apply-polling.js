@@ -49,6 +49,7 @@
         })
         .finally(() => {
           inFlight = null;
+          if (forceNextRequest && !stopped && !options.isHidden()) schedule(0);
         });
       return inFlight;
     };

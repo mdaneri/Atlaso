@@ -2353,6 +2353,38 @@ def test_appliance_apply_status_uses_lightweight_projection(client, monkeypatch)
     assert reconcile_values == [False, False]
 
 
+def test_appliance_apply_job_invalidates_projection_before_and_after_execution(client, monkeypatch):
+    """Verify Apply invalidates sidebar state at both execution boundaries.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+    """
+    from atlaso.app import ui
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import ApplianceSettings
+
+    login(client)
+    page = client.get("/settings")
+    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    with SessionLocal() as db:
+        units = ui.appliance_apply_units(db)
+        ui.update_appliance_apply_baselines(db, units, {unit["id"] for unit in units})
+        settings = db.query(ApplianceSettings).one()
+        settings.vmware_ceip_enabled = not settings.vmware_ceip_enabled
+        db.commit()
+
+    invalidations = []
+    monkeypatch.setattr(ui, "invalidate_appliance_apply_status_projection", lambda: invalidations.append(True))
+    response = client.post(
+        "/appliance-apply",
+        data={"csrf": csrf, "selected_units": "appliance_settings"},
+    )
+
+    assert_apply_redirect(response)
+    assert len(invalidations) == 2
+
+
 def test_appliance_apply_status_api_tracks_autosaved_desired_state(client):
     """Verify that appliance apply status api tracks autosaved desired state.
 

@@ -15354,6 +15354,8 @@ def run_appliance_apply_job(job_id: str, *, force_real: bool = False) -> None:
                 detail=f"result={job.status}",
                 success=False,
             )
+        finally:
+            invalidate_appliance_apply_status_projection()
 
 
 VCF_DEPOT_SOFTWARE_ID_TASK_STEPS = (
