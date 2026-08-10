@@ -2,6 +2,7 @@
 
 from pathlib import Path
 import importlib.util
+import json
 import sys
 
 import pytest
@@ -126,7 +127,7 @@ def test_vmware_ovf_customizer_rejects_incomplete_ipv4_pairs():
     try:
         customizer.validate_properties(properties)
     except customizer.OvfCustomizationError as exc:
-        assert "gateway is required" in str(exc)
+        assert "requires an IPv4 gateway" in str(exc)
     else:
         raise AssertionError("static IPv4 without a gateway should fail")
 
@@ -135,9 +136,132 @@ def test_vmware_ovf_customizer_rejects_incomplete_ipv4_pairs():
     try:
         customizer.validate_properties(properties)
     except customizer.OvfCustomizationError as exc:
-        assert "cannot be supplied" in str(exc)
+        assert "requires an address and prefix" in str(exc)
     else:
         raise AssertionError("IPv4 gateway without a CIDR should fail")
+
+
+@pytest.mark.parametrize(
+    ("cidr", "gateway", "message"),
+    [
+        ("192.168.1.254/32", "192.168.1.1", "on-link"),
+        ("192.168.1.254/24", "192.168.1.254", "cannot equal"),
+    ],
+)
+def test_vmware_ovf_customizer_rejects_invalid_ipv4_gateway_relationships(cidr, gateway, message):
+    """Verify OVF IPv4 validation uses the shared cross-field contract.
+
+    Args:
+        cidr: Candidate management IPv4 address and prefix.
+        gateway: Candidate management IPv4 gateway.
+        message: Expected validation-message fragment.
+    """
+    customizer = load_customizer()
+    properties = customizer.parse_ovf_environment(OVF_ENV)
+    properties["atlaso.cidr"] = cidr
+    properties["atlaso.gateway"] = gateway
+
+    with pytest.raises(customizer.OvfManagementNetworkError, match=message):
+        customizer.validate_properties(properties)
+
+
+def test_vmware_ovf_customizer_routes_invalid_ipv6_mode_to_network_review():
+    """Verify malformed IPv6 enablement remains recoverable from tty1."""
+    customizer = load_customizer()
+    properties = customizer.parse_ovf_environment(OVF_ENV)
+    properties["atlaso.ipv6_enabled"] = "sometimes"
+
+    with pytest.raises(customizer.OvfManagementNetworkError, match="must be true or false"):
+        customizer.validate_properties(properties)
+
+
+def test_vmware_ovf_customizer_rejects_non_network_correction_fields(tmp_path):
+    """Verify the correction handshake rejects fields outside its safe allowlist.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    customizer = load_customizer()
+    customizer.NETWORK_CORRECTION_PATH = tmp_path / "network-correction.json"
+    customizer.write_json_atomic(
+        customizer.NETWORK_CORRECTION_PATH,
+        {"version": 1, "ipv4_method": "dhcp", "root_password": "not-accepted"},
+        mode=0o600,
+    )
+
+    with pytest.raises(customizer.OvfManagementNetworkError, match="unsupported fields"):
+        customizer.read_network_correction()
+
+
+def test_vmware_ovf_customizer_waits_for_nonsecret_console_correction(tmp_path, monkeypatch):
+    """Verify invalid networking pauses before mutation and resumes from tty1 correction.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+        monkeypatch: Pytest helper used to replace first-boot state and actions.
+    """
+    customizer = load_customizer()
+    customizer.NETWORK_REVIEW_PATH = tmp_path / "network-review.json"
+    customizer.NETWORK_CORRECTION_PATH = tmp_path / "network-correction.json"
+    customizer.MARKER_PATH = tmp_path / "customization.applied"
+    properties = customizer.parse_ovf_environment(OVF_ENV)
+    properties["atlaso.cidr"] = "192.168.1.254/32"
+    properties["atlaso.gateway"] = "192.168.1.1"
+    captured_review: list[str] = []
+    applied: list[dict[str, object]] = []
+
+    def supply_correction(_seconds):
+        """Supply one safe console correction after observing the review state.
+
+        Args:
+            _seconds: Requested polling delay, unused by the test.
+        """
+        assert applied == []
+        assert not customizer.MARKER_PATH.exists()
+        captured_review.append(customizer.NETWORK_REVIEW_PATH.read_text(encoding="utf-8"))
+        customizer.write_json_atomic(
+            customizer.NETWORK_CORRECTION_PATH,
+            {
+                "version": 1,
+                "ipv4_method": "static",
+                "ipv4_cidr": "192.168.1.254/24",
+                "ipv4_gateway": "192.168.1.1",
+                "ipv6_mode": "disabled",
+                "ipv6_cidr": "",
+                "ipv6_gateway": "",
+                "dns_servers": "192.168.10.2,192.168.10.3",
+            },
+            mode=0o600,
+        )
+
+    def apply_correction(config, *, dry_run=False):
+        """Record the first mutation and create the marker as the real apply does.
+
+        Args:
+            config: Validated corrected OVF customization values.
+            dry_run: Whether mutation should be suppressed.
+
+        Returns:
+            The safe customization summary written to the marker.
+        """
+        assert dry_run is False
+        applied.append(config)
+        summary = customizer.redacted_summary(config)
+        customizer.write_json_atomic(customizer.MARKER_PATH, summary)
+        return summary
+
+    monkeypatch.setattr(customizer.time, "sleep", supply_correction)
+    monkeypatch.setattr(customizer, "apply_customization", apply_correction)
+
+    assert customizer.wait_for_network_review(properties, "Management gateway must be on-link.") == 0
+
+    assert applied[0]["cidr"] == "192.168.1.254/24"
+    assert applied[0]["gateway"] == "192.168.1.1"
+    assert customizer.MARKER_PATH.exists()
+    assert not customizer.NETWORK_REVIEW_PATH.exists()
+    assert not customizer.NETWORK_CORRECTION_PATH.exists()
+    assert "admin-secret" not in captured_review[0]
+    assert "root-secret1" not in captured_review[0]
 
 
 def test_vmware_ovf_customizer_supports_disabled_auto_and_static_ipv6(tmp_path):
@@ -190,7 +314,7 @@ def test_vmware_ovf_customizer_rejects_contradictory_or_incomplete_ipv6():
     try:
         customizer.validate_properties(properties)
     except customizer.OvfCustomizationError as exc:
-        assert "ipv6_enabled=true" in str(exc)
+        assert "Disabled or automatic IPv6 cannot include" in str(exc)
     else:
         raise AssertionError("disabled IPv6 with a CIDR should fail")
 
@@ -272,7 +396,7 @@ def test_vmware_ovf_customizer_requires_static_network_properties_only_for_stati
     try:
         customizer.validate_properties(properties)
     except customizer.OvfCustomizationError as exc:
-        assert "atlaso.cidr" in str(exc)
+        assert "address and prefix" in str(exc)
     else:
         raise AssertionError("missing static CIDR should fail validation")
 
@@ -369,6 +493,10 @@ def test_vmware_ovf_customizer_rotates_clone_specific_env_secrets(tmp_path):
     assert "rotated-secrets-key" not in str(summary)
     assert 'ATLASO_APPLIANCE_MANAGEMENT_IPV6_ENABLED="true"' in rendered
     assert 'ATLASO_APPLIANCE_ROOT_SSH_ENABLED="true"' in rendered
+    marker = json.loads(customizer.MARKER_PATH.read_text(encoding="utf-8"))
+    assert marker["cidr"] == "192.168.10.10/24"
+    assert "admin-secret" not in str(marker)
+    assert "root-secret1" not in str(marker)
 
 
 def test_vmware_ovf_export_and_image_plumbing_are_present():
@@ -480,7 +608,12 @@ def test_vmware_ovf_export_and_image_plumbing_are_present():
     assert "systemctl enable atlaso-vmware-ovf-customize.service" in provision_script
     assert "systemctl enable atlaso-bootstrap-https.service" in provision_script
     assert "Before=network-pre.target" in vmware_unit
+    assert "After=local-fs.target atlaso-console.service" in vmware_unit
+    assert "Wants=atlaso-console.service" in vmware_unit
+    assert "atlaso-data-disks.service" in vmware_unit
     assert "atlaso-bootstrap-https.service" in vmware_unit
+    assert "ExecStart=/opt/atlaso/.venv/bin/python /opt/atlaso/bin/atlaso-vmware-ovf-customize.py" in vmware_unit
+    assert "TimeoutStartSec=infinity" in vmware_unit
     assert "/image/vmware-workstation/ovf" in gitignore
     assert "VMware Workstation\\OVFTool" in docs
     assert "Atlaso Management Network" in docs

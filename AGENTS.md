@@ -78,6 +78,11 @@ The following cross-cutting boundaries always apply:
   generated metadata, and profile enablement together.
 - Keep development system adapters in dry-run mode unless a reviewed apply unit explicitly promotes real mutation.
 - VMware Workstation is the default live appliance target; use Hyper-V lifecycle coverage for exact VLAN behavior.
+- VMware OVF first boot and the Atlaso tty1 console share one management-network validation contract. Reject off-link,
+  equal-address, incomplete, and malformed gateway relationships before host mutation. Start the console independently
+  of management networking and before data-disk initialization; on validation failure, show a recoverable non-secret
+  network-review state, retain deployment secrets only in the waiting customizer, and write applied state only after
+  successful correction and customization.
 - VMware release images use separate compacted Photon OS and required Atlaso system-content payload VMDKs, followed by
   empty 500 GiB depot and backup disks. Preserve `/opt/atlaso` and appliance-wide PowerShell modules on the UUID-mounted
   system-content disk, size-gate individual OVF release assets below 2 GiB, and publish the aggregate OVA only when it

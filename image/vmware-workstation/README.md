@@ -181,8 +181,9 @@ regenerates the manifest, and packages the folder as an OVA unless `-NoOva` is p
 and Atlaso system-content VMDKs, then declares a 500 GiB empty VCF Offline Depot disk and a 500 GiB empty VCF Backups
 disk. ESXi creates the latter two disks during deployment without payload files. The exporter requires exactly four
 ordered disks, requires file-backed payloads for the first two, uses VMware Paravirtual SCSI, and removes the build-time
-CD-ROM device. On first boot, `atlaso-data-disks.service` ignores the formatted system-content disk and formats the two
-blank disks as
+CD-ROM device. On first boot, the independent Atlaso `tty1` console and OVF management-network validation start before
+data-disk discovery. After networking validates, `atlaso-data-disks.service` ignores the formatted system-content disk
+and formats the two blank disks as
 ext4, labels them `ATLASO_DEPOT` and `ATLASO_BKUP`, writes their UUIDs to `/etc/fstab`, and mounts them at
 `/mnt/atlaso-vcf-offline-depot` and `/mnt/atlaso-vcf-backups`. The descriptor exposes two network mappings for
 vSphere/ESXi import: `Atlaso Management Network` for the first adapter, which remains management-only as `eth0`, and
@@ -214,10 +215,10 @@ The OVF properties are intended for vSphere/ESXi import:
 | Category            | Property                  | Required | Description                                                                                                      |
 | ------------------- | ------------------------- | -------- | ---------------------------------------------------------------------------------------------------------------- |
 | Management network  | `atlaso.cidr`             | no       | Static management IPv4 CIDR for `eth0`, for example `192.168.10.10/24`; blank uses DHCPv4.                       |
-| Management network  | `atlaso.gateway`          | no       | Required with a static IPv4 CIDR and invalid without one.                                                        |
+| Management network  | `atlaso.gateway`          | no       | Required with static IPv4; must be on-link for the CIDR and differ from the management address.                  |
 | Management network  | `atlaso.ipv6_enabled`     | no       | Boolean, default `false`. Enables management IPv6.                                                               |
 | Management network  | `atlaso.ipv6_cidr`        | no       | Blank while IPv6 is enabled uses RA/SLAAC; a value selects static IPv6.                                          |
-| Management network  | `atlaso.ipv6_gateway`     | no       | Optional with a static IPv6 CIDR; accepts an on-link global address or link-local address.                       |
+| Management network  | `atlaso.ipv6_gateway`     | no       | Optional with static IPv6; accepts an on-link or link-local address that differs from the management address.    |
 | Management network  | `atlaso.dns_servers`      | no       | Optional resolver IPs separated by commas, spaces, or new lines. Blank DHCP deployments keep lease-provided DNS. |
 | Appliance identity  | `atlaso.fqdn`             | yes      | Appliance FQDN applied to Photon OS and Atlaso desired state.                                                    |
 | Initial credentials | `atlaso.admin_password`   | yes      | Initial Atlaso web `admin` password.                                                                             |
@@ -230,6 +231,12 @@ be disabled, automatic through RA/SLAAC, or static. The customizer also writes f
 overrides when supplied, hostname, root password, optional root SSH state, and bootstrap admin password once, then
 records a redacted marker under `/var/lib/atlaso`. Passwords are consumed as deployment inputs and are not printed in
 the marker or customization log.
+
+The customizer validates IPv4, IPv6, gateway, and DNS relationships before any host mutation. If validation fails, the
+Atlaso `tty1` console displays **First-time initialization — Network configuration requires review**, prepopulates only
+non-secret OVF values, and accepts a corrected network configuration. Networkd, data-disk initialization, HTTPS
+bootstrap, and Atlaso remain held until the correction passes the same shared validation and applies successfully. The
+applied marker is absent until success, so another console correction remains possible without redeploying the OVA.
 
 The OVF descriptor stores these as unqualified property IDs inside the `atlaso` product class. ESXi qualifies them once
 in the guest OVF environment as `atlaso.<property>`; do not repeat the class prefix in each property ID.

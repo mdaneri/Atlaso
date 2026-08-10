@@ -43,6 +43,23 @@ During the first 30 seconds after startup, a missing interface inventory is show
 **Initializing appliance networking...**. If the interface remains missing after that period, the console reports the
 normal actionable error.
 
+## Correct invalid VMware OVF networking on first boot
+
+An OVF/OVA deployment with inconsistent management networking pauses before the network or data disks are initialized.
+The console displays **First-time initialization — Network configuration requires review** and the non-secret OVF
+address, gateway, DNS, and appliance-name values. This screen does not depend on management-network readiness.
+
+1. Press `F2` or `Enter`.
+2. Correct the prepopulated IPv4 and IPv6 modes, addresses, gateways, and DNS servers.
+3. Select **Apply**, review the values, and choose **Continue initialization**.
+4. Wait for the normal appliance console to replace the review state.
+5. Verify `https://<management-address>/openapi.json` from another machine.
+
+Static IPv4 and IPv6 gateways must be reachable through their configured prefix and cannot equal the interface address;
+an IPv6 link-local gateway is also valid. The OVF customizer validates the complete correction before making any host
+change. The first-boot flow does not request, display, or persist deployment passwords: it retains the original OVF
+credentials in the waiting customizer and accepts only non-secret network corrections from the console.
+
 Service state uses compact labels:
 
 | Label       | Meaning                                            |
@@ -77,8 +94,9 @@ authorization result between menus.
 8. Confirm that the console shows the expected management address and URL.
 9. Verify `https://<management-address>/openapi.json` from another machine.
 
-The editor supports IPv4 DHCP or static configuration. IPv6 can be disabled, automatic through RA/SLAAC, or static. A
-static IPv6 gateway must be on-link or link-local and cannot equal the interface address.
+The editor supports IPv4 DHCP or static configuration. IPv6 can be disabled, automatic through RA/SLAAC, or static.
+Static IPv4 and IPv6 gateways must be on-link and cannot equal their interface address; an IPv6 gateway may instead be
+link-local.
 
 The recovery action updates Atlaso desired state and submits one synchronous global appliance-apply task. It never
 falls back to unvalidated host commands. A validation or apply failure leaves the new desired state pending for review

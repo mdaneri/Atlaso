@@ -15,6 +15,8 @@ recovery steps should start with the [local appliance console guide](../operate/
 ## Terminal ownership
 
 - `atlaso-console.service` owns `/dev/tty1`, conflicts with `getty@tty1.service`, and restarts automatically.
+- The console starts after local filesystems and virtual-console setup, does not wait for management networking, and
+  starts before VMware OVF customization and data-disk initialization.
 - Image provisioning masks only `getty@tty1.service`; later virtual terminals retain normal Photon login prompts.
 - The appliance masks `ctrl-alt-del.target` and sets `CtrlAltDelBurstAction=none`.
 - systemd uses `ShowStatus=no` so unit progress does not overwrite the full-screen console.
@@ -70,11 +72,33 @@ selected action closes and is never reused across menus.
 `F4` shell sessions record open and close audit events with actor `console:root`. The password is not retained or
 logged.
 
+The bounded VMware first-boot network-review form is the exception: it is available before the OVF root password is
+applied and accepts only non-secret management-network values. It cannot open the process monitor, root shell, power
+menu, or ordinary desired-state editor.
+
+## VMware first-boot network review
+
+`atlaso-vmware-ovf-customize.service` and the console use `atlaso.app.management_network` for the same IPv4, IPv6, and
+DNS validation rules. Static gateways must be on-link for their configured prefix and cannot equal the interface
+address; an IPv6 gateway may instead be link-local. The customizer validates all OVF management fields before the
+first host mutation.
+
+When validation fails, the customizer atomically writes a bounded, non-secret review document under
+`/var/lib/atlaso` and waits without starting networkd, data-disk initialization, bootstrap HTTPS, or Atlaso. The console
+prepopulates its existing management form from that document and atomically submits only allowlisted network fields in
+a mode-`0600` correction document. OVF passwords remain only in customizer memory and never enter either document or
+the console.
+
+The customizer consumes a correction, revalidates the complete merged OVF configuration, applies it, and writes the
+redacted applied marker only after every mutation succeeds. A validation or apply failure leaves the marker absent,
+updates the review state without exception-derived command output, and permits another correction. Success removes
+both handshake documents and releases the remaining first-boot units.
+
 ## Management editor contract
 
 The `F2` management editor supports:
 
-- IPv4 DHCP or static address/prefix with an optional on-link gateway;
+- IPv4 DHCP or static address/prefix with an optional on-link gateway that differs from the interface address;
 - IPv6 Disabled, Automatic RA/SLAAC, or static address/prefix with an optional gateway;
 - external DNS servers;
 - persistent Firewall enablement; and

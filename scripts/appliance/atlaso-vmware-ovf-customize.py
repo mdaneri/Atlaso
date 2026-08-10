@@ -12,9 +12,12 @@ import secrets
 import shutil
 import subprocess
 import sys
+import time
 from datetime import datetime, timezone
-from ipaddress import IPv4Address, IPv4Interface, IPv6Address, IPv6Interface, ip_address
+from ipaddress import ip_interface
 import xml.etree.ElementTree as ET
+
+from atlaso.app.management_network import ManagementNetworkValidationError, validate_management_network
 
 
 PROPERTY_PREFIX = "atlaso."
@@ -43,13 +46,22 @@ NGINX_MANAGEMENT_PATH = Path("/etc/atlaso/nginx/sites.d/management.conf")
 FIREWALL_CONFIG_PATH = Path("/etc/atlaso/nftables.d/atlaso.nft")
 SSHD_ROOT_LOGIN_CONFIG_PATH = Path("/etc/ssh/sshd_config.d/atlaso-root-login.conf")
 MARKER_PATH = Path("/var/lib/atlaso/vmware-ovf-customization.applied")
+NETWORK_REVIEW_PATH = Path("/var/lib/atlaso/vmware-ovf-network-review.json")
+NETWORK_CORRECTION_PATH = Path("/var/lib/atlaso/vmware-ovf-network-correction.json")
 LOG_PATH = Path("/var/log/atlaso/vmware-ovf-customize.log")
 DEFAULT_INTERFACE = "eth0"
+NETWORK_REVIEW_POLL_SECONDS = 1.0
 FQDN_PATTERN = re.compile(r"^(?=.{1,253}$)(?!-)[A-Za-z0-9-]{1,63}(?<!-)(\.(?!-)[A-Za-z0-9-]{1,63}(?<!-))+$")
 
 
 class OvfCustomizationError(ValueError):
     """Report a ovf customization error."""
+    pass
+
+
+class OvfManagementNetworkError(OvfCustomizationError):
+    """Report recoverable OVF management-network validation failure."""
+
     pass
 
 
@@ -111,15 +123,6 @@ def parse_ovf_environment(xml_text: str) -> dict[str, str]:
     return properties
 
 
-def split_list(value: str) -> list[str]:
-    """Return split list.
-
-    Args:
-        value: Candidate value consumed by split list.
-    """
-    return [item.strip() for item in re.split(r"[\s,;]+", value or "") if item.strip()]
-
-
 def validate_fqdn(value: str) -> str:
     """Validate fqdn.
 
@@ -139,31 +142,6 @@ def validate_fqdn(value: str) -> str:
     if fqdn.endswith(".local"):
         raise OvfCustomizationError("atlaso.fqdn must not use .local")
     return fqdn
-
-
-def validate_dns_servers(value: str, *, required: bool = False) -> list[str]:
-    """Validate dns servers.
-
-    Args:
-        value: Candidate value consumed by validate DNS servers.
-        required: Whether required applies to the operation.
-
-
-    Returns:
-        The validate dns servers result.
-
-    Raises:
-        OvfCustomizationError: If the operation encounters an invalid state.
-    """
-    servers = split_list(value)
-    if required and not servers:
-        raise OvfCustomizationError("atlaso.dns_servers must include at least one DNS server")
-    for server in servers:
-        try:
-            ip_address(server)
-        except ValueError as exc:
-            raise OvfCustomizationError(f"DNS server must be an IP address: {server}") from exc
-    return servers
 
 
 def parse_boolean_property(properties: dict[str, str], key: str, *, default: bool = False) -> bool:
@@ -215,68 +193,249 @@ def validate_properties(properties: dict[str, str]) -> dict[str, object]:
 
     _legacy_management_mode = properties.get(PROPERTY_MANAGEMENT_MODE, "").strip().lower()
     # Kept parse-compatible for existing deployment automation; address presence now owns IPv4 behavior.
-    cidr: IPv4Interface | None = None
-    gateway: IPv4Address | None = None
     cidr_value = properties.get(PROPERTY_CIDR, "").strip()
     gateway_value = properties.get(PROPERTY_GATEWAY, "").strip()
-    management_mode = "static" if cidr_value else "dhcp"
-    if cidr_value:
-        if not gateway_value:
-            raise OvfCustomizationError("atlaso.gateway is required when atlaso.cidr is supplied")
-        try:
-            cidr = IPv4Interface(cidr_value)
-        except ValueError as exc:
-            raise OvfCustomizationError("atlaso.cidr must be an IPv4 CIDR such as 192.168.10.10/24") from exc
+    management_mode = "static" if cidr_value or gateway_value else "dhcp"
 
-        try:
-            gateway = IPv4Address(gateway_value)
-        except ValueError as exc:
-            raise OvfCustomizationError("atlaso.gateway must be an IPv4 address") from exc
-    elif gateway_value:
-        raise OvfCustomizationError("atlaso.gateway cannot be supplied without atlaso.cidr")
-
-    ipv6_enabled = parse_boolean_property(properties, PROPERTY_IPV6_ENABLED)
+    try:
+        ipv6_enabled = parse_boolean_property(properties, PROPERTY_IPV6_ENABLED)
+    except OvfCustomizationError as exc:
+        raise OvfManagementNetworkError(str(exc)) from exc
     ipv6_cidr_value = properties.get(PROPERTY_IPV6_CIDR, "").strip()
     ipv6_gateway_value = properties.get(PROPERTY_IPV6_GATEWAY, "").strip()
-    ipv6_cidr: IPv6Interface | None = None
-    ipv6_gateway: IPv6Address | None = None
-    if not ipv6_enabled and (ipv6_cidr_value or ipv6_gateway_value):
-        raise OvfCustomizationError("IPv6 CIDR and gateway require atlaso.ipv6_enabled=true")
-    if ipv6_enabled and ipv6_cidr_value:
-        try:
-            ipv6_cidr = IPv6Interface(ipv6_cidr_value)
-        except ValueError as exc:
-            raise OvfCustomizationError("atlaso.ipv6_cidr must be an IPv6 CIDR such as fd00:10::10/64") from exc
-        if ipv6_gateway_value:
-            try:
-                ipv6_gateway = IPv6Address(ipv6_gateway_value)
-            except ValueError as exc:
-                raise OvfCustomizationError("atlaso.ipv6_gateway must be an IPv6 address") from exc
-            if not ipv6_gateway.is_link_local and ipv6_gateway not in ipv6_cidr.network:
-                raise OvfCustomizationError("atlaso.ipv6_gateway must be link-local or on-link for atlaso.ipv6_cidr")
-            if ipv6_gateway == ipv6_cidr.ip:
-                raise OvfCustomizationError("atlaso.ipv6_gateway cannot equal the management IPv6 address")
-    elif ipv6_gateway_value:
-        raise OvfCustomizationError("atlaso.ipv6_gateway cannot be supplied without atlaso.ipv6_cidr")
+    ipv6_mode = (
+        "static"
+        if ipv6_cidr_value or ipv6_gateway_value
+        else ("automatic" if ipv6_enabled else "disabled")
+    )
+
+    try:
+        network = validate_management_network(
+            ipv4_method=management_mode,
+            ipv4_cidr=cidr_value,
+            ipv4_gateway=gateway_value,
+            ipv6_mode=ipv6_mode if ipv6_enabled else "disabled",
+            ipv6_cidr=ipv6_cidr_value,
+            ipv6_gateway=ipv6_gateway_value,
+            dns_servers=properties.get(PROPERTY_DNS, ""),
+            require_static_ipv4_gateway=True,
+        )
+    except ManagementNetworkValidationError as exc:
+        raise OvfManagementNetworkError(str(exc)) from exc
 
     fqdn = validate_fqdn(properties[PROPERTY_FQDN])
-    dns_servers = validate_dns_servers(properties.get(PROPERTY_DNS, ""))
+    management_source_cidr = (
+        str(ip_interface(network.ipv4_cidr).network) if network.ipv4_cidr else ""
+    )
+    management_source_ipv6_cidr = (
+        str(ip_interface(network.ipv6_cidr).network) if network.ipv6_cidr else ""
+    )
     return {
-        "management_mode": management_mode,
-        "cidr": str(cidr) if cidr else "dhcp",
-        "gateway": str(gateway) if gateway else "",
+        "management_mode": network.ipv4_method,
+        "cidr": network.ipv4_cidr or "dhcp",
+        "gateway": network.ipv4_gateway,
         "ipv6_enabled": ipv6_enabled,
-        "ipv6_mode": "static" if ipv6_cidr else ("auto" if ipv6_enabled else "disabled"),
-        "ipv6_cidr": str(ipv6_cidr) if ipv6_cidr else "",
-        "ipv6_gateway": str(ipv6_gateway) if ipv6_gateway else "",
+        "ipv6_mode": "auto" if network.ipv6_mode == "automatic" else network.ipv6_mode,
+        "ipv6_cidr": network.ipv6_cidr,
+        "ipv6_gateway": network.ipv6_gateway,
         "fqdn": fqdn,
-        "dns_servers": dns_servers,
+        "dns_servers": list(network.dns_servers),
         "admin_password": properties[PROPERTY_ADMIN_PASSWORD],
         "root_password": properties[PROPERTY_ROOT_PASSWORD],
         "root_ssh_enabled": parse_boolean_property(properties, PROPERTY_ROOT_SSH_ENABLED),
-        "management_source_cidr": str(cidr.network) if cidr else "",
-        "management_source_ipv6_cidr": str(ipv6_cidr.network) if ipv6_cidr else "",
+        "management_source_cidr": management_source_cidr,
+        "management_source_ipv6_cidr": management_source_ipv6_cidr,
     }
+
+
+def _bounded_review_value(value: object, limit: int = 512) -> str:
+    """Return one bounded non-secret OVF value for local console review.
+
+    Args:
+        value: Candidate scalar review value.
+        limit: Maximum returned character count.
+
+    Returns:
+        The bounded display value.
+    """
+    return str(value or "").strip()[:limit]
+
+
+def network_review_state(properties: dict[str, str], error: str) -> dict[str, object]:
+    """Build the non-secret first-boot network review state.
+
+    Args:
+        properties: Original OVF properties containing deployment values.
+        error: Safe management-network validation message.
+
+    Returns:
+        A bounded non-secret review document.
+    """
+    cidr = _bounded_review_value(properties.get(PROPERTY_CIDR, ""))
+    gateway = _bounded_review_value(properties.get(PROPERTY_GATEWAY, ""))
+    ipv6_cidr = _bounded_review_value(properties.get(PROPERTY_IPV6_CIDR, ""))
+    ipv6_gateway = _bounded_review_value(properties.get(PROPERTY_IPV6_GATEWAY, ""))
+    ipv6_enabled = properties.get(PROPERTY_IPV6_ENABLED, "").strip().lower() in {
+        "true",
+        "1",
+        "yes",
+        "on",
+    }
+    return {
+        "version": 1,
+        "state": "network_review",
+        "error": _bounded_review_value(error, 1024),
+        "ipv4_method": "static" if cidr or gateway else "dhcp",
+        "ipv4_cidr": cidr,
+        "ipv4_gateway": gateway,
+        "ipv6_mode": (
+            "static"
+            if ipv6_cidr or ipv6_gateway
+            else ("automatic" if ipv6_enabled else "disabled")
+        ),
+        "ipv6_cidr": ipv6_cidr,
+        "ipv6_gateway": ipv6_gateway,
+        "dns_servers": _bounded_review_value(properties.get(PROPERTY_DNS, "")),
+        "fqdn": _bounded_review_value(properties.get(PROPERTY_FQDN, ""), 253),
+        "updated_at": utc_now(),
+    }
+
+
+def write_json_atomic(path: Path, payload: dict[str, object], *, mode: int = 0o640) -> None:
+    """Persist bounded JSON without exposing a partially written state file.
+
+    Args:
+        path: Destination path for the JSON document.
+        payload: JSON-compatible document to persist.
+        mode: Filesystem mode for the completed document.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    try:
+        temporary.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        os.chmod(temporary, mode)
+        temporary.replace(path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def write_network_review(properties: dict[str, str], error: str) -> None:
+    """Persist recoverable, non-secret first-boot review state.
+
+    Args:
+        properties: Original or corrected OVF properties requiring review.
+        error: Safe management-network validation or recovery message.
+    """
+    write_json_atomic(NETWORK_REVIEW_PATH, network_review_state(properties, error))
+
+
+def read_network_correction() -> dict[str, str] | None:
+    """Read one console-supplied, non-secret management-network correction."""
+    if not NETWORK_CORRECTION_PATH.exists():
+        return None
+    try:
+        payload = json.loads(NETWORK_CORRECTION_PATH.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise OvfManagementNetworkError("The console network correction could not be read; review it again.") from exc
+    if not isinstance(payload, dict) or payload.get("version") != 1:
+        raise OvfManagementNetworkError("The console network correction has an unsupported format.")
+    allowed = {
+        "ipv4_method",
+        "ipv4_cidr",
+        "ipv4_gateway",
+        "ipv6_mode",
+        "ipv6_cidr",
+        "ipv6_gateway",
+        "dns_servers",
+    }
+    unexpected = sorted(set(payload) - allowed - {"version"})
+    if unexpected:
+        raise OvfManagementNetworkError(
+            "The console network correction contains unsupported fields; review it again."
+        )
+    return {key: _bounded_review_value(payload.get(key, "")) for key in allowed}
+
+
+def properties_with_network_correction(
+    properties: dict[str, str], correction: dict[str, str]
+) -> dict[str, str]:
+    """Merge only the allowlisted network fields into the original OVF properties.
+
+    Args:
+        properties: Original OVF properties, including in-memory credentials.
+        correction: Validated allowlisted console network fields.
+
+    Returns:
+        The OVF properties with only management-network values replaced.
+    """
+    corrected = dict(properties)
+    ipv4_method = correction.get("ipv4_method", "").strip().lower()
+    if ipv4_method == "dhcp":
+        corrected.pop(PROPERTY_CIDR, None)
+        corrected.pop(PROPERTY_GATEWAY, None)
+    else:
+        corrected[PROPERTY_CIDR] = correction.get("ipv4_cidr", "")
+        corrected[PROPERTY_GATEWAY] = correction.get("ipv4_gateway", "")
+    ipv6_mode = correction.get("ipv6_mode", "").strip().lower()
+    corrected[PROPERTY_IPV6_ENABLED] = "true" if ipv6_mode != "disabled" else "false"
+    if ipv6_mode == "static":
+        corrected[PROPERTY_IPV6_CIDR] = correction.get("ipv6_cidr", "")
+        corrected[PROPERTY_IPV6_GATEWAY] = correction.get("ipv6_gateway", "")
+    else:
+        corrected.pop(PROPERTY_IPV6_CIDR, None)
+        corrected.pop(PROPERTY_IPV6_GATEWAY, None)
+    corrected[PROPERTY_DNS] = correction.get("dns_servers", "")
+    return corrected
+
+
+def clear_network_review() -> None:
+    """Remove first-boot review state only after successful customization."""
+    NETWORK_CORRECTION_PATH.unlink(missing_ok=True)
+    NETWORK_REVIEW_PATH.unlink(missing_ok=True)
+
+
+def wait_for_network_review(properties: dict[str, str], error: str) -> int:
+    """Wait visibly for tty1 to provide a valid first-boot network correction.
+
+    Args:
+        properties: Original OVF properties retained in process memory.
+        error: Initial safe management-network validation message.
+
+    Returns:
+        Zero after corrected customization succeeds.
+    """
+    write_network_review(properties, error)
+    log("VMware OVF management network requires review on the Atlaso tty1 console.")
+    while True:
+        try:
+            correction = read_network_correction()
+        except OvfManagementNetworkError as exc:
+            write_network_review(properties, str(exc))
+            NETWORK_CORRECTION_PATH.unlink(missing_ok=True)
+            time.sleep(NETWORK_REVIEW_POLL_SECONDS)
+            continue
+        if correction is None:
+            time.sleep(NETWORK_REVIEW_POLL_SECONDS)
+            continue
+        corrected_properties = properties_with_network_correction(properties, correction)
+        try:
+            config = validate_properties(corrected_properties)
+            summary = apply_customization(config)
+        except OvfManagementNetworkError as exc:
+            write_network_review(corrected_properties, str(exc))
+            NETWORK_CORRECTION_PATH.unlink(missing_ok=True)
+            continue
+        except (OvfCustomizationError, OSError, subprocess.CalledProcessError) as exc:
+            write_network_review(
+                corrected_properties,
+                "The corrected management network could not be applied. Review the values and retry.",
+            )
+            NETWORK_CORRECTION_PATH.unlink(missing_ok=True)
+            log(f"VMware OVF customization could not apply the console correction: {type(exc).__name__}")
+            continue
+        clear_network_review()
+        log("Applied corrected Atlaso VMware OVF customization: " + json.dumps(summary, sort_keys=True))
+        return 0
 
 
 def redacted_summary(config: dict[str, object]) -> dict[str, object]:
@@ -578,9 +737,7 @@ def apply_customization(config: dict[str, object], *, dry_run: bool = False) -> 
             "ATLASO_MANAGEMENT_SOURCE_CIDR": config["management_source_cidr"],
         },
     )
-    MARKER_PATH.parent.mkdir(parents=True, exist_ok=True)
-    MARKER_PATH.write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    os.chmod(MARKER_PATH, 0o640)
+    write_json_atomic(MARKER_PATH, summary)
     return summary
 
 
@@ -612,6 +769,11 @@ def main(argv: list[str] | None = None) -> int:
     try:
         config = validate_properties(properties)
         summary = apply_customization(config, dry_run=args.dry_run)
+    except OvfManagementNetworkError as exc:
+        if args.dry_run:
+            log(f"VMware OVF customization failed validation: {exc}")
+            return 2
+        return wait_for_network_review(properties, str(exc))
     except (OvfCustomizationError, ET.ParseError) as exc:
         log(f"VMware OVF customization failed validation: {exc}")
         return 2
@@ -619,6 +781,8 @@ def main(argv: list[str] | None = None) -> int:
         log(f"VMware OVF customization command failed: {exc.cmd} exit_code={exc.returncode}")
         return exc.returncode or 1
 
+    if not args.dry_run:
+        clear_network_review()
     log("Applied Atlaso VMware OVF customization: " + json.dumps(summary, sort_keys=True))
     return 0
 
