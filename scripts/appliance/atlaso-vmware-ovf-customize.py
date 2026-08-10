@@ -526,6 +526,58 @@ def read_ovf_environment() -> str:
     return ""
 
 
+def read_ovf_environment_source(ovf_env_file: str) -> str:
+    """Read OVF XML from an explicit test file or the VMware guest channel.
+
+    Args:
+        ovf_env_file: Optional filesystem path supplied by the command line.
+
+    Returns:
+        The current OVF environment XML text.
+    """
+    return Path(ovf_env_file).read_text(encoding="utf-8") if ovf_env_file else read_ovf_environment()
+
+
+def wait_for_ovf_properties(ovf_env_file: str) -> tuple[dict[str, str], dict[str, object]]:
+    """Wait fail-closed for a complete, valid non-network OVF property set.
+
+    Args:
+        ovf_env_file: Optional filesystem path supplied by the command line.
+
+    Returns:
+        The complete raw properties and validated non-network values.
+    """
+    last_state = ""
+    messages = {
+        "unavailable": "Atlaso VMware OVF deployment properties are unavailable; waiting with tty1 locked.",
+        "unreadable": "Atlaso VMware OVF deployment properties are unreadable; waiting with tty1 locked.",
+        "incomplete": (
+            "Atlaso VMware OVF deployment properties are incomplete or invalid; "
+            "waiting with tty1 locked."
+        ),
+    }
+    while True:
+        try:
+            properties = parse_ovf_environment(read_ovf_environment_source(ovf_env_file))
+        except (OSError, ET.ParseError):
+            state = "unreadable"
+        else:
+            if not properties:
+                state = "unavailable"
+            else:
+                try:
+                    non_network = validate_non_network_properties(properties)
+                except OvfCustomizationError:
+                    state = "incomplete"
+                else:
+                    log("Atlaso VMware OVF deployment properties are complete; continuing initialization.")
+                    return properties, non_network
+        if state != last_state:
+            log(messages[state])
+            last_state = state
+        time.sleep(OVF_ENVIRONMENT_POLL_SECONDS)
+
+
 def quote_env_value(value: object) -> str:
     """Return quote env value.
 
@@ -811,39 +863,24 @@ def main(argv: list[str] | None = None) -> int:
         log("VMware OVF customization already applied; leaving appliance state unchanged.")
         return 0
 
-    xml_text = Path(args.ovf_env_file).read_text(encoding="utf-8") if args.ovf_env_file else read_ovf_environment()
-    try:
-        properties = parse_ovf_environment(xml_text)
-    except ET.ParseError:
-        if args.dry_run:
-            log("VMware OVF customization failed validation: the OVF environment XML is malformed.")
+    if args.dry_run:
+        try:
+            properties = parse_ovf_environment(read_ovf_environment_source(args.ovf_env_file))
+        except (OSError, ET.ParseError):
+            log("VMware OVF customization failed validation: the OVF environment XML is unreadable.")
             return 2
-        properties = {}
-        log("Atlaso VMware OVF deployment properties are malformed; waiting with tty1 locked.")
-    if not properties:
-        if args.dry_run:
+        if not properties:
             log("No Atlaso VMware OVF properties found; image defaults remain unchanged.")
             return 0
-        log("Atlaso VMware OVF deployment properties are unavailable; waiting with tty1 locked.")
-        malformed_logged = False
-        while not properties:
-            time.sleep(OVF_ENVIRONMENT_POLL_SECONDS)
-            xml_text = (
-                Path(args.ovf_env_file).read_text(encoding="utf-8")
-                if args.ovf_env_file
-                else read_ovf_environment()
-            )
-            try:
-                properties = parse_ovf_environment(xml_text)
-            except ET.ParseError:
-                if not malformed_logged:
-                    log("Atlaso VMware OVF deployment properties remain malformed; continuing to wait.")
-                    malformed_logged = True
-                continue
-        log("Atlaso VMware OVF deployment properties are available; continuing initialization.")
+        try:
+            non_network = validate_non_network_properties(properties)
+        except OvfCustomizationError as exc:
+            log(f"VMware OVF customization failed validation: {exc}")
+            return 2
+    else:
+        properties, non_network = wait_for_ovf_properties(args.ovf_env_file)
 
     try:
-        non_network = validate_non_network_properties(properties)
         config = validate_properties(properties, non_network=non_network)
     except OvfManagementNetworkError as exc:
         if args.dry_run:

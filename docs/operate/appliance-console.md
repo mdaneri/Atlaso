@@ -67,9 +67,10 @@ only non-secret network corrections from the console.
 Atlaso validates the FQDN, required properties, credentials, and root-SSH boolean before offering network-only
 correction. If initialization stays on the starting screen and no network review appears, correct those non-network OVF
 properties in the hypervisor and restart the deployment, or redeploy with corrected values. When VMware Tools has not
-yet supplied readable Atlaso OVF properties, the customizer keeps tty1 privileged actions locked and retries empty or
-malformed responses instead of using the image-build credentials; redeploy if valid properties never become available.
-A reboot after successful customization removes any stale review document by trusting the redacted applied marker.
+yet supplied a complete valid set of Atlaso OVF properties, the customizer keeps tty1 privileged actions locked and
+retries empty, unreadable, malformed, incomplete, or invalid non-network responses instead of using the image-build
+credentials; redeploy if valid properties never become available. A reboot after successful customization removes any
+stale review document by trusting the redacted applied marker.
 If a later customization step fails after either the original or corrected network validates, the review screen remains
 backed by the waiting customizer. Resolve the safe condition named in
 `/var/log/atlaso/vmware-ovf-customize.log`, then resubmit the network review to retry; the applied marker remains absent
