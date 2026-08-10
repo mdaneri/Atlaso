@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from ipaddress import ip_address, ip_interface
+from ipaddress import IPv4Address, IPv6Address, ip_address, ip_interface
 
 
 class ManagementNetworkValidationError(ValueError):
@@ -22,6 +22,22 @@ class ManagementNetworkValues:
     ipv6_cidr: str
     ipv6_gateway: str
     dns_servers: tuple[str, ...]
+
+
+def reject_non_unicast_address(address: IPv4Address | IPv6Address, *, label: str) -> None:
+    """Reject address classes that cannot identify a management host or next hop.
+
+    Args:
+        address: Parsed interface or gateway address to inspect.
+        label: Human-readable field label for the validation error.
+
+    Raises:
+        ManagementNetworkValidationError: If the address is non-unicast or reserved.
+    """
+    if address.is_unspecified or address.is_loopback or address.is_multicast or address.is_reserved:
+        raise ManagementNetworkValidationError(
+            f"{label} must be a unicast address and cannot be unspecified, loopback, multicast, or reserved."
+        )
 
 
 def validate_ipv4_management_values(
@@ -65,6 +81,7 @@ def validate_ipv4_management_values(
         ) from exc
     if parsed_interface.version != 4:
         raise ManagementNetworkValidationError("Management IP must use IPv4.")
+    reject_non_unicast_address(parsed_interface.ip, label="Management IPv4 address")
     if parsed_interface.network.prefixlen <= 30 and parsed_interface.ip in {
         parsed_interface.network.network_address,
         parsed_interface.network.broadcast_address,
@@ -83,6 +100,8 @@ def validate_ipv4_management_values(
             raise ManagementNetworkValidationError(
                 "Management gateway must be a valid IPv4 address."
             ) from exc
+        if parsed_gateway.version == 4:
+            reject_non_unicast_address(parsed_gateway, label="Management IPv4 gateway")
         if parsed_gateway.version != 4 or parsed_gateway not in parsed_interface.network:
             raise ManagementNetworkValidationError(
                 "Management gateway must be an on-link IPv4 address for the configured prefix."
@@ -144,6 +163,7 @@ def validate_ipv6_management_values(
         ) from exc
     if parsed_interface.version != 6:
         raise ManagementNetworkValidationError("Management IPv6 CIDR must use IPv6.")
+    reject_non_unicast_address(parsed_interface.ip, label="Management IPv6 address")
     if gateway_value:
         try:
             parsed_gateway = ip_address(gateway_value)
@@ -153,6 +173,7 @@ def validate_ipv6_management_values(
             ) from exc
         if parsed_gateway.version != 6:
             raise ManagementNetworkValidationError("Management IPv6 gateway must use IPv6.")
+        reject_non_unicast_address(parsed_gateway, label="Management IPv6 gateway")
         if not parsed_gateway.is_link_local and parsed_gateway not in parsed_interface.network:
             raise ManagementNetworkValidationError(
                 "Management IPv6 gateway must be link-local or on-link for the configured prefix."

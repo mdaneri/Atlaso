@@ -232,7 +232,9 @@ overrides when supplied, hostname, root password, optional root SSH state, and b
 records a redacted marker under `/var/lib/atlaso`. Passwords are consumed as deployment inputs and are not printed in
 the marker or customization log.
 
-The customizer validates IPv4, IPv6, gateway, and DNS relationships before any host mutation. If validation fails, the
+The customizer validates IPv4, IPv6, gateway, and DNS relationships before any host mutation. Interface and gateway
+addresses must be usable unicast values rather than unspecified, loopback, multicast, or reserved addresses. If
+validation fails, the
 Atlaso `tty1` console displays **First-time initialization — Network configuration requires review**, prepopulates only
 non-secret OVF values, and accepts a corrected network configuration. Networkd, data-disk initialization, HTTPS
 bootstrap, and Atlaso remain held until the correction passes the same shared validation and applies successfully. The

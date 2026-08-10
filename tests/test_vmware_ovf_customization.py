@@ -168,6 +168,57 @@ def test_vmware_ovf_customizer_rejects_invalid_ipv4_gateway_relationships(cidr, 
         customizer.validate_properties(properties)
 
 
+@pytest.mark.parametrize(
+    ("cidr", "gateway", "message"),
+    [
+        ("127.0.0.2/8", "127.0.0.1", "Management IPv4 address must be a unicast address"),
+        ("192.168.10.10/24", "127.0.0.1", "Management IPv4 gateway must be a unicast address"),
+        ("224.0.0.2/24", "224.0.0.1", "Management IPv4 address must be a unicast address"),
+    ],
+)
+def test_vmware_ovf_customizer_rejects_non_unicast_ipv4_values(cidr, gateway, message):
+    """Verify OVF and tty1 share rejection of non-unicast IPv4 values.
+
+    Args:
+        cidr: Candidate management IPv4 address and prefix.
+        gateway: Candidate management IPv4 gateway.
+        message: Expected validation-message fragment.
+    """
+    customizer = load_customizer()
+    properties = customizer.parse_ovf_environment(OVF_ENV)
+    properties["atlaso.cidr"] = cidr
+    properties["atlaso.gateway"] = gateway
+
+    with pytest.raises(customizer.OvfManagementNetworkError, match=message):
+        customizer.validate_properties(properties)
+
+
+@pytest.mark.parametrize(
+    ("cidr", "gateway", "message"),
+    [
+        ("::/64", "::2", "Management IPv6 address must be a unicast address"),
+        ("fd00:49::10/64", "::1", "Management IPv6 gateway must be a unicast address"),
+        ("ff02::2/64", "fe80::1", "Management IPv6 address must be a unicast address"),
+    ],
+)
+def test_vmware_ovf_customizer_rejects_non_unicast_ipv6_values(cidr, gateway, message):
+    """Verify OVF and tty1 share rejection of non-unicast IPv6 values.
+
+    Args:
+        cidr: Candidate management IPv6 address and prefix.
+        gateway: Candidate management IPv6 gateway.
+        message: Expected validation-message fragment.
+    """
+    customizer = load_customizer()
+    properties = customizer.parse_ovf_environment(OVF_ENV)
+    properties["atlaso.ipv6_enabled"] = "true"
+    properties["atlaso.ipv6_cidr"] = cidr
+    properties["atlaso.ipv6_gateway"] = gateway
+
+    with pytest.raises(customizer.OvfManagementNetworkError, match=message):
+        customizer.validate_properties(properties)
+
+
 def test_vmware_ovf_customizer_accepts_ipv4_point_to_point_gateway_peers():
     """Verify both addresses in an IPv4 /31 remain usable point-to-point hosts."""
     customizer = load_customizer()
