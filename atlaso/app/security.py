@@ -169,7 +169,6 @@ UI_PATH_SCOPES = [
     ("/firewall", "read:firewall", "write:firewall"),
     ("/dns", "read:dns", "write:dns"),
     ("/dhcp", "read:dhcp", "write:dhcp"),
-    ("/kms", "read:kms", "write:kms"),
     ("/ldap", "read:ldap", "write:ldap"),
     ("/ntp", "read:services", "write:services"),
     ("/esxi-pxe", "read:esxi-pxe", "write:esxi-pxe"),

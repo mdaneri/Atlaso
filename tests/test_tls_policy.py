@@ -28,6 +28,7 @@ def test_kms_context_requires_tls_1_2_or_newer(monkeypatch, tmp_path):
             protocol: Protocol captured or supplied by this test helper.
             minimum_version: Minimum version captured or supplied by this test helper.
             verify_mode: Verify mode captured or supplied by this test helper.
+            verify_flags: X.509 verification flags captured by this test helper.
         """
         def __init__(self, protocol):
             """Initialize the fake context.
@@ -38,6 +39,7 @@ def test_kms_context_requires_tls_1_2_or_newer(monkeypatch, tmp_path):
             self.protocol = protocol
             self.minimum_version = None
             self.verify_mode = None
+            self.verify_flags = 0
 
         def load_cert_chain(self, _certificate_path, _private_key_path):
             """Return cert chain.
@@ -74,6 +76,7 @@ def test_kms_context_requires_tls_1_2_or_newer(monkeypatch, tmp_path):
     assert context.protocol == ssl.PROTOCOL_TLS_SERVER
     assert context.minimum_version == ssl.TLSVersion.TLSv1_2
     assert context.verify_mode == ssl.CERT_REQUIRED
+    assert context.verify_flags & ssl.VERIFY_X509_PARTIAL_CHAIN
 
 
 def test_vcf_automation_fingerprint_context_requires_tls_1_2_without_ca_verification():

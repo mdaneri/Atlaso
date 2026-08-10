@@ -1,310 +1,101 @@
 {% extends "base.html" %}
 {% from "partials/resource_wizard.html" import resource_wizard %}
-{% block page_title %}KMS / KMIP{% endblock %}
+{% block page_title %}vSphere Key Providers{% endblock %}
 {% block content %}
-<section class="split-workspace">
+<section class="split-workspace vsphere-key-provider-workspace">
   <div class="panel wide-panel">
     <div class="panel-head">
       <div>
-        <h2>KMS / KMIP</h2>
-        <p class="muted">Manage the appliance-native KMIP provider, trusted clients, and key metadata.</p>
+        <h2>vSphere Key Providers</h2>
+        <p class="muted">Manage isolated provider namespaces and exact public-certificate trust for vCenter.</p>
       </div>
       <span class="status-pill {{ 'good' if kms_settings.enabled else 'muted' }}">{{ "enabled" if kms_settings.enabled else "disabled" }}</span>
     </div>
-    {% if form_error %}
-      <div class="alert error">{{ form_error }}</div>
-    {% endif %}
-    <div class="alert warning">
-      {{ kms_lab_notice }}
-    </div>
+    {% if form_error %}<div class="alert error">{{ form_error }}</div>{% endif %}
+    <div class="alert warning">{{ kms_lab_notice }}</div>
 
-    <div class="tab-buttons tool-tabs" role="tablist" aria-label="KMS views">
-      <button class="tab-button active" type="button" role="tab" data-tab-target="kms-keys-panel" aria-controls="kms-keys-panel" aria-selected="true">Keys</button>
-      <button class="tab-button" type="button" role="tab" data-tab-target="kms-clients-panel" aria-controls="kms-clients-panel" aria-selected="false">Clients</button>
+    <div class="tab-buttons tool-tabs" role="tablist" aria-label="vSphere Key Provider tools">
+      <button class="tab-button active" type="button" role="tab" data-tab-target="vsphere-providers-panel" aria-controls="vsphere-providers-panel" aria-selected="true">Providers</button>
+      <button class="tab-button" type="button" role="tab" data-tab-target="vsphere-vcenters-panel" aria-controls="vsphere-vcenters-panel" aria-selected="false">Trusted vCenters</button>
+      <button class="tab-button" type="button" role="tab" data-tab-target="vsphere-certificates-panel" aria-controls="vsphere-certificates-panel" aria-selected="false">Certificates</button>
+      <button class="tab-button" type="button" role="tab" data-tab-target="vsphere-health-panel" aria-controls="vsphere-health-panel" aria-selected="false">Health &amp; lifecycle</button>
     </div>
 
     <div class="tab-panels">
-      <div id="kms-keys-panel" class="tab-panel active" role="tabpanel">
-        <div class="section-head">
-          <div>
-            <h2>Managed Keys</h2>
-            <p class="muted">Browse staged keys here. Use the bottom add row or open a key to review cryptographic policy, ownership, and lifecycle state.</p>
-          </div>
-          <span class="status-pill muted">{{ kms_keys|length }} keys</span>
-        </div>
-        <div id="kms-key-error" class="alert error hidden"></div>
-        <div
-          id="kms-keys-table"
-          class="tabulator-shell kms-keys-table"
-          data-keys='{{ kms_key_rows | tojson }}'
-          data-client-options='{{ kms_client_choices | tojson }}'
-          data-algorithm-options='{{ kms_key_algorithms | tojson }}'
-          data-state-options='{{ kms_key_states | tojson }}'
-          data-csrf="{{ csrf_token }}"
-          data-fallback-id="kms-keys-fallback"
-        ></div>
-        <table id="kms-keys-fallback" class="data-table dns-fallback-table">
-          <thead>
-            <tr><th>Name</th><th>Algorithm</th><th>Length</th><th>Usage</th><th>State</th><th>Owner</th><th>Enabled</th><th>Actions</th></tr>
-          </thead>
-          <tbody>
-            {% for key in kms_keys %}
-              <tr>
-                <td>{{ key.name }}</td>
-                <td>{{ key.algorithm }}</td>
-                <td>{{ key.length }}</td>
-                <td>{{ key.usage }}</td>
-                <td>{{ key.state }}</td>
-                <td>{{ key.owner_client.name if key.owner_client else "Unassigned" }}</td>
-                <td><span class="status-pill {{ 'good' if key.enabled else 'muted' }}">{{ "enabled" if key.enabled else "disabled" }}</span></td>
-                <td>
-                  <form
-                    action="/kms/keys/{{ key.id }}/delete"
-                    method="post"
-                    data-confirm-modal
-                    data-confirm-title="Delete {{ key.name }} key?"
-                    data-confirm-message="This removes the KMS key from Atlaso desired state. It will not touch the appliance until global appliance apply runs."
-                    data-confirm-label="Delete key"
-                  >
-                    <input type="hidden" name="csrf" value="{{ csrf_token }}">
-                    <button class="button tiny danger" type="submit">Delete</button>
-                  </form>
-                </td>
-              </tr>
-            {% endfor %}
-          </tbody>
+      <div id="vsphere-providers-panel" class="tab-panel active" role="tabpanel">
+        <div class="section-head"><div><h2>Providers</h2><p class="muted">Each immutable UUID is an isolated operational key namespace.</p></div><span class="status-pill muted">{{ vsphere_key_providers|length }} providers</span></div>
+        <div id="vsphere-provider-error" class="alert error hidden"></div>
+        <div id="vsphere-providers-table" class="tabulator-shell" data-providers='{{ vsphere_key_provider_rows|tojson }}' data-csrf="{{ csrf_token }}" data-fallback-id="vsphere-providers-fallback"></div>
+        <table id="vsphere-providers-fallback" class="data-table dns-fallback-table">
+          <thead><tr><th>Name</th><th>Provider UUID</th><th>Trusted vCenters</th><th>Certificates</th><th>Enabled</th><th>Actions</th></tr></thead>
+          <tbody>{% for provider in vsphere_key_providers %}<tr><td>{{ provider.name }}</td><td><code>{{ provider.id }}</code></td><td>{{ provider.trusted_vcenters|length }}</td><td>{{ provider.trusted_vcenters|map(attribute='certificates')|map('length')|sum }}</td><td><span class="status-pill {{ 'good' if provider.enabled else 'muted' }}">{{ 'enabled' if provider.enabled else 'disabled' }}</span></td><td><form action="/vsphere-key-providers/providers/{{ provider.id }}/delete" method="post" data-confirm-modal data-confirm-title="Delete {{ provider.name }}?" data-confirm-message="Deletion requires this provider to be disabled, detached, and verified to contain zero operational keys." data-confirm-label="Delete provider"><input type="hidden" name="csrf" value="{{ csrf_token }}"><button class="button tiny danger" type="submit">Delete</button></form></td></tr>{% else %}<tr><td colspan="6">No providers configured.</td></tr>{% endfor %}</tbody>
         </table>
       </div>
 
-      <div id="kms-clients-panel" class="tab-panel" role="tabpanel" hidden>
-        <div class="section-head">
-          <div>
-            <h2>KMIP Clients</h2>
-            <p class="muted">Clients map exact certificate fingerprints to this isolated provider.</p>
-          </div>
-          <span class="status-pill muted">{{ kms_clients|length }} clients</span>
-        </div>
-        <div id="kms-client-error" class="alert error hidden"></div>
-        <div
-          id="kms-clients-table"
-          class="tabulator-shell kms-clients-table"
-          data-clients='{{ kms_client_rows | tojson }}'
-          data-role-options='{{ kms_client_roles | tojson }}'
-          data-csrf="{{ csrf_token }}"
-          data-fallback-id="kms-clients-fallback"
-        ></div>
-        <table id="kms-clients-fallback" class="data-table dns-fallback-table">
-          <thead>
-            <tr><th>Name</th><th>Certificate subject</th><th>Role</th><th>Operations</th><th>Enabled</th><th>Actions</th></tr>
-          </thead>
-          <tbody>
-            {% for client in kms_clients %}
-              <tr>
-                <td>{{ client.name }}</td>
-                <td>{{ client.certificate_subject }}</td>
-                <td>{{ client.role }}</td>
-                <td>{{ client.allowed_operations }}</td>
-                <td><span class="status-pill {{ 'good' if client.enabled else 'muted' }}">{{ "enabled" if client.enabled else "disabled" }}</span></td>
-                <td>
-                  <form
-                    action="/kms/clients/{{ client.id }}/delete"
-                    method="post"
-                    data-confirm-modal
-                    data-confirm-title="Delete {{ client.name }} client?"
-                    data-confirm-message="This removes the KMS client from Atlaso desired state and unassigns any keys owned by it. It will not touch the appliance until global appliance apply runs."
-                    data-confirm-label="Delete client"
-                  >
-                    <input type="hidden" name="csrf" value="{{ csrf_token }}">
-                    <button class="button tiny danger" type="submit">Delete</button>
-                  </form>
-                </td>
-              </tr>
-            {% endfor %}
-          </tbody>
+      <div id="vsphere-vcenters-panel" class="tab-panel" role="tabpanel" hidden>
+        <div class="section-head"><div><h2>Trusted vCenters</h2><p class="muted">Assign each vCenter and its public client certificates to exactly one provider.</p></div><span class="status-pill muted">{{ vsphere_trusted_vcenters|length }} vCenters</span></div>
+        <div id="vsphere-vcenter-error" class="alert error hidden"></div>
+        <div id="vsphere-vcenters-table" class="tabulator-shell" data-vcenters='{{ vsphere_trusted_vcenter_rows|tojson }}' data-provider-options='{{ vsphere_provider_choices|tojson }}' data-csrf="{{ csrf_token }}" data-fallback-id="vsphere-vcenters-fallback"></div>
+        <table id="vsphere-vcenters-fallback" class="data-table dns-fallback-table">
+          <thead><tr><th>Name</th><th>Provider</th><th>Hostname</th><th>Certificates</th><th>Earliest expiry</th><th>Enabled</th><th>Actions</th></tr></thead>
+          <tbody>{% for vcenter in vsphere_trusted_vcenters %}<tr><td>{{ vcenter.name }}</td><td>{{ vcenter.provider.name }}</td><td>{{ vcenter.hostname or 'Not recorded' }}</td><td>{{ vcenter.certificates|length }}</td><td>{{ vcenter.certificates|selectattr('not_valid_after')|map(attribute='not_valid_after')|min if vcenter.certificates else 'Not reported' }}</td><td><span class="status-pill {{ 'good' if vcenter.enabled else 'muted' }}">{{ 'enabled' if vcenter.enabled else 'disabled' }}</span></td><td><form action="/vsphere-key-providers/trusted-vcenters/{{ vcenter.id }}/delete" method="post" data-confirm-modal data-confirm-title="Delete {{ vcenter.name }}?" data-confirm-message="Disable the trusted vCenter and retire every certificate first." data-confirm-label="Delete trusted vCenter"><input type="hidden" name="provider_id" value="{{ vcenter.provider_id }}"><input type="hidden" name="csrf" value="{{ csrf_token }}"><button class="button tiny danger" type="submit">Delete</button></form></td></tr>{% else %}<tr><td colspan="7">No trusted vCenters configured.</td></tr>{% endfor %}</tbody>
         </table>
+      </div>
+
+      <div id="vsphere-certificates-panel" class="tab-panel" role="tabpanel" hidden>
+        <div class="section-head"><div><h2>Certificates</h2><p class="muted">Read-only public X.509 metadata. Context actions add or retire exact trust records.</p></div><span class="status-pill muted">{{ vsphere_certificates|length }} certificates</span></div>
+        <div id="vsphere-certificate-error" class="alert error hidden"></div>
+        <div id="vsphere-certificates-table" class="tabulator-shell" data-certificates='{{ vsphere_certificate_rows|tojson }}' data-csrf="{{ csrf_token }}" data-fallback-id="vsphere-certificates-fallback"></div>
+        <table id="vsphere-certificates-fallback" class="data-table dns-fallback-table">
+          <thead><tr><th>Provider</th><th>vCenter</th><th>Subject</th><th>SHA-256 fingerprint</th><th>Validity</th><th>Source</th><th>Status</th><th>Actions</th></tr></thead>
+          <tbody>{% for certificate in vsphere_certificates %}<tr><td>{{ certificate.trusted_vcenter.provider.name }}</td><td>{{ certificate.trusted_vcenter.name }}</td><td>{{ certificate.subject or 'Not reported' }}</td><td><code>{{ certificate.fingerprint_sha256 }}</code></td><td>{{ certificate.not_valid_before or 'Not reported' }} – {{ certificate.not_valid_after or 'Not reported' }}</td><td>{{ certificate.source }}</td><td>{{ certificate.status if certificate.status is defined else 'reported' }}</td><td><form action="/vsphere-key-providers/trusted-vcenters/{{ certificate.trusted_vcenter_id }}/certificates/{{ certificate.id }}/delete" method="post" data-confirm-modal data-confirm-title="Retire public certificate?" data-confirm-message="The exact fingerprint leaves desired trust after the next global Appliance Apply." data-confirm-label="Retire certificate"><input type="hidden" name="provider_id" value="{{ certificate.trusted_vcenter.provider_id }}"><input type="hidden" name="csrf" value="{{ csrf_token }}"><button class="button tiny danger" type="submit">Retire</button></form></td></tr>{% else %}<tr><td colspan="8">No public certificates configured.</td></tr>{% endfor %}</tbody>
+        </table>
+      </div>
+
+      <div id="vsphere-health-panel" class="tab-panel" role="tabpanel" hidden>
+        <div class="section-head"><div><h2>Health &amp; lifecycle</h2><p class="muted">Authenticated redacted counts. Unavailable evidence is not reported, never zero.</p></div></div>
+        <div id="vsphere-health-table" class="tabulator-shell" data-health='{{ vsphere_status_rows|tojson }}' data-fallback-id="vsphere-health-fallback"></div>
+        <table id="vsphere-health-fallback" class="data-table dns-fallback-table"><thead><tr><th>Provider</th><th>Desired</th><th>Readiness</th><th>Runtime</th><th>Pre-Active</th><th>Active</th><th>Total</th></tr></thead><tbody>{% for row in vsphere_status_rows %}<tr><td>{{ row.provider_name }}</td><td>{{ row.desired_state }}</td><td>{{ row.readiness }}</td><td>{{ row.runtime_state }}</td><td>{{ row.pre_active_count if row.pre_active_count is not none else 'Not reported' }}</td><td>{{ row.active_count if row.active_count is not none else 'Not reported' }}</td><td>{{ row.total_count if row.total_count is not none else 'Not reported' }}</td></tr>{% else %}<tr><td colspan="7">No provider namespaces configured.</td></tr>{% endfor %}</tbody></table>
       </div>
     </div>
   </div>
 
   <aside class="side-stack">
     <div class="panel detail-panel">
-      <div class="panel-head">
-        <h2>KMS Settings</h2>
-        <span class="status-pill {{ kms_service_status.pill }}">{{ kms_service_status.label }}</span>
-      </div>
-      <form class="form-stack" action="/kms/settings" method="post" data-autosave-form data-kms-settings data-autosave-status-id="kms-settings-autosave-status">
+      <div class="panel-head"><h2>Listener settings</h2><span class="status-pill {{ kms_service_status.pill }}">{{ kms_service_status.label }}</span></div>
+      <form class="form-stack" action="/vsphere-key-providers/settings" method="post" data-autosave-form data-kms-settings data-autosave-status-id="kms-settings-autosave-status">
         <input type="hidden" name="csrf" value="{{ csrf_token }}">
-        <label class="switch-field"><span class="field-label"><span>Service enabled</span><button class="help-icon" type="button" data-help="Controls whether Atlaso treats the appliance-native KMIP service as enabled desired state. It starts only after global appliance apply.">i</button></span><input class="switch-input" type="checkbox" name="enabled" {{ "checked" if kms_settings.enabled else "" }}><span class="switch-track" aria-hidden="true"></span></label>
-        <input type="hidden" name="backend" value="{{ kms_settings.backend }}">
-        <label class="compact-service-field">
-          <span class="field-label"><span>Hostname</span><button class="help-icon" type="button" data-help="DNS name clients should use for the KMIP endpoint. Atlaso uses this same name for the CA-issued server certificate.">i</button></span>
-          <input name="hostname" value="{{ kms_settings.hostname }}">
-        </label>
+        <label class="switch-field"><span class="field-label"><span>Service enabled</span><button class="help-icon" type="button" data-help="Enables saved desired state. The host changes only through global Appliance Apply.">i</button></span><input class="switch-input" type="checkbox" name="enabled" {{ 'checked' if kms_settings.enabled else '' }}><span class="switch-track" aria-hidden="true"></span></label>
+        <label class="compact-service-field"><span class="field-label"><span>Hostname</span><button class="help-icon" type="button" data-help="Shared appliance-wide KMIP endpoint and server-certificate name.">i</button></span><input name="hostname" value="{{ kms_settings.hostname }}"></label>
         <input type="hidden" name="listen_interfaces_present" value="1">
         <div class="service-bind-editor stacked-service-bind-editor" data-service-bind>
-          <div class="form-field">
-            <span class="field-label"><span>Listen interfaces</span><button class="help-icon" type="button" data-help="One or more access-mode physical interfaces and VLAN interfaces where KMIP should be reachable. Management is reserved for the Atlaso UI; the KMIP daemon binds to the first selected address.">i</button></span>
-            <div class="tag-editor" data-tag-editor data-tag-name="listen_interfaces" data-service-bind-interface>
-              <div class="tag-editor-tags" data-tag-list>
-                {% for interface_name in selected_kms_interfaces %}
-                  <span class="tag-token" data-value="{{ interface_name }}">
-                    <span>{{ interface_name }}</span>
-                    <button type="button" data-tag-remove aria-label="Remove {{ interface_name }}">×</button>
-                    <input type="hidden" name="listen_interfaces" value="{{ interface_name }}">
-                  </span>
-                {% endfor %}
-              </div>
-              <input class="tag-editor-input" type="text" placeholder="Add interface..." list="kms-interface-options" data-tag-entry autocomplete="off">
-              <button class="tag-add-button" type="button" data-tag-menu-toggle aria-label="Add existing interface">+</button>
-              <div class="tag-suggestions" data-tag-menu hidden>
-                {% for interface in available_interfaces %}
-                  <button type="button" data-tag-option="{{ interface.name }}" data-service-bind-address="{{ interface.address }}" data-service-bind-addresses="{{ interface.addresses|join(',') }}">
-                    <strong>{{ interface.name }}</strong>
-                    <small>{{ interface.label }}</small>
-                  </button>
-                {% endfor %}
-              </div>
-            </div>
-            <datalist id="kms-interface-options">
-              {% for interface in available_interfaces %}
-                <option value="{{ interface.name }}">{{ interface.label }}</option>
-              {% endfor %}
-            </datalist>
-          </div>
-          <div class="form-field">
-            <span class="field-label"><span>Listen addresses</span><button class="help-icon" type="button" data-help="Read-only addresses resolved from selected interface IPv4 and IPv6 CIDRs. The first address is the KMIP daemon bind host.">i</button></span>
-            <div class="derived-field fixed-value-field">
-              <strong data-derived-listen-addresses>{{ selected_kms_addresses|join(", ") if selected_kms_addresses else "No interface address selected" }}</strong>
-            </div>
-          </div>
+          <div class="form-field"><span class="field-label"><span>Listen interfaces</span><button class="help-icon" type="button" data-help="Access interfaces on which vCenter can reach the shared listener.">i</button></span><div class="tag-editor" data-tag-editor data-tag-name="listen_interfaces" data-service-bind-interface><div class="tag-editor-tags" data-tag-list>{% for interface_name in selected_kms_interfaces %}<span class="tag-token" data-value="{{ interface_name }}"><span>{{ interface_name }}</span><button type="button" data-tag-remove aria-label="Remove {{ interface_name }}">×</button><input type="hidden" name="listen_interfaces" value="{{ interface_name }}"></span>{% endfor %}</div><input class="tag-editor-input" type="text" placeholder="Add interface..." list="kms-interface-options" data-tag-entry autocomplete="off"><button class="tag-add-button" type="button" data-tag-menu-toggle aria-label="Add existing interface">+</button><div class="tag-suggestions" data-tag-menu hidden>{% for interface in available_interfaces %}<button type="button" data-tag-option="{{ interface.name }}" data-service-bind-address="{{ interface.address }}" data-service-bind-addresses="{{ interface.addresses|join(',') }}"><strong>{{ interface.name }}</strong><small>{{ interface.label }}</small></button>{% endfor %}</div></div><datalist id="kms-interface-options">{% for interface in available_interfaces %}<option value="{{ interface.name }}">{{ interface.label }}</option>{% endfor %}</datalist></div>
+          <div class="form-field"><span class="field-label"><span>Listen addresses</span><button class="help-icon" type="button" data-help="Read-only addresses derived from the selected interfaces.">i</button></span><div class="derived-field fixed-value-field"><strong data-derived-listen-addresses>{{ selected_kms_addresses|join(', ') if selected_kms_addresses else 'No interface address selected' }}</strong></div></div>
         </div>
-        <label class="compact-service-field">
-          <span class="field-label"><span>Port</span><button class="help-icon" type="button" data-help="KMIP commonly uses TCP 5696. Change only if a lab client expects a different port.">i</button></span>
-          <input type="number" name="port" value="{{ kms_settings.port }}" min="1" max="65535">
-        </label>
-        <div class="derived-field fixed-value-field">
-          <span class="field-label"><span>Client CA path</span><button class="help-icon" type="button" data-help="Appliance-owned path to the CA certificate used to verify KMIP client certificates. This path is informational in the web UI.">i</button></span>
-          <strong>{{ kms_settings.ca_certificate_path }}</strong>
-        </div>
-        <div class="derived-field fixed-value-field">
-          <span class="field-label"><span>Client authentication</span><button class="help-icon" type="button" data-help="The appliance-native provider always requires a CA-valid client certificate whose exact SHA-256 fingerprint maps to this provider.">i</button></span>
-          <strong>Mutual TLS and exact fingerprint</strong>
-        </div>
+        <label class="compact-service-field"><span class="field-label"><span>Port</span><button class="help-icon" type="button" data-help="The shared TLS 1.2 or newer KMIP listener port.">i</button></span><input type="number" name="port" value="{{ kms_settings.port }}" min="1" max="65535"></label>
+        <div class="derived-field fixed-value-field"><span class="field-label"><span>Client trust</span></span><strong>Internal CA + imported public certificates</strong></div>
+        <div class="derived-field fixed-value-field"><span class="field-label"><span>Authorization</span></span><strong>Exact fingerprint to provider UUID</strong></div>
+        {% if kms_server_certificate and kms_server_certificate.certificate_pem %}<a class="button secondary" href="/vsphere-key-providers/server-certificate.pem">Download public server chain</a>{% else %}<p class="muted">Public server chain becomes available after Certificate Authority issuance.</p>{% endif %}
         <p id="kms-settings-autosave-status" class="autosave-status" aria-live="polite">Changes save automatically.</p>
       </form>
     </div>
-
     {% include "partials/appliance_apply_status.html" %}
-
-    <div class="panel">
-      <div class="panel-head">
-        <h2>Validation</h2>
-        <span class="status-pill {{ 'good' if not kms_validation_errors else 'warn' }}" data-kms-validation-status>{{ "valid" if not kms_validation_errors else "needs attention" }}</span>
-      </div>
-      {% if kms_validation_errors %}
-        <div class="alert error" data-kms-validation-errors>
-          {% for error in kms_validation_errors %}
-            <div>{{ error }}</div>
-          {% endfor %}
-        </div>
-      {% endif %}
-      {% if not kms_validation_errors %}
-        <p class="muted" data-kms-validation-message>The desired KMS state passes Atlaso validation. Appliance validation still runs through the allowlisted KMS helper before atlaso-kmip changes are applied.</p>
-      {% endif %}
-      {% set preview_label = "atlaso-kmip config" %}
-      {% set preview_path = kms_settings.config_path %}
-      {% set preview_path_attr = "data-kms-config-path" %}
-      {% set preview_title = "KMS rendered config" %}
-      {% set preview_button_label = "config" %}
-      {% set preview_text = kms_config_preview %}
-      {% set preview_data_attr = "data-kms-config-preview" %}
-      {% include "partials/config_preview_action.html" %}
-    </div>
+    <div class="panel"><div class="panel-head"><h2>Validation</h2><span class="status-pill {{ 'good' if not kms_validation_errors else 'warn' }}" data-kms-validation-status>{{ 'valid' if not kms_validation_errors else 'needs attention' }}</span></div>{% if kms_validation_errors %}<div class="alert error" data-kms-validation-errors>{% for error in kms_validation_errors %}<div>{{ error }}</div>{% endfor %}</div>{% else %}<p class="muted" data-kms-validation-message>Desired state passes secret-free validation. The allowlisted helper validates it again during global Appliance Apply.</p>{% endif %}{% set preview_label = "atlaso-kmip config" %}{% set preview_path = kms_settings.config_path %}{% set preview_path_attr = "data-kms-config-path" %}{% set preview_title = "Redacted provider config" %}{% set preview_button_label = "config" %}{% set preview_text = kms_config_preview %}{% set preview_data_attr = "data-kms-config-preview" %}{% include "partials/config_preview_action.html" %}</div>
   </aside>
 </section>
 
-{% set kms_client_steps = [
-  {"id": "identity", "label": "Client", "summary": "Name and certificate subject"},
-  {"id": "access", "label": "Access", "summary": "Role and KMIP operations"},
-  {"id": "state", "label": "State", "summary": "Enablement and notes"},
-  {"id": "review", "label": "Review", "summary": "Confirm desired state"}
-] %}
-{% call resource_wizard(
-  "kms-client-dialog",
-  "kms-client-form",
-  "/kms/clients",
-  kms_client_steps,
-  "Define the KMIP client",
-  "Name the client and bind it to the exact certificate subject used for mutual TLS.",
-  "Create KMIP client"
-) %}
-  <input type="hidden" name="csrf" value="{{ csrf_token }}">
-  <input type="hidden" name="record_id" value="">
-  <section data-atlaso-wizard-step="identity">
-    <div class="form-grid">
-      <label><span class="field-label"><span>Name</span><button class="help-icon" type="button" data-help="Stable client identity used by KMS desired state and managed certificates.">i</button></span><input name="name" required></label>
-      <label><span class="field-label"><span>Certificate subject</span><button class="help-icon" type="button" data-help="Exact client-certificate subject authorized for this KMIP identity.">i</button></span><input name="certificate_subject" placeholder="CN=client,O=Atlaso" required></label>
-    </div>
-  </section>
-  <section class="hidden" data-atlaso-wizard-step="access">
-    <div class="form-grid">
-      <label><span class="field-label"><span>Role</span><button class="help-icon" type="button" data-help="KMIP role used by Atlaso's lab authorization model.">i</button></span><select name="role">{% for role in kms_client_roles %}<option value="{{ role }}">{{ role }}</option>{% endfor %}</select></label>
-      <label><span class="field-label"><span>Allowed operations</span><button class="help-icon" type="button" data-help="Comma-separated KMIP operations permitted for this certificate subject.">i</button></span><input name="allowed_operations" required></label>
-    </div>
-  </section>
-  <section class="hidden" data-atlaso-wizard-step="state">
-    <label class="switch-field"><span class="field-label"><span>Client enabled</span><button class="help-icon" type="button" data-help="Enabled clients enter rendered KMIP desired state after validation.">i</button></span><input class="switch-input" type="checkbox" name="enabled"><span class="switch-track" aria-hidden="true"></span></label>
-    <label><span class="field-label"><span>Description</span><button class="help-icon" type="button" data-help="Operator note describing the workload that owns this client.">i</button></span><input name="description"></label>
-  </section>
-  <section class="hidden" data-atlaso-wizard-step="review">
-    <div class="settings-list" data-atlaso-resource-review></div>
-    <div class="alert warning">Saving changes KMS desired state. Client certificate issuance and atlaso-kmip enforcement remain controlled by global appliance apply.</div>
-  </section>
+{% set provider_steps = [{"id":"identity","label":"Provider","summary":"Name and immutable namespace"},{"id":"state","label":"State","summary":"Description and enablement"},{"id":"review","label":"Review","summary":"Confirm desired state"}] %}
+{% call resource_wizard("vsphere-provider-dialog", "vsphere-provider-form", "/vsphere-key-providers/providers", provider_steps, "Define the provider", "Name the isolated provider namespace.", "Create provider") %}
+<input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="record_id" value=""><section data-atlaso-wizard-step="identity"><label><span class="field-label"><span>Name</span><button class="help-icon" type="button" data-help="Unique operator-facing name. Atlaso assigns an immutable provider UUID.">i</button></span><input name="name" maxlength="120" required></label></section><section class="hidden" data-atlaso-wizard-step="state"><label><span class="field-label"><span>Description</span></span><textarea name="description" rows="4" maxlength="1000"></textarea></label><label class="switch-field"><span class="field-label"><span>Provider enabled</span></span><input class="switch-input" type="checkbox" name="enabled"><span class="switch-track" aria-hidden="true"></span></label></section><section class="hidden" data-atlaso-wizard-step="review"><div class="settings-list" data-atlaso-resource-review></div><div class="alert warning">Enforcement occurs only through global Appliance Apply.</div></section>
 {% endcall %}
 
-{% set kms_key_steps = [
-  {"id": "identity", "label": "Key", "summary": "Name and algorithm"},
-  {"id": "policy", "label": "Policy", "summary": "Usage, ownership, and export"},
-  {"id": "state", "label": "State", "summary": "Lifecycle and enablement"},
-  {"id": "review", "label": "Review", "summary": "Confirm desired state"}
-] %}
-{% call resource_wizard(
-  "kms-key-dialog",
-  "kms-key-form",
-  "/kms/keys",
-  kms_key_steps,
-  "Define the KMS key",
-  "Name the staged key and choose its algorithm and length.",
-  "Create KMS key"
-) %}
-  <input type="hidden" name="csrf" value="{{ csrf_token }}">
-  <input type="hidden" name="record_id" value="">
-  <section data-atlaso-wizard-step="identity">
-    <div class="form-stack">
-      <div class="form-grid">
-        <label><span class="field-label"><span>Name</span><button class="help-icon" type="button" data-help="Stable operator-visible key name in KMS desired state.">i</button></span><input name="name" required></label>
-        <label><span class="field-label"><span>Algorithm</span><button class="help-icon" type="button" data-help="Cryptographic algorithm represented by this staged key.">i</button></span><select name="algorithm">{% for algorithm in kms_key_algorithms %}<option value="{{ algorithm }}">{{ algorithm }}</option>{% endfor %}</select></label>
-        <label><span class="field-label"><span>Length</span><button class="help-icon" type="button" data-help="Key length in bits, validated against the selected algorithm by the KMS service.">i</button></span><input type="number" name="length" min="1" required></label>
-      </div>
-      <label><span class="field-label"><span>Description</span><button class="help-icon" type="button" data-help="Operator note describing the key purpose.">i</button></span><textarea name="description" rows="3" maxlength="1000"></textarea></label>
-    </div>
-  </section>
-  <section class="hidden" data-atlaso-wizard-step="policy">
-    <div class="form-grid">
-      <label><span class="field-label"><span>Usage</span><button class="help-icon" type="button" data-help="Comma-separated cryptographic operations associated with this key.">i</button></span><input name="usage" required></label>
-      <label><span class="field-label"><span>Owner client</span><button class="help-icon" type="button" data-help="Optional enabled KMIP client that owns the staged key.">i</button></span><select name="owner_client_id"><option value="">Unassigned</option>{% for client in kms_clients if client.enabled %}<option value="{{ client.id }}">{{ client.name }}</option>{% endfor %}</select></label>
-      <label class="switch-field"><span class="field-label"><span>Exportable</span><button class="help-icon" type="button" data-help="Marks whether the lab key may be exported through compatible KMIP operations.">i</button></span><input class="switch-input" type="checkbox" name="exportable"><span class="switch-track" aria-hidden="true"></span></label>
-    </div>
-  </section>
-  <section class="hidden" data-atlaso-wizard-step="state">
-    <div class="form-grid">
-      <label><span class="field-label"><span>Lifecycle state</span><button class="help-icon" type="button" data-help="Desired KMIP lifecycle state for the staged key.">i</button></span><select name="state">{% for state in kms_key_states %}<option value="{{ state }}">{{ state }}</option>{% endfor %}</select></label>
-      <label class="switch-field"><span class="field-label"><span>Key enabled</span><button class="help-icon" type="button" data-help="Enabled keys enter rendered KMS desired state after validation.">i</button></span><input class="switch-input" type="checkbox" name="enabled"><span class="switch-track" aria-hidden="true"></span></label>
-    </div>
-  </section>
-  <section class="hidden" data-atlaso-wizard-step="review">
-    <div class="settings-list" data-atlaso-resource-review></div>
-    <div class="alert warning">This row is desired-state metadata only. Operational AES-256 keys are generated by an authenticated vSphere KMIP Create request and are never pre-provisioned from the UI.</div>
-  </section>
+{% set vcenter_steps = [{"id":"identity","label":"Identity","summary":"Provider, name, and hostname"},{"id":"certificate","label":"Certificate","summary":"Public X.509 PEM"},{"id":"state","label":"State","summary":"Description and enablement"},{"id":"review","label":"Review","summary":"Confirm exact trust"}] %}
+{% call resource_wizard("vsphere-vcenter-dialog", "vsphere-vcenter-form", "/vsphere-key-providers/trusted-vcenters", vcenter_steps, "Define the trusted vCenter", "Assign the vCenter to one provider namespace.", "Create trusted vCenter") %}
+<input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="record_id" value=""><section data-atlaso-wizard-step="identity"><div class="form-grid"><label><span class="field-label"><span>Provider</span></span><select name="provider_id" required>{% for provider in vsphere_key_providers %}<option value="{{ provider.id }}">{{ provider.name }}</option>{% endfor %}</select></label><label><span class="field-label"><span>Name</span></span><input name="name" maxlength="120" required></label><label><span class="field-label"><span>Hostname</span></span><input name="hostname" maxlength="253"></label></div></section><section class="hidden" data-atlaso-wizard-step="certificate"><label><span class="field-label"><span>Public client certificate PEM</span><button class="help-icon" type="button" data-help="Paste one current public X.509 client certificate. Private keys are rejected.">i</button></span><textarea name="certificate_pem" rows="12" spellcheck="false" placeholder="-----BEGIN CERTIFICATE-----"></textarea></label></section><section class="hidden" data-atlaso-wizard-step="state"><label><span class="field-label"><span>Description</span></span><textarea name="description" rows="4" maxlength="1000"></textarea></label><label class="switch-field"><span class="field-label"><span>Trusted vCenter enabled</span></span><input class="switch-input" type="checkbox" name="enabled"><span class="switch-track" aria-hidden="true"></span></label></section><section class="hidden" data-atlaso-wizard-step="review"><div class="settings-list" data-atlaso-resource-review></div><div class="alert warning">Only the canonical public certificate and its parsed metadata are stored. Atlaso never accepts the client private key.</div></section>
+{% endcall %}
+
+{% set certificate_steps = [{"id":"target","label":"Target","summary":"Trusted vCenter assignment"},{"id":"certificate","label":"Certificate","summary":"Public X.509 PEM"},{"id":"review","label":"Review","summary":"Confirm certificate trust"}] %}
+{% call resource_wizard("vsphere-certificate-dialog", "vsphere-certificate-form", "/vsphere-key-providers/trusted-vcenters", certificate_steps, "Add public certificate", "Choose the existing trusted vCenter.", "Add certificate") %}
+<input type="hidden" name="csrf" value="{{ csrf_token }}"><section data-atlaso-wizard-step="target"><label><span class="field-label"><span>Trusted vCenter</span></span><select name="target" required>{% for vcenter in vsphere_trusted_vcenters %}<option value="{{ vcenter.provider_id }}|{{ vcenter.id }}">{{ vcenter.provider.name }} / {{ vcenter.name }}</option>{% endfor %}</select></label><input type="hidden" name="provider_id" value=""><input type="hidden" name="vcenter_id" value=""></section><section class="hidden" data-atlaso-wizard-step="certificate"><label><span class="field-label"><span>Public client certificate PEM</span></span><textarea name="certificate_pem" rows="12" spellcheck="false" required placeholder="-----BEGIN CERTIFICATE-----"></textarea></label></section><section class="hidden" data-atlaso-wizard-step="review"><div class="settings-list" data-atlaso-resource-review></div><div class="alert warning">Duplicate or cross-provider fingerprints and private-key blocks are rejected.</div></section>
 {% endcall %}
 {% endblock %}

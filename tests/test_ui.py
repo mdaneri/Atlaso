@@ -97,7 +97,7 @@ def test_login_and_dashboard_render(client):
         "/users",
         "/ldap",
         "/certificate-authority",
-        "/kms",
+        "/vsphere-key-providers",
         "/network-boot",
         "/esx-storage",
         "/vcf-helper",
@@ -988,9 +988,9 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert "hasDownloadLikePath(url)" in service_worker.text
     assert "accept.includes(\"text/html\") && !hasDownloadLikePath(url)" in service_worker.text
     assert "/static/vendor/monaco/atlaso-monaco.min.js?v=atlaso-monaco-20260806-7" in service_worker.text
-    assert "/static/app.css?v=nts-restoration-appliance-update-261-20260809-3" in service_worker.text
+    assert "/static/app.css?v=vsphere-key-providers-170-20260810-1" in service_worker.text
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-8" in service_worker.text
-    assert "/static/app.js?v=nts-restoration-appliance-update-261-20260809-3" in service_worker.text
+    assert "/static/app.js?v=vsphere-key-providers-170-20260810-1" in service_worker.text
     assert "vcfdt-configuration-248-20260807-14" not in service_worker.text
 
     registration = client.get("/static/pwa.js")
@@ -1000,7 +1000,7 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     offline = client.get("/static/offline.html")
     assert offline.status_code == 200
     assert "Appliance connection unavailable" in offline.text
-    assert "/static/app.css?v=nts-restoration-appliance-update-261-20260809-3" in offline.text
+    assert "/static/app.css?v=vsphere-key-providers-170-20260810-1" in offline.text
 
 
 def test_shared_ui_pattern_shell_and_wizard_contracts(client):
@@ -1016,8 +1016,8 @@ def test_shared_ui_pattern_shell_and_wizard_contracts(client):
     base = (templates / "base.html").read_text(encoding="utf-8")
     public_base = (templates / "public_portal_base.html").read_text(encoding="utf-8")
     for shell, app_asset in (
-        (base, "/static/app.js?v=nts-restoration-appliance-update-261-20260809-3"),
-        (public_base, "/static/app.js?v=nts-restoration-appliance-update-261-20260809-3"),
+        (base, "/static/app.js?v=vsphere-key-providers-170-20260810-1"),
+        (public_base, "/static/app.js?v=vsphere-key-providers-170-20260810-1"),
     ):
         assert shell.index("/static/vendor/tabulator/tabulator.min.js") < shell.index(
             "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-8"
@@ -1076,9 +1076,9 @@ def test_every_existing_tabulator_uses_the_shared_grid_foundation(client):
     app_js = client.get("/static/app.js").text
     create_grid = "window.AtlasoUiPatterns.createGrid({"
 
-    assert app_js.count(create_grid) == 38
+    assert app_js.count(create_grid) == 40
     assert app_js.count('pattern: "direct-edit"') == 13
-    assert app_js.count('pattern: "read-only"') == 14
+    assert app_js.count('pattern: "read-only"') == 16
     assert app_js.count('pattern: "wizard-backed"') == 11
     assert "new Tabulator(" not in app_js
     assert "new window.Tabulator(" not in app_js
@@ -1179,8 +1179,7 @@ def test_every_existing_tabulator_uses_the_shared_grid_foundation(client):
         "initializeCaProfilesTable",
         "initializeCaCertificatesTable",
         "initializeFirewallRulesTable",
-        "initializeKmsClientsTable",
-        "initializeKmsKeysTable",
+        "initializeVsphereKeyProviderTables",
         "initializeDhcpScopesTable",
         "initializeDhcpOptionsTable",
         "initializeUsersTable",
@@ -1365,39 +1364,43 @@ def test_complex_resource_wizard_grid_contracts_return_saved_rows_and_delete_wit
     firewall_rule = firewall_response.json()["rule"]
     assert firewall_rule["name"] == "wizard-firewall"
 
-    client_data = {
-        "name": "wizard-kmip-client",
-        "certificate_subject": "CN=wizard-kmip-client,O=Atlaso",
-        "role": "service",
-        "allowed_operations": "locate,get",
+    provider_data = {
+        "name": "Wizard vSphere provider",
         "description": "issue 118",
-        "enabled": "on",
         "csrf": csrf,
     }
-    kms_client_response = client.post("/kms/clients", data=client_data, headers=headers)
-    assert kms_client_response.status_code == 200
-    kms_client = kms_client_response.json()["client"]
-    assert kms_client["name"] == "wizard-kmip-client"
-    duplicate_client = client.post("/kms/clients", data=client_data, headers=headers)
-    assert duplicate_client.status_code == 409
-    assert duplicate_client.json()["detail"] == "KMS client wizard-kmip-client already exists."
+    provider_response = client.post(
+        "/vsphere-key-providers/providers",
+        data=provider_data,
+        headers=headers,
+    )
+    assert provider_response.status_code == 200
+    provider = provider_response.json()["provider"]
+    assert provider["name"] == "Wizard vSphere provider"
+    duplicate_provider = client.post(
+        "/vsphere-key-providers/providers",
+        data=provider_data,
+        headers=headers,
+    )
+    assert duplicate_provider.status_code == 409
+    assert duplicate_provider.json()["detail"] == "Provider name already exists."
 
-    key_data = {
-        "name": "wizard-kms-key",
-        "algorithm": "AES",
-        "length": "256",
-        "usage": "encrypt,decrypt",
-        "state": "active",
-        "owner_client_id": str(kms_client["id"]),
-        "exportable": "on",
+    vcenter_data = {
+        "provider_id": provider["id"],
+        "name": "Wizard vCenter",
+        "hostname": "vcsa-wizard.atlaso.internal",
         "description": "issue 118",
-        "enabled": "on",
+        "certificate_pem": "",
         "csrf": csrf,
     }
-    kms_key_response = client.post("/kms/keys", data=key_data, headers=headers)
-    assert kms_key_response.status_code == 200
-    kms_key = kms_key_response.json()["key"]
-    assert kms_key["owner_client_id"] == kms_client["id"]
+    vcenter_response = client.post(
+        "/vsphere-key-providers/trusted-vcenters",
+        data=vcenter_data,
+        headers=headers,
+    )
+    assert vcenter_response.status_code == 200
+    trusted_vcenter = vcenter_response.json()["trusted_vcenter"]
+    assert trusted_vcenter["provider_id"] == provider["id"]
 
     scope_data = {
         "name": "WizardZone",
@@ -1465,8 +1468,7 @@ def test_complex_resource_wizard_grid_contracts_return_saved_rows_and_delete_wit
         f"/vcf-offline-depot/profiles/{depot_profile['id']}/delete",
         f"/vcf-private-registry/bundles/{bundle['id']}/delete",
         f"/dhcp/scopes/{scope['id']}/delete",
-        f"/kms/keys/{kms_key['id']}/delete",
-        f"/kms/clients/{kms_client['id']}/delete",
+        f"/vsphere-key-providers/trusted-vcenters/{trusted_vcenter['id']}/delete",
         f"/firewall/rules/{firewall_rule['id']}/delete",
         f"/certificate-authority/certificates/{certificate['id']}/delete",
         f"/certificate-authority/profiles/{profile['id']}/delete",
@@ -1551,7 +1553,7 @@ def test_reported_template_accessibility_contracts():
         "authentication.html": '"api-token-form"',
         "certificate_authority.html": '"ca-certificate-form"',
         "firewall.html": '"firewall-rule-form"',
-        "kms.html": '"kms-key-form"',
+        "kms.html": '"vsphere-provider-form"',
         "dhcp.html": '"dhcp-scope-form"',
         "users.html": '"user-account-form"',
         "ldap.html": '"ldap-organization-form"',
@@ -1611,9 +1613,9 @@ def test_monitor_page_renders_and_data_endpoint(client):
     assert "Loading devices" not in page.text
     assert "<th>Device</th><th>Read/s</th><th>Write/s</th>" in page.text
     assert "swagger-link-icon" in page.text
-    assert "/static/app.css?v=nts-restoration-appliance-update-261-20260809-3" in page.text
+    assert "/static/app.css?v=vsphere-key-providers-170-20260810-1" in page.text
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-8" in page.text
-    assert "/static/app.js?v=nts-restoration-appliance-update-261-20260809-3" in page.text
+    assert "/static/app.js?v=vsphere-key-providers-170-20260810-1" in page.text
     app_css = client.get("/static/app.css")
     assert app_css.status_code == 200
     assert ".split-workspace > .wide-panel" in app_css.text
@@ -2671,7 +2673,7 @@ def test_validation_rails_use_modal_config_previews(client):
         "/dhcp": [],
         "/ntp": ["data-ntp-config-preview"],
         "/certificate-authority": ["data-ca-config-preview"],
-        "/kms": ["data-kms-config-preview"],
+        "/vsphere-key-providers": ["data-kms-config-preview"],
         "/esxi-pxe": ["data-esxi-pxe-preview"],
         "/vcf-offline-depot": ["data-vcf-depot-https-preview"],
         "/vcf-private-registry": ["data-vcf-registry-harbor-preview", "data-vcf-registry-relocation-preview"],
@@ -6279,8 +6281,6 @@ def test_backup_restore_factory_reset_resets_desired_state_and_stops_services(cl
         DnsRecord,
         DnsSettings,
         FirewallRule,
-        KmsClient,
-        KmsKey,
         KmsSettings,
         NatRule,
         PhysicalInterface,
@@ -6367,8 +6367,6 @@ def test_backup_restore_factory_reset_resets_desired_state_and_stops_services(cl
         assert db.execute(select(FirewallRule)).scalars().all() == []
         assert db.execute(select(CaProfile)).scalars().all() == []
         assert db.execute(select(CaCertificate)).scalars().all() == []
-        assert db.execute(select(KmsClient)).scalars().all() == []
-        assert db.execute(select(KmsKey)).scalars().all() == []
         depot_profiles = db.execute(
             select(VcfDepotDownloadProfile).order_by(VcfDepotDownloadProfile.name)
         ).scalars().all()
@@ -6832,7 +6830,7 @@ def test_local_users_page_separates_ldap_authentication(client):
     assert "initializeAtlasoResourceWizard({" in users_table_js
     assert 'height: "100%"' in users_table_js
     assert "initializePasswordToggles(accountForm)" not in users_table_js
-    password_form_js = app_js.text.split("function initializeUserPasswordForm()", 1)[1].split("async function autoSaveKmsClient", 1)[0]
+    password_form_js = app_js.text.split("function initializeUserPasswordForm()", 1)[1].split("function updateCaSettingsPreview", 1)[0]
     assert "initializePasswordToggles(form)" in password_form_js
     assert "resetPasswordVisibility(form)" not in users_table_js
     assert "form.dataset.osPasswordAvailable" not in users_table_js
@@ -10134,88 +10132,51 @@ def test_certificate_authority_issues_encrypted_managed_certs_and_exports(client
     assert "BEGIN PRIVATE KEY" in key.text
 
 
-def test_kms_page_renders(client):
-    """Verify that kms page renders.
+def test_vsphere_key_provider_page_uses_shared_management_contract(client):
+    """Verify the provider-management page and shared UI contract.
 
     Args:
         client: HTTP test client used to exercise the Atlaso application.
     """
-    from sqlalchemy import select
-
-    from atlaso.app.database import SessionLocal
-    from atlaso.app.models import ServiceState
-
     login(client)
-    with SessionLocal() as db:
-        service = db.execute(select(ServiceState).where(ServiceState.service == "kms")).scalar_one()
-        service.enabled = True
-        service.running = True
-        service.health = "healthy"
-        db.commit()
-
-    kms = client.get("/kms")
-    assert kms.status_code == 200
-    assert "KMS / KMIP" in kms.text
-    assert "appliance-native atlaso-kmip service" in kms.text
-    assert "bounded candidate VCF 9.1 profile" in kms.text
-    assert "kms-keys-table" in kms.text
-    assert "kms-clients-table" in kms.text
-    assert "vcf-management" in kms.text
-    assert "vcf-sddc-manager-aes" in kms.text
-    assert "kms.atlaso.internal" in kms.text
-    assert "Listen interfaces" in kms.text
-    assert "Listen addresses" in kms.text
-    assert "service-bind-editor" in kms.text
-    assert "service-bind-editor stacked-service-bind-editor" in kms.text
-    assert '<select name="backend"' not in kms.text
-    assert 'type="hidden" name="backend" value="atlaso-kmip"' in kms.text
-    assert kms.text.index('name="hostname"') < kms.text.index('data-tag-name="listen_interfaces"')
-    assert kms.text.index('data-tag-name="listen_interfaces"') < kms.text.index('data-derived-listen-addresses')
-    assert kms.text.index('data-derived-listen-addresses') < kms.text.index('name="port"')
-    assert 'name="listen_interfaces_present"' in kms.text
-    assert 'data-tag-name="listen_interfaces"' in kms.text
-    assert 'data-tag-name="listen_addresses"' not in kms.text
-    assert "data-tag-single" not in kms.text
-    assert "192.168.50.1" in kms.text
-    assert "eth2 - access / access / 192.168.50.1" in kms.text
-    assert 'data-autosave-status-id="kms-settings-autosave-status"' in kms.text
-    assert "Changes save automatically." in kms.text
-    assert 'href="/dashboard#appliance-apply-review"' in kms.text
-    assert "Review appliance changes" in kms.text
-    assert "server.json" in kms.text
-    assert "/var/lib/atlaso/kmip/store.db" in kms.text
-    assert "<span>Database path</span>" not in kms.text
-    assert "<span>Config path</span>" not in kms.text
-    assert "<span>Client CA path</span>" in kms.text
-    assert "fixed-value-field" in kms.text
-    assert 'name="server_certificate"' not in kms.text
-    assert 'name="ca_certificate_path"' not in kms.text
-    assert 'name="database_path"' not in kms.text
-    assert 'name="config_path"' not in kms.text
-    assert "data-confirm-modal" in kms.text
-    key_wizard = kms.text.split('id="kms-key-dialog"', 1)[1].split("</dialog>", 1)[0]
-    key_identity = key_wizard.split('data-atlaso-wizard-step="identity"', 1)[1].split(
-        "</section>", 1
-    )[0]
-    key_state = key_wizard.split('data-atlaso-wizard-step="state"', 1)[1].split(
-        "</section>", 1
-    )[0]
-    assert '<textarea name="description" rows="3" maxlength="1000">' in key_identity
-    assert 'name="description"' not in key_state
+    page = client.get("/vsphere-key-providers")
+    assert page.status_code == 200
+    assert "vSphere Key Providers" in page.text
+    assert "bounded candidate VCF 9.1 profile" in page.text
+    assert "vsphere-providers-table" in page.text
+    assert "vsphere-vcenters-table" in page.text
+    assert "vsphere-certificates-table" in page.text
+    assert "vsphere-health-table" in page.text
+    assert "Providers" in page.text
+    assert "Trusted vCenters" in page.text
+    assert "Certificates" in page.text
+    assert "/vsphere-key-providers/server-certificate.pem" not in page.text
+    assert "Health &amp; lifecycle" in page.text
+    assert "Listen interfaces" in page.text
+    assert "Listen addresses" in page.text
+    assert "Internal CA + imported public certificates" in page.text
+    assert "Exact fingerprint to provider UUID" in page.text
+    assert 'id="vsphere-provider-dialog"' in page.text
+    assert 'id="vsphere-vcenter-dialog"' in page.text
+    assert 'id="vsphere-certificate-dialog"' in page.text
+    assert "PRIVATE KEY" not in page.text
+    assert "Managed Keys" not in page.text
+    assert "Create KMS key" not in page.text
+    assert "data-confirm-modal" in page.text
+    assert 'href="/dashboard#appliance-apply-review"' in page.text
 
     app_js = client.get("/static/app.js")
     assert app_js.status_code == 200
-    assert "initializeKmsKeysTable" in app_js.text
-    assert "initializeKmsClientsTable" in app_js.text
-    assert "initializeKmsSettings" in app_js.text
-    assert "+ Add key here" in app_js.text
-    assert "+ Add client here" in app_js.text
-    assert "deleteKmsKeyFromMenu" in app_js.text
-    assert "deleteKmsClientFromMenu" in app_js.text
-    assert '<span class="status-pill good">live</span>' in kms.text
-    assert "preview-modal" in kms.text
-    assert "data-preview-modal-code" in kms.text
-    assert "initializeTerminalNoteActions" in app_js.text
+    assert "initializeVsphereKeyProviderTables" in app_js.text
+    assert "window.AtlasoUiPatterns.createGrid" in app_js.text
+    assert "window.AtlasoUiPatterns.createWizard" in app_js.text
+    assert "+ Add provider here" in app_js.text
+    assert "+ Add trusted vCenter here" in app_js.text
+    assert "upsertOption(vcenterProviderSelect" in app_js.text
+    assert "removeOption(vcenterProviderSelect" in app_js.text
+    assert "onSaved: ({ resource }) => upsertOption(" in app_js.text
+    assert "certificateTargetSelect," in app_js.text
+    assert "removeOption(certificateTargetSelect" in app_js.text
 
 
 def test_root_aware_initializers_do_not_receive_dom_content_loaded_event():
@@ -10260,10 +10221,10 @@ def test_kms_settings_autosave_returns_json(client):
     from atlaso.app.models import DnsRecord
 
     login(client)
-    page = client.get("/kms")
+    page = client.get("/vsphere-key-providers")
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
     response = client.post(
-        "/kms/settings",
+        "/vsphere-key-providers/settings",
         data={
             "enabled": "on",
             "backend": "atlaso-kmip",
@@ -10289,12 +10250,12 @@ def test_kms_settings_autosave_returns_json(client):
     assert payload["listen_addresses"] == ["192.168.50.1"]
     assert payload["server_certificate"] == "kms.atlaso.internal"
     assert "KMS requires Certificate Authority to be enabled before activation." in payload["validation_errors"]
-    refreshed = client.get("/kms")
+    refreshed = client.get("/vsphere-key-providers")
     assert "enabled" in refreshed.text
     assert "/tmp/rogue-kms.db" not in refreshed.text
     assert "/tmp/rogue-kms.conf" not in refreshed.text
     assert "/tmp/rogue-client-ca.crt" not in refreshed.text
-    assert "/etc/atlaso/ca/root.crt" in refreshed.text
+    assert "/etc/atlaso/kmip/client-trust.pem" in refreshed.text
     assert "/var/lib/atlaso/kmip/store.db" in refreshed.text
     assert "/etc/atlaso/kmip/server.json" in refreshed.text
     assert "10.0.0.99" not in refreshed.text
@@ -10314,10 +10275,10 @@ def test_kms_settings_accept_multiple_listen_targets(client):
         client: HTTP test client used to exercise the Atlaso application.
     """
     login(client)
-    page = client.get("/kms")
+    page = client.get("/vsphere-key-providers")
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
     response = client.post(
-        "/kms/settings",
+        "/vsphere-key-providers/settings",
         data={
             "enabled": "on",
             "backend": "atlaso-kmip",
@@ -10344,8 +10305,8 @@ def test_kms_settings_accept_multiple_listen_targets(client):
     assert config_preview["schema_version"] == 1
 
 
-def test_kms_enable_autocreates_ca_managed_certificate_rows(client):
-    """Verify that kms enable autocreates ca managed certificate rows.
+def test_vsphere_provider_enable_creates_only_shared_server_identity(client):
+    """Verify provider enablement never generates a vCenter client private key.
 
     Args:
         client: HTTP test client used to exercise the Atlaso application.
@@ -10353,7 +10314,7 @@ def test_kms_enable_autocreates_ca_managed_certificate_rows(client):
     from sqlalchemy import select
 
     from atlaso.app.database import SessionLocal
-    from atlaso.app.models import CaCertificate, CaSettings, KmsClient
+    from atlaso.app.models import CaCertificate, CaSettings
 
     login(client)
     with SessionLocal() as db:
@@ -10361,10 +10322,10 @@ def test_kms_enable_autocreates_ca_managed_certificate_rows(client):
         ca_settings.enabled = True
         db.commit()
 
-    page = client.get("/kms")
+    page = client.get("/vsphere-key-providers")
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
     response = client.post(
-        "/kms/settings",
+        "/vsphere-key-providers/settings",
         data={
             "enabled": "on",
             "backend": "atlaso-kmip",
@@ -10380,108 +10341,24 @@ def test_kms_enable_autocreates_ca_managed_certificate_rows(client):
     )
 
     assert response.status_code == 200
-    assert response.json()["validation_errors"] == []
-    config = json.loads(response.json()["config_preview"])
+    assert any("public client certificate" in error for error in response.json()["validation_errors"])
 
     with SessionLocal() as db:
         server_cert = db.execute(select(CaCertificate).where(CaCertificate.managed_owner == "kms:server")).scalar_one()
-        client_cert = db.execute(select(CaCertificate).where(CaCertificate.managed_owner == "kms:client:vcf-management")).scalar_one()
-        kms_client = db.execute(select(KmsClient).where(KmsClient.name == "vcf-management")).scalar_one()
         assert server_cert.status == "issued"
         assert server_cert.ip_addresses == "192.168.50.1"
         assert server_cert.cert_path == "/etc/atlaso/kmip/certs/kms.atlaso.internal.crt"
-        assert client_cert.status == "issued"
-        assert kms_client.certificate_fingerprint == client_cert.fingerprint
-        assert config["providers"][0]["client_fingerprints"] == [client_cert.fingerprint]
-        assert config["providers"][0]["client_certificate_paths"] == []
+        client_certificates = db.execute(
+            select(CaCertificate).where(CaCertificate.managed_owner.like("kms:client:%"))
+        ).scalars().all()
+        assert client_certificates == []
 
-
-def test_kms_client_certificate_rotation_overlaps_then_retires_previous_fingerprint(
-    client,
-):
-    """Verify that kms client certificate rotation overlaps then retires previous fingerprint.
-
-    Args:
-        client: HTTP test client used to exercise the Atlaso application.
-    """
-    from sqlalchemy import select
-
-    from atlaso.app.database import SessionLocal
-    from atlaso.app.models import CaCertificate, CaSettings, KmsClient, KmsKey, KmsSettings
-    from atlaso.app.services.kms import kms_client_fingerprints, render_kms_config
-
-    login(client)
-    with SessionLocal() as db:
-        ca_settings = db.execute(select(CaSettings)).scalar_one()
-        ca_settings.enabled = True
-        db.commit()
-
-    page = client.get("/kms")
-    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
-    enabled = client.post(
-        "/kms/settings",
-        data={
-            "enabled": "on",
-            "backend": "atlaso-kmip",
-            "listen_interface": "eth2",
-            "port": "5696",
-            "hostname": "kms.atlaso.internal",
-            "server_certificate": "kms.atlaso.internal",
-            "require_client_cert": "on",
-            "allow_register": "on",
-            "csrf": csrf,
-        },
-        headers={"X-Atlaso-Autosave": "1"},
-    )
-    assert enabled.status_code == 200
-    with SessionLocal() as db:
-        kms_client = db.execute(
-            select(KmsClient).where(KmsClient.name == "vcf-management")
-        ).scalar_one()
-        certificate = db.execute(
-            select(CaCertificate).where(
-                CaCertificate.managed_owner == "kms:client:vcf-management"
-            )
-        ).scalar_one()
-        previous_fingerprint = kms_client.certificate_fingerprint
-        current_fingerprint = "f" * 64
-        assert previous_fingerprint != current_fingerprint
-        certificate.fingerprint = current_fingerprint
-        db.commit()
-
-    rotated_page = client.get("/kms")
-    assert rotated_page.status_code == 200
-    with SessionLocal() as db:
-        kms_client = db.execute(
-            select(KmsClient).where(KmsClient.name == "vcf-management")
-        ).scalar_one()
-        assert kms_client_fingerprints(kms_client.certificate_fingerprint) == [
-            previous_fingerprint,
-            current_fingerprint,
-        ]
-        client_id = kms_client.id
-
-    retired = client.post(
-        f"/kms/clients/{client_id}/retire-previous-certificate",
-        data={"csrf": csrf},
-    )
-
-    assert retired.status_code == 200
-    assert retired.json()["client"]["certificate_fingerprints"] == [
-        current_fingerprint
-    ]
-    with SessionLocal() as db:
-        kms_client = db.get(KmsClient, client_id)
-        assert kms_client is not None
-        assert kms_client.certificate_fingerprint == current_fingerprint
-        settings = db.execute(select(KmsSettings)).scalar_one()
-        keys = db.execute(select(KmsKey)).scalars().all()
-        config = json.loads(
-            render_kms_config(settings=settings, clients=[kms_client], keys=keys)
-        )
-        assert config["providers"][0]["client_fingerprints"] == [
-            current_fingerprint
-        ]
+    download = client.get("/vsphere-key-providers/server-certificate.pem")
+    assert download.status_code == 200
+    assert download.text.startswith("-----BEGIN CERTIFICATE-----")
+    assert "PRIVATE KEY" not in download.text
+    assert download.headers["cache-control"] == "no-store"
+    assert "atlaso-kmip-server-chain.pem" in download.headers["content-disposition"]
 
 
 def test_kms_apply_task_captures_current_desired_state(client):
@@ -10496,8 +10373,14 @@ def test_kms_apply_task_captures_current_desired_state(client):
     from atlaso.app.models import DnsRecord, Job
 
     login(client)
-    page = client.get("/kms")
+    page = client.get("/vsphere-key-providers")
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    disabled = client.post(
+        "/vsphere-key-providers/settings",
+        data={"hostname": "kms.atlaso.internal", "port": "5696", "csrf": csrf},
+        headers={"X-Atlaso-Autosave": "1"},
+    )
+    assert disabled.status_code == 200
     response = client.post("/appliance-apply", data={"csrf": csrf, "selected_units": "kms"})
 
     assert_apply_redirect(response)
@@ -16543,7 +16426,7 @@ def test_services_and_service_pages_derive_composite_runtime_status(client, monk
     assert depot_row["running"] is True
     assert depot_row["enabled"] is True
 
-    assert '<span class="status-pill good">live</span>' in client.get("/kms").text
+    assert '<span class="status-pill good">live</span>' in client.get("/vsphere-key-providers").text
     assert '<span class="status-pill good">live</span>' in client.get("/vcf-offline-depot").text
     ca_page = client.get("/certificate-authority").text
     assert '<span class="status-pill muted">disabled</span>' not in ca_page

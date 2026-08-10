@@ -3837,76 +3837,6 @@ function initializeDepotBrowserTable() {
   });
 }
 
-async function postKmsAction(url, data, csrf, options = {}) {
-  const reload = options.reload ?? true;
-  const body = new FormData();
-  body.set("csrf", csrf);
-  for (const [key, value] of Object.entries(data)) {
-    if (key === "id" || key === "is_new" || key === "owner_client_name") {
-      continue;
-    }
-    if (key === "enabled" || key === "exportable") {
-      if (value) {
-        body.set(key, "on");
-      }
-      continue;
-    }
-    body.set(key, value ?? "");
-  }
-
-  const response = await fetch(url, {
-    method: "POST",
-    body,
-    credentials: "same-origin",
-  });
-
-  if (!response.ok) {
-    const text = await response.text();
-    throw new Error(text.match(/KMS .* already exists[^<]*/)?.[0] || "The KMS desired state could not be saved.");
-  }
-  if (reload) {
-    window.location.reload();
-  }
-}
-
-function newKmsClientRow() {
-  return {
-    id: "__new__",
-    name: "",
-    certificate_subject: "",
-    role: "service",
-    allowed_operations: "locate,get,create,activate,get-attributes,get-attribute-list,query,discover-versions",
-    enabled: true,
-    description: "",
-    is_new: true,
-  };
-}
-
-function newKmsKeyRow(defaultClientId = "") {
-  return {
-    id: "__new__",
-    name: "",
-    algorithm: "AES",
-    length: 256,
-    usage: "encrypt,decrypt",
-    state: "active",
-    owner_client_id: defaultClientId,
-    owner_client_name: "",
-    exportable: false,
-    enabled: true,
-    description: "",
-    is_new: true,
-  };
-}
-
-function hasRequiredKmsClientFields(data) {
-  return Boolean((data.name || "").trim() && (data.certificate_subject || "").trim());
-}
-
-function hasRequiredKmsKeyFields(data) {
-  return Boolean((data.name || "").trim());
-}
-
 async function postFirewallRuleAction(url, data, csrf, options = {}) {
   const reload = options.reload ?? true;
   const body = new FormData();
@@ -4715,298 +4645,6 @@ function initializeUserPasswordForm() {
   });
 }
 
-async function autoSaveKmsClient(cell, csrf) {
-  clearCaMessage("kms-client-error");
-  const row = cell.getRow();
-  const data = row.getData();
-  if (data.is_new) {
-    if (!hasRequiredKmsClientFields(data)) {
-      return;
-    }
-    try {
-      await postKmsAction("/kms/clients", data, csrf, { reload: false });
-      showTransientGridStatus("Added");
-      window.location.reload();
-    } catch (error) {
-      showCaMessage("kms-client-error", error instanceof Error ? error.message : "The KMS client could not be added.");
-      if (typeof cell.restoreOldValue === "function") {
-        cell.restoreOldValue();
-      }
-    }
-    return;
-  }
-  try {
-    await postKmsAction(`/kms/clients/${data.id}/edit`, data, csrf, { reload: false });
-    showTransientGridStatus("Saved");
-  } catch (error) {
-    showCaMessage("kms-client-error", error instanceof Error ? error.message : "The KMS client could not be saved.");
-    if (typeof cell.restoreOldValue === "function") {
-      cell.restoreOldValue();
-    }
-  }
-}
-
-async function autoSaveKmsKey(cell, csrf) {
-  clearCaMessage("kms-key-error");
-  const row = cell.getRow();
-  const data = row.getData();
-  if (data.is_new) {
-    if (!hasRequiredKmsKeyFields(data)) {
-      reformatPendingNewRecord(cell);
-      return;
-    }
-    try {
-      await postKmsAction("/kms/keys", data, csrf, { reload: false });
-      showTransientGridStatus("Added");
-      window.location.reload();
-    } catch (error) {
-      showCaMessage("kms-key-error", error instanceof Error ? error.message : "The KMS key could not be added.");
-      if (typeof cell.restoreOldValue === "function") {
-        cell.restoreOldValue();
-      }
-    }
-    return;
-  }
-  try {
-    await postKmsAction(`/kms/keys/${data.id}/edit`, data, csrf, { reload: false });
-    showTransientGridStatus("Saved");
-  } catch (error) {
-    showCaMessage("kms-key-error", error instanceof Error ? error.message : "The KMS key could not be saved.");
-    if (typeof cell.restoreOldValue === "function") {
-      cell.restoreOldValue();
-    }
-  }
-}
-
-async function deleteKmsClientFromMenu(row, csrf) {
-  clearCaMessage("kms-client-error");
-  const data = row.getData();
-  if (data.is_new) {
-    return;
-  }
-  const confirmed = await requestConfirmation({
-    title: `Delete ${data.name} client?`,
-    message: "This removes the KMS client from Atlaso desired state and unassigns any keys owned by it. It will not touch the appliance until global appliance apply runs.",
-    label: "Delete client",
-  });
-  if (!confirmed) {
-    return;
-  }
-  try {
-    await postKmsAction(`/kms/clients/${data.id}/delete`, {}, csrf);
-  } catch (error) {
-    showCaMessage("kms-client-error", error instanceof Error ? error.message : "The KMS client could not be deleted.");
-  }
-}
-
-async function deleteKmsKeyFromMenu(row, csrf) {
-  clearCaMessage("kms-key-error");
-  const data = row.getData();
-  if (data.is_new) {
-    return;
-  }
-  const confirmed = await requestConfirmation({
-    title: `Delete ${data.name} key?`,
-    message: "This removes the KMS key from Atlaso desired state. It will not touch the appliance until global appliance apply runs.",
-    label: "Delete key",
-  });
-  if (!confirmed) {
-    return;
-  }
-  try {
-    await postKmsAction(`/kms/keys/${data.id}/delete`, {}, csrf);
-  } catch (error) {
-    showCaMessage("kms-key-error", error instanceof Error ? error.message : "The KMS key could not be deleted.");
-  }
-}
-
-function initializeKmsClientsTable() {
-  const element = document.getElementById("kms-clients-table");
-  if (!(element instanceof HTMLElement)) return;
-  const updateOwnerOption = (resource) => {
-    const select = document.querySelector("[data-kms-key-form] select[name='owner_client_id']");
-    if (!(select instanceof HTMLSelectElement)) return;
-    let option = [...select.options].find((item) => item.value === String(resource.id));
-    if (!resource.enabled) {
-      option?.remove();
-      return;
-    }
-    if (!option) {
-      option = document.createElement("option");
-      option.value = String(resource.id);
-      select.append(option);
-    }
-    option.textContent = resource.name;
-  };
-  const retirePreviousCertificate = async (row) => {
-    const data = row.getData();
-    const confirmed = await requestConfirmation({
-      title: `Retire previous ${data.name} certificate?`,
-      message: "Confirm vCenter is using the current CA-issued certificate. This removes every previous fingerprint from KMS desired state after the next global appliance apply.",
-      confirmLabel: "Retire previous certificate",
-      tone: "danger",
-    });
-    if (!confirmed) return;
-    const body = new FormData();
-    body.set("csrf", element.dataset.csrf || "");
-    const payload = await atlasoGridWizardRequest(
-      `/kms/clients/${data.id}/retire-previous-certificate`,
-      body,
-    );
-    await row.update(payload.client);
-    showTransientGridStatus("Previous certificate retired");
-  };
-  initializeAtlasoResourceWizard({
-    elementId: "kms-clients-table",
-    formSelector: "[data-kms-client-form]",
-    dialogId: "kms-client-dialog",
-    rows: JSON.parse(element.dataset.clients || "[]"),
-    newRow: newKmsClientRow(),
-    resourceName: "client",
-    createUrl: "/kms/clients",
-    editUrl: (id) => `/kms/clients/${id}/edit`,
-    deleteResource: true,
-    deleteUrl: (id) => `/kms/clients/${id}/delete`,
-    editLabel: "Edit client",
-    deleteLabel: "Delete client",
-    createLabel: "Create KMIP client",
-    updateLabel: "Update KMIP client",
-    emptyMessage: "No KMIP clients configured.",
-    actionErrorSelector: "#kms-client-error",
-    extraActions: [
-      {
-        label: "Retire previous certificate",
-        disabled: (row) => Number(row.getData().certificate_fingerprint_count || 0) < 2,
-        action: (_event, row) => retirePreviousCertificate(row),
-      },
-    ],
-    defaults: newKmsClientRow(),
-    steps: [
-      { id: "identity", title: "Define the KMIP client", description: "Name the client and bind it to the exact certificate subject used for mutual TLS." },
-      { id: "access", title: "Grant KMIP access", description: "Choose the lab authorization role and allowlisted operations." },
-      { id: "state", title: "Choose client state", description: "Enable the client and record the workload that owns it." },
-      { id: "review", title: "Review KMS desired state", description: "Confirm the client and global appliance-apply boundary." },
-    ],
-    reviewItems: [
-      { label: "Client", field: "name" },
-      { label: "Certificate subject", field: "certificate_subject" },
-      { label: "Role", field: "role" },
-      { label: "Operations", field: "allowed_operations" },
-      { label: "State", field: "enabled" },
-    ],
-    deleteConfirmation: (data) => ({
-      title: `Delete ${data.name} client?`,
-      message: "This removes the KMS client from Atlaso desired state and unassigns any keys owned by it. It will not touch the appliance until global appliance apply runs.",
-      confirmLabel: "Delete client",
-      tone: "danger",
-    }),
-    onSaved: ({ resource }) => updateOwnerOption(resource),
-    onDeleted: ({ data }) => {
-      const select = document.querySelector("[data-kms-key-form] select[name='owner_client_id']");
-      if (select instanceof HTMLSelectElement) {
-        [...select.options].find((option) => option.value === String(data.id))?.remove();
-      }
-      const keysTable = document.getElementById("kms-keys-table")?.atlasoTabulator;
-      keysTable?.getRows?.().forEach((row) => {
-        if (String(row.getData().owner_client_id) === String(data.id)) {
-          row.update({ owner_client_id: "", owner_client_name: "Unassigned" });
-        }
-      });
-    },
-    options: {
-      height: "420px",
-      rowHeight: 28,
-      placeholder: "No KMIP clients configured.",
-      columns: [
-        {
-          title: "Name",
-          field: "name",
-          minWidth: 170,
-          formatter: (cell) => cell.getRow().getData().is_new
-            ? '<button class="add-row-button" type="button" data-atlaso-wizard-add>+ Add client here</button>'
-            : escapeHtml(cell.getValue()),
-        },
-        { title: "Certificate subject", field: "certificate_subject", minWidth: 300 },
-        { title: "Role", field: "role", width: 120 },
-        { title: "Operations", field: "allowed_operations", minWidth: 220 },
-        { title: "Enabled", field: "enabled", formatter: (cell) => cell.getRow().getData().is_new ? "" : atlasoBooleanFormatter(cell), hozAlign: "center", width: 100, headerSort: false },
-        { title: "Description", field: "description", minWidth: 220 },
-      ],
-      rowFormatter: (row) => markNewRecordRow(row, "name"),
-    },
-  });
-}
-
-function initializeKmsKeysTable() {
-  const element = document.getElementById("kms-keys-table");
-  if (!(element instanceof HTMLElement)) return;
-  const clientOptions = JSON.parse(element.dataset.clientOptions || "[]");
-  const defaultClientId = clientOptions[0]?.id || "";
-  initializeAtlasoResourceWizard({
-    elementId: "kms-keys-table",
-    formSelector: "[data-kms-key-form]",
-    dialogId: "kms-key-dialog",
-    rows: JSON.parse(element.dataset.keys || "[]"),
-    newRow: newKmsKeyRow(defaultClientId),
-    resourceName: "key",
-    createUrl: "/kms/keys",
-    editUrl: (id) => `/kms/keys/${id}/edit`,
-    deleteResource: true,
-    deleteUrl: (id) => `/kms/keys/${id}/delete`,
-    editLabel: "Edit key",
-    deleteLabel: "Delete key",
-    createLabel: "Create KMS key",
-    updateLabel: "Update KMS key",
-    emptyMessage: "No KMS keys configured.",
-    actionErrorSelector: "#kms-key-error",
-    defaults: newKmsKeyRow(defaultClientId),
-    steps: [
-      { id: "identity", title: "Define the KMS key", description: "Name the staged key, describe its purpose, and choose its algorithm and length." },
-      { id: "policy", title: "Set key policy", description: "Choose usage, optional client ownership, and export behavior." },
-      { id: "state", title: "Choose key lifecycle", description: "Set the KMIP lifecycle state and enablement." },
-      { id: "review", title: "Review KMS desired state", description: "Confirm the key and global appliance-apply boundary." },
-    ],
-    reviewItems: [
-      { label: "Key", field: "name" },
-      { label: "Algorithm", value: (form) => `${form.elements.algorithm.value} ${form.elements.length.value}` },
-      { label: "Usage", field: "usage" },
-      { label: "Owner", field: "owner_client_id" },
-      { label: "Exportable", field: "exportable" },
-      { label: "Lifecycle", field: "state" },
-      { label: "Enabled", field: "enabled" },
-    ],
-    deleteConfirmation: (data) => ({
-      title: `Delete ${data.name} key?`,
-      message: "This removes the KMS key from Atlaso desired state. It will not touch the appliance until global appliance apply runs.",
-      confirmLabel: "Delete key",
-      tone: "danger",
-    }),
-    options: {
-      height: "420px",
-      rowHeight: 28,
-      placeholder: "No KMS keys configured.",
-      columns: [
-        {
-          title: "Name",
-          field: "name",
-          minWidth: 190,
-          formatter: (cell) => cell.getRow().getData().is_new
-            ? '<button class="add-row-button" type="button" data-atlaso-wizard-add>+ Add key here</button>'
-            : escapeHtml(cell.getValue()),
-        },
-        { title: "Algorithm", field: "algorithm", width: 120 },
-        { title: "Length", field: "length", width: 95 },
-        { title: "Usage", field: "usage", minWidth: 150 },
-        { title: "State", field: "state", minWidth: 140 },
-        { title: "Owner client", field: "owner_client_name", formatter: (cell) => cell.getRow().getData().is_new ? "" : escapeHtml(cell.getValue() || "Unassigned"), minWidth: 170 },
-        { title: "Exportable", field: "exportable", formatter: (cell) => cell.getRow().getData().is_new ? "" : atlasoBooleanFormatter(cell), hozAlign: "center", width: 110, headerSort: false },
-        { title: "Enabled", field: "enabled", formatter: (cell) => cell.getRow().getData().is_new ? "" : atlasoBooleanFormatter(cell), hozAlign: "center", width: 100, headerSort: false },
-        { title: "Description", field: "description", minWidth: 220 },
-      ],
-      rowFormatter: (row) => markNewRecordRow(row, "name"),
-    },
-  });
-}
 
 function updateCaSettingsPreview(payload = {}) {
   const configPreview = document.querySelector("[data-ca-config-preview]");
@@ -5130,6 +4768,255 @@ function updateKmsDerivedAddress(form, payload = {}) {
   const portField = form.querySelector('input[name="port"]');
   if (portField instanceof HTMLInputElement && payload.port) {
     portField.value = String(port);
+  }
+}
+
+let vsphereCertificateWizard = null;
+
+function openVsphereCertificateWizard(data = {}, launcher = null) {
+  const form = document.querySelector("[data-vsphere-certificate-form]");
+  if (!(form instanceof HTMLFormElement) || !vsphereCertificateWizard) return;
+  const target = form.elements.namedItem("target");
+  if (target instanceof HTMLSelectElement && data.provider_id && data.id) {
+    target.value = `${data.provider_id}|${data.id}`;
+  }
+  vsphereCertificateWizard.open({ launcher, context: data });
+}
+
+function initializeVsphereKeyProviderTables() {
+  const providerElement = document.getElementById("vsphere-providers-table");
+  if (!(providerElement instanceof HTMLElement) || !window.AtlasoUiPatterns) return;
+  const vcenterProviderSelect = document.querySelector('[data-vsphere-vcenter-form] select[name="provider_id"]');
+  const certificateTargetSelect = document.querySelector('[data-vsphere-certificate-form] select[name="target"]');
+  const upsertOption = (select, value, label) => {
+    if (!(select instanceof HTMLSelectElement) || !value) return;
+    let option = Array.from(select.options).find((item) => item.value === String(value));
+    if (!option) {
+      option = document.createElement("option");
+      option.value = String(value);
+      select.append(option);
+    }
+    option.textContent = label;
+  };
+  const removeOption = (select, value) => {
+    if (!(select instanceof HTMLSelectElement)) return;
+    Array.from(select.options).find((item) => item.value === String(value))?.remove();
+  };
+  initializeAtlasoResourceWizard({
+    elementId: "vsphere-providers-table",
+    formSelector: "[data-vsphere-provider-form]",
+    dialogId: "vsphere-provider-dialog",
+    rows: JSON.parse(providerElement.dataset.providers || "[]"),
+    newRow: { id: "__new_vsphere_provider__", name: "", description: "", enabled: false, is_new: true },
+    resourceName: "provider",
+    createUrl: "/vsphere-key-providers/providers",
+    editUrl: (id) => `/vsphere-key-providers/providers/${id}/edit`,
+    deleteResource: true,
+    deleteUrl: (id) => `/vsphere-key-providers/providers/${id}/delete`,
+    createLabel: "Create provider",
+    updateLabel: "Update provider",
+    editLabel: "Edit provider",
+    deleteLabel: "Delete provider",
+    emptyMessage: "No provider namespaces configured.",
+    actionErrorSelector: "#vsphere-provider-error",
+    defaults: { name: "", description: "", enabled: false },
+    steps: [
+      { id: "identity", title: "Define the provider", description: "Name the isolated provider namespace. Atlaso assigns its immutable UUID." },
+      { id: "state", title: "Choose provider state", description: "Record its purpose and saved desired-state enablement." },
+      { id: "review", title: "Review provider desired state", description: "Confirm the namespace and global Appliance Apply boundary." },
+    ],
+    reviewItems: [
+      { label: "Provider", field: "name" },
+      { label: "Description", field: "description" },
+      { label: "Enabled", field: "enabled" },
+      { label: "Namespace", value: (form) => form.elements.record_id.value ? "Immutable UUID preserved" : "Immutable UUID assigned on creation" },
+    ],
+    onSaved: ({ resource }) => upsertOption(vcenterProviderSelect, resource.id, resource.name),
+    onDeleted: ({ data }) => removeOption(vcenterProviderSelect, data.id),
+    deleteConfirmation: (data) => ({ title: `Delete ${data.name}?`, message: "Deletion requires this provider to be disabled, detached from every vCenter, and authenticated as containing zero operational keys.", confirmLabel: "Delete provider", tone: "danger" }),
+    options: {
+      height: "420px",
+      rowHeight: 28,
+      columns: [
+        { title: "Name", field: "name", minWidth: 190, formatter: (cell) => cell.getRow().getData().is_new ? '<button class="add-row-button" type="button" data-atlaso-wizard-add>+ Add provider here</button>' : escapeHtml(cell.getValue()) },
+        { title: "Provider UUID", field: "id", minWidth: 290, formatter: (cell) => cell.getRow().getData().is_new ? "" : `<code>${escapeHtml(cell.getValue())}</code>` },
+        { title: "Trusted vCenters", field: "trusted_vcenter_count", width: 145, hozAlign: "right" },
+        { title: "Certificates", field: "certificate_count", width: 125, hozAlign: "right" },
+        { title: "Usable", field: "usable_certificate_count", width: 95, hozAlign: "right" },
+        { title: "Enabled", field: "enabled", formatter: (cell) => cell.getRow().getData().is_new ? "" : atlasoBooleanFormatter(cell), width: 100, hozAlign: "center" },
+        { title: "Description", field: "description", minWidth: 220 },
+      ],
+      rowFormatter: (row) => markNewRecordRow(row, "name"),
+    },
+  });
+
+  const vcenterElement = document.getElementById("vsphere-vcenters-table");
+  if (!(vcenterElement instanceof HTMLElement)) return;
+  const providers = JSON.parse(vcenterElement.dataset.providerOptions || "[]");
+  const providerValues = Object.fromEntries(providers.map((item) => [String(item.id), item.label]));
+  initializeAtlasoResourceWizard({
+    elementId: "vsphere-vcenters-table",
+    formSelector: "[data-vsphere-vcenter-form]",
+    dialogId: "vsphere-vcenter-dialog",
+    rows: JSON.parse(vcenterElement.dataset.vcenters || "[]"),
+    newRow: { id: "__new_vsphere_vcenter__", provider_id: providers[0]?.id || "", name: "", hostname: "", description: "", enabled: false, certificate_pem: "", is_new: true },
+    resourceName: "trusted_vcenter",
+    createUrl: "/vsphere-key-providers/trusted-vcenters",
+    editUrl: (id) => `/vsphere-key-providers/trusted-vcenters/${id}/edit`,
+    deleteResource: true,
+    deleteUrl: (id) => `/vsphere-key-providers/trusted-vcenters/${id}/delete`,
+    createLabel: "Create trusted vCenter",
+    updateLabel: "Update trusted vCenter",
+    editLabel: "Edit trusted vCenter",
+    deleteLabel: "Delete trusted vCenter",
+    emptyMessage: "No trusted vCenters configured.",
+    actionErrorSelector: "#vsphere-vcenter-error",
+    defaults: { provider_id: providers[0]?.id || "", name: "", hostname: "", description: "", certificate_pem: "", enabled: false },
+    canEdit: () => true,
+    extraActions: [{ label: "Add public certificate", action: (_event, row) => openVsphereCertificateWizard(row.getData(), row.getElement()) }],
+    steps: [
+      { id: "identity", title: "Define the trusted vCenter", description: "Assign its stable identity to one provider namespace." },
+      { id: "certificate", title: "Provide public trust", description: "Paste one current public X.509 client certificate. Private keys are forbidden." },
+      { id: "state", title: "Choose trusted-vCenter state", description: "Record its purpose and saved desired-state enablement." },
+      { id: "review", title: "Review exact trust", description: "Confirm provider assignment, public certificate handling, and global Appliance Apply." },
+    ],
+    reviewItems: [
+      { label: "Provider", field: "provider_id" },
+      { label: "vCenter", field: "name" },
+      { label: "Hostname", field: "hostname" },
+      { label: "Certificate", value: (form) => form.elements.certificate_pem.value.trim() ? "Public X.509 PEM supplied" : "No new certificate" },
+      { label: "Enabled", field: "enabled" },
+    ],
+    onOpen: ({ form, context }) => {
+      const provider = form.elements.namedItem("provider_id");
+      if (provider instanceof HTMLSelectElement) {
+        provider.disabled = Boolean(context && !context.is_new);
+        if (!context && !provider.value && provider.options.length) provider.selectedIndex = 0;
+      }
+      form.elements.certificate_pem.value = "";
+    },
+    prepareFormData: ({ body, form }) => {
+      const provider = form.elements.namedItem("provider_id");
+      if (provider instanceof HTMLSelectElement) body.set("provider_id", provider.value);
+    },
+    onSaved: ({ resource }) => upsertOption(
+      certificateTargetSelect,
+      `${resource.provider_id}|${resource.id}`,
+      `${resource.provider_name} / ${resource.name}`,
+    ),
+    onDeleted: ({ data }) => removeOption(certificateTargetSelect, `${data.provider_id}|${data.id}`),
+    deleteConfirmation: (data) => ({ title: `Delete ${data.name}?`, message: "Disable this trusted vCenter and retire every public certificate before deletion.", confirmLabel: "Delete trusted vCenter", tone: "danger" }),
+    options: {
+      height: "420px",
+      rowHeight: 28,
+      columns: [
+        { title: "Name", field: "name", minWidth: 180, formatter: (cell) => cell.getRow().getData().is_new ? '<button class="add-row-button" type="button" data-atlaso-wizard-add>+ Add trusted vCenter here</button>' : escapeHtml(cell.getValue()) },
+        { title: "Provider", field: "provider_id", minWidth: 180, formatter: (cell) => cell.getRow().getData().is_new ? "" : escapeHtml(providerValues[String(cell.getValue())] || cell.getRow().getData().provider_name || "") },
+        { title: "Hostname", field: "hostname", minWidth: 190, formatter: (cell) => escapeHtml(cell.getValue() || "Not recorded") },
+        { title: "Certificates", field: "certificate_count", width: 125, hozAlign: "right" },
+        { title: "Usable", field: "usable_certificate_count", width: 95, hozAlign: "right" },
+        { title: "Earliest expiry", field: "earliest_expiry", minWidth: 180, formatter: (cell) => escapeHtml(cell.getValue() || "Not reported") },
+        { title: "Enabled", field: "enabled", formatter: (cell) => cell.getRow().getData().is_new ? "" : atlasoBooleanFormatter(cell), width: 100, hozAlign: "center" },
+      ],
+      rowFormatter: (row) => markNewRecordRow(row, "name"),
+    },
+  });
+
+  const certificateForm = document.querySelector("[data-vsphere-certificate-form]");
+  const certificateDialog = document.getElementById("vsphere-certificate-dialog");
+  if (certificateForm instanceof HTMLFormElement && certificateDialog instanceof HTMLDialogElement) {
+    vsphereCertificateWizard = window.AtlasoUiPatterns.createWizard({
+      form: certificateForm,
+      dialog: certificateDialog,
+      steps: [
+        { id: "target", title: "Choose the trusted vCenter", description: "Assign the exact public identity to an existing provider-scoped vCenter." },
+        { id: "certificate", title: "Provide public trust", description: "Paste one current public X.509 client certificate. Private keys are rejected." },
+        { id: "review", title: "Review certificate trust", description: "Confirm the exact target and global Appliance Apply boundary." },
+      ],
+      onOpen: ({ context }) => {
+        certificateForm.reset();
+        const target = certificateForm.elements.namedItem("target");
+        if (target instanceof HTMLSelectElement && context?.provider_id && context?.id) target.value = `${context.provider_id}|${context.id}`;
+      },
+      prepareReview: () => renderAtlasoWizardReview(certificateForm, [
+        { label: "Trusted vCenter", field: "target" },
+        { label: "Certificate", value: () => certificateForm.elements.certificate_pem.value.trim() ? "Public X.509 PEM supplied" : "Missing" },
+      ]),
+      onSubmit: async () => {
+        const body = new FormData(certificateForm);
+        const [providerId, vcenterId] = String(body.get("target") || "").split("|");
+        if (!providerId || !vcenterId) return { valid: false, message: "Choose a trusted vCenter." };
+        body.set("provider_id", providerId);
+        const payload = await atlasoGridWizardRequest(`/vsphere-key-providers/trusted-vcenters/${vcenterId}/certificates`, body);
+        const certificateTable = document.getElementById("vsphere-certificates-table")?.atlasoTabulator;
+        await certificateTable?.addRow?.(payload.certificate, true);
+        showTransientGridStatus("Certificate added");
+        return { valid: true };
+      },
+    });
+  }
+
+  const certificateElement = document.getElementById("vsphere-certificates-table");
+  if (certificateElement instanceof HTMLElement) {
+    const csrf = certificateElement.dataset.csrf || "";
+    const retireCertificate = async (row) => {
+      const data = row.getData();
+      const confirmed = await requestConfirmation({ title: "Retire public certificate?", message: "The exact fingerprint leaves desired trust after the next global Appliance Apply.", confirmLabel: "Retire certificate", tone: "danger" });
+      if (!confirmed) return;
+      const body = new FormData();
+      body.set("csrf", csrf);
+      await atlasoGridWizardRequest(`/vsphere-key-providers/trusted-vcenters/${data.trusted_vcenter_id}/certificates/${data.id}/delete`, body, { expectJson: false });
+      await row.delete();
+      showTransientGridStatus("Certificate retired");
+    };
+    const grid = window.AtlasoUiPatterns.createGrid({
+      element: certificateElement,
+      fallback: `#${certificateElement.dataset.fallbackId}`,
+      pattern: "read-only",
+      emptyMessage: "No public certificates configured.",
+      rowActions: [
+        { label: "Add replacement certificate", action: (_event, row) => openVsphereCertificateWizard({ provider_id: row.getData().provider_id, id: row.getData().trusted_vcenter_id }, row.getElement()) },
+        { label: "Retire certificate", action: (_event, row) => retireCertificate(row), tone: "danger" },
+      ],
+      options: {
+        data: JSON.parse(certificateElement.dataset.certificates || "[]"), index: "id", height: "420px", rowHeight: 28,
+        columns: [
+          { title: "Provider", field: "provider_name", minWidth: 175 },
+          { title: "vCenter", field: "trusted_vcenter_name", minWidth: 175 },
+          { title: "Subject", field: "subject", minWidth: 280, formatter: (cell) => escapeHtml(cell.getValue() || "Not reported") },
+          { title: "SHA-256 fingerprint", field: "fingerprint_sha256", minWidth: 440, formatter: (cell) => `<code>${escapeHtml(cell.getValue())}</code>` },
+          { title: "Valid from", field: "not_valid_before", minWidth: 180, formatter: (cell) => escapeHtml(cell.getValue() || "Not reported") },
+          { title: "Expires", field: "not_valid_after", minWidth: 180, formatter: (cell) => escapeHtml(cell.getValue() || "Not reported") },
+          { title: "Source", field: "source", width: 150 },
+          { title: "Status", field: "status", width: 135 },
+        ],
+      },
+    });
+    certificateElement.atlasoTabulator = grid.table;
+  }
+
+  const healthElement = document.getElementById("vsphere-health-table");
+  if (healthElement instanceof HTMLElement) {
+    const grid = window.AtlasoUiPatterns.createGrid({
+      element: healthElement,
+      fallback: `#${healthElement.dataset.fallbackId}`,
+      pattern: "read-only",
+      emptyMessage: "No provider namespaces configured.",
+      options: {
+        data: JSON.parse(healthElement.dataset.health || "[]"), index: "provider_id", height: "420px", rowHeight: 28,
+        columns: [
+          { title: "Provider", field: "provider_name", minWidth: 190 },
+          { title: "Desired", field: "desired_state", width: 110 },
+          { title: "Readiness", field: "readiness", width: 140 },
+          { title: "Runtime", field: "runtime_state", width: 135 },
+          { title: "Pre-Active", field: "pre_active_count", width: 115, formatter: (cell) => cell.getValue() ?? "Not reported" },
+          { title: "Active", field: "active_count", width: 100, formatter: (cell) => cell.getValue() ?? "Not reported" },
+          { title: "Total", field: "total_count", width: 100, formatter: (cell) => cell.getValue() ?? "Not reported" },
+          { title: "Evidence", field: "count_status", minWidth: 140 },
+        ],
+      },
+    });
+    healthElement.atlasoTabulator = grid.table;
   }
 }
 
@@ -20602,8 +20489,7 @@ document.addEventListener("DOMContentLoaded", initializeCaCertificatesTable);
 document.addEventListener("DOMContentLoaded", initializeCaRequestsTable);
 document.addEventListener("DOMContentLoaded", () => initializeCaSettings());
 document.addEventListener("DOMContentLoaded", initializeCaCsrWizard);
-document.addEventListener("DOMContentLoaded", initializeKmsClientsTable);
-document.addEventListener("DOMContentLoaded", initializeKmsKeysTable);
+document.addEventListener("DOMContentLoaded", initializeVsphereKeyProviderTables);
 document.addEventListener("DOMContentLoaded", () => initializeKmsSettings());
 document.addEventListener("DOMContentLoaded", initializeLdapOrganizationWizard);
 document.addEventListener("DOMContentLoaded", initializeLdapPageState);

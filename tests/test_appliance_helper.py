@@ -642,7 +642,7 @@ def kms_config_text(managed_root: Path, *, enabled: bool = True, database_path: 
             "tls": {
                 "certificate_path": str(managed_root / "kmip" / "certs" / "kms.atlaso.internal.crt"),
                 "private_key_path": str(managed_root / "kmip" / "certs" / "kms.atlaso.internal.key"),
-                "ca_path": str(managed_root / "ca" / "root.crt"),
+                "ca_path": str(managed_root / "kmip" / "client-trust.pem"),
             },
             "store": {
                 "database_path": str(database_path),
@@ -3453,6 +3453,7 @@ def test_kms_helper_validates_disabled_staged_config(monkeypatch, tmp_path):
     apply_dir.mkdir(parents=True)
     state_dir.mkdir(parents=True)
     config_path = apply_dir / "server.json"
+    trust_path = apply_dir / "client-trust.pem"
     config_path.write_text(kms_config_text(managed_root, enabled=False, database_path=state_dir / "store.db"), encoding="utf-8")
 
     monkeypatch.setattr(helper, "KMS_APPLY_DIR", apply_dir)
@@ -3498,53 +3499,6 @@ def test_kms_helper_rejects_coerced_json_types(
     assert any(expected in error for error in helper._kms_config_errors(config_path))
 
 
-def test_kms_helper_blocks_nonempty_legacy_store(monkeypatch, tmp_path):
-    """Verify that kms helper blocks nonempty legacy store.
-
-    Args:
-        monkeypatch: Pytest fixture used to replace dependencies for the test.
-        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
-    """
-    helper = load_helper_module()
-    apply_dir = tmp_path / "apply" / "kms"
-    state_dir = tmp_path / "state" / "kmip"
-    managed_root = tmp_path / "etc" / "atlaso"
-    legacy_path = tmp_path / "legacy" / "pykmip.db"
-    command_path = tmp_path / "venv" / "bin" / "atlaso-kmip"
-    config_path = apply_dir / "server.json"
-    cert_path = managed_root / "kmip" / "certs" / "kms.atlaso.internal.crt"
-    key_path = managed_root / "kmip" / "certs" / "kms.atlaso.internal.key"
-    client_path = managed_root / "kmip" / "clients" / "vcf.crt"
-    ca_path = managed_root / "ca" / "root.crt"
-    for path, value in (
-        (cert_path, "-----BEGIN CERTIFICATE-----\nleaf\n-----END CERTIFICATE-----\n"),
-        (key_path, "-----BEGIN PRIVATE KEY-----\nkey\n-----END PRIVATE KEY-----\n"),
-        (client_path, "-----BEGIN CERTIFICATE-----\nclient\n-----END CERTIFICATE-----\n"),
-        (ca_path, "-----BEGIN CERTIFICATE-----\nroot\n-----END CERTIFICATE-----\n"),
-        (command_path, "#!/bin/sh\n"),
-        (legacy_path, "legacy keys"),
-    ):
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(value, encoding="utf-8")
-    apply_dir.mkdir(parents=True, exist_ok=True)
-    state_dir.mkdir(parents=True, exist_ok=True)
-    config_path.write_text(
-        kms_config_text(managed_root, database_path=state_dir / "store.db"),
-        encoding="utf-8",
-    )
-
-    monkeypatch.setattr(helper, "KMS_APPLY_DIR", apply_dir)
-    monkeypatch.setattr(helper, "KMS_STATE_DIR", state_dir)
-    monkeypatch.setattr(helper, "KMS_CONFIG_DIR", managed_root / "kmip")
-    monkeypatch.setattr(helper, "CA_MANAGED_PATH_BASE", managed_root)
-    monkeypatch.setattr(helper, "ATLASO_KMIP_VENV_PATH", command_path)
-    monkeypatch.setattr(helper, "KMS_LEGACY_DATABASE_PATH", legacy_path)
-    monkeypatch.setattr(helper.pwd, "getpwnam", lambda _name: SimpleNamespace(pw_uid=1001))
-    monkeypatch.setattr(helper.grp, "getgrnam", lambda _name: SimpleNamespace(gr_gid=1002))
-
-    assert helper._handle_kms("validate", [str(config_path)]) == 2
-
-
 def test_kms_helper_apply_installs_atlaso_kmip_service(monkeypatch, tmp_path):
     """Verify that kms helper apply installs atlaso kmip service.
 
@@ -3562,6 +3516,7 @@ def test_kms_helper_apply_installs_atlaso_kmip_service(monkeypatch, tmp_path):
     kms_credential_path = managed_root / "kmip" / "atlaso-secrets-key.cred"
     command_path = tmp_path / "venv" / "bin" / "atlaso-kmip"
     config_path = apply_dir / "server.json"
+    trust_path = apply_dir / "client-trust.pem"
     cert_path = managed_root / "kmip" / "certs" / "kms.atlaso.internal.crt"
     key_path = managed_root / "kmip" / "certs" / "kms.atlaso.internal.key"
     client_path = managed_root / "kmip" / "clients" / "vcf.crt"
@@ -3584,6 +3539,7 @@ def test_kms_helper_apply_installs_atlaso_kmip_service(monkeypatch, tmp_path):
     )
     command_path.write_text("#!/bin/sh\n", encoding="utf-8")
     config_path.write_text(kms_config_text(managed_root, database_path=state_dir / "store.db"), encoding="utf-8")
+    trust_path.write_text("-----BEGIN CERTIFICATE-----\nroot\n-----END CERTIFICATE-----\n", encoding="utf-8")
     commands: list[list[str]] = []
     credential_inputs: list[tuple[list[str], str]] = []
     ownership: list[tuple[Path, int, int]] = []
@@ -3632,6 +3588,9 @@ def test_kms_helper_apply_installs_atlaso_kmip_service(monkeypatch, tmp_path):
     assert helper._handle_kms("apply", [str(config_path)]) == 0
 
     assert (managed_root / "kmip" / "server.json").is_file()
+    runtime_trust_path = managed_root / "kmip" / "client-trust.pem"
+    assert runtime_trust_path.read_text(encoding="utf-8").startswith("-----BEGIN CERTIFICATE-----")
+    assert "PRIVATE KEY" not in runtime_trust_path.read_text(encoding="utf-8")
     service = service_path.read_text(encoding="utf-8")
     assert "User=atlaso-kmip" in service
     assert f"LoadCredentialEncrypted=atlaso-secrets-key:{kms_credential_path}" in service
@@ -3645,6 +3604,7 @@ def test_kms_helper_apply_installs_atlaso_kmip_service(monkeypatch, tmp_path):
     assert (state_dir, 1001, 1002) in ownership
     assert (log_dir, 1001, 1002) in ownership
     assert (managed_root / "kmip", 0, 1002) in ownership
+    assert (runtime_trust_path, 0, 1002) in ownership
     assert ["systemctl", "daemon-reload"] in commands
     assert ["systemctl", "disable", "--now", "atlaso-kms.service"] in commands
     assert ["systemctl", "enable", "atlaso-kmip.service"] in commands
@@ -3662,13 +3622,159 @@ def test_kms_helper_apply_installs_atlaso_kmip_service(monkeypatch, tmp_path):
     assert "bootstrap-secret" not in credential_text
     if os.name != "nt":
         assert kms_credential_path.stat().st_mode & 0o777 == 0o600
+        assert runtime_trust_path.stat().st_mode & 0o777 == 0o640
 
 
-def test_kms_apply_reconciles_service_identity_for_upgraded_appliance(
+def test_kms_helper_rejects_symlinked_staged_public_trust_bundle(monkeypatch, tmp_path):
+    """Verify staged vCenter trust cannot escape through a symbolic link.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    helper = load_helper_module()
+    apply_dir = tmp_path / "apply" / "kms"
+    state_dir = tmp_path / "state" / "kmip"
+    managed_root = tmp_path / "etc" / "atlaso"
+    config_path = apply_dir / "server.json"
+    trust_target = tmp_path / "outside-trust.pem"
+    trust_path = apply_dir / "client-trust.pem"
+    cert_path = managed_root / "kmip" / "certs" / "kms.atlaso.internal.crt"
+    key_path = managed_root / "kmip" / "certs" / "kms.atlaso.internal.key"
+    client_path = managed_root / "kmip" / "clients" / "vcf.crt"
+    for path, value in (
+        (cert_path, "-----BEGIN CERTIFICATE-----\nleaf\n-----END CERTIFICATE-----\n"),
+        (key_path, "-----BEGIN PRIVATE KEY-----\nkey\n-----END PRIVATE KEY-----\n"),
+        (client_path, "-----BEGIN CERTIFICATE-----\nclient\n-----END CERTIFICATE-----\n"),
+        (trust_target, "-----BEGIN CERTIFICATE-----\nroot\n-----END CERTIFICATE-----\n"),
+    ):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(value, encoding="utf-8")
+    apply_dir.mkdir(parents=True, exist_ok=True)
+    state_dir.mkdir(parents=True, exist_ok=True)
+    config_path.write_text(kms_config_text(managed_root, database_path=state_dir / "store.db"), encoding="utf-8")
+    try:
+        trust_path.symlink_to(trust_target)
+    except OSError:
+        pytest.skip("Symbolic link creation is unavailable on this test host.")
+
+    monkeypatch.setattr(helper, "KMS_APPLY_DIR", apply_dir)
+    monkeypatch.setattr(helper, "KMS_STATE_DIR", state_dir)
+    monkeypatch.setattr(helper, "KMS_CONFIG_DIR", managed_root / "kmip")
+    monkeypatch.setattr(helper, "CA_MANAGED_PATH_BASE", managed_root)
+
+    errors = helper._kms_config_errors(config_path)
+    assert any("regular file" in error for error in errors)
+
+
+def test_kms_helper_rejects_symlinked_staged_config(monkeypatch, tmp_path):
+    """Verify the fixed staged KMS configuration cannot be a symbolic link.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    helper = load_helper_module()
+    apply_dir = tmp_path / "apply" / "kms"
+    config_target = tmp_path / "outside-server.json"
+    config_path = apply_dir / "server.json"
+    apply_dir.mkdir(parents=True)
+    config_target.write_text("{}", encoding="utf-8")
+    try:
+        config_path.symlink_to(config_target)
+    except OSError:
+        pytest.skip("Symbolic link creation is unavailable on this test host.")
+    monkeypatch.setattr(helper, "KMS_APPLY_DIR", apply_dir)
+
+    with pytest.raises(ValueError, match="symbolic links"):
+        helper._validate_kms_config_path(str(config_path))
+
+
+def test_kms_helper_status_returns_only_authenticated_redacted_counts(monkeypatch, tmp_path, capsys):
+    """Verify the fixed status operation returns no credential or operational key IDs.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+        capsys: Pytest fixture capturing standard output and error streams.
+    """
+    helper = load_helper_module()
+    config_path = tmp_path / "server.json"
+    credential_path = tmp_path / "atlaso-secrets-key.cred"
+    command_path = tmp_path / "atlaso-kmip"
+    config_path.write_text("{}", encoding="utf-8")
+    credential_path.write_text("encrypted", encoding="utf-8")
+    command_path.write_text("#!/bin/sh\n", encoding="utf-8")
+    provider_id = "885841f9-0878-45c2-aee0-b72bc9fc643f"
+    status_payload = {
+        "status": "available",
+        "runtime_state": "running",
+        "store_status": "authenticated",
+        "providers": {provider_id: {"pre_active": 1, "active": 2, "total": 3}},
+    }
+
+    monkeypatch.setattr(helper, "KMS_CONFIG_PATH", config_path)
+    monkeypatch.setattr(helper, "KMS_CREDENTIAL_PATH", credential_path)
+    monkeypatch.setattr(helper, "ATLASO_KMIP_VENV_PATH", command_path)
+    monkeypatch.setattr(
+        helper,
+        "_run",
+        lambda command: subprocess.CompletedProcess(command, 0, "protected-runtime-secret\n", ""),
+    )
+    monkeypatch.setattr(
+        helper.subprocess,
+        "run",
+        lambda command, **kwargs: subprocess.CompletedProcess(command, 0, json.dumps(status_payload), ""),
+    )
+
+    assert helper._handle_kms("status", []) == 0
+    output = capsys.readouterr().out
+    assert json.loads(output) == status_payload
+    assert "protected-runtime-secret" not in output
+    assert "key_id" not in output
+
+
+def test_kms_helper_status_cli_requires_no_path_and_returns_only_status(monkeypatch, capsys):
+    """Verify the fixed read-only CLI emits no helper action envelope.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+        capsys: Pytest fixture capturing standard output and error streams.
+    """
+    helper = load_helper_module()
+    status_payload = {
+        "status": "available",
+        "runtime_state": "running",
+        "store_status": "authenticated",
+        "providers": {},
+    }
+
+    def fake_status(action, args):
+        """Return a fixed redacted status payload.
+
+        Args:
+            action: Helper action selected by the CLI.
+            args: Validated positional arguments supplied to the helper action.
+
+        Returns:
+            Successful helper exit status.
+        """
+        assert action == "status"
+        assert args == []
+        print(json.dumps(status_payload))
+        return 0
+
+    monkeypatch.setattr(helper, "_handle_kms", fake_status)
+
+    assert helper.main(["atlaso-helper", "kms", "status", "--real"]) == 0
+    assert json.loads(capsys.readouterr().out) == status_payload
+
+
+def test_kms_apply_reconciles_service_identity(
     monkeypatch,
     tmp_path,
 ):
-    """Verify that kms apply reconciles service identity for upgraded appliance.
+    """Verify that KMS apply reconciles its constrained service identity.
 
     Args:
         monkeypatch: Pytest fixture used to replace dependencies for the test.

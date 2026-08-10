@@ -70,6 +70,10 @@ OPENAPI_TAGS = [
     {"name": "Settings", "description": "Inspect and update appliance settings desired state."},
     {"name": "CA", "description": "Inspect and manage the integrated certificate authority."},
     {"name": "LDAP", "description": "Inspect and manage Atlaso-managed LDAP organizations, users, and groups."},
+    {
+        "name": "vSphere Key Providers",
+        "description": "Inspect and manage isolated vSphere Key Provider namespaces and public vCenter trust.",
+    },
     {"name": "OIDC Provider", "description": "Administer the constrained Atlaso OpenID Connect provider."},
     {"name": "ESXi PXE", "description": "Manage ESXi Kickstarts, host references, and installer media."},
     {"name": "network-boot", "description": "Manage Network Boot environments, discovered hosts, and reports."},

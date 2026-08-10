@@ -794,6 +794,38 @@ class WrappedKeyStore:
             self._verify_store_commitment(connection)
             return [row["key_id"] for row in connection.execute(sql, parameters).fetchall()]
 
+    def lifecycle_counts(self) -> dict[str, dict[str, int]]:
+        """Return authenticated key counts grouped by provider and lifecycle state.
+
+        Returns:
+            Redacted per-provider counts with no operational key identifiers.
+        """
+        counts: dict[str, dict[str, int]] = {}
+        with self._lock, self._connect() as connection:
+            self._verify_store_commitment(connection)
+            rows = connection.execute(
+                """
+                SELECT provider_id, key_id, algorithm, key_length, name, state,
+                       created_at, activated_at, nonce, ciphertext, aad_json
+                FROM wrapped_keys
+                ORDER BY provider_id, key_id
+                """
+            ).fetchall()
+            for row in rows:
+                metadata, plaintext = self._decrypt_row(row)
+                try:
+                    provider = counts.setdefault(
+                        metadata.provider_id,
+                        {"pre_active": 0, "active": 0, "total": 0},
+                    )
+                    field = "pre_active" if metadata.state == "Pre-Active" else "active"
+                    provider[field] += 1
+                    provider["total"] += 1
+                finally:
+                    mutable = bytearray(plaintext)
+                    mutable[:] = b"\0" * len(mutable)
+        return counts
+
     def close(self) -> None:
         """Handle close."""
         self._master_key[:] = b"\0" * len(self._master_key)

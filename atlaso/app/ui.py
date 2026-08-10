@@ -63,9 +63,10 @@ from atlaso.app.models import (
     Job,
     JobStep,
     JobStatus,
-    KmsClient,
-    KmsKey,
     KmsSettings,
+    VsphereKeyProvider,
+    VsphereTrustedVcenter,
+    VsphereTrustedVcenterCertificate,
     LdapGroup,
     LdapGroupMembership,
     LdapOrganization,
@@ -448,22 +449,23 @@ from atlaso.app.services.esx_storage import (
     validate_mounted_volume_path as validate_esx_storage_mounted_volume_path,
 )
 from atlaso.app.services.kms import (
-    KMS_BACKENDS,
-    KMS_CLIENT_ROLES,
     KMS_DEFAULT_CONFIG_PATH,
     KMS_DEFAULT_DATABASE_PATH,
     KMS_DNS_RECORD_DESCRIPTION,
-    KMS_KEY_ALGORITHMS,
-    KMS_KEY_STATES,
     KMS_STAGED_CONFIG_PATH,
-    ensure_kms_provider_id,
+    KMS_STAGED_CLIENT_TRUST_PATH,
     join_csv,
-    kms_client_fingerprints,
-    kms_client_to_dict,
-    kms_key_to_dict,
-    render_kms_config,
-    split_csv,
-    validate_kms_state,
+)
+from atlaso.app.services.vsphere_key_providers import (
+    certificate_to_dict,
+    parse_public_certificate,
+    provider_rows,
+    provider_to_dict,
+    render_client_trust_bundle,
+    render_provider_config,
+    runtime_status_snapshot,
+    trusted_vcenter_to_dict,
+    validate_provider_state,
 )
 from atlaso.app.services.ldap import (
     LDAP_CERT_PATH,
@@ -1172,16 +1174,6 @@ def remove_ntp_nts_certificate_rows(db: Session) -> int:
     return len(certificates)
 
 
-def kms_client_common_name(client: KmsClient) -> str:
-    """Return kms client common name.
-
-    Args:
-        client: Client consumed by KMS client common name.
-    """
-    match = re.search(r"(?:^|,)CN=([^,]+)", client.certificate_subject or "")
-    return match.group(1).strip() if match else client.name
-
-
 def managed_ca_certificate_specs(db: Session) -> list[ManagedCertificateSpec]:
     """Return managed ca certificate specs.
 
@@ -1268,23 +1260,6 @@ def managed_ca_certificate_specs(db: Session) -> list[ManagedCertificateSpec]:
                 chain_path=chain_path,
             )
         )
-        for client in db.execute(select(KmsClient).where(KmsClient.enabled.is_(True)).order_by(KmsClient.name)).scalars().all():
-            common_name = kms_client_common_name(client)
-            cert_path, key_path, chain_path = ca_service_cert_paths("kmip/clients", client.name)
-            specs.append(
-                ManagedCertificateSpec(
-                    owner=f"kms:client:{client.name}",
-                    common_name=common_name,
-                    dns_names=[],
-                    ip_addresses=[],
-                    profile_name=CA_CLIENT_PROFILE_NAME,
-                    description=f"Managed KMIP client certificate for {client.name}.",
-                    cert_path=cert_path,
-                    key_path=key_path,
-                    chain_path=chain_path,
-                )
-            )
-
     ldap_settings = get_ldap_settings_row(db)
     if ldap_settings.enabled and ldap_settings.ldaps_enabled:
         _ldap_interfaces, ldap_certificate_addresses = resolve_ldap_bind_targets(
@@ -1434,8 +1409,6 @@ def get_kms_settings_row(db: Session) -> KmsSettings:
         db.add(settings)
         db.commit()
         db.refresh(settings)
-    elif ensure_kms_provider_id(settings):
-        db.commit()
     return settings
 
 
@@ -4980,33 +4953,23 @@ def kms_context(db: Session, *, reconcile: bool = True) -> dict:
         db.commit()
         db.refresh(settings)
     ca_state_errors = ensure_ca_state(db) if reconcile else []
-    clients = db.execute(select(KmsClient).order_by(KmsClient.name)).scalars().all()
-    if reconcile:
-        issued_fingerprints = {
-            certificate.managed_owner: certificate.fingerprint
-            for certificate in db.execute(
-                select(CaCertificate).where(
-                    CaCertificate.managed_owner.in_(
-                        [f"kms:client:{client.name}" for client in clients]
-                    ),
-                    CaCertificate.status == "issued",
-                )
-            ).scalars()
-            if certificate.fingerprint
-        }
-        fingerprint_changed = False
-        for client in clients:
-            fingerprint = issued_fingerprints.get(f"kms:client:{client.name}", "")
-            fingerprints = kms_client_fingerprints(client.certificate_fingerprint)
-            normalized = fingerprint.casefold()
-            if normalized and normalized not in fingerprints:
-                client.certificate_fingerprint = join_csv([*fingerprints, normalized])
-                fingerprint_changed = True
-        if fingerprint_changed:
-            db.commit()
-    keys = db.execute(select(KmsKey).options(selectinload(KmsKey.owner_client)).order_by(KmsKey.name)).scalars().all()
-    config_preview = render_kms_config(settings=settings, clients=clients, keys=keys)
-    validation_errors = [*ca_state_errors, *validate_kms_state(settings=settings, clients=clients, keys=keys)]
+    providers = provider_rows(db)
+    trusted_vcenters = [
+        trusted
+        for provider in providers
+        for trusted in provider.trusted_vcenters
+    ]
+    certificates = [
+        certificate
+        for trusted in trusted_vcenters
+        for certificate in trusted.certificates
+    ]
+    config_preview = render_provider_config(settings, providers)
+    trust_bundle = render_client_trust_bundle(db, providers)
+    validation_errors = [
+        *ca_state_errors,
+        *(validate_provider_state(providers) if settings.enabled else []),
+    ]
     ca_settings = get_ca_settings_row(db)
     if settings.enabled:
         invalid_interfaces = [
@@ -5024,28 +4987,50 @@ def kms_context(db: Session, *, reconcile: bool = True) -> dict:
             validation_errors.append("KMS cannot be activated until Certificate Authority state is healthy.")
         elif not ca_certificate_available(db, "kms:server"):
             validation_errors.append("KMS requires an issued CA-managed server certificate before apply.")
-        else:
-            for client in clients:
-                if client.enabled and not ca_certificate_available(db, f"kms:client:{client.name}"):
-                    validation_errors.append(f"KMS client {client.name} requires an issued CA-managed client certificate before apply.")
+    server_certificate = db.execute(
+        select(CaCertificate)
+        .where(CaCertificate.managed_owner == "kms:server")
+        .order_by(CaCertificate.id.desc())
+    ).scalars().first()
+    runtime = service_runtime_status(db, "kms")
+    status_snapshot = runtime_status_snapshot()
+    runtime_counts = status_snapshot.get("providers")
+    runtime_counts = runtime_counts if isinstance(runtime_counts, dict) else {}
+    status_rows = [
+        {
+            "provider_id": provider.id,
+            "provider_name": provider.name,
+            "desired_state": "enabled" if provider.enabled else "disabled",
+            "readiness": "ready" if provider.enabled and not validate_provider_state([provider]) else "needs attention",
+            "runtime_state": str(status_snapshot.get("runtime_state") or runtime["label"]),
+            "pre_active_count": runtime_counts.get(provider.id, {}).get("pre_active"),
+            "active_count": runtime_counts.get(provider.id, {}).get("active"),
+            "total_count": runtime_counts.get(provider.id, {}).get("total"),
+            "count_status": "available" if provider.id in runtime_counts else "not reported",
+        }
+        for provider in providers
+    ]
     return {
         "kms_settings": settings,
-        "kms_clients": clients,
-        "kms_keys": keys,
-        "kms_client_rows": [kms_client_to_dict(client) for client in clients],
-        "kms_key_rows": [kms_key_to_dict(key) for key in keys],
-        "kms_client_choices": [{"id": client.id, "label": client.name} for client in clients if client.enabled],
-        "kms_backend_options": KMS_BACKENDS,
-        "kms_client_roles": KMS_CLIENT_ROLES,
-        "kms_key_algorithms": KMS_KEY_ALGORITHMS,
-        "kms_key_states": KMS_KEY_STATES,
+        "kms_clients": [],
+        "kms_keys": [],
+        "vsphere_key_providers": providers,
+        "vsphere_key_provider_rows": [provider_to_dict(provider) for provider in providers],
+        "vsphere_trusted_vcenters": trusted_vcenters,
+        "vsphere_trusted_vcenter_rows": [trusted_vcenter_to_dict(trusted) for trusted in trusted_vcenters],
+        "vsphere_certificates": certificates,
+        "vsphere_certificate_rows": [certificate_to_dict(certificate) for certificate in certificates],
+        "vsphere_status_rows": status_rows,
+        "vsphere_provider_choices": [{"id": provider.id, "label": provider.name} for provider in providers],
+        "kms_client_trust_bundle": trust_bundle,
+        "kms_server_certificate": server_certificate,
         "available_interfaces": available_interfaces,
         "selected_kms_interfaces": split_interfaces(settings.listen_interface),
         "selected_kms_addresses": split_addresses(settings.listen_address),
         "available_kms_addresses": available_service_listen_addresses(settings.listen_address, available_interfaces),
         "kms_config_preview": config_preview,
         "kms_validation_errors": validation_errors,
-        "kms_service_status": service_runtime_status(db, "kms"),
+        "kms_service_status": runtime,
         "kms_lab_notice": (
             "The appliance-native atlaso-kmip service implements the bounded candidate VCF 9.1 profile. "
             "Treat it as experimental until the observed interoperability and recovery gate in issue #172 passes; "
@@ -10007,10 +9992,14 @@ def appliance_apply_units(db: Session, *, reconcile: bool = True) -> list[dict[s
         ),
         make_appliance_apply_unit(
             unit_id="kms",
-            label="KMS / KMIP",
-            page_url="/kms",
+            label="vSphere Key Providers",
+            page_url="/vsphere-key-providers",
             context=kms,
-            summary=["service enabled" if kms["kms_settings"].enabled else "service disabled", f"{len(kms['kms_clients'])} clients", f"{len(kms['kms_keys'])} keys"],
+            summary=[
+                "service enabled" if kms["kms_settings"].enabled else "service disabled",
+                f"{len(kms['vsphere_key_providers'])} providers",
+                f"{len(kms['vsphere_trusted_vcenters'])} trusted vCenters",
+            ],
             validation_errors=kms["kms_validation_errors"],
             config_path=KMS_STAGED_CONFIG_PATH,
             config_preview=kms["kms_config_preview"],
@@ -12314,6 +12303,10 @@ def execute_appliance_apply_unit(unit: dict[str, Any], *, adapter: SystemAdapter
     elif unit_id == "kms":
         config_path = KMS_STAGED_CONFIG_PATH
         if not adapter.dry_run:
+            stage_appliance_apply_config(
+                KMS_STAGED_CLIENT_TRUST_PATH,
+                context["kms_client_trust_bundle"],
+            )
             config_path = stage_appliance_apply_config(KMS_STAGED_CONFIG_PATH, unit["raw_config_preview"])
         results = run_adapter_steps(
             [
@@ -12426,6 +12419,10 @@ def execute_appliance_apply_unit(unit: dict[str, Any], *, adapter: SystemAdapter
             mark_local_users_failed(users, error)
     if unit_id == "esxi_pxe" and succeeded and not any(result.dry_run for result in results):
         mark_kickstarts_applied(list(context["esxi_kickstarts"]))
+    if unit_id == "kms" and succeeded and not any(result.dry_run for result in results):
+        for provider in context["vsphere_key_providers"]:
+            if provider.enabled:
+                provider.applied_at = utcnow()
     if (
         unit_id == "ldap"
         and context["ldap_settings"].enabled
@@ -13009,7 +13006,7 @@ def login(
     next: str = Form(""),
     csrf: str = Form(...),
     db: Session = Depends(get_db),
-) -> RedirectResponse | HTMLResponse | JSONResponse:
+) -> RedirectResponse | HTMLResponse | JSONResponse | Response:
     """Handle the login endpoint.
 
     Args:
@@ -21942,7 +21939,7 @@ async def import_ldap_recovery_from_ui(
     return RedirectResponse("/backup-restore#ldap-directory-recovery", status_code=303)
 
 
-@router.get("/kms", response_class=HTMLResponse, response_model=None)
+@router.get("/vsphere-key-providers", response_class=HTMLResponse, response_model=None)
 def kms_page(
     request: Request,
     identity: Identity = Depends(require_session_identity),
@@ -21961,7 +21958,47 @@ def kms_page(
     return render(request, "kms.html", {"identity": identity, **kms_context(db), "appliance_apply_status": appliance_apply_status(db, "kms")})
 
 
-@router.post("/kms/settings", response_model=None)
+@router.get("/vsphere-key-providers/server-certificate.pem", response_model=None)
+def download_vsphere_key_provider_server_chain(
+    identity: Identity = Depends(require_session_identity),
+    db: Session = Depends(get_db),
+) -> Response:
+    """Download the public appliance-wide KMIP server certificate chain.
+
+    Args:
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        Public PEM certificate-chain attachment.
+    """
+    certificate = db.execute(
+        select(CaCertificate)
+        .where(CaCertificate.managed_owner == "kms:server")
+        .order_by(CaCertificate.id.desc())
+    ).scalars().first()
+    if certificate is None or not certificate.certificate_pem:
+        raise HTTPException(status_code=404, detail="The public server certificate chain is not available.")
+    chain = certificate.chain_pem or certificate.certificate_pem
+    record_audit(
+        db,
+        actor=identity.username,
+        action="download_vsphere_key_provider_server_chain",
+        resource_type="vsphere_key_provider_settings",
+        resource_id="server-certificate",
+        detail="public_chain=true",
+    )
+    return Response(
+        chain.encode("utf-8"),
+        media_type="application/x-pem-file",
+        headers={
+            "Cache-Control": "no-store",
+            "Content-Disposition": 'attachment; filename="atlaso-kmip-server-chain.pem"',
+        },
+    )
+
+
+@router.post("/vsphere-key-providers/settings", response_model=None)
 def update_kms_settings_from_ui(
     request: Request,
     enabled: str | None = Form(None),
@@ -22059,7 +22096,412 @@ def update_kms_settings_from_ui(
                 "config_preview": context["kms_config_preview"],
             }
         )
-    return RedirectResponse("/kms", status_code=303)
+    return RedirectResponse("/vsphere-key-providers", status_code=303)
+
+
+def _vsphere_grid_error(
+    request: Request,
+    identity: Identity,
+    db: Session,
+    detail: str,
+    status_code: int = 409,
+) -> HTMLResponse | JSONResponse:
+    """Return a consistent provider-management browser error.
+
+    Args:
+        request: Incoming HTTP request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+        detail: Public error detail.
+        status_code: HTTP status code returned to the browser.
+    """
+    return grid_error_response(
+        request,
+        detail=detail,
+        status_code=status_code,
+        template_name="kms.html",
+        context={
+            "identity": identity,
+            **kms_context(db),
+            "appliance_apply_status": appliance_apply_status(db, "kms"),
+            "form_error": detail,
+        },
+    )
+
+
+@router.post("/vsphere-key-providers/providers", response_model=None)
+def create_vsphere_provider_from_ui(
+    request: Request,
+    name: str = Form(...),
+    description: str = Form(""),
+    enabled: str | None = Form(None),
+    csrf: str = Form(...),
+    identity: Identity = Depends(require_session_identity),
+    db: Session = Depends(get_db),
+) -> RedirectResponse | HTMLResponse | JSONResponse:
+    """Create a provider namespace from the shared browser wizard.
+
+    Args:
+        request: Incoming HTTP request.
+        name: Unique provider name.
+        description: Operator-facing provider purpose.
+        enabled: Submitted desired-state enablement.
+        csrf: Validated CSRF token.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+    """
+    verify_csrf(request, csrf)
+    provider = VsphereKeyProvider(
+        id=str(uuid4()),
+        name=name.strip(),
+        description=description.strip(),
+        enabled=enabled == "on",
+    )
+    db.add(provider)
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        return _vsphere_grid_error(request, identity, db, "Provider name already exists.")
+    record_audit(db, actor=identity.username, action="create_vsphere_key_provider", resource_type="vsphere_key_provider", resource_id=provider.id, detail=f"name={provider.name}; enabled={provider.enabled}")
+    refreshed = next(item for item in provider_rows(db) if item.id == provider.id)
+    return grid_saved_response(request, redirect_url="/vsphere-key-providers", resource_name="provider", resource=provider_to_dict(refreshed))
+
+
+@router.post("/vsphere-key-providers/providers/{provider_id}/edit", response_model=None)
+def edit_vsphere_provider_from_ui(
+    request: Request,
+    provider_id: str,
+    name: str = Form(...),
+    description: str = Form(""),
+    enabled: str | None = Form(None),
+    csrf: str = Form(...),
+    identity: Identity = Depends(require_session_identity),
+    db: Session = Depends(get_db),
+) -> RedirectResponse | HTMLResponse | JSONResponse:
+    """Update a provider namespace from the shared browser wizard.
+
+    Args:
+        request: Incoming HTTP request.
+        provider_id: Immutable provider UUID.
+        name: Unique provider name.
+        description: Operator-facing provider purpose.
+        enabled: Submitted desired-state enablement.
+        csrf: Validated CSRF token.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+    """
+    verify_csrf(request, csrf)
+    provider = db.get(VsphereKeyProvider, provider_id)
+    if provider is None:
+        raise HTTPException(status_code=404, detail="vSphere Key Provider not found.")
+    provider.name = name.strip()
+    provider.description = description.strip()
+    provider.enabled = enabled == "on"
+    provider.updated_at = utcnow()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        return _vsphere_grid_error(request, identity, db, "Provider name already exists.")
+    record_audit(db, actor=identity.username, action="update_vsphere_key_provider", resource_type="vsphere_key_provider", resource_id=provider.id, detail=f"name={provider.name}; enabled={provider.enabled}")
+    refreshed = next(item for item in provider_rows(db) if item.id == provider.id)
+    return grid_saved_response(request, redirect_url="/vsphere-key-providers", resource_name="provider", resource=provider_to_dict(refreshed))
+
+
+@router.post("/vsphere-key-providers/providers/{provider_id}/delete", response_model=None)
+def delete_vsphere_provider_from_ui(
+    request: Request,
+    provider_id: str,
+    csrf: str = Form(...),
+    identity: Identity = Depends(require_session_identity),
+    db: Session = Depends(get_db),
+) -> RedirectResponse | HTMLResponse | JSONResponse | Response:
+    """Delete a disabled, detached, verified-empty provider namespace.
+
+    Args:
+        request: Incoming HTTP request.
+        provider_id: Immutable provider UUID.
+        csrf: Validated CSRF token.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+    """
+    verify_csrf(request, csrf)
+    provider = next((item for item in provider_rows(db) if item.id == provider_id), None)
+    if provider is None:
+        raise HTTPException(status_code=404, detail="vSphere Key Provider not found.")
+    if provider.enabled or provider.trusted_vcenters:
+        return _vsphere_grid_error(request, identity, db, "Disable the provider and detach every trusted vCenter before deletion.")
+    snapshot = runtime_status_snapshot()
+    providers = snapshot.get("providers")
+    counts = providers.get(provider.id) if isinstance(providers, dict) else None
+    if snapshot.get("status") != "available" or not isinstance(counts, dict) or counts.get("total") != 0:
+        return _vsphere_grid_error(request, identity, db, "Authenticated zero-key runtime evidence is required before deletion.")
+    name = provider.name
+    db.delete(provider)
+    db.commit()
+    record_audit(db, actor=identity.username, action="delete_vsphere_key_provider", resource_type="vsphere_key_provider", resource_id=provider_id, detail=f"name={name}; verified_empty=true")
+    if grid_request(request):
+        return Response(status_code=204)
+    return RedirectResponse("/vsphere-key-providers", status_code=303)
+
+
+def _vsphere_vcenter_row(db: Session, provider_id: str, vcenter_id: str) -> VsphereTrustedVcenter:
+    """Return a browser provider-scoped vCenter record.
+
+    Args:
+        db: Active database session.
+        provider_id: Immutable provider UUID.
+        vcenter_id: Immutable trusted-vCenter UUID.
+    """
+    provider = next((item for item in provider_rows(db) if item.id == provider_id), None)
+    if provider is None:
+        raise HTTPException(status_code=404, detail="vSphere Key Provider not found.")
+    vcenter = next((item for item in provider.trusted_vcenters if item.id == vcenter_id), None)
+    if vcenter is None:
+        raise HTTPException(status_code=404, detail="Trusted vCenter not found.")
+    return vcenter
+
+
+def _attach_vsphere_public_certificate(
+    db: Session,
+    vcenter: VsphereTrustedVcenter,
+    certificate_pem: str,
+) -> VsphereTrustedVcenterCertificate | None:
+    """Attach optional public PEM input to a trusted vCenter.
+
+    Args:
+        db: Active database session.
+        vcenter: Provider-scoped trusted-vCenter record.
+        certificate_pem: Optional public X.509 PEM certificate.
+    """
+    if not certificate_pem.strip():
+        return None
+    parsed = parse_public_certificate(certificate_pem)
+    certificate = VsphereTrustedVcenterCertificate(
+        id=str(uuid4()),
+        trusted_vcenter_id=vcenter.id,
+        source="uploaded_public",
+        **parsed,
+    )
+    db.add(certificate)
+    return certificate
+
+
+@router.post("/vsphere-key-providers/trusted-vcenters", response_model=None)
+def create_vsphere_vcenter_from_ui(
+    request: Request,
+    provider_id: str = Form(...),
+    name: str = Form(...),
+    hostname: str = Form(""),
+    description: str = Form(""),
+    certificate_pem: str = Form(""),
+    enabled: str | None = Form(None),
+    csrf: str = Form(...),
+    identity: Identity = Depends(require_session_identity),
+    db: Session = Depends(get_db),
+) -> RedirectResponse | HTMLResponse | JSONResponse:
+    """Create a trusted vCenter and its initial public certificate.
+
+    Args:
+        request: Incoming HTTP request.
+        provider_id: Immutable provider UUID.
+        name: Unique trusted-vCenter name within the provider.
+        hostname: Operational vCenter hostname label.
+        description: Operator-facing trusted-vCenter purpose.
+        certificate_pem: Initial public X.509 PEM certificate.
+        enabled: Submitted desired-state enablement.
+        csrf: Validated CSRF token.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+    """
+    verify_csrf(request, csrf)
+    provider = db.get(VsphereKeyProvider, provider_id)
+    if provider is None:
+        raise HTTPException(status_code=404, detail="vSphere Key Provider not found.")
+    vcenter = VsphereTrustedVcenter(id=str(uuid4()), provider_id=provider.id, name=name.strip(), hostname=hostname.strip().casefold(), description=description.strip(), enabled=enabled == "on")
+    db.add(vcenter)
+    try:
+        db.flush()
+        certificate = _attach_vsphere_public_certificate(db, vcenter, certificate_pem)
+        if vcenter.enabled and certificate is None:
+            raise ValueError("An enabled trusted vCenter requires a current public client certificate.")
+        db.commit()
+    except ValueError as exc:
+        db.rollback()
+        return _vsphere_grid_error(request, identity, db, str(exc), 400)
+    except IntegrityError:
+        db.rollback()
+        return _vsphere_grid_error(request, identity, db, "Trusted vCenter name or certificate fingerprint is already assigned.")
+    record_audit(db, actor=identity.username, action="create_vsphere_trusted_vcenter", resource_type="vsphere_trusted_vcenter", resource_id=vcenter.id, detail=f"provider_id={provider.id}; name={vcenter.name}; enabled={vcenter.enabled}; public_certificate={bool(certificate)}")
+    refreshed = _vsphere_vcenter_row(db, provider.id, vcenter.id)
+    return grid_saved_response(request, redirect_url="/vsphere-key-providers", resource_name="trusted_vcenter", resource=trusted_vcenter_to_dict(refreshed), extra={"certificates": [certificate_to_dict(item) for item in refreshed.certificates]})
+
+
+@router.post("/vsphere-key-providers/trusted-vcenters/{vcenter_id}/edit", response_model=None)
+def edit_vsphere_vcenter_from_ui(
+    request: Request,
+    vcenter_id: str,
+    provider_id: str = Form(...),
+    name: str = Form(...),
+    hostname: str = Form(""),
+    description: str = Form(""),
+    certificate_pem: str = Form(""),
+    enabled: str | None = Form(None),
+    csrf: str = Form(...),
+    identity: Identity = Depends(require_session_identity),
+    db: Session = Depends(get_db),
+) -> RedirectResponse | HTMLResponse | JSONResponse:
+    """Update a trusted vCenter and optionally add one public certificate.
+
+    Args:
+        request: Incoming HTTP request.
+        vcenter_id: Immutable trusted-vCenter UUID.
+        provider_id: Immutable owning provider UUID.
+        name: Unique trusted-vCenter name within the provider.
+        hostname: Operational vCenter hostname label.
+        description: Operator-facing trusted-vCenter purpose.
+        certificate_pem: Optional replacement public X.509 PEM certificate.
+        enabled: Submitted desired-state enablement.
+        csrf: Validated CSRF token.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+    """
+    verify_csrf(request, csrf)
+    vcenter = db.get(VsphereTrustedVcenter, vcenter_id)
+    if vcenter is None:
+        raise HTTPException(status_code=404, detail="Trusted vCenter not found.")
+    if vcenter.provider_id != provider_id:
+        return _vsphere_grid_error(request, identity, db, "A trusted vCenter cannot move between provider namespaces.")
+    vcenter.name = name.strip()
+    vcenter.hostname = hostname.strip().casefold()
+    vcenter.description = description.strip()
+    vcenter.enabled = enabled == "on"
+    vcenter.updated_at = utcnow()
+    try:
+        certificate = _attach_vsphere_public_certificate(db, vcenter, certificate_pem)
+        if vcenter.enabled and not vcenter.certificates and certificate is None:
+            raise ValueError("An enabled trusted vCenter requires a current public client certificate.")
+        db.commit()
+    except ValueError as exc:
+        db.rollback()
+        return _vsphere_grid_error(request, identity, db, str(exc), 400)
+    except IntegrityError:
+        db.rollback()
+        return _vsphere_grid_error(request, identity, db, "Trusted vCenter name or certificate fingerprint is already assigned.")
+    record_audit(db, actor=identity.username, action="update_vsphere_trusted_vcenter", resource_type="vsphere_trusted_vcenter", resource_id=vcenter.id, detail=f"provider_id={provider_id}; name={vcenter.name}; enabled={vcenter.enabled}; public_certificate_added={bool(certificate)}")
+    refreshed = _vsphere_vcenter_row(db, provider_id, vcenter.id)
+    return grid_saved_response(request, redirect_url="/vsphere-key-providers", resource_name="trusted_vcenter", resource=trusted_vcenter_to_dict(refreshed), extra={"certificates": [certificate_to_dict(item) for item in refreshed.certificates]})
+
+
+@router.post("/vsphere-key-providers/trusted-vcenters/{vcenter_id}/delete", response_model=None)
+def delete_vsphere_vcenter_from_ui(
+    request: Request,
+    vcenter_id: str,
+    csrf: str = Form(...),
+    identity: Identity = Depends(require_session_identity),
+    db: Session = Depends(get_db),
+) -> RedirectResponse | HTMLResponse | JSONResponse | Response:
+    """Delete a disabled trusted vCenter after certificate retirement.
+
+    Args:
+        request: Incoming HTTP request.
+        vcenter_id: Immutable trusted-vCenter UUID.
+        csrf: Validated CSRF token.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+    """
+    verify_csrf(request, csrf)
+    vcenter = db.get(VsphereTrustedVcenter, vcenter_id)
+    if vcenter is None:
+        raise HTTPException(status_code=404, detail="Trusted vCenter not found.")
+    provider_id = vcenter.provider_id
+    if vcenter.enabled or vcenter.certificates:
+        return _vsphere_grid_error(request, identity, db, "Disable the trusted vCenter and retire every certificate before deletion.")
+    name = vcenter.name
+    db.delete(vcenter)
+    db.commit()
+    record_audit(db, actor=identity.username, action="delete_vsphere_trusted_vcenter", resource_type="vsphere_trusted_vcenter", resource_id=vcenter_id, detail=f"provider_id={provider_id}; name={name}")
+    if grid_request(request):
+        return Response(status_code=204)
+    return RedirectResponse("/vsphere-key-providers", status_code=303)
+
+
+@router.post("/vsphere-key-providers/trusted-vcenters/{vcenter_id}/certificates", response_model=None)
+def add_vsphere_certificate_from_ui(
+    request: Request,
+    vcenter_id: str,
+    provider_id: str = Form(...),
+    certificate_pem: str = Form(...),
+    csrf: str = Form(...),
+    identity: Identity = Depends(require_session_identity),
+    db: Session = Depends(get_db),
+) -> RedirectResponse | HTMLResponse | JSONResponse:
+    """Add one public certificate to an existing trusted vCenter.
+
+    Args:
+        request: Incoming HTTP request.
+        vcenter_id: Immutable trusted-vCenter UUID.
+        provider_id: Immutable owning provider UUID.
+        certificate_pem: Current public X.509 PEM certificate.
+        csrf: Validated CSRF token.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+    """
+    verify_csrf(request, csrf)
+    vcenter = _vsphere_vcenter_row(db, provider_id, vcenter_id)
+    try:
+        certificate = _attach_vsphere_public_certificate(db, vcenter, certificate_pem)
+        db.commit()
+    except ValueError as exc:
+        db.rollback()
+        return _vsphere_grid_error(request, identity, db, str(exc), 400)
+    except IntegrityError:
+        db.rollback()
+        return _vsphere_grid_error(request, identity, db, "Certificate fingerprint is already assigned.")
+    if certificate is None:
+        return _vsphere_grid_error(request, identity, db, "A public certificate is required.", 400)
+    record_audit(db, actor=identity.username, action="add_vsphere_trusted_certificate", resource_type="vsphere_trusted_certificate", resource_id=certificate.id, detail=f"provider_id={provider_id}; trusted_vcenter_id={vcenter_id}; public_certificate=true")
+    refreshed = _vsphere_vcenter_row(db, provider_id, vcenter_id)
+    stored = next(item for item in refreshed.certificates if item.id == certificate.id)
+    return grid_saved_response(request, redirect_url="/vsphere-key-providers", resource_name="certificate", resource=certificate_to_dict(stored))
+
+
+@router.post("/vsphere-key-providers/trusted-vcenters/{vcenter_id}/certificates/{certificate_id}/delete", response_model=None)
+def retire_vsphere_certificate_from_ui(
+    request: Request,
+    vcenter_id: str,
+    certificate_id: str,
+    csrf: str = Form(...),
+    identity: Identity = Depends(require_session_identity),
+    db: Session = Depends(get_db),
+) -> RedirectResponse | HTMLResponse | JSONResponse | Response:
+    """Retire one exact public certificate trust assignment.
+
+    Args:
+        request: Incoming HTTP request.
+        vcenter_id: Immutable trusted-vCenter UUID.
+        certificate_id: Immutable public-certificate UUID.
+        csrf: Validated CSRF token.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+    """
+    verify_csrf(request, csrf)
+    vcenter = db.get(VsphereTrustedVcenter, vcenter_id)
+    if vcenter is None:
+        raise HTTPException(status_code=404, detail="Trusted vCenter not found.")
+    provider_id = vcenter.provider_id
+    certificate = next((item for item in vcenter.certificates if item.id == certificate_id), None)
+    if certificate is None:
+        raise HTTPException(status_code=404, detail="Certificate not found.")
+    if vcenter.enabled and len(vcenter.certificates) <= 1:
+        return _vsphere_grid_error(request, identity, db, "Disable the trusted vCenter before retiring its last certificate.")
+    db.delete(certificate)
+    db.commit()
+    record_audit(db, actor=identity.username, action="retire_vsphere_trusted_certificate", resource_type="vsphere_trusted_certificate", resource_id=certificate_id, detail=f"provider_id={provider_id}; trusted_vcenter_id={vcenter_id}")
+    if grid_request(request):
+        return Response(status_code=204)
+    return RedirectResponse("/vsphere-key-providers", status_code=303)
 
 
 @router.get("/ntp", response_class=HTMLResponse, response_model=None)
@@ -22309,434 +22751,6 @@ def update_ntp_settings_from_ui(
     return RedirectResponse("/ntp", status_code=303)
 
 
-def parse_kms_owner_client_id(raw_value: str | int | None) -> int | None:
-    """Parse kms owner client id.
-
-    Args:
-        raw_value: Candidate raw value to parse.
-
-
-    Returns:
-        The parsed kms owner client id.
-    """
-    if raw_value in {None, "", "None", "unassigned"}:
-        return None
-    return int(raw_value)
-
-
-@router.post("/kms/clients", response_model=None)
-def create_kms_client_from_ui(
-    request: Request,
-    name: str = Form(...),
-    certificate_subject: str = Form(...),
-    role: str = Form("service"),
-    allowed_operations: str = Form(
-        "locate,get,create,activate,get-attributes,get-attribute-list,query,discover-versions"
-    ),
-    description: str = Form(""),
-    enabled: str | None = Form(None),
-    csrf: str = Form(...),
-    identity: Identity = Depends(require_session_identity),
-    db: Session = Depends(get_db),
-) -> RedirectResponse | HTMLResponse | JSONResponse:
-    """Handle the create kms client from ui endpoint.
-
-    Args:
-        request: Incoming HTTP request.
-        name: Name of the target object.
-        certificate_subject: Certificate subject supplied by the caller.
-        role: Atlaso role used for authorization.
-        allowed_operations: Allowed operations supplied by the caller.
-        description: Human-readable description of the resource.
-        enabled: Whether the requested behavior is enabled.
-        csrf: Validated CSRF token authorizing the request.
-        identity: Authenticated identity authorizing the request.
-        db: Active database session.
-
-    Returns:
-        The endpoint response.
-    """
-    verify_csrf(request, csrf)
-    client = KmsClient(
-        name=name.strip(),
-        certificate_subject=certificate_subject.strip(),
-        role=role.strip() or "service",
-        allowed_operations=join_csv(split_csv(allowed_operations)),
-        description=description or None,
-        enabled=enabled == "on",
-    )
-    db.add(client)
-    try:
-        db.commit()
-    except IntegrityError:
-        db.rollback()
-        detail = f"KMS client {name} already exists."
-        return grid_error_response(
-            request,
-            detail=detail,
-            status_code=409,
-            template_name="kms.html",
-            context={"identity": identity, **kms_context(db), "form_error": detail},
-        )
-    record_audit(db, actor=identity.username, action="create_kms_client", resource_type="kms_client", resource_id=str(client.id))
-    return grid_saved_response(
-        request,
-        redirect_url="/kms",
-        resource_name="client",
-        resource=kms_client_to_dict(client),
-    )
-
-
-@router.post("/kms/clients/{client_id}/edit", response_model=None)
-def edit_kms_client_from_ui(
-    request: Request,
-    client_id: int,
-    name: str = Form(...),
-    certificate_subject: str = Form(...),
-    role: str = Form("service"),
-    allowed_operations: str = Form(
-        "locate,get,create,activate,get-attributes,get-attribute-list,query,discover-versions"
-    ),
-    description: str = Form(""),
-    enabled: str | None = Form(None),
-    csrf: str = Form(...),
-    identity: Identity = Depends(require_session_identity),
-    db: Session = Depends(get_db),
-) -> RedirectResponse | HTMLResponse | JSONResponse:
-    """Handle the edit kms client from ui endpoint.
-
-    Args:
-        request: Incoming HTTP request.
-        client_id: Identifier of the client.
-        name: Name of the target object.
-        certificate_subject: Certificate subject supplied by the caller.
-        role: Atlaso role used for authorization.
-        allowed_operations: Allowed operations supplied by the caller.
-        description: Human-readable description of the resource.
-        enabled: Whether the requested behavior is enabled.
-        csrf: Validated CSRF token authorizing the request.
-        identity: Authenticated identity authorizing the request.
-        db: Active database session.
-
-    Returns:
-        The endpoint response.
-
-    Raises:
-        HTTPException: If the request cannot be fulfilled.
-    """
-    verify_csrf(request, csrf)
-    client = db.get(KmsClient, client_id)
-    if not client:
-        raise HTTPException(status_code=404, detail="KMS client not found")
-    client.name = name.strip()
-    client.certificate_subject = certificate_subject.strip()
-    client.role = role.strip() or "service"
-    client.allowed_operations = join_csv(split_csv(allowed_operations))
-    client.description = description or None
-    client.enabled = enabled == "on"
-    client.updated_at = utcnow()
-    try:
-        db.commit()
-    except IntegrityError:
-        db.rollback()
-        detail = f"KMS client {name} already exists."
-        return grid_error_response(
-            request,
-            detail=detail,
-            status_code=409,
-            template_name="kms.html",
-            context={"identity": identity, **kms_context(db), "form_error": detail},
-        )
-    record_audit(db, actor=identity.username, action="update_kms_client", resource_type="kms_client", resource_id=str(client.id))
-    return grid_saved_response(
-        request,
-        redirect_url="/kms",
-        resource_name="client",
-        resource=kms_client_to_dict(client),
-    )
-
-
-@router.post("/kms/clients/{client_id}/retire-previous-certificate", response_model=None)
-def retire_previous_kms_client_certificate(
-    request: Request,
-    client_id: int,
-    csrf: str = Form(...),
-    identity: Identity = Depends(require_session_identity),
-    db: Session = Depends(get_db),
-) -> JSONResponse:
-    """Handle the retire previous kms client certificate endpoint.
-
-    Args:
-        request: Incoming HTTP request.
-        client_id: Identifier of the client.
-        csrf: Validated CSRF token authorizing the request.
-        identity: Authenticated identity authorizing the request.
-        db: Active database session.
-
-    Returns:
-        The endpoint response.
-
-    Raises:
-        HTTPException: If the request cannot be fulfilled.
-    """
-    verify_csrf(request, csrf)
-    client = db.get(KmsClient, client_id)
-    if not client:
-        raise HTTPException(status_code=404, detail="KMS client not found")
-    fingerprints = kms_client_fingerprints(client.certificate_fingerprint)
-    if len(fingerprints) < 2:
-        raise HTTPException(
-            status_code=409,
-            detail="KMS client has no previous certificate fingerprint to retire.",
-        )
-    certificate = db.execute(
-        select(CaCertificate).where(
-            CaCertificate.managed_owner == f"kms:client:{client.name}",
-            CaCertificate.status == "issued",
-        )
-    ).scalar_one_or_none()
-    current_fingerprint = (
-        certificate.fingerprint.casefold()
-        if certificate and certificate.fingerprint
-        else ""
-    )
-    if not current_fingerprint or current_fingerprint not in fingerprints:
-        raise HTTPException(
-            status_code=409,
-            detail="The current CA-issued KMS client certificate is not in the trusted overlap.",
-        )
-    client.certificate_fingerprint = current_fingerprint
-    client.updated_at = utcnow()
-    db.commit()
-    record_audit(
-        db,
-        actor=identity.username,
-        action="retire_previous_kms_client_certificate",
-        resource_type="kms_client",
-        resource_id=str(client.id),
-        detail="retired_previous_fingerprints=true",
-    )
-    return JSONResponse({"client": kms_client_to_dict(client)})
-
-
-@router.post("/kms/clients/{client_id}/delete", response_model=None)
-def delete_kms_client_from_ui(
-    request: Request,
-    client_id: int,
-    csrf: str = Form(...),
-    identity: Identity = Depends(require_session_identity),
-    db: Session = Depends(get_db),
-) -> RedirectResponse | Response:
-    """Handle the delete kms client from ui endpoint.
-
-    Args:
-        request: Incoming HTTP request.
-        client_id: Identifier of the client.
-        csrf: Validated CSRF token authorizing the request.
-        identity: Authenticated identity authorizing the request.
-        db: Active database session.
-
-    Returns:
-        The endpoint response.
-
-    Raises:
-        HTTPException: If the request cannot be fulfilled.
-    """
-    verify_csrf(request, csrf)
-    client = db.get(KmsClient, client_id)
-    if not client:
-        raise HTTPException(status_code=404, detail="KMS client not found")
-    for key in db.execute(select(KmsKey).where(KmsKey.owner_client_id == client_id)).scalars().all():
-        key.owner_client_id = None
-    db.delete(client)
-    db.commit()
-    record_audit(db, actor=identity.username, action="delete_kms_client", resource_type="kms_client", resource_id=str(client_id))
-    if grid_request(request):
-        return Response(status_code=204)
-    return RedirectResponse("/kms", status_code=303)
-
-
-@router.post("/kms/keys", response_model=None)
-def create_kms_key_from_ui(
-    request: Request,
-    name: str = Form(...),
-    algorithm: str = Form("AES"),
-    length: int = Form(256),
-    usage: str = Form("encrypt,decrypt"),
-    state: str = Form("active"),
-    owner_client_id: str = Form(""),
-    exportable: str | None = Form(None),
-    description: str = Form(""),
-    enabled: str | None = Form(None),
-    csrf: str = Form(...),
-    identity: Identity = Depends(require_session_identity),
-    db: Session = Depends(get_db),
-) -> RedirectResponse | HTMLResponse | JSONResponse:
-    """Handle the create kms key from ui endpoint.
-
-    Args:
-        request: Incoming HTTP request.
-        name: Name of the target object.
-        algorithm: Algorithm supplied by the caller.
-        length: Length supplied by the caller.
-        usage: Usage supplied by the caller.
-        state: Lifecycle or job state to persist.
-        owner_client_id: Identifier of the owner client.
-        exportable: Exportable supplied by the caller.
-        description: Human-readable description of the resource.
-        enabled: Whether the requested behavior is enabled.
-        csrf: Validated CSRF token authorizing the request.
-        identity: Authenticated identity authorizing the request.
-        db: Active database session.
-
-    Returns:
-        The endpoint response.
-    """
-    verify_csrf(request, csrf)
-    key = KmsKey(
-        name=name.strip(),
-        algorithm=algorithm.strip().upper() or "AES",
-        length=length,
-        usage=join_csv(split_csv(usage)),
-        state=state.strip() or "active",
-        owner_client_id=parse_kms_owner_client_id(owner_client_id),
-        exportable=exportable == "on",
-        description=description or None,
-        enabled=enabled == "on",
-    )
-    db.add(key)
-    try:
-        db.commit()
-    except IntegrityError:
-        db.rollback()
-        detail = f"KMS key {name} already exists."
-        return grid_error_response(
-            request,
-            detail=detail,
-            status_code=409,
-            template_name="kms.html",
-            context={"identity": identity, **kms_context(db), "form_error": detail},
-        )
-    db.refresh(key)
-    record_audit(db, actor=identity.username, action="create_kms_key", resource_type="kms_key", resource_id=str(key.id))
-    return grid_saved_response(
-        request,
-        redirect_url="/kms",
-        resource_name="key",
-        resource=kms_key_to_dict(key),
-    )
-
-
-@router.post("/kms/keys/{key_id}/edit", response_model=None)
-def edit_kms_key_from_ui(
-    request: Request,
-    key_id: int,
-    name: str = Form(...),
-    algorithm: str = Form("AES"),
-    length: int = Form(256),
-    usage: str = Form("encrypt,decrypt"),
-    state: str = Form("active"),
-    owner_client_id: str = Form(""),
-    exportable: str | None = Form(None),
-    description: str = Form(""),
-    enabled: str | None = Form(None),
-    csrf: str = Form(...),
-    identity: Identity = Depends(require_session_identity),
-    db: Session = Depends(get_db),
-) -> RedirectResponse | HTMLResponse | JSONResponse:
-    """Handle the edit kms key from ui endpoint.
-
-    Args:
-        request: Incoming HTTP request.
-        key_id: Identifier of the key.
-        name: Name of the target object.
-        algorithm: Algorithm supplied by the caller.
-        length: Length supplied by the caller.
-        usage: Usage supplied by the caller.
-        state: Lifecycle or job state to persist.
-        owner_client_id: Identifier of the owner client.
-        exportable: Exportable supplied by the caller.
-        description: Human-readable description of the resource.
-        enabled: Whether the requested behavior is enabled.
-        csrf: Validated CSRF token authorizing the request.
-        identity: Authenticated identity authorizing the request.
-        db: Active database session.
-
-    Returns:
-        The endpoint response.
-
-    Raises:
-        HTTPException: If the request cannot be fulfilled.
-    """
-    verify_csrf(request, csrf)
-    key = db.get(KmsKey, key_id)
-    if not key:
-        raise HTTPException(status_code=404, detail="KMS key not found")
-    key.name = name.strip()
-    key.algorithm = algorithm.strip().upper() or "AES"
-    key.length = length
-    key.usage = join_csv(split_csv(usage))
-    key.state = state.strip() or "active"
-    key.owner_client_id = parse_kms_owner_client_id(owner_client_id)
-    key.exportable = exportable == "on"
-    key.description = description or None
-    key.enabled = enabled == "on"
-    key.updated_at = utcnow()
-    try:
-        db.commit()
-    except IntegrityError:
-        db.rollback()
-        detail = f"KMS key {name} already exists."
-        return grid_error_response(
-            request,
-            detail=detail,
-            status_code=409,
-            template_name="kms.html",
-            context={"identity": identity, **kms_context(db), "form_error": detail},
-        )
-    db.refresh(key)
-    record_audit(db, actor=identity.username, action="update_kms_key", resource_type="kms_key", resource_id=str(key.id))
-    return grid_saved_response(
-        request,
-        redirect_url="/kms",
-        resource_name="key",
-        resource=kms_key_to_dict(key),
-    )
-
-
-@router.post("/kms/keys/{key_id}/delete", response_model=None)
-def delete_kms_key_from_ui(
-    request: Request,
-    key_id: int,
-    csrf: str = Form(...),
-    identity: Identity = Depends(require_session_identity),
-    db: Session = Depends(get_db),
-) -> RedirectResponse | Response:
-    """Handle the delete kms key from ui endpoint.
-
-    Args:
-        request: Incoming HTTP request.
-        key_id: Identifier of the key.
-        csrf: Validated CSRF token authorizing the request.
-        identity: Authenticated identity authorizing the request.
-        db: Active database session.
-
-    Returns:
-        The endpoint response.
-
-    Raises:
-        HTTPException: If the request cannot be fulfilled.
-    """
-    verify_csrf(request, csrf)
-    key = db.get(KmsKey, key_id)
-    if not key:
-        raise HTTPException(status_code=404, detail="KMS key not found")
-    db.delete(key)
-    db.commit()
-    record_audit(db, actor=identity.username, action="delete_kms_key", resource_type="kms_key", resource_id=str(key_id))
-    if grid_request(request):
-        return Response(status_code=204)
-    return RedirectResponse("/kms", status_code=303)
 
 
 @router.get("/https-repository", response_model=None)

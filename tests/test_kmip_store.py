@@ -72,6 +72,35 @@ def test_provider_namespace_isolation_fails_closed(tmp_path: Path) -> None:
     assert operational_store.locate_keys(other_provider_id) == []
 
 
+def test_lifecycle_counts_authenticate_rows_and_isolate_provider_namespaces(tmp_path: Path) -> None:
+    """Verify redacted lifecycle counts authenticate every counted row.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    first_provider = str(uuid.uuid4())
+    second_provider = str(uuid.uuid4())
+    operational_store = store(tmp_path)
+    first_pre_active = operational_store.create_key(first_provider)
+    first_active = operational_store.create_key(first_provider)
+    operational_store.activate_key(first_provider, first_active.key_id)
+    operational_store.create_key(second_provider)
+
+    assert operational_store.lifecycle_counts() == {
+        first_provider: {"pre_active": 1, "active": 1, "total": 2},
+        second_provider: {"pre_active": 1, "active": 0, "total": 1},
+    }
+
+    with sqlite3.connect(tmp_path / "store.db") as connection:
+        connection.execute(
+            "UPDATE wrapped_keys SET ciphertext = ? WHERE key_id = ?",
+            (b"tampered", first_pre_active.key_id),
+        )
+        connection.commit()
+    with pytest.raises(KeyStoreError, match="integrity"):
+        operational_store.lifecycle_counts()
+
+
 def test_activation_rewraps_key_and_preserves_material(tmp_path: Path) -> None:
     """Verify that activation rewraps key and preserves material.
 

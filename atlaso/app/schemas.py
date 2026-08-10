@@ -2520,3 +2520,154 @@ class OidcSubjectResponse(BaseModel):
     organization_id: Annotated[int | None, Field(description='Stable identifier of the related organization resource.')]
     organization_name: Annotated[str, Field(description='Returned organization name value for this oidc subject resource.')]
     created_at: Annotated[datetime, Field(description='UTC timestamp when the resource was created.')]
+
+
+class VsphereKeyProviderSettingsUpdate(BaseModel):
+    """Fields accepted for appliance-wide vSphere Key Provider listener desired state."""
+
+    enabled: Annotated[bool, Field(description="Whether the shared KMIP listener is enabled in desired state.")]
+    listen_interfaces: Annotated[list[str], Field(description="Access interfaces selected for the shared KMIP listener.")]
+    listen_addresses: Annotated[list[str], Field(description="IP addresses derived from selected KMIP listener interfaces.")]
+    port: Annotated[int, Field(description="TCP port for the KMIP 1.4 listener.", ge=1, le=65535)] = 5696
+    hostname: Annotated[str, Field(description="DNS hostname advertised for the shared vSphere Key Provider endpoint.", min_length=1, max_length=253)]
+
+
+class VsphereKeyProviderSettingsResponse(VsphereKeyProviderSettingsUpdate):
+    """Fields returned for appliance-wide vSphere Key Provider listener desired state."""
+
+    updated_at: Annotated[datetime, Field(description="UTC timestamp of the most recent saved listener change.")]
+    valid: Annotated[bool, Field(description="Whether current desired state is ready for global Appliance Apply validation.")]
+    validation_errors: Annotated[list[str], Field(description="Secret-free reasons current desired state needs attention.")]
+    config_path: Annotated[str, Field(description="Fixed runtime path for the applied bounded KMIP configuration.")]
+
+
+class VsphereKeyProviderCreate(BaseModel):
+    """Fields accepted when creating a logical vSphere Key Provider namespace."""
+
+    name: Annotated[str, Field(description="Unique operator-facing provider name.", min_length=1, max_length=120)]
+    description: Annotated[str, Field(description="Operator-facing purpose of the provider namespace.", max_length=1000)] = ""
+    enabled: Annotated[bool, Field(description="Whether the provider enters rendered desired state after validation.")] = True
+
+
+class VsphereKeyProviderUpdate(BaseModel):
+    """Fields accepted when updating a logical vSphere Key Provider namespace."""
+
+    name: Annotated[str | None, Field(description="Replacement unique operator-facing provider name.", min_length=1, max_length=120)] = None
+    description: Annotated[str | None, Field(description="Replacement operator-facing provider purpose.", max_length=1000)] = None
+    enabled: Annotated[bool | None, Field(description="Replacement provider desired-state enablement.")] = None
+
+
+class VsphereKeyProviderResponse(BaseModel):
+    """Fields returned for one logical vSphere Key Provider namespace."""
+
+    id: Annotated[str, Field(description="Immutable UUID qualifying every operational key lookup in this namespace.")]
+    name: Annotated[str, Field(description="Unique operator-facing provider name.")]
+    description: Annotated[str, Field(description="Operator-facing purpose of the provider namespace.")]
+    enabled: Annotated[bool, Field(description="Whether the provider is enabled in saved desired state.")]
+    trusted_vcenter_count: Annotated[int, Field(description="Number of trusted vCenter records assigned to the provider.")]
+    certificate_count: Annotated[int, Field(description="Number of public client certificate records assigned to the provider.")]
+    usable_certificate_count: Annotated[int, Field(description="Number of current exact certificate fingerprints usable after apply.")]
+    created_at: Annotated[datetime, Field(description="UTC timestamp when the provider was created.")]
+    updated_at: Annotated[datetime, Field(description="UTC timestamp when the provider was last updated.")]
+
+
+class VsphereTrustedVcenterCreate(BaseModel):
+    """Fields accepted when creating a provider-scoped trusted vCenter."""
+
+    name: Annotated[str, Field(description="Unique vCenter label within the provider.", min_length=1, max_length=120)]
+    hostname: Annotated[str, Field(description="Operational vCenter hostname or IP label; no credentials or URL are stored.", max_length=253)] = ""
+    description: Annotated[str, Field(description="Operator-facing purpose of this trusted vCenter.", max_length=1000)] = ""
+    enabled: Annotated[bool, Field(description="Whether current certificate fingerprints enter rendered trust desired state.")] = True
+
+
+class VsphereTrustedVcenterUpdate(BaseModel):
+    """Fields accepted when updating a provider-scoped trusted vCenter."""
+
+    name: Annotated[str | None, Field(description="Replacement unique vCenter label within the provider.", min_length=1, max_length=120)] = None
+    hostname: Annotated[str | None, Field(description="Replacement operational vCenter hostname or IP label.", max_length=253)] = None
+    description: Annotated[str | None, Field(description="Replacement operator-facing purpose.", max_length=1000)] = None
+    enabled: Annotated[bool | None, Field(description="Replacement trust desired-state enablement.")] = None
+
+
+class VsphereTrustedVcenterResponse(BaseModel):
+    """Fields returned for one provider-scoped trusted vCenter."""
+
+    id: Annotated[str, Field(description="Immutable UUID assigned to this trusted-vCenter record.")]
+    provider_id: Annotated[str, Field(description="Immutable UUID of the owning provider namespace.")]
+    provider_name: Annotated[str, Field(description="Operator-facing name of the owning provider.")]
+    name: Annotated[str, Field(description="Unique vCenter label within the provider.")]
+    hostname: Annotated[str, Field(description="Operational vCenter hostname or IP label.")]
+    description: Annotated[str, Field(description="Operator-facing purpose of this trusted vCenter.")]
+    enabled: Annotated[bool, Field(description="Whether its current fingerprints enter rendered trust desired state.")]
+    certificate_count: Annotated[int, Field(description="Number of assigned public certificate records.")]
+    usable_certificate_count: Annotated[int, Field(description="Number of current exact fingerprints usable after apply.")]
+    earliest_expiry: Annotated[datetime | None, Field(description="Earliest assigned certificate expiry, or null when no certificate is assigned.")]
+    created_at: Annotated[datetime, Field(description="UTC timestamp when the trusted-vCenter record was created.")]
+    updated_at: Annotated[datetime, Field(description="UTC timestamp when the trusted-vCenter record was last updated.")]
+
+
+class VsphereTrustedCertificateCreate(BaseModel):
+    """Fields accepted when assigning one public vCenter client certificate."""
+
+    certificate_pem: Annotated[str, Field(description="One PEM-encoded public X.509 vCenter client certificate; private keys are forbidden.", min_length=1, max_length=65536)]
+
+
+class VsphereTrustedCertificateResponse(BaseModel):
+    """Fields returned for one exact public vCenter client certificate identity."""
+
+    id: Annotated[str, Field(description="Immutable UUID assigned to the certificate record.")]
+    provider_id: Annotated[str, Field(description="Immutable UUID of the owning provider namespace.")]
+    provider_name: Annotated[str, Field(description="Operator-facing name of the owning provider.")]
+    trusted_vcenter_id: Annotated[str, Field(description="Immutable UUID of the owning trusted-vCenter record.")]
+    trusted_vcenter_name: Annotated[str, Field(description="Operator-facing name of the owning trusted vCenter.")]
+    fingerprint_sha256: Annotated[str, Field(description="Normalized lowercase SHA-256 fingerprint used for exact provider authorization.")]
+    certificate_pem: Annotated[str, Field(description="Canonical public PEM certificate; no private material is returned.")]
+    subject: Annotated[str, Field(description="RFC 4514 subject name parsed from the public certificate.")]
+    issuer: Annotated[str, Field(description="RFC 4514 issuer name parsed from the public certificate.")]
+    serial_number: Annotated[str, Field(description="Lowercase hexadecimal public certificate serial number.")]
+    not_valid_before: Annotated[datetime, Field(description="UTC certificate validity start.")]
+    not_valid_after: Annotated[datetime, Field(description="UTC certificate expiry.")]
+    source: Annotated[str, Field(description="Origin of the public trust record; currently uploaded_public.")]
+    status: Annotated[str, Field(description="Current certificate status: valid, expired, or not-yet-valid.")]
+    created_at: Annotated[datetime, Field(description="UTC timestamp when the certificate trust record was created.")]
+
+
+class VsphereProviderReadinessResponse(BaseModel):
+    """Fields returned by a provider desired-state readiness evaluation."""
+
+    provider_id: Annotated[str, Field(description="Immutable UUID of the evaluated provider namespace.")]
+    ready: Annotated[bool, Field(description="Whether provider desired state satisfies the bounded pre-apply contract.")]
+    reasons: Annotated[list[str], Field(description="Secret-free readiness failures; empty when ready is true.")]
+    requires_appliance_apply: Annotated[bool, Field(description="Whether saved desired state still requires global Appliance Apply enforcement.")]
+
+
+class VsphereProviderHealthResponse(BaseModel):
+    """Fields returned by a redacted provider runtime health evaluation."""
+
+    provider_id: Annotated[str, Field(description="Immutable UUID of the evaluated provider namespace.")]
+    desired_state: Annotated[str, Field(description="Saved provider state: enabled or disabled.")]
+    runtime_state: Annotated[str, Field(description="Observed shared daemon state or not-reported when unavailable.")]
+    store_status: Annotated[str, Field(description="Authenticated operational-store status or not-reported when unavailable.")]
+    observed_at: Annotated[datetime, Field(description="UTC timestamp when health evidence was collected.")]
+
+
+class VsphereProviderLifecycleCountsResponse(BaseModel):
+    """Fields returned for redacted operational key lifecycle counts."""
+
+    provider_id: Annotated[str, Field(description="Immutable UUID qualifying the counted operational namespace.")]
+    status: Annotated[str, Field(description="Evidence state: available or not-reported.")]
+    pre_active: Annotated[int | None, Field(description="Authenticated count of Pre-Active keys, or null when unavailable.")]
+    active: Annotated[int | None, Field(description="Authenticated count of Active keys, or null when unavailable.")]
+    total: Annotated[int | None, Field(description="Authenticated total operational-key count, or null when unavailable.")]
+    observed_at: Annotated[datetime, Field(description="UTC timestamp when count evidence was collected.")]
+
+
+class VsphereServerCertificateResponse(BaseModel):
+    """Fields returned for the appliance-wide public KMIP server identity."""
+
+    available: Annotated[bool, Field(description="Whether an issued public server certificate is currently available.")]
+    hostname: Annotated[str, Field(description="Configured DNS hostname of the shared KMIP endpoint.")]
+    fingerprint_sha256: Annotated[str, Field(description="Public server-certificate SHA-256 fingerprint, or empty when unavailable.")]
+    certificate_pem: Annotated[str, Field(description="Public server certificate PEM, or empty when unavailable.")]
+    chain_pem: Annotated[str, Field(description="Public issuer chain PEM, or empty when unavailable.")]
+    expires_at: Annotated[datetime | None, Field(description="UTC server-certificate expiry, or null when unavailable.")]

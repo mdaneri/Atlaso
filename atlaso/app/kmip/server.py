@@ -426,6 +426,7 @@ def tls_context(config: ServiceConfig) -> ssl.SSLContext:
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     context.minimum_version = ssl.TLSVersion.TLSv1_2
     context.verify_mode = ssl.CERT_REQUIRED
+    context.verify_flags |= ssl.VERIFY_X509_PARTIAL_CHAIN
     context.load_cert_chain(config.certificate_path, config.private_key_path)
     context.load_verify_locations(cafile=config.ca_path)
     return context
@@ -879,6 +880,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", type=Path, required=True)
     parser.add_argument("--check", action="store_true", help="Validate TLS, identity, and store configuration.")
+    parser.add_argument("--status", action="store_true", help="Return authenticated redacted provider counts.")
     args = parser.parse_args(argv)
     logging.basicConfig(
         level=logging.INFO,
@@ -887,9 +889,46 @@ def main(argv: list[str] | None = None) -> int:
     try:
         config = load_config(args.config)
         secrets_key = _load_secrets_key()
+        if args.check and args.status:
+            raise ConfigurationError("KMIP check and status modes are mutually exclusive.")
         if args.check:
             check_config(config, secrets_key=secrets_key)
             print(json.dumps({"atlaso_kmip": "configuration valid"}, sort_keys=True))
+            return 0
+        if args.status:
+            if not config.database_path.exists() or not config.kek_path.exists():
+                print(
+                    json.dumps(
+                        {
+                            "status": "available",
+                            "runtime_state": "configured" if config.enabled else "disabled",
+                            "store_status": "empty",
+                            "providers": {},
+                        },
+                        sort_keys=True,
+                    )
+                )
+                return 0
+            store = WrappedKeyStore(
+                config.database_path,
+                config.kek_path,
+                secrets_key=secrets_key,
+            )
+            try:
+                counts = store.lifecycle_counts()
+            finally:
+                store.close()
+            print(
+                json.dumps(
+                    {
+                        "status": "available",
+                        "runtime_state": "configured" if config.enabled else "disabled",
+                        "store_status": "healthy",
+                        "providers": counts,
+                    },
+                    sort_keys=True,
+                )
+            )
             return 0
         if not config.enabled:
             raise ConfigurationError("KMIP service configuration is disabled.")

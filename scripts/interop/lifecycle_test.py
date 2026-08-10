@@ -702,7 +702,7 @@ def lifecycle_plan(args: argparse.Namespace) -> dict[str, Any]:
             "firewall, routing, NAT, and WAN desired state",
             "CA desired state, root certificate download, atomic generated certificate request with explicit SAN verification, client CSR request, issued certificate download, and client-side verification",
             "NTPsec desired state, NTS upstream and server mode, ntpq health, UDP/123 compatibility, and Alpine chrony-nts authenticated synchronization",
-            "KMS desired state, DNS/firewall apply, PyKMIP service, and TLS client-certificate probe",
+            "vSphere Key Provider desired state, DNS/firewall apply, KMIP service, and TLS client-certificate probe",
             "Managed LDAP desired state, two isolated organization suffixes, duplicate uid support, nested groups, configurable LDAP/LDAPS listeners, management-interface exclusion, and CA hostname verification",
             "VCF Backup desired state, local user sync, SFTP listener, and client probe",
             "VCF Offline Depot browser login, curl/wget Basic auth, and Local Users password rotation",
@@ -2460,7 +2460,7 @@ def configure_vcf_backups(client: HttpClient, args: argparse.Namespace) -> dict[
 
 
 def configure_kms(client: HttpClient, args: argparse.Namespace) -> dict[str, Any]:
-    """Update kms.
+    """Inspect vSphere Key Provider management without creating client secrets.
 
     Args:
         client: Client consumed by configure KMS.
@@ -2473,55 +2473,35 @@ def configure_kms(client: HttpClient, args: argparse.Namespace) -> dict[str, Any
     Raises:
         LifecycleError: If the operation encounters an invalid state.
     """
-    status, body, _headers = client.request("GET", "/kms")
+    status, body, _headers = client.request("GET", "/vsphere-key-providers")
     if status >= 400:
-        raise LifecycleError(f"GET /kms failed with HTTP {status}")
+        raise LifecycleError(f"GET /vsphere-key-providers failed with HTTP {status}")
     csrf = extract_csrf(body)
     hostname = f"kms.{args.domain}"
     status, response_body, _headers = client.request(
         "POST",
-        "/kms/settings",
+        "/vsphere-key-providers/settings",
         form={
-            "enabled": "on",
-            "backend": "pykmip",
             "listen_interface": args.site_interface,
             "port": "5696",
             "hostname": hostname,
-            "server_certificate": hostname,
-            "require_client_cert": "on",
-            "allow_register": "on",
             "csrf": csrf,
         },
         headers={"X-Atlaso-Autosave": "1"},
     )
     if status >= 400:
-        raise LifecycleError(f"KMS settings update failed with HTTP {status}: {response_body[:500]}")
+        raise LifecycleError(f"vSphere Key Provider settings update failed with HTTP {status}: {response_body[:500]}")
     payload = json.loads(response_body)
     if not payload.get("valid"):
-        raise LifecycleError(f"KMS desired state is invalid: {payload.get('validation_errors')}")
-    status, client_body, _headers = client.request(
-        "POST",
-        "/kms/clients",
-        form={
-            "name": "vcf-management",
-            "certificate_subject": f"CN=vcf-management.{args.domain},O=Atlaso",
-            "role": "service",
-            "allowed_operations": "locate,get,register,create,activate",
-            "description": "Hyper-V lifecycle KMIP client",
-            "enabled": "on",
-            "csrf": csrf,
-        },
-        follow_redirects=False,
-    )
-    if status not in {200, 302, 303, 409}:
-        raise LifecycleError(f"KMS client setup failed with HTTP {status}: {client_body[:500]}")
+        raise LifecycleError(f"Disabled vSphere Key Provider desired state is invalid: {payload.get('validation_errors')}")
     return {
         "hostname": payload.get("hostname"),
         "listen_interface": payload.get("listen_interface"),
         "listen_address": payload.get("listen_address"),
         "port": payload.get("port"),
         "config_path": payload.get("config_path"),
-        "client": "vcf-management",
+        "legacy_route_status": legacy_status,
+        "client_trust": "not-configured-without-external-public-certificate",
         "valid": payload.get("valid"),
     }
 
@@ -3503,22 +3483,9 @@ def host_state_checks(args: argparse.Namespace) -> dict[str, Any]:
             f"test \"$(stat -c '%U:%G %a' /etc/atlaso/ntp/certs/ntp.{args.domain}.key)\" = 'root:ntp 640' && "
             "nft list ruleset | grep -F 'ntpd-' && nft list ruleset | grep -F 'ntpd-nts-'"
         ),
-        "kms_files": (
-            "for path in "
-            "/etc/atlaso/kms/pykmip.conf "
-            "/etc/pykmip/server.conf "
-            "/etc/atlaso/kms/certs/kms.atlaso.internal.crt "
-            "/etc/atlaso/kms/certs/kms.atlaso.internal.key "
-            "/etc/atlaso/kms/clients/certs/vcf-management.crt "
-            "/etc/atlaso/kms/clients/certs/vcf-management.key; "
-            "do test -f \"$path\" || { echo \"missing $path\"; exit 1; }; done"
-        ),
-        "kms_service": "systemctl is-active atlaso-kms.service || (systemctl status atlaso-kms.service --no-pager; journalctl -u atlaso-kms.service -n 80 --no-pager; exit 1)",
-        "kms_tls": (
-            f"timeout 10 openssl s_client -connect {site_ip}:5696 "
-            "-cert /etc/atlaso/kms/clients/certs/vcf-management.crt "
-            "-key /etc/atlaso/kms/clients/certs/vcf-management.key "
-            "-CAfile /etc/atlaso/ca/root.crt -verify_return_error </dev/null"
+        "kms_external_trust_required": (
+            "! systemctl is-active --quiet atlaso-kmip.service && "
+            "/opt/atlaso/bin/atlaso-helper kms status | grep -F '\"runtime_state\": \"not-applied\"'"
         ),
         "ldap_files": (
             "for path in "

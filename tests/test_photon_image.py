@@ -1575,13 +1575,9 @@ def test_lifecycle_runner_covers_ca_vcf_backups_wan_noise_and_console_summary():
     assert "https_request_unverified" in script
     assert "configure-vcf-backups" in script
     assert "configure-kms" in script
-    assert '"/kms/clients"' in script
-    assert '"name": "vcf-management"' in script
-    assert "Hyper-V lifecycle KMIP client" in script
-    assert "atlaso-kms.service" in script
-    assert "kms_files" in script
-    assert "kms_service" in script
-    assert "kms_tls" in script
+    assert '"/vsphere-key-providers"' in script
+    assert "not-configured-without-external-public-certificate" in script
+    assert "kms_external_trust_required" in script
     assert '"local_console"' in script
     assert "systemctl is-active atlaso-console.service" in script
     assert "systemctl is-enabled getty@tty1.service" in script
@@ -1589,9 +1585,6 @@ def test_lifecycle_runner_covers_ca_vcf_backups_wan_noise_and_console_summary():
     assert '\\"maintenance_isolation\\": false' in script
     assert "apply-kms-unit" in script
     assert "Appliance apply task failed" in script
-    assert "/etc/atlaso/kms/clients/certs/vcf-management.crt" in script
-    assert "/etc/atlaso/kms/clients/vcf-management.crt" not in script
-    assert "missing $path" in script
     assert "stderr:" in script
     assert "stdout:" in script
     assert "vcf-backup-client-check" in script
