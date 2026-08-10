@@ -293,6 +293,14 @@ dotted profile name or a valid DOS 8.3 short-path representation. Cleanup cannot
 or stop the retry loop. After the VM starts, the wrapper prints a connection summary with the HTTPS console URL,
 Swagger URL, OpenAPI URL, root certificate URL, and `ssh admin@<appliance-ip>` command.
 
+Both this wrapper and the Workstation lifecycle runner inject a complete `guestinfo.ovfEnv` document into a raw cloned
+VMX before power-on. The default document selects IPv4 DHCP, leaves resolver overrides blank, keeps IPv6 and root SSH
+disabled, and supplies the required appliance identity and first-boot credentials. This gives raw Workstation clones the
+same fail-closed initialization contract as an OVA deployment instead of leaving the customizer waiting for properties
+that only an OVF deployment normally supplies. Use `-FirstBootFqdn`, `-AdminPassword`, and `-RootPassword` to override
+the normal test-VM values; the lifecycle wrapper uses its existing admin-password input. Password values are written
+only to the guestinfo-backed VMX setting and are never printed in plan, result, or connection-summary output.
+
 The VM's first virtual terminal runs the Atlaso recovery console; tty2 and later terminals retain Photon login prompts.
 Its normal 80x30 layout includes boot and runtime state for the appliance services, including Firewall desired state. F3
 and F4 each require a fresh Photon root password before opening `top` or an audited root Bash session. Exiting either

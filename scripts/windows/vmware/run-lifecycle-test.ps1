@@ -16,7 +16,7 @@ param(
     [string]$SiteInterface = 'eth1',
     [string]$SiteCidr = '192.168.12.1/24',
     [string]$AdminUsername = 'admin',
-    [string]$AdminPassword = 'VMware01!',
+    [string]$AdminPassword = 'VMware01!Test',
     [string]$ApplianceSshUser = 'admin',
     [string]$ClientSshUser = 'alpine',
     [string]$SshPassword = '',
@@ -38,6 +38,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'Atlaso.WorkstationFirstBoot.ps1')
 
 $repoRoot = Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..\..')
 if (-not $SshPassword) {
@@ -962,6 +963,11 @@ if ($PlanOnly) {
     return
 }
 
+$firstBootOvfEnvironment = New-AtlasoWorkstationOvfEnvironment `
+    -Fqdn (New-AtlasoWorkstationFqdn -Name $applianceName) `
+    -AdminPassword $AdminPassword `
+    -RootPassword $AdminPassword
+
 New-Item -ItemType Directory -Force -Path $vmRoot | Out-Null
 New-Item -ItemType Directory -Force -Path $seedRoot | Out-Null
 
@@ -977,6 +983,7 @@ if (-not $OidcOnly) {
 try {
     $applianceVmx = Copy-VmDirectory -SourceVmx $ApplianceVmxPath -DestinationDirectory (Join-Path $vmRoot $applianceName) -Name $applianceName
     Set-VmxNetworkAdapter -Path $applianceVmx -Index 0 -Vmnet $ManagementNetwork
+    Set-AtlasoWorkstationOvfEnvironment -VmxPath $applianceVmx -OvfEnvironment $firstBootOvfEnvironment
     $clientAVmx = ''
     $clientBVmx = ''
     if (-not $OidcOnly) {

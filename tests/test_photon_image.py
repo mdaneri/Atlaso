@@ -1213,6 +1213,53 @@ def test_create_atlaso_vmware_test_vm_wrapper_uses_common_helpers():
     assert "`-ServiceVmnetName`" in docs
 
 
+def test_vmware_raw_vmx_workflows_inject_complete_first_boot_ovf_environment_before_start():
+    """Verify raw Workstation clones receive the same complete first-boot contract as OVA deployments."""
+    helper = Path("scripts/windows/vmware/Atlaso.WorkstationFirstBoot.ps1").read_text(encoding="utf-8")
+    test_vm = Path("scripts/windows/vmware/create-atlaso-test-vm.ps1").read_text(encoding="utf-8")
+    lifecycle = Path("scripts/windows/vmware/run-lifecycle-test.ps1").read_text(encoding="utf-8")
+    lifecycle_wrapper = Path("scripts/windows/vmware/invoke-lifecycle-test.ps1").read_text(encoding="utf-8")
+    docs = Path("docs/reference/vmware-workstation-lifecycle-testing.md").read_text(encoding="utf-8")
+
+    for key in (
+        "atlaso.management_mode",
+        "atlaso.cidr",
+        "atlaso.gateway",
+        "atlaso.ipv6_enabled",
+        "atlaso.ipv6_cidr",
+        "atlaso.ipv6_gateway",
+        "atlaso.dns_servers",
+        "atlaso.fqdn",
+        "atlaso.admin_password",
+        "atlaso.root_password",
+        "atlaso.root_ssh_enabled",
+    ):
+        assert f"'{key}'" in helper
+    assert "[System.Security.SecurityElement]::Escape($Value)" in helper
+    assert "must contain at least 12 characters" in helper
+    assert "guestinfo.ovfEnv = " in helper
+    assert "Write-Host" not in helper
+
+    assert "Atlaso.WorkstationFirstBoot.ps1" in test_vm
+    assert "New-AtlasoWorkstationOvfEnvironment" in test_vm
+    assert "Set-AtlasoWorkstationOvfEnvironment -VmxPath $targetVmx" in test_vm
+    assert test_vm.index("Set-AtlasoWorkstationOvfEnvironment -VmxPath $targetVmx") < test_vm.index(
+        "start-atlaso-vm.ps1"
+    )
+
+    assert "Atlaso.WorkstationFirstBoot.ps1" in lifecycle
+    assert "New-AtlasoWorkstationOvfEnvironment" in lifecycle
+    assert "Set-AtlasoWorkstationOvfEnvironment -VmxPath $applianceVmx" in lifecycle
+    assert lifecycle.index("Set-AtlasoWorkstationOvfEnvironment -VmxPath $applianceVmx") < lifecycle.index(
+        "Start-WorkstationVm -Path $vmx"
+    )
+    assert "[string]$AdminPassword = 'VMware01!Test'" in lifecycle
+    assert "[string]$AdminPassword = 'VMware01!Test'" in lifecycle_wrapper
+    assert "[string]$SshPassword = 'VMware01!Test'" in lifecycle_wrapper
+    assert "complete Atlaso first-boot OVF environment" in docs
+    assert "plan and result artifacts" in docs
+
+
 def test_create_atlaso_vmware_test_vm_root_ca_retry_cleanup_is_idempotent():
     """Verify root CA retry cleanup handles missing files and dotted short temp paths."""
     script = Path("scripts/windows/vmware/create-atlaso-test-vm.ps1").read_text(encoding="utf-8")
