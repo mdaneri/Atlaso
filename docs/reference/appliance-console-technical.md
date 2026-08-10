@@ -82,9 +82,10 @@ password and completes.
 
 `atlaso-vmware-ovf-customize.service` and the console use `atlaso.app.management_network` for the same IPv4, IPv6, and
 DNS validation rules. Static gateways must be on-link for their configured prefix and cannot equal the interface
-address; an IPv6 gateway may instead be link-local. The customizer validates all OVF management fields before the
-first host mutation. It first validates the FQDN, required properties, credentials, and root-SSH boolean because the
-network-only console handshake cannot correct those fields.
+address. IPv4 network and broadcast addresses are rejected for both the interface and gateway when the prefix is
+shorter than `/31`, while both `/31` point-to-point peers remain usable; an IPv6 gateway may instead be link-local. The
+customizer validates all OVF management fields before the first host mutation. It first validates the FQDN, required
+properties, credentials, and root-SSH boolean because the network-only console handshake cannot correct those fields.
 
 When validation fails, the customizer atomically writes a bounded, non-secret review document under
 `/var/lib/atlaso` and waits without starting networkd, data-disk initialization, bootstrap HTTPS, or Atlaso. The console

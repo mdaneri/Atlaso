@@ -65,6 +65,13 @@ def validate_ipv4_management_values(
         ) from exc
     if parsed_interface.version != 4:
         raise ManagementNetworkValidationError("Management IP must use IPv4.")
+    if parsed_interface.network.prefixlen <= 30 and parsed_interface.ip in {
+        parsed_interface.network.network_address,
+        parsed_interface.network.broadcast_address,
+    }:
+        raise ManagementNetworkValidationError(
+            "Management IPv4 address must be a usable host address for the configured prefix."
+        )
     if require_static_gateway and not gateway_value:
         raise ManagementNetworkValidationError(
             "A static management IPv4 configuration requires an IPv4 gateway."
@@ -83,6 +90,13 @@ def validate_ipv4_management_values(
         if parsed_gateway == parsed_interface.ip:
             raise ManagementNetworkValidationError(
                 "Management gateway cannot equal the management IPv4 address."
+            )
+        if parsed_interface.network.prefixlen <= 30 and parsed_gateway in {
+            parsed_interface.network.network_address,
+            parsed_interface.network.broadcast_address,
+        }:
+            raise ManagementNetworkValidationError(
+                "Management gateway must be a usable host IPv4 address for the configured prefix."
             )
         gateway_value = str(parsed_gateway)
     return method, str(parsed_interface), gateway_value

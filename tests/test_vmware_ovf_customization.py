@@ -146,6 +146,9 @@ def test_vmware_ovf_customizer_rejects_incomplete_ipv4_pairs():
     [
         ("192.168.1.254/32", "192.168.1.1", "on-link"),
         ("192.168.1.254/24", "192.168.1.254", "cannot equal"),
+        ("192.168.10.10/24", "192.168.10.0", "usable host"),
+        ("192.168.10.10/24", "192.168.10.255", "usable host"),
+        ("192.168.10.0/24", "192.168.10.1", "address must be a usable host"),
     ],
 )
 def test_vmware_ovf_customizer_rejects_invalid_ipv4_gateway_relationships(cidr, gateway, message):
@@ -163,6 +166,19 @@ def test_vmware_ovf_customizer_rejects_invalid_ipv4_gateway_relationships(cidr, 
 
     with pytest.raises(customizer.OvfManagementNetworkError, match=message):
         customizer.validate_properties(properties)
+
+
+def test_vmware_ovf_customizer_accepts_ipv4_point_to_point_gateway_peers():
+    """Verify both addresses in an IPv4 /31 remain usable point-to-point hosts."""
+    customizer = load_customizer()
+    properties = customizer.parse_ovf_environment(OVF_ENV)
+    properties["atlaso.cidr"] = "192.0.2.0/31"
+    properties["atlaso.gateway"] = "192.0.2.1"
+
+    config = customizer.validate_properties(properties)
+
+    assert config["cidr"] == "192.0.2.0/31"
+    assert config["gateway"] == "192.0.2.1"
 
 
 def test_vmware_ovf_customizer_routes_invalid_ipv6_mode_to_network_review():

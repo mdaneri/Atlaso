@@ -57,10 +57,12 @@ are available; Customize, process monitor, root shell, and power actions remain 
 4. Wait for the normal appliance console to replace the review state.
 5. Verify `https://<management-address>/openapi.json` from another machine.
 
-Static IPv4 and IPv6 gateways must be reachable through their configured prefix and cannot equal the interface address;
-an IPv6 link-local gateway is also valid. The OVF customizer validates the complete correction before making any host
-change. The first-boot flow does not request, display, or persist deployment passwords: it retains the original OVF
-credentials in the waiting customizer and accepts only non-secret network corrections from the console.
+Static IPv4 and IPv6 gateways must be reachable through their configured prefix and cannot equal the interface address.
+For IPv4 prefixes shorter than `/31`, both the interface and gateway must also be usable host addresses rather than the
+network or broadcast address; `/31` point-to-point peers remain valid. An IPv6 link-local gateway is also valid. The OVF
+customizer validates the complete correction before making any host change. The first-boot flow does not request,
+display, or persist deployment passwords: it retains the original OVF credentials in the waiting customizer and accepts
+only non-secret network corrections from the console.
 
 Atlaso validates the FQDN, required properties, credentials, and root-SSH boolean before offering network-only
 correction. If initialization stays on the starting screen and no network review appears, correct those non-network OVF
