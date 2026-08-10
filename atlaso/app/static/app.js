@@ -25,6 +25,7 @@ let ldapMembershipTooltip = null;
 const LDAP_ORGANIZATION_SELECTION_KEY = "atlaso:ldap:organization";
 let applianceApplySidebarRefreshTimer = 0;
 let applianceApplyGlobalPollTimer = 0;
+let applianceApplyPollController = null;
 let applianceApplyAutoCloseTimer = 0;
 let applianceApplyModalTable = null;
 let applianceApplyActiveJobId = "";
@@ -46,7 +47,8 @@ function isAtlasoSameOriginRequest(input) {
 function scheduleApplianceApplySidebarRefresh() {
   window.clearTimeout(applianceApplySidebarRefreshTimer);
   applianceApplySidebarRefreshTimer = window.setTimeout(() => {
-    refreshApplianceApplySidebar().catch(() => {});
+    if (applianceApplyPollController) applianceApplyPollController.refreshImmediately().catch(() => {});
+    else refreshApplianceApplySidebar().catch(() => {});
   }, 50);
 }
 
@@ -15355,35 +15357,8 @@ async function submitApplianceApplyForm(form) {
 }
 
 async function pollGlobalApplianceApply() {
-  window.clearTimeout(applianceApplyGlobalPollTimer);
-  if (document.visibilityState === "hidden") {
-    applianceApplyGlobalPollTimer = window.setTimeout(pollGlobalApplianceApply, 5000);
-    return;
-  }
-  let delay = 2000;
-  try {
-    const response = await fetch("/appliance-apply/status", { credentials: "same-origin", headers: { Accept: "application/json" } });
-    if (!response.ok) throw new Error("Unable to read appliance apply status.");
-    const payload = await response.json();
-    updateApplianceApplySidebar(payload);
-    if (payload.active_task) {
-      applianceApplyActiveJobId = payload.active_task.id || "";
-      renderApplianceApplyTask(payload.active_task);
-      delay = 2000;
-    } else if (applianceApplyActiveJobId) {
-      const jobId = applianceApplyActiveJobId;
-      const taskResponse = await fetch(`/tasks/${encodeURIComponent(jobId)}/status`, { credentials: "same-origin", headers: { Accept: "application/json" } });
-      if (taskResponse.ok) {
-        const taskPayload = await taskResponse.json();
-        renderApplianceApplyTask(taskPayload.task);
-        refreshCurrentWorkflowAfterApplianceApply(taskPayload.task);
-      }
-      applianceApplyActiveJobId = "";
-    }
-  } catch (_error) {
-    delay = 2000;
-  }
-  applianceApplyGlobalPollTimer = window.setTimeout(pollGlobalApplianceApply, delay);
+  if (!applianceApplyPollController) return null;
+  return applianceApplyPollController.refresh();
 }
 
 function initializeApplianceApplyProgress() {
@@ -15432,9 +15407,38 @@ function initializeApplianceApplyProgress() {
     }
     renderApplianceApplyTask(payload.task);
   });
-  document.addEventListener("visibilitychange", () => {
-    if (document.visibilityState !== "hidden") pollGlobalApplianceApply().catch(() => {});
+  applianceApplyPollController = window.AtlasoApplianceApplyPolling.createController({
+    request: async (refresh) => {
+      const statusUrl = refresh ? "/appliance-apply/status?refresh=true" : "/appliance-apply/status";
+      const response = await fetch(statusUrl, { credentials: "same-origin", headers: { Accept: "application/json" } });
+      if (!response.ok) throw new Error("Unable to read appliance apply status.");
+      return response.json();
+    },
+    onStatus: async (payload) => {
+      updateApplianceApplySidebar(payload);
+      if (payload.active_task) {
+        applianceApplyActiveJobId = payload.active_task.id || "";
+        renderApplianceApplyTask(payload.active_task);
+      } else if (applianceApplyActiveJobId) {
+        const jobId = applianceApplyActiveJobId;
+        const taskResponse = await fetch(`/tasks/${encodeURIComponent(jobId)}/status`, { credentials: "same-origin", headers: { Accept: "application/json" } });
+        if (taskResponse.ok) {
+          const taskPayload = await taskResponse.json();
+          renderApplianceApplyTask(taskPayload.task);
+          refreshCurrentWorkflowAfterApplianceApply(taskPayload.task);
+        }
+        applianceApplyActiveJobId = "";
+        window.setTimeout(() => applianceApplyPollController?.refreshImmediately().catch(() => {}), 0);
+      }
+    },
+    isHidden: () => document.visibilityState === "hidden",
+    setTimer: (callback, delay) => {
+      applianceApplyGlobalPollTimer = window.setTimeout(callback, delay);
+      return applianceApplyGlobalPollTimer;
+    },
+    clearTimer: (timer) => window.clearTimeout(timer),
   });
+  document.addEventListener("visibilitychange", () => applianceApplyPollController.visibilityChanged().catch(() => {}));
   pollGlobalApplianceApply().catch(() => {});
   if (window.location.hash === "#appliance-apply-review") {
     openApplianceApplyReview().catch(() => {});

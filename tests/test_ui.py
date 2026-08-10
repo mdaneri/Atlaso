@@ -976,7 +976,7 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert service_worker.headers["cache-control"] == "no-cache"
     assert service_worker.headers["service-worker-allowed"] == "/"
     assert "ATLASO_CACHE" in service_worker.text
-    assert "atlaso-pwa-v237" in service_worker.text
+    assert "atlaso-pwa-v238" in service_worker.text
     assert 'fetch(asset, { cache: "reload" })' in service_worker.text
     assert ".catch(() => undefined)" in service_worker.text
     assert 'request.mode === "navigate"' in service_worker.text
@@ -990,7 +990,8 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert "/static/vendor/monaco/atlaso-monaco.min.js?v=atlaso-monaco-20260806-7" in service_worker.text
     assert "/static/app.css?v=vsphere-key-providers-170-20260810-1" in service_worker.text
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-8" in service_worker.text
-    assert "/static/app.js?v=vsphere-key-providers-170-20260810-1" in service_worker.text
+    assert "/static/appliance-apply-polling.js?v=issue-280-1" in service_worker.text
+    assert "/static/app.js?v=vsphere-key-providers-170-issue-280-20260810-2" in service_worker.text
     assert "vcfdt-configuration-248-20260807-14" not in service_worker.text
 
     registration = client.get("/static/pwa.js")
@@ -1016,8 +1017,9 @@ def test_shared_ui_pattern_shell_and_wizard_contracts(client):
     base = (templates / "base.html").read_text(encoding="utf-8")
     public_base = (templates / "public_portal_base.html").read_text(encoding="utf-8")
     for shell, app_asset in (
-        (base, "/static/app.js?v=vsphere-key-providers-170-20260810-1"),
-        (public_base, "/static/app.js?v=vsphere-key-providers-170-20260810-1"),
+        (base, "/static/app.js?v=vsphere-key-providers-170-issue-280-20260810-2"),
+        (public_base, "/static/app.js?v=vsphere-key-providers-170-issue-280-20260810-2"),
+        (base, "/static/appliance-apply-polling.js?v=issue-280-1"),
     ):
         assert shell.index("/static/vendor/tabulator/tabulator.min.js") < shell.index(
             "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-8"
@@ -1640,7 +1642,7 @@ def test_monitor_page_renders_and_data_endpoint(client):
     assert "swagger-link-icon" in page.text
     assert "/static/app.css?v=vsphere-key-providers-170-20260810-1" in page.text
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-8" in page.text
-    assert "/static/app.js?v=vsphere-key-providers-170-20260810-1" in page.text
+    assert "/static/app.js?v=vsphere-key-providers-170-issue-280-20260810-2" in page.text
     app_css = client.get("/static/app.css")
     assert app_css.status_code == 200
     assert ".split-workspace > .wide-panel" in app_css.text
@@ -2340,6 +2342,76 @@ def test_appliance_apply_status_tolerates_duplicate_managed_certificate_owners(c
     assert response.json()["units"]
 
 
+def test_appliance_apply_status_uses_lightweight_projection(client, monkeypatch):
+    """Verify ordinary status polling never runs apply-time reconciliation.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+    """
+    from atlaso.app import ui
+
+    login(client)
+    original = ui.appliance_apply_units
+    monkeypatch.setattr(ui, "_appliance_apply_status_cache", None)
+    reconcile_values = []
+
+    def tracked_units(db, *, reconcile=True):
+        """Track reconciliation selection.
+
+        Args:
+            db: Active database session.
+            reconcile: Whether dependent desired state should be reconciled.
+        """
+        reconcile_values.append(reconcile)
+        return original(db, reconcile=reconcile)
+
+    monkeypatch.setattr(ui, "appliance_apply_units", tracked_units)
+    first = client.get("/appliance-apply/status")
+    second = client.get("/appliance-apply/status")
+    users_page = client.get("/users")
+    refreshed = client.get("/appliance-apply/status?refresh=true")
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert users_page.status_code == 200
+    assert refreshed.status_code == 200
+    assert first.json().keys() == second.json().keys()
+    assert reconcile_values == [False, False]
+
+
+def test_appliance_apply_job_invalidates_projection_before_and_after_execution(client, monkeypatch):
+    """Verify Apply invalidates sidebar state at both execution boundaries.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+    """
+    from atlaso.app import ui
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import ApplianceSettings
+
+    login(client)
+    page = client.get("/settings")
+    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    with SessionLocal() as db:
+        units = ui.appliance_apply_units(db)
+        ui.update_appliance_apply_baselines(db, units, {unit["id"] for unit in units})
+        settings = db.query(ApplianceSettings).one()
+        settings.vmware_ceip_enabled = not settings.vmware_ceip_enabled
+        db.commit()
+
+    invalidations = []
+    monkeypatch.setattr(ui, "invalidate_appliance_apply_status_projection", lambda: invalidations.append(True))
+    response = client.post(
+        "/appliance-apply",
+        data={"csrf": csrf, "selected_units": "appliance_settings"},
+    )
+
+    assert_apply_redirect(response)
+    assert len(invalidations) == 2
+
+
 def test_appliance_apply_status_api_tracks_autosaved_desired_state(client):
     """Verify that appliance apply status api tracks autosaved desired state.
 
@@ -2434,7 +2506,7 @@ def test_appliance_apply_status_api_tracks_autosaved_desired_state(client):
         update_appliance_apply_baselines(db, units, {"dnsmasq"})
         db.commit()
 
-    applied = client.get("/appliance-apply/status")
+    applied = client.get("/appliance-apply/status?refresh=true")
     assert applied.status_code == 200
     applied_dns = next(unit for unit in applied.json()["units"] if unit["id"] == "dnsmasq")
     assert applied_dns["changed"] is False
@@ -2976,7 +3048,7 @@ def test_settings_autosave_does_not_update_ntp_servers_when_ntp_is_disabled(clie
     assert_apply_redirect(apply_response)
 
     with SessionLocal() as db:
-        status = appliance_apply_status(db, "appliance_settings")
+        status = appliance_apply_status(db, "appliance_settings", refresh=True)
         assert status["changed"] is False
         assert "ntp_servers" not in status["config_preview"]
 
@@ -3688,6 +3760,7 @@ def test_management_dhcp_dns_falls_back_to_exact_networkd_lease_after_local_dns(
 
     from atlaso.app.adapters.system import AdapterResult, SystemAdapter
     from atlaso.app.services.appliance_settings import (
+        invalidate_observed_management_dhcp_dns,
         observed_management_dhcp_dns_servers,
         parse_networkd_dhcp_dns_payload,
     )
@@ -3718,6 +3791,10 @@ def test_management_dhcp_dns_falls_back_to_exact_networkd_lease_after_local_dns(
     monkeypatch.setattr(SystemAdapter, "read_networkd_dhcp_dns", fake_read_networkd_dhcp_dns)
 
     assert observed_management_dhcp_dns_servers("eth0") == ["192.168.167.2"]
+    assert observed_management_dhcp_dns_servers("eth0") == ["192.168.167.2"]
+    assert calls == ["eth0"]
+
+    invalidate_observed_management_dhcp_dns("eth0")
     assert observed_management_dhcp_dns_servers("eth0") == ["192.168.167.2"]
     assert calls == ["eth0", "eth0"]
     assert parse_networkd_dhcp_dns_payload(
@@ -5362,7 +5439,7 @@ def test_esxi_pxe_default_host_edit_marks_appliance_apply_pending(client):
         update_appliance_apply_baselines(db, units, {unit["id"] for unit in units})
         db.commit()
     with SessionLocal() as db:
-        assert appliance_apply_status(db, "esxi_pxe")["changed"] is False
+        assert appliance_apply_status(db, "esxi_pxe", refresh=True)["changed"] is False
 
     current = client.get("/appliance-apply/status")
     assert current.status_code == 200
@@ -5380,7 +5457,7 @@ def test_esxi_pxe_default_host_edit_marks_appliance_apply_pending(client):
     assert pending.json()["pending_count"] > current_pending_count
     assert pending.json()["label"] == "Review appliance changes"
     with SessionLocal() as db:
-        assert appliance_apply_status(db, "esxi_pxe")["changed"] is True
+        assert appliance_apply_status(db, "esxi_pxe", refresh=True)["changed"] is True
 
 
 def test_network_boot_task_widget_contains_only_media_jobs(client):
@@ -11392,7 +11469,7 @@ def test_vcf_offline_depot_tool_upload_marks_apply_pending_without_profiles(clie
         units = appliance_apply_units(db)
         update_appliance_apply_baselines(db, units, {unit["id"] for unit in units})
         db.commit()
-        assert appliance_apply_status(db, "vcf_offline_depot")["changed"] is False
+        assert appliance_apply_status(db, "vcf_offline_depot", refresh=True)["changed"] is False
 
     archive_path = tmp_path / "vcf-download-tool-9.1.0.test.tar.gz"
     make_vcfdt_archive(archive_path)
@@ -11419,7 +11496,7 @@ def test_vcf_offline_depot_tool_upload_marks_apply_pending_without_profiles(clie
     assert pending.status_code == 200
     assert pending.json()["pending_count"] > 0
     with SessionLocal() as db:
-        status = appliance_apply_status(db, "vcf_offline_depot")
+        status = appliance_apply_status(db, "vcf_offline_depot", refresh=True)
         assert status["changed"] is True
         unit = next(unit for unit in appliance_apply_units(db) if unit["id"] == "vcf_offline_depot")
         assert "# VCFDT tool package status" in unit["config_preview"]
