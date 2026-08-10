@@ -452,7 +452,6 @@ def wait_for_network_review(properties: dict[str, str], error: str) -> int:
         corrected_properties = properties_with_network_correction(properties, correction)
         try:
             config = validate_properties(corrected_properties)
-            summary = apply_customization(config)
         except OvfManagementNetworkError as exc:
             write_network_review(corrected_properties, str(exc))
             NETWORK_CORRECTION_PATH.unlink(missing_ok=True)
@@ -464,6 +463,17 @@ def wait_for_network_review(properties: dict[str, str], error: str) -> int:
                 f"{type(exc).__name__}"
             )
             return 2
+        try:
+            summary = apply_customization(config)
+        except OvfCustomizationError as exc:
+            write_network_review(
+                corrected_properties,
+                "The corrected management network validated, but first-time initialization did not finish. "
+                "Resolve the condition reported in the customization log, then submit the network review again.",
+            )
+            NETWORK_CORRECTION_PATH.unlink(missing_ok=True)
+            log(f"VMware OVF customization could not finish after console correction: {type(exc).__name__}")
+            continue
         except (OSError, subprocess.CalledProcessError) as exc:
             write_network_review(
                 corrected_properties,

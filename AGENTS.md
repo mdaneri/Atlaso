@@ -83,8 +83,8 @@ The following cross-cutting boundaries always apply:
   of management networking and before data-disk initialization; on validation failure, show a recoverable non-secret
   network-review state, retain deployment secrets only in the waiting customizer, and keep privileged tty1 actions
   locked until the deployment root password applies. Validate non-network OVF fields before offering network-only
-  correction, make review cleanup recover from interruption after marker creation, and write applied state only after
-  successful correction and customization.
+  correction, keep the waiting customizer alive across post-validation apply failures, make review cleanup recover from
+  interruption after marker creation, and write applied state only after successful correction and customization.
 - VMware release images use separate compacted Photon OS and required Atlaso system-content payload VMDKs, followed by
   empty 500 GiB depot and backup disks. Preserve `/opt/atlaso` and appliance-wide PowerShell modules on the UUID-mounted
   system-content disk, size-gate individual OVF release assets below 2 GiB, and publish the aggregate OVA only when it

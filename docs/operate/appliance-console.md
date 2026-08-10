@@ -66,6 +66,9 @@ Atlaso validates the FQDN, required properties, credentials, and root-SSH boolea
 correction. If initialization stays on the starting screen and no network review appears, correct those non-network OVF
 properties in the hypervisor and restart the deployment, or redeploy with corrected values. A reboot after successful
 customization removes any stale review document by trusting the redacted applied marker.
+If a later customization step fails after the corrected network validates, the review screen remains backed by the
+waiting customizer. Resolve the safe condition named in `/var/log/atlaso/vmware-ovf-customize.log`, then resubmit the
+network review to retry; the applied marker remains absent until the retry succeeds.
 
 Service state uses compact labels:
 
