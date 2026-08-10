@@ -454,6 +454,25 @@ def recover_pending_customization() -> int:
     return 0
 
 
+def scrub_applied_ovf_environment() -> None:
+    """Remove newly injected properties when a source disk was already customized."""
+    if not read_ovf_environment().strip():
+        return
+    logged_failure = False
+    while True:
+        try:
+            clear_ovf_environment()
+            return
+        except (OvfCustomizationError, OSError, subprocess.CalledProcessError):
+            if not logged_failure:
+                log(
+                    "VMware OVF customization is retrying removal of deployment properties from an already "
+                    "initialized appliance."
+                )
+                logged_failure = True
+            time.sleep(OVF_ENVIRONMENT_POLL_SECONDS)
+
+
 def wait_for_network_review(properties: dict[str, str], error: str) -> int:
     """Wait visibly for tty1 to provide a valid first-boot network correction.
 
@@ -943,6 +962,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     if MARKER_PATH.exists() and not args.dry_run:
+        scrub_applied_ovf_environment()
         complete_first_boot_initialization()
         log("VMware OVF customization already applied; leaving appliance state unchanged.")
         return 0

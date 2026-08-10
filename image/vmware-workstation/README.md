@@ -235,7 +235,9 @@ marker, clears the consumed OVF environment through VMware Tools, and atomically
 applied marker. This removes raw-clone credentials from the host-side `guestinfo.ovfEnv` VMX setting while keeping a
 power interruption between scrub and promotion recoverable on the next boot. A failed scrub remains unmarked and is
 retried with the initialization lock held. Mutation failures identify only a bounded, non-secret initialization layer in
-the customization log.
+the customization log. If a raw clone accidentally reuses a disk whose applied marker already exists, the customizer
+does not reapply the injected credentials, but it does clear the injected OVF environment before its marker early exit so
+those plaintext values cannot remain in the cloned VMX; use only pristine, never-booted image outputs as clone sources.
 
 The customizer validates IPv4, IPv6, gateway, and DNS relationships before any host mutation. Interface and gateway
 addresses must be usable unicast values rather than unspecified, loopback, multicast, or reserved addresses. If

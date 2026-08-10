@@ -583,6 +583,7 @@ def test_vmware_ovf_customizer_marker_recovers_interrupted_review_cleanup(tmp_pa
     """
     customizer = load_customizer()
     customizer.MARKER_PATH = tmp_path / "customization.applied"
+    customizer.PENDING_MARKER_PATH = tmp_path / "customization.pending"
     customizer.INITIALIZATION_LOCK_PATH = tmp_path / "initializing"
     customizer.NETWORK_REVIEW_PATH = tmp_path / "network-review.json"
     customizer.NETWORK_CORRECTION_PATH = tmp_path / "network-correction.json"
@@ -594,12 +595,43 @@ def test_vmware_ovf_customizer_marker_recovers_interrupted_review_cleanup(tmp_pa
     ):
         path.write_text("{}\n", encoding="utf-8")
     monkeypatch.setattr(customizer, "log", lambda _message: None)
+    monkeypatch.setattr(customizer, "read_ovf_environment", lambda: "")
 
     assert customizer.main([]) == 0
     assert customizer.MARKER_PATH.exists()
     assert not customizer.INITIALIZATION_LOCK_PATH.exists()
     assert not customizer.NETWORK_REVIEW_PATH.exists()
     assert not customizer.NETWORK_CORRECTION_PATH.exists()
+
+
+def test_vmware_ovf_customizer_marker_scrubs_properties_injected_into_reused_source(tmp_path, monkeypatch):
+    """Verify an already-customized raw source cannot retain newly injected credentials.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+    """
+    customizer = load_customizer()
+    customizer.MARKER_PATH = tmp_path / "customization.applied"
+    customizer.PENDING_MARKER_PATH = tmp_path / "customization.pending"
+    customizer.INITIALIZATION_LOCK_PATH = tmp_path / "initializing"
+    customizer.NETWORK_REVIEW_PATH = tmp_path / "network-review.json"
+    customizer.NETWORK_CORRECTION_PATH = tmp_path / "network-correction.json"
+    customizer.MARKER_PATH.write_text("{}\n", encoding="utf-8")
+    customizer.INITIALIZATION_LOCK_PATH.write_text("\n", encoding="utf-8")
+    monkeypatch.setattr(customizer, "read_ovf_environment", lambda: OVF_ENV)
+    scrubbed = []
+    monkeypatch.setattr(customizer, "clear_ovf_environment", lambda: scrubbed.append(True))
+    messages = []
+    monkeypatch.setattr(customizer, "log", messages.append)
+
+    assert customizer.main([]) == 0
+
+    assert scrubbed == [True]
+    assert customizer.MARKER_PATH.exists()
+    assert not customizer.INITIALIZATION_LOCK_PATH.exists()
+    assert "admin-secret" not in " ".join(messages)
+    assert "root-secret1" not in " ".join(messages)
 
 
 def test_vmware_ovf_customizer_supports_disabled_auto_and_static_ipv6(tmp_path):
