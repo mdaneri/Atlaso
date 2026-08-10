@@ -336,10 +336,13 @@ def test_vcf_depot_nginx_config_renders_atlaso_auth_request_by_default():
     assert "auth_basic_user_file /etc/atlaso/nginx/htpasswd/vcf-offline-depot.htpasswd;" in config
     assert "proxy_set_header X-Atlaso-Depot-Basic-User $remote_user;" in config
     assert "location = /PROD/" in config
+    assert "location = /ui/public" in config
+    assert "location ^~ /ui/public/" in config
     assert "location ^~ /static/" in config
     assert "location = /favicon.ico" in config
-    assert "location = /manifest.webmanifest" in config
-    assert "location = /service-worker.js" in config
+    assert "location = /manifest.webmanifest" not in config
+    assert "location = /service-worker.js" not in config
+    assert "/ui/management" not in config
     assert "location = /ca" not in config
     assert "location ^~ /ca/" not in config
     assert "location = /requests" not in config
@@ -623,8 +626,10 @@ def test_vcf_depot_nginx_preview_uses_ca_paths_and_static_file_directives():
     assert "proxy_pass http://127.0.0.1:8000;" in preview
     assert "location ^~ /static/" in preview
     assert "location = /favicon.ico" in preview
-    assert "location = /manifest.webmanifest" in preview
-    assert "location = /service-worker.js" in preview
+    assert "location = /ui/public" in preview
+    assert "location ^~ /ui/public/" in preview
+    assert "location = /manifest.webmanifest" not in preview
+    assert "location = /service-worker.js" not in preview
     assert "location = /ca" not in preview
     assert "location ^~ /ca/" not in preview
     assert "location = /requests" not in preview

@@ -73,10 +73,10 @@ def test_appliance_update_page_and_dry_run_job(client):
     assert "Check for updates" in page.text
     assert "Install updates" in page.text
     assert "Checking is read-only. Installing runs the selected maintenance streams." in page.text
-    assert 'href="/automation"' in page.text
+    assert 'href="/ui/management/automation"' in page.text
     assert "schedule update checks or installations in Automation" in page.text
-    assert 'formaction="/appliance-update/check" title="Check the selected streams without installing changes"' in page.text
-    assert 'formaction="/appliance-update/run" title="Install updates from the selected streams"' in page.text
+    assert 'formaction="/ui/management/appliance-update/check" title="Check the selected streams without installing changes"' in page.text
+    assert 'formaction="/ui/management/appliance-update/run" title="Install updates from the selected streams"' in page.text
     assert "https://updates.example.test/releases" in page.text
     assert "channels/&lt;channel&gt;/manifest.json" in page.text
     assert "Recent update tasks" in page.text
@@ -844,7 +844,7 @@ def test_software_source_and_managed_module_lifecycle(client):
     assert grouped_page.text.index('data-tab-target="appliance-update-streams"') < grouped_page.text.index('data-tab-target="appliance-update-sources"')
     assert "Synchronize repositories" in grouped_page.text
     assert grouped_page.text.count('class="appliance-update-source-actions"') == 1
-    assert 'action="/appliance-update/source-sync" data-appliance-update-source-sync-form' in grouped_page.text
+    assert 'action="/ui/management/appliance-update/source-sync" data-appliance-update-source-sync-form' in grouped_page.text
     assert 'class="button secondary icon-button" type="submit" aria-label="Synchronize repositories" title="Synchronize repositories" data-appliance-update-source-sync-action' in grouped_page.text
     assert grouped_page.text.count("Synchronize repositories") >= 2
     assert 'class="muted appliance-update-source-intro"' in grouped_page.text
@@ -893,8 +893,8 @@ def test_software_source_and_managed_module_lifecycle(client):
     assert 'wizard.open({ launcher, context: managedPackage });' in app_js
     assert '"X-Atlaso-Wizard": "1"' in app_js
     assert 'throw new Error(payload.detail || "The managed PowerShell module could not be saved.");' in app_js
-    assert 'window.history.replaceState(null, "", "/appliance-update#update-sources");' in app_js
-    assert 'window.history.replaceState(null, "", "/appliance-update#managed-packages");' in app_js
+    assert 'window.history.replaceState(null, "", managementUiPath("/appliance-update#update-sources"));' in app_js
+    assert 'window.history.replaceState(null, "", managementUiPath("/appliance-update#managed-packages"));' in app_js
     source_wizard_js = app_js.split("function initializeApplianceUpdateSourceWizard()", 1)[1].split(
         "function initializeManagedPackageWizard()", 1
     )[0]

@@ -69,7 +69,7 @@
         {% set task_grid_lock_component_filter = true %}
         {% set task_grid_height = "100%" %}
         {% set task_grid_scope_label = "Media operations only" %}
-        {% set task_grid_history_url = "/tasks" %}
+        {% set task_grid_history_url = management_ui_path("/tasks") %}
         {% set task_grid_empty_message = "No Network Boot media tasks have been recorded yet." %}
         {% include "partials/task_grid.html" %}
       </div>
@@ -200,7 +200,7 @@
 {% endif %}
 {% if esxi_can_write %}
 <dialog id="esxi-iso-upload-dialog" class="confirm-modal wide-modal vcf-sddc-wizard-modal" aria-labelledby="esxi-iso-upload-title" aria-describedby="esxi-iso-upload-description">
-  <form class="confirm-modal-panel vcf-sddc-wizard-panel" action="/esxi-pxe/isos/upload" method="post" enctype="multipart/form-data" data-esxi-iso-upload data-atlaso-wizard novalidate>
+  <form class="confirm-modal-panel vcf-sddc-wizard-panel" action="{{ management_ui_root }}/esxi-pxe/isos/upload" method="post" enctype="multipart/form-data" data-esxi-iso-upload data-atlaso-wizard novalidate>
     <input type="hidden" name="csrf" value="{{ csrf_token }}">
     <aside class="vcf-sddc-wizard-rail" aria-label="Add ESX ISO steps">
       <p class="kicker">Network Boot</p><h2 id="esxi-iso-upload-title">Add ESX ISO</h2>
@@ -254,7 +254,7 @@
       <span class="status-pill {{ esxi_pxe_service_status.pill }}">{{ esxi_pxe_service_status.label }}</span>
     </div>
 
-    <form class="form-stack boot-service-form" action="/esxi-pxe/boot-settings" method="post" data-autosave-form data-autosave-status-id="esxi-pxe-boot-settings-status">
+    <form class="form-stack boot-service-form" action="{{ management_ui_root }}/esxi-pxe/boot-settings" method="post" data-autosave-form data-autosave-status-id="esxi-pxe-boot-settings-status">
       <input type="hidden" name="csrf" value="{{ csrf_token }}">
       <div class="form-grid">
         <label class="switch-field">
@@ -377,11 +377,11 @@
                   {% if esxi_can_write %}
                     <button type="button" data-kickstart-edit-id="{{ row.id }}">Edit</button>
                     <noscript>
-                      <a href="/esxi-pxe?kickstart_id={{ row.id }}#kickstart-fallback-editor">Edit source</a>
-                      <a href="/esxi-pxe/kickstarts/{{ row.id }}/download">Download</a>
-                      <form class="inline-form" action="/esxi-pxe/kickstarts/{{ row.id }}/duplicate" method="post"><input type="hidden" name="csrf" value="{{ csrf_token }}"><button type="submit">Duplicate</button></form>
-                      <form class="inline-form" action="/esxi-pxe/kickstarts/{{ row.id }}/validate" method="post"><input type="hidden" name="csrf" value="{{ csrf_token }}"><button type="submit">Validate</button></form>
-                      <form class="inline-form" action="/esxi-pxe/kickstarts/{{ row.id }}/delete" method="post" data-confirm-modal data-confirm-title="Delete {{ row.name }}?" data-confirm-message="This removes the Kickstart from desired state and clears host references. Generated PXE files change only after global appliance apply." data-confirm-label="Delete Kickstart"><input type="hidden" name="csrf" value="{{ csrf_token }}"><button type="submit">Delete Kickstart</button></form>
+                      <a href="{{ management_ui_root }}/esxi-pxe?kickstart_id={{ row.id }}#kickstart-fallback-editor">Edit source</a>
+                      <a href="{{ management_ui_root }}/esxi-pxe/kickstarts/{{ row.id }}/download">Download</a>
+                      <form class="inline-form" action="{{ management_ui_root }}/esxi-pxe/kickstarts/{{ row.id }}/duplicate" method="post"><input type="hidden" name="csrf" value="{{ csrf_token }}"><button type="submit">Duplicate</button></form>
+                      <form class="inline-form" action="{{ management_ui_root }}/esxi-pxe/kickstarts/{{ row.id }}/validate" method="post"><input type="hidden" name="csrf" value="{{ csrf_token }}"><button type="submit">Validate</button></form>
+                      <form class="inline-form" action="{{ management_ui_root }}/esxi-pxe/kickstarts/{{ row.id }}/delete" method="post" data-confirm-modal data-confirm-title="Delete {{ row.name }}?" data-confirm-message="This removes the Kickstart from desired state and clears host references. Generated PXE files change only after global appliance apply." data-confirm-label="Delete Kickstart"><input type="hidden" name="csrf" value="{{ csrf_token }}"><button type="submit">Delete Kickstart</button></form>
                     </noscript>
                   {% endif %}
                 </td>
@@ -391,14 +391,14 @@
           </tbody>
         </table>
         {% for row in esxi_kickstart_rows %}
-          <form id="kickstart-duplicate-{{ row.id }}" action="/esxi-pxe/kickstarts/{{ row.id }}/duplicate" method="post" hidden><input type="hidden" name="csrf" value="{{ csrf_token }}"></form>
-          <form id="kickstart-delete-{{ row.id }}" action="/esxi-pxe/kickstarts/{{ row.id }}/delete" method="post" hidden><input type="hidden" name="csrf" value="{{ csrf_token }}"><button type="submit" data-confirm-modal data-confirm-title="Delete {{ row.name }}?" data-confirm-message="The database source is removed now. Generated runtime files change only after global appliance apply." data-confirm-label="Delete Kickstart">Delete Kickstart</button></form>
+          <form id="kickstart-duplicate-{{ row.id }}" action="{{ management_ui_root }}/esxi-pxe/kickstarts/{{ row.id }}/duplicate" method="post" hidden><input type="hidden" name="csrf" value="{{ csrf_token }}"></form>
+          <form id="kickstart-delete-{{ row.id }}" action="{{ management_ui_root }}/esxi-pxe/kickstarts/{{ row.id }}/delete" method="post" hidden><input type="hidden" name="csrf" value="{{ csrf_token }}"><button type="submit" data-confirm-modal data-confirm-title="Delete {{ row.name }}?" data-confirm-message="The database source is removed now. Generated runtime files change only after global appliance apply." data-confirm-label="Delete Kickstart">Delete Kickstart</button></form>
         {% endfor %}
         {% if esxi_can_write %}
           <noscript>
             <style>[data-atlaso-wizard-add], [data-kickstart-edit-id] { display: none !important; }</style>
             {% if esxi_selected_kickstart %}
-              <form id="kickstart-fallback-editor" class="form-stack" action="/esxi-pxe/kickstarts/{{ esxi_selected_kickstart.id }}" method="post">
+              <form id="kickstart-fallback-editor" class="form-stack" action="{{ management_ui_root }}/esxi-pxe/kickstarts/{{ esxi_selected_kickstart.id }}" method="post">
                 <h3>Edit {{ esxi_selected_kickstart.name }}</h3>
                 <input type="hidden" name="csrf" value="{{ csrf_token }}">
                 <label>Name <input name="name" value="{{ esxi_selected_kickstart.name }}" required maxlength="120"></label>
@@ -408,7 +408,7 @@
                 <button class="button primary" type="submit">Save Kickstart</button>
               </form>
             {% endif %}
-            <form id="kickstart-fallback-create" class="form-stack" action="/esxi-pxe/kickstarts" method="post">
+            <form id="kickstart-fallback-create" class="form-stack" action="{{ management_ui_root }}/esxi-pxe/kickstarts" method="post">
               <h3>Add Kickstart</h3>
               <input type="hidden" name="csrf" value="{{ csrf_token }}">
               <label>Name <input name="name" required maxlength="120"></label>
@@ -438,7 +438,7 @@
             <thead><tr><th>Host</th><th>MAC</th><th>IP address</th><th>Kickstart</th><th>Installer ISO</th><th>Variables</th><th>Enabled</th><th>Actions</th></tr></thead>
             <tbody>
               <tr>
-                <form action="/esxi-pxe/default-host" method="post">
+                <form action="{{ management_ui_root }}/esxi-pxe/default-host" method="post">
                   <input type="hidden" name="csrf" value="{{ csrf_token }}">
                   <td>Default / undefined MACs</td>
                   <td>*</td>
@@ -466,7 +466,7 @@
               </tr>
               {% for host in esxi_pxe_hosts %}
                 <tr>
-                  <form action="/esxi-pxe/hosts/{{ host.id }}" method="post">
+                  <form action="{{ management_ui_root }}/esxi-pxe/hosts/{{ host.id }}" method="post">
                     <input type="hidden" name="csrf" value="{{ csrf_token }}">
                     <td><input name="hostname" value="{{ host.hostname }}" aria-label="ESXi PXE hostname" {{ "disabled" if not esxi_can_write else "" }}></td>
                     <td><input name="mac_address" value="{{ host.mac_address }}" aria-label="ESXi PXE MAC address" {{ "disabled" if not esxi_can_write else "" }}></td>
@@ -492,7 +492,7 @@
                     <td>
                       <button class="button tiny secondary" type="submit" {{ "disabled" if not esxi_can_write else "" }}>Update</button>
                       {% if esxi_can_write %}
-                        <button class="button tiny danger" type="submit" formaction="/esxi-pxe/hosts/{{ host.id }}/delete" data-confirm-modal data-confirm-title="Delete {{ host.hostname }} host reference?" data-confirm-message="This removes the ESXi PXE host reference for {{ host.mac_address }} from desired state. It will not touch generated PXE files until global appliance apply runs." data-confirm-label="Delete host reference">Delete</button>
+                        <button class="button tiny danger" type="submit" formaction="{{ management_ui_root }}/esxi-pxe/hosts/{{ host.id }}/delete" data-confirm-modal data-confirm-title="Delete {{ host.hostname }} host reference?" data-confirm-message="This removes the ESXi PXE host reference for {{ host.mac_address }} from desired state. It will not touch generated PXE files until global appliance apply runs." data-confirm-label="Delete host reference">Delete</button>
                       {% endif %}
                     </td>
                   </form>
@@ -505,7 +505,7 @@
           </table>
           {% if esxi_can_write %}
             <noscript>
-              <form id="esxi-pxe-host-fallback-create" class="form-stack" action="/esxi-pxe/hosts" method="post">
+              <form id="esxi-pxe-host-fallback-create" class="form-stack" action="{{ management_ui_root }}/esxi-pxe/hosts" method="post">
                 <h3>Add host reference</h3>
                 <input type="hidden" name="csrf" value="{{ csrf_token }}">
                 <div class="form-grid">
@@ -545,8 +545,8 @@
                 <td><input name="default_value" value="{{ variable.default_value }}" form="custom-variable-{{ loop.index }}" aria-label="Custom variable default value" {{ "disabled" if not esxi_can_write else "" }}></td>
                 <td>
                   {% if esxi_can_write %}
-                    <form id="custom-variable-{{ loop.index }}" class="inline-form" action="/esxi-pxe/custom-variables/{{ variable.name }}" method="post"><input type="hidden" name="csrf" value="{{ csrf_token }}"><button type="submit">Save custom variable</button></form>
-                    <form class="inline-form" action="/esxi-pxe/custom-variables/{{ variable.name }}/delete" method="post" data-confirm-modal data-confirm-title="Remove {{ variable.name }}?" data-confirm-message="This removes the custom variable from desired state. Existing Kickstarts must no longer reference it." data-confirm-label="Remove custom variable"><input type="hidden" name="csrf" value="{{ csrf_token }}"><button type="submit">Remove custom variable</button></form>
+                    <form id="custom-variable-{{ loop.index }}" class="inline-form" action="{{ management_ui_root }}/esxi-pxe/custom-variables/{{ variable.name }}" method="post"><input type="hidden" name="csrf" value="{{ csrf_token }}"><button type="submit">Save custom variable</button></form>
+                    <form class="inline-form" action="{{ management_ui_root }}/esxi-pxe/custom-variables/{{ variable.name }}/delete" method="post" data-confirm-modal data-confirm-title="Remove {{ variable.name }}?" data-confirm-message="This removes the custom variable from desired state. Existing Kickstarts must no longer reference it." data-confirm-label="Remove custom variable"><input type="hidden" name="csrf" value="{{ csrf_token }}"><button type="submit">Remove custom variable</button></form>
                   {% endif %}
                 </td>
               </tr>
@@ -556,7 +556,7 @@
                 <td><input name="name" form="custom-variable-new" aria-label="New custom variable name" placeholder="+ Add custom variable"></td>
                 <td><input name="description" form="custom-variable-new" aria-label="New custom variable description"></td>
                 <td><input name="default_value" form="custom-variable-new" aria-label="New custom variable default value"></td>
-                <td><form id="custom-variable-new" action="/esxi-pxe/custom-variables" method="post"><input type="hidden" name="csrf" value="{{ csrf_token }}"><button type="submit">Add custom variable</button></form></td>
+                <td><form id="custom-variable-new" action="{{ management_ui_root }}/esxi-pxe/custom-variables" method="post"><input type="hidden" name="csrf" value="{{ csrf_token }}"><button type="submit">Add custom variable</button></form></td>
               </tr>
             {% endif %}
           </tbody>
@@ -568,7 +568,7 @@
           <noscript>
             <details class="create-kickstart-panel">
               <summary>Upload ESX ISO</summary>
-              <form class="form-stack" action="/esxi-pxe/isos/upload" method="post" enctype="multipart/form-data">
+              <form class="form-stack" action="{{ management_ui_root }}/esxi-pxe/isos/upload" method="post" enctype="multipart/form-data">
                 <input type="hidden" name="csrf" value="{{ csrf_token }}">
                 <label><span>ESX installer ISO</span><input type="file" name="iso_file" accept=".iso,application/x-iso9660-image" required></label>
                 <button class="button secondary" type="submit">Upload ESX ISO</button>
@@ -672,7 +672,7 @@
 </section>
 {% if esxi_can_write %}
 <dialog id="esxi-custom-variable-wizard-dialog" class="confirm-modal wide-modal vcf-sddc-wizard-modal" aria-labelledby="esxi-custom-variable-wizard-title" aria-describedby="esxi-custom-variable-wizard-description">
-  <form class="confirm-modal-panel vcf-sddc-wizard-panel" action="/esxi-pxe/custom-variables" method="post" data-esxi-custom-variable-wizard data-atlaso-wizard>
+  <form class="confirm-modal-panel vcf-sddc-wizard-panel" action="{{ management_ui_root }}/esxi-pxe/custom-variables" method="post" data-esxi-custom-variable-wizard data-atlaso-wizard>
     <input type="hidden" name="csrf" value="{{ csrf_token }}">
     <input type="hidden" name="record_id" value="">
     <aside class="vcf-sddc-wizard-rail" aria-label="Custom variable steps">
@@ -703,7 +703,7 @@
   </form>
 </dialog>
 <dialog id="kickstart-wizard-dialog" class="confirm-modal wide-modal vcf-sddc-wizard-modal" aria-labelledby="kickstart-wizard-title" aria-describedby="kickstart-wizard-description">
-  <form class="confirm-modal-panel vcf-sddc-wizard-panel" action="/esxi-pxe/kickstarts" method="post" data-kickstart-wizard data-atlaso-wizard>
+  <form class="confirm-modal-panel vcf-sddc-wizard-panel" action="{{ management_ui_root }}/esxi-pxe/kickstarts" method="post" data-kickstart-wizard data-atlaso-wizard>
     <input type="hidden" name="csrf" value="{{ csrf_token }}">
     <input type="hidden" name="record_id" value="">
     <aside class="vcf-sddc-wizard-rail" aria-label="Kickstart steps">

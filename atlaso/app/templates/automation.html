@@ -35,7 +35,7 @@
   </table>
   <script type="application/json" id="automation-schedules-data">{{ automation_schedule_rows|tojson }}</script>
   <dialog id="automation-schedule-modal" class="confirm-modal wide-modal vcf-sddc-wizard-modal" aria-labelledby="automation-schedule-modal-title" aria-describedby="automation-schedule-modal-description">
-    <form id="automation-schedule-create-form" class="confirm-modal-panel vcf-sddc-wizard-panel" action="/automation/schedules" method="post" data-automation-schedule-form data-atlaso-wizard>
+    <form id="automation-schedule-create-form" class="confirm-modal-panel vcf-sddc-wizard-panel" action="{{ management_ui_root }}/automation/schedules" method="post" data-automation-schedule-form data-atlaso-wizard>
       <input type="hidden" name="csrf" value="{{ csrf_token }}">
       <aside class="vcf-sddc-wizard-rail" aria-label="Automation schedule steps">
         <p class="kicker">Automation schedule</p>
@@ -75,7 +75,7 @@
                   {% for profile in automation_vcf_profiles %}<option value="{{ profile.id }}" {{ 'disabled' if not profile.enabled else '' }}>{{ profile.name }}{{ ' · disabled' if not profile.enabled else '' }}</option>{% endfor %}
                 </select>
                 <small class="muted" data-automation-vcf-profile-guidance>
-                  {% if not automation_vcf_profiles %}No download profiles exist. <a href="/vcf-offline-depot">Create and enable a profile in VCF Offline Depot</a> before scheduling it.{% elif not automation_vcf_enabled_profile_count %}All configured download profiles are disabled. <a href="/vcf-offline-depot">Enable a profile in VCF Offline Depot</a> before scheduling it.{% else %}Only enabled profiles can be scheduled. <a href="/vcf-offline-depot">Manage profiles in VCF Offline Depot</a>.{% endif %}
+                  {% if not automation_vcf_profiles %}No download profiles exist. <a href="{{ management_ui_root }}/vcf-offline-depot">Create and enable a profile in VCF Offline Depot</a> before scheduling it.{% elif not automation_vcf_enabled_profile_count %}All configured download profiles are disabled. <a href="{{ management_ui_root }}/vcf-offline-depot">Enable a profile in VCF Offline Depot</a> before scheduling it.{% else %}Only enabled profiles can be scheduled. <a href="{{ management_ui_root }}/vcf-offline-depot">Manage profiles in VCF Offline Depot</a>.{% endif %}
                 </small>
               </label>
               <label class="full hidden" data-automation-config="managed-script"><span class="field-label"><span>Managed script</span><button class="help-icon" type="button" data-help="Pins this schedule to an enabled immutable script revision. Enable a revision from the Managed Scripts grid before scheduling it.">i</button></span><select name="revision_id" data-automation-script-revision><option value="">Choose a managed script</option>{% for revision in automation_revisions %}<option value="{{ revision.id }}" data-interpreter="{{ revision.interpreter }}" {{ 'disabled' if not revision.enabled else '' }}>{{ revision.script.name }} · revision {{ revision.revision }} · {{ revision.interpreter }}{{ ' · disabled' if not revision.enabled else '' }}</option>{% endfor %}</select></label>
@@ -131,9 +131,9 @@
   </dialog>
   {% for schedule in automation_schedule_rows %}
     <div class="hidden">
-      <form id="automation-schedule-toggle-{{ schedule.id }}" action="/automation/schedules/{{ schedule.id }}/toggle" method="post"><input type="hidden" name="csrf" value="{{ csrf_token }}"></form>
-      <form id="automation-schedule-run-{{ schedule.id }}" action="/automation/schedules/{{ schedule.id }}/run" method="post"><input type="hidden" name="csrf" value="{{ csrf_token }}"></form>
-      <form id="automation-schedule-delete-{{ schedule.id }}" action="/automation/schedules/{{ schedule.id }}/delete" method="post" data-confirm-modal data-confirm-title="Delete {{ schedule.name }} schedule?" data-confirm-message="This removes the schedule definition. Existing task history remains and no appliance action is run." data-confirm-label="Delete schedule"><input type="hidden" name="csrf" value="{{ csrf_token }}"></form>
+      <form id="automation-schedule-toggle-{{ schedule.id }}" action="{{ management_ui_root }}/automation/schedules/{{ schedule.id }}/toggle" method="post"><input type="hidden" name="csrf" value="{{ csrf_token }}"></form>
+      <form id="automation-schedule-run-{{ schedule.id }}" action="{{ management_ui_root }}/automation/schedules/{{ schedule.id }}/run" method="post"><input type="hidden" name="csrf" value="{{ csrf_token }}"></form>
+      <form id="automation-schedule-delete-{{ schedule.id }}" action="{{ management_ui_root }}/automation/schedules/{{ schedule.id }}/delete" method="post" data-confirm-modal data-confirm-title="Delete {{ schedule.name }} schedule?" data-confirm-message="This removes the schedule definition. Existing task history remains and no appliance action is run." data-confirm-label="Delete schedule"><input type="hidden" name="csrf" value="{{ csrf_token }}"></form>
     </div>
   {% endfor %}
 </div>
@@ -181,7 +181,7 @@
   {% call resource_wizard(
     "automation-script-create-dialog",
     "automation-script-create-form",
-    "/automation/scripts",
+    management_ui_path("/automation/scripts"),
     automation_script_steps,
     "Add managed script",
     "Define the script and its first immutable revision.",
@@ -299,14 +299,14 @@
   </dialog>
   {% for script in automation_scripts %}
     <div class="hidden">
-      <form id="delete-automation-script-{{ script.id }}" action="/automation/scripts/{{ script.id }}/delete" method="post" data-confirm-modal data-confirm-title="Delete {{ script.name }}?" data-confirm-message="This permanently removes the managed script and every immutable revision. Schedules that use a revision block deletion; existing task history remains." data-confirm-label="Delete managed script"><input type="hidden" name="csrf" value="{{ csrf_token }}"><button class="button danger compact" type="submit">Delete managed script</button></form>
-      <form id="automation-script-edit-{{ script.id }}" action="/automation/scripts/{{ script.id }}/edit" method="post"><input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="name"><input type="hidden" name="description"></form>
-      <form id="automation-script-revision-{{ script.id }}" action="/automation/scripts/{{ script.id }}/revisions" method="post">
+      <form id="delete-automation-script-{{ script.id }}" action="{{ management_ui_root }}/automation/scripts/{{ script.id }}/delete" method="post" data-confirm-modal data-confirm-title="Delete {{ script.name }}?" data-confirm-message="This permanently removes the managed script and every immutable revision. Schedules that use a revision block deletion; existing task history remains." data-confirm-label="Delete managed script"><input type="hidden" name="csrf" value="{{ csrf_token }}"><button class="button danger compact" type="submit">Delete managed script</button></form>
+      <form id="automation-script-edit-{{ script.id }}" action="{{ management_ui_root }}/automation/scripts/{{ script.id }}/edit" method="post"><input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="name"><input type="hidden" name="description"></form>
+      <form id="automation-script-revision-{{ script.id }}" action="{{ management_ui_root }}/automation/scripts/{{ script.id }}/revisions" method="post">
         <input type="hidden" name="csrf" value="{{ csrf_token }}">
         <input type="hidden" name="interpreter"><input type="hidden" name="timeout_seconds"><textarea name="content"></textarea>
       </form>
       {% if script.revisions %}{% set latest = script.revisions[-1] %}
-      <form id="automation-script-toggle-{{ script.id }}" action="/automation/scripts/revisions/{{ latest.id }}/toggle" method="post"><input type="hidden" name="csrf" value="{{ csrf_token }}"></form>
+      <form id="automation-script-toggle-{{ script.id }}" action="{{ management_ui_root }}/automation/scripts/revisions/{{ latest.id }}/toggle" method="post"><input type="hidden" name="csrf" value="{{ csrf_token }}"></form>
       {% endif %}
     </div>
   {% endfor %}

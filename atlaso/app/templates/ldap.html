@@ -7,7 +7,7 @@
         <h2>LDAP Settings</h2>
         <span class="status-pill {{ ldap_service_status.pill }}" data-ldap-runtime-status>{{ ldap_service_status.label }}</span>
       </div>
-      <form class="form-stack" action="/ldap/settings" method="post" data-autosave-form data-autosave-status-id="ldap-settings-autosave-status">
+      <form class="form-stack" action="{{ management_ui_root }}/ldap/settings" method="post" data-autosave-form data-autosave-status-id="ldap-settings-autosave-status">
         <input type="hidden" name="csrf" value="{{ csrf_token }}">
         <label class="switch-field">
           <span class="field-label"><span>Service enabled</span><button class="help-icon" type="button" data-help="Enables managed OpenLDAP desired state. The service starts only after global appliance apply validates its dependencies and listener configuration. Dry-run environments record command intent without changing the host.">i</button></span>
@@ -100,7 +100,7 @@
         </div>
         <div class="tab-buttons zone-tabs" role="tablist" aria-label="LDAP organizations" data-ldap-organization-tabs>
           {% for organization in ldap_organizations %}
-            <a class="tab-button {{ 'active' if ldap_selected_organization and organization.id == ldap_selected_organization.id else '' }}" role="tab" {% if ldap_selected_organization and organization.id == ldap_selected_organization.id %}aria-selected="true"{% else %}aria-selected="false"{% endif %} href="/ldap?organization_id={{ organization.id }}#ldap-directory-panel" data-ldap-organization-id="{{ organization.id }}">{{ organization.name }}</a>
+            <a class="tab-button {{ 'active' if ldap_selected_organization and organization.id == ldap_selected_organization.id else '' }}" role="tab" {% if ldap_selected_organization and organization.id == ldap_selected_organization.id %}aria-selected="true"{% else %}aria-selected="false"{% endif %} href="{{ management_ui_root }}/ldap?organization_id={{ organization.id }}#ldap-directory-panel" data-ldap-organization-id="{{ organization.id }}">{{ organization.name }}</a>
           {% endfor %}
           <button class="tab-button" type="button" role="tab" aria-selected="false" data-ldap-organization-open>+ Organization</button>
         </div>
@@ -113,10 +113,10 @@
               <span class="muted">organization directory and VCF bind identity</span>
             </div>
             <div class="zone-actions">
-              <form action="/ldap/organizations/{{ ldap_selected_organization.id }}/bind-credential/rotate" method="post" data-confirm-modal data-confirm-title="Rotate VCF bind credential?" data-confirm-message="The new password is shown once. VCF continues using the old password until LDAP is applied and the VCF organization settings are updated." data-confirm-label="Rotate credential">
+              <form action="{{ management_ui_root }}/ldap/organizations/{{ ldap_selected_organization.id }}/bind-credential/rotate" method="post" data-confirm-modal data-confirm-title="Rotate VCF bind credential?" data-confirm-message="The new password is shown once. VCF continues using the old password until LDAP is applied and the VCF organization settings are updated." data-confirm-label="Rotate credential">
                 <input type="hidden" name="csrf" value="{{ csrf_token }}"><button class="button tiny secondary" type="submit">Rotate bind credential</button>
               </form>
-              <form action="/ldap/organizations/{{ ldap_selected_organization.id }}/delete" method="post" data-confirm-modal data-confirm-title="Delete {{ ldap_selected_organization.name }}?" data-confirm-message="This removes the organization, users, groups, and bind identity from desired state. The LDAP database is removed from service on the next global apply." data-confirm-label="Delete organization">
+              <form action="{{ management_ui_root }}/ldap/organizations/{{ ldap_selected_organization.id }}/delete" method="post" data-confirm-modal data-confirm-title="Delete {{ ldap_selected_organization.name }}?" data-confirm-message="This removes the organization, users, groups, and bind identity from desired state. The LDAP database is removed from service on the next global apply." data-confirm-label="Delete organization">
                 <input type="hidden" name="csrf" value="{{ csrf_token }}"><button class="button tiny danger" type="submit">Delete organization</button>
               </form>
             </div>
@@ -147,9 +147,9 @@
                       <td><span class="status-pill {{ 'good' if user.enabled else 'muted' }}">{{ "enabled" if user.enabled else "disabled" }}</span></td>
                       <td class="button-row">
                         <button class="button tiny secondary" type="button" data-ldap-password-button data-user-id="{{ user.id }}" data-user-uid="{{ user.uid }}">Reset password</button>
-                        <form action="/ldap/users/{{ user.id }}/unlock" method="post"><input type="hidden" name="csrf" value="{{ csrf_token }}"><button class="button tiny secondary" type="submit">Unlock</button></form>
-                        <form action="/ldap/users/{{ user.id }}/enabled" method="post"><input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="enabled" value="{{ 'false' if user.enabled else 'true' }}"><button class="button tiny secondary" type="submit">{{ "Disable" if user.enabled else "Enable" }}</button></form>
-                        <form action="/ldap/users/{{ user.id }}/delete" method="post" data-confirm-modal data-confirm-title="Delete {{ user.uid }}?" data-confirm-message="This permanently removes the user from desired state and from OpenLDAP on the next global apply." data-confirm-label="Delete user"><input type="hidden" name="csrf" value="{{ csrf_token }}"><button class="button tiny danger" type="submit">Delete</button></form>
+                        <form action="{{ management_ui_root }}/ldap/users/{{ user.id }}/unlock" method="post"><input type="hidden" name="csrf" value="{{ csrf_token }}"><button class="button tiny secondary" type="submit">Unlock</button></form>
+                        <form action="{{ management_ui_root }}/ldap/users/{{ user.id }}/enabled" method="post"><input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="enabled" value="{{ 'false' if user.enabled else 'true' }}"><button class="button tiny secondary" type="submit">{{ "Disable" if user.enabled else "Enable" }}</button></form>
+                        <form action="{{ management_ui_root }}/ldap/users/{{ user.id }}/delete" method="post" data-confirm-modal data-confirm-title="Delete {{ user.uid }}?" data-confirm-message="This permanently removes the user from desired state and from OpenLDAP on the next global apply." data-confirm-label="Delete user"><input type="hidden" name="csrf" value="{{ csrf_token }}"><button class="button tiny danger" type="submit">Delete</button></form>
                       </td>
                     </tr>
                   {% endfor %}
@@ -167,7 +167,7 @@
                       <td>{{ group.name }}</td>
                       <td>{{ group.members|length }}</td>
                       <td><span class="status-pill {{ 'good' if group.enabled else 'muted' }}">{{ "enabled" if group.enabled else "disabled" }}</span></td>
-                      <td class="button-row"><form action="/ldap/groups/{{ group.id }}/enabled" method="post"><input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="enabled" value="{{ 'false' if group.enabled else 'true' }}"><button class="button tiny secondary" type="submit">{{ "Disable" if group.enabled else "Enable" }}</button></form><form action="/ldap/groups/{{ group.id }}/delete" method="post" data-confirm-modal data-confirm-title="Delete {{ group.name }}?" data-confirm-message="This removes the group and its nested memberships from desired state and OpenLDAP on the next global apply." data-confirm-label="Delete group"><input type="hidden" name="csrf" value="{{ csrf_token }}"><button class="button tiny danger" type="submit">Delete</button></form></td>
+                      <td class="button-row"><form action="{{ management_ui_root }}/ldap/groups/{{ group.id }}/enabled" method="post"><input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="enabled" value="{{ 'false' if group.enabled else 'true' }}"><button class="button tiny secondary" type="submit">{{ "Disable" if group.enabled else "Enable" }}</button></form><form action="{{ management_ui_root }}/ldap/groups/{{ group.id }}/delete" method="post" data-confirm-modal data-confirm-title="Delete {{ group.name }}?" data-confirm-message="This removes the group and its nested memberships from desired state and OpenLDAP on the next global apply." data-confirm-label="Delete group"><input type="hidden" name="csrf" value="{{ csrf_token }}"><button class="button tiny danger" type="submit">Delete</button></form></td>
                     </tr>
                   {% endfor %}
                 </tbody>
@@ -217,7 +217,7 @@
 {% call resource_wizard(
   "ldap-organization-dialog",
   "ldap-organization-form",
-  "/ldap/organizations",
+  management_ui_path("/ldap/organizations"),
   ldap_organization_steps,
   "Create LDAP organization",
   "Name the VCF organization and choose its isolated LDAP naming context.",
@@ -257,7 +257,7 @@
 {% call resource_wizard(
   "ldap-user-dialog",
   "ldap-user-form",
-  "/ldap/organizations/" ~ ldap_selected_organization.id ~ "/users",
+  management_ui_path("/ldap/organizations/") ~ ldap_selected_organization.id ~ "/users",
   ldap_user_steps,
   "Define the LDAP user",
   "Create or update an account in " ~ ldap_selected_organization.name ~ ".",
@@ -305,7 +305,7 @@
 {% call resource_wizard(
   "ldap-group-dialog",
   "ldap-group-form",
-  "/ldap/organizations/" ~ ldap_selected_organization.id ~ "/groups",
+  management_ui_path("/ldap/organizations/") ~ ldap_selected_organization.id ~ "/groups",
   ldap_group_steps,
   "Define the LDAP group",
   "Create or update a group in " ~ ldap_selected_organization.name ~ ".",
@@ -369,7 +369,7 @@
 {% endif %}
 
 <dialog id="ldap-password-modal" class="confirm-modal" aria-labelledby="ldap-password-modal-title">
-  <form id="ldap-password-form" class="confirm-modal-panel form-stack" action="/ldap/users/0/password" method="post">
+  <form id="ldap-password-form" class="confirm-modal-panel form-stack" action="{{ management_ui_root }}/ldap/users/0/password" method="post">
     <input type="hidden" name="csrf" value="{{ csrf_token }}">
     <div class="confirm-modal-body">
       <p class="kicker">Directory account</p>
@@ -383,7 +383,7 @@
 
 {% if ldap_selected_organization %}
 <dialog id="ldap-group-members-modal" class="confirm-modal" aria-labelledby="ldap-group-members-modal-title">
-  <form id="ldap-group-members-form" class="confirm-modal-panel form-stack" action="/ldap/groups/0/members" method="post">
+  <form id="ldap-group-members-form" class="confirm-modal-panel form-stack" action="{{ management_ui_root }}/ldap/groups/0/members" method="post">
     <input type="hidden" name="csrf" value="{{ csrf_token }}">
     <div class="confirm-modal-body">
       <p class="kicker">Directory group</p>

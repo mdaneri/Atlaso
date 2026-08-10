@@ -63,15 +63,15 @@
                 <td><span class="status-pill {{ 'good' if certificate.enabled else 'muted' }}">{{ "enabled" if certificate.enabled else "disabled" }}</span></td>
                 <td>
                   {% if certificate.status == "issued" and certificate.certificate_pem %}
-                    <a class="button tiny secondary" href="/certificate-authority/certificates/{{ certificate.id }}/downloads/certificate.pem">Cert</a>
-                    <a class="button tiny secondary" href="/certificate-authority/certificates/{{ certificate.id }}/downloads/chain.pem">Chain</a>
+                    <a class="button tiny secondary" href="{{ management_ui_root }}/certificate-authority/certificates/{{ certificate.id }}/downloads/certificate.pem">Cert</a>
+                    <a class="button tiny secondary" href="{{ management_ui_root }}/certificate-authority/certificates/{{ certificate.id }}/downloads/chain.pem">Chain</a>
                     {% if certificate.private_key_encrypted %}
-                      <a class="button tiny ghost" href="/certificate-authority/certificates/{{ certificate.id }}/downloads/private-key.pem">Private key</a>
+                      <a class="button tiny ghost" href="{{ management_ui_root }}/certificate-authority/certificates/{{ certificate.id }}/downloads/private-key.pem">Private key</a>
                     {% endif %}
                   {% endif %}
                   {% if not certificate.managed_owner %}
                     <form
-                      action="/certificate-authority/certificates/{{ certificate.id }}/delete"
+                      action="{{ management_ui_root }}/certificate-authority/certificates/{{ certificate.id }}/delete"
                       method="post"
                       data-confirm-modal
                       data-confirm-title="Delete {{ certificate.common_name }} certificate request?"
@@ -123,7 +123,7 @@
                 <td>{{ "yes" if profile.san_required else "no" }}</td>
                 <td>
                   <form
-                    action="/certificate-authority/profiles/{{ profile.id }}/delete"
+                    action="{{ management_ui_root }}/certificate-authority/profiles/{{ profile.id }}/delete"
                     method="post"
                     data-confirm-modal
                     data-confirm-title="Delete {{ profile.name }} profile?"
@@ -163,7 +163,7 @@
         <h2>CA Settings</h2>
         <span class="status-pill {{ ca_service_status.pill }}">{{ ca_service_status.label }}</span>
       </div>
-      <form class="form-stack" action="/certificate-authority/settings" method="post" data-autosave-form data-ca-settings data-service-bind data-autosave-status-id="ca-settings-autosave-status">
+      <form class="form-stack" action="{{ management_ui_root }}/certificate-authority/settings" method="post" data-autosave-form data-ca-settings data-service-bind data-autosave-status-id="ca-settings-autosave-status">
         <input type="hidden" name="csrf" value="{{ csrf_token }}">
         <label class="switch-field"><span class="field-label"><span>Service enabled</span><button class="help-icon" type="button" data-help="Controls whether Atlaso treats the CA as enabled desired state. It does not generate keys until global appliance apply runs.">i</button></span><input class="switch-input" type="checkbox" name="enabled" {{ "checked" if ca_settings.enabled else "" }}><span class="switch-track" aria-hidden="true"></span></label>
         <label>
@@ -275,9 +275,9 @@
       </div>
       <p class="muted">Download public trust material for clients. The root private key is not exposed from the web console.</p>
       <div class="button-row">
-        <a class="button primary" href="/certificate-authority/downloads/root-ca.pem">Download root CA</a>
-        <a class="button ghost" href="/certificate-authority/downloads/ca-bundle.pem">Download CA bundle</a>
-        <a class="button secondary" href="/requests">Open request portal</a>
+        <a class="button primary" href="{{ management_ui_root }}/certificate-authority/downloads/root-ca.pem">Download root CA</a>
+        <a class="button ghost" href="{{ management_ui_root }}/certificate-authority/downloads/ca-bundle.pem">Download CA bundle</a>
+        <a class="button secondary" href="{{ ca_public_portal_url }}">Open request portal</a>
       </div>
       <p class="muted">These files come from encrypted Atlaso CA custody. The appliance filesystem is updated only after global appliance apply.</p>
       <div class="detail-list compact ca-download-details">
@@ -336,7 +336,7 @@
 {% call resource_wizard(
   "ca-csr-dialog",
   "ca-csr-form",
-  "/certificate-authority/certificates",
+  management_ui_path("/certificate-authority/certificates"),
   ca_csr_steps,
   "Stage a certificate signing request",
   "Define the request metadata and paste the client-generated CSR.",
@@ -375,7 +375,7 @@
 {% call resource_wizard(
   "ca-profile-dialog",
   "ca-profile-form",
-  "/certificate-authority/profiles",
+  management_ui_path("/certificate-authority/profiles"),
   ca_profile_steps,
   "Define the certificate profile",
   "Name the reusable certificate policy and choose its certificate type.",
@@ -418,7 +418,7 @@
 {% call resource_wizard(
   "ca-certificate-dialog",
   "ca-certificate-form",
-  "/certificate-authority/certificates",
+  management_ui_path("/certificate-authority/certificates"),
   ca_certificate_steps,
   "Define the certificate request",
   "Choose the common name and enabled certificate profile.",

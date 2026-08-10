@@ -1,3 +1,8 @@
+const terminalUiPath = (path = "") => {
+  const publicPlane = window.location.pathname.startsWith(window.AtlasoRoutes.publicRoot);
+  return publicPlane ? window.AtlasoRoutes.public(path) : window.AtlasoRoutes.management(path);
+};
+
 (() => {
   const panel = document.querySelector("[data-web-terminal]");
   if (!(panel instanceof HTMLElement) || panel.dataset.terminalAvailable !== "true") return;
@@ -146,7 +151,11 @@
     body.set("browser_session_id", browserSessionId);
     if (remoteLaunch) body.set("remote_launch", remoteLaunch);
     if (takeover) body.set("takeover", "true");
-    const response = await fetch("/terminal/tickets", { method: "POST", body, headers: { "X-Requested-With": "Atlaso" } });
+    const response = await fetch(terminalUiPath("/terminal/tickets"), {
+      method: "POST",
+      body,
+      headers: { "X-Requested-With": "Atlaso" },
+    });
     let payload = null;
     try {
       payload = await response.json();

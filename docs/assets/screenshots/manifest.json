@@ -1,5 +1,10 @@
 {
   "schema_version": 1,
+  "canonical_browser_roots": {
+    "management": "/ui/management",
+    "public": "/ui/public",
+    "note": "Per-image route values preserve the URL used for the historical capture; documentation generators publish the canonical issue 287 route."
+  },
   "screenshots": [
     {
       "path": "assets/screenshots/about-modal-desktop.webp",

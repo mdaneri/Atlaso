@@ -12,6 +12,23 @@ MANIFEST = ROOT / "docs" / "assets" / "screenshots" / "manifest.json"
 GALLERY = ROOT / "docs" / "reference" / "interface-gallery.md"
 
 
+def canonical_route(route: str) -> str:
+    """Return the current browser route for historical screenshot metadata.
+
+    Args:
+        route: Historical screenshot route recorded in the manifest.
+    """
+    if route == "/ca":
+        return "/ui/public/ca"
+    if route == "/requests":
+        return "/ui/public/ca/requests"
+    if route == "/ca/requests":
+        return "/ui/management/ca/requests"
+    if route.startswith("/") and not route.startswith(("/api/", "/PROD/")):
+        return f"/ui/management{route}"
+    return route
+
+
 def route_title(route: str) -> str:
     """Return route title.
 
@@ -20,7 +37,18 @@ def route_title(route: str) -> str:
     """
     if route == "vmware-console":
         return "VMware console"
-    path, separator, fragment = route.partition("#")
+    if route == "/ui/management/ca/requests":
+        return "Management CA / Requests"
+    if route == "/ui/public/ca/requests":
+        return "Public CA / Requests"
+    display_route = route
+    if route.startswith("/ui/management/"):
+        display_route = route.removeprefix("/ui/management")
+    elif route == "/ui/management":
+        display_route = "/"
+    elif route.startswith("/ui/public/"):
+        display_route = route.removeprefix("/ui/public")
+    path, separator, fragment = display_route.partition("#")
     if path == "/":
         return "Home"
     title = path.strip("/").replace("-", " ").replace("/", " / ").title()
@@ -34,7 +62,7 @@ def main() -> None:
     payload = json.loads(MANIFEST.read_text(encoding="utf-8"))
     grouped: dict[str, list[dict[str, object]]] = defaultdict(list)
     for screenshot in payload["screenshots"]:
-        grouped[str(screenshot["route"])].append(screenshot)
+        grouped[canonical_route(str(screenshot["route"]))].append(screenshot)
 
     lines = [
         "---",

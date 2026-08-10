@@ -99,7 +99,7 @@ def test_vcf_schedule_profile_selector_shows_disabled_profiles_and_actionable_gu
     assert f'<option value="{enabled_id}" >Enabled schedule profile</option>' in page.text
     assert f'<option value="{disabled_id}" disabled>Disabled schedule profile · disabled</option>' in page.text
     assert "Only enabled profiles can be scheduled." in page.text
-    assert '<a href="/vcf-offline-depot">Manage profiles in VCF Offline Depot</a>' in page.text
+    assert '<a href="/ui/management/vcf-offline-depot">Manage profiles in VCF Offline Depot</a>' in page.text
 
     with SessionLocal() as db:
         db.get(VcfDepotDownloadProfile, enabled_id).enabled = False
@@ -108,7 +108,7 @@ def test_vcf_schedule_profile_selector_shows_disabled_profiles_and_actionable_gu
     page = client.get("/automation")
     assert '<option value="" disabled selected>No enabled profiles</option>' in page.text
     assert "All configured download profiles are disabled." in page.text
-    assert '<a href="/vcf-offline-depot">Enable a profile in VCF Offline Depot</a>' in page.text
+    assert '<a href="/ui/management/vcf-offline-depot">Enable a profile in VCF Offline Depot</a>' in page.text
 
 
 def test_managed_script_rejects_content_larger_than_one_mibibyte(client):

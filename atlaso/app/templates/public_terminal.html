@@ -1,5 +1,5 @@
-{% set public_logout_action = '/logout' %}
-{% set public_logout_next = '/terminal' %}
+{% set public_logout_action = public_ui_path('/logout') %}
+{% set public_logout_next = public_ui_path('/terminal') %}
 {% extends "public_portal_base.html" %}
 
 {% block title %}Atlaso - Web Terminal{% endblock %}
@@ -17,5 +17,5 @@
 
 {% block public_after_main %}
   <script src="/static/vendor/xterm/xterm.js?v=5.5.0"></script>
-  <script src="/static/terminal.js?v=atlaso-vault-uri-20260727-2"></script>
+  <script src="/static/terminal.js?v=issue-287-1"></script>
 {% endblock %}

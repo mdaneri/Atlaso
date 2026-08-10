@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 from atlaso.app.config import Settings, get_settings
 from atlaso.app.database import get_db
 from atlaso.app.models import ApiToken, Role, Setting, User, utcnow
+from atlaso.app.ui_routes import MANAGEMENT_UI_ROOT, PUBLIC_UI_ROOT
 
 
 ALL_SCOPES = {
@@ -668,6 +669,13 @@ def enforce_ui_path_permission(request: Request, identity: Identity) -> None:
         HTTPException: If the request cannot be fulfilled.
     """
     path = request.url.path
+    for ui_root in (MANAGEMENT_UI_ROOT, PUBLIC_UI_ROOT):
+        if path == ui_root:
+            path = "/"
+            break
+        if path.startswith(f"{ui_root}/"):
+            path = path.removeprefix(ui_root)
+            break
     if path in {"/", "/logout"}:
         return
     for prefix, read_scope, write_scope in UI_PATH_SCOPES:

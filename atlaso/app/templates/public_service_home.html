@@ -1,6 +1,6 @@
-{% set public_login_href = '/ca/login' if public_ca_service_available else '' %}
-{% set public_logout_action = '/requests/logout' %}
-{% set public_logout_next = '/' %}
+{% set public_login_href = public_ui_path('/ca/login') if public_ca_service_available else '' %}
+{% set public_logout_action = public_ui_path('/ca/requests/logout') %}
+{% set public_logout_next = public_ui_root %}
 {% extends "public_portal_base.html" %}
 
 {% block title %}Atlaso - Public Services{% endblock %}
