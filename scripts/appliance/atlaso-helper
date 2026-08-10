@@ -84,7 +84,7 @@ COMMANDS: dict[str, set[str]] = {
     "appliance-update": {"check", "apply", "sync-sources", "restart-service"},
     "automation": {"run"},
     "appliance-power": {"reboot", "shutdown"},
-    "console": {"disable-services", "restore-services", "status"},
+    "console": {"disable-services", "recover-management-plane", "restore-services", "status"},
     "wan": {"validate", "apply"},
 }
 
@@ -112,6 +112,7 @@ SYSTEMD_RUN_REAL_ACTIONS = {
     "relocate-bundles",
     "export",
     "restart-service",
+    "recover-management-plane",
     "sync-sources",
 }
 SYSTEMD_RUN_CHILD_ENV = "ATLASO_HELPER_SYSTEMD_RUN_CHILD"
@@ -132,6 +133,7 @@ NO_PATH_ACTIONS = {
     ("appliance-power", "shutdown"),
     ("web-terminal", "status"),
     ("console", "disable-services"),
+    ("console", "recover-management-plane"),
     ("console", "restore-services"),
     ("console", "status"),
     ("vcf-offline-depot", "generate-software-depot-id"),
@@ -173,6 +175,12 @@ ATLASO_POWERSHELL_HOME = ATLASO_STATE_DIR / "powershell"
 SUPPORTED_RELEASE_PYTHON_ABIS = {"cp314"}
 CONSOLE_STATE_DIR = ATLASO_STATE_DIR / "console"
 CONSOLE_SERVICE_STATE_PATH = CONSOLE_STATE_DIR / "services.json"
+FIRST_BOOT_HTTPS_MARKER_PATH = ATLASO_STATE_DIR / "first-boot-https.applied"
+FIRST_BOOT_HTTPS_UNIT = "atlaso-bootstrap-https.service"
+MANAGEMENT_PLANE_UNITS = ("nginx.service", "atlaso.service")
+MANAGEMENT_APPLICATION_READINESS_CHECK = (
+    ("Atlaso application loopback", "http://127.0.0.1:8000/openapi.json", False, "200"),
+)
 CONSOLE_MANAGED_SERVICE_UNITS = (
     "atlaso.service",
     "nginx.service",
@@ -11144,6 +11152,170 @@ def _restore_console_managed_services() -> int:
     return 1 if failures else 0
 
 
+def _console_recovery_command(label: str, command: list[str]) -> subprocess.CompletedProcess[str]:
+    """Run one required management-plane recovery command.
+
+    Args:
+        label: Human-readable recovery stage.
+        command: Command and arguments to execute.
+
+    Raises:
+        ValueError: If the command does not succeed.
+    """
+    result = _run(command)
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout or f"exit code {result.returncode}").strip()
+        raise ValueError(f"{label} failed: {detail}")
+    return result
+
+
+def _console_management_http_status(curl: str, url: str, *, insecure: bool = False) -> str:
+    """Return one bounded management readiness status code.
+
+    Args:
+        curl: Absolute curl executable path.
+        url: Loopback URL to probe.
+        insecure: Whether to skip certificate trust for the local HTTPS probe.
+    """
+    command = [
+        curl,
+        "--silent",
+        "--show-error",
+        "--output",
+        "/dev/null",
+        "--write-out",
+        "%{http_code}",
+        "--connect-timeout",
+        "2",
+        "--max-time",
+        "3",
+    ]
+    if insecure:
+        command.append("--insecure")
+    result = _run([*command, url])
+    return result.stdout.strip() if result.returncode == 0 else "000"
+
+
+def _console_management_readiness_checks() -> tuple[bool, tuple[tuple[str, str, bool, str], ...]]:
+    """Return readiness checks for the applied nginx management mode.
+
+    Returns:
+        Whether management HTTPS is enabled and the matching readiness checks.
+
+    Raises:
+        ValueError: If the applied nginx management configuration cannot be read.
+    """
+    try:
+        management_config = NGINX_MANAGEMENT_SITE_PATH.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise ValueError(f"reading the applied nginx management configuration failed: {exc}") from exc
+    https_enabled = bool(re.search(r"(?m)^\s*listen\s+\d+\s+ssl(?:\s+default_server)?;", management_config))
+    nginx_checks = (
+        ("nginx HTTP redirect", "http://127.0.0.1/", False, "308"),
+        ("nginx HTTPS readiness", "https://127.0.0.1/openapi.json", True, "200"),
+    ) if https_enabled else (
+        ("nginx HTTP readiness", "http://127.0.0.1/openapi.json", False, "200"),
+    )
+    return https_enabled, (*MANAGEMENT_APPLICATION_READINESS_CHECK, *nginx_checks)
+
+
+def _recover_console_management_plane(timeout_seconds: int = 60) -> int:
+    """Recover and verify the complete local management plane.
+
+    Args:
+        timeout_seconds: Maximum readiness wait after service recovery.
+    """
+    bootstrap_retried = False
+    atlaso_restarted = False
+    try:
+        if not FIRST_BOOT_HTTPS_MARKER_PATH.exists():
+            _console_recovery_command(
+                "resetting the first-boot HTTPS bootstrap failure",
+                ["systemctl", "reset-failed", FIRST_BOOT_HTTPS_UNIT],
+            )
+            _console_recovery_command(
+                "retrying first-boot HTTPS bootstrap",
+                ["systemctl", "start", FIRST_BOOT_HTTPS_UNIT],
+            )
+            bootstrap_retried = True
+            if not FIRST_BOOT_HTTPS_MARKER_PATH.exists():
+                raise ValueError("first-boot HTTPS bootstrap returned without its completion marker")
+
+        nginx = shutil.which("nginx")
+        if nginx is None:
+            raise ValueError("nginx is not installed")
+        curl = shutil.which("curl")
+        if curl is None:
+            raise ValueError("curl is not installed for management readiness checks")
+
+        _console_recovery_command("validating nginx configuration", [nginx, "-t"])
+        _console_recovery_command(
+            "enabling management services",
+            ["systemctl", "enable", *MANAGEMENT_PLANE_UNITS],
+        )
+        _console_recovery_command("starting Atlaso", ["systemctl", "start", "atlaso.service"])
+        nginx_active = _run(["systemctl", "is-active", "nginx.service"])
+        nginx_action = "reload" if nginx_active.returncode == 0 else "start"
+        _console_recovery_command(
+            f"{nginx_action}ing nginx",
+            ["systemctl", nginx_action, "nginx.service"],
+        )
+        management_https_enabled, readiness_checks = _console_management_readiness_checks()
+
+        deadline = time.monotonic() + timeout_seconds
+        consecutive_successes = 0
+        statuses: dict[str, str] = {}
+        while time.monotonic() < deadline:
+            statuses = {
+                label: _console_management_http_status(curl, url, insecure=insecure)
+                for label, url, insecure, _expected in readiness_checks
+            }
+            ready = all(
+                statuses[label] == expected
+                for label, _url, _insecure, expected in readiness_checks
+            )
+            if ready:
+                consecutive_successes += 1
+                if consecutive_successes >= 5:
+                    break
+            else:
+                consecutive_successes = 0
+                if statuses.get("Atlaso application loopback") != "200" and not atlaso_restarted:
+                    _console_recovery_command(
+                        "restarting an unready Atlaso service",
+                        ["systemctl", "restart", "atlaso.service"],
+                    )
+                    atlaso_restarted = True
+            time.sleep(1)
+        else:
+            summary = ", ".join(f"{label}={status}" for label, status in statuses.items())
+            raise ValueError(f"management readiness did not stabilize within {timeout_seconds} seconds ({summary})")
+
+        _console_recovery_command(
+            "checking management service state",
+            ["systemctl", "is-active", *MANAGEMENT_PLANE_UNITS],
+        )
+    except ValueError as exc:
+        print(f"Management plane recovery failed: {exc}", file=sys.stderr)
+        return 1
+
+    print(
+        json.dumps(
+            {
+                "management_plane": "ready",
+                "bootstrap_marker": str(FIRST_BOOT_HTTPS_MARKER_PATH),
+                "bootstrap_retried": bootstrap_retried,
+                "atlaso_restarted": atlaso_restarted,
+                "management_https_enabled": management_https_enabled,
+                "readiness": statuses,
+                "stable_samples": consecutive_successes,
+            },
+            sort_keys=True,
+        )
+    )
+    return 0
+
+
 def _handle_console(action: str, args: list[str]) -> int:
     """Handle console.
 
@@ -11169,6 +11341,8 @@ def _handle_console(action: str, args: list[str]) -> int:
         return 0
     if action == "disable-services":
         return _disable_console_managed_services()
+    if action == "recover-management-plane":
+        return _recover_console_management_plane()
     if action == "restore-services":
         return _restore_console_managed_services()
     print(f"unsupported console action: {action}", file=sys.stderr)

@@ -84,13 +84,23 @@ Static fields remain disabled unless their address family uses Static mode. A st
 configured prefix or link-local (`fe80::/10`) and cannot equal the interface address. Disabled or Automatic IPv6 clears
 stored static IPv6 address and gateway state.
 
-Network, DNS, and Firewall edits update desired state and create one synchronous global appliance-apply task with actor
-`console:root`. The management editor selects Network and Appliance Settings together, adding Firewall only when the
-address change affects its rendered validity. Other pending units remain unselected.
+Network, DNS, and Firewall edits update desired state and create two synchronous global appliance-apply tasks with actor
+`console:root`. The first selects Network and Firewall together for every management correction. This guarantees that
+the persisted nftables rules are regenerated from the corrected management CIDR instead of retaining an OVF-derived
+source restriction. Other pending units remain unselected.
+
+After the first task, the constrained console helper retries `atlaso-bootstrap-https.service` when
+`/var/lib/atlaso/first-boot-https.applied` is absent. The bootstrap marker is created only after CA apply produces the
+managed certificate/key and `nginx -t` succeeds. The helper validates nginx before reload, enables nginx and Atlaso,
+starts an inactive control plane, and requires five consecutive local readiness samples: HTTP 200 from uvicorn
+`/openapi.json` plus the applied nginx contract. HTTPS mode requires HTTP 308 and HTTPS `/openapi.json` 200; HTTP-only
+mode requires HTTP `/openapi.json` 200. Appliance Settings is then applied as the second task and the same idempotent
+readiness check runs again so its delayed Atlaso restart cannot produce a false success.
 
 The console rejects changes while another appliance-apply task is active. The selected helper path runs as a real local
-recovery action even when ordinary adapters use dry-run. Validation and apply failures remain pending for web review;
-the console never invokes unvalidated fallback commands.
+recovery action even when ordinary adapters use dry-run. Validation, bootstrap, nginx, service, and readiness failures
+identify their stage and leave pending desired state for web review; the console never invokes unvalidated fallback
+commands.
 
 ## Maintenance isolation
 

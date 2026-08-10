@@ -15,6 +15,8 @@ brings infrastructure, storage, identity, networking, and lifecycle workflows in
 - [Documentation](https://mdaneri.github.io/Atlaso/docs/) — install, configure, operate, and troubleshoot Atlaso.
 - [Getting started](docs/getting-started/index.md) — choose an appliance path and complete initial setup.
 - [Operations](docs/operate/index.md) — run the appliance and review desired-state changes.
+- [Local appliance console](docs/operate/appliance-console.md) — correct management networking from `tty1` and have
+  Atlaso reconcile Firewall, retry unfinished first-boot HTTPS, and verify the complete management front door.
 - [Use the Atlaso API](docs/operate/api.md) — create least-privilege tokens, call the versioned REST contract safely,
   and interpret responses, request IDs, locks, and apply boundaries.
 - [Appliance Update](docs/operate/appliance-update.md) — inspect configured Photon, PowerShell, and signed Atlaso
