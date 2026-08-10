@@ -3420,10 +3420,15 @@ and the backup/restore pass.</p>
 </span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>  <span class="o">-File</span> <span class="n">scripts</span><span class="p">/</span><span class="n">windows</span><span class="p">/</span><span class="n">vmware</span><span class="p">/</span><span class="n">create-atlaso-test-vm</span><span class="p">.</span><span class="n">ps1</span> <span class="p">`</span>
 </span><span id="__span-5-3"><a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a>  <span class="n">-Redeploy</span> <span class="p">`</span>
 </span><span id="__span-5-4"><a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a>  <span class="n">-ResetDataDisks</span> <span class="p">`</span>
-</span><span id="__span-5-5"><a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a>  <span class="n">-WaitForIp</span>
+</span><span id="__span-5-5"><a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a>  <span class="n">-WaitForIp</span> <span class="p">`</span>
+</span><span id="__span-5-6"><a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a>  <span class="n">-TrustRootCa</span>
 </span></code></pre></div>
 <p>That is the Workstation counterpart to <code>scripts/windows/hyperv/create-atlaso-test-vm.ps1</code>. It defaults to the management
-vmnet only; pass <code>-IncludeLabNetworkAdapters</code> after creating the SiteA, WAN/SiteB, and trunk-like vmnets.</p>
+vmnet only; pass <code>-IncludeLabNetworkAdapters</code> after creating the SiteA, WAN/SiteB, and trunk-like vmnets.
+<code>-TrustRootCa</code> waits for the first-boot CA endpoint, removes partial downloads best-effort between retries, validates the
+self-signed Atlaso root CA, and imports it into the current-user Trusted Root store. The temporary-file cleanup remains
+idempotent for missing files and safely handles dotted user-profile directories and valid DOS 8.3 short paths, so a
+cleanup race or path alias cannot stop the readiness retry loop. Use <code>-TimeoutSeconds</code> to change the IP and CA waits.</p>
 <h2 id="fidelity-boundary">Fidelity Boundary<a class="headerlink" href="#fidelity-boundary" title="Permanent link">&para;</a></h2>
 <p>For ESX Storage appliance acceptance, attach an extra blank VMDK to the normal Workstation test appliance, initialize it
 only through global <code>esx_storage</code> apply, and apply the matching DNS/DHCP and Firewall units. Record the job ID,
