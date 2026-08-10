@@ -721,6 +721,43 @@ def test_vmware_ovf_customizer_configures_and_validates_root_ssh(tmp_path, monke
     assert commands == [["/usr/sbin/sshd", "-t"]]
 
 
+def test_vmware_ovf_customizer_scrubs_consumed_guestinfo_credentials(monkeypatch):
+    """Verify successful first boot clears the secret-bearing VMware guest property.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+    """
+    customizer = load_customizer()
+    commands = []
+
+    def fake_run(command, **kwargs):
+        """Record a sanitized VMware RPC command.
+
+        Args:
+            command: Command and arguments to execute.
+            **kwargs: Additional keyword arguments accepted by subprocess.run.
+
+        Returns:
+            A successful bounded command result.
+        """
+        commands.append((command, kwargs))
+        return type("Result", (), {"returncode": 0})()
+
+    monkeypatch.setattr(customizer.shutil, "which", lambda command: f"/usr/bin/{command}")
+    monkeypatch.setattr(customizer.subprocess, "run", fake_run)
+
+    customizer.clear_ovf_environment()
+
+    assert commands == [
+        (
+            ["/usr/bin/vmware-rpctool", "info-set guestinfo.ovfEnv "],
+            {"check": False, "text": True, "capture_output": True},
+        )
+    ]
+    assert "admin-secret" not in str(commands)
+    assert "root-secret1" not in str(commands)
+
+
 def test_vmware_ovf_customizer_requires_static_network_properties_only_for_static_mode():
     """Verify that vmware ovf customizer requires static network properties only for static mode.
 
@@ -804,6 +841,14 @@ def test_vmware_ovf_customizer_rotates_clone_specific_env_secrets(tmp_path):
     customizer.set_password = lambda username, password: None
     customizer.set_hostname = lambda fqdn: None
     customizer.configure_root_ssh = lambda enabled: None
+    scrubbed = []
+
+    def clear_ovf_environment():
+        """Record that credentials are scrubbed before the success marker."""
+        assert not customizer.MARKER_PATH.exists()
+        scrubbed.append(True)
+
+    customizer.clear_ovf_environment = clear_ovf_environment
     customizer.ENV_PATH.write_text(
         "\n".join(
             [
@@ -832,6 +877,7 @@ def test_vmware_ovf_customizer_rotates_clone_specific_env_secrets(tmp_path):
     assert 'ATLASO_APPLIANCE_MANAGEMENT_IPV6_ENABLED="true"' in rendered
     assert 'ATLASO_APPLIANCE_ROOT_SSH_ENABLED="true"' in rendered
     marker = json.loads(customizer.MARKER_PATH.read_text(encoding="utf-8"))
+    assert scrubbed == [True]
     assert marker["cidr"] == "192.168.10.10/24"
     assert "admin-secret" not in str(marker)
     assert "root-secret1" not in str(marker)

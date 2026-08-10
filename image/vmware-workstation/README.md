@@ -230,7 +230,9 @@ before Atlaso starts. A blank IPv4 CIDR writes `DHCP=ipv4`; a supplied CIDR and 
 be disabled, automatic through RA/SLAAC, or static. The customizer also writes family-correct firewall access, resolver
 overrides when supplied, hostname, root password, optional root SSH state, and bootstrap admin password once, then
 records a redacted marker under `/var/lib/atlaso`. Passwords are consumed as deployment inputs and are not printed in
-the marker or customization log.
+the marker or customization log. After all first-boot configuration succeeds, the customizer clears the consumed OVF
+environment through VMware Tools before writing the applied marker, which also removes raw-clone credentials from the
+host-side `guestinfo.ovfEnv` VMX setting. A failed scrub remains unmarked and in the recoverable initialization flow.
 
 The customizer validates IPv4, IPv6, gateway, and DNS relationships before any host mutation. Interface and gateway
 addresses must be usable unicast values rather than unspecified, loopback, multicast, or reserved addresses. If
@@ -301,7 +303,8 @@ disabled, and supplies the required appliance identity and first-boot credential
 same fail-closed initialization contract as an OVA deployment instead of leaving the customizer waiting for properties
 that only an OVF deployment normally supplies. Use `-FirstBootFqdn`, `-AdminPassword`, and `-RootPassword` to override
 the normal test-VM values; the lifecycle wrapper uses its existing admin-password input. Password values are written
-only to the guestinfo-backed VMX setting and are never printed in plan, result, or connection-summary output.
+only to the guestinfo-backed VMX setting until successful first-boot consumption clears it; they are never printed in
+plan, result, or connection-summary output.
 
 The VM's first virtual terminal runs the Atlaso recovery console; tty2 and later terminals retain Photon login prompts.
 Its normal 80x30 layout includes boot and runtime state for the appliance services, including Firewall desired state. F3

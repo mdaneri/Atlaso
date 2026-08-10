@@ -526,6 +526,31 @@ def read_ovf_environment() -> str:
     return ""
 
 
+def clear_ovf_environment() -> None:
+    """Remove secret-bearing deployment properties from the VMware guest channel.
+
+    Raises:
+        OvfCustomizationError: If no available VMware Tools command accepts the scrub.
+    """
+    commands = [
+        ["vmware-rpctool", "info-set guestinfo.ovfEnv "],
+        ["vmtoolsd", "--cmd", "info-set guestinfo.ovfEnv "],
+    ]
+    for command in commands:
+        executable = shutil.which(command[0])
+        if executable is None:
+            continue
+        result = subprocess.run(
+            [executable, *command[1:]],
+            check=False,
+            text=True,
+            capture_output=True,
+        )
+        if result.returncode == 0:
+            return
+    raise OvfCustomizationError("VMware Tools could not clear the consumed OVF deployment properties")
+
+
 def read_ovf_environment_source(ovf_env_file: str) -> str:
     """Read OVF XML from an explicit test file or the VMware guest channel.
 
@@ -839,6 +864,7 @@ def apply_customization(config: dict[str, object], *, dry_run: bool = False) -> 
             "ATLASO_MANAGEMENT_SOURCE_CIDR": config["management_source_cidr"],
         },
     )
+    clear_ovf_environment()
     write_json_atomic(MARKER_PATH, summary)
     return summary
 
