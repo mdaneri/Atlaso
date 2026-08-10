@@ -119,11 +119,16 @@ pwsh -ExecutionPolicy Bypass `
   -File scripts/windows/vmware/create-atlaso-test-vm.ps1 `
   -Redeploy `
   -ResetDataDisks `
-  -WaitForIp
+  -WaitForIp `
+  -TrustRootCa
 ```
 
 That is the Workstation counterpart to `scripts/windows/hyperv/create-atlaso-test-vm.ps1`. It defaults to the management
 vmnet only; pass `-IncludeLabNetworkAdapters` after creating the SiteA, WAN/SiteB, and trunk-like vmnets.
+`-TrustRootCa` waits for the first-boot CA endpoint, removes partial downloads best-effort between retries, validates the
+self-signed Atlaso root CA, and imports it into the current-user Trusted Root store. The temporary-file cleanup remains
+idempotent for missing files and safely handles dotted user-profile directories and valid DOS 8.3 short paths, so a
+cleanup race or path alias cannot stop the readiness retry loop. Use `-TimeoutSeconds` to change the IP and CA waits.
 
 ## Fidelity Boundary
 
