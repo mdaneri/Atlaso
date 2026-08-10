@@ -230,9 +230,12 @@ before Atlaso starts. A blank IPv4 CIDR writes `DHCP=ipv4`; a supplied CIDR and 
 be disabled, automatic through RA/SLAAC, or static. The customizer also writes family-correct firewall access, resolver
 overrides when supplied, hostname, root password, optional root SSH state, and bootstrap admin password once, then
 records a redacted marker under `/var/lib/atlaso`. Passwords are consumed as deployment inputs and are not printed in
-the marker or customization log. After all first-boot configuration succeeds, the customizer clears the consumed OVF
-environment through VMware Tools before writing the applied marker, which also removes raw-clone credentials from the
-host-side `guestinfo.ovfEnv` VMX setting. A failed scrub remains unmarked and in the recoverable initialization flow.
+the marker or customization log. After all first-boot configuration succeeds, the customizer writes a redacted pending
+marker, clears the consumed OVF environment through VMware Tools, and atomically promotes the pending file to the
+applied marker. This removes raw-clone credentials from the host-side `guestinfo.ovfEnv` VMX setting while keeping a
+power interruption between scrub and promotion recoverable on the next boot. A failed scrub remains unmarked and is
+retried with the initialization lock held. Mutation failures identify only a bounded, non-secret initialization layer in
+the customization log.
 
 The customizer validates IPv4, IPv6, gateway, and DNS relationships before any host mutation. Interface and gateway
 addresses must be usable unicast values rather than unspecified, loopback, multicast, or reserved addresses. If

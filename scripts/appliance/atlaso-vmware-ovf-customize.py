@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+from collections.abc import Callable
 import json
 import os
 from pathlib import Path
@@ -46,6 +47,7 @@ NGINX_MANAGEMENT_PATH = Path("/etc/atlaso/nginx/sites.d/management.conf")
 FIREWALL_CONFIG_PATH = Path("/etc/atlaso/nftables.d/atlaso.nft")
 SSHD_ROOT_LOGIN_CONFIG_PATH = Path("/etc/ssh/sshd_config.d/atlaso-root-login.conf")
 MARKER_PATH = Path("/var/lib/atlaso/vmware-ovf-customization.applied")
+PENDING_MARKER_PATH = Path("/var/lib/atlaso/vmware-ovf-customization.pending")
 INITIALIZATION_LOCK_PATH = Path("/var/lib/atlaso/vmware-ovf-initializing")
 NETWORK_REVIEW_PATH = Path("/var/lib/atlaso/vmware-ovf-network-review.json")
 NETWORK_CORRECTION_PATH = Path("/var/lib/atlaso/vmware-ovf-network-correction.json")
@@ -424,7 +426,32 @@ def clear_network_review() -> None:
 def complete_first_boot_initialization() -> None:
     """Unlock tty1 after success or recover cleanup from an applied marker."""
     clear_network_review()
+    PENDING_MARKER_PATH.unlink(missing_ok=True)
     INITIALIZATION_LOCK_PATH.unlink(missing_ok=True)
+
+
+def recover_pending_customization() -> int:
+    """Finish a crash-interrupted credential scrub and applied-marker promotion.
+
+    Returns:
+        Zero after the pending state is durably promoted and tty1 is unlocked.
+    """
+    logged_failure = False
+    while not MARKER_PATH.exists():
+        try:
+            clear_ovf_environment()
+            PENDING_MARKER_PATH.replace(MARKER_PATH)
+        except (OvfCustomizationError, OSError, subprocess.CalledProcessError):
+            if not logged_failure:
+                log(
+                    "VMware OVF first-time initialization is retrying the credential scrub and applied-marker "
+                    "finalization."
+                )
+                logged_failure = True
+            time.sleep(OVF_ENVIRONMENT_POLL_SECONDS)
+    complete_first_boot_initialization()
+    log("Recovered completed Atlaso VMware OVF customization after an interrupted credential scrub.")
+    return 0
 
 
 def wait_for_network_review(properties: dict[str, str], error: str) -> int:
@@ -473,7 +500,7 @@ def wait_for_network_review(properties: dict[str, str], error: str) -> int:
                 "Resolve the condition reported in the customization log, then submit the network review again.",
             )
             NETWORK_CORRECTION_PATH.unlink(missing_ok=True)
-            log(f"VMware OVF customization could not finish after console correction: {type(exc).__name__}")
+            log(f"VMware OVF customization could not finish after console correction: {exc}")
             continue
         except (OSError, subprocess.CalledProcessError) as exc:
             write_network_review(
@@ -824,6 +851,22 @@ def configure_root_ssh(enabled: bool) -> None:
         raise OvfCustomizationError("Photon sshd configuration validation failed") from exc
 
 
+def run_initialization_layer(label: str, operation: Callable[[], None]) -> None:
+    """Run one mutation while exposing only its bounded non-secret layer name.
+
+    Args:
+        label: Stable operator-facing name for the initialization layer.
+        operation: Mutation to execute.
+
+    Raises:
+        OvfCustomizationError: If the layer cannot finish.
+    """
+    try:
+        operation()
+    except (OvfCustomizationError, OSError, subprocess.CalledProcessError) as exc:
+        raise OvfCustomizationError(f"First-time initialization failed in the {label} layer.") from exc
+
+
 def apply_customization(config: dict[str, object], *, dry_run: bool = False) -> dict[str, object]:
     """Update customization.
 
@@ -839,33 +882,48 @@ def apply_customization(config: dict[str, object], *, dry_run: bool = False) -> 
     if dry_run:
         return summary
 
-    write_networkd_config(config)
-    write_resolv_conf(config)
-    write_nginx_management_server_name(config)
-    write_initial_firewall_config(config)
-    set_hostname(str(config["fqdn"]))
-    set_password("root", str(config["root_password"]))
-    configure_root_ssh(bool(config["root_ssh_enabled"]))
-    bootstrap_user = read_env_file(ENV_PATH).get("ATLASO_BOOTSTRAP_ADMIN_USERNAME", "admin").strip('"') or "admin"
-    set_password(bootstrap_user, str(config["admin_password"]))
-    write_env_file(
-        ENV_PATH,
-        {
-            "ATLASO_BOOTSTRAP_ADMIN_PASSWORD": config["admin_password"],
-            "ATLASO_SECRET_KEY": generate_secret_key(),
-            "ATLASO_SECRETS_KEY": generate_secret_key(),
-            "ATLASO_APPLIANCE_FQDN": config["fqdn"],
-            "ATLASO_APPLIANCE_MANAGEMENT_CIDR": config["cidr"],
-            "ATLASO_APPLIANCE_MANAGEMENT_IPV6_ENABLED": str(config["ipv6_enabled"]).lower(),
-            "ATLASO_APPLIANCE_MANAGEMENT_IPV6_CIDR": config["ipv6_cidr"],
-            "ATLASO_APPLIANCE_MANAGEMENT_IPV6_GATEWAY": config["ipv6_gateway"],
-            "ATLASO_APPLIANCE_ROOT_SSH_ENABLED": str(config["root_ssh_enabled"]).lower(),
-            "ATLASO_APPLIANCE_EXTERNAL_DNS_SERVERS": ",".join(config["dns_servers"]),
-            "ATLASO_MANAGEMENT_SOURCE_CIDR": config["management_source_cidr"],
-        },
+    run_initialization_layer("management network", lambda: write_networkd_config(config))
+    run_initialization_layer("resolver", lambda: write_resolv_conf(config))
+    run_initialization_layer("management web server", lambda: write_nginx_management_server_name(config))
+    run_initialization_layer("firewall", lambda: write_initial_firewall_config(config))
+    run_initialization_layer("hostname", lambda: set_hostname(str(config["fqdn"])))
+    run_initialization_layer("root password", lambda: set_password("root", str(config["root_password"])))
+    run_initialization_layer("root SSH", lambda: configure_root_ssh(bool(config["root_ssh_enabled"])))
+    try:
+        bootstrap_user = read_env_file(ENV_PATH).get("ATLASO_BOOTSTRAP_ADMIN_USERNAME", "admin").strip('"') or "admin"
+    except OSError as exc:
+        raise OvfCustomizationError(
+            "First-time initialization failed in the bootstrap administrator lookup layer."
+        ) from exc
+    run_initialization_layer(
+        "bootstrap administrator password",
+        lambda: set_password(bootstrap_user, str(config["admin_password"])),
     )
-    clear_ovf_environment()
-    write_json_atomic(MARKER_PATH, summary)
+    run_initialization_layer(
+        "appliance environment",
+        lambda: write_env_file(
+            ENV_PATH,
+            {
+                "ATLASO_BOOTSTRAP_ADMIN_PASSWORD": config["admin_password"],
+                "ATLASO_SECRET_KEY": generate_secret_key(),
+                "ATLASO_SECRETS_KEY": generate_secret_key(),
+                "ATLASO_APPLIANCE_FQDN": config["fqdn"],
+                "ATLASO_APPLIANCE_MANAGEMENT_CIDR": config["cidr"],
+                "ATLASO_APPLIANCE_MANAGEMENT_IPV6_ENABLED": str(config["ipv6_enabled"]).lower(),
+                "ATLASO_APPLIANCE_MANAGEMENT_IPV6_CIDR": config["ipv6_cidr"],
+                "ATLASO_APPLIANCE_MANAGEMENT_IPV6_GATEWAY": config["ipv6_gateway"],
+                "ATLASO_APPLIANCE_ROOT_SSH_ENABLED": str(config["root_ssh_enabled"]).lower(),
+                "ATLASO_APPLIANCE_EXTERNAL_DNS_SERVERS": ",".join(config["dns_servers"]),
+                "ATLASO_MANAGEMENT_SOURCE_CIDR": config["management_source_cidr"],
+            },
+        ),
+    )
+    run_initialization_layer(
+        "pending success marker",
+        lambda: write_json_atomic(PENDING_MARKER_PATH, summary),
+    )
+    run_initialization_layer("OVF credential scrub", clear_ovf_environment)
+    run_initialization_layer("applied marker", lambda: PENDING_MARKER_PATH.replace(MARKER_PATH))
     return summary
 
 
@@ -888,6 +946,8 @@ def main(argv: list[str] | None = None) -> int:
         complete_first_boot_initialization()
         log("VMware OVF customization already applied; leaving appliance state unchanged.")
         return 0
+    if PENDING_MARKER_PATH.exists() and not args.dry_run:
+        return recover_pending_customization()
 
     if args.dry_run:
         try:
@@ -920,7 +980,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         summary = apply_customization(config, dry_run=args.dry_run)
     except (OvfCustomizationError, OSError, subprocess.CalledProcessError) as exc:
-        log(f"VMware OVF customization could not finish after validation: {type(exc).__name__}")
+        log(f"VMware OVF customization could not finish after validation: {exc}")
         if args.dry_run:
             return 2
         return wait_for_network_review(

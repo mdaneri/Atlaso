@@ -758,6 +758,65 @@ def test_vmware_ovf_customizer_scrubs_consumed_guestinfo_credentials(monkeypatch
     assert "root-secret1" not in str(commands)
 
 
+def test_vmware_ovf_customizer_recovers_pending_marker_after_scrub_interruption(tmp_path, monkeypatch):
+    """Verify a crash between credential scrub and marker promotion remains recoverable.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+    """
+    customizer = load_customizer()
+    customizer.PENDING_MARKER_PATH = tmp_path / "customization.pending"
+    customizer.MARKER_PATH = tmp_path / "customization.applied"
+    summary = {"fqdn": "appliance.atlaso.internal", "admin_password_set": True}
+    customizer.write_json_atomic(customizer.PENDING_MARKER_PATH, summary)
+    attempts = []
+    completed = []
+
+    def clear_ovf_environment():
+        """Fail once, then prove the pending scrub is safely retryable."""
+        attempts.append(True)
+        if len(attempts) == 1:
+            raise customizer.OvfCustomizationError("unsafe implementation detail")
+
+    monkeypatch.setattr(customizer, "clear_ovf_environment", clear_ovf_environment)
+    monkeypatch.setattr(customizer, "complete_first_boot_initialization", lambda: completed.append(True))
+    monkeypatch.setattr(customizer.time, "sleep", lambda seconds: None)
+    messages = []
+    monkeypatch.setattr(customizer, "log", messages.append)
+
+    assert customizer.recover_pending_customization() == 0
+
+    assert attempts == [True, True]
+    assert completed == [True]
+    assert customizer.MARKER_PATH.exists()
+    assert not customizer.PENDING_MARKER_PATH.exists()
+    assert json.loads(customizer.MARKER_PATH.read_text(encoding="utf-8")) == summary
+    assert "unsafe implementation detail" not in " ".join(messages)
+    assert "credential scrub and applied-marker finalization" in " ".join(messages)
+
+
+def test_vmware_ovf_customizer_reports_safe_failing_initialization_layer(monkeypatch):
+    """Verify mutation failures identify a safe layer without exception-derived text.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+    """
+    customizer = load_customizer()
+    config = customizer.validate_properties(customizer.parse_ovf_environment(OVF_ENV))
+    monkeypatch.setattr(
+        customizer,
+        "write_networkd_config",
+        lambda candidate: (_ for _ in ()).throw(OSError("secret-bearing implementation detail")),
+    )
+
+    with pytest.raises(customizer.OvfCustomizationError) as failure:
+        customizer.apply_customization(config)
+
+    assert str(failure.value) == "First-time initialization failed in the management network layer."
+    assert "secret-bearing implementation detail" not in str(failure.value)
+
+
 def test_vmware_ovf_customizer_requires_static_network_properties_only_for_static_mode():
     """Verify that vmware ovf customizer requires static network properties only for static mode.
 
@@ -835,6 +894,7 @@ def test_vmware_ovf_customizer_rotates_clone_specific_env_secrets(tmp_path):
     customizer.NGINX_MANAGEMENT_PATH = tmp_path / "management.conf"
     customizer.FIREWALL_CONFIG_PATH = tmp_path / "atlaso.nft"
     customizer.MARKER_PATH = tmp_path / "marker.json"
+    customizer.PENDING_MARKER_PATH = tmp_path / "marker.pending.json"
     customizer.NGINX_MANAGEMENT_PATH.write_text("server_name atlaso.internal _;\n", encoding="utf-8")
     generated = iter(["rotated-secret-key", "rotated-secrets-key"])
     customizer.generate_secret_key = lambda: next(generated)
@@ -846,6 +906,7 @@ def test_vmware_ovf_customizer_rotates_clone_specific_env_secrets(tmp_path):
     def clear_ovf_environment():
         """Record that credentials are scrubbed before the success marker."""
         assert not customizer.MARKER_PATH.exists()
+        assert customizer.PENDING_MARKER_PATH.exists()
         scrubbed.append(True)
 
     customizer.clear_ovf_environment = clear_ovf_environment

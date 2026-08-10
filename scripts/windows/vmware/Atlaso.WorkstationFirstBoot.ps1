@@ -54,6 +54,9 @@ function New-AtlasoWorkstationOvfEnvironment {
     if ($Fqdn -notmatch '^(?=.{1,253}$)(?!-)[A-Za-z0-9-]{1,63}(?<!-)(\.(?!-)[A-Za-z0-9-]{1,63}(?<!-))+$') {
         throw "First-boot FQDN is invalid: $Fqdn"
     }
+    if ($Fqdn.TrimEnd('.').ToLowerInvariant().EndsWith('.local')) {
+        throw 'First-boot FQDN must not use .local.'
+    }
 
     $properties = [ordered]@{
         'atlaso.management_mode' = 'dhcp'

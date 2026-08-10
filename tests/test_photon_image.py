@@ -1237,6 +1237,8 @@ def test_vmware_raw_vmx_workflows_inject_complete_first_boot_ovf_environment_bef
         assert f"'{key}'" in helper
     assert "[System.Security.SecurityElement]::Escape($Value)" in helper
     assert "must contain at least 12 characters" in helper
+    assert ".EndsWith('.local')" in helper
+    assert "First-boot FQDN must not use .local." in helper
     assert "guestinfo.ovfEnv = " in helper
     assert "Write-Host" not in helper
 
