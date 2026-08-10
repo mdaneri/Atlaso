@@ -100,7 +100,12 @@ PROTOCOL_EXACT_PATHS = frozenset(
 
 
 def _plane_path(root: str, path: str = "") -> str:
-    """Return a normalized path beneath one browser UI root."""
+    """Return a normalized path beneath one browser UI root.
+
+    Args:
+        root: Canonical browser-plane root.
+        path: Relative or already-canonical browser path.
+    """
     candidate = str(path or "").strip()
     if not candidate or candidate == "/":
         return root
@@ -112,17 +117,29 @@ def _plane_path(root: str, path: str = "") -> str:
 
 
 def management_ui_path(path: str = "") -> str:
-    """Return a canonical management-browser path."""
+    """Return a canonical management-browser path.
+
+    Args:
+        path: Relative or already-canonical browser path.
+    """
     return _plane_path(MANAGEMENT_UI_ROOT, path)
 
 
 def public_ui_path(path: str = "") -> str:
-    """Return a canonical public-browser path."""
+    """Return a canonical public-browser path.
+
+    Args:
+        path: Relative or already-canonical browser path.
+    """
     return _plane_path(PUBLIC_UI_ROOT, path)
 
 
 def is_protocol_path(path: str) -> bool:
-    """Return whether a path belongs to a stable non-UI contract."""
+    """Return whether a path belongs to a stable non-UI contract.
+
+    Args:
+        path: Absolute request path to classify.
+    """
     return (
         path in PROTOCOL_EXACT_PATHS
         or any(path.startswith(prefix) for prefix in PROTOCOL_PATH_PREFIXES)
@@ -131,7 +148,12 @@ def is_protocol_path(path: str) -> bool:
 
 
 def legacy_browser_target(path: str, *, public_terminal: bool = False) -> tuple[str, str] | None:
-    """Return ``(plane, canonical_path)`` for a retired browser path."""
+    """Return ``(plane, canonical_path)`` for a retired browser path.
+
+    Args:
+        path: Retired absolute browser path.
+        public_terminal: Whether terminal and authentication paths belong to the public plane.
+    """
     if not path.startswith("/") or path.startswith("//") or is_protocol_path(path):
         return None
     if public_terminal and path in {"/login", "/logout"}:
@@ -159,7 +181,12 @@ def legacy_browser_target(path: str, *, public_terminal: bool = False) -> tuple[
 
 
 def canonical_browser_location(location: str, *, plane: str) -> str:
-    """Canonicalize a same-host redirect emitted by an existing UI handler."""
+    """Canonicalize a same-host redirect emitted by an existing UI handler.
+
+    Args:
+        location: Redirect target emitted by the route handler.
+        plane: Browser plane that owns the current request.
+    """
     parsed = urlsplit(str(location or ""))
     if parsed.scheme or parsed.netloc or not parsed.path.startswith("/") or parsed.path.startswith("//"):
         return location
@@ -179,7 +206,11 @@ def canonical_browser_location(location: str, *, plane: str) -> str:
 
 
 def safe_management_return_path(value: str | None) -> str:
-    """Normalize a login return target to the management namespace."""
+    """Normalize a login return target to the management namespace.
+
+    Args:
+        value: Candidate same-host return target.
+    """
     target = str(value or "").strip()
     if not target.startswith("/") or target.startswith("//") or "\\" in target:
         return MANAGEMENT_UI_ROOT
@@ -197,7 +228,12 @@ def safe_management_return_path(value: str | None) -> str:
 
 
 def safe_public_return_path(value: str | None, *, default: str = "/") -> str:
-    """Normalize a return target to the public namespace."""
+    """Normalize a return target to the public namespace.
+
+    Args:
+        value: Candidate same-host return target.
+        default: Public-plane fallback when the candidate is unsafe.
+    """
     target = str(value or "").strip()
     if not target.startswith("/") or target.startswith("//") or "\\" in target:
         return public_ui_path(default)

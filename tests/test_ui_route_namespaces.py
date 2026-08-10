@@ -37,6 +37,11 @@ PROTOCOL_ROUTE_INVENTORY = {
 
 
 def _route_paths(router) -> set[str]:
+    """Return the paths owned by a router.
+
+    Args:
+        router: FastAPI router whose routes are inventoried.
+    """
     return {route.path for route in router.routes}
 
 
@@ -71,7 +76,11 @@ def test_return_targets_are_same_plane_and_same_host():
 
 
 def test_legacy_safe_redirect_and_unsafe_bridge(client):
-    """Redirect safe bookmarks while never replay-redirecting a mutation."""
+    """Redirect safe bookmarks while never replay-redirecting a mutation.
+
+    Args:
+        client: Test application client.
+    """
     safe = client.get("/dashboard?sample=1", follow_redirects=False)
     assert safe.status_code == 307
     assert safe.headers["location"] == "/ui/management/dashboard?sample=1"
@@ -82,7 +91,11 @@ def test_legacy_safe_redirect_and_unsafe_bridge(client):
 
 
 def test_public_listener_cannot_cross_into_management_plane(client):
-    """Keep management existence and login behavior unavailable publicly."""
+    """Keep management existence and login behavior unavailable publicly.
+
+    Args:
+        client: Test application client.
+    """
     with SessionLocal() as db:
         appliance = db.execute(select(ApplianceSettings)).scalar_one()
         appliance.management_https_enabled = True
@@ -114,7 +127,11 @@ def test_public_listener_cannot_cross_into_management_plane(client):
 
 
 def test_front_door_uses_observed_management_dhcp_address(client):
-    """Recognize the live DHCP lease even though desired-state CIDR is empty."""
+    """Recognize the live DHCP lease even though desired-state CIDR is empty.
+
+    Args:
+        client: Test application client.
+    """
     with SessionLocal() as db:
         management = db.execute(select(PhysicalInterface).where(PhysicalInterface.name == "eth0")).scalar_one()
         management.role = "management"
