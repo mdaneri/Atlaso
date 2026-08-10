@@ -37,6 +37,7 @@ from atlaso.app.ui import (
     cleanup_transient_secret_staging_files,
     ensure_ca_state,
     initialize_factory_appliance_apply_baseline,
+    invalidate_appliance_apply_status_projection,
     recover_interrupted_appliance_apply_jobs,
     recover_interrupted_vcf_depot_software_id_jobs,
     recover_interrupted_vcf_helper_jobs,
@@ -183,7 +184,10 @@ def create_app() -> FastAPI:
                         },
                         status_code=423,
                     )
-            return await call_next(request)
+            response = await call_next(request)
+            if response.status_code < 400:
+                invalidate_appliance_apply_status_projection()
+            return response
 
     @app.middleware("http")
     async def request_id_middleware(request: Request, call_next):
