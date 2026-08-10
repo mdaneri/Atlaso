@@ -86,8 +86,8 @@ The recovery action updates Atlaso desired state and submits two synchronous, sc
 first always applies Network and Firewall so stale management-source restrictions cannot survive an address correction.
 Atlaso then retries first-boot HTTPS only when its completion marker is absent, validates nginx before any reload, and
 ensures nginx and Atlaso are enabled and running. After the second task applies Appliance Settings, the console requires
-five stable local checks: application `/openapi.json` on port 8000, the nginx HTTP redirect, and nginx HTTPS
-`/openapi.json`.
+five stable local checks: application `/openapi.json` on port 8000 plus the applied nginx management mode. HTTPS mode
+requires the HTTP redirect and HTTPS `/openapi.json`; HTTP-only mode requires HTTP `/openapi.json`.
 
 It never falls back to unvalidated host commands. A validation, bootstrap, firewall, nginx, service, or readiness
 failure names the failing layer on the console and leaves unapplied desired state pending for review in the web UI.

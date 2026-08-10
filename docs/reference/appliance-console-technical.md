@@ -93,9 +93,9 @@ After the first task, the constrained console helper retries `atlaso-bootstrap-h
 `/var/lib/atlaso/first-boot-https.applied` is absent. The bootstrap marker is created only after CA apply produces the
 managed certificate/key and `nginx -t` succeeds. The helper validates nginx before reload, enables nginx and Atlaso,
 starts an inactive control plane, and requires five consecutive local readiness samples: HTTP 200 from uvicorn
-`/openapi.json`, HTTP 308 from nginx, and HTTP 200 from nginx HTTPS `/openapi.json`. Appliance Settings is then applied
-as the second task and the same idempotent readiness check runs again so its delayed Atlaso restart cannot produce a
-false success.
+`/openapi.json` plus the applied nginx contract. HTTPS mode requires HTTP 308 and HTTPS `/openapi.json` 200; HTTP-only
+mode requires HTTP `/openapi.json` 200. Appliance Settings is then applied as the second task and the same idempotent
+readiness check runs again so its delayed Atlaso restart cannot produce a false success.
 
 The console rejects changes while another appliance-apply task is active. The selected helper path runs as a real local
 recovery action even when ordinary adapters use dry-run. Validation, bootstrap, nginx, service, and readiness failures

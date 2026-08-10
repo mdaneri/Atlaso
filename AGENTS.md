@@ -108,8 +108,9 @@ The following cross-cutting boundaries always apply:
 - Validate live appliance readiness through `/openapi.json`, not VMware Tools IP discovery or service color alone.
 - A successful tty1 management-network correction must explicitly apply Network and Firewall from the corrected state,
   retry unfinished first-boot HTTPS before applying Appliance Settings, validate nginx before reload, ensure nginx and
-  Atlaso are enabled/running, and require stable loopback HTTP redirect plus HTTP/HTTPS `/openapi.json` readiness before
-  the console reports success. Keep this recovery idempotent and preserve an actionable failing-layer message.
+  Atlaso are enabled/running, and require stable loopback readiness matching the applied HTTP-only or HTTPS management
+  mode before the console reports success. Keep this recovery idempotent and preserve an actionable failing-layer
+  message.
 - Keep configured Appliance Update source tabs read-only. Create and edit Photon, PowerShell, and signed Atlaso sources
   through the shared reviewed source wizard, with **Edit repository** beside the destructive action. Wizard submission
   saves desired runtime-maintenance state only; package-client changes still require the explicit audited

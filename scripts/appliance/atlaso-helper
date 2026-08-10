@@ -177,10 +177,8 @@ CONSOLE_SERVICE_STATE_PATH = CONSOLE_STATE_DIR / "services.json"
 FIRST_BOOT_HTTPS_MARKER_PATH = ATLASO_STATE_DIR / "first-boot-https.applied"
 FIRST_BOOT_HTTPS_UNIT = "atlaso-bootstrap-https.service"
 MANAGEMENT_PLANE_UNITS = ("nginx.service", "atlaso.service")
-MANAGEMENT_READINESS_CHECKS = (
+MANAGEMENT_APPLICATION_READINESS_CHECK = (
     ("Atlaso application loopback", "http://127.0.0.1:8000/openapi.json", False, "200"),
-    ("nginx HTTP redirect", "http://127.0.0.1/", False, "308"),
-    ("nginx HTTPS readiness", "https://127.0.0.1/openapi.json", True, "200"),
 )
 CONSOLE_MANAGED_SERVICE_UNITS = (
     "atlaso.service",
@@ -11118,6 +11116,29 @@ def _console_management_http_status(curl: str, url: str, *, insecure: bool = Fal
     return result.stdout.strip() if result.returncode == 0 else "000"
 
 
+def _console_management_readiness_checks() -> tuple[bool, tuple[tuple[str, str, bool, str], ...]]:
+    """Return readiness checks for the applied nginx management mode.
+
+    Returns:
+        Whether management HTTPS is enabled and the matching readiness checks.
+
+    Raises:
+        ValueError: If the applied nginx management configuration cannot be read.
+    """
+    try:
+        management_config = NGINX_MANAGEMENT_SITE_PATH.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise ValueError(f"reading the applied nginx management configuration failed: {exc}") from exc
+    https_enabled = bool(re.search(r"(?m)^\s*listen\s+\d+\s+ssl(?:\s+default_server)?;", management_config))
+    nginx_checks = (
+        ("nginx HTTP redirect", "http://127.0.0.1/", False, "308"),
+        ("nginx HTTPS readiness", "https://127.0.0.1/openapi.json", True, "200"),
+    ) if https_enabled else (
+        ("nginx HTTP readiness", "http://127.0.0.1/openapi.json", False, "200"),
+    )
+    return https_enabled, (*MANAGEMENT_APPLICATION_READINESS_CHECK, *nginx_checks)
+
+
 def _recover_console_management_plane(timeout_seconds: int = 60) -> int:
     """Recover and verify the complete local management plane.
 
@@ -11159,6 +11180,7 @@ def _recover_console_management_plane(timeout_seconds: int = 60) -> int:
             f"{nginx_action}ing nginx",
             ["systemctl", nginx_action, "nginx.service"],
         )
+        management_https_enabled, readiness_checks = _console_management_readiness_checks()
 
         deadline = time.monotonic() + timeout_seconds
         consecutive_successes = 0
@@ -11166,11 +11188,11 @@ def _recover_console_management_plane(timeout_seconds: int = 60) -> int:
         while time.monotonic() < deadline:
             statuses = {
                 label: _console_management_http_status(curl, url, insecure=insecure)
-                for label, url, insecure, _expected in MANAGEMENT_READINESS_CHECKS
+                for label, url, insecure, _expected in readiness_checks
             }
             ready = all(
                 statuses[label] == expected
-                for label, _url, _insecure, expected in MANAGEMENT_READINESS_CHECKS
+                for label, _url, _insecure, expected in readiness_checks
             )
             if ready:
                 consecutive_successes += 1
@@ -11204,6 +11226,7 @@ def _recover_console_management_plane(timeout_seconds: int = 60) -> int:
                 "bootstrap_marker": str(FIRST_BOOT_HTTPS_MARKER_PATH),
                 "bootstrap_retried": bootstrap_retried,
                 "atlaso_restarted": atlaso_restarted,
+                "management_https_enabled": management_https_enabled,
                 "readiness": statuses,
                 "stable_samples": consecutive_successes,
             },

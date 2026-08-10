@@ -1483,7 +1483,10 @@ def test_console_management_plane_recovery_retries_bootstrap_and_verifies_readin
     """
     helper = load_helper_module()
     marker = tmp_path / "first-boot-https.applied"
+    management_config = tmp_path / "management.conf"
+    management_config.write_text("listen 443 ssl default_server;\n", encoding="utf-8")
     monkeypatch.setattr(helper, "FIRST_BOOT_HTTPS_MARKER_PATH", marker)
+    monkeypatch.setattr(helper, "NGINX_MANAGEMENT_SITE_PATH", management_config)
     monkeypatch.setattr(
         helper.shutil,
         "which",
@@ -1512,12 +1515,58 @@ def test_console_management_plane_recovery_retries_bootstrap_and_verifies_readin
     output = capsys.readouterr().out
     assert '"management_plane": "ready"' in output
     assert '"bootstrap_retried": true' in output
+    assert '"management_https_enabled": true' in output
     assert ["systemctl", "reset-failed", helper.FIRST_BOOT_HTTPS_UNIT] in commands
     assert ["systemctl", "start", helper.FIRST_BOOT_HTTPS_UNIT] in commands
     assert ["/usr/bin/nginx", "-t"] in commands
     assert ["systemctl", "enable", "nginx.service", "atlaso.service"] in commands
     assert ["systemctl", "reload", "nginx.service"] in commands
     assert ["systemctl", "is-active", "nginx.service", "atlaso.service"] in commands
+
+
+def test_console_management_plane_recovery_verifies_http_only_mode(monkeypatch, tmp_path, capsys):
+    """Verify that recovery accepts the applied HTTP-only management contract.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+        capsys: Pytest fixture used to capture standard output and standard error.
+    """
+    helper = load_helper_module()
+    marker = tmp_path / "first-boot-https.applied"
+    marker.write_text("complete\n", encoding="utf-8")
+    management_config = tmp_path / "management.conf"
+    management_config.write_text("listen 80 default_server;\n", encoding="utf-8")
+    monkeypatch.setattr(helper, "FIRST_BOOT_HTTPS_MARKER_PATH", marker)
+    monkeypatch.setattr(helper, "NGINX_MANAGEMENT_SITE_PATH", management_config)
+    monkeypatch.setattr(
+        helper.shutil,
+        "which",
+        lambda name: f"/usr/bin/{name}" if name in {"curl", "nginx"} else None,
+    )
+    monkeypatch.setattr(helper.time, "sleep", lambda _seconds: None)
+    commands: list[list[str]] = []
+
+    def fake_run(command: list[str]) -> subprocess.CompletedProcess[str]:
+        """Return successful HTTP-only recovery results.
+
+        Args:
+            command: Command and arguments to execute.
+        """
+        commands.append(command)
+        if command and command[0] == "/usr/bin/curl":
+            return subprocess.CompletedProcess(command, 0, "200", "")
+        return subprocess.CompletedProcess(command, 0, "active\n", "")
+
+    monkeypatch.setattr(helper, "_run", fake_run)
+
+    assert helper._handle_console("recover-management-plane", []) == 0
+    output = capsys.readouterr().out
+    assert '"management_https_enabled": false' in output
+    assert '"nginx HTTP readiness": "200"' in output
+    curl_urls = [command[-1] for command in commands if command and command[0] == "/usr/bin/curl"]
+    assert "http://127.0.0.1/openapi.json" in curl_urls
+    assert all(not url.startswith("https://") for url in curl_urls)
 
 
 def test_console_management_plane_recovery_stops_after_nginx_validation_failure(monkeypatch, tmp_path, capsys):

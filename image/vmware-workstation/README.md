@@ -233,9 +233,10 @@ the marker or customization log.
 
 If an administrator later corrects management networking from the tty1 console, Atlaso explicitly regenerates Network
 and Firewall state from the corrected CIDR, retries an unfinished first-boot HTTPS bootstrap, applies Appliance
-Settings, validates nginx, restores nginx and Atlaso when needed, and proves stable loopback HTTP/HTTPS readiness before
-the console reports success. The supported external check remains
-`https://<management-address>/openapi.json`.
+Settings, validates nginx, restores nginx and Atlaso when needed, and proves stable loopback readiness for the applied
+HTTP-only or HTTPS management mode before the console reports success. Check
+`https://<management-address>/openapi.json` when HTTPS is enabled or `http://<management-address>/openapi.json` in
+HTTP-only mode.
 
 The OVF descriptor stores these as unqualified property IDs inside the `atlaso` product class. ESXi qualifies them once
 in the guest OVF environment as `atlaso.<property>`; do not repeat the class prefix in each property ID.
