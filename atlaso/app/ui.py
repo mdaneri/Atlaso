@@ -12053,18 +12053,11 @@ def log_appliance_apply_failures(job_id: str, unit_results: list[dict[str, Any]]
         job_id: Stable identifier of the associated job resource.
         unit_results: Unit results consumed by log appliance apply failures.
     """
-    for failure in appliance_apply_failure_summaries(unit_results):
-        for command_index, command in enumerate(failure["commands"], start=1):
-            APPLY_LOGGER.error(
-                "Appliance apply task %s failed unit=%s command_index=%s returncode=%s "
-                "stderr_present=%s stdout_present=%s",
-                job_id,
-                failure["label"],
-                command_index,
-                command["returncode"],
-                bool(command["stderr"]),
-                bool(command["stdout"]),
-            )
+    if appliance_apply_failure_summaries(unit_results):
+        APPLY_LOGGER.error(
+            "Appliance apply task %s failed; helper and desired-state details omitted from operational logs.",
+            job_id,
+        )
 
 
 def log_appliance_apply_submission(
@@ -12084,35 +12077,16 @@ def log_appliance_apply_submission(
         unit_results: Unit results supplied by the caller.
         succeeded: Succeeded supplied by the caller.
     """
-    APPLY_LOGGER.info(
-        "Appliance apply task %s completed status=%s selected_units=%s skipped_changed_units=%s dry_run=%s",
-        job_id,
-        "succeeded" if succeeded else "failed",
-        ",".join(selected_units),
-        ",".join(unit["unit_id"] for unit in skipped_changed_units),
-        any(result["dry_run"] for result in unit_results),
-    )
-    for result in unit_results:
-        summary_text = result["summary"] if isinstance(result["summary"], str) else "; ".join(str(item) for item in result["summary"])
+    if succeeded:
         APPLY_LOGGER.info(
-            "Appliance apply task %s unit=%s status=%s dry_run=%s validation_errors=%s validation_warnings=%s summary=%s",
+            "Appliance apply task %s succeeded; desired-state and helper details omitted from operational logs.",
             job_id,
-            result["unit_id"],
-            result["status"],
-            result["dry_run"],
-            len(result["validation_errors"]),
-            len(result["validation_warnings"]),
-            apply_output_excerpt(summary_text, limit=600),
         )
-        for command_index, command in enumerate(result["commands"], start=1):
-            APPLY_LOGGER.info(
-                "Appliance apply task %s unit=%s command_index=%s returncode=%s dry_run=%s",
-                job_id,
-                result["unit_id"],
-                command_index,
-                command["returncode"],
-                command["dry_run"],
-            )
+    else:
+        APPLY_LOGGER.info(
+            "Appliance apply task %s failed; desired-state and helper details omitted from operational logs.",
+            job_id,
+        )
 
 
 def _write_staged_config_file(path: Path, config_preview: str) -> None:

@@ -8166,9 +8166,12 @@ def test_appliance_apply_logging_redacts_commands_and_helper_output(caplog):
     assert "sensitive-command-value" not in logged
     assert "sensitive-helper-stdout" not in logged
     assert "sensitive-helper-stderr" not in logged
-    assert "command_index=1" in logged
-    assert "stderr_present=True" in logged
-    assert "stdout_present=True" in logged
+    assert "job_redacted" in logged
+    assert "helper and desired-state details omitted" in logged
+    assert "desired-state and helper details omitted" in logged
+    assert "command_index" not in logged
+    assert "returncode" not in logged
+    assert "stdout_present" not in logged
 
 
 def test_record_audit_writes_redacted_operational_log(client, tmp_path, monkeypatch):
