@@ -1,5 +1,8 @@
 # Atlaso
 
+Authenticated pages share a lightweight, visibility-aware Appliance Apply status projection. Apply review and
+validation continue to reconcile live host state, while idle sidebar polling never starts privileged helper work.
+
 ![Atlaso — Everything your virtualization lab needs](docs/assets/brand/atlaso-docs-header-dark-1600x400.png)
 
 **Everything your virtualization lab needs.**

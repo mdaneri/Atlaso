@@ -38,6 +38,13 @@ valid changed units by default, and lets an operator unselect any unit that shou
 `/appliance-apply` POST, `/appliance-apply/review`, and `/appliance-apply/status` routes remain the backend workflow
 used by the modal.
 
+The status route is deliberately a lightweight desired-state projection: it compares current snapshots with stored
+baselines without running apply-time reconciliation or privileged observation helpers. Full review, validation, and
+submission still reconcile current host observations and therefore retain fail-closed DHCP DNS fallback behavior.
+The browser permits only one status request at a time, polls active work every two seconds, exponentially backs idle
+polling from ten to sixty seconds, suspends polling while hidden, and refreshes immediately after successful desired-
+state mutations, visibility return, and Apply completion.
+
 Submitting transforms the review modal into a live master/child task grid. One `appliance-apply` master owns one child
 execution record per selected component. Every signed-in session sees the blocking grid while the master is pending or
 running. Atlaso rejects other UI and API mutations with HTTP `423 Locked`; read-only pages, authentication/session

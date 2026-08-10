@@ -10132,19 +10132,59 @@ def appliance_apply_units(db: Session, *, reconcile: bool = True) -> list[dict[s
     return units
 
 
-def appliance_apply_status(db: Session, unit_id: str) -> dict[str, Any]:
+def appliance_apply_status(db: Session, unit_id: str, *, refresh: bool = False) -> dict[str, Any]:
     """Return appliance apply status.
 
     Args:
         db: Active database session.
         unit_id: Identifier of the unit.
+        refresh: Whether to replace the cached projection immediately.
     """
-    units = appliance_apply_units(db)
-    sidebar_count = len([unit for unit in units if unit["changed"]])
-    for unit in units:
+    projection = appliance_apply_status_projection(db, refresh=refresh)
+    for unit in projection["units"]:
         if unit["id"] == unit_id:
-            return appliance_apply_status_from_unit(unit, sidebar_pending_apply_count=sidebar_count)
+            return unit
+    sidebar_count = projection["pending_count"]
     return {"state": "unknown", "pill": "muted", "changed": False, "validation_errors": [], "sidebar_pending_apply_count": sidebar_count}
+
+
+_APPLIANCE_APPLY_STATUS_CACHE_TTL_SECONDS = 60.0
+_appliance_apply_status_cache: tuple[float, dict[str, Any]] | None = None
+_appliance_apply_status_cache_lock = threading.Lock()
+
+
+def invalidate_appliance_apply_status_projection() -> None:
+    """Invalidate the cached sidebar projection after desired-state mutation."""
+    global _appliance_apply_status_cache
+
+    with _appliance_apply_status_cache_lock:
+        _appliance_apply_status_cache = None
+
+
+def appliance_apply_status_projection(db: Session, *, refresh: bool = False) -> dict[str, Any]:
+    """Return the bounded, non-reconciling sidebar status projection.
+
+    Args:
+        db: Active database session.
+        refresh: Whether to replace the cached projection immediately.
+    """
+    global _appliance_apply_status_cache
+
+    now = time.monotonic()
+    with _appliance_apply_status_cache_lock:
+        if not refresh and _appliance_apply_status_cache is not None:
+            cached_at, cached_projection = _appliance_apply_status_cache
+            if now - cached_at < _APPLIANCE_APPLY_STATUS_CACHE_TTL_SECONDS:
+                return cached_projection
+        units = appliance_apply_units(db, reconcile=False)
+        submitted_ids = active_appliance_apply_submitted_unit_ids(db)
+        pending_count = sum(unit["changed"] and unit["id"] not in submitted_ids for unit in units)
+        projection = {
+            "units": [appliance_apply_status_from_unit(unit, sidebar_pending_apply_count=pending_count) for unit in units],
+            "pending_count": pending_count,
+        }
+        _appliance_apply_status_cache = (now, projection)
+        return projection
 
 
 def appliance_apply_status_from_unit(unit: dict[str, Any], *, sidebar_pending_apply_count: int | None = None) -> dict[str, Any]:
@@ -14896,6 +14936,9 @@ def appliance_apply_review(
     Returns:
         The endpoint response.
     """
+    from atlaso.app.services.appliance_settings import invalidate_observed_management_dhcp_dns
+
+    invalidate_observed_management_dhcp_dns()
     context = appliance_apply_context(db)
     units = [
         {
@@ -14938,27 +14981,24 @@ def appliance_apply_review(
 
 @router.get("/appliance-apply/status", response_class=JSONResponse, response_model=None)
 def appliance_apply_status_api(
+    refresh: bool = Query(False),
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> JSONResponse:
     """Handle the appliance apply status api endpoint.
 
     Args:
+        refresh: Whether to replace the cached sidebar projection.
         identity: Authenticated identity authorizing the request.
         db: Active database session.
 
     Returns:
         The endpoint response.
     """
-    context = appliance_apply_context(db)
-    pending_count = context["changed_apply_unit_count"]
+    projection = appliance_apply_status_projection(db, refresh=refresh)
+    pending_count = projection["pending_count"]
     active_job = active_appliance_apply_job(db)
-    units = [
-        appliance_apply_client_status(
-            appliance_apply_status_from_unit(unit, sidebar_pending_apply_count=pending_count)
-        )
-        for unit in context["apply_units"]
-    ]
+    units = [appliance_apply_client_status(unit) for unit in projection["units"]]
     return JSONResponse(
         {
             "units": units,
@@ -15065,6 +15105,10 @@ def run_appliance_apply_job(job_id: str, *, force_real: bool = False) -> None:
                 for unit in job_result.get("captured_units", [])
                 if isinstance(unit, dict) and unit.get("unit_id")
             }
+            from atlaso.app.services.appliance_settings import invalidate_observed_management_dhcp_dns
+
+            invalidate_observed_management_dhcp_dns()
+            invalidate_appliance_apply_status_projection()
             current_units = appliance_apply_units(db)
             current_by_id = {unit["id"]: unit for unit in current_units}
             missing_ids = [unit_id for unit_id in selected_order if unit_id not in current_by_id]
@@ -15522,6 +15566,9 @@ def submit_appliance_apply(
     """
     verify_csrf(request, csrf)
     wants_json = "application/json" in request.headers.get("accept", "")
+    from atlaso.app.services.appliance_settings import invalidate_observed_management_dhcp_dns
+
+    invalidate_observed_management_dhcp_dns()
     units = appliance_apply_units(db)
     unit_map = {unit["id"]: unit for unit in units}
     selected_ids = {unit_id for unit_id in selected_units if unit_id in APPLIANCE_APPLY_UNIT_IDS}
