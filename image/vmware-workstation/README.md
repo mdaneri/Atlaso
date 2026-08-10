@@ -237,6 +237,9 @@ Atlaso `tty1` console displays **First-time initialization — Network configura
 non-secret OVF values, and accepts a corrected network configuration. Networkd, data-disk initialization, HTTPS
 bootstrap, and Atlaso remain held until the correction passes the same shared validation and applies successfully. The
 applied marker is absent until success, so another console correction remains possible without redeploying the OVA.
+A root-owned lock staged in the VMware image disables ordinary privileged tty1 actions until the deployment root
+password applies. Non-network properties validate before network recovery is offered, and a later boot clears stale
+handshake files when the applied marker proves customization finished.
 
 The OVF descriptor stores these as unqualified property IDs inside the `atlaso` product class. ESXi qualifies them once
 in the guest OVF environment as `atlaso.<property>`; do not repeat the class prefix in each property ID.

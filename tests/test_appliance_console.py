@@ -1159,6 +1159,69 @@ def test_console_first_boot_review_renders_branded_recovery_state(monkeypatch):
     assert "<F2> Review network" in text
 
 
+def test_console_first_boot_initialization_locks_privileged_actions(monkeypatch):
+    """Verify tty1 explicitly renders the locked pre-customization state.
+
+    Args:
+        monkeypatch: Pytest helper used to replace the displayed package version.
+    """
+    rendered: list[str] = []
+    console = CursesConsole.__new__(CursesConsole)
+    console.curses = SimpleNamespace(A_BOLD=1, color_pair=lambda value: value)
+    console._safe_add = lambda _row, _column, value, *_args: rendered.append(value)
+    console._fill_line = lambda *_args: None
+    console._refresh_screen = lambda: None
+    monkeypatch.setattr(appliance_console, "_package_version", lambda: "0.9.96")
+
+    console._draw_first_boot_initializing(30)
+
+    text = "\n".join(rendered)
+    assert "First-time initialization" in text
+    assert "Privileged console actions remain locked" in text
+    assert "<F1> Help" in text
+    assert "<F2>" not in text
+    assert "<F4>" not in text
+    assert "<F12>" not in text
+
+
+def test_console_first_boot_lock_ignores_privileged_action_keys(tmp_path, monkeypatch):
+    """Verify pre-customization key handling cannot enter privileged workflows.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+        monkeypatch: Pytest helper used to replace first-boot state loading.
+    """
+    lock_path = tmp_path / "initializing"
+    lock_path.touch()
+    keys = iter((4, 12, 2))
+    called: list[str] = []
+    console = CursesConsole.__new__(CursesConsole)
+    console.curses = SimpleNamespace(
+        KEY_F1=1,
+        KEY_F2=2,
+        KEY_F3=3,
+        KEY_F4=4,
+        KEY_F12=12,
+        KEY_RESIZE=99,
+        KEY_ENTER=10,
+    )
+    console.stdscr = SimpleNamespace(getch=lambda: next(keys))
+    console.draw_main = lambda: None
+    console._recovery_redraws = lambda _last_refresh: 0
+    console.show_help = lambda: called.append("help")
+    console.customize = lambda: called.append("customize")
+    console.show_authenticated_top = lambda: called.append("top")
+    console.show_shell = lambda: called.append("shell")
+    console.power_menu = lambda: called.append("power")
+    monkeypatch.setattr(appliance_console, "FIRST_BOOT_INITIALIZATION_LOCK_PATH", lock_path)
+    monkeypatch.setattr(appliance_console, "load_first_boot_network_review", lambda: None)
+
+    with pytest.raises(StopIteration):
+        console.run()
+
+    assert called == []
+
+
 def test_console_appliance_services_use_full_catalog_and_optional_units(monkeypatch):
     """Verify that console appliance services use full catalog and optional units.
 

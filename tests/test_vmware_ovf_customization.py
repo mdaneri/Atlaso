@@ -175,6 +175,21 @@ def test_vmware_ovf_customizer_routes_invalid_ipv6_mode_to_network_review():
         customizer.validate_properties(properties)
 
 
+def test_vmware_ovf_customizer_validates_uncorrectable_fields_before_network():
+    """Verify invalid non-network OVF fields never enter network-only recovery."""
+    customizer = load_customizer()
+    properties = customizer.parse_ovf_environment(OVF_ENV)
+    properties["atlaso.cidr"] = "192.168.1.254/32"
+    properties["atlaso.gateway"] = "192.168.1.1"
+    properties["atlaso.fqdn"] = "not-an-fqdn"
+
+    with pytest.raises(customizer.OvfCustomizationError) as exc_info:
+        customizer.validate_properties(properties)
+
+    assert not isinstance(exc_info.value, customizer.OvfManagementNetworkError)
+    assert "fully qualified" in str(exc_info.value)
+
+
 def test_vmware_ovf_customizer_rejects_non_network_correction_fields(tmp_path):
     """Verify the correction handshake rejects fields outside its safe allowlist.
 
@@ -204,6 +219,8 @@ def test_vmware_ovf_customizer_waits_for_nonsecret_console_correction(tmp_path, 
     customizer.NETWORK_REVIEW_PATH = tmp_path / "network-review.json"
     customizer.NETWORK_CORRECTION_PATH = tmp_path / "network-correction.json"
     customizer.MARKER_PATH = tmp_path / "customization.applied"
+    customizer.INITIALIZATION_LOCK_PATH = tmp_path / "initializing"
+    customizer.INITIALIZATION_LOCK_PATH.touch()
     properties = customizer.parse_ovf_environment(OVF_ENV)
     properties["atlaso.cidr"] = "192.168.1.254/32"
     properties["atlaso.gateway"] = "192.168.1.1"
@@ -260,8 +277,37 @@ def test_vmware_ovf_customizer_waits_for_nonsecret_console_correction(tmp_path, 
     assert customizer.MARKER_PATH.exists()
     assert not customizer.NETWORK_REVIEW_PATH.exists()
     assert not customizer.NETWORK_CORRECTION_PATH.exists()
+    assert not customizer.INITIALIZATION_LOCK_PATH.exists()
     assert "admin-secret" not in captured_review[0]
     assert "root-secret1" not in captured_review[0]
+
+
+def test_vmware_ovf_customizer_marker_recovers_interrupted_review_cleanup(tmp_path, monkeypatch):
+    """Verify an applied marker clears stale review and tty1 lock on restart.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+        monkeypatch: Pytest helper used to suppress the customization log.
+    """
+    customizer = load_customizer()
+    customizer.MARKER_PATH = tmp_path / "customization.applied"
+    customizer.INITIALIZATION_LOCK_PATH = tmp_path / "initializing"
+    customizer.NETWORK_REVIEW_PATH = tmp_path / "network-review.json"
+    customizer.NETWORK_CORRECTION_PATH = tmp_path / "network-correction.json"
+    for path in (
+        customizer.MARKER_PATH,
+        customizer.INITIALIZATION_LOCK_PATH,
+        customizer.NETWORK_REVIEW_PATH,
+        customizer.NETWORK_CORRECTION_PATH,
+    ):
+        path.write_text("{}\n", encoding="utf-8")
+    monkeypatch.setattr(customizer, "log", lambda _message: None)
+
+    assert customizer.main([]) == 0
+    assert customizer.MARKER_PATH.exists()
+    assert not customizer.INITIALIZATION_LOCK_PATH.exists()
+    assert not customizer.NETWORK_REVIEW_PATH.exists()
+    assert not customizer.NETWORK_CORRECTION_PATH.exists()
 
 
 def test_vmware_ovf_customizer_supports_disabled_auto_and_static_ipv6(tmp_path):
@@ -527,6 +573,7 @@ def test_vmware_ovf_export_and_image_plumbing_are_present():
 
     assert "-Key 'management_mode'" not in export_script
     assert "PROPERTY_MANAGEMENT_MODE" in Path("scripts/appliance/atlaso-vmware-ovf-customize.py").read_text(encoding="utf-8")
+    assert 'install -o root -g root -m 0640 /dev/null "$ATLASO_STATE/vmware-ovf-initializing"' in provision_script
     assert "-Boolean $true -DefaultValue 'false'" in export_script
 
     assert "ovftool was not found" in export_script

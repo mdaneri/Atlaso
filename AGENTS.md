@@ -81,7 +81,9 @@ The following cross-cutting boundaries always apply:
 - VMware OVF first boot and the Atlaso tty1 console share one management-network validation contract. Reject off-link,
   equal-address, incomplete, and malformed gateway relationships before host mutation. Start the console independently
   of management networking and before data-disk initialization; on validation failure, show a recoverable non-secret
-  network-review state, retain deployment secrets only in the waiting customizer, and write applied state only after
+  network-review state, retain deployment secrets only in the waiting customizer, and keep privileged tty1 actions
+  locked until the deployment root password applies. Validate non-network OVF fields before offering network-only
+  correction, make review cleanup recover from interruption after marker creation, and write applied state only after
   successful correction and customization.
 - VMware release images use separate compacted Photon OS and required Atlaso system-content payload VMDKs, followed by
   empty 500 GiB depot and backup disks. Preserve `/opt/atlaso` and appliance-wide PowerShell modules on the UUID-mounted

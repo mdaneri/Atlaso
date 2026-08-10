@@ -46,6 +46,7 @@ NGINX_MANAGEMENT_PATH = Path("/etc/atlaso/nginx/sites.d/management.conf")
 FIREWALL_CONFIG_PATH = Path("/etc/atlaso/nftables.d/atlaso.nft")
 SSHD_ROOT_LOGIN_CONFIG_PATH = Path("/etc/ssh/sshd_config.d/atlaso-root-login.conf")
 MARKER_PATH = Path("/var/lib/atlaso/vmware-ovf-customization.applied")
+INITIALIZATION_LOCK_PATH = Path("/var/lib/atlaso/vmware-ovf-initializing")
 NETWORK_REVIEW_PATH = Path("/var/lib/atlaso/vmware-ovf-network-review.json")
 NETWORK_CORRECTION_PATH = Path("/var/lib/atlaso/vmware-ovf-network-correction.json")
 LOG_PATH = Path("/var/log/atlaso/vmware-ovf-customize.log")
@@ -169,18 +170,17 @@ def parse_boolean_property(properties: dict[str, str], key: str, *, default: boo
     raise OvfCustomizationError(f"{key} must be true or false")
 
 
-def validate_properties(properties: dict[str, str]) -> dict[str, object]:
-    """Validate properties.
+def validate_non_network_properties(properties: dict[str, str]) -> dict[str, object]:
+    """Validate OVF fields that the network-only console flow cannot correct.
 
     Args:
-        properties: Candidate properties to validate.
-
+        properties: Candidate OVF properties to validate.
 
     Returns:
-        The validate properties result.
+        The validated non-network customization values.
 
     Raises:
-        OvfCustomizationError: If the operation encounters an invalid state.
+        OvfCustomizationError: If a non-network property is invalid.
     """
     missing = sorted(key for key in REQUIRED_PROPERTIES if not properties.get(key, "").strip())
     if missing:
@@ -190,6 +190,33 @@ def validate_properties(properties: dict[str, str]) -> dict[str, object]:
             raise OvfCustomizationError(
                 f"{password_key} must be at least {MINIMUM_PASSWORD_LENGTH} characters"
             )
+    return {
+        "fqdn": validate_fqdn(properties[PROPERTY_FQDN]),
+        "admin_password": properties[PROPERTY_ADMIN_PASSWORD],
+        "root_password": properties[PROPERTY_ROOT_PASSWORD],
+        "root_ssh_enabled": parse_boolean_property(properties, PROPERTY_ROOT_SSH_ENABLED),
+    }
+
+
+def validate_properties(
+    properties: dict[str, str],
+    *,
+    non_network: dict[str, object] | None = None,
+) -> dict[str, object]:
+    """Validate properties.
+
+    Args:
+        properties: Candidate properties to validate.
+        non_network: Previously validated non-network values, when available.
+
+
+    Returns:
+        The validate properties result.
+
+    Raises:
+        OvfCustomizationError: If the operation encounters an invalid state.
+    """
+    validated_non_network = non_network or validate_non_network_properties(properties)
 
     _legacy_management_mode = properties.get(PROPERTY_MANAGEMENT_MODE, "").strip().lower()
     # Kept parse-compatible for existing deployment automation; address presence now owns IPv4 behavior.
@@ -223,7 +250,6 @@ def validate_properties(properties: dict[str, str]) -> dict[str, object]:
     except ManagementNetworkValidationError as exc:
         raise OvfManagementNetworkError(str(exc)) from exc
 
-    fqdn = validate_fqdn(properties[PROPERTY_FQDN])
     management_source_cidr = (
         str(ip_interface(network.ipv4_cidr).network) if network.ipv4_cidr else ""
     )
@@ -238,11 +264,11 @@ def validate_properties(properties: dict[str, str]) -> dict[str, object]:
         "ipv6_mode": "auto" if network.ipv6_mode == "automatic" else network.ipv6_mode,
         "ipv6_cidr": network.ipv6_cidr,
         "ipv6_gateway": network.ipv6_gateway,
-        "fqdn": fqdn,
+        "fqdn": validated_non_network["fqdn"],
         "dns_servers": list(network.dns_servers),
-        "admin_password": properties[PROPERTY_ADMIN_PASSWORD],
-        "root_password": properties[PROPERTY_ROOT_PASSWORD],
-        "root_ssh_enabled": parse_boolean_property(properties, PROPERTY_ROOT_SSH_ENABLED),
+        "admin_password": validated_non_network["admin_password"],
+        "root_password": validated_non_network["root_password"],
+        "root_ssh_enabled": validated_non_network["root_ssh_enabled"],
         "management_source_cidr": management_source_cidr,
         "management_source_ipv6_cidr": management_source_ipv6_cidr,
     }
@@ -389,9 +415,15 @@ def properties_with_network_correction(
 
 
 def clear_network_review() -> None:
-    """Remove first-boot review state only after successful customization."""
+    """Remove the non-secret first-boot review handshake."""
     NETWORK_CORRECTION_PATH.unlink(missing_ok=True)
     NETWORK_REVIEW_PATH.unlink(missing_ok=True)
+
+
+def complete_first_boot_initialization() -> None:
+    """Unlock tty1 after success or recover cleanup from an applied marker."""
+    clear_network_review()
+    INITIALIZATION_LOCK_PATH.unlink(missing_ok=True)
 
 
 def wait_for_network_review(properties: dict[str, str], error: str) -> int:
@@ -425,7 +457,14 @@ def wait_for_network_review(properties: dict[str, str], error: str) -> int:
             write_network_review(corrected_properties, str(exc))
             NETWORK_CORRECTION_PATH.unlink(missing_ok=True)
             continue
-        except (OvfCustomizationError, OSError, subprocess.CalledProcessError) as exc:
+        except OvfCustomizationError as exc:
+            NETWORK_CORRECTION_PATH.unlink(missing_ok=True)
+            log(
+                "VMware OVF customization stopped after an uncorrectable console validation: "
+                f"{type(exc).__name__}"
+            )
+            return 2
+        except (OSError, subprocess.CalledProcessError) as exc:
             write_network_review(
                 corrected_properties,
                 "The corrected management network could not be applied. Review the values and retry.",
@@ -433,7 +472,7 @@ def wait_for_network_review(properties: dict[str, str], error: str) -> int:
             NETWORK_CORRECTION_PATH.unlink(missing_ok=True)
             log(f"VMware OVF customization could not apply the console correction: {type(exc).__name__}")
             continue
-        clear_network_review()
+        complete_first_boot_initialization()
         log("Applied corrected Atlaso VMware OVF customization: " + json.dumps(summary, sort_keys=True))
         return 0
 
@@ -757,17 +796,21 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     if MARKER_PATH.exists() and not args.dry_run:
+        complete_first_boot_initialization()
         log("VMware OVF customization already applied; leaving appliance state unchanged.")
         return 0
 
     xml_text = Path(args.ovf_env_file).read_text(encoding="utf-8") if args.ovf_env_file else read_ovf_environment()
     properties = parse_ovf_environment(xml_text)
     if not properties:
+        if not args.dry_run:
+            complete_first_boot_initialization()
         log("No Atlaso VMware OVF properties found; using image defaults.")
         return 0
 
     try:
-        config = validate_properties(properties)
+        non_network = validate_non_network_properties(properties)
+        config = validate_properties(properties, non_network=non_network)
         summary = apply_customization(config, dry_run=args.dry_run)
     except OvfManagementNetworkError as exc:
         if args.dry_run:
@@ -782,7 +825,7 @@ def main(argv: list[str] | None = None) -> int:
         return exc.returncode or 1
 
     if not args.dry_run:
-        clear_network_review()
+        complete_first_boot_initialization()
     log("Applied Atlaso VMware OVF customization: " + json.dumps(summary, sort_keys=True))
     return 0
 

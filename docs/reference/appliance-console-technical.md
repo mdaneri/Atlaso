@@ -74,14 +74,17 @@ logged.
 
 The bounded VMware first-boot network-review form is the exception: it is available before the OVF root password is
 applied and accepts only non-secret management-network values. It cannot open the process monitor, root shell, power
-menu, or ordinary desired-state editor.
+menu, or ordinary desired-state editor. A root-owned initialization lock is present in the reusable VMware image, so
+those privileged actions are unavailable from the moment tty1 starts until customization applies the deployment root
+password and completes.
 
 ## VMware first-boot network review
 
 `atlaso-vmware-ovf-customize.service` and the console use `atlaso.app.management_network` for the same IPv4, IPv6, and
 DNS validation rules. Static gateways must be on-link for their configured prefix and cannot equal the interface
 address; an IPv6 gateway may instead be link-local. The customizer validates all OVF management fields before the
-first host mutation.
+first host mutation. It first validates the FQDN, required properties, credentials, and root-SSH boolean because the
+network-only console handshake cannot correct those fields.
 
 When validation fails, the customizer atomically writes a bounded, non-secret review document under
 `/var/lib/atlaso` and waits without starting networkd, data-disk initialization, bootstrap HTTPS, or Atlaso. The console
@@ -92,7 +95,9 @@ the console.
 The customizer consumes a correction, revalidates the complete merged OVF configuration, applies it, and writes the
 redacted applied marker only after every mutation succeeds. A validation or apply failure leaves the marker absent,
 updates the review state without exception-derived command output, and permits another correction. Success removes
-both handshake documents and releases the remaining first-boot units.
+both handshake documents plus the initialization lock and releases the remaining first-boot units. If interruption
+occurs after marker creation but before cleanup, the next customizer start trusts the applied marker and removes the
+stale handshake and lock before exiting.
 
 ## Management editor contract
 

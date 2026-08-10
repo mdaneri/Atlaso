@@ -48,6 +48,8 @@ normal actionable error.
 An OVF/OVA deployment with inconsistent management networking pauses before the network or data disks are initialized.
 The console displays **First-time initialization — Network configuration requires review** and the non-secret OVF
 address, gateway, DNS, and appliance-name values. This screen does not depend on management-network readiness.
+From the first tty1 screen until the deployment root password applies, only Help and the bounded network-review action
+are available; Customize, process monitor, root shell, and power actions remain locked.
 
 1. Press `F2` or `Enter`.
 2. Correct the prepopulated IPv4 and IPv6 modes, addresses, gateways, and DNS servers.
@@ -59,6 +61,11 @@ Static IPv4 and IPv6 gateways must be reachable through their configured prefix 
 an IPv6 link-local gateway is also valid. The OVF customizer validates the complete correction before making any host
 change. The first-boot flow does not request, display, or persist deployment passwords: it retains the original OVF
 credentials in the waiting customizer and accepts only non-secret network corrections from the console.
+
+Atlaso validates the FQDN, required properties, credentials, and root-SSH boolean before offering network-only
+correction. If initialization stays on the starting screen and no network review appears, correct those non-network OVF
+properties in the hypervisor and restart the deployment, or redeploy with corrected values. A reboot after successful
+customization removes any stale review document by trusting the redacted applied marker.
 
 Service state uses compact labels:
 

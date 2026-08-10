@@ -1147,7 +1147,9 @@ clean tagged checkout, then preflights and uploads the OVF assets with GitHub CL
 that archive independently remains below the configured asset limit. On deployed-VM first boot, OVF IPv4, IPv6,
 gateway, and DNS relationships validate before mutation. Invalid management values hold networkd and data-disk startup
 while the network-independent Atlaso tty1 console accepts a non-secret correction; the applied marker is written only
-after the corrected customization succeeds.
+after the corrected customization succeeds. A baked root-owned initialization lock keeps privileged tty1 actions
+unavailable until deployment credentials apply, and marker-first startup recovery removes stale review state after an
+interruption.
 
 Lifecycle testing uses VMX/VMDK artifacts and `vmrun.exe`:
 

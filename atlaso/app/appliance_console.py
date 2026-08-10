@@ -59,6 +59,7 @@ from atlaso.app.services.dnsmasq import join_servers, split_servers
 HELPER_PATH = Path("/opt/atlaso/bin/atlaso-helper")
 PHOTON_RELEASE_PATH = Path("/etc/photon-release")
 MAINTENANCE_STATE_PATH = Path("/var/lib/atlaso/console/services.json")
+FIRST_BOOT_INITIALIZATION_LOCK_PATH = Path("/var/lib/atlaso/vmware-ovf-initializing")
 FIRST_BOOT_NETWORK_REVIEW_PATH = Path("/var/lib/atlaso/vmware-ovf-network-review.json")
 FIRST_BOOT_NETWORK_CORRECTION_PATH = Path("/var/lib/atlaso/vmware-ovf-network-correction.json")
 CONSOLE_ACTOR = "console:root"
@@ -1527,6 +1528,27 @@ class CursesConsole:
         self._safe_add(height - 1, 12, "<F2> Review network", curses.color_pair(3) | curses.A_BOLD)
         self._refresh_screen()
 
+    def _draw_first_boot_initializing(self, height: int) -> None:
+        """Render the locked VMware initialization state before review is ready.
+
+        Args:
+            height: Current terminal height.
+        """
+        curses = self.curses
+        self._safe_add(1, 4, f"Atlaso Appliance {_package_version()}", curses.color_pair(1) | curses.A_BOLD)
+        self._safe_add(3, 4, "First-time initialization", curses.color_pair(1) | curses.A_BOLD)
+        self._safe_add(7, 4, "VMware OVF customization is starting.", curses.color_pair(3) | curses.A_BOLD)
+        self._safe_add(
+            9,
+            4,
+            "Privileged console actions remain locked until deployment credentials apply.",
+            curses.color_pair(2),
+        )
+        self._safe_add(11, 4, "This screen will refresh automatically.", curses.color_pair(2))
+        self._fill_line(height - 1, curses.color_pair(3))
+        self._safe_add(height - 1, 1, "<F1> Help", curses.color_pair(3) | curses.A_BOLD)
+        self._refresh_screen()
+
     def draw_main(self) -> None:
         """Handle draw main."""
         curses = self.curses
@@ -1563,6 +1585,9 @@ class CursesConsole:
             )
         if first_boot_review is not None:
             self._draw_first_boot_network_review(first_boot_review, height, width)
+            return
+        if FIRST_BOOT_INITIALIZATION_LOCK_PATH.exists():
+            self._draw_first_boot_initializing(height)
             return
         try:
             status = load_console_status()
@@ -2443,12 +2468,13 @@ class CursesConsole:
                 first_boot_review = load_first_boot_network_review()
             except ConsoleOperationError:
                 first_boot_review = None
-            if first_boot_review is not None:
+            initialization_locked = FIRST_BOOT_INITIALIZATION_LOCK_PATH.exists()
+            if first_boot_review is not None or initialization_locked:
                 if key == curses.KEY_F1:
                     self.show_help()
                     self.draw_main()
                     last_refresh = time.monotonic()
-                elif key in {curses.KEY_F2, 10, 13, curses.KEY_ENTER}:
+                elif first_boot_review is not None and key in {curses.KEY_F2, 10, 13, curses.KEY_ENTER}:
                     self.review_first_boot_network(first_boot_review)
                     self.draw_main()
                     last_refresh = time.monotonic()
