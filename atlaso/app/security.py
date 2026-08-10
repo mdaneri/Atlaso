@@ -160,6 +160,7 @@ UI_PATH_SCOPES = [
     ("/settings", "admin:all", "admin:all"),
     ("/users", "admin:all", "admin:all"),
     ("/certificate-authority", "admin:all", "admin:all"),
+    ("/vsphere-key-providers", "read:kms", "write:kms"),
     ("/ca/requests", "write:ca-requests", "write:ca-requests"),
     ("/ca/certificates", "read:ca", "write:ca-revocations"),
     ("/authentication", "read:dashboard", "read:dashboard"),

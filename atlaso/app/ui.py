@@ -457,7 +457,9 @@ from atlaso.app.services.kms import (
     join_csv,
 )
 from atlaso.app.services.vsphere_key_providers import (
+    authenticated_provider_counts,
     certificate_to_dict,
+    mark_provider_desired_changed,
     normalize_service_hostname as normalize_vsphere_service_hostname,
     normalize_vcenter_hostname as normalize_vsphere_vcenter_hostname,
     parse_public_certificate,
@@ -12463,9 +12465,9 @@ def execute_appliance_apply_unit(unit: dict[str, Any], *, adapter: SystemAdapter
     if unit_id == "esxi_pxe" and succeeded and not any(result.dry_run for result in results):
         mark_kickstarts_applied(list(context["esxi_kickstarts"]))
     if unit_id == "kms" and succeeded and not any(result.dry_run for result in results):
+        applied_at = utcnow()
         for provider in context["vsphere_key_providers"]:
-            if provider.enabled:
-                provider.applied_at = utcnow()
+            provider.applied_at = applied_at
     if (
         unit_id == "ldap"
         and context["ldap_settings"].enabled
@@ -22277,9 +22279,8 @@ def delete_vsphere_provider_from_ui(
     if provider.enabled or provider.trusted_vcenters:
         return _vsphere_grid_error(request, identity, db, "Disable the provider and detach every trusted vCenter before deletion.")
     snapshot = runtime_status_snapshot()
-    providers = snapshot.get("providers")
-    counts = providers.get(provider.id) if isinstance(providers, dict) else None
-    if snapshot.get("status") != "available" or not isinstance(counts, dict) or counts.get("total") != 0:
+    counts = authenticated_provider_counts(snapshot, provider.id)
+    if counts is None or counts.get("total") != 0:
         return _vsphere_grid_error(request, identity, db, "Authenticated zero-key runtime evidence is required before deletion.")
     name = provider.name
     db.delete(provider)
@@ -22370,6 +22371,7 @@ def create_vsphere_vcenter_from_ui(
         certificate = _attach_vsphere_public_certificate(db, vcenter, certificate_pem)
         if vcenter.enabled and certificate is None:
             raise ValueError("An enabled trusted vCenter requires a current public client certificate.")
+        mark_provider_desired_changed(provider)
         db.commit()
     except ValueError:
         db.rollback()
@@ -22426,6 +22428,7 @@ def edit_vsphere_vcenter_from_ui(
         certificate = _attach_vsphere_public_certificate(db, vcenter, certificate_pem)
         if vcenter.enabled and not vcenter.certificates and certificate is None:
             raise ValueError("An enabled trusted vCenter requires a current public client certificate.")
+        mark_provider_desired_changed(vcenter.provider)
         db.commit()
     except ValueError:
         db.rollback()
@@ -22463,6 +22466,7 @@ def delete_vsphere_vcenter_from_ui(
     if vcenter.enabled or vcenter.certificates:
         return _vsphere_grid_error(request, identity, db, "Disable the trusted vCenter and retire every certificate before deletion.")
     name = vcenter.name
+    mark_provider_desired_changed(vcenter.provider)
     db.delete(vcenter)
     db.commit()
     record_audit(db, actor=identity.username, action="delete_vsphere_trusted_vcenter", resource_type="vsphere_trusted_vcenter", resource_id=vcenter_id, detail=f"provider_id={provider_id}; name={name}")
@@ -22496,6 +22500,9 @@ def add_vsphere_certificate_from_ui(
     vcenter = _vsphere_vcenter_row(db, provider_id, vcenter_id)
     try:
         certificate = _attach_vsphere_public_certificate(db, vcenter, certificate_pem)
+        if certificate is None:
+            raise ValueError("A public certificate is required.")
+        mark_provider_desired_changed(vcenter.provider)
         db.commit()
     except ValueError:
         db.rollback()
@@ -22503,8 +22510,6 @@ def add_vsphere_certificate_from_ui(
     except IntegrityError:
         db.rollback()
         return _vsphere_grid_error(request, identity, db, "Certificate fingerprint is already assigned.")
-    if certificate is None:
-        return _vsphere_grid_error(request, identity, db, "A public certificate is required.", 400)
     record_audit(db, actor=identity.username, action="add_vsphere_trusted_certificate", resource_type="vsphere_trusted_certificate", resource_id=certificate.id, detail=f"provider_id={provider_id}; trusted_vcenter_id={vcenter_id}; public_certificate=true")
     refreshed = _vsphere_vcenter_row(db, provider_id, vcenter_id)
     stored = next(item for item in refreshed.certificates if item.id == certificate.id)
@@ -22540,6 +22545,7 @@ def retire_vsphere_certificate_from_ui(
         raise HTTPException(status_code=404, detail="Certificate not found.")
     if vcenter.enabled and len(vcenter.certificates) <= 1:
         return _vsphere_grid_error(request, identity, db, "Disable the trusted vCenter before retiring its last certificate.")
+    mark_provider_desired_changed(vcenter.provider)
     db.delete(certificate)
     db.commit()
     record_audit(db, actor=identity.username, action="retire_vsphere_trusted_certificate", resource_type="vsphere_trusted_certificate", resource_id=certificate_id, detail=f"provider_id={provider_id}; trusted_vcenter_id={vcenter_id}")

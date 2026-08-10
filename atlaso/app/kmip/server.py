@@ -896,6 +896,10 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps({"atlaso_kmip": "configuration valid"}, sort_keys=True))
             return 0
         if args.status:
+            empty_counts = {
+                provider.id: {"pre_active": 0, "active": 0, "total": 0}
+                for provider in config.providers
+            }
             if not config.database_path.exists() or not config.kek_path.exists():
                 print(
                     json.dumps(
@@ -903,7 +907,7 @@ def main(argv: list[str] | None = None) -> int:
                             "status": "available",
                             "runtime_state": "configured" if config.enabled else "disabled",
                             "store_status": "empty",
-                            "providers": {},
+                            "providers": empty_counts,
                         },
                         sort_keys=True,
                     )
@@ -915,7 +919,7 @@ def main(argv: list[str] | None = None) -> int:
                 secrets_key=secrets_key,
             )
             try:
-                counts = store.lifecycle_counts()
+                counts = store.lifecycle_counts(provider.id for provider in config.providers)
             finally:
                 store.close()
             print(

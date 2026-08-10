@@ -3734,6 +3734,43 @@ def test_kms_helper_status_returns_only_authenticated_redacted_counts(monkeypatc
     assert "key_id" not in output
 
 
+def test_kms_helper_status_fails_closed_when_store_material_cannot_be_authenticated(
+    monkeypatch,
+    tmp_path,
+    capsys,
+):
+    """Verify missing runtime credentials never convert retained store state into zero counts."""
+    helper = load_helper_module()
+    state_dir = tmp_path / "state"
+    state_dir.mkdir()
+    (state_dir / "store.db").write_bytes(b"retained-operational-store")
+    monkeypatch.setattr(helper, "KMS_STATE_DIR", state_dir)
+    monkeypatch.setattr(helper, "KMS_CONFIG_PATH", tmp_path / "missing-server.json")
+    monkeypatch.setattr(helper, "KMS_CREDENTIAL_PATH", tmp_path / "missing-credential")
+
+    assert helper._handle_kms("status", []) == 2
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "unavailable" in captured.err
+
+
+def test_kms_helper_status_reports_empty_only_when_all_fixed_runtime_state_is_absent(
+    monkeypatch,
+    tmp_path,
+    capsys,
+):
+    """Verify a clean fixed runtime path provides trustworthy empty-store evidence."""
+    helper = load_helper_module()
+    monkeypatch.setattr(helper, "KMS_STATE_DIR", tmp_path / "missing-state")
+    monkeypatch.setattr(helper, "KMS_CONFIG_PATH", tmp_path / "missing-server.json")
+    monkeypatch.setattr(helper, "KMS_CREDENTIAL_PATH", tmp_path / "missing-credential")
+
+    assert helper._handle_kms("status", []) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["store_status"] == "empty"
+    assert payload["providers"] == {}
+
+
 def test_kms_helper_status_cli_requires_no_path_and_returns_only_status(monkeypatch, capsys):
     """Verify the fixed read-only CLI emits no helper action envelope.
 

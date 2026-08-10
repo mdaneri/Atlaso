@@ -173,7 +173,9 @@ from atlaso.app.schemas import (
 )
 from atlaso.app.services.kms import KMS_DEFAULT_CONFIG_PATH, join_csv
 from atlaso.app.services.vsphere_key_providers import (
+    authenticated_provider_counts,
     certificate_to_dict,
+    mark_provider_desired_changed,
     normalize_service_hostname,
     normalize_vcenter_hostname,
     parse_public_certificate,
@@ -6673,8 +6675,8 @@ def delete_vsphere_key_provider(
     if provider.enabled or provider.trusted_vcenters:
         raise HTTPException(status_code=409, detail="Disable the provider and detach every trusted vCenter before deletion.")
     snapshot = runtime_status_snapshot()
-    counts = snapshot.get("providers", {}).get(provider.id) if isinstance(snapshot.get("providers"), dict) else None
-    if snapshot.get("status") != "available" or not isinstance(counts, dict) or counts.get("total") != 0:
+    counts = authenticated_provider_counts(snapshot, provider.id)
+    if counts is None or counts.get("total") != 0:
         raise HTTPException(status_code=409, detail="Authenticated zero-key runtime evidence is required before deletion.")
     name = provider.name
     db.delete(provider)
@@ -6733,6 +6735,7 @@ def create_vsphere_trusted_vcenter(
     provider = _vsphere_provider(db, provider_id)
     item = VsphereTrustedVcenter(id=str(uuid4()), provider_id=provider.id, name=payload.name.strip(), hostname=_normalize_vsphere_vcenter_hostname(payload.hostname), description=payload.description.strip(), enabled=payload.enabled)
     db.add(item)
+    mark_provider_desired_changed(provider)
     try:
         db.commit()
     except IntegrityError as exc:
@@ -6796,6 +6799,7 @@ def update_vsphere_trusted_vcenter(
         setattr(item, key, value.strip() if isinstance(value, str) else value)
     item.hostname = _normalize_vsphere_vcenter_hostname(item.hostname)
     item.updated_at = utcnow()
+    mark_provider_desired_changed(item.provider)
     try:
         db.commit()
     except IntegrityError as exc:
@@ -6831,6 +6835,7 @@ def delete_vsphere_trusted_vcenter(
     if item.enabled or item.certificates:
         raise HTTPException(status_code=409, detail="Disable the trusted vCenter and retire every certificate before deletion.")
     name = item.name
+    mark_provider_desired_changed(item.provider)
     db.delete(item)
     db.commit()
     record_audit(db, actor=identity.username, action="delete_vsphere_trusted_vcenter", resource_type="vsphere_trusted_vcenter", resource_id=vcenter_id, detail=f"provider_id={provider_id}; name={name}")
@@ -6896,6 +6901,7 @@ def create_vsphere_trusted_vcenter_certificate(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     certificate = VsphereTrustedVcenterCertificate(id=str(uuid4()), trusted_vcenter_id=item.id, source="uploaded_public", **parsed)
     db.add(certificate)
+    mark_provider_desired_changed(item.provider)
     try:
         db.commit()
     except IntegrityError as exc:
@@ -6969,6 +6975,7 @@ def delete_vsphere_trusted_vcenter_certificate(
         raise HTTPException(status_code=404, detail="Certificate not found.")
     if item.enabled and len(usable_certificates(item)) <= 1:
         raise HTTPException(status_code=409, detail="Disable the trusted vCenter before retiring its last public certificate.")
+    mark_provider_desired_changed(item.provider)
     db.delete(certificate)
     db.commit()
     record_audit(db, actor=identity.username, action="retire_vsphere_trusted_certificate", resource_type="vsphere_trusted_certificate", resource_id=certificate_id, detail=f"provider_id={provider_id}; trusted_vcenter_id={vcenter_id}")
@@ -7048,8 +7055,7 @@ def get_vsphere_key_provider_lifecycle_counts(
     """
     provider = _vsphere_provider(db, provider_id)
     snapshot = runtime_status_snapshot()
-    providers = snapshot.get("providers")
-    counts = providers.get(provider.id) if snapshot.get("status") == "available" and isinstance(providers, dict) else None
+    counts = authenticated_provider_counts(snapshot, provider.id)
     available = isinstance(counts, dict) and all(isinstance(counts.get(key), int) for key in ("pre_active", "active", "total"))
     return VsphereProviderLifecycleCountsResponse(provider_id=provider.id, status="available" if available else "not-reported", pre_active=counts.get("pre_active") if available else None, active=counts.get("active") if available else None, total=counts.get("total") if available else None, observed_at=utcnow())
 

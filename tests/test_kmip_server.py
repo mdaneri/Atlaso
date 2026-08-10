@@ -39,6 +39,7 @@ from atlaso.app.kmip.server import (
     _load_secrets_key,
     build_server,
     certificate_sha256,
+    main as kmip_main,
     parse_config,
 )
 from atlaso.app.kmip.store import WrappedKeyStore
@@ -705,6 +706,24 @@ def test_trace_skips_invalid_create_without_suppressing_failed_response(tmp_path
     )
 
     assert not trace_path.exists()
+
+
+def test_status_seeds_authenticated_zero_for_configured_empty_provider(
+    monkeypatch,
+    tmp_path: Path,
+    capsys,
+) -> None:
+    """Verify status distinguishes an authenticated empty namespace from unavailable evidence."""
+    config = service_config(tmp_path, material(tmp_path))
+    monkeypatch.setattr("atlaso.app.kmip.server.load_config", lambda _path: config)
+    monkeypatch.setattr("atlaso.app.kmip.server._load_secrets_key", lambda: "appliance-secrets-key")
+
+    assert kmip_main(["--config", str(tmp_path / "server.json"), "--status"]) == 0
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["providers"] == {
+        config.providers[0].id: {"pre_active": 0, "active": 0, "total": 0}
+    }
 
 
 def test_tcp_server_selects_ipv6_address_family_before_binding(monkeypatch, tmp_path: Path) -> None:

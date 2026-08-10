@@ -164,6 +164,80 @@ def test_provider_api_enforces_scopes_public_certificates_and_global_fingerprint
     assert "already assigned" in duplicate.text
 
 
+def test_provider_readiness_tracks_every_trust_graph_mutation(client) -> None:
+    """Verify vCenter and certificate mutations make the provider desired state pending."""
+    token = _token(client, ["read:kms", "write:kms"])
+    headers = {"Authorization": f"Bearer {token}"}
+    provider_id = client.post(
+        "/api/v1/vsphere-key-providers",
+        headers=headers,
+        json={"name": "Readiness provider", "enabled": False},
+    ).json()["id"]
+
+    def mark_applied() -> None:
+        with SessionLocal() as db:
+            provider = db.get(VsphereKeyProvider, provider_id)
+            applied_at = datetime.now(timezone.utc)
+            provider.updated_at = applied_at
+            provider.applied_at = applied_at
+            db.commit()
+
+    def requires_apply() -> bool:
+        response = client.get(
+            f"/api/v1/vsphere-key-providers/{provider_id}/readiness",
+            headers=headers,
+        )
+        assert response.status_code == 200
+        return response.json()["requires_appliance_apply"]
+
+    mark_applied()
+    assert requires_apply() is False
+    vcenter = client.post(
+        f"/api/v1/vsphere-key-providers/{provider_id}/trusted-vcenters",
+        headers=headers,
+        json={"name": "Tracked vCenter", "hostname": "vcsa-tracked.atlaso.internal", "enabled": False},
+    )
+    assert vcenter.status_code == 201
+    vcenter_id = vcenter.json()["id"]
+    assert requires_apply() is True
+
+    mark_applied()
+    updated = client.patch(
+        f"/api/v1/vsphere-key-providers/{provider_id}/trusted-vcenters/{vcenter_id}",
+        headers=headers,
+        json={"description": "updated desired trust"},
+    )
+    assert updated.status_code == 200
+    assert requires_apply() is True
+
+    mark_applied()
+    public_pem, _private_pem = _public_client_certificate("vcsa-tracked.atlaso.internal")
+    certificate = client.post(
+        f"/api/v1/vsphere-key-providers/{provider_id}/trusted-vcenters/{vcenter_id}/certificates",
+        headers=headers,
+        json={"certificate_pem": public_pem},
+    )
+    assert certificate.status_code == 201
+    certificate_id = certificate.json()["id"]
+    assert requires_apply() is True
+
+    mark_applied()
+    retired = client.delete(
+        f"/api/v1/vsphere-key-providers/{provider_id}/trusted-vcenters/{vcenter_id}/certificates/{certificate_id}",
+        headers=headers,
+    )
+    assert retired.status_code == 204
+    assert requires_apply() is True
+
+    mark_applied()
+    detached = client.delete(
+        f"/api/v1/vsphere-key-providers/{provider_id}/trusted-vcenters/{vcenter_id}",
+        headers=headers,
+    )
+    assert detached.status_code == 204
+    assert requires_apply() is True
+
+
 def test_provider_api_rejects_invalid_listener_and_vcenter_network_identifiers(client) -> None:
     """Verify listener and trusted-vCenter network identifiers are canonical and bounded.
 
@@ -310,6 +384,26 @@ def test_lifecycle_counts_report_null_when_unavailable_and_verified_counts_when_
     assert unavailable.json()["total"] is None
     assert "secret-bearing raw error" not in unavailable.text
 
+    zero_payload = {
+        "status": "available",
+        "runtime_state": "running",
+        "store_status": "authenticated",
+        "providers": {},
+    }
+    monkeypatch.setattr(
+        "atlaso.app.services.vsphere_key_providers.SystemAdapter.kms_status",
+        lambda _self: AdapterResult(command=[], dry_run=False, stdout=json.dumps(zero_payload)),
+    )
+    authenticated_zero = client.get(
+        f"/api/v1/vsphere-key-providers/{provider_id}/lifecycle-counts",
+        headers=headers,
+    )
+    assert authenticated_zero.status_code == 200
+    assert authenticated_zero.json()["status"] == "available"
+    assert authenticated_zero.json()["pre_active"] == 0
+    assert authenticated_zero.json()["active"] == 0
+    assert authenticated_zero.json()["total"] == 0
+
     payload = {
         "status": "available",
         "runtime_state": "running",
@@ -329,6 +423,16 @@ def test_lifecycle_counts_report_null_when_unavailable_and_verified_counts_when_
     assert available.json()["pre_active"] == 2
     assert available.json()["active"] == 3
     assert available.json()["total"] == 5
+
+    monkeypatch.setattr(
+        "atlaso.app.services.vsphere_key_providers.SystemAdapter.kms_status",
+        lambda _self: AdapterResult(command=[], dry_run=False, stdout=json.dumps(zero_payload)),
+    )
+    deleted = client.delete(
+        f"/api/v1/vsphere-key-providers/{provider_id}",
+        headers=headers,
+    )
+    assert deleted.status_code == 204
 
 
 def test_rendered_trust_uses_exact_enabled_fingerprints_and_public_pem_only(client) -> None:

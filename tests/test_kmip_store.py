@@ -80,15 +80,17 @@ def test_lifecycle_counts_authenticate_rows_and_isolate_provider_namespaces(tmp_
     """
     first_provider = str(uuid.uuid4())
     second_provider = str(uuid.uuid4())
+    empty_provider = str(uuid.uuid4())
     operational_store = store(tmp_path)
     first_pre_active = operational_store.create_key(first_provider)
     first_active = operational_store.create_key(first_provider)
     operational_store.activate_key(first_provider, first_active.key_id)
     operational_store.create_key(second_provider)
 
-    assert operational_store.lifecycle_counts() == {
+    assert operational_store.lifecycle_counts([empty_provider]) == {
         first_provider: {"pre_active": 1, "active": 1, "total": 2},
         second_provider: {"pre_active": 1, "active": 0, "total": 1},
+        empty_provider: {"pre_active": 0, "active": 0, "total": 0},
     }
 
     with sqlite3.connect(tmp_path / "store.db") as connection:

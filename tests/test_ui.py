@@ -10333,6 +10333,43 @@ def test_vsphere_key_provider_page_uses_shared_management_contract(client):
     assert "removeOption(certificateTargetSelect" in app_js.text
 
 
+def test_vsphere_key_provider_browser_routes_enforce_kms_scopes(client):
+    """Verify browser reads and mutations enforce the renamed KMS scope boundary."""
+    from sqlalchemy import select
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Role, User
+    from atlaso.app.security import roles_to_json
+
+    with SessionLocal() as db:
+        admin = db.execute(select(User).where(User.username == "admin")).scalar_one()
+        admin.role = Role.VIEWER.value
+        admin.roles_json = roles_to_json([Role.VIEWER.value])
+        db.commit()
+
+    login(client)
+    page = client.get("/vsphere-key-providers")
+    assert page.status_code == 200
+    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    denied_write = client.post(
+        "/vsphere-key-providers/settings",
+        data={"hostname": "kms.atlaso.internal", "port": "5696", "csrf": csrf},
+        headers={"X-Atlaso-Autosave": "1"},
+    )
+    assert denied_write.status_code == 403
+    assert "Missing required scope: write:kms" in denied_write.text
+
+    with SessionLocal() as db:
+        admin = db.execute(select(User).where(User.username == "admin")).scalar_one()
+        admin.role = Role.NETWORK_ADMIN.value
+        admin.roles_json = roles_to_json([Role.NETWORK_ADMIN.value])
+        db.commit()
+
+    denied_read = client.get("/vsphere-key-providers")
+    assert denied_read.status_code == 403
+    assert "Missing required scope: read:kms" in denied_read.text
+
+
 def test_root_aware_initializers_do_not_receive_dom_content_loaded_event():
     """Verify that root aware initializers do not receive dom content loaded event."""
     source = Path("atlaso/app/static/app.js").read_text(encoding="utf-8")
@@ -10545,6 +10582,53 @@ def test_kms_apply_task_captures_current_desired_state(client):
         assert "atlaso-helper" in (job.result or "")
         assert "/var/lib/atlaso/apply/kms/server.json" in (job.result or "")
         assert "atlaso-helper kms" in (job.result or "")
+
+
+def test_successful_kms_apply_marks_disabled_provider_removal_applied(monkeypatch, tmp_path):
+    """Verify a successful real apply acknowledges disabled-provider runtime removal."""
+    from atlaso.app.adapters.system import AdapterResult
+    from atlaso.app.models import VsphereKeyProvider
+    from atlaso.app.ui import execute_appliance_apply_unit
+
+    provider = VsphereKeyProvider(name="Disabled provider removal", enabled=False)
+
+    class SuccessfulKmsAdapter:
+        """Return successful non-dry-run helper results."""
+
+        dry_run = False
+
+        @staticmethod
+        def validate_kms_config(path):
+            return AdapterResult(["kms", "validate", path], False)
+
+        @staticmethod
+        def apply_kms_config(path):
+            return AdapterResult(["kms", "apply", path], False)
+
+    config_path = tmp_path / "kms" / "server.json"
+    trust_path = tmp_path / "kms" / "client-trust.pem"
+    monkeypatch.setattr("atlaso.app.ui.KMS_STAGED_CONFIG_PATH", str(config_path))
+    monkeypatch.setattr("atlaso.app.ui.KMS_STAGED_CLIENT_TRUST_PATH", str(trust_path))
+    unit = {
+        "id": "kms",
+        "label": "vSphere Key Providers",
+        "context": {
+            "vsphere_key_providers": [provider],
+            "kms_client_trust_bundle": "",
+        },
+        "raw_config_preview": "{}",
+        "summary": ["service disabled"],
+        "validation_errors": [],
+        "validation_warnings": [],
+        "config_path": str(config_path),
+        "config_preview": "{}",
+        "config_diff": "",
+    }
+
+    result = execute_appliance_apply_unit(unit, adapter=SuccessfulKmsAdapter())
+
+    assert result["success"] is True
+    assert provider.applied_at is not None
 
 
 def test_vcf_backups_page_uses_local_user_for_sftp(client):

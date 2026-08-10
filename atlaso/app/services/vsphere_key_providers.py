@@ -246,6 +246,15 @@ def provider_requires_appliance_apply(provider: VsphereKeyProvider) -> bool:
     return provider.applied_at is None or _aware(provider.updated_at) > _aware(provider.applied_at)
 
 
+def mark_provider_desired_changed(provider: VsphereKeyProvider) -> None:
+    """Mark a provider trust-graph mutation as pending global Appliance Apply.
+
+    Args:
+        provider: Provider whose desired trust graph changed.
+    """
+    provider.updated_at = utcnow()
+
+
 def trusted_vcenter_to_dict(trusted: VsphereTrustedVcenter) -> dict[str, object]:
     """Return one provider-scoped trusted vCenter.
 
@@ -492,3 +501,29 @@ def runtime_status_snapshot(adapter: SystemAdapter | None = None) -> dict[str, o
         "store_status": str(payload.get("store_status") or "not-reported"),
         "providers": providers,
     }
+
+
+def authenticated_provider_counts(
+    snapshot: dict[str, object],
+    provider_id: str,
+) -> dict[str, int] | None:
+    """Return verified counts, including an authenticated zero for an absent namespace.
+
+    Args:
+        snapshot: Validated helper status payload.
+        provider_id: Immutable provider UUID to inspect.
+
+    Returns:
+        Redacted counts when the complete store was authenticated, otherwise ``None``.
+    """
+    if snapshot.get("status") != "available":
+        return None
+    providers = snapshot.get("providers")
+    if not isinstance(providers, dict):
+        return None
+    counts = providers.get(provider_id)
+    if isinstance(counts, dict):
+        return counts
+    if snapshot.get("store_status") in {"authenticated", "healthy", "empty"}:
+        return {"pre_active": 0, "active": 0, "total": 0}
+    return None

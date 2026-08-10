@@ -3898,7 +3898,13 @@ def _handle_kms(action: str, args: list[str]) -> int:
         if args:
             print("kms status does not accept arguments", file=sys.stderr)
             return 2
-        if not KMS_CONFIG_PATH.is_file() or not KMS_CREDENTIAL_PATH.is_file():
+        config_available = KMS_CONFIG_PATH.is_file()
+        credential_available = KMS_CREDENTIAL_PATH.is_file()
+        store_material_available = any(
+            path.exists()
+            for path in (KMS_STATE_DIR / "store.db", KMS_STATE_DIR / "kek.json")
+        )
+        if not config_available and not credential_available and not store_material_available:
             print(
                 json.dumps(
                     {
@@ -3911,6 +3917,9 @@ def _handle_kms(action: str, args: list[str]) -> int:
                 )
             )
             return 0
+        if not config_available or not credential_available:
+            print("KMIP authenticated runtime status is unavailable.", file=sys.stderr)
+            return 2
         decrypted = _run(
             [
                 "systemd-creds",

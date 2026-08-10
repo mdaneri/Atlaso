@@ -12,6 +12,17 @@ Open **vSphere Key Providers** at `/vsphere-key-providers` to manage Atlaso's ap
 listener and server identity are shared appliance-wide, while every provider UUID is an isolated operational key
 namespace.
 
+<!-- BEGIN GENERATED INTERFACE OVERVIEW -->
+## Interface overview
+
+This verified appliance view provides visual orientation before you begin.
+
+![Atlaso vSphere Key Providers page in the clean-appliance desktop viewport.](../assets/screenshots/vsphere-key-providers-clean-desktop.webp)
+
+*Figure: vSphere Key Providers in the verified clean-appliance desktop state.*
+
+<!-- END GENERATED INTERFACE OVERVIEW -->
+
 Atlaso implements a bounded candidate profile for VCF 9.1. Keep it experimental until the observed interoperability
 and recovery work in issue #172 is complete. Do not describe the current candidate as observed or supported VCF 9.1
 behavior.
@@ -83,3 +94,16 @@ response, authorization, validation, and compatibility details.
 ![vSphere Key Providers in the clean-appliance narrow viewport.](../assets/screenshots/vsphere-key-providers-clean-responsive.webp)
 
 *Figure: the wide service frame and DNS-style settings rail in the verified narrow layout.*
+
+<!-- BEGIN GENERATED ADDITIONAL SCREENSHOTS -->
+## Additional verified states
+
+These captures show responsive layouts and useful operational states referenced by this page.
+
+### vSphere Key Providers
+
+![Atlaso vSphere Key Providers page in the clean-appliance responsive viewport.](../assets/screenshots/vsphere-key-providers-clean-responsive.webp)
+
+*Figure: vSphere Key Providers in the verified clean-appliance responsive state.*
+
+<!-- END GENERATED ADDITIONAL SCREENSHOTS -->
