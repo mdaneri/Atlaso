@@ -3,6 +3,8 @@
 import json
 import re
 import subprocess
+import threading
+import time
 from ipaddress import ip_address, ip_interface
 from pathlib import Path
 from typing import Any
@@ -338,6 +340,24 @@ def parse_networkd_dhcp_dns_payload(output: str, interface_name: str) -> list[st
     return []
 
 
+_MANAGEMENT_DHCP_DNS_CACHE_TTL_SECONDS = 60.0
+_management_dhcp_dns_cache: dict[str, tuple[float, tuple[str, ...]]] = {}
+_management_dhcp_dns_cache_lock = threading.Lock()
+
+
+def invalidate_observed_management_dhcp_dns(interface_name: str | None = None) -> None:
+    """Invalidate cached DHCP DNS observations before current-truth validation.
+
+    Args:
+        interface_name: Exact interface to invalidate, or all interfaces when omitted.
+    """
+    with _management_dhcp_dns_cache_lock:
+        if interface_name is None:
+            _management_dhcp_dns_cache.clear()
+        else:
+            _management_dhcp_dns_cache.pop(interface_name, None)
+
+
 def observed_management_dhcp_dns_servers(interface_name: str) -> list[str]:
     """Return observed management dhcp dns servers.
 
@@ -346,6 +366,11 @@ def observed_management_dhcp_dns_servers(interface_name: str) -> list[str]:
     """
     if not interface_name:
         return []
+    now = time.monotonic()
+    with _management_dhcp_dns_cache_lock:
+        cached = _management_dhcp_dns_cache.get(interface_name)
+        if cached is not None and now - cached[0] < _MANAGEMENT_DHCP_DNS_CACHE_TTL_SECONDS:
+            return list(cached[1])
     try:
         result = subprocess.run(
             ["resolvectl", "dns", interface_name],
@@ -359,14 +384,17 @@ def observed_management_dhcp_dns_servers(interface_name: str) -> list[str]:
     if result is not None and result.returncode == 0:
         servers = parse_resolvectl_dns_servers(result.stdout)
         if servers:
+            with _management_dhcp_dns_cache_lock:
+                _management_dhcp_dns_cache[interface_name] = (now, tuple(servers))
             return servers
 
     from atlaso.app.adapters.system import SystemAdapter
 
     lease_result = SystemAdapter().read_networkd_dhcp_dns(interface_name)
-    if lease_result.returncode != 0:
-        return []
-    return parse_networkd_dhcp_dns_payload(lease_result.stdout, interface_name)
+    servers = [] if lease_result.returncode != 0 else parse_networkd_dhcp_dns_payload(lease_result.stdout, interface_name)
+    with _management_dhcp_dns_cache_lock:
+        _management_dhcp_dns_cache[interface_name] = (now, tuple(servers))
+    return servers
 
 
 def management_dhcp_dns_context(interfaces: list[PhysicalInterface]) -> tuple[dict[str, str], list[str]]:
