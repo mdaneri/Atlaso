@@ -485,6 +485,7 @@ def test_web_terminal_uses_one_use_ticket_and_bridges_websocket_input(client, mo
     )
     assert ticket_response.status_code == 200
     assert ticket_response.headers["cache-control"] == "no-store"
+    assert ticket_response.json()["websocket_path"] == "/terminal/ws"
     ticket = ticket_response.json()["ticket"]
 
     with client.websocket_connect("/ui/management/terminal/ws", headers={"origin": "http://testserver"}) as websocket:

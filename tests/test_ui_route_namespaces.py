@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from sqlalchemy import select
 
-from atlaso.app import ui, web_terminal
+from atlaso.app import main, ui, web_terminal
 from atlaso.app.database import SessionLocal
 from atlaso.app.models import ApplianceSettings, CaSettings, PhysicalInterface
 from atlaso.app.ui_routes import (
@@ -143,3 +143,20 @@ def test_front_door_uses_observed_management_dhcp_address(client):
     response = client.get("/", headers={"host": "192.0.2.25"}, follow_redirects=False)
     assert response.status_code == 303
     assert response.headers["location"] == MANAGEMENT_UI_ROOT
+
+
+def test_protocol_and_static_requests_skip_ui_listener_lookup(client, monkeypatch):
+    """Keep stable machine routes outside browser listener-state inspection.
+
+    Args:
+        client: Test application client.
+        monkeypatch: Pytest monkeypatch helper.
+    """
+    def reject_session_lookup():
+        """Fail if browser middleware opens a database session."""
+        raise AssertionError("browser namespace middleware queried protocol listener state")
+
+    monkeypatch.setattr(main, "SessionLocal", reject_session_lookup)
+
+    assert client.get("/openapi.json").status_code == 200
+    assert client.get("/static/app.js").status_code == 200

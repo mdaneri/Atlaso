@@ -756,11 +756,8 @@ def create_terminal_ticket(
             remote_fingerprint=remote.fingerprint if remote else "",
         )
     record_audit(db, actor=identity.username, action="web_terminal_ticket", resource_type="web_terminal")
-    websocket_path = (
-        public_ui_path("/terminal/ws") if requested_public_plane else management_ui_path("/terminal/ws")
-    ) if canonical_plane else "/terminal/ws"
     return JSONResponse(
-        {"ticket": raw, "expires_in": TICKET_TTL_SECONDS, "websocket_path": websocket_path},
+        {"ticket": raw, "expires_in": TICKET_TTL_SECONDS, "websocket_path": "/terminal/ws"},
         headers={"Cache-Control": "no-store"},
     )
 

@@ -52,6 +52,7 @@ from atlaso.app.ui_routes import (
     MANAGEMENT_UI_ROOT,
     PUBLIC_UI_ROOT,
     canonical_browser_location,
+    is_protocol_path,
     legacy_browser_target,
     management_ui_path,
     public_ui_path,
@@ -243,8 +244,14 @@ def create_app() -> FastAPI:
         elif original_path == PUBLIC_UI_ROOT or original_path.startswith(f"{PUBLIC_UI_ROOT}/"):
             plane = "public"
 
+        if is_protocol_path(original_path):
+            request.state.ui_plane = ""
+            return await call_next(request)
+
         with SessionLocal() as db:
-            public_terminal = public_ui_request_allowed(request, db, "/terminal")
+            public_terminal = False
+            if original_path in {"/login", "/logout", "/terminal"} or original_path.startswith("/terminal/"):
+                public_terminal = public_ui_request_allowed(request, db, "/terminal")
             legacy_target = legacy_browser_target(original_path, public_terminal=public_terminal)
             if legacy_target is not None:
                 plane, canonical_path = legacy_target
