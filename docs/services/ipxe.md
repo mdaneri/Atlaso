@@ -397,7 +397,18 @@ changes** workflow to enforce desired state on the appliance.
 Double-click an existing reference or choose **Edit host reference** from its
 row menu to reopen the same workflow. The Enabled value remains directly
 toggleable in the collection. The row menu also retains **Boot Inventory Linux
-once**, **Wake host**, and **Delete host reference** where applicable. The
+once**, **Authorize ESXi boot once**, **Wake host**, and **Delete host
+reference** where applicable. Start the assigned host first and choose its ESXi
+entry. The host console displays a one-time code while its unpredictable boot
+claim waits. Then choose **Authorize ESXi boot once**, enter that console code
+in the shared two-step wizard, and review the host before submitting. Atlaso
+creates a ten-minute, single-use authorization bound to that exact claim,
+applied Host Reference, applied Kickstart revision, HTTP listener, and boot
+attempt. The management page and API receipt do not display the boot capability
+or its URL. Appliance Apply invalidates all outstanding attempts. Unauthorized,
+invalid-code, expired, replayed, wrong-host,
+wrong-revision, and wrong-listener requests receive the same not-found response.
+The
 **Default / undefined MACs** profile remains a compact inline exception for its
 Kickstart, installer ISO, and Enabled values. Manual add and edit require ESXi
 PXE write access; discovered-host promotion also requires Network Boot write
@@ -425,16 +436,25 @@ than guessing its version.
 The remainder is a cleaned Markdown copy of Broadcom Tech Docs content for ESX
 installation, Kickstart, `boot.cfg`, PXELINUX, iPXE, and native UEFI HTTP boot.
 
-Atlaso note: ESXi PXE host-specific `boot.cfg` artifacts should pass Kickstart URLs as
-`/pxe/esxi/ks/<file>.cfg?mac=<normalized-mac>`. The MAC query parameter is required so Atlaso can render restricted
-`{{variable}}` Kickstart markers from the database source and the selected host's custom variable map. Atlaso
-intentionally does not infer the host MAC from request source IP or dnsmasq leases.
+Atlaso note: applied host-specific `boot.cfg` files do not contain reusable
+Kickstart URLs. A MAC-selected menu request creates a distinct unpredictable
+pending claim; it never receives an existing attempt path. The boot console
+shows a one-time code that an authenticated `write:pxe` administrator must
+enter before that exact claim can obtain an ephemeral attempt-specific
+`boot.cfg`. Atlaso stores only claim, code, and capability SHA-256 verifiers,
+consumes the capability atomically before resolving any markers, and renders
+from the exact applied Host Reference and full Kickstart content hash. A MAC
+address remains a non-secret operational identifier and is never treated as
+authentication. Claim and capability paths are omitted from management API/UI,
+audit, job, and problem-response data and are suppressed from PXE listener
+access logs. Keep the PXE listener on a trusted provisioning network; use
+authenticated HTTPS for management API calls.
 
 Kickstarts declare vault access directly in source with `{{vault.<vaultname>.<key>.username}}`,
 `{{vault.<vaultname>.<key>.password}}`, or a configured URI from `{{vault.<vaultname>.<key>.uri1}}` through
 `{{vault.<vaultname>.<key>.uri9}}`. The Monaco Editor suggests authorized exact markers after `{{` without loading
-credential values. Atlaso validates every referenced vault, key, and subkey when source is saved and again when an
-enabled assigned host requests the dynamic response. Source downloads and previews retain the marker, missing or
+credential values. Atlaso validates every referenced vault, key, and subkey when source is saved and again after a
+matching boot authorization is atomically consumed. Source downloads and previews retain the marker, missing or
 renamed references fail closed, and dynamic responses disable caching. See [Vaults](vaults.md) for marker examples,
 URI ordering, and secret-handling boundaries.
 

@@ -30,7 +30,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPExcepti
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
-from sqlalchemy import String, and_, cast, desc, func, or_, select
+from sqlalchemy import String, and_, cast, delete, desc, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
@@ -63,6 +63,7 @@ from atlaso.app.models import (
     Job,
     JobStep,
     JobStatus,
+    NetworkBootEsxiBootCapability,
     KmsSettings,
     VsphereKeyProvider,
     VsphereTrustedVcenter,
@@ -12536,6 +12537,7 @@ def execute_appliance_apply_unit(unit: dict[str, Any], *, adapter: SystemAdapter
             error = "\n".join(result.stderr for result in results if result.stderr).strip() or "Local user OS sync failed."
             mark_local_users_failed(users, error)
     if unit_id == "esxi_pxe" and succeeded and not any(result.dry_run for result in results):
+        db.execute(delete(NetworkBootEsxiBootCapability))
         mark_kickstarts_applied(list(context["esxi_kickstarts"]))
     if unit_id == "kms" and succeeded and not any(result.dry_run for result in results):
         applied_at = utcnow()
@@ -28699,80 +28701,45 @@ def audit_log(
     )
 
 
-@protocol_router.get("/pxe/esxi/ks/{kickstart_file}", response_model=None)
-def serve_esxi_kickstart_file(kickstart_file: str, mac: str = "", db: Session = Depends(get_db)) -> Response:
-    """Handle the serve esxi kickstart file endpoint.
+@protocol_router.get(
+    "/pxe/esxi/ks/{mac_key}/{kickstart_revision}/{capability_file}",
+    response_model=None,
+)
+def serve_esxi_kickstart_file(
+    mac_key: str,
+    kickstart_revision: str,
+    capability_file: str,
+    request: Request,
+    db: Session = Depends(get_db),
+) -> Response:
+    """Consume one exact boot capability and return its applied Kickstart.
 
     Args:
-        kickstart_file: Kickstart file supplied by the caller.
-        mac: Mac supplied by the caller.
-        db: Active database session.
-
-    Returns:
-        The endpoint response.
-
-    Raises:
-        HTTPException: If the request cannot be fulfilled.
+        mac_key: PXE-formatted MAC address bound to the capability.
+        kickstart_revision: Exact applied Kickstart content revision.
+        capability_file: Bearer capability filename supplied by the boot artifact.
+        request: Incoming PXE HTTP request used to bind the listener origin.
+        db: Database session used to consume the capability.
     """
-    if not kickstart_file.endswith(".cfg"):
+    from atlaso.app.services.network_boot import consume_esxi_boot_capability
+
+    if not capability_file.endswith(".cfg"):
         raise HTTPException(status_code=404, detail="Kickstart not found")
-    mac_key = normalize_pxe_mac(mac) if mac else ""
-    if mac and not mac_key:
-        raise HTTPException(status_code=400, detail="Kickstart request requires a valid mac query parameter.")
-    stem = kickstart_file.removesuffix(".cfg").strip().lower()
-    if not re.fullmatch(r"(?:\d+|[0-9a-f]{12,64})", stem):
-        raise HTTPException(status_code=404, detail="Kickstart not found")
-    if stem.isdigit():
-        kickstart = db.get(EsxiKickstart, int(stem))
-    else:
-        kickstart = next(
-            (
-                row
-                for row in db.execute(select(EsxiKickstart).where(EsxiKickstart.enabled.is_(True))).scalars().all()
-                if (row.content_hash or "").lower().startswith(stem)
-            ),
-            None,
-        )
-    if not kickstart or not kickstart.enabled:
-        raise HTTPException(status_code=404, detail="Kickstart not found")
-    names, invalid = kickstart_template_variables(kickstart.content)
-    if invalid:
-        raise HTTPException(status_code=400, detail=f"Kickstart contains invalid variable marker: {invalid[0]}")
-    if not mac_key:
-        if names:
-            raise HTTPException(status_code=400, detail="Kickstart request requires a valid mac query parameter.")
-        return Response(kickstart.content, media_type="text/plain; charset=utf-8")
-    host = db.execute(
-        select(EsxiPxeHost)
-        .options(selectinload(EsxiPxeHost.kickstart))
-        .where(EsxiPxeHost.mac_address == mac_key.replace("-", ":"))
-    ).scalar_one_or_none()
-    if host is None:
-        host = next(
-            (
-                row
-                for row in db.execute(select(EsxiPxeHost).options(selectinload(EsxiPxeHost.kickstart))).scalars().all()
-                if normalize_pxe_mac(row.mac_address) == mac_key
-            ),
-            None,
-        )
-    if not host or host.enabled is False:
-        raise HTTPException(status_code=404, detail="ESXi PXE host not found")
-    if host.kickstart_id != kickstart.id:
-        raise HTTPException(status_code=404, detail="Kickstart not assigned to host")
+    token = capability_file.removesuffix(".cfg")
+    request_origin = f"{request.url.scheme}://{request.headers.get('host', '')}"
     try:
-        vault_values: dict[str, str] = {}
-        if any(name.startswith("vault.") for name in names):
-            vault_values = kickstart_vault_values_for_markers(db, names)
-        rendered = render_kickstart_for_host(
-            kickstart.content,
-            host,
-            esxi_pxe_boot_settings(db),
-            vault_values,
-            custom_variable_defaults(db),
+        rendered = consume_esxi_boot_capability(
+            db,
+            mac_key=mac_key.lower(),
+            kickstart_revision=kickstart_revision.lower(),
+            token=token,
+            request_origin=request_origin,
         )
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except (OSError, TypeError, ValueError):
+        db.rollback()
+        rendered = None
+    if rendered is None:
+        raise HTTPException(status_code=404, detail="Kickstart not found")
     return Response(
         rendered,
         media_type="text/plain; charset=utf-8",

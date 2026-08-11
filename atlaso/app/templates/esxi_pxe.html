@@ -199,6 +199,31 @@
 </dialog>
 {% endif %}
 {% if esxi_can_write %}
+<dialog id="esxi-boot-authorization-dialog" class="confirm-modal wide-modal vcf-sddc-wizard-modal" aria-labelledby="esxi-boot-authorization-title" aria-describedby="esxi-boot-authorization-description">
+  <form class="confirm-modal-panel vcf-sddc-wizard-panel" data-esxi-boot-authorization-form data-atlaso-wizard novalidate>
+    <input type="hidden" name="csrf" value="{{ csrf_token }}">
+    <input type="hidden" name="host_id">
+    <aside class="vcf-sddc-wizard-rail" aria-label="ESXi boot authorization steps">
+      <p class="kicker">Network Boot</p><h2 id="esxi-boot-authorization-title">Authorize ESXi boot</h2>
+      <ol class="vcf-sddc-step-list">
+        <li><button class="vcf-sddc-step-button active" type="button" data-atlaso-wizard-nav="code"><span>1</span><strong>Console code</strong><small>Identify the exact boot attempt</small></button></li>
+        <li><button class="vcf-sddc-step-button" type="button" data-atlaso-wizard-nav="review" disabled><span>2</span><strong>Review</strong><small>Confirm the bounded authorization</small></button></li>
+      </ol>
+    </aside>
+    <div class="vcf-sddc-wizard-main">
+      <div class="confirm-modal-body vcf-sddc-wizard-body">
+        <div class="vcf-sddc-wizard-heading"><p class="kicker" data-atlaso-wizard-kicker>Step 1 of 2</p><h3 data-atlaso-wizard-title>Enter the host-console code</h3><p id="esxi-boot-authorization-description" class="muted" data-atlaso-wizard-description>Start Network Boot on the intended host, choose its assigned ESXi entry, and enter the one-time code shown on that console.</p></div>
+        <div class="alert error hidden" data-atlaso-wizard-error></div>
+        <section class="vcf-sddc-step-page" data-atlaso-wizard-step="code">
+          <label><span>Console code</span><input name="boot_code" inputmode="text" autocomplete="one-time-code" autocapitalize="characters" spellcheck="false" maxlength="9" placeholder="ABCD-EFGH" required aria-describedby="esxi-boot-code-help"><small id="esxi-boot-code-help" class="field-help">The code is valid only for the exact pending boot attempt and is never displayed by Atlaso management.</small></label>
+        </section>
+        <section class="vcf-sddc-step-page hidden" data-atlaso-wizard-step="review"><div class="settings-list" data-atlaso-resource-review data-esxi-boot-authorization-review></div><p class="muted">Authorization lasts ten minutes and the first matching Kickstart request consumes it.</p></section>
+      </div>
+      <div class="confirm-modal-actions vcf-sddc-wizard-actions"><button class="button secondary" type="button" data-atlaso-wizard-cancel>Cancel</button><button class="button secondary hidden" type="button" data-atlaso-wizard-back>Back</button><button class="button primary" type="button" data-atlaso-wizard-next>Next</button><button class="button primary hidden" type="submit" data-atlaso-wizard-submit>Authorize boot attempt</button></div>
+    </div>
+  </form>
+</dialog>
+
 <dialog id="esxi-iso-upload-dialog" class="confirm-modal wide-modal vcf-sddc-wizard-modal" aria-labelledby="esxi-iso-upload-title" aria-describedby="esxi-iso-upload-description">
   <form class="confirm-modal-panel vcf-sddc-wizard-panel" action="{{ management_ui_root }}/esxi-pxe/isos/upload" method="post" enctype="multipart/form-data" data-esxi-iso-upload data-atlaso-wizard novalidate>
     <input type="hidden" name="csrf" value="{{ csrf_token }}">
@@ -613,14 +638,14 @@
             data-fallback-id="esxi-pxe-preview-fallback"
           ></div>
           <table id="esxi-pxe-preview-fallback" class="data-table compact">
-            <thead><tr><th>Host</th><th>PXELINUX</th><th>UEFI boot.cfg</th><th>Kickstart URL</th><th>Image URL</th></tr></thead>
+            <thead><tr><th>Host</th><th>PXELINUX</th><th>UEFI boot.cfg</th><th>Kickstart delivery</th><th>Image URL</th></tr></thead>
             <tbody>
               {% for artifact in esxi_pxe_artifacts %}
                 <tr>
                   <td>{{ artifact.hostname }}</td>
                   <td><code>{{ artifact.pxelinux_config_path }}</code></td>
                   <td><code>{{ artifact.uefi_tftp_boot_cfg_path }}</code></td>
-                  <td><code>{{ artifact.kickstart_url or "interactive installer" }}</code></td>
+                  <td>{{ "one-time boot authorization" if artifact.kickstart_id else "interactive installer" }}</td>
                   <td><code>{{ artifact.image_http_url }}</code></td>
                 </tr>
               {% endfor %}

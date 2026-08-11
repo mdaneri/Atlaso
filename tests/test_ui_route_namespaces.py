@@ -33,7 +33,7 @@ PROTOCOL_ROUTE_INVENTORY = {
     "/certificate-authority/downloads/ca-bundle.pem",
     "/certificate-authority/downloads/root-ca.pem",
     "/pxe/esxi/boot.ipxe",
-    "/pxe/esxi/ks/{kickstart_file}",
+    "/pxe/esxi/ks/{mac_key}/{kickstart_revision}/{capability_file}",
 }
 
 

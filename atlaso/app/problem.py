@@ -10,6 +10,19 @@ from fastapi.responses import JSONResponse, RedirectResponse
 from atlaso.app.ui_routes import PUBLIC_UI_ROOT, management_ui_path, public_ui_path, safe_public_return_path
 
 
+def redacted_request_path(path: str) -> str:
+    """Return a path safe for responses and operational logging.
+
+    Args:
+        path: Original request path to sanitize.
+    """
+    if path.startswith("/pxe/esxi/ks/"):
+        return "/pxe/esxi/ks/[redacted].cfg"
+    if path.startswith("/pxe/esxi/claim/"):
+        return "/pxe/esxi/claim/[redacted].ipxe"
+    return path
+
+
 def should_redirect_to_login(request: Request, exc: HTTPException) -> bool:
     """Return whether redirect to login.
 
@@ -52,7 +65,7 @@ def problem_response(
             "title": title,
             "status": status_code,
             "detail": detail,
-            "instance": str(request.url.path),
+            "instance": redacted_request_path(str(request.url.path)),
             "error_code": error_code,
             "request_id": request_id,
         },

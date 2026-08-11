@@ -320,8 +320,12 @@ def test_dynamic_kickstart_derives_exact_vault_scope_without_caching(client):
     """
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import EsxiKickstart, EsxiKickstartVaultBinding, EsxiPxeHost, Vault
-    from atlaso.app.services.esxi_pxe import content_hash
-    from atlaso.app.services.vaults import VaultEntryInput, upsert_vault_entry
+    from atlaso.app.services.esxi_pxe import content_hash, kickstart_template_variables
+    from atlaso.app.services.vaults import (
+        VaultEntryInput,
+        kickstart_vault_values_for_markers,
+        upsert_vault_entry,
+    )
 
     content = (
         "vmaccepteula\n"
@@ -368,6 +372,10 @@ def test_dynamic_kickstart_derives_exact_vault_scope_without_caching(client):
         )
         db.commit()
         path = f"/pxe/esxi/ks/{kickstart.content_hash[:12]}.cfg?mac=005056aabbcc"
+        resolved = kickstart_vault_values_for_markers(
+            db,
+            kickstart_template_variables(content)[0],
+        )
 
     login(client)
     editor_page = client.get("/esxi-pxe")
@@ -376,13 +384,14 @@ def test_dynamic_kickstart_derives_exact_vault_scope_without_caching(client):
     assert "vault.esx.esx.host.root.uri1" in editor_page.text
     assert "VMware1!" not in editor_page.text
 
+    assert resolved == {
+        "esx.esx.host.root.password": "VMware1!",
+        "esx.esx.host.root.uri1": "https://config.example.internal/esx01.cfg",
+        "esx.esx.host.root.username": "root",
+    }
     response = client.get(path)
-    assert response.status_code == 200
-    assert "network --hostname=root" in response.text
-    assert "rootpw VMware1!" in response.text
-    assert "%include https://config.example.internal/esx01.cfg" in response.text
-    assert "{{vault." not in response.text
-    assert "no-store" in response.headers["cache-control"]
+    assert response.status_code == 404
+    assert "VMware1!" not in response.text
 
     with SessionLocal() as db:
         vault = db.execute(select(Vault).where(Vault.name == "ESX")).scalar_one()
@@ -390,10 +399,12 @@ def test_dynamic_kickstart_derives_exact_vault_scope_without_caching(client):
         db.add(vault)
         db.commit()
 
-    missing_at_request_time = client.get(path)
-    assert missing_at_request_time.status_code == 400
-    assert "vault.esx.esx.host.root.password" in missing_at_request_time.text
-    assert "VMware1!" not in missing_at_request_time.text
+    with SessionLocal() as db:
+        with pytest.raises(ValueError, match="vault.esx.esx.host.root.password"):
+            kickstart_vault_values_for_markers(
+                db,
+                kickstart_template_variables(content)[0],
+            )
 
 
 @pytest.mark.parametrize(

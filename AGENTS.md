@@ -170,7 +170,12 @@ The following cross-cutting boundaries always apply:
   CSRF-protect and audit reveals without values, disable caching, and automatically hide the value again.
 - Use the locally bundled `window.AtlasoMonaco` integration for code or configuration editing. ESXi Kickstarts use the
   dedicated Kickstart language and derive vault scope only from exact source markers; never restore an explicit
-  Kickstart-to-vault selector or expose resolved values in browser state or completion metadata.
+  Kickstart-to-vault selector or expose resolved values in browser state or completion metadata. Dynamic Kickstart
+  retrieval requires a cryptographically random pending boot claim plus an administrator-entered one-time code shown
+  by the intended host console. Only that exact claim may receive a short-lived, atomic single-use boot capability
+  bound to the applied host, full Kickstart revision, listener, and generated attempt. Store only claim, code, and
+  capability verifiers, never treat a MAC address as authentication, and never expose capability paths in management
+  UI/API, audit, job, problem, or log data. The exact pending boot protocol response may carry only its own claim.
 - Browser navigation to a globally disabled Web Terminal must render the authenticated Atlaso unavailable-state page;
   reserve JSON and protocol errors for ticket, API, and WebSocket consumers.
 - When local DNS points the management resolver to loopback, recover empty DNS service upstreams from the exact

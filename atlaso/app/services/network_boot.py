@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import base64
 import hashlib
+import hmac
 import json
 import os
 import re
@@ -28,15 +30,17 @@ from typing import Any, Callable, Iterable
 
 import pycdlib
 from pycdlib import pycdlibexception
-from sqlalchemy import delete, desc, func, select
+from sqlalchemy import delete, desc, func, select, update
 from sqlalchemy.orm import Session
 
+from atlaso.app.config import get_settings
 from atlaso.app.models import (
     EsxiPxeHost,
     Job,
     JobStatus,
     NetworkBootDiscoveredHost,
     NetworkBootEnvironment,
+    NetworkBootEsxiBootCapability,
     NetworkBootHostBootOverride,
     NetworkBootInventoryCommand,
     NetworkBootInventoryReport,
@@ -45,7 +49,16 @@ from atlaso.app.models import (
     Setting,
     utcnow,
 )
-from atlaso.app.services.esxi_pxe import esxi_http_base_url, normalize_pxe_mac
+from atlaso.app.services.esxi_pxe import (
+    ESXI_PXE_HTTP_BASE,
+    ESXI_TFTP_ROOT,
+    esxi_http_base_url,
+    host_variables,
+    kickstart_template_variables,
+    normalize_pxe_mac,
+    render_kickstart_for_host,
+)
+from atlaso.app.services.vaults import kickstart_vault_values_for_markers
 from atlaso.app.services.release_updates import verify_signed_json
 
 try:
@@ -71,6 +84,8 @@ NETWORK_BOOT_SESSION_LIFETIME = timedelta(hours=8)
 NETWORK_BOOT_ONLINE_THRESHOLD = timedelta(seconds=30)
 NETWORK_BOOT_OVERRIDE_LIFETIME = timedelta(minutes=30)
 NETWORK_BOOT_OVERRIDE_CLAIM_GRACE = timedelta(minutes=5)
+NETWORK_BOOT_ESXI_CAPABILITY_LIFETIME = timedelta(minutes=10)
+NETWORK_BOOT_ESXI_BOOT_CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
 NETWORK_BOOT_MEDIA_ROOT = Path("/var/lib/atlaso/pxe/media")
 NETWORK_BOOT_UPLOAD_ROOT = Path("/var/lib/atlaso/pxe/uploads")
 NETWORK_BOOT_UPLOAD_MAX_BYTES = 2 * 1024 * 1024 * 1024
@@ -2162,6 +2177,555 @@ def _request_http_origin(boot: dict[str, Any], requested_origin: str) -> str:
     return f"http://{rendered_host}:{port}"
 
 
+def _applied_esxi_boot_context(
+    db: Session,
+    *,
+    host_id: int,
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any]]:
+    """Return the exact applied host, artifact, Kickstart, boot, and manifest.
+
+    Args:
+        db: Database session used to compare desired and applied state.
+        host_id: ESXi Host Reference identifier to resolve.
+    """
+    manifest = _applied_esxi_pxe_manifest(db)
+    boot = manifest.get("boot")
+    hosts = manifest.get("hosts")
+    artifacts = manifest.get("artifacts")
+    kickstarts = manifest.get("kickstarts")
+    if not all(isinstance(value, expected) for value, expected in (
+        (boot, dict), (hosts, list), (artifacts, list), (kickstarts, list),
+    )):
+        raise ValueError("Applied ESXi Network Boot state is unavailable.")
+    host = next(
+        (row for row in hosts if isinstance(row, dict) and row.get("id") == host_id),
+        None,
+    )
+    artifact = next(
+        (
+            row
+            for row in artifacts
+            if isinstance(row, dict)
+            and row.get("host_id") == host_id
+            and not row.get("is_default")
+        ),
+        None,
+    )
+    if not host or not host.get("enabled") or not artifact:
+        raise ValueError("Enabled applied ESXi host state is unavailable.")
+    current_host = db.get(EsxiPxeHost, host_id)
+    applied_variables = host.get("variables") if isinstance(host.get("variables"), dict) else {}
+    if (
+        current_host is None
+        or not current_host.enabled
+        or current_host.hostname != str(host.get("hostname") or "")
+        or normalize_mac(current_host.mac_address) != normalize_mac(str(host.get("mac_address") or ""))
+        or (current_host.ip_address or "") != str(host.get("ip_address") or "")
+        or current_host.kickstart_id != host.get("kickstart_id")
+        or (current_host.installer_iso_path or "") != str(host.get("installer_iso_path") or "")
+        or host_variables(current_host) != applied_variables
+    ):
+        raise ValueError("The ESXi Host Reference differs from applied state; review and apply it before authorizing boot.")
+    kickstart_id = host.get("kickstart_id")
+    kickstart = next(
+        (
+            row
+            for row in kickstarts
+            if isinstance(row, dict)
+            and row.get("id") == kickstart_id
+            and row.get("enabled")
+        ),
+        None,
+    )
+    if not kickstart or artifact.get("kickstart_id") != kickstart_id:
+        raise ValueError("Applied ESXi Kickstart state is unavailable.")
+    content = str(kickstart.get("content") or "")
+    revision = str(kickstart.get("content_hash") or "").lower()
+    if not re.fullmatch(r"[0-9a-f]{64}", revision) or hashlib.sha256(content.encode("utf-8")).hexdigest() != revision:
+        raise ValueError("Applied ESXi Kickstart revision is invalid.")
+    expected_mac = normalize_mac(str(host.get("mac_address") or ""))
+    if normalize_pxe_mac(expected_mac) != str(artifact.get("mac_key") or ""):
+        raise ValueError("Applied ESXi host binding is invalid.")
+    return host, artifact, kickstart, dict(boot), manifest
+
+
+def _artifact_listener_origin(artifact: dict[str, Any]) -> str:
+    """Return the normalized HTTP origin of an applied ESXi artifact.
+
+    Args:
+        artifact: Applied ESXi boot artifact metadata.
+    """
+    parsed = urllib.parse.urlsplit(str(artifact.get("image_http_url") or ""))
+    if parsed.scheme != "http" or not parsed.hostname or parsed.username or parsed.password:
+        raise ValueError("Applied ESXi listener binding is invalid.")
+    port = parsed.port or 80
+    host = f"[{parsed.hostname}]" if ":" in parsed.hostname else parsed.hostname
+    return f"http://{host.lower()}:{port}"
+
+
+def _atomic_write_text(path: Path, content: str) -> None:
+    """Write one generated boot artifact without exposing a partial file.
+
+    Args:
+        path: Final filesystem path for the generated artifact.
+        content: Text content to write atomically.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
+    temporary.write_text(content, encoding="utf-8", newline="\n")
+    os.chmod(temporary, 0o644)
+    os.replace(temporary, path)
+
+
+def _remove_esxi_boot_attempt(attempt_id: str) -> None:
+    """Remove generated artifacts for one validated attempt identifier.
+
+    Args:
+        attempt_id: Validated boot-attempt identifier to remove.
+    """
+    if not re.fullmatch(r"[0-9a-f]{32}", attempt_id or ""):
+        return
+    for directory in (
+        ESXI_PXE_HTTP_BASE / "attempts" / attempt_id,
+        ESXI_TFTP_ROOT / "attempts" / attempt_id,
+    ):
+        shutil.rmtree(directory, ignore_errors=True)
+    try:
+        (ESXI_TFTP_ROOT / "pxelinux.cfg" / "attempts" / attempt_id).unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
+def cleanup_esxi_boot_authorizations(db: Session) -> None:
+    """Remove expired, consumed, and orphaned attempt artifacts.
+
+    Args:
+        db: Database session used to identify active authorizations.
+    """
+    now = utcnow()
+    active_attempts: set[str] = set()
+    for row in db.execute(select(NetworkBootEsxiBootCapability)).scalars().all():
+        expires_at = row.expires_at
+        if expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=timezone.utc)
+        if row.consumed_at is None and expires_at > now:
+            active_attempts.add(row.attempt_id)
+        else:
+            _remove_esxi_boot_attempt(row.attempt_id)
+            db.delete(row)
+    for root in (
+        ESXI_PXE_HTTP_BASE / "attempts",
+        ESXI_TFTP_ROOT / "attempts",
+    ):
+        if root.is_dir():
+            for child in root.iterdir():
+                if child.is_dir() and re.fullmatch(r"[0-9a-f]{32}", child.name) and child.name not in active_attempts:
+                    shutil.rmtree(child, ignore_errors=True)
+    pxelinux_root = ESXI_TFTP_ROOT / "pxelinux.cfg" / "attempts"
+    if pxelinux_root.is_dir():
+        for child in pxelinux_root.iterdir():
+            if child.is_file() and re.fullmatch(r"[0-9a-f]{32}", child.name) and child.name not in active_attempts:
+                try:
+                    child.unlink()
+                except OSError:
+                    pass
+
+
+def _normalize_esxi_boot_code(value: str) -> str:
+    """Return one normalized ESXi boot-console code.
+
+    Args:
+        value: Operator-entered code copied from the intended host console.
+    """
+    compact = re.sub(r"[^A-Za-z0-9]", "", value or "").upper()
+    if not re.fullmatch(r"[A-HJ-NP-Z2-9]{8}", compact):
+        raise ValueError("Enter the eight-character code displayed by the intended host.")
+    return f"{compact[:4]}-{compact[4:]}"
+
+
+def create_esxi_boot_claim(
+    db: Session,
+    *,
+    host_id: int,
+    request_origin: str,
+) -> NetworkBootEsxiBootCapability:
+    """Create a pending claim for one exact host-console boot attempt.
+
+    Args:
+        db: Database session used to persist the pending claim.
+        host_id: Applied ESXi Host Reference requesting an authorization code.
+        request_origin: HTTP listener origin serving the host's iPXE request.
+    """
+    cleanup_esxi_boot_authorizations(db)
+    host, artifact, kickstart, _boot, _manifest = _applied_esxi_boot_context(db, host_id=host_id)
+    listener_origin = _artifact_listener_origin(artifact)
+    if listener_origin != request_origin.rstrip("/").lower():
+        raise ValueError("The request did not arrive on the applied ESXi PXE listener.")
+
+    claim = secrets.token_urlsafe(32)
+    compact_code = "".join(secrets.choice(NETWORK_BOOT_ESXI_BOOT_CODE_ALPHABET) for _ in range(8))
+    boot_code = f"{compact_code[:4]}-{compact_code[4:]}"
+    attempt_id = uuid.uuid4().hex
+    now = utcnow()
+    capability = NetworkBootEsxiBootCapability(
+        attempt_id=attempt_id,
+        host_id=host_id,
+        claim_hash=hashlib.sha256(claim.encode("ascii")).hexdigest(),
+        boot_code_hash=hashlib.sha256(boot_code.encode("ascii")).hexdigest(),
+        token_hash=None,
+        mac_address=normalize_mac(str(host.get("mac_address") or "")),
+        kickstart_id=int(kickstart["id"]),
+        kickstart_revision=str(kickstart["content_hash"]).lower(),
+        listener_origin=listener_origin,
+        requested_by="",
+        requested_at=now,
+        expires_at=now + NETWORK_BOOT_ESXI_CAPABILITY_LIFETIME,
+        authorized_at=None,
+        consumed_at=None,
+    )
+    db.add(capability)
+    db.flush()
+    capability._plaintext_claim = claim
+    capability._boot_code = boot_code
+    return capability
+
+
+def authorize_esxi_boot_once(
+    db: Session,
+    *,
+    host_id: int,
+    requested_by: str,
+    boot_code: str,
+) -> NetworkBootEsxiBootCapability:
+    """Authorize the exact pending host-console boot claim identified by a code.
+
+    Args:
+        db: Database session used to persist the authorization.
+        host_id: Applied ESXi Host Reference to authorize.
+        requested_by: Authenticated account requesting the authorization.
+        boot_code: One-time code displayed by the intended host console.
+    """
+    cleanup_esxi_boot_authorizations(db)
+    normalized_code = _normalize_esxi_boot_code(boot_code)
+    code_hash = hashlib.sha256(normalized_code.encode("ascii")).hexdigest()
+    now = utcnow()
+    capability = db.execute(
+        select(NetworkBootEsxiBootCapability).where(
+            NetworkBootEsxiBootCapability.host_id == host_id,
+            NetworkBootEsxiBootCapability.boot_code_hash == code_hash,
+            NetworkBootEsxiBootCapability.authorized_at.is_(None),
+            NetworkBootEsxiBootCapability.consumed_at.is_(None),
+            NetworkBootEsxiBootCapability.expires_at > now,
+        )
+    ).scalar_one_or_none()
+    if capability is None:
+        raise ValueError("The host-console code is invalid or expired. Start a new Network Boot attempt and try again.")
+    host, artifact, kickstart, _boot, _manifest = _applied_esxi_boot_context(db, host_id=host_id)
+    if (
+        capability.mac_address != normalize_mac(str(host.get("mac_address") or ""))
+        or capability.kickstart_id != int(kickstart.get("id") or 0)
+        or capability.kickstart_revision != str(kickstart.get("content_hash") or "").lower()
+        or capability.listener_origin != _artifact_listener_origin(artifact)
+    ):
+        capability.consumed_at = now
+        raise ValueError("The pending boot attempt no longer matches applied state. Start a new Network Boot attempt.")
+    for other in db.execute(
+        select(NetworkBootEsxiBootCapability).where(
+            NetworkBootEsxiBootCapability.host_id == host_id,
+            NetworkBootEsxiBootCapability.attempt_id != capability.attempt_id,
+            NetworkBootEsxiBootCapability.authorized_at.is_not(None),
+            NetworkBootEsxiBootCapability.consumed_at.is_(None),
+        )
+    ).scalars().all():
+        other.consumed_at = now
+        _remove_esxi_boot_attempt(other.attempt_id)
+    capability.requested_by = requested_by
+    capability.requested_at = now
+    capability.authorized_at = now
+    capability.expires_at = now + NETWORK_BOOT_ESXI_CAPABILITY_LIFETIME
+    db.flush()
+    return capability
+
+
+def _esxi_kickstart_token(
+    capability: NetworkBootEsxiBootCapability,
+    claim: str,
+) -> str:
+    """Derive an unpersisted Kickstart capability from the boot claim.
+
+    Args:
+        capability: Authorized boot claim and its exact applied bindings.
+        claim: Plaintext random claim held by the intended boot attempt.
+    """
+    message = "\0".join((
+        claim,
+        capability.attempt_id,
+        capability.mac_address,
+        capability.kickstart_revision,
+        capability.listener_origin,
+    )).encode("utf-8")
+    digest = hmac.new(get_settings().secret_key.encode("utf-8"), message, hashlib.sha256).digest()
+    return base64.urlsafe_b64encode(digest).decode("ascii").rstrip("=")
+
+
+def _prepare_esxi_boot_attempt(
+    capability: NetworkBootEsxiBootCapability,
+    *,
+    claim: str,
+    artifact: dict[str, Any],
+) -> None:
+    """Generate ephemeral loader artifacts after console-code authorization.
+
+    Args:
+        capability: Authorized claim that owns the generated attempt artifacts.
+        claim: Plaintext random claim supplied by the polling boot client.
+        artifact: Exact applied ESXi artifact metadata.
+    """
+    source_http = Path(str(artifact.get("http_boot_cfg_path") or ""))
+    source_tftp = Path(str(artifact.get("uefi_tftp_boot_cfg_path") or ""))
+    if not source_http.is_file() or not source_tftp.is_file():
+        raise ValueError("Applied ESXi boot artifacts are unavailable.")
+    token = _esxi_kickstart_token(capability, claim)
+    capability.token_hash = hashlib.sha256(token.encode("ascii")).hexdigest()
+    mac_key = normalize_pxe_mac(capability.mac_address)
+    kickstart_url = (
+        f"{capability.listener_origin}/pxe/esxi/ks/{mac_key}/"
+        f"{capability.kickstart_revision}/{token}.cfg"
+    )
+    lines = source_http.read_text(encoding="utf-8").splitlines()
+    kernelopt_index = next((index for index, line in enumerate(lines) if line.startswith("kernelopt=")), None)
+    if kernelopt_index is None:
+        lines.append(f"kernelopt=ks={kickstart_url}")
+    else:
+        options = re.sub(r"(?:^|\s)ks=\S+", "", lines[kernelopt_index].removeprefix("kernelopt=")).strip()
+        lines[kernelopt_index] = f"kernelopt={options} ks={kickstart_url}".replace("= ", "=")
+    attempt_boot_cfg = "\n".join(lines) + "\n"
+
+    http_attempt = ESXI_PXE_HTTP_BASE / "attempts" / capability.attempt_id
+    tftp_attempt = ESXI_TFTP_ROOT / "attempts" / capability.attempt_id
+    _atomic_write_text(http_attempt / "boot.cfg", attempt_boot_cfg)
+    _atomic_write_text(tftp_attempt / "boot.cfg", attempt_boot_cfg)
+    source_mboot = source_http.parent / "mboot.efi"
+    if not source_mboot.is_file():
+        raise ValueError("Applied ESXi UEFI loader is unavailable.")
+    shutil.copy2(source_mboot, http_attempt / "mboot.efi")
+    os.chmod(http_attempt / "mboot.efi", 0o644)
+    source_crypto = source_http.parent / "crypto64.efi"
+    if source_crypto.is_file():
+        shutil.copy2(source_crypto, http_attempt / "crypto64.efi")
+        os.chmod(http_attempt / "crypto64.efi", 0o644)
+    image_key = str(artifact.get("image_key") or "")
+    if not re.fullmatch(r"[A-Za-z0-9._-]+", image_key):
+        raise ValueError("Applied ESXi image binding is invalid.")
+    pxelinux = "\n".join((
+        "DEFAULT esxi",
+        "NOHALT 1",
+        "LABEL esxi",
+        f"  KERNEL images/{image_key}/mboot.c32",
+        f"  APPEND -c attempts/{capability.attempt_id}/boot.cfg",
+        "IPAPPEND 2",
+        "",
+    ))
+    _atomic_write_text(ESXI_TFTP_ROOT / "pxelinux.cfg" / "attempts" / capability.attempt_id, pxelinux)
+
+
+def render_esxi_boot_claim(
+    db: Session,
+    *,
+    claim: str,
+    firmware: str,
+    request_origin: str,
+) -> str | None:
+    """Return the wait or loader script for one unpredictable boot claim.
+
+    Args:
+        db: Database session used to resolve the pending claim.
+        claim: Plaintext random claim held by the boot client.
+        firmware: Boot firmware reported by iPXE.
+        request_origin: HTTP listener origin serving the polling request.
+    """
+    if not re.fullmatch(r"[A-Za-z0-9_-]{40,64}", claim or ""):
+        return None
+    claim_hash = hashlib.sha256(claim.encode("ascii")).hexdigest()
+    capability = db.execute(
+        select(NetworkBootEsxiBootCapability).where(
+            NetworkBootEsxiBootCapability.claim_hash == claim_hash,
+        )
+    ).scalar_one_or_none()
+    if capability is None:
+        return None
+    now = utcnow()
+    expires_at = capability.expires_at
+    if expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=timezone.utc)
+    normalized_origin = request_origin.rstrip("/").lower()
+    if capability.consumed_at is not None or expires_at <= now or capability.listener_origin != normalized_origin:
+        capability.consumed_at = capability.consumed_at or now
+        _remove_esxi_boot_attempt(capability.attempt_id)
+        db.commit()
+        return None
+    if capability.authorized_at is None:
+        return "\n".join((
+            "#!ipxe",
+            "echo Waiting for Atlaso authorization of this console code...",
+            "sleep 3",
+            f"chain {normalized_origin}/pxe/esxi/claim/{claim}.ipxe?firmware=${{platform}}",
+            "",
+        ))
+    try:
+        _host, artifact, kickstart, _boot, _manifest = _applied_esxi_boot_context(
+            db,
+            host_id=capability.host_id,
+        )
+        if (
+            capability.kickstart_id != int(kickstart.get("id") or 0)
+            or capability.kickstart_revision != str(kickstart.get("content_hash") or "").lower()
+            or capability.listener_origin != _artifact_listener_origin(artifact)
+        ):
+            raise ValueError("The authorized boot attempt no longer matches applied state.")
+        _prepare_esxi_boot_attempt(capability, claim=claim, artifact=artifact)
+        db.commit()
+    except (OSError, TypeError, ValueError):
+        capability.consumed_at = now
+        _remove_esxi_boot_attempt(capability.attempt_id)
+        db.commit()
+        return None
+    esxi_base_url = f"{normalized_origin}/pxe/esxi"
+    normalized_firmware = firmware.strip().lower()
+    if normalized_firmware == "efi":
+        loader = [f"chain {esxi_base_url}/attempts/{capability.attempt_id}/mboot.efi"]
+    elif normalized_firmware in {"bios", "pcbios"}:
+        loader = [
+            f"set 209:string pxelinux.cfg/attempts/{capability.attempt_id}",
+            "set 210:string tftp://${next-server}/",
+            "chain tftp://${next-server}/pxelinux.0",
+        ]
+    else:
+        loader = [
+            "iseq ${platform} efi && goto authorized_uefi || goto authorized_bios",
+            ":authorized_uefi",
+            f"chain {esxi_base_url}/attempts/{capability.attempt_id}/mboot.efi",
+            ":authorized_bios",
+            f"set 209:string pxelinux.cfg/attempts/{capability.attempt_id}",
+            "set 210:string tftp://${next-server}/",
+            "chain tftp://${next-server}/pxelinux.0",
+        ]
+    return "\n".join(("#!ipxe", *loader, ""))
+
+
+def consume_esxi_boot_capability(
+    db: Session,
+    *,
+    mac_key: str,
+    kickstart_revision: str,
+    token: str,
+    request_origin: str,
+) -> str | None:
+    """Consume and render one exact applied ESXi boot capability.
+
+    Args:
+        db: Database session used for atomic capability consumption.
+        mac_key: PXE-formatted MAC address bound to the capability.
+        kickstart_revision: Exact applied Kickstart content revision.
+        token: Plaintext bearer capability supplied by the boot artifact.
+        request_origin: HTTP listener origin serving the request.
+    """
+    if not re.fullmatch(r"01(?:-[0-9a-f]{2}){6}", mac_key or ""):
+        return None
+    if not re.fullmatch(r"[0-9a-f]{64}", kickstart_revision or ""):
+        return None
+    if not re.fullmatch(r"[A-Za-z0-9_-]{40,64}", token or ""):
+        return None
+    token_hash = hashlib.sha256(token.encode("ascii")).hexdigest()
+    capability = db.execute(
+        select(NetworkBootEsxiBootCapability).where(
+            NetworkBootEsxiBootCapability.token_hash == token_hash,
+        )
+    ).scalar_one_or_none()
+    if capability is None:
+        return None
+    now = utcnow()
+    expires_at = capability.expires_at
+    if expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=timezone.utc)
+    normalized_origin = request_origin.rstrip("/").lower()
+    if (
+        capability.consumed_at is not None
+        or capability.authorized_at is None
+        or expires_at <= now
+        or normalize_pxe_mac(capability.mac_address) != mac_key
+        or capability.kickstart_revision != kickstart_revision
+        or capability.listener_origin.lower() != normalized_origin
+    ):
+        if capability.consumed_at is None:
+            capability.consumed_at = now
+            db.commit()
+        _remove_esxi_boot_attempt(capability.attempt_id)
+        return None
+    try:
+        host, artifact, kickstart, boot, manifest = _applied_esxi_boot_context(db, host_id=capability.host_id)
+        if (
+            normalize_pxe_mac(str(host.get("mac_address") or "")) != mac_key
+            or str(kickstart.get("content_hash") or "").lower() != kickstart_revision
+            or _artifact_listener_origin(artifact).lower() != normalized_origin
+            or int(kickstart.get("id") or 0) != capability.kickstart_id
+        ):
+            raise ValueError("The capability no longer matches applied state.")
+    except (TypeError, ValueError):
+        capability.consumed_at = now
+        db.commit()
+        _remove_esxi_boot_attempt(capability.attempt_id)
+        return None
+    result = db.execute(
+        update(NetworkBootEsxiBootCapability)
+        .where(
+            NetworkBootEsxiBootCapability.attempt_id == capability.attempt_id,
+            NetworkBootEsxiBootCapability.token_hash == token_hash,
+            NetworkBootEsxiBootCapability.consumed_at.is_(None),
+            NetworkBootEsxiBootCapability.expires_at > now,
+        )
+        .values(consumed_at=now)
+        .execution_options(synchronize_session=False)
+    )
+    if result.rowcount != 1:
+        return None
+    db.commit()
+
+    applied_host = EsxiPxeHost(
+        id=int(host["id"]),
+        hostname=str(host.get("hostname") or ""),
+        mac_address=str(host.get("mac_address") or ""),
+        ip_address=str(host.get("ip_address") or ""),
+        kickstart_id=int(host.get("kickstart_id") or 0),
+        variables_json=json.dumps(host.get("variables") if isinstance(host.get("variables"), dict) else {}),
+        enabled=True,
+    )
+    names, invalid = kickstart_template_variables(str(kickstart["content"]))
+    if invalid:
+        _remove_esxi_boot_attempt(capability.attempt_id)
+        return None
+    try:
+        vault_values = (
+            kickstart_vault_values_for_markers(db, names)
+            if any(name.startswith("vault.") for name in names)
+            else {}
+        )
+        custom_defaults = {
+            str(row.get("name") or ""): str(row.get("default_value") or "")
+            for row in manifest.get("custom_variables", [])
+            if isinstance(row, dict) and row.get("name")
+        }
+        return render_kickstart_for_host(
+            str(kickstart["content"]),
+            applied_host,
+            boot,
+            vault_values,
+            custom_defaults,
+        )
+    finally:
+        _remove_esxi_boot_attempt(capability.attempt_id)
+
+
 def render_network_boot_menu(
     db: Session,
     *,
@@ -2182,11 +2746,11 @@ def render_network_boot_menu(
     Returns:
         The rendered network boot menu.
     """
+    cleanup_esxi_boot_authorizations(db)
     mac = normalize_mac(mac_address) if mac_address else ""
     mac_key = normalize_pxe_mac(mac) if mac else ""
     boot, artifacts = _applied_esxi_pxe_runtime(db)
     http_origin = _request_http_origin(boot, request_origin)
-    esxi_base_url = f"{http_origin}/pxe/esxi" if http_origin else ""
     assigned = next(
         (
             artifact
@@ -2195,7 +2759,16 @@ def render_network_boot_menu(
         ),
         None,
     )
-    undefined = next((artifact for artifact in artifacts if artifact.get("is_default")), None)
+    assigned_claim = None
+    if assigned is not None and http_origin:
+        try:
+            assigned_claim = create_esxi_boot_claim(
+                db,
+                host_id=int(assigned.get("host_id") or 0),
+                request_origin=http_origin,
+            )
+        except (TypeError, ValueError):
+            assigned_claim = None
     active = _active_media(db)
     inventory = active.get("inventory")
     requested_default = (
@@ -2209,7 +2782,7 @@ def render_network_boot_menu(
         else "inventory"
         if requested_default == "inventory"
         else "esxi_assigned"
-        if assigned
+        if assigned and assigned_claim
         else "inventory"
         if inventory
         else "local"
@@ -2224,33 +2797,29 @@ def render_network_boot_menu(
         artifact: dict[str, Any],
         *,
         label: str,
+        claim: NetworkBootEsxiBootCapability | None,
     ) -> list[str]:
         """Return esxi loader lines.
 
         Args:
             artifact: Artifact consumed by ESXi loader lines.
             label: Human-readable label used to identify the result.
+            claim: Pending claim created for this exact menu request, if available.
         """
-        mac_key = str(artifact.get("mac_key") or "default")
-        normalized_firmware = firmware.strip().lower()
-        uefi_lines = [
-            f"chain {esxi_base_url}/{mac_key}/mboot.efi || goto menu",
-        ]
-        bios_lines = [
-            f"set 209:string pxelinux.cfg/{mac_key}",
-            "set 210:string tftp://${next-server}/",
-            "chain tftp://${next-server}/pxelinux.0 || goto menu",
-        ]
-        if normalized_firmware == "efi":
-            return uefi_lines
-        if normalized_firmware in {"bios", "pcbios"}:
-            return bios_lines
+        if claim is None:
+            return [
+                "echo This ESXi boot cannot be authorized until desired and applied state match.",
+                "sleep 3",
+                "goto menu",
+            ]
+        plaintext_claim = str(getattr(claim, "_plaintext_claim", ""))
+        boot_code = str(getattr(claim, "_boot_code", ""))
         return [
-            f"iseq ${{platform}} efi && goto {label}_uefi || goto {label}_bios",
-            f":{label}_uefi",
-            *uefi_lines,
-            f":{label}_bios",
-            *bios_lines,
+            "echo Authorize this exact boot attempt in Atlaso.",
+            f"echo Console code: {boot_code}",
+            "echo Waiting for an administrator...",
+            "sleep 2",
+            f"chain {http_origin}/pxe/esxi/claim/{plaintext_claim}.ipxe?firmware=${{platform}} || goto menu",
         ]
     if inventory:
         lines.extend(
@@ -2275,17 +2844,6 @@ def render_network_boot_menu(
         lines.append("item --gap -- ---------------- Maintenance ----------------")
         for key, entry in maintenance:
             lines.append(f"item env_{key} {entry.label} [{entry.risk}]")
-    esxi_manual = [
-        artifact
-        for artifact in artifacts
-        if not artifact.get("is_default") and artifact is not assigned
-    ]
-    if esxi_manual or undefined:
-        lines.append("item --gap -- ---------------- ESXi manual entries ----------------")
-        for artifact in esxi_manual:
-            lines.append(f"item esxi_{artifact['host_id']} ESXi: {artifact['hostname']}")
-        if undefined:
-            lines.append("item esxi_default ESXi: Default / undefined MACs")
     lines.extend(
         [
             "item --gap -- ---------------- Exit ----------------",
@@ -2311,26 +2869,11 @@ def render_network_boot_menu(
         lines.extend(
             [
                 ":esxi_assigned",
-                *esxi_loader_lines(assigned, label="esxi_assigned"),
-                "",
-            ]
-        )
-    for artifact in esxi_manual:
-        lines.extend(
-            [
-                f":esxi_{artifact['host_id']}",
                 *esxi_loader_lines(
-                    artifact,
-                    label=f"esxi_{artifact['host_id']}",
+                    assigned,
+                    label="esxi_assigned",
+                    claim=assigned_claim,
                 ),
-                "",
-            ]
-        )
-    if undefined:
-        lines.extend(
-            [
-                ":esxi_default",
-                *esxi_loader_lines(undefined, label="esxi_default"),
                 "",
             ]
         )

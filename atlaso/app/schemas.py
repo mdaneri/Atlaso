@@ -1294,6 +1294,29 @@ class EsxiPxeHostResponse(EsxiPxeHostCreate):
     updated_at: Annotated[datetime, Field(description='UTC timestamp when the resource was last updated.')]
 
 
+class EsxiBootAuthorizationRequest(BaseModel):
+    """Console code identifying the exact pending ESXi boot attempt."""
+
+    boot_code: Annotated[
+        str,
+        Field(
+            min_length=9,
+            max_length=9,
+            pattern=r"^[A-HJ-NP-Z2-9]{4}-[A-HJ-NP-Z2-9]{4}$",
+            description="One-time code displayed on the intended host console.",
+        ),
+    ]
+
+
+class EsxiBootAuthorizationResponse(BaseModel):
+    """Secret-free receipt for a one-time applied ESXi boot authorization."""
+
+    host_id: Annotated[int, Field(description="Applied ESXi Host Reference authorized for the next boot attempt.")]
+    requested_at: Annotated[datetime, Field(description="UTC timestamp when the authorization was issued.")]
+    expires_at: Annotated[datetime, Field(description="UTC timestamp after which the authorization cannot be used.")]
+    message: Annotated[str, Field(description="Secret-free operator guidance for the authorized boot attempt.")]
+
+
 class EsxiInstallerIsoResponse(BaseModel):
     """Fields returned by the Atlaso esxi installer iso API.
 

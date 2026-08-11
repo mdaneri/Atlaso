@@ -2697,6 +2697,35 @@ class NetworkBootHostBootOverride(Base):
     claimed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
+class NetworkBootEsxiBootCapability(Base):
+    """Represent one pending or authorized ESXi boot-console claim.
+
+    Plaintext boot claims, console codes, and Kickstart capabilities are never
+    persisted. Multiple pending claims may exist for a host so an unrelated
+    caller cannot replace the claim displayed by the intended boot attempt.
+    """
+
+    __tablename__ = "network_boot_esxi_boot_claims"
+
+    attempt_id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    host_id: Mapped[int] = mapped_column(
+        ForeignKey("esxi_pxe_hosts.id", ondelete="CASCADE"),
+        index=True,
+    )
+    claim_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    boot_code_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    token_hash: Mapped[str | None] = mapped_column(String(64), unique=True, index=True, nullable=True)
+    mac_address: Mapped[str] = mapped_column(String(32), index=True)
+    kickstart_id: Mapped[int] = mapped_column(Integer)
+    kickstart_revision: Mapped[str] = mapped_column(String(64), index=True)
+    listener_origin: Mapped[str] = mapped_column(String(500))
+    requested_by: Mapped[str] = mapped_column(String(100), default="")
+    requested_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    authorized_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    consumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
 class Job(Base):
     """Represent job.
 
