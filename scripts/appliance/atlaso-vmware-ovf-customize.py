@@ -579,6 +579,7 @@ def pending_marker_matches_current_deployment(ovf_env_file: str) -> bool:
         else:
             answered, content = try_read_ovf_environment()
             if not answered:
+                empty_reads = 0
                 if not logged_failure:
                     log(
                         "VMware OVF first-time initialization is retrying an inconclusive deployment-property read "

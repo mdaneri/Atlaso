@@ -1048,8 +1048,10 @@ def test_vmware_ovf_customizer_requires_stable_empty_ovf_before_pending_recovery
     sleeps = []
 
     def read_empty_environment():
-        """Return one conclusive empty environment and record the attempt."""
+        """Interrupt one empty sequence, then return a complete stable sequence."""
         reads.append(True)
+        if len(reads) == 11:
+            return False, ""
         return True, ""
 
     monkeypatch.setattr(customizer, "try_read_ovf_environment", read_empty_environment)
@@ -1058,8 +1060,8 @@ def test_vmware_ovf_customizer_requires_stable_empty_ovf_before_pending_recovery
 
     assert customizer.pending_marker_matches_current_deployment("") is True
 
-    assert len(reads) == customizer.PENDING_EMPTY_CONFIRMATION_READS
-    assert len(sleeps) == customizer.PENDING_EMPTY_CONFIRMATION_READS - 1
+    assert len(reads) == customizer.PENDING_EMPTY_CONFIRMATION_READS + 11
+    assert len(sleeps) == customizer.PENDING_EMPTY_CONFIRMATION_READS + 10
 
 
 def test_vmware_ovf_customizer_reports_safe_failing_initialization_layer(monkeypatch):
