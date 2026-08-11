@@ -105,8 +105,10 @@ Success removes both handshake documents plus the initialization lock and releas
 interruption occurs after marker creation but before cleanup, the next customizer start
 recovers the pending marker only when the OVF environment is already empty or its non-secret raw-clone deployment
 identifier matches. Any nonempty ID-less environment, including a release OVA redeployment, is reapplied rather than
-promoting possibly stale source state. An interrupted original OVA apply is safe to reapply idempotently. The applied
-marker removes the stale handshake and lock before exiting.
+promoting possibly stale source state. Empty guestinfo must remain conclusively empty for 30 one-second reads before it
+proves scrub completion; properties that appear during that window are applied as a replacement deployment. An
+interrupted original OVA apply is safe to reapply idempotently. The applied marker removes the stale handshake and lock
+before exiting.
 
 OVF XML password attributes are consumed exactly as parsed rather than trimmed. This preserves valid leading or trailing
 spaces supplied through a release deployment instead of applying a different credential or leaving initialization

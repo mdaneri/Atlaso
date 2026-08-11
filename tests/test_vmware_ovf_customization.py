@@ -982,8 +982,14 @@ def test_vmware_ovf_customizer_reapplies_new_deployment_over_pending_source(
             "  <PropertySection>\n",
             "  <PropertySection>\n"
             f'    <Property oe:key="atlaso.deployment_id" oe:value="{replacement_deployment_id}" />\n',
-        )
-    monkeypatch.setattr(customizer, "try_read_ovf_environment", lambda: (True, replacement_ovf))
+    )
+    ovf_reads = iter([(True, ""), (True, ""), (True, replacement_ovf)])
+    monkeypatch.setattr(
+        customizer,
+        "try_read_ovf_environment",
+        lambda: next(ovf_reads, (True, replacement_ovf)),
+    )
+    monkeypatch.setattr(customizer.time, "sleep", lambda seconds: None)
     monkeypatch.setattr(
         customizer,
         "recover_pending_customization",
@@ -1017,6 +1023,34 @@ def test_vmware_ovf_customizer_reapplies_new_deployment_over_pending_source(
     assert applied[0]["deployment_id"] == replacement_deployment_id
     assert customizer.MARKER_PATH.exists()
     assert not customizer.PENDING_MARKER_PATH.exists()
+
+
+def test_vmware_ovf_customizer_requires_stable_empty_ovf_before_pending_recovery(tmp_path, monkeypatch):
+    """Verify one transient empty guestinfo read cannot promote pending state.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+        monkeypatch: Pytest fixture used to replace VMware reads and polling.
+    """
+    customizer = load_customizer()
+    customizer.PENDING_MARKER_PATH = tmp_path / "customization.pending"
+    customizer.write_json_atomic(customizer.PENDING_MARKER_PATH, {"deployment_id": ""})
+    reads = []
+    sleeps = []
+
+    def read_empty_environment():
+        """Return one conclusive empty environment and record the attempt."""
+        reads.append(True)
+        return True, ""
+
+    monkeypatch.setattr(customizer, "try_read_ovf_environment", read_empty_environment)
+    monkeypatch.setattr(customizer.time, "sleep", sleeps.append)
+    monkeypatch.setattr(customizer, "log", lambda message: None)
+
+    assert customizer.pending_marker_matches_current_deployment("") is True
+
+    assert len(reads) == customizer.PENDING_EMPTY_CONFIRMATION_READS
+    assert len(sleeps) == customizer.PENDING_EMPTY_CONFIRMATION_READS - 1
 
 
 def test_vmware_ovf_customizer_reports_safe_failing_initialization_layer(monkeypatch):

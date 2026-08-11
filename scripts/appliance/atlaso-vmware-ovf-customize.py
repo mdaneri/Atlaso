@@ -57,6 +57,7 @@ LOG_PATH = Path("/var/log/atlaso/vmware-ovf-customize.log")
 DEFAULT_INTERFACE = "eth0"
 NETWORK_REVIEW_POLL_SECONDS = 1.0
 OVF_ENVIRONMENT_POLL_SECONDS = 1.0
+PENDING_EMPTY_CONFIRMATION_READS = 30
 FQDN_PATTERN = re.compile(r"^(?=.{1,253}$)(?!-)[A-Za-z0-9-]{1,63}(?<!-)(\.(?!-)[A-Za-z0-9-]{1,63}(?<!-))+$")
 
 
@@ -556,26 +557,36 @@ def pending_marker_matches_current_deployment(ovf_env_file: str) -> bool:
         requires a fresh apply instead.
     """
     logged_failure = False
+    empty_reads = 0
     while True:
         if ovf_env_file:
             try:
                 content = Path(ovf_env_file).read_text(encoding="utf-8")
             except OSError:
                 return False
+        else:
+            answered, content = try_read_ovf_environment()
+            if not answered:
+                if not logged_failure:
+                    log(
+                        "VMware OVF first-time initialization is retrying an inconclusive deployment-property read "
+                        "before pending-state recovery."
+                    )
+                    logged_failure = True
+                time.sleep(OVF_ENVIRONMENT_POLL_SECONDS)
+                continue
+        if content.strip():
             break
-        answered, content = try_read_ovf_environment()
-        if answered:
-            break
+        empty_reads += 1
+        if empty_reads >= PENDING_EMPTY_CONFIRMATION_READS:
+            return True
         if not logged_failure:
             log(
-                "VMware OVF first-time initialization is retrying an inconclusive deployment-property read "
+                "VMware OVF first-time initialization is confirming that deployment properties remain empty "
                 "before pending-state recovery."
             )
             logged_failure = True
         time.sleep(OVF_ENVIRONMENT_POLL_SECONDS)
-
-    if not content.strip():
-        return True
     try:
         properties = parse_ovf_environment(content)
         pending = json.loads(PENDING_MARKER_PATH.read_text(encoding="utf-8"))
