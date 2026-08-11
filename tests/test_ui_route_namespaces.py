@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from sqlalchemy import select
+from starlette.requests import Request
 
 from atlaso.app import main, ui, web_terminal
 from atlaso.app.database import SessionLocal
@@ -160,3 +161,13 @@ def test_protocol_and_static_requests_skip_ui_listener_lookup(client, monkeypatc
 
     assert client.get("/openapi.json").status_code == 200
     assert client.get("/static/app.js").status_code == 200
+
+
+def test_listener_address_header_is_trusted_only_from_loopback_proxy():
+    """Classify aliases by nginx listener identity without trusting remote spoofing."""
+    headers = [(b"host", b"alias.example.test"), (b"x-atlaso-listener-address", b"192.0.2.25")]
+    proxied = Request({"type": "http", "headers": headers, "client": ("127.0.0.1", 49152)})
+    direct = Request({"type": "http", "headers": headers, "client": ("192.0.2.99", 49152)})
+
+    assert ui.request_host_name(proxied) == "192.0.2.25"
+    assert ui.request_host_name(direct) == "alias.example.test"

@@ -4763,11 +4763,22 @@ def safe_login_next(value: str | None) -> str:
 
 
 def request_host_name(request: Request) -> str:
-    """Return request host name.
+    """Return the trusted listener address or direct request host name.
 
     Args:
         request: Incoming HTTP request.
     """
+    listener_address = (request.headers.get("x-atlaso-listener-address") or "").strip().strip("[]")
+    client_host = str(request.client.host if request.client else "").strip().strip("[]")
+    try:
+        trusted_proxy = ip_address(client_host).is_loopback
+    except ValueError:
+        trusted_proxy = False
+    if trusted_proxy and listener_address:
+        try:
+            return str(ip_address(listener_address)).lower()
+        except ValueError:
+            pass
     raw_host = (request.headers.get("host") or "").strip().lower()
     if raw_host.startswith("["):
         closing_bracket = raw_host.find("]")
