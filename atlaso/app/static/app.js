@@ -30,7 +30,6 @@ let applianceApplyGlobalPollTimer = 0;
 let applianceApplyPollController = null;
 let applianceApplyAutoCloseTimer = 0;
 let applianceApplyModalTable = null;
-let applianceApplyActiveJobId = "";
 
 function atlasoRequestMethod(input, init = {}) {
   return String(init.method || (input instanceof Request ? input.method : "GET")).toUpperCase();
@@ -15020,6 +15019,7 @@ function applianceApplyModalElements() {
     status: modal?.querySelector("[data-appliance-apply-modal-status]"),
     error: modal?.querySelector("[data-appliance-apply-modal-error]"),
     connectionWarning: modal?.querySelector("[data-appliance-apply-connection-warning]"),
+    pollWarning: modal?.querySelector("[data-appliance-apply-poll-warning]"),
     review: modal?.querySelector("[data-appliance-apply-review]"),
     live: modal?.querySelector("[data-appliance-apply-live]"),
     reviewList: modal?.querySelector("[data-appliance-apply-review-list]"),
@@ -15065,6 +15065,14 @@ function setApplianceApplyModalError(message = "") {
   if (error instanceof HTMLElement) {
     error.textContent = message;
     error.classList.toggle("hidden", !message);
+  }
+}
+
+function setApplianceApplyPollWarning(message = "") {
+  const warning = applianceApplyModalElements().pollWarning;
+  if (warning instanceof HTMLElement) {
+    warning.textContent = message;
+    warning.classList.toggle("hidden", !message);
   }
 }
 
@@ -15244,6 +15252,7 @@ async function openApplianceApplyReview() {
     elements.selectionSummary.textContent = "Loading appliance changes…";
   }
   setApplianceApplyModalError("");
+  setApplianceApplyPollWarning("");
   if (elements.connectionWarning instanceof HTMLElement) {
     elements.connectionWarning.replaceChildren();
     elements.connectionWarning.classList.add("hidden");
@@ -15254,8 +15263,8 @@ async function openApplianceApplyReview() {
     const payload = await response.json();
     if (!response.ok) throw new Error(payload.detail || "Unable to load appliance changes.");
     if (payload.active_task) {
-      applianceApplyActiveJobId = payload.active_task.id || "";
-      renderApplianceApplyTask(payload.active_task);
+      if (applianceApplyPollController) await applianceApplyPollController.observeTask(payload.active_task);
+      else renderApplianceApplyTask(payload.active_task);
       return;
     }
     const units = Array.isArray(payload.units) ? payload.units : [];
@@ -15443,8 +15452,9 @@ async function submitApplianceApplyForm(form) {
     });
     const payload = await response.json();
     if (!response.ok) throw new Error(payload.detail || "Appliance changes could not be submitted.");
-    applianceApplyActiveJobId = payload.job_id || payload.task?.id || "";
-    renderApplianceApplyTask(payload.task);
+    if (payload.task && applianceApplyPollController) await applianceApplyPollController.observeTask(payload.task);
+    else if (payload.task) renderApplianceApplyTask(payload.task);
+    else applianceApplyPollController?.trackJob(payload.job_id);
     refreshApplianceApplySidebar().catch(() => {});
     return true;
   } catch (error) {
@@ -15507,32 +15517,29 @@ function initializeApplianceApplyProgress() {
       setApplianceApplyModalError(payload.detail || "Unable to request cancellation.");
       return;
     }
-    renderApplianceApplyTask(payload.task);
+    if (payload.task && applianceApplyPollController) await applianceApplyPollController.observeTask(payload.task);
+    else renderApplianceApplyTask(payload.task);
   });
-  applianceApplyPollController = window.AtlasoApplianceApplyPolling.createController({
-    request: async (refresh) => {
+  applianceApplyPollController = window.AtlasoApplianceApplyPolling.createMonitor({
+    requestStatus: async (refresh) => {
       const statusUrl = refresh ? managementUiPath("/appliance-apply/status?refresh=true") : managementUiPath("/appliance-apply/status");
       const response = await fetch(statusUrl, { credentials: "same-origin", headers: { Accept: "application/json" } });
       if (!response.ok) throw new Error("Unable to read appliance apply status.");
       return response.json();
     },
-    onStatus: async (payload) => {
-      updateApplianceApplySidebar(payload);
-      if (payload.active_task) {
-        applianceApplyActiveJobId = payload.active_task.id || "";
-        renderApplianceApplyTask(payload.active_task);
-      } else if (applianceApplyActiveJobId) {
-        const jobId = applianceApplyActiveJobId;
-        const taskResponse = await fetch(managementUiPath(`/tasks/${encodeURIComponent(jobId)}/status`), { credentials: "same-origin", headers: { Accept: "application/json" } });
-        if (taskResponse.ok) {
-          const taskPayload = await taskResponse.json();
-          renderApplianceApplyTask(taskPayload.task);
-          await refreshCurrentWorkflowAfterApplianceApply(taskPayload.task);
-        }
-        applianceApplyActiveJobId = "";
-        window.setTimeout(() => applianceApplyPollController?.refreshImmediately().catch(() => {}), 0);
-      }
+    requestTask: async (jobId) => {
+      const response = await fetch(managementUiPath(`/tasks/${encodeURIComponent(jobId)}/status`), { credentials: "same-origin", headers: { Accept: "application/json" } });
+      if (!response.ok) throw new Error("Unable to reconcile the completed appliance task.");
+      const payload = await response.json();
+      return payload.task;
     },
+    onStatus: async (payload) => updateApplianceApplySidebar(payload),
+    onTask: (task) => renderApplianceApplyTask(task),
+    onTerminal: (task) => refreshCurrentWorkflowAfterApplianceApply(task),
+    onError: (_error, state) => {
+      if (state.active) setApplianceApplyPollWarning("Live task status is temporarily unavailable. Atlaso will retry automatically.");
+    },
+    onRecovered: () => setApplianceApplyPollWarning(""),
     isHidden: () => document.visibilityState === "hidden",
     setTimer: (callback, delay) => {
       applianceApplyGlobalPollTimer = window.setTimeout(callback, delay);

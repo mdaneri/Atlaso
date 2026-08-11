@@ -1,7 +1,10 @@
 # Atlaso
 
 Authenticated pages share a lightweight, visibility-aware Appliance Apply status projection. Apply review and
-validation continue to reconcile live host state, while idle sidebar polling never starts privileged helper work.
+validation continue to reconcile live host state, while idle sidebar polling never starts privileged helper work. The
+shared task monitor retries transient status failures, follows a completed master to its terminal task record, and keeps
+the modal, sidebar, pending count, and global lock synchronized without requiring a page reload. It completes a retained
+task's terminal refresh before following a newer Apply started by another session.
 
 ![Atlaso — Everything your virtualization lab needs](docs/assets/brand/atlaso-docs-header-dark-1600x400.png)
 

@@ -12,6 +12,7 @@
     let inFlight = null;
     let forceNextRequest = false;
     let stopped = false;
+    let requestSequence = 0;
 
     const clearScheduled = () => {
       if (timer) options.clearTimer(timer);
@@ -29,10 +30,12 @@
       if (inFlight) return inFlight;
       const force = forceNextRequest;
       forceNextRequest = false;
-      inFlight = Promise.resolve(options.request(force))
+      const sequence = typeof options.beginRequest === "function" ? options.beginRequest() : ++requestSequence;
+      inFlight = Promise.resolve(options.request(force, sequence))
         .then(async (payload) => {
-          await options.onStatus(payload);
-          if (payload && payload.active_task) {
+          const result = await options.onStatus(payload, { sequence });
+          const active = typeof result?.active === "boolean" ? result.active : Boolean(payload && payload.active_task);
+          if (active) {
             idleInterval = idleInitialInterval;
             schedule(activeInterval);
           } else {
@@ -42,9 +45,15 @@
           return payload;
         })
         .catch((error) => {
-          if (typeof options.onError === "function") options.onError(error);
-          schedule(idleInterval);
-          idleInterval = Math.min(idleInterval * 2, idleMaximumInterval);
+          const active = typeof options.isActive === "function" && options.isActive();
+          if (typeof options.onError === "function") options.onError(error, { active });
+          if (active) {
+            idleInterval = idleInitialInterval;
+            schedule(activeInterval);
+          } else {
+            schedule(idleInterval);
+            idleInterval = Math.min(idleInterval * 2, idleMaximumInterval);
+          }
           return null;
         })
         .finally(() => {
@@ -75,5 +84,117 @@
     };
   }
 
-  return { createController };
+  function taskActive(task) {
+    return ["pending", "running"].includes(String(task?.status || ""));
+  }
+
+  function createMonitor(options) {
+    let sequence = 0;
+    let acceptedSequence = 0;
+    let currentTask = null;
+    let trackedJobId = "";
+
+    const beginRequest = () => ++sequence;
+    const hasTrackedTask = () => Boolean(trackedJobId);
+
+    const acceptTask = (task, observedSequence = beginRequest()) => {
+      const taskId = String(task?.id || "");
+      if (!taskId) return false;
+      const sameTask = String(currentTask?.id || "") === taskId;
+      if (sameTask && observedSequence < acceptedSequence) return false;
+      if (sameTask && !taskActive(currentTask) && taskActive(task)) return false;
+      currentTask = task;
+      acceptedSequence = observedSequence;
+      if (taskActive(task)) trackedJobId = taskId;
+      else if (trackedJobId === taskId) trackedJobId = "";
+      options.onTask(task);
+      return true;
+    };
+
+    const reconcileTrackedTask = async (observedSequence) => {
+      const jobId = trackedJobId;
+      const task = await options.requestTask(jobId, observedSequence);
+      if (!task || String(task.id || "") !== jobId) {
+        throw new Error("Appliance Apply returned an invalid task status response.");
+      }
+      const accepted = acceptTask(task, observedSequence);
+      if (accepted && !taskActive(task) && typeof options.onTerminal === "function") {
+        await options.onTerminal(task);
+      }
+      return { accepted, task };
+    };
+
+    let controller;
+    controller = createController({
+      activeInterval: options.activeInterval,
+      idleInitialInterval: options.idleInitialInterval,
+      idleMaximumInterval: options.idleMaximumInterval,
+      beginRequest,
+      request: options.requestStatus,
+      onStatus: async (payload, context) => {
+        if (currentTask && context.sequence < acceptedSequence) {
+          return { active: hasTrackedTask() };
+        }
+        if (payload?.active_task) {
+          const activeTaskId = String(payload.active_task.id || "");
+          if (trackedJobId && activeTaskId !== trackedJobId) {
+            const reconciled = await reconcileTrackedTask(context.sequence);
+            if (!reconciled.accepted || taskActive(reconciled.task)) {
+              await options.onStatus(payload);
+              if (typeof options.onRecovered === "function") options.onRecovered();
+              return { active: hasTrackedTask() };
+            }
+          }
+          if (!acceptTask(payload.active_task, context.sequence)) {
+            return { active: hasTrackedTask() };
+          }
+          await options.onStatus(payload);
+          if (typeof options.onRecovered === "function") options.onRecovered();
+          return { active: true };
+        }
+        await options.onStatus(payload);
+        if (!trackedJobId) {
+          if (typeof options.onRecovered === "function") options.onRecovered();
+          return { active: false };
+        }
+        const reconciled = await reconcileTrackedTask(context.sequence);
+        const { accepted, task } = reconciled;
+        if (accepted && !taskActive(task)) {
+          controller.refreshImmediately();
+        }
+        if (typeof options.onRecovered === "function") options.onRecovered();
+        return { active: hasTrackedTask() };
+      },
+      onError: (error, state) => {
+        if (typeof options.onError === "function") options.onError(error, state);
+      },
+      isActive: hasTrackedTask,
+      isHidden: options.isHidden,
+      setTimer: options.setTimer,
+      clearTimer: options.clearTimer,
+    });
+
+    return {
+      refresh: controller.refresh,
+      refreshImmediately: controller.refreshImmediately,
+      visibilityChanged: controller.visibilityChanged,
+      stop: controller.stop,
+      async observeTask(task) {
+        const accepted = acceptTask(task);
+        if (!accepted) return false;
+        if (!taskActive(task) && typeof options.onTerminal === "function") {
+          await options.onTerminal(task);
+        }
+        controller.refreshImmediately();
+        return accepted;
+      },
+      trackJob(jobId) {
+        const normalized = String(jobId || "");
+        if (normalized) trackedJobId = normalized;
+      },
+      trackedJobId: () => trackedJobId,
+    };
+  }
+
+  return { createController, createMonitor };
 });
