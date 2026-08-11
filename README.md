@@ -13,6 +13,8 @@ brings infrastructure, storage, identity, networking, and lifecycle workflows in
 ## Start here
 
 - [Documentation](https://mdaneri.github.io/Atlaso/docs/) — install, configure, operate, and troubleshoot Atlaso.
+- [What is Atlaso?](docs/project/what-is-atlaso.md) — discover the Esperanto word, the map, and the myth behind the
+  Atlaso name.
 - [Getting started](docs/getting-started/index.md) — choose an appliance path and complete initial setup.
 - [Operations](docs/operate/index.md) — run the appliance and review desired-state changes.
 - [Local appliance console](docs/operate/appliance-console.md) — correct management networking from `tty1` and have
