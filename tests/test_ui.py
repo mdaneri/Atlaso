@@ -1610,7 +1610,8 @@ def test_reported_template_accessibility_contracts():
     assert 'data-atlaso-wizard-step="password"' not in users_template
     assert 'data-atlaso-wizard-step="enablement"' not in users_template
     assert '<input type="checkbox" name="enabled" hidden>' in users_template
-    assert "Set/reset Photon OS password" in app_js
+    assert "Set Photon OS password and enable user" in app_js
+    assert "Reset Photon OS password" in app_js
     assert "cell.setValue(previousValue);" in app_js
     for template_name, form_marker in {
         "authentication.html": '"api-token-form"',
