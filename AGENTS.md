@@ -37,6 +37,12 @@ normal version, CI, review, and squash-merge gates, and synchronized generated l
 Every Python lock must be generated through `python scripts/compile_requirements.py`, which excludes distributions
 uploaded less than seven full days ago. Do not bypass the upload-time cutoff for direct, transitive, or security updates.
 
+Trusted version refresh dispatches CI from protected `main` with the exact PR number, base SHA, and head SHA. Candidate
+validation jobs remain read-only. Only separate no-checkout jobs may publish the canonical `Version policy`, `Repository
+checks`, and `Python tests` commit statuses after revalidating the open same-repository PR and exact head/base. Preserve
+the bot-only publication gate, visible run links, diagnostic names for bot-triggered `pull_request` jobs, and the active
+ruleset contexts; never dispatch a candidate workflow revision with status-write permission.
+
 Use `python scripts/version.py bump` or `.\scripts\version.ps1` to increment and synchronize the current patch version.
 When an explicit target is required, pass the current version or exact next patch through `--version X.Y.Z` to Python or
 `-Version X.Y.Z` to PowerShell. Explicit targets cannot skip a patch or change the major or minor version. Never update

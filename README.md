@@ -49,8 +49,8 @@ brings infrastructure, storage, identity, networking, and lifecycle workflows in
 - [vSphere Key Provider protocol](docs/reference/vsphere-key-provider-protocol.md) — review the appliance-native
   daemon's bounded, currently unverified VCF 9.1 KMIP contract and live-evidence promotion gate.
 - [Technical reference](docs/reference/index.md) — API, image building, lifecycle testing, and detailed behavior.
-- [Contributing](CONTRIBUTING.md) — issue, version, validation, pull-request, and seven-day Python dependency-age
-  requirements.
+- [Contributing](CONTRIBUTING.md) — issue, version, validation, protected trusted-CI status handoff, pull-request, and
+  seven-day Python dependency-age requirements.
 - [Dependency management](docs/contribute/dependency-management.md) — regenerate hash locks without selecting newly
   published packages that approved mirrors may not have synchronized.
 - [UI Design Guide](docs/contribute/ui-design-guide.md) — approved Atlaso patterns and the shared

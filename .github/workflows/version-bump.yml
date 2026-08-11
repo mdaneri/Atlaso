@@ -53,6 +53,7 @@ jobs:
             exit 1
           fi
           {
+            echo "pull_number=$PR_NUMBER"
             echo "base_sha=$(jq -r '.base.sha' <<<"$pull_request")"
             echo "head_ref=$head_ref"
             echo "head_sha=$head_sha"
@@ -93,13 +94,40 @@ jobs:
           git -C target add pyproject.toml atlaso/__init__.py clients/powershell/Atlaso/Atlaso.psd1
           git -C target commit -m "chore: bump version to ${version}"
           git -C target push origin "HEAD:${HEAD_REF}"
+      - name: Confirm exact candidate head
+        id: candidate
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ steps.pull-request.outputs.pull_number }}
+        run: |
+          set -euo pipefail
+          candidate_head_sha="$(git -C target rev-parse HEAD)"
+          pull_request_head_sha=""
+          for attempt in {1..12}; do
+            pull_request_head_sha="$(
+              gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" --jq '.head.sha'
+            )"
+            if [[ "$candidate_head_sha" == "$pull_request_head_sha" ]]; then
+              break
+            fi
+            sleep 2
+          done
+          if [[ "$candidate_head_sha" != "$pull_request_head_sha" ]]; then
+            echo "::error::The pull request head changed before trusted CI dispatch."
+            exit 1
+          fi
+          echo "head_sha=$candidate_head_sha" >> "$GITHUB_OUTPUT"
       - name: Run required checks for version commit
         if: steps.changes.outputs.changed == 'true' || github.event_name == 'repository_dispatch'
         env:
           BASE_SHA: ${{ steps.pull-request.outputs.base_sha }}
           GH_TOKEN: ${{ github.token }}
-          HEAD_REF: ${{ steps.pull-request.outputs.head_ref }}
+          HEAD_SHA: ${{ steps.candidate.outputs.head_sha }}
+          PR_NUMBER: ${{ steps.pull-request.outputs.pull_number }}
         run: |
           gh api --method POST "repos/${GITHUB_REPOSITORY}/actions/workflows/ci.yml/dispatches" \
-            -f ref="${HEAD_REF}" \
-            -f "inputs[base_sha]=${BASE_SHA}"
+            -f ref=main \
+            -f "inputs[base_sha]=${BASE_SHA}" \
+            -f "inputs[head_sha]=${HEAD_SHA}" \
+            -f "inputs[pull_number]=${PR_NUMBER}"
