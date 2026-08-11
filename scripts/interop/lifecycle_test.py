@@ -162,6 +162,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--client-ssh-user", default="alpine")
     parser.add_argument("--ssh-key", default="")
     parser.add_argument("--ssh-password", default="")
+    parser.add_argument("--appliance-ssh-password", default="")
     parser.add_argument("--appliance-ssh-host", default="192.168.49.1")
     parser.add_argument("--appliance-ssh-hostkey", default="")
     parser.add_argument("--client-a-hostkey", default="")
@@ -510,6 +511,18 @@ def ssh_hostkey(host: str, args: argparse.Namespace, role: str) -> str:
     return ""
 
 
+def ssh_password(args: argparse.Namespace, role: str) -> str:
+    """Return the role-specific SSH password.
+
+    Args:
+        args: Parsed command-line options consumed by the operation.
+        role: Atlaso role used for authentication.
+    """
+    if role == "appliance":
+        return args.appliance_ssh_password or args.ssh_password
+    return args.ssh_password
+
+
 def appliance_ssh_command(args: argparse.Namespace, command: str) -> str:
     """Return appliance ssh command.
 
@@ -520,8 +533,9 @@ def appliance_ssh_command(args: argparse.Namespace, command: str) -> str:
     if ssh_username(args, "appliance") == "root":
         return command
     quoted_command = shell_single_quote(command)
-    if args.ssh_password:
-        quoted_password = shell_single_quote(args.ssh_password)
+    appliance_password = ssh_password(args, "appliance")
+    if appliance_password:
+        quoted_password = shell_single_quote(appliance_password)
         return f"printf '%s\\n' {quoted_password} | sudo -S -p '' sh -lc {quoted_command}"
     return f"sudo -n sh -lc {quoted_command}"
 
@@ -575,10 +589,11 @@ def ssh_command(
     if not host:
         raise LifecycleError("SSH host was not provided.")
     user = ssh_username(args, role)
+    password = ssh_password(args, role)
     remote_command = appliance_ssh_command(args, command) if role == "appliance" and appliance_as_root else command
-    secrets = [args.ssh_password, *(redact_values or [])]
-    if args.ssh_password:
-        plink_args = ["plink", "-batch", "-ssh", "-pw", args.ssh_password, f"{user}@{host}", remote_command]
+    secrets = [password, *(redact_values or [])]
+    if password:
+        plink_args = ["plink", "-batch", "-ssh", "-pw", password, f"{user}@{host}", remote_command]
         hostkey = ssh_hostkey(host, args, role)
         if hostkey:
             plink_args[3:3] = ["-hostkey", hostkey]
@@ -3295,19 +3310,20 @@ def managed_ldap_helper_authentication_check(args: argparse.Namespace) -> dict[s
     user = ssh_username(args, "appliance")
     host = args.appliance_ssh_host
     hostkey = ssh_hostkey(host, args, "appliance")
-    secrets = [args.ssh_password, LIFECYCLE_LDAP_PASSWORD]
+    appliance_password = ssh_password(args, "appliance")
+    secrets = [appliance_password, LIFECYCLE_LDAP_PASSWORD]
     if user == "root":
         remote_command = f"sh -lc {shell_single_quote(helper_command)}"
         input_text = f"{LIFECYCLE_LDAP_PASSWORD}\n"
-    elif args.ssh_password:
+    elif appliance_password:
         remote_command = f"sudo -S -p '' sh -lc {shell_single_quote(helper_command)}"
-        input_text = f"{args.ssh_password}\n{LIFECYCLE_LDAP_PASSWORD}\n"
+        input_text = f"{appliance_password}\n{LIFECYCLE_LDAP_PASSWORD}\n"
     else:
         remote_command = f"sudo -n sh -lc {shell_single_quote(helper_command)}"
         input_text = f"{LIFECYCLE_LDAP_PASSWORD}\n"
 
-    if args.ssh_password:
-        command = ["plink", "-batch", "-ssh", "-pw", args.ssh_password, f"{user}@{host}", remote_command]
+    if appliance_password:
+        command = ["plink", "-batch", "-ssh", "-pw", appliance_password, f"{user}@{host}", remote_command]
         if hostkey:
             command[3:3] = ["-hostkey", hostkey]
         redacted_command = redact_sequence(command, secrets)

@@ -43,6 +43,40 @@ During the first 30 seconds after startup, a missing interface inventory is show
 **Initializing appliance networking...**. If the interface remains missing after that period, the console reports the
 normal actionable error.
 
+## Correct invalid VMware OVF networking on first boot
+
+An OVF/OVA deployment with inconsistent management networking pauses before the network or data disks are initialized.
+The console displays **First-time initialization — Network configuration requires review** and the non-secret OVF
+address, gateway, DNS, and appliance-name values. This screen does not depend on management-network readiness.
+From the first tty1 screen until the deployment root password applies, only Help and the bounded network-review action
+are available; Customize, process monitor, root shell, and power actions remain locked.
+
+1. Press `F2` or `Enter`.
+2. Correct the prepopulated IPv4 and IPv6 modes, addresses, gateways, and DNS servers.
+3. Select **Apply**, review the values, and choose **Continue initialization**.
+4. Wait for the normal appliance console to replace the review state.
+5. Verify `https://<management-address>/openapi.json` from another machine.
+
+Static IPv4 and IPv6 gateways must be reachable through their configured prefix and cannot equal the interface address.
+For IPv4 prefixes shorter than `/31`, both the interface and gateway must also be usable host addresses rather than the
+network or broadcast address; `/31` point-to-point peers remain valid. An IPv6 link-local gateway is also valid. The OVF
+customizer validates the complete correction before making any host change. The first-boot flow does not request,
+display, or persist deployment passwords: it retains the original OVF credentials in the waiting customizer and accepts
+only non-secret network corrections from the console.
+
+Atlaso validates the FQDN, required properties, credentials, and root-SSH boolean before offering network-only
+correction. If initialization stays on the starting screen and no network review appears, correct those non-network OVF
+properties in the hypervisor and restart the deployment, or redeploy with corrected values. When VMware Tools has not
+yet supplied a complete valid set of Atlaso OVF properties, the customizer keeps tty1 privileged actions locked and
+retries empty, unreadable, malformed, incomplete, or invalid non-network responses instead of using the image-build
+credentials; redeploy if valid properties never become available. A reboot after successful customization removes any
+stale review document by trusting the redacted applied marker.
+If a later customization step fails after either the original or corrected network validates, the review screen remains
+backed by the waiting customizer. Resolve the safe condition named in
+`/var/log/atlaso/vmware-ovf-customize.log`, then resubmit the network review to retry; the applied marker remains absent
+until the retry succeeds. Before a retry changes the host, Atlaso durably removes any pending-success record left by the
+earlier attempt, so an interruption cannot promote stale state on the next boot.
+
 Service state uses compact labels:
 
 | Label       | Meaning                                            |
@@ -79,8 +113,9 @@ authorization result between menus.
 9. Verify that `http://<management-address>/` redirects to HTTPS from another machine.
 10. Verify that `https://<management-address>/openapi.json` returns HTTP 200 from another machine.
 
-The editor supports IPv4 DHCP or static configuration. IPv6 can be disabled, automatic through RA/SLAAC, or static. A
-static IPv6 gateway must be on-link or link-local and cannot equal the interface address.
+The editor supports IPv4 DHCP or static configuration. IPv6 can be disabled, automatic through RA/SLAAC, or static.
+Static IPv4 and IPv6 gateways must be on-link and cannot equal their interface address; an IPv6 gateway may instead be
+link-local.
 
 The recovery action updates Atlaso desired state and submits two synchronous, scoped global appliance-apply tasks. The
 first always applies Network and Firewall so stale management-source restrictions cannot survive an address correction.

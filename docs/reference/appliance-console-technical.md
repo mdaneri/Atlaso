@@ -15,6 +15,8 @@ recovery steps should start with the [local appliance console guide](../operate/
 ## Terminal ownership
 
 - `atlaso-console.service` owns `/dev/tty1`, conflicts with `getty@tty1.service`, and restarts automatically.
+- The console starts after local filesystems and virtual-console setup, does not wait for management networking, and
+  starts before VMware OVF customization and data-disk initialization.
 - Image provisioning masks only `getty@tty1.service`; later virtual terminals retain normal Photon login prompts.
 - The appliance masks `ctrl-alt-del.target` and sets `CtrlAltDelBurstAction=none`.
 - systemd uses `ShowStatus=no` so unit progress does not overwrite the full-screen console.
@@ -70,11 +72,53 @@ selected action closes and is never reused across menus.
 `F4` shell sessions record open and close audit events with actor `console:root`. The password is not retained or
 logged.
 
+The bounded VMware first-boot network-review form is the exception: it is available before the OVF root password is
+applied and accepts only non-secret management-network values. It cannot open the process monitor, root shell, power
+menu, or ordinary desired-state editor. A root-owned initialization lock is present in the reusable VMware image, so
+those privileged actions are unavailable from the moment tty1 starts until customization applies the deployment root
+password and completes.
+
+## VMware first-boot network review
+
+`atlaso-vmware-ovf-customize.service` and the console use `atlaso.app.management_network` for the same IPv4, IPv6, and
+DNS validation rules. Static gateways must be on-link for their configured prefix and cannot equal the interface
+address. IPv4 network and broadcast addresses are rejected for both the interface and gateway when the prefix is
+shorter than `/31`, while both `/31` point-to-point peers remain usable; an IPv6 gateway may instead be link-local. The
+customizer validates all OVF management fields before the first host mutation. It first validates the FQDN, required
+properties, credentials, and root-SSH boolean because the network-only console handshake cannot correct those fields.
+
+When validation fails, the customizer atomically writes a bounded, non-secret review document under
+`/var/lib/atlaso` and waits without starting networkd, data-disk initialization, bootstrap HTTPS, or Atlaso. The console
+prepopulates its existing management form from that document and atomically submits only allowlisted network fields in
+a mode-`0600` correction document. OVF passwords remain only in customizer memory and never enter either document or
+the console.
+
+The customizer consumes a correction, revalidates the complete merged OVF configuration, applies it, and writes the
+redacted applied marker only after every mutation succeeds. A validation or apply failure leaves the marker absent,
+updates the review state without exception-derived command output, and permits another correction. Before that retry
+starts host mutation, it durably invalidates any pending-success record from the preceding attempt so restart recovery
+cannot promote stale state. After every host mutation succeeds, the customizer synchronizes host filesystem state before
+durably writing pending success, so restart recovery cannot promote a marker ahead of its configuration. Because tty1
+starts while that lock is present, customization restarts `atlaso-console.service` after rotating the appliance secret
+keys and before the durability barrier; the replacement process loads the applied keys before privileged actions unlock.
+Success removes both handshake documents plus the initialization lock and releases the remaining first-boot units. If
+interruption occurs after marker creation but before cleanup, the next customizer start
+recovers the pending marker only when the OVF environment is already empty or its non-secret raw-clone deployment
+identifier matches. Any nonempty ID-less environment, including a release OVA redeployment, is reapplied rather than
+promoting possibly stale source state. Empty guestinfo must remain conclusively empty for 30 one-second reads before it
+proves scrub completion; properties that appear during that window are applied as a replacement deployment. An
+interrupted original OVA apply is safe to reapply idempotently. The applied marker removes the stale handshake and lock
+before exiting.
+
+OVF XML password attributes are consumed exactly as parsed rather than trimmed. This preserves valid leading or trailing
+spaces supplied through a release deployment instead of applying a different credential or leaving initialization
+locked on a shortened value.
+
 ## Management editor contract
 
 The `F2` management editor supports:
 
-- IPv4 DHCP or static address/prefix with an optional on-link gateway;
+- IPv4 DHCP or static address/prefix with an optional on-link gateway that differs from the interface address;
 - IPv6 Disabled, Automatic RA/SLAAC, or static address/prefix with an optional gateway;
 - external DNS servers;
 - persistent Firewall enablement; and

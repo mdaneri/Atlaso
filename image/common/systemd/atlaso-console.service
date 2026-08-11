@@ -1,7 +1,8 @@
 [Unit]
 Description=Atlaso local appliance console on tty1
 Documentation=file:/opt/atlaso/docs/appliance-console.md
-After=systemd-user-sessions.service systemd-networkd.service
+After=local-fs.target systemd-vconsole-setup.service
+Before=atlaso-data-disks.service
 Conflicts=getty@tty1.service
 
 [Service]

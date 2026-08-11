@@ -1,3 +1,4 @@
+[Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSAvoidUsingPlainTextForPassword', '')]
 [CmdletBinding(SupportsShouldProcess = $true)]
 param(
     [string]$Name = 'Atlaso-VMware',
@@ -21,10 +22,15 @@ param(
     [switch]$SkipNetworkPrepare,
     [switch]$WaitForIp,
     [switch]$TrustRootCa,
+    [string]$FirstBootFqdn = '',
+    [string]$AdminPassword = 'VMware01!Test',
+    [string]$RootPassword = 'VMware01!Test',
+    [switch]$RootSshEnabled,
     [int]$TimeoutSeconds = 300
 )
 
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'Atlaso.WorkstationFirstBoot.ps1')
 
 function Find-LatestApplianceVmx {
     param([string]$RepoRoot)
@@ -157,6 +163,15 @@ function Write-ConnectionSummary {
 
 $repoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..\..')).Path
 
+if (-not $FirstBootFqdn) {
+    $FirstBootFqdn = New-AtlasoWorkstationFqdn -Name $Name
+}
+$firstBootOvfEnvironment = New-AtlasoWorkstationOvfEnvironment `
+    -Fqdn $FirstBootFqdn `
+    -AdminPassword $AdminPassword `
+    -RootPassword $RootPassword `
+    -RootSshEnabled:$RootSshEnabled
+
 if ($SkipLabNetworkAdapters -and $IncludeLabNetworkAdapters) {
     throw "Pass either -SkipLabNetworkAdapters or -IncludeLabNetworkAdapters, not both."
 }
@@ -257,6 +272,7 @@ if ($PSCmdlet.ShouldProcess($targetVmx, "Create Atlaso Workstation test VM from 
     if (-not $?) {
         throw "Atlaso VMware Workstation VM creation failed."
     }
+    Set-AtlasoWorkstationOvfEnvironment -VmxPath $targetVmx -OvfEnvironment $firstBootOvfEnvironment
 }
 
 if (-not $NoStart -and -not $WhatIfPreference) {
