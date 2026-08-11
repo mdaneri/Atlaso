@@ -519,9 +519,11 @@ def recover_pending_customization() -> int:
 def scrub_applied_ovf_environment() -> None:
     """Remove newly injected properties when a source disk was already customized."""
     logged_failure = False
+    empty_reads = 0
     while True:
         answered, content = try_read_ovf_environment()
         if not answered:
+            empty_reads = 0
             if not logged_failure:
                 log(
                     "VMware OVF customization is retrying an inconclusive deployment-property read from an already "
@@ -531,7 +533,17 @@ def scrub_applied_ovf_environment() -> None:
             time.sleep(OVF_ENVIRONMENT_POLL_SECONDS)
             continue
         if not content.strip():
-            return
+            empty_reads += 1
+            if empty_reads >= PENDING_EMPTY_CONFIRMATION_READS:
+                return
+            if not logged_failure:
+                log(
+                    "VMware OVF customization is confirming that an already initialized appliance has no newly "
+                    "injected deployment properties."
+                )
+                logged_failure = True
+            time.sleep(OVF_ENVIRONMENT_POLL_SECONDS)
+            continue
         try:
             clear_ovf_environment()
             return

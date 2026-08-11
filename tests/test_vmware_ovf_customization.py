@@ -682,13 +682,22 @@ def test_vmware_ovf_customizer_marker_recovers_interrupted_review_cleanup(tmp_pa
     ):
         path.write_text("{}\n", encoding="utf-8")
     monkeypatch.setattr(customizer, "log", lambda _message: None)
-    monkeypatch.setattr(customizer, "try_read_ovf_environment", lambda: (True, ""))
+    empty_reads = []
+
+    def read_empty_environment():
+        """Return one conclusive empty value and record the cleanup check."""
+        empty_reads.append(True)
+        return True, ""
+
+    monkeypatch.setattr(customizer, "try_read_ovf_environment", read_empty_environment)
+    monkeypatch.setattr(customizer.time, "sleep", lambda seconds: None)
 
     assert customizer.main([]) == 0
     assert customizer.MARKER_PATH.exists()
     assert not customizer.INITIALIZATION_LOCK_PATH.exists()
     assert not customizer.NETWORK_REVIEW_PATH.exists()
     assert not customizer.NETWORK_CORRECTION_PATH.exists()
+    assert len(empty_reads) == customizer.PENDING_EMPTY_CONFIRMATION_READS
 
 
 def test_vmware_ovf_customizer_marker_scrubs_properties_injected_into_reused_source(tmp_path, monkeypatch):

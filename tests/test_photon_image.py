@@ -1256,6 +1256,7 @@ def test_vmware_raw_vmx_workflows_inject_complete_first_boot_ovf_environment_bef
 
     assert "Atlaso.WorkstationFirstBoot.ps1" in lifecycle
     assert "New-AtlasoWorkstationOvfEnvironment" in lifecycle
+    assert "-RootSshEnabled:($ApplianceSshUser -eq 'root')" in lifecycle
     assert "Set-AtlasoWorkstationOvfEnvironment -VmxPath $applianceVmx" in lifecycle
     assert lifecycle.index("Set-AtlasoWorkstationOvfEnvironment -VmxPath $applianceVmx") < lifecycle.index(
         "Start-WorkstationVm -Path $vmx"

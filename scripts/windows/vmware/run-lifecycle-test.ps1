@@ -967,7 +967,8 @@ if ($PlanOnly) {
 $firstBootOvfEnvironment = New-AtlasoWorkstationOvfEnvironment `
     -Fqdn (New-AtlasoWorkstationFqdn -Name $applianceName) `
     -AdminPassword $AdminPassword `
-    -RootPassword $AdminPassword
+    -RootPassword $AdminPassword `
+    -RootSshEnabled:($ApplianceSshUser -eq 'root')
 
 New-Item -ItemType Directory -Force -Path $vmRoot | Out-Null
 New-Item -ItemType Directory -Force -Path $seedRoot | Out-Null

@@ -242,9 +242,11 @@ rotation and before the initialization lock is removed, so it cannot retain bake
 accidentally reuses a disk whose applied marker already exists, the customizer
 does not reapply the injected credentials, but it does clear the injected OVF environment before its marker early exit so
 those plaintext values cannot remain in the cloned VMX. Inconclusive VMware RPC reads are retried rather than treated as
-proof of an empty property. Raw-clone injection carries a non-secret deployment identifier; if a source was interrupted
-with only a pending marker, a different injected identifier invalidates that stale pending state before the clone applies
-its own properties. A nonempty ID-less OVF environment is also applied instead of promoting pending source state, so
+proof of an empty property. Applied-marker cleanup also requires 30 consecutive successful empty reads before unlocking
+tty1, so delayed clone properties are scrubbed. Raw-clone injection carries a non-secret deployment identifier; if a
+source was interrupted with only a pending marker, a different injected identifier invalidates that stale pending state
+before the clone applies its own properties. A nonempty ID-less OVF environment is also applied instead of promoting
+pending source state, so
 release OVA redeployment remains safe. Pending recovery requires 30 consecutive successful empty guestinfo reads, and
 applies properties that appear during that confirmation window. Use only pristine, never-booted image outputs as clone
 sources.
