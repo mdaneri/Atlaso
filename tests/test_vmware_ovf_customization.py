@@ -923,12 +923,29 @@ def test_vmware_ovf_customizer_recovers_pending_marker_after_scrub_interruption(
     assert "credential scrub and applied-marker finalization" in " ".join(messages)
 
 
-def test_vmware_ovf_customizer_reapplies_new_raw_clone_over_pending_source(tmp_path, monkeypatch):
-    """Verify a new raw-clone deployment cannot promote its source's pending state.
+@pytest.mark.parametrize(
+    ("source_deployment_id", "replacement_deployment_id"),
+    [
+        (
+            "11111111-1111-4111-8111-111111111111",
+            "22222222-2222-4222-8222-222222222222",
+        ),
+        ("", ""),
+    ],
+)
+def test_vmware_ovf_customizer_reapplies_new_deployment_over_pending_source(
+    tmp_path,
+    monkeypatch,
+    source_deployment_id,
+    replacement_deployment_id,
+):
+    """Verify a new raw-clone or ID-less OVA deployment cannot promote source state.
 
     Args:
         tmp_path: Temporary directory provided by pytest for isolated filesystem state.
         monkeypatch: Pytest fixture used to replace dependencies for the test.
+        source_deployment_id: Non-secret identifier recorded by the interrupted source.
+        replacement_deployment_id: Identifier supplied by the replacement, or blank for OVA.
     """
     customizer = load_customizer()
     customizer.PENDING_MARKER_PATH = tmp_path / "customization.pending"
@@ -936,17 +953,17 @@ def test_vmware_ovf_customizer_reapplies_new_raw_clone_over_pending_source(tmp_p
     customizer.INITIALIZATION_LOCK_PATH = tmp_path / "initializing"
     customizer.NETWORK_REVIEW_PATH = tmp_path / "network-review.json"
     customizer.NETWORK_CORRECTION_PATH = tmp_path / "network-correction.json"
-    source_deployment_id = "11111111-1111-4111-8111-111111111111"
-    clone_deployment_id = "22222222-2222-4222-8222-222222222222"
     customizer.write_json_atomic(
         customizer.PENDING_MARKER_PATH,
         {"fqdn": "source.atlaso.internal", "deployment_id": source_deployment_id},
     )
-    replacement_ovf = OVF_ENV.replace(
-        "  <PropertySection>\n",
-        "  <PropertySection>\n"
-        f'    <Property oe:key="atlaso.deployment_id" oe:value="{clone_deployment_id}" />\n',
-    )
+    replacement_ovf = OVF_ENV
+    if replacement_deployment_id:
+        replacement_ovf = replacement_ovf.replace(
+            "  <PropertySection>\n",
+            "  <PropertySection>\n"
+            f'    <Property oe:key="atlaso.deployment_id" oe:value="{replacement_deployment_id}" />\n',
+        )
     monkeypatch.setattr(customizer, "try_read_ovf_environment", lambda: (True, replacement_ovf))
     monkeypatch.setattr(
         customizer,
@@ -978,7 +995,7 @@ def test_vmware_ovf_customizer_reapplies_new_raw_clone_over_pending_source(tmp_p
     assert customizer.main([]) == 0
 
     assert len(applied) == 1
-    assert applied[0]["deployment_id"] == clone_deployment_id
+    assert applied[0]["deployment_id"] == replacement_deployment_id
     assert customizer.MARKER_PATH.exists()
     assert not customizer.PENDING_MARKER_PATH.exists()
 

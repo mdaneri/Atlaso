@@ -242,7 +242,8 @@ does not reapply the injected credentials, but it does clear the injected OVF en
 those plaintext values cannot remain in the cloned VMX. Inconclusive VMware RPC reads are retried rather than treated as
 proof of an empty property. Raw-clone injection carries a non-secret deployment identifier; if a source was interrupted
 with only a pending marker, a different injected identifier invalidates that stale pending state before the clone applies
-its own properties. Use only pristine, never-booted image outputs as clone sources.
+its own properties. A nonempty ID-less OVF environment is also applied instead of promoting pending source state, so
+release OVA redeployment remains safe. Use only pristine, never-booted image outputs as clone sources.
 
 The customizer validates IPv4, IPv6, gateway, and DNS relationships before any host mutation. Interface and gateway
 addresses must be usable unicast values rather than unspecified, loopback, multicast, or reserved addresses. If

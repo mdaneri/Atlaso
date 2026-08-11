@@ -574,7 +574,11 @@ def pending_marker_matches_current_deployment(ovf_env_file: str) -> bool:
         return False
     current_deployment_id = properties.get(PROPERTY_DEPLOYMENT_ID, "").strip().lower()
     pending_deployment_id = str(pending.get("deployment_id", "")).strip().lower()
-    return current_deployment_id == pending_deployment_id
+    return bool(
+        current_deployment_id
+        and pending_deployment_id
+        and current_deployment_id == pending_deployment_id
+    )
 
 
 def wait_for_network_review(properties: dict[str, str], error: str) -> int:
