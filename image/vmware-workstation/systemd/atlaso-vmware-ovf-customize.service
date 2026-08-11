@@ -1,13 +1,15 @@
 [Unit]
 Description=Atlaso VMware OVF first-boot customization
 DefaultDependencies=no
-After=local-fs.target
-Before=network-pre.target systemd-networkd.service atlaso-firewall.service atlaso-bootstrap-https.service nginx.service atlaso.service
+After=local-fs.target atlaso-console.service
+Wants=atlaso-console.service
+Before=network-pre.target systemd-networkd.service atlaso-data-disks.service atlaso-firewall.service atlaso-bootstrap-https.service nginx.service atlaso.service
 
 [Service]
 Type=oneshot
-ExecStart=/opt/atlaso/bin/atlaso-vmware-ovf-customize.py
+ExecStart=/opt/atlaso/.venv/bin/python /opt/atlaso/bin/atlaso-vmware-ovf-customize.py
 RemainAfterExit=yes
+TimeoutStartSec=infinity
 
 [Install]
 WantedBy=multi-user.target

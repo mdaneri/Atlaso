@@ -79,8 +79,9 @@ The first real OS appliance target is Photon OS 5.0 on Hyper-V. The image builde
   `appliance:https` certificate, redirecting HTTP/80 to CA-backed HTTPS/443, and proxying HTTPS/443 to uvicorn on
   `127.0.0.1:8000`;
 - `atlaso-firewall.service` loading the appliance nftables firewall;
-- a Atlaso recovery console on tty1 with authenticated configuration and power menus, `top`, and an
-  authenticated/audited root Bash handoff, while tty2 and later terminals retain normal Photon login prompts; and
+- an Atlaso recovery console on tty1 with authenticated configuration and power menus, `top`, and an
+  authenticated/audited root Bash handoff, while tty2 and later terminals retain normal Photon login prompts; VMware
+  first boot can also use its bounded non-secret network-review state before network and data-disk initialization; and
 - `/opt/atlaso/bin/atlaso-helper` and a constrained sudoers template.
 
 Finished Hyper-V appliance VMs and VMware OVF/OVA appliances also attach two durable expandable data disks: one for the
@@ -1159,7 +1160,12 @@ removes the build-only `python3-devel` package, clears package/download caches a
 and leaves Packer compaction enabled. OVF export preserves both payload VMDKs and adds empty 500 GiB depot and backup
 definitions at SCSI units 2 and 3. `export-ovf.ps1 -Release` derives the exact tag and destination repository from the
 clean tagged checkout, then preflights and uploads the OVF assets with GitHub CLI. It uploads the combined OVA only when
-that archive independently remains below the configured asset limit.
+that archive independently remains below the configured asset limit. On deployed-VM first boot, OVF IPv4, IPv6,
+gateway, and DNS relationships validate before mutation. Invalid management values hold networkd and data-disk startup
+while the network-independent Atlaso tty1 console accepts a non-secret correction; the applied marker is written only
+after the corrected customization succeeds. A baked root-owned initialization lock keeps privileged tty1 actions
+unavailable until deployment credentials apply, and marker-first startup recovery removes stale review state after an
+interruption.
 
 Lifecycle testing uses VMX/VMDK artifacts and `vmrun.exe`:
 

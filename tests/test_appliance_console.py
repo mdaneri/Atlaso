@@ -48,8 +48,80 @@ def test_console_management_validation_limits_dhcp_and_static_values():
     )
     with pytest.raises(ConsoleOperationError, match="on-link"):
         validate_management_values("static", "192.168.49.1/24", "192.168.50.1")
+    with pytest.raises(ConsoleOperationError, match="on-link"):
+        validate_management_values("static", "192.168.1.254/32", "192.168.1.1")
+    with pytest.raises(ConsoleOperationError, match="cannot equal"):
+        validate_management_values("static", "192.168.49.1/24", "192.168.49.1")
     with pytest.raises(ConsoleOperationError, match="cannot include"):
         validate_management_values("dhcp", "192.168.49.1/24", "")
+
+
+def test_console_first_boot_network_review_submits_only_valid_nonsecret_values(tmp_path, monkeypatch):
+    """Verify tty1 transitions a recoverable OVF review into a safe correction.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+        monkeypatch: Pytest helper used to replace first-boot state paths.
+    """
+    review_path = tmp_path / "network-review.json"
+    correction_path = tmp_path / "network-correction.json"
+    monkeypatch.setattr(appliance_console, "FIRST_BOOT_NETWORK_REVIEW_PATH", review_path)
+    monkeypatch.setattr(appliance_console, "FIRST_BOOT_NETWORK_CORRECTION_PATH", correction_path)
+    review_path.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "state": "network_review",
+                "error": "Management gateway must be on-link for the configured prefix.",
+                "ipv4_method": "static",
+                "ipv4_cidr": "192.168.1.254/32",
+                "ipv4_gateway": "192.168.1.1",
+                "ipv6_mode": "automatic",
+                "ipv6_cidr": "",
+                "ipv6_gateway": "",
+                "dns_servers": "192.168.1.2",
+                "fqdn": "appliance.atlaso.internal",
+                "ignored_password": "must-not-be-loaded",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    review = appliance_console.load_first_boot_network_review()
+
+    assert review is not None
+    assert review.ipv4_cidr == "192.168.1.254/32"
+    assert review.gateway == "192.168.1.1"
+    assert review.fqdn == "appliance.atlaso.internal"
+    assert "must-not-be-loaded" not in repr(review)
+    with pytest.raises(ConsoleOperationError, match="on-link"):
+        appliance_console.submit_first_boot_network_correction(
+            "static",
+            "192.168.1.254/32",
+            "192.168.1.1",
+            "automatic",
+            "",
+            "",
+            "192.168.1.2",
+        )
+    assert not correction_path.exists()
+
+    result = appliance_console.submit_first_boot_network_correction(
+        "static",
+        "192.168.1.254/24",
+        "192.168.1.1",
+        "automatic",
+        "",
+        "",
+        "192.168.1.2",
+    )
+
+    correction = json.loads(correction_path.read_text(encoding="utf-8"))
+    assert result == "First-time management network correction submitted"
+    assert correction["ipv4_cidr"] == "192.168.1.254/24"
+    assert correction["ipv4_gateway"] == "192.168.1.1"
+    assert correction["ipv6_mode"] == "automatic"
+    assert "password" not in str(correction).lower()
 
 
 @pytest.mark.parametrize(
@@ -1050,6 +1122,106 @@ def test_console_footer_includes_help_and_compact_power_label():
     ]
 
 
+def test_console_first_boot_review_renders_branded_recovery_state(monkeypatch):
+    """Verify the full-screen console names first-time network review explicitly.
+
+    Args:
+        monkeypatch: Pytest helper used to replace console status loading.
+    """
+    rendered: list[str] = []
+    console = CursesConsole.__new__(CursesConsole)
+    console.curses = SimpleNamespace(A_BOLD=1, color_pair=lambda value: value)
+    console.message = ""
+    console.message_error = False
+    console._safe_add = lambda _row, _column, value, *_args: rendered.append(value)
+    console._fill_line = lambda *_args: None
+    console._refresh_screen = lambda: None
+    monkeypatch.setattr(appliance_console, "_package_version", lambda: "0.9.95")
+    review = appliance_console.FirstBootNetworkReview(
+        error="Management gateway must be on-link for the configured prefix.",
+        ipv4_method="static",
+        ipv4_cidr="192.168.1.254/32",
+        gateway="192.168.1.1",
+        ipv6_mode="disabled",
+        ipv6_cidr="",
+        ipv6_gateway="",
+        dns_servers=("192.168.1.2",),
+        fqdn="appliance.atlaso.internal",
+    )
+
+    console._draw_first_boot_network_review(review, 30, 80)
+
+    text = "\n".join(rendered)
+    assert "Atlaso Appliance 0.9.95" in text
+    assert "First-time initialization" in text
+    assert "Network configuration requires review" in text
+    assert "Press F2 or Enter" in text
+    assert "<F2> Review network" in text
+
+
+def test_console_first_boot_initialization_locks_privileged_actions(monkeypatch):
+    """Verify tty1 explicitly renders the locked pre-customization state.
+
+    Args:
+        monkeypatch: Pytest helper used to replace the displayed package version.
+    """
+    rendered: list[str] = []
+    console = CursesConsole.__new__(CursesConsole)
+    console.curses = SimpleNamespace(A_BOLD=1, color_pair=lambda value: value)
+    console._safe_add = lambda _row, _column, value, *_args: rendered.append(value)
+    console._fill_line = lambda *_args: None
+    console._refresh_screen = lambda: None
+    monkeypatch.setattr(appliance_console, "_package_version", lambda: "0.9.96")
+
+    console._draw_first_boot_initializing(30)
+
+    text = "\n".join(rendered)
+    assert "First-time initialization" in text
+    assert "Privileged console actions remain locked" in text
+    assert "<F1> Help" in text
+    assert "<F2>" not in text
+    assert "<F4>" not in text
+    assert "<F12>" not in text
+
+
+def test_console_first_boot_lock_ignores_privileged_action_keys(tmp_path, monkeypatch):
+    """Verify pre-customization key handling cannot enter privileged workflows.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+        monkeypatch: Pytest helper used to replace first-boot state loading.
+    """
+    lock_path = tmp_path / "initializing"
+    lock_path.touch()
+    keys = iter((4, 12, 2))
+    called: list[str] = []
+    console = CursesConsole.__new__(CursesConsole)
+    console.curses = SimpleNamespace(
+        KEY_F1=1,
+        KEY_F2=2,
+        KEY_F3=3,
+        KEY_F4=4,
+        KEY_F12=12,
+        KEY_RESIZE=99,
+        KEY_ENTER=10,
+    )
+    console.stdscr = SimpleNamespace(getch=lambda: next(keys))
+    console.draw_main = lambda: None
+    console._recovery_redraws = lambda _last_refresh: 0
+    console.show_help = lambda: called.append("help")
+    console.customize = lambda: called.append("customize")
+    console.show_authenticated_top = lambda: called.append("top")
+    console.show_shell = lambda: called.append("shell")
+    console.power_menu = lambda: called.append("power")
+    monkeypatch.setattr(appliance_console, "FIRST_BOOT_INITIALIZATION_LOCK_PATH", lock_path)
+    monkeypatch.setattr(appliance_console, "load_first_boot_network_review", lambda: None)
+
+    with pytest.raises(StopIteration):
+        console.run()
+
+    assert called == []
+
+
 def test_console_appliance_services_use_full_catalog_and_optional_units(monkeypatch):
     """Verify that console appliance services use full catalog and optional units.
 
@@ -1351,6 +1523,9 @@ def test_console_systemd_unit_replaces_only_tty1():
     manager = Path("image/common/systemd/atlaso-console-manager.conf").read_text(encoding="utf-8")
     assert "TTYPath=/dev/tty1" in unit
     assert "Conflicts=getty@tty1.service" in unit
+    assert "After=local-fs.target systemd-vconsole-setup.service" in unit
+    assert "Before=atlaso-data-disks.service" in unit
+    assert "systemd-networkd.service" not in unit
     assert "getty@tty2" not in unit
     assert "systemctl mask getty@tty1.service" in provision
     assert "systemctl enable atlaso-console.service" in provision

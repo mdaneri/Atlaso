@@ -632,6 +632,7 @@ if [ "$ATLASO_GUEST_PLATFORM" = "hyperv" ]; then
   systemctl enable --now hv_fcopy_daemon || true
   systemctl enable --now hv_vss_daemon || true
 elif [ "$ATLASO_GUEST_PLATFORM" = "vmware" ]; then
+  install -o root -g root -m 0640 /dev/null "$ATLASO_STATE/vmware-ovf-initializing"
   systemctl enable --now vmtoolsd || true
   systemctl enable atlaso-vmware-ovf-customize.service
 fi

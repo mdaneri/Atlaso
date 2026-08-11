@@ -86,6 +86,17 @@ default runs the restored backup/restore pass. Pass `-SkipBackupRestoreTest` onl
 intended. Unless `-ApplianceIPAddress` is passed, the wrapper waits for VMware Tools to report the appliance's DHCP
 management IPv4 address and derives the appliance URL from that discovered address.
 
+Before it powers on the raw appliance clone, the runner injects the complete Atlaso first-boot OVF environment that a
+normal ESXi or Workstation OVF deployment would provide. The lifecycle lab uses IPv4 DHCP with blank DNS overrides,
+disabled IPv6, a generated lab FQDN, and the existing lifecycle admin-password input for both required
+first-boot credential properties. Each injection also carries a generated non-secret deployment identifier so an
+interrupted source VM's pending state cannot be mistaken for the new clone's attempt. The value is stored only in the
+clone's guestinfo-backed VMX setting and is excluded from plan and result artifacts. Invalid identity or password inputs
+fail before the runner creates the lab directories. Root SSH remains disabled for the default `admin` appliance SSH user;
+selecting `-ApplianceSshUser root` explicitly enables it in the same first-boot document.
+After customization, appliance guest operations use that applied admin password while `-SshPassword` remains dedicated
+to the client VMs, so callers may continue to supply different appliance and client credentials.
+
 For focused deployed OIDC acceptance independent of the full service-network topology, pass `-OidcOnly`. The wrapper
 still clones the selected appliance, installs the exact branch wheel, proves appliance readiness, and runs the OIDC
 Authorization Code acceptance check. It skips unrelated multi-NIC service configuration, client VM creation and probes,
@@ -125,6 +136,10 @@ pwsh -ExecutionPolicy Bypass `
 
 That is the Workstation counterpart to `scripts/windows/hyperv/create-atlaso-test-vm.ps1`. It defaults to the management
 vmnet only; pass `-IncludeLabNetworkAdapters` after creating the SiteA, WAN/SiteB, and trunk-like vmnets.
+The wrapper injects the same complete DHCP-first OVF environment before power-on; use `-FirstBootFqdn`,
+`-AdminPassword`, and `-RootPassword` when the default local test identity or credentials are not appropriate.
+Credential overrides must be at least 12 characters, contain no leading, trailing, tab, carriage-return, or newline
+whitespace, and contain only XML-representable characters so the OVF value round-trips unchanged.
 `-TrustRootCa` waits for the first-boot CA endpoint, removes partial downloads best-effort between retries, validates the
 self-signed Atlaso root CA, and imports it into the current-user Trusted Root store. The temporary-file cleanup remains
 idempotent for missing files and safely handles dotted user-profile directories and valid DOS 8.3 short paths, so a
