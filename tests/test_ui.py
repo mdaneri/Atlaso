@@ -351,6 +351,7 @@ def test_public_web_terminal_uses_public_shell_and_explicit_user_access(client, 
     assert "Back to Public Services" not in terminal.text
     assert 'action="/ui/public/logout"' in terminal.text
     assert 'name="next" value="/ui/public/terminal"' in terminal.text
+    assert terminal.text.index("/static/ui-routes.js?v=issue-287-1") < terminal.text.index("/static/terminal.js?v=issue-287-2")
 
     directory = client.get("/ui/public", headers={"host": "192.168.87.32"})
     assert directory.status_code == 200
