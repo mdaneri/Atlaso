@@ -380,6 +380,14 @@ def promote_pending_marker() -> None:
     fsync_parent_directory(MARKER_PATH)
 
 
+def invalidate_pending_marker() -> None:
+    """Durably remove an earlier attempt's pending-success record."""
+    if not PENDING_MARKER_PATH.exists():
+        return
+    PENDING_MARKER_PATH.unlink()
+    fsync_parent_directory(PENDING_MARKER_PATH)
+
+
 def write_network_review(properties: dict[str, str], error: str) -> None:
     """Persist recoverable, non-secret first-boot review state.
 
@@ -553,6 +561,7 @@ def wait_for_network_review(properties: dict[str, str], error: str) -> int:
             )
             return 2
         try:
+            invalidate_pending_marker()
             summary = apply_customization(config)
         except OvfCustomizationError as exc:
             write_network_review(

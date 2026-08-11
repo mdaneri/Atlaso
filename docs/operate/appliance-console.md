@@ -74,7 +74,8 @@ stale review document by trusting the redacted applied marker.
 If a later customization step fails after either the original or corrected network validates, the review screen remains
 backed by the waiting customizer. Resolve the safe condition named in
 `/var/log/atlaso/vmware-ovf-customize.log`, then resubmit the network review to retry; the applied marker remains absent
-until the retry succeeds.
+until the retry succeeds. Before a retry changes the host, Atlaso durably removes any pending-success record left by the
+earlier attempt, so an interruption cannot promote stale state on the next boot.
 
 Service state uses compact labels:
 

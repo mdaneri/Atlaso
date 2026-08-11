@@ -359,9 +359,12 @@ def test_vmware_ovf_customizer_keeps_waiter_after_corrected_apply_failure(tmp_pa
     customizer = load_customizer()
     customizer.NETWORK_REVIEW_PATH = tmp_path / "network-review.json"
     customizer.NETWORK_CORRECTION_PATH = tmp_path / "network-correction.json"
+    customizer.PENDING_MARKER_PATH = tmp_path / "customization.pending"
     customizer.MARKER_PATH = tmp_path / "customization.applied"
     customizer.INITIALIZATION_LOCK_PATH = tmp_path / "initializing"
     customizer.INITIALIZATION_LOCK_PATH.touch()
+    synchronized_paths = []
+    monkeypatch.setattr(customizer, "fsync_parent_directory", synchronized_paths.append)
     properties = customizer.parse_ovf_environment(OVF_ENV)
     properties["atlaso.cidr"] = "192.168.1.254/32"
     properties["atlaso.gateway"] = "192.168.1.1"
@@ -409,7 +412,12 @@ def test_vmware_ovf_customizer_keeps_waiter_after_corrected_apply_failure(tmp_pa
         assert dry_run is False
         apply_attempts.append(config)
         if len(apply_attempts) == 1:
+            customizer.write_json_atomic(
+                customizer.PENDING_MARKER_PATH,
+                {"cidr": "stale-attempt"},
+            )
             raise customizer.OvfCustomizationError("Photon sshd configuration validation failed")
+        assert not customizer.PENDING_MARKER_PATH.exists()
         summary = customizer.redacted_summary(config)
         customizer.write_json_atomic(customizer.MARKER_PATH, summary)
         return summary
@@ -424,6 +432,8 @@ def test_vmware_ovf_customizer_keeps_waiter_after_corrected_apply_failure(tmp_pa
     assert "customization log" in retry_review[0]["error"]
     assert "sshd" not in retry_review[0]["error"]
     assert customizer.MARKER_PATH.exists()
+    assert not customizer.PENDING_MARKER_PATH.exists()
+    assert synchronized_paths.count(customizer.PENDING_MARKER_PATH) == 2
     assert not customizer.NETWORK_REVIEW_PATH.exists()
     assert not customizer.NETWORK_CORRECTION_PATH.exists()
     assert not customizer.INITIALIZATION_LOCK_PATH.exists()

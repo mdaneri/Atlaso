@@ -95,10 +95,11 @@ the console.
 
 The customizer consumes a correction, revalidates the complete merged OVF configuration, applies it, and writes the
 redacted applied marker only after every mutation succeeds. A validation or apply failure leaves the marker absent,
-updates the review state without exception-derived command output, and permits another correction. Success removes
-both handshake documents plus the initialization lock and releases the remaining first-boot units. If interruption
-occurs after marker creation but before cleanup, the next customizer start trusts the applied marker and removes the
-stale handshake and lock before exiting.
+updates the review state without exception-derived command output, and permits another correction. Before that retry
+starts host mutation, it durably invalidates any pending-success record from the preceding attempt so restart recovery
+cannot promote stale state. Success removes both handshake documents plus the initialization lock and releases the
+remaining first-boot units. If interruption occurs after marker creation but before cleanup, the next customizer start
+trusts the applied marker and removes the stale handshake and lock before exiting.
 
 ## Management editor contract
 
