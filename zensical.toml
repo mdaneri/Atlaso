@@ -77,6 +77,7 @@ nav = [
   ] },
   { "Project" = [
     { "Overview" = "project/index.md" },
+    { "What is Atlaso?" = "project/what-is-atlaso.md" },
     { "Development project" = "project/github-project.md" },
     { "UI compliance matrix" = "project/ui-compliance-matrix.md" },
     { "Brand assets" = "project/branding.md" },
