@@ -2177,7 +2177,12 @@ def _applied_esxi_boot_context(
     *,
     host_id: int,
 ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any]]:
-    """Return the exact applied host, artifact, Kickstart, boot, and manifest."""
+    """Return the exact applied host, artifact, Kickstart, boot, and manifest.
+
+    Args:
+        db: Database session used to compare desired and applied state.
+        host_id: ESXi Host Reference identifier to resolve.
+    """
     manifest = _applied_esxi_pxe_manifest(db)
     boot = manifest.get("boot")
     hosts = manifest.get("hosts")
@@ -2236,7 +2241,11 @@ def _applied_esxi_boot_context(
 
 
 def _artifact_listener_origin(artifact: dict[str, Any]) -> str:
-    """Return the normalized HTTP origin of an applied ESXi artifact."""
+    """Return the normalized HTTP origin of an applied ESXi artifact.
+
+    Args:
+        artifact: Applied ESXi boot artifact metadata.
+    """
     parsed = urllib.parse.urlsplit(str(artifact.get("image_http_url") or ""))
     if parsed.scheme != "http" or not parsed.hostname or parsed.username or parsed.password:
         raise ValueError("Applied ESXi listener binding is invalid.")
@@ -2246,7 +2255,12 @@ def _artifact_listener_origin(artifact: dict[str, Any]) -> str:
 
 
 def _atomic_write_text(path: Path, content: str) -> None:
-    """Write one generated boot artifact without exposing a partial file."""
+    """Write one generated boot artifact without exposing a partial file.
+
+    Args:
+        path: Final filesystem path for the generated artifact.
+        content: Text content to write atomically.
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
     temporary.write_text(content, encoding="utf-8", newline="\n")
@@ -2255,7 +2269,11 @@ def _atomic_write_text(path: Path, content: str) -> None:
 
 
 def _remove_esxi_boot_attempt(attempt_id: str) -> None:
-    """Remove generated artifacts for one validated attempt identifier."""
+    """Remove generated artifacts for one validated attempt identifier.
+
+    Args:
+        attempt_id: Validated boot-attempt identifier to remove.
+    """
     if not re.fullmatch(r"[0-9a-f]{32}", attempt_id or ""):
         return
     for directory in (
@@ -2272,7 +2290,11 @@ def _remove_esxi_boot_attempt(attempt_id: str) -> None:
 def discard_esxi_boot_authorization(
     authorization: NetworkBootEsxiBootCapability | None,
 ) -> None:
-    """Remove filesystem artifacts for an authorization that was not committed."""
+    """Remove filesystem artifacts for an authorization that was not committed.
+
+    Args:
+        authorization: Uncommitted authorization whose artifacts must be discarded.
+    """
     if authorization is not None:
         _remove_esxi_boot_attempt(authorization.attempt_id)
 
@@ -2280,14 +2302,22 @@ def discard_esxi_boot_authorization(
 def finalize_esxi_boot_authorization(
     authorization: NetworkBootEsxiBootCapability,
 ) -> None:
-    """Remove superseded artifacts after the replacement row commits."""
+    """Remove superseded artifacts after the replacement row commits.
+
+    Args:
+        authorization: Committed replacement authorization.
+    """
     replaced_attempt_id = str(getattr(authorization, "_replaced_attempt_id", ""))
     if replaced_attempt_id:
         _remove_esxi_boot_attempt(replaced_attempt_id)
 
 
 def cleanup_esxi_boot_authorizations(db: Session) -> None:
-    """Remove expired, consumed, and orphaned attempt artifacts."""
+    """Remove expired, consumed, and orphaned attempt artifacts.
+
+    Args:
+        db: Database session used to identify active authorizations.
+    """
     now = utcnow()
     active_attempts: set[str] = set()
     for row in db.execute(select(NetworkBootEsxiBootCapability)).scalars().all():
@@ -2322,7 +2352,13 @@ def authorize_esxi_boot_once(
     host_id: int,
     requested_by: str,
 ) -> NetworkBootEsxiBootCapability:
-    """Create a short-lived capability for the exact applied ESXi boot attempt."""
+    """Create a short-lived capability for the exact applied ESXi boot attempt.
+
+    Args:
+        db: Database session used to persist the capability.
+        host_id: Applied ESXi Host Reference to authorize.
+        requested_by: Authenticated account requesting the authorization.
+    """
     cleanup_esxi_boot_authorizations(db)
     host, artifact, kickstart, _boot, _manifest = _applied_esxi_boot_context(db, host_id=host_id)
     listener_origin = _artifact_listener_origin(artifact)
@@ -2408,7 +2444,15 @@ def consume_esxi_boot_capability(
     token: str,
     request_origin: str,
 ) -> str | None:
-    """Consume and render one exact applied ESXi boot capability."""
+    """Consume and render one exact applied ESXi boot capability.
+
+    Args:
+        db: Database session used for atomic capability consumption.
+        mac_key: PXE-formatted MAC address bound to the capability.
+        kickstart_revision: Exact applied Kickstart content revision.
+        token: Plaintext bearer capability supplied by the boot artifact.
+        request_origin: HTTP listener origin serving the request.
+    """
     if not re.fullmatch(r"01(?:-[0-9a-f]{2}){6}", mac_key or ""):
         return None
     if not re.fullmatch(r"[0-9a-f]{64}", kickstart_revision or ""):
@@ -2593,6 +2637,7 @@ def render_network_boot_menu(
         Args:
             artifact: Artifact consumed by ESXi loader lines.
             label: Human-readable label used to identify the result.
+            authorization: Active authorization for the host, if one exists.
         """
         if authorization is None:
             return [

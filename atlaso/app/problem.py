@@ -11,7 +11,11 @@ from atlaso.app.ui_routes import PUBLIC_UI_ROOT, management_ui_path, public_ui_p
 
 
 def redacted_request_path(path: str) -> str:
-    """Return a path safe for responses and operational logging."""
+    """Return a path safe for responses and operational logging.
+
+    Args:
+        path: Original request path to sanitize.
+    """
     if path.startswith("/pxe/esxi/ks/"):
         return "/pxe/esxi/ks/[redacted].cfg"
     return path

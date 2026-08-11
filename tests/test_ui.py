@@ -1051,7 +1051,7 @@ def test_shared_ui_pattern_shell_and_wizard_contracts(client):
     base = (templates / "base.html").read_text(encoding="utf-8")
     public_base = (templates / "public_portal_base.html").read_text(encoding="utf-8")
     for shell, app_asset in (
-        (base, "/static/app.js?v=users-refresh-278-279-20260811-1"),
+        (base, "/static/app.js?v=pxe-boot-capability-295-20260811-1"),
         (public_base, "/static/app.js?v=users-refresh-278-279-20260811-1"),
         (base, "/static/appliance-apply-polling.js?v=issue-280-1"),
     ):
@@ -1677,7 +1677,7 @@ def test_monitor_page_renders_and_data_endpoint(client):
     assert "swagger-link-icon" in page.text
     assert "/static/app.css?v=vsphere-key-providers-170-20260810-1" in page.text
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-8" in page.text
-    assert "/static/app.js?v=users-refresh-278-279-20260811-1" in page.text
+    assert "/static/app.js?v=pxe-boot-capability-295-20260811-1" in page.text
     app_css = client.get("/static/app.css")
     assert app_css.status_code == 200
     assert ".split-workspace > .wide-panel" in app_css.text

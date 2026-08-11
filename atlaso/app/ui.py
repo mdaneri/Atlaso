@@ -28712,7 +28712,15 @@ def serve_esxi_kickstart_file(
     request: Request,
     db: Session = Depends(get_db),
 ) -> Response:
-    """Consume one exact boot capability and return its applied Kickstart."""
+    """Consume one exact boot capability and return its applied Kickstart.
+
+    Args:
+        mac_key: PXE-formatted MAC address bound to the capability.
+        kickstart_revision: Exact applied Kickstart content revision.
+        capability_file: Bearer capability filename supplied by the boot artifact.
+        request: Incoming PXE HTTP request used to bind the listener origin.
+        db: Database session used to consume the capability.
+    """
     from atlaso.app.services.network_boot import consume_esxi_boot_capability
 
     if not capability_file.endswith(".cfg"):

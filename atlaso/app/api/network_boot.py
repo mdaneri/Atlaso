@@ -1200,7 +1200,14 @@ def authorize_esxi_host_boot_once(
     identity: Annotated[Identity, Depends(require_api_or_session_scope("write:pxe"))],
     db: Session = Depends(get_db),
 ) -> EsxiBootAuthorizationResponse:
-    """Authorize the next exact applied ESXi network boot attempt."""
+    """Authorize the next exact applied ESXi network boot attempt.
+
+    Args:
+        host_id: Enabled ESXi Host Reference to authorize.
+        request: Incoming HTTP request used for audit correlation.
+        identity: Authenticated identity with PXE write access.
+        db: Database session used to persist the authorization.
+    """
     host = db.get(EsxiPxeHost, host_id)
     if host is None or not host.enabled:
         raise HTTPException(status_code=404, detail="Enabled ESXi Host Reference not found.")
