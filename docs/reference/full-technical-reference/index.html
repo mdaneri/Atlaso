@@ -3918,8 +3918,9 @@ KMS changes by default.</p>
   <code>appliance:https</code> certificate, redirecting HTTP/80 to CA-backed HTTPS/443, and proxying HTTPS/443 to uvicorn on
   <code>127.0.0.1:8000</code>;</li>
 <li><code>atlaso-firewall.service</code> loading the appliance nftables firewall;</li>
-<li>a Atlaso recovery console on tty1 with authenticated configuration and power menus, <code>top</code>, and an
-  authenticated/audited root Bash handoff, while tty2 and later terminals retain normal Photon login prompts; and</li>
+<li>an Atlaso recovery console on tty1 with authenticated configuration and power menus, <code>top</code>, and an
+  authenticated/audited root Bash handoff, while tty2 and later terminals retain normal Photon login prompts; VMware
+  first boot can also use its bounded non-secret network-review state before network and data-disk initialization; and</li>
 <li><code>/opt/atlaso/bin/atlaso-helper</code> and a constrained sudoers template.</li>
 </ul>
 <p>Finished Hyper-V appliance VMs and VMware OVF/OVA appliances also attach two durable expandable data disks: one for the
@@ -4809,7 +4810,12 @@ removes the build-only <code>python3-devel</code> package, clears package/downlo
 and leaves Packer compaction enabled. OVF export preserves both payload VMDKs and adds empty 500 GiB depot and backup
 definitions at SCSI units 2 and 3. <code>export-ovf.ps1 -Release</code> derives the exact tag and destination repository from the
 clean tagged checkout, then preflights and uploads the OVF assets with GitHub CLI. It uploads the combined OVA only when
-that archive independently remains below the configured asset limit.</p>
+that archive independently remains below the configured asset limit. On deployed-VM first boot, OVF IPv4, IPv6,
+gateway, and DNS relationships validate before mutation. Invalid management values hold networkd and data-disk startup
+while the network-independent Atlaso tty1 console accepts a non-secret correction; the applied marker is written only
+after the corrected customization succeeds. A baked root-owned initialization lock keeps privileged tty1 actions
+unavailable until deployment credentials apply, and marker-first startup recovery removes stale review state after an
+interruption.</p>
 <p>Lifecycle testing uses VMX/VMDK artifacts and <code>vmrun.exe</code>:</p>
 <div class="language-powershell highlight"><pre><span></span><code><span id="__span-31-1"><a id="__codelineno-31-1" name="__codelineno-31-1" href="#__codelineno-31-1"></a><span class="n">pwsh</span> <span class="n">-ExecutionPolicy</span> <span class="n">Bypass</span> <span class="p">`</span>
 </span><span id="__span-31-2"><a id="__codelineno-31-2" name="__codelineno-31-2" href="#__codelineno-31-2"></a>  <span class="o">-File</span> <span class="n">scripts</span><span class="p">/</span><span class="n">windows</span><span class="p">/</span><span class="n">vmware</span><span class="p">/</span><span class="nb">invoke-lifecycle</span><span class="n">-test</span><span class="p">.</span><span class="n">ps1</span>
