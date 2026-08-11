@@ -26,11 +26,15 @@ identity, networking, and lifecycle workflows into one operator-focused control 
 The name also reflects Esperanto's purpose as an international language: make something complicated easier to share
 and understand.
 
-## The Atlas behind the atlas
+## The Atlases behind the atlas
 
-The word carries an older story too. In Greek mythology, Atlas was the Titan condemned to hold up the sky. Despite the
-familiar modern image, the mythological Atlas carried the heavens rather than planet Earth. Later illustrations linked
-him with collections of maps, giving the atlas its enduring visual identity.
+Two related figures share the name. In Greek mythology, Atlas was the Titan condemned to hold up the sky. Despite the
+familiar modern image, the mythological Atlas carried the heavens rather than planet Earth.
+
+The map book has a distinct origin. Gerardus Mercator's posthumous 1595 work used *Atlas* in its title to honor the
+legendary King Atlas of Mauretania—a philosopher, mathematician, and astronomer—rather than the Titan. Later publishers
+blended the two traditions in their imagery, helping the sky-bearing Titan become the familiar emblem of an atlas. The
+[State Library of New South Wales traces that cartographic history](https://www.sl.nsw.gov.au/stories/world-book).
 
 ![A stylized Atlas supporting a celestial sphere filled with constellations and infrastructure connections.](../assets/illustrations/what-is-atlaso-atlas.webp)
 
