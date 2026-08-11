@@ -3446,9 +3446,10 @@ can also serve as explicitly selected identity sources where a service supports 
 <li>Choose Photon shell and Web SSH access as separate decisions.</li>
 <li>Review and create the account. New accounts start disabled; the identity and access wizard does not collect
    credentials or change account availability.</li>
-<li>Open the row menu and choose <strong>Set/reset Photon OS password</strong>. Enter and confirm a policy-compliant password. This
-   dedicated guarded workflow stages the password and enables the account in desired state. Use the eye beside either
-   password field to show only that field temporarily; reopening the workflow always masks both fields.</li>
+<li>For a disabled account, open the row menu and choose <strong>Set Photon OS password and enable user</strong>. For an enabled
+   account, choose <strong>Reset Photon OS password</strong>. Enter and confirm a policy-compliant password. The disabled-account
+   action explicitly enables the account in desired state. Use the eye beside either password field to show only that
+   field temporarily; reopening the workflow always masks both fields.</li>
 <li>Change an existing account's ordinary desired availability directly from the grid's <strong>Enabled</strong> column. Enabling
    requires a staged or previously applied Photon password; Atlaso restores the prior grid value and explains the
    requirement when the save is rejected.</li>
@@ -3465,6 +3466,9 @@ audits, and test output never receive the raw password.</p>
 password instead of treating it as applied. Enable the user and apply Local Users again to create the Photon account and
 consume the staged password. Public Services blocks VCF Offline Depot publication while its selected HTTP user is
 disabled, and appliance apply automatically includes changed Local Users state before that public listener.</p>
+<p>When a successful Appliance Apply task includes Local Users, the open Users grid refreshes its Photon account and
+password-staging status in place. The refresh preserves the current page and grid context instead of requiring a manual
+browser reload.</p>
 <p>Read-only Photon account status uses a different uniquely named, short-lived file containing no password values. It
 cannot replace an active apply payload and is removed as soon as the status request finishes.</p>
 <h2 id="verify">Verify<a class="headerlink" href="#verify" title="Permanent link">&para;</a></h2>
