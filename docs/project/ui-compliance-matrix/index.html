@@ -340,6 +340,8 @@
       
         
       
+        
+      
     
     
     
@@ -1277,6 +1279,8 @@
       
         
       
+        
+      
     
     
     
@@ -1453,6 +1457,40 @@
     
   
   NTP and NTS
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../services/public-services/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Public Services
 
     
   </span>
@@ -2862,6 +2900,17 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
+  <a href="#canonical-browser-route-inventory" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Canonical browser-route inventory
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#result-and-evidence-key" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -3188,6 +3237,17 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
+  <a href="#canonical-browser-route-inventory" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Canonical browser-route inventory
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#result-and-evidence-key" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -3365,9 +3425,64 @@
 HTML from <code>atlaso/app/ui.py</code> or <code>atlaso/app/web_terminal.py</code>, plus the shared shells, dialogs, and responsive variants
 used by those routes. API, download, redirect-only, and static-asset routes are outside this matrix because they do not
 render an Atlaso browser surface.</p>
-<p>No new <code>custom/other</code> interaction was introduced by the final audit. Rows that name an established dashboard, chart,
-terminal, login, or public-directory surface describe a pre-existing reviewed interaction from the #114/#115 baseline;
-the #120 remediation changes only shared accessibility or fallback behavior around those surfaces.</p>
+<p>Issue #287 introduced an explicitly maintainer-approved <code>custom/other</code> information-architecture change while preserving
+the established dashboard, chart, terminal, login, and public-directory interactions. Management surfaces now belong to
+<code>/ui/management</code>; app-owned public surfaces belong to <code>/ui/public</code>; <code>/</code> is only the interface-aware dispatcher.</p>
+<h2 id="canonical-browser-route-inventory">Canonical browser-route inventory<a class="headerlink" href="#canonical-browser-route-inventory" title="Permanent link">&para;</a></h2>
+<p>The route-inventory test fails when an app-owned human route is added outside its declared plane or when a protocol
+exemption changes without review. The management routes rendered by the current templates are:</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>/ui/management
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>/ui/management/appliance-update
+</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>/ui/management/audit-log
+</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>/ui/management/authentication
+</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>/ui/management/automation
+</span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>/ui/management/backup-restore
+</span><span id="__span-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>/ui/management/ca/requests
+</span><span id="__span-0-8"><a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>/ui/management/certificate-authority
+</span><span id="__span-0-9"><a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a>/ui/management/dashboard
+</span><span id="__span-0-10"><a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a>/ui/management/dhcp
+</span><span id="__span-0-11"><a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a>/ui/management/dns
+</span><span id="__span-0-12"><a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a>/ui/management/esx-storage
+</span><span id="__span-0-13"><a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a>/ui/management/firewall
+</span><span id="__span-0-14"><a id="__codelineno-0-14" name="__codelineno-0-14" href="#__codelineno-0-14"></a>/ui/management/kms
+</span><span id="__span-0-15"><a id="__codelineno-0-15" name="__codelineno-0-15" href="#__codelineno-0-15"></a>/ui/management/ldap
+</span><span id="__span-0-16"><a id="__codelineno-0-16" name="__codelineno-0-16" href="#__codelineno-0-16"></a>/ui/management/login
+</span><span id="__span-0-17"><a id="__codelineno-0-17" name="__codelineno-0-17" href="#__codelineno-0-17"></a>/ui/management/logs
+</span><span id="__span-0-18"><a id="__codelineno-0-18" name="__codelineno-0-18" href="#__codelineno-0-18"></a>/ui/management/monitor
+</span><span id="__span-0-19"><a id="__codelineno-0-19" name="__codelineno-0-19" href="#__codelineno-0-19"></a>/ui/management/network-boot
+</span><span id="__span-0-20"><a id="__codelineno-0-20" name="__codelineno-0-20" href="#__codelineno-0-20"></a>/ui/management/ntp
+</span><span id="__span-0-21"><a id="__codelineno-0-21" name="__codelineno-0-21" href="#__codelineno-0-21"></a>/ui/management/openid-connect
+</span><span id="__span-0-22"><a id="__codelineno-0-22" name="__codelineno-0-22" href="#__codelineno-0-22"></a>/ui/management/physical-interfaces
+</span><span id="__span-0-23"><a id="__codelineno-0-23" name="__codelineno-0-23" href="#__codelineno-0-23"></a>/ui/management/routes-wan
+</span><span id="__span-0-24"><a id="__codelineno-0-24" name="__codelineno-0-24" href="#__codelineno-0-24"></a>/ui/management/services
+</span><span id="__span-0-25"><a id="__codelineno-0-25" name="__codelineno-0-25" href="#__codelineno-0-25"></a>/ui/management/services/{service}/logs
+</span><span id="__span-0-26"><a id="__codelineno-0-26" name="__codelineno-0-26" href="#__codelineno-0-26"></a>/ui/management/settings
+</span><span id="__span-0-27"><a id="__codelineno-0-27" name="__codelineno-0-27" href="#__codelineno-0-27"></a>/ui/management/tasks
+</span><span id="__span-0-28"><a id="__codelineno-0-28" name="__codelineno-0-28" href="#__codelineno-0-28"></a>/ui/management/terminal
+</span><span id="__span-0-29"><a id="__codelineno-0-29" name="__codelineno-0-29" href="#__codelineno-0-29"></a>/ui/management/terminal/remote
+</span><span id="__span-0-30"><a id="__codelineno-0-30" name="__codelineno-0-30" href="#__codelineno-0-30"></a>/ui/management/users
+</span><span id="__span-0-31"><a id="__codelineno-0-31" name="__codelineno-0-31" href="#__codelineno-0-31"></a>/ui/management/vaults
+</span><span id="__span-0-32"><a id="__codelineno-0-32" name="__codelineno-0-32" href="#__codelineno-0-32"></a>/ui/management/vcf-backups
+</span><span id="__span-0-33"><a id="__codelineno-0-33" name="__codelineno-0-33" href="#__codelineno-0-33"></a>/ui/management/vcf-helper
+</span><span id="__span-0-34"><a id="__codelineno-0-34" name="__codelineno-0-34" href="#__codelineno-0-34"></a>/ui/management/vcf-offline-depot
+</span><span id="__span-0-35"><a id="__codelineno-0-35" name="__codelineno-0-35" href="#__codelineno-0-35"></a>/ui/management/vcf-offline-depot/tasks/{job_id}/log
+</span><span id="__span-0-36"><a id="__codelineno-0-36" name="__codelineno-0-36" href="#__codelineno-0-36"></a>/ui/management/vcf-private-registry
+</span><span id="__span-0-37"><a id="__codelineno-0-37" name="__codelineno-0-37" href="#__codelineno-0-37"></a>/ui/management/vcf-trust
+</span><span id="__span-0-38"><a id="__codelineno-0-38" name="__codelineno-0-38" href="#__codelineno-0-38"></a>/ui/management/vlan-interfaces
+</span><span id="__span-0-39"><a id="__codelineno-0-39" name="__codelineno-0-39" href="#__codelineno-0-39"></a>/ui/management/{page}
+</span></code></pre></div>
+<p>The public routes rendered through <code>public_portal_base.html</code> are:</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>/ui/public
+</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>/ui/public/ca
+</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>/ui/public/ca/login
+</span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a>/ui/public/ca/requests
+</span><span id="__span-1-5"><a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a>/ui/public/login
+</span><span id="__span-1-6"><a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a>/ui/public/terminal
+</span></code></pre></div>
+<p>For compactness, the detailed rows below retain their recognizable child slugs. Management child slugs are relative to
+<code>/ui/management</code>, public child slugs are relative to <code>/ui/public</code>, and <code>/PROD/</code> remains an explicitly exempt protocol
+and browser contract at its existing root path. Retired root-level browser paths are temporary compatibility entries,
+not canonical route owners.</p>
 <h2 id="result-and-evidence-key">Result and evidence key<a class="headerlink" href="#result-and-evidence-key" title="Permanent link">&para;</a></h2>
 <p>Each result records desktop (<strong>D</strong>, 1600×1000), narrow (<strong>N</strong>, 900×1200), keyboard-only operation (<strong>K</strong>), launcher
 focus restoration (<strong>F</strong>), browser zoom through 200% (<strong>Z</strong>), and validation failure/recovery (<strong>V</strong>). <code>N/A</code> means the

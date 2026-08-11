@@ -340,6 +340,8 @@
       
         
       
+        
+      
     
     
     
@@ -1277,6 +1279,8 @@
       
         
       
+        
+      
     
     
     
@@ -1453,6 +1457,40 @@
     
   
   NTP and NTS
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../services/public-services/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Public Services
 
     
   </span>
@@ -2207,17 +2245,6 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#ca-requests" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Ca / Requests
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
   <a href="#certificate-authority" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -2372,6 +2399,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#management-ca-requests" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Management CA / Requests
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#monitor" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -2460,10 +2498,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#requests" class="md-nav__link">
+  <a href="#public-ca-requests" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Requests
+        Public CA / Requests
       </span>
     </span>
   </a>
@@ -3672,17 +3710,6 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#ca-requests" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Ca / Requests
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
   <a href="#certificate-authority" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -3837,6 +3864,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#management-ca-requests" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Management CA / Requests
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#monitor" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -3925,10 +3963,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#requests" class="md-nav__link">
+  <a href="#public-ca-requests" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Requests
+        Public CA / Requests
       </span>
     </span>
   </a>
@@ -4188,55 +4226,49 @@ successful state is shown only where the corresponding task completed successful
 <p><img alt="Atlaso Swagger API reference page in the clean-appliance responsive viewport." src="../../assets/screenshots/swagger-clean-responsive.webp" /></p>
 <p>Figure: Swagger API reference in the verified clean-appliance responsive state.</p>
 <h2 id="appliance-update">Appliance Update<a class="headerlink" href="#appliance-update" title="Permanent link">&para;</a></h2>
-<p>Route: <code>/appliance-update</code></p>
+<p>Route: <code>/ui/management/appliance-update</code></p>
 <p><img alt="Atlaso Appliance Update page in the clean-appliance desktop viewport." src="../../assets/screenshots/appliance-update-clean-desktop.webp" /></p>
 <p>Figure: Appliance Update in the verified clean-appliance desktop state.</p>
 <p><img alt="Atlaso Appliance Update page in the clean-appliance responsive viewport." src="../../assets/screenshots/appliance-update-clean-responsive.webp" /></p>
 <p>Figure: Appliance Update in the verified clean-appliance responsive state.</p>
 <h2 id="audit-log">Audit Log<a class="headerlink" href="#audit-log" title="Permanent link">&para;</a></h2>
-<p>Route: <code>/audit-log</code></p>
+<p>Route: <code>/ui/management/audit-log</code></p>
 <p><img alt="Atlaso Audit Events page in the clean-appliance desktop viewport." src="../../assets/screenshots/audit-log-clean-desktop.webp" /></p>
 <p>Figure: Audit Events in the verified clean-appliance desktop state.</p>
 <p><img alt="Atlaso Audit Events page in the clean-appliance responsive viewport." src="../../assets/screenshots/audit-log-clean-responsive.webp" /></p>
 <p>Figure: Audit Events in the verified clean-appliance responsive state.</p>
 <h2 id="automation">Automation<a class="headerlink" href="#automation" title="Permanent link">&para;</a></h2>
-<p>Route: <code>/automation</code></p>
+<p>Route: <code>/ui/management/automation</code></p>
 <p><img alt="Atlaso Automation page in the clean-appliance desktop viewport." src="../../assets/screenshots/automation-clean-desktop.webp" /></p>
 <p>Figure: Automation in the verified clean-appliance desktop state.</p>
 <p><img alt="Atlaso Automation page in the clean-appliance responsive viewport." src="../../assets/screenshots/automation-clean-responsive.webp" /></p>
 <p>Figure: Automation in the verified clean-appliance responsive state.</p>
 <h2 id="automation-schedules">Automation: Schedules<a class="headerlink" href="#automation-schedules" title="Permanent link">&para;</a></h2>
-<p>Route: <code>/automation#schedules</code></p>
+<p>Route: <code>/ui/management/automation#schedules</code></p>
 <p><img alt="Atlaso Automation schedule wizard with VCF Offline Depot profile download selected at the desktop viewport." src="../../assets/screenshots/automation-vcf-schedule-wizard-desktop.webp" /></p>
 <p>Figure: VCF Offline Depot profile scheduling in the shared Automation wizard.</p>
 <p><img alt="Atlaso Automation schedule wizard with VCF Offline Depot profile download selected at the responsive viewport." src="../../assets/screenshots/automation-vcf-schedule-wizard-responsive.webp" /></p>
 <p>Figure: VCF Offline Depot profile scheduling in the shared Automation wizard at the responsive viewport.</p>
 <h2 id="backup-restore">Backup Restore<a class="headerlink" href="#backup-restore" title="Permanent link">&para;</a></h2>
-<p>Route: <code>/backup-restore</code></p>
+<p>Route: <code>/ui/management/backup-restore</code></p>
 <p><img alt="Atlaso Backup and Restore page in the clean-appliance desktop viewport." src="../../assets/screenshots/backup-restore-clean-desktop.webp" /></p>
 <p>Figure: Backup and Restore in the verified clean-appliance desktop state.</p>
 <p><img alt="Atlaso Backup and Restore page in the clean-appliance responsive viewport." src="../../assets/screenshots/backup-restore-clean-responsive.webp" /></p>
 <p>Figure: Backup and Restore in the verified clean-appliance responsive state.</p>
 <h2 id="ca">Ca<a class="headerlink" href="#ca" title="Permanent link">&para;</a></h2>
-<p>Route: <code>/ca</code></p>
+<p>Route: <code>/ui/public/ca</code></p>
 <p><img alt="Atlaso Public certificate portal page in the clean-appliance desktop viewport." src="../../assets/screenshots/ca-public-clean-desktop.webp" /></p>
 <p>Figure: Public certificate portal in the verified clean-appliance desktop state.</p>
 <p><img alt="Atlaso Public certificate portal page in the clean-appliance responsive viewport." src="../../assets/screenshots/ca-public-clean-responsive.webp" /></p>
 <p>Figure: Public certificate portal in the verified clean-appliance responsive state.</p>
-<h2 id="ca-requests">Ca / Requests<a class="headerlink" href="#ca-requests" title="Permanent link">&para;</a></h2>
-<p>Route: <code>/ca/requests</code></p>
-<p><img alt="Atlaso management Certificate Requests page showing issued certificates in a read-only grid." src="../../assets/screenshots/ca-management-requests-clean-desktop.webp" /></p>
-<p>Figure: Management certificate requests rendered through the shared read-only grid in the desktop viewport.</p>
-<p><img alt="Atlaso management Certificate Requests page showing its read-only grid in the narrow viewport." src="../../assets/screenshots/ca-management-requests-clean-responsive.webp" /></p>
-<p>Figure: Management certificate requests remain contained in the narrow viewport.</p>
 <h2 id="certificate-authority">Certificate Authority<a class="headerlink" href="#certificate-authority" title="Permanent link">&para;</a></h2>
-<p>Route: <code>/certificate-authority</code></p>
+<p>Route: <code>/ui/management/certificate-authority</code></p>
 <p><img alt="Atlaso Certificate Authority page in the clean-appliance desktop viewport." src="../../assets/screenshots/certificate-authority-clean-desktop.webp" /></p>
 <p>Figure: Certificate Authority in the verified clean-appliance desktop state.</p>
 <p><img alt="Atlaso Certificate Authority page in the clean-appliance responsive viewport." src="../../assets/screenshots/certificate-authority-clean-responsive.webp" /></p>
 <p>Figure: Certificate Authority in the verified clean-appliance responsive state.</p>
 <h2 id="dashboard">Dashboard<a class="headerlink" href="#dashboard" title="Permanent link">&para;</a></h2>
-<p>Route: <code>/dashboard</code></p>
+<p>Route: <code>/ui/management/dashboard</code></p>
 <p><img alt="Atlaso About dialog showing version 0.9.21, build identity, and Python version." src="../../assets/screenshots/about-modal-desktop.webp" /></p>
 <p>Figure: Atlaso About dialog with the deployed version and build identity.</p>
 <p><img alt="Atlaso dashboard after a successful DNS appliance apply." src="../../assets/screenshots/dashboard-applied-desktop.webp" /></p>
@@ -4250,23 +4282,23 @@ successful state is shown only where the corresponding task completed successful
 <p><img alt="Atlaso dashboard showing pending appliance changes and a validation exception." src="../../assets/screenshots/dashboard-pending-desktop.webp" /></p>
 <p>Figure: Dashboard with valid pending changes and a unit needing attention.</p>
 <h2 id="dashboard-appliance-apply-review">Dashboard: Appliance Apply Review<a class="headerlink" href="#dashboard-appliance-apply-review" title="Permanent link">&para;</a></h2>
-<p>Route: <code>/dashboard#appliance-apply-review</code></p>
+<p>Route: <code>/ui/management/dashboard#appliance-apply-review</code></p>
 <p><img alt="Review appliance changes dialog with selected valid units and one unit needing attention." src="../../assets/screenshots/appliance-review-modal-desktop.webp" /></p>
 <p>Figure: Appliance change review with valid and invalid desired-state units.</p>
 <h2 id="dhcp">Dhcp<a class="headerlink" href="#dhcp" title="Permanent link">&para;</a></h2>
-<p>Route: <code>/dhcp</code></p>
+<p>Route: <code>/ui/management/dhcp</code></p>
 <p><img alt="Atlaso DHCP page in the clean-appliance desktop viewport." src="../../assets/screenshots/dhcp-clean-desktop.webp" /></p>
 <p>Figure: DHCP in the verified clean-appliance desktop state.</p>
 <p><img alt="Atlaso DHCP page in the clean-appliance responsive viewport." src="../../assets/screenshots/dhcp-clean-responsive.webp" /></p>
 <p>Figure: DHCP in the verified clean-appliance responsive state.</p>
 <h2 id="dhcp-ip-zone-services">Dhcp: Ip Zone Services<a class="headerlink" href="#dhcp-ip-zone-services" title="Permanent link">&para;</a></h2>
-<p>Route: <code>/dhcp#ip-zone-services</code></p>
+<p>Route: <code>/ui/management/dhcp#ip-zone-services</code></p>
 <p><img alt="Atlaso DHCP IP zone wizard Services step showing a framed Lease time group and aligned Domain, DNS server, and NTP server fields." src="../../assets/screenshots/dhcp-ip-zone-wizard-services-desktop.webp" /></p>
 <p>Figure: DHCP IP zone Services step with aligned service fields and a framed Lease time group.</p>
 <p><img alt="Atlaso DHCP IP zone wizard Services step in a narrow viewport without page overflow." src="../../assets/screenshots/dhcp-ip-zone-wizard-services-narrow.webp" /></p>
 <p>Figure: DHCP IP zone Services step in the verified narrow viewport.</p>
 <h2 id="dns">Dns<a class="headerlink" href="#dns" title="Permanent link">&para;</a></h2>
-<p>Route: <code>/dns</code></p>
+<p>Route: <code>/ui/management/dns</code></p>
 <p><img alt="Atlaso DNS page after the desired dnsmasq configuration was applied successfully." src="../../assets/screenshots/dns-applied-desktop.webp" /></p>
 <p>Figure: DNS desired state after a successful dnsmasq apply.</p>
 <p><img alt="Atlaso DNS page in the clean-appliance desktop viewport." src="../../assets/screenshots/dns-clean-desktop.webp" /></p>
@@ -4274,55 +4306,61 @@ successful state is shown only where the corresponding task completed successful
 <p><img alt="Atlaso DNS page in the clean-appliance responsive viewport." src="../../assets/screenshots/dns-clean-responsive.webp" /></p>
 <p>Figure: DNS in the verified clean-appliance responsive state.</p>
 <h2 id="dns-managed-domain">Dns: Managed Domain<a class="headerlink" href="#dns-managed-domain" title="Permanent link">&para;</a></h2>
-<p>Route: <code>/dns#managed-domain</code></p>
+<p>Route: <code>/ui/management/dns#managed-domain</code></p>
 <p><img alt="Atlaso DNS managed domain showing Records, Import Hosts, and Import Zone File tabs with Domain enabled on the right and compact generated authoritative records above." src="../../assets/screenshots/dns-domain-tools-desktop.webp" /></p>
 <p>Figure: DNS domain tools with the Enabled switch beside the tabs and compact generated authoritative records.</p>
 <p><img alt="Atlaso DNS managed domain in a narrow viewport with Domain enabled aligned to the right of the tool tabs." src="../../assets/screenshots/dns-domain-tools-narrow.webp" /></p>
 <p>Figure: DNS domain tools in the verified narrow viewport.</p>
 <h2 id="esx-storage">Esx Storage<a class="headerlink" href="#esx-storage" title="Permanent link">&para;</a></h2>
-<p>Route: <code>/esx-storage</code></p>
+<p>Route: <code>/ui/management/esx-storage</code></p>
 <p><img alt="Atlaso ESX Storage page in the clean-appliance desktop viewport." src="../../assets/screenshots/esx-storage-clean-desktop.webp" /></p>
 <p>Figure: ESX Storage in the verified clean-appliance desktop state.</p>
 <p><img alt="Atlaso ESX Storage page in the clean-appliance responsive viewport." src="../../assets/screenshots/esx-storage-clean-responsive.webp" /></p>
 <p>Figure: ESX Storage in the verified clean-appliance responsive state.</p>
 <h2 id="firewall">Firewall<a class="headerlink" href="#firewall" title="Permanent link">&para;</a></h2>
-<p>Route: <code>/firewall</code></p>
+<p>Route: <code>/ui/management/firewall</code></p>
 <p><img alt="Atlaso Firewall page in the clean-appliance desktop viewport." src="../../assets/screenshots/firewall-clean-desktop.webp" /></p>
 <p>Figure: Firewall in the verified clean-appliance desktop state.</p>
 <p><img alt="Atlaso Firewall page in the clean-appliance responsive viewport." src="../../assets/screenshots/firewall-clean-responsive.webp" /></p>
 <p>Figure: Firewall in the verified clean-appliance responsive state.</p>
 <h2 id="kms">Kms<a class="headerlink" href="#kms" title="Permanent link">&para;</a></h2>
-<p>Route: <code>/kms</code></p>
+<p>Route: <code>/ui/management/kms</code></p>
 <p><img alt="Atlaso KMS and KMIP page in the clean-appliance desktop viewport." src="../../assets/screenshots/kms-clean-desktop.webp" /></p>
 <p>Figure: KMS and KMIP in the verified clean-appliance desktop state.</p>
 <p><img alt="Atlaso KMS and KMIP page in the clean-appliance responsive viewport." src="../../assets/screenshots/kms-clean-responsive.webp" /></p>
 <p>Figure: KMS and KMIP in the verified clean-appliance responsive state.</p>
 <h2 id="ldap">Ldap<a class="headerlink" href="#ldap" title="Permanent link">&para;</a></h2>
-<p>Route: <code>/ldap</code></p>
+<p>Route: <code>/ui/management/ldap</code></p>
 <p><img alt="Atlaso Managed LDAP page in the clean-appliance desktop viewport." src="../../assets/screenshots/ldap-clean-desktop.webp" /></p>
 <p>Figure: Managed LDAP in the verified clean-appliance desktop state.</p>
 <p><img alt="Atlaso Managed LDAP page in the clean-appliance responsive viewport." src="../../assets/screenshots/ldap-clean-responsive.webp" /></p>
 <p>Figure: Managed LDAP in the verified clean-appliance responsive state.</p>
 <h2 id="ldap-groups">Ldap: Groups<a class="headerlink" href="#ldap-groups" title="Permanent link">&para;</a></h2>
-<p>Route: <code>/ldap#groups</code></p>
+<p>Route: <code>/ui/management/ldap#groups</code></p>
 <p><img alt="Atlaso Managed LDAP group wizard Members step showing selectable organization users and nested groups." src="../../assets/screenshots/managed-ldap-group-members-desktop.webp" /></p>
 <p>Figure: Managed LDAP group wizard populated with selectable users and nested groups.</p>
 <p><img alt="Atlaso Managed LDAP group wizard Members step in a narrow viewport with populated membership options." src="../../assets/screenshots/managed-ldap-group-members-narrow.webp" /></p>
 <p>Figure: Managed LDAP group Members step in the verified narrow viewport.</p>
 <h2 id="login">Login<a class="headerlink" href="#login" title="Permanent link">&para;</a></h2>
-<p>Route: <code>/login</code></p>
+<p>Route: <code>/ui/management/login</code></p>
 <p><img alt="Atlaso sign-in page in the desktop viewport." src="../../assets/screenshots/login-desktop.webp" /></p>
 <p>Figure: Appliance sign-in in the verified desktop viewport.</p>
 <p><img alt="Atlaso sign-in page in the responsive viewport." src="../../assets/screenshots/login-responsive.webp" /></p>
 <p>Figure: Appliance sign-in in the verified responsive viewport.</p>
 <h2 id="logs">Logs<a class="headerlink" href="#logs" title="Permanent link">&para;</a></h2>
-<p>Route: <code>/logs</code></p>
+<p>Route: <code>/ui/management/logs</code></p>
 <p><img alt="Atlaso Logs page in the clean-appliance desktop viewport." src="../../assets/screenshots/logs-clean-desktop.webp" /></p>
 <p>Figure: Logs in the verified clean-appliance desktop state.</p>
 <p><img alt="Atlaso Logs page in the clean-appliance responsive viewport." src="../../assets/screenshots/logs-clean-responsive.webp" /></p>
 <p>Figure: Logs in the verified clean-appliance responsive state.</p>
+<h2 id="management-ca-requests">Management CA / Requests<a class="headerlink" href="#management-ca-requests" title="Permanent link">&para;</a></h2>
+<p>Route: <code>/ui/management/ca/requests</code></p>
+<p><img alt="Atlaso management Certificate Requests page showing issued certificates in a read-only grid." src="../../assets/screenshots/ca-management-requests-clean-desktop.webp" /></p>
+<p>Figure: Management certificate requests rendered through the shared read-only grid in the desktop viewport.</p>
+<p><img alt="Atlaso management Certificate Requests page showing its read-only grid in the narrow viewport." src="../../assets/screenshots/ca-management-requests-clean-responsive.webp" /></p>
+<p>Figure: Management certificate requests remain contained in the narrow viewport.</p>
 <h2 id="monitor">Monitor<a class="headerlink" href="#monitor" title="Permanent link">&para;</a></h2>
-<p>Route: <code>/monitor</code></p>
+<p>Route: <code>/ui/management/monitor</code></p>
 <p><img alt="Atlaso Monitor page showing live appliance runtime metrics after apply." src="../../assets/screenshots/monitor-applied-desktop.webp" /></p>
 <p>Figure: Runtime monitoring after a successful appliance apply.</p>
 <p><img alt="Atlaso Monitor page showing live appliance metrics in the desktop viewport." src="../../assets/screenshots/monitor-clean-desktop.webp" /></p>
@@ -4334,37 +4372,37 @@ successful state is shown only where the corresponding task completed successful
 <p><img alt="Atlaso Monitor narrow page showing read-only network interface and disk activity detail grids." src="../../assets/screenshots/monitor-detail-grids-clean-responsive.webp" /></p>
 <p>Figure: Network-interface and disk-device grids remain readable without page overflow in the narrow viewport.</p>
 <h2 id="network-boot">Network Boot<a class="headerlink" href="#network-boot" title="Permanent link">&para;</a></h2>
-<p>Route: <code>/network-boot</code></p>
+<p>Route: <code>/ui/management/network-boot</code></p>
 <p><img alt="Atlaso Network Boot page in the clean-appliance desktop viewport." src="../../assets/screenshots/esxi-pxe-clean-desktop.webp" /></p>
 <p>Figure: Network Boot in the verified clean-appliance desktop state.</p>
 <p><img alt="Atlaso Network Boot page in the clean-appliance responsive viewport." src="../../assets/screenshots/esxi-pxe-clean-responsive.webp" /></p>
 <p>Figure: Network Boot in the verified clean-appliance responsive state.</p>
 <h2 id="network-boot-custom-variables">Network Boot: Custom Variables<a class="headerlink" href="#network-boot-custom-variables" title="Permanent link">&para;</a></h2>
-<p>Route: <code>/network-boot#custom-variables</code></p>
+<p>Route: <code>/ui/management/network-boot#custom-variables</code></p>
 <p><img alt="Atlaso ESXi custom variable wizard showing full-width Description and Default value rows below Name." src="../../assets/screenshots/esxi-custom-variable-description-desktop.webp" /></p>
 <p>Figure: ESXi custom variable wizard with Description on its own full-width row.</p>
 <p><img alt="Atlaso ESXi custom variable wizard in a narrow viewport with full-width Description and Default value fields." src="../../assets/screenshots/esxi-custom-variable-description-narrow.webp" /></p>
 <p>Figure: ESXi custom variable wizard in the verified narrow viewport.</p>
 <h2 id="ntp">Ntp<a class="headerlink" href="#ntp" title="Permanent link">&para;</a></h2>
-<p>Route: <code>/ntp</code></p>
+<p>Route: <code>/ui/management/ntp</code></p>
 <p><img alt="Atlaso NTP and NTS page in the clean-appliance desktop viewport." src="../../assets/screenshots/ntp-clean-desktop.webp" /></p>
 <p>Figure: NTP and NTS in the verified clean-appliance desktop state.</p>
 <p><img alt="Atlaso NTP and NTS page in the clean-appliance responsive viewport." src="../../assets/screenshots/ntp-clean-responsive.webp" /></p>
 <p>Figure: NTP and NTS in the verified clean-appliance responsive state.</p>
 <h2 id="openid-connect-oidc-group-mappings">Openid Connect: Oidc Group Mappings<a class="headerlink" href="#openid-connect-oidc-group-mappings" title="Permanent link">&para;</a></h2>
-<p>Route: <code>/openid-connect#oidc-group-mappings</code></p>
+<p>Route: <code>/ui/management/openid-connect#oidc-group-mappings</code></p>
 <p><img alt="Atlaso OpenID Connect page showing the external group mapping grid at the desktop viewport." src="../../assets/screenshots/authentication-group-mappings-desktop.webp" /></p>
 <p>Figure: OIDC external group mappings in the desktop direct-edit collection.</p>
 <p><img alt="Atlaso OpenID Connect page showing the external group mapping grid at the responsive viewport." src="../../assets/screenshots/authentication-group-mappings-responsive.webp" /></p>
 <p>Figure: OIDC external group mappings in the responsive direct-edit collection.</p>
 <h2 id="openid-connect-oidc-provider">Openid Connect: Oidc Provider<a class="headerlink" href="#openid-connect-oidc-provider" title="Permanent link">&para;</a></h2>
-<p>Route: <code>/openid-connect#oidc-provider</code></p>
+<p>Route: <code>/ui/management/openid-connect#oidc-provider</code></p>
 <p><img alt="Atlaso OpenID Connect provider status with right-column service settings." src="../../assets/screenshots/authentication-clean-desktop.webp" /></p>
 <p>Figure: OIDC provider status and issuer information with service settings in the right column.</p>
 <p><img alt="Atlaso OpenID Connect provider settings stacked with status and issuer information at a narrow viewport." src="../../assets/screenshots/authentication-clean-responsive.webp" /></p>
 <p>Figure: OIDC provider settings with status and issuer information stacked at the responsive viewport.</p>
 <h2 id="physical-interfaces">Physical Interfaces<a class="headerlink" href="#physical-interfaces" title="Permanent link">&para;</a></h2>
-<p>Route: <code>/physical-interfaces</code></p>
+<p>Route: <code>/ui/management/physical-interfaces</code></p>
 <p><img alt="Atlaso Physical Interfaces page in the clean-appliance desktop viewport." src="../../assets/screenshots/physical-interfaces-clean-desktop.webp" /></p>
 <p>Figure: Physical Interfaces in the verified clean-appliance desktop state.</p>
 <p><img alt="Atlaso Physical Interfaces page in the clean-appliance responsive viewport." src="../../assets/screenshots/physical-interfaces-clean-responsive.webp" /></p>
@@ -4375,26 +4413,26 @@ successful state is shown only where the corresponding task completed successful
 <p>Figure: The public VCF Offline Depot directory renders exact artifact paths as safe native links in a read-only grid.</p>
 <p><img alt="Atlaso public VCF Offline Depot browser showing its read-only contents grid in the narrow viewport." src="../../assets/screenshots/vcf-depot-browser-clean-responsive.webp" /></p>
 <p>Figure: The public VCF Offline Depot browser remains contained in the narrow viewport.</p>
-<h2 id="requests">Requests<a class="headerlink" href="#requests" title="Permanent link">&para;</a></h2>
-<p>Route: <code>/requests</code></p>
+<h2 id="public-ca-requests">Public CA / Requests<a class="headerlink" href="#public-ca-requests" title="Permanent link">&para;</a></h2>
+<p>Route: <code>/ui/public/ca/requests</code></p>
 <p><img alt="Atlaso public Certificate Request Portal showing issued certificates in a read-only grid." src="../../assets/screenshots/ca-requests-clean-desktop.webp" /></p>
 <p>Figure: Public certificate requests rendered through the shared read-only grid in the desktop viewport.</p>
 <p><img alt="Atlaso public Certificate Request Portal showing its read-only grid in the narrow viewport." src="../../assets/screenshots/ca-requests-clean-responsive.webp" /></p>
 <p>Figure: Public certificate requests remain contained in the narrow viewport.</p>
 <h2 id="routes-wan">Routes Wan<a class="headerlink" href="#routes-wan" title="Permanent link">&para;</a></h2>
-<p>Route: <code>/routes-wan</code></p>
+<p>Route: <code>/ui/management/routes-wan</code></p>
 <p><img alt="Atlaso Routes and WAN Simulation page in the clean-appliance desktop viewport." src="../../assets/screenshots/routes-wan-clean-desktop.webp" /></p>
 <p>Figure: Routes and WAN Simulation in the verified clean-appliance desktop state.</p>
 <p><img alt="Atlaso Routes and WAN Simulation page in the clean-appliance responsive viewport." src="../../assets/screenshots/routes-wan-clean-responsive.webp" /></p>
 <p>Figure: Routes and WAN Simulation in the verified clean-appliance responsive state.</p>
 <h2 id="services">Services<a class="headerlink" href="#services" title="Permanent link">&para;</a></h2>
-<p>Route: <code>/services</code></p>
+<p>Route: <code>/ui/management/services</code></p>
 <p><img alt="Atlaso Services page in the clean-appliance desktop viewport." src="../../assets/screenshots/services-clean-desktop.webp" /></p>
 <p>Figure: Services in the verified clean-appliance desktop state.</p>
 <p><img alt="Atlaso Services page in the clean-appliance responsive viewport." src="../../assets/screenshots/services-clean-responsive.webp" /></p>
 <p>Figure: Services in the verified clean-appliance responsive state.</p>
 <h2 id="settings">Settings<a class="headerlink" href="#settings" title="Permanent link">&para;</a></h2>
-<p>Route: <code>/settings</code></p>
+<p>Route: <code>/ui/management/settings</code></p>
 <p><img alt="Atlaso Settings page in the clean-appliance desktop viewport." src="../../assets/screenshots/settings-clean-desktop.webp" /></p>
 <p>Figure: Settings in the verified clean-appliance desktop state.</p>
 <p><img alt="Atlaso Settings page in the clean-appliance responsive viewport." src="../../assets/screenshots/settings-clean-responsive.webp" /></p>
@@ -4406,7 +4444,7 @@ successful state is shown only where the corresponding task completed successful
 <p><img alt="Atlaso Settings validation card explaining that the appliance FQDN is invalid." src="../../assets/screenshots/settings-validation-error-desktop.webp" /></p>
 <p>Figure: Appliance Settings validation error for an invalid FQDN.</p>
 <h2 id="tasks">Tasks<a class="headerlink" href="#tasks" title="Permanent link">&para;</a></h2>
-<p>Route: <code>/tasks</code></p>
+<p>Route: <code>/ui/management/tasks</code></p>
 <p><img alt="Atlaso task detail dialog for a failed appliance apply." src="../../assets/screenshots/tasks-apply-failed-detail-desktop.webp" /></p>
 <p>Figure: Failed appliance apply task with redacted operator detail.</p>
 <p><img alt="Atlaso task detail dialog showing a successful DNS appliance apply." src="../../assets/screenshots/tasks-apply-succeeded-detail-desktop.webp" /></p>
@@ -4418,13 +4456,13 @@ successful state is shown only where the corresponding task completed successful
 <p><img alt="Atlaso Tasks page in the clean-appliance responsive viewport." src="../../assets/screenshots/tasks-clean-responsive.webp" /></p>
 <p>Figure: Tasks in the verified clean-appliance responsive state.</p>
 <h2 id="terminal">Terminal<a class="headerlink" href="#terminal" title="Permanent link">&para;</a></h2>
-<p>Route: <code>/terminal</code></p>
+<p>Route: <code>/ui/management/terminal</code></p>
 <p><img alt="Atlaso Web terminal connected as the admin user in the desktop viewport." src="../../assets/screenshots/terminal-clean-desktop.webp" /></p>
 <p>Figure: Web terminal connected to the verified Photon appliance in the desktop viewport.</p>
 <p><img alt="Atlaso Web terminal connected as the admin user in the responsive viewport." src="../../assets/screenshots/terminal-clean-responsive.webp" /></p>
 <p>Figure: Web terminal connected to the verified Photon appliance in the responsive viewport.</p>
 <h2 id="users">Users<a class="headerlink" href="#users" title="Permanent link">&para;</a></h2>
-<p>Route: <code>/users</code></p>
+<p>Route: <code>/ui/management/users</code></p>
 <p><img alt="Atlaso Users page in the clean-appliance desktop viewport." src="../../assets/screenshots/users-clean-desktop.webp" /></p>
 <p>Figure: Users in the verified clean-appliance desktop state.</p>
 <p><img alt="Atlaso Users page in the clean-appliance responsive viewport." src="../../assets/screenshots/users-clean-responsive.webp" /></p>
@@ -4434,19 +4472,19 @@ successful state is shown only where the corresponding task completed successful
 <p><img alt="Atlaso Photon appliance console showing management networking and service status." src="../../assets/screenshots/appliance-console-applied.webp" /></p>
 <p>Figure: VMware console after a successful appliance apply.</p>
 <h2 id="vcf-backups">Vcf Backups<a class="headerlink" href="#vcf-backups" title="Permanent link">&para;</a></h2>
-<p>Route: <code>/vcf-backups</code></p>
+<p>Route: <code>/ui/management/vcf-backups</code></p>
 <p><img alt="Atlaso VCF Backups page in the clean-appliance desktop viewport." src="../../assets/screenshots/vcf-backups-clean-desktop.webp" /></p>
 <p>Figure: VCF Backups in the verified clean-appliance desktop state.</p>
 <p><img alt="Atlaso VCF Backups page in the clean-appliance responsive viewport." src="../../assets/screenshots/vcf-backups-clean-responsive.webp" /></p>
 <p>Figure: VCF Backups in the verified clean-appliance responsive state.</p>
 <h2 id="vcf-helper">Vcf Helper<a class="headerlink" href="#vcf-helper" title="Permanent link">&para;</a></h2>
-<p>Route: <code>/vcf-helper</code></p>
+<p>Route: <code>/ui/management/vcf-helper</code></p>
 <p><img alt="Atlaso VCF Helper page in the clean-appliance desktop viewport." src="../../assets/screenshots/vcf-helper-clean-desktop.webp" /></p>
 <p>Figure: VCF Helper in the verified clean-appliance desktop state.</p>
 <p><img alt="Atlaso VCF Helper page in the clean-appliance responsive viewport." src="../../assets/screenshots/vcf-helper-clean-responsive.webp" /></p>
 <p>Figure: VCF Helper in the verified clean-appliance responsive state.</p>
 <h2 id="vcf-offline-depot">Vcf Offline Depot<a class="headerlink" href="#vcf-offline-depot" title="Permanent link">&para;</a></h2>
-<p>Route: <code>/vcf-offline-depot</code></p>
+<p>Route: <code>/ui/management/vcf-offline-depot</code></p>
 <p><img alt="Atlaso VCF Offline Depot desktop page showing Metadata before Binaries and ESX profiles and the combined VCFDT configuration action." src="../../assets/screenshots/vcf-offline-depot-clean-desktop.webp" /></p>
 <p>Figure: VCF Offline Depot with metadata first and the compact VCFDT configuration summary in the desktop settings rail.</p>
 <p><img alt="Atlaso VCF Offline Depot responsive page showing Metadata first with the add-profile row pinned last." src="../../assets/screenshots/vcf-offline-depot-clean-responsive.webp" /></p>
@@ -4456,13 +4494,13 @@ successful state is shown only where the corresponding task completed successful
 <p><img alt="VCF Offline Depot profile row menu showing Schedule download disabled until the profile is enabled." src="../../assets/screenshots/vcf-offline-depot-schedule-action-desktop.webp" /></p>
 <p>Figure: VCF Offline Depot profile scheduling action with the disabled-profile reason.</p>
 <h2 id="vcf-private-registry">Vcf Private Registry<a class="headerlink" href="#vcf-private-registry" title="Permanent link">&para;</a></h2>
-<p>Route: <code>/vcf-private-registry</code></p>
+<p>Route: <code>/ui/management/vcf-private-registry</code></p>
 <p><img alt="Atlaso VCF Private Registry page in the clean-appliance desktop viewport." src="../../assets/screenshots/vcf-private-registry-clean-desktop.webp" /></p>
 <p>Figure: VCF Private Registry in the verified clean-appliance desktop state.</p>
 <p><img alt="Atlaso VCF Private Registry page in the clean-appliance responsive viewport." src="../../assets/screenshots/vcf-private-registry-clean-responsive.webp" /></p>
 <p>Figure: VCF Private Registry in the verified clean-appliance responsive state.</p>
 <h2 id="vlan-interfaces">Vlan Interfaces<a class="headerlink" href="#vlan-interfaces" title="Permanent link">&para;</a></h2>
-<p>Route: <code>/vlan-interfaces</code></p>
+<p>Route: <code>/ui/management/vlan-interfaces</code></p>
 <p><img alt="Atlaso VLAN Interfaces page in the clean-appliance desktop viewport." src="../../assets/screenshots/vlan-interfaces-clean-desktop.webp" /></p>
 <p>Figure: VLAN Interfaces in the verified clean-appliance desktop state.</p>
 <p><img alt="Atlaso VLAN Interfaces page in the clean-appliance responsive viewport." src="../../assets/screenshots/vlan-interfaces-clean-responsive.webp" /></p>

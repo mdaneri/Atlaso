@@ -15,7 +15,7 @@
         <link rel="canonical" href="https://mdaneri.github.io/Atlaso/docs/services/certificate-authority/">
       
       
-        <link rel="prev" href="../ntp/">
+        <link rel="prev" href="../public-services/">
       
       
         <link rel="next" href="../esx-storage/">
@@ -306,6 +306,8 @@
       
         
           
+        
+      
         
       
         
@@ -1279,6 +1281,8 @@
       
         
       
+        
+      
     
     
     
@@ -1458,6 +1462,40 @@
     
   
   NTP and NTS
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../public-services/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Public Services
 
     
   </span>
@@ -3413,6 +3451,8 @@
       
         
       
+        
+      
     
     
     
@@ -3492,6 +3532,11 @@ dedicated step for both certificate profiles and requests. <strong>CSR Intake</s
 metadata, SANs, PEM content, and final review.</p>
 <p>The public portal exposes only the approved public certificate surface. It must not disclose operator-only state or
 offer administrative actions.</p>
+<p>The management authority is canonical at <code>/ui/management/certificate-authority</code>, with its authenticated request list at
+<code>/ui/management/ca/requests</code>. The public trust and enrollment pages are <code>/ui/public/ca</code> and
+<code>/ui/public/ca/requests</code>. Root CA, bundle, leaf certificate, chain, and private-key download contracts retain their
+existing non-<code>/ui</code> paths. Eligible legacy <code>GET</code>/<code>HEAD</code> bookmarks redirect temporarily; public mutations are bridged
+internally and retain their CSRF, role, request validation, and listener checks.</p>
 <h2 id="verify-and-recover">Verify and recover<a class="headerlink" href="#verify-and-recover" title="Permanent link">&para;</a></h2>
 <p>After apply, verify the presented management certificate and download the expected public root certificate. Keep a VM
 snapshot or equivalent rollback point before replacing active trust. Use <a href="../vcf-trust/">VCF Certificate Trust</a> for the
@@ -3558,7 +3603,7 @@ separate task that installs the active Atlaso root into a supported VCF applianc
       <nav class="md-footer__inner md-grid" aria-label="Footer" >
         
           
-          <a href="../ntp/" class="md-footer__link md-footer__link--prev" aria-label="Previous: NTP and NTS">
+          <a href="../public-services/" class="md-footer__link md-footer__link--prev" aria-label="Previous: Public Services">
             <div class="md-footer__button md-icon">
               
               <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-arrow-left" viewBox="0 0 24 24"><path d="m12 19-7-7 7-7M19 12H5"/></svg>
@@ -3568,7 +3613,7 @@ separate task that installs the active Atlaso root into a supported VCF applianc
                 Previous
               </span>
               <div class="md-ellipsis">
-                NTP and NTS
+                Public Services
               </div>
             </div>
           </a>

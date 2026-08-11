@@ -340,6 +340,8 @@
       
         
       
+        
+      
     
     
     
@@ -1277,6 +1279,8 @@
       
         
       
+        
+      
     
     
     
@@ -1453,6 +1457,40 @@
     
   
   NTP and NTS
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../services/public-services/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Public Services
 
     
   </span>
@@ -4259,9 +4297,9 @@ service-specific apply buttons or service-specific apply submit routes.</p>
 <p><code>Appliance Apply</code> is the global review and submit workflow, presented through a shared modal rather than a standalone
 page. The bottom-left review card and page-level review actions open the modal, which lists changed apply units, checks
 valid changed units by default, and lets an operator unselect any unit that should remain pending. A direct GET to
-<code>/appliance-apply</code> redirects to <code>/dashboard#appliance-apply-review</code>, where the same modal opens automatically. The
-<code>/appliance-apply</code> POST, <code>/appliance-apply/review</code>, and <code>/appliance-apply/status</code> routes remain the backend workflow
-used by the modal.</p>
+<code>/ui/management/appliance-apply</code> redirects to <code>/ui/management/dashboard#appliance-apply-review</code>, where the same modal
+opens automatically. The <code>/ui/management/appliance-apply</code> POST, <code>/ui/management/appliance-apply/review</code>, and
+<code>/ui/management/appliance-apply/status</code> routes remain the browser-only backend workflow used by the modal.</p>
 <p>The status route is deliberately a lightweight desired-state projection: it compares current snapshots with stored
 baselines without running apply-time reconciliation or privileged observation helpers. Full review, validation, and
 submission still reconcile current host observations and therefore retain fail-closed DHCP DNS fallback behavior.

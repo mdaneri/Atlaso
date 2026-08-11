@@ -340,6 +340,8 @@
       
         
       
+        
+      
     
     
     
@@ -1277,6 +1279,8 @@
       
         
       
+        
+      
     
     
     
@@ -1453,6 +1457,40 @@
     
   
   NTP and NTS
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../services/public-services/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Public Services
 
     
   </span>
@@ -3912,17 +3950,19 @@ the chart or a legend item pins that series until it is cleared or another serie
 24h history selectors use the same sampled data. The sampler records one row about every 30 seconds and keeps the
 24-hour window plus a small buffer. Collection uses Linux <code>/proc</code>, <code>/sys</code>, filesystem usage, DMI data,
 <code>systemd-detect-virt</code>, and <code>vmtoolsd</code> when present; it does not call privileged helpers or mutate host services. Set
-<code>ATLASO_MONITOR_ENABLED=false</code> to disable both the background sampler and request-time collection from <code>/monitor/data</code>
+<code>ATLASO_MONITOR_ENABLED=false</code> to disable both the background sampler and request-time collection from
+<code>/ui/management/monitor/data</code>
 or <code>/api/v1/monitor</code>. When disabled, Atlaso may read existing monitor rows but it does not probe the host or create new
 <code>monitor_samples</code> rows. See <a href="../../project/monitor-apply-ux-design-qa/">Monitor hierarchy and interaction design QA</a> for
 the current hierarchy, interaction behavior, responsive expectations, and the history of the removed Disk Usage panel.</p>
-<p>The authenticated <code>/dashboard</code> page is the compact operations command center. Its server-rendered snapshot shows overall
-appliance state, setup readiness, actionable exceptions, valid pending changes, active tasks, enabled service health,
-the management network path, and a six-entry task/audit activity feed. Invalid changed apply units, recent failed tasks,
-unhealthy enabled services, and missing or unexpectedly down configured interfaces are prioritized in that order.
+<p>The authenticated <code>/ui/management/dashboard</code> page is the compact operations command center. Its server-rendered
+snapshot shows overall appliance state, setup readiness, actionable exceptions, valid pending changes, active tasks,
+enabled service health, the management network path, and a six-entry task/audit activity feed. Invalid changed apply
+units, recent failed tasks, unhealthy enabled services, and missing or unexpectedly down configured interfaces are
+prioritized in that order.
 Disabled optional services and unused interfaces remain quiet. The page refreshes from the session-authenticated
-<code>/dashboard/data</code> UI endpoint every 30 seconds while visible, retains the last successful snapshot on failure, and marks
-retained data stale. This private UI endpoint does not replace or change the bearer-authenticated <code>/api/v1/dashboard</code>
+<code>/ui/management/dashboard/data</code> UI endpoint every 30 seconds while visible, retains the last successful snapshot on
+failure, and marks retained data stale. This private UI endpoint does not replace or change the bearer-authenticated <code>/api/v1/dashboard</code>
 contract. Dashboard actions are links into existing workflows; the page does not apply configuration, restart services,
 or mutate the appliance.</p>
 <p>Photon OS 5.0 GA shipped with Python 3.11, but the current Photon 5.0 updates stream has moved beyond that baseline. On
@@ -4190,19 +4230,23 @@ defaults to disabled and is used by VCF Download Tool command previews and runti
 <code>AllUsers</code> scope, and future Atlaso-managed VMware product integrations. Atlaso does not migrate or infer this value
 from the retired VCF Download Tool-specific choice. Explicit PowerCLI <code>User</code> and <code>Session</code> overrides remain outside
 Atlaso ownership.</p>
-<p>Atlaso renders a generated <code>public_services</code> nginx site for non-management service IPs. Requests to <code>/</code> on a
-management-role address keep the HTTPS management portal/login behavior. Requests to <code>/</code> on a non-management service IP
-render an unauthenticated public service directory scoped to the called host or IP. The generated HTTP nginx site serves
-only ESXi PXE paths; CA, certificate requests, VCF Offline Depot, and registry links use their app or service-owned
-HTTPS front doors.</p>
-<p>Direct public service paths remain scoped per IP in the app: Certificate Authority <code>/ca</code>, <code>/requests</code>,
-<code>/ca/downloads/root-ca.pem</code>, and <code>/ca/downloads/ca-bundle.pem</code>; ESXi PXE <code>/pxe/esxi/</code> with <code>/pxe/esxi</code> redirecting to
-<code>/pxe/esxi/</code>; VCF Offline Depot <code>/PROD/</code> with <code>/PROD</code> redirecting to <code>/PROD/</code>; and VCF Private Registry as a canonical
-registry URL link only. The generated public-services HTTP site proxies only dynamic ESXi Kickstart requests and serves
-PXE static content through a narrow nginx alias on matching PXE service IPs. It does not expose CA, depot, management,
-or <code>/registry</code> HTTP proxies.</p>
+<p>Atlaso renders a generated <code>public_services</code> Nginx site for non-management service IPs. Requests to <code>/</code> dispatch by the
+requested host/interface: management-role addresses redirect to <code>/ui/management</code>, while eligible non-management
+addresses redirect to <code>/ui/public</code>. The public directory is scoped to the called host or IP. Requests entitled to
+neither plane return not found. Nginx publishes <code>/ui/management</code> only on the management listener and <code>/ui/public</code> only
+on applicable public listeners; the URL prefix is never the sole authorization boundary.</p>
+<p>App-owned public pages remain scoped per IP: Certificate Authority <code>/ui/public/ca</code>, certificate requests
+<code>/ui/public/ca/requests</code>, and Web Terminal <code>/ui/public/terminal</code>. Stable service paths remain outside <code>/ui</code>: CA downloads
+under <code>/ca/downloads/</code> and <code>/certificate-authority/.../downloads/</code>; ESXi PXE <code>/pxe/esxi/</code>; VCF Offline Depot <code>/PROD/</code>;
+and VCF Private Registry canonical URLs. OIDC <code>/identity/</code>, API/OpenAPI, and shared immutable assets likewise retain
+their documented paths. The generated public-services HTTP site proxies only dynamic ESXi Kickstart requests and serves
+PXE static content through a narrow Nginx alias on matching PXE service IPs.</p>
+<p>Eligible legacy browser <code>GET</code>/<code>HEAD</code> requests receive temporary same-host redirects after destination listener checks.
+Legacy mutations are rewritten internally to the canonical handler and never use replaying <code>307</code>/<code>308</code> redirects.
+Same-plane return-target validation rejects external and cross-plane destinations. The checked-in route inventory makes
+new human routes fail tests unless they belong to a declared UI plane or an explicitly reviewed protocol exemption.</p>
 <p>The public portal uses the compact Atlaso shell across the directory, CA trust page, request portal, and depot browser.
-Public user pages extend <code>public_portal_base.html</code>, the brand mark links back to <code>/</code>, the header action is contextual
+Public user pages extend <code>public_portal_base.html</code>, the brand mark links back to <code>/ui/public</code>, the header action is contextual
 <code>Login</code> or <code>Sign out</code>, and GitHub, Swagger, Python, and version metadata live in the shared bottom footnote. Public
 service cards default to hostname URLs and include a Name/IP switch near the login action; the preference is stored in
 the <code>atlaso_public_address_mode</code> cookie. Card links use each service's configured scheme and port, such as the ESXi PXE
@@ -4242,7 +4286,8 @@ the viewport rather than appearing as a form control.</p>
 <p>Atlaso treats service pages as desired-state editors. Routine setting and grid edits save into the control-plane
 database, but they do not mutate host services on each field change.</p>
 <p>Use <code>Appliance Apply</code> to review and submit appliance changes. The bottom-left pending card and page-level review actions
-open a wide review modal. There is no separate appliance-apply page; a direct GET to <code>/appliance-apply</code> redirects to the
+open a wide review modal. There is no separate appliance-apply page; a direct GET to
+<code>/ui/management/appliance-apply</code> redirects to the
 Dashboard and opens the same modal. The workflow:</p>
 <ul>
 <li>lists changed apply units such as Local Users, Appliance Settings, Network, Routes &amp; WAN Simulation, DNS/DHCP, ESXi
@@ -4343,9 +4388,10 @@ NTS client sources. Appliance Settings and Web Terminal autosave do not own or m
 Certificate Authority stores CA and leaf private keys
 encrypted in the database with <code>ATLASO_SECRETS_KEY</code>, auto-ensures VCF/KMS/service certificates when enabled, and stages
 <code>/var/lib/atlaso/apply/ca/atlaso-ca.json</code>; the helper writes public bundles and service certificate/key files under
-<code>/etc/atlaso</code>. The public CA portal defaults to <code>ca.atlaso.internal</code>: <code>/</code> shows public trust material and <code>/requests</code> is
-the authenticated certificate request/revocation workflow. The management console keeps CA configuration under
-<code>/certificate-authority</code>; <code>/ca</code> and <code>/ca/requests</code> remain compatibility paths.</p>
+<code>/etc/atlaso</code>. The public CA portal defaults to <code>ca.atlaso.internal</code>: <code>/ui/public/ca</code> shows public trust material and
+<code>/ui/public/ca/requests</code> is the authenticated certificate request/revocation workflow. The management console keeps CA
+configuration under <code>/ui/management/certificate-authority</code>, with its request list under
+<code>/ui/management/ca/requests</code>. Root-level browser paths remain temporary compatibility entries.</p>
 <p>ESXi PXE stores Kickstart source files in the Atlaso database. The database is the source of truth; generated files
 under <code>/var/lib/atlaso/pxe/http/esxi/ks/&lt;id&gt;.cfg</code> are runtime copies for drift/apply bookkeeping, while boot-time
 Kickstart responses are rendered dynamically by Atlaso from <code>/pxe/esxi/ks/&lt;file&gt;.cfg?mac=&lt;normalized-mac&gt;</code>. Kickstart
@@ -4400,8 +4446,8 @@ is new, disabled/enabled, removed, has a pending password, changes shell, or has
 for non-management IPs where ESXi PXE is enabled, proxies dynamic PXE requests to the app, serves PXE static artifacts
 through a narrow alias, and leaves CA, certificate requests, depot, registry, and management routes on their
 HTTPS/app-owned front doors. When web terminal access is selected for a non-management interface, that interface's
-Public Services directory includes a <code>Web Terminal</code> tile linked to its HTTPS <code>/terminal</code> route. Management-role IPs stay
-on the management front door.</p>
+Public Services directory includes a <code>Web Terminal</code> tile linked to its HTTPS <code>/ui/public/terminal</code> route.
+Management-role IPs stay on the management front door.</p>
 <p>The firewall preview derives Atlaso-managed service allow rules from service desired state, including management, DNS,
 DHCP, NTPsec, KMS, VCF Backup, VCF Offline Depot, and VCF Private Registry listeners. It also derives managed routing
 rules: route-role network pairs are allowed, explicit access routing rules are allowed, and management-to-lab or

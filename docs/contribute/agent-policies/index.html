@@ -340,6 +340,8 @@
       
         
       
+        
+      
     
     
     
@@ -1277,6 +1279,8 @@
       
         
       
+        
+      
     
     
     
@@ -1453,6 +1457,40 @@
     
   
   NTP and NTS
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../services/public-services/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Public Services
 
     
   </span>
@@ -4311,10 +4349,11 @@
   certificate/key files under <code>/etc/atlaso</code>, and must not print private keys in stdout, stderr, previews, jobs, docs, or
   final responses. CA custody and managed certificate deployment do not require a public listen interface. Selecting a
   CA interface is the explicit publication boundary for the portal, DNS, firewall, and public-service configuration.
-  The public CA portal defaults to <code>ca.atlaso.internal</code>: <code>/</code> shows public trust material and <code>/requests</code> is the
-  authenticated certificate request/revocation workflow. Do not put Certificate Requests in the primary Atlaso
-  sidebar; link it from CA-associated surfaces instead. Every selected NTS server apply automatically includes the CA
-  material unit and preserves CA-before-NTP execution order, even when the CA baseline appears current.</li>
+  The public CA portal defaults to <code>ca.atlaso.internal</code>: <code>/ui/public/ca</code> shows public trust material and
+  <code>/ui/public/ca/requests</code> is the authenticated certificate request/revocation workflow. Do not put Certificate
+  Requests in the primary Atlaso sidebar; link it from CA-associated surfaces instead. Every selected NTS server apply
+  automatically includes the CA material unit and preserves CA-before-NTP execution order, even when the CA baseline
+  appears current.</li>
 <li>Real KMS apply stages strict JSON under <code>/var/lib/atlaso/apply/kms/server.json</code> as the <code>atlaso</code> service user before
   invoking the root helper. KMS can be activated only when CA desired state is enabled and healthy; the page derives
   IPv4 and IPv6 listen addresses from the selected access interface or enabled VLAN, creates app-owned DNS records for
@@ -4468,17 +4507,22 @@
 </ul>
 <h2 id="public-services-front-door">Public Services Front Door<a class="headerlink" href="#public-services-front-door" title="Permanent link">&para;</a></h2>
 <ul>
-<li>Management-role interface addresses keep the management front door at <code>/</code>, including login redirects and
-  management-only routes.</li>
-<li>Non-management interface addresses render an unauthenticated public service directory at <code>/</code> scoped to the called
-  IP/host. The page must list only enabled public services whose desired listen addresses include that IP, and must show
+<li>Management-role interface addresses dispatch <code>/</code> to <code>/ui/management</code>; all authenticated management pages and their
+  browser-only support/action endpoints stay under that canonical root.</li>
+<li>Non-management interface addresses dispatch <code>/</code> to an unauthenticated public service directory at <code>/ui/public</code>
+  scoped to the called IP/host. The page must list only enabled public services whose desired listen addresses include
+  that IP, and must show
   a minimal <code>No public services on this interface</code> state when none match.</li>
 <li>When web terminal access is enabled for the called non-management interface, include a <code>Web Terminal</code> service tile
-  linked to that address's HTTPS <code>/terminal</code> route. Do not show the tile on unselected interfaces, and do not invent an
-  interface DNS name for the Name/IP toggle.</li>
-<li>Direct public paths must also be IP-scoped: CA <code>/ca</code>, <code>/requests</code>, <code>/ca/downloads/root-ca.pem</code>, and
-  <code>/ca/downloads/ca-bundle.pem</code>; ESXi PXE <code>/pxe/esxi/</code>; VCF Offline Depot <code>/PROD/</code> with <code>/PROD</code> redirecting to <code>/PROD/</code>;
-  and VCF Private Registry as a canonical registry URL card/link only.</li>
+  linked to that address's HTTPS <code>/ui/public/terminal</code> route. Do not show the tile on unselected interfaces, and do not
+  invent an interface DNS name for the Name/IP toggle.</li>
+<li>App-owned public pages must also be IP-scoped: CA <code>/ui/public/ca</code>, certificate requests
+  <code>/ui/public/ca/requests</code>, and Web Terminal <code>/ui/public/terminal</code>. Keep CA downloads
+  <code>/ca/downloads/root-ca.pem</code> and <code>/ca/downloads/ca-bundle.pem</code>, ESXi PXE <code>/pxe/esxi/</code>, VCF Offline Depot <code>/PROD/</code>,
+  and VCF Private Registry canonical URLs outside <code>/ui</code> as stable machine/protocol contracts.</li>
+<li>A public listener must return not found for <code>/ui/management</code> without rendering login behavior or the management shell;
+  a management listener must not publish <code>/ui/public</code>. Safe eligible root-level browser bookmarks use temporary
+  same-host redirects. Legacy mutations bridge internally to canonical handlers and must never use replaying redirects.</li>
 <li>Do not add <code>/registry</code> reverse proxying in the public-services site. Registry DNS and canonical registry URLs remain
   service-owned.</li>
 <li>Public Services apply stages <code>/var/lib/atlaso/apply/public-services/atlaso-public-services.conf</code> as the <code>atlaso</code>
@@ -4493,13 +4537,16 @@
   while static artifact locations use the same <code>vcf-depot</code> htpasswd file generated from the applied Photon OS account.
   Local Users apply must run before exposing the depot with authentication.</li>
 <li>Public portal/user pages should extend <code>public_portal_base.html</code> so they share the compact Atlaso header and bottom
-  appliance footnote. The brand mark links to <code>/</code>, the header action is contextual <code>Login</code> or <code>Sign out</code>, footer
+  appliance footnote. The brand mark links to <code>/ui/public</code>, the header action is contextual <code>Login</code> or <code>Sign out</code>, footer
   metadata should link Swagger <code>/api/docs</code> rather than the raw OpenAPI document, and the Python version should link to
   the official Python site. Public service cards should default to service hostnames, use the configured service
   scheme/port, and provide a Name/IP toggle stored as the <code>atlaso_public_address_mode</code> cookie. CA fingerprint controls
   should use compact monospace text with a copy icon. Do not apply this public shell to the authenticated admin portal.</li>
 <li>Styled app-owned directory browsing should wrap depot indexes instead of exposing raw nginx autoindex pages when the
   user navigates from the public portal.</li>
+<li>The management manifest starts within <code>/ui/management</code>, and its service worker may intercept only
+  <code>/ui/management/</code> navigation plus shared immutable assets. Keep public UI caching disabled and never intercept API,
+  OIDC, CA download, PXE, depot, registry, or other protocol requests.</li>
 </ul>
 <h2 id="dns-and-dhcp">DNS And DHCP<a class="headerlink" href="#dns-and-dhcp" title="Permanent link">&para;</a></h2>
 <ul>
