@@ -1294,6 +1294,20 @@ class EsxiPxeHostResponse(EsxiPxeHostCreate):
     updated_at: Annotated[datetime, Field(description='UTC timestamp when the resource was last updated.')]
 
 
+class EsxiBootAuthorizationRequest(BaseModel):
+    """Console code identifying the exact pending ESXi boot attempt."""
+
+    boot_code: Annotated[
+        str,
+        Field(
+            min_length=9,
+            max_length=9,
+            pattern=r"^[A-HJ-NP-Z2-9]{4}-[A-HJ-NP-Z2-9]{4}$",
+            description="One-time code displayed on the intended host console.",
+        ),
+    ]
+
+
 class EsxiBootAuthorizationResponse(BaseModel):
     """Secret-free receipt for a one-time applied ESXi boot authorization."""
 

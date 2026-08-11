@@ -112,19 +112,21 @@ desired state and use `/appliance-apply`; do not build new automation around the
 ## Authorize one ESXi boot
 
 `POST /api/v1/network-boot/esxi-hosts/{host_id}/authorize-boot-once` requires
-`write:pxe` and immediately creates an ephemeral authorization for the enabled,
-applied Host Reference. It does not modify desired state and does not replace
-global Appliance Apply. The response contains only the host ID, issue and
+`write:pxe` and accepts JSON containing the `boot_code` displayed by the exact
+pending host-console attempt, for example `{"boot_code":"ABCD-EFGH"}`. Start
+Network Boot and choose the assigned ESXi entry before calling this operation.
+It does not modify desired state and does not replace global Appliance Apply.
+The response contains only the host ID, issue and
 expiry timestamps, and secret-free operator guidance; it never contains the
 capability or a credential-bearing URL.
 
 The authorization lasts ten minutes, is consumed by the first matching
 Kickstart retrieval, and is bound to the exact applied host, full applied
-Kickstart revision, applied HTTP listener, and generated boot attempt. Issuing
-another authorization for the host replaces the previous attempt. A `409`
-means the exact applied state or its generated loader files are unavailable;
-review and apply Network Boot state before retrying. Start the intended host
-promptly after a `202` response, and never collect PXE URLs from packet traces or
+Kickstart revision, applied HTTP listener, and generated boot attempt. A `409`
+means the code is invalid or expired, the desired Host Reference has drifted,
+or exact applied state is unavailable; start a new host attempt or review and
+apply Network Boot state before retrying. Continue the intended host promptly
+after a `202` response, and never collect PXE URLs from packet traces or
 boot consoles in tickets, logs, screenshots, or automation output.
 
 ## Troubleshoot clients

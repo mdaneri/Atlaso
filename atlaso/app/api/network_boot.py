@@ -27,7 +27,6 @@ from atlaso.app.models import (
     JobStatus,
     NetworkBootDiscoveredHost,
     NetworkBootEnvironment,
-    NetworkBootEsxiBootCapability,
     NetworkBootInventoryCommand,
     NetworkBootInventoryReport,
     NetworkBootInventorySession,
@@ -36,7 +35,7 @@ from atlaso.app.models import (
 )
 from atlaso.app.openapi import DocumentedAPIRoute
 from atlaso.app.security import Identity, require_api_or_session_scope
-from atlaso.app.schemas import EsxiBootAuthorizationResponse, EsxiPxeHostCreate
+from atlaso.app.schemas import EsxiBootAuthorizationRequest, EsxiBootAuthorizationResponse, EsxiPxeHostCreate
 from atlaso.app.services.esxi_pxe import (
     esxi_pxe_boot_settings,
     host_variables_json,
@@ -53,8 +52,6 @@ from atlaso.app.services.network_boot import (
     NETWORK_BOOT_UPLOAD_MAX_BYTES,
     catalog_rows,
     claim_host_boot_override,
-    discard_esxi_boot_authorization,
-    finalize_esxi_boot_authorization,
     esxi_host_assignments_by_mac,
     host_to_dict,
     inventory_session_for_token,
@@ -63,6 +60,7 @@ from atlaso.app.services.network_boot import (
     normalize_mac,
     poll_inventory_command,
     queue_reboot_command,
+    render_esxi_boot_claim,
     render_network_boot_menu,
     report_identity,
     report_history,
@@ -1182,20 +1180,21 @@ def boot_esxi_host_into_inventory_once(
     operation_id="authorize_esxi_host_boot_once",
     summary="Authorize one applied ESXi network boot attempt",
     description=(
-        "Requires `write:pxe`. Creates a short-lived, single-use authorization bound to the enabled "
-        "applied Host Reference, exact applied Kickstart revision, and applied HTTP listener. The "
-        "response never returns the boot capability or a credential-bearing URL. A subsequent "
-        "authorization replaces any unused authorization for the same host."
+        "Requires `write:pxe`. Accepts the one-time code displayed by a pending host-console boot "
+        "attempt, then creates a short-lived, single-use authorization bound to that claim, the "
+        "enabled applied Host Reference, exact applied Kickstart revision, and applied HTTP listener. "
+        "The response never returns the boot capability or a credential-bearing URL."
     ),
     responses={
         401: {"description": "Authentication is required."},
         403: {"description": "The authenticated identity lacks `write:pxe`."},
         404: {"description": "The enabled Host Reference does not exist."},
-        409: {"description": "The exact applied boot state or generated boot artifacts are unavailable."},
+        409: {"description": "The console code is invalid or expired, or exact applied boot state is unavailable."},
     },
 )
 def authorize_esxi_host_boot_once(
     host_id: Annotated[int, ApiPath(description="Unique identifier of the enabled ESXi Host Reference.")],
+    payload: EsxiBootAuthorizationRequest,
     request: Request,
     identity: Annotated[Identity, Depends(require_api_or_session_scope("write:pxe"))],
     db: Session = Depends(get_db),
@@ -1204,6 +1203,7 @@ def authorize_esxi_host_boot_once(
 
     Args:
         host_id: Enabled ESXi Host Reference to authorize.
+        payload: Console code identifying the exact pending boot attempt.
         request: Incoming HTTP request used for audit correlation.
         identity: Authenticated identity with PXE write access.
         db: Database session used to persist the authorization.
@@ -1216,9 +1216,9 @@ def authorize_esxi_host_boot_once(
             db,
             host_id=host.id,
             requested_by=identity.username,
+            boot_code=payload.boot_code,
         )
     except ValueError as exc:
-        discard_esxi_boot_authorization(db.get(NetworkBootEsxiBootCapability, host.id))
         db.rollback()
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     record_audit(
@@ -1230,18 +1230,12 @@ def authorize_esxi_host_boot_once(
         detail=f"expires_at={authorization.expires_at.isoformat()}",
         request_id=request.state.request_id,
     )
-    try:
-        db.commit()
-    except Exception:
-        discard_esxi_boot_authorization(authorization)
-        db.rollback()
-        raise
-    finalize_esxi_boot_authorization(authorization)
+    db.commit()
     return EsxiBootAuthorizationResponse(
         host_id=host.id,
         requested_at=authorization.requested_at,
         expires_at=authorization.expires_at,
-        message="The next matching ESXi Network Boot attempt is authorized for ten minutes.",
+        message="The matching host-console boot attempt is authorized for ten minutes.",
     )
 
 
@@ -1394,10 +1388,44 @@ def network_boot_ipxe(
             request_origin=f"{request.url.scheme}://{request.url.netloc}",
             default_environment_key=default_environment_key,
         )
-        if default_environment_key:
-            db.commit()
+        db.commit()
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return Response(
+        content,
+        media_type="text/plain; charset=utf-8",
+        headers={
+            "Cache-Control": "no-store, max-age=0",
+            "Pragma": "no-cache",
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
+
+
+@public_router.get("/pxe/esxi/claim/{claim}.ipxe")
+def network_boot_esxi_claim(
+    claim: str,
+    request: Request,
+    firmware: str = "",
+    db: Session = Depends(get_db),
+) -> Response:
+    """Poll one unpredictable ESXi boot claim without disclosing it in logs.
+
+    Args:
+        claim: Plaintext random claim held by the exact boot attempt.
+        request: Incoming PXE HTTP request used to bind the listener origin.
+        firmware: Boot firmware reported by iPXE.
+        db: Active database session.
+    """
+    _bounded_rate_limit(request, bucket="esxi-claim", limit=120)
+    content = render_esxi_boot_claim(
+        db,
+        claim=claim,
+        firmware=firmware,
+        request_origin=f"{request.url.scheme}://{request.url.netloc}",
+    )
+    if content is None:
+        raise HTTPException(status_code=404, detail="Boot claim not found")
     return Response(
         content,
         media_type="text/plain; charset=utf-8",

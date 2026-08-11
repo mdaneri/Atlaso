@@ -42,7 +42,8 @@ brings infrastructure, storage, identity, networking, and lifecycle workflows in
   hostname and address remain visible, and standard grid-backed wizards manage
   Host References and installer ISOs. Audited Wake-on-LAN is available for
   discovered hosts and saved ESXi Host References; scripted ESXi boots require
-  a short-lived, single-use authorization bound to exact applied state.
+  an administrator to enter the one-time code shown by the exact host-console
+  attempt before a short-lived, single-use authorization is bound to applied state.
 - [Vaults](docs/services/vaults.md) — scope encrypted VCF and ESX passwords to managed scripts and exact Kickstart
   source markers.
 - [OpenID Connect provider](docs/services/oidc-provider.md) — use the dedicated tabbed administration page for

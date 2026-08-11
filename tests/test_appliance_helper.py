@@ -2397,10 +2397,11 @@ def test_esxi_pxe_helper_validates_and_writes_generated_kickstarts(monkeypatch, 
     assert "IPAPPEND 2" in pxelinux
     nginx_site = (tmp_path / "nginx" / "sites.d" / "esxi-pxe.conf").read_text(encoding="utf-8")
     assert nginx_site.count("listen 8080;") == 1
-    assert nginx_site.count("proxy_set_header Host $http_host;") == 4
+    assert nginx_site.count("proxy_set_header Host $http_host;") == 5
     assert "proxy_set_header Host $host;" not in nginx_site
     assert "location /pxe/esxi/ks/" in nginx_site
-    assert nginx_site.count("access_log off;") == 2
+    assert "location /pxe/esxi/claim/" in nginx_site
+    assert nginx_site.count("access_log off;") == 3
     assert "location /pxe/esxi/attempts/" in nginx_site
     assert f"alias {http_base}/attempts/;" in nginx_site
     assert "proxy_pass http://127.0.0.1:8000;" in nginx_site

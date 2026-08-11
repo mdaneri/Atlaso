@@ -18,6 +18,8 @@ def redacted_request_path(path: str) -> str:
     """
     if path.startswith("/pxe/esxi/ks/"):
         return "/pxe/esxi/ks/[redacted].cfg"
+    if path.startswith("/pxe/esxi/claim/"):
+        return "/pxe/esxi/claim/[redacted].ipxe"
     return path
 
 

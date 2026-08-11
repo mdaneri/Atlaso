@@ -281,10 +281,13 @@ Tabulator collection and edit database source through the built-in Monaco Editor
 artifacts, not desired state. Saving a Kickstart updates the database source hash and marks `esxi_pxe` changed, but does
 not write `/var/lib/atlaso/pxe/http/esxi/ks/<id>.cfg`.
 Applied host boot files contain no reusable Kickstart location. An
-authenticated `write:pxe` action creates one attempt-specific boot file with a
-cryptographically random, ten-minute, single-use capability. Atlaso stores only
-its verifier and binds retrieval to the exact applied Host Reference, full
-Kickstart content hash, listener, and generated attempt before rendering
+MAC-selected menu request creates a distinct unpredictable pending claim and
+shows its one-time code only on that boot console. An authenticated `write:pxe`
+administrator enters the code before Atlaso creates one attempt-specific boot
+file with a cryptographically random, ten-minute, single-use capability. Atlaso
+stores only claim, code, and capability verifiers and binds retrieval to every
+render-affecting field of the exact applied Host Reference, full Kickstart
+content hash, listener, and generated attempt before rendering
 `{{variable}}` markers. A MAC address is an operational selector, not
 authentication, and invalid, expired, consumed, or mismatched capabilities fail
 with the same not-found response.

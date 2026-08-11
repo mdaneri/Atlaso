@@ -1051,7 +1051,7 @@ def test_shared_ui_pattern_shell_and_wizard_contracts(client):
     base = (templates / "base.html").read_text(encoding="utf-8")
     public_base = (templates / "public_portal_base.html").read_text(encoding="utf-8")
     for shell, app_asset in (
-        (base, "/static/app.js?v=pxe-boot-capability-295-20260811-1"),
+        (base, "/static/app.js?v=pxe-boot-capability-295-20260811-2"),
         (public_base, "/static/app.js?v=users-refresh-278-279-20260811-1"),
         (base, "/static/appliance-apply-polling.js?v=issue-280-1"),
     ):
@@ -1677,7 +1677,7 @@ def test_monitor_page_renders_and_data_endpoint(client):
     assert "swagger-link-icon" in page.text
     assert "/static/app.css?v=vsphere-key-providers-170-20260810-1" in page.text
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-8" in page.text
-    assert "/static/app.js?v=pxe-boot-capability-295-20260811-1" in page.text
+    assert "/static/app.js?v=pxe-boot-capability-295-20260811-2" in page.text
     app_css = client.get("/static/app.css")
     assert app_css.status_code == 200
     assert ".split-workspace > .wide-panel" in app_css.text
@@ -5261,6 +5261,10 @@ def test_esxi_pxe_host_reference_wizard_and_grid_responses(client):
     page = client.get("/network-boot")
     assert page.status_code == 200
     assert 'id="network-boot-promote-dialog"' in page.text
+    assert 'id="esxi-boot-authorization-dialog"' in page.text
+    assert 'data-esxi-boot-authorization-form data-atlaso-wizard' in page.text
+    assert 'name="boot_code"' in page.text
+    assert 'autocomplete="one-time-code"' in page.text
     assert 'data-esxi-host-wizard-title' in page.text
     assert 'name="host_source"' in page.text
     assert 'value="discovered">Discovered Network Boot host' in page.text
@@ -5368,6 +5372,13 @@ def test_esxi_pxe_host_reference_wizard_and_grid_responses(client):
     assert "installerIsoSelect.addEventListener" in wizard_js
     assert "window.location.reload()" not in wizard_js
     assert "networkBootDiscoveredHostRefresh?.refresh?.()" in wizard_js
+    authorization_js = app_js.split("function initializeEsxiBootAuthorizationWizard()", 1)[1].split(
+        "function esxiHostHasValidWakeMac", 1
+    )[0]
+    assert "window.AtlasoUiPatterns.createWizard" in authorization_js
+    assert "boot_code: normalizeCode()" in authorization_js
+    assert "Console code entered" in authorization_js
+    assert "activeHost?.hostname" in authorization_js
 
 
 def test_esxi_pxe_host_reference_wizard_respects_read_only_permissions(client):
@@ -5392,6 +5403,7 @@ def test_esxi_pxe_host_reference_wizard_respects_read_only_permissions(client):
     page = client.get("/network-boot")
     assert page.status_code == 200
     assert 'id="network-boot-promote-dialog"' not in page.text
+    assert 'id="esxi-boot-authorization-dialog"' not in page.text
     assert 'id="esxi-pxe-host-fallback-create"' not in page.text
     assert 'id="esxi-pxe-hosts-table"' in page.text
     assert 'data-can-write="false"' in page.text

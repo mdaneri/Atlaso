@@ -669,10 +669,13 @@ configuration under `/ui/management/certificate-authority`, with its request lis
 
 ESXi PXE stores Kickstart source files in the Atlaso database. The database is the source of truth; generated files
 under `/var/lib/atlaso/pxe/http/esxi/ks/<id>.cfg` are runtime copies for drift/apply bookkeeping, while boot-time
-Kickstart responses require a cryptographically random, ten-minute, single-use
-boot capability. Atlaso stores only the capability verifier and binds it to the
-exact applied host, full Kickstart content hash, listener origin, and generated
-boot attempt before dynamic rendering. Kickstart
+Kickstart responses require an unpredictable pending boot claim whose one-time
+code is entered by an authenticated administrator from the intended host
+console. Only that exact claim can receive the cryptographically random,
+ten-minute, single-use boot capability. Atlaso stores only claim, code, and
+capability verifiers and binds the capability to the exact applied host, every
+render-affecting Host Reference field, full Kickstart content hash, listener
+origin, and generated boot attempt before dynamic rendering. Kickstart
 templates may use restricted `{{variable}}` markers such as `{{host.hostname}}`, `{{host.ip_address}}`,
 `{{dhcp.gateway}}`, `{{dhcp.netmask}}`, `{{dhcp.dns_servers}}`, `{{dhcp.ntp_servers}}`, `{{dhcp.domain}}`,
 `{{pxe.http_base_url}}`, and per-host custom values under `{{custom.<name>}}`. Missing, invalid, disabled, or unknown

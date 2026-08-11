@@ -225,13 +225,13 @@ def create_app() -> FastAPI:
                 request.method,
                 redacted_request_path(request.url.path),
             )
-            if request.url.path.startswith("/pxe/esxi/ks/"):
+            if request.url.path.startswith(("/pxe/esxi/ks/", "/pxe/esxi/claim/")):
                 request.scope["path"] = redacted_request_path(request.url.path)
                 request.scope["raw_path"] = request.scope["path"].encode("ascii")
                 request.scope["query_string"] = b""
             raise
         response.headers["X-Request-ID"] = request.state.request_id
-        if request.url.path.startswith("/pxe/esxi/ks/"):
+        if request.url.path.startswith(("/pxe/esxi/ks/", "/pxe/esxi/claim/")):
             request.scope["path"] = redacted_request_path(request.url.path)
             request.scope["raw_path"] = request.scope["path"].encode("ascii")
             request.scope["query_string"] = b""

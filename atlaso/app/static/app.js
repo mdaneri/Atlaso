@@ -2454,6 +2454,7 @@ function clearEsxiHostError() {
 }
 
 let esxiHostReferenceWizard = null;
+let esxiBootAuthorizationWizard = null;
 let esxiInstallerIsosTable = null;
 let esxiIsoUploadWizard = null;
 let networkBootDiscoveredHostRefresh = null;
@@ -3161,21 +3162,62 @@ async function requestEsxiHostBootAuthorization(row) {
   clearEsxiHostError();
   const data = row.getData();
   if (data.is_new || data.is_default || !data.enabled || !data.kickstart_id) return;
-  const confirmed = await requestConfirmation({
-    title: `Authorize one ESXi boot for ${data.hostname}?`,
-    message: "For ten minutes, only this applied host and exact applied Kickstart revision can retrieve a rendered Kickstart. The authorization is consumed by the first matching request and cannot be replayed.",
-    label: "Authorize ESXi boot",
-  });
-  if (!confirmed) return;
   try {
-    const result = await networkBootRequest(
-      `/api/v1/network-boot/esxi-hosts/${data.id}/authorize-boot-once`,
-      { method: "POST" },
-    );
-    showEsxiHostSuccess(result.message || `One ESXi boot is authorized for ${data.hostname}.`);
+    if (!esxiBootAuthorizationWizard) throw new Error("The ESXi boot authorization wizard is unavailable.");
+    await esxiBootAuthorizationWizard.open({ launcher: row.getElement(), context: { host: data } });
   } catch (error) {
     showEsxiHostError(error instanceof Error ? error.message : "The one-time ESXi boot could not be authorized.");
   }
+}
+
+function initializeEsxiBootAuthorizationWizard() {
+  const dialog = document.getElementById("esxi-boot-authorization-dialog");
+  const form = dialog?.querySelector("[data-esxi-boot-authorization-form]");
+  if (!(dialog instanceof HTMLDialogElement) || !(form instanceof HTMLFormElement)) return;
+  let activeHost = null;
+  const normalizeCode = () => {
+    const compact = String(form.elements.boot_code.value || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+    return compact.length === 8 ? `${compact.slice(0, 4)}-${compact.slice(4)}` : compact;
+  };
+  esxiBootAuthorizationWizard = window.AtlasoUiPatterns.createWizard({
+    form,
+    dialog,
+    steps: [
+      { id: "code", title: "Enter the host-console code", description: "Use the code shown by the exact ESXi Network Boot attempt you intend to authorize." },
+      { id: "review", title: "Review boot authorization", description: "Confirm the host and bounded one-time lifecycle." },
+    ],
+    discardTitle: "Discard this boot authorization?",
+    discardMessage: "The console code entered here will be cleared.",
+    onOpen: ({ context }) => {
+      activeHost = context?.host || null;
+      form.elements.host_id.value = activeHost?.id || "";
+      form.elements.boot_code.value = "";
+    },
+    validateStep: ({ step }) => {
+      if (step.id !== "code") return { valid: true };
+      const normalized = normalizeCode();
+      if (!/^[A-HJ-NP-Z2-9]{4}-[A-HJ-NP-Z2-9]{4}$/.test(normalized)) {
+        return { valid: false, message: "Enter the eight-character code displayed by the intended host.", field: "boot_code" };
+      }
+      form.elements.boot_code.value = normalized;
+      return { valid: true };
+    },
+    prepareReview: () => {
+      renderAtlasoWizardReview(form, [
+        { label: "Host", value: () => activeHost?.hostname || "Not selected" },
+        { label: "Boot attempt", value: () => "Console code entered" },
+        { label: "Lifetime", value: () => "Ten minutes; consumed by first matching Kickstart request" },
+      ]);
+    },
+    onSubmit: async () => {
+      const result = await networkBootRequest(
+        `/api/v1/network-boot/esxi-hosts/${activeHost.id}/authorize-boot-once`,
+        { method: "POST", body: JSON.stringify({ boot_code: normalizeCode() }) },
+      );
+      showEsxiHostSuccess(result.message || `One ESXi boot attempt is authorized for ${activeHost.hostname}.`);
+      return { valid: true };
+    },
+  });
 }
 
 function esxiHostHasValidWakeMac(data) {
@@ -20529,6 +20571,7 @@ function initializeNetworkBootPage() {
 document.addEventListener("DOMContentLoaded", initializeDashboard);
 document.addEventListener("DOMContentLoaded", initializeNetworkBootWorkspace);
 document.addEventListener("DOMContentLoaded", initializeEsxiHostReferenceWizard);
+document.addEventListener("DOMContentLoaded", initializeEsxiBootAuthorizationWizard);
 document.addEventListener("DOMContentLoaded", initializeNetworkBootPage);
 document.addEventListener("DOMContentLoaded", initializeVaultsPage);
 document.addEventListener("DOMContentLoaded", initializeVcfVaultCredentialPickers);
