@@ -48,7 +48,9 @@ until `/ui/management/tasks/<id>/status` returns a valid terminal task. A transi
 keeps the global lock visible, shows a retry warning in the open monitor, and retries at the two-second active cadence.
 Successful reconciliation clears that warning and converges the modal, sidebar badge, pending count, and lock from the
 authoritative status and task responses. Terminal task state is sticky so an older in-flight `pending` or `running`
-response cannot replace a newer `succeeded`, `failed`, or `cancelled` result.
+response cannot replace a newer `succeeded`, `failed`, or `cancelled` result. If another session starts a new Apply
+between polls, the browser reconciles the retained task and runs its terminal completion refresh before accepting the
+new active task. Directly observed terminal responses, including cancellation races, run the same completion refresh.
 
 Submitting transforms the review modal into a live master/child task grid. One `appliance-apply` master owns one child
 execution record per selected component. Every signed-in session sees the blocking grid while the master is pending or

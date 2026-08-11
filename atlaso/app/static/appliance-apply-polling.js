@@ -111,6 +111,19 @@
       return true;
     };
 
+    const reconcileTrackedTask = async (observedSequence) => {
+      const jobId = trackedJobId;
+      const task = await options.requestTask(jobId, observedSequence);
+      if (!task || String(task.id || "") !== jobId) {
+        throw new Error("Appliance Apply returned an invalid task status response.");
+      }
+      const accepted = acceptTask(task, observedSequence);
+      if (accepted && !taskActive(task) && typeof options.onTerminal === "function") {
+        await options.onTerminal(task);
+      }
+      return { accepted, task };
+    };
+
     let controller;
     controller = createController({
       activeInterval: options.activeInterval,
@@ -123,6 +136,15 @@
           return { active: hasTrackedTask() };
         }
         if (payload?.active_task) {
+          const activeTaskId = String(payload.active_task.id || "");
+          if (trackedJobId && activeTaskId !== trackedJobId) {
+            const reconciled = await reconcileTrackedTask(context.sequence);
+            if (!reconciled.accepted || taskActive(reconciled.task)) {
+              await options.onStatus(payload);
+              if (typeof options.onRecovered === "function") options.onRecovered();
+              return { active: hasTrackedTask() };
+            }
+          }
           if (!acceptTask(payload.active_task, context.sequence)) {
             return { active: hasTrackedTask() };
           }
@@ -135,14 +157,9 @@
           if (typeof options.onRecovered === "function") options.onRecovered();
           return { active: false };
         }
-        const jobId = trackedJobId;
-        const task = await options.requestTask(jobId, context.sequence);
-        if (!task || String(task.id || "") !== jobId) {
-          throw new Error("Appliance Apply returned an invalid task status response.");
-        }
-        const accepted = acceptTask(task, context.sequence);
+        const reconciled = await reconcileTrackedTask(context.sequence);
+        const { accepted, task } = reconciled;
         if (accepted && !taskActive(task)) {
-          if (typeof options.onTerminal === "function") await options.onTerminal(task);
           controller.refreshImmediately();
         }
         if (typeof options.onRecovered === "function") options.onRecovered();
@@ -162,9 +179,13 @@
       refreshImmediately: controller.refreshImmediately,
       visibilityChanged: controller.visibilityChanged,
       stop: controller.stop,
-      observeTask(task) {
+      async observeTask(task) {
         const accepted = acceptTask(task);
-        if (accepted) controller.refreshImmediately();
+        if (!accepted) return false;
+        if (!taskActive(task) && typeof options.onTerminal === "function") {
+          await options.onTerminal(task);
+        }
+        controller.refreshImmediately();
         return accepted;
       },
       trackJob(jobId) {

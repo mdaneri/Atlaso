@@ -15263,7 +15263,7 @@ async function openApplianceApplyReview() {
     const payload = await response.json();
     if (!response.ok) throw new Error(payload.detail || "Unable to load appliance changes.");
     if (payload.active_task) {
-      if (applianceApplyPollController) applianceApplyPollController.observeTask(payload.active_task);
+      if (applianceApplyPollController) await applianceApplyPollController.observeTask(payload.active_task);
       else renderApplianceApplyTask(payload.active_task);
       return;
     }
@@ -15452,7 +15452,7 @@ async function submitApplianceApplyForm(form) {
     });
     const payload = await response.json();
     if (!response.ok) throw new Error(payload.detail || "Appliance changes could not be submitted.");
-    if (payload.task && applianceApplyPollController) applianceApplyPollController.observeTask(payload.task);
+    if (payload.task && applianceApplyPollController) await applianceApplyPollController.observeTask(payload.task);
     else if (payload.task) renderApplianceApplyTask(payload.task);
     else applianceApplyPollController?.trackJob(payload.job_id);
     refreshApplianceApplySidebar().catch(() => {});
@@ -15517,7 +15517,7 @@ function initializeApplianceApplyProgress() {
       setApplianceApplyModalError(payload.detail || "Unable to request cancellation.");
       return;
     }
-    if (payload.task && applianceApplyPollController) applianceApplyPollController.observeTask(payload.task);
+    if (payload.task && applianceApplyPollController) await applianceApplyPollController.observeTask(payload.task);
     else renderApplianceApplyTask(payload.task);
   });
   applianceApplyPollController = window.AtlasoApplianceApplyPolling.createMonitor({

@@ -88,6 +88,9 @@ count after the task starts.
 5. Wait for the master task to reach a terminal state. The dialog, lower-left sidebar badge, pending count, and global
    write lock update automatically; a page reload is not required.
 
+If another session starts a new Apply immediately after the current master finishes, the monitor completes the current
+task's terminal refresh before following the newer task.
+
 Components run sequentially. If one component fails, Atlaso stops the sequence and marks the remaining components
 **skipped**. Other write operations are locked while the master task is pending or running; read-only pages, task
 inspection, authentication actions, and safe cancellation remain available.

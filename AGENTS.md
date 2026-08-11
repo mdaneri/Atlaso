@@ -80,8 +80,9 @@ The following cross-cutting boundaries always apply:
   Prevent overlapping browser polls, suspend them while hidden, back off when idle, and refresh promptly after successful
   mutations and Apply completion. Retain the tracked master task until a valid terminal task response is rendered, retry
   transient status and terminal-reconciliation failures at the active cadence with an observable warning, and never let
-  an older active response replace a terminal result. Full review, validation, and submission must still reconcile
-  current host observations.
+  an older active response replace a terminal result. Reconcile a retained task and run its completion refresh before
+  accepting a different session's newer active task. Full review, validation, and submission must still reconcile current
+  host observations.
 - Privileged appliance operations go through `atlaso-helper` and constrained sudoers rules.
 - VCF Offline Depot settings and download-profile applies preserve the registered VCFDT software depot ID. Generate an
   ID only when none exists or an administrator explicitly confirms **Refresh software depot ID** through global apply;

@@ -204,12 +204,73 @@ test("does not let an older running response replace a terminal task", async () 
   });
 
   const oldPoll = state.monitor.refresh();
-  assert.equal(state.monitor.observeTask({ id: "job-1", status: "succeeded" }), true);
+  assert.equal(await state.monitor.observeTask({ id: "job-1", status: "succeeded" }), true);
   resolveStatus({ active_task: { id: "job-1", status: "running" }, pending_count: 0 });
   await oldPoll;
 
   assert.deepEqual(state.tasks.map((task) => task.status), ["succeeded"]);
+  assert.deepEqual(state.terminals, ["succeeded"]);
   assert.equal(state.ui.modalStatus, "succeeded");
   assert.equal(state.ui.locked, false);
+  assert.equal(state.monitor.trackedJobId(), "");
+});
+
+test("reconciles the tracked task before accepting a different active task", async () => {
+  const statusPayloads = [
+    { active_task: { id: "job-1", status: "running" }, pending_count: 0 },
+    { active_task: { id: "job-2", status: "running" }, pending_count: 0 },
+  ];
+  const requestedTaskIds = [];
+  const state = monitorHarness({
+    requestStatus: async () => statusPayloads.shift(),
+    requestTask: async (jobId) => {
+      requestedTaskIds.push(jobId);
+      return { id: jobId, status: "succeeded" };
+    },
+  });
+
+  await state.monitor.refresh();
+  await state.timers.at(-1).callback();
+
+  assert.deepEqual(requestedTaskIds, ["job-1"]);
+  assert.deepEqual(state.tasks.map((task) => `${task.id}:${task.status}`), [
+    "job-1:running",
+    "job-1:succeeded",
+    "job-2:running",
+  ]);
+  assert.deepEqual(state.terminals, ["succeeded"]);
+  assert.equal(state.monitor.trackedJobId(), "job-2");
+});
+
+test("does not replace a tracked task when its reconciliation fails", async () => {
+  const statusPayloads = [
+    { active_task: { id: "job-1", status: "running" }, pending_count: 0 },
+    { active_task: { id: "job-2", status: "running" }, pending_count: 0 },
+  ];
+  const state = monitorHarness({
+    requestStatus: async () => statusPayloads.shift(),
+    requestTask: async () => { throw new Error("temporary task failure"); },
+  });
+
+  await state.monitor.refresh();
+  await state.timers.at(-1).callback();
+
+  assert.deepEqual(state.tasks.map((task) => `${task.id}:${task.status}`), ["job-1:running"]);
+  assert.deepEqual(state.errors, ["temporary task failure"]);
+  assert.equal(state.monitor.trackedJobId(), "job-1");
+  assert.equal(state.timers.at(-1).delay, 2000);
+});
+
+test("runs terminal reconciliation for a directly observed terminal task", async () => {
+  const state = monitorHarness({
+    requestStatus: async () => ({ active_task: null, pending_count: 0 }),
+    requestTask: async () => null,
+  });
+  state.monitor.trackJob("job-1");
+
+  assert.equal(await state.monitor.observeTask({ id: "job-1", status: "succeeded" }), true);
+
+  assert.deepEqual(state.tasks.map((task) => task.status), ["succeeded"]);
+  assert.deepEqual(state.terminals, ["succeeded"]);
   assert.equal(state.monitor.trackedJobId(), "");
 });
