@@ -16,6 +16,7 @@ import sys
 import time
 from datetime import datetime, timezone
 from ipaddress import ip_interface
+from uuid import UUID
 import xml.etree.ElementTree as ET
 
 from atlaso.app.management_network import ManagementNetworkValidationError, validate_management_network
@@ -33,6 +34,7 @@ PROPERTY_DNS = f"{PROPERTY_PREFIX}dns_servers"
 PROPERTY_ADMIN_PASSWORD = f"{PROPERTY_PREFIX}admin_password"
 PROPERTY_ROOT_PASSWORD = f"{PROPERTY_PREFIX}root_password"
 PROPERTY_ROOT_SSH_ENABLED = f"{PROPERTY_PREFIX}root_ssh_enabled"
+PROPERTY_DEPLOYMENT_ID = f"{PROPERTY_PREFIX}deployment_id"
 MINIMUM_PASSWORD_LENGTH = 12
 REQUIRED_PROPERTIES = {
     PROPERTY_FQDN,
@@ -193,11 +195,18 @@ def validate_non_network_properties(properties: dict[str, str]) -> dict[str, obj
             raise OvfCustomizationError(
                 f"{password_key} must be at least {MINIMUM_PASSWORD_LENGTH} characters"
             )
+    deployment_id = properties.get(PROPERTY_DEPLOYMENT_ID, "").strip()
+    if deployment_id:
+        try:
+            deployment_id = str(UUID(deployment_id))
+        except ValueError as exc:
+            raise OvfCustomizationError(f"{PROPERTY_DEPLOYMENT_ID} must be a UUID") from exc
     return {
         "fqdn": validate_fqdn(properties[PROPERTY_FQDN]),
         "admin_password": properties[PROPERTY_ADMIN_PASSWORD],
         "root_password": properties[PROPERTY_ROOT_PASSWORD],
         "root_ssh_enabled": parse_boolean_property(properties, PROPERTY_ROOT_SSH_ENABLED),
+        "deployment_id": deployment_id,
     }
 
 
@@ -272,6 +281,7 @@ def validate_properties(
         "admin_password": validated_non_network["admin_password"],
         "root_password": validated_non_network["root_password"],
         "root_ssh_enabled": validated_non_network["root_ssh_enabled"],
+        "deployment_id": validated_non_network["deployment_id"],
         "management_source_cidr": management_source_cidr,
         "management_source_ipv6_cidr": management_source_ipv6_cidr,
     }
@@ -523,6 +533,50 @@ def scrub_applied_ovf_environment() -> None:
             time.sleep(OVF_ENVIRONMENT_POLL_SECONDS)
 
 
+def pending_marker_matches_current_deployment(ovf_env_file: str) -> bool:
+    """Return whether pending state belongs to the currently injected deployment.
+
+    Args:
+        ovf_env_file: Optional filesystem path supplied by the command line.
+
+    Returns:
+        ``True`` when restart recovery may promote the pending marker. A
+        different raw-clone deployment identifier or malformed nonempty input
+        requires a fresh apply instead.
+    """
+    logged_failure = False
+    while True:
+        if ovf_env_file:
+            try:
+                content = Path(ovf_env_file).read_text(encoding="utf-8")
+            except OSError:
+                return False
+            break
+        answered, content = try_read_ovf_environment()
+        if answered:
+            break
+        if not logged_failure:
+            log(
+                "VMware OVF first-time initialization is retrying an inconclusive deployment-property read "
+                "before pending-state recovery."
+            )
+            logged_failure = True
+        time.sleep(OVF_ENVIRONMENT_POLL_SECONDS)
+
+    if not content.strip():
+        return True
+    try:
+        properties = parse_ovf_environment(content)
+        pending = json.loads(PENDING_MARKER_PATH.read_text(encoding="utf-8"))
+    except (OSError, ET.ParseError, json.JSONDecodeError):
+        return False
+    if not isinstance(pending, dict):
+        return False
+    current_deployment_id = properties.get(PROPERTY_DEPLOYMENT_ID, "").strip().lower()
+    pending_deployment_id = str(pending.get("deployment_id", "")).strip().lower()
+    return current_deployment_id == pending_deployment_id
+
+
 def wait_for_network_review(properties: dict[str, str], error: str) -> int:
     """Wait visibly for tty1 to provide a valid first-boot network correction.
 
@@ -561,7 +615,7 @@ def wait_for_network_review(properties: dict[str, str], error: str) -> int:
             )
             return 2
         try:
-            invalidate_pending_marker()
+            run_initialization_layer("pending success marker invalidation", invalidate_pending_marker)
             summary = apply_customization(config)
         except OvfCustomizationError as exc:
             write_network_review(
@@ -605,6 +659,7 @@ def redacted_summary(config: dict[str, object]) -> dict[str, object]:
         "admin_password_set": bool(config["admin_password"]),
         "root_password_set": bool(config["root_password"]),
         "root_ssh_enabled": config["root_ssh_enabled"],
+        "deployment_id": config["deployment_id"],
     }
 
 
@@ -1024,7 +1079,13 @@ def main(argv: list[str] | None = None) -> int:
         log("VMware OVF customization already applied; leaving appliance state unchanged.")
         return 0
     if PENDING_MARKER_PATH.exists() and not args.dry_run:
-        return recover_pending_customization()
+        if pending_marker_matches_current_deployment(args.ovf_env_file):
+            return recover_pending_customization()
+        try:
+            run_initialization_layer("pending success marker invalidation", invalidate_pending_marker)
+        except OvfCustomizationError as exc:
+            log(f"VMware OVF customization could not inspect a replacement deployment: {exc}")
+            return 2
 
     if args.dry_run:
         try:

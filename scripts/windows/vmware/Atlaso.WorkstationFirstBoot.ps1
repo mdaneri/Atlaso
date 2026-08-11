@@ -68,6 +68,7 @@ function New-AtlasoWorkstationOvfEnvironment {
     }
 
     $properties = [ordered]@{
+        'atlaso.deployment_id' = [guid]::NewGuid().ToString('D')
         'atlaso.management_mode' = 'dhcp'
         'atlaso.cidr' = ''
         'atlaso.gateway' = ''

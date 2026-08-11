@@ -1222,6 +1222,7 @@ def test_vmware_raw_vmx_workflows_inject_complete_first_boot_ovf_environment_bef
     docs = Path("docs/reference/vmware-workstation-lifecycle-testing.md").read_text(encoding="utf-8")
 
     for key in (
+        "atlaso.deployment_id",
         "atlaso.management_mode",
         "atlaso.cidr",
         "atlaso.gateway",
@@ -1235,6 +1236,7 @@ def test_vmware_raw_vmx_workflows_inject_complete_first_boot_ovf_environment_bef
         "atlaso.root_ssh_enabled",
     ):
         assert f"'{key}'" in helper
+    assert "[guid]::NewGuid().ToString('D')" in helper
     assert "[System.Security.SecurityElement]::Escape($Value)" in helper
     assert "[System.Xml.XmlConvert]::VerifyXmlChars($passwordInput.Value)" in helper
     assert "$passwordInput.Value -ne $passwordInput.Value.Trim()" in helper

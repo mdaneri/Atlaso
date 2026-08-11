@@ -89,8 +89,10 @@ management IPv4 address and derives the appliance URL from that discovered addre
 Before it powers on the raw appliance clone, the runner injects the complete Atlaso first-boot OVF environment that a
 normal ESXi or Workstation OVF deployment would provide. The lifecycle lab uses IPv4 DHCP with blank DNS overrides,
 disabled IPv6 and root SSH, a generated lab FQDN, and the existing lifecycle admin-password input for both required
-first-boot credential properties. The value is stored only in the clone's guestinfo-backed VMX setting and is excluded
-from plan and result artifacts. Invalid identity or password inputs fail before the runner creates the lab directories.
+first-boot credential properties. Each injection also carries a generated non-secret deployment identifier so an
+interrupted source VM's pending state cannot be mistaken for the new clone's attempt. The value is stored only in the
+clone's guestinfo-backed VMX setting and is excluded from plan and result artifacts. Invalid identity or password inputs
+fail before the runner creates the lab directories.
 After customization, appliance guest operations use that applied admin password while `-SshPassword` remains dedicated
 to the client VMs, so callers may continue to supply different appliance and client credentials.
 

@@ -439,6 +439,64 @@ def test_vmware_ovf_customizer_keeps_waiter_after_corrected_apply_failure(tmp_pa
     assert not customizer.INITIALIZATION_LOCK_PATH.exists()
 
 
+def test_vmware_ovf_customizer_names_pending_invalidation_failure(tmp_path, monkeypatch):
+    """Verify retry invalidation failures expose only their stable layer name.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+        monkeypatch: Pytest helper used to replace first-boot state and actions.
+    """
+    customizer = load_customizer()
+    customizer.NETWORK_REVIEW_PATH = tmp_path / "network-review.json"
+    customizer.NETWORK_CORRECTION_PATH = tmp_path / "network-correction.json"
+    customizer.PENDING_MARKER_PATH = tmp_path / "customization.pending"
+    customizer.PENDING_MARKER_PATH.write_text("{}\n", encoding="utf-8")
+    properties = customizer.parse_ovf_environment(OVF_ENV)
+    customizer.write_json_atomic(
+        customizer.NETWORK_CORRECTION_PATH,
+        {
+            "version": 1,
+            "ipv4_method": "static",
+            "ipv4_cidr": "192.168.10.10/24",
+            "ipv4_gateway": "192.168.10.1",
+            "ipv6_mode": "disabled",
+            "ipv6_cidr": "",
+            "ipv6_gateway": "",
+            "dns_servers": "192.168.10.2",
+        },
+        mode=0o600,
+    )
+
+    class StopPolling(BaseException):
+        """Stop the retained review loop after observing the failure state."""
+
+    monkeypatch.setattr(
+        customizer,
+        "invalidate_pending_marker",
+        lambda: (_ for _ in ()).throw(OSError("secret-bearing filesystem detail")),
+    )
+    monkeypatch.setattr(
+        customizer,
+        "apply_customization",
+        lambda config: pytest.fail("mutation started before pending-state invalidation"),
+    )
+    monkeypatch.setattr(
+        customizer.time,
+        "sleep",
+        lambda seconds: (_ for _ in ()).throw(StopPolling()),
+    )
+    messages = []
+    monkeypatch.setattr(customizer, "log", messages.append)
+
+    with pytest.raises(StopPolling):
+        customizer.wait_for_network_review(properties, "Retry initialization.")
+
+    rendered = " ".join(messages)
+    assert "pending success marker invalidation layer" in rendered
+    assert "secret-bearing filesystem detail" not in rendered
+    assert customizer.PENDING_MARKER_PATH.exists()
+
+
 def test_vmware_ovf_customizer_routes_initial_apply_failure_to_waiter(tmp_path, monkeypatch):
     """Verify valid original networking retains a consumer when its first apply fails.
 
@@ -863,6 +921,66 @@ def test_vmware_ovf_customizer_recovers_pending_marker_after_scrub_interruption(
     assert json.loads(customizer.MARKER_PATH.read_text(encoding="utf-8")) == summary
     assert "unsafe implementation detail" not in " ".join(messages)
     assert "credential scrub and applied-marker finalization" in " ".join(messages)
+
+
+def test_vmware_ovf_customizer_reapplies_new_raw_clone_over_pending_source(tmp_path, monkeypatch):
+    """Verify a new raw-clone deployment cannot promote its source's pending state.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+    """
+    customizer = load_customizer()
+    customizer.PENDING_MARKER_PATH = tmp_path / "customization.pending"
+    customizer.MARKER_PATH = tmp_path / "customization.applied"
+    customizer.INITIALIZATION_LOCK_PATH = tmp_path / "initializing"
+    customizer.NETWORK_REVIEW_PATH = tmp_path / "network-review.json"
+    customizer.NETWORK_CORRECTION_PATH = tmp_path / "network-correction.json"
+    source_deployment_id = "11111111-1111-4111-8111-111111111111"
+    clone_deployment_id = "22222222-2222-4222-8222-222222222222"
+    customizer.write_json_atomic(
+        customizer.PENDING_MARKER_PATH,
+        {"fqdn": "source.atlaso.internal", "deployment_id": source_deployment_id},
+    )
+    replacement_ovf = OVF_ENV.replace(
+        "  <PropertySection>\n",
+        "  <PropertySection>\n"
+        f'    <Property oe:key="atlaso.deployment_id" oe:value="{clone_deployment_id}" />\n',
+    )
+    monkeypatch.setattr(customizer, "try_read_ovf_environment", lambda: (True, replacement_ovf))
+    monkeypatch.setattr(
+        customizer,
+        "recover_pending_customization",
+        lambda: pytest.fail("the source deployment was incorrectly recovered"),
+    )
+    applied = []
+
+    def apply_customization(config, *, dry_run=False):
+        """Record the replacement deployment after stale state is invalidated.
+
+        Args:
+            config: Validated replacement deployment settings.
+            dry_run: Whether host mutation is disabled.
+
+        Returns:
+            The redacted replacement-deployment summary.
+        """
+        assert dry_run is False
+        assert not customizer.PENDING_MARKER_PATH.exists()
+        applied.append(config)
+        summary = customizer.redacted_summary(config)
+        customizer.write_json_atomic(customizer.MARKER_PATH, summary)
+        return summary
+
+    monkeypatch.setattr(customizer, "apply_customization", apply_customization)
+    monkeypatch.setattr(customizer, "log", lambda message: None)
+
+    assert customizer.main([]) == 0
+
+    assert len(applied) == 1
+    assert applied[0]["deployment_id"] == clone_deployment_id
+    assert customizer.MARKER_PATH.exists()
+    assert not customizer.PENDING_MARKER_PATH.exists()
 
 
 def test_vmware_ovf_customizer_reports_safe_failing_initialization_layer(monkeypatch):

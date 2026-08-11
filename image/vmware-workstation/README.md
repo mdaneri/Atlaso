@@ -240,7 +240,9 @@ the applied-marker promotion synchronizes the directory again. If a raw clone ac
 marker already exists, the customizer
 does not reapply the injected credentials, but it does clear the injected OVF environment before its marker early exit so
 those plaintext values cannot remain in the cloned VMX. Inconclusive VMware RPC reads are retried rather than treated as
-proof of an empty property. Use only pristine, never-booted image outputs as clone sources.
+proof of an empty property. Raw-clone injection carries a non-secret deployment identifier; if a source was interrupted
+with only a pending marker, a different injected identifier invalidates that stale pending state before the clone applies
+its own properties. Use only pristine, never-booted image outputs as clone sources.
 
 The customizer validates IPv4, IPv6, gateway, and DNS relationships before any host mutation. Interface and gateway
 addresses must be usable unicast values rather than unspecified, loopback, multicast, or reserved addresses. If
@@ -309,8 +311,9 @@ Both this wrapper and the Workstation lifecycle runner inject a complete `guesti
 VMX before power-on. The default document selects IPv4 DHCP, leaves resolver overrides blank, keeps IPv6 and root SSH
 disabled, and supplies the required appliance identity and first-boot credentials. This gives raw Workstation clones the
 same fail-closed initialization contract as an OVA deployment instead of leaving the customizer waiting for properties
-that only an OVF deployment normally supplies. Use `-FirstBootFqdn`, `-AdminPassword`, and `-RootPassword` to override
-the normal test-VM values; the lifecycle wrapper uses its existing admin-password input. Password values are written
+that only an OVF deployment normally supplies. A generated non-secret deployment identifier distinguishes each raw
+clone attempt during pending-marker crash recovery. Use `-FirstBootFqdn`, `-AdminPassword`, and `-RootPassword` to
+override the normal test-VM values; the lifecycle wrapper uses its existing admin-password input. Password values are written
 only to the guestinfo-backed VMX setting until successful first-boot consumption clears it; they are never printed in
 plan, result, or connection-summary output. Raw-clone credential overrides must be at least 12 characters and cannot
 contain leading, trailing, XML control, or non-XML characters that would change during OVF attribute parsing.
