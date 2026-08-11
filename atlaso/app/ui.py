@@ -469,6 +469,7 @@ from atlaso.app.services.vsphere_key_providers import (
     render_provider_config,
     runtime_status_snapshot,
     trusted_vcenter_to_dict,
+    usable_certificates,
     validate_provider_state,
 )
 from atlaso.app.services.ldap import (
@@ -22517,8 +22518,9 @@ def retire_vsphere_certificate_from_ui(
     certificate = next((item for item in vcenter.certificates if item.id == certificate_id), None)
     if certificate is None:
         raise HTTPException(status_code=404, detail="Certificate not found.")
-    if vcenter.enabled and len(vcenter.certificates) <= 1:
-        return _vsphere_grid_error(request, identity, db, "Disable the trusted vCenter before retiring its last certificate.")
+    usable = usable_certificates(vcenter)
+    if vcenter.enabled and certificate in usable and len(usable) <= 1:
+        return _vsphere_grid_error(request, identity, db, "Disable the trusted vCenter before retiring its last usable certificate.")
     mark_provider_desired_changed(vcenter.provider)
     db.delete(certificate)
     db.commit()

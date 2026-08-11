@@ -4804,6 +4804,22 @@ function initializeVsphereKeyProviderTables() {
     if (!(select instanceof HTMLSelectElement)) return;
     Array.from(select.options).find((item) => item.value === String(value))?.remove();
   };
+  const updateCertificateCounts = async (providerId, vcenterId, certificateDelta, usableDelta) => {
+    const targets = [
+      ["vsphere-providers-table", providerId],
+      ["vsphere-vcenters-table", vcenterId],
+    ];
+    await Promise.all(targets.map(async ([elementId, rowId]) => {
+      const table = document.getElementById(elementId)?.atlasoTabulator;
+      const row = table?.getRow?.(rowId);
+      if (!row) return;
+      const data = row.getData();
+      await row.update({
+        certificate_count: Math.max(0, Number(data.certificate_count || 0) + certificateDelta),
+        usable_certificate_count: Math.max(0, Number(data.usable_certificate_count || 0) + usableDelta),
+      });
+    }));
+  };
   initializeAtlasoResourceWizard({
     elementId: "vsphere-providers-table",
     formSelector: "[data-vsphere-provider-form]",
@@ -4952,6 +4968,8 @@ function initializeVsphereKeyProviderTables() {
         const payload = await atlasoGridWizardRequest(`/vsphere-key-providers/trusted-vcenters/${vcenterId}/certificates`, body);
         const certificateTable = document.getElementById("vsphere-certificates-table")?.atlasoTabulator;
         await certificateTable?.addRow?.(payload.certificate, true);
+        await updateCertificateCounts(providerId, vcenterId, 1, payload.certificate.status === "valid" ? 1 : 0);
+        await refreshNetworkSideStack();
         showTransientGridStatus("Certificate added");
         return { valid: true };
       },
@@ -4969,6 +4987,8 @@ function initializeVsphereKeyProviderTables() {
       body.set("csrf", csrf);
       await atlasoGridWizardRequest(`/vsphere-key-providers/trusted-vcenters/${data.trusted_vcenter_id}/certificates/${data.id}/delete`, body, { expectJson: false });
       await row.delete();
+      await updateCertificateCounts(data.provider_id, data.trusted_vcenter_id, -1, data.status === "valid" ? -1 : 0);
+      await refreshNetworkSideStack();
       showTransientGridStatus("Certificate retired");
     };
     const grid = window.AtlasoUiPatterns.createGrid({

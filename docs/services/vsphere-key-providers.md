@@ -45,11 +45,19 @@ Certificate fingerprints are normalized SHA-256 values and are unique appliance-
 assigned to another trusted vCenter or provider. Atlaso stores canonical public PEM and parsed public metadata only; it
 does not generate, accept, export, or reveal a vCenter client private key.
 
+Listener settings accept only currently available addressed access or VLAN interfaces. Atlaso derives the saved IPv4
+and IPv6 listener addresses from those selected interfaces; API callers cannot bind the service to an unrelated address
+by supplying a different `listen_addresses` value.
+
 ## Rotate or retire public trust
 
 Use **Add public certificate** on a trusted-vCenter row or **Add replacement certificate** on a certificate row. Apply
 the overlapping trust bundle globally, move vCenter to the new certificate, and then use **Retire certificate**. An
 enabled trusted vCenter cannot lose its last usable fingerprint. Vault-assisted rotation belongs to issue #171.
+
+Settings backups preserve public certificate history, including certificates that expire after they were accepted.
+Restore revalidates each PEM body and exact fingerprint while retaining its expired status; an expired record never
+becomes usable trust merely because it was restored.
 
 ## Health and lifecycle counts
 

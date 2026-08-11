@@ -1240,7 +1240,7 @@ def _restore_vsphere_certificates(db: Session, rows: list[dict[str, Any]]) -> in
         if fingerprint in fingerprints:
             raise ValueError("Archived public certificate fingerprint is duplicated.")
         certificate_pem = str(row.get("certificate_pem") or "")
-        parsed = parse_public_certificate(certificate_pem)
+        parsed = parse_public_certificate(certificate_pem, require_current=False)
         if parsed["fingerprint_sha256"] != fingerprint:
             raise ValueError("Archived public certificate fingerprint does not match its PEM body.")
         db.add(

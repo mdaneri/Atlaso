@@ -2527,7 +2527,15 @@ class VsphereKeyProviderSettingsUpdate(BaseModel):
 
     enabled: Annotated[bool, Field(description="Whether the shared KMIP listener is enabled in desired state.")]
     listen_interfaces: Annotated[list[str], Field(description="Access interfaces selected for the shared KMIP listener.")]
-    listen_addresses: Annotated[list[str], Field(description="IP addresses derived from selected KMIP listener interfaces.")]
+    listen_addresses: Annotated[
+        list[str],
+        Field(
+            description=(
+                "IP addresses derived from selected KMIP listener interfaces. Callers may echo this field for shape "
+                "compatibility, but Atlaso ignores supplied entries and derives the saved addresses server-side."
+            )
+        ),
+    ]
     port: Annotated[int, Field(description="TCP port for the KMIP 1.4 listener.", ge=1, le=65535)] = 5696
     hostname: Annotated[str, Field(description="DNS hostname advertised for the shared vSphere Key Provider endpoint.", min_length=1, max_length=253)]
 

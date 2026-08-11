@@ -10340,6 +10340,13 @@ def test_vsphere_key_provider_page_uses_shared_management_contract(client):
     assert "onSaved: ({ resource }) => upsertOption(" in app_js.text
     assert "certificateTargetSelect," in app_js.text
     assert "removeOption(certificateTargetSelect" in app_js.text
+    assert "updateCertificateCounts" in app_js.text
+    assert "await updateCertificateCounts(providerId, vcenterId, 1" in app_js.text
+    assert "await updateCertificateCounts(data.provider_id, data.trusted_vcenter_id, -1" in app_js.text
+    certificate_actions = app_js.text.split("const certificateForm =", 1)[1].split(
+        'const healthElement = document.getElementById("vsphere-health-table")', 1
+    )[0]
+    assert certificate_actions.count("await refreshNetworkSideStack();") == 2
 
 
 def test_vsphere_key_provider_browser_routes_enforce_kms_scopes(client):

@@ -6292,9 +6292,6 @@ async def stage_ldap_recovery_import(
     )
 
 
-VSPHERE_INTERFACE_PATTERN = re.compile(r"^[A-Za-z0-9_.:-]{1,64}$")
-
-
 def _normalize_vsphere_service_hostname(value: str) -> str:
     """Return a canonical fully qualified DNS name for the shared listener.
 
@@ -6333,31 +6330,41 @@ def _normalize_vsphere_vcenter_hostname(value: str) -> str:
 
 def _normalize_vsphere_listener_values(
     payload: VsphereKeyProviderSettingsUpdate,
+    db: Session,
 ) -> tuple[list[str], list[str], str]:
     """Validate and normalize public listener settings before saving desired state.
 
     Args:
         payload: Submitted appliance-wide listener desired state.
+        db: Active database session used to resolve current service bind targets.
 
     Returns:
         Deduplicated interface names, canonical IP addresses, and canonical hostname.
     """
+    from atlaso.app.ui import service_bind_options
+
+    available = {
+        str(option["name"]): [str(address) for address in option.get("addresses", [])]
+        for option in service_bind_options(db)
+    }
     interfaces: list[str] = []
     for raw_interface in payload.listen_interfaces:
         interface = raw_interface.strip()
-        if not VSPHERE_INTERFACE_PATTERN.fullmatch(interface):
-            raise HTTPException(status_code=422, detail="Listener interfaces contain an invalid name.")
+        if interface not in available:
+            raise HTTPException(
+                status_code=422,
+                detail="Listener interfaces must be available addressed access or VLAN interfaces.",
+            )
         if interface not in interfaces:
             interfaces.append(interface)
 
-    addresses: list[str] = []
-    for raw_address in payload.listen_addresses:
-        try:
-            address = str(ip_address(raw_address.strip()))
-        except ValueError as exc:
-            raise HTTPException(status_code=422, detail="Listener addresses must be valid IP addresses.") from exc
-        if address not in addresses:
-            addresses.append(address)
+    addresses = list(
+        dict.fromkeys(
+            address
+            for interface in interfaces
+            for address in available[interface]
+        )
+    )
 
     if payload.enabled and not interfaces:
         raise HTTPException(status_code=422, detail="At least one listener interface is required while the service is enabled.")
@@ -6474,7 +6481,7 @@ def update_vsphere_key_provider_settings(
         identity: Authenticated identity authorizing the operation.
         db: Active database session used by the operation.
     """
-    interfaces, addresses, hostname = _normalize_vsphere_listener_values(payload)
+    interfaces, addresses, hostname = _normalize_vsphere_listener_values(payload, db)
     settings = get_kms_settings_row(db)
     settings.enabled = payload.enabled
     settings.listen_interface = join_csv(interfaces)
@@ -6973,8 +6980,9 @@ def delete_vsphere_trusted_vcenter_certificate(
     certificate = next((cert for cert in item.certificates if cert.id == certificate_id), None)
     if certificate is None:
         raise HTTPException(status_code=404, detail="Certificate not found.")
-    if item.enabled and len(usable_certificates(item)) <= 1:
-        raise HTTPException(status_code=409, detail="Disable the trusted vCenter before retiring its last public certificate.")
+    usable = usable_certificates(item)
+    if item.enabled and certificate in usable and len(usable) <= 1:
+        raise HTTPException(status_code=409, detail="Disable the trusted vCenter before retiring its last usable public certificate.")
     mark_provider_desired_changed(item.provider)
     db.delete(certificate)
     db.commit()

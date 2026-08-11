@@ -16,11 +16,13 @@ from atlaso.app.adapters.system import AdapterResult
 from atlaso.app.database import SessionLocal
 from atlaso.app.models import (
     KmsSettings,
+    PhysicalInterface,
     VsphereKeyProvider,
     VsphereTrustedVcenter,
     VsphereTrustedVcenterCertificate,
 )
 from atlaso.app.services.vsphere_key_providers import (
+    certificate_status,
     parse_public_certificate,
     provider_rows,
     render_client_trust_bundle,
@@ -92,6 +94,27 @@ def _token(client, scopes: list[str]) -> str:
     )
     assert response.status_code == 200, response.text
     return response.json()["raw_token"]
+
+
+def _login(client) -> str:
+    """Authenticate the browser client and return the active CSRF token.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+
+    Returns:
+        CSRF token rendered after successful authentication.
+    """
+    login_page = client.get("/login")
+    csrf = login_page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    response = client.post(
+        "/login",
+        data={"username": "admin", "password": "atlaso-admin", "csrf": csrf},
+        follow_redirects=False,
+    )
+    assert response.status_code == 303
+    page = client.get("/vsphere-key-providers")
+    return page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
 
 
 def test_provider_api_enforces_scopes_public_certificates_and_global_fingerprint_uniqueness(client) -> None:
@@ -250,41 +273,53 @@ def test_provider_api_rejects_invalid_listener_and_vcenter_network_identifiers(c
     """
     token = _token(client, ["read:kms", "write:kms"])
     headers = {"Authorization": f"Bearer {token}"}
+    with SessionLocal() as db:
+        db.add(
+            PhysicalInterface(
+                name="eth42",
+                mac_address="02:00:00:00:00:42",
+                ip_cidr="192.0.2.10/24",
+                role="access",
+                mode="access",
+                oper_state="up",
+            )
+        )
+        db.commit()
 
-    invalid_address = client.patch(
+    derived_address = client.patch(
         "/api/v1/vsphere-key-providers/settings",
         headers=headers,
         json={
             "enabled": False,
-            "listen_interfaces": ["eth2"],
+            "listen_interfaces": ["eth42"],
             "listen_addresses": ["not-an-ip"],
             "port": 5696,
             "hostname": "kms.atlaso.internal",
         },
     )
-    assert invalid_address.status_code == 422
-    assert "valid IP addresses" in invalid_address.text
+    assert derived_address.status_code == 200
+    assert derived_address.json()["listen_addresses"] == ["192.0.2.10"]
 
     invalid_interface = client.patch(
         "/api/v1/vsphere-key-providers/settings",
         headers=headers,
         json={
             "enabled": False,
-            "listen_interfaces": ["eth2,eth3"],
+            "listen_interfaces": ["eth999"],
             "listen_addresses": ["192.0.2.10"],
             "port": 5696,
             "hostname": "kms.atlaso.internal",
         },
     )
     assert invalid_interface.status_code == 422
-    assert "invalid name" in invalid_interface.text
+    assert "available addressed access or VLAN interfaces" in invalid_interface.text
 
     invalid_hostname = client.patch(
         "/api/v1/vsphere-key-providers/settings",
         headers=headers,
         json={
             "enabled": False,
-            "listen_interfaces": ["eth2"],
+            "listen_interfaces": ["eth42"],
             "listen_addresses": ["192.0.2.10"],
             "port": 5696,
             "hostname": "not-qualified",
@@ -321,8 +356,8 @@ def test_settings_archive_round_trips_only_public_provider_desired_state(client)
     Args:
         client: HTTP test client used to exercise the Atlaso application.
     """
-    public_pem, _private_pem = _public_client_certificate("vcsa-archive.atlaso.internal")
-    parsed = parse_public_certificate(public_pem)
+    public_pem, _private_pem = _public_client_certificate("vcsa-archive.atlaso.internal", expired=True)
+    parsed = parse_public_certificate(public_pem, require_current=False)
     provider_id = str(uuid4())
     vcenter_id = str(uuid4())
     certificate_id = str(uuid4())
@@ -358,6 +393,67 @@ def test_settings_archive_round_trips_only_public_provider_desired_state(client)
         assert restored.trusted_vcenters[0].id == vcenter_id
         assert restored.trusted_vcenters[0].certificates[0].id == certificate_id
         assert restored.trusted_vcenters[0].certificates[0].certificate_pem == public_pem
+        assert certificate_status(restored.trusted_vcenters[0].certificates[0]) == "expired"
+
+
+def test_browser_retirement_preserves_the_last_usable_certificate(client) -> None:
+    """Verify browser retirement distinguishes expired records from the last usable trust record.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
+    current_pem, _current_key = _public_client_certificate("vcsa-current.atlaso.internal")
+    expired_pem, _expired_key = _public_client_certificate("vcsa-expired.atlaso.internal", expired=True)
+    provider_id = str(uuid4())
+    vcenter_id = str(uuid4())
+    current_id = str(uuid4())
+    expired_id = str(uuid4())
+    with SessionLocal() as db:
+        provider = VsphereKeyProvider(id=provider_id, name="Retirement provider", enabled=True)
+        vcenter = VsphereTrustedVcenter(
+            id=vcenter_id,
+            provider_id=provider_id,
+            name="Retirement vCenter",
+            enabled=True,
+        )
+        provider.trusted_vcenters.append(vcenter)
+        vcenter.certificates.extend(
+            [
+                VsphereTrustedVcenterCertificate(
+                    id=current_id,
+                    trusted_vcenter_id=vcenter_id,
+                    source="uploaded_public",
+                    **parse_public_certificate(current_pem),
+                ),
+                VsphereTrustedVcenterCertificate(
+                    id=expired_id,
+                    trusted_vcenter_id=vcenter_id,
+                    source="uploaded_public",
+                    **parse_public_certificate(expired_pem, require_current=False),
+                ),
+            ]
+        )
+        db.add(provider)
+        db.commit()
+
+    csrf = _login(client)
+    headers = {"X-Atlaso-Grid": "1", "Accept": "application/json"}
+    expired_retirement = client.post(
+        f"/vsphere-key-providers/trusted-vcenters/{vcenter_id}/certificates/{expired_id}/delete",
+        data={"csrf": csrf},
+        headers=headers,
+    )
+    assert expired_retirement.status_code == 204
+
+    last_usable_retirement = client.post(
+        f"/vsphere-key-providers/trusted-vcenters/{vcenter_id}/certificates/{current_id}/delete",
+        data={"csrf": csrf},
+        headers=headers,
+    )
+    assert last_usable_retirement.status_code == 409
+    assert last_usable_retirement.json()["detail"] == (
+        "Disable the trusted vCenter before retiring its last usable certificate."
+    )
 
 
 def test_lifecycle_counts_report_null_when_unavailable_and_verified_counts_when_available(client, monkeypatch) -> None:
