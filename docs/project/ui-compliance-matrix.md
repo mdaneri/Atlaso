@@ -184,7 +184,8 @@ are explicitly inventoried so route/template changes cannot silently escape the 
   `vsphere-vcenter-dialog`, and `vsphere-certificate-dialog`.
 - Network Boot and storage: `network-boot-host-dialog`, `network-boot-upload-dialog`,
   `network-boot-promote-dialog`, `esxi-iso-upload-dialog`, `esxi-custom-variable-wizard-dialog`,
-  `kickstart-wizard-dialog`, `esx-storage-volume-modal`, and `esx-storage-share-modal`.
+  `esxi-boot-authorization-dialog`, `kickstart-wizard-dialog`, `esx-storage-volume-modal`, and
+  `esx-storage-share-modal`.
 - VCF workflows: `vcf-fqdn-modal`, `vcf-ldap-modal`, `vcf-trust-modal`, `vcf-sddc-deploy-modal`, `vcf-target-depot-modal`,
   `vcf-vault-import-modal`, `vcf-depot-profile-dialog`, `vcf-depot-tool-package-dialog`,
   `vcf-depot-configuration-dialog`, `vcf-depot-tool-reset-modal`, and `vcf-registry-bundle-dialog`.

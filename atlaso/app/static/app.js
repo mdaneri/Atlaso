@@ -30,7 +30,6 @@ let applianceApplyGlobalPollTimer = 0;
 let applianceApplyPollController = null;
 let applianceApplyAutoCloseTimer = 0;
 let applianceApplyModalTable = null;
-let applianceApplyActiveJobId = "";
 
 function atlasoRequestMethod(input, init = {}) {
   return String(init.method || (input instanceof Request ? input.method : "GET")).toUpperCase();
@@ -2454,6 +2453,7 @@ function clearEsxiHostError() {
 }
 
 let esxiHostReferenceWizard = null;
+let esxiBootAuthorizationWizard = null;
 let esxiInstallerIsosTable = null;
 let esxiIsoUploadWizard = null;
 let networkBootDiscoveredHostRefresh = null;
@@ -3155,6 +3155,68 @@ async function requestEsxiHostInventoryBoot(row) {
   } catch (error) {
     showEsxiHostError(error instanceof Error ? error.message : "The one-time Inventory Linux boot could not be scheduled.");
   }
+}
+
+async function requestEsxiHostBootAuthorization(row) {
+  clearEsxiHostError();
+  const data = row.getData();
+  if (data.is_new || data.is_default || !data.enabled || !data.kickstart_id) return;
+  try {
+    if (!esxiBootAuthorizationWizard) throw new Error("The ESXi boot authorization wizard is unavailable.");
+    await esxiBootAuthorizationWizard.open({ launcher: row.getElement(), context: { host: data } });
+  } catch (error) {
+    showEsxiHostError(error instanceof Error ? error.message : "The one-time ESXi boot could not be authorized.");
+  }
+}
+
+function initializeEsxiBootAuthorizationWizard() {
+  const dialog = document.getElementById("esxi-boot-authorization-dialog");
+  const form = dialog?.querySelector("[data-esxi-boot-authorization-form]");
+  if (!(dialog instanceof HTMLDialogElement) || !(form instanceof HTMLFormElement)) return;
+  let activeHost = null;
+  const normalizeCode = () => {
+    const compact = String(form.elements.boot_code.value || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+    return compact.length === 8 ? `${compact.slice(0, 4)}-${compact.slice(4)}` : compact;
+  };
+  esxiBootAuthorizationWizard = window.AtlasoUiPatterns.createWizard({
+    form,
+    dialog,
+    steps: [
+      { id: "code", title: "Enter the host-console code", description: "Use the code shown by the exact ESXi Network Boot attempt you intend to authorize." },
+      { id: "review", title: "Review boot authorization", description: "Confirm the host and bounded one-time lifecycle." },
+    ],
+    discardTitle: "Discard this boot authorization?",
+    discardMessage: "The console code entered here will be cleared.",
+    onOpen: ({ context }) => {
+      activeHost = context?.host || null;
+      form.elements.host_id.value = activeHost?.id || "";
+      form.elements.boot_code.value = "";
+    },
+    validateStep: ({ step }) => {
+      if (step.id !== "code") return { valid: true };
+      const normalized = normalizeCode();
+      if (!/^[A-HJ-NP-Z2-9]{4}-[A-HJ-NP-Z2-9]{4}$/.test(normalized)) {
+        return { valid: false, message: "Enter the eight-character code displayed by the intended host.", field: "boot_code" };
+      }
+      form.elements.boot_code.value = normalized;
+      return { valid: true };
+    },
+    prepareReview: () => {
+      renderAtlasoWizardReview(form, [
+        { label: "Host", value: () => activeHost?.hostname || "Not selected" },
+        { label: "Boot attempt", value: () => "Console code entered" },
+        { label: "Lifetime", value: () => "Ten minutes; consumed by first matching Kickstart request" },
+      ]);
+    },
+    onSubmit: async () => {
+      const result = await networkBootRequest(
+        `/api/v1/network-boot/esxi-hosts/${activeHost.id}/authorize-boot-once`,
+        { method: "POST", body: JSON.stringify({ boot_code: normalizeCode() }) },
+      );
+      showEsxiHostSuccess(result.message || `One ESXi boot attempt is authorized for ${activeHost.hostname}.`);
+      return { valid: true };
+    },
+  });
 }
 
 function esxiHostHasValidWakeMac(data) {
@@ -4355,6 +4417,7 @@ function openUserPasswordModal(data) {
   const form = document.getElementById("user-password-form");
   const title = document.getElementById("user-password-modal-title");
   const message = document.getElementById("user-password-modal-message");
+  const submit = document.getElementById("user-password-submit");
   if (!(modal instanceof HTMLDialogElement) || !(form instanceof HTMLFormElement)) {
     return;
   }
@@ -4366,12 +4429,14 @@ function openUserPasswordModal(data) {
       input.setCustomValidity("");
     }
   });
-  if (title instanceof HTMLElement) {
-    title.textContent = `Reset ${data.username} password`;
-  }
-  if (message instanceof HTMLElement) {
-    message.textContent = "Set/reset the Photon OS password. The password is held only until global Local Users apply.";
-  }
+  const enablesUser = !Boolean(data.enabled);
+  if (title instanceof HTMLElement) title.textContent = enablesUser
+    ? `Set ${data.username} Photon OS password and enable user`
+    : `Reset ${data.username} Photon OS password`;
+  if (message instanceof HTMLElement) message.textContent = enablesUser
+    ? "Setting the Photon OS password also enables this local user in desired state. The password is held only until global Local Users apply."
+    : "Reset the Photon OS password. The password is held only until global Local Users apply.";
+  if (submit instanceof HTMLButtonElement) submit.textContent = enablesUser ? "Set password and enable user" : "Reset password";
   modal.showModal();
   const passwordInput = form.querySelector('input[name="password"]');
   if (passwordInput instanceof HTMLInputElement) {
@@ -4512,7 +4577,7 @@ function initializeUsersTable() {
     canDelete: (data) => !data.is_current,
     extraActions: [
       {
-        label: "Set/reset Photon OS password",
+        label: (row) => row.getData().enabled ? "Reset Photon OS password" : "Set Photon OS password and enable user",
         disabled: (row) => row.getData().is_new,
         action: (_event, row) => openUserPasswordModal(row.getData()),
       },
@@ -4610,7 +4675,11 @@ function initializeUserPasswordForm() {
       return;
     }
     button.addEventListener("click", () => {
-      openUserPasswordModal({ id: button.dataset.userId, username: button.dataset.username || "user" });
+      openUserPasswordModal({
+        id: button.dataset.userId,
+        username: button.dataset.username || "user",
+        enabled: button.dataset.userEnabled === "true",
+      });
     });
   });
   if (cancel instanceof HTMLButtonElement && modal instanceof HTMLDialogElement) {
@@ -9525,6 +9594,14 @@ function initializeEsxiPxeHostsTable() {
           action: (_event, row) => requestEsxiHostInventoryBoot(row),
         },
         {
+          label: "Authorize ESXi boot once",
+          disabled: (component) => {
+            const data = component.getData();
+            return data.is_new || data.is_default || !data.enabled || !data.kickstart_id;
+          },
+          action: (_event, row) => requestEsxiHostBootAuthorization(row),
+        },
+        {
           label: "Wake host",
           disabled: (component) => !esxiHostHasValidWakeMac(component.getData()),
           action: (_event, row) => requestEsxiHostWake(row),
@@ -9671,7 +9748,7 @@ function initializeEsxiPxePreviewTable() {
         { title: "Host", field: "hostname", minWidth: 190, frozen: true },
         { title: "PXELINUX", field: "pxelinux_config_path", minWidth: 280, formatter: (cell) => `<code>${escapeHtml(cell.getValue())}</code>` },
         { title: "UEFI boot.cfg", field: "uefi_tftp_boot_cfg_path", minWidth: 280, formatter: (cell) => `<code>${escapeHtml(cell.getValue())}</code>` },
-        { title: "Kickstart URL", field: "kickstart_url", minWidth: 260, formatter: (cell) => `<code>${escapeHtml(cell.getValue() || "interactive installer")}</code>` },
+        { title: "Kickstart delivery", field: "kickstart_id", minWidth: 220, formatter: (cell) => cell.getValue() ? "one-time boot authorization" : "interactive installer" },
         { title: "Image URL", field: "image_http_url", minWidth: 340, formatter: (cell) => `<code>${escapeHtml(cell.getValue())}</code>` },
       ],
     },
@@ -14942,6 +15019,7 @@ function applianceApplyModalElements() {
     status: modal?.querySelector("[data-appliance-apply-modal-status]"),
     error: modal?.querySelector("[data-appliance-apply-modal-error]"),
     connectionWarning: modal?.querySelector("[data-appliance-apply-connection-warning]"),
+    pollWarning: modal?.querySelector("[data-appliance-apply-poll-warning]"),
     review: modal?.querySelector("[data-appliance-apply-review]"),
     live: modal?.querySelector("[data-appliance-apply-live]"),
     reviewList: modal?.querySelector("[data-appliance-apply-review-list]"),
@@ -14987,6 +15065,14 @@ function setApplianceApplyModalError(message = "") {
   if (error instanceof HTMLElement) {
     error.textContent = message;
     error.classList.toggle("hidden", !message);
+  }
+}
+
+function setApplianceApplyPollWarning(message = "") {
+  const warning = applianceApplyModalElements().pollWarning;
+  if (warning instanceof HTMLElement) {
+    warning.textContent = message;
+    warning.classList.toggle("hidden", !message);
   }
 }
 
@@ -15166,6 +15252,7 @@ async function openApplianceApplyReview() {
     elements.selectionSummary.textContent = "Loading appliance changes…";
   }
   setApplianceApplyModalError("");
+  setApplianceApplyPollWarning("");
   if (elements.connectionWarning instanceof HTMLElement) {
     elements.connectionWarning.replaceChildren();
     elements.connectionWarning.classList.add("hidden");
@@ -15176,8 +15263,8 @@ async function openApplianceApplyReview() {
     const payload = await response.json();
     if (!response.ok) throw new Error(payload.detail || "Unable to load appliance changes.");
     if (payload.active_task) {
-      applianceApplyActiveJobId = payload.active_task.id || "";
-      renderApplianceApplyTask(payload.active_task);
+      if (applianceApplyPollController) await applianceApplyPollController.observeTask(payload.active_task);
+      else renderApplianceApplyTask(payload.active_task);
       return;
     }
     const units = Array.isArray(payload.units) ? payload.units : [];
@@ -15301,9 +15388,41 @@ function renderApplianceApplyTask(task) {
   scheduleApplianceApplyAutoClose(task);
 }
 
-function refreshCurrentWorkflowAfterApplianceApply(task) {
+async function refreshUsersAfterApplianceApply(task) {
+  const selectedUnits = Array.isArray(task?.result?.selected_units) ? task.result.selected_units : [];
+  if (window.location.pathname !== managementUiPath("/users") || !selectedUnits.includes("local_users")) return false;
+  const element = document.getElementById("users-table");
+  const table = element?.atlasoTabulator;
+  if (!(element instanceof HTMLElement) || !table || typeof table.replaceData !== "function") {
+    window.location.reload();
+    return true;
+  }
+  try {
+    const response = await fetch(managementUiPath("/users/status"), {
+      credentials: "same-origin",
+      cache: "no-store",
+      headers: { Accept: "application/json" },
+    });
+    if (!response.ok) throw new Error("Unable to refresh Local Users status.");
+    const payload = await response.json();
+    if (!Array.isArray(payload.users)) throw new Error("Local Users returned an invalid status response.");
+    await table.replaceData([...payload.users, newUserRow()]);
+    element.dataset.users = JSON.stringify(payload.users);
+    const count = document.getElementById("users-count");
+    if (count instanceof HTMLElement) count.textContent = `${payload.users.length} users`;
+    clearCaMessage("users-error");
+    showTransientGridStatus("Users refreshed");
+  } catch (error) {
+    showCaMessage("users-error", error instanceof Error ? error.message : "Unable to refresh Local Users status.");
+  }
+  return true;
+}
+
+async function refreshCurrentWorkflowAfterApplianceApply(task) {
   const refreshableWorkflows = new Set([managementUiPath("/esx-storage"), managementUiPath("/vcf-offline-depot")]);
-  if (task?.status !== "succeeded" || !refreshableWorkflows.has(window.location.pathname)) return;
+  if (task?.status !== "succeeded") return;
+  if (await refreshUsersAfterApplianceApply(task)) return;
+  if (!refreshableWorkflows.has(window.location.pathname)) return;
   window.setTimeout(() => window.location.reload(), 300);
 }
 
@@ -15333,8 +15452,9 @@ async function submitApplianceApplyForm(form) {
     });
     const payload = await response.json();
     if (!response.ok) throw new Error(payload.detail || "Appliance changes could not be submitted.");
-    applianceApplyActiveJobId = payload.job_id || payload.task?.id || "";
-    renderApplianceApplyTask(payload.task);
+    if (payload.task && applianceApplyPollController) await applianceApplyPollController.observeTask(payload.task);
+    else if (payload.task) renderApplianceApplyTask(payload.task);
+    else applianceApplyPollController?.trackJob(payload.job_id);
     refreshApplianceApplySidebar().catch(() => {});
     return true;
   } catch (error) {
@@ -15397,32 +15517,29 @@ function initializeApplianceApplyProgress() {
       setApplianceApplyModalError(payload.detail || "Unable to request cancellation.");
       return;
     }
-    renderApplianceApplyTask(payload.task);
+    if (payload.task && applianceApplyPollController) await applianceApplyPollController.observeTask(payload.task);
+    else renderApplianceApplyTask(payload.task);
   });
-  applianceApplyPollController = window.AtlasoApplianceApplyPolling.createController({
-    request: async (refresh) => {
+  applianceApplyPollController = window.AtlasoApplianceApplyPolling.createMonitor({
+    requestStatus: async (refresh) => {
       const statusUrl = refresh ? managementUiPath("/appliance-apply/status?refresh=true") : managementUiPath("/appliance-apply/status");
       const response = await fetch(statusUrl, { credentials: "same-origin", headers: { Accept: "application/json" } });
       if (!response.ok) throw new Error("Unable to read appliance apply status.");
       return response.json();
     },
-    onStatus: async (payload) => {
-      updateApplianceApplySidebar(payload);
-      if (payload.active_task) {
-        applianceApplyActiveJobId = payload.active_task.id || "";
-        renderApplianceApplyTask(payload.active_task);
-      } else if (applianceApplyActiveJobId) {
-        const jobId = applianceApplyActiveJobId;
-        const taskResponse = await fetch(managementUiPath(`/tasks/${encodeURIComponent(jobId)}/status`), { credentials: "same-origin", headers: { Accept: "application/json" } });
-        if (taskResponse.ok) {
-          const taskPayload = await taskResponse.json();
-          renderApplianceApplyTask(taskPayload.task);
-          refreshCurrentWorkflowAfterApplianceApply(taskPayload.task);
-        }
-        applianceApplyActiveJobId = "";
-        window.setTimeout(() => applianceApplyPollController?.refreshImmediately().catch(() => {}), 0);
-      }
+    requestTask: async (jobId) => {
+      const response = await fetch(managementUiPath(`/tasks/${encodeURIComponent(jobId)}/status`), { credentials: "same-origin", headers: { Accept: "application/json" } });
+      if (!response.ok) throw new Error("Unable to reconcile the completed appliance task.");
+      const payload = await response.json();
+      return payload.task;
     },
+    onStatus: async (payload) => updateApplianceApplySidebar(payload),
+    onTask: (task) => renderApplianceApplyTask(task),
+    onTerminal: (task) => refreshCurrentWorkflowAfterApplianceApply(task),
+    onError: (_error, state) => {
+      if (state.active) setApplianceApplyPollWarning("Live task status is temporarily unavailable. Atlaso will retry automatically.");
+    },
+    onRecovered: () => setApplianceApplyPollWarning(""),
     isHidden: () => document.visibilityState === "hidden",
     setTimer: (callback, delay) => {
       applianceApplyGlobalPollTimer = window.setTimeout(callback, delay);
@@ -20461,6 +20578,7 @@ function initializeNetworkBootPage() {
 document.addEventListener("DOMContentLoaded", initializeDashboard);
 document.addEventListener("DOMContentLoaded", initializeNetworkBootWorkspace);
 document.addEventListener("DOMContentLoaded", initializeEsxiHostReferenceWizard);
+document.addEventListener("DOMContentLoaded", initializeEsxiBootAuthorizationWizard);
 document.addEventListener("DOMContentLoaded", initializeNetworkBootPage);
 document.addEventListener("DOMContentLoaded", initializeVaultsPage);
 document.addEventListener("DOMContentLoaded", initializeVcfVaultCredentialPickers);

@@ -43,7 +43,14 @@ baselines without running apply-time reconciliation or privileged observation he
 submission still reconcile current host observations and therefore retain fail-closed DHCP DNS fallback behavior.
 The browser permits only one status request at a time, polls active work every two seconds, exponentially backs idle
 polling from ten to sixty seconds, suspends polling while hidden, and refreshes immediately after successful desired-
-state mutations, visibility return, and Apply completion.
+state mutations, visibility return, and Apply completion. Once a master task is observed, the browser retains its ID
+until `/ui/management/tasks/<id>/status` returns a valid terminal task. A transient status or terminal-follow-up failure
+keeps the global lock visible, shows a retry warning in the open monitor, and retries at the two-second active cadence.
+Successful reconciliation clears that warning and converges the modal, sidebar badge, pending count, and lock from the
+authoritative status and task responses. Terminal task state is sticky so an older in-flight `pending` or `running`
+response cannot replace a newer `succeeded`, `failed`, or `cancelled` result. If another session starts a new Apply
+between polls, the browser reconciles the retained task and runs its terminal completion refresh before accepting the
+new active task. Directly observed terminal responses, including cancellation races, run the same completion refresh.
 
 Submitting transforms the review modal into a live master/child task grid. One `appliance-apply` master owns one child
 execution record per selected component. Every signed-in session sees the blocking grid while the master is pending or
@@ -280,9 +287,17 @@ The ESXi PXE apply unit owns generated installer boot artifacts. Operators manag
 Tabulator collection and edit database source through the built-in Monaco Editor; filesystem copies are derived
 artifacts, not desired state. Saving a Kickstart updates the database source hash and marks `esxi_pxe` changed, but does
 not write `/var/lib/atlaso/pxe/http/esxi/ks/<id>.cfg`.
-Boot-time Kickstart requests use `/pxe/esxi/ks/<file>.cfg?mac=<normalized-mac>` so Atlaso can render `{{variable}}`
-markers for the selected host. The endpoint requires an explicit valid MAC and does not infer MAC identity from source
-IP or DHCP leases.
+Applied host boot files contain no reusable Kickstart location. An
+MAC-selected menu request creates a distinct unpredictable pending claim and
+shows its one-time code only on that boot console. An authenticated `write:pxe`
+administrator enters the code before Atlaso creates one attempt-specific boot
+file with a cryptographically random, ten-minute, single-use capability. Atlaso
+stores only claim, code, and capability verifiers and binds retrieval to every
+render-affecting field of the exact applied Host Reference, full Kickstart
+content hash, listener, and generated attempt before rendering
+`{{variable}}` markers. A MAC address is an operational selector, not
+authentication, and invalid, expired, consumed, or mismatched capabilities fail
+with the same not-found response.
 
 Kickstart vault scope is derived only from exact
 `{{vault.<vaultname>.<key>.<username|password|uri1..uri9>}}` source markers. Save and validation reject malformed,

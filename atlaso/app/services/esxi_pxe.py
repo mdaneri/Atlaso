@@ -201,33 +201,6 @@ def generated_kickstart_path(kickstart_id: int, content_hash_value: str | None =
     return ESXI_KICKSTART_HTTP_ROOT / f"{kickstart_http_stem(kickstart_id, content_hash_value)}.cfg"
 
 
-def kickstart_url(base_url: str, http_path: str) -> str:
-    """Return kickstart url.
-
-    Args:
-        base_url: URL used for base.
-        http_path: Filesystem path used for HTTP.
-    """
-    if not base_url or not http_path:
-        return ""
-    filename = Path(http_path).name
-    if not filename:
-        return ""
-    return f"{base_url}/ks/{filename}"
-
-
-def host_kickstart_url(base_url: str, http_path: str, mac_key: str) -> str:
-    """Return host kickstart url.
-
-    Args:
-        base_url: URL used for base.
-        http_path: Filesystem path used for HTTP.
-        mac_key: Mac key consumed by host kickstart URL.
-    """
-    url = kickstart_url(base_url, http_path)
-    return f"{url}?mac={mac_key}" if url and mac_key and mac_key != "default" else url
-
-
 def kickstart_requires_host_context(content: str) -> bool:
     """Return kickstart requires host context.
 
@@ -1933,7 +1906,10 @@ def _esxi_pxe_artifact(
         "image_generated_path": str(ESXI_PXE_IMAGE_HTTP_ROOT / image_key),
         "kickstart_id": kickstart_id,
         "kickstart_http_path": kickstart_path,
-        "kickstart_url": host_kickstart_url(base_url, kickstart_path, mac_key) if (not is_default and kickstart_host_context_required) else kickstart_url(base_url, kickstart_path),
+        # Static applied boot artifacts never carry a reusable Kickstart URL.
+        # The runtime authorization service injects a short-lived capability
+        # into an attempt-specific copy immediately before an intended boot.
+        "kickstart_url": "",
         "pxelinux_config_path": pxelinux_config_path,
         "uefi_tftp_boot_cfg_path": uefi_tftp_boot_cfg_path,
         "http_boot_cfg_path": http_boot_cfg_path,

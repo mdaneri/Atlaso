@@ -171,6 +171,9 @@ def set_applied_pxe_runtime(
     boot=None,
     artifacts=None,
     environments=None,
+    kickstarts=None,
+    hosts=None,
+    custom_variables=None,
 ):
     """Update applied pxe runtime.
 
@@ -179,6 +182,9 @@ def set_applied_pxe_runtime(
         boot: Boot supplied to the test scenario.
         artifacts: Artifacts supplied to the test scenario.
         environments: Environments supplied to the test scenario.
+        kickstarts: Applied Kickstart revisions supplied to the test scenario.
+        hosts: Applied ESXi host definitions supplied to the test scenario.
+        custom_variables: Applied custom-variable definitions supplied to the test scenario.
     """
     setting = db_session.execute(
         select(Setting).where(Setting.key == "appliance_apply.baselines.v1")
@@ -191,6 +197,9 @@ def set_applied_pxe_runtime(
                 "schema_version": 1,
                 "boot": boot or {},
                 "artifacts": artifacts or [],
+                "kickstarts": kickstarts or [],
+                "hosts": hosts or [],
+                "custom_variables": custom_variables or [],
                 "network_boot": {
                     "schema_version": 1,
                     "environments": environments or [],
@@ -693,6 +702,300 @@ def test_api_schedules_and_claims_esxi_inventory_boot_override(client):
                 AuditEvent.resource_id == str(host_id),
             )
         ).scalar_one_or_none() is not None
+
+
+def test_esxi_boot_capability_authorization_binding_and_single_use(
+    client,
+    monkeypatch,
+    tmp_path,
+):
+    """Verify that resolved Kickstarts require one bound boot capability.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    from urllib.parse import urlsplit
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import DhcpScope, EsxiKickstart
+    from atlaso.app.services.esxi_pxe import (
+        assign_kickstart_content,
+        esxi_pxe_boot_settings,
+        host_variables_json,
+        save_esxi_pxe_boot_settings,
+    )
+
+    tftp_root = tmp_path / "tftp"
+    http_base = tmp_path / "http" / "esxi"
+    mac_key = "01-00-50-56-aa-bb-cc"
+    image_key = "esxi-test-image"
+    http_host_root = http_base / mac_key
+    tftp_host_root = tftp_root / mac_key
+    http_host_root.mkdir(parents=True)
+    tftp_host_root.mkdir(parents=True)
+    (http_host_root / "mboot.efi").write_bytes(b"test mboot")
+    boot_cfg = "prefix=http://192.168.50.1:8080/pxe/esxi/images/esxi-test-image\nkernel=b.b00\nkernelopt=runweasel\nmodules=jumpstrt.gz\n"
+    (http_host_root / "boot.cfg").write_text(boot_cfg, encoding="utf-8")
+    (tftp_host_root / "boot.cfg").write_text(boot_cfg, encoding="utf-8")
+
+    monkeypatch.setattr(network_boot, "ESXI_TFTP_ROOT", tftp_root)
+    monkeypatch.setattr(network_boot, "ESXI_PXE_HTTP_BASE", http_base)
+    monkeypatch.setattr(
+        network_boot,
+        "kickstart_vault_values_for_markers",
+        lambda _db, _names: {"lab.root.password": "resolved-value-for-test"},
+    )
+
+    with SessionLocal() as db:
+        scope = db.execute(select(DhcpScope).where(DhcpScope.name == "SiteA")).scalar_one()
+        save_esxi_pxe_boot_settings(
+            db,
+            enabled=True,
+            hostname="esxi-pxe.atlaso.internal",
+            dhcp_scope_ids=[scope.id],
+            listen_interface="eth2",
+            listen_address="192.168.50.1",
+            tftp_root="/var/lib/atlaso/pxe/tftp",
+            http_port="8080",
+            bios_bootfile="undionly.kpxe",
+            uefi_bootfile="snponly.efi",
+            native_uefi_http_enabled=True,
+        )
+        kickstart = EsxiKickstart(
+            name="Capability-bound ESXi",
+            content="",
+            content_hash="",
+            enabled=True,
+        )
+        db.add(kickstart)
+        db.flush()
+        assign_kickstart_content(
+            kickstart,
+            "install --firstdisk={{custom.disk}}\nnetwork --bootproto=static --ip={{host.ip_address}}\nrootpw {{vault.lab.root.password}}\nreboot\n",
+            max_bytes=262_144,
+        )
+        host = EsxiPxeHost(
+            hostname="esx-capability",
+            mac_address="00:50:56:aa:bb:cc",
+            ip_address="192.168.50.150",
+            kickstart_id=kickstart.id,
+            variables_json=host_variables_json({"custom.disk": "firstdisk"}),
+            installer_iso_path="/mnt/atlaso-vcf-offline-depot/PROD/COMP/ESX_HOST/esxi.iso",
+            enabled=True,
+        )
+        db.add(host)
+        db.commit()
+        host_id = host.id
+        kickstart_id = kickstart.id
+        revision = kickstart.content_hash
+        applied_boot = esxi_pxe_boot_settings(db)
+        applied_artifact = {
+            "host_id": host.id,
+            "hostname": host.hostname,
+            "mac_address": host.mac_address,
+            "mac_key": mac_key,
+            "image_key": image_key,
+            "image_http_url": f"http://192.168.50.1:8080/pxe/esxi/images/{image_key}",
+            "kickstart_id": kickstart.id,
+            "http_boot_cfg_path": str(http_host_root / "boot.cfg"),
+            "uefi_tftp_boot_cfg_path": str(tftp_host_root / "boot.cfg"),
+            "pxelinux_config_path": str(tftp_root / "pxelinux.cfg" / mac_key),
+            "is_default": False,
+        }
+        set_applied_pxe_runtime(
+            db,
+            boot=applied_boot,
+            artifacts=[applied_artifact],
+            kickstarts=[
+                {
+                    "id": kickstart.id,
+                    "enabled": True,
+                    "content": kickstart.content,
+                    "content_hash": revision,
+                }
+            ],
+            hosts=[
+                {
+                    "id": host.id,
+                    "hostname": host.hostname,
+                    "mac_address": host.mac_address,
+                    "ip_address": host.ip_address,
+                    "kickstart_id": kickstart.id,
+                    "installer_iso_path": host.installer_iso_path,
+                    "variables": {"disk": "firstdisk"},
+                    "enabled": True,
+                }
+            ],
+            custom_variables=[
+                {
+                    "name": "disk",
+                    "description": "Installation disk",
+                    "default_value": "fallbackdisk",
+                }
+            ],
+        )
+
+    endpoint = f"/api/v1/network-boot/esxi-hosts/{host_id}/authorize-boot-once"
+    write_token = create_api_token(client, ["write:pxe"])
+    write_headers = {"Authorization": f"Bearer {write_token}"}
+    orphan_attempt = "f" * 32
+    (http_base / "attempts" / orphan_attempt).mkdir(parents=True)
+    (tftp_root / "attempts" / orphan_attempt).mkdir(parents=True)
+    (tftp_root / "pxelinux.cfg" / "attempts").mkdir(parents=True)
+    (tftp_root / "pxelinux.cfg" / "attempts" / orphan_attempt).write_text("orphan", encoding="utf-8")
+
+    assert client.post(endpoint, json={"boot_code": "ABCD-EFGH"}).status_code == 401
+    read_token = create_api_token(client, ["read:pxe"])
+    assert client.post(
+        endpoint,
+        json={"boot_code": "ABCD-EFGH"},
+        headers={"Authorization": f"Bearer {read_token}"},
+    ).status_code == 403
+    assert client.post(endpoint, json={"boot_code": "ABCD-EFGH"}, headers=write_headers).status_code == 409
+
+    from atlaso.app.models import NetworkBootEsxiBootCapability
+
+    def pending_boot() -> tuple[str, str]:
+        menu = client.get(
+            "/pxe/boot.ipxe?mac=00:50:56:aa:bb:cc&firmware=efi",
+            headers={"host": "192.168.50.1:8080"},
+        )
+        assert menu.status_code == 200, menu.text
+        assert "/pxe/esxi/attempts/" not in menu.text
+        code_match = re.search(r"Console code: ([A-HJ-NP-Z2-9]{4}-[A-HJ-NP-Z2-9]{4})", menu.text)
+        claim_match = re.search(r"/pxe/esxi/claim/([A-Za-z0-9_-]{40,64})\.ipxe", menu.text)
+        assert code_match is not None
+        assert claim_match is not None
+        return code_match.group(1), claim_match.group(1)
+
+    def authorize_and_prepare() -> tuple[str, str, str, str]:
+        code, claim = pending_boot()
+        pending = client.get(
+            f"/pxe/esxi/claim/{claim}.ipxe?firmware=efi",
+            headers={"host": "192.168.50.1:8080"},
+        )
+        assert pending.status_code == 200
+        assert "Waiting for Atlaso authorization" in pending.text
+        assert "/pxe/esxi/attempts/" not in pending.text
+        authorized = client.post(endpoint, json={"boot_code": code}, headers=write_headers)
+        assert authorized.status_code == 202, authorized.text
+        assert set(authorized.json()) == {"host_id", "requested_at", "expires_at", "message"}
+        loader = client.get(
+            f"/pxe/esxi/claim/{claim}.ipxe?firmware=efi",
+            headers={"host": "192.168.50.1:8080"},
+        )
+        assert loader.status_code == 200, loader.text
+        attempt_match = re.search(r"/pxe/esxi/attempts/([0-9a-f]{32})/mboot\.efi", loader.text)
+        assert attempt_match is not None
+        attempt_id = attempt_match.group(1)
+        attempt_boot_cfg = http_base / "attempts" / attempt_id / "boot.cfg"
+        match = re.search(r"(?:^|\s)ks=(\S+)", attempt_boot_cfg.read_text(encoding="utf-8"))
+        assert match is not None
+        capability_url = urlsplit(match.group(1))
+        assert capability_url.netloc == "192.168.50.1:8080"
+        return code, claim, attempt_id, capability_url.path
+
+    code, claim = pending_boot()
+    wrong_host_menu = client.get(
+        "/pxe/boot.ipxe?mac=00:50:56:aa:bb:dd&firmware=efi",
+        headers={"host": "192.168.50.1:8080"},
+    )
+    assert wrong_host_menu.status_code == 200
+    assert claim not in wrong_host_menu.text
+    assert code not in wrong_host_menu.text
+    unauthorized_claim = client.get(
+        f"/pxe/esxi/claim/{'A' * 43}.ipxe?firmware=efi",
+        headers={"host": "192.168.50.1:8080"},
+    )
+    assert unauthorized_claim.status_code == 404
+    assert unauthorized_claim.json()["instance"] == "/pxe/esxi/claim/[redacted].ipxe"
+    assert claim not in unauthorized_claim.text
+
+    with SessionLocal() as db:
+        host = db.get(EsxiPxeHost, host_id)
+        host.hostname = "desired-drift"
+        db.commit()
+    drifted = client.post(endpoint, json={"boot_code": code}, headers=write_headers)
+    assert drifted.status_code == 409
+    with SessionLocal() as db:
+        host = db.get(EsxiPxeHost, host_id)
+        host.hostname = "esx-capability"
+        db.commit()
+
+    code, claim, attempt_id, capability_path = authorize_and_prepare()
+    plaintext_capability = capability_path.rsplit("/", 1)[-1].removesuffix(".cfg")
+    with SessionLocal() as db:
+        stored = db.get(NetworkBootEsxiBootCapability, attempt_id)
+        assert stored is not None
+        assert stored.claim_hash != claim
+        assert stored.boot_code_hash != code
+        assert stored.token_hash != plaintext_capability
+        assert claim not in repr(stored.__dict__)
+        assert code not in repr(stored.__dict__)
+        assert plaintext_capability not in repr(stored.__dict__)
+        audit = db.execute(
+            select(AuditEvent).where(
+                AuditEvent.action == "authorize_esxi_host_boot_once",
+                AuditEvent.resource_id == str(host_id),
+            ).order_by(AuditEvent.id.desc())
+        ).scalars().first()
+        assert audit is not None
+        assert claim not in (audit.detail or "")
+        assert code not in (audit.detail or "")
+        assert attempt_id not in (audit.detail or "")
+    assert not (http_base / "attempts" / orphan_attempt).exists()
+    assert not (tftp_root / "attempts" / orphan_attempt).exists()
+    assert not (tftp_root / "pxelinux.cfg" / "attempts" / orphan_attempt).exists()
+
+    old_numeric = client.get(
+        f"/pxe/esxi/ks/{kickstart_id}.cfg?mac={mac_key}",
+        headers={"host": "192.168.50.1:8080"},
+    )
+    old_hash = client.get(
+        f"/pxe/esxi/ks/{revision[:12]}.cfg?mac={mac_key}",
+        headers={"host": "192.168.50.1:8080"},
+    )
+    assert old_numeric.status_code == 404
+    assert old_hash.status_code == 404
+
+    rendered = client.get(capability_path, headers={"host": "192.168.50.1:8080"})
+    assert rendered.status_code == 200, rendered.text
+    assert "install --firstdisk=firstdisk" in rendered.text
+    assert "--ip=192.168.50.150" in rendered.text
+    assert "resolved-value-for-test" in rendered.text
+    assert rendered.headers["cache-control"] == "no-store, private"
+    replay = client.get(capability_path, headers={"host": "192.168.50.1:8080"})
+    assert replay.status_code == 404
+    assert "resolved-value-for-test" not in replay.text
+    assert replay.json()["instance"] == "/pxe/esxi/ks/[redacted].cfg"
+    assert plaintext_capability not in replay.text
+
+    for mutate_path, host_header in (
+        (lambda path: path.replace(mac_key, "01-00-50-56-aa-bb-dd"), "192.168.50.1:8080"),
+        (lambda path: path.replace(revision, "0" * 64), "192.168.50.1:8080"),
+        (lambda path: path, "192.168.50.2:8080"),
+    ):
+        _code, _claim, _attempt_id, bound_path = authorize_and_prepare()
+        denied = client.get(mutate_path(bound_path), headers={"host": host_header})
+        assert denied.status_code == 404
+        assert "resolved-value-for-test" not in denied.text
+        assert denied.json()["instance"] == "/pxe/esxi/ks/[redacted].cfg"
+        burned = client.get(bound_path, headers={"host": "192.168.50.1:8080"})
+        assert burned.status_code == 404
+        assert "resolved-value-for-test" not in burned.text
+
+    _code, _claim, expired_attempt_id, expired_path = authorize_and_prepare()
+    with SessionLocal() as db:
+        capability = db.get(NetworkBootEsxiBootCapability, expired_attempt_id)
+        assert capability is not None
+        assert capability.token_hash is not None and len(capability.token_hash) == 64
+        capability.expires_at = utcnow() - timedelta(seconds=1)
+        db.commit()
+    expired = client.get(expired_path, headers={"host": "192.168.50.1:8080"})
+    assert expired.status_code == 404
+    assert "resolved-value-for-test" not in expired.text
 
 
 def test_wake_on_lan_packet_and_distinct_broadcast_delivery():
@@ -3051,53 +3354,16 @@ def test_known_enabled_esxi_mac_becomes_timed_default(db_session):
         db_session,
         mac_address="52:54:00:12:34:56",
     )
-    assert "choose --timeout 10000 --default esxi_assigned" in menu
+    assert "choose --timeout 10000 --default local" in menu
+    assert "item esxi_assigned ESXi: esx01.atlaso.internal" in menu
+    assert "This ESXi boot cannot be authorized until desired and applied state match" in menu
 
 
-@pytest.mark.parametrize(
-    ("firmware", "expected_lines"),
-    [
-        (
-            "efi",
-            [
-                "chain http://192.0.2.10:8080/pxe/esxi/"
-                "01-52-54-00-12-34-56/mboot.efi || goto menu",
-            ],
-        ),
-        (
-            "pcbios",
-            [
-                "set 209:string pxelinux.cfg/01-52-54-00-12-34-56",
-                "set 210:string tftp://${next-server}/",
-                "chain tftp://${next-server}/pxelinux.0 || goto menu",
-            ],
-        ),
-        (
-            "",
-            [
-                "iseq ${platform} efi && goto esxi_assigned_uefi || "
-                "goto esxi_assigned_bios",
-                ":esxi_assigned_uefi",
-                "chain http://192.0.2.10:8080/pxe/esxi/"
-                "01-52-54-00-12-34-56/mboot.efi || goto menu",
-                ":esxi_assigned_bios",
-                "set 209:string pxelinux.cfg/01-52-54-00-12-34-56",
-                "chain tftp://${next-server}/pxelinux.0 || goto menu",
-            ],
-        ),
-    ],
-)
-def test_esxi_menu_executes_the_firmware_loader(
-    db_session,
-    firmware,
-    expected_lines,
-):
-    """Verify that esxi menu executes the firmware loader.
+def test_esxi_menu_requires_authorization_before_firmware_loader(db_session):
+    """Verify that ESXi firmware loaders stay unavailable without authorization.
 
     Args:
         db_session: Active database session used by the operation.
-        firmware: Firmware supplied to the test scenario.
-        expected_lines: Expected lines used to verify the result.
     """
     host = EsxiPxeHost(
         hostname="esx01.atlaso.internal",
@@ -3122,13 +3388,13 @@ def test_esxi_menu_executes_the_firmware_loader(
     menu = render_network_boot_menu(
         db_session,
         mac_address=host.mac_address,
-        firmware=firmware,
+        firmware="efi",
         request_origin="http://192.0.2.10:8080",
     )
 
-    for expected in expected_lines:
-        assert expected in menu
-    assert "/boot.cfg || goto menu" not in menu
+    assert "This ESXi boot cannot be authorized until desired and applied state match" in menu
+    assert "/mboot.efi || goto menu" not in menu
+    assert "pxelinux.cfg/01-52-54-00-12-34-56" not in menu
 
 
 def test_known_esxi_host_can_claim_one_time_inventory_boot(db_session):

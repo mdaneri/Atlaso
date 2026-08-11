@@ -263,6 +263,7 @@
           </div>
           <div class="alert error hidden" data-appliance-apply-modal-error role="alert"></div>
           <div class="alert warning hidden" data-appliance-apply-connection-warning role="alert"></div>
+          <div class="alert warning hidden" data-appliance-apply-poll-warning role="status"></div>
           <section class="appliance-apply-review" data-appliance-apply-review>
             <form class="form-stack" data-appliance-apply-review-form>
               <input type="hidden" name="csrf" value="{{ csrf_token }}">
@@ -299,7 +300,7 @@
     {% endif %}
     <script src="/static/vendor/tabulator/tabulator.min.js"></script>
     <script src="/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-8"></script>
-    <script src="/static/appliance-apply-polling.js?v=issue-280-1"></script>
+    <script src="/static/appliance-apply-polling.js?v=issue-294-2"></script>
     <script>
       window.Prism = window.Prism || {};
       window.Prism.manual = true;
@@ -309,7 +310,7 @@
     <link rel="stylesheet" href="/static/vendor/monaco/atlaso-monaco.min.css?v=atlaso-monaco-20260806-7">
     <script src="/static/vendor/monaco/atlaso-monaco.min.js?v=atlaso-monaco-20260806-7"></script>
     <script src="/static/ui-routes.js?v=issue-287-1"></script>
-    <script src="/static/app.js?v=vsphere-key-providers-170-issue-287-20260810-1"></script>
+    <script src="/static/app.js?v=appliance-apply-terminal-294-2"></script>
     <script src="/static/pwa.js?v=issue-287-2"></script>
     {% block extra_scripts %}{% endblock %}
   </body>

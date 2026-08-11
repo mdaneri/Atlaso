@@ -11,6 +11,7 @@ status: current
 
 ## Current project guidance
 
+- [What is Atlaso?](what-is-atlaso.md)
 - [Atlaso Development Project](github-project.md)
 - [Appliance UI compliance matrix](ui-compliance-matrix.md)
 - [Atlaso Brand Assets](branding.md)

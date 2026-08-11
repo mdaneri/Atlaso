@@ -4,7 +4,7 @@
 #
 #    pip-compile --allow-unsafe --generate-hashes --index-url=https://pypi.org/simple --no-emit-index-url --output-file=requirements-appliance.lock --strip-extras --uploaded-prior-to=P7D pyproject.toml requirements-appliance-bootstrap.in
 #
-# atlaso-declarations-sha256: 45f96153a7014a837270e5f743b666a0d2cf971eca07a193485e5f9f770d23b3
+# atlaso-declarations-sha256: e212c246f4496a571d593fb2db9f234a56df8e599ce473f5a61e1e21aaaabc8d
 annotated-doc==0.0.4 \
     --hash=sha256:571ac1dc6991c450b25a9c2d84a3705e2ae7a53467b5d111c24fa8baabbed320 \
     --hash=sha256:fbcda96e87e9c92ad167c2e53839e57503ecfda18804ea28102353485033faa4
@@ -1315,9 +1315,9 @@ wheel==0.47.0 \
     # via -r requirements-appliance-bootstrap.in
 
 # The following packages are considered to be unsafe in a requirements file:
-pip==26.1.2 \
-    --hash=sha256:382ff9f685ee3bc25864f820aa50505825f10f5458ffff07e30a6d96e5715cab \
-    --hash=sha256:f49cd134c61cf2fd75e0ce2676db03e4054504a5a4986d00f8299ae632dc4605
+pip==26.2 \
+    --hash=sha256:2d8542afcc84cdd8e846c2b36b2861fad1da376dd98f8e7113e9108a3c331690 \
+    --hash=sha256:931c303696af6fa3417112103b1cad26890e5a07eccb5b99783700e33f2b8aad
     # via -r requirements-appliance-bootstrap.in
 setuptools==83.0.0 \
     --hash=sha256:025bccbbf0fa05b6192bc64ae1e7b16e001fd6d6d4d5de03c97b1c1ade523bef \

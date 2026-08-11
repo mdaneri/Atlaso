@@ -565,8 +565,6 @@ def test_appliance_power_action_creates_task_before_scheduling(client, monkeypat
         client: HTTP test client used to exercise the Atlaso application.
         monkeypatch: Pytest fixture used to replace dependencies for the test.
     """
-    import json
-
     from sqlalchemy import select
 
     from atlaso.app.adapters.system import AdapterResult
@@ -1003,7 +1001,7 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert service_worker.headers["cache-control"] == "no-cache"
     assert service_worker.headers["service-worker-allowed"] == "/ui/management/"
     assert "ATLASO_CACHE" in service_worker.text
-    assert "atlaso-management-pwa-v242" in service_worker.text
+    assert "atlaso-management-pwa-v245" in service_worker.text
     assert 'fetch(asset, { cache: "reload" })' in service_worker.text
     assert ".catch(() => undefined)" in service_worker.text
     assert 'request.mode === "navigate"' in service_worker.text
@@ -1019,9 +1017,9 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert "/static/vendor/monaco/atlaso-monaco.min.js?v=atlaso-monaco-20260806-7" in service_worker.text
     assert "/static/app.css?v=vsphere-key-providers-170-20260810-1" in service_worker.text
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-8" in service_worker.text
-    assert "/static/appliance-apply-polling.js?v=issue-280-1" in service_worker.text
+    assert "/static/appliance-apply-polling.js?v=issue-294-2" in service_worker.text
     assert "/static/ui-routes.js?v=issue-287-1" in service_worker.text
-    assert "/static/app.js?v=vsphere-key-providers-170-issue-287-20260810-1" in service_worker.text
+    assert "/static/app.js?v=appliance-apply-terminal-294-2" in service_worker.text
     assert "/static/terminal.js?v=issue-287-2" in service_worker.text
     assert "/static/pwa.js?v=issue-287-2" in service_worker.text
     assert "vcfdt-configuration-248-20260807-14" not in service_worker.text
@@ -1053,9 +1051,9 @@ def test_shared_ui_pattern_shell_and_wizard_contracts(client):
     base = (templates / "base.html").read_text(encoding="utf-8")
     public_base = (templates / "public_portal_base.html").read_text(encoding="utf-8")
     for shell, app_asset in (
-        (base, "/static/app.js?v=vsphere-key-providers-170-issue-287-20260810-1"),
-        (public_base, "/static/app.js?v=vsphere-key-providers-170-issue-287-20260810-1"),
-        (base, "/static/appliance-apply-polling.js?v=issue-280-1"),
+        (base, "/static/app.js?v=appliance-apply-terminal-294-2"),
+        (public_base, "/static/app.js?v=appliance-apply-terminal-294-2"),
+        (base, "/static/appliance-apply-polling.js?v=issue-294-2"),
     ):
         assert shell.index("/static/vendor/tabulator/tabulator.min.js") < shell.index(
             "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-8"
@@ -1610,7 +1608,8 @@ def test_reported_template_accessibility_contracts():
     assert 'data-atlaso-wizard-step="password"' not in users_template
     assert 'data-atlaso-wizard-step="enablement"' not in users_template
     assert '<input type="checkbox" name="enabled" hidden>' in users_template
-    assert "Set/reset Photon OS password" in app_js
+    assert "Set Photon OS password and enable user" in app_js
+    assert "Reset Photon OS password" in app_js
     assert "cell.setValue(previousValue);" in app_js
     for template_name, form_marker in {
         "authentication.html": '"api-token-form"',
@@ -1678,7 +1677,7 @@ def test_monitor_page_renders_and_data_endpoint(client):
     assert "swagger-link-icon" in page.text
     assert "/static/app.css?v=vsphere-key-providers-170-20260810-1" in page.text
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-8" in page.text
-    assert "/static/app.js?v=vsphere-key-providers-170-issue-287-20260810-1" in page.text
+    assert "/static/app.js?v=appliance-apply-terminal-294-2" in page.text
     app_css = client.get("/static/app.css")
     assert app_css.status_code == 200
     assert ".split-workspace > .wide-panel" in app_css.text
@@ -5262,6 +5261,10 @@ def test_esxi_pxe_host_reference_wizard_and_grid_responses(client):
     page = client.get("/network-boot")
     assert page.status_code == 200
     assert 'id="network-boot-promote-dialog"' in page.text
+    assert 'id="esxi-boot-authorization-dialog"' in page.text
+    assert 'data-esxi-boot-authorization-form data-atlaso-wizard' in page.text
+    assert 'name="boot_code"' in page.text
+    assert 'autocomplete="one-time-code"' in page.text
     assert 'data-esxi-host-wizard-title' in page.text
     assert 'name="host_source"' in page.text
     assert 'value="discovered">Discovered Network Boot host' in page.text
@@ -5369,6 +5372,13 @@ def test_esxi_pxe_host_reference_wizard_and_grid_responses(client):
     assert "installerIsoSelect.addEventListener" in wizard_js
     assert "window.location.reload()" not in wizard_js
     assert "networkBootDiscoveredHostRefresh?.refresh?.()" in wizard_js
+    authorization_js = app_js.split("function initializeEsxiBootAuthorizationWizard()", 1)[1].split(
+        "function esxiHostHasValidWakeMac", 1
+    )[0]
+    assert "window.AtlasoUiPatterns.createWizard" in authorization_js
+    assert "boot_code: normalizeCode()" in authorization_js
+    assert "Console code entered" in authorization_js
+    assert "activeHost?.hostname" in authorization_js
 
 
 def test_esxi_pxe_host_reference_wizard_respects_read_only_permissions(client):
@@ -5393,6 +5403,7 @@ def test_esxi_pxe_host_reference_wizard_respects_read_only_permissions(client):
     page = client.get("/network-boot")
     assert page.status_code == 200
     assert 'id="network-boot-promote-dialog"' not in page.text
+    assert 'id="esxi-boot-authorization-dialog"' not in page.text
     assert 'id="esxi-pxe-host-fallback-create"' not in page.text
     assert 'id="esxi-pxe-hosts-table"' in page.text
     assert 'data-can-write="false"' in page.text
@@ -5701,8 +5712,8 @@ def test_esxi_kickstart_validation_rejects_duplicate_install_directives(client):
     assert "missing install or upgrade directive" not in warnings
 
 
-def test_esxi_kickstart_host_variables_render_from_mac_endpoint(client):
-    """Verify that esxi kickstart host variables render from mac endpoint.
+def test_esxi_kickstart_legacy_retrieval_is_unavailable(client):
+    """Verify that reusable ID and revision retrieval paths stay unavailable.
 
     Args:
         client: HTTP test client used to exercise the Atlaso application.
@@ -5794,32 +5805,15 @@ def test_esxi_kickstart_host_variables_render_from_mac_endpoint(client):
         static_artifact_url = static_artifacts[0]["kickstart_url"]
         db.commit()
 
-    rendered = client.get(f"/pxe/esxi/ks/{kickstart_file}?mac=01-00-50-56-aa-bb-cc")
-    assert rendered.status_code == 200, rendered.text
-    assert "install --firstdisk=mpx.vmhba0:C0:T0:L0" in rendered.text
-    assert "--ip=192.168.50.150" in rendered.text
-    assert "--gateway=192.168.50.1" in rendered.text
-    assert "--netmask=255.255.255.0" in rendered.text
-    assert "--nameserver=192.168.50.1" in rendered.text
-    assert "ntpserver 192.168.50.1" in rendered.text
-
-    assert client.get(f"/pxe/esxi/ks/{kickstart_file}").status_code == 400
-    static_rendered = client.get(f"/pxe/esxi/ks/{static_kickstart_file}")
-    assert static_rendered.status_code == 200, static_rendered.text
-    assert "network --bootproto=dhcp" in static_rendered.text
-    assert static_artifact_url.endswith(f"/pxe/esxi/ks/{static_kickstart_file}")
-    assert "?mac=" not in static_artifact_url
-    assert client.get(f"/pxe/esxi/ks/{kickstart_file}?mac=not-a-mac").status_code == 400
-    assert client.get(f"/pxe/esxi/ks/{kickstart_file}?mac=01-00-50-56-aa-bb-dd").status_code == 404
-
-    with SessionLocal() as db:
-        host = db.execute(select(EsxiPxeHost).where(EsxiPxeHost.mac_address == "00:50:56:aa:bb:cc")).scalar_one()
-        host.variables_json = json.dumps({})
-        db.add(host)
-        db.commit()
-    unresolved = client.get(f"/pxe/esxi/ks/{kickstart_file}?mac=01-00-50-56-aa-bb-cc")
-    assert unresolved.status_code == 200
-    assert "install --firstdisk=fallbackdisk" in unresolved.text
+    for path in (
+        f"/pxe/esxi/ks/{kickstart.id}.cfg?mac=01-00-50-56-aa-bb-cc",
+        f"/pxe/esxi/ks/{kickstart_file}?mac=01-00-50-56-aa-bb-cc",
+        f"/pxe/esxi/ks/{static_kickstart_file}",
+    ):
+        response = client.get(path)
+        assert response.status_code == 404
+        assert "VMware01!" not in response.text
+    assert static_artifact_url == ""
 
 
 def test_esxi_pxe_host_variables_api_and_manifest(client):
@@ -6887,7 +6881,8 @@ def test_local_users_page_separates_ldap_authentication(client):
     assert "user-password-modal" in users.text
     assert "data-password-toggle" in users.text
     assert "Password Reset" not in users.text
-    assert "Reset password" in users.text
+    assert "Set Photon OS password and enable user" in users.text
+    assert "Reset Photon OS password" in users.text
     assert "Remove" in users.text
     assert "Password Policy" in users.text
     assert "Local Users has pending appliance changes" in users.text
@@ -6980,6 +6975,8 @@ def test_local_users_page_separates_ldap_authentication(client):
     assert "userActionsFormatter" not in app_js.text
     assert "formatter: userActionsFormatter" not in app_js.text
     assert "openUserPasswordModal" in app_js.text
+    assert 'row.getData().enabled ? "Reset Photon OS password" : "Set Photon OS password and enable user"' in app_js.text
+    assert 'enabled: button.dataset.userEnabled === "true"' in app_js.text
     assert "deleteUserFromMenu" not in app_js.text
     assert "Unlock OS account" in app_js.text
     assert "disableUserFromMenu" in app_js.text
@@ -7012,11 +7009,62 @@ def test_local_users_page_separates_ldap_authentication(client):
     assert 'field: "web_terminal_access"' in app_js.text
     assert 'title: "Web SSH"' in app_js.text
     assert "Temp Password" not in app_js.text
+    apply_refresh_js = app_js.text.split("async function refreshUsersAfterApplianceApply", 1)[1].split(
+        "async function submitApplianceApplyForm", 1
+    )[0]
+    assert 'window.location.pathname !== managementUiPath("/users")' in apply_refresh_js
+    assert 'selectedUnits.includes("local_users")' in apply_refresh_js
+    assert 'fetch(managementUiPath("/users/status")' in apply_refresh_js
+    assert "await table.replaceData([...payload.users, newUserRow()])" in apply_refresh_js
+    assert 'task?.status !== "succeeded"' in apply_refresh_js
     app_css = client.get("/static/app.css").text
     assert ".users-main-panel {" in app_css
     assert "height: calc(100vh - 144px);" in app_css
     assert ".users-grid {" in app_css
     assert "flex: 1 1 0;" in app_css
+
+
+def test_local_users_status_returns_current_uncached_grid_rows(client, monkeypatch, tmp_path):
+    """Verify that local users status returns current uncached grid rows.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    import atlaso.app.ui as ui
+    from atlaso.app.adapters.system import AdapterResult
+
+    class StatusAdapter:
+        """Return a current Photon account state for the refresh endpoint."""
+
+        dry_run = False
+
+        def local_users_status(self, config_path: str) -> AdapterResult:
+            """Return one current Photon account status row.
+
+            Args:
+                config_path: Short-lived status input path.
+            """
+            return AdapterResult(
+                command=["atlaso-helper", "local-users", "status", config_path],
+                dry_run=False,
+                stdout='{"local_users":"status ok","users":[{"username":"admin","state":"present","detail":"password set"}]}',
+            )
+
+    monkeypatch.setattr(ui, "LOCAL_USERS_STAGED_CONFIG_PATH", str(tmp_path / "local-users" / "atlaso-users.json"))
+    monkeypatch.setattr(ui, "SystemAdapter", StatusAdapter)
+    login(client)
+
+    response = client.get("/users/status")
+
+    assert response.status_code == 200
+    assert response.headers["cache-control"] == "no-store"
+    rows = response.json()["users"]
+    admin = next(row for row in rows if row["username"] == "admin")
+    assert admin["os_account_state"] == "present"
+    assert admin["os_account_detail"] == "password set"
+    assert "/users/status" not in client.get("/openapi.json").json()["paths"]
 
 
 def test_managed_ldap_page_creates_org_user_group_and_shows_secret_once(client):
@@ -8483,6 +8531,9 @@ def test_dns_and_dhcp_pages_render(client):
     assert "Submit appliance changes" in app_js.text
     assert "openApplianceApplyReview" in app_js.text
     assert "renderApplianceApplyTask" in app_js.text
+    assert "window.AtlasoApplianceApplyPolling.createMonitor" in app_js.text
+    assert 'throw new Error("Unable to reconcile the completed appliance task.")' in app_js.text
+    assert "Live task status is temporarily unavailable. Atlaso will retry automatically." in app_js.text
     assert "const APPLIANCE_APPLY_SUCCESS_AUTO_CLOSE_MS = 15000;" in app_js.text
     assert "function clearApplianceApplyAutoClose()" in app_js.text
     assert "function scheduleApplianceApplyAutoClose(task)" in app_js.text
@@ -8499,6 +8550,7 @@ def test_dns_and_dhcp_pages_render(client):
     assert 'atlasoTasksTable?.on("rowClick"' in app_js.text
     assert "data-appliance-apply-modal" in app_js.text
     assert "data-appliance-apply-connection-warning" in dns.text
+    assert "data-appliance-apply-poll-warning" in dns.text
     assert 'class="button primary hidden" type="submit" data-appliance-apply-submit' in dns.text
     assert "data-apply-submit-tracker" not in app_js.text
     assert "index === 0 ? \"Applying\"" not in app_js.text

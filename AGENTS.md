@@ -78,7 +78,11 @@ The following cross-cutting boundaries always apply:
 - `/ui/management/appliance-apply` is the only desired-state host-mutation workflow.
 - Keep ordinary `/ui/management/appliance-apply/status` polling on the non-reconciling desired-state projection.
   Prevent overlapping browser polls, suspend them while hidden, back off when idle, and refresh promptly after successful
-  mutations and Apply completion; full review, validation, and submission must still reconcile current host observations.
+  mutations and Apply completion. Retain the tracked master task until a valid terminal task response is rendered, retry
+  transient status and terminal-reconciliation failures at the active cadence with an observable warning, and never let
+  an older active response replace a terminal result. Reconcile a retained task and run its completion refresh before
+  accepting a different session's newer active task. Full review, validation, and submission must still reconcile current
+  host observations.
 - Privileged appliance operations go through `atlaso-helper` and constrained sudoers rules.
 - VCF Offline Depot settings and download-profile applies preserve the registered VCFDT software depot ID. Generate an
   ID only when none exists or an administrator explicitly confirms **Refresh software depot ID** through global apply;
@@ -170,7 +174,12 @@ The following cross-cutting boundaries always apply:
   CSRF-protect and audit reveals without values, disable caching, and automatically hide the value again.
 - Use the locally bundled `window.AtlasoMonaco` integration for code or configuration editing. ESXi Kickstarts use the
   dedicated Kickstart language and derive vault scope only from exact source markers; never restore an explicit
-  Kickstart-to-vault selector or expose resolved values in browser state or completion metadata.
+  Kickstart-to-vault selector or expose resolved values in browser state or completion metadata. Dynamic Kickstart
+  retrieval requires a cryptographically random pending boot claim plus an administrator-entered one-time code shown
+  by the intended host console. Only that exact claim may receive a short-lived, atomic single-use boot capability
+  bound to the applied host, full Kickstart revision, listener, and generated attempt. Store only claim, code, and
+  capability verifiers, never treat a MAC address as authentication, and never expose capability paths in management
+  UI/API, audit, job, problem, or log data. The exact pending boot protocol response may carry only its own claim.
 - Browser navigation to a globally disabled Web Terminal must render the authenticated Atlaso unavailable-state page;
   reserve JSON and protocol errors for ticket, API, and WebSocket consumers.
 - When local DNS points the management resolver to loopback, recover empty DNS service upstreams from the exact

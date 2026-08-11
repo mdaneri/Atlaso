@@ -1,7 +1,10 @@
 # Atlaso
 
 Authenticated pages share a lightweight, visibility-aware Appliance Apply status projection. Apply review and
-validation continue to reconcile live host state, while idle sidebar polling never starts privileged helper work.
+validation continue to reconcile live host state, while idle sidebar polling never starts privileged helper work. The
+shared task monitor retries transient status failures, follows a completed master to its terminal task record, and keeps
+the modal, sidebar, pending count, and global lock synchronized without requiring a page reload. It completes a retained
+task's terminal refresh before following a newer Apply started by another session.
 
 ![Atlaso — Everything your virtualization lab needs](docs/assets/brand/atlaso-docs-header-dark-1600x400.png)
 
@@ -13,6 +16,8 @@ brings infrastructure, storage, identity, networking, and lifecycle workflows in
 ## Start here
 
 - [Documentation](https://mdaneri.github.io/Atlaso/docs/) — install, configure, operate, and troubleshoot Atlaso.
+- [What is Atlaso?](docs/project/what-is-atlaso.md) — discover the Esperanto word, the map, and the myth behind the
+  Atlaso name.
 - [Getting started](docs/getting-started/index.md) — choose an appliance path and complete initial setup.
 - [Operations](docs/operate/index.md) — run the appliance and review desired-state changes.
 - [Local appliance console](docs/operate/appliance-console.md) — correct management networking from `tty1` and have
@@ -41,7 +46,9 @@ brings infrastructure, storage, identity, networking, and lifecycle workflows in
   with JSON export; newly reported hosts refresh automatically, assigned ESXi
   hostname and address remain visible, and standard grid-backed wizards manage
   Host References and installer ISOs. Audited Wake-on-LAN is available for
-  discovered hosts and saved ESXi Host References.
+  discovered hosts and saved ESXi Host References; scripted ESXi boots require
+  an administrator to enter the one-time code shown by the exact host-console
+  attempt before a short-lived, single-use authorization is bound to applied state.
 - [Vaults](docs/services/vaults.md) — scope encrypted VCF and ESX passwords to managed scripts and exact Kickstart
   source markers.
 - [OpenID Connect provider](docs/services/oidc-provider.md) — use the dedicated tabbed administration page for
