@@ -236,7 +236,8 @@ applied marker. This removes raw-clone credentials from the host-side `guestinfo
 power interruption between scrub and promotion recoverable on the next boot. A failed scrub remains unmarked and is
 retried with the initialization lock held. Mutation failures identify only a bounded, non-secret initialization layer in
 the customization log. The pending file and its parent directory are synchronized before the external credential scrub;
-the applied-marker promotion synchronizes the directory again. If a raw clone accidentally reuses a disk whose applied
+all preceding host filesystem mutations are synchronized before pending success is recorded, and the applied-marker
+promotion synchronizes the directory again. If a raw clone accidentally reuses a disk whose applied
 marker already exists, the customizer
 does not reapply the injected credentials, but it does clear the injected OVF environment before its marker early exit so
 those plaintext values cannot remain in the cloned VMX. Inconclusive VMware RPC reads are retried rather than treated as

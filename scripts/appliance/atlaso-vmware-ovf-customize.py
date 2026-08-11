@@ -125,7 +125,8 @@ def parse_ovf_environment(xml_text: str) -> dict[str, str]:
         key = attr_value(element, "key")
         if not key.startswith(PROPERTY_PREFIX):
             continue
-        properties[key] = attr_value(element, "value").strip()
+        value = attr_value(element, "value")
+        properties[key] = value if key in {PROPERTY_ADMIN_PASSWORD, PROPERTY_ROOT_PASSWORD} else value.strip()
     return properties
 
 
@@ -388,6 +389,16 @@ def promote_pending_marker() -> None:
     """Atomically and durably promote the redacted pending state to applied."""
     PENDING_MARKER_PATH.replace(MARKER_PATH)
     fsync_parent_directory(MARKER_PATH)
+
+
+def sync_customized_host_state() -> None:
+    """Flush successful first-boot mutations before recording pending success."""
+    sync = getattr(os, "sync", None)
+    if sync is None:
+        if os.name == "nt":
+            return
+        raise OSError("The platform does not expose a filesystem synchronization primitive.")
+    sync()
 
 
 def invalidate_pending_marker() -> None:
@@ -1053,6 +1064,7 @@ def apply_customization(config: dict[str, object], *, dry_run: bool = False) -> 
             },
         ),
     )
+    run_initialization_layer("host state durability", sync_customized_host_state)
     run_initialization_layer(
         "pending success marker",
         lambda: write_json_atomic(PENDING_MARKER_PATH, summary),

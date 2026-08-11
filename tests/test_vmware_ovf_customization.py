@@ -101,6 +101,25 @@ def test_vmware_ovf_customizer_rejects_empty_or_whitespace_passwords():
             raise AssertionError(f"Expected an empty {key} value to be rejected")
 
 
+def test_vmware_ovf_customizer_preserves_release_ovf_password_whitespace():
+    """Verify XML password attributes are consumed without destructive trimming."""
+    customizer = load_customizer()
+    admin_password = "  admin-secret  "
+    root_password = "root-secret1  "
+    ovf_environment = OVF_ENV.replace("admin-secret", admin_password).replace(
+        "root-secret1",
+        root_password,
+    )
+
+    properties = customizer.parse_ovf_environment(ovf_environment)
+    config = customizer.validate_properties(properties)
+
+    assert properties[customizer.PROPERTY_ADMIN_PASSWORD] == admin_password
+    assert properties[customizer.PROPERTY_ROOT_PASSWORD] == root_password
+    assert config["admin_password"] == admin_password
+    assert config["root_password"] == root_password
+
+
 def test_vmware_ovf_customizer_ignores_legacy_mode_and_derives_ipv4_from_cidr():
     """Verify that vmware ovf customizer ignores legacy mode and derives ipv4 from cidr."""
     customizer = load_customizer()
@@ -1085,11 +1104,12 @@ def test_vmware_ovf_customizer_renders_dhcp_network_and_interface_scoped_firewal
     assert 'iifname "eth0" meta nfproto ipv4 tcp dport { 22, 80, 443 } accept' in firewall
 
 
-def test_vmware_ovf_customizer_rotates_clone_specific_env_secrets(tmp_path):
+def test_vmware_ovf_customizer_rotates_clone_specific_env_secrets(tmp_path, monkeypatch):
     """Verify that vmware ovf customizer rotates clone specific env secrets.
 
     Args:
         tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+        monkeypatch: Pytest fixture used to replace the host sync primitive.
     """
     customizer = load_customizer()
     customizer.ENV_PATH = tmp_path / "atlaso.env"
@@ -1100,6 +1120,8 @@ def test_vmware_ovf_customizer_rotates_clone_specific_env_secrets(tmp_path):
     customizer.MARKER_PATH = tmp_path / "marker.json"
     customizer.PENDING_MARKER_PATH = tmp_path / "marker.pending.json"
     customizer.NGINX_MANAGEMENT_PATH.write_text("server_name atlaso.internal _;\n", encoding="utf-8")
+    synchronized = []
+    monkeypatch.setattr(customizer.os, "sync", lambda: synchronized.append(True), raising=False)
     generated = iter(["rotated-secret-key", "rotated-secrets-key"])
     customizer.generate_secret_key = lambda: next(generated)
     customizer.set_password = lambda username, password: None
@@ -1109,6 +1131,7 @@ def test_vmware_ovf_customizer_rotates_clone_specific_env_secrets(tmp_path):
 
     def clear_ovf_environment():
         """Record that credentials are scrubbed before the success marker."""
+        assert synchronized == [True]
         assert not customizer.MARKER_PATH.exists()
         assert customizer.PENDING_MARKER_PATH.exists()
         scrubbed.append(True)
@@ -1142,6 +1165,7 @@ def test_vmware_ovf_customizer_rotates_clone_specific_env_secrets(tmp_path):
     assert 'ATLASO_APPLIANCE_MANAGEMENT_IPV6_ENABLED="true"' in rendered
     assert 'ATLASO_APPLIANCE_ROOT_SSH_ENABLED="true"' in rendered
     marker = json.loads(customizer.MARKER_PATH.read_text(encoding="utf-8"))
+    assert synchronized == [True]
     assert scrubbed == [True]
     assert marker["cidr"] == "192.168.10.10/24"
     assert "admin-secret" not in str(marker)

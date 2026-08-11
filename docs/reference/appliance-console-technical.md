@@ -97,12 +97,18 @@ The customizer consumes a correction, revalidates the complete merged OVF config
 redacted applied marker only after every mutation succeeds. A validation or apply failure leaves the marker absent,
 updates the review state without exception-derived command output, and permits another correction. Before that retry
 starts host mutation, it durably invalidates any pending-success record from the preceding attempt so restart recovery
-cannot promote stale state. Success removes both handshake documents plus the initialization lock and releases the
-remaining first-boot units. If interruption occurs after marker creation but before cleanup, the next customizer start
+cannot promote stale state. After every host mutation succeeds, the customizer synchronizes host filesystem state before
+durably writing pending success, so restart recovery cannot promote a marker ahead of its configuration. Success removes
+both handshake documents plus the initialization lock and releases the remaining first-boot units. If interruption
+occurs after marker creation but before cleanup, the next customizer start
 recovers the pending marker only when the OVF environment is already empty or its non-secret raw-clone deployment
 identifier matches. Any nonempty ID-less environment, including a release OVA redeployment, is reapplied rather than
 promoting possibly stale source state. An interrupted original OVA apply is safe to reapply idempotently. The applied
 marker removes the stale handshake and lock before exiting.
+
+OVF XML password attributes are consumed exactly as parsed rather than trimmed. This preserves valid leading or trailing
+spaces supplied through a release deployment instead of applying a different credential or leaving initialization
+locked on a shortened value.
 
 ## Management editor contract
 
