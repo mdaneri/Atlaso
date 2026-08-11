@@ -6,7 +6,8 @@ from typing import Any
 from atlaso.app.api.network_boot import public_router as network_boot_public_router
 from atlaso.app.oidc import public_router as oidc_public_router
 from atlaso.app.ui import router as ui_router
-from atlaso.app.web_terminal import router as web_terminal_router
+from atlaso.app.web_terminal import management_router as web_terminal_management_router
+from atlaso.app.web_terminal import protocol_router as web_terminal_protocol_router
 
 
 HTTP_METHODS = {"get", "post", "put", "patch", "delete", "head", "options", "trace"}
@@ -88,8 +89,10 @@ def test_non_versioned_protocol_and_ui_routes_remain_registered():
     """Verify that non versioned protocol and ui routes remain registered."""
     assert "/identity/.well-known/openid-configuration" in {route.path for route in oidc_public_router.routes}
     assert "/pxe/boot.ipxe" in {route.path for route in network_boot_public_router.routes}
-    assert "/terminal" in {route.path for route in web_terminal_router.routes}
-    assert "/dashboard" in {route.path for route in ui_router.routes}
+    assert "/ui/management/terminal" in {route.path for route in web_terminal_management_router.routes}
+    assert "/terminal/tickets" in {route.path for route in web_terminal_protocol_router.routes}
+    assert "/terminal/ws" in {route.path for route in web_terminal_protocol_router.routes}
+    assert "/ui/management/dashboard" in {route.path for route in ui_router.routes}
 
 
 def test_legacy_direct_apply_routes_remain_compatible_but_are_not_promoted(client):

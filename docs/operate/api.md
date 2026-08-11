@@ -14,6 +14,10 @@ alternative ReDoc view at `/api/redoc`, or the machine-readable OpenAPI 3.1 docu
 contains only versioned `/api/v1` operations; browser pages and service-specific protocol routes remain supported but
 are documented in their service guides instead of Swagger.
 
+The authenticated browser application is rooted at `/ui/management`, and app-owned public pages are rooted at
+`/ui/public`. Those presentation namespaces do not change API URLs or make management APIs available on Public Services
+listeners. See [Public Services](../services/public-services.md) for the listener and compatibility contract.
+
 ## Create and protect an API token
 
 1. Sign in to the management UI and open **Authentication > API Tokens**.

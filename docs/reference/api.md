@@ -56,6 +56,10 @@ details, see the [full technical reference](full-technical-reference.md).
 OIDC `/identity`, Network Boot `/pxe`, Web Terminal, and browser routes are intentionally absent from Swagger. Their
 runtime protocols remain supported and are documented in the corresponding service and operator guides.
 
+Human browser pages are separately owned by `/ui/management` and `/ui/public`; see
+[Public Services](../services/public-services.md). This namespace change does not move `/api/v1`, `/openapi.json`,
+`/api/docs`, `/api/redoc`, or any service protocol route.
+
 <!-- BEGIN GENERATED ADDITIONAL SCREENSHOTS -->
 ## Additional verified states
 

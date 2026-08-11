@@ -58,7 +58,7 @@
             <td>{{ scope.domain_name }}</td>
             <td>
               <form
-                action="/dhcp/scopes/{{ scope.id }}/delete"
+                action="{{ management_ui_root }}/dhcp/scopes/{{ scope.id }}/delete"
                 method="post"
                 data-confirm-modal
                 data-confirm-title="Delete {{ scope.name }} IP zone?"
@@ -104,7 +104,7 @@
             <td>{{ option.description or "" }}</td>
             <td>
               <form
-                action="/dhcp/options/{{ option.id }}/delete"
+                action="{{ management_ui_root }}/dhcp/options/{{ option.id }}/delete"
                 method="post"
                 data-confirm-modal
                 data-confirm-title="Delete DHCP option {{ option.option_code }}?"
@@ -150,7 +150,7 @@
             <td>{{ reservation.description or "" }}</td>
             <td>
               <form
-                action="/dhcp/reservations/{{ reservation.id }}/delete"
+                action="{{ management_ui_root }}/dhcp/reservations/{{ reservation.id }}/delete"
                 method="post"
                 data-confirm-modal
                 data-confirm-title="Delete {{ reservation.hostname }} reservation?"
@@ -250,7 +250,7 @@
                         data-mac-address="{{ lease.mac_address }}"
                       >Create PXE entry</button>
                       <form
-                        action="/dhcp/leases/deny"
+                        action="{{ management_ui_root }}/dhcp/leases/deny"
                         method="post"
                         data-confirm-modal
                         data-confirm-title="Deny DHCP for {{ lease.mac_address }}?"
@@ -273,7 +273,7 @@
           </tbody>
         </table>
         <dialog id="dhcp-lease-reservation-modal" class="confirm-modal" aria-labelledby="dhcp-lease-reservation-title">
-          <form class="confirm-modal-panel" action="/dhcp/reservations" method="post">
+          <form class="confirm-modal-panel" action="{{ management_ui_root }}/dhcp/reservations" method="post">
             <input type="hidden" name="csrf" value="{{ csrf_token }}">
             <input type="hidden" name="mac_address" data-dhcp-lease-modal-mac-input>
             <input type="hidden" name="ip_address" data-dhcp-lease-modal-ip-input>
@@ -299,7 +299,7 @@
           </form>
         </dialog>
         <dialog id="dhcp-lease-pxe-modal" class="confirm-modal" aria-labelledby="dhcp-lease-pxe-title">
-          <form class="confirm-modal-panel" action="/dhcp/leases/pxe-host" method="post">
+          <form class="confirm-modal-panel" action="{{ management_ui_root }}/dhcp/leases/pxe-host" method="post">
             <input type="hidden" name="csrf" value="{{ csrf_token }}">
             <input type="hidden" name="mac_address" data-dhcp-lease-pxe-mac-input>
             <input type="hidden" name="ip_address" data-dhcp-lease-pxe-ip-input>
@@ -332,7 +332,7 @@
         <h2>DHCP Settings</h2>
         <span class="status-pill {{ 'good' if dhcp_settings.enabled else 'muted' }}">{{ 'enabled' if dhcp_settings.enabled else 'disabled' }}</span>
       </div>
-      <form class="form-stack" action="/dhcp/settings" method="post" data-autosave-form data-autosave-status-id="dhcp-settings-autosave-status">
+      <form class="form-stack" action="{{ management_ui_root }}/dhcp/settings" method="post" data-autosave-form data-autosave-status-id="dhcp-settings-autosave-status">
         <input type="hidden" name="csrf" value="{{ csrf_token }}">
         <label class="switch-field"><span class="field-label"><span>Service enabled</span><button class="help-icon" type="button" data-help="Controls whether Atlaso renders DHCP as enabled desired state for dnsmasq.">i</button></span><input class="switch-input" type="checkbox" name="enabled" {{ "checked" if dhcp_settings.enabled else "" }}><span class="switch-track" aria-hidden="true"></span></label>
         <input type="hidden" name="interface_name" value="{{ dhcp_settings.interface_name }}">
@@ -385,7 +385,7 @@
 {% call resource_wizard(
   "dhcp-scope-dialog",
   "dhcp-scope-form",
-  "/dhcp/scopes",
+  management_ui_path("/dhcp/scopes"),
   dhcp_scope_steps,
   "Define the DHCP IP zone",
   "Name the IP zone and bind its address family and interface.",
@@ -445,7 +445,7 @@
 {% call resource_wizard(
   "dhcp-option-dialog",
   "dhcp-option-form",
-  "/dhcp/options",
+  management_ui_path("/dhcp/options"),
   dhcp_option_steps,
   "Define the DHCP option",
   "Choose whether this option applies globally or to one managed IP zone.",

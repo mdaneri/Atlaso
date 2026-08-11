@@ -62,10 +62,16 @@ current operator or contributor guide before making a change.
 
 The following cross-cutting boundaries always apply:
 
-- `/appliance-apply` is the only desired-state host-mutation workflow.
-- Keep ordinary `/appliance-apply/status` polling on the non-reconciling desired-state projection. Prevent overlapping
-  browser polls, suspend them while hidden, back off when idle, and refresh promptly after successful mutations and
-  Apply completion; full review, validation, and submission must still reconcile current host observations.
+- Canonical human browser surfaces belong to `/ui/management` or `/ui/public`; `/` is only the requested-interface
+  dispatcher. Keep API, OpenAPI, OIDC, CA-download, PXE, `/PROD/`, registry, static, and other machine/protocol routes at
+  their stable paths. A URL prefix never replaces listener, authentication, authorization, CSRF, or session enforcement.
+  Safe legacy `GET`/`HEAD` bookmarks may redirect only after destination eligibility is proven; bridge legacy mutations
+  internally and never replay them through `307`/`308`. Route-inventory coverage must fail for an undeclared human UI
+  route. Scope management browser caching to `/ui/management/` and keep public UI caching disabled.
+- `/ui/management/appliance-apply` is the only desired-state host-mutation workflow.
+- Keep ordinary `/ui/management/appliance-apply/status` polling on the non-reconciling desired-state projection.
+  Prevent overlapping browser polls, suspend them while hidden, back off when idle, and refresh promptly after successful
+  mutations and Apply completion; full review, validation, and submission must still reconcile current host observations.
 - Privileged appliance operations go through `atlaso-helper` and constrained sudoers rules.
 - VCF Offline Depot settings and download-profile applies preserve the registered VCFDT software depot ID. Generate an
   ID only when none exists or an administrator explicitly confirms **Refresh software depot ID** through global apply;

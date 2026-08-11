@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-management-ui-root="{{ management_ui_root }}" data-public-ui-root="{{ public_ui_root }}">
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -26,7 +26,7 @@
         {% if error %}
           <div class="alert error">{{ error }}</div>
         {% endif %}
-        <form class="form-stack" action="/login" method="post" target="_self">
+        <form class="form-stack" action="{{ management_ui_path('/login') }}" method="post" target="_self">
           <input type="hidden" name="csrf" value="{{ csrf_token }}">
           <input type="hidden" name="next" value="{{ return_to or '/' }}">
           <label>
@@ -42,6 +42,6 @@
         <p class="hint">Development default: admin / atlaso-admin. Appliance images use the bootstrap admin password set during image build.</p>
       </section>
     </main>
-    <script src="/static/pwa.js?v=atlaso-brand-20260725-1"></script>
+    <script src="/static/pwa.js?v=issue-287-2"></script>
   </body>
 </html>

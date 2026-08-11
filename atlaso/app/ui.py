@@ -653,6 +653,14 @@ from atlaso.app.services.esxi_pxe import (
     strict_validation_enabled,
 )
 from atlaso.app.token_service import create_token_for_user
+from atlaso.app.ui_routes import (
+    MANAGEMENT_UI_ROOT,
+    PUBLIC_UI_ROOT,
+    management_ui_path,
+    public_ui_path,
+    safe_management_return_path,
+    safe_public_return_path,
+)
 
 APP_DIR = Path(__file__).resolve().parent
 STATIC_DIR = APP_DIR / "static"
@@ -668,7 +676,68 @@ NETWORK_STAGED_CONFIG_PATH = "/var/lib/atlaso/apply/network/atlaso-network.conf"
 DNSMASQ_STAGED_CONFIG_PATH = "/var/lib/atlaso/apply/dnsmasq/atlaso.conf"
 
 templates = Jinja2Templates(directory=TEMPLATES_DIR)
-router = APIRouter()
+
+
+def management_ui_request_allowed(request: Request, db: Session) -> bool:
+    """Return whether the called host may expose the management browser plane.
+
+    Args:
+        request: Incoming HTTP request.
+        db: Active database session.
+    """
+    request_host = request_host_name(request)
+    try:
+        if ip_address(request_host.strip("[]")).is_loopback:
+            return True
+    except ValueError:
+        pass
+    binding = request_host_interface_binding(request_host, db)
+    if binding is not None:
+        return binding.get("role") == "management"
+    return getattr(get_settings(), "environment", "development") != "appliance"
+
+
+def require_management_ui_request(request: Request, db: Session = Depends(get_db)) -> None:
+    """Hide the management namespace from non-management listeners.
+
+    Args:
+        request: Incoming HTTP request.
+        db: Active database session.
+    """
+    if not management_ui_request_allowed(request, db):
+        raise HTTPException(status_code=404, detail="Not found")
+
+
+def public_ui_request_allowed(request: Request, db: Session, path: str = "") -> bool:
+    """Return whether the called host may expose a requested public UI path.
+
+    Args:
+        request: Incoming HTTP request.
+        db: Active database session.
+        path: Public-plane path being evaluated.
+    """
+    binding = request_host_interface_binding(request_host_name(request), db)
+    if not binding or binding.get("role") == "management":
+        return False
+    normalized = path or request.url.path.removeprefix(PUBLIC_UI_ROOT)
+    if normalized.startswith("/ca"):
+        return request_allows_public_service(db, request, "ca")
+    if normalized.startswith("/terminal"):
+        return request_allows_public_service(db, request, "web_terminal")
+    return True
+
+
+router = APIRouter(prefix=MANAGEMENT_UI_ROOT, dependencies=[Depends(require_management_ui_request)])
+public_router = APIRouter(prefix=PUBLIC_UI_ROOT)
+front_door_router = APIRouter()
+protocol_router = APIRouter()
+
+templates.env.globals.update(
+    management_ui_path=management_ui_path,
+    public_ui_path=public_ui_path,
+    management_ui_root=MANAGEMENT_UI_ROOT,
+    public_ui_root=PUBLIC_UI_ROOT,
+)
 
 
 def csrf_token(request: Request) -> str:
@@ -729,6 +798,8 @@ def render(request: Request, template: str, context: dict, status_code: int = 20
             "server_time": utcnow(),
             "public_github_url": "https://github.com/mdaneri/Atlaso",
             "current_version_info": current_version_info(),
+            "management_ui_root": MANAGEMENT_UI_ROOT,
+            "public_ui_root": PUBLIC_UI_ROOT,
             **context,
         },
         status_code=status_code,
@@ -4418,6 +4489,12 @@ def ca_context(db: Session, *, reconcile: bool = True) -> dict:
         ca_status = {**ca_status, "health": "degraded", "label": "needs attention", "pill": "warn"}
     return {
         "ca_settings": settings,
+        "ca_public_portal_url": _absolute_public_url(
+            "https",
+            settings.portal_hostname or CA_DEFAULT_PORTAL_HOSTNAME,
+            public_ui_path("/ca/requests"),
+            port=443,
+        ),
         "ca_profiles": profiles,
         "ca_profile_rows": [ca_profile_to_dict(profile) for profile in profiles],
         "ca_certificate_rows": [ca_certificate_to_dict(certificate) for certificate in certificates],
@@ -4586,7 +4663,7 @@ def public_portal_links_context(db: Session) -> dict[str, str]:
     base_url = f"{scheme}://{host}" if host else ""
     return {
         "public_management_base_url": base_url,
-        "public_management_url": f"{base_url}/" if base_url else "",
+        "public_management_url": f"{base_url}{MANAGEMENT_UI_ROOT}" if base_url else "",
         "public_swagger_url": f"{base_url}/api/docs" if base_url else "/api/docs",
         "public_openapi_url": f"{base_url}/api/docs" if base_url else "/api/docs",
     }
@@ -4655,8 +4732,8 @@ def public_service_link_variants(service: dict[str, Any], binding: dict[str, str
     except (TypeError, ValueError):
         service_port = 0
     if service_id == "ca":
-        name_href = _absolute_public_url("https", hostname, "/ca", port=service_port or 443)
-        ip_href = _absolute_public_url("https", address, "/ca", port=service_port or 443)
+        name_href = _absolute_public_url("https", hostname, public_ui_path("/ca"), port=service_port or 443)
+        ip_href = _absolute_public_url("https", address, public_ui_path("/ca"), port=service_port or 443)
     elif service_id == "vcf_offline_depot":
         name_href = _absolute_public_url("https", hostname, "/PROD/", port=service_port or 443)
         ip_href = _absolute_public_url("https", address, "/PROD/", port=service_port or 443)
@@ -4668,7 +4745,7 @@ def public_service_link_variants(service: dict[str, Any], binding: dict[str, str
         name_href = _absolute_public_url("http", hostname, "/pxe/esxi/", port=http_port)
         ip_href = _absolute_public_url("http", address, "/pxe/esxi/", port=http_port)
     elif service_id == "web_terminal":
-        name_href = _absolute_public_url("https", address, "/terminal", port=service_port or 443)
+        name_href = _absolute_public_url("https", address, public_ui_path("/terminal"), port=service_port or 443)
         ip_href = name_href
     else:
         name_href = str(service.get("href") or "")
@@ -4677,25 +4754,31 @@ def public_service_link_variants(service: dict[str, Any], binding: dict[str, str
 
 
 def safe_login_next(value: str | None) -> str:
-    """Return safe login next.
+    """Return a fail-closed management-plane login target.
 
     Args:
         value: Candidate value consumed by safe login next.
     """
-    target = (value or "").strip()
-    if not target.startswith("/") or target.startswith("//") or "\\" in target:
-        return "/"
-    if target.startswith("/static/") or target in {"/login", "/logout"}:
-        return "/"
-    return target
+    return safe_management_return_path(value)
 
 
 def request_host_name(request: Request) -> str:
-    """Return request host name.
+    """Return the trusted listener address or direct request host name.
 
     Args:
         request: Incoming HTTP request.
     """
+    listener_address = (request.headers.get("x-atlaso-listener-address") or "").strip().strip("[]")
+    server_host = str((request.scope.get("server") or ("", 0))[0]).strip().strip("[]")
+    try:
+        trusted_proxy = ip_address(server_host).is_loopback
+    except ValueError:
+        trusted_proxy = False
+    if trusted_proxy and listener_address:
+        try:
+            return str(ip_address(listener_address)).lower()
+        except ValueError:
+            pass
     raw_host = (request.headers.get("host") or "").strip().lower()
     if raw_host.startswith("["):
         closing_bracket = raw_host.find("]")
@@ -4752,10 +4835,24 @@ def request_host_interface_binding(request_host: str, db: Session) -> dict[str, 
     """
     if not request_host:
         return None
+    physical_interfaces = db.execute(select(PhysicalInterface).order_by(PhysicalInterface.name)).scalars().all()
     entries = public_service_interface_entries(
-        db.execute(select(PhysicalInterface).order_by(PhysicalInterface.name)).scalars().all(),
+        physical_interfaces,
         db.execute(select(VlanInterface).where(VlanInterface.enabled.is_(True)).order_by(VlanInterface.parent_interface, VlanInterface.vlan_id)).scalars().all(),
     )
+    for interface in physical_interfaces:
+        if interface.oper_state == "missing":
+            continue
+        for cidr in (interface.host_ip_cidr, interface.host_ipv6_cidr):
+            address = interface_address(cidr)
+            if address:
+                entries.append(
+                    {
+                        "interface": interface.name,
+                        "role": normalize_interface_role(interface.role),
+                        "address": address,
+                    }
+                )
     by_address = {entry["address"].lower(): entry for entry in entries}
     try:
         parsed_host = str(ip_address(request_host.strip("[]"))).lower()
@@ -4776,21 +4873,21 @@ def request_host_interface_binding(request_host: str, db: Session) -> dict[str, 
         ).scalars()
         candidate_addresses.extend(record.address for record in records)
 
-        appliance_settings = get_appliance_settings_row(db)
-        if hostname == normalize_dns_hostname(appliance_settings.fqdn):
+        appliance_settings = db.execute(select(ApplianceSettings).order_by(ApplianceSettings.id)).scalars().first()
+        if appliance_settings is not None and hostname == normalize_dns_hostname(appliance_settings.fqdn):
             management = management_interface_context(db.execute(select(PhysicalInterface).order_by(PhysicalInterface.name)).scalars().all())
             candidate_addresses.append(management.get("ip", ""))
 
-        ca_settings = get_ca_settings_row(db)
-        if hostname == normalize_dns_hostname(ca_settings.portal_hostname or CA_DEFAULT_PORTAL_HOSTNAME):
+        ca_settings = db.execute(select(CaSettings).order_by(CaSettings.id)).scalars().first()
+        if ca_settings is not None and hostname == normalize_dns_hostname(ca_settings.portal_hostname or CA_DEFAULT_PORTAL_HOSTNAME):
             candidate_addresses.extend(split_addresses(ca_settings.listen_address))
 
-        depot_settings = get_vcf_offline_depot_settings_row(db)
-        if hostname == normalize_dns_hostname(depot_settings.hostname):
+        depot_settings = db.execute(select(VcfOfflineDepotSettings).order_by(VcfOfflineDepotSettings.id)).scalars().first()
+        if depot_settings is not None and hostname == normalize_dns_hostname(depot_settings.hostname or VCF_DEPOT_DEFAULT_HOSTNAME):
             candidate_addresses.extend(split_addresses(depot_settings.listen_address))
 
-        registry_settings = get_vcf_private_registry_settings_row(db)
-        if hostname == normalize_dns_hostname(registry_settings.hostname):
+        registry_settings = db.execute(select(VcfPrivateRegistrySettings).order_by(VcfPrivateRegistrySettings.id)).scalars().first()
+        if registry_settings is not None and hostname == normalize_dns_hostname(registry_settings.hostname or VCF_REGISTRY_DEFAULT_HOSTNAME):
             candidate_addresses.extend(split_addresses(registry_settings.listen_address))
 
         esxi_boot = esxi_pxe_boot_settings(db)
@@ -12584,7 +12681,7 @@ def initialize_factory_appliance_apply_baseline(db: Session) -> bool:
     return True
 
 
-@router.get("/favicon.ico", response_model=None)
+@front_door_router.get("/favicon.ico", response_model=None)
 def favicon() -> FileResponse:
     """Handle the favicon endpoint.
 
@@ -12594,7 +12691,7 @@ def favicon() -> FileResponse:
     return FileResponse(STATIC_DIR / "brand" / "favicon.ico", media_type="image/x-icon")
 
 
-@router.get("/manifest.webmanifest", response_model=None)
+@front_door_router.get("/manifest.webmanifest", response_model=None)
 def webmanifest() -> FileResponse:
     """Handle the webmanifest endpoint.
 
@@ -12608,7 +12705,7 @@ def webmanifest() -> FileResponse:
     )
 
 
-@router.get("/service-worker.js", response_model=None)
+@front_door_router.get("/service-worker.js", response_model=None)
 def service_worker() -> FileResponse:
     """Handle the service worker endpoint.
 
@@ -12620,12 +12717,12 @@ def service_worker() -> FileResponse:
         media_type="application/javascript",
         headers={
             "Cache-Control": "no-cache",
-            "Service-Worker-Allowed": "/",
+            "Service-Worker-Allowed": f"{MANAGEMENT_UI_ROOT}/",
         },
     )
 
 
-@router.get("/", response_class=HTMLResponse, response_model=None)
+@front_door_router.get("/", response_class=HTMLResponse, response_model=None)
 def root(
     request: Request,
     identity: Identity | None = Depends(get_session_identity),
@@ -12643,10 +12740,41 @@ def root(
     """
     binding = request_host_interface_binding(request_host_name(request), db)
     if binding and binding.get("role") != "management":
-        return render(request, "public_service_home.html", {"identity": identity, **public_service_directory_context(db, binding)})
+        return RedirectResponse(PUBLIC_UI_ROOT, status_code=303)
+    if management_ui_request_allowed(request, db):
+        return RedirectResponse(MANAGEMENT_UI_ROOT, status_code=303)
+    raise HTTPException(status_code=404, detail="Not found")
+
+
+@router.get("", response_class=HTMLResponse, response_model=None)
+def management_home(identity: Identity | None = Depends(get_session_identity)) -> RedirectResponse:
+    """Dispatch the canonical management UI root to sign-in or Dashboard.
+
+    Args:
+        identity: Optional authenticated session identity.
+    """
     if not identity:
-        return RedirectResponse("/login", status_code=303)
-    return RedirectResponse("/dashboard", status_code=303)
+        return RedirectResponse(management_ui_path("/login"), status_code=303)
+    return RedirectResponse(management_ui_path("/dashboard"), status_code=303)
+
+
+@public_router.get("", response_class=HTMLResponse, response_model=None)
+def public_home(
+    request: Request,
+    identity: Identity | None = Depends(get_session_identity),
+    db: Session = Depends(get_db),
+) -> HTMLResponse:
+    """Render the canonical interface-scoped Public Services directory.
+
+    Args:
+        request: Incoming HTTP request.
+        identity: Optional authenticated session identity.
+        db: Active database session.
+    """
+    binding = request_host_interface_binding(request_host_name(request), db)
+    if not binding or binding.get("role") == "management":
+        raise HTTPException(status_code=404, detail="Not found")
+    return render(request, "public_service_home.html", {"identity": identity, **public_service_directory_context(db, binding)})
 
 
 def _format_file_size(size: int) -> str:
@@ -12740,7 +12868,7 @@ def _depot_browser_context(db: Session, depot_path: str = "") -> dict[str, Any]:
     }
 
 
-@router.get("/PROD", response_model=None)
+@protocol_router.get("/PROD", response_model=None)
 def public_depot_redirect() -> RedirectResponse:
     """Handle the public depot redirect endpoint.
 
@@ -12789,7 +12917,7 @@ def depot_login_response(request: Request, *, return_to: str = "/PROD/", error: 
     )
 
 
-@router.get("/PROD/login", response_class=HTMLResponse, response_model=None)
+@protocol_router.get("/PROD/login", response_class=HTMLResponse, response_model=None)
 def depot_login_page(
     request: Request,
     next: str = Query("/PROD/"),
@@ -12818,7 +12946,7 @@ def depot_login_page(
     return depot_login_response(request, return_to=return_to, db=db)
 
 
-@router.post("/PROD/login", response_model=None)
+@protocol_router.post("/PROD/login", response_model=None)
 def depot_login(
     request: Request,
     username: str = Form(...),
@@ -12864,7 +12992,7 @@ def depot_login(
     return RedirectResponse(return_to, status_code=303)
 
 
-@router.post("/PROD/logout", response_model=None)
+@protocol_router.post("/PROD/logout", response_model=None)
 def depot_logout(request: Request, csrf: str = Form(...), next: str = Form("/")) -> RedirectResponse:
     """Handle the depot logout endpoint.
 
@@ -12881,7 +13009,7 @@ def depot_logout(request: Request, csrf: str = Form(...), next: str = Form("/"))
     return RedirectResponse(next if next in {"/", "/PROD/"} else "/", status_code=303)
 
 
-@router.get("/PROD/auth-check", response_model=None)
+@protocol_router.get("/PROD/auth-check", response_model=None)
 def depot_auth_check(
     request: Request,
     identity: Identity | None = Depends(get_session_identity),
@@ -12905,8 +13033,8 @@ def depot_auth_check(
     return Response(status_code=401)
 
 
-@router.get("/PROD/auth-failure", response_model=None)
-@router.head("/PROD/auth-failure", response_model=None)
+@protocol_router.get("/PROD/auth-failure", response_model=None)
+@protocol_router.head("/PROD/auth-failure", response_model=None)
 def depot_auth_failure(request: Request, db: Session = Depends(get_db)) -> Response:
     """Handle the depot auth failure endpoint.
 
@@ -12925,10 +13053,10 @@ def depot_auth_failure(request: Request, db: Session = Depends(get_db)) -> Respo
     return Response(status_code=401, headers={"WWW-Authenticate": 'Basic realm="VCF Offline Depot"'})
 
 
-@router.get("/PROD/", response_class=HTMLResponse, response_model=None)
-@router.head("/PROD/", response_class=HTMLResponse, response_model=None)
-@router.get("/PROD/{depot_path:path}", response_class=HTMLResponse, response_model=None)
-@router.head("/PROD/{depot_path:path}", response_class=HTMLResponse, response_model=None)
+@protocol_router.get("/PROD/", response_class=HTMLResponse, response_model=None)
+@protocol_router.head("/PROD/", response_class=HTMLResponse, response_model=None)
+@protocol_router.get("/PROD/{depot_path:path}", response_class=HTMLResponse, response_model=None)
+@protocol_router.head("/PROD/{depot_path:path}", response_class=HTMLResponse, response_model=None)
 def public_depot_browser(
     request: Request,
     depot_path: str = "",
@@ -12987,12 +13115,12 @@ def public_terminal_login_response(
         "ca_request_login.html",
         {
             "error": error,
-            "return_to": "/terminal",
-            "login_action": "/login",
+            "return_to": public_ui_path("/terminal"),
+            "login_action": public_ui_path("/login"),
             "portal_title": "Atlaso Web Terminal",
             "login_heading": "Sign in to Web Terminal",
             "login_copy": "Use a Atlaso local user with Web SSH access enabled.",
-            "back_href": "/",
+            "back_href": PUBLIC_UI_ROOT,
             "back_label": "Back to Public Services",
             **public_portal_links_context(db),
         },
@@ -13036,8 +13164,6 @@ def login_page(
     return_to = safe_login_next(next)
     if identity:
         return RedirectResponse(return_to, status_code=303)
-    if return_to == "/terminal" and request_allows_public_service(db, request, "web_terminal"):
-        return public_terminal_login_response(request, db=db)
     return render(request, "login.html", {"error": None, "return_to": return_to})
 
 
@@ -13065,18 +13191,9 @@ def login(
     """
     verify_csrf(request, csrf)
     return_to = safe_login_next(next)
-    public_terminal_login = return_to == "/terminal" and request_allows_public_service(db, request, "web_terminal")
     user = authenticate_user(db, username, password)
-    if user is None and public_terminal_login:
-        local_user = db.execute(select(User).where(User.username == username.strip().lower())).scalar_one_or_none()
-        if local_user_has_web_terminal_access(local_user):
-            authentication = SystemAdapter().authenticate_local_user(local_user.username, password)
-            if authentication.returncode == 0 and not authentication.dry_run:
-                user = local_user
     if not user:
         record_audit(db, actor=username, action="ui_login_failed", resource_type="auth", success=False)
-        if public_terminal_login:
-            return public_terminal_login_response(request, error="Invalid username or password", status_code=401, db=db)
         return render(request, "login.html", {"error": "Invalid username or password", "return_to": return_to})
     request.session["user_id"] = user.id
     request.session[SESSION_APPLIANCE_INSTANCE_SESSION_KEY] = ensure_appliance_instance_id(db)
@@ -13098,9 +13215,83 @@ def logout(request: Request, csrf: str = Form(...), next: str = Form("")) -> Red
     """
     verify_csrf(request, csrf)
     request.session.clear()
-    if next == "/terminal":
-        return RedirectResponse("/login?next=/terminal", status_code=303)
-    return RedirectResponse("/login", status_code=303)
+    return RedirectResponse(management_ui_path("/login"), status_code=303)
+
+
+@public_router.get("/login", response_class=HTMLResponse, response_model=None)
+def public_login_page(
+    request: Request,
+    next: str = Query(""),
+    identity: Identity | None = Depends(get_session_identity),
+    db: Session = Depends(get_db),
+) -> HTMLResponse | RedirectResponse:
+    """Render the public-plane Web Terminal sign-in page.
+
+    Args:
+        request: Incoming HTTP request.
+        next: Requested same-plane return path.
+        identity: Optional authenticated session identity.
+        db: Active database session.
+    """
+    if not public_ui_request_allowed(request, db, "/terminal"):
+        raise HTTPException(status_code=404, detail="Not found")
+    return_to = safe_public_return_path(next, default="/terminal")
+    if identity:
+        return RedirectResponse(return_to, status_code=303)
+    return public_terminal_login_response(request, db=db)
+
+
+@public_router.post("/login", response_model=None)
+def public_login(
+    request: Request,
+    username: str = Form(...),
+    password: str = Form(...),
+    next: str = Form(""),
+    csrf: str = Form(...),
+    db: Session = Depends(get_db),
+) -> RedirectResponse | HTMLResponse:
+    """Authenticate an eligible local user for the public Web Terminal.
+
+    Args:
+        request: Incoming HTTP request.
+        username: Local account name supplied for authentication.
+        password: Password supplied for the immediate authentication attempt.
+        next: Requested same-plane return path.
+        csrf: Validated CSRF token authorizing the request.
+        db: Active database session.
+    """
+    if not public_ui_request_allowed(request, db, "/terminal"):
+        raise HTTPException(status_code=404, detail="Not found")
+    verify_csrf(request, csrf)
+    return_to = safe_public_return_path(next, default="/terminal")
+    user = authenticate_user(db, username, password)
+    if user is None:
+        local_user = db.execute(select(User).where(User.username == username.strip().lower())).scalar_one_or_none()
+        if local_user_has_web_terminal_access(local_user):
+            authentication = SystemAdapter().authenticate_local_user(local_user.username, password)
+            if authentication.returncode == 0 and not authentication.dry_run:
+                user = local_user
+    if not user:
+        record_audit(db, actor=username, action="public_ui_login_failed", resource_type="auth", success=False)
+        return public_terminal_login_response(request, error="Invalid username or password", status_code=401, db=db)
+    request.session["user_id"] = user.id
+    request.session[SESSION_APPLIANCE_INSTANCE_SESSION_KEY] = ensure_appliance_instance_id(db)
+    record_audit(db, actor=user.username, action="public_ui_login", resource_type="auth")
+    return RedirectResponse(return_to, status_code=303)
+
+
+@public_router.post("/logout", response_model=None)
+def public_logout(request: Request, csrf: str = Form(...), next: str = Form("")) -> RedirectResponse:
+    """End a public-plane session without crossing into management.
+
+    Args:
+        request: Incoming HTTP request.
+        csrf: Validated CSRF token authorizing the request.
+        next: Requested same-plane return path.
+    """
+    verify_csrf(request, csrf)
+    request.session.clear()
+    return RedirectResponse(safe_public_return_path(next, default="/terminal"), status_code=303)
 
 
 @router.post("/appliance/power/{action}", response_model=None)
@@ -19312,7 +19503,7 @@ def certificate_authority_page(
     return render(request, "certificate_authority.html", {"identity": identity, **ca_context(db), "appliance_apply_status": appliance_apply_status(db, "ca")})
 
 
-@router.get("/ca", response_class=HTMLResponse, response_model=None)
+@public_router.get("/ca", response_class=HTMLResponse, response_model=None)
 def public_ca_page(
     request: Request,
     identity: Identity | None = Depends(get_session_identity),
@@ -19331,7 +19522,7 @@ def public_ca_page(
     Raises:
         HTTPException: If the request cannot be fulfilled.
     """
-    if not request_public_service_route_allowed(db, request, "ca"):
+    if not public_ui_request_allowed(request, db, "/ca"):
         raise HTTPException(status_code=404, detail="CA public service is not available on this interface")
     return render(request, "ca_public.html", {"identity": identity, **public_ca_context(db)})
 
@@ -19350,11 +19541,11 @@ def ca_public_login_response(request: Request, *, error: str | None = None, stat
         "ca_request_login.html",
         {
             "error": error,
-            "return_to": "/ca",
-            "login_action": "/ca/login",
+            "return_to": public_ui_path("/ca"),
+            "login_action": public_ui_path("/ca/login"),
             "portal_title": "Atlaso CA",
             "portal_subtitle": "Public trust portal",
-            "back_href": "/ca",
+            "back_href": public_ui_path("/ca"),
             "back_label": "Cancel",
             **(public_portal_links_context(db) if db else {}),
         },
@@ -19394,7 +19585,7 @@ def authenticate_ca_portal_session(
     return RedirectResponse(next_path, status_code=303)
 
 
-@router.get("/ca/login", response_class=HTMLResponse, response_model=None)
+@public_router.get("/ca/login", response_class=HTMLResponse, response_model=None)
 def ca_public_login_page(request: Request, db: Session = Depends(get_db)) -> HTMLResponse:
     """Handle the ca public login page endpoint.
 
@@ -19408,18 +19599,18 @@ def ca_public_login_page(request: Request, db: Session = Depends(get_db)) -> HTM
     Raises:
         HTTPException: If the request cannot be fulfilled.
     """
-    if not request_public_service_route_allowed(db, request, "ca"):
+    if not public_ui_request_allowed(request, db, "/ca"):
         raise HTTPException(status_code=404, detail="CA public service is not available on this interface")
     return ca_public_login_response(request, db=db)
 
 
-@router.post("/ca/login", response_model=None)
+@public_router.post("/ca/login", response_model=None)
 def ca_public_login(
     request: Request,
     username: str = Form(...),
     password: str = Form(...),
     csrf: str = Form(...),
-    next: str = Form("/ca"),
+    next: str = Form(PUBLIC_UI_ROOT + "/ca"),
     db: Session = Depends(get_db),
 ) -> RedirectResponse | HTMLResponse:
     """Handle the ca public login endpoint.
@@ -19438,15 +19629,18 @@ def ca_public_login(
     Raises:
         HTTPException: If the request cannot be fulfilled.
     """
-    if not request_public_service_route_allowed(db, request, "ca"):
+    if not public_ui_request_allowed(request, db, "/ca"):
         raise HTTPException(status_code=404, detail="CA public service is not available on this interface")
+    return_to = safe_public_return_path(next, default="/ca")
+    if return_to != public_ui_path("/ca"):
+        return_to = public_ui_path("/ca")
     return authenticate_ca_portal_session(
         request,
         db,
         username=username,
         password=password,
         csrf=csrf,
-        next_path="/ca" if next != "/ca" else next,
+        next_path=return_to,
         failure_response=lambda failed_request, *, error=None, status_code=200: ca_public_login_response(
             failed_request,
             error=error,
@@ -19477,7 +19671,7 @@ def public_root_ca_response(db: Session, *, bundle: bool = False) -> Response:
     )
 
 
-@router.get("/ca/downloads/root-ca.pem", response_model=None)
+@protocol_router.get("/ca/downloads/root-ca.pem", response_model=None)
 def download_public_root_ca(
     request: Request,
     db: Session = Depends(get_db),
@@ -19499,7 +19693,7 @@ def download_public_root_ca(
     return public_root_ca_response(db)
 
 
-@router.get("/ca/downloads/ca-bundle.pem", response_model=None)
+@protocol_router.get("/ca/downloads/ca-bundle.pem", response_model=None)
 def download_public_ca_bundle(
     request: Request,
     db: Session = Depends(get_db),
@@ -19555,14 +19749,14 @@ def ca_request_portal_login_response(request: Request, *, error: str | None = No
         "ca_request_login.html",
         {
             "error": error,
-            "return_to": "/requests",
+            "return_to": public_ui_path("/ca/requests"),
             **(public_portal_links_context(db) if db else {}),
         },
         status_code=status_code,
     )
 
 
-@router.get("/requests", response_class=HTMLResponse, response_model=None)
+@public_router.get("/ca/requests", response_class=HTMLResponse, response_model=None)
 def ca_portal_requests_page(
     request: Request,
     identity: Identity | None = Depends(get_session_identity),
@@ -19581,7 +19775,7 @@ def ca_portal_requests_page(
     Raises:
         HTTPException: If the request cannot be fulfilled.
     """
-    if not request_public_service_route_allowed(db, request, "ca"):
+    if not public_ui_request_allowed(request, db, "/ca/requests"):
         raise HTTPException(status_code=404, detail="CA public service is not available on this interface")
     if identity is None:
         return ca_request_portal_login_response(request, db=db)
@@ -19589,13 +19783,13 @@ def ca_portal_requests_page(
     return render(request, "ca_request_portal.html", {"identity": identity, **ca_request_context(db)})
 
 
-@router.post("/requests/login", response_model=None)
+@public_router.post("/ca/requests/login", response_model=None)
 def ca_request_portal_login(
     request: Request,
     username: str = Form(...),
     password: str = Form(...),
     csrf: str = Form(...),
-    next: str = Form("/requests"),
+    next: str = Form(PUBLIC_UI_ROOT + "/ca/requests"),
     db: Session = Depends(get_db),
 ) -> RedirectResponse | HTMLResponse:
     """Handle the ca request portal login endpoint.
@@ -19614,7 +19808,7 @@ def ca_request_portal_login(
     Raises:
         HTTPException: If the request cannot be fulfilled.
     """
-    if not request_public_service_route_allowed(db, request, "ca"):
+    if not public_ui_request_allowed(request, db, "/ca/requests"):
         raise HTTPException(status_code=404, detail="CA public service is not available on this interface")
     return authenticate_ca_portal_session(
         request,
@@ -19622,7 +19816,7 @@ def ca_request_portal_login(
         username=username,
         password=password,
         csrf=csrf,
-        next_path="/requests" if next != "/requests" else next,
+        next_path=safe_public_return_path(next, default="/ca/requests"),
         failure_response=lambda failed_request, *, error=None, status_code=200: ca_request_portal_login_response(
             failed_request,
             error=error,
@@ -19632,8 +19826,12 @@ def ca_request_portal_login(
     )
 
 
-@router.post("/requests/logout", response_model=None)
-def ca_request_portal_logout(request: Request, csrf: str = Form(...), next: str = Form("/requests")) -> RedirectResponse:
+@public_router.post("/ca/requests/logout", response_model=None)
+def ca_request_portal_logout(
+    request: Request,
+    csrf: str = Form(...),
+    next: str = Form(PUBLIC_UI_ROOT + "/ca/requests"),
+) -> RedirectResponse:
     """Handle the ca request portal logout endpoint.
 
     Args:
@@ -19646,7 +19844,7 @@ def ca_request_portal_logout(request: Request, csrf: str = Form(...), next: str 
     """
     verify_csrf(request, csrf)
     request.session.clear()
-    return RedirectResponse(next if next in {"/", "/ca"} else "/requests", status_code=303)
+    return RedirectResponse(safe_public_return_path(next, default="/ca/requests"), status_code=303)
 
 
 def _stage_ca_certificate_request(
@@ -19763,7 +19961,7 @@ def submit_ca_request_from_portal(
     return RedirectResponse("/ca/requests", status_code=303)
 
 
-@router.post("/requests", response_model=None)
+@public_router.post("/ca/requests", response_model=None)
 def submit_ca_request_from_portal_alias(
     request: Request,
     common_name: str = Form(...),
@@ -19796,7 +19994,7 @@ def submit_ca_request_from_portal_alias(
     Raises:
         HTTPException: If the request cannot be fulfilled.
     """
-    if not request_public_service_route_allowed(db, request, "ca"):
+    if not public_ui_request_allowed(request, db, "/ca/requests"):
         raise HTTPException(status_code=404, detail="CA public service is not available on this interface")
     if identity is None:
         return ca_request_portal_login_response(request, status_code=401)
@@ -19819,7 +20017,7 @@ def submit_ca_request_from_portal_alias(
         csr_text=csr_text,
     )
     record_audit(db, actor=identity.username, action="submit_ca_certificate_request", resource_type="ca_certificate", resource_id=str(certificate.id))
-    return RedirectResponse("/requests", status_code=303)
+    return RedirectResponse(public_ui_path("/ca/requests"), status_code=303)
 
 
 @router.post("/ca/certificates/{certificate_id}/revoke", response_model=None)
@@ -19851,8 +20049,7 @@ def revoke_ca_certificate_from_portal(
     return RedirectResponse("/ca/requests", status_code=303)
 
 
-@router.post("/requests/certificates/{certificate_id}/revoke", response_model=None)
-@router.post("/certificates/{certificate_id}/revoke", response_model=None)
+@public_router.post("/ca/requests/certificates/{certificate_id}/revoke", response_model=None)
 def revoke_ca_certificate_from_portal_alias(
     request: Request,
     certificate_id: int,
@@ -19877,7 +20074,7 @@ def revoke_ca_certificate_from_portal_alias(
     Raises:
         HTTPException: If the request cannot be fulfilled.
     """
-    if not request_public_service_route_allowed(db, request, "ca"):
+    if not public_ui_request_allowed(request, db, "/ca/requests"):
         raise HTTPException(status_code=404, detail="CA public service is not available on this interface")
     if identity is None:
         return ca_request_portal_login_response(request, status_code=401)
@@ -19885,10 +20082,10 @@ def revoke_ca_certificate_from_portal_alias(
     verify_csrf(request, csrf)
     certificate = _revoke_ca_certificate(db, certificate_id=certificate_id, actor=identity.username, reason=reason)
     record_audit(db, actor=identity.username, action="revoke_ca_certificate", resource_type="ca_certificate", resource_id=str(certificate.id))
-    return RedirectResponse("/requests", status_code=303)
+    return RedirectResponse(public_ui_path("/ca/requests"), status_code=303)
 
 
-@router.get("/certificate-authority/downloads/root-ca.pem", response_model=None)
+@protocol_router.get("/certificate-authority/downloads/root-ca.pem", response_model=None)
 def download_root_ca(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
@@ -19916,7 +20113,7 @@ def download_root_ca(
     )
 
 
-@router.get("/certificate-authority/downloads/ca-bundle.pem", response_model=None)
+@protocol_router.get("/certificate-authority/downloads/ca-bundle.pem", response_model=None)
 def download_ca_bundle(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
@@ -19963,7 +20160,7 @@ def get_exportable_ca_certificate(db: Session, certificate_id: int) -> CaCertifi
     return certificate
 
 
-@router.get("/certificate-authority/certificates/{certificate_id}/downloads/certificate.pem", response_model=None)
+@protocol_router.get("/certificate-authority/certificates/{certificate_id}/downloads/certificate.pem", response_model=None)
 def download_ca_certificate(
     certificate_id: int,
     identity: Identity = Depends(require_session_identity),
@@ -19989,7 +20186,7 @@ def download_ca_certificate(
     )
 
 
-@router.get("/certificate-authority/certificates/{certificate_id}/downloads/chain.pem", response_model=None)
+@protocol_router.get("/certificate-authority/certificates/{certificate_id}/downloads/chain.pem", response_model=None)
 def download_ca_certificate_chain(
     certificate_id: int,
     identity: Identity = Depends(require_session_identity),
@@ -20016,7 +20213,7 @@ def download_ca_certificate_chain(
     )
 
 
-@router.get("/certificate-authority/certificates/{certificate_id}/downloads/private-key.pem", response_model=None)
+@protocol_router.get("/certificate-authority/certificates/{certificate_id}/downloads/private-key.pem", response_model=None)
 def download_ca_certificate_private_key(
     certificate_id: int,
     identity: Identity = Depends(require_session_identity),
@@ -28484,7 +28681,7 @@ def audit_log(
     )
 
 
-@router.get("/pxe/esxi/ks/{kickstart_file}", response_model=None)
+@protocol_router.get("/pxe/esxi/ks/{kickstart_file}", response_model=None)
 def serve_esxi_kickstart_file(kickstart_file: str, mac: str = "", db: Session = Depends(get_db)) -> Response:
     """Handle the serve esxi kickstart file endpoint.
 
@@ -28565,7 +28762,7 @@ def serve_esxi_kickstart_file(kickstart_file: str, mac: str = "", db: Session = 
     )
 
 
-@router.get("/pxe/esxi/boot.ipxe", response_model=None)
+@protocol_router.get("/pxe/esxi/boot.ipxe", response_model=None)
 def serve_esxi_http_ipxe_script() -> FileResponse:
     """Handle the serve esxi http ipxe script endpoint.
 

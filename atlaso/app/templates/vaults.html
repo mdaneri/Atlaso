@@ -23,7 +23,7 @@
           <div class="vault-panel-toolbar">
             <p class="muted">{{ vault.description or "No description." }}</p>
             <form
-              action="/vaults/{{ vault.id }}/delete"
+              action="{{ management_ui_root }}/vaults/{{ vault.id }}/delete"
               method="post"
               data-confirm-modal
               data-confirm-title="Delete {{ vault.name }} vault?"
@@ -48,7 +48,7 @@
 </section>
 
 <dialog id="vault-create-modal" class="confirm-modal wide-modal vcf-sddc-wizard-modal vault-create-wizard-modal" aria-labelledby="vault-create-title" aria-describedby="vault-create-description">
-  <form class="confirm-modal-panel vcf-sddc-wizard-panel" action="/vaults" method="post" data-atlaso-wizard data-vault-create-form>
+  <form class="confirm-modal-panel vcf-sddc-wizard-panel" action="{{ management_ui_root }}/vaults" method="post" data-atlaso-wizard data-vault-create-form>
     <input type="hidden" name="csrf" value="{{ csrf_token }}">
     <aside class="vcf-sddc-wizard-rail"><p class="kicker">New vault</p><h2 id="vault-create-title">Add vault</h2><ol class="vcf-sddc-step-list"><li><button class="vcf-sddc-step-button active" type="button" data-atlaso-wizard-nav="identity"><span>1</span><strong>Identity</strong><small>Name and purpose</small></button></li><li><button class="vcf-sddc-step-button" type="button" data-atlaso-wizard-nav="review" disabled><span>2</span><strong>Review</strong><small>Confirm vault</small></button></li></ol></aside>
     <div class="vcf-sddc-wizard-main"><div class="confirm-modal-body vcf-sddc-wizard-body">
@@ -75,5 +75,5 @@
   </form>
 </dialog>
 
-{% for vault in vaults %}{% for entry in vault.entry_rows %}<form id="vault-entry-delete-{{ entry.id }}" action="/vaults/{{ vault.id }}/entries/{{ entry.id }}/delete" method="post" class="hidden" data-confirm-modal data-confirm-title="Remove {{ entry.key }}?" data-confirm-message="This permanently removes the encrypted password for {{ entry.key }} from the {{ vault.name }} vault." data-confirm-label="Remove"><input type="hidden" name="csrf" value="{{ csrf_token }}"></form>{% endfor %}{% endfor %}
+{% for vault in vaults %}{% for entry in vault.entry_rows %}<form id="vault-entry-delete-{{ entry.id }}" action="{{ management_ui_root }}/vaults/{{ vault.id }}/entries/{{ entry.id }}/delete" method="post" class="hidden" data-confirm-modal data-confirm-title="Remove {{ entry.key }}?" data-confirm-message="This permanently removes the encrypted password for {{ entry.key }} from the {{ vault.name }} vault." data-confirm-label="Remove"><input type="hidden" name="csrf" value="{{ csrf_token }}"></form>{% endfor %}{% endfor %}
 {% endblock %}

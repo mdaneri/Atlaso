@@ -26,7 +26,7 @@
         {% if not vcf_ldap_authorized %}
           <section data-atlaso-wizard-step="organization"><div class="alert warning">Managed LDAP VCF configuration is available only to Atlaso administrators.</div></section>
         {% elif not vcf_ldap_available or not vcf_ldap_organizations %}
-          <section data-atlaso-wizard-step="organization"><div class="empty-state"><h3>Enable Managed LDAP first</h3><p>Enable the LDAP service and create at least one organization before configuring VCF.</p><a class="button primary" href="/ldap">Open Managed LDAP</a></div></section>
+          <section data-atlaso-wizard-step="organization"><div class="empty-state"><h3>Enable Managed LDAP first</h3><p>Enable the LDAP service and create at least one organization before configuring VCF.</p><a class="button primary" href="{{ management_ui_root }}/ldap">Open Managed LDAP</a></div></section>
         {% else %}
           <input type="hidden" name="csrf" value="{{ csrf_token }}">
           <section data-atlaso-wizard-step="organization">
@@ -37,7 +37,7 @@
                 </select>
               </label>
               {% if vcf_ldap_selected_organization %}
-                <div class="button-row"><a class="button secondary" href="/ldap/organizations/{{ vcf_ldap_selected_organization.id }}/vcf-bundle.zip">Download manual bundle</a></div>
+                <div class="button-row"><a class="button secondary" href="{{ management_ui_root }}/ldap/organizations/{{ vcf_ldap_selected_organization.id }}/vcf-bundle.zip">Download manual bundle</a></div>
                 <div class="settings-list compact-list">
                   <div><span>Mandatory VCF mapping</span><strong>serviceAccount → employeeType</strong></div>
                   <div><span>User search base</span><strong>ou=users,{{ vcf_ldap_selected_organization.suffix_dn }}</strong></div>
@@ -100,7 +100,7 @@
 
 {% if vcf_ldap_selected_organization %}
 <dialog id="ldap-generate-modal" class="confirm-modal wide-modal vcf-sddc-wizard-modal resource-wizard-dialog" aria-labelledby="ldap-generate-modal-title" aria-describedby="ldap-generate-modal-description" {% if ldap_generate_auto_open %}data-ldap-generate-auto-open{% endif %}>
-  <form class="confirm-modal-panel vcf-sddc-wizard-panel" action="/ldap/organizations/{{ vcf_ldap_selected_organization.id }}/generate-directory" method="post" data-ldap-generate-form data-atlaso-wizard>
+  <form class="confirm-modal-panel vcf-sddc-wizard-panel" action="{{ management_ui_root }}/ldap/organizations/{{ vcf_ldap_selected_organization.id }}/generate-directory" method="post" data-ldap-generate-form data-atlaso-wizard>
     <input type="hidden" name="csrf" value="{{ csrf_token }}">
     <input type="hidden" name="action" value="generate" data-ldap-generate-action>
     <aside class="vcf-sddc-wizard-rail" aria-label="Generate test directory steps">

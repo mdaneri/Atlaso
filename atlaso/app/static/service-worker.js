@@ -1,16 +1,17 @@
-const ATLASO_CACHE = "atlaso-pwa-v238";
+const ATLASO_CACHE = "atlaso-management-pwa-v241";
 const ATLASO_ASSETS = [
   "/manifest.webmanifest",
   "/favicon.ico",
   "/static/offline.html",
   "/static/app.css?v=nts-restoration-appliance-update-261-20260809-3",
   "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-8",
+  "/static/ui-routes.js?v=issue-287-1",
   "/static/appliance-apply-polling.js?v=issue-280-1",
-  "/static/app.js?v=issue-280-1",
-  "/static/terminal.js?v=web-terminal-review-20260716-3",
+  "/static/app.js?v=issue-287-2",
+  "/static/terminal.js?v=issue-287-2",
   "/static/vendor/xterm/xterm.css?v=5.5.0",
   "/static/vendor/xterm/xterm.js?v=5.5.0",
-  "/static/pwa.js?v=atlaso-brand-20260725-1",
+  "/static/pwa.js?v=issue-287-2",
   "/static/brand/atlaso-icon.svg",
   "/static/brand/atlaso-logo-horizontal-light.svg",
   "/static/brand/atlaso-logo-horizontal-transparent-1200x300.png",
@@ -75,7 +76,11 @@ function hasDownloadLikePath(url) {
 
 function shouldServeOfflineFallback(request, url) {
   const accept = request.headers.get("Accept") || "";
-  return accept.includes("text/html") && !hasDownloadLikePath(url);
+  return (
+    accept.includes("text/html") &&
+    (url.pathname === "/ui/management" || url.pathname.startsWith("/ui/management/")) &&
+    !hasDownloadLikePath(url)
+  );
 }
 
 self.addEventListener("fetch", (event) => {

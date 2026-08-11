@@ -34,9 +34,9 @@ service-specific apply buttons or service-specific apply submit routes.
 `Appliance Apply` is the global review and submit workflow, presented through a shared modal rather than a standalone
 page. The bottom-left review card and page-level review actions open the modal, which lists changed apply units, checks
 valid changed units by default, and lets an operator unselect any unit that should remain pending. A direct GET to
-`/appliance-apply` redirects to `/dashboard#appliance-apply-review`, where the same modal opens automatically. The
-`/appliance-apply` POST, `/appliance-apply/review`, and `/appliance-apply/status` routes remain the backend workflow
-used by the modal.
+`/ui/management/appliance-apply` redirects to `/ui/management/dashboard#appliance-apply-review`, where the same modal
+opens automatically. The `/ui/management/appliance-apply` POST, `/ui/management/appliance-apply/review`, and
+`/ui/management/appliance-apply/status` routes remain the browser-only backend workflow used by the modal.
 
 The status route is deliberately a lightweight desired-state projection: it compares current snapshots with stored
 baselines without running apply-time reconciliation or privileged observation helpers. Full review, validation, and

@@ -5057,7 +5057,6 @@ def _public_services_config_errors(path: Path) -> list[str]:
         if _vcf_depot_auth_required(text) and "proxy_pass http://127.0.0.1:8000/PROD/auth-failure;" not in text:
             errors.append("Authenticated public services VCF Offline Depot config must return 401 to non-browser clients.")
     for forbidden in [
-        "location = /favicon.ico",
         "location = /manifest.webmanifest",
         "location = /service-worker.js",
         "location = /requests/login",
@@ -5084,8 +5083,6 @@ def _public_services_config_errors(path: Path) -> list[str]:
             "location ^~ /requests/",
             "location ^~ /static/",
             "location = /favicon.ico",
-            "location = /manifest.webmanifest",
-            "location = /service-worker.js",
             "proxy_set_header X-Forwarded-Proto https;",
         ]:
             if required not in text:
@@ -8462,8 +8459,6 @@ def _vcf_depot_config_errors(path: Path) -> list[str]:
         "location = / {",
         "location ^~ /static/",
         "location = /favicon.ico",
-        "location = /manifest.webmanifest",
-        "location = /service-worker.js",
         "location = /PROD",
         "return 301 /PROD/;",
         "location = /PROD/login",

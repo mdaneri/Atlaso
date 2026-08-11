@@ -43,14 +43,14 @@
             <td class="button-row">
               <button class="button tiny secondary" type="button" data-reset-user-button data-user-id="{{ user.id }}" data-username="{{ user.username }}">Reset password</button>
               {% if os_state in ["locked", "faillock blocked"] and user.enabled %}
-                <form action="/users/{{ user.id }}/unlock" method="post">
+                <form action="{{ management_ui_root }}/users/{{ user.id }}/unlock" method="post">
                   <input type="hidden" name="csrf" value="{{ csrf_token }}">
                   <button class="button tiny secondary" type="submit">Unlock OS account</button>
                 </form>
               {% endif %}
               {% if user.enabled %}
                 <form
-                  action="/users/{{ user.id }}/disable"
+                  action="{{ management_ui_root }}/users/{{ user.id }}/disable"
                   method="post"
                   data-confirm-modal
                   data-confirm-title="Disable {{ user.username }}?"
@@ -62,7 +62,7 @@
                 </form>
               {% endif %}
               <form
-                action="/users/{{ user.id }}/delete"
+                action="{{ management_ui_root }}/users/{{ user.id }}/delete"
                 method="post"
                 data-confirm-modal
                 data-confirm-title="Remove {{ user.username }}?"
@@ -85,7 +85,7 @@
         <h2>Password Policy</h2>
         <span class="status-pill good">strict</span>
       </div>
-      <form class="form-stack" action="/users/password-policy" method="post" data-autosave-form data-autosave-status-id="users-password-policy-status">
+      <form class="form-stack" action="{{ management_ui_root }}/users/password-policy" method="post" data-autosave-form data-autosave-status-id="users-password-policy-status">
         <input type="hidden" name="csrf" value="{{ csrf_token }}">
         <label>
           <span class="field-label"><span>Minimum length</span><button class="help-icon" type="button" data-help="Sets the desired local password minimum length. Atlaso enforces it before staging a password, and Local Users apply writes it to Photon PAM/pwquality.">i</button></span>
@@ -131,7 +131,7 @@
       <p class="muted">This page manages local Atlaso and Photon accounts only. Managed VCF directory users remain isolated under the LDAP service and are never copied into this table.</p>
       <div class="settings-list compact-list">
         <div><span>Local users</span><strong>managed here</strong></div>
-        <div><span>Managed VCF LDAP</span><strong><a class="text-link" href="/ldap">separate directory</a></strong></div>
+        <div><span>Managed VCF LDAP</span><strong><a class="text-link" href="{{ management_ui_root }}/ldap">separate directory</a></strong></div>
         <div><span>OIDC</span><strong>provider settings</strong></div>
       </div>
     </div>
@@ -146,7 +146,7 @@
 {% call resource_wizard(
   "user-account-dialog",
   "user-account-form",
-  "/users",
+  management_ui_path("/users"),
   local_user_steps,
   "Define the local user",
   "Set the Atlaso identity, roles, and desired Photon access.",
@@ -200,7 +200,7 @@
 {% endcall %}
 
 <dialog id="user-password-modal" class="confirm-modal" aria-labelledby="user-password-modal-title">
-  <form id="user-password-form" class="confirm-modal-panel form-stack" action="/users/0/password" method="post">
+  <form id="user-password-form" class="confirm-modal-panel form-stack" action="{{ management_ui_root }}/users/0/password" method="post">
     <input type="hidden" name="csrf" value="{{ csrf_token }}">
     <div class="confirm-modal-body">
       <p class="kicker">Local account</p>
