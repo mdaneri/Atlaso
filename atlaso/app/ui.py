@@ -27418,6 +27418,25 @@ def users_page(
     )
 
 
+@router.get("/users/status", response_model=None, include_in_schema=False)
+def users_status(
+    identity: Identity = Depends(require_session_identity),
+    db: Session = Depends(get_db),
+) -> JSONResponse:
+    """Return current local-user grid rows for an in-place status refresh.
+
+    Args:
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The current Local Users grid payload.
+    """
+    require_admin_identity(identity)
+    rows = users_context(db, identity)["users_json"]
+    return JSONResponse({"users": rows}, headers={"Cache-Control": "no-store"})
+
+
 @router.post("/users/password-policy", response_model=None)
 def update_users_password_policy(
     request: Request,

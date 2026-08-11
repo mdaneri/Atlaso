@@ -9,7 +9,7 @@
         <h2>Local Users</h2>
         <p class="muted">Manage appliance-local Atlaso accounts. VCF directory identities are managed separately under Managed LDAP.</p>
       </div>
-      <span class="status-pill muted">{{ users|length }} users</span>
+      <span id="users-count" class="status-pill muted">{{ users|length }} users</span>
     </div>
     <div id="users-error" class="alert hidden"></div>
     <div
@@ -41,7 +41,7 @@
             </td>
             <td>{{ user.created_at.strftime("%Y-%m-%d") }}</td>
             <td class="button-row">
-              <button class="button tiny secondary" type="button" data-reset-user-button data-user-id="{{ user.id }}" data-username="{{ user.username }}">Reset password</button>
+              <button class="button tiny secondary" type="button" data-reset-user-button data-user-id="{{ user.id }}" data-username="{{ user.username }}" data-user-enabled="{{ 'true' if user.enabled else 'false' }}">{{ "Reset Photon OS password" if user.enabled else "Set Photon OS password and enable user" }}</button>
               {% if os_state in ["locked", "faillock blocked"] and user.enabled %}
                 <form action="{{ management_ui_root }}/users/{{ user.id }}/unlock" method="post">
                   <input type="hidden" name="csrf" value="{{ csrf_token }}">
@@ -204,8 +204,8 @@
     <input type="hidden" name="csrf" value="{{ csrf_token }}">
     <div class="confirm-modal-body">
       <p class="kicker">Local account</p>
-      <h2 id="user-password-modal-title">Reset password</h2>
-      <p id="user-password-modal-message" class="muted">Set/reset the Photon OS password. The password is held only until global Local Users apply.</p>
+      <h2 id="user-password-modal-title">Set Photon OS password and enable user</h2>
+      <p id="user-password-modal-message" class="muted">Setting the Photon OS password also enables this local user in desired state. The password is held only until global Local Users apply.</p>
     </div>
     <label>
       <span class="field-label"><span>New password</span><button class="help-icon" type="button" data-help="Minimum length is 8 characters.">i</button></span>
@@ -233,7 +233,7 @@
     </label>
     <div class="confirm-modal-actions">
       <button class="button ghost" value="cancel" type="button" data-user-password-cancel>Cancel</button>
-      <button class="button primary" type="submit">Set/reset password</button>
+      <button id="user-password-submit" class="button primary" type="submit">Set password and enable user</button>
     </div>
   </form>
 </dialog>

@@ -1003,7 +1003,7 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert service_worker.headers["cache-control"] == "no-cache"
     assert service_worker.headers["service-worker-allowed"] == "/ui/management/"
     assert "ATLASO_CACHE" in service_worker.text
-    assert "atlaso-management-pwa-v242" in service_worker.text
+    assert "atlaso-management-pwa-v243" in service_worker.text
     assert 'fetch(asset, { cache: "reload" })' in service_worker.text
     assert ".catch(() => undefined)" in service_worker.text
     assert 'request.mode === "navigate"' in service_worker.text
@@ -1021,7 +1021,7 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-8" in service_worker.text
     assert "/static/appliance-apply-polling.js?v=issue-280-1" in service_worker.text
     assert "/static/ui-routes.js?v=issue-287-1" in service_worker.text
-    assert "/static/app.js?v=vsphere-key-providers-170-issue-287-20260810-1" in service_worker.text
+    assert "/static/app.js?v=users-refresh-278-279-20260811-1" in service_worker.text
     assert "/static/terminal.js?v=issue-287-2" in service_worker.text
     assert "/static/pwa.js?v=issue-287-2" in service_worker.text
     assert "vcfdt-configuration-248-20260807-14" not in service_worker.text
@@ -1053,8 +1053,8 @@ def test_shared_ui_pattern_shell_and_wizard_contracts(client):
     base = (templates / "base.html").read_text(encoding="utf-8")
     public_base = (templates / "public_portal_base.html").read_text(encoding="utf-8")
     for shell, app_asset in (
-        (base, "/static/app.js?v=vsphere-key-providers-170-issue-287-20260810-1"),
-        (public_base, "/static/app.js?v=vsphere-key-providers-170-issue-287-20260810-1"),
+        (base, "/static/app.js?v=users-refresh-278-279-20260811-1"),
+        (public_base, "/static/app.js?v=users-refresh-278-279-20260811-1"),
         (base, "/static/appliance-apply-polling.js?v=issue-280-1"),
     ):
         assert shell.index("/static/vendor/tabulator/tabulator.min.js") < shell.index(
@@ -1610,7 +1610,8 @@ def test_reported_template_accessibility_contracts():
     assert 'data-atlaso-wizard-step="password"' not in users_template
     assert 'data-atlaso-wizard-step="enablement"' not in users_template
     assert '<input type="checkbox" name="enabled" hidden>' in users_template
-    assert "Set/reset Photon OS password" in app_js
+    assert "Set Photon OS password and enable user" in app_js
+    assert "Reset Photon OS password" in app_js
     assert "cell.setValue(previousValue);" in app_js
     for template_name, form_marker in {
         "authentication.html": '"api-token-form"',
@@ -1678,7 +1679,7 @@ def test_monitor_page_renders_and_data_endpoint(client):
     assert "swagger-link-icon" in page.text
     assert "/static/app.css?v=vsphere-key-providers-170-20260810-1" in page.text
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-8" in page.text
-    assert "/static/app.js?v=vsphere-key-providers-170-issue-287-20260810-1" in page.text
+    assert "/static/app.js?v=users-refresh-278-279-20260811-1" in page.text
     app_css = client.get("/static/app.css")
     assert app_css.status_code == 200
     assert ".split-workspace > .wide-panel" in app_css.text
@@ -6887,7 +6888,8 @@ def test_local_users_page_separates_ldap_authentication(client):
     assert "user-password-modal" in users.text
     assert "data-password-toggle" in users.text
     assert "Password Reset" not in users.text
-    assert "Reset password" in users.text
+    assert "Set Photon OS password and enable user" in users.text
+    assert "Reset Photon OS password" in users.text
     assert "Remove" in users.text
     assert "Password Policy" in users.text
     assert "Local Users has pending appliance changes" in users.text
@@ -6980,6 +6982,8 @@ def test_local_users_page_separates_ldap_authentication(client):
     assert "userActionsFormatter" not in app_js.text
     assert "formatter: userActionsFormatter" not in app_js.text
     assert "openUserPasswordModal" in app_js.text
+    assert 'row.getData().enabled ? "Reset Photon OS password" : "Set Photon OS password and enable user"' in app_js.text
+    assert 'enabled: button.dataset.userEnabled === "true"' in app_js.text
     assert "deleteUserFromMenu" not in app_js.text
     assert "Unlock OS account" in app_js.text
     assert "disableUserFromMenu" in app_js.text
@@ -7012,11 +7016,62 @@ def test_local_users_page_separates_ldap_authentication(client):
     assert 'field: "web_terminal_access"' in app_js.text
     assert 'title: "Web SSH"' in app_js.text
     assert "Temp Password" not in app_js.text
+    apply_refresh_js = app_js.text.split("async function refreshUsersAfterApplianceApply", 1)[1].split(
+        "async function submitApplianceApplyForm", 1
+    )[0]
+    assert 'window.location.pathname !== managementUiPath("/users")' in apply_refresh_js
+    assert 'selectedUnits.includes("local_users")' in apply_refresh_js
+    assert 'fetch(managementUiPath("/users/status")' in apply_refresh_js
+    assert "await table.replaceData([...payload.users, newUserRow()])" in apply_refresh_js
+    assert 'task?.status !== "succeeded"' in apply_refresh_js
     app_css = client.get("/static/app.css").text
     assert ".users-main-panel {" in app_css
     assert "height: calc(100vh - 144px);" in app_css
     assert ".users-grid {" in app_css
     assert "flex: 1 1 0;" in app_css
+
+
+def test_local_users_status_returns_current_uncached_grid_rows(client, monkeypatch, tmp_path):
+    """Verify that local users status returns current uncached grid rows.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    import atlaso.app.ui as ui
+    from atlaso.app.adapters.system import AdapterResult
+
+    class StatusAdapter:
+        """Return a current Photon account state for the refresh endpoint."""
+
+        dry_run = False
+
+        def local_users_status(self, config_path: str) -> AdapterResult:
+            """Return one current Photon account status row.
+
+            Args:
+                config_path: Short-lived status input path.
+            """
+            return AdapterResult(
+                command=["atlaso-helper", "local-users", "status", config_path],
+                dry_run=False,
+                stdout='{"local_users":"status ok","users":[{"username":"admin","state":"present","detail":"password set"}]}',
+            )
+
+    monkeypatch.setattr(ui, "LOCAL_USERS_STAGED_CONFIG_PATH", str(tmp_path / "local-users" / "atlaso-users.json"))
+    monkeypatch.setattr(ui, "SystemAdapter", StatusAdapter)
+    login(client)
+
+    response = client.get("/users/status")
+
+    assert response.status_code == 200
+    assert response.headers["cache-control"] == "no-store"
+    rows = response.json()["users"]
+    admin = next(row for row in rows if row["username"] == "admin")
+    assert admin["os_account_state"] == "present"
+    assert admin["os_account_detail"] == "password set"
+    assert "/users/status" not in client.get("/openapi.json").json()["paths"]
 
 
 def test_managed_ldap_page_creates_org_user_group_and_shows_secret_once(client):
