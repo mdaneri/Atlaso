@@ -20,7 +20,7 @@ proof-of-concept, lab, and test environments.
 - [Services](services/index.md) for DNS, identity, storage, network boot, VCF/ESX password vaults, and VCF integrations.
 - [Reference](reference/index.md) for APIs, image building, interoperability, and detailed technical behavior.
 - [Contribute](contribute/index.md) for repository workflow, documentation, design, and implementation policies.
-- [Project](project/index.md) for branding, roadmaps, and historical design records.
+- [Project](project/index.md) for the Atlaso name, branding, roadmaps, and historical design records.
 
 > **Latest documentation:** This site describes the latest supported Atlaso release. Pages marked **Roadmap** or
 > **Historical** are context, not statements of current appliance behavior.
