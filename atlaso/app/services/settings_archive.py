@@ -32,8 +32,6 @@ from atlaso.app.models import (
     EsxStorageVolume,
     FirewallRule,
     FirewallSettings,
-    KmsClient,
-    KmsKey,
     KmsSettings,
     Job,
     LdapGroup,
@@ -71,6 +69,9 @@ from atlaso.app.models import (
     VaultEntry,
     VlanInterface,
     WanPolicy,
+    VsphereKeyProvider,
+    VsphereTrustedVcenter,
+    VsphereTrustedVcenterCertificate,
 )
 from atlaso.app.seed import NTP_NTS_RESTORATION_SETTING_KEY, SEED_EXAMPLES_SETTING_KEY, seed_initial_data, seed_update_sources
 from atlaso.app.services.dnsmasq import DNS_CONDITIONAL_FORWARDERS_SETTING_KEY
@@ -116,7 +117,6 @@ SCALAR_TABLES = {
     "ca_settings": CaSettings,
     "ca_profiles": CaProfile,
     "kms_settings": KmsSettings,
-    "kms_clients": KmsClient,
     "ldap_settings": LdapSettings,
     "vcf_private_registry_settings": VcfPrivateRegistrySettings,
     "vcf_registry_bundles": VcfRegistryBundle,
@@ -147,8 +147,9 @@ RESTORE_DELETE_MODELS = [
     VcfOfflineDepotSettings,
     VcfPrivateRegistrySettings,
     VcfBackupSettings,
-    KmsKey,
-    KmsClient,
+    VsphereTrustedVcenterCertificate,
+    VsphereTrustedVcenter,
+    VsphereKeyProvider,
     KmsSettings,
     OidcClientRedirectUri,
     OidcAuthorizationCode,
@@ -256,7 +257,9 @@ def export_settings_archive(db: Session, *, actor: str) -> dict[str, Any]:
         for row in _ca_certificates_to_archive(db)
         if ntp_server_enabled or row.get("managed_owner") != "ntp:nts"
     ]
-    data["kms_keys"] = _kms_keys_to_archive(db)
+    data["vsphere_key_providers"] = _vsphere_key_providers_to_archive(db)
+    data["vsphere_trusted_vcenters"] = _vsphere_trusted_vcenters_to_archive(db)
+    data["vsphere_trusted_vcenter_certificates"] = _vsphere_certificates_to_archive(db)
     data["ldap_organizations"] = _ldap_organizations_to_archive(db)
     data["ldap_users"] = _ldap_users_to_archive(db)
     data["ldap_groups"] = _ldap_groups_to_archive(db)
@@ -337,19 +340,65 @@ def _ca_certificates_to_archive(db: Session) -> list[dict[str, Any]]:
     return rows
 
 
-def _kms_keys_to_archive(db: Session) -> list[dict[str, Any]]:
-    """Return kms keys to archive.
+def _vsphere_key_providers_to_archive(db: Session) -> list[dict[str, Any]]:
+    """Return public provider desired state with immutable UUIDs.
 
     Args:
         db: Active database session.
     """
-    clients = {client.id: client.name for client in db.execute(select(KmsClient)).scalars().all()}
-    rows = []
-    for key in db.execute(select(KmsKey)).scalars().all():
-        payload = _row_to_dict(key, exclude={"owner_client_id"})
-        payload["owner_client_name"] = clients.get(key.owner_client_id) if key.owner_client_id else ""
-        rows.append(payload)
-    return rows
+    return [
+        {
+            "id": row.id,
+            "name": row.name,
+            "description": row.description,
+            "enabled": row.enabled,
+        }
+        for row in db.execute(select(VsphereKeyProvider).order_by(VsphereKeyProvider.name)).scalars().all()
+    ]
+
+
+def _vsphere_trusted_vcenters_to_archive(db: Session) -> list[dict[str, Any]]:
+    """Return provider-scoped trusted-vCenter desired state.
+
+    Args:
+        db: Active database session.
+    """
+    return [
+        {
+            "id": row.id,
+            "provider_id": row.provider_id,
+            "name": row.name,
+            "hostname": row.hostname,
+            "description": row.description,
+            "enabled": row.enabled,
+        }
+        for row in db.execute(select(VsphereTrustedVcenter).order_by(VsphereTrustedVcenter.name)).scalars().all()
+    ]
+
+
+def _vsphere_certificates_to_archive(db: Session) -> list[dict[str, Any]]:
+    """Return public certificate trust without private or operational-key material.
+
+    Args:
+        db: Active database session.
+    """
+    return [
+        {
+            "id": row.id,
+            "trusted_vcenter_id": row.trusted_vcenter_id,
+            "fingerprint_sha256": row.fingerprint_sha256,
+            "certificate_pem": row.certificate_pem,
+            "subject": row.subject,
+            "issuer": row.issuer,
+            "serial_number": row.serial_number,
+            "source": row.source,
+        }
+        for row in db.execute(
+            select(VsphereTrustedVcenterCertificate).order_by(
+                VsphereTrustedVcenterCertificate.fingerprint_sha256
+            )
+        ).scalars().all()
+    ]
 
 
 def _ldap_organizations_to_archive(db: Session) -> list[dict[str, Any]]:
@@ -699,9 +748,18 @@ def restore_settings_archive(db: Session, archive: dict[str, Any]) -> dict[str, 
             db.delete(certificate)
         counts["ca_certificates"] -= len(stale_nts_certificates)
     counts["kms_settings"] = _insert_rows(db, KmsSettings, data.get("kms_settings", []))
-    counts["kms_clients"] = _insert_rows(db, KmsClient, data.get("kms_clients", []))
-    db.flush()
-    counts["kms_keys"] = _restore_kms_keys(db, data.get("kms_keys", []))
+    counts["vsphere_key_providers"] = _restore_vsphere_key_providers(
+        db,
+        data.get("vsphere_key_providers", []),
+    )
+    counts["vsphere_trusted_vcenters"] = _restore_vsphere_trusted_vcenters(
+        db,
+        data.get("vsphere_trusted_vcenters", []),
+    )
+    counts["vsphere_trusted_vcenter_certificates"] = _restore_vsphere_certificates(
+        db,
+        data.get("vsphere_trusted_vcenter_certificates", []),
+    )
     counts["ldap_settings"] = _insert_rows(db, LdapSettings, data.get("ldap_settings", []))
     counts["ldap_organizations"] = _restore_ldap_organizations(db, data.get("ldap_organizations", []))
     counts["ldap_users"] = _restore_ldap_users(db, data.get("ldap_users", []))
@@ -798,7 +856,11 @@ def desired_state_counts(db: Session) -> dict[str, int]:
     counts["routing_rules"] = len(db.execute(select(RoutingRule)).scalars().all())
     counts["dhcp_options"] = len(db.execute(select(DhcpOption)).scalars().all())
     counts["ca_certificates"] = len(db.execute(select(CaCertificate)).scalars().all())
-    counts["kms_keys"] = len(db.execute(select(KmsKey)).scalars().all())
+    counts["vsphere_key_providers"] = len(db.execute(select(VsphereKeyProvider)).scalars().all())
+    counts["vsphere_trusted_vcenters"] = len(db.execute(select(VsphereTrustedVcenter)).scalars().all())
+    counts["vsphere_trusted_vcenter_certificates"] = len(
+        db.execute(select(VsphereTrustedVcenterCertificate)).scalars().all()
+    )
     counts["ldap_organizations"] = len(db.execute(select(LdapOrganization)).scalars().all())
     counts["ldap_users"] = len(db.execute(select(LdapUser)).scalars().all())
     counts["ldap_groups"] = len(db.execute(select(LdapGroup)).scalars().all())
@@ -1113,19 +1175,89 @@ def _restore_ca_certificates(db: Session, rows: list[dict[str, Any]]) -> int:
     return len(rows)
 
 
-def _restore_kms_keys(db: Session, rows: list[dict[str, Any]]) -> int:
-    """Return restore kms keys.
+def _restore_vsphere_key_providers(db: Session, rows: list[dict[str, Any]]) -> int:
+    """Restore provider UUIDs and public desired-state metadata.
 
     Args:
         db: Active database session.
         rows: Database or collection rows to process.
     """
-    clients = {client.name: client.id for client in db.execute(select(KmsClient)).scalars().all()}
     for row in rows:
-        payload = _model_kwargs(KmsKey, row, exclude={"owner_client_id"})
-        client_name = str(row.get("owner_client_name") or "")
-        payload["owner_client_id"] = clients.get(client_name) if client_name else None
-        db.add(KmsKey(**payload))
+        db.add(
+            VsphereKeyProvider(
+                id=str(row["id"]),
+                name=str(row["name"]),
+                description=str(row.get("description") or ""),
+                enabled=bool(row.get("enabled", False)),
+            )
+        )
+    db.flush()
+    return len(rows)
+
+
+def _restore_vsphere_trusted_vcenters(db: Session, rows: list[dict[str, Any]]) -> int:
+    """Restore trusted-vCenter rows without changing provider UUIDs.
+
+    Args:
+        db: Active database session.
+        rows: Database or collection rows to process.
+    """
+    provider_ids = set(db.execute(select(VsphereKeyProvider.id)).scalars().all())
+    for row in rows:
+        provider_id = str(row["provider_id"])
+        if provider_id not in provider_ids:
+            raise ValueError("Archived trusted vCenter references an unknown provider UUID.")
+        db.add(
+            VsphereTrustedVcenter(
+                id=str(row["id"]),
+                provider_id=provider_id,
+                name=str(row["name"]),
+                hostname=str(row.get("hostname") or ""),
+                description=str(row.get("description") or ""),
+                enabled=bool(row.get("enabled", False)),
+            )
+        )
+    db.flush()
+    return len(rows)
+
+
+def _restore_vsphere_certificates(db: Session, rows: list[dict[str, Any]]) -> int:
+    """Restore and revalidate public certificate trust records.
+
+    Args:
+        db: Active database session.
+        rows: Database or collection rows to process.
+    """
+    from atlaso.app.services.vsphere_key_providers import parse_public_certificate
+
+    vcenter_ids = set(db.execute(select(VsphereTrustedVcenter.id)).scalars().all())
+    fingerprints: set[str] = set()
+    for row in rows:
+        vcenter_id = str(row["trusted_vcenter_id"])
+        if vcenter_id not in vcenter_ids:
+            raise ValueError("Archived public certificate references an unknown trusted vCenter UUID.")
+        fingerprint = str(row["fingerprint_sha256"]).replace(":", "").casefold()
+        if fingerprint in fingerprints:
+            raise ValueError("Archived public certificate fingerprint is duplicated.")
+        certificate_pem = str(row.get("certificate_pem") or "")
+        parsed = parse_public_certificate(certificate_pem, require_current=False)
+        if parsed["fingerprint_sha256"] != fingerprint:
+            raise ValueError("Archived public certificate fingerprint does not match its PEM body.")
+        db.add(
+            VsphereTrustedVcenterCertificate(
+                id=str(row["id"]),
+                trusted_vcenter_id=vcenter_id,
+                fingerprint_sha256=fingerprint,
+                certificate_pem=str(parsed["certificate_pem"]),
+                subject=str(parsed["subject"]),
+                issuer=str(parsed["issuer"]),
+                serial_number=str(parsed["serial_number"]),
+                not_valid_before=parsed["not_valid_before"],
+                not_valid_after=parsed["not_valid_after"],
+                source="uploaded_public",
+            )
+        )
+        fingerprints.add(fingerprint)
     db.flush()
     return len(rows)
 

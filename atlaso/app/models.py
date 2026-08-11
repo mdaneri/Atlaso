@@ -1111,7 +1111,6 @@ class KmsSettings(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     backend: Mapped[str] = mapped_column(String(40), default="atlaso-kmip")
-    provider_id: Mapped[str] = mapped_column(String(36), default=lambda: str(uuid4()), unique=True)
     listen_interface: Mapped[str] = mapped_column(String(240), default="")
     listen_address: Mapped[str] = mapped_column(String(240), default="")
     port: Mapped[int] = mapped_column(Integer, default=5696)
@@ -1126,75 +1125,73 @@ class KmsSettings(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
-class KmsClient(Base):
-    """Represent kms client.
+class VsphereKeyProvider(Base):
+    """Represent one immutable vSphere Key Provider namespace."""
 
-    Attributes:
-        id: Unique database identifier for the resource.
-        name: Operator-facing name of the resource.
-        certificate_subject: Persisted certificate subject for the kmsclient resource.
-        certificate_fingerprint: Persisted certificate fingerprint for the kmsclient resource.
-        role: Persisted role for the kmsclient resource.
-        allowed_operations: Persisted allowed operations for the kmsclient resource.
-        enabled: Whether the resource is enabled.
-        description: Operator-facing purpose or context for the resource.
-        created_at: UTC timestamp when the resource was created.
-        updated_at: UTC timestamp when the resource was last updated.
-        keys: Persisted keys for the kmsclient resource.
-    """
-    __tablename__ = "kms_clients"
+    __tablename__ = "vsphere_key_providers"
 
-    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
     name: Mapped[str] = mapped_column(String(120), unique=True, index=True)
-    certificate_subject: Mapped[str] = mapped_column(String(240))
-    certificate_fingerprint: Mapped[str] = mapped_column(Text, default="")
-    role: Mapped[str] = mapped_column(String(40), default="service")
-    allowed_operations: Mapped[str] = mapped_column(
-        Text,
-        default="locate,get,create,activate,get-attributes,get-attribute-list,query,discover-versions",
+    description: Mapped[str] = mapped_column(Text, default="")
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    applied_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    trusted_vcenters: Mapped[list["VsphereTrustedVcenter"]] = relationship(
+        back_populates="provider",
+        cascade="all, delete-orphan",
     )
+
+
+class VsphereTrustedVcenter(Base):
+    """Represent a vCenter identity trusted by one provider namespace."""
+
+    __tablename__ = "vsphere_trusted_vcenters"
+    __table_args__ = (
+        UniqueConstraint("provider_id", "name", name="uq_vsphere_vcenter_provider_name"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    provider_id: Mapped[str] = mapped_column(
+        ForeignKey("vsphere_key_providers.id", ondelete="CASCADE"),
+        index=True,
+    )
+    name: Mapped[str] = mapped_column(String(120))
+    hostname: Mapped[str] = mapped_column(String(253), default="")
+    description: Mapped[str] = mapped_column(Text, default="")
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
-    description: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
-    keys: Mapped[list["KmsKey"]] = relationship(back_populates="owner_client")
+    provider: Mapped[VsphereKeyProvider] = relationship(back_populates="trusted_vcenters")
+    certificates: Mapped[list["VsphereTrustedVcenterCertificate"]] = relationship(
+        back_populates="trusted_vcenter",
+        cascade="all, delete-orphan",
+    )
 
 
-class KmsKey(Base):
-    """Represent kms key.
+class VsphereTrustedVcenterCertificate(Base):
+    """Store one public vCenter client certificate and exact trust fingerprint."""
 
-    Attributes:
-        id: Unique database identifier for the resource.
-        name: Operator-facing name of the resource.
-        algorithm: Persisted algorithm for the kmskey resource.
-        length: Persisted length for the kmskey resource.
-        usage: Persisted usage for the kmskey resource.
-        state: Current lifecycle state.
-        owner_client_id: Identifier of the associated owner client.
-        exportable: Persisted exportable for the kmskey resource.
-        enabled: Whether the resource is enabled.
-        description: Operator-facing purpose or context for the resource.
-        created_at: UTC timestamp when the resource was created.
-        updated_at: UTC timestamp when the resource was last updated.
-        owner_client: Persisted owner client for the kmskey resource.
-    """
-    __tablename__ = "kms_keys"
+    __tablename__ = "vsphere_trusted_vcenter_certificates"
 
-    id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    name: Mapped[str] = mapped_column(String(120), unique=True, index=True)
-    algorithm: Mapped[str] = mapped_column(String(40), default="AES")
-    length: Mapped[int] = mapped_column(Integer, default=256)
-    usage: Mapped[str] = mapped_column(String(240), default="encrypt,decrypt")
-    state: Mapped[str] = mapped_column(String(40), default="active")
-    owner_client_id: Mapped[int | None] = mapped_column(ForeignKey("kms_clients.id"), nullable=True, index=True)
-    exportable: Mapped[bool] = mapped_column(Boolean, default=False)
-    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
-    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    trusted_vcenter_id: Mapped[str] = mapped_column(
+        ForeignKey("vsphere_trusted_vcenters.id", ondelete="CASCADE"),
+        index=True,
+    )
+    fingerprint_sha256: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    certificate_pem: Mapped[str] = mapped_column(Text, default="")
+    subject: Mapped[str] = mapped_column(Text, default="")
+    issuer: Mapped[str] = mapped_column(Text, default="")
+    serial_number: Mapped[str] = mapped_column(String(80), default="")
+    not_valid_before: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    not_valid_after: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    source: Mapped[str] = mapped_column(String(40), default="uploaded_public")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
-    owner_client: Mapped[KmsClient | None] = relationship(back_populates="keys")
+    trusted_vcenter: Mapped[VsphereTrustedVcenter] = relationship(back_populates="certificates")
 
 
 class LdapSettings(Base):

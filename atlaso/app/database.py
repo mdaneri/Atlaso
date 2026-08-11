@@ -191,32 +191,6 @@ def init_db() -> None:
                         "ADD COLUMN description TEXT NOT NULL DEFAULT ''"
                     )
                 )
-            kms_settings_columns = {
-                row[1]
-                for row in connection.execute(
-                    text("PRAGMA table_info(kms_settings)")
-                ).all()
-            }
-            if "provider_id" not in kms_settings_columns:
-                connection.execute(
-                    text(
-                        "ALTER TABLE kms_settings "
-                        "ADD COLUMN provider_id VARCHAR(36) NOT NULL DEFAULT ''"
-                    )
-                )
-            kms_client_columns = {
-                row[1]
-                for row in connection.execute(
-                    text("PRAGMA table_info(kms_clients)")
-                ).all()
-            }
-            if "certificate_fingerprint" not in kms_client_columns:
-                connection.execute(
-                    text(
-                        "ALTER TABLE kms_clients "
-                        "ADD COLUMN certificate_fingerprint VARCHAR(64) NOT NULL DEFAULT ''"
-                    )
-                )
             job_columns = {
                 row[1]
                 for row in connection.execute(

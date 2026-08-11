@@ -19,8 +19,6 @@ from atlaso.app.models import (
     DnsSettings,
     FirewallRule,
     FirewallSettings,
-    KmsClient,
-    KmsKey,
     KmsSettings,
     LdapSettings,
     NatRule,
@@ -525,30 +523,6 @@ def seed_initial_data(db: Session, *, include_examples: bool = True, appliance_m
             )
         )
 
-    if include_examples and db.execute(select(KmsClient)).first() is None:
-        client = KmsClient(
-            name="vcf-management",
-            certificate_subject="CN=vcf-management.atlaso.internal,O=Atlaso",
-            role="service",
-            allowed_operations="locate,get,create,activate,get-attributes,get-attribute-list,query,discover-versions",
-            description="Sample VCF management KMIP client.",
-            enabled=True,
-        )
-        db.add(client)
-        db.flush()
-        db.add(
-            KmsKey(
-                name="vcf-sddc-manager-aes",
-                algorithm="AES",
-                length=256,
-                usage="encrypt,decrypt",
-                state="active",
-                owner_client_id=client.id,
-                exportable=False,
-                description="Sample AES key desired state for VCF lab encryption.",
-                enabled=True,
-            )
-        )
     if db.execute(select(VcfBackupSettings)).first() is None:
         db.add(
             VcfBackupSettings(

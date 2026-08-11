@@ -46,8 +46,10 @@ brings infrastructure, storage, identity, networking, and lifecycle workflows in
   source markers.
 - [OpenID Connect provider](docs/services/oidc-provider.md) — use the dedicated tabbed administration page for
   confidential clients, exact redirects, key rotation, explicit identity sources, and privacy-safe scoped claims.
+- [vSphere Key Providers](docs/services/vsphere-key-providers.md) — manage isolated provider UUIDs, trusted vCenters,
+  public-certificate trust, and redacted lifecycle counts; the bounded VCF 9.1 contract remains unverified.
 - [vSphere Key Provider protocol](docs/reference/vsphere-key-provider-protocol.md) — review the appliance-native
-  daemon's bounded, currently unverified VCF 9.1 KMIP contract and live-evidence promotion gate.
+  daemon's narrow KMIP contract and live-evidence promotion gate.
 - [Technical reference](docs/reference/index.md) — API, image building, lifecycle testing, and detailed behavior.
 - [Contributing](CONTRIBUTING.md) — issue, version, validation, pull-request, and seven-day Python dependency-age
   requirements.

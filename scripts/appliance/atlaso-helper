@@ -71,7 +71,7 @@ COMMANDS: dict[str, set[str]] = {
     "firewall": {"validate", "apply"},
     "dnsmasq": {"validate", "apply", "reload", "leases", "logs"},
     "ca": {"validate", "apply"},
-    "kms": {"validate", "apply"},
+    "kms": {"validate", "apply", "status"},
     "ldap": {"validate", "apply", "status", "export", "logs", "authenticate"},
     "ntpd": {"validate", "apply", "status", "logs", "capabilities"},
     "nginx": {"logs", "access-logs", "error-logs"},
@@ -125,6 +125,7 @@ NO_PATH_ACTIONS = {
     ("ntpd", "capabilities"),
     ("ldap", "status"),
     ("ldap", "logs"),
+    ("kms", "status"),
     ("nginx", "logs"),
     ("nginx", "access-logs"),
     ("nginx", "error-logs"),
@@ -251,11 +252,12 @@ NGINX_ACCESS_LOG_PATH = Path("/var/log/nginx/access.log")
 NGINX_ERROR_LOG_PATH = Path("/var/log/nginx/error.log")
 KMS_CONFIG_DIR = Path("/etc/atlaso/kmip")
 KMS_CONFIG_PATH = KMS_CONFIG_DIR / "server.json"
+KMS_STAGED_CLIENT_TRUST_PATH = KMS_APPLY_DIR / "client-trust.pem"
+KMS_CLIENT_TRUST_PATH = KMS_CONFIG_DIR / "client-trust.pem"
 KMS_CREDENTIAL_PATH = KMS_CONFIG_DIR / "atlaso-secrets-key.cred"
 KMS_CREDENTIAL_NAME = "atlaso-secrets-key"
 KMS_SERVICE_PATH = Path("/etc/systemd/system/atlaso-kmip.service")
 KMS_SERVICE_USER = "atlaso-kmip"
-KMS_LEGACY_DATABASE_PATH = Path("/var/lib/atlaso/kms/pykmip.db")
 LDAP_APPLY_DIR = Path("/var/lib/atlaso/apply/ldap")
 LDAP_STATE_DIR = Path("/var/lib/openldap/atlaso")
 LDAP_RECOVERY_DIR = Path("/var/lib/atlaso/ldap/recovery")
@@ -693,11 +695,15 @@ def _validate_kms_config_path(path_value: str) -> Path:
     Args:
         path_value: Candidate path value to validate.
     """
-    path = Path(_validate_path(path_value)).resolve()
+    staged_path = Path(_validate_path(path_value))
+    expected_path = KMS_APPLY_DIR / "server.json"
+    if staged_path != expected_path:
+        raise ValueError(f"KMS config must use the fixed staged path {expected_path}")
+    if staged_path.is_symlink() or staged_path.parent.is_symlink():
+        raise ValueError("KMS staged config path must not use symbolic links")
+    path = staged_path.resolve()
     if path.suffix != ".json":
         raise ValueError("KMS config path must end with .json")
-    if not path.is_relative_to(KMS_APPLY_DIR):
-        raise ValueError(f"KMS config must be staged under {KMS_APPLY_DIR}")
     if not path.is_file():
         raise ValueError(f"KMS config does not exist: {path}")
     return path
@@ -3650,8 +3656,8 @@ def _kms_config_errors(path: Path) -> list[str]:
     store = payload["store"]
     limits = payload["limits"]
     providers = payload["providers"]
-    if not isinstance(listen, dict) or set(listen) != {"host", "port"}:
-        errors.append("KMS listen must contain only host and port.")
+    if not isinstance(listen, dict) or set(listen) != {"addresses", "port"}:
+        errors.append("KMS listen must contain only addresses and port.")
         listen = {}
     if not isinstance(tls, dict) or set(tls) != {
         "certificate_path",
@@ -3677,12 +3683,23 @@ def _kms_config_errors(path: Path) -> list[str]:
     if enabled and not providers:
         errors.append("Enabled KMS config requires at least one provider.")
 
-    host_value = listen.get("host", "")
-    host = host_value.strip() if isinstance(host_value, str) else ""
-    try:
-        ip_address(host)
-    except ValueError:
-        errors.append("KMS listen host must be the derived listen IP address.")
+    address_values = listen.get("addresses", [])
+    if not isinstance(address_values, list) or not address_values:
+        errors.append("KMS listen addresses must be a nonempty list.")
+        address_values = []
+    elif len(address_values) > 32:
+        errors.append("KMS listen addresses cannot contain more than 32 entries.")
+    normalized_addresses: list[str] = []
+    for value in address_values:
+        if not isinstance(value, str):
+            errors.append("KMS listen address must be a derived IP address.")
+            continue
+        try:
+            normalized_addresses.append(str(ip_address(value.strip())))
+        except ValueError:
+            errors.append("KMS listen address must be a derived IP address.")
+    if len(normalized_addresses) != len(set(normalized_addresses)):
+        errors.append("KMS listen addresses must be unique.")
     port = listen.get("port", 0)
     if isinstance(port, bool) or not isinstance(port, int):
         errors.append("KMS port must be an integer.")
@@ -3692,7 +3709,6 @@ def _kms_config_errors(path: Path) -> list[str]:
     for option, label, private in (
         ("certificate_path", "KMS server certificate", False),
         ("private_key_path", "KMS server private key", True),
-        ("ca_path", "KMS CA certificate", False),
     ):
         value = str(tls.get(option, "")).strip()
         try:
@@ -3706,6 +3722,24 @@ def _kms_config_errors(path: Path) -> list[str]:
                 continue
             try:
                 errors.extend(_pem_errors(managed_path.read_text(encoding="utf-8"), label, private_key=private))
+            except OSError as exc:
+                errors.append(str(exc))
+
+    runtime_trust_path = KMS_CONFIG_DIR / KMS_CLIENT_TRUST_PATH.name
+    staged_trust_path = KMS_APPLY_DIR / KMS_STAGED_CLIENT_TRUST_PATH.name
+    ca_value = str(tls.get("ca_path", "")).strip()
+    if ca_value != str(runtime_trust_path):
+        errors.append(f"KMS client trust path must be {runtime_trust_path}.")
+    trust_path = staged_trust_path if path.parent == KMS_APPLY_DIR else runtime_trust_path
+    if enabled:
+        if trust_path.is_symlink() or not trust_path.is_file():
+            errors.append(f"KMS client trust bundle must be a regular file: {trust_path}")
+        else:
+            try:
+                trust_pem = trust_path.read_text(encoding="utf-8")
+                errors.extend(_pem_errors(trust_pem, "KMS client trust bundle"))
+                if "PRIVATE KEY-----" in trust_pem:
+                    errors.append("KMS client trust bundle must not contain private key material.")
             except OSError as exc:
                 errors.append(str(exc))
 
@@ -3806,11 +3840,6 @@ def _kms_config_errors(path: Path) -> list[str]:
         errors.append("atlaso-kmip command not found")
     if enabled and _command_path("systemd-creds") is None:
         errors.append("systemd-creds is required to protect the KMS runtime credential.")
-    if enabled and KMS_LEGACY_DATABASE_PATH.is_file() and KMS_LEGACY_DATABASE_PATH.stat().st_size:
-        errors.append(
-            "A nonempty legacy PyKMIP database blocks in-place replacement; "
-            "keep the old appliance available while VMware rekeys into a new provider."
-        )
     if enabled:
         group_available, account_available = _kms_service_identity_available()
         if not group_available and _command_path("groupadd") is None:
@@ -3884,6 +3913,63 @@ def _handle_kms(action: str, args: list[str]) -> int:
         action: Action consumed by handle KMS.
         args: Parsed command-line options consumed by the operation.
     """
+    if action == "status":
+        if args:
+            print("kms status does not accept arguments", file=sys.stderr)
+            return 2
+        config_available = KMS_CONFIG_PATH.is_file()
+        credential_available = KMS_CREDENTIAL_PATH.is_file()
+        store_material_available = any(
+            path.exists()
+            for path in (KMS_STATE_DIR / "store.db", KMS_STATE_DIR / "kek.json")
+        )
+        if not config_available and not credential_available and not store_material_available:
+            print(
+                json.dumps(
+                    {
+                        "status": "available",
+                        "runtime_state": "not-applied",
+                        "store_status": "empty",
+                        "providers": {},
+                    },
+                    sort_keys=True,
+                )
+            )
+            return 0
+        if not config_available or not credential_available:
+            print("KMIP authenticated runtime status is unavailable.", file=sys.stderr)
+            return 2
+        decrypted = _run(
+            [
+                "systemd-creds",
+                "decrypt",
+                f"--name={KMS_CREDENTIAL_NAME}",
+                str(KMS_CREDENTIAL_PATH),
+                "-",
+            ]
+        )
+        if decrypted.returncode != 0 or not decrypted.stdout:
+            print("KMIP runtime status credential is unavailable.", file=sys.stderr)
+            return 2
+        with tempfile.TemporaryDirectory(prefix="atlaso-kmip-status-") as temp_root_value:
+            credential_path = Path(temp_root_value) / KMS_CREDENTIAL_NAME
+            credential_path.write_text(decrypted.stdout, encoding="utf-8")
+            credential_path.chmod(0o600)
+            environment = os.environ.copy()
+            environment["ATLASO_SECRETS_KEY_FILE"] = str(credential_path)
+            completed = subprocess.run(
+                [str(ATLASO_KMIP_VENV_PATH), "--config", str(KMS_CONFIG_PATH), "--status"],
+                check=False,
+                capture_output=True,
+                text=True,
+                env=environment,
+            )
+        if completed.returncode != 0:
+            print("KMIP authenticated runtime status is unavailable.", file=sys.stderr)
+            return completed.returncode
+        print(completed.stdout, end="")
+        return 0
+
     if len(args) != 1:
         print(f"kms {action} requires exactly one staged config path", file=sys.stderr)
         return 2
@@ -3951,6 +4037,11 @@ def _handle_kms(action: str, args: list[str]) -> int:
         os.chown(directory, account.pw_uid, group.gr_gid)
     os.chmod(KMS_CONFIG_DIR, 0o750)
     os.chown(KMS_CONFIG_DIR, 0, group.gr_gid)
+    staged_trust_path = KMS_APPLY_DIR / KMS_STAGED_CLIENT_TRUST_PATH.name
+    runtime_trust_path = KMS_CONFIG_DIR / KMS_CLIENT_TRUST_PATH.name
+    shutil.copyfile(staged_trust_path, runtime_trust_path)
+    os.chmod(runtime_trust_path, 0o640)
+    os.chown(runtime_trust_path, 0, group.gr_gid)
     shutil.copy2(config_path, KMS_CONFIG_PATH)
     os.chmod(KMS_CONFIG_PATH, 0o640)
     os.chown(KMS_CONFIG_PATH, 0, group.gr_gid)
@@ -12124,6 +12215,9 @@ def main(argv: list[str]) -> int:
     except ValueError as exc:
         print(str(exc), file=sys.stderr)
         return 2
+
+    if (group, action) == ("kms", "status"):
+        return _handle_kms(action, normalized_args)
 
     if real_apply and _should_run_real_action_with_systemd(action):
         return _run_real_action_with_systemd(group, action, normalized_args)

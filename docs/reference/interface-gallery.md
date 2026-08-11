@@ -223,17 +223,17 @@ Figure: Firewall in the verified clean-appliance desktop state.
 
 Figure: Firewall in the verified clean-appliance responsive state.
 
-## Kms
+## vSphere Key Providers
 
-Route: `/ui/management/kms`
+Route: `/ui/management/vsphere-key-providers`
 
-![Atlaso KMS and KMIP page in the clean-appliance desktop viewport.](../assets/screenshots/kms-clean-desktop.webp)
+![Atlaso vSphere Key Providers page in the clean-appliance desktop viewport.](../assets/screenshots/vsphere-key-providers-clean-desktop.webp)
 
-Figure: KMS and KMIP in the verified clean-appliance desktop state.
+Figure: vSphere Key Providers in the verified clean-appliance desktop state.
 
-![Atlaso KMS and KMIP page in the clean-appliance responsive viewport.](../assets/screenshots/kms-clean-responsive.webp)
+![Atlaso vSphere Key Providers page in the clean-appliance responsive viewport.](../assets/screenshots/vsphere-key-providers-clean-responsive.webp)
 
-Figure: KMS and KMIP in the verified clean-appliance responsive state.
+Figure: vSphere Key Providers in the verified clean-appliance responsive state.
 
 ## Ldap
 

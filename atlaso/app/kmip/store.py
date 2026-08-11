@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from hashlib import sha256
 from pathlib import Path
+from typing import Iterable
 
 from cryptography.exceptions import InvalidTag
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
@@ -793,6 +794,48 @@ class WrappedKeyStore:
         with self._lock, self._connect() as connection:
             self._verify_store_commitment(connection)
             return [row["key_id"] for row in connection.execute(sql, parameters).fetchall()]
+
+    def lifecycle_counts(self, provider_ids: Iterable[str] = ()) -> dict[str, dict[str, int]]:
+        """Return authenticated key counts grouped by provider and lifecycle state.
+
+        Args:
+            provider_ids: Configured provider UUIDs that require explicit authenticated zeroes.
+
+        Returns:
+            Redacted per-provider counts with no operational key identifiers.
+        """
+        counts = {
+            _validated_uuid(provider_id, label="provider_id"): {
+                "pre_active": 0,
+                "active": 0,
+                "total": 0,
+            }
+            for provider_id in provider_ids
+        }
+        with self._lock, self._connect() as connection:
+            self._verify_store_commitment(connection)
+            rows = connection.execute(
+                """
+                SELECT provider_id, key_id, algorithm, key_length, name, state,
+                       created_at, activated_at, nonce, ciphertext, aad_json
+                FROM wrapped_keys
+                ORDER BY provider_id, key_id
+                """
+            ).fetchall()
+            for row in rows:
+                metadata, plaintext = self._decrypt_row(row)
+                try:
+                    provider = counts.setdefault(
+                        metadata.provider_id,
+                        {"pre_active": 0, "active": 0, "total": 0},
+                    )
+                    field = "pre_active" if metadata.state == "Pre-Active" else "active"
+                    provider[field] += 1
+                    provider["total"] += 1
+                finally:
+                    mutable = bytearray(plaintext)
+                    mutable[:] = b"\0" * len(mutable)
+        return counts
 
     def close(self) -> None:
         """Handle close."""
