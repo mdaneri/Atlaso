@@ -602,6 +602,9 @@ hash is stored. Public Services validation blocks publishing the authenticated d
 disabled. When an authenticated VCF Offline Depot or Public Services unit is selected and its HTTP user has unapplied
 Local Users state, appliance apply automatically places Local Users before that publishing unit so the Photon account
 and derived `htpasswd` state exist first. Unrelated Local Users changes do not alter a publishing-only submission.
+After successful browser authentication, Atlaso reconstructs the return location beneath the server-owned `/PROD`
+prefix. A valid nested depot path and query are preserved; an unsupported or malformed destination returns to
+`/PROD/`.
 
 #### Tool staging, downloads, and HTTPS service
 

@@ -10025,13 +10025,35 @@ def test_public_service_home_is_scoped_to_called_ip(client, tmp_path, monkeypatc
     depot_signed_in = client.post(
         "/PROD/login",
         headers={"host": "192.168.87.32"},
-        data={"username": "vcf-depot", "password": "Depot-user1!", "csrf": depot_csrf, "next": "/PROD/"},
+        data={
+            "username": "vcf-depot",
+            "password": "Depot-user1!",
+            "csrf": depot_csrf,
+            "next": "/PROD/COMP/?view=compact",
+        },
         follow_redirects=False,
     )
     assert depot_signed_in.status_code == 303
-    assert depot_signed_in.headers["location"] == "/PROD/"
+    assert depot_signed_in.headers["location"] == "/PROD/COMP/?view=compact"
     assert authentication_calls == ["vcf-depot"]
     assert client.get("/PROD/auth-check", headers={"host": "192.168.87.32"}).status_code == 204
+    client.cookies.clear()
+
+    unsafe_login = client.get("/PROD/login", headers={"host": "192.168.87.32"})
+    unsafe_csrf = unsafe_login.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    unsafe_signed_in = client.post(
+        "/PROD/login",
+        headers={"host": "192.168.87.32"},
+        data={
+            "username": "vcf-depot",
+            "password": "Depot-user1!",
+            "csrf": unsafe_csrf,
+            "next": "/PROD/..\\..\\malicious.example",
+        },
+        follow_redirects=False,
+    )
+    assert unsafe_signed_in.status_code == 303
+    assert unsafe_signed_in.headers["location"] == "/PROD/"
     client.cookies.clear()
 
     wrong_login = client.get("/PROD/login", headers={"host": "192.168.87.32"})
@@ -10144,6 +10166,25 @@ def test_public_service_home_is_scoped_to_called_ip(client, tmp_path, monkeypatc
     assert "Certificate Authority" not in registry_page.text
     assert "VCF Offline Depot" not in registry_page.text
     assert "Web Terminal" not in registry_page.text
+
+
+def test_safe_depot_login_next_requires_canonical_depot_path():
+    """Verify that depot login returns only to canonical depot paths."""
+    from atlaso.app.ui import safe_depot_login_next
+
+    assert safe_depot_login_next("/PROD") == "/PROD"
+    assert safe_depot_login_next("/PROD/COMP/ESX_HOST/?view=compact") == "/PROD/COMP/ESX_HOST/?view=compact"
+    for unsafe_target in (
+        "https://malicious.example/",
+        "//malicious.example/",
+        "/PROD/..\\..\\malicious.example",
+        "/PROD/../ui/management",
+        "/PROD/%252e%252e/%252f%252fmalicious.example",
+        "/PROD//malicious.example",
+        "/PROD/COMP/#fragment",
+        "/PROD/COMP/\r\nLocation: https://malicious.example/",
+    ):
+        assert safe_depot_login_next(unsafe_target) == "/PROD/"
 
 
 def test_public_service_home_empty_state_for_non_management_ip(client):

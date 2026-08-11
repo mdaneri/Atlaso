@@ -960,6 +960,9 @@ status: current
   `/etc/atlaso/nginx/htpasswd/`; Atlaso must not store or render plaintext passwords or password hashes.
 - `/PROD/` is the canonical depot path, `/PROD` redirects to `/PROD/`, and the depot service-owned HTTPS site must
   follow the configured auth setting and htpasswd file.
+- Successful browser login may return only to `/PROD` or a validated path beneath `/PROD/`. Reconstruct the destination
+  from the server-owned depot prefix, reject scheme, authority, traversal, control-character, fragment, repeated-slash,
+  and browser-equivalent backslash forms, and fall back to `/PROD/` for every unsupported target.
 
 ## VCF Private Registry
 
