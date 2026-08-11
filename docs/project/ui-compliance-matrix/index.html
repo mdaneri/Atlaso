@@ -1619,14 +1619,14 @@
   
   
     <li class="md-nav__item">
-      <a href="../../services/kms/" class="md-nav__link">
+      <a href="../../services/vsphere-key-providers/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-  KMS and KMIP
+  vSphere Key Providers
 
     
   </span>
@@ -3444,7 +3444,7 @@ exemption changes without review. The management routes rendered by the current 
 </span><span id="__span-0-11"><a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a>/ui/management/dns
 </span><span id="__span-0-12"><a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a>/ui/management/esx-storage
 </span><span id="__span-0-13"><a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a>/ui/management/firewall
-</span><span id="__span-0-14"><a id="__codelineno-0-14" name="__codelineno-0-14" href="#__codelineno-0-14"></a>/ui/management/kms
+</span><span id="__span-0-14"><a id="__codelineno-0-14" name="__codelineno-0-14" href="#__codelineno-0-14"></a>/ui/management/vsphere-key-providers
 </span><span id="__span-0-15"><a id="__codelineno-0-15" name="__codelineno-0-15" href="#__codelineno-0-15"></a>/ui/management/ldap
 </span><span id="__span-0-16"><a id="__codelineno-0-16" name="__codelineno-0-16" href="#__codelineno-0-16"></a>/ui/management/login
 </span><span id="__span-0-17"><a id="__codelineno-0-17" name="__codelineno-0-17" href="#__codelineno-0-17"></a>/ui/management/logs
@@ -3618,10 +3618,10 @@ read-only or unavailable surface has a mutation workflow.</p>
 <td>E1–E8</td>
 </tr>
 <tr>
-<td><code>/kms</code> — service settings, clients, keys</td>
-<td>Wizard-backed Tabulator and non-grid settings; ESX Storage/DNS references</td>
-<td>Client/key fallbacks, validation, and redacted preview</td>
-<td>Admin writes; shared destructive confirmation; TLS/fingerprint and global <code>kms</code> apply boundaries preserved</td>
+<td><code>/ui/management/vsphere-key-providers</code> — providers, trusted vCenters, certificates, health</td>
+<td>Wizard-backed and read-only Tabulator plus non-grid settings; ESX Storage/Tasks/Audit Events/DNS references</td>
+<td>Four tool fallbacks, validation, nullable lifecycle counts, and redacted preview</td>
+<td>Admin writes; shared destructive confirmation; public-certificate-only trust, exact fingerprint mapping, and global <code>kms</code> apply boundaries preserved</td>
 <td>Pass D/N/K/F/Z/V</td>
 <td>E1–E8</td>
 </tr>
@@ -3905,9 +3905,10 @@ are explicitly inventoried so route/template changes cannot silently escape the 
 <li>Networking and services: <code>dns-domain-dialog</code>, <code>dhcp-scope-dialog</code>, <code>dhcp-option-dialog</code>,
   <code>dhcp-lease-reservation-modal</code>, <code>dhcp-lease-pxe-modal</code>, <code>firewall-rule-dialog</code>,
   <code>firewall-rename-group-modal</code>, and <code>ntp-source-dialog</code>.</li>
-<li>Identity, CA, and KMS: <code>ca-csr-dialog</code>, <code>ca-profile-dialog</code>, <code>ca-certificate-dialog</code>,
+<li>Identity, CA, and vSphere Key Providers: <code>ca-csr-dialog</code>, <code>ca-profile-dialog</code>, <code>ca-certificate-dialog</code>,
   <code>ldap-organization-dialog</code>, <code>ldap-user-dialog</code>, <code>ldap-group-dialog</code>, <code>ldap-bind-secret-modal</code>,
-  <code>ldap-password-modal</code>, <code>ldap-group-members-modal</code>, <code>ldap-generate-modal</code>, <code>kms-client-dialog</code>, and <code>kms-key-dialog</code>.</li>
+  <code>ldap-password-modal</code>, <code>ldap-group-members-modal</code>, <code>ldap-generate-modal</code>, <code>vsphere-provider-dialog</code>,
+  <code>vsphere-vcenter-dialog</code>, and <code>vsphere-certificate-dialog</code>.</li>
 <li>Network Boot and storage: <code>network-boot-host-dialog</code>, <code>network-boot-upload-dialog</code>,
   <code>network-boot-promote-dialog</code>, <code>esxi-iso-upload-dialog</code>, <code>esxi-custom-variable-wizard-dialog</code>,
   <code>kickstart-wizard-dialog</code>, <code>esx-storage-volume-modal</code>, and <code>esx-storage-share-modal</code>.</li>

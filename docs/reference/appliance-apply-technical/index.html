@@ -1619,14 +1619,14 @@
   
   
     <li class="md-nav__item">
-      <a href="../../services/kms/" class="md-nav__link">
+      <a href="../../services/vsphere-key-providers/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-  KMS and KMIP
+  vSphere Key Providers
 
     
   </span>
@@ -2491,10 +2491,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#kms-kmip-apply" class="md-nav__link">
+  <a href="#vsphere-key-provider-apply" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        KMS / KMIP apply
+        vSphere Key Provider apply
       </span>
     </span>
   </a>
@@ -3943,10 +3943,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#kms-kmip-apply" class="md-nav__link">
+  <a href="#vsphere-key-provider-apply" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        KMS / KMIP apply
+        vSphere Key Provider apply
       </span>
     </span>
   </a>
@@ -4329,7 +4329,7 @@ read-only mount namespace.</p>
 <li>DNS/DHCP (dnsmasq)</li>
 <li>ESXi PXE</li>
 <li>Certificate Authority</li>
-<li>KMS / KMIP</li>
+<li>vSphere Key Providers (internal <code>kms</code> unit)</li>
 <li>Managed LDAP</li>
 <li>NTPsec</li>
 <li>VCF Backups</li>
@@ -4633,22 +4633,26 @@ after validation or apply succeeds, fails, or raises; the helper performs the sa
 allowlisted path, and startup removes an input left by interruption.</p>
 <p>Settings backups include encrypted CA private-key material. Restoring usable CA custody requires the same
 <code>ATLASO_SECRETS_KEY</code>; otherwise operators should reissue the CA/certificates.</p>
-<h3 id="kms-kmip-apply">KMS / KMIP apply<a class="headerlink" href="#kms-kmip-apply" title="Permanent link">&para;</a></h3>
-<p>The real KMS apply path uses Atlaso's appliance-native, experimental <code>atlaso-kmip</code> provider. The KMS page derives IPv4
-and IPv6 listen addresses from the selected access physical interface or enabled VLAN, creates app-owned canonical
-CNAME and generated A/AAAA target records for the KMIP hostname, and requires an enabled healthy CA before KMS can be
-activated. When KMS is enabled, CA desired state auto-ensures the <code>kms:server</code> certificate and enabled KMIP client
-certificates; apply remains invalid until the issued server certificate, private key, and exact client identity are
-available.</p>
-<p>The <code>kms</code> unit stages <code>/var/lib/atlaso/apply/kms/server.json</code>. Through <code>atlaso-helper kms validate|apply</code>, the helper
-confines the staged file, validates its exact schema, derived listen address, CA-managed paths, UUID provider namespace,
-unique SHA-256 client fingerprints, store paths, and resource limits, then installs <code>/etc/atlaso/kmip/server.json</code> and
-manages <code>atlaso-kmip.service</code>. The daemon runs as the non-login <code>atlaso-kmip</code> account with a hardened systemd sandbox.
-Its SQLite store and KEK envelope live under <code>/var/lib/atlaso/kmip</code> with service-only permissions; the KEK is protected
-by <code>ATLASO_SECRETS_KEY</code>. The helper uses <code>systemd-creds</code> to persist only a machine-encrypted credential; systemd exposes
-the decrypted value only in the daemon's private runtime credential directory. The listener requires TLS 1.2 or newer.
-Disabling KMS stops both the current and retired service names while preserving the new store. Firewall apply owns
-TCP/5696 access to the selected interface. The bounded KMIP operation and evidence contract is documented in
+<h3 id="vsphere-key-provider-apply">vSphere Key Provider apply<a class="headerlink" href="#vsphere-key-provider-apply" title="Permanent link">&para;</a></h3>
+<p>The real internal <code>kms</code> apply unit uses Atlaso's appliance-native, experimental <code>atlaso-kmip</code> daemon. The
+<code>/ui/management/vsphere-key-providers</code> page derives IPv4 and IPv6 listen addresses from selected access interfaces or
+enabled VLANs, creates app-owned DNS records for the shared endpoint, and requires an enabled healthy CA and issued <code>kms:server</code>
+identity before activation. Provider and trusted-vCenter changes remain database desired state until this global apply.</p>
+<p>The unit stages <code>/var/lib/atlaso/apply/kms/server.json</code> and the public-only
+<code>/var/lib/atlaso/apply/kms/client-trust.pem</code>. Through <code>atlaso-helper kms validate|apply</code>, the helper confines both fixed
+paths, rejects symbolic links and private-key material, validates exact schema, derived listener, CA-managed server
+identity, immutable UUID namespaces, globally unique exact SHA-256 fingerprints, store paths, and resource limits, then
+installs <code>/etc/atlaso/kmip/server.json</code> and <code>/etc/atlaso/kmip/client-trust.pem</code>. The installed trust bundle is mode
+<code>0640</code>, owned by root and <code>atlaso-kmip</code>, and contains the internal CA public root plus imported public leaf certificates.
+The daemon binds the shared endpoint port on every exact derived address recorded in the validated configuration.</p>
+<p>The daemon runs as the non-login <code>atlaso-kmip</code> account with a hardened systemd sandbox. Its SQLite store and KEK
+envelope live under <code>/var/lib/atlaso/kmip</code> with service-only permissions; the KEK is protected by
+<code>ATLASO_SECRETS_KEY</code>. The helper uses <code>systemd-creds</code> to persist only a machine-encrypted credential; systemd exposes
+the decrypted value only in the daemon's private runtime credential directory. TLS requires version 1.2 or newer,
+allows partial-chain verification for explicitly imported public leaves, and still requires an exact fingerprint to map
+to one provider. <code>atlaso-helper kms status</code> authenticates store metadata and returns only service/store health and
+per-provider lifecycle counts. Disabling the service preserves the operational store. Firewall apply owns TCP/5696
+access to selected interfaces. The bounded protocol contract is documented in
 <a href="../vsphere-key-provider-protocol/">vSphere Key Provider protocol contract</a>.</p>
 <h2 id="appliance-settings-and-operations">Appliance settings and operations<a class="headerlink" href="#appliance-settings-and-operations" title="Permanent link">&para;</a></h2>
 <h3 id="ntpsec-apply">NTPsec apply<a class="headerlink" href="#ntpsec-apply" title="Permanent link">&para;</a></h3>

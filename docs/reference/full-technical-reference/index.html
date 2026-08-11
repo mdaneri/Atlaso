@@ -1619,14 +1619,14 @@
   
   
     <li class="md-nav__item">
-      <a href="../../services/kms/" class="md-nav__link">
+      <a href="../../services/vsphere-key-providers/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-  KMS and KMIP
+  vSphere Key Providers
 
     
   </span>
@@ -4459,15 +4459,20 @@ address yet: IPv4 zones open UDP/67 and IPv6 zones open UDP/547. NTPsec opens UD
 and adds TCP/4460 when NTS server mode is enabled. Moving a DHCP scope, service listener, or routing permission to a
 VLAN such as <code>eth2.50</code> also changes the Firewall apply unit. In development, system adapters remain dry-run by default
 and record command intent instead of mutating host services directly.</p>
-<p>KMS / KMIP uses Atlaso's appliance-native provider and remains experimental until the VCF 9.1 acceptance and recovery
-gate in issue #172 passes. The KMS page derives IPv4 and IPv6 listen addresses from the selected service interface,
-manages app-owned A and/or AAAA records for the KMS hostname, and requires an enabled healthy CA before activation.
-Real KMS apply stages <code>/var/lib/atlaso/apply/kms/server.json</code>, installs <code>/etc/atlaso/kmip/server.json</code>, and manages the
-hardened, unprivileged <code>atlaso-kmip.service</code>. The daemon exposes only the checked-in KMIP 1.4 AES-256 symmetric-key
-contract, maps exact client-certificate fingerprints to UUID provider namespaces, and stores only AES-GCM-wrapped keys
-under <code>/var/lib/atlaso/kmip</code>. <code>systemd-creds</code> stores the daemon's <code>ATLASO_SECRETS_KEY</code> input as a machine-encrypted
-credential and exposes its plaintext only in the service's private runtime credential directory. The listener requires
-TLS 1.2 or newer. Disabling KMS stops the service while preserving the operational store.</p>
+<p>vSphere Key Providers use Atlaso's appliance-native daemon and remain experimental until the VCF 9.1 acceptance and
+recovery gate in issue #172 passes. <code>/ui/management/vsphere-key-providers</code> manages
+multiple immutable UUID namespaces, provider-scoped trusted vCenters, canonical public X.509 certificates, and one
+appliance-wide listener/server identity. The same fingerprint cannot map to multiple providers, and Atlaso exposes no
+client-private-key or management key workflow.</p>
+<p>Real internal <code>kms</code> apply stages <code>/var/lib/atlaso/apply/kms/server.json</code> and the public-only
+<code>/var/lib/atlaso/apply/kms/client-trust.pem</code>, installs fixed runtime paths, and manages the hardened, unprivileged
+<code>atlaso-kmip.service</code>. The daemon exposes only the checked-in KMIP 1.4 AES-256 symmetric-key contract, maps each exact
+peer fingerprint to one provider UUID, and stores only AES-GCM-wrapped operational keys under <code>/var/lib/atlaso/kmip</code>.
+<code>systemd-creds</code> protects the runtime store credential. TLS requires 1.2 or newer and permits partial-chain verification
+for imported public leaves, and the daemon binds every derived selected listener address. Authenticated status returns
+only service/store health and nullable per-provider lifecycle counts; unavailable evidence is never represented as zero.
+Disabling the service preserves the operational store. Provider deletion also requires the disabled and detached state
+to complete global Appliance Apply before authenticated zero-key evidence can authorize removal.</p>
 <p>Managed LDAP provides an OpenLDAP 2.6 service for VCF Automation 9.1 while Atlaso operator sign-in remains local. Each
 VCF organization receives an isolated suffix and LMDB database, organization-local users and nested groups, and a
 read-only bind identity whose secret is encrypted with <code>ATLASO_SECRETS_KEY</code>. Organizations use DNS-style tabs, users and
@@ -4503,7 +4508,8 @@ organization, and managed LDAP OIDC sessions never grant operator UI access. See
 <p>Complex resource collections use the shared wizard-backed Tabulator pattern. Their identity steps use the shared
 two-column field grid and place supported descriptions on a separate full-width multiline row. Authentication API
 tokens use a role-constrained scope checklist instead of free-form permission text. Authentication API tokens and OIDC
-clients, CA profiles and certificate requests, operator firewall rules, KMS clients and keys, DHCP IP zones, VCF
+clients, CA profiles and certificate requests, operator firewall rules, vSphere Key Providers and trusted vCenters,
+DHCP IP zones, VCF
 Offline Depot download profiles, and VCF Private Registry bundles remain visible as browsable grids. The pinned bottom
 row launches add; row double-click and the context menu launch edit where permissions allow. Guided steps validate
 before advancing, retain recoverable server errors in the open dialog, and finish with a desired-state and safety-boundary
@@ -4531,13 +4537,13 @@ generated PXE runtime files, or other runtime history. Restoring usable CA priva
 <p>Restoring a settings archive replaces desired-state configuration in the control-plane database only. Factory reset
 removes current desired-state configuration and reseeds only core Atlaso defaults. It does not recreate demo VLANs,
 routes, NAT rules, WAN policies, trunk-only parent NIC posture, DHCP scopes or reservations, firewall rules, CA
-requests, KMS clients or keys, depot download profiles, or service listener bindings, including after a service restart.
-The core reset keeps only the appliance DNS zone derived from the appliance FQDN and an app-owned appliance A/AAAA
-record pointing at the management IP. The core reset leaves only <code>eth0</code> desired up for management; other physical NICs
-are desired admin down until an operator enables them. Disabled service settings reset with blank listen interfaces and
-addresses so <code>Appliance Apply</code> can submit a clean disabled baseline. Both restore and factory reset force service status
-rows to stopped, disabled, and <code>unconfigured</code>; host services are not mutated until the operator reviews and submits
-selected units through the global <code>Appliance Apply</code> workflow.</p>
+requests, vSphere Key Provider records, depot download profiles, or service listener bindings, including after a
+service restart. The core reset keeps only the appliance DNS zone derived from the appliance FQDN and an app-owned
+appliance A/AAAA record pointing at the management IP. The core reset leaves only <code>eth0</code> desired up for management;
+other physical NICs are desired admin down until an operator enables them. Disabled service settings reset with blank
+listen interfaces and addresses so <code>Appliance Apply</code> can submit a clean disabled baseline. Both restore and factory
+reset force service status rows to stopped, disabled, and <code>unconfigured</code>; host services are not mutated until the
+operator reviews and submits selected units through the global <code>Appliance Apply</code> workflow.</p>
 <h2 id="brand-assets">Brand Assets<a class="headerlink" href="#brand-assets" title="Permanent link">&para;</a></h2>
 <p>Reusable SVG assets live in <code>atlaso/app/static/brand/</code> and are documented in <code>docs/branding.md</code>.</p>
 <h2 id="safety-boundary">Safety Boundary<a class="headerlink" href="#safety-boundary" title="Permanent link">&para;</a></h2>

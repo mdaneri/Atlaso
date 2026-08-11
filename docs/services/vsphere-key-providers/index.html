@@ -6,13 +6,13 @@
       <meta charset="utf-8">
       <meta name="viewport" content="width=device-width,initial-scale=1">
       
-        <meta name="description" content="Configure Atlaso KMS and KMIP listener desired state and client trust.">
+        <meta name="description" content="Manage isolated vSphere Key Provider namespaces and exact public-certificate trust for vCenter.">
       
       
         <meta name="author" content="Atlaso contributors">
       
       
-        <link rel="canonical" href="https://mdaneri.github.io/Atlaso/docs/services/kms/">
+        <link rel="canonical" href="https://mdaneri.github.io/Atlaso/docs/services/vsphere-key-providers/">
       
       
         <link rel="prev" href="../ipxe/">
@@ -29,7 +29,7 @@
     
     
       
-        <title>KMS and KMIP - Atlaso Documentation</title>
+        <title>vSphere Key Providers - Atlaso Documentation</title>
       
     
     
@@ -87,7 +87,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#kms-and-kmip" class="md-skip">
+        <a href="#vsphere-key-providers" class="md-skip">
           Skip to content
         </a>
       
@@ -122,7 +122,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              KMS and KMIP
+              vSphere Key Providers
             
           </span>
         </div>
@@ -1640,7 +1640,7 @@
   <span class="md-ellipsis">
     
   
-  KMS and KMIP
+  vSphere Key Providers
 
     
   </span>
@@ -1664,7 +1664,7 @@
   <span class="md-ellipsis">
     
   
-  KMS and KMIP
+  vSphere Key Providers
 
     
   </span>
@@ -1708,10 +1708,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#configure-the-service" class="md-nav__link">
+  <a href="#add-a-provider-and-trusted-vcenter" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Configure the service
+        Add a provider and trusted vCenter
       </span>
     </span>
   </a>
@@ -1719,10 +1719,54 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#verify" class="md-nav__link">
+  <a href="#rotate-or-retire-public-trust" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Verify
+        Rotate or retire public trust
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#health-and-lifecycle-counts" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Health and lifecycle counts
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#removal-safeguards" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Removal safeguards
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#apply-and-trust-bundle-boundary" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Apply and trust-bundle boundary
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#api-access" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        API access
       </span>
     </span>
   </a>
@@ -1742,10 +1786,10 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#kms-and-kmip_1" class="md-nav__link">
+  <a href="#vsphere-key-providers_1" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        KMS and KMIP
+        vSphere Key Providers
       </span>
     </span>
   </a>
@@ -3232,10 +3276,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#configure-the-service" class="md-nav__link">
+  <a href="#add-a-provider-and-trusted-vcenter" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Configure the service
+        Add a provider and trusted vCenter
       </span>
     </span>
   </a>
@@ -3243,10 +3287,54 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#verify" class="md-nav__link">
+  <a href="#rotate-or-retire-public-trust" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Verify
+        Rotate or retire public trust
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#health-and-lifecycle-counts" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Health and lifecycle counts
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#removal-safeguards" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Removal safeguards
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#apply-and-trust-bundle-boundary" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Apply and trust-bundle boundary
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#api-access" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        API access
       </span>
     </span>
   </a>
@@ -3266,10 +3354,10 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#kms-and-kmip_1" class="md-nav__link">
+  <a href="#vsphere-key-providers_1" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        KMS and KMIP
+        vSphere Key Providers
       </span>
     </span>
   </a>
@@ -3391,7 +3479,7 @@
                 
                   
   
-    <a href="https://github.com/mdaneri/Atlaso/edit/main/docs/services/kms.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
+    <a href="https://github.com/mdaneri/Atlaso/edit/main/docs/services/vsphere-key-providers.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
       
       <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-file-pen" viewBox="0 0 24 24"><path d="M12.659 22H18a2 2 0 0 0 2-2V8a2.4 2.4 0 0 0-.706-1.706l-3.588-3.588A2.4 2.4 0 0 0 14 2H6a2 2 0 0 0-2 2v9.34"/><path d="M14 2v5a1 1 0 0 0 1 1h5M10.378 12.622a1 1 0 0 1 3 3.003L8.36 20.637a2 2 0 0 1-.854.506l-2.867.837a.5.5 0 0 1-.62-.62l.836-2.869a2 2 0 0 1 .506-.853z"/></svg>
     </a>
@@ -3400,60 +3488,93 @@
     
       
     
-    <a href="https://github.com/mdaneri/Atlaso/raw/main/docs/services/kms.md" title="View source of this page" class="md-content__button md-icon">
+    <a href="https://github.com/mdaneri/Atlaso/raw/main/docs/services/vsphere-key-providers.md" title="View source of this page" class="md-content__button md-icon">
       
       <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-file-code-2" viewBox="0 0 24 24"><path d="M4 12.15V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.706.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2h-3.35"/><path d="M14 2v5a1 1 0 0 0 1 1h5M5 16l-3 3 3 3M9 22l3-3-3-3"/></svg>
     </a>
   
 
 
-<h1 id="kms-and-kmip">KMS and KMIP<a class="headerlink" href="#kms-and-kmip" title="Permanent link">&para;</a></h1>
-<p>Open <strong>KMS and KMIP</strong> to configure the appliance-managed key service, listener binding, and client trust material.
-Atlaso's appliance-native <code>atlaso-kmip</code> daemon implements only the bounded VCF 9.1 candidate contract. Treat the
-service as experimental until the live interoperability and recovery gate in issue #172 passes.</p>
+<h1 id="vsphere-key-providers">vSphere Key Providers<a class="headerlink" href="#vsphere-key-providers" title="Permanent link">&para;</a></h1>
+<p>Open <strong>vSphere Key Providers</strong> at <code>/ui/management/vsphere-key-providers</code> to manage Atlaso's appliance-native KMIP
+endpoint. The
+listener and server identity are shared appliance-wide, while every provider UUID is an isolated operational key
+namespace.</p>
 <!-- BEGIN GENERATED INTERFACE OVERVIEW -->
 <h2 id="interface-overview">Interface overview<a class="headerlink" href="#interface-overview" title="Permanent link">&para;</a></h2>
 <p>This verified appliance view provides visual orientation before you begin.</p>
-<p><img alt="Atlaso KMS and KMIP page in the clean-appliance desktop viewport." src="../../assets/screenshots/kms-clean-desktop.webp" /></p>
-<p><em>Figure: KMS and KMIP in the verified clean-appliance desktop state.</em></p>
+<p><img alt="Atlaso vSphere Key Providers page in the clean-appliance desktop viewport." src="../../assets/screenshots/vsphere-key-providers-clean-desktop.webp" /></p>
+<p><em>Figure: vSphere Key Providers in the verified clean-appliance desktop state.</em></p>
 <!-- END GENERATED INTERFACE OVERVIEW -->
 
-<h2 id="configure-the-service">Configure the service<a class="headerlink" href="#configure-the-service" title="Permanent link">&para;</a></h2>
+<p>Atlaso implements a bounded candidate profile for VCF 9.1. Keep it experimental until the observed interoperability
+and recovery work in issue #172 is complete. Do not describe the current candidate as observed or supported VCF 9.1
+behavior.</p>
+<p><img alt="vSphere Key Providers in the clean-appliance desktop viewport." src="../../assets/screenshots/vsphere-key-providers-clean-desktop.webp" /></p>
+<p><em>Figure: the provider, trusted-vCenter, certificate, and lifecycle tools with listener settings in the right rail.</em></p>
+<h2 id="add-a-provider-and-trusted-vcenter">Add a provider and trusted vCenter<a class="headerlink" href="#add-a-provider-and-trusted-vcenter" title="Permanent link">&para;</a></h2>
 <ol>
-<li>Select only the interfaces that should accept KMIP traffic.</li>
-<li>Enable the CA-managed server certificate and at least one client whose exact SHA-256 certificate fingerprint maps
-   to the provider.</li>
-<li>Resolve Validation-card errors and inspect the rendered service configuration.</li>
-<li>Submit the KMS/KMIP unit through <a href="../../operate/appliance-apply/">Appliance Apply</a>.</li>
+<li>On <strong>Providers</strong>, add a unique name, description, and saved enabled state. Atlaso assigns an immutable provider UUID.</li>
+<li>On <strong>Trusted vCenters</strong>, select the provider and enter the vCenter name and optional operational hostname.</li>
+<li>Paste exactly one current public X.509 client certificate. Atlaso rejects private-key blocks, malformed or expired
+   certificates, CA certificates, and certificates that cannot perform client authentication.</li>
+<li>Review the exact provider assignment and save the record.</li>
+<li>Review <strong>Pending Appliance Changes</strong>, then run global <strong>Appliance Apply</strong> for the internal <code>kms</code> unit.</li>
+<li>Download the public Atlaso server chain from the listener rail and configure the shared endpoint in vCenter.</li>
 </ol>
-<p>The managed-key wizard keeps the key name, algorithm, length, and full-width multiline purpose description together in
-its first identity step. Policy and lifecycle choices remain in their dedicated steps before review.</p>
-<p>The apply unit installs <code>/etc/atlaso/kmip/server.json</code> and manages <code>atlaso-kmip.service</code> as an unprivileged account.
-It gives systemd a root-managed mode-<code>0600</code>, machine-encrypted credential containing only <code>ATLASO_SECRETS_KEY</code>;
-systemd decrypts it into the service's private runtime credential directory, and the daemon does not receive the web
-session key or bootstrap administrator password from the shared appliance environment. On an upgraded appliance, the
-first KMS apply reconciles the <code>atlaso-kmip</code> system account and its state directories before
-starting the service. Wrapped operational keys and the protected KEK envelope remain under <code>/var/lib/atlaso/kmip</code>
-when the service is disabled. Keep the listener restricted to intended lab networks. Never publish private keys,
-plaintext key material, or client credentials in documentation, screenshots, task notes, or issues.</p>
-<p>When the CA issues a replacement client certificate, Atlaso keeps both the prior and current exact fingerprints in
-desired state. Install and verify the replacement in vCenter, then use <strong>Retire previous certificate</strong> from that client
-row's context menu. The audited action removes earlier fingerprints from desired state; submit another global KMS
-apply to enforce the retirement on the appliance.</p>
-<p>A nonempty legacy PyKMIP database blocks in-place replacement. Keep the old appliance available while VMware rekeys
-workloads into a newly configured provider; Atlaso does not migrate legacy key rows.
-The appliance-native listener requires TLS 1.2 or newer.</p>
-<h2 id="verify">Verify<a class="headerlink" href="#verify" title="Permanent link">&para;</a></h2>
-<p>Confirm the apply task succeeded, <code>atlaso-kmip.service</code> is healthy, and an approved client can complete a bounded KMIP
-operation over mutual TLS. A successful TLS handshake is insufficient unless the exact client fingerprint maps to the
-provider. If validation or negotiation fails, restore the prior desired state and submit a new apply rather than
-editing appliance files directly.</p>
+<p>Certificate fingerprints are normalized SHA-256 values and are unique appliance-wide. The same fingerprint cannot be
+assigned to another trusted vCenter or provider. Atlaso stores canonical public PEM and parsed public metadata only; it
+does not generate, accept, export, or reveal a vCenter client private key.</p>
+<p>Listener settings accept only currently available addressed access or VLAN interfaces. Atlaso derives the saved IPv4
+and IPv6 listener addresses from those selected interfaces; API callers cannot bind the service to an unrelated address
+by supplying a different <code>listen_addresses</code> value.</p>
+<h2 id="rotate-or-retire-public-trust">Rotate or retire public trust<a class="headerlink" href="#rotate-or-retire-public-trust" title="Permanent link">&para;</a></h2>
+<p>Use <strong>Add public certificate</strong> on a trusted-vCenter row or <strong>Add replacement certificate</strong> on a certificate row. Apply
+the overlapping trust bundle globally, move vCenter to the new certificate, and then use <strong>Retire certificate</strong>. An
+enabled trusted vCenter cannot lose its last usable fingerprint. Vault-assisted rotation belongs to issue #171.</p>
+<p>Settings backups preserve public certificate history, including certificates that expire after they were accepted.
+Restore revalidates each PEM body and exact fingerprint while retaining its expired status; an expired record never
+becomes usable trust merely because it was restored.</p>
+<h2 id="health-and-lifecycle-counts">Health and lifecycle counts<a class="headerlink" href="#health-and-lifecycle-counts" title="Permanent link">&para;</a></h2>
+<p><strong>Health &amp; lifecycle</strong> reports saved provider state, apply readiness, shared-daemon state, and authenticated redacted
+counts for <strong>Pre-Active</strong>, <strong>Active</strong>, and total operational keys. Counts come from the protected wrapped-key store
+through the fixed <code>atlaso-helper kms status</code> operation. If authentication, integrity verification, or store access is
+unavailable, Atlaso reports <strong>Not reported</strong> and null counts; it never substitutes zero.</p>
+<p>Operational keys are daemon-owned. No browser or REST operation creates, edits, exports, deletes, or lists operational
+key identifiers, and KMIP Destroy remains outside the bounded protocol contract.</p>
+<h2 id="removal-safeguards">Removal safeguards<a class="headerlink" href="#removal-safeguards" title="Permanent link">&para;</a></h2>
+<p>A provider can be deleted only when all of these conditions hold:</p>
+<ul>
+<li>it is disabled;</li>
+<li>every trusted vCenter has been detached;</li>
+<li>the disabled and detached desired state has completed global Appliance Apply; and</li>
+<li>authenticated runtime evidence reports exactly zero operational keys for its UUID.</li>
+</ul>
+<p>Atlaso fails closed when empty-store evidence is unavailable. A trusted vCenter can be deleted only after it is disabled
+and every certificate record is retired.</p>
+<h2 id="apply-and-trust-bundle-boundary">Apply and trust-bundle boundary<a class="headerlink" href="#apply-and-trust-bundle-boundary" title="Permanent link">&para;</a></h2>
+<p>Saving page or API changes updates database desired state only. Global Appliance Apply renders the enabled providers
+with exact enabled fingerprints, configures the daemon on every derived selected listener address, stages
+<code>/var/lib/atlaso/apply/kms/server.json</code> and
+<code>/var/lib/atlaso/apply/kms/client-trust.pem</code>, and invokes the constrained helper. The helper accepts only those fixed
+paths, rejects symbolic links and private-key material, and installs the bundle as
+<code>/etc/atlaso/kmip/client-trust.pem</code> with root and <code>atlaso-kmip</code> ownership.</p>
+<p>The TLS trust bundle contains the internal CA public root plus imported public leaf certificates. The daemon requires
+TLS 1.2 or newer, permits X.509 partial-chain verification for explicitly imported leaf trust, and still authorizes the
+connection only when the peer's exact fingerprint maps to one provider UUID.</p>
+<h2 id="api-access">API access<a class="headerlink" href="#api-access" title="Permanent link">&para;</a></h2>
+<p>Reads require <code>read:kms</code>; mutations require <code>write:kms</code>. The versioned resources are rooted at
+<code>/api/v1/vsphere-key-providers</code> and include listener settings, providers, trusted vCenters, certificates, readiness,
+health, lifecycle counts, and the public server chain. See the generated OpenAPI document at <code>/openapi.json</code> for request,
+response, authorization, validation, and compatibility details.</p>
+<p><img alt="vSphere Key Providers in the clean-appliance narrow viewport." src="../../assets/screenshots/vsphere-key-providers-clean-responsive.webp" /></p>
+<p><em>Figure: the wide service frame and DNS-style settings rail in the verified narrow layout.</em></p>
 <!-- BEGIN GENERATED ADDITIONAL SCREENSHOTS -->
 <h2 id="additional-verified-states">Additional verified states<a class="headerlink" href="#additional-verified-states" title="Permanent link">&para;</a></h2>
 <p>These captures show responsive layouts and useful operational states referenced by this page.</p>
-<h3 id="kms-and-kmip_1">KMS and KMIP<a class="headerlink" href="#kms-and-kmip_1" title="Permanent link">&para;</a></h3>
-<p><img alt="Atlaso KMS and KMIP page in the clean-appliance responsive viewport." src="../../assets/screenshots/kms-clean-responsive.webp" /></p>
-<p><em>Figure: KMS and KMIP in the verified clean-appliance responsive state.</em></p>
+<h3 id="vsphere-key-providers_1">vSphere Key Providers<a class="headerlink" href="#vsphere-key-providers_1" title="Permanent link">&para;</a></h3>
+<p><img alt="Atlaso vSphere Key Providers page in the clean-appliance responsive viewport." src="../../assets/screenshots/vsphere-key-providers-clean-responsive.webp" /></p>
+<p><em>Figure: vSphere Key Providers in the verified clean-appliance responsive state.</em></p>
 <!-- END GENERATED ADDITIONAL SCREENSHOTS -->
 
 

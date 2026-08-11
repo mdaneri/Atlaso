@@ -1619,14 +1619,14 @@
   
   
     <li class="md-nav__item">
-      <a href="../../services/kms/" class="md-nav__link">
+      <a href="../../services/vsphere-key-providers/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-  KMS and KMIP
+  vSphere Key Providers
 
     
   </span>
@@ -2352,17 +2352,6 @@
     <span class="md-ellipsis">
       <span class="md-typeset">
         Recovery and disaster recovery
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#legacy-upgrade-boundary" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Legacy upgrade boundary
       </span>
     </span>
   </a>
@@ -3303,17 +3292,6 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#legacy-upgrade-boundary" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Legacy upgrade boundary
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
   <a href="#abuse-cases-and-mitigations" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -3450,14 +3428,14 @@ implementation tracked by issues <a href="https://github.com/mdaneri/Atlaso/issu
 but they must remain described as experimental until the VCF 9.1 promotion gate is complete.</p>
 <h2 id="architecture-decision">Architecture decision<a class="headerlink" href="#architecture-decision" title="Permanent link">&para;</a></h2>
 <p>Atlaso implements a small Python service with an internal, bounded KMIP 1.4 TTLV codec and operation dispatcher.
-It does not embed the PyKMIP server, request engine, policy engine, storage model, or compatibility wrapper.</p>
+It does not embed a general-purpose KMIP request engine, policy engine, storage model, or compatibility wrapper.</p>
 <p>Python keeps the service inside Atlaso's existing build, packaging, logging, testing, and Photon lifecycle. The
 security boundary comes from the narrow checked-in protocol allowlist rather than the language. The adapter must:</p>
 <ul>
 <li>decode only the required TTLV types and structures;</li>
 <li>reject unknown, duplicate, oversized, deeply nested, or malformed input before dispatch;</li>
 <li>enforce a maximum request size, batch size, nesting depth, connection count, and idle timeout;</li>
-<li>bind a verified client certificate fingerprint to one or more explicitly selected providers;</li>
+<li>bind a verified client certificate fingerprint to exactly one provider UUID;</li>
 <li>authorize every batch item independently inside the provider namespace;</li>
 <li>never include raw TTLV, key bytes, wrapped blobs, credentials, or private material in logs and errors; and</li>
 <li>use deterministic protocol errors without falling back to a broader KMIP implementation.</li>
@@ -3491,7 +3469,7 @@ security boundary comes from the narrow checked-in protocol allowlist rather tha
 </tr>
 <tr>
 <td>vCenter client identity</td>
-<td>Exact certificate fingerprint mapped to explicit provider IDs</td>
+<td>Canonical public X.509 PEM and exact SHA-256 fingerprint mapped to one provider UUID; no client private key is accepted or generated</td>
 </tr>
 <tr>
 <td>Recovery bundle</td>
@@ -3514,13 +3492,15 @@ authority.</p>
 <p>Every provider receives an immutable UUID and an independent key namespace. Every key receives a stable random UUID
 whose lookup is always qualified by provider ID. Database constraints and service-layer queries both enforce the
 qualification.</p>
-<p>A trusted client record contains a normalized SHA-256 certificate fingerprint and explicit provider membership.
-Multiple vCenters may be trusted by one provider, but a successful TLS handshake alone grants no key access. Missing,
-disabled, expired, ambiguous, or unmapped identities fail closed. LDAP organization membership is irrelevant.</p>
-<p>Certificate replacement uses an overlap window. Atlaso adds the exact fingerprint of the current CA-issued managed
-client certificate while retaining the prior exact fingerprint. The administrator installs and verifies the new
-certificate in vCenter, then uses the audited <strong>Retire previous certificate</strong> client action before the next global KMS
-apply. The service never trusts a renewed certificate merely because its subject or CA matches.</p>
+<p>A provider-scoped trusted-vCenter record contains one or more normalized SHA-256 certificate fingerprints and canonical
+public X.509 certificates. Fingerprints are unique appliance-wide, so the same certificate cannot authorize another
+provider. Multiple vCenters may be trusted by one provider, but a successful TLS handshake alone grants no key access.
+Missing, disabled, expired, ambiguous, or unmapped identities fail closed. LDAP organization membership is irrelevant.</p>
+<p>The handshake trust bundle contains the internal CA public root and current imported public leaf certificates. X.509
+partial-chain verification permits explicit leaf trust, but authorization still requires the peer's exact fingerprint.
+Certificate replacement uses an add-apply-verify-retire overlap. The administrator imports the replacement public
+certificate, applies it globally, moves vCenter to that identity, and uses the audited <strong>Retire certificate</strong> action.
+The service never trusts a renewed certificate merely because its subject or CA matches.</p>
 <h2 id="key-creation-and-storage">Key creation and storage<a class="headerlink" href="#key-creation-and-storage" title="Permanent link">&para;</a></h2>
 <p>The service generates AES-256 key material with the operating system CSPRNG. It wraps each key with AES-256-GCM under
 the runtime key-encryption key (KEK). The authenticated additional data binds at least:</p>
@@ -3553,6 +3533,8 @@ and is restricted to an authenticated client mapped to the same provider. Mutabl
 permits, but encoded protocol bytes and immutable Python objects cannot be guaranteed to be overwritten in place; the
 unprivileged process and short request lifetime are part of the memory-exposure boundary.</p>
 <h2 id="recovery-and-disaster-recovery">Recovery and disaster recovery<a class="headerlink" href="#recovery-and-disaster-recovery" title="Permanent link">&para;</a></h2>
+<p>The recovery implementation and final recovery gate belong to issue #172. The requirements below are
+the retained security contract, not a claim that provider recovery is currently available.</p>
 <p>The normal Atlaso settings archive excludes operational keys, the runtime KEK, private certificates, and Vault
 passwords. A separate recovery workflow produces a passphrase-encrypted bundle containing the minimum material needed
 to restore provider identity, wrapped keys, the runtime KEK, and integrity metadata.</p>
@@ -3569,16 +3551,6 @@ to restore provider identity, wrapped keys, the runtime KEK, and integrity metad
 </ol>
 <p>Losing both the running store and a valid recovery bundle is unrecoverable. Losing only
 <code>ATLASO_SECRETS_KEY</code> is also unrecoverable unless the recovery bundle contains a separately passphrase-protected KEK.</p>
-<h2 id="legacy-upgrade-boundary">Legacy upgrade boundary<a class="headerlink" href="#legacy-upgrade-boundary" title="Permanent link">&para;</a></h2>
-<p>There is no PyKMIP key migration. During upgrade:</p>
-<ul>
-<li>an empty or absent legacy <code>/var/lib/atlaso/kms/pykmip.db</code> may be replaced;</li>
-<li>the first KMS apply reconciles the unprivileged <code>atlaso-kmip</code> account and state directories on an upgraded appliance;</li>
-<li>a nonempty legacy store blocks in-place replacement with a clear, secret-free diagnostic;</li>
-<li>the old appliance must remain available while VMware rekeys workloads into a newly configured provider; and</li>
-<li>no code may read and rewrite legacy plaintext key rows into the new store.</li>
-</ul>
-<p>This boundary avoids silently changing key identifiers, ownership, lifecycle semantics, or protection guarantees.</p>
 <h2 id="abuse-cases-and-mitigations">Abuse cases and mitigations<a class="headerlink" href="#abuse-cases-and-mitigations" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
@@ -3614,15 +3586,15 @@ to restore provider identity, wrapped keys, the runtime KEK, and integrity metad
 </tr>
 <tr>
 <td>Certificate rotation creates an outage</td>
-<td>Add-verify-retire overlap with health proof before removal</td>
+<td>Import-apply-verify-retire public-certificate overlap with health proof before removal</td>
+</tr>
+<tr>
+<td>Provider deletion loses operational keys</td>
+<td>Disabled and detached state plus authenticated exact zero-key evidence; unavailable evidence fails closed</td>
 </tr>
 <tr>
 <td>Recovery overwrites a healthy store</td>
 <td>Empty/matching-store precondition, dry-run, atomic install, explicit confirmation</td>
-</tr>
-<tr>
-<td>Legacy upgrade loses keys</td>
-<td>Nonempty PyKMIP store hard block and documented VMware rekey procedure</td>
 </tr>
 <tr>
 <td>Broad KMIP behavior is accidentally exposed</td>
