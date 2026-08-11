@@ -737,15 +737,21 @@ and adds TCP/4460 when NTS server mode is enabled. Moving a DHCP scope, service 
 VLAN such as `eth2.50` also changes the Firewall apply unit. In development, system adapters remain dry-run by default
 and record command intent instead of mutating host services directly.
 
-KMS / KMIP uses Atlaso's appliance-native provider and remains experimental until the VCF 9.1 acceptance and recovery
-gate in issue #172 passes. The KMS page derives IPv4 and IPv6 listen addresses from the selected service interface,
-manages app-owned A and/or AAAA records for the KMS hostname, and requires an enabled healthy CA before activation.
-Real KMS apply stages `/var/lib/atlaso/apply/kms/server.json`, installs `/etc/atlaso/kmip/server.json`, and manages the
-hardened, unprivileged `atlaso-kmip.service`. The daemon exposes only the checked-in KMIP 1.4 AES-256 symmetric-key
-contract, maps exact client-certificate fingerprints to UUID provider namespaces, and stores only AES-GCM-wrapped keys
-under `/var/lib/atlaso/kmip`. `systemd-creds` stores the daemon's `ATLASO_SECRETS_KEY` input as a machine-encrypted
-credential and exposes its plaintext only in the service's private runtime credential directory. The listener requires
-TLS 1.2 or newer. Disabling KMS stops the service while preserving the operational store.
+vSphere Key Providers use Atlaso's appliance-native daemon and remain experimental until the VCF 9.1 acceptance and
+recovery gate in issue #172 passes. `/ui/management/vsphere-key-providers` manages
+multiple immutable UUID namespaces, provider-scoped trusted vCenters, canonical public X.509 certificates, and one
+appliance-wide listener/server identity. The same fingerprint cannot map to multiple providers, and Atlaso exposes no
+client-private-key or management key workflow.
+
+Real internal `kms` apply stages `/var/lib/atlaso/apply/kms/server.json` and the public-only
+`/var/lib/atlaso/apply/kms/client-trust.pem`, installs fixed runtime paths, and manages the hardened, unprivileged
+`atlaso-kmip.service`. The daemon exposes only the checked-in KMIP 1.4 AES-256 symmetric-key contract, maps each exact
+peer fingerprint to one provider UUID, and stores only AES-GCM-wrapped operational keys under `/var/lib/atlaso/kmip`.
+`systemd-creds` protects the runtime store credential. TLS requires 1.2 or newer and permits partial-chain verification
+for imported public leaves, and the daemon binds every derived selected listener address. Authenticated status returns
+only service/store health and nullable per-provider lifecycle counts; unavailable evidence is never represented as zero.
+Disabling the service preserves the operational store. Provider deletion also requires the disabled and detached state
+to complete global Appliance Apply before authenticated zero-key evidence can authorize removal.
 
 Managed LDAP provides an OpenLDAP 2.6 service for VCF Automation 9.1 while Atlaso operator sign-in remains local. Each
 VCF organization receives an isolated suffix and LMDB database, organization-local users and nested groups, and a
@@ -784,7 +790,8 @@ organization, and managed LDAP OIDC sessions never grant operator UI access. See
 Complex resource collections use the shared wizard-backed Tabulator pattern. Their identity steps use the shared
 two-column field grid and place supported descriptions on a separate full-width multiline row. Authentication API
 tokens use a role-constrained scope checklist instead of free-form permission text. Authentication API tokens and OIDC
-clients, CA profiles and certificate requests, operator firewall rules, KMS clients and keys, DHCP IP zones, VCF
+clients, CA profiles and certificate requests, operator firewall rules, vSphere Key Providers and trusted vCenters,
+DHCP IP zones, VCF
 Offline Depot download profiles, and VCF Private Registry bundles remain visible as browsable grids. The pinned bottom
 row launches add; row double-click and the context menu launch edit where permissions allow. Guided steps validate
 before advancing, retain recoverable server errors in the open dialog, and finish with a desired-state and safety-boundary
@@ -818,13 +825,13 @@ generated PXE runtime files, or other runtime history. Restoring usable CA priva
 Restoring a settings archive replaces desired-state configuration in the control-plane database only. Factory reset
 removes current desired-state configuration and reseeds only core Atlaso defaults. It does not recreate demo VLANs,
 routes, NAT rules, WAN policies, trunk-only parent NIC posture, DHCP scopes or reservations, firewall rules, CA
-requests, KMS clients or keys, depot download profiles, or service listener bindings, including after a service restart.
-The core reset keeps only the appliance DNS zone derived from the appliance FQDN and an app-owned appliance A/AAAA
-record pointing at the management IP. The core reset leaves only `eth0` desired up for management; other physical NICs
-are desired admin down until an operator enables them. Disabled service settings reset with blank listen interfaces and
-addresses so `Appliance Apply` can submit a clean disabled baseline. Both restore and factory reset force service status
-rows to stopped, disabled, and `unconfigured`; host services are not mutated until the operator reviews and submits
-selected units through the global `Appliance Apply` workflow.
+requests, vSphere Key Provider records, depot download profiles, or service listener bindings, including after a
+service restart. The core reset keeps only the appliance DNS zone derived from the appliance FQDN and an app-owned
+appliance A/AAAA record pointing at the management IP. The core reset leaves only `eth0` desired up for management;
+other physical NICs are desired admin down until an operator enables them. Disabled service settings reset with blank
+listen interfaces and addresses so `Appliance Apply` can submit a clean disabled baseline. Both restore and factory
+reset force service status rows to stopped, disabled, and `unconfigured`; host services are not mutated until the
+operator reviews and submits selected units through the global `Appliance Apply` workflow.
 
 ## Brand Assets
 

@@ -25,7 +25,6 @@ MANAGEMENT_ROUTE_ROOTS = frozenset(
         "esxi-pxe",
         "firewall",
         "https-repository",
-        "kms",
         "ldap",
         "ldap-users",
         "login",
@@ -49,6 +48,7 @@ MANAGEMENT_ROUTE_ROOTS = frozenset(
         "vcf-private-registry",
         "vcf-trust",
         "vlan-interfaces",
+        "vsphere-key-providers",
     }
 )
 

@@ -622,29 +622,27 @@ status: current
   Requests in the primary Atlaso sidebar; link it from CA-associated surfaces instead. Every selected NTS server apply
   automatically includes the CA material unit and preserves CA-before-NTP execution order, even when the CA baseline
   appears current.
-- Real KMS apply stages strict JSON under `/var/lib/atlaso/apply/kms/server.json` as the `atlaso` service user before
-  invoking the root helper. KMS can be activated only when CA desired state is enabled and healthy; the page derives
-  IPv4 and IPv6 listen addresses from the selected access interface or enabled VLAN, creates app-owned DNS records for
-  the derived address families, and auto-ensures KMS server/client CA rows. The only backend is `atlaso-kmip`, so do not
-  show a backend selector; keep backend as hidden desired state if needed for form compatibility. The KMS settings rail
-  should show hostname near the top, stack listen interfaces and derived listen addresses on separate rows, keep port
-  as a compact field, and derive the CA-managed server certificate name from the hostname instead of exposing a
-  separate server-certificate input. The helper validates the exact JSON schema, fixed paths, CA-managed material,
-  provider UUIDs, client fingerprints, and resource limits; installs `/etc/atlaso/kmip/server.json`; and manages the
-  hardened, unprivileged `atlaso-kmip.service`. Disabling KMS stops the new and retired service names while preserving
-  `/var/lib/atlaso/kmip`. Never print KMS private keys or plaintext key material in previews, jobs, logs, docs, or final
-  responses.
-- Issue #162 replaces the PyKMIP lab listener in ordered phases. The Python `atlaso-kmip` service implements only the
-  candidate VCF 9.1 contract in
+- Real internal `kms` apply stages strict JSON and the public-only trust bundle at fixed paths under
+  `/var/lib/atlaso/apply/kms`. vSphere Key Providers can be activated only when CA desired state is enabled and healthy;
+  `/ui/management/vsphere-key-providers` derives IPv4 and IPv6 listen addresses, creates app-owned DNS records, and
+  auto-ensures only the shared KMS server CA row. The only backend is `atlaso-kmip`; expose no backend or
+  server-certificate selector.
+  Keep hostname near the top of the DNS-style settings rail, stack listen interfaces and derived addresses, and keep
+  port compact. The helper validates exact JSON, fixed paths, ownership, modes, symlink resistance, CA-managed server
+  identity, provider UUIDs, globally unique exact fingerprints, and resource limits. It installs
+  `/etc/atlaso/kmip/server.json` and `/etc/atlaso/kmip/client-trust.pem` and manages the hardened unprivileged service.
+  The trust bundle contains only the internal CA public root and imported public vCenter certificates. Never generate,
+  accept, export, or expose a vCenter client private key or plaintext operational key material.
+- The Python `atlaso-kmip` service implements only the candidate VCF 9.1 contract in
   `atlaso/app/kmip/contracts/vcf_9_1.json`; keep the implementation experimental until issue #172 records the live
   VCF 9.1 acceptance and recovery evidence required to promote the contract to `observed`. A provider UUID defines an
-  isolated key namespace and may trust multiple exact vCenter certificate fingerprints. LDAP organizations do not
-  select providers. Generate only AES-256 keys, wrap operational keys with AES-256-GCM under a KEK protected by
+  isolated key namespace and may trust multiple provider-scoped vCenters; every exact certificate fingerprint maps to
+  one provider appliance-wide. LDAP organizations do not select providers. Generate only AES-256 keys, wrap
+  operational keys with AES-256-GCM under a KEK protected by
   `ATLASO_SECRETS_KEY`, and never expose plaintext keys outside the authorized KMIP `Get` response. Reject operations,
   objects, algorithms, formats, and attributes outside the contract. Interop traces contain metadata only and must pass
   `scripts/kmip/validate_interop_trace.py`; raw TTLV and secret-bearing fields are forbidden. Recovery uses a separate
-  passphrase-encrypted bundle. There is no legacy key migration: a nonempty PyKMIP database must block in-place
-  replacement while the old appliance remains available for VMware rekey.
+  passphrase-encrypted bundle in issue #172.
 - Real VCF Offline Depot apply stages nginx config under
   `/var/lib/atlaso/apply/vcf-offline-depot/atlaso-vcf-offline-depot.conf` as the `atlaso` service user before invoking
   the root helper. Uploading `vcf-download-tool-*.tar.gz` uses a shared two-step package wizard and remains desired-state
@@ -1016,12 +1014,12 @@ status: current
   hashes, remains outside the settings archive, and stages import for global LDAP apply. Restore and factory reset must
   leave service status rows stopped, disabled, and `unconfigured`; host mutation still belongs only to the global
   `/appliance-apply` workflow. Factory reset must reseed only core defaults and must not recreate demo VLANs, trunk-only
-  parent NIC posture, routes, NAT rules, WAN policies, DHCP scopes/reservations, firewall rules, CA requests, KMS
-  clients/keys, depot download profiles, or service listener bindings, including after service restart. The only DNS
-  record factory reset should reseed is the app-owned appliance FQDN record pointed at the management IP. After factory
-  reset, only `eth0` should be desired admin up; other physical NICs should be desired admin down until an operator
-  enables them. Disabled service settings should have blank listen interfaces and addresses until an operator selects a
-  valid bind target.
+  parent NIC posture, routes, NAT rules, WAN policies, DHCP scopes/reservations, firewall rules, CA requests, vSphere
+  providers/trusted vCenters, depot download profiles, or service listener bindings, including after service restart.
+  The only DNS record factory reset should reseed is the app-owned appliance FQDN record pointed at the management IP.
+  After factory reset, only `eth0` should be desired admin up; other physical NICs should be desired admin down until
+  an operator enables them. Disabled service settings should have blank listen interfaces and addresses until an
+  operator selects a valid bind target.
 - Settings archives must not include vault entries. Restore and factory reset clear vaults and the unused legacy
   Kickstart-binding compatibility table; operators reimport or recreate vault contents afterward.
 - Documentation updates are required for every major product, architecture, workflow, safety-boundary, or

@@ -19,7 +19,7 @@ access, Kickstart markers, connection URIs, VCF Helper imports, reveal auditing,
 - [Certificate Authority](certificate-authority.md)
 - [ESX storage over NFS](esx-storage.md)
 - [ESX network boot and scripted installation](ipxe.md)
-- [KMS and KMIP](kms.md)
+- [vSphere Key Providers](vsphere-key-providers.md)
 - [Local users](local-users.md)
 - [Managed LDAP](managed-ldap.md)
 - [OpenID Connect provider](oidc-provider.md)

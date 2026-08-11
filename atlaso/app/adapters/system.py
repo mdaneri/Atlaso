@@ -373,6 +373,18 @@ class SystemAdapter:
         """
         return self._helper_result("kms", "validate", config_path, dry_run_message="dry-run: KMS validation command recorded")
 
+    def kms_status(self) -> AdapterResult:
+        """Return authenticated, redacted vSphere Key Provider runtime status.
+
+        Returns:
+            The bounded helper status result.
+        """
+        return self._helper_result(
+            "kms",
+            "status",
+            dry_run_message=json.dumps({"status": "not-reported", "providers": {}}),
+        )
+
     def apply_ldap_config(self, config_path: str) -> AdapterResult:
         """Update ldap config.
 

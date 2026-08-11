@@ -150,8 +150,10 @@ The following cross-cutting boundaries always apply:
   audits, logs, documentation, screenshots, or video.
 - The appliance-native vSphere Key Provider targets only VCF 9.1 and implements the checked-in bounded KMIP contract.
   Keep it experimental until the live acceptance and recovery gate promotes that contract to observed. Provider UUIDs
-  are isolated key namespaces, client access uses exact certificate fingerprints, and LDAP organizations never select
-  a provider. Do not restore a general-purpose KMIP backend or migrate keys from a nonempty PyKMIP store.
+  are isolated key namespaces; multiple provider-scoped vCenters use canonical public certificates and appliance-wide
+  unique exact fingerprints. Never generate or expose vCenter client private keys or management key CRUD. Authenticated
+  status exposes nullable redacted lifecycle counts and unavailable evidence is never zero. LDAP organizations never
+  select a provider. Do not restore a general-purpose KMIP backend.
 - Keep secret-bearing Local Users, Certificate Authority, and Managed LDAP apply inputs mode `0600` and present only
   for the constrained helper execution window. Remove them on success, validation or apply failure, and startup
   recovery; read-only Local Users status must use a separate short-lived file.
