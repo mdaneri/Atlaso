@@ -1,6 +1,6 @@
 # Bootstrap tools are part of the offline appliance release and are installed
 # from the same ABI-specific wheelhouse as runtime dependencies.
 packaging==26.2
-pip==26.1.2
+pip==26.2
 setuptools==83.0.0
 wheel==0.47.0
