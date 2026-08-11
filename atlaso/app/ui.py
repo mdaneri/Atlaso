@@ -22,7 +22,7 @@ from ipaddress import IPv4Address, IPv4Network, IPv6Address, IPv6Network, ip_add
 from pathlib import Path, PurePosixPath
 from secrets import token_urlsafe
 from typing import Any, Callable
-from urllib.parse import quote, urlsplit
+from urllib.parse import quote, unquote, urlsplit
 from uuid import uuid4
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -12864,10 +12864,39 @@ def safe_depot_login_next(value: str | None) -> str:
     Args:
         value: Candidate value consumed by safe depot login next.
     """
+    fallback = "/PROD/"
     target = (value or "").strip()
-    if target == "/PROD" or target.startswith("/PROD/"):
-        return target
-    return "/PROD/"
+    if not target or "\\" in target or any(ord(character) < 0x20 or ord(character) == 0x7F for character in target):
+        return fallback
+    try:
+        parsed = urlsplit(target)
+    except ValueError:
+        return fallback
+    if parsed.scheme or parsed.netloc or parsed.fragment:
+        return fallback
+
+    decoded_path = parsed.path
+    for _ in range(4):
+        next_decoded_path = unquote(decoded_path)
+        if next_decoded_path == decoded_path:
+            break
+        decoded_path = next_decoded_path
+    else:
+        return fallback
+    if (
+        "\\" in decoded_path
+        or any(ord(character) < 0x20 or ord(character) == 0x7F for character in decoded_path)
+        or "//" in decoded_path
+        or any(segment in {".", ".."} for segment in decoded_path.split("/"))
+    ):
+        return fallback
+
+    if parsed.path == "/PROD":
+        return "/PROD" + ("?" + parsed.query if parsed.query else "")
+    if not parsed.path.startswith("/PROD/") or not decoded_path.startswith("/PROD/"):
+        return fallback
+    depot_suffix = parsed.path.removeprefix("/PROD/")
+    return "/PROD/" + depot_suffix + ("?" + parsed.query if parsed.query else "")
 
 
 def depot_login_response(request: Request, *, return_to: str = "/PROD/", error: str | None = None, status_code: int = 200, db: Session | None = None) -> HTMLResponse:
