@@ -1,10 +1,10 @@
 {
-  "id": "/",
+  "id": "/ui/management",
   "name": "Atlaso",
   "short_name": "Atlaso",
   "description": "Everything your virtualization lab needs.",
-  "start_url": "/dashboard",
-  "scope": "/",
+  "start_url": "/ui/management/dashboard",
+  "scope": "/ui/management/",
   "display": "standalone",
   "launch_handler": {
     "client_mode": "navigate-existing"

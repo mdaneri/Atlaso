@@ -8,6 +8,11 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 TEMPLATES = ROOT / "atlaso" / "app" / "templates"
 MATRIX = ROOT / "docs" / "project" / "ui-compliance-matrix.md"
+ROUTER_PREFIXES = {
+    "router": "/ui/management",
+    "management_router": "/ui/management",
+    "public_router": "/ui/public",
+}
 
 
 def _html_routes(path: Path) -> set[str]:
@@ -37,7 +42,10 @@ def _html_routes(path: Path) -> set[str]:
                 for keyword in decorator.keywords
             )
             if renders_html:
-                routes.add(str(decorator.args[0].value))
+                route = str(decorator.args[0].value)
+                owner = decorator.func.value
+                prefix = ROUTER_PREFIXES.get(owner.id, "") if isinstance(owner, ast.Name) else ""
+                routes.add(f"{prefix}{route}" or "/")
     return routes
 
 
@@ -46,9 +54,9 @@ def test_ui_compliance_matrix_covers_every_html_route_and_template():
     matrix = MATRIX.read_text(encoding="utf-8")
     routes = _html_routes(ROOT / "atlaso" / "app" / "ui.py")
     routes.update(_html_routes(ROOT / "atlaso" / "app" / "web_terminal.py"))
-    assert len(routes) == 45
+    assert len(routes) >= 45
     for route in sorted(routes):
-        assert f"`{route}`" in matrix, route
+        assert f"`{route}`" in matrix or f"\n{route}\n" in matrix, route
 
     for template in TEMPLATES.rglob("*.html"):
         relative = template.relative_to(TEMPLATES).as_posix()

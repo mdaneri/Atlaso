@@ -1,5 +1,5 @@
-{% set public_logout_action = '/requests/logout' %}
-{% set public_logout_next = '/requests' %}
+{% set public_logout_action = public_ui_path('/ca/requests/logout') %}
+{% set public_logout_next = public_ui_path('/ca/requests') %}
 {% extends "public_portal_base.html" %}
 
 {% block title %}Atlaso - Certificate Request Portal{% endblock %}
@@ -11,7 +11,7 @@
       <h1>Certificate Requests</h1>
     </div>
     <div class="topbar-actions">
-      <button class="button secondary" type="button" data-history-back data-history-fallback="/ca">Back</button>
+      <button class="button secondary" type="button" data-history-back data-history-fallback="{{ public_ui_path('/ca') }}">Back</button>
       <span class="status-pill muted">{{ ca_certificates|length }} requests</span>
     </div>
   </div>
@@ -33,7 +33,7 @@
         class="tabulator-shell"
         data-rows='{{ ca_request_rows | tojson }}'
         data-csrf="{{ csrf_token }}"
-        data-revoke-url-template="/requests/certificates/__id__/revoke"
+        data-revoke-url-template="{{ public_ui_path('/ca/requests/certificates/__id__/revoke') }}"
         data-fallback-id="ca-requests-fallback"
       ></div>
       <p id="ca-requests-status" class="autosave-status" aria-live="polite">Certificate requests are read-only here; use the row menu to revoke an issued certificate.</p>
@@ -52,7 +52,7 @@
               <td>
                 {% if certificate.status == "issued" and certificate.serial_number %}
                   <form
-                    action="/requests/certificates/{{ certificate.id }}/revoke"
+                    action="{{ public_ui_path('/ca/requests/certificates/') }}{{ certificate.id }}/revoke"
                     method="post"
                     data-confirm-modal
                     data-confirm-title="Revoke {{ certificate.common_name }}?"
@@ -79,7 +79,7 @@
           <h2>Submit Request</h2>
           <span class="status-pill good">portal</span>
         </div>
-        <form class="form-stack" action="/requests" method="post">
+        <form class="form-stack" action="{{ public_ui_path('/ca/requests') }}" method="post">
           <input type="hidden" name="csrf" value="{{ csrf_token }}">
           <label>
             <span class="field-label"><span>Common name</span><button class="help-icon" type="button" data-help="Primary certificate subject name. For service certificates, use the FQDN clients will connect to.">i</button></span>

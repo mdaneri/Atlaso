@@ -72,7 +72,7 @@
               <td>{{ "yes" if bundle.enabled else "no" }}</td>
               <td>
                 <form
-                  action="/vcf-private-registry/bundles/{{ bundle.id }}/delete"
+                  action="{{ management_ui_root }}/vcf-private-registry/bundles/{{ bundle.id }}/delete"
                   method="post"
                   data-confirm-modal
                   data-confirm-title="Delete {{ bundle.name }} bundle?"
@@ -95,7 +95,7 @@
         <h2>Harbor Settings</h2>
         <span class="status-pill {{ vcf_registry_service_status.pill }}">{{ vcf_registry_service_status.label }}</span>
       </div>
-      <form class="form-stack" action="/vcf-private-registry/settings" method="post" data-autosave-form data-vcf-registry-settings data-autosave-status-id="vcf-registry-settings-status">
+      <form class="form-stack" action="{{ management_ui_root }}/vcf-private-registry/settings" method="post" data-autosave-form data-vcf-registry-settings data-autosave-status-id="vcf-registry-settings-status">
         <input type="hidden" name="csrf" value="{{ csrf_token }}">
         <label class="switch-field"><span class="field-label"><span>Service enabled</span><button class="help-icon" type="button" data-help="Controls whether Atlaso treats the Harbor registry as enabled desired state. Host services are not changed until global appliance apply runs.">i</button></span><input class="switch-input" type="checkbox" name="enabled" {{ "checked" if vcf_registry_settings.enabled else "" }}><span class="switch-track" aria-hidden="true"></span></label>
         <div class="form-grid">
@@ -251,7 +251,7 @@
 {% call resource_wizard(
   "vcf-registry-bundle-dialog",
   "vcf-registry-bundle-form",
-  "/vcf-private-registry/bundles",
+  management_ui_path("/vcf-private-registry/bundles"),
   vcf_registry_bundle_steps,
   "Define the Supervisor Service bundle",
   "Name the bundle and identify the upstream source that Atlaso should relocate.",

@@ -30,7 +30,7 @@ remain part of the generated REST contract.
 
 ## Operate Network Boot
 
-Open **Network Boot** at `/network-boot`. The former `/esxi-pxe` browser route
+Open **Network Boot** at `/ui/management/network-boot`. The former `/esxi-pxe` browser route
 redirects here; existing ESXi API paths, the `esxi_pxe` apply unit, staged
 configuration paths, and helper commands remain compatible.
 

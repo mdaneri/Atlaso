@@ -12,9 +12,9 @@
       {% if error %}
         <div class="alert error">{{ error }}</div>
       {% endif %}
-      <form class="form-stack" action="{{ login_action|default('/requests/login') }}" method="post" target="_self">
+      <form class="form-stack" action="{{ login_action|default(public_ui_path('/ca/requests/login')) }}" method="post" target="_self">
         <input type="hidden" name="csrf" value="{{ csrf_token }}">
-        <input type="hidden" name="next" value="{{ return_to or '/requests' }}">
+        <input type="hidden" name="next" value="{{ return_to or public_ui_path('/ca/requests') }}">
         <label>
           <span>Username</span>
           <input name="username" autocomplete="username" required autofocus>
@@ -25,7 +25,7 @@
         </label>
         <div class="button-row login-actions">
           <button class="button primary" type="submit">Sign in</button>
-          <button class="button secondary" type="button" data-history-back data-history-fallback="{{ back_href|default('/ca') }}">{{ back_label|default("Cancel") }}</button>
+          <button class="button secondary" type="button" data-history-back data-history-fallback="{{ back_href|default(public_ui_path('/ca')) }}">{{ back_label|default("Cancel") }}</button>
         </div>
       </form>
     </div>

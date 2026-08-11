@@ -39,7 +39,7 @@
             <div class="zone-actions">
               <span class="status-pill muted">{{ group.records | length }} records</span>
               <form
-                action="/dns/zones/delete"
+                action="{{ management_ui_root }}/dns/zones/delete"
                 method="post"
                 data-confirm-modal
                 data-confirm-title="Delete {{ group.domain }}?"
@@ -89,7 +89,7 @@
               <button class="tab-button" type="button" role="tab" data-tab-target="dns-zone-{{ loop.index }}-hosts" aria-selected="false">Import Hosts</button>
               <button class="tab-button" type="button" role="tab" data-tab-target="dns-zone-{{ loop.index }}-file" aria-selected="false">Import Zone File</button>
             </div>
-            <form action="/dns/zones/enabled" method="post" data-dns-domain-enabled-form>
+            <form action="{{ management_ui_root }}/dns/zones/enabled" method="post" data-dns-domain-enabled-form>
               <input type="hidden" name="csrf" value="{{ csrf_token }}">
               <input type="hidden" name="domain" value="{{ group.domain }}">
               <label class="switch-field inline-switch">
@@ -150,12 +150,12 @@
                       </td>
                       <td><input class="table-input" name="description" value="{{ record.description or '' }}" form="dns-record-edit-{{ record.id }}" aria-label="Description for {{ record.host_label or record.hostname or 'DNS record' }}"></td>
                       <td class="button-row">
-                        <form id="dns-record-edit-{{ record.id }}" action="/dns/records/{{ record.id }}/edit" method="post">
+                        <form id="dns-record-edit-{{ record.id }}" action="{{ management_ui_root }}/dns/records/{{ record.id }}/edit" method="post">
                           <input type="hidden" name="csrf" value="{{ csrf_token }}">
                           <input type="hidden" name="domain" value="{{ group.domain }}">
                         </form>
                         <button class="button tiny primary" type="submit" form="dns-record-edit-{{ record.id }}">Update DNS record</button>
-                        <form action="/dns/records/{{ record.id }}/delete" method="post" data-confirm-modal data-confirm-title="Delete {{ record.host_label or record.hostname or 'DNS record' }}?" data-confirm-message="This removes the DNS record from desired state. The appliance changes only after global appliance apply." data-confirm-label="Delete DNS record">
+                        <form action="{{ management_ui_root }}/dns/records/{{ record.id }}/delete" method="post" data-confirm-modal data-confirm-title="Delete {{ record.host_label or record.hostname or 'DNS record' }}?" data-confirm-message="This removes the DNS record from desired state. The appliance changes only after global appliance apply." data-confirm-label="Delete DNS record">
                           <input type="hidden" name="csrf" value="{{ csrf_token }}">
                           <button class="button tiny" type="submit">Delete</button>
                         </form>
@@ -170,7 +170,7 @@
               {% if bulk_error %}
                 <div class="alert error">{{ bulk_error }}</div>
               {% endif %}
-              <form class="form-stack dns-import-form" action="/dns/records/import" method="post">
+              <form class="form-stack dns-import-form" action="{{ management_ui_root }}/dns/records/import" method="post">
                 <input type="hidden" name="csrf" value="{{ csrf_token }}">
                 <input type="hidden" name="domain" value="{{ group.domain }}">
                 <div class="form-grid dns-import-controls">
@@ -195,7 +195,7 @@
               {% if bulk_error %}
                 <div class="alert error">{{ bulk_error }}</div>
               {% endif %}
-              <form class="form-stack dns-import-form" action="/dns/zones/import" method="post">
+              <form class="form-stack dns-import-form" action="{{ management_ui_root }}/dns/zones/import" method="post">
                 <input type="hidden" name="csrf" value="{{ csrf_token }}">
                 <input type="hidden" name="domain" value="{{ group.domain }}">
                 <div class="form-grid dns-import-controls">
@@ -272,7 +272,7 @@
         <h2>DNS Settings</h2>
         <span class="status-pill {{ 'good' if dns_settings.enabled else 'muted' }}">{{ "enabled" if dns_settings.enabled else "disabled" }}</span>
       </div>
-      <form class="form-stack" action="/dns/settings" method="post" data-autosave-form data-autosave-status-id="dns-settings-autosave-status">
+      <form class="form-stack" action="{{ management_ui_root }}/dns/settings" method="post" data-autosave-form data-autosave-status-id="dns-settings-autosave-status">
         <input type="hidden" name="csrf" value="{{ csrf_token }}">
         <input type="hidden" name="listen_interfaces_present" value="1">
         <label class="switch-field"><span class="field-label"><span>Service enabled</span><button class="help-icon" type="button" data-help="Controls whether Atlaso renders DNS as enabled desired state for dnsmasq.">i</button></span><input class="switch-input" type="checkbox" name="enabled" {{ "checked" if dns_settings.enabled else "" }}><span class="switch-track" aria-hidden="true"></span></label>
@@ -399,7 +399,7 @@
 {% call resource_wizard(
   "dns-domain-dialog",
   "dns-domain-form",
-  "/dns/zones",
+  management_ui_path("/dns/zones"),
   dns_domain_steps,
   "Define the DNS domain",
   "Choose the managed DNS suffix that will own its records and zone-file tools.",
