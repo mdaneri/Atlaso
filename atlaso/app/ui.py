@@ -4769,9 +4769,9 @@ def request_host_name(request: Request) -> str:
         request: Incoming HTTP request.
     """
     listener_address = (request.headers.get("x-atlaso-listener-address") or "").strip().strip("[]")
-    client_host = str(request.client.host if request.client else "").strip().strip("[]")
+    server_host = str((request.scope.get("server") or ("", 0))[0]).strip().strip("[]")
     try:
-        trusted_proxy = ip_address(client_host).is_loopback
+        trusted_proxy = ip_address(server_host).is_loopback
     except ValueError:
         trusted_proxy = False
     if trusted_proxy and listener_address:
