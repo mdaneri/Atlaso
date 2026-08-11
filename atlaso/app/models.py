@@ -2697,6 +2697,31 @@ class NetworkBootHostBootOverride(Base):
     claimed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
+class NetworkBootEsxiBootCapability(Base):
+    """Represent one bounded authorization for an applied ESXi boot attempt.
+
+    The plaintext capability is deliberately never persisted.  A row is keyed by
+    host so issuing a replacement authorization also bounds retained state.
+    """
+
+    __tablename__ = "network_boot_esxi_boot_capabilities"
+
+    host_id: Mapped[int] = mapped_column(
+        ForeignKey("esxi_pxe_hosts.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    attempt_id: Mapped[str] = mapped_column(String(32), unique=True, index=True)
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    mac_address: Mapped[str] = mapped_column(String(32), index=True)
+    kickstart_id: Mapped[int] = mapped_column(Integer)
+    kickstart_revision: Mapped[str] = mapped_column(String(64), index=True)
+    listener_origin: Mapped[str] = mapped_column(String(500))
+    requested_by: Mapped[str] = mapped_column(String(100))
+    requested_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    consumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
 class Job(Base):
     """Represent job.
 

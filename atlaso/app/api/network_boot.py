@@ -27,6 +27,7 @@ from atlaso.app.models import (
     JobStatus,
     NetworkBootDiscoveredHost,
     NetworkBootEnvironment,
+    NetworkBootEsxiBootCapability,
     NetworkBootInventoryCommand,
     NetworkBootInventoryReport,
     NetworkBootInventorySession,
@@ -35,7 +36,7 @@ from atlaso.app.models import (
 )
 from atlaso.app.openapi import DocumentedAPIRoute
 from atlaso.app.security import Identity, require_api_or_session_scope
-from atlaso.app.schemas import EsxiPxeHostCreate
+from atlaso.app.schemas import EsxiBootAuthorizationResponse, EsxiPxeHostCreate
 from atlaso.app.services.esxi_pxe import (
     esxi_pxe_boot_settings,
     host_variables_json,
@@ -46,11 +47,14 @@ from atlaso.app.services.esxi_pxe import (
 from atlaso.app.services.network_boot import (
     acknowledge_inventory_command,
     active_network_boot_media,
+    authorize_esxi_boot_once,
     available_network_boot_versions,
     NETWORK_BOOT_MEDIA_ROOT,
     NETWORK_BOOT_UPLOAD_MAX_BYTES,
     catalog_rows,
     claim_host_boot_override,
+    discard_esxi_boot_authorization,
+    finalize_esxi_boot_authorization,
     esxi_host_assignments_by_mac,
     host_to_dict,
     inventory_session_for_token,
@@ -1169,6 +1173,69 @@ def boot_esxi_host_into_inventory_once(
         "expires_at": override.expires_at.isoformat(),
         "claimed_at": None,
     }
+
+
+@router.post(
+    "/esxi-hosts/{host_id}/authorize-boot-once",
+    status_code=status.HTTP_202_ACCEPTED,
+    response_model=EsxiBootAuthorizationResponse,
+    operation_id="authorize_esxi_host_boot_once",
+    summary="Authorize one applied ESXi network boot attempt",
+    description=(
+        "Requires `write:pxe`. Creates a short-lived, single-use authorization bound to the enabled "
+        "applied Host Reference, exact applied Kickstart revision, and applied HTTP listener. The "
+        "response never returns the boot capability or a credential-bearing URL. A subsequent "
+        "authorization replaces any unused authorization for the same host."
+    ),
+    responses={
+        401: {"description": "Authentication is required."},
+        403: {"description": "The authenticated identity lacks `write:pxe`."},
+        404: {"description": "The enabled Host Reference does not exist."},
+        409: {"description": "The exact applied boot state or generated boot artifacts are unavailable."},
+    },
+)
+def authorize_esxi_host_boot_once(
+    host_id: Annotated[int, ApiPath(description="Unique identifier of the enabled ESXi Host Reference.")],
+    request: Request,
+    identity: Annotated[Identity, Depends(require_api_or_session_scope("write:pxe"))],
+    db: Session = Depends(get_db),
+) -> EsxiBootAuthorizationResponse:
+    """Authorize the next exact applied ESXi network boot attempt."""
+    host = db.get(EsxiPxeHost, host_id)
+    if host is None or not host.enabled:
+        raise HTTPException(status_code=404, detail="Enabled ESXi Host Reference not found.")
+    try:
+        authorization = authorize_esxi_boot_once(
+            db,
+            host_id=host.id,
+            requested_by=identity.username,
+        )
+    except ValueError as exc:
+        discard_esxi_boot_authorization(db.get(NetworkBootEsxiBootCapability, host.id))
+        db.rollback()
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    record_audit(
+        db,
+        actor=identity.username,
+        action="authorize_esxi_host_boot_once",
+        resource_type="network_boot_esxi_boot_authorization",
+        resource_id=str(host.id),
+        detail=f"expires_at={authorization.expires_at.isoformat()}",
+        request_id=request.state.request_id,
+    )
+    try:
+        db.commit()
+    except Exception:
+        discard_esxi_boot_authorization(authorization)
+        db.rollback()
+        raise
+    finalize_esxi_boot_authorization(authorization)
+    return EsxiBootAuthorizationResponse(
+        host_id=host.id,
+        requested_at=authorization.requested_at,
+        expires_at=authorization.expires_at,
+        message="The next matching ESXi Network Boot attempt is authorized for ten minutes.",
+    )
 
 
 @router.post("/hosts/{host_id}/promote", status_code=status.HTTP_201_CREATED)

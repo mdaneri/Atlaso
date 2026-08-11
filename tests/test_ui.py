@@ -565,8 +565,6 @@ def test_appliance_power_action_creates_task_before_scheduling(client, monkeypat
         client: HTTP test client used to exercise the Atlaso application.
         monkeypatch: Pytest fixture used to replace dependencies for the test.
     """
-    import json
-
     from sqlalchemy import select
 
     from atlaso.app.adapters.system import AdapterResult
@@ -5702,8 +5700,8 @@ def test_esxi_kickstart_validation_rejects_duplicate_install_directives(client):
     assert "missing install or upgrade directive" not in warnings
 
 
-def test_esxi_kickstart_host_variables_render_from_mac_endpoint(client):
-    """Verify that esxi kickstart host variables render from mac endpoint.
+def test_esxi_kickstart_legacy_retrieval_is_unavailable(client):
+    """Verify that reusable ID and revision retrieval paths stay unavailable.
 
     Args:
         client: HTTP test client used to exercise the Atlaso application.
@@ -5795,32 +5793,15 @@ def test_esxi_kickstart_host_variables_render_from_mac_endpoint(client):
         static_artifact_url = static_artifacts[0]["kickstart_url"]
         db.commit()
 
-    rendered = client.get(f"/pxe/esxi/ks/{kickstart_file}?mac=01-00-50-56-aa-bb-cc")
-    assert rendered.status_code == 200, rendered.text
-    assert "install --firstdisk=mpx.vmhba0:C0:T0:L0" in rendered.text
-    assert "--ip=192.168.50.150" in rendered.text
-    assert "--gateway=192.168.50.1" in rendered.text
-    assert "--netmask=255.255.255.0" in rendered.text
-    assert "--nameserver=192.168.50.1" in rendered.text
-    assert "ntpserver 192.168.50.1" in rendered.text
-
-    assert client.get(f"/pxe/esxi/ks/{kickstart_file}").status_code == 400
-    static_rendered = client.get(f"/pxe/esxi/ks/{static_kickstart_file}")
-    assert static_rendered.status_code == 200, static_rendered.text
-    assert "network --bootproto=dhcp" in static_rendered.text
-    assert static_artifact_url.endswith(f"/pxe/esxi/ks/{static_kickstart_file}")
-    assert "?mac=" not in static_artifact_url
-    assert client.get(f"/pxe/esxi/ks/{kickstart_file}?mac=not-a-mac").status_code == 400
-    assert client.get(f"/pxe/esxi/ks/{kickstart_file}?mac=01-00-50-56-aa-bb-dd").status_code == 404
-
-    with SessionLocal() as db:
-        host = db.execute(select(EsxiPxeHost).where(EsxiPxeHost.mac_address == "00:50:56:aa:bb:cc")).scalar_one()
-        host.variables_json = json.dumps({})
-        db.add(host)
-        db.commit()
-    unresolved = client.get(f"/pxe/esxi/ks/{kickstart_file}?mac=01-00-50-56-aa-bb-cc")
-    assert unresolved.status_code == 200
-    assert "install --firstdisk=fallbackdisk" in unresolved.text
+    for path in (
+        f"/pxe/esxi/ks/{kickstart.id}.cfg?mac=01-00-50-56-aa-bb-cc",
+        f"/pxe/esxi/ks/{kickstart_file}?mac=01-00-50-56-aa-bb-cc",
+        f"/pxe/esxi/ks/{static_kickstart_file}",
+    ):
+        response = client.get(path)
+        assert response.status_code == 404
+        assert "VMware01!" not in response.text
+    assert static_artifact_url == ""
 
 
 def test_esxi_pxe_host_variables_api_and_manifest(client):

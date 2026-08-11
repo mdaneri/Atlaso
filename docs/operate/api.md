@@ -109,6 +109,24 @@ Legacy `/api/v1/dns/apply`, `/api/v1/dhcp/apply`, and `/api/v1/firewall/apply` r
 but are intentionally absent from Swagger because they predate the reviewed global workflow. New clients must save
 desired state and use `/appliance-apply`; do not build new automation around the legacy direct-apply routes.
 
+## Authorize one ESXi boot
+
+`POST /api/v1/network-boot/esxi-hosts/{host_id}/authorize-boot-once` requires
+`write:pxe` and immediately creates an ephemeral authorization for the enabled,
+applied Host Reference. It does not modify desired state and does not replace
+global Appliance Apply. The response contains only the host ID, issue and
+expiry timestamps, and secret-free operator guidance; it never contains the
+capability or a credential-bearing URL.
+
+The authorization lasts ten minutes, is consumed by the first matching
+Kickstart retrieval, and is bound to the exact applied host, full applied
+Kickstart revision, applied HTTP listener, and generated boot attempt. Issuing
+another authorization for the host replaces the previous attempt. A `409`
+means the exact applied state or its generated loader files are unavailable;
+review and apply Network Boot state before retrying. Start the intended host
+promptly after a `202` response, and never collect PXE URLs from packet traces or
+boot consoles in tickets, logs, screenshots, or automation output.
+
 ## Troubleshoot clients
 
 - Confirm `/openapi.json` is reachable and every client URL begins with `/api/v1`.

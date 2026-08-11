@@ -613,14 +613,14 @@
             data-fallback-id="esxi-pxe-preview-fallback"
           ></div>
           <table id="esxi-pxe-preview-fallback" class="data-table compact">
-            <thead><tr><th>Host</th><th>PXELINUX</th><th>UEFI boot.cfg</th><th>Kickstart URL</th><th>Image URL</th></tr></thead>
+            <thead><tr><th>Host</th><th>PXELINUX</th><th>UEFI boot.cfg</th><th>Kickstart delivery</th><th>Image URL</th></tr></thead>
             <tbody>
               {% for artifact in esxi_pxe_artifacts %}
                 <tr>
                   <td>{{ artifact.hostname }}</td>
                   <td><code>{{ artifact.pxelinux_config_path }}</code></td>
                   <td><code>{{ artifact.uefi_tftp_boot_cfg_path }}</code></td>
-                  <td><code>{{ artifact.kickstart_url or "interactive installer" }}</code></td>
+                  <td>{{ "one-time boot authorization" if artifact.kickstart_id else "interactive installer" }}</td>
                   <td><code>{{ artifact.image_http_url }}</code></td>
                 </tr>
               {% endfor %}

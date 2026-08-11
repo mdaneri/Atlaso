@@ -131,6 +131,9 @@ def test_public_services_nginx_config_contains_per_ip_scoped_locations():
     assert "\n  location = /login {" not in config
     assert "\n  location = /logout {" not in config
     assert "location /pxe/esxi/ks/" in config
+    assert config.count("access_log off;") >= 2
+    assert "location /pxe/esxi/attempts/" in config
+    assert "alias /var/lib/atlaso/pxe/http/esxi/attempts/;" in config
     assert "location = /pxe/boot.ipxe" in config
     assert "location /pxe/inventory/" in config
     assert "location /pxe/media/" in config

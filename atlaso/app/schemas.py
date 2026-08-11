@@ -1294,6 +1294,15 @@ class EsxiPxeHostResponse(EsxiPxeHostCreate):
     updated_at: Annotated[datetime, Field(description='UTC timestamp when the resource was last updated.')]
 
 
+class EsxiBootAuthorizationResponse(BaseModel):
+    """Secret-free receipt for a one-time applied ESXi boot authorization."""
+
+    host_id: Annotated[int, Field(description="Applied ESXi Host Reference authorized for the next boot attempt.")]
+    requested_at: Annotated[datetime, Field(description="UTC timestamp when the authorization was issued.")]
+    expires_at: Annotated[datetime, Field(description="UTC timestamp after which the authorization cannot be used.")]
+    message: Annotated[str, Field(description="Secret-free operator guidance for the authorized boot attempt.")]
+
+
 class EsxiInstallerIsoResponse(BaseModel):
     """Fields returned by the Atlaso esxi installer iso API.
 

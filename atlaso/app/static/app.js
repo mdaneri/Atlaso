@@ -3157,6 +3157,27 @@ async function requestEsxiHostInventoryBoot(row) {
   }
 }
 
+async function requestEsxiHostBootAuthorization(row) {
+  clearEsxiHostError();
+  const data = row.getData();
+  if (data.is_new || data.is_default || !data.enabled || !data.kickstart_id) return;
+  const confirmed = await requestConfirmation({
+    title: `Authorize one ESXi boot for ${data.hostname}?`,
+    message: "For ten minutes, only this applied host and exact applied Kickstart revision can retrieve a rendered Kickstart. The authorization is consumed by the first matching request and cannot be replayed.",
+    label: "Authorize ESXi boot",
+  });
+  if (!confirmed) return;
+  try {
+    const result = await networkBootRequest(
+      `/api/v1/network-boot/esxi-hosts/${data.id}/authorize-boot-once`,
+      { method: "POST" },
+    );
+    showEsxiHostSuccess(result.message || `One ESXi boot is authorized for ${data.hostname}.`);
+  } catch (error) {
+    showEsxiHostError(error instanceof Error ? error.message : "The one-time ESXi boot could not be authorized.");
+  }
+}
+
 function esxiHostHasValidWakeMac(data) {
   if (!data || data.is_new || data.is_default) return false;
   const compact = String(data.mac_address || "").toLowerCase().replace(/[:-]/g, "").replace(/\./g, "");
@@ -9532,6 +9553,14 @@ function initializeEsxiPxeHostsTable() {
           action: (_event, row) => requestEsxiHostInventoryBoot(row),
         },
         {
+          label: "Authorize ESXi boot once",
+          disabled: (component) => {
+            const data = component.getData();
+            return data.is_new || data.is_default || !data.enabled || !data.kickstart_id;
+          },
+          action: (_event, row) => requestEsxiHostBootAuthorization(row),
+        },
+        {
           label: "Wake host",
           disabled: (component) => !esxiHostHasValidWakeMac(component.getData()),
           action: (_event, row) => requestEsxiHostWake(row),
@@ -9678,7 +9707,7 @@ function initializeEsxiPxePreviewTable() {
         { title: "Host", field: "hostname", minWidth: 190, frozen: true },
         { title: "PXELINUX", field: "pxelinux_config_path", minWidth: 280, formatter: (cell) => `<code>${escapeHtml(cell.getValue())}</code>` },
         { title: "UEFI boot.cfg", field: "uefi_tftp_boot_cfg_path", minWidth: 280, formatter: (cell) => `<code>${escapeHtml(cell.getValue())}</code>` },
-        { title: "Kickstart URL", field: "kickstart_url", minWidth: 260, formatter: (cell) => `<code>${escapeHtml(cell.getValue() || "interactive installer")}</code>` },
+        { title: "Kickstart delivery", field: "kickstart_id", minWidth: 220, formatter: (cell) => cell.getValue() ? "one-time boot authorization" : "interactive installer" },
         { title: "Image URL", field: "image_http_url", minWidth: 340, formatter: (cell) => `<code>${escapeHtml(cell.getValue())}</code>` },
       ],
     },

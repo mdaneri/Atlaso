@@ -2202,6 +2202,23 @@ def _remove_stale_esxi_pxe_host_artifacts(generated_files: list[str], generated_
                 pass
 
 
+def _reset_esxi_boot_attempt_roots() -> None:
+    """Invalidate all ephemeral ESXi boot artifacts and restore bounded ownership."""
+    roots = (
+        ESXI_PXE_HTTP_BASE / "attempts",
+        ESXI_TFTP_ROOT / "attempts",
+        ESXI_TFTP_ROOT / "pxelinux.cfg" / "attempts",
+    )
+    for root in roots:
+        shutil.rmtree(root, ignore_errors=True)
+        root.mkdir(parents=True, exist_ok=True)
+        try:
+            shutil.chown(root, user="atlaso", group="atlaso")
+        except (LookupError, PermissionError, OSError):
+            pass
+        os.chmod(root, 0o755)
+
+
 def _esxi_pxe_nginx_config(port: int) -> str:
     """Perform ESXi PXE nginx config.
 
@@ -2231,12 +2248,18 @@ def _esxi_pxe_nginx_config(port: int) -> str:
             "        proxy_set_header X-Real-IP $remote_addr;",
             "    }",
             "    location /pxe/esxi/ks/ {",
+            "        access_log off;",
             "        proxy_pass http://127.0.0.1:8000;",
             "        proxy_http_version 1.1;",
             "        proxy_set_header Host $http_host;",
             "        proxy_set_header X-Real-IP $remote_addr;",
             "        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;",
             "        proxy_set_header X-Forwarded-Proto http;",
+            "    }",
+            "    location /pxe/esxi/attempts/ {",
+            "        access_log off;",
+            f"        alias {ESXI_PXE_HTTP_BASE}/attempts/;",
+            "        autoindex off;",
             "    }",
             "    location /pxe/esxi/ {",
             f"        alias {ESXI_PXE_HTTP_BASE}/;",
@@ -2313,6 +2336,7 @@ def _apply_esxi_pxe_manifest(payload: dict) -> int:
             shutil.chown(ESXI_TFTP_ROOT, user="atlaso", group="atlaso")
         except (LookupError, PermissionError, OSError):
             pass
+        _reset_esxi_boot_attempt_roots()
         for key in ("bios_bootfile", "uefi_bootfile", "bios_second_stage_bootfile"):
             filename = str(boot.get(key) or "")
             source = _find_pxe_boot_binary(filename)
@@ -2432,6 +2456,12 @@ def _apply_esxi_pxe_manifest(payload: dict) -> int:
         if site_result != 0:
             return site_result
     else:
+        for attempt_root in (
+            ESXI_PXE_HTTP_BASE / "attempts",
+            ESXI_TFTP_ROOT / "attempts",
+            ESXI_TFTP_ROOT / "pxelinux.cfg" / "attempts",
+        ):
+            shutil.rmtree(attempt_root, ignore_errors=True)
         for filename in (
             str(boot.get("bios_bootfile") or "undionly.kpxe"),
             str(boot.get("uefi_bootfile") or "snponly.efi"),

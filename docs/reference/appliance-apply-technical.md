@@ -280,9 +280,14 @@ The ESXi PXE apply unit owns generated installer boot artifacts. Operators manag
 Tabulator collection and edit database source through the built-in Monaco Editor; filesystem copies are derived
 artifacts, not desired state. Saving a Kickstart updates the database source hash and marks `esxi_pxe` changed, but does
 not write `/var/lib/atlaso/pxe/http/esxi/ks/<id>.cfg`.
-Boot-time Kickstart requests use `/pxe/esxi/ks/<file>.cfg?mac=<normalized-mac>` so Atlaso can render `{{variable}}`
-markers for the selected host. The endpoint requires an explicit valid MAC and does not infer MAC identity from source
-IP or DHCP leases.
+Applied host boot files contain no reusable Kickstart location. An
+authenticated `write:pxe` action creates one attempt-specific boot file with a
+cryptographically random, ten-minute, single-use capability. Atlaso stores only
+its verifier and binds retrieval to the exact applied Host Reference, full
+Kickstart content hash, listener, and generated attempt before rendering
+`{{variable}}` markers. A MAC address is an operational selector, not
+authentication, and invalid, expired, consumed, or mismatched capabilities fail
+with the same not-found response.
 
 Kickstart vault scope is derived only from exact
 `{{vault.<vaultname>.<key>.<username|password|uri1..uri9>}}` source markers. Save and validation reject malformed,

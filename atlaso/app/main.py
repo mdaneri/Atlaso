@@ -22,7 +22,7 @@ from atlaso.app.operational_logging import configure_operational_logging
 from atlaso.app.oidc import admin_router as oidc_admin_router
 from atlaso.app.oidc import public_router as oidc_public_router
 from atlaso.app.openapi import API_VALIDATION_RESPONSES, OPENAPI_TAGS
-from atlaso.app.problem import install_problem_handlers
+from atlaso.app.problem import install_problem_handlers, redacted_request_path
 from atlaso.app.seed import seed_initial_data
 from atlaso.app.services.monitoring import start_monitor_sampler
 from atlaso.app.services.networking import sync_host_physical_interfaces
@@ -223,10 +223,18 @@ def create_app() -> FastAPI:
                 "Unhandled request exception request_id=%s method=%s path=%s",
                 request.state.request_id,
                 request.method,
-                request.url.path,
+                redacted_request_path(request.url.path),
             )
+            if request.url.path.startswith("/pxe/esxi/ks/"):
+                request.scope["path"] = redacted_request_path(request.url.path)
+                request.scope["raw_path"] = request.scope["path"].encode("ascii")
+                request.scope["query_string"] = b""
             raise
         response.headers["X-Request-ID"] = request.state.request_id
+        if request.url.path.startswith("/pxe/esxi/ks/"):
+            request.scope["path"] = redacted_request_path(request.url.path)
+            request.scope["raw_path"] = request.scope["path"].encode("ascii")
+            request.scope["query_string"] = b""
         return response
 
     @app.middleware("http")
