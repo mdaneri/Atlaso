@@ -4812,7 +4812,10 @@ Photon hash and writes a locked, non-matching entry if that account is missing o
 hash is stored. Public Services validation blocks publishing the authenticated depot while its selected local user is
 disabled. When an authenticated VCF Offline Depot or Public Services unit is selected and its HTTP user has unapplied
 Local Users state, appliance apply automatically places Local Users before that publishing unit so the Photon account
-and derived <code>htpasswd</code> state exist first. Unrelated Local Users changes do not alter a publishing-only submission.</p>
+and derived <code>htpasswd</code> state exist first. Unrelated Local Users changes do not alter a publishing-only submission.
+After successful browser authentication, Atlaso reconstructs the return location beneath the server-owned <code>/PROD</code>
+prefix. A valid nested depot path and query are preserved; an unsupported or malformed destination returns to
+<code>/PROD/</code>.</p>
 <h4 id="tool-staging-downloads-and-https-service">Tool staging, downloads, and HTTPS service<a class="headerlink" href="#tool-staging-downloads-and-https-service" title="Permanent link">&para;</a></h4>
 <p>The real VCF Offline Depot apply path stages nginx config at
 <code>/var/lib/atlaso/apply/vcf-offline-depot/atlaso-vcf-offline-depot.conf</code>. The preview and staged config use the
