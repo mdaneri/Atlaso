@@ -93,6 +93,8 @@ code because they no longer match the new Software Depot ID. Package add/update 
 reset clears the package and its complete saved configuration together.
 Enabled depot profiles can use the shared Automation scheduler. Manual and scheduled downloads share one global
 single-active task guard and execution-time prerequisite validation; schedule definitions contain no Broadcom secrets.
+VCF Offline Depot browser login returns only to validated canonical `/PROD` paths; unsupported destinations fall back
+to the depot root.
 
 The integrated CA can maintain trust and deploy managed service certificates without publishing its public portal on
 an access interface. Selecting a CA listen interface is the explicit portal-publication boundary. When NTS server

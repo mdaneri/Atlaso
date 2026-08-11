@@ -178,6 +178,9 @@ The following cross-cutting boundaries always apply:
   UI/API, audit, job, problem, or log data. The exact pending boot protocol response may carry only its own claim.
 - Browser navigation to a globally disabled Web Terminal must render the authenticated Atlaso unavailable-state page;
   reserve JSON and protocol errors for ticket, API, and WebSocket consumers.
+- VCF Offline Depot login return targets must be reconstructed beneath the server-owned `/PROD` prefix after strict
+  relative-path validation. Unsupported or malformed destinations fall back to `/PROD/`; never redirect a successful
+  depot login to an authority, scheme, traversal path, or browser-equivalent backslash form supplied by the request.
 - When local DNS points the management resolver to loopback, recover empty DNS service upstreams from the exact
   management interface's systemd-networkd DHCP lease. Reject loopback, unscoped IPv6 link-local, duplicate, malformed,
   and other-interface lease values, preserve explicit upstream precedence, and fail both desired-state and helper
