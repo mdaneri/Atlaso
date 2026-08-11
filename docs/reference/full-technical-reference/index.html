@@ -4402,11 +4402,18 @@ configuration under <code>/ui/management/certificate-authority</code>, with its 
 <code>/ui/management/ca/requests</code>. Root-level browser paths remain temporary compatibility entries.</p>
 <p>ESXi PXE stores Kickstart source files in the Atlaso database. The database is the source of truth; generated files
 under <code>/var/lib/atlaso/pxe/http/esxi/ks/&lt;id&gt;.cfg</code> are runtime copies for drift/apply bookkeeping, while boot-time
-Kickstart responses are rendered dynamically by Atlaso from <code>/pxe/esxi/ks/&lt;file&gt;.cfg?mac=&lt;normalized-mac&gt;</code>. Kickstart
+Kickstart responses require an unpredictable pending boot claim whose one-time
+code is entered by an authenticated administrator from the intended host
+console. Only that exact claim can receive the cryptographically random,
+ten-minute, single-use boot capability. Atlaso stores only claim, code, and
+capability verifiers and binds the capability to the exact applied host, every
+render-affecting Host Reference field, full Kickstart content hash, listener
+origin, and generated boot attempt before dynamic rendering. Kickstart
 templates may use restricted <code>{{variable}}</code> markers such as <code>{{host.hostname}}</code>, <code>{{host.ip_address}}</code>,
 <code>{{dhcp.gateway}}</code>, <code>{{dhcp.netmask}}</code>, <code>{{dhcp.dns_servers}}</code>, <code>{{dhcp.ntp_servers}}</code>, <code>{{dhcp.domain}}</code>,
 <code>{{pxe.http_base_url}}</code>, and per-host custom values under <code>{{custom.&lt;name&gt;}}</code>. Missing, invalid, disabled, or unknown
-MAC selectors return an error; Atlaso does not infer MAC addresses from source IP or leases. Kickstarts are managed in
+bindings return a uniform not-found response when invalid, expired, consumed,
+or mismatched; a MAC address is not authentication. Kickstarts are managed in
 a wizard-backed Tabulator collection with direct Enabled editing and a four-step Monaco Editor wizard. Completion
 suggests built-in variables, custom definitions from the direct-edit <strong>Custom Variables</strong> collection, the editable
 <code>{{custom.&lt;variable&gt;}}</code> template, and authorized exact vault markers after <code>{{</code> without loading vault values. Custom
@@ -4432,7 +4439,8 @@ extracts selected installers to <code>/var/lib/atlaso/pxe/http/esxi/images/&lt;i
 <code>boot.cfg</code> plus PXELINUX configs, writes an HTTP <code>boot.ipxe</code> entrypoint even when there are no host profiles, stages
 <code>undionly.kpxe</code>, <code>snponly.efi</code>, <code>pxelinux.0</code>, <code>mboot.efi</code>, and <code>mboot.c32</code>, installs a dedicated ESXi PXE HTTP listener
 on the configured HTTP port that redirects <code>/pxe/esxi</code> to <code>/pxe/esxi/</code>, serves a small <code>/pxe/esxi/</code> status response,
-proxies dynamic <code>/pxe/esxi/ks/</code> and <code>boot.ipxe</code> requests to Atlaso, serves boot/image artifacts statically, records
+proxies dynamic <code>/pxe/esxi/ks/</code> and <code>boot.ipxe</code> requests to Atlaso, suppresses
+Kickstart capability access logs, serves boot/image artifacts statically, records
 render/apply timestamps, and redacts sensitive Kickstart values from previews, diffs, jobs, logs, and audit events. The
 helper searches Photon package paths plus <code>/var/lib/atlaso/pxe/bootloaders</code> for the iPXE/SYSLINUX first-stage files;
 Photon image provisioning stages Atlaso's bundled iPXE <code>undionly.kpxe</code> and <code>snponly.efi</code> artifacts there because the

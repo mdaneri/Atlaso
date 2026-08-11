@@ -1297,6 +1297,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#authorize-one-esxi-boot" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Authorize one ESXi boot
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#troubleshoot-clients" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -3281,6 +3292,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#authorize-one-esxi-boot" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Authorize one ESXi boot
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#troubleshoot-clients" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -3526,6 +3548,23 @@ or Tasks interfaces and verify terminal results.</p>
 <p>Legacy <code>/api/v1/dns/apply</code>, <code>/api/v1/dhcp/apply</code>, and <code>/api/v1/firewall/apply</code> routes remain available for compatibility
 but are intentionally absent from Swagger because they predate the reviewed global workflow. New clients must save
 desired state and use <code>/appliance-apply</code>; do not build new automation around the legacy direct-apply routes.</p>
+<h2 id="authorize-one-esxi-boot">Authorize one ESXi boot<a class="headerlink" href="#authorize-one-esxi-boot" title="Permanent link">&para;</a></h2>
+<p><code>POST /api/v1/network-boot/esxi-hosts/{host_id}/authorize-boot-once</code> requires
+<code>write:pxe</code> and accepts JSON containing the <code>boot_code</code> displayed by the exact
+pending host-console attempt, for example <code>{"boot_code":"ABCD-EFGH"}</code>. Start
+Network Boot and choose the assigned ESXi entry before calling this operation.
+It does not modify desired state and does not replace global Appliance Apply.
+The response contains only the host ID, issue and
+expiry timestamps, and secret-free operator guidance; it never contains the
+capability or a credential-bearing URL.</p>
+<p>The authorization lasts ten minutes, is consumed by the first matching
+Kickstart retrieval, and is bound to the exact applied host, full applied
+Kickstart revision, applied HTTP listener, and generated boot attempt. A <code>409</code>
+means the code is invalid or expired, the desired Host Reference has drifted,
+or exact applied state is unavailable; start a new host attempt or review and
+apply Network Boot state before retrying. Continue the intended host promptly
+after a <code>202</code> response, and never collect PXE URLs from packet traces or
+boot consoles in tickets, logs, screenshots, or automation output.</p>
 <h2 id="troubleshoot-clients">Troubleshoot clients<a class="headerlink" href="#troubleshoot-clients" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Confirm <code>/openapi.json</code> is reachable and every client URL begins with <code>/api/v1</code>.</li>

@@ -4504,9 +4504,17 @@ lease file at <code>/var/lib/atlaso/dnsmasq/dhcp.leases</code>; live lease readb
 Tabulator collection and edit database source through the built-in Monaco Editor; filesystem copies are derived
 artifacts, not desired state. Saving a Kickstart updates the database source hash and marks <code>esxi_pxe</code> changed, but does
 not write <code>/var/lib/atlaso/pxe/http/esxi/ks/&lt;id&gt;.cfg</code>.
-Boot-time Kickstart requests use <code>/pxe/esxi/ks/&lt;file&gt;.cfg?mac=&lt;normalized-mac&gt;</code> so Atlaso can render <code>{{variable}}</code>
-markers for the selected host. The endpoint requires an explicit valid MAC and does not infer MAC identity from source
-IP or DHCP leases.</p>
+Applied host boot files contain no reusable Kickstart location. An
+MAC-selected menu request creates a distinct unpredictable pending claim and
+shows its one-time code only on that boot console. An authenticated <code>write:pxe</code>
+administrator enters the code before Atlaso creates one attempt-specific boot
+file with a cryptographically random, ten-minute, single-use capability. Atlaso
+stores only claim, code, and capability verifiers and binds retrieval to every
+render-affecting field of the exact applied Host Reference, full Kickstart
+content hash, listener, and generated attempt before rendering
+<code>{{variable}}</code> markers. A MAC address is an operational selector, not
+authentication, and invalid, expired, consumed, or mismatched capabilities fail
+with the same not-found response.</p>
 <p>Kickstart vault scope is derived only from exact
 <code>{{vault.&lt;vaultname&gt;.&lt;key&gt;.&lt;username|password|uri1..uri9&gt;}}</code> source markers. Save and validation reject malformed,
 missing, renamed, inaccessible, or unsupported references. Boot-time rendering revalidates the references and resolves
