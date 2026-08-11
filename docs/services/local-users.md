@@ -30,9 +30,10 @@ This verified appliance view provides visual orientation before you begin.
 2. Choose Photon shell and Web SSH access as separate decisions.
 3. Review and create the account. New accounts start disabled; the identity and access wizard does not collect
    credentials or change account availability.
-4. Open the row menu and choose **Set/reset Photon OS password**. Enter and confirm a policy-compliant password. This
-   dedicated guarded workflow stages the password and enables the account in desired state. Use the eye beside either
-   password field to show only that field temporarily; reopening the workflow always masks both fields.
+4. For a disabled account, open the row menu and choose **Set Photon OS password and enable user**. For an enabled
+   account, choose **Reset Photon OS password**. Enter and confirm a policy-compliant password. The disabled-account
+   action explicitly enables the account in desired state. Use the eye beside either password field to show only that
+   field temporarily; reopening the workflow always masks both fields.
 5. Change an existing account's ordinary desired availability directly from the grid's **Enabled** column. Enabling
    requires a staged or previously applied Photon password; Atlaso restores the prior grid value and explains the
    requirement when the save is rejected.
@@ -52,6 +53,10 @@ If a password is staged while its user remains disabled, a successful Local User
 password instead of treating it as applied. Enable the user and apply Local Users again to create the Photon account and
 consume the staged password. Public Services blocks VCF Offline Depot publication while its selected HTTP user is
 disabled, and appliance apply automatically includes changed Local Users state before that public listener.
+
+When a successful Appliance Apply task includes Local Users, the open Users grid refreshes its Photon account and
+password-staging status in place. The refresh preserves the current page and grid context instead of requiring a manual
+browser reload.
 
 Read-only Photon account status uses a different uniquely named, short-lived file containing no password values. It
 cannot replace an active apply payload and is removed as soon as the status request finishes.

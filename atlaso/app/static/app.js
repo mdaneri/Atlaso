@@ -4355,6 +4355,7 @@ function openUserPasswordModal(data) {
   const form = document.getElementById("user-password-form");
   const title = document.getElementById("user-password-modal-title");
   const message = document.getElementById("user-password-modal-message");
+  const submit = document.getElementById("user-password-submit");
   if (!(modal instanceof HTMLDialogElement) || !(form instanceof HTMLFormElement)) {
     return;
   }
@@ -4366,12 +4367,14 @@ function openUserPasswordModal(data) {
       input.setCustomValidity("");
     }
   });
-  if (title instanceof HTMLElement) {
-    title.textContent = `Reset ${data.username} password`;
-  }
-  if (message instanceof HTMLElement) {
-    message.textContent = "Set/reset the Photon OS password. The password is held only until global Local Users apply.";
-  }
+  const enablesUser = !Boolean(data.enabled);
+  if (title instanceof HTMLElement) title.textContent = enablesUser
+    ? `Set ${data.username} Photon OS password and enable user`
+    : `Reset ${data.username} Photon OS password`;
+  if (message instanceof HTMLElement) message.textContent = enablesUser
+    ? "Setting the Photon OS password also enables this local user in desired state. The password is held only until global Local Users apply."
+    : "Reset the Photon OS password. The password is held only until global Local Users apply.";
+  if (submit instanceof HTMLButtonElement) submit.textContent = enablesUser ? "Set password and enable user" : "Reset password";
   modal.showModal();
   const passwordInput = form.querySelector('input[name="password"]');
   if (passwordInput instanceof HTMLInputElement) {
@@ -4512,7 +4515,7 @@ function initializeUsersTable() {
     canDelete: (data) => !data.is_current,
     extraActions: [
       {
-        label: "Set/reset Photon OS password",
+        label: (row) => row.getData().enabled ? "Reset Photon OS password" : "Set Photon OS password and enable user",
         disabled: (row) => row.getData().is_new,
         action: (_event, row) => openUserPasswordModal(row.getData()),
       },
@@ -4610,7 +4613,11 @@ function initializeUserPasswordForm() {
       return;
     }
     button.addEventListener("click", () => {
-      openUserPasswordModal({ id: button.dataset.userId, username: button.dataset.username || "user" });
+      openUserPasswordModal({
+        id: button.dataset.userId,
+        username: button.dataset.username || "user",
+        enabled: button.dataset.userEnabled === "true",
+      });
     });
   });
   if (cancel instanceof HTMLButtonElement && modal instanceof HTMLDialogElement) {
@@ -15301,9 +15308,41 @@ function renderApplianceApplyTask(task) {
   scheduleApplianceApplyAutoClose(task);
 }
 
-function refreshCurrentWorkflowAfterApplianceApply(task) {
+async function refreshUsersAfterApplianceApply(task) {
+  const selectedUnits = Array.isArray(task?.result?.selected_units) ? task.result.selected_units : [];
+  if (window.location.pathname !== managementUiPath("/users") || !selectedUnits.includes("local_users")) return false;
+  const element = document.getElementById("users-table");
+  const table = element?.atlasoTabulator;
+  if (!(element instanceof HTMLElement) || !table || typeof table.replaceData !== "function") {
+    window.location.reload();
+    return true;
+  }
+  try {
+    const response = await fetch(managementUiPath("/users/status"), {
+      credentials: "same-origin",
+      cache: "no-store",
+      headers: { Accept: "application/json" },
+    });
+    if (!response.ok) throw new Error("Unable to refresh Local Users status.");
+    const payload = await response.json();
+    if (!Array.isArray(payload.users)) throw new Error("Local Users returned an invalid status response.");
+    await table.replaceData([...payload.users, newUserRow()]);
+    element.dataset.users = JSON.stringify(payload.users);
+    const count = document.getElementById("users-count");
+    if (count instanceof HTMLElement) count.textContent = `${payload.users.length} users`;
+    clearCaMessage("users-error");
+    showTransientGridStatus("Users refreshed");
+  } catch (error) {
+    showCaMessage("users-error", error instanceof Error ? error.message : "Unable to refresh Local Users status.");
+  }
+  return true;
+}
+
+async function refreshCurrentWorkflowAfterApplianceApply(task) {
   const refreshableWorkflows = new Set([managementUiPath("/esx-storage"), managementUiPath("/vcf-offline-depot")]);
-  if (task?.status !== "succeeded" || !refreshableWorkflows.has(window.location.pathname)) return;
+  if (task?.status !== "succeeded") return;
+  if (await refreshUsersAfterApplianceApply(task)) return;
+  if (!refreshableWorkflows.has(window.location.pathname)) return;
   window.setTimeout(() => window.location.reload(), 300);
 }
 
@@ -15417,7 +15456,7 @@ function initializeApplianceApplyProgress() {
         if (taskResponse.ok) {
           const taskPayload = await taskResponse.json();
           renderApplianceApplyTask(taskPayload.task);
-          refreshCurrentWorkflowAfterApplianceApply(taskPayload.task);
+          await refreshCurrentWorkflowAfterApplianceApply(taskPayload.task);
         }
         applianceApplyActiveJobId = "";
         window.setTimeout(() => applianceApplyPollController?.refreshImmediately().catch(() => {}), 0);
