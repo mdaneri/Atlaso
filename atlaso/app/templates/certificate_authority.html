@@ -63,10 +63,10 @@
                 <td><span class="status-pill {{ 'good' if certificate.enabled else 'muted' }}">{{ "enabled" if certificate.enabled else "disabled" }}</span></td>
                 <td>
                   {% if certificate.status == "issued" and certificate.certificate_pem %}
-                    <a class="button tiny secondary" href="{{ management_ui_root }}/certificate-authority/certificates/{{ certificate.id }}/downloads/certificate.pem">Cert</a>
-                    <a class="button tiny secondary" href="{{ management_ui_root }}/certificate-authority/certificates/{{ certificate.id }}/downloads/chain.pem">Chain</a>
+                    <a class="button tiny secondary" href="/certificate-authority/certificates/{{ certificate.id }}/downloads/certificate.pem">Cert</a>
+                    <a class="button tiny secondary" href="/certificate-authority/certificates/{{ certificate.id }}/downloads/chain.pem">Chain</a>
                     {% if certificate.private_key_encrypted %}
-                      <a class="button tiny ghost" href="{{ management_ui_root }}/certificate-authority/certificates/{{ certificate.id }}/downloads/private-key.pem">Private key</a>
+                      <a class="button tiny ghost" href="/certificate-authority/certificates/{{ certificate.id }}/downloads/private-key.pem">Private key</a>
                     {% endif %}
                   {% endif %}
                   {% if not certificate.managed_owner %}
@@ -275,8 +275,8 @@
       </div>
       <p class="muted">Download public trust material for clients. The root private key is not exposed from the web console.</p>
       <div class="button-row">
-        <a class="button primary" href="{{ management_ui_root }}/certificate-authority/downloads/root-ca.pem">Download root CA</a>
-        <a class="button ghost" href="{{ management_ui_root }}/certificate-authority/downloads/ca-bundle.pem">Download CA bundle</a>
+        <a class="button primary" href="/certificate-authority/downloads/root-ca.pem">Download root CA</a>
+        <a class="button ghost" href="/certificate-authority/downloads/ca-bundle.pem">Download CA bundle</a>
         <a class="button secondary" href="{{ ca_public_portal_url }}">Open request portal</a>
       </div>
       <p class="muted">These files come from encrypted Atlaso CA custody. The appliance filesystem is updated only after global appliance apply.</p>

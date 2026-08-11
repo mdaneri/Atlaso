@@ -3524,7 +3524,7 @@ function downloadCaCertificateArtifact(row, artifact) {
   if (!capability || !data[capability]) {
     return;
   }
-  window.location.assign(managementUiPath(`/certificate-authority/certificates/${data.id}/downloads/${artifact}`));
+  window.location.assign(`/certificate-authority/certificates/${data.id}/downloads/${artifact}`);
 }
 
 async function copyCaCertificateFingerprint(row) {

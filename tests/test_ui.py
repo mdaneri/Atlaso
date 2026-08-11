@@ -1002,7 +1002,7 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert service_worker.headers["cache-control"] == "no-cache"
     assert service_worker.headers["service-worker-allowed"] == "/ui/management/"
     assert "ATLASO_CACHE" in service_worker.text
-    assert "atlaso-management-pwa-v240" in service_worker.text
+    assert "atlaso-management-pwa-v241" in service_worker.text
     assert 'fetch(asset, { cache: "reload" })' in service_worker.text
     assert ".catch(() => undefined)" in service_worker.text
     assert 'request.mode === "navigate"' in service_worker.text
@@ -1020,7 +1020,7 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-8" in service_worker.text
     assert "/static/appliance-apply-polling.js?v=issue-280-1" in service_worker.text
     assert "/static/ui-routes.js?v=issue-287-1" in service_worker.text
-    assert "/static/app.js?v=issue-287-1" in service_worker.text
+    assert "/static/app.js?v=issue-287-2" in service_worker.text
     assert "/static/terminal.js?v=issue-287-2" in service_worker.text
     assert "/static/pwa.js?v=issue-287-2" in service_worker.text
     assert "vcfdt-configuration-248-20260807-14" not in service_worker.text
@@ -1052,8 +1052,8 @@ def test_shared_ui_pattern_shell_and_wizard_contracts(client):
     base = (templates / "base.html").read_text(encoding="utf-8")
     public_base = (templates / "public_portal_base.html").read_text(encoding="utf-8")
     for shell, app_asset in (
-        (base, "/static/app.js?v=issue-287-1"),
-        (public_base, "/static/app.js?v=issue-287-1"),
+        (base, "/static/app.js?v=issue-287-2"),
+        (public_base, "/static/app.js?v=issue-287-2"),
         (base, "/static/appliance-apply-polling.js?v=issue-280-1"),
     ):
         assert shell.index("/static/vendor/tabulator/tabulator.min.js") < shell.index(
@@ -1650,7 +1650,7 @@ def test_monitor_page_renders_and_data_endpoint(client):
     assert "swagger-link-icon" in page.text
     assert "/static/app.css?v=nts-restoration-appliance-update-261-20260809-3" in page.text
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-8" in page.text
-    assert "/static/app.js?v=issue-287-1" in page.text
+    assert "/static/app.js?v=issue-287-2" in page.text
     app_css = client.get("/static/app.css")
     assert app_css.status_code == 200
     assert ".split-workspace > .wide-panel" in app_css.text
@@ -9168,6 +9168,9 @@ def test_certificate_authority_page_renders(client):
     assert 'label: "Certificate"' in certificate_table_js
     assert 'label: "Certificate chain"' in certificate_table_js
     assert 'label: "Private key"' in certificate_table_js
+    app_js = client.get("/static/app.js").text
+    assert 'window.location.assign(`/certificate-authority/certificates/${data.id}/downloads/${artifact}`)' in app_js
+    assert 'managementUiPath(`/certificate-authority/certificates/${data.id}/downloads/${artifact}`)' not in app_js
     assert 'title: "Exports"' not in certificate_table_js
     assert re.search(r'title: "Status",\s+field: "status",\s+width: 100', certificate_table_js)
     assert 'formatter: (cell) => escapeHtml(cell.getValue() || "")' in certificate_table_js
@@ -9211,8 +9214,10 @@ def test_certificate_authority_page_renders(client):
     assert "ca-download-details" in ca.text
     assert 'data-secret-mask="hidden">hidden</span>' in ca.text
     assert 'data-secret-toggle aria-label="Show secrets key source"' in ca.text
-    assert "/certificate-authority/downloads/root-ca.pem" in ca.text
-    assert "/certificate-authority/downloads/ca-bundle.pem" in ca.text
+    assert 'href="/certificate-authority/downloads/root-ca.pem"' in ca.text
+    assert 'href="/certificate-authority/downloads/ca-bundle.pem"' in ca.text
+    assert 'href="/ui/management/certificate-authority/downloads/' not in ca.text
+    assert not re.search(r'href="/ui/management/certificate-authority/certificates/[^"]+/downloads/', ca.text)
 
 
 def test_certificate_request_creation_is_atomic_and_issues_submitted_sans(client):

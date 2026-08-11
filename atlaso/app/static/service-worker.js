@@ -1,4 +1,4 @@
-const ATLASO_CACHE = "atlaso-management-pwa-v240";
+const ATLASO_CACHE = "atlaso-management-pwa-v241";
 const ATLASO_ASSETS = [
   "/manifest.webmanifest",
   "/favicon.ico",
@@ -7,7 +7,7 @@ const ATLASO_ASSETS = [
   "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-8",
   "/static/ui-routes.js?v=issue-287-1",
   "/static/appliance-apply-polling.js?v=issue-280-1",
-  "/static/app.js?v=issue-287-1",
+  "/static/app.js?v=issue-287-2",
   "/static/terminal.js?v=issue-287-2",
   "/static/vendor/xterm/xterm.css?v=5.5.0",
   "/static/vendor/xterm/xterm.js?v=5.5.0",
