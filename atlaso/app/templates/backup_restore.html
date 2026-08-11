@@ -22,13 +22,13 @@
     </div>
     <div class="alert warning">This LDAP-specific archive is not part of the normal settings backup. Restoring it is staged in memory and changes OpenLDAP only after the global LDAP apply unit runs.</div>
     <div class="content-grid two-column">
-      <form class="form-stack" action="/backup-restore/ldap/export" method="post">
+      <form class="form-stack" action="{{ management_ui_root }}/backup-restore/ldap/export" method="post">
         <input type="hidden" name="csrf" value="{{ csrf_token }}">
         <h3>Export directory data</h3>
         <label><span class="field-label"><span>Archive passphrase</span><button class="help-icon" type="button" data-help="Encrypts the LDAP slapcat recovery archive, including directory password hashes. The passphrase is not stored and this export remains separate from the settings backup.">i</button></span><input type="password" name="passphrase" minlength="12" autocomplete="new-password" required></label>
         <button class="button primary" type="submit">Download encrypted LDAP recovery</button>
       </form>
-      <form class="form-stack" action="/backup-restore/ldap/import" method="post" enctype="multipart/form-data">
+      <form class="form-stack" action="{{ management_ui_root }}/backup-restore/ldap/import" method="post" enctype="multipart/form-data">
         <input type="hidden" name="csrf" value="{{ csrf_token }}">
         <h3>Stage directory import</h3>
         <label>
@@ -56,7 +56,7 @@
         </div>
         <span class="status-pill good">{{ settings_backup_total_rows }} rows</span>
       </div>
-      <form action="/backup-restore/export" method="post">
+      <form action="{{ management_ui_root }}/backup-restore/export" method="post">
         <input type="hidden" name="csrf" value="{{ csrf_token }}">
         <button class="button primary" type="submit">Download settings backup</button>
       </form>
@@ -74,7 +74,7 @@
           <p class="muted">Replaces current desired-state configuration with an uploaded archive.</p>
         </div>
       </div>
-      <form class="form-stack" action="/backup-restore/restore" method="post" enctype="multipart/form-data">
+      <form class="form-stack" action="{{ management_ui_root }}/backup-restore/restore" method="post" enctype="multipart/form-data">
         <input type="hidden" name="csrf" value="{{ csrf_token }}">
         <label>
           <span class="field-label"><span>Settings archive</span><button class="help-icon" type="button" data-help="Upload a Atlaso settings JSON backup. Restore replaces desired state in the control-plane database, does not mutate host services directly, and forces services to stopped/unconfigured state.">i</button></span>
@@ -106,7 +106,7 @@
         <span class="status-pill warn">admin action</span>
       </div>
       <form
-        action="/backup-restore/factory-reset"
+        action="{{ management_ui_root }}/backup-restore/factory-reset"
         method="post"
         data-confirm-modal
         data-confirm-title="Factory reset Atlaso settings?"

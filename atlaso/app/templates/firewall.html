@@ -91,7 +91,7 @@
         <h2>Firewall Settings</h2>
         <span class="status-pill {{ firewall_service_status.pill }}">{{ firewall_service_status.label }}</span>
       </div>
-      <form class="form-stack" action="/firewall/settings" method="post" data-autosave-form data-autosave-status-id="firewall-settings-status">
+      <form class="form-stack" action="{{ management_ui_root }}/firewall/settings" method="post" data-autosave-form data-autosave-status-id="firewall-settings-status">
         <input type="hidden" name="csrf" value="{{ csrf_token }}">
         <label class="switch-field"><span class="field-label"><span>Service enabled</span><button class="help-icon" type="button" data-help="Controls whether Atlaso treats firewall desired state as enabled. The MVP records intent until global appliance apply runs.">i</button></span><input class="switch-input" type="checkbox" name="enabled" {{ "checked" if firewall_settings.enabled else "" }}><span class="switch-track" aria-hidden="true"></span></label>
         <label>
@@ -131,7 +131,7 @@
         <h2>Groups</h2>
         <span class="status-pill muted">{{ firewall_source_groups|length }} groups</span>
       </div>
-      <form class="form-stack source-group-create-form" action="/firewall/source-groups" method="post">
+      <form class="form-stack source-group-create-form" action="{{ management_ui_root }}/firewall/source-groups" method="post">
         <input type="hidden" name="csrf" value="{{ csrf_token }}">
         <input type="hidden" name="action" value="create">
         <input type="hidden" name="group_entries" value="any">
@@ -159,7 +159,7 @@
         {% for group in firewall_source_groups %}
           {% if not group.builtin %}
           <section class="source-group-editor {{ 'active' if editable_source_groups and group.id == editable_source_groups[0].id else '' }}" data-source-group-editor data-source-group-id="{{ group.id }}" {{ "" if editable_source_groups and group.id == editable_source_groups[0].id else "hidden" }}>
-            <form class="form-stack" action="/firewall/source-groups" method="post" data-autosave-form data-autosave-trigger="change" data-firewall-source-groups data-autosave-status-id="firewall-source-groups-status">
+            <form class="form-stack" action="{{ management_ui_root }}/firewall/source-groups" method="post" data-autosave-form data-autosave-trigger="change" data-firewall-source-groups data-autosave-status-id="firewall-source-groups-status">
               <input type="hidden" name="csrf" value="{{ csrf_token }}">
               <input type="hidden" name="action" value="update">
               <input type="hidden" name="group_id" value="{{ group.id }}">
@@ -199,7 +199,7 @@
             </form>
             <div class="source-group-actions">
               <button class="button secondary compact-button" type="button" data-source-group-rename data-group-id="{{ group.id }}" data-group-name="{{ group.name }}">Rename group</button>
-              <form action="/firewall/source-groups" method="post" data-confirm-modal data-confirm-title="Remove {{ group.name }}?" data-confirm-message="This removes the firewall group from desired state and moves managed rules using it back to Any. The appliance changes only after global appliance apply." data-confirm-label="Remove group">
+              <form action="{{ management_ui_root }}/firewall/source-groups" method="post" data-confirm-modal data-confirm-title="Remove {{ group.name }}?" data-confirm-message="This removes the firewall group from desired state and moves managed rules using it back to Any. The appliance changes only after global appliance apply." data-confirm-label="Remove group">
                 <input type="hidden" name="csrf" value="{{ csrf_token }}">
                 <input type="hidden" name="action" value="delete">
                 <input type="hidden" name="group_id" value="{{ group.id }}">
@@ -211,7 +211,7 @@
         {% endfor %}
       </div>
       <dialog id="firewall-rename-group-modal" class="confirm-modal" aria-labelledby="firewall-rename-group-title">
-        <form class="confirm-modal-panel" action="/firewall/source-groups" method="post">
+        <form class="confirm-modal-panel" action="{{ management_ui_root }}/firewall/source-groups" method="post">
           <input type="hidden" name="csrf" value="{{ csrf_token }}">
           <input type="hidden" name="action" value="rename">
           <input type="hidden" name="group_id" value="">
@@ -270,7 +270,7 @@
 {% call resource_wizard(
   "firewall-rule-dialog",
   "firewall-rule-form",
-  "/firewall/rules",
+  management_ui_path("/firewall/rules"),
   firewall_rule_steps,
   "Define the firewall rule",
   "Name the operator rule and choose its nftables direction and action.",

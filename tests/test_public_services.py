@@ -110,14 +110,17 @@ def test_public_services_nginx_config_contains_per_ip_scoped_locations():
 
     assert "IP-scoped HTTPS public services front door." in config
     assert "server_name _ 192.168.87.32;" in config
+    assert "location = /ui/public {" in config
+    assert "location ^~ /ui/public/ {" in config
     assert "location = /ca {" in config
     assert "location ^~ /ca/ {" in config
     assert "location = /requests {" in config
     assert "location ^~ /requests/ {" in config
     assert "location ^~ /static/ {" in config
     assert "location = /favicon.ico {" in config
-    assert "location = /manifest.webmanifest {" in config
-    assert "location = /service-worker.js {" in config
+    assert "location = /manifest.webmanifest {" not in config
+    assert "location = /service-worker.js {" not in config
+    assert "/ui/management" not in config
     assert "proxy_set_header X-Forwarded-Proto https;" in config
     assert "listen 192.168.87.32:80;" in config
     assert "server_name _ 192.168.87.32;" in config
@@ -303,6 +306,8 @@ def test_public_services_nginx_config_can_expose_terminal_only_on_selected_addre
     assert "listen 192.168.87.32:443 ssl;" in config
     assert "ssl_certificate /etc/atlaso/ca/certs/appliance.crt;" in config
     assert "ssl_certificate_key /etc/atlaso/ca/private/appliance.key;" in config
+    assert "location = /ui/public {" in config
+    assert "location ^~ /ui/public/ {" in config
     assert "location = /login {" in config
     assert "location = /terminal {" in config
     assert "location = /terminal/tickets {" in config
@@ -311,6 +316,7 @@ def test_public_services_nginx_config_can_expose_terminal_only_on_selected_addre
     assert "proxy_set_header X-Atlaso-Listener-Address $server_addr;" in config
     assert "location ^~ /static/ {" in config
     assert "location = /dashboard {" not in config
+    assert "/ui/management" not in config
     assert "location = /api/" not in config
 
 

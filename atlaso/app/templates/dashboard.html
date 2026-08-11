@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block page_title %}Dashboard{% endblock %}
 {% block content %}
-<div class="dashboard-command-center" data-dashboard data-refresh-url="/dashboard/data">
+<div class="dashboard-command-center" data-dashboard data-refresh-url="{{ management_ui_root }}/dashboard/data">
   <div class="dashboard-stale-notice" data-dashboard-stale hidden role="status">Live refresh is unavailable. Showing the last successful dashboard snapshot.</div>
 
   <section class="dashboard-status-band {{ dashboard.overall.state }}" aria-labelledby="dashboard-overall-state">
@@ -62,30 +62,30 @@
       <div class="panel-head compact">
         <div><h2>Changes &amp; Tasks</h2><p class="muted">Desired-state drift and work in progress.</p></div>
       </div>
-      <a class="dashboard-summary-row" href="/dashboard#appliance-apply-review" data-appliance-apply-open>
+      <a class="dashboard-summary-row" href="{{ management_ui_root }}/dashboard#appliance-apply-review" data-appliance-apply-open>
         <span><strong>Pending appliance changes</strong><small>Valid changed units ready for review</small></span>
         <span class="dashboard-summary-value">{{ dashboard.pending_changes.count }}</span>
       </a>
       {% if dashboard.pending_changes.units %}
         <div class="dashboard-unit-links" aria-label="Valid pending apply units">
           {% for unit in dashboard.pending_changes.units[:4] %}<a href="{{ unit.url }}">{{ unit.label }}</a>{% endfor %}
-          {% if dashboard.pending_changes.units|length > 4 %}<a href="/dashboard#appliance-apply-review" data-appliance-apply-open>+{{ dashboard.pending_changes.units|length - 4 }} more</a>{% endif %}
+          {% if dashboard.pending_changes.units|length > 4 %}<a href="{{ management_ui_root }}/dashboard#appliance-apply-review" data-appliance-apply-open>+{{ dashboard.pending_changes.units|length - 4 }} more</a>{% endif %}
         </div>
       {% else %}
         <p class="dashboard-inline-empty">No valid pending changes.</p>
       {% endif %}
       {% if dashboard.pending_changes.invalid_count %}<p class="dashboard-invalid-note"><span class="status-pill error">{{ dashboard.pending_changes.invalid_count }} invalid</span> Kept in Needs attention until resolved.</p>{% endif %}
-      <a class="dashboard-summary-row" href="/tasks">
+      <a class="dashboard-summary-row" href="{{ management_ui_root }}/tasks">
         <span><strong>Tasks</strong><small>Pending and running work</small></span>
         <span class="dashboard-task-counts"><b>{{ dashboard.tasks.pending }}</b> pending <b>{{ dashboard.tasks.running }}</b> running</span>
       </a>
-      <div class="dashboard-panel-actions"><a class="text-link" href="/dashboard#appliance-apply-review" data-appliance-apply-open>Review changes</a><a class="text-link" href="/tasks">Open tasks</a></div>
+      <div class="dashboard-panel-actions"><a class="text-link" href="{{ management_ui_root }}/dashboard#appliance-apply-review" data-appliance-apply-open>Review changes</a><a class="text-link" href="{{ management_ui_root }}/tasks">Open tasks</a></div>
     </article>
   </section>
 
   <section class="dashboard-snapshot-grid">
     <article class="panel dashboard-snapshot-panel">
-      <div class="panel-head compact"><div><h2>Services</h2><p class="muted">Enabled runtime state; exceptions only.</p></div><a class="text-link" href="/services">Open services</a></div>
+      <div class="panel-head compact"><div><h2>Services</h2><p class="muted">Enabled runtime state; exceptions only.</p></div><a class="text-link" href="{{ management_ui_root }}/services">Open services</a></div>
       <div class="dashboard-count-strip">
         <span><strong>{{ dashboard.services.enabled }}</strong><small>Enabled</small></span>
         <span><strong>{{ dashboard.services.running }}</strong><small>Running</small></span>
@@ -97,7 +97,7 @@
     </article>
 
     <article class="panel dashboard-snapshot-panel">
-      <div class="panel-head compact"><div><h2>Network</h2><p class="muted">Management path and configured interfaces.</p></div><a class="text-link" href="/physical-interfaces">Open interfaces</a></div>
+      <div class="panel-head compact"><div><h2>Network</h2><p class="muted">Management path and configured interfaces.</p></div><a class="text-link" href="{{ management_ui_root }}/physical-interfaces">Open interfaces</a></div>
       <div class="dashboard-management-row">
         <span><strong>{{ dashboard.network.management.name }}</strong><small>{{ dashboard.network.management.address or "No management address" }}</small></span>
         <span class="status-pill {{ 'good' if dashboard.network.management.healthy else 'warn' }}">{{ dashboard.network.management.link }}</span>
@@ -114,7 +114,7 @@
   </section>
 
   <section class="panel dashboard-activity-panel">
-    <div class="panel-head compact"><div><h2>Recent activity</h2><p class="muted">Tasks and audit events in one chronological view.</p></div><div class="dashboard-activity-links"><a class="text-link" href="/tasks">Tasks</a><a class="text-link" href="/audit-log">Audit events</a></div></div>
+    <div class="panel-head compact"><div><h2>Recent activity</h2><p class="muted">Tasks and audit events in one chronological view.</p></div><div class="dashboard-activity-links"><a class="text-link" href="{{ management_ui_root }}/tasks">Tasks</a><a class="text-link" href="{{ management_ui_root }}/audit-log">Audit events</a></div></div>
     <div class="dashboard-activity-list">
       {% for item in dashboard.recent_activity %}
         <a class="dashboard-activity-row" href="{{ item.url }}">

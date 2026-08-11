@@ -47,9 +47,12 @@ from atlaso.app.services.appliance_settings import (
     web_terminal_listener_interfaces,
 )
 from atlaso.app.services.vaults import vault_entry_uris
+from atlaso.app.ui_routes import MANAGEMENT_UI_ROOT, PUBLIC_UI_ROOT, management_ui_path, public_ui_path
 
 
-router = APIRouter()
+management_router = APIRouter(prefix=MANAGEMENT_UI_ROOT)
+public_router = APIRouter(prefix=PUBLIC_UI_ROOT)
+protocol_router = APIRouter()
 LOGGER = logging.getLogger("atlaso.web_terminal")
 WEB_TERMINAL_REQUEST_DIR = Path("/var/lib/atlaso/web-terminal/requests")
 SSH_HOST_PUBLIC_KEY_PATH = Path("/etc/ssh/ssh_host_ed25519_key.pub")
@@ -463,7 +466,8 @@ def _terminal_page_context(
     return context, public_listener
 
 
-@router.get("/terminal", response_class=HTMLResponse, response_model=None)
+@management_router.get("/terminal", response_class=HTMLResponse, response_model=None)
+@public_router.get("/terminal", response_class=HTMLResponse, response_model=None)
 def terminal_page(
     request: Request,
     identity=Depends(get_session_identity),
@@ -479,17 +483,22 @@ def terminal_page(
     Returns:
         The endpoint response.
     """
+    requested_public_plane = request.url.path.startswith(PUBLIC_UI_ROOT)
     if identity is None:
-        return RedirectResponse("/login?next=/terminal", status_code=303)
+        login_path = public_ui_path("/login") if requested_public_plane else management_ui_path("/login")
+        next_path = public_ui_path("/terminal") if requested_public_plane else management_ui_path("/terminal")
+        return RedirectResponse(f"{login_path}?next={next_path}", status_code=303)
     context, public_listener = _terminal_page_context(request, identity, db)
     from atlaso.app.ui import appliance_apply_status, public_portal_links_context, render
 
+    if requested_public_plane != public_listener:
+        raise HTTPException(status_code=404, detail="Not found")
     if public_listener:
         context.update(
             {
                 "public_address_mode_switch": False,
-                "public_logout_action": "/logout",
-                "public_logout_next": "/terminal",
+                "public_logout_action": public_ui_path("/logout"),
+                "public_logout_next": public_ui_path("/terminal"),
                 **public_portal_links_context(db),
             }
         )
@@ -502,7 +511,7 @@ def terminal_page(
     )
 
 
-@router.get("/terminal/remote", response_class=HTMLResponse, response_model=None)
+@management_router.get("/terminal/remote", response_class=HTMLResponse, response_model=None)
 def remote_terminal_page(
     request: Request,
     identity=Depends(get_session_identity),
@@ -522,7 +531,10 @@ def remote_terminal_page(
         HTTPException: If the request cannot be fulfilled.
     """
     if identity is None:
-        return RedirectResponse("/login?next=/terminal/remote", status_code=303)
+        return RedirectResponse(
+            f"{management_ui_path('/login')}?next={management_ui_path('/terminal/remote')}",
+            status_code=303,
+        )
     if not identity.has_role("admin"):
         raise HTTPException(status_code=403, detail="Administrator role required")
     context, public_listener = _terminal_page_context(request, identity, db)
@@ -533,7 +545,8 @@ def remote_terminal_page(
     return render(request, "remote_terminal.html", context)
 
 
-@router.post("/terminal/remote-launches", response_model=None)
+@management_router.post("/terminal/remote-launches", response_model=None)
+@protocol_router.post("/terminal/remote-launches", response_model=None)
 async def create_remote_terminal_launch(
     request: Request,
     vault_id: int = Form(...),
@@ -567,11 +580,12 @@ async def create_remote_terminal_launch(
     if not csrf or csrf != request.session.get("csrf_token"):
         raise HTTPException(status_code=403, detail="Invalid CSRF token")
     user = db.get(User, int(identity.user_id))
-    desired, _selected, addresses, _management_addresses = _terminal_network_state(db)
+    desired, _selected, addresses, management_addresses = _terminal_network_state(db)
     server_host = str((request.scope.get("server") or ("", 0))[0])
     if (
         not _user_can_access_terminal(user)
         or not _request_uses_selected_listener(request.headers, server_host, addresses)
+        or not _request_uses_selected_listener(request.headers, server_host, management_addresses)
         or get_settings().environment != "appliance"
         or not desired.web_terminal_enabled
         or not _request_is_https(request.headers, request.url.scheme)
@@ -631,14 +645,16 @@ async def create_remote_terminal_launch(
     )
     return JSONResponse(
         {
-            "url": f"/terminal/remote#remote-launch={raw}",
+            "url": f"{management_ui_path('/terminal/remote')}#remote-launch={raw}",
             "target": hostname,
         },
         headers={"Cache-Control": "no-store"},
     )
 
 
-@router.post("/terminal/tickets", response_model=None)
+@management_router.post("/terminal/tickets", response_model=None)
+@public_router.post("/terminal/tickets", response_model=None)
+@protocol_router.post("/terminal/tickets", response_model=None)
 def create_terminal_ticket(
     request: Request,
     csrf: str = Form(...),
@@ -673,9 +689,18 @@ def create_terminal_ticket(
     browser_session_id = browser_session_id.strip()
     if not re.fullmatch(r"[A-Za-z0-9_-]{16,80}", browser_session_id):
         raise HTTPException(status_code=400, detail="Invalid browser terminal session identifier")
-    desired, _selected, addresses, _management_addresses = _terminal_network_state(db)
+    desired, _selected, addresses, management_addresses = _terminal_network_state(db)
     server_host = str((request.scope.get("server") or ("", 0))[0])
-    if not _request_uses_selected_listener(request.headers, server_host, addresses):
+    selected_listener = _request_uses_selected_listener(request.headers, server_host, addresses)
+    management_listener = _request_uses_selected_listener(request.headers, server_host, management_addresses)
+    public_listener = selected_listener and not management_listener
+    canonical_plane = request.url.path.startswith((MANAGEMENT_UI_ROOT, PUBLIC_UI_ROOT))
+    requested_public_plane = (
+        request.url.path.startswith(PUBLIC_UI_ROOT) or getattr(request.state, "ui_plane", "") == "public"
+        if canonical_plane
+        else public_listener
+    )
+    if not selected_listener or requested_public_plane != public_listener:
         raise HTTPException(status_code=404, detail="Not found")
     if (
         get_settings().environment != "appliance"
@@ -687,6 +712,8 @@ def create_terminal_ticket(
     active_session = _active_session_for_user(int(identity.user_id))
     remote: RemoteTerminalLaunch | None = None
     if remote_launch:
+        if requested_public_plane:
+            raise HTTPException(status_code=404, detail="Not found")
         with _ticket_lock:
             remote = _remote_launches.pop(_ticket_digest(remote_launch), None)
         if (
@@ -980,7 +1007,9 @@ async def _attach_terminal_session(session: ActiveTerminalSession, websocket: We
             pass
 
 
-@router.websocket("/terminal/ws")
+@management_router.websocket("/terminal/ws")
+@public_router.websocket("/terminal/ws")
+@protocol_router.websocket("/terminal/ws")
 async def terminal_websocket(websocket: WebSocket) -> None:
     """Handle the terminal websocket endpoint.
 
@@ -1000,9 +1029,14 @@ async def terminal_websocket(websocket: WebSocket) -> None:
         if not _user_can_access_terminal(user):
             await websocket.close(code=4403)
             return
-        desired, _selected, addresses, _management_addresses = _terminal_network_state(db)
+        desired, _selected, addresses, management_addresses = _terminal_network_state(db)
         server_host = str((websocket.scope.get("server") or ("", 0))[0])
-        if not _request_uses_selected_listener(websocket.headers, server_host, addresses):
+        selected_listener = _request_uses_selected_listener(websocket.headers, server_host, addresses)
+        management_listener = _request_uses_selected_listener(websocket.headers, server_host, management_addresses)
+        public_listener = selected_listener and not management_listener
+        canonical_plane = websocket.url.path.startswith((MANAGEMENT_UI_ROOT, PUBLIC_UI_ROOT))
+        requested_public_plane = websocket.url.path.startswith(PUBLIC_UI_ROOT) if canonical_plane else public_listener
+        if not selected_listener or requested_public_plane != public_listener:
             await websocket.close(code=4404)
             return
         if (

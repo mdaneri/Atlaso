@@ -181,8 +181,9 @@ regenerates the manifest, and packages the folder as an OVA unless `-NoOva` is p
 and Atlaso system-content VMDKs, then declares a 500 GiB empty VCF Offline Depot disk and a 500 GiB empty VCF Backups
 disk. ESXi creates the latter two disks during deployment without payload files. The exporter requires exactly four
 ordered disks, requires file-backed payloads for the first two, uses VMware Paravirtual SCSI, and removes the build-time
-CD-ROM device. On first boot, `atlaso-data-disks.service` ignores the formatted system-content disk and formats the two
-blank disks as
+CD-ROM device. On first boot, the independent Atlaso `tty1` console and OVF management-network validation start before
+data-disk discovery. After networking validates, `atlaso-data-disks.service` ignores the formatted system-content disk
+and formats the two blank disks as
 ext4, labels them `ATLASO_DEPOT` and `ATLASO_BKUP`, writes their UUIDs to `/etc/fstab`, and mounts them at
 `/mnt/atlaso-vcf-offline-depot` and `/mnt/atlaso-vcf-backups`. The descriptor exposes two network mappings for
 vSphere/ESXi import: `Atlaso Management Network` for the first adapter, which remains management-only as `eth0`, and
@@ -214,10 +215,10 @@ The OVF properties are intended for vSphere/ESXi import:
 | Category            | Property                  | Required | Description                                                                                                      |
 | ------------------- | ------------------------- | -------- | ---------------------------------------------------------------------------------------------------------------- |
 | Management network  | `atlaso.cidr`             | no       | Static management IPv4 CIDR for `eth0`, for example `192.168.10.10/24`; blank uses DHCPv4.                       |
-| Management network  | `atlaso.gateway`          | no       | Required with a static IPv4 CIDR and invalid without one.                                                        |
+| Management network  | `atlaso.gateway`          | no       | Required with static IPv4; must be on-link for the CIDR and differ from the management address.                  |
 | Management network  | `atlaso.ipv6_enabled`     | no       | Boolean, default `false`. Enables management IPv6.                                                               |
 | Management network  | `atlaso.ipv6_cidr`        | no       | Blank while IPv6 is enabled uses RA/SLAAC; a value selects static IPv6.                                          |
-| Management network  | `atlaso.ipv6_gateway`     | no       | Optional with a static IPv6 CIDR; accepts an on-link global address or link-local address.                       |
+| Management network  | `atlaso.ipv6_gateway`     | no       | Optional with static IPv6; accepts an on-link or link-local address that differs from the management address.    |
 | Management network  | `atlaso.dns_servers`      | no       | Optional resolver IPs separated by commas, spaces, or new lines. Blank DHCP deployments keep lease-provided DNS. |
 | Appliance identity  | `atlaso.fqdn`             | yes      | Appliance FQDN applied to Photon OS and Atlaso desired state.                                                    |
 | Initial credentials | `atlaso.admin_password`   | yes      | Initial Atlaso web `admin` password.                                                                             |
@@ -229,7 +230,44 @@ before Atlaso starts. A blank IPv4 CIDR writes `DHCP=ipv4`; a supplied CIDR and 
 be disabled, automatic through RA/SLAAC, or static. The customizer also writes family-correct firewall access, resolver
 overrides when supplied, hostname, root password, optional root SSH state, and bootstrap admin password once, then
 records a redacted marker under `/var/lib/atlaso`. Passwords are consumed as deployment inputs and are not printed in
-the marker or customization log.
+the marker or customization log. After all first-boot configuration succeeds, the customizer writes a redacted pending
+marker, clears the consumed OVF environment through VMware Tools, and atomically promotes the pending file to the
+applied marker. This removes raw-clone credentials from the host-side `guestinfo.ovfEnv` VMX setting while keeping a
+power interruption between scrub and promotion recoverable on the next boot. A failed scrub remains unmarked and is
+retried with the initialization lock held. Mutation failures identify only a bounded, non-secret initialization layer in
+the customization log. The pending file and its parent directory are synchronized before the external credential scrub;
+all preceding host filesystem mutations are synchronized before pending success is recorded, and the applied-marker
+promotion synchronizes the directory again. The early tty1 console is restarted after clone-specific appliance secret
+rotation and before the initialization lock is removed, so it cannot retain baked keys in process memory. If a raw clone
+accidentally reuses a disk whose applied marker already exists, the customizer
+does not reapply the injected credentials, but it does clear the injected OVF environment before its marker early exit so
+those plaintext values cannot remain in the cloned VMX. Inconclusive VMware RPC reads are retried rather than treated as
+proof of an empty property. Applied-marker cleanup also requires 30 consecutive successful empty reads before unlocking
+tty1, so delayed clone properties are scrubbed. Raw-clone injection carries a non-secret deployment identifier; if a
+source was interrupted with only a pending marker, a different injected identifier invalidates that stale pending state
+before the clone applies its own properties. A nonempty ID-less OVF environment is also applied instead of promoting
+pending source state, so
+release OVA redeployment remains safe. Pending recovery requires 30 consecutive successful empty guestinfo reads, and
+applies properties that appear during that confirmation window. Use only pristine, never-booted image outputs as clone
+sources.
+
+The customizer validates IPv4, IPv6, gateway, and DNS relationships before any host mutation. Interface and gateway
+addresses must be usable unicast values rather than unspecified, loopback, multicast, or reserved addresses. If
+validation fails, the
+Atlaso `tty1` console displays **First-time initialization — Network configuration requires review**, prepopulates only
+non-secret OVF values, and accepts a corrected network configuration. Networkd, data-disk initialization, HTTPS
+bootstrap, and Atlaso remain held until the correction passes the same shared validation and applies successfully. The
+applied marker is absent until success, so another console correction remains possible without redeploying the OVA.
+A root-owned lock staged in the VMware image disables ordinary privileged tty1 actions until the deployment root
+password applies. Non-network properties validate before network recovery is offered, and a later boot clears stale
+handshake files when the applied marker proves customization finished.
+
+If an administrator later corrects management networking from the tty1 console, Atlaso explicitly regenerates Network
+and Firewall state from the corrected CIDR, retries an unfinished first-boot HTTPS bootstrap, applies Appliance
+Settings, validates nginx, restores nginx and Atlaso when needed, and proves stable loopback readiness for the applied
+HTTP-only or HTTPS management mode before the console reports success. Check
+`https://<management-address>/openapi.json` when HTTPS is enabled or `http://<management-address>/openapi.json` in
+HTTP-only mode.
 
 The OVF descriptor stores these as unqualified property IDs inside the `atlaso` product class. ESXi qualifies them once
 in the guest OVF environment as `atlaso.<property>`; do not repeat the class prefix in each property ID.
@@ -270,9 +308,22 @@ removes stale Atlaso root CAs from the current-user Trusted Root store, and trus
 integrated browser accept the first-boot HTTPS cert. The root CA is generated by `atlaso-bootstrap-https.service` on
 each deployed VM's first boot, not baked into the reusable Packer-built VMX. The wrapper waits up to five minutes by
 default for the first-boot CA endpoint, retrying transient connection and service-readiness failures. Pass
-`-TimeoutSeconds <seconds>` to adjust both IP discovery and CA readiness waits. After the VM starts, the wrapper prints
-a connection summary with the HTTPS console URL, Swagger URL, OpenAPI URL, root certificate URL, and
-`ssh admin@<appliance-ip>` command.
+`-TimeoutSeconds <seconds>` to adjust both IP discovery and CA readiness waits. Partial downloads are removed
+best-effort between retries through .NET file APIs, including when the current user's temporary directory contains a
+dotted profile name or a valid DOS 8.3 short-path representation. Cleanup cannot replace the original readiness error
+or stop the retry loop. After the VM starts, the wrapper prints a connection summary with the HTTPS console URL,
+Swagger URL, OpenAPI URL, root certificate URL, and `ssh admin@<appliance-ip>` command.
+
+Both this wrapper and the Workstation lifecycle runner inject a complete `guestinfo.ovfEnv` document into a raw cloned
+VMX before power-on. The default document selects IPv4 DHCP, leaves resolver overrides blank, keeps IPv6 and root SSH
+disabled, and supplies the required appliance identity and first-boot credentials. This gives raw Workstation clones the
+same fail-closed initialization contract as an OVA deployment instead of leaving the customizer waiting for properties
+that only an OVF deployment normally supplies. A generated non-secret deployment identifier distinguishes each raw
+clone attempt during pending-marker crash recovery. Use `-FirstBootFqdn`, `-AdminPassword`, and `-RootPassword` to
+override the normal test-VM values; the lifecycle wrapper uses its existing admin-password input. Password values are written
+only to the guestinfo-backed VMX setting until successful first-boot consumption clears it; they are never printed in
+plan, result, or connection-summary output. Raw-clone credential overrides must be at least 12 characters and cannot
+contain leading, trailing, XML control, or non-XML characters that would change during OVF attribute parsing.
 
 The VM's first virtual terminal runs the Atlaso recovery console; tty2 and later terminals retain Photon login prompts.
 Its normal 80x30 layout includes boot and runtime state for the appliance services, including Firewall desired state. F3

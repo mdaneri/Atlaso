@@ -15,9 +15,72 @@ HTML from `atlaso/app/ui.py` or `atlaso/app/web_terminal.py`, plus the shared sh
 used by those routes. API, download, redirect-only, and static-asset routes are outside this matrix because they do not
 render an Atlaso browser surface.
 
-No new `custom/other` interaction was introduced by the final audit. Rows that name an established dashboard, chart,
-terminal, login, or public-directory surface describe a pre-existing reviewed interaction from the #114/#115 baseline;
-the #120 remediation changes only shared accessibility or fallback behavior around those surfaces.
+Issue #287 introduced an explicitly maintainer-approved `custom/other` information-architecture change while preserving
+the established dashboard, chart, terminal, login, and public-directory interactions. Management surfaces now belong to
+`/ui/management`; app-owned public surfaces belong to `/ui/public`; `/` is only the interface-aware dispatcher.
+
+## Canonical browser-route inventory
+
+The route-inventory test fails when an app-owned human route is added outside its declared plane or when a protocol
+exemption changes without review. The management routes rendered by the current templates are:
+
+```text
+/ui/management
+/ui/management/appliance-update
+/ui/management/audit-log
+/ui/management/authentication
+/ui/management/automation
+/ui/management/backup-restore
+/ui/management/ca/requests
+/ui/management/certificate-authority
+/ui/management/dashboard
+/ui/management/dhcp
+/ui/management/dns
+/ui/management/esx-storage
+/ui/management/firewall
+/ui/management/vsphere-key-providers
+/ui/management/ldap
+/ui/management/login
+/ui/management/logs
+/ui/management/monitor
+/ui/management/network-boot
+/ui/management/ntp
+/ui/management/openid-connect
+/ui/management/physical-interfaces
+/ui/management/routes-wan
+/ui/management/services
+/ui/management/services/{service}/logs
+/ui/management/settings
+/ui/management/tasks
+/ui/management/terminal
+/ui/management/terminal/remote
+/ui/management/users
+/ui/management/vaults
+/ui/management/vcf-backups
+/ui/management/vcf-helper
+/ui/management/vcf-offline-depot
+/ui/management/vcf-offline-depot/tasks/{job_id}/log
+/ui/management/vcf-private-registry
+/ui/management/vcf-trust
+/ui/management/vlan-interfaces
+/ui/management/{page}
+```
+
+The public routes rendered through `public_portal_base.html` are:
+
+```text
+/ui/public
+/ui/public/ca
+/ui/public/ca/login
+/ui/public/ca/requests
+/ui/public/login
+/ui/public/terminal
+```
+
+For compactness, the detailed rows below retain their recognizable child slugs. Management child slugs are relative to
+`/ui/management`, public child slugs are relative to `/ui/public`, and `/PROD/` remains an explicitly exempt protocol
+and browser contract at its existing root path. Retired root-level browser paths are temporary compatibility entries,
+not canonical route owners.
 
 ## Result and evidence key
 
@@ -61,7 +124,7 @@ read-only or unavailable surface has a mutation workflow.
 | `/dhcp` — settings, IP zones, options, reservations, leases | Wizard-backed, direct-edit, and read-only Tabulator; DNS/ESX Storage references | Four paired fallbacks plus reviewed generated PXE option summary | Role-gated desired-state writes, shared confirmations, validation recovery; global `dnsmasq` apply only | Pass D/N/K/F/Z/V | E1–E8 |
 | `/certificate-authority` — CA settings, profiles, certificates | Wizard-backed Tabulator and non-grid settings; ESX Storage/DNS references | Certificate/profile fallbacks, settings, validation, and redacted preview | Role-gated writes, CSRF, shared revoke/delete confirmation; global `ca` apply only | Pass D/N/K/F/Z/V | E1–E8 |
 | `/ldap` — organizations, users, groups, VCF setup | Wizard-backed and direct-edit Tabulator plus non-grid settings; DNS zones and ESX Storage references | Organization/settings content and paired user/group fallbacks | Admin writes, secret-safe one-time dialogs, confirmation and recovery; global `ldap` apply only | Pass D/N/K/F/Z/V | E1–E8 |
-| `/kms` — service settings, clients, keys | Wizard-backed Tabulator and non-grid settings; ESX Storage/DNS references | Client/key fallbacks, validation, and redacted preview | Admin writes; shared destructive confirmation; TLS/fingerprint and global `kms` apply boundaries preserved | Pass D/N/K/F/Z/V | E1–E8 |
+| `/ui/management/vsphere-key-providers` — providers, trusted vCenters, certificates, health | Wizard-backed and read-only Tabulator plus non-grid settings; ESX Storage/Tasks/Audit Events/DNS references | Four tool fallbacks, validation, nullable lifecycle counts, and redacted preview | Admin writes; shared destructive confirmation; public-certificate-only trust, exact fingerprint mapping, and global `kms` apply boundaries preserved | Pass D/N/K/F/Z/V | E1–E8 |
 | `/ntp` — settings, upstreams, source health | Wizard-backed Tabulator and non-grid settings; ESX Storage/DNS references | Upstream fallback, settings, validation, and config preview | Role-gated desired-state writes; NTS remains disabled; global `ntpd` apply only | Pass D/N/K/F/Z/V | E1–E8 |
 | `/vcf-helper` — FQDN and remote VCF workflows | Established VCF Helper workflows and shared wizards; VCF credential-wizard reference | Server-rendered forms, reviewed FQDN semantic summary, and recoverable errors | Admin permission, TLS fingerprint before credentials, shared confirmation; DNS edits remain global-apply desired state | Pass D/N/K/F/Z/V | E1–E8 |
 | `/vcf-trust` — certificate-trust handoff | Shared VCF credential wizard on the VCF Helper surface | Server-rendered VCF Helper state and recoverable validation errors | Admin, request-local credentials, explicit TLS confirmation, auditable task boundary | Pass D/N/K/F/Z/V | E1–E8 |
@@ -115,9 +178,10 @@ are explicitly inventoried so route/template changes cannot silently escape the 
 - Networking and services: `dns-domain-dialog`, `dhcp-scope-dialog`, `dhcp-option-dialog`,
   `dhcp-lease-reservation-modal`, `dhcp-lease-pxe-modal`, `firewall-rule-dialog`,
   `firewall-rename-group-modal`, and `ntp-source-dialog`.
-- Identity, CA, and KMS: `ca-csr-dialog`, `ca-profile-dialog`, `ca-certificate-dialog`,
+- Identity, CA, and vSphere Key Providers: `ca-csr-dialog`, `ca-profile-dialog`, `ca-certificate-dialog`,
   `ldap-organization-dialog`, `ldap-user-dialog`, `ldap-group-dialog`, `ldap-bind-secret-modal`,
-  `ldap-password-modal`, `ldap-group-members-modal`, `ldap-generate-modal`, `kms-client-dialog`, and `kms-key-dialog`.
+  `ldap-password-modal`, `ldap-group-members-modal`, `ldap-generate-modal`, `vsphere-provider-dialog`,
+  `vsphere-vcenter-dialog`, and `vsphere-certificate-dialog`.
 - Network Boot and storage: `network-boot-host-dialog`, `network-boot-upload-dialog`,
   `network-boot-promote-dialog`, `esxi-iso-upload-dialog`, `esxi-custom-variable-wizard-dialog`,
   `kickstart-wizard-dialog`, `esx-storage-volume-modal`, and `esx-storage-share-modal`.

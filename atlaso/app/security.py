@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 from atlaso.app.config import Settings, get_settings
 from atlaso.app.database import get_db
 from atlaso.app.models import ApiToken, Role, Setting, User, utcnow
+from atlaso.app.ui_routes import MANAGEMENT_UI_ROOT, PUBLIC_UI_ROOT
 
 
 ALL_SCOPES = {
@@ -160,6 +161,7 @@ UI_PATH_SCOPES = [
     ("/settings", "admin:all", "admin:all"),
     ("/users", "admin:all", "admin:all"),
     ("/certificate-authority", "admin:all", "admin:all"),
+    ("/vsphere-key-providers", "read:kms", "write:kms"),
     ("/ca/requests", "write:ca-requests", "write:ca-requests"),
     ("/ca/certificates", "read:ca", "write:ca-revocations"),
     ("/authentication", "read:dashboard", "read:dashboard"),
@@ -169,7 +171,6 @@ UI_PATH_SCOPES = [
     ("/firewall", "read:firewall", "write:firewall"),
     ("/dns", "read:dns", "write:dns"),
     ("/dhcp", "read:dhcp", "write:dhcp"),
-    ("/kms", "read:kms", "write:kms"),
     ("/ldap", "read:ldap", "write:ldap"),
     ("/ntp", "read:services", "write:services"),
     ("/esxi-pxe", "read:esxi-pxe", "write:esxi-pxe"),
@@ -668,6 +669,13 @@ def enforce_ui_path_permission(request: Request, identity: Identity) -> None:
         HTTPException: If the request cannot be fulfilled.
     """
     path = request.url.path
+    for ui_root in (MANAGEMENT_UI_ROOT, PUBLIC_UI_ROOT):
+        if path == ui_root:
+            path = "/"
+            break
+        if path.startswith(f"{ui_root}/"):
+            path = path.removeprefix(ui_root)
+            break
     if path in {"/", "/logout"}:
         return
     for prefix, read_scope, write_scope in UI_PATH_SCOPES:

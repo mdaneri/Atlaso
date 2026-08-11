@@ -54,6 +54,12 @@ metadata, SANs, PEM content, and final review.
 The public portal exposes only the approved public certificate surface. It must not disclose operator-only state or
 offer administrative actions.
 
+The management authority is canonical at `/ui/management/certificate-authority`, with its authenticated request list at
+`/ui/management/ca/requests`. The public trust and enrollment pages are `/ui/public/ca` and
+`/ui/public/ca/requests`. Root CA, bundle, leaf certificate, chain, and private-key download contracts retain their
+existing non-`/ui` paths. Eligible legacy `GET`/`HEAD` bookmarks redirect temporarily; public mutations are bridged
+internally and retain their CSRF, role, request validation, and listener checks.
+
 ## Verify and recover
 
 After apply, verify the presented management certificate and download the expected public root certificate. Keep a VM

@@ -584,6 +584,10 @@ def test_photon_provisioning_installs_default_nginx_management_proxy():
     assert "proxy_set_header X-Forwarded-Proto https;" in bootstrap
     assert "proxy_set_header X-Forwarded-Proto http;" in bootstrap
     assert "proxy_set_header Upgrade $http_upgrade;" in bootstrap
+    assert "if not certificate.is_file() or not key.is_file():" in bootstrap
+    assert 'if nginx is None:' in bootstrap
+    assert bootstrap.index("if not certificate.is_file() or not key.is_file():") < bootstrap.index("MARKER_PATH.write_text")
+    assert bootstrap.index("validation = run([nginx, \"-t\"])") < bootstrap.index("MARKER_PATH.write_text")
     assert "nginx -t" in script
     assert "systemctl enable --now nginx" in script
     assert 'ATLASO_DRY_RUN_SYSTEM_ADAPTERS="${ATLASO_DRY_RUN_SYSTEM_ADAPTERS:-true}"' in script
@@ -1209,6 +1213,81 @@ def test_create_atlaso_vmware_test_vm_wrapper_uses_common_helpers():
     assert "`-ServiceVmnetName`" in docs
 
 
+def test_vmware_raw_vmx_workflows_inject_complete_first_boot_ovf_environment_before_start():
+    """Verify raw Workstation clones receive the same complete first-boot contract as OVA deployments."""
+    helper = Path("scripts/windows/vmware/Atlaso.WorkstationFirstBoot.ps1").read_text(encoding="utf-8")
+    test_vm = Path("scripts/windows/vmware/create-atlaso-test-vm.ps1").read_text(encoding="utf-8")
+    lifecycle = Path("scripts/windows/vmware/run-lifecycle-test.ps1").read_text(encoding="utf-8")
+    lifecycle_wrapper = Path("scripts/windows/vmware/invoke-lifecycle-test.ps1").read_text(encoding="utf-8")
+    docs = Path("docs/reference/vmware-workstation-lifecycle-testing.md").read_text(encoding="utf-8")
+
+    for key in (
+        "atlaso.deployment_id",
+        "atlaso.management_mode",
+        "atlaso.cidr",
+        "atlaso.gateway",
+        "atlaso.ipv6_enabled",
+        "atlaso.ipv6_cidr",
+        "atlaso.ipv6_gateway",
+        "atlaso.dns_servers",
+        "atlaso.fqdn",
+        "atlaso.admin_password",
+        "atlaso.root_password",
+        "atlaso.root_ssh_enabled",
+    ):
+        assert f"'{key}'" in helper
+    assert "[guid]::NewGuid().ToString('D')" in helper
+    assert "[System.Security.SecurityElement]::Escape($Value)" in helper
+    assert "[System.Xml.XmlConvert]::VerifyXmlChars($passwordInput.Value)" in helper
+    assert "$passwordInput.Value -ne $passwordInput.Value.Trim()" in helper
+    assert "$passwordInput.Value -match '[\\r\\n\\t]'" in helper
+    assert "must contain at least 12 characters" in helper
+    assert ".EndsWith('.local')" in helper
+    assert "First-boot FQDN must not use .local." in helper
+    assert "guestinfo.ovfEnv = " in helper
+    assert "Write-Host" not in helper
+
+    assert "Atlaso.WorkstationFirstBoot.ps1" in test_vm
+    assert "New-AtlasoWorkstationOvfEnvironment" in test_vm
+    assert "Set-AtlasoWorkstationOvfEnvironment -VmxPath $targetVmx" in test_vm
+    assert test_vm.index("Set-AtlasoWorkstationOvfEnvironment -VmxPath $targetVmx") < test_vm.index(
+        "start-atlaso-vm.ps1"
+    )
+
+    assert "Atlaso.WorkstationFirstBoot.ps1" in lifecycle
+    assert "New-AtlasoWorkstationOvfEnvironment" in lifecycle
+    assert "-RootSshEnabled:($ApplianceSshUser -eq 'root')" in lifecycle
+    assert "Set-AtlasoWorkstationOvfEnvironment -VmxPath $applianceVmx" in lifecycle
+    assert lifecycle.index("Set-AtlasoWorkstationOvfEnvironment -VmxPath $applianceVmx") < lifecycle.index(
+        "Start-WorkstationVm -Path $vmx"
+    )
+    assert "[string]$AdminPassword = 'VMware01!Test'" in lifecycle
+    assert "$ApplianceGuestPassword = $AdminPassword" in lifecycle
+    assert "'--appliance-ssh-password', $ApplianceGuestPassword" in lifecycle
+    assert "-gp $SshPassword" not in lifecycle
+    assert "[string]$AdminPassword = 'VMware01!Test'" in lifecycle_wrapper
+    assert "[string]$SshPassword = 'VMware01!Test'" in lifecycle_wrapper
+    assert "complete Atlaso first-boot OVF environment" in docs
+    assert "plan and result artifacts" in docs
+
+
+def test_create_atlaso_vmware_test_vm_root_ca_retry_cleanup_is_idempotent():
+    """Verify root CA retry cleanup handles missing files and dotted short temp paths."""
+    script = Path("scripts/windows/vmware/create-atlaso-test-vm.ps1").read_text(encoding="utf-8")
+    install_root_ca = script.split("function Install-ApplianceRootCa", 1)[1].split(
+        "function Write-ConnectionSummary", 1
+    )[0]
+
+    assert "[System.IO.Path]::GetFullPath([System.IO.Path]::GetTempPath())" in install_root_ca
+    assert '[System.IO.Path]::Combine($tempRoot, "atlaso-$Name-root-ca.pem")' in install_root_ca
+    assert "[System.IO.File]::Delete($rootPemPath)" in install_root_ca
+    assert "File.Delete is idempotent for a missing file" in install_root_ca
+    assert "valid dotted/short Windows paths" in install_root_ca
+    assert "Best-effort cleanup must never mask" in install_root_ca
+    assert "Test-Path -LiteralPath $rootPemPath" not in install_root_ca
+    assert "Remove-Item -LiteralPath $rootPemPath" not in install_root_ca
+
+
 def test_vmware_deploy_wheel_supports_password_backed_noninteractive_deploy():
     """Verify that vmware deploy wheel supports password backed noninteractive deploy."""
     script = Path("scripts/windows/vmware/deploy-wheel.ps1").read_text(encoding="utf-8")
@@ -1575,13 +1654,9 @@ def test_lifecycle_runner_covers_ca_vcf_backups_wan_noise_and_console_summary():
     assert "https_request_unverified" in script
     assert "configure-vcf-backups" in script
     assert "configure-kms" in script
-    assert '"/kms/clients"' in script
-    assert '"name": "vcf-management"' in script
-    assert "Hyper-V lifecycle KMIP client" in script
-    assert "atlaso-kms.service" in script
-    assert "kms_files" in script
-    assert "kms_service" in script
-    assert "kms_tls" in script
+    assert '"/vsphere-key-providers"' in script
+    assert "not-configured-without-external-public-certificate" in script
+    assert "kms_external_trust_required" in script
     assert '"local_console"' in script
     assert "systemctl is-active atlaso-console.service" in script
     assert "systemctl is-enabled getty@tty1.service" in script
@@ -1589,9 +1664,6 @@ def test_lifecycle_runner_covers_ca_vcf_backups_wan_noise_and_console_summary():
     assert '\\"maintenance_isolation\\": false' in script
     assert "apply-kms-unit" in script
     assert "Appliance apply task failed" in script
-    assert "/etc/atlaso/kms/clients/certs/vcf-management.crt" in script
-    assert "/etc/atlaso/kms/clients/vcf-management.crt" not in script
-    assert "missing $path" in script
     assert "stderr:" in script
     assert "stdout:" in script
     assert "vcf-backup-client-check" in script

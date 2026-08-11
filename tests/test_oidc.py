@@ -1002,7 +1002,7 @@ def test_openid_connect_page_exposes_authorization_code_oidc_ui(client):
     assert signed_in.status_code == 303
     authentication_page = client.get("/authentication")
     assert authentication_page.status_code == 200
-    assert 'href="/openid-connect"' in authentication_page.text
+    assert 'href="/ui/management/openid-connect"' in authentication_page.text
     assert 'id="oidc-provider"' not in authentication_page.text
 
     page = client.get("/openid-connect")
@@ -1126,7 +1126,7 @@ def test_authentication_ui_deletes_bound_client_before_ldap_organization(client)
         follow_redirects=False,
     )
     assert deleted.status_code == 303
-    assert deleted.headers["location"] == "/openid-connect#oidc-clients"
+    assert deleted.headers["location"] == "/ui/management/openid-connect#oidc-clients"
     organization_deleted = client.post(
         f"/ldap/organizations/{organization_id}/delete",
         data={"csrf": csrf},
@@ -2163,9 +2163,9 @@ def test_fixed_organization_managed_ldap_flow_never_creates_operator_session(cli
         headers={"Authorization": f"Bearer {access_token}"},
     )
     assert disabled_organization.status_code == 401
-    dashboard = client.get("/dashboard", follow_redirects=False)
+    dashboard = client.get("/ui/management/dashboard", follow_redirects=False)
     assert dashboard.status_code == 303
-    assert dashboard.headers["location"].startswith("/login")
+    assert dashboard.headers["location"].startswith("/ui/management/login")
 
 
 def test_concurrent_code_redemption_has_at_most_one_success(client):

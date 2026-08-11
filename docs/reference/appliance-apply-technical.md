@@ -34,9 +34,9 @@ service-specific apply buttons or service-specific apply submit routes.
 `Appliance Apply` is the global review and submit workflow, presented through a shared modal rather than a standalone
 page. The bottom-left review card and page-level review actions open the modal, which lists changed apply units, checks
 valid changed units by default, and lets an operator unselect any unit that should remain pending. A direct GET to
-`/appliance-apply` redirects to `/dashboard#appliance-apply-review`, where the same modal opens automatically. The
-`/appliance-apply` POST, `/appliance-apply/review`, and `/appliance-apply/status` routes remain the backend workflow
-used by the modal.
+`/ui/management/appliance-apply` redirects to `/ui/management/dashboard#appliance-apply-review`, where the same modal
+opens automatically. The `/ui/management/appliance-apply` POST, `/ui/management/appliance-apply/review`, and
+`/ui/management/appliance-apply/status` routes remain the browser-only backend workflow used by the modal.
 
 The status route is deliberately a lightweight desired-state projection: it compares current snapshots with stored
 baselines without running apply-time reconciliation or privileged observation helpers. Full review, validation, and
@@ -72,7 +72,7 @@ Current apply units are:
 - DNS/DHCP (dnsmasq)
 - ESXi PXE
 - Certificate Authority
-- KMS / KMIP
+- vSphere Key Providers (internal `kms` unit)
 - Managed LDAP
 - NTPsec
 - VCF Backups
@@ -436,24 +436,29 @@ allowlisted path, and startup removes an input left by interruption.
 Settings backups include encrypted CA private-key material. Restoring usable CA custody requires the same
 `ATLASO_SECRETS_KEY`; otherwise operators should reissue the CA/certificates.
 
-### KMS / KMIP apply
+### vSphere Key Provider apply
 
-The real KMS apply path uses Atlaso's appliance-native, experimental `atlaso-kmip` provider. The KMS page derives IPv4
-and IPv6 listen addresses from the selected access physical interface or enabled VLAN, creates app-owned canonical
-CNAME and generated A/AAAA target records for the KMIP hostname, and requires an enabled healthy CA before KMS can be
-activated. When KMS is enabled, CA desired state auto-ensures the `kms:server` certificate and enabled KMIP client
-certificates; apply remains invalid until the issued server certificate, private key, and exact client identity are
-available.
+The real internal `kms` apply unit uses Atlaso's appliance-native, experimental `atlaso-kmip` daemon. The
+`/ui/management/vsphere-key-providers` page derives IPv4 and IPv6 listen addresses from selected access interfaces or
+enabled VLANs, creates app-owned DNS records for the shared endpoint, and requires an enabled healthy CA and issued `kms:server`
+identity before activation. Provider and trusted-vCenter changes remain database desired state until this global apply.
 
-The `kms` unit stages `/var/lib/atlaso/apply/kms/server.json`. Through `atlaso-helper kms validate|apply`, the helper
-confines the staged file, validates its exact schema, derived listen address, CA-managed paths, UUID provider namespace,
-unique SHA-256 client fingerprints, store paths, and resource limits, then installs `/etc/atlaso/kmip/server.json` and
-manages `atlaso-kmip.service`. The daemon runs as the non-login `atlaso-kmip` account with a hardened systemd sandbox.
-Its SQLite store and KEK envelope live under `/var/lib/atlaso/kmip` with service-only permissions; the KEK is protected
-by `ATLASO_SECRETS_KEY`. The helper uses `systemd-creds` to persist only a machine-encrypted credential; systemd exposes
-the decrypted value only in the daemon's private runtime credential directory. The listener requires TLS 1.2 or newer.
-Disabling KMS stops both the current and retired service names while preserving the new store. Firewall apply owns
-TCP/5696 access to the selected interface. The bounded KMIP operation and evidence contract is documented in
+The unit stages `/var/lib/atlaso/apply/kms/server.json` and the public-only
+`/var/lib/atlaso/apply/kms/client-trust.pem`. Through `atlaso-helper kms validate|apply`, the helper confines both fixed
+paths, rejects symbolic links and private-key material, validates exact schema, derived listener, CA-managed server
+identity, immutable UUID namespaces, globally unique exact SHA-256 fingerprints, store paths, and resource limits, then
+installs `/etc/atlaso/kmip/server.json` and `/etc/atlaso/kmip/client-trust.pem`. The installed trust bundle is mode
+`0640`, owned by root and `atlaso-kmip`, and contains the internal CA public root plus imported public leaf certificates.
+The daemon binds the shared endpoint port on every exact derived address recorded in the validated configuration.
+
+The daemon runs as the non-login `atlaso-kmip` account with a hardened systemd sandbox. Its SQLite store and KEK
+envelope live under `/var/lib/atlaso/kmip` with service-only permissions; the KEK is protected by
+`ATLASO_SECRETS_KEY`. The helper uses `systemd-creds` to persist only a machine-encrypted credential; systemd exposes
+the decrypted value only in the daemon's private runtime credential directory. TLS requires version 1.2 or newer,
+allows partial-chain verification for explicitly imported public leaves, and still requires an exact fingerprint to map
+to one provider. `atlaso-helper kms status` authenticates store metadata and returns only service/store health and
+per-provider lifecycle counts. Disabling the service preserves the operational store. Firewall apply owns TCP/5696
+access to selected interfaces. The bounded protocol contract is documented in
 [vSphere Key Provider protocol contract](vsphere-key-provider-protocol.md).
 
 ## Appliance settings and operations

@@ -37,6 +37,13 @@ normal version, CI, review, and squash-merge gates, and synchronized generated l
 Every Python lock must be generated through `python scripts/compile_requirements.py`, which excludes distributions
 uploaded less than seven full days ago. Do not bypass the upload-time cutoff for direct, transitive, or security updates.
 
+Trusted version refresh dispatches CI from protected `main` with the exact PR number, base SHA, and head SHA. Candidate
+validation jobs remain read-only. Only separate no-checkout jobs may publish the canonical `Version policy`, `Repository
+checks`, and `Python tests` commit statuses after revalidating the open same-repository PR and exact head/base. Preserve
+the bot-only publication gate, visible run links, diagnostic names for bot-triggered `pull_request` jobs, and the active
+ruleset contexts. Keep trusted dispatch and diagnostic pull-request runs in separate concurrency groups so diagnostic
+work cannot cancel the trusted publisher. Never dispatch a candidate workflow revision with status-write permission.
+
 Use `python scripts/version.py bump` or `.\scripts\version.ps1` to increment and synchronize the current patch version.
 When an explicit target is required, pass the current version or exact next patch through `--version X.Y.Z` to Python or
 `-Version X.Y.Z` to PowerShell. Explicit targets cannot skip a patch or change the major or minor version. Never update
@@ -62,10 +69,16 @@ current operator or contributor guide before making a change.
 
 The following cross-cutting boundaries always apply:
 
-- `/appliance-apply` is the only desired-state host-mutation workflow.
-- Keep ordinary `/appliance-apply/status` polling on the non-reconciling desired-state projection. Prevent overlapping
-  browser polls, suspend them while hidden, back off when idle, and refresh promptly after successful mutations and
-  Apply completion; full review, validation, and submission must still reconcile current host observations.
+- Canonical human browser surfaces belong to `/ui/management` or `/ui/public`; `/` is only the requested-interface
+  dispatcher. Keep API, OpenAPI, OIDC, CA-download, PXE, `/PROD/`, registry, static, and other machine/protocol routes at
+  their stable paths. A URL prefix never replaces listener, authentication, authorization, CSRF, or session enforcement.
+  Safe legacy `GET`/`HEAD` bookmarks may redirect only after destination eligibility is proven; bridge legacy mutations
+  internally and never replay them through `307`/`308`. Route-inventory coverage must fail for an undeclared human UI
+  route. Scope management browser caching to `/ui/management/` and keep public UI caching disabled.
+- `/ui/management/appliance-apply` is the only desired-state host-mutation workflow.
+- Keep ordinary `/ui/management/appliance-apply/status` polling on the non-reconciling desired-state projection.
+  Prevent overlapping browser polls, suspend them while hidden, back off when idle, and refresh promptly after successful
+  mutations and Apply completion; full review, validation, and submission must still reconcile current host observations.
 - Privileged appliance operations go through `atlaso-helper` and constrained sudoers rules.
 - VCF Offline Depot settings and download-profile applies preserve the registered VCFDT software depot ID. Generate an
   ID only when none exists or an administrator explicitly confirms **Refresh software depot ID** through global apply;
@@ -78,6 +91,13 @@ The following cross-cutting boundaries always apply:
   generated metadata, and profile enablement together.
 - Keep development system adapters in dry-run mode unless a reviewed apply unit explicitly promotes real mutation.
 - VMware Workstation is the default live appliance target; use Hyper-V lifecycle coverage for exact VLAN behavior.
+- VMware OVF first boot and the Atlaso tty1 console share one management-network validation contract. Reject off-link,
+  equal-address, incomplete, and malformed gateway relationships before host mutation. Start the console independently
+  of management networking and before data-disk initialization; on validation failure, show a recoverable non-secret
+  network-review state, retain deployment secrets only in the waiting customizer, and keep privileged tty1 actions
+  locked until the deployment root password applies. Validate non-network OVF fields before offering network-only
+  correction, keep the waiting customizer alive across post-validation apply failures, make review cleanup recover from
+  interruption after marker creation, and write applied state only after successful correction and customization.
 - VMware release images use separate compacted Photon OS and required Atlaso system-content payload VMDKs, followed by
   empty 500 GiB depot and backup disks. Preserve `/opt/atlaso` and appliance-wide PowerShell modules on the UUID-mounted
   system-content disk, size-gate individual OVF release assets below 2 GiB, and publish the aggregate OVA only when it
@@ -106,6 +126,11 @@ The following cross-cutting boundaries always apply:
   distribution selection, native-Linux cache, Linux-only child `PATH`, per-repository `flock`, and checkout-wide output
   serialization described in the canonical contributor guide.
 - Validate live appliance readiness through `/openapi.json`, not VMware Tools IP discovery or service color alone.
+- A successful tty1 management-network correction must explicitly apply Network and Firewall from the corrected state,
+  retry unfinished first-boot HTTPS before applying Appliance Settings, validate nginx before reload, ensure nginx and
+  Atlaso are enabled/running, and require stable loopback readiness matching the applied HTTP-only or HTTPS management
+  mode before the console reports success. Keep this recovery idempotent and preserve an actionable failing-layer
+  message.
 - Keep configured Appliance Update source tabs read-only. Create and edit Photon, PowerShell, and signed Atlaso sources
   through the shared reviewed source wizard, with **Edit repository** beside the destructive action. Wizard submission
   saves desired runtime-maintenance state only; package-client changes still require the explicit audited
@@ -125,8 +150,10 @@ The following cross-cutting boundaries always apply:
   audits, logs, documentation, screenshots, or video.
 - The appliance-native vSphere Key Provider targets only VCF 9.1 and implements the checked-in bounded KMIP contract.
   Keep it experimental until the live acceptance and recovery gate promotes that contract to observed. Provider UUIDs
-  are isolated key namespaces, client access uses exact certificate fingerprints, and LDAP organizations never select
-  a provider. Do not restore a general-purpose KMIP backend or migrate keys from a nonempty PyKMIP store.
+  are isolated key namespaces; multiple provider-scoped vCenters use canonical public certificates and appliance-wide
+  unique exact fingerprints. Never generate or expose vCenter client private keys or management key CRUD. Authenticated
+  status exposes nullable redacted lifecycle counts and unavailable evidence is never zero. LDAP organizations never
+  select a provider. Do not restore a general-purpose KMIP backend.
 - Keep secret-bearing Local Users, Certificate Authority, and Managed LDAP apply inputs mode `0600` and present only
   for the constrained helper execution window. Remove them on success, validation or apply failure, and startup
   recovery; read-only Local Users status must use a separate short-lived file.

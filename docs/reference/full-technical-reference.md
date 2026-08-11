@@ -79,8 +79,9 @@ The first real OS appliance target is Photon OS 5.0 on Hyper-V. The image builde
   `appliance:https` certificate, redirecting HTTP/80 to CA-backed HTTPS/443, and proxying HTTPS/443 to uvicorn on
   `127.0.0.1:8000`;
 - `atlaso-firewall.service` loading the appliance nftables firewall;
-- a Atlaso recovery console on tty1 with authenticated configuration and power menus, `top`, and an
-  authenticated/audited root Bash handoff, while tty2 and later terminals retain normal Photon login prompts; and
+- an Atlaso recovery console on tty1 with authenticated configuration and power menus, `top`, and an
+  authenticated/audited root Bash handoff, while tty2 and later terminals retain normal Photon login prompts; VMware
+  first boot can also use its bounded non-secret network-review state before network and data-disk initialization; and
 - `/opt/atlaso/bin/atlaso-helper` and a constrained sudoers template.
 
 Finished Hyper-V appliance VMs and VMware OVF/OVA appliances also attach two durable expandable data disks: one for the
@@ -114,18 +115,20 @@ the chart or a legend item pins that series until it is cleared or another serie
 24h history selectors use the same sampled data. The sampler records one row about every 30 seconds and keeps the
 24-hour window plus a small buffer. Collection uses Linux `/proc`, `/sys`, filesystem usage, DMI data,
 `systemd-detect-virt`, and `vmtoolsd` when present; it does not call privileged helpers or mutate host services. Set
-`ATLASO_MONITOR_ENABLED=false` to disable both the background sampler and request-time collection from `/monitor/data`
+`ATLASO_MONITOR_ENABLED=false` to disable both the background sampler and request-time collection from
+`/ui/management/monitor/data`
 or `/api/v1/monitor`. When disabled, Atlaso may read existing monitor rows but it does not probe the host or create new
 `monitor_samples` rows. See [Monitor hierarchy and interaction design QA](../project/monitor-apply-ux-design-qa.md) for
 the current hierarchy, interaction behavior, responsive expectations, and the history of the removed Disk Usage panel.
 
-The authenticated `/dashboard` page is the compact operations command center. Its server-rendered snapshot shows overall
-appliance state, setup readiness, actionable exceptions, valid pending changes, active tasks, enabled service health,
-the management network path, and a six-entry task/audit activity feed. Invalid changed apply units, recent failed tasks,
-unhealthy enabled services, and missing or unexpectedly down configured interfaces are prioritized in that order.
+The authenticated `/ui/management/dashboard` page is the compact operations command center. Its server-rendered
+snapshot shows overall appliance state, setup readiness, actionable exceptions, valid pending changes, active tasks,
+enabled service health, the management network path, and a six-entry task/audit activity feed. Invalid changed apply
+units, recent failed tasks, unhealthy enabled services, and missing or unexpectedly down configured interfaces are
+prioritized in that order.
 Disabled optional services and unused interfaces remain quiet. The page refreshes from the session-authenticated
-`/dashboard/data` UI endpoint every 30 seconds while visible, retains the last successful snapshot on failure, and marks
-retained data stale. This private UI endpoint does not replace or change the bearer-authenticated `/api/v1/dashboard`
+`/ui/management/dashboard/data` UI endpoint every 30 seconds while visible, retains the last successful snapshot on
+failure, and marks retained data stale. This private UI endpoint does not replace or change the bearer-authenticated `/api/v1/dashboard`
 contract. Dashboard actions are links into existing workflows; the page does not apply configuration, restart services,
 or mutate the appliance.
 
@@ -319,14 +322,22 @@ that have auto-merge enabled and report `BEHIND`. Each request includes the obse
 push causes GitHub to reject the stale update instead of merging over it. Forks, conflicted branches, and pull requests
 without auto-merge are never updated by this workflow.
 
-An internal branch update performed with `GITHUB_TOKEN` also creates a `pull_request` CI run that GitHub holds for
-approval. Those approval-gated jobs have diagnostic names and are not required contexts. The version workflow's trusted
-`workflow_dispatch` run uses the canonical `Version policy`, `Repository checks`, and `Python tests` names enforced by
-the `main` ruleset. This preserves required validation without a personal access token or automatic approval of
-untrusted workflow code. Because a token-authenticated update does not trigger `pull_request_target`, the updater waits
-for GitHub's new head SHA and sends a typed repository dispatch. GitHub loads that handler from protected `main`; it
-re-fetches the PR and verifies that it remains open, same-repository, based on `main`, and at the expected head before
-checking out or pushing. The privileged updater has no manual-dispatch trigger.
+An internal branch update performed with `GITHUB_TOKEN` also creates a `pull_request` CI run that GitHub may hold for
+approval. Those approval-gated jobs have diagnostic names and are not required contexts. Because a token-authenticated
+update does not trigger `pull_request_target`, the updater waits for GitHub's new head SHA and sends a typed repository
+dispatch. GitHub loads that handler from protected `main`; it re-fetches the PR and verifies that it remains open,
+same-repository, based on `main`, and at the expected head before checking out or pushing. The privileged updater has no
+manual-dispatch trigger.
+
+Trusted CI is also dispatched from protected `main`, not from the candidate branch's workflow revision. It receives the
+exact pull-request number, base SHA, and head SHA. Read-only jobs check out and validate that candidate. Before and after
+those jobs, separate status-publisher jobs with no candidate checkout revalidate the PR identity and publish the
+canonical `Version policy`, `Repository checks`, and `Python tests` commit statuses on its exact head. Each status names
+the trusted run and links to it, so the checks are visible and attributable in the pull request. Only a bot-authenticated
+dispatch can publish these statuses; manual dispatch remains diagnostic. Trusted dispatches and diagnostic
+pull-request runs use separate concurrency groups, preventing a delayed diagnostic run from canceling the trusted
+publisher. This bridge is required because GitHub does not associate an ordinary `workflow_dispatch` check suite with
+the pull request even when it runs on the same commit.
 
 The application update build continues to append `+g<commit>` metadata to wheel versions. A merged pull request does not
 create a Git tag, GitHub release, or changelog entry; those remain deliberate release-management actions.
@@ -477,21 +488,26 @@ defaults to disabled and is used by VCF Download Tool command previews and runti
 from the retired VCF Download Tool-specific choice. Explicit PowerCLI `User` and `Session` overrides remain outside
 Atlaso ownership.
 
-Atlaso renders a generated `public_services` nginx site for non-management service IPs. Requests to `/` on a
-management-role address keep the HTTPS management portal/login behavior. Requests to `/` on a non-management service IP
-render an unauthenticated public service directory scoped to the called host or IP. The generated HTTP nginx site serves
-only ESXi PXE paths; CA, certificate requests, VCF Offline Depot, and registry links use their app or service-owned
-HTTPS front doors.
+Atlaso renders a generated `public_services` Nginx site for non-management service IPs. Requests to `/` dispatch by the
+requested host/interface: management-role addresses redirect to `/ui/management`, while eligible non-management
+addresses redirect to `/ui/public`. The public directory is scoped to the called host or IP. Requests entitled to
+neither plane return not found. Nginx publishes `/ui/management` only on the management listener and `/ui/public` only
+on applicable public listeners; the URL prefix is never the sole authorization boundary.
 
-Direct public service paths remain scoped per IP in the app: Certificate Authority `/ca`, `/requests`,
-`/ca/downloads/root-ca.pem`, and `/ca/downloads/ca-bundle.pem`; ESXi PXE `/pxe/esxi/` with `/pxe/esxi` redirecting to
-`/pxe/esxi/`; VCF Offline Depot `/PROD/` with `/PROD` redirecting to `/PROD/`; and VCF Private Registry as a canonical
-registry URL link only. The generated public-services HTTP site proxies only dynamic ESXi Kickstart requests and serves
-PXE static content through a narrow nginx alias on matching PXE service IPs. It does not expose CA, depot, management,
-or `/registry` HTTP proxies.
+App-owned public pages remain scoped per IP: Certificate Authority `/ui/public/ca`, certificate requests
+`/ui/public/ca/requests`, and Web Terminal `/ui/public/terminal`. Stable service paths remain outside `/ui`: CA downloads
+under `/ca/downloads/` and `/certificate-authority/.../downloads/`; ESXi PXE `/pxe/esxi/`; VCF Offline Depot `/PROD/`;
+and VCF Private Registry canonical URLs. OIDC `/identity/`, API/OpenAPI, and shared immutable assets likewise retain
+their documented paths. The generated public-services HTTP site proxies only dynamic ESXi Kickstart requests and serves
+PXE static content through a narrow Nginx alias on matching PXE service IPs.
+
+Eligible legacy browser `GET`/`HEAD` requests receive temporary same-host redirects after destination listener checks.
+Legacy mutations are rewritten internally to the canonical handler and never use replaying `307`/`308` redirects.
+Same-plane return-target validation rejects external and cross-plane destinations. The checked-in route inventory makes
+new human routes fail tests unless they belong to a declared UI plane or an explicitly reviewed protocol exemption.
 
 The public portal uses the compact Atlaso shell across the directory, CA trust page, request portal, and depot browser.
-Public user pages extend `public_portal_base.html`, the brand mark links back to `/`, the header action is contextual
+Public user pages extend `public_portal_base.html`, the brand mark links back to `/ui/public`, the header action is contextual
 `Login` or `Sign out`, and GitHub, Swagger, Python, and version metadata live in the shared bottom footnote. Public
 service cards default to hostname URLs and include a Name/IP switch near the login action; the preference is stored in
 the `atlaso_public_address_mode` cookie. Card links use each service's configured scheme and port, such as the ESXi PXE
@@ -539,7 +555,8 @@ Atlaso treats service pages as desired-state editors. Routine setting and grid e
 database, but they do not mutate host services on each field change.
 
 Use `Appliance Apply` to review and submit appliance changes. The bottom-left pending card and page-level review actions
-open a wide review modal. There is no separate appliance-apply page; a direct GET to `/appliance-apply` redirects to the
+open a wide review modal. There is no separate appliance-apply page; a direct GET to
+`/ui/management/appliance-apply` redirects to the
 Dashboard and opens the same modal. The workflow:
 
 - lists changed apply units such as Local Users, Appliance Settings, Network, Routes & WAN Simulation, DNS/DHCP, ESXi
@@ -645,9 +662,10 @@ NTS client sources. Appliance Settings and Web Terminal autosave do not own or m
 Certificate Authority stores CA and leaf private keys
 encrypted in the database with `ATLASO_SECRETS_KEY`, auto-ensures VCF/KMS/service certificates when enabled, and stages
 `/var/lib/atlaso/apply/ca/atlaso-ca.json`; the helper writes public bundles and service certificate/key files under
-`/etc/atlaso`. The public CA portal defaults to `ca.atlaso.internal`: `/` shows public trust material and `/requests` is
-the authenticated certificate request/revocation workflow. The management console keeps CA configuration under
-`/certificate-authority`; `/ca` and `/ca/requests` remain compatibility paths.
+`/etc/atlaso`. The public CA portal defaults to `ca.atlaso.internal`: `/ui/public/ca` shows public trust material and
+`/ui/public/ca/requests` is the authenticated certificate request/revocation workflow. The management console keeps CA
+configuration under `/ui/management/certificate-authority`, with its request list under
+`/ui/management/ca/requests`. Root-level browser paths remain temporary compatibility entries.
 
 ESXi PXE stores Kickstart source files in the Atlaso database. The database is the source of truth; generated files
 under `/var/lib/atlaso/pxe/http/esxi/ks/<id>.cfg` are runtime copies for drift/apply bookkeeping, while boot-time
@@ -705,8 +723,8 @@ Public Services stages `/var/lib/atlaso/apply/public-services/atlaso-public-serv
 for non-management IPs where ESXi PXE is enabled, proxies dynamic PXE requests to the app, serves PXE static artifacts
 through a narrow alias, and leaves CA, certificate requests, depot, registry, and management routes on their
 HTTPS/app-owned front doors. When web terminal access is selected for a non-management interface, that interface's
-Public Services directory includes a `Web Terminal` tile linked to its HTTPS `/terminal` route. Management-role IPs stay
-on the management front door.
+Public Services directory includes a `Web Terminal` tile linked to its HTTPS `/ui/public/terminal` route.
+Management-role IPs stay on the management front door.
 
 The firewall preview derives Atlaso-managed service allow rules from service desired state, including management, DNS,
 DHCP, NTPsec, KMS, VCF Backup, VCF Offline Depot, and VCF Private Registry listeners. It also derives managed routing
@@ -719,15 +737,21 @@ and adds TCP/4460 when NTS server mode is enabled. Moving a DHCP scope, service 
 VLAN such as `eth2.50` also changes the Firewall apply unit. In development, system adapters remain dry-run by default
 and record command intent instead of mutating host services directly.
 
-KMS / KMIP uses Atlaso's appliance-native provider and remains experimental until the VCF 9.1 acceptance and recovery
-gate in issue #172 passes. The KMS page derives IPv4 and IPv6 listen addresses from the selected service interface,
-manages app-owned A and/or AAAA records for the KMS hostname, and requires an enabled healthy CA before activation.
-Real KMS apply stages `/var/lib/atlaso/apply/kms/server.json`, installs `/etc/atlaso/kmip/server.json`, and manages the
-hardened, unprivileged `atlaso-kmip.service`. The daemon exposes only the checked-in KMIP 1.4 AES-256 symmetric-key
-contract, maps exact client-certificate fingerprints to UUID provider namespaces, and stores only AES-GCM-wrapped keys
-under `/var/lib/atlaso/kmip`. `systemd-creds` stores the daemon's `ATLASO_SECRETS_KEY` input as a machine-encrypted
-credential and exposes its plaintext only in the service's private runtime credential directory. The listener requires
-TLS 1.2 or newer. Disabling KMS stops the service while preserving the operational store.
+vSphere Key Providers use Atlaso's appliance-native daemon and remain experimental until the VCF 9.1 acceptance and
+recovery gate in issue #172 passes. `/ui/management/vsphere-key-providers` manages
+multiple immutable UUID namespaces, provider-scoped trusted vCenters, canonical public X.509 certificates, and one
+appliance-wide listener/server identity. The same fingerprint cannot map to multiple providers, and Atlaso exposes no
+client-private-key or management key workflow.
+
+Real internal `kms` apply stages `/var/lib/atlaso/apply/kms/server.json` and the public-only
+`/var/lib/atlaso/apply/kms/client-trust.pem`, installs fixed runtime paths, and manages the hardened, unprivileged
+`atlaso-kmip.service`. The daemon exposes only the checked-in KMIP 1.4 AES-256 symmetric-key contract, maps each exact
+peer fingerprint to one provider UUID, and stores only AES-GCM-wrapped operational keys under `/var/lib/atlaso/kmip`.
+`systemd-creds` protects the runtime store credential. TLS requires 1.2 or newer and permits partial-chain verification
+for imported public leaves, and the daemon binds every derived selected listener address. Authenticated status returns
+only service/store health and nullable per-provider lifecycle counts; unavailable evidence is never represented as zero.
+Disabling the service preserves the operational store. Provider deletion also requires the disabled and detached state
+to complete global Appliance Apply before authenticated zero-key evidence can authorize removal.
 
 Managed LDAP provides an OpenLDAP 2.6 service for VCF Automation 9.1 while Atlaso operator sign-in remains local. Each
 VCF organization receives an isolated suffix and LMDB database, organization-local users and nested groups, and a
@@ -766,7 +790,8 @@ organization, and managed LDAP OIDC sessions never grant operator UI access. See
 Complex resource collections use the shared wizard-backed Tabulator pattern. Their identity steps use the shared
 two-column field grid and place supported descriptions on a separate full-width multiline row. Authentication API
 tokens use a role-constrained scope checklist instead of free-form permission text. Authentication API tokens and OIDC
-clients, CA profiles and certificate requests, operator firewall rules, KMS clients and keys, DHCP IP zones, VCF
+clients, CA profiles and certificate requests, operator firewall rules, vSphere Key Providers and trusted vCenters,
+DHCP IP zones, VCF
 Offline Depot download profiles, and VCF Private Registry bundles remain visible as browsable grids. The pinned bottom
 row launches add; row double-click and the context menu launch edit where permissions allow. Guided steps validate
 before advancing, retain recoverable server errors in the open dialog, and finish with a desired-state and safety-boundary
@@ -800,13 +825,13 @@ generated PXE runtime files, or other runtime history. Restoring usable CA priva
 Restoring a settings archive replaces desired-state configuration in the control-plane database only. Factory reset
 removes current desired-state configuration and reseeds only core Atlaso defaults. It does not recreate demo VLANs,
 routes, NAT rules, WAN policies, trunk-only parent NIC posture, DHCP scopes or reservations, firewall rules, CA
-requests, KMS clients or keys, depot download profiles, or service listener bindings, including after a service restart.
-The core reset keeps only the appliance DNS zone derived from the appliance FQDN and an app-owned appliance A/AAAA
-record pointing at the management IP. The core reset leaves only `eth0` desired up for management; other physical NICs
-are desired admin down until an operator enables them. Disabled service settings reset with blank listen interfaces and
-addresses so `Appliance Apply` can submit a clean disabled baseline. Both restore and factory reset force service status
-rows to stopped, disabled, and `unconfigured`; host services are not mutated until the operator reviews and submits
-selected units through the global `Appliance Apply` workflow.
+requests, vSphere Key Provider records, depot download profiles, or service listener bindings, including after a
+service restart. The core reset keeps only the appliance DNS zone derived from the appliance FQDN and an app-owned
+appliance A/AAAA record pointing at the management IP. The core reset leaves only `eth0` desired up for management;
+other physical NICs are desired admin down until an operator enables them. Disabled service settings reset with blank
+listen interfaces and addresses so `Appliance Apply` can submit a clean disabled baseline. Both restore and factory
+reset force service status rows to stopped, disabled, and `unconfigured`; host services are not mutated until the
+operator reviews and submits selected units through the global `Appliance Apply` workflow.
 
 ## Brand Assets
 
@@ -1143,7 +1168,12 @@ removes the build-only `python3-devel` package, clears package/download caches a
 and leaves Packer compaction enabled. OVF export preserves both payload VMDKs and adds empty 500 GiB depot and backup
 definitions at SCSI units 2 and 3. `export-ovf.ps1 -Release` derives the exact tag and destination repository from the
 clean tagged checkout, then preflights and uploads the OVF assets with GitHub CLI. It uploads the combined OVA only when
-that archive independently remains below the configured asset limit.
+that archive independently remains below the configured asset limit. On deployed-VM first boot, OVF IPv4, IPv6,
+gateway, and DNS relationships validate before mutation. Invalid management values hold networkd and data-disk startup
+while the network-independent Atlaso tty1 console accepts a non-secret correction; the applied marker is written only
+after the corrected customization succeeds. A baked root-owned initialization lock keeps privileged tty1 actions
+unavailable until deployment credentials apply, and marker-first startup recovery removes stale review state after an
+interruption.
 
 Lifecycle testing uses VMX/VMDK artifacts and `vmrun.exe`:
 

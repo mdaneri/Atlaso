@@ -15,12 +15,16 @@ brings infrastructure, storage, identity, networking, and lifecycle workflows in
 - [Documentation](https://mdaneri.github.io/Atlaso/docs/) — install, configure, operate, and troubleshoot Atlaso.
 - [Getting started](docs/getting-started/index.md) — choose an appliance path and complete initial setup.
 - [Operations](docs/operate/index.md) — run the appliance and review desired-state changes.
+- [Local appliance console](docs/operate/appliance-console.md) — correct management networking from `tty1` and have
+  Atlaso reconcile Firewall, retry unfinished first-boot HTTPS, and verify the complete management front door.
 - [Use the Atlaso API](docs/operate/api.md) — create least-privilege tokens, call the versioned REST contract safely,
   and interpret responses, request IDs, locks, and apply boundaries.
 - [Appliance Update](docs/operate/appliance-update.md) — inspect configured Photon, PowerShell, and signed Atlaso
   sources in read-only repository tabs, then create or edit desired source state through the shared reviewed wizard
   before explicitly synchronizing package clients.
 - [Services](docs/services/index.md) — configure DNS, identity, storage, network boot, and VCF integrations.
+- [Public Services](docs/services/public-services.md) — use the canonical `/ui/management` and `/ui/public` browser
+  planes, understand interface-aware `/` dispatch, and keep machine/protocol routes at their stable paths.
 - [DNS](docs/services/dns.md) — preserve explicit forwarders or usable resolvers from the management interface's exact
   DHCP lease
   across global appliance applies, including applies triggered by unrelated settings such as Web Terminal.
@@ -42,11 +46,13 @@ brings infrastructure, storage, identity, networking, and lifecycle workflows in
   source markers.
 - [OpenID Connect provider](docs/services/oidc-provider.md) — use the dedicated tabbed administration page for
   confidential clients, exact redirects, key rotation, explicit identity sources, and privacy-safe scoped claims.
+- [vSphere Key Providers](docs/services/vsphere-key-providers.md) — manage isolated provider UUIDs, trusted vCenters,
+  public-certificate trust, and redacted lifecycle counts; the bounded VCF 9.1 contract remains unverified.
 - [vSphere Key Provider protocol](docs/reference/vsphere-key-provider-protocol.md) — review the appliance-native
-  daemon's bounded, currently unverified VCF 9.1 KMIP contract and live-evidence promotion gate.
+  daemon's narrow KMIP contract and live-evidence promotion gate.
 - [Technical reference](docs/reference/index.md) — API, image building, lifecycle testing, and detailed behavior.
-- [Contributing](CONTRIBUTING.md) — issue, version, validation, pull-request, and seven-day Python dependency-age
-  requirements.
+- [Contributing](CONTRIBUTING.md) — issue, version, validation, protected trusted-CI status handoff, pull-request, and
+  seven-day Python dependency-age requirements.
 - [Dependency management](docs/contribute/dependency-management.md) — regenerate hash locks without selecting newly
   published packages that approved mirrors may not have synchronized.
 - [UI Design Guide](docs/contribute/ui-design-guide.md) — approved Atlaso patterns and the shared
@@ -64,6 +70,10 @@ authoritative lifecycle interoperability environment for exact access and trunk 
 The VMware release appliance uses separate compacted Photon OS and Atlaso/tools payload VMDKs, followed by empty
 500 GiB VCF Offline Depot and VCF Backups disks. The OVF package is the canonical GitHub-distributable form; its assets
 are size-gated individually, while the combined OVA is published only when it remains below GitHub's asset limit.
+VMware first boot validates management addresses and gateways as one contract before host mutation. Invalid OVF
+networking pauses initialization at the Atlaso `tty1` review screen so an administrator can correct it in place.
+Privileged tty1 actions remain locked until deployment credentials apply, and interrupted review cleanup recovers from
+the applied marker on the next boot.
 
 Development appliances keep host-mutating adapters in dry-run mode by default. Atlaso applies selected desired state
 only through the global appliance-change workflow and its constrained privileged helper. Secret-bearing Local Users,

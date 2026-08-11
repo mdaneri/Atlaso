@@ -9,6 +9,7 @@ import re
 import socket
 import subprocess
 import sys
+import textwrap
 import time
 from dataclasses import dataclass
 from importlib.metadata import PackageNotFoundError, version
@@ -44,6 +45,13 @@ from sqlalchemy.exc import IntegrityError, OperationalError as SQLAlchemyOperati
 
 from atlaso.app.audit import record_audit
 from atlaso.app.database import SessionLocal
+from atlaso.app.management_network import (
+    ManagementNetworkValidationError,
+    validate_ipv4_management_values,
+    validate_ipv6_management_values as validate_shared_ipv6_management_values,
+    validate_management_dns_servers,
+    validate_management_network,
+)
 from atlaso.app.models import ApplianceSettings, FirewallSettings, Job, JobStatus, JobStep, PhysicalInterface, utcnow
 from atlaso.app.services.dnsmasq import join_servers, split_servers
 
@@ -51,6 +59,9 @@ from atlaso.app.services.dnsmasq import join_servers, split_servers
 HELPER_PATH = Path("/opt/atlaso/bin/atlaso-helper")
 PHOTON_RELEASE_PATH = Path("/etc/photon-release")
 MAINTENANCE_STATE_PATH = Path("/var/lib/atlaso/console/services.json")
+FIRST_BOOT_INITIALIZATION_LOCK_PATH = Path("/var/lib/atlaso/vmware-ovf-initializing")
+FIRST_BOOT_NETWORK_REVIEW_PATH = Path("/var/lib/atlaso/vmware-ovf-network-review.json")
+FIRST_BOOT_NETWORK_CORRECTION_PATH = Path("/var/lib/atlaso/vmware-ovf-network-correction.json")
 CONSOLE_ACTOR = "console:root"
 CONSOLE_REFRESH_ENV = "ATLASO_CONSOLE_REFRESH_SECONDS"
 CONSOLE_STARTUP_GRACE_SECONDS = 30
@@ -301,6 +312,21 @@ class ConsoleStatus:
     urls: tuple[str, ...]
 
 
+@dataclass(frozen=True)
+class FirstBootNetworkReview:
+    """Represent non-secret VMware OVF management values requiring review."""
+
+    error: str
+    ipv4_method: str
+    ipv4_cidr: str
+    gateway: str
+    ipv6_mode: str
+    ipv6_cidr: str
+    ipv6_gateway: str
+    dns_servers: tuple[str, ...]
+    fqdn: str
+
+
 def _run(
     command: list[str],
     *,
@@ -347,6 +373,120 @@ def _read_text(path: Path, fallback: str = "") -> str:
         return path.read_text(encoding="utf-8").strip()
     except OSError:
         return fallback
+
+
+def load_first_boot_network_review() -> FirstBootNetworkReview | None:
+    """Load the non-secret OVF network review state when first boot is paused."""
+    if not FIRST_BOOT_NETWORK_REVIEW_PATH.exists():
+        return None
+    try:
+        payload = json.loads(FIRST_BOOT_NETWORK_REVIEW_PATH.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ConsoleOperationError("First-time initialization review state is unreadable.") from exc
+    if not isinstance(payload, dict) or payload.get("version") != 1 or payload.get("state") != "network_review":
+        raise ConsoleOperationError("First-time initialization review state is unsupported.")
+
+    def bounded(name: str, limit: int = 512) -> str:
+        """Return one bounded string from the root-owned review state.
+
+        Args:
+            name: Review-state field to read.
+            limit: Maximum returned character count.
+
+        Returns:
+            The bounded scalar field value.
+        """
+        value = payload.get(name, "")
+        return str(value if isinstance(value, (str, int, float, bool)) else "").strip()[:limit]
+
+    ipv4_method = bounded("ipv4_method", 16).lower()
+    ipv6_mode = bounded("ipv6_mode", 16).lower()
+    if ipv4_method not in {"dhcp", "static"}:
+        ipv4_method = "static" if bounded("ipv4_cidr") or bounded("ipv4_gateway") else "dhcp"
+    if ipv6_mode not in {"disabled", "automatic", "static"}:
+        ipv6_mode = "static" if bounded("ipv6_cidr") or bounded("ipv6_gateway") else "disabled"
+    dns_servers = tuple(item for item in re.split(r"[\s,;]+", bounded("dns_servers")) if item)
+    return FirstBootNetworkReview(
+        error=bounded("error", 1024) or "The management network values require review.",
+        ipv4_method=ipv4_method,
+        ipv4_cidr=bounded("ipv4_cidr"),
+        gateway=bounded("ipv4_gateway"),
+        ipv6_mode=ipv6_mode,
+        ipv6_cidr=bounded("ipv6_cidr"),
+        ipv6_gateway=bounded("ipv6_gateway"),
+        dns_servers=dns_servers,
+        fqdn=bounded("fqdn", 253),
+    )
+
+
+def _write_first_boot_network_correction(payload: dict[str, object]) -> None:
+    """Atomically submit one non-secret network correction to the waiting customizer.
+
+    Args:
+        payload: Validated allowlisted correction document to persist.
+    """
+    path = FIRST_BOOT_NETWORK_CORRECTION_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f".{path.name}.{uuid4().hex}.tmp")
+    try:
+        temporary.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        os.chmod(temporary, 0o600)
+        temporary.replace(path)
+    except OSError as exc:
+        raise ConsoleOperationError("Could not submit the first-time network correction.") from exc
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def submit_first_boot_network_correction(
+    ipv4_method: str,
+    ipv4_cidr: str,
+    gateway: str,
+    ipv6_mode: str,
+    ipv6_cidr: str,
+    ipv6_gateway: str,
+    dns_servers: str,
+) -> str:
+    """Validate and submit corrected OVF networking without handling any secrets.
+
+    Args:
+        ipv4_method: Corrected IPv4 assignment method.
+        ipv4_cidr: Corrected static IPv4 address and prefix.
+        gateway: Corrected static IPv4 gateway.
+        ipv6_mode: Corrected IPv6 assignment mode.
+        ipv6_cidr: Corrected static IPv6 address and prefix.
+        ipv6_gateway: Corrected static IPv6 gateway.
+        dns_servers: Corrected delimited DNS server addresses.
+
+    Returns:
+        A safe submission status message.
+    """
+    try:
+        values = validate_management_network(
+            ipv4_method=ipv4_method,
+            ipv4_cidr=ipv4_cidr,
+            ipv4_gateway=gateway,
+            ipv6_mode=ipv6_mode,
+            ipv6_cidr=ipv6_cidr,
+            ipv6_gateway=ipv6_gateway,
+            dns_servers=dns_servers,
+            require_static_ipv4_gateway=True,
+        )
+    except ManagementNetworkValidationError as exc:
+        raise ConsoleOperationError(str(exc)) from exc
+    _write_first_boot_network_correction(
+        {
+            "version": 1,
+            "ipv4_method": values.ipv4_method,
+            "ipv4_cidr": values.ipv4_cidr,
+            "ipv4_gateway": values.ipv4_gateway,
+            "ipv6_mode": values.ipv6_mode,
+            "ipv6_cidr": values.ipv6_cidr,
+            "ipv6_gateway": values.ipv6_gateway,
+            "dns_servers": ",".join(values.dns_servers),
+        }
+    )
+    return "First-time management network correction submitted"
 
 
 def _first_display_line(value: str, fallback: str = "") -> str:
@@ -744,30 +884,10 @@ def validate_management_values(ipv4_method: str, ipv4_cidr: str, gateway: str) -
     Raises:
         ConsoleOperationError: If the operation encounters an invalid state.
     """
-    method = ipv4_method.strip().lower()
-    if method not in {"dhcp", "static"}:
-        raise ConsoleOperationError("Management IPv4 method must be DHCP or static.")
-    if method == "dhcp":
-        if ipv4_cidr.strip() or gateway.strip():
-            raise ConsoleOperationError("DHCP management networking cannot include a static address or gateway.")
-        return method, "", ""
     try:
-        parsed_interface = ip_interface(ipv4_cidr.strip())
-    except ValueError as exc:
-        raise ConsoleOperationError("Management IPv4 must be an IPv4 CIDR such as 192.168.49.1/24.") from exc
-    if parsed_interface.version != 4:
-        raise ConsoleOperationError("Management IP must use IPv4.")
-    gateway_value = gateway.strip()
-    if gateway_value:
-        try:
-            parsed_gateway = ip_address(gateway_value)
-        except ValueError as exc:
-            raise ConsoleOperationError("Management gateway must be a valid IPv4 address.") from exc
-        if parsed_gateway.version != 4 or parsed_gateway not in parsed_interface.network:
-            raise ConsoleOperationError("Management gateway must be an on-link IPv4 address.")
-        if parsed_gateway == parsed_interface.ip:
-            raise ConsoleOperationError("Management gateway cannot equal the management IP.")
-    return method, str(parsed_interface), gateway_value
+        return validate_ipv4_management_values(ipv4_method, ipv4_cidr, gateway)
+    except ManagementNetworkValidationError as exc:
+        raise ConsoleOperationError(str(exc)) from exc
 
 
 def validate_ipv6_management_values(ipv6_mode: str, ipv6_cidr: str, ipv6_gateway: str) -> tuple[str, str, str]:
@@ -785,34 +905,10 @@ def validate_ipv6_management_values(ipv6_mode: str, ipv6_cidr: str, ipv6_gateway
     Raises:
         ConsoleOperationError: If the operation encounters an invalid state.
     """
-    mode = ipv6_mode.strip().lower()
-    if mode not in {"disabled", "automatic", "static"}:
-        raise ConsoleOperationError("Management IPv6 mode must be disabled, automatic, or static.")
-    cidr_value = ipv6_cidr.strip()
-    gateway_value = ipv6_gateway.strip()
-    if mode != "static":
-        if cidr_value or gateway_value:
-            raise ConsoleOperationError("Disabled or automatic IPv6 cannot include a static address or gateway.")
-        return mode, "", ""
     try:
-        parsed_interface = ip_interface(cidr_value)
-    except ValueError as exc:
-        raise ConsoleOperationError("Management IPv6 must be an IPv6 CIDR such as fd00:49::1/64.") from exc
-    if parsed_interface.version != 6:
-        raise ConsoleOperationError("Management IPv6 CIDR must use IPv6.")
-    if gateway_value:
-        try:
-            parsed_gateway = ip_address(gateway_value)
-        except ValueError as exc:
-            raise ConsoleOperationError("Management IPv6 gateway must be a valid IPv6 address.") from exc
-        if parsed_gateway.version != 6:
-            raise ConsoleOperationError("Management IPv6 gateway must use IPv6.")
-        if not parsed_gateway.is_link_local and parsed_gateway not in parsed_interface.network:
-            raise ConsoleOperationError("Management IPv6 gateway must be link-local or on-link.")
-        if parsed_gateway == parsed_interface.ip:
-            raise ConsoleOperationError("Management IPv6 gateway cannot equal the management IPv6 address.")
-        gateway_value = str(parsed_gateway)
-    return mode, str(parsed_interface), gateway_value
+        return validate_shared_ipv6_management_values(ipv6_mode, ipv6_cidr, ipv6_gateway)
+    except ManagementNetworkValidationError as exc:
+        raise ConsoleOperationError(str(exc)) from exc
 
 
 def validate_dns_servers(raw: str) -> list[str]:
@@ -828,15 +924,10 @@ def validate_dns_servers(raw: str) -> list[str]:
     Raises:
         ConsoleOperationError: If the operation encounters an invalid state.
     """
-    servers = [item for item in re.split(r"[\s,]+", raw.strip()) if item]
-    if not servers:
-        raise ConsoleOperationError("At least one DNS server is required.")
-    for server in servers:
-        try:
-            ip_address(server)
-        except ValueError as exc:
-            raise ConsoleOperationError(f"DNS server {server} must be an IPv4 or IPv6 address.") from exc
-    return servers
+    try:
+        return list(validate_management_dns_servers(raw, required=True))
+    except ManagementNetworkValidationError as exc:
+        raise ConsoleOperationError(str(exc)) from exc
 
 
 def _captured_apply_payload(units: list[dict[str, Any]], selected_ids: set[str]) -> tuple[list[dict[str, Any]], dict[str, Any]]:
@@ -884,22 +975,6 @@ def _captured_apply_payload(units: list[dict[str, Any]], selected_ids: set[str])
     return selected, payload
 
 
-def _console_unit_hashes(unit_ids: set[str]) -> dict[str, str]:
-    """Return console unit hashes.
-
-    Args:
-        unit_ids: Stable identifiers of the associated unit resources.
-    """
-    from atlaso.app.ui import appliance_apply_units
-
-    with SessionLocal() as db:
-        return {
-            str(unit["id"]): str(unit["snapshot_hash"])
-            for unit in appliance_apply_units(db)
-            if unit["id"] in unit_ids
-        }
-
-
 def _ensure_no_active_apply() -> None:
     """Ensure no active apply.
 
@@ -914,15 +989,12 @@ def _ensure_no_active_apply() -> None:
             raise ConsoleOperationError(f"Appliance apply task {active.id} is already {active.status}.")
 
 
-def _submit_console_apply(required_ids: set[str], *, changed_dependents: dict[str, str] | None = None) -> str:
+def _submit_console_apply(required_ids: set[str]) -> str:
     # Imported lazily so read-only status remains available even if the web stack has a startup issue.
     """Return submit console apply.
 
     Args:
         required_ids: Stable identifiers of the associated required resources.
-        changed_dependents: Changed dependents consumed by submit console apply.
-
-
     Raises:
         ConsoleOperationError: If the operation encounters an invalid state.
     """
@@ -939,16 +1011,6 @@ def _submit_console_apply(required_ids: set[str], *, changed_dependents: dict[st
             raise ConsoleOperationError(f"Appliance apply task {active.id} is already {active.status}.")
         units = appliance_apply_units(db)
         selected_ids = set(required_ids)
-        if changed_dependents:
-            selected_ids.update(
-                str(unit["id"])
-                for unit in units
-                if (
-                    unit["id"] in changed_dependents
-                    and str(unit["snapshot_hash"]) != changed_dependents[unit["id"]]
-                    and not unit["validation_errors"]
-                )
-            )
         selected, payload = _captured_apply_payload(units, selected_ids)
         job_id = f"job_{uuid4().hex[:12]}"
         job = Job(
@@ -1003,6 +1065,29 @@ def _submit_console_apply(required_ids: set[str], *, changed_dependents: dict[st
     return job_id
 
 
+def _recover_management_plane(stage: str) -> None:
+    """Retry first-boot HTTPS and verify local management readiness.
+
+    Args:
+        stage: Operator-facing description of the completed correction phase.
+
+    Raises:
+        ConsoleOperationError: If the constrained recovery helper does not restore readiness.
+    """
+    try:
+        result = _run(
+            [str(HELPER_PATH), "console", "recover-management-plane", "--real"],
+            timeout=120,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise ConsoleOperationError(
+            f"{stage}, but management-plane recovery did not complete: {exc}"
+        ) from exc
+    if result.returncode != 0:
+        detail = (result.stderr or "the recovery helper returned no failure detail").strip()
+        raise ConsoleOperationError(f"{stage}, but management-plane recovery failed: {detail}")
+
+
 def configure_management(
     ipv4_method: str,
     ipv4_cidr: str,
@@ -1033,7 +1118,6 @@ def configure_management(
     mode, ipv6_cidr_value, ipv6_gateway_value = validate_ipv6_management_values(ipv6_mode, ipv6_cidr, ipv6_gateway)
     dns_servers = validate_dns_servers(raw_dns_servers)
     _ensure_no_active_apply()
-    dependent_hashes = _console_unit_hashes({"firewall"})
     with SessionLocal() as db:
         interface = _management_interface(db)
         settings = db.scalar(select(ApplianceSettings).order_by(ApplianceSettings.id))
@@ -1056,7 +1140,20 @@ def configure_management(
             resource_id=interface.name,
             detail=f"ipv4_method={method}; ipv6_mode={mode}; dns_servers={len(dns_servers)}",
         )
-    return _submit_console_apply({"network", "appliance_settings"}, changed_dependents=dependent_hashes)
+    network_job_id = _submit_console_apply({"network", "firewall"})
+    _recover_management_plane("Network and Firewall were applied")
+    settings_job_id = _submit_console_apply({"appliance_settings"})
+    _recover_management_plane("Appliance Settings were applied")
+    with SessionLocal() as db:
+        record_audit(
+            db,
+            actor=CONSOLE_ACTOR,
+            action="console_recover_management_plane",
+            resource_type="job",
+            resource_id=settings_job_id,
+            detail=f"network_job={network_job_id}; settings_job={settings_job_id}; readiness=verified",
+        )
+    return f"tasks {network_job_id} and {settings_job_id}"
 
 
 def configure_dns(raw_servers: str) -> str:
@@ -1375,6 +1472,89 @@ class CursesConsole:
             self._force_redraw = False
         self.stdscr.refresh()
 
+    def _draw_first_boot_network_review(
+        self,
+        review: FirstBootNetworkReview,
+        height: int,
+        width: int,
+    ) -> None:
+        """Render the explicit first-time initialization recovery state.
+
+        Args:
+            review: Non-secret first-boot values requiring correction.
+            height: Current terminal height.
+            width: Current terminal width.
+        """
+        curses = self.curses
+        self._safe_add(1, 4, f"Atlaso Appliance {_package_version()}", curses.color_pair(1) | curses.A_BOLD)
+        self._safe_add(3, 4, "First-time initialization", curses.color_pair(1) | curses.A_BOLD)
+        self._safe_add(5, 4, "Network configuration requires review", curses.color_pair(7) | curses.A_BOLD)
+        error_lines = textwrap.wrap(review.error, width=max(width - 10, 20))[:3]
+        for index, line in enumerate(error_lines):
+            self._safe_add(7 + index, 6, line, curses.color_pair(7))
+        self._safe_add(11, 4, "OVF management values", curses.color_pair(2) | curses.A_BOLD)
+        ipv4 = f"{review.ipv4_method} {review.ipv4_cidr}".strip()
+        self._safe_add(12, 6, f"IPv4: {ipv4 or 'DHCP'} | gateway: {review.gateway or 'none'}", curses.color_pair(2))
+        ipv6 = f"{review.ipv6_mode} {review.ipv6_cidr}".strip()
+        self._safe_add(
+            13,
+            6,
+            f"IPv6: {ipv6 or 'disabled'} | gateway: {review.ipv6_gateway or 'none'}",
+            curses.color_pair(2),
+        )
+        self._safe_add(
+            14,
+            6,
+            f"DNS: {', '.join(review.dns_servers) or 'lease/default'}",
+            curses.color_pair(2),
+        )
+        if review.fqdn:
+            self._safe_add(15, 6, f"Appliance: {review.fqdn}", curses.color_pair(2))
+        self._safe_add(
+            17,
+            4,
+            "Press F2 or Enter to review and correct management networking.",
+            curses.color_pair(3) | curses.A_BOLD,
+        )
+        self._safe_add(
+            18,
+            4,
+            "Initialization will continue only after the corrected values validate.",
+            curses.color_pair(2),
+        )
+        if self.message:
+            self._safe_add(
+                min(20, height - 2),
+                4,
+                self.message,
+                curses.color_pair(7 if self.message_error else 5) | curses.A_BOLD,
+            )
+        self._fill_line(height - 1, curses.color_pair(3))
+        self._safe_add(height - 1, 1, "<F1> Help", curses.color_pair(3) | curses.A_BOLD)
+        self._safe_add(height - 1, 12, "<F2> Review network", curses.color_pair(3) | curses.A_BOLD)
+        self._refresh_screen()
+
+    def _draw_first_boot_initializing(self, height: int) -> None:
+        """Render the locked VMware initialization state before review is ready.
+
+        Args:
+            height: Current terminal height.
+        """
+        curses = self.curses
+        self._safe_add(1, 4, f"Atlaso Appliance {_package_version()}", curses.color_pair(1) | curses.A_BOLD)
+        self._safe_add(3, 4, "First-time initialization", curses.color_pair(1) | curses.A_BOLD)
+        self._safe_add(7, 4, "VMware OVF customization is starting.", curses.color_pair(3) | curses.A_BOLD)
+        self._safe_add(
+            9,
+            4,
+            "Privileged console actions remain locked until deployment credentials apply.",
+            curses.color_pair(2),
+        )
+        self._safe_add(11, 4, "This screen will refresh automatically.", curses.color_pair(2))
+        self._fill_line(height - 1, curses.color_pair(3))
+        self._safe_add(height - 1, 1, "<F1> Help", curses.color_pair(3) | curses.A_BOLD)
+        self._refresh_screen()
+
     def draw_main(self) -> None:
         """Handle draw main."""
         curses = self.curses
@@ -1395,6 +1575,26 @@ class CursesConsole:
             self._fill_line(y, curses.color_pair(1))
         for y in range(header_height, height - 1):
             self._fill_line(y, curses.color_pair(2))
+        try:
+            first_boot_review = load_first_boot_network_review()
+        except ConsoleOperationError as exc:
+            first_boot_review = FirstBootNetworkReview(
+                error=str(exc),
+                ipv4_method="dhcp",
+                ipv4_cidr="",
+                gateway="",
+                ipv6_mode="disabled",
+                ipv6_cidr="",
+                ipv6_gateway="",
+                dns_servers=(),
+                fqdn="",
+            )
+        if first_boot_review is not None:
+            self._draw_first_boot_network_review(first_boot_review, height, width)
+            return
+        if FIRST_BOOT_INITIALIZATION_LOCK_PATH.exists():
+            self._draw_first_boot_initializing(height)
+            return
         try:
             status = load_console_status()
         except Exception as exc:  # noqa: BLE001 - recovery console must remain visible.
@@ -1845,7 +2045,10 @@ class CursesConsole:
             return value[:cursor] + chr(key) + value[cursor:], cursor + 1
         return value, cursor
 
-    def _management_form(self, status: ConsoleStatus) -> tuple[str, str, str, str, str, str, str] | None:
+    def _management_form(
+        self,
+        status: ConsoleStatus | FirstBootNetworkReview,
+    ) -> tuple[str, str, str, str, str, str, str] | None:
         """Return management form.
 
         Args:
@@ -2200,6 +2403,44 @@ class CursesConsole:
                 if confirm == 0:
                     self._apply_action(lambda: set_maintenance_isolation(enabling), f"{isolation_label} completed")
 
+    def review_first_boot_network(self, review: FirstBootNetworkReview) -> None:
+        """Reuse the management form for unauthenticated first-boot correction.
+
+        Args:
+            review: Non-secret first-boot values to prepopulate.
+        """
+        management = self._management_form(review)
+        if management is None:
+            self._restore_main_surface()
+            return
+        ipv4_method, cidr, gateway, ipv6_mode, ipv6_cidr, ipv6_gateway, dns_servers = management
+        confirm = self._dialog(
+            "Continue first-time initialization",
+            [
+                f"IPv4: {ipv4_method} {cidr}",
+                f"IPv4 gateway: {gateway or 'none'}",
+                f"IPv6: {ipv6_mode} {ipv6_cidr}",
+                f"IPv6 gateway: {ipv6_gateway or 'none'}",
+                f"DNS: {dns_servers or 'lease/default'}",
+                "The waiting OVF customizer will validate all values before changing the appliance.",
+            ],
+            ["Continue initialization", "Cancel"],
+        )
+        if confirm == 0:
+            self._apply_action(
+                lambda: submit_first_boot_network_correction(
+                    ipv4_method,
+                    cidr,
+                    gateway,
+                    ipv6_mode,
+                    ipv6_cidr,
+                    ipv6_gateway,
+                    dns_servers,
+                ),
+                "Management correction submitted; initialization is continuing",
+            )
+        self._restore_main_surface()
+
     def _restore_main_surface(self) -> None:
         """Physically clear nested form remnants before rebuilding a parent menu."""
         self._force_clear = True
@@ -2229,6 +2470,24 @@ class CursesConsole:
         recovery_redraws = self._recovery_redraws(last_refresh)
         while True:
             key = self.stdscr.getch()
+            try:
+                first_boot_review = load_first_boot_network_review()
+            except ConsoleOperationError:
+                first_boot_review = None
+            initialization_locked = FIRST_BOOT_INITIALIZATION_LOCK_PATH.exists()
+            if first_boot_review is not None or initialization_locked:
+                if key == curses.KEY_F1:
+                    self.show_help()
+                    self.draw_main()
+                    last_refresh = time.monotonic()
+                elif first_boot_review is not None and key in {curses.KEY_F2, 10, 13, curses.KEY_ENTER}:
+                    self.review_first_boot_network(first_boot_review)
+                    self.draw_main()
+                    last_refresh = time.monotonic()
+                elif key == curses.KEY_RESIZE or time.monotonic() - last_refresh >= CONSOLE_REFRESH_SECONDS:
+                    self.draw_main()
+                    last_refresh = time.monotonic()
+                continue
             if key == curses.KEY_F1:
                 self.show_help()
                 self.draw_main()

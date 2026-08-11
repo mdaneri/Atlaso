@@ -162,6 +162,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--client-ssh-user", default="alpine")
     parser.add_argument("--ssh-key", default="")
     parser.add_argument("--ssh-password", default="")
+    parser.add_argument("--appliance-ssh-password", default="")
     parser.add_argument("--appliance-ssh-host", default="192.168.49.1")
     parser.add_argument("--appliance-ssh-hostkey", default="")
     parser.add_argument("--client-a-hostkey", default="")
@@ -510,6 +511,18 @@ def ssh_hostkey(host: str, args: argparse.Namespace, role: str) -> str:
     return ""
 
 
+def ssh_password(args: argparse.Namespace, role: str) -> str:
+    """Return the role-specific SSH password.
+
+    Args:
+        args: Parsed command-line options consumed by the operation.
+        role: Atlaso role used for authentication.
+    """
+    if role == "appliance":
+        return args.appliance_ssh_password or args.ssh_password
+    return args.ssh_password
+
+
 def appliance_ssh_command(args: argparse.Namespace, command: str) -> str:
     """Return appliance ssh command.
 
@@ -520,8 +533,9 @@ def appliance_ssh_command(args: argparse.Namespace, command: str) -> str:
     if ssh_username(args, "appliance") == "root":
         return command
     quoted_command = shell_single_quote(command)
-    if args.ssh_password:
-        quoted_password = shell_single_quote(args.ssh_password)
+    appliance_password = ssh_password(args, "appliance")
+    if appliance_password:
+        quoted_password = shell_single_quote(appliance_password)
         return f"printf '%s\\n' {quoted_password} | sudo -S -p '' sh -lc {quoted_command}"
     return f"sudo -n sh -lc {quoted_command}"
 
@@ -575,10 +589,11 @@ def ssh_command(
     if not host:
         raise LifecycleError("SSH host was not provided.")
     user = ssh_username(args, role)
+    password = ssh_password(args, role)
     remote_command = appliance_ssh_command(args, command) if role == "appliance" and appliance_as_root else command
-    secrets = [args.ssh_password, *(redact_values or [])]
-    if args.ssh_password:
-        plink_args = ["plink", "-batch", "-ssh", "-pw", args.ssh_password, f"{user}@{host}", remote_command]
+    secrets = [password, *(redact_values or [])]
+    if password:
+        plink_args = ["plink", "-batch", "-ssh", "-pw", password, f"{user}@{host}", remote_command]
         hostkey = ssh_hostkey(host, args, role)
         if hostkey:
             plink_args[3:3] = ["-hostkey", hostkey]
@@ -702,7 +717,7 @@ def lifecycle_plan(args: argparse.Namespace) -> dict[str, Any]:
             "firewall, routing, NAT, and WAN desired state",
             "CA desired state, root certificate download, atomic generated certificate request with explicit SAN verification, client CSR request, issued certificate download, and client-side verification",
             "NTPsec desired state, NTS upstream and server mode, ntpq health, UDP/123 compatibility, and Alpine chrony-nts authenticated synchronization",
-            "KMS desired state, DNS/firewall apply, PyKMIP service, and TLS client-certificate probe",
+            "vSphere Key Provider desired state, DNS/firewall apply, KMIP service, and TLS client-certificate probe",
             "Managed LDAP desired state, two isolated organization suffixes, duplicate uid support, nested groups, configurable LDAP/LDAPS listeners, management-interface exclusion, and CA hostname verification",
             "VCF Backup desired state, local user sync, SFTP listener, and client probe",
             "VCF Offline Depot browser login, curl/wget Basic auth, and Local Users password rotation",
@@ -2460,7 +2475,7 @@ def configure_vcf_backups(client: HttpClient, args: argparse.Namespace) -> dict[
 
 
 def configure_kms(client: HttpClient, args: argparse.Namespace) -> dict[str, Any]:
-    """Update kms.
+    """Inspect vSphere Key Provider management without creating client secrets.
 
     Args:
         client: Client consumed by configure KMS.
@@ -2473,55 +2488,35 @@ def configure_kms(client: HttpClient, args: argparse.Namespace) -> dict[str, Any
     Raises:
         LifecycleError: If the operation encounters an invalid state.
     """
-    status, body, _headers = client.request("GET", "/kms")
+    status, body, _headers = client.request("GET", "/vsphere-key-providers")
     if status >= 400:
-        raise LifecycleError(f"GET /kms failed with HTTP {status}")
+        raise LifecycleError(f"GET /vsphere-key-providers failed with HTTP {status}")
     csrf = extract_csrf(body)
     hostname = f"kms.{args.domain}"
     status, response_body, _headers = client.request(
         "POST",
-        "/kms/settings",
+        "/vsphere-key-providers/settings",
         form={
-            "enabled": "on",
-            "backend": "pykmip",
             "listen_interface": args.site_interface,
             "port": "5696",
             "hostname": hostname,
-            "server_certificate": hostname,
-            "require_client_cert": "on",
-            "allow_register": "on",
             "csrf": csrf,
         },
         headers={"X-Atlaso-Autosave": "1"},
     )
     if status >= 400:
-        raise LifecycleError(f"KMS settings update failed with HTTP {status}: {response_body[:500]}")
+        raise LifecycleError(f"vSphere Key Provider settings update failed with HTTP {status}: {response_body[:500]}")
     payload = json.loads(response_body)
     if not payload.get("valid"):
-        raise LifecycleError(f"KMS desired state is invalid: {payload.get('validation_errors')}")
-    status, client_body, _headers = client.request(
-        "POST",
-        "/kms/clients",
-        form={
-            "name": "vcf-management",
-            "certificate_subject": f"CN=vcf-management.{args.domain},O=Atlaso",
-            "role": "service",
-            "allowed_operations": "locate,get,register,create,activate",
-            "description": "Hyper-V lifecycle KMIP client",
-            "enabled": "on",
-            "csrf": csrf,
-        },
-        follow_redirects=False,
-    )
-    if status not in {200, 302, 303, 409}:
-        raise LifecycleError(f"KMS client setup failed with HTTP {status}: {client_body[:500]}")
+        raise LifecycleError(f"Disabled vSphere Key Provider desired state is invalid: {payload.get('validation_errors')}")
     return {
         "hostname": payload.get("hostname"),
         "listen_interface": payload.get("listen_interface"),
         "listen_address": payload.get("listen_address"),
         "port": payload.get("port"),
         "config_path": payload.get("config_path"),
-        "client": "vcf-management",
+        "legacy_route_status": legacy_status,
+        "client_trust": "not-configured-without-external-public-certificate",
         "valid": payload.get("valid"),
     }
 
@@ -3295,19 +3290,20 @@ def managed_ldap_helper_authentication_check(args: argparse.Namespace) -> dict[s
     user = ssh_username(args, "appliance")
     host = args.appliance_ssh_host
     hostkey = ssh_hostkey(host, args, "appliance")
-    secrets = [args.ssh_password, LIFECYCLE_LDAP_PASSWORD]
+    appliance_password = ssh_password(args, "appliance")
+    secrets = [appliance_password, LIFECYCLE_LDAP_PASSWORD]
     if user == "root":
         remote_command = f"sh -lc {shell_single_quote(helper_command)}"
         input_text = f"{LIFECYCLE_LDAP_PASSWORD}\n"
-    elif args.ssh_password:
+    elif appliance_password:
         remote_command = f"sudo -S -p '' sh -lc {shell_single_quote(helper_command)}"
-        input_text = f"{args.ssh_password}\n{LIFECYCLE_LDAP_PASSWORD}\n"
+        input_text = f"{appliance_password}\n{LIFECYCLE_LDAP_PASSWORD}\n"
     else:
         remote_command = f"sudo -n sh -lc {shell_single_quote(helper_command)}"
         input_text = f"{LIFECYCLE_LDAP_PASSWORD}\n"
 
-    if args.ssh_password:
-        command = ["plink", "-batch", "-ssh", "-pw", args.ssh_password, f"{user}@{host}", remote_command]
+    if appliance_password:
+        command = ["plink", "-batch", "-ssh", "-pw", appliance_password, f"{user}@{host}", remote_command]
         if hostkey:
             command[3:3] = ["-hostkey", hostkey]
         redacted_command = redact_sequence(command, secrets)
@@ -3503,22 +3499,9 @@ def host_state_checks(args: argparse.Namespace) -> dict[str, Any]:
             f"test \"$(stat -c '%U:%G %a' /etc/atlaso/ntp/certs/ntp.{args.domain}.key)\" = 'root:ntp 640' && "
             "nft list ruleset | grep -F 'ntpd-' && nft list ruleset | grep -F 'ntpd-nts-'"
         ),
-        "kms_files": (
-            "for path in "
-            "/etc/atlaso/kms/pykmip.conf "
-            "/etc/pykmip/server.conf "
-            "/etc/atlaso/kms/certs/kms.atlaso.internal.crt "
-            "/etc/atlaso/kms/certs/kms.atlaso.internal.key "
-            "/etc/atlaso/kms/clients/certs/vcf-management.crt "
-            "/etc/atlaso/kms/clients/certs/vcf-management.key; "
-            "do test -f \"$path\" || { echo \"missing $path\"; exit 1; }; done"
-        ),
-        "kms_service": "systemctl is-active atlaso-kms.service || (systemctl status atlaso-kms.service --no-pager; journalctl -u atlaso-kms.service -n 80 --no-pager; exit 1)",
-        "kms_tls": (
-            f"timeout 10 openssl s_client -connect {site_ip}:5696 "
-            "-cert /etc/atlaso/kms/clients/certs/vcf-management.crt "
-            "-key /etc/atlaso/kms/clients/certs/vcf-management.key "
-            "-CAfile /etc/atlaso/ca/root.crt -verify_return_error </dev/null"
+        "kms_external_trust_required": (
+            "! systemctl is-active --quiet atlaso-kmip.service && "
+            "/opt/atlaso/bin/atlaso-helper kms status | grep -F '\"runtime_state\": \"not-applied\"'"
         ),
         "ldap_files": (
             "for path in "

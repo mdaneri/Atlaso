@@ -48,8 +48,80 @@ def test_console_management_validation_limits_dhcp_and_static_values():
     )
     with pytest.raises(ConsoleOperationError, match="on-link"):
         validate_management_values("static", "192.168.49.1/24", "192.168.50.1")
+    with pytest.raises(ConsoleOperationError, match="on-link"):
+        validate_management_values("static", "192.168.1.254/32", "192.168.1.1")
+    with pytest.raises(ConsoleOperationError, match="cannot equal"):
+        validate_management_values("static", "192.168.49.1/24", "192.168.49.1")
     with pytest.raises(ConsoleOperationError, match="cannot include"):
         validate_management_values("dhcp", "192.168.49.1/24", "")
+
+
+def test_console_first_boot_network_review_submits_only_valid_nonsecret_values(tmp_path, monkeypatch):
+    """Verify tty1 transitions a recoverable OVF review into a safe correction.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+        monkeypatch: Pytest helper used to replace first-boot state paths.
+    """
+    review_path = tmp_path / "network-review.json"
+    correction_path = tmp_path / "network-correction.json"
+    monkeypatch.setattr(appliance_console, "FIRST_BOOT_NETWORK_REVIEW_PATH", review_path)
+    monkeypatch.setattr(appliance_console, "FIRST_BOOT_NETWORK_CORRECTION_PATH", correction_path)
+    review_path.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "state": "network_review",
+                "error": "Management gateway must be on-link for the configured prefix.",
+                "ipv4_method": "static",
+                "ipv4_cidr": "192.168.1.254/32",
+                "ipv4_gateway": "192.168.1.1",
+                "ipv6_mode": "automatic",
+                "ipv6_cidr": "",
+                "ipv6_gateway": "",
+                "dns_servers": "192.168.1.2",
+                "fqdn": "appliance.atlaso.internal",
+                "ignored_password": "must-not-be-loaded",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    review = appliance_console.load_first_boot_network_review()
+
+    assert review is not None
+    assert review.ipv4_cidr == "192.168.1.254/32"
+    assert review.gateway == "192.168.1.1"
+    assert review.fqdn == "appliance.atlaso.internal"
+    assert "must-not-be-loaded" not in repr(review)
+    with pytest.raises(ConsoleOperationError, match="on-link"):
+        appliance_console.submit_first_boot_network_correction(
+            "static",
+            "192.168.1.254/32",
+            "192.168.1.1",
+            "automatic",
+            "",
+            "",
+            "192.168.1.2",
+        )
+    assert not correction_path.exists()
+
+    result = appliance_console.submit_first_boot_network_correction(
+        "static",
+        "192.168.1.254/24",
+        "192.168.1.1",
+        "automatic",
+        "",
+        "",
+        "192.168.1.2",
+    )
+
+    correction = json.loads(correction_path.read_text(encoding="utf-8"))
+    assert result == "First-time management network correction submitted"
+    assert correction["ipv4_cidr"] == "192.168.1.254/24"
+    assert correction["ipv4_gateway"] == "192.168.1.1"
+    assert correction["ipv6_mode"] == "automatic"
+    assert "password" not in str(correction).lower()
 
 
 @pytest.mark.parametrize(
@@ -1050,6 +1122,106 @@ def test_console_footer_includes_help_and_compact_power_label():
     ]
 
 
+def test_console_first_boot_review_renders_branded_recovery_state(monkeypatch):
+    """Verify the full-screen console names first-time network review explicitly.
+
+    Args:
+        monkeypatch: Pytest helper used to replace console status loading.
+    """
+    rendered: list[str] = []
+    console = CursesConsole.__new__(CursesConsole)
+    console.curses = SimpleNamespace(A_BOLD=1, color_pair=lambda value: value)
+    console.message = ""
+    console.message_error = False
+    console._safe_add = lambda _row, _column, value, *_args: rendered.append(value)
+    console._fill_line = lambda *_args: None
+    console._refresh_screen = lambda: None
+    monkeypatch.setattr(appliance_console, "_package_version", lambda: "0.9.95")
+    review = appliance_console.FirstBootNetworkReview(
+        error="Management gateway must be on-link for the configured prefix.",
+        ipv4_method="static",
+        ipv4_cidr="192.168.1.254/32",
+        gateway="192.168.1.1",
+        ipv6_mode="disabled",
+        ipv6_cidr="",
+        ipv6_gateway="",
+        dns_servers=("192.168.1.2",),
+        fqdn="appliance.atlaso.internal",
+    )
+
+    console._draw_first_boot_network_review(review, 30, 80)
+
+    text = "\n".join(rendered)
+    assert "Atlaso Appliance 0.9.95" in text
+    assert "First-time initialization" in text
+    assert "Network configuration requires review" in text
+    assert "Press F2 or Enter" in text
+    assert "<F2> Review network" in text
+
+
+def test_console_first_boot_initialization_locks_privileged_actions(monkeypatch):
+    """Verify tty1 explicitly renders the locked pre-customization state.
+
+    Args:
+        monkeypatch: Pytest helper used to replace the displayed package version.
+    """
+    rendered: list[str] = []
+    console = CursesConsole.__new__(CursesConsole)
+    console.curses = SimpleNamespace(A_BOLD=1, color_pair=lambda value: value)
+    console._safe_add = lambda _row, _column, value, *_args: rendered.append(value)
+    console._fill_line = lambda *_args: None
+    console._refresh_screen = lambda: None
+    monkeypatch.setattr(appliance_console, "_package_version", lambda: "0.9.96")
+
+    console._draw_first_boot_initializing(30)
+
+    text = "\n".join(rendered)
+    assert "First-time initialization" in text
+    assert "Privileged console actions remain locked" in text
+    assert "<F1> Help" in text
+    assert "<F2>" not in text
+    assert "<F4>" not in text
+    assert "<F12>" not in text
+
+
+def test_console_first_boot_lock_ignores_privileged_action_keys(tmp_path, monkeypatch):
+    """Verify pre-customization key handling cannot enter privileged workflows.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+        monkeypatch: Pytest helper used to replace first-boot state loading.
+    """
+    lock_path = tmp_path / "initializing"
+    lock_path.touch()
+    keys = iter((4, 12, 2))
+    called: list[str] = []
+    console = CursesConsole.__new__(CursesConsole)
+    console.curses = SimpleNamespace(
+        KEY_F1=1,
+        KEY_F2=2,
+        KEY_F3=3,
+        KEY_F4=4,
+        KEY_F12=12,
+        KEY_RESIZE=99,
+        KEY_ENTER=10,
+    )
+    console.stdscr = SimpleNamespace(getch=lambda: next(keys))
+    console.draw_main = lambda: None
+    console._recovery_redraws = lambda _last_refresh: 0
+    console.show_help = lambda: called.append("help")
+    console.customize = lambda: called.append("customize")
+    console.show_authenticated_top = lambda: called.append("top")
+    console.show_shell = lambda: called.append("shell")
+    console.power_menu = lambda: called.append("power")
+    monkeypatch.setattr(appliance_console, "FIRST_BOOT_INITIALIZATION_LOCK_PATH", lock_path)
+    monkeypatch.setattr(appliance_console, "load_first_boot_network_review", lambda: None)
+
+    with pytest.raises(StopIteration):
+        console.run()
+
+    assert called == []
+
+
 def test_console_appliance_services_use_full_catalog_and_optional_units(monkeypatch):
     """Verify that console appliance services use full catalog and optional units.
 
@@ -1200,6 +1372,70 @@ def test_console_firewall_toggle_persists_desired_state_and_selects_only_firewal
     assert selected == [{"firewall"}]
 
 
+def test_console_management_correction_reconciles_firewall_bootstrap_and_settings(client, monkeypatch):
+    """Verify that management correction recovers the complete front door in order.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+    """
+    events: list[tuple[str, object]] = []
+
+    def fake_submit(unit_ids, **_kwargs):
+        """Record one scoped console apply submission.
+
+        Args:
+            unit_ids: Apply unit identifiers selected by the console.
+            **_kwargs: Additional submission options ignored by the test.
+        """
+        events.append(("apply", set(unit_ids)))
+        return f"job_{len([event for event in events if event[0] == 'apply'])}"
+
+    monkeypatch.setattr(appliance_console, "_submit_console_apply", fake_submit)
+    monkeypatch.setattr(
+        appliance_console,
+        "_recover_management_plane",
+        lambda stage: events.append(("recover", stage)),
+    )
+
+    result = appliance_console.configure_management(
+        "dhcp",
+        "",
+        "",
+        "disabled",
+        "",
+        "",
+        "192.0.2.53",
+    )
+
+    assert result == "tasks job_1 and job_2"
+    assert events == [
+        ("apply", {"network", "firewall"}),
+        ("recover", "Network and Firewall were applied"),
+        ("apply", {"appliance_settings"}),
+        ("recover", "Appliance Settings were applied"),
+    ]
+
+
+def test_console_management_recovery_reports_the_failed_layer(monkeypatch):
+    """Verify that constrained recovery failures remain actionable.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+    """
+    monkeypatch.setattr(
+        appliance_console,
+        "_run",
+        lambda *_args, **_kwargs: subprocess.CompletedProcess([], 1, "", "validating nginx configuration failed"),
+    )
+
+    with pytest.raises(
+        ConsoleOperationError,
+        match="Network and Firewall were applied, but management-plane recovery failed: validating nginx",
+    ):
+        appliance_console._recover_management_plane("Network and Firewall were applied")
+
+
 def test_console_power_task_is_committed_before_real_helper_invocation(client, monkeypatch):
     """Verify that console power task is committed before real helper invocation.
 
@@ -1287,6 +1523,9 @@ def test_console_systemd_unit_replaces_only_tty1():
     manager = Path("image/common/systemd/atlaso-console-manager.conf").read_text(encoding="utf-8")
     assert "TTYPath=/dev/tty1" in unit
     assert "Conflicts=getty@tty1.service" in unit
+    assert "After=local-fs.target systemd-vconsole-setup.service" in unit
+    assert "Before=atlaso-data-disks.service" in unit
+    assert "systemd-networkd.service" not in unit
     assert "getty@tty2" not in unit
     assert "systemctl mask getty@tty1.service" in provision
     assert "systemctl enable atlaso-console.service" in provision
@@ -1407,3 +1646,134 @@ def test_console_service_restore_keeps_snapshot_when_restoration_is_incomplete(m
 
     assert helper._handle_console("restore-services", []) == 1
     assert state_path.exists()
+
+
+def test_console_management_plane_recovery_retries_bootstrap_and_verifies_readiness(monkeypatch, tmp_path, capsys):
+    """Verify that the helper repairs bootstrap and proves stable loopback readiness.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+        capsys: Pytest fixture used to capture standard output and standard error.
+    """
+    helper = load_helper_module()
+    marker = tmp_path / "first-boot-https.applied"
+    management_config = tmp_path / "management.conf"
+    management_config.write_text("listen 443 ssl default_server;\n", encoding="utf-8")
+    monkeypatch.setattr(helper, "FIRST_BOOT_HTTPS_MARKER_PATH", marker)
+    monkeypatch.setattr(helper, "NGINX_MANAGEMENT_SITE_PATH", management_config)
+    monkeypatch.setattr(
+        helper.shutil,
+        "which",
+        lambda name: f"/usr/bin/{name}" if name in {"curl", "nginx"} else None,
+    )
+    monkeypatch.setattr(helper.time, "sleep", lambda _seconds: None)
+    commands: list[list[str]] = []
+
+    def fake_run(command: list[str]) -> subprocess.CompletedProcess[str]:
+        """Return deterministic recovery command results.
+
+        Args:
+            command: Command and arguments to execute.
+        """
+        commands.append(command)
+        if command == ["systemctl", "start", helper.FIRST_BOOT_HTTPS_UNIT]:
+            marker.write_text("complete\n", encoding="utf-8")
+        if command and command[0] == "/usr/bin/curl":
+            status = "308" if command[-1] == "http://127.0.0.1/" else "200"
+            return subprocess.CompletedProcess(command, 0, status, "")
+        return subprocess.CompletedProcess(command, 0, "active\n", "")
+
+    monkeypatch.setattr(helper, "_run", fake_run)
+
+    assert helper._handle_console("recover-management-plane", []) == 0
+    output = capsys.readouterr().out
+    assert '"management_plane": "ready"' in output
+    assert '"bootstrap_retried": true' in output
+    assert '"management_https_enabled": true' in output
+    assert ["systemctl", "reset-failed", helper.FIRST_BOOT_HTTPS_UNIT] in commands
+    assert ["systemctl", "start", helper.FIRST_BOOT_HTTPS_UNIT] in commands
+    assert ["/usr/bin/nginx", "-t"] in commands
+    assert ["systemctl", "enable", "nginx.service", "atlaso.service"] in commands
+    assert ["systemctl", "reload", "nginx.service"] in commands
+    assert ["systemctl", "is-active", "nginx.service", "atlaso.service"] in commands
+
+
+def test_console_management_plane_recovery_verifies_http_only_mode(monkeypatch, tmp_path, capsys):
+    """Verify that recovery accepts the applied HTTP-only management contract.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+        capsys: Pytest fixture used to capture standard output and standard error.
+    """
+    helper = load_helper_module()
+    marker = tmp_path / "first-boot-https.applied"
+    marker.write_text("complete\n", encoding="utf-8")
+    management_config = tmp_path / "management.conf"
+    management_config.write_text("listen 80 default_server;\n", encoding="utf-8")
+    monkeypatch.setattr(helper, "FIRST_BOOT_HTTPS_MARKER_PATH", marker)
+    monkeypatch.setattr(helper, "NGINX_MANAGEMENT_SITE_PATH", management_config)
+    monkeypatch.setattr(
+        helper.shutil,
+        "which",
+        lambda name: f"/usr/bin/{name}" if name in {"curl", "nginx"} else None,
+    )
+    monkeypatch.setattr(helper.time, "sleep", lambda _seconds: None)
+    commands: list[list[str]] = []
+
+    def fake_run(command: list[str]) -> subprocess.CompletedProcess[str]:
+        """Return successful HTTP-only recovery results.
+
+        Args:
+            command: Command and arguments to execute.
+        """
+        commands.append(command)
+        if command and command[0] == "/usr/bin/curl":
+            return subprocess.CompletedProcess(command, 0, "200", "")
+        return subprocess.CompletedProcess(command, 0, "active\n", "")
+
+    monkeypatch.setattr(helper, "_run", fake_run)
+
+    assert helper._handle_console("recover-management-plane", []) == 0
+    output = capsys.readouterr().out
+    assert '"management_https_enabled": false' in output
+    assert '"nginx HTTP readiness": "200"' in output
+    curl_urls = [command[-1] for command in commands if command and command[0] == "/usr/bin/curl"]
+    assert "http://127.0.0.1/openapi.json" in curl_urls
+    assert all(not url.startswith("https://") for url in curl_urls)
+
+
+def test_console_management_plane_recovery_stops_after_nginx_validation_failure(monkeypatch, tmp_path, capsys):
+    """Verify that invalid nginx configuration prevents service reload and readiness claims.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+        capsys: Pytest fixture used to capture standard output and standard error.
+    """
+    helper = load_helper_module()
+    marker = tmp_path / "first-boot-https.applied"
+    marker.write_text("complete\n", encoding="utf-8")
+    monkeypatch.setattr(helper, "FIRST_BOOT_HTTPS_MARKER_PATH", marker)
+    monkeypatch.setattr(helper.shutil, "which", lambda name: f"/usr/bin/{name}")
+    commands: list[list[str]] = []
+
+    def fake_run(command: list[str]) -> subprocess.CompletedProcess[str]:
+        """Fail nginx validation and record all attempted commands.
+
+        Args:
+            command: Command and arguments to execute.
+        """
+        commands.append(command)
+        if command == ["/usr/bin/nginx", "-t"]:
+            return subprocess.CompletedProcess(command, 1, "", "nginx syntax invalid")
+        return subprocess.CompletedProcess(command, 0, "active\n", "")
+
+    monkeypatch.setattr(helper, "_run", fake_run)
+
+    assert helper._handle_console("recover-management-plane", []) == 1
+    error = capsys.readouterr().err
+    assert "validating nginx configuration failed" in error
+    assert ["systemctl", "reload", "nginx.service"] not in commands
+    assert ["systemctl", "start", "nginx.service"] not in commands

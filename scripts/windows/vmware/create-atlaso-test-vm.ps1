@@ -1,3 +1,4 @@
+[Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSAvoidUsingPlainTextForPassword', '')]
 [CmdletBinding(SupportsShouldProcess = $true)]
 param(
     [string]$Name = 'Atlaso-VMware',
@@ -21,10 +22,15 @@ param(
     [switch]$SkipNetworkPrepare,
     [switch]$WaitForIp,
     [switch]$TrustRootCa,
+    [string]$FirstBootFqdn = '',
+    [string]$AdminPassword = 'VMware01!Test',
+    [string]$RootPassword = 'VMware01!Test',
+    [switch]$RootSshEnabled,
     [int]$TimeoutSeconds = 300
 )
 
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'Atlaso.WorkstationFirstBoot.ps1')
 
 function Find-LatestApplianceVmx {
     param([string]$RepoRoot)
@@ -51,8 +57,9 @@ function Install-ApplianceRootCa {
         [int]$PollSeconds = 5
     )
 
-    $rootPemPath = Join-Path $env:TEMP "atlaso-$Name-root-ca.pem"
-    $rootCerPath = Join-Path $env:TEMP "atlaso-$Name-root-ca.cer"
+    $tempRoot = [System.IO.Path]::GetFullPath([System.IO.Path]::GetTempPath())
+    $rootPemPath = [System.IO.Path]::Combine($tempRoot, "atlaso-$Name-root-ca.pem")
+    $rootCerPath = [System.IO.Path]::Combine($tempRoot, "atlaso-$Name-root-ca.cer")
     $rootUrl = "http://$IpAddress/ca/downloads/root-ca.pem"
     $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
     $downloaded = $false
@@ -72,8 +79,12 @@ function Install-ApplianceRootCa {
         }
         catch {
             $lastError = $_.Exception.Message
-            if (Test-Path -LiteralPath $rootPemPath) {
-                Remove-Item -LiteralPath $rootPemPath -Force -ErrorAction SilentlyContinue
+            try {
+                # File.Delete is idempotent for a missing file and safely handles valid dotted/short Windows paths.
+                [System.IO.File]::Delete($rootPemPath)
+            }
+            catch {
+                # Best-effort cleanup must never mask the CA readiness error that triggered this retry.
             }
             if ((Get-Date) -lt $deadline) {
                 Write-Host "Atlaso root CA is not ready; retrying in $PollSeconds seconds." -ForegroundColor DarkGray
@@ -151,6 +162,15 @@ function Write-ConnectionSummary {
 }
 
 $repoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..\..')).Path
+
+if (-not $FirstBootFqdn) {
+    $FirstBootFqdn = New-AtlasoWorkstationFqdn -Name $Name
+}
+$firstBootOvfEnvironment = New-AtlasoWorkstationOvfEnvironment `
+    -Fqdn $FirstBootFqdn `
+    -AdminPassword $AdminPassword `
+    -RootPassword $RootPassword `
+    -RootSshEnabled:$RootSshEnabled
 
 if ($SkipLabNetworkAdapters -and $IncludeLabNetworkAdapters) {
     throw "Pass either -SkipLabNetworkAdapters or -IncludeLabNetworkAdapters, not both."
@@ -252,6 +272,7 @@ if ($PSCmdlet.ShouldProcess($targetVmx, "Create Atlaso Workstation test VM from 
     if (-not $?) {
         throw "Atlaso VMware Workstation VM creation failed."
     }
+    Set-AtlasoWorkstationOvfEnvironment -VmxPath $targetVmx -OvfEnvironment $firstBootOvfEnvironment
 }
 
 if (-not $NoStart -and -not $WhatIfPreference) {

@@ -63,9 +63,10 @@ from atlaso.app.models import (
     Job,
     JobStep,
     JobStatus,
-    KmsClient,
-    KmsKey,
     KmsSettings,
+    VsphereKeyProvider,
+    VsphereTrustedVcenter,
+    VsphereTrustedVcenterCertificate,
     LdapGroup,
     LdapGroupMembership,
     LdapOrganization,
@@ -448,22 +449,29 @@ from atlaso.app.services.esx_storage import (
     validate_mounted_volume_path as validate_esx_storage_mounted_volume_path,
 )
 from atlaso.app.services.kms import (
-    KMS_BACKENDS,
-    KMS_CLIENT_ROLES,
     KMS_DEFAULT_CONFIG_PATH,
     KMS_DEFAULT_DATABASE_PATH,
     KMS_DNS_RECORD_DESCRIPTION,
-    KMS_KEY_ALGORITHMS,
-    KMS_KEY_STATES,
     KMS_STAGED_CONFIG_PATH,
-    ensure_kms_provider_id,
+    KMS_STAGED_CLIENT_TRUST_PATH,
     join_csv,
-    kms_client_fingerprints,
-    kms_client_to_dict,
-    kms_key_to_dict,
-    render_kms_config,
-    split_csv,
-    validate_kms_state,
+)
+from atlaso.app.services.vsphere_key_providers import (
+    authenticated_provider_counts,
+    certificate_to_dict,
+    mark_provider_desired_changed,
+    normalize_service_hostname as normalize_vsphere_service_hostname,
+    normalize_vcenter_hostname as normalize_vsphere_vcenter_hostname,
+    parse_public_certificate,
+    provider_requires_appliance_apply,
+    provider_rows,
+    provider_to_dict,
+    render_client_trust_bundle,
+    render_provider_config,
+    runtime_status_snapshot,
+    trusted_vcenter_to_dict,
+    usable_certificates,
+    validate_provider_state,
 )
 from atlaso.app.services.ldap import (
     LDAP_CERT_PATH,
@@ -653,6 +661,14 @@ from atlaso.app.services.esxi_pxe import (
     strict_validation_enabled,
 )
 from atlaso.app.token_service import create_token_for_user
+from atlaso.app.ui_routes import (
+    MANAGEMENT_UI_ROOT,
+    PUBLIC_UI_ROOT,
+    management_ui_path,
+    public_ui_path,
+    safe_management_return_path,
+    safe_public_return_path,
+)
 
 APP_DIR = Path(__file__).resolve().parent
 STATIC_DIR = APP_DIR / "static"
@@ -668,7 +684,68 @@ NETWORK_STAGED_CONFIG_PATH = "/var/lib/atlaso/apply/network/atlaso-network.conf"
 DNSMASQ_STAGED_CONFIG_PATH = "/var/lib/atlaso/apply/dnsmasq/atlaso.conf"
 
 templates = Jinja2Templates(directory=TEMPLATES_DIR)
-router = APIRouter()
+
+
+def management_ui_request_allowed(request: Request, db: Session) -> bool:
+    """Return whether the called host may expose the management browser plane.
+
+    Args:
+        request: Incoming HTTP request.
+        db: Active database session.
+    """
+    request_host = request_host_name(request)
+    try:
+        if ip_address(request_host.strip("[]")).is_loopback:
+            return True
+    except ValueError:
+        pass
+    binding = request_host_interface_binding(request_host, db)
+    if binding is not None:
+        return binding.get("role") == "management"
+    return getattr(get_settings(), "environment", "development") != "appliance"
+
+
+def require_management_ui_request(request: Request, db: Session = Depends(get_db)) -> None:
+    """Hide the management namespace from non-management listeners.
+
+    Args:
+        request: Incoming HTTP request.
+        db: Active database session.
+    """
+    if not management_ui_request_allowed(request, db):
+        raise HTTPException(status_code=404, detail="Not found")
+
+
+def public_ui_request_allowed(request: Request, db: Session, path: str = "") -> bool:
+    """Return whether the called host may expose a requested public UI path.
+
+    Args:
+        request: Incoming HTTP request.
+        db: Active database session.
+        path: Public-plane path being evaluated.
+    """
+    binding = request_host_interface_binding(request_host_name(request), db)
+    if not binding or binding.get("role") == "management":
+        return False
+    normalized = path or request.url.path.removeprefix(PUBLIC_UI_ROOT)
+    if normalized.startswith("/ca"):
+        return request_allows_public_service(db, request, "ca")
+    if normalized.startswith("/terminal"):
+        return request_allows_public_service(db, request, "web_terminal")
+    return True
+
+
+router = APIRouter(prefix=MANAGEMENT_UI_ROOT, dependencies=[Depends(require_management_ui_request)])
+public_router = APIRouter(prefix=PUBLIC_UI_ROOT)
+front_door_router = APIRouter()
+protocol_router = APIRouter()
+
+templates.env.globals.update(
+    management_ui_path=management_ui_path,
+    public_ui_path=public_ui_path,
+    management_ui_root=MANAGEMENT_UI_ROOT,
+    public_ui_root=PUBLIC_UI_ROOT,
+)
 
 
 def csrf_token(request: Request) -> str:
@@ -729,6 +806,8 @@ def render(request: Request, template: str, context: dict, status_code: int = 20
             "server_time": utcnow(),
             "public_github_url": "https://github.com/mdaneri/Atlaso",
             "current_version_info": current_version_info(),
+            "management_ui_root": MANAGEMENT_UI_ROOT,
+            "public_ui_root": PUBLIC_UI_ROOT,
             **context,
         },
         status_code=status_code,
@@ -1172,16 +1251,6 @@ def remove_ntp_nts_certificate_rows(db: Session) -> int:
     return len(certificates)
 
 
-def kms_client_common_name(client: KmsClient) -> str:
-    """Return kms client common name.
-
-    Args:
-        client: Client consumed by KMS client common name.
-    """
-    match = re.search(r"(?:^|,)CN=([^,]+)", client.certificate_subject or "")
-    return match.group(1).strip() if match else client.name
-
-
 def managed_ca_certificate_specs(db: Session) -> list[ManagedCertificateSpec]:
     """Return managed ca certificate specs.
 
@@ -1268,23 +1337,6 @@ def managed_ca_certificate_specs(db: Session) -> list[ManagedCertificateSpec]:
                 chain_path=chain_path,
             )
         )
-        for client in db.execute(select(KmsClient).where(KmsClient.enabled.is_(True)).order_by(KmsClient.name)).scalars().all():
-            common_name = kms_client_common_name(client)
-            cert_path, key_path, chain_path = ca_service_cert_paths("kmip/clients", client.name)
-            specs.append(
-                ManagedCertificateSpec(
-                    owner=f"kms:client:{client.name}",
-                    common_name=common_name,
-                    dns_names=[],
-                    ip_addresses=[],
-                    profile_name=CA_CLIENT_PROFILE_NAME,
-                    description=f"Managed KMIP client certificate for {client.name}.",
-                    cert_path=cert_path,
-                    key_path=key_path,
-                    chain_path=chain_path,
-                )
-            )
-
     ldap_settings = get_ldap_settings_row(db)
     if ldap_settings.enabled and ldap_settings.ldaps_enabled:
         _ldap_interfaces, ldap_certificate_addresses = resolve_ldap_bind_targets(
@@ -1434,8 +1486,6 @@ def get_kms_settings_row(db: Session) -> KmsSettings:
         db.add(settings)
         db.commit()
         db.refresh(settings)
-    elif ensure_kms_provider_id(settings):
-        db.commit()
     return settings
 
 
@@ -4418,6 +4468,12 @@ def ca_context(db: Session, *, reconcile: bool = True) -> dict:
         ca_status = {**ca_status, "health": "degraded", "label": "needs attention", "pill": "warn"}
     return {
         "ca_settings": settings,
+        "ca_public_portal_url": _absolute_public_url(
+            "https",
+            settings.portal_hostname or CA_DEFAULT_PORTAL_HOSTNAME,
+            public_ui_path("/ca/requests"),
+            port=443,
+        ),
         "ca_profiles": profiles,
         "ca_profile_rows": [ca_profile_to_dict(profile) for profile in profiles],
         "ca_certificate_rows": [ca_certificate_to_dict(certificate) for certificate in certificates],
@@ -4586,7 +4642,7 @@ def public_portal_links_context(db: Session) -> dict[str, str]:
     base_url = f"{scheme}://{host}" if host else ""
     return {
         "public_management_base_url": base_url,
-        "public_management_url": f"{base_url}/" if base_url else "",
+        "public_management_url": f"{base_url}{MANAGEMENT_UI_ROOT}" if base_url else "",
         "public_swagger_url": f"{base_url}/api/docs" if base_url else "/api/docs",
         "public_openapi_url": f"{base_url}/api/docs" if base_url else "/api/docs",
     }
@@ -4655,8 +4711,8 @@ def public_service_link_variants(service: dict[str, Any], binding: dict[str, str
     except (TypeError, ValueError):
         service_port = 0
     if service_id == "ca":
-        name_href = _absolute_public_url("https", hostname, "/ca", port=service_port or 443)
-        ip_href = _absolute_public_url("https", address, "/ca", port=service_port or 443)
+        name_href = _absolute_public_url("https", hostname, public_ui_path("/ca"), port=service_port or 443)
+        ip_href = _absolute_public_url("https", address, public_ui_path("/ca"), port=service_port or 443)
     elif service_id == "vcf_offline_depot":
         name_href = _absolute_public_url("https", hostname, "/PROD/", port=service_port or 443)
         ip_href = _absolute_public_url("https", address, "/PROD/", port=service_port or 443)
@@ -4668,7 +4724,7 @@ def public_service_link_variants(service: dict[str, Any], binding: dict[str, str
         name_href = _absolute_public_url("http", hostname, "/pxe/esxi/", port=http_port)
         ip_href = _absolute_public_url("http", address, "/pxe/esxi/", port=http_port)
     elif service_id == "web_terminal":
-        name_href = _absolute_public_url("https", address, "/terminal", port=service_port or 443)
+        name_href = _absolute_public_url("https", address, public_ui_path("/terminal"), port=service_port or 443)
         ip_href = name_href
     else:
         name_href = str(service.get("href") or "")
@@ -4677,25 +4733,31 @@ def public_service_link_variants(service: dict[str, Any], binding: dict[str, str
 
 
 def safe_login_next(value: str | None) -> str:
-    """Return safe login next.
+    """Return a fail-closed management-plane login target.
 
     Args:
         value: Candidate value consumed by safe login next.
     """
-    target = (value or "").strip()
-    if not target.startswith("/") or target.startswith("//") or "\\" in target:
-        return "/"
-    if target.startswith("/static/") or target in {"/login", "/logout"}:
-        return "/"
-    return target
+    return safe_management_return_path(value)
 
 
 def request_host_name(request: Request) -> str:
-    """Return request host name.
+    """Return the trusted listener address or direct request host name.
 
     Args:
         request: Incoming HTTP request.
     """
+    listener_address = (request.headers.get("x-atlaso-listener-address") or "").strip().strip("[]")
+    server_host = str((request.scope.get("server") or ("", 0))[0]).strip().strip("[]")
+    try:
+        trusted_proxy = ip_address(server_host).is_loopback
+    except ValueError:
+        trusted_proxy = False
+    if trusted_proxy and listener_address:
+        try:
+            return str(ip_address(listener_address)).lower()
+        except ValueError:
+            pass
     raw_host = (request.headers.get("host") or "").strip().lower()
     if raw_host.startswith("["):
         closing_bracket = raw_host.find("]")
@@ -4752,10 +4814,24 @@ def request_host_interface_binding(request_host: str, db: Session) -> dict[str, 
     """
     if not request_host:
         return None
+    physical_interfaces = db.execute(select(PhysicalInterface).order_by(PhysicalInterface.name)).scalars().all()
     entries = public_service_interface_entries(
-        db.execute(select(PhysicalInterface).order_by(PhysicalInterface.name)).scalars().all(),
+        physical_interfaces,
         db.execute(select(VlanInterface).where(VlanInterface.enabled.is_(True)).order_by(VlanInterface.parent_interface, VlanInterface.vlan_id)).scalars().all(),
     )
+    for interface in physical_interfaces:
+        if interface.oper_state == "missing":
+            continue
+        for cidr in (interface.host_ip_cidr, interface.host_ipv6_cidr):
+            address = interface_address(cidr)
+            if address:
+                entries.append(
+                    {
+                        "interface": interface.name,
+                        "role": normalize_interface_role(interface.role),
+                        "address": address,
+                    }
+                )
     by_address = {entry["address"].lower(): entry for entry in entries}
     try:
         parsed_host = str(ip_address(request_host.strip("[]"))).lower()
@@ -4776,21 +4852,21 @@ def request_host_interface_binding(request_host: str, db: Session) -> dict[str, 
         ).scalars()
         candidate_addresses.extend(record.address for record in records)
 
-        appliance_settings = get_appliance_settings_row(db)
-        if hostname == normalize_dns_hostname(appliance_settings.fqdn):
+        appliance_settings = db.execute(select(ApplianceSettings).order_by(ApplianceSettings.id)).scalars().first()
+        if appliance_settings is not None and hostname == normalize_dns_hostname(appliance_settings.fqdn):
             management = management_interface_context(db.execute(select(PhysicalInterface).order_by(PhysicalInterface.name)).scalars().all())
             candidate_addresses.append(management.get("ip", ""))
 
-        ca_settings = get_ca_settings_row(db)
-        if hostname == normalize_dns_hostname(ca_settings.portal_hostname or CA_DEFAULT_PORTAL_HOSTNAME):
+        ca_settings = db.execute(select(CaSettings).order_by(CaSettings.id)).scalars().first()
+        if ca_settings is not None and hostname == normalize_dns_hostname(ca_settings.portal_hostname or CA_DEFAULT_PORTAL_HOSTNAME):
             candidate_addresses.extend(split_addresses(ca_settings.listen_address))
 
-        depot_settings = get_vcf_offline_depot_settings_row(db)
-        if hostname == normalize_dns_hostname(depot_settings.hostname):
+        depot_settings = db.execute(select(VcfOfflineDepotSettings).order_by(VcfOfflineDepotSettings.id)).scalars().first()
+        if depot_settings is not None and hostname == normalize_dns_hostname(depot_settings.hostname or VCF_DEPOT_DEFAULT_HOSTNAME):
             candidate_addresses.extend(split_addresses(depot_settings.listen_address))
 
-        registry_settings = get_vcf_private_registry_settings_row(db)
-        if hostname == normalize_dns_hostname(registry_settings.hostname):
+        registry_settings = db.execute(select(VcfPrivateRegistrySettings).order_by(VcfPrivateRegistrySettings.id)).scalars().first()
+        if registry_settings is not None and hostname == normalize_dns_hostname(registry_settings.hostname or VCF_REGISTRY_DEFAULT_HOSTNAME):
             candidate_addresses.extend(split_addresses(registry_settings.listen_address))
 
         esxi_boot = esxi_pxe_boot_settings(db)
@@ -4980,33 +5056,23 @@ def kms_context(db: Session, *, reconcile: bool = True) -> dict:
         db.commit()
         db.refresh(settings)
     ca_state_errors = ensure_ca_state(db) if reconcile else []
-    clients = db.execute(select(KmsClient).order_by(KmsClient.name)).scalars().all()
-    if reconcile:
-        issued_fingerprints = {
-            certificate.managed_owner: certificate.fingerprint
-            for certificate in db.execute(
-                select(CaCertificate).where(
-                    CaCertificate.managed_owner.in_(
-                        [f"kms:client:{client.name}" for client in clients]
-                    ),
-                    CaCertificate.status == "issued",
-                )
-            ).scalars()
-            if certificate.fingerprint
-        }
-        fingerprint_changed = False
-        for client in clients:
-            fingerprint = issued_fingerprints.get(f"kms:client:{client.name}", "")
-            fingerprints = kms_client_fingerprints(client.certificate_fingerprint)
-            normalized = fingerprint.casefold()
-            if normalized and normalized not in fingerprints:
-                client.certificate_fingerprint = join_csv([*fingerprints, normalized])
-                fingerprint_changed = True
-        if fingerprint_changed:
-            db.commit()
-    keys = db.execute(select(KmsKey).options(selectinload(KmsKey.owner_client)).order_by(KmsKey.name)).scalars().all()
-    config_preview = render_kms_config(settings=settings, clients=clients, keys=keys)
-    validation_errors = [*ca_state_errors, *validate_kms_state(settings=settings, clients=clients, keys=keys)]
+    providers = provider_rows(db)
+    trusted_vcenters = [
+        trusted
+        for provider in providers
+        for trusted in provider.trusted_vcenters
+    ]
+    certificates = [
+        certificate
+        for trusted in trusted_vcenters
+        for certificate in trusted.certificates
+    ]
+    config_preview = render_provider_config(settings, providers)
+    trust_bundle = render_client_trust_bundle(db, providers)
+    validation_errors = [
+        *ca_state_errors,
+        *(validate_provider_state(providers) if settings.enabled else []),
+    ]
     ca_settings = get_ca_settings_row(db)
     if settings.enabled:
         invalid_interfaces = [
@@ -5024,28 +5090,50 @@ def kms_context(db: Session, *, reconcile: bool = True) -> dict:
             validation_errors.append("KMS cannot be activated until Certificate Authority state is healthy.")
         elif not ca_certificate_available(db, "kms:server"):
             validation_errors.append("KMS requires an issued CA-managed server certificate before apply.")
-        else:
-            for client in clients:
-                if client.enabled and not ca_certificate_available(db, f"kms:client:{client.name}"):
-                    validation_errors.append(f"KMS client {client.name} requires an issued CA-managed client certificate before apply.")
+    server_certificate = db.execute(
+        select(CaCertificate)
+        .where(CaCertificate.managed_owner == "kms:server")
+        .order_by(CaCertificate.id.desc())
+    ).scalars().first()
+    runtime = service_runtime_status(db, "kms")
+    status_snapshot = runtime_status_snapshot()
+    runtime_counts = status_snapshot.get("providers")
+    runtime_counts = runtime_counts if isinstance(runtime_counts, dict) else {}
+    status_rows = [
+        {
+            "provider_id": provider.id,
+            "provider_name": provider.name,
+            "desired_state": "enabled" if provider.enabled else "disabled",
+            "readiness": "ready" if provider.enabled and not validate_provider_state([provider]) else "needs attention",
+            "runtime_state": str(status_snapshot.get("runtime_state") or runtime["label"]),
+            "pre_active_count": runtime_counts.get(provider.id, {}).get("pre_active"),
+            "active_count": runtime_counts.get(provider.id, {}).get("active"),
+            "total_count": runtime_counts.get(provider.id, {}).get("total"),
+            "count_status": "available" if provider.id in runtime_counts else "not reported",
+        }
+        for provider in providers
+    ]
     return {
         "kms_settings": settings,
-        "kms_clients": clients,
-        "kms_keys": keys,
-        "kms_client_rows": [kms_client_to_dict(client) for client in clients],
-        "kms_key_rows": [kms_key_to_dict(key) for key in keys],
-        "kms_client_choices": [{"id": client.id, "label": client.name} for client in clients if client.enabled],
-        "kms_backend_options": KMS_BACKENDS,
-        "kms_client_roles": KMS_CLIENT_ROLES,
-        "kms_key_algorithms": KMS_KEY_ALGORITHMS,
-        "kms_key_states": KMS_KEY_STATES,
+        "kms_clients": [],
+        "kms_keys": [],
+        "vsphere_key_providers": providers,
+        "vsphere_key_provider_rows": [provider_to_dict(provider) for provider in providers],
+        "vsphere_trusted_vcenters": trusted_vcenters,
+        "vsphere_trusted_vcenter_rows": [trusted_vcenter_to_dict(trusted) for trusted in trusted_vcenters],
+        "vsphere_certificates": certificates,
+        "vsphere_certificate_rows": [certificate_to_dict(certificate) for certificate in certificates],
+        "vsphere_status_rows": status_rows,
+        "vsphere_provider_choices": [{"id": provider.id, "label": provider.name} for provider in providers],
+        "kms_client_trust_bundle": trust_bundle,
+        "kms_server_certificate": server_certificate,
         "available_interfaces": available_interfaces,
         "selected_kms_interfaces": split_interfaces(settings.listen_interface),
         "selected_kms_addresses": split_addresses(settings.listen_address),
         "available_kms_addresses": available_service_listen_addresses(settings.listen_address, available_interfaces),
         "kms_config_preview": config_preview,
         "kms_validation_errors": validation_errors,
-        "kms_service_status": service_runtime_status(db, "kms"),
+        "kms_service_status": runtime,
         "kms_lab_notice": (
             "The appliance-native atlaso-kmip service implements the bounded candidate VCF 9.1 profile. "
             "Treat it as experimental until the observed interoperability and recovery gate in issue #172 passes; "
@@ -10007,10 +10095,14 @@ def appliance_apply_units(db: Session, *, reconcile: bool = True) -> list[dict[s
         ),
         make_appliance_apply_unit(
             unit_id="kms",
-            label="KMS / KMIP",
-            page_url="/kms",
+            label="vSphere Key Providers",
+            page_url="/vsphere-key-providers",
             context=kms,
-            summary=["service enabled" if kms["kms_settings"].enabled else "service disabled", f"{len(kms['kms_clients'])} clients", f"{len(kms['kms_keys'])} keys"],
+            summary=[
+                "service enabled" if kms["kms_settings"].enabled else "service disabled",
+                f"{len(kms['vsphere_key_providers'])} providers",
+                f"{len(kms['vsphere_trusted_vcenters'])} trusted vCenters",
+            ],
             validation_errors=kms["kms_validation_errors"],
             config_path=KMS_STAGED_CONFIG_PATH,
             config_preview=kms["kms_config_preview"],
@@ -12060,17 +12152,11 @@ def log_appliance_apply_failures(job_id: str, unit_results: list[dict[str, Any]]
         job_id: Stable identifier of the associated job resource.
         unit_results: Unit results consumed by log appliance apply failures.
     """
-    for failure in appliance_apply_failure_summaries(unit_results):
-        for command in failure["commands"]:
-            APPLY_LOGGER.error(
-                "Appliance apply task %s failed unit=%s command=%s returncode=%s stderr=%s stdout=%s",
-                job_id,
-                failure["label"],
-                command["command_line"],
-                command["returncode"],
-                command["stderr"] or "",
-                command["stdout"] or "",
-            )
+    if appliance_apply_failure_summaries(unit_results):
+        APPLY_LOGGER.error(
+            "Appliance apply task %s failed; helper and desired-state details omitted from operational logs.",
+            job_id,
+        )
 
 
 def log_appliance_apply_submission(
@@ -12090,35 +12176,16 @@ def log_appliance_apply_submission(
         unit_results: Unit results supplied by the caller.
         succeeded: Succeeded supplied by the caller.
     """
-    APPLY_LOGGER.info(
-        "Appliance apply task %s completed status=%s selected_units=%s skipped_changed_units=%s dry_run=%s",
-        job_id,
-        "succeeded" if succeeded else "failed",
-        ",".join(selected_units),
-        ",".join(unit["unit_id"] for unit in skipped_changed_units),
-        any(result["dry_run"] for result in unit_results),
-    )
-    for result in unit_results:
-        summary_text = result["summary"] if isinstance(result["summary"], str) else "; ".join(str(item) for item in result["summary"])
+    if succeeded:
         APPLY_LOGGER.info(
-            "Appliance apply task %s unit=%s status=%s dry_run=%s validation_errors=%s validation_warnings=%s summary=%s",
+            "Appliance apply task %s succeeded; desired-state and helper details omitted from operational logs.",
             job_id,
-            result["unit_id"],
-            result["status"],
-            result["dry_run"],
-            len(result["validation_errors"]),
-            len(result["validation_warnings"]),
-            apply_output_excerpt(summary_text, limit=600),
         )
-        for command in result["commands"]:
-            APPLY_LOGGER.info(
-                "Appliance apply task %s unit=%s command=%s returncode=%s dry_run=%s",
-                job_id,
-                result["unit_id"],
-                apply_output_excerpt(command["command_line"], limit=800),
-                command["returncode"],
-                command["dry_run"],
-            )
+    else:
+        APPLY_LOGGER.info(
+            "Appliance apply task %s failed; desired-state and helper details omitted from operational logs.",
+            job_id,
+        )
 
 
 def _write_staged_config_file(path: Path, config_preview: str) -> None:
@@ -12354,6 +12421,10 @@ def execute_appliance_apply_unit(unit: dict[str, Any], *, adapter: SystemAdapter
     elif unit_id == "kms":
         config_path = KMS_STAGED_CONFIG_PATH
         if not adapter.dry_run:
+            stage_appliance_apply_config(
+                KMS_STAGED_CLIENT_TRUST_PATH,
+                context["kms_client_trust_bundle"],
+            )
             config_path = stage_appliance_apply_config(KMS_STAGED_CONFIG_PATH, unit["raw_config_preview"])
         results = run_adapter_steps(
             [
@@ -12466,6 +12537,10 @@ def execute_appliance_apply_unit(unit: dict[str, Any], *, adapter: SystemAdapter
             mark_local_users_failed(users, error)
     if unit_id == "esxi_pxe" and succeeded and not any(result.dry_run for result in results):
         mark_kickstarts_applied(list(context["esxi_kickstarts"]))
+    if unit_id == "kms" and succeeded and not any(result.dry_run for result in results):
+        applied_at = utcnow()
+        for provider in context["vsphere_key_providers"]:
+            provider.applied_at = applied_at
     if (
         unit_id == "ldap"
         and context["ldap_settings"].enabled
@@ -12584,7 +12659,7 @@ def initialize_factory_appliance_apply_baseline(db: Session) -> bool:
     return True
 
 
-@router.get("/favicon.ico", response_model=None)
+@front_door_router.get("/favicon.ico", response_model=None)
 def favicon() -> FileResponse:
     """Handle the favicon endpoint.
 
@@ -12594,7 +12669,7 @@ def favicon() -> FileResponse:
     return FileResponse(STATIC_DIR / "brand" / "favicon.ico", media_type="image/x-icon")
 
 
-@router.get("/manifest.webmanifest", response_model=None)
+@front_door_router.get("/manifest.webmanifest", response_model=None)
 def webmanifest() -> FileResponse:
     """Handle the webmanifest endpoint.
 
@@ -12608,7 +12683,7 @@ def webmanifest() -> FileResponse:
     )
 
 
-@router.get("/service-worker.js", response_model=None)
+@front_door_router.get("/service-worker.js", response_model=None)
 def service_worker() -> FileResponse:
     """Handle the service worker endpoint.
 
@@ -12620,12 +12695,12 @@ def service_worker() -> FileResponse:
         media_type="application/javascript",
         headers={
             "Cache-Control": "no-cache",
-            "Service-Worker-Allowed": "/",
+            "Service-Worker-Allowed": f"{MANAGEMENT_UI_ROOT}/",
         },
     )
 
 
-@router.get("/", response_class=HTMLResponse, response_model=None)
+@front_door_router.get("/", response_class=HTMLResponse, response_model=None)
 def root(
     request: Request,
     identity: Identity | None = Depends(get_session_identity),
@@ -12643,10 +12718,41 @@ def root(
     """
     binding = request_host_interface_binding(request_host_name(request), db)
     if binding and binding.get("role") != "management":
-        return render(request, "public_service_home.html", {"identity": identity, **public_service_directory_context(db, binding)})
+        return RedirectResponse(PUBLIC_UI_ROOT, status_code=303)
+    if management_ui_request_allowed(request, db):
+        return RedirectResponse(MANAGEMENT_UI_ROOT, status_code=303)
+    raise HTTPException(status_code=404, detail="Not found")
+
+
+@router.get("", response_class=HTMLResponse, response_model=None)
+def management_home(identity: Identity | None = Depends(get_session_identity)) -> RedirectResponse:
+    """Dispatch the canonical management UI root to sign-in or Dashboard.
+
+    Args:
+        identity: Optional authenticated session identity.
+    """
     if not identity:
-        return RedirectResponse("/login", status_code=303)
-    return RedirectResponse("/dashboard", status_code=303)
+        return RedirectResponse(management_ui_path("/login"), status_code=303)
+    return RedirectResponse(management_ui_path("/dashboard"), status_code=303)
+
+
+@public_router.get("", response_class=HTMLResponse, response_model=None)
+def public_home(
+    request: Request,
+    identity: Identity | None = Depends(get_session_identity),
+    db: Session = Depends(get_db),
+) -> HTMLResponse:
+    """Render the canonical interface-scoped Public Services directory.
+
+    Args:
+        request: Incoming HTTP request.
+        identity: Optional authenticated session identity.
+        db: Active database session.
+    """
+    binding = request_host_interface_binding(request_host_name(request), db)
+    if not binding or binding.get("role") == "management":
+        raise HTTPException(status_code=404, detail="Not found")
+    return render(request, "public_service_home.html", {"identity": identity, **public_service_directory_context(db, binding)})
 
 
 def _format_file_size(size: int) -> str:
@@ -12740,7 +12846,7 @@ def _depot_browser_context(db: Session, depot_path: str = "") -> dict[str, Any]:
     }
 
 
-@router.get("/PROD", response_model=None)
+@protocol_router.get("/PROD", response_model=None)
 def public_depot_redirect() -> RedirectResponse:
     """Handle the public depot redirect endpoint.
 
@@ -12789,7 +12895,7 @@ def depot_login_response(request: Request, *, return_to: str = "/PROD/", error: 
     )
 
 
-@router.get("/PROD/login", response_class=HTMLResponse, response_model=None)
+@protocol_router.get("/PROD/login", response_class=HTMLResponse, response_model=None)
 def depot_login_page(
     request: Request,
     next: str = Query("/PROD/"),
@@ -12818,7 +12924,7 @@ def depot_login_page(
     return depot_login_response(request, return_to=return_to, db=db)
 
 
-@router.post("/PROD/login", response_model=None)
+@protocol_router.post("/PROD/login", response_model=None)
 def depot_login(
     request: Request,
     username: str = Form(...),
@@ -12864,7 +12970,7 @@ def depot_login(
     return RedirectResponse(return_to, status_code=303)
 
 
-@router.post("/PROD/logout", response_model=None)
+@protocol_router.post("/PROD/logout", response_model=None)
 def depot_logout(request: Request, csrf: str = Form(...), next: str = Form("/")) -> RedirectResponse:
     """Handle the depot logout endpoint.
 
@@ -12881,7 +12987,7 @@ def depot_logout(request: Request, csrf: str = Form(...), next: str = Form("/"))
     return RedirectResponse(next if next in {"/", "/PROD/"} else "/", status_code=303)
 
 
-@router.get("/PROD/auth-check", response_model=None)
+@protocol_router.get("/PROD/auth-check", response_model=None)
 def depot_auth_check(
     request: Request,
     identity: Identity | None = Depends(get_session_identity),
@@ -12905,8 +13011,8 @@ def depot_auth_check(
     return Response(status_code=401)
 
 
-@router.get("/PROD/auth-failure", response_model=None)
-@router.head("/PROD/auth-failure", response_model=None)
+@protocol_router.get("/PROD/auth-failure", response_model=None)
+@protocol_router.head("/PROD/auth-failure", response_model=None)
 def depot_auth_failure(request: Request, db: Session = Depends(get_db)) -> Response:
     """Handle the depot auth failure endpoint.
 
@@ -12925,10 +13031,10 @@ def depot_auth_failure(request: Request, db: Session = Depends(get_db)) -> Respo
     return Response(status_code=401, headers={"WWW-Authenticate": 'Basic realm="VCF Offline Depot"'})
 
 
-@router.get("/PROD/", response_class=HTMLResponse, response_model=None)
-@router.head("/PROD/", response_class=HTMLResponse, response_model=None)
-@router.get("/PROD/{depot_path:path}", response_class=HTMLResponse, response_model=None)
-@router.head("/PROD/{depot_path:path}", response_class=HTMLResponse, response_model=None)
+@protocol_router.get("/PROD/", response_class=HTMLResponse, response_model=None)
+@protocol_router.head("/PROD/", response_class=HTMLResponse, response_model=None)
+@protocol_router.get("/PROD/{depot_path:path}", response_class=HTMLResponse, response_model=None)
+@protocol_router.head("/PROD/{depot_path:path}", response_class=HTMLResponse, response_model=None)
 def public_depot_browser(
     request: Request,
     depot_path: str = "",
@@ -12987,12 +13093,12 @@ def public_terminal_login_response(
         "ca_request_login.html",
         {
             "error": error,
-            "return_to": "/terminal",
-            "login_action": "/login",
+            "return_to": public_ui_path("/terminal"),
+            "login_action": public_ui_path("/login"),
             "portal_title": "Atlaso Web Terminal",
             "login_heading": "Sign in to Web Terminal",
             "login_copy": "Use a Atlaso local user with Web SSH access enabled.",
-            "back_href": "/",
+            "back_href": PUBLIC_UI_ROOT,
             "back_label": "Back to Public Services",
             **public_portal_links_context(db),
         },
@@ -13036,8 +13142,6 @@ def login_page(
     return_to = safe_login_next(next)
     if identity:
         return RedirectResponse(return_to, status_code=303)
-    if return_to == "/terminal" and request_allows_public_service(db, request, "web_terminal"):
-        return public_terminal_login_response(request, db=db)
     return render(request, "login.html", {"error": None, "return_to": return_to})
 
 
@@ -13049,7 +13153,7 @@ def login(
     next: str = Form(""),
     csrf: str = Form(...),
     db: Session = Depends(get_db),
-) -> RedirectResponse | HTMLResponse | JSONResponse:
+) -> RedirectResponse | HTMLResponse | JSONResponse | Response:
     """Handle the login endpoint.
 
     Args:
@@ -13065,18 +13169,9 @@ def login(
     """
     verify_csrf(request, csrf)
     return_to = safe_login_next(next)
-    public_terminal_login = return_to == "/terminal" and request_allows_public_service(db, request, "web_terminal")
     user = authenticate_user(db, username, password)
-    if user is None and public_terminal_login:
-        local_user = db.execute(select(User).where(User.username == username.strip().lower())).scalar_one_or_none()
-        if local_user_has_web_terminal_access(local_user):
-            authentication = SystemAdapter().authenticate_local_user(local_user.username, password)
-            if authentication.returncode == 0 and not authentication.dry_run:
-                user = local_user
     if not user:
         record_audit(db, actor=username, action="ui_login_failed", resource_type="auth", success=False)
-        if public_terminal_login:
-            return public_terminal_login_response(request, error="Invalid username or password", status_code=401, db=db)
         return render(request, "login.html", {"error": "Invalid username or password", "return_to": return_to})
     request.session["user_id"] = user.id
     request.session[SESSION_APPLIANCE_INSTANCE_SESSION_KEY] = ensure_appliance_instance_id(db)
@@ -13098,9 +13193,83 @@ def logout(request: Request, csrf: str = Form(...), next: str = Form("")) -> Red
     """
     verify_csrf(request, csrf)
     request.session.clear()
-    if next == "/terminal":
-        return RedirectResponse("/login?next=/terminal", status_code=303)
-    return RedirectResponse("/login", status_code=303)
+    return RedirectResponse(management_ui_path("/login"), status_code=303)
+
+
+@public_router.get("/login", response_class=HTMLResponse, response_model=None)
+def public_login_page(
+    request: Request,
+    next: str = Query(""),
+    identity: Identity | None = Depends(get_session_identity),
+    db: Session = Depends(get_db),
+) -> HTMLResponse | RedirectResponse:
+    """Render the public-plane Web Terminal sign-in page.
+
+    Args:
+        request: Incoming HTTP request.
+        next: Requested same-plane return path.
+        identity: Optional authenticated session identity.
+        db: Active database session.
+    """
+    if not public_ui_request_allowed(request, db, "/terminal"):
+        raise HTTPException(status_code=404, detail="Not found")
+    return_to = safe_public_return_path(next, default="/terminal")
+    if identity:
+        return RedirectResponse(return_to, status_code=303)
+    return public_terminal_login_response(request, db=db)
+
+
+@public_router.post("/login", response_model=None)
+def public_login(
+    request: Request,
+    username: str = Form(...),
+    password: str = Form(...),
+    next: str = Form(""),
+    csrf: str = Form(...),
+    db: Session = Depends(get_db),
+) -> RedirectResponse | HTMLResponse:
+    """Authenticate an eligible local user for the public Web Terminal.
+
+    Args:
+        request: Incoming HTTP request.
+        username: Local account name supplied for authentication.
+        password: Password supplied for the immediate authentication attempt.
+        next: Requested same-plane return path.
+        csrf: Validated CSRF token authorizing the request.
+        db: Active database session.
+    """
+    if not public_ui_request_allowed(request, db, "/terminal"):
+        raise HTTPException(status_code=404, detail="Not found")
+    verify_csrf(request, csrf)
+    return_to = safe_public_return_path(next, default="/terminal")
+    user = authenticate_user(db, username, password)
+    if user is None:
+        local_user = db.execute(select(User).where(User.username == username.strip().lower())).scalar_one_or_none()
+        if local_user_has_web_terminal_access(local_user):
+            authentication = SystemAdapter().authenticate_local_user(local_user.username, password)
+            if authentication.returncode == 0 and not authentication.dry_run:
+                user = local_user
+    if not user:
+        record_audit(db, actor=username, action="public_ui_login_failed", resource_type="auth", success=False)
+        return public_terminal_login_response(request, error="Invalid username or password", status_code=401, db=db)
+    request.session["user_id"] = user.id
+    request.session[SESSION_APPLIANCE_INSTANCE_SESSION_KEY] = ensure_appliance_instance_id(db)
+    record_audit(db, actor=user.username, action="public_ui_login", resource_type="auth")
+    return RedirectResponse(return_to, status_code=303)
+
+
+@public_router.post("/logout", response_model=None)
+def public_logout(request: Request, csrf: str = Form(...), next: str = Form("")) -> RedirectResponse:
+    """End a public-plane session without crossing into management.
+
+    Args:
+        request: Incoming HTTP request.
+        csrf: Validated CSRF token authorizing the request.
+        next: Requested same-plane return path.
+    """
+    verify_csrf(request, csrf)
+    request.session.clear()
+    return RedirectResponse(safe_public_return_path(next, default="/terminal"), status_code=303)
 
 
 @router.post("/appliance/power/{action}", response_model=None)
@@ -19312,7 +19481,7 @@ def certificate_authority_page(
     return render(request, "certificate_authority.html", {"identity": identity, **ca_context(db), "appliance_apply_status": appliance_apply_status(db, "ca")})
 
 
-@router.get("/ca", response_class=HTMLResponse, response_model=None)
+@public_router.get("/ca", response_class=HTMLResponse, response_model=None)
 def public_ca_page(
     request: Request,
     identity: Identity | None = Depends(get_session_identity),
@@ -19331,7 +19500,7 @@ def public_ca_page(
     Raises:
         HTTPException: If the request cannot be fulfilled.
     """
-    if not request_public_service_route_allowed(db, request, "ca"):
+    if not public_ui_request_allowed(request, db, "/ca"):
         raise HTTPException(status_code=404, detail="CA public service is not available on this interface")
     return render(request, "ca_public.html", {"identity": identity, **public_ca_context(db)})
 
@@ -19350,11 +19519,11 @@ def ca_public_login_response(request: Request, *, error: str | None = None, stat
         "ca_request_login.html",
         {
             "error": error,
-            "return_to": "/ca",
-            "login_action": "/ca/login",
+            "return_to": public_ui_path("/ca"),
+            "login_action": public_ui_path("/ca/login"),
             "portal_title": "Atlaso CA",
             "portal_subtitle": "Public trust portal",
-            "back_href": "/ca",
+            "back_href": public_ui_path("/ca"),
             "back_label": "Cancel",
             **(public_portal_links_context(db) if db else {}),
         },
@@ -19394,7 +19563,7 @@ def authenticate_ca_portal_session(
     return RedirectResponse(next_path, status_code=303)
 
 
-@router.get("/ca/login", response_class=HTMLResponse, response_model=None)
+@public_router.get("/ca/login", response_class=HTMLResponse, response_model=None)
 def ca_public_login_page(request: Request, db: Session = Depends(get_db)) -> HTMLResponse:
     """Handle the ca public login page endpoint.
 
@@ -19408,18 +19577,18 @@ def ca_public_login_page(request: Request, db: Session = Depends(get_db)) -> HTM
     Raises:
         HTTPException: If the request cannot be fulfilled.
     """
-    if not request_public_service_route_allowed(db, request, "ca"):
+    if not public_ui_request_allowed(request, db, "/ca"):
         raise HTTPException(status_code=404, detail="CA public service is not available on this interface")
     return ca_public_login_response(request, db=db)
 
 
-@router.post("/ca/login", response_model=None)
+@public_router.post("/ca/login", response_model=None)
 def ca_public_login(
     request: Request,
     username: str = Form(...),
     password: str = Form(...),
     csrf: str = Form(...),
-    next: str = Form("/ca"),
+    next: str = Form(PUBLIC_UI_ROOT + "/ca"),
     db: Session = Depends(get_db),
 ) -> RedirectResponse | HTMLResponse:
     """Handle the ca public login endpoint.
@@ -19438,15 +19607,18 @@ def ca_public_login(
     Raises:
         HTTPException: If the request cannot be fulfilled.
     """
-    if not request_public_service_route_allowed(db, request, "ca"):
+    if not public_ui_request_allowed(request, db, "/ca"):
         raise HTTPException(status_code=404, detail="CA public service is not available on this interface")
+    return_to = safe_public_return_path(next, default="/ca")
+    if return_to != public_ui_path("/ca"):
+        return_to = public_ui_path("/ca")
     return authenticate_ca_portal_session(
         request,
         db,
         username=username,
         password=password,
         csrf=csrf,
-        next_path="/ca" if next != "/ca" else next,
+        next_path=return_to,
         failure_response=lambda failed_request, *, error=None, status_code=200: ca_public_login_response(
             failed_request,
             error=error,
@@ -19477,7 +19649,7 @@ def public_root_ca_response(db: Session, *, bundle: bool = False) -> Response:
     )
 
 
-@router.get("/ca/downloads/root-ca.pem", response_model=None)
+@protocol_router.get("/ca/downloads/root-ca.pem", response_model=None)
 def download_public_root_ca(
     request: Request,
     db: Session = Depends(get_db),
@@ -19499,7 +19671,7 @@ def download_public_root_ca(
     return public_root_ca_response(db)
 
 
-@router.get("/ca/downloads/ca-bundle.pem", response_model=None)
+@protocol_router.get("/ca/downloads/ca-bundle.pem", response_model=None)
 def download_public_ca_bundle(
     request: Request,
     db: Session = Depends(get_db),
@@ -19555,14 +19727,14 @@ def ca_request_portal_login_response(request: Request, *, error: str | None = No
         "ca_request_login.html",
         {
             "error": error,
-            "return_to": "/requests",
+            "return_to": public_ui_path("/ca/requests"),
             **(public_portal_links_context(db) if db else {}),
         },
         status_code=status_code,
     )
 
 
-@router.get("/requests", response_class=HTMLResponse, response_model=None)
+@public_router.get("/ca/requests", response_class=HTMLResponse, response_model=None)
 def ca_portal_requests_page(
     request: Request,
     identity: Identity | None = Depends(get_session_identity),
@@ -19581,7 +19753,7 @@ def ca_portal_requests_page(
     Raises:
         HTTPException: If the request cannot be fulfilled.
     """
-    if not request_public_service_route_allowed(db, request, "ca"):
+    if not public_ui_request_allowed(request, db, "/ca/requests"):
         raise HTTPException(status_code=404, detail="CA public service is not available on this interface")
     if identity is None:
         return ca_request_portal_login_response(request, db=db)
@@ -19589,13 +19761,13 @@ def ca_portal_requests_page(
     return render(request, "ca_request_portal.html", {"identity": identity, **ca_request_context(db)})
 
 
-@router.post("/requests/login", response_model=None)
+@public_router.post("/ca/requests/login", response_model=None)
 def ca_request_portal_login(
     request: Request,
     username: str = Form(...),
     password: str = Form(...),
     csrf: str = Form(...),
-    next: str = Form("/requests"),
+    next: str = Form(PUBLIC_UI_ROOT + "/ca/requests"),
     db: Session = Depends(get_db),
 ) -> RedirectResponse | HTMLResponse:
     """Handle the ca request portal login endpoint.
@@ -19614,7 +19786,7 @@ def ca_request_portal_login(
     Raises:
         HTTPException: If the request cannot be fulfilled.
     """
-    if not request_public_service_route_allowed(db, request, "ca"):
+    if not public_ui_request_allowed(request, db, "/ca/requests"):
         raise HTTPException(status_code=404, detail="CA public service is not available on this interface")
     return authenticate_ca_portal_session(
         request,
@@ -19622,7 +19794,7 @@ def ca_request_portal_login(
         username=username,
         password=password,
         csrf=csrf,
-        next_path="/requests" if next != "/requests" else next,
+        next_path=safe_public_return_path(next, default="/ca/requests"),
         failure_response=lambda failed_request, *, error=None, status_code=200: ca_request_portal_login_response(
             failed_request,
             error=error,
@@ -19632,8 +19804,12 @@ def ca_request_portal_login(
     )
 
 
-@router.post("/requests/logout", response_model=None)
-def ca_request_portal_logout(request: Request, csrf: str = Form(...), next: str = Form("/requests")) -> RedirectResponse:
+@public_router.post("/ca/requests/logout", response_model=None)
+def ca_request_portal_logout(
+    request: Request,
+    csrf: str = Form(...),
+    next: str = Form(PUBLIC_UI_ROOT + "/ca/requests"),
+) -> RedirectResponse:
     """Handle the ca request portal logout endpoint.
 
     Args:
@@ -19646,7 +19822,7 @@ def ca_request_portal_logout(request: Request, csrf: str = Form(...), next: str 
     """
     verify_csrf(request, csrf)
     request.session.clear()
-    return RedirectResponse(next if next in {"/", "/ca"} else "/requests", status_code=303)
+    return RedirectResponse(safe_public_return_path(next, default="/ca/requests"), status_code=303)
 
 
 def _stage_ca_certificate_request(
@@ -19763,7 +19939,7 @@ def submit_ca_request_from_portal(
     return RedirectResponse("/ca/requests", status_code=303)
 
 
-@router.post("/requests", response_model=None)
+@public_router.post("/ca/requests", response_model=None)
 def submit_ca_request_from_portal_alias(
     request: Request,
     common_name: str = Form(...),
@@ -19796,7 +19972,7 @@ def submit_ca_request_from_portal_alias(
     Raises:
         HTTPException: If the request cannot be fulfilled.
     """
-    if not request_public_service_route_allowed(db, request, "ca"):
+    if not public_ui_request_allowed(request, db, "/ca/requests"):
         raise HTTPException(status_code=404, detail="CA public service is not available on this interface")
     if identity is None:
         return ca_request_portal_login_response(request, status_code=401)
@@ -19819,7 +19995,7 @@ def submit_ca_request_from_portal_alias(
         csr_text=csr_text,
     )
     record_audit(db, actor=identity.username, action="submit_ca_certificate_request", resource_type="ca_certificate", resource_id=str(certificate.id))
-    return RedirectResponse("/requests", status_code=303)
+    return RedirectResponse(public_ui_path("/ca/requests"), status_code=303)
 
 
 @router.post("/ca/certificates/{certificate_id}/revoke", response_model=None)
@@ -19851,8 +20027,7 @@ def revoke_ca_certificate_from_portal(
     return RedirectResponse("/ca/requests", status_code=303)
 
 
-@router.post("/requests/certificates/{certificate_id}/revoke", response_model=None)
-@router.post("/certificates/{certificate_id}/revoke", response_model=None)
+@public_router.post("/ca/requests/certificates/{certificate_id}/revoke", response_model=None)
 def revoke_ca_certificate_from_portal_alias(
     request: Request,
     certificate_id: int,
@@ -19877,7 +20052,7 @@ def revoke_ca_certificate_from_portal_alias(
     Raises:
         HTTPException: If the request cannot be fulfilled.
     """
-    if not request_public_service_route_allowed(db, request, "ca"):
+    if not public_ui_request_allowed(request, db, "/ca/requests"):
         raise HTTPException(status_code=404, detail="CA public service is not available on this interface")
     if identity is None:
         return ca_request_portal_login_response(request, status_code=401)
@@ -19885,10 +20060,10 @@ def revoke_ca_certificate_from_portal_alias(
     verify_csrf(request, csrf)
     certificate = _revoke_ca_certificate(db, certificate_id=certificate_id, actor=identity.username, reason=reason)
     record_audit(db, actor=identity.username, action="revoke_ca_certificate", resource_type="ca_certificate", resource_id=str(certificate.id))
-    return RedirectResponse("/requests", status_code=303)
+    return RedirectResponse(public_ui_path("/ca/requests"), status_code=303)
 
 
-@router.get("/certificate-authority/downloads/root-ca.pem", response_model=None)
+@protocol_router.get("/certificate-authority/downloads/root-ca.pem", response_model=None)
 def download_root_ca(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
@@ -19916,7 +20091,7 @@ def download_root_ca(
     )
 
 
-@router.get("/certificate-authority/downloads/ca-bundle.pem", response_model=None)
+@protocol_router.get("/certificate-authority/downloads/ca-bundle.pem", response_model=None)
 def download_ca_bundle(
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
@@ -19963,7 +20138,7 @@ def get_exportable_ca_certificate(db: Session, certificate_id: int) -> CaCertifi
     return certificate
 
 
-@router.get("/certificate-authority/certificates/{certificate_id}/downloads/certificate.pem", response_model=None)
+@protocol_router.get("/certificate-authority/certificates/{certificate_id}/downloads/certificate.pem", response_model=None)
 def download_ca_certificate(
     certificate_id: int,
     identity: Identity = Depends(require_session_identity),
@@ -19989,7 +20164,7 @@ def download_ca_certificate(
     )
 
 
-@router.get("/certificate-authority/certificates/{certificate_id}/downloads/chain.pem", response_model=None)
+@protocol_router.get("/certificate-authority/certificates/{certificate_id}/downloads/chain.pem", response_model=None)
 def download_ca_certificate_chain(
     certificate_id: int,
     identity: Identity = Depends(require_session_identity),
@@ -20016,7 +20191,7 @@ def download_ca_certificate_chain(
     )
 
 
-@router.get("/certificate-authority/certificates/{certificate_id}/downloads/private-key.pem", response_model=None)
+@protocol_router.get("/certificate-authority/certificates/{certificate_id}/downloads/private-key.pem", response_model=None)
 def download_ca_certificate_private_key(
     certificate_id: int,
     identity: Identity = Depends(require_session_identity),
@@ -21991,7 +22166,7 @@ async def import_ldap_recovery_from_ui(
     return RedirectResponse("/backup-restore#ldap-directory-recovery", status_code=303)
 
 
-@router.get("/kms", response_class=HTMLResponse, response_model=None)
+@router.get("/vsphere-key-providers", response_class=HTMLResponse, response_model=None)
 def kms_page(
     request: Request,
     identity: Identity = Depends(require_session_identity),
@@ -22010,23 +22185,56 @@ def kms_page(
     return render(request, "kms.html", {"identity": identity, **kms_context(db), "appliance_apply_status": appliance_apply_status(db, "kms")})
 
 
-@router.post("/kms/settings", response_model=None)
+@router.get("/vsphere-key-providers/server-certificate.pem", response_model=None)
+def download_vsphere_key_provider_server_chain(
+    identity: Identity = Depends(require_session_identity),
+    db: Session = Depends(get_db),
+) -> Response:
+    """Download the public appliance-wide KMIP server certificate chain.
+
+    Args:
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        Public PEM certificate-chain attachment.
+    """
+    certificate = db.execute(
+        select(CaCertificate)
+        .where(CaCertificate.managed_owner == "kms:server")
+        .order_by(CaCertificate.id.desc())
+    ).scalars().first()
+    if certificate is None or not certificate.certificate_pem:
+        raise HTTPException(status_code=404, detail="The public server certificate chain is not available.")
+    chain = certificate.chain_pem or certificate.certificate_pem
+    record_audit(
+        db,
+        actor=identity.username,
+        action="download_vsphere_key_provider_server_chain",
+        resource_type="vsphere_key_provider_settings",
+        resource_id="server-certificate",
+        detail="public_chain=true",
+    )
+    return Response(
+        chain.encode("utf-8"),
+        media_type="application/x-pem-file",
+        headers={
+            "Cache-Control": "no-store",
+            "Content-Disposition": 'attachment; filename="atlaso-kmip-server-chain.pem"',
+        },
+    )
+
+
+@router.post("/vsphere-key-providers/settings", response_model=None)
 def update_kms_settings_from_ui(
     request: Request,
     enabled: str | None = Form(None),
-    backend: str = Form("atlaso-kmip"),
     listen_interfaces: list[str] = Form(default_factory=list),
     listen_addresses: list[str] = Form(default_factory=list),
     listen_interfaces_present: str | None = Form(None),
     listen_addresses_present: str | None = Form(None),
-    listen_interface: str = Form(""),
-    listen_address: str = Form(""),
     port: int = Form(5696),
     hostname: str = Form("kms.atlaso.internal"),
-    server_certificate: str | None = Form(None),
-    require_client_cert: str | None = Form(None),
-    allow_register: str | None = Form(None),
-    allow_destroy: str | None = Form(None),
     csrf: str = Form(...),
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
@@ -22036,19 +22244,12 @@ def update_kms_settings_from_ui(
     Args:
         request: Incoming HTTP request.
         enabled: Whether the requested behavior is enabled.
-        backend: Backend supplied by the caller.
         listen_interfaces: Interfaces on which the service should listen.
         listen_addresses: Addresses on which the service should listen.
         listen_interfaces_present: Whether the caller supplied listen interfaces.
         listen_addresses_present: Whether the caller supplied listen addresses.
-        listen_interface: Interface on which the service should listen.
-        listen_address: Address on which the service should listen.
         port: TCP or UDP port of the target service.
         hostname: DNS hostname of the target resource.
-        server_certificate: Server certificate supplied by the caller.
-        require_client_cert: Require client cert supplied by the caller.
-        allow_register: Allow register supplied by the caller.
-        allow_destroy: Allow destroy supplied by the caller.
         csrf: Validated CSRF token authorizing the request.
         identity: Authenticated identity authorizing the request.
         db: Active database session.
@@ -22061,8 +22262,8 @@ def update_kms_settings_from_ui(
     previous_hostname = settings.hostname
     selected_interfaces, selected_addresses = resolve_service_bind_targets(
         db,
-        [*listen_interfaces, listen_interface],
-        [*listen_addresses, listen_address],
+        listen_interfaces,
+        listen_addresses,
         current_interface=settings.listen_interface,
         current_address=settings.listen_address,
         listen_interfaces_present=listen_interfaces_present,
@@ -22073,7 +22274,13 @@ def update_kms_settings_from_ui(
     settings.listen_interface = selected_interfaces
     settings.listen_address = selected_addresses
     settings.port = port
-    settings.hostname = normalize_dns_hostname(hostname.strip() or "kms.atlaso.internal")
+    try:
+        settings.hostname = normalize_vsphere_service_hostname(hostname.strip() or "kms.atlaso.internal")
+    except ValueError:
+        raise HTTPException(
+            status_code=422,
+            detail="vSphere Key Provider hostname must be a valid fully qualified DNS name.",
+        ) from None
     settings.server_certificate = settings.hostname
     settings.ca_certificate_path = settings.ca_certificate_path.strip() or "/etc/atlaso/ca/root.crt"
     settings.database_path = KMS_DEFAULT_DATABASE_PATH
@@ -22108,7 +22315,424 @@ def update_kms_settings_from_ui(
                 "config_preview": context["kms_config_preview"],
             }
         )
-    return RedirectResponse("/kms", status_code=303)
+    return RedirectResponse(management_ui_path("/vsphere-key-providers"), status_code=303)
+
+
+def _vsphere_grid_error(
+    request: Request,
+    identity: Identity,
+    db: Session,
+    detail: str,
+    status_code: int = 409,
+) -> HTMLResponse | JSONResponse:
+    """Return a consistent provider-management browser error.
+
+    Args:
+        request: Incoming HTTP request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+        detail: Public error detail.
+        status_code: HTTP status code returned to the browser.
+    """
+    return grid_error_response(
+        request,
+        detail=detail,
+        status_code=status_code,
+        template_name="kms.html",
+        context={
+            "identity": identity,
+            **kms_context(db),
+            "appliance_apply_status": appliance_apply_status(db, "kms"),
+            "form_error": detail,
+        },
+    )
+
+
+@router.post("/vsphere-key-providers/providers", response_model=None)
+def create_vsphere_provider_from_ui(
+    request: Request,
+    name: str = Form(...),
+    description: str = Form(""),
+    enabled: str | None = Form(None),
+    csrf: str = Form(...),
+    identity: Identity = Depends(require_session_identity),
+    db: Session = Depends(get_db),
+) -> RedirectResponse | HTMLResponse | JSONResponse:
+    """Create a provider namespace from the shared browser wizard.
+
+    Args:
+        request: Incoming HTTP request.
+        name: Unique provider name.
+        description: Operator-facing provider purpose.
+        enabled: Submitted desired-state enablement.
+        csrf: Validated CSRF token.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+    """
+    verify_csrf(request, csrf)
+    provider = VsphereKeyProvider(
+        id=str(uuid4()),
+        name=name.strip(),
+        description=description.strip(),
+        enabled=enabled == "on",
+    )
+    db.add(provider)
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        return _vsphere_grid_error(request, identity, db, "Provider name already exists.")
+    record_audit(db, actor=identity.username, action="create_vsphere_key_provider", resource_type="vsphere_key_provider", resource_id=provider.id, detail=f"name={provider.name}; enabled={provider.enabled}")
+    refreshed = next(item for item in provider_rows(db) if item.id == provider.id)
+    return grid_saved_response(request, redirect_url=management_ui_path("/vsphere-key-providers"), resource_name="provider", resource=provider_to_dict(refreshed))
+
+
+@router.post("/vsphere-key-providers/providers/{provider_id}/edit", response_model=None)
+def edit_vsphere_provider_from_ui(
+    request: Request,
+    provider_id: str,
+    name: str = Form(...),
+    description: str = Form(""),
+    enabled: str | None = Form(None),
+    csrf: str = Form(...),
+    identity: Identity = Depends(require_session_identity),
+    db: Session = Depends(get_db),
+) -> RedirectResponse | HTMLResponse | JSONResponse:
+    """Update a provider namespace from the shared browser wizard.
+
+    Args:
+        request: Incoming HTTP request.
+        provider_id: Immutable provider UUID.
+        name: Unique provider name.
+        description: Operator-facing provider purpose.
+        enabled: Submitted desired-state enablement.
+        csrf: Validated CSRF token.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+    """
+    verify_csrf(request, csrf)
+    provider = db.get(VsphereKeyProvider, provider_id)
+    if provider is None:
+        raise HTTPException(status_code=404, detail="vSphere Key Provider not found.")
+    provider.name = name.strip()
+    provider.description = description.strip()
+    provider.enabled = enabled == "on"
+    provider.updated_at = utcnow()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        return _vsphere_grid_error(request, identity, db, "Provider name already exists.")
+    record_audit(db, actor=identity.username, action="update_vsphere_key_provider", resource_type="vsphere_key_provider", resource_id=provider.id, detail=f"name={provider.name}; enabled={provider.enabled}")
+    refreshed = next(item for item in provider_rows(db) if item.id == provider.id)
+    return grid_saved_response(request, redirect_url=management_ui_path("/vsphere-key-providers"), resource_name="provider", resource=provider_to_dict(refreshed))
+
+
+@router.post("/vsphere-key-providers/providers/{provider_id}/delete", response_model=None)
+def delete_vsphere_provider_from_ui(
+    request: Request,
+    provider_id: str,
+    csrf: str = Form(...),
+    identity: Identity = Depends(require_session_identity),
+    db: Session = Depends(get_db),
+) -> RedirectResponse | HTMLResponse | JSONResponse | Response:
+    """Delete an applied-disabled, detached, verified-empty provider namespace.
+
+    Args:
+        request: Incoming HTTP request.
+        provider_id: Immutable provider UUID.
+        csrf: Validated CSRF token.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+    """
+    verify_csrf(request, csrf)
+    provider = next((item for item in provider_rows(db) if item.id == provider_id), None)
+    if provider is None:
+        raise HTTPException(status_code=404, detail="vSphere Key Provider not found.")
+    if provider.enabled or provider.trusted_vcenters:
+        return _vsphere_grid_error(request, identity, db, "Disable the provider and detach every trusted vCenter before deletion.")
+    if provider_requires_appliance_apply(provider):
+        return _vsphere_grid_error(
+            request,
+            identity,
+            db,
+            "Apply the disabled and detached provider state before deletion.",
+        )
+    snapshot = runtime_status_snapshot()
+    counts = authenticated_provider_counts(snapshot, provider.id)
+    if counts is None or counts.get("total") != 0:
+        return _vsphere_grid_error(request, identity, db, "Authenticated zero-key runtime evidence is required before deletion.")
+    name = provider.name
+    db.delete(provider)
+    db.commit()
+    record_audit(db, actor=identity.username, action="delete_vsphere_key_provider", resource_type="vsphere_key_provider", resource_id=provider_id, detail=f"name={name}; verified_empty=true")
+    if grid_request(request):
+        return Response(status_code=204)
+    return RedirectResponse(management_ui_path("/vsphere-key-providers"), status_code=303)
+
+
+def _vsphere_vcenter_row(db: Session, provider_id: str, vcenter_id: str) -> VsphereTrustedVcenter:
+    """Return a browser provider-scoped vCenter record.
+
+    Args:
+        db: Active database session.
+        provider_id: Immutable provider UUID.
+        vcenter_id: Immutable trusted-vCenter UUID.
+    """
+    provider = next((item for item in provider_rows(db) if item.id == provider_id), None)
+    if provider is None:
+        raise HTTPException(status_code=404, detail="vSphere Key Provider not found.")
+    vcenter = next((item for item in provider.trusted_vcenters if item.id == vcenter_id), None)
+    if vcenter is None:
+        raise HTTPException(status_code=404, detail="Trusted vCenter not found.")
+    return vcenter
+
+
+def _attach_vsphere_public_certificate(
+    db: Session,
+    vcenter: VsphereTrustedVcenter,
+    certificate_pem: str,
+) -> VsphereTrustedVcenterCertificate | None:
+    """Attach optional public PEM input to a trusted vCenter.
+
+    Args:
+        db: Active database session.
+        vcenter: Provider-scoped trusted-vCenter record.
+        certificate_pem: Optional public X.509 PEM certificate.
+    """
+    if not certificate_pem.strip():
+        return None
+    parsed = parse_public_certificate(certificate_pem)
+    certificate = VsphereTrustedVcenterCertificate(
+        id=str(uuid4()),
+        trusted_vcenter_id=vcenter.id,
+        source="uploaded_public",
+        **parsed,
+    )
+    db.add(certificate)
+    return certificate
+
+
+@router.post("/vsphere-key-providers/trusted-vcenters", response_model=None)
+def create_vsphere_vcenter_from_ui(
+    request: Request,
+    provider_id: str = Form(...),
+    name: str = Form(...),
+    hostname: str = Form(""),
+    description: str = Form(""),
+    certificate_pem: str = Form(""),
+    enabled: str | None = Form(None),
+    csrf: str = Form(...),
+    identity: Identity = Depends(require_session_identity),
+    db: Session = Depends(get_db),
+) -> RedirectResponse | HTMLResponse | JSONResponse:
+    """Create a trusted vCenter and its initial public certificate.
+
+    Args:
+        request: Incoming HTTP request.
+        provider_id: Immutable provider UUID.
+        name: Unique trusted-vCenter name within the provider.
+        hostname: Operational vCenter hostname label.
+        description: Operator-facing trusted-vCenter purpose.
+        certificate_pem: Initial public X.509 PEM certificate.
+        enabled: Submitted desired-state enablement.
+        csrf: Validated CSRF token.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+    """
+    verify_csrf(request, csrf)
+    provider = db.get(VsphereKeyProvider, provider_id)
+    if provider is None:
+        raise HTTPException(status_code=404, detail="vSphere Key Provider not found.")
+    try:
+        vcenter = VsphereTrustedVcenter(id=str(uuid4()), provider_id=provider.id, name=name.strip(), hostname=normalize_vsphere_vcenter_hostname(hostname), description=description.strip(), enabled=enabled == "on")
+        db.add(vcenter)
+        db.flush()
+        certificate = _attach_vsphere_public_certificate(db, vcenter, certificate_pem)
+        if vcenter.enabled and certificate is None:
+            raise ValueError("An enabled trusted vCenter requires a current public client certificate.")
+        mark_provider_desired_changed(provider)
+        db.commit()
+    except ValueError:
+        db.rollback()
+        return _vsphere_grid_error(request, identity, db, "The trusted vCenter details or public certificate are invalid.", 400)
+    except IntegrityError:
+        db.rollback()
+        return _vsphere_grid_error(request, identity, db, "Trusted vCenter name or certificate fingerprint is already assigned.")
+    record_audit(db, actor=identity.username, action="create_vsphere_trusted_vcenter", resource_type="vsphere_trusted_vcenter", resource_id=vcenter.id, detail=f"provider_id={provider.id}; name={vcenter.name}; enabled={vcenter.enabled}; public_certificate={bool(certificate)}")
+    refreshed = _vsphere_vcenter_row(db, provider.id, vcenter.id)
+    return grid_saved_response(request, redirect_url=management_ui_path("/vsphere-key-providers"), resource_name="trusted_vcenter", resource=trusted_vcenter_to_dict(refreshed), extra={"certificates": [certificate_to_dict(item) for item in refreshed.certificates]})
+
+
+@router.post("/vsphere-key-providers/trusted-vcenters/{vcenter_id}/edit", response_model=None)
+def edit_vsphere_vcenter_from_ui(
+    request: Request,
+    vcenter_id: str,
+    provider_id: str = Form(...),
+    name: str = Form(...),
+    hostname: str = Form(""),
+    description: str = Form(""),
+    certificate_pem: str = Form(""),
+    enabled: str | None = Form(None),
+    csrf: str = Form(...),
+    identity: Identity = Depends(require_session_identity),
+    db: Session = Depends(get_db),
+) -> RedirectResponse | HTMLResponse | JSONResponse:
+    """Update a trusted vCenter and optionally add one public certificate.
+
+    Args:
+        request: Incoming HTTP request.
+        vcenter_id: Immutable trusted-vCenter UUID.
+        provider_id: Immutable owning provider UUID.
+        name: Unique trusted-vCenter name within the provider.
+        hostname: Operational vCenter hostname label.
+        description: Operator-facing trusted-vCenter purpose.
+        certificate_pem: Optional replacement public X.509 PEM certificate.
+        enabled: Submitted desired-state enablement.
+        csrf: Validated CSRF token.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+    """
+    verify_csrf(request, csrf)
+    vcenter = db.get(VsphereTrustedVcenter, vcenter_id)
+    if vcenter is None:
+        raise HTTPException(status_code=404, detail="Trusted vCenter not found.")
+    if vcenter.provider_id != provider_id:
+        return _vsphere_grid_error(request, identity, db, "A trusted vCenter cannot move between provider namespaces.")
+    try:
+        vcenter.name = name.strip()
+        vcenter.hostname = normalize_vsphere_vcenter_hostname(hostname)
+        vcenter.description = description.strip()
+        vcenter.enabled = enabled == "on"
+        vcenter.updated_at = utcnow()
+        certificate = _attach_vsphere_public_certificate(db, vcenter, certificate_pem)
+        if vcenter.enabled and not vcenter.certificates and certificate is None:
+            raise ValueError("An enabled trusted vCenter requires a current public client certificate.")
+        mark_provider_desired_changed(vcenter.provider)
+        db.commit()
+    except ValueError:
+        db.rollback()
+        return _vsphere_grid_error(request, identity, db, "The trusted vCenter details or public certificate are invalid.", 400)
+    except IntegrityError:
+        db.rollback()
+        return _vsphere_grid_error(request, identity, db, "Trusted vCenter name or certificate fingerprint is already assigned.")
+    record_audit(db, actor=identity.username, action="update_vsphere_trusted_vcenter", resource_type="vsphere_trusted_vcenter", resource_id=vcenter.id, detail=f"provider_id={provider_id}; name={vcenter.name}; enabled={vcenter.enabled}; public_certificate_added={bool(certificate)}")
+    refreshed = _vsphere_vcenter_row(db, provider_id, vcenter.id)
+    return grid_saved_response(request, redirect_url=management_ui_path("/vsphere-key-providers"), resource_name="trusted_vcenter", resource=trusted_vcenter_to_dict(refreshed), extra={"certificates": [certificate_to_dict(item) for item in refreshed.certificates]})
+
+
+@router.post("/vsphere-key-providers/trusted-vcenters/{vcenter_id}/delete", response_model=None)
+def delete_vsphere_vcenter_from_ui(
+    request: Request,
+    vcenter_id: str,
+    csrf: str = Form(...),
+    identity: Identity = Depends(require_session_identity),
+    db: Session = Depends(get_db),
+) -> RedirectResponse | HTMLResponse | JSONResponse | Response:
+    """Delete a disabled trusted vCenter after certificate retirement.
+
+    Args:
+        request: Incoming HTTP request.
+        vcenter_id: Immutable trusted-vCenter UUID.
+        csrf: Validated CSRF token.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+    """
+    verify_csrf(request, csrf)
+    vcenter = db.get(VsphereTrustedVcenter, vcenter_id)
+    if vcenter is None:
+        raise HTTPException(status_code=404, detail="Trusted vCenter not found.")
+    provider_id = vcenter.provider_id
+    if vcenter.enabled or vcenter.certificates:
+        return _vsphere_grid_error(request, identity, db, "Disable the trusted vCenter and retire every certificate before deletion.")
+    name = vcenter.name
+    mark_provider_desired_changed(vcenter.provider)
+    db.delete(vcenter)
+    db.commit()
+    record_audit(db, actor=identity.username, action="delete_vsphere_trusted_vcenter", resource_type="vsphere_trusted_vcenter", resource_id=vcenter_id, detail=f"provider_id={provider_id}; name={name}")
+    if grid_request(request):
+        return Response(status_code=204)
+    return RedirectResponse(management_ui_path("/vsphere-key-providers"), status_code=303)
+
+
+@router.post("/vsphere-key-providers/trusted-vcenters/{vcenter_id}/certificates", response_model=None)
+def add_vsphere_certificate_from_ui(
+    request: Request,
+    vcenter_id: str,
+    provider_id: str = Form(...),
+    certificate_pem: str = Form(...),
+    csrf: str = Form(...),
+    identity: Identity = Depends(require_session_identity),
+    db: Session = Depends(get_db),
+) -> RedirectResponse | HTMLResponse | JSONResponse:
+    """Add one public certificate to an existing trusted vCenter.
+
+    Args:
+        request: Incoming HTTP request.
+        vcenter_id: Immutable trusted-vCenter UUID.
+        provider_id: Immutable owning provider UUID.
+        certificate_pem: Current public X.509 PEM certificate.
+        csrf: Validated CSRF token.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+    """
+    verify_csrf(request, csrf)
+    vcenter = _vsphere_vcenter_row(db, provider_id, vcenter_id)
+    try:
+        certificate = _attach_vsphere_public_certificate(db, vcenter, certificate_pem)
+        if certificate is None:
+            raise ValueError("A public certificate is required.")
+        mark_provider_desired_changed(vcenter.provider)
+        db.commit()
+    except ValueError:
+        db.rollback()
+        return _vsphere_grid_error(request, identity, db, "The public certificate is invalid.", 400)
+    except IntegrityError:
+        db.rollback()
+        return _vsphere_grid_error(request, identity, db, "Certificate fingerprint is already assigned.")
+    record_audit(db, actor=identity.username, action="add_vsphere_trusted_certificate", resource_type="vsphere_trusted_certificate", resource_id=certificate.id, detail=f"provider_id={provider_id}; trusted_vcenter_id={vcenter_id}; public_certificate=true")
+    refreshed = _vsphere_vcenter_row(db, provider_id, vcenter_id)
+    stored = next(item for item in refreshed.certificates if item.id == certificate.id)
+    return grid_saved_response(request, redirect_url=management_ui_path("/vsphere-key-providers"), resource_name="certificate", resource=certificate_to_dict(stored))
+
+
+@router.post("/vsphere-key-providers/trusted-vcenters/{vcenter_id}/certificates/{certificate_id}/delete", response_model=None)
+def retire_vsphere_certificate_from_ui(
+    request: Request,
+    vcenter_id: str,
+    certificate_id: str,
+    csrf: str = Form(...),
+    identity: Identity = Depends(require_session_identity),
+    db: Session = Depends(get_db),
+) -> RedirectResponse | HTMLResponse | JSONResponse | Response:
+    """Retire one exact public certificate trust assignment.
+
+    Args:
+        request: Incoming HTTP request.
+        vcenter_id: Immutable trusted-vCenter UUID.
+        certificate_id: Immutable public-certificate UUID.
+        csrf: Validated CSRF token.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+    """
+    verify_csrf(request, csrf)
+    vcenter = db.get(VsphereTrustedVcenter, vcenter_id)
+    if vcenter is None:
+        raise HTTPException(status_code=404, detail="Trusted vCenter not found.")
+    provider_id = vcenter.provider_id
+    certificate = next((item for item in vcenter.certificates if item.id == certificate_id), None)
+    if certificate is None:
+        raise HTTPException(status_code=404, detail="Certificate not found.")
+    usable = usable_certificates(vcenter)
+    if vcenter.enabled and certificate in usable and len(usable) <= 1:
+        return _vsphere_grid_error(request, identity, db, "Disable the trusted vCenter before retiring its last usable certificate.")
+    mark_provider_desired_changed(vcenter.provider)
+    db.delete(certificate)
+    db.commit()
+    record_audit(db, actor=identity.username, action="retire_vsphere_trusted_certificate", resource_type="vsphere_trusted_certificate", resource_id=certificate_id, detail=f"provider_id={provider_id}; trusted_vcenter_id={vcenter_id}")
+    if grid_request(request):
+        return Response(status_code=204)
+    return RedirectResponse(management_ui_path("/vsphere-key-providers"), status_code=303)
 
 
 @router.get("/ntp", response_class=HTMLResponse, response_model=None)
@@ -22358,434 +22982,6 @@ def update_ntp_settings_from_ui(
     return RedirectResponse("/ntp", status_code=303)
 
 
-def parse_kms_owner_client_id(raw_value: str | int | None) -> int | None:
-    """Parse kms owner client id.
-
-    Args:
-        raw_value: Candidate raw value to parse.
-
-
-    Returns:
-        The parsed kms owner client id.
-    """
-    if raw_value in {None, "", "None", "unassigned"}:
-        return None
-    return int(raw_value)
-
-
-@router.post("/kms/clients", response_model=None)
-def create_kms_client_from_ui(
-    request: Request,
-    name: str = Form(...),
-    certificate_subject: str = Form(...),
-    role: str = Form("service"),
-    allowed_operations: str = Form(
-        "locate,get,create,activate,get-attributes,get-attribute-list,query,discover-versions"
-    ),
-    description: str = Form(""),
-    enabled: str | None = Form(None),
-    csrf: str = Form(...),
-    identity: Identity = Depends(require_session_identity),
-    db: Session = Depends(get_db),
-) -> RedirectResponse | HTMLResponse | JSONResponse:
-    """Handle the create kms client from ui endpoint.
-
-    Args:
-        request: Incoming HTTP request.
-        name: Name of the target object.
-        certificate_subject: Certificate subject supplied by the caller.
-        role: Atlaso role used for authorization.
-        allowed_operations: Allowed operations supplied by the caller.
-        description: Human-readable description of the resource.
-        enabled: Whether the requested behavior is enabled.
-        csrf: Validated CSRF token authorizing the request.
-        identity: Authenticated identity authorizing the request.
-        db: Active database session.
-
-    Returns:
-        The endpoint response.
-    """
-    verify_csrf(request, csrf)
-    client = KmsClient(
-        name=name.strip(),
-        certificate_subject=certificate_subject.strip(),
-        role=role.strip() or "service",
-        allowed_operations=join_csv(split_csv(allowed_operations)),
-        description=description or None,
-        enabled=enabled == "on",
-    )
-    db.add(client)
-    try:
-        db.commit()
-    except IntegrityError:
-        db.rollback()
-        detail = f"KMS client {name} already exists."
-        return grid_error_response(
-            request,
-            detail=detail,
-            status_code=409,
-            template_name="kms.html",
-            context={"identity": identity, **kms_context(db), "form_error": detail},
-        )
-    record_audit(db, actor=identity.username, action="create_kms_client", resource_type="kms_client", resource_id=str(client.id))
-    return grid_saved_response(
-        request,
-        redirect_url="/kms",
-        resource_name="client",
-        resource=kms_client_to_dict(client),
-    )
-
-
-@router.post("/kms/clients/{client_id}/edit", response_model=None)
-def edit_kms_client_from_ui(
-    request: Request,
-    client_id: int,
-    name: str = Form(...),
-    certificate_subject: str = Form(...),
-    role: str = Form("service"),
-    allowed_operations: str = Form(
-        "locate,get,create,activate,get-attributes,get-attribute-list,query,discover-versions"
-    ),
-    description: str = Form(""),
-    enabled: str | None = Form(None),
-    csrf: str = Form(...),
-    identity: Identity = Depends(require_session_identity),
-    db: Session = Depends(get_db),
-) -> RedirectResponse | HTMLResponse | JSONResponse:
-    """Handle the edit kms client from ui endpoint.
-
-    Args:
-        request: Incoming HTTP request.
-        client_id: Identifier of the client.
-        name: Name of the target object.
-        certificate_subject: Certificate subject supplied by the caller.
-        role: Atlaso role used for authorization.
-        allowed_operations: Allowed operations supplied by the caller.
-        description: Human-readable description of the resource.
-        enabled: Whether the requested behavior is enabled.
-        csrf: Validated CSRF token authorizing the request.
-        identity: Authenticated identity authorizing the request.
-        db: Active database session.
-
-    Returns:
-        The endpoint response.
-
-    Raises:
-        HTTPException: If the request cannot be fulfilled.
-    """
-    verify_csrf(request, csrf)
-    client = db.get(KmsClient, client_id)
-    if not client:
-        raise HTTPException(status_code=404, detail="KMS client not found")
-    client.name = name.strip()
-    client.certificate_subject = certificate_subject.strip()
-    client.role = role.strip() or "service"
-    client.allowed_operations = join_csv(split_csv(allowed_operations))
-    client.description = description or None
-    client.enabled = enabled == "on"
-    client.updated_at = utcnow()
-    try:
-        db.commit()
-    except IntegrityError:
-        db.rollback()
-        detail = f"KMS client {name} already exists."
-        return grid_error_response(
-            request,
-            detail=detail,
-            status_code=409,
-            template_name="kms.html",
-            context={"identity": identity, **kms_context(db), "form_error": detail},
-        )
-    record_audit(db, actor=identity.username, action="update_kms_client", resource_type="kms_client", resource_id=str(client.id))
-    return grid_saved_response(
-        request,
-        redirect_url="/kms",
-        resource_name="client",
-        resource=kms_client_to_dict(client),
-    )
-
-
-@router.post("/kms/clients/{client_id}/retire-previous-certificate", response_model=None)
-def retire_previous_kms_client_certificate(
-    request: Request,
-    client_id: int,
-    csrf: str = Form(...),
-    identity: Identity = Depends(require_session_identity),
-    db: Session = Depends(get_db),
-) -> JSONResponse:
-    """Handle the retire previous kms client certificate endpoint.
-
-    Args:
-        request: Incoming HTTP request.
-        client_id: Identifier of the client.
-        csrf: Validated CSRF token authorizing the request.
-        identity: Authenticated identity authorizing the request.
-        db: Active database session.
-
-    Returns:
-        The endpoint response.
-
-    Raises:
-        HTTPException: If the request cannot be fulfilled.
-    """
-    verify_csrf(request, csrf)
-    client = db.get(KmsClient, client_id)
-    if not client:
-        raise HTTPException(status_code=404, detail="KMS client not found")
-    fingerprints = kms_client_fingerprints(client.certificate_fingerprint)
-    if len(fingerprints) < 2:
-        raise HTTPException(
-            status_code=409,
-            detail="KMS client has no previous certificate fingerprint to retire.",
-        )
-    certificate = db.execute(
-        select(CaCertificate).where(
-            CaCertificate.managed_owner == f"kms:client:{client.name}",
-            CaCertificate.status == "issued",
-        )
-    ).scalar_one_or_none()
-    current_fingerprint = (
-        certificate.fingerprint.casefold()
-        if certificate and certificate.fingerprint
-        else ""
-    )
-    if not current_fingerprint or current_fingerprint not in fingerprints:
-        raise HTTPException(
-            status_code=409,
-            detail="The current CA-issued KMS client certificate is not in the trusted overlap.",
-        )
-    client.certificate_fingerprint = current_fingerprint
-    client.updated_at = utcnow()
-    db.commit()
-    record_audit(
-        db,
-        actor=identity.username,
-        action="retire_previous_kms_client_certificate",
-        resource_type="kms_client",
-        resource_id=str(client.id),
-        detail="retired_previous_fingerprints=true",
-    )
-    return JSONResponse({"client": kms_client_to_dict(client)})
-
-
-@router.post("/kms/clients/{client_id}/delete", response_model=None)
-def delete_kms_client_from_ui(
-    request: Request,
-    client_id: int,
-    csrf: str = Form(...),
-    identity: Identity = Depends(require_session_identity),
-    db: Session = Depends(get_db),
-) -> RedirectResponse | Response:
-    """Handle the delete kms client from ui endpoint.
-
-    Args:
-        request: Incoming HTTP request.
-        client_id: Identifier of the client.
-        csrf: Validated CSRF token authorizing the request.
-        identity: Authenticated identity authorizing the request.
-        db: Active database session.
-
-    Returns:
-        The endpoint response.
-
-    Raises:
-        HTTPException: If the request cannot be fulfilled.
-    """
-    verify_csrf(request, csrf)
-    client = db.get(KmsClient, client_id)
-    if not client:
-        raise HTTPException(status_code=404, detail="KMS client not found")
-    for key in db.execute(select(KmsKey).where(KmsKey.owner_client_id == client_id)).scalars().all():
-        key.owner_client_id = None
-    db.delete(client)
-    db.commit()
-    record_audit(db, actor=identity.username, action="delete_kms_client", resource_type="kms_client", resource_id=str(client_id))
-    if grid_request(request):
-        return Response(status_code=204)
-    return RedirectResponse("/kms", status_code=303)
-
-
-@router.post("/kms/keys", response_model=None)
-def create_kms_key_from_ui(
-    request: Request,
-    name: str = Form(...),
-    algorithm: str = Form("AES"),
-    length: int = Form(256),
-    usage: str = Form("encrypt,decrypt"),
-    state: str = Form("active"),
-    owner_client_id: str = Form(""),
-    exportable: str | None = Form(None),
-    description: str = Form(""),
-    enabled: str | None = Form(None),
-    csrf: str = Form(...),
-    identity: Identity = Depends(require_session_identity),
-    db: Session = Depends(get_db),
-) -> RedirectResponse | HTMLResponse | JSONResponse:
-    """Handle the create kms key from ui endpoint.
-
-    Args:
-        request: Incoming HTTP request.
-        name: Name of the target object.
-        algorithm: Algorithm supplied by the caller.
-        length: Length supplied by the caller.
-        usage: Usage supplied by the caller.
-        state: Lifecycle or job state to persist.
-        owner_client_id: Identifier of the owner client.
-        exportable: Exportable supplied by the caller.
-        description: Human-readable description of the resource.
-        enabled: Whether the requested behavior is enabled.
-        csrf: Validated CSRF token authorizing the request.
-        identity: Authenticated identity authorizing the request.
-        db: Active database session.
-
-    Returns:
-        The endpoint response.
-    """
-    verify_csrf(request, csrf)
-    key = KmsKey(
-        name=name.strip(),
-        algorithm=algorithm.strip().upper() or "AES",
-        length=length,
-        usage=join_csv(split_csv(usage)),
-        state=state.strip() or "active",
-        owner_client_id=parse_kms_owner_client_id(owner_client_id),
-        exportable=exportable == "on",
-        description=description or None,
-        enabled=enabled == "on",
-    )
-    db.add(key)
-    try:
-        db.commit()
-    except IntegrityError:
-        db.rollback()
-        detail = f"KMS key {name} already exists."
-        return grid_error_response(
-            request,
-            detail=detail,
-            status_code=409,
-            template_name="kms.html",
-            context={"identity": identity, **kms_context(db), "form_error": detail},
-        )
-    db.refresh(key)
-    record_audit(db, actor=identity.username, action="create_kms_key", resource_type="kms_key", resource_id=str(key.id))
-    return grid_saved_response(
-        request,
-        redirect_url="/kms",
-        resource_name="key",
-        resource=kms_key_to_dict(key),
-    )
-
-
-@router.post("/kms/keys/{key_id}/edit", response_model=None)
-def edit_kms_key_from_ui(
-    request: Request,
-    key_id: int,
-    name: str = Form(...),
-    algorithm: str = Form("AES"),
-    length: int = Form(256),
-    usage: str = Form("encrypt,decrypt"),
-    state: str = Form("active"),
-    owner_client_id: str = Form(""),
-    exportable: str | None = Form(None),
-    description: str = Form(""),
-    enabled: str | None = Form(None),
-    csrf: str = Form(...),
-    identity: Identity = Depends(require_session_identity),
-    db: Session = Depends(get_db),
-) -> RedirectResponse | HTMLResponse | JSONResponse:
-    """Handle the edit kms key from ui endpoint.
-
-    Args:
-        request: Incoming HTTP request.
-        key_id: Identifier of the key.
-        name: Name of the target object.
-        algorithm: Algorithm supplied by the caller.
-        length: Length supplied by the caller.
-        usage: Usage supplied by the caller.
-        state: Lifecycle or job state to persist.
-        owner_client_id: Identifier of the owner client.
-        exportable: Exportable supplied by the caller.
-        description: Human-readable description of the resource.
-        enabled: Whether the requested behavior is enabled.
-        csrf: Validated CSRF token authorizing the request.
-        identity: Authenticated identity authorizing the request.
-        db: Active database session.
-
-    Returns:
-        The endpoint response.
-
-    Raises:
-        HTTPException: If the request cannot be fulfilled.
-    """
-    verify_csrf(request, csrf)
-    key = db.get(KmsKey, key_id)
-    if not key:
-        raise HTTPException(status_code=404, detail="KMS key not found")
-    key.name = name.strip()
-    key.algorithm = algorithm.strip().upper() or "AES"
-    key.length = length
-    key.usage = join_csv(split_csv(usage))
-    key.state = state.strip() or "active"
-    key.owner_client_id = parse_kms_owner_client_id(owner_client_id)
-    key.exportable = exportable == "on"
-    key.description = description or None
-    key.enabled = enabled == "on"
-    key.updated_at = utcnow()
-    try:
-        db.commit()
-    except IntegrityError:
-        db.rollback()
-        detail = f"KMS key {name} already exists."
-        return grid_error_response(
-            request,
-            detail=detail,
-            status_code=409,
-            template_name="kms.html",
-            context={"identity": identity, **kms_context(db), "form_error": detail},
-        )
-    db.refresh(key)
-    record_audit(db, actor=identity.username, action="update_kms_key", resource_type="kms_key", resource_id=str(key.id))
-    return grid_saved_response(
-        request,
-        redirect_url="/kms",
-        resource_name="key",
-        resource=kms_key_to_dict(key),
-    )
-
-
-@router.post("/kms/keys/{key_id}/delete", response_model=None)
-def delete_kms_key_from_ui(
-    request: Request,
-    key_id: int,
-    csrf: str = Form(...),
-    identity: Identity = Depends(require_session_identity),
-    db: Session = Depends(get_db),
-) -> RedirectResponse | Response:
-    """Handle the delete kms key from ui endpoint.
-
-    Args:
-        request: Incoming HTTP request.
-        key_id: Identifier of the key.
-        csrf: Validated CSRF token authorizing the request.
-        identity: Authenticated identity authorizing the request.
-        db: Active database session.
-
-    Returns:
-        The endpoint response.
-
-    Raises:
-        HTTPException: If the request cannot be fulfilled.
-    """
-    verify_csrf(request, csrf)
-    key = db.get(KmsKey, key_id)
-    if not key:
-        raise HTTPException(status_code=404, detail="KMS key not found")
-    db.delete(key)
-    db.commit()
-    record_audit(db, actor=identity.username, action="delete_kms_key", resource_type="kms_key", resource_id=str(key_id))
-    if grid_request(request):
-        return Response(status_code=204)
-    return RedirectResponse("/kms", status_code=303)
 
 
 @router.get("/https-repository", response_model=None)
@@ -28484,7 +28680,7 @@ def audit_log(
     )
 
 
-@router.get("/pxe/esxi/ks/{kickstart_file}", response_model=None)
+@protocol_router.get("/pxe/esxi/ks/{kickstart_file}", response_model=None)
 def serve_esxi_kickstart_file(kickstart_file: str, mac: str = "", db: Session = Depends(get_db)) -> Response:
     """Handle the serve esxi kickstart file endpoint.
 
@@ -28565,7 +28761,7 @@ def serve_esxi_kickstart_file(kickstart_file: str, mac: str = "", db: Session = 
     )
 
 
-@router.get("/pxe/esxi/boot.ipxe", response_model=None)
+@protocol_router.get("/pxe/esxi/boot.ipxe", response_model=None)
 def serve_esxi_http_ipxe_script() -> FileResponse:
     """Handle the serve esxi http ipxe script endpoint.
 

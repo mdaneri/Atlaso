@@ -14,11 +14,11 @@ def login(client):
     Args:
         client: HTTP test client used to exercise the Atlaso application.
     """
-    page = client.get("/login")
+    page = client.get("/ui/management/login")
     assert page.status_code == 200
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
     response = client.post(
-        "/login",
+        "/ui/management/login",
         data={"username": "admin", "password": "atlaso-admin", "csrf": csrf},
         follow_redirects=False,
     )
@@ -32,10 +32,10 @@ def assert_apply_redirect(response):
         response: HTTP or command response being inspected.
     """
     assert response.status_code == 200
-    assert response.url.path == "/tasks"
+    assert response.url.path == "/ui/management/tasks"
     assert response.history
     assert response.history[0].status_code == 303
-    assert response.history[0].headers["location"].startswith("/tasks?job_id=job_")
+    assert response.history[0].headers["location"].startswith("/ui/management/tasks?job_id=job_")
     assert "Appliance Apply" in response.text
 
 
@@ -69,8 +69,8 @@ def test_login_and_dashboard_render(client):
     login(client)
     root = client.get("/", follow_redirects=False)
     assert root.status_code == 303
-    assert root.headers["location"] == "/dashboard"
-    response = client.get("/dashboard")
+    assert root.headers["location"] == "/ui/management"
+    response = client.get("/ui/management/dashboard")
     assert response.status_code == 200
     assert "Atlaso" in response.text
     assert "Routes &amp; WAN Simulation" in response.text
@@ -78,38 +78,38 @@ def test_login_and_dashboard_render(client):
     assert "HTTPS Repository" not in response.text
     assert "Users" in response.text
     assert "LDAP / Users" not in response.text
-    assert 'href="/monitor"' in response.text
+    assert 'href="/ui/management/monitor"' in response.text
     nav = response.text.split('<nav class="nav-stack"', 1)[1].split("</nav>", 1)[0]
     for section in ["Overview", "Appliance Setup", "Core Services", "Identity &amp; Trust", "VCF Workflows", "Operations"]:
         assert section in nav
     expected_nav_order = [
-        "/dashboard",
-        "/monitor",
-        "/settings",
-        "/physical-interfaces",
-        "/vlan-interfaces",
-        "/routes-wan",
-        "/firewall",
-        "/dns",
-        "/ntp",
-        "/dhcp",
-        "/authentication",
-        "/users",
-        "/ldap",
-        "/certificate-authority",
-        "/kms",
-        "/network-boot",
-        "/esx-storage",
-        "/vcf-helper",
-        "/vcf-offline-depot",
-        "/vcf-private-registry",
-        "/vcf-backups",
-        "/services",
-        "/tasks",
-        "/logs",
-        "/audit-log",
-        "/appliance-update",
-        "/backup-restore",
+        "/ui/management/dashboard",
+        "/ui/management/monitor",
+        "/ui/management/settings",
+        "/ui/management/physical-interfaces",
+        "/ui/management/vlan-interfaces",
+        "/ui/management/routes-wan",
+        "/ui/management/firewall",
+        "/ui/management/dns",
+        "/ui/management/ntp",
+        "/ui/management/dhcp",
+        "/ui/management/authentication",
+        "/ui/management/users",
+        "/ui/management/ldap",
+        "/ui/management/certificate-authority",
+        "/ui/management/vsphere-key-providers",
+        "/ui/management/network-boot",
+        "/ui/management/esx-storage",
+        "/ui/management/vcf-helper",
+        "/ui/management/vcf-offline-depot",
+        "/ui/management/vcf-private-registry",
+        "/ui/management/vcf-backups",
+        "/ui/management/services",
+        "/ui/management/tasks",
+        "/ui/management/logs",
+        "/ui/management/audit-log",
+        "/ui/management/appliance-update",
+        "/ui/management/backup-restore",
     ]
     position = -1
     for href in expected_nav_order:
@@ -131,15 +131,15 @@ def test_login_and_dashboard_render(client):
     assert 'aria-label="Open account menu for admin"' in response.text
     assert "About" in response.text
     assert "Sign out (admin)" in response.text
-    assert 'action="/appliance/power/reboot"' in response.text
-    assert 'action="/appliance/power/shutdown"' in response.text
+    assert 'action="/ui/management/appliance/power/reboot"' in response.text
+    assert 'action="/ui/management/appliance/power/shutdown"' in response.text
     assert 'data-confirm-title="Reboot Atlaso appliance?"' in response.text
     assert 'data-confirm-title="Shut down Atlaso appliance?"' in response.text
     assert 'id="about-modal"' in response.text
     assert 'class="about-brand-mark" src="/static/brand/atlaso-icon.svg"' in response.text
     assert '<span class="role-chip">admin</span>' not in response.text
-    assert 'href="/logs"' in response.text
-    assert 'href="/audit-log"' in response.text
+    assert 'href="/ui/management/logs"' in response.text
+    assert 'href="/ui/management/audit-log"' in response.text
     assert "cdn.tailwindcss.com" not in response.text
     assert "unpkg.com/htmx" not in response.text
     assert 'body class="bg-slate-100 text-slate-900"' not in response.text
@@ -158,7 +158,7 @@ def test_login_and_dashboard_render(client):
     assert '<link rel="icon" href="/favicon.ico" type="image/x-icon">' in response.text
     assert '<link rel="manifest" href="/manifest.webmanifest">' in response.text
     assert '<meta name="theme-color"' not in response.text
-    assert "/static/pwa.js?v=atlaso-brand-20260725-1" in response.text
+    assert "/static/pwa.js?v=issue-287-2" in response.text
     assert "Everything your virtualization lab needs." in response.text
     assert "Infrastructure • Storage • Identity • Networking • Lifecycle" in response.text
     assert "simplifying deployment, maintenance, and validation" in response.text
@@ -178,16 +178,16 @@ def test_web_terminal_requires_login_and_renders_admin_only_unavailable_state(cl
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import User
 
-    unauthenticated = client.get("/terminal", follow_redirects=False)
+    unauthenticated = client.get("/ui/management/terminal", follow_redirects=False)
     assert unauthenticated.status_code == 303
-    assert unauthenticated.headers["location"] == "/login?next=/terminal"
+    assert unauthenticated.headers["location"] == "/ui/management/login?next=/ui/management/terminal"
 
     login(client)
     with SessionLocal() as db:
         admin = db.execute(select(User).where(User.username == "admin")).scalar_one()
         admin.web_terminal_access = False
         db.commit()
-    response = client.get("/terminal")
+    response = client.get("/ui/management/terminal")
 
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("text/html")
@@ -198,15 +198,15 @@ def test_web_terminal_requires_login_and_renders_admin_only_unavailable_state(cl
     assert "Web terminal access is disabled in Appliance Settings." in response.text
     assert '"detail":' not in response.text
     assert "/static/vendor/xterm/xterm.js?v=5.5.0" in response.text
-    assert "/static/terminal.js?v=atlaso-vault-uri-20260727-2" in response.text
+    assert "/static/terminal.js?v=issue-287-2" in response.text
     assert "data-terminal-connect" not in response.text
     assert "data-terminal-disconnect" not in response.text
 
-    dashboard = client.get("/dashboard")
-    assert 'href="/terminal"' in dashboard.text
-    assert dashboard.text.count('href="/terminal"') == 1
-    assert '<a class="account-menu-item" href="/terminal"' not in dashboard.text
-    assert dashboard.text.index("Operations") < dashboard.text.index('href="/terminal"') < dashboard.text.index('href="/services"')
+    dashboard = client.get("/ui/management/dashboard")
+    assert 'href="/ui/management/terminal"' in dashboard.text
+    assert dashboard.text.count('href="/ui/management/terminal"') == 1
+    assert '<a class="account-menu-item" href="/ui/management/terminal"' not in dashboard.text
+    assert dashboard.text.index("Operations") < dashboard.text.index('href="/ui/management/terminal"') < dashboard.text.index('href="/ui/management/services"')
 
 
 def test_disabled_web_terminal_page_accepts_only_management_listener(client, monkeypatch):
@@ -242,7 +242,7 @@ def test_disabled_web_terminal_page_accepts_only_management_listener(client, mon
     monkeypatch.setattr(web_terminal, "_request_uses_selected_listener", capture_listener)
 
     login(client)
-    response = client.get("/terminal")
+    response = client.get("/ui/management/terminal")
 
     assert response.status_code == 200
     assert allowed_addresses == ["192.168.49.1"]
@@ -320,45 +320,68 @@ def test_public_web_terminal_uses_public_shell_and_explicit_user_access(client, 
         lambda _headers, _server_host, addresses: "192.168.87.32" in addresses,
     )
 
-    login_page = client.get("/login?next=/terminal", headers={"host": "192.168.87.32"})
+    login_page = client.get(
+        "/ui/public/login?next=/ui/public/terminal",
+        headers={"host": "192.168.87.32"},
+    )
     assert login_page.status_code == 200
     assert "Sign in to Web Terminal" in login_page.text
     assert 'class="public-portal-shell"' in login_page.text
     assert 'class="app-shell"' not in login_page.text
     csrf = login_page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
     signed_in = client.post(
-        "/login",
+        "/ui/public/login",
         headers={"host": "192.168.87.32"},
-        data={"username": "test", "password": "Test-user1!", "csrf": csrf, "next": "/terminal"},
+        data={
+            "username": "test",
+            "password": "Test-user1!",
+            "csrf": csrf,
+            "next": "/ui/public/terminal",
+        },
         follow_redirects=False,
     )
     assert signed_in.status_code == 303
-    assert signed_in.headers["location"] == "/terminal"
+    assert signed_in.headers["location"] == "/ui/public/terminal"
 
-    terminal = client.get("/terminal", headers={"host": "192.168.87.32"})
+    terminal = client.get("/ui/public/terminal", headers={"host": "192.168.87.32"})
     assert terminal.status_code == 200
     assert "Passwordless local SSH as test" in terminal.text
     assert 'class="public-portal-shell"' in terminal.text
     assert 'class="app-shell"' not in terminal.text
     assert "Back to Public Services" not in terminal.text
-    assert 'action="/logout"' in terminal.text
-    assert 'name="next" value="/terminal"' in terminal.text
+    assert 'action="/ui/public/logout"' in terminal.text
+    assert 'name="next" value="/ui/public/terminal"' in terminal.text
+    assert terminal.text.index("/static/ui-routes.js?v=issue-287-1") < terminal.text.index("/static/terminal.js?v=issue-287-2")
+
+    directory = client.get("/ui/public", headers={"host": "192.168.87.32"})
+    assert directory.status_code == 200
+    assert 'action="/ui/public/logout"' in directory.text
+    assert 'action="/ui/public/ca/requests/logout"' not in directory.text
 
     with SessionLocal() as db:
         user = db.get(User, user_id)
         user.web_terminal_access = False
         db.commit()
-    denied = client.get("/terminal", headers={"host": "192.168.87.32"})
+    denied = client.get("/ui/public/terminal", headers={"host": "192.168.87.32"})
     assert denied.status_code == 403
     assert "Web SSH access is not enabled" in denied.text
     logout = client.post(
-        "/logout",
+        "/ui/public/logout",
         headers={"host": "192.168.87.32"},
-        data={"csrf": csrf, "next": "/terminal"},
+        data={"csrf": csrf, "next": "/ui/public/terminal"},
         follow_redirects=False,
     )
     assert logout.status_code == 303
-    assert logout.headers["location"] == "/login?next=/terminal"
+    assert logout.headers["location"] == "/ui/public/terminal"
+
+    expired_ticket = client.post(
+        "/ui/public/terminal/tickets",
+        headers={"host": "192.168.87.32"},
+        data={"csrf": csrf, "browser_session_id": "browser_session_1234"},
+        follow_redirects=False,
+    )
+    assert expired_ticket.status_code == 303
+    assert expired_ticket.headers["location"] == "/ui/public/login?next=/ui/public/terminal"
 
 
 def test_web_terminal_uses_one_use_ticket_and_bridges_websocket_input(client, monkeypatch):
@@ -463,7 +486,7 @@ def test_web_terminal_uses_one_use_ticket_and_bridges_websocket_input(client, mo
         admin.shell = "/bin/bash"
         db.commit()
 
-    page = client.get("/terminal")
+    page = client.get("/ui/management/terminal")
     assert page.status_code == 200
     assert "data-terminal-reconnect" in page.text
     assert "data-terminal-copy" in page.text
@@ -472,14 +495,15 @@ def test_web_terminal_uses_one_use_ticket_and_bridges_websocket_input(client, mo
     assert "data-terminal-disconnect" not in page.text
     csrf = page.text.split('data-csrf="', 1)[1].split('"', 1)[0]
     ticket_response = client.post(
-        "/terminal/tickets",
+        "/ui/management/terminal/tickets",
         data={"csrf": csrf, "browser_session_id": "browser_session_1234"},
     )
     assert ticket_response.status_code == 200
     assert ticket_response.headers["cache-control"] == "no-store"
+    assert ticket_response.json()["websocket_path"] == "/terminal/ws"
     ticket = ticket_response.json()["ticket"]
 
-    with client.websocket_connect("/terminal/ws", headers={"origin": "http://testserver"}) as websocket:
+    with client.websocket_connect("/ui/management/terminal/ws", headers={"origin": "http://testserver"}) as websocket:
         websocket.send_json({"type": "authenticate", "ticket": ticket})
         first_ready = websocket.receive_json()
         assert first_ready["type"] == "ready"
@@ -487,11 +511,11 @@ def test_web_terminal_uses_one_use_ticket_and_bridges_websocket_input(client, mo
         assert websocket.receive_bytes() == b"shell ready\r\n"
 
         reload_ticket = client.post(
-            "/terminal/tickets",
+            "/ui/management/terminal/tickets",
             data={"csrf": csrf, "browser_session_id": "browser_session_1234"},
         )
         assert reload_ticket.status_code == 200
-        with client.websocket_connect("/terminal/ws", headers={"origin": "http://testserver"}) as reloaded_websocket:
+        with client.websocket_connect("/ui/management/terminal/ws", headers={"origin": "http://testserver"}) as reloaded_websocket:
             reloaded_websocket.send_json({"type": "authenticate", "ticket": reload_ticket.json()["ticket"]})
             reload_ready = reloaded_websocket.receive_json()
             assert reload_ready["type"] == "ready"
@@ -499,18 +523,18 @@ def test_web_terminal_uses_one_use_ticket_and_bridges_websocket_input(client, mo
             assert reloaded_websocket.receive_bytes() == b"shell ready\r\n"
 
         conflict = client.post(
-            "/terminal/tickets",
+            "/ui/management/terminal/tickets",
             data={"csrf": csrf, "browser_session_id": "other_browser_1234"},
         )
         assert conflict.status_code == 409
         assert conflict.json()["error_code"] == "TERMINAL_SESSION_ACTIVE"
 
         takeover = client.post(
-            "/terminal/tickets",
+            "/ui/management/terminal/tickets",
             data={"csrf": csrf, "browser_session_id": "other_browser_1234", "takeover": "true"},
         )
         assert takeover.status_code == 200
-        with client.websocket_connect("/terminal/ws", headers={"origin": "http://testserver"}) as moved_websocket:
+        with client.websocket_connect("/ui/management/terminal/ws", headers={"origin": "http://testserver"}) as moved_websocket:
             moved_websocket.send_json({"type": "authenticate", "ticket": takeover.json()["ticket"]})
             moved_ready = moved_websocket.receive_json()
             assert moved_ready["type"] == "ready"
@@ -529,6 +553,8 @@ def test_web_terminal_uses_one_use_ticket_and_bridges_websocket_input(client, mo
     assert favicon.headers["content-type"].startswith("image/x-icon")
     terminal_js = client.get("/static/terminal.js")
     assert 'JSON.stringify({ type: "input", data })' in terminal_js.text
+    assert "if (response.redirected)" in terminal_js.text
+    assert "window.location.assign(response.url)" in terminal_js.text
     assert 'data === "\\u0004" ? "exit\\r" : data' not in terminal_js.text
 
 
@@ -578,7 +604,7 @@ def test_appliance_power_action_creates_task_before_scheduling(client, monkeypat
     )
 
     assert response.status_code == 303
-    assert response.headers["location"].startswith("/tasks?job_id=job_")
+    assert response.headers["location"].startswith("/ui/management/tasks?job_id=job_")
     assert observed == [(JobStatus.RUNNING.value, "reboot")]
     with SessionLocal() as db:
         job = db.execute(select(Job).where(Job.type == "appliance-reboot")).scalar_one()
@@ -730,7 +756,7 @@ def test_tasks_page_lists_redacts_logs_and_cancels(client):
     page = client.get("/tasks?job_id=job_taskgrid001")
     assert page.status_code == 200
     assert "Tasks" in page.text
-    assert 'href="/tasks"' in page.text
+    assert 'href="/ui/management/tasks"' in page.text
     assert "job_taskgrid001" in page.text
     assert "uploading-disk1.vmdk" in page.text
     assert "VMware01!" not in page.text
@@ -960,8 +986,9 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     manifest_json = manifest.json()
     assert manifest_json["name"] == "Atlaso"
     assert manifest_json["short_name"] == "Atlaso"
-    assert manifest_json["start_url"] == "/dashboard"
-    assert manifest_json["scope"] == "/"
+    assert manifest_json["id"] == "/ui/management"
+    assert manifest_json["start_url"] == "/ui/management/dashboard"
+    assert manifest_json["scope"] == "/ui/management/"
     assert manifest_json["display"] == "standalone"
     assert manifest_json["launch_handler"] == {"client_mode": "navigate-existing"}
     assert manifest_json["background_color"] == "#071A3A"
@@ -974,34 +1001,43 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert service_worker.status_code == 200
     assert service_worker.headers["content-type"].startswith("application/javascript")
     assert service_worker.headers["cache-control"] == "no-cache"
-    assert service_worker.headers["service-worker-allowed"] == "/"
+    assert service_worker.headers["service-worker-allowed"] == "/ui/management/"
     assert "ATLASO_CACHE" in service_worker.text
-    assert "atlaso-pwa-v238" in service_worker.text
+    assert "atlaso-management-pwa-v242" in service_worker.text
     assert 'fetch(asset, { cache: "reload" })' in service_worker.text
     assert ".catch(() => undefined)" in service_worker.text
     assert 'request.mode === "navigate"' in service_worker.text
+    assert 'url.pathname.startsWith("/ui/management/")' in service_worker.text
     assert 'caches.match("/static/offline.html")' in service_worker.text
     assert 'request.method !== "GET"' in service_worker.text
     assert 'url.pathname.startsWith("/ca/downloads/")' in service_worker.text
     assert 'url.pathname.startsWith("/certificate-authority/downloads/")' in service_worker.text
     assert 'url.pathname.startsWith("/api/")' in service_worker.text
     assert "hasDownloadLikePath(url)" in service_worker.text
-    assert "accept.includes(\"text/html\") && !hasDownloadLikePath(url)" in service_worker.text
+    assert 'accept.includes("text/html")' in service_worker.text
+    assert '!hasDownloadLikePath(url)' in service_worker.text
     assert "/static/vendor/monaco/atlaso-monaco.min.js?v=atlaso-monaco-20260806-7" in service_worker.text
-    assert "/static/app.css?v=nts-restoration-appliance-update-261-20260809-3" in service_worker.text
+    assert "/static/app.css?v=vsphere-key-providers-170-20260810-1" in service_worker.text
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-8" in service_worker.text
     assert "/static/appliance-apply-polling.js?v=issue-280-1" in service_worker.text
-    assert "/static/app.js?v=issue-280-1" in service_worker.text
+    assert "/static/ui-routes.js?v=issue-287-1" in service_worker.text
+    assert "/static/app.js?v=vsphere-key-providers-170-issue-287-20260810-1" in service_worker.text
+    assert "/static/terminal.js?v=issue-287-2" in service_worker.text
+    assert "/static/pwa.js?v=issue-287-2" in service_worker.text
     assert "vcfdt-configuration-248-20260807-14" not in service_worker.text
 
     registration = client.get("/static/pwa.js")
     assert registration.status_code == 200
-    assert 'navigator.serviceWorker.register("/service-worker.js")' in registration.text
+    assert "navigator.serviceWorker.getRegistrations()" in registration.text
+    assert "registration.scope === legacyScope" in registration.text
+    assert "registration.unregister()" in registration.text
+    assert registration.text.index("registration.unregister()") < registration.text.index("navigator.serviceWorker.register")
+    assert 'navigator.serviceWorker.register("/service-worker.js", { scope: managementScope })' in registration.text
 
     offline = client.get("/static/offline.html")
     assert offline.status_code == 200
     assert "Appliance connection unavailable" in offline.text
-    assert "/static/app.css?v=nts-restoration-appliance-update-261-20260809-3" in offline.text
+    assert "/static/app.css?v=vsphere-key-providers-170-20260810-1" in offline.text
 
 
 def test_shared_ui_pattern_shell_and_wizard_contracts(client):
@@ -1017,8 +1053,8 @@ def test_shared_ui_pattern_shell_and_wizard_contracts(client):
     base = (templates / "base.html").read_text(encoding="utf-8")
     public_base = (templates / "public_portal_base.html").read_text(encoding="utf-8")
     for shell, app_asset in (
-        (base, "/static/app.js?v=issue-280-1"),
-        (public_base, "/static/app.js?v=issue-280-1"),
+        (base, "/static/app.js?v=vsphere-key-providers-170-issue-287-20260810-1"),
+        (public_base, "/static/app.js?v=vsphere-key-providers-170-issue-287-20260810-1"),
         (base, "/static/appliance-apply-polling.js?v=issue-280-1"),
     ):
         assert shell.index("/static/vendor/tabulator/tabulator.min.js") < shell.index(
@@ -1078,9 +1114,9 @@ def test_every_existing_tabulator_uses_the_shared_grid_foundation(client):
     app_js = client.get("/static/app.js").text
     create_grid = "window.AtlasoUiPatterns.createGrid({"
 
-    assert app_js.count(create_grid) == 38
+    assert app_js.count(create_grid) == 40
     assert app_js.count('pattern: "direct-edit"') == 13
-    assert app_js.count('pattern: "read-only"') == 14
+    assert app_js.count('pattern: "read-only"') == 16
     assert app_js.count('pattern: "wizard-backed"') == 11
     assert "new Tabulator(" not in app_js
     assert "new window.Tabulator(" not in app_js
@@ -1181,8 +1217,7 @@ def test_every_existing_tabulator_uses_the_shared_grid_foundation(client):
         "initializeCaProfilesTable",
         "initializeCaCertificatesTable",
         "initializeFirewallRulesTable",
-        "initializeKmsClientsTable",
-        "initializeKmsKeysTable",
+        "initializeVsphereKeyProviderTables",
         "initializeDhcpScopesTable",
         "initializeDhcpOptionsTable",
         "initializeUsersTable",
@@ -1367,39 +1402,68 @@ def test_complex_resource_wizard_grid_contracts_return_saved_rows_and_delete_wit
     firewall_rule = firewall_response.json()["rule"]
     assert firewall_rule["name"] == "wizard-firewall"
 
-    client_data = {
-        "name": "wizard-kmip-client",
-        "certificate_subject": "CN=wizard-kmip-client,O=Atlaso",
-        "role": "service",
-        "allowed_operations": "locate,get",
+    provider_data = {
+        "name": "Wizard vSphere provider",
         "description": "issue 118",
-        "enabled": "on",
         "csrf": csrf,
     }
-    kms_client_response = client.post("/kms/clients", data=client_data, headers=headers)
-    assert kms_client_response.status_code == 200
-    kms_client = kms_client_response.json()["client"]
-    assert kms_client["name"] == "wizard-kmip-client"
-    duplicate_client = client.post("/kms/clients", data=client_data, headers=headers)
-    assert duplicate_client.status_code == 409
-    assert duplicate_client.json()["detail"] == "KMS client wizard-kmip-client already exists."
+    provider_response = client.post(
+        "/vsphere-key-providers/providers",
+        data=provider_data,
+        headers=headers,
+    )
+    assert provider_response.status_code == 200
+    provider = provider_response.json()["provider"]
+    assert provider["name"] == "Wizard vSphere provider"
+    duplicate_provider = client.post(
+        "/vsphere-key-providers/providers",
+        data=provider_data,
+        headers=headers,
+    )
+    assert duplicate_provider.status_code == 409
+    assert duplicate_provider.json()["detail"] == "Provider name already exists."
 
-    key_data = {
-        "name": "wizard-kms-key",
-        "algorithm": "AES",
-        "length": "256",
-        "usage": "encrypt,decrypt",
-        "state": "active",
-        "owner_client_id": str(kms_client["id"]),
-        "exportable": "on",
+    vcenter_data = {
+        "provider_id": provider["id"],
+        "name": "Wizard vCenter",
+        "hostname": "vcsa-wizard.atlaso.internal",
         "description": "issue 118",
-        "enabled": "on",
+        "certificate_pem": "",
         "csrf": csrf,
     }
-    kms_key_response = client.post("/kms/keys", data=key_data, headers=headers)
-    assert kms_key_response.status_code == 200
-    kms_key = kms_key_response.json()["key"]
-    assert kms_key["owner_client_id"] == kms_client["id"]
+    vcenter_response = client.post(
+        "/vsphere-key-providers/trusted-vcenters",
+        data=vcenter_data,
+        headers=headers,
+    )
+    assert vcenter_response.status_code == 200
+    trusted_vcenter = vcenter_response.json()["trusted_vcenter"]
+    assert trusted_vcenter["provider_id"] == provider["id"]
+
+    invalid_vcenter = client.post(
+        "/vsphere-key-providers/trusted-vcenters",
+        data={
+            **vcenter_data,
+            "name": "Invalid wizard vCenter",
+            "hostname": "https://vcsa-wizard.atlaso.internal",
+        },
+        headers=headers,
+    )
+    assert invalid_vcenter.status_code == 400
+    assert invalid_vcenter.json()["detail"] == "The trusted vCenter details or public certificate are invalid."
+
+    invalid_certificate = client.post(
+        f"/vsphere-key-providers/trusted-vcenters/{trusted_vcenter['id']}/certificates",
+        data={
+            "provider_id": provider["id"],
+            "certificate_pem": "-----BEGIN PRIVATE KEY-----\nforbidden\n-----END PRIVATE KEY-----",
+            "csrf": csrf,
+        },
+        headers=headers,
+    )
+    assert invalid_certificate.status_code == 400
+    assert invalid_certificate.json()["detail"] == "The public certificate is invalid."
+    assert "forbidden" not in invalid_certificate.text
 
     scope_data = {
         "name": "WizardZone",
@@ -1467,8 +1531,7 @@ def test_complex_resource_wizard_grid_contracts_return_saved_rows_and_delete_wit
         f"/vcf-offline-depot/profiles/{depot_profile['id']}/delete",
         f"/vcf-private-registry/bundles/{bundle['id']}/delete",
         f"/dhcp/scopes/{scope['id']}/delete",
-        f"/kms/keys/{kms_key['id']}/delete",
-        f"/kms/clients/{kms_client['id']}/delete",
+        f"/vsphere-key-providers/trusted-vcenters/{trusted_vcenter['id']}/delete",
         f"/firewall/rules/{firewall_rule['id']}/delete",
         f"/certificate-authority/certificates/{certificate['id']}/delete",
         f"/certificate-authority/profiles/{profile['id']}/delete",
@@ -1553,7 +1616,7 @@ def test_reported_template_accessibility_contracts():
         "authentication.html": '"api-token-form"',
         "certificate_authority.html": '"ca-certificate-form"',
         "firewall.html": '"firewall-rule-form"',
-        "kms.html": '"kms-key-form"',
+        "kms.html": '"vsphere-provider-form"',
         "dhcp.html": '"dhcp-scope-form"',
         "users.html": '"user-account-form"',
         "ldap.html": '"ldap-organization-form"',
@@ -1613,9 +1676,9 @@ def test_monitor_page_renders_and_data_endpoint(client):
     assert "Loading devices" not in page.text
     assert "<th>Device</th><th>Read/s</th><th>Write/s</th>" in page.text
     assert "swagger-link-icon" in page.text
-    assert "/static/app.css?v=nts-restoration-appliance-update-261-20260809-3" in page.text
+    assert "/static/app.css?v=vsphere-key-providers-170-20260810-1" in page.text
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-8" in page.text
-    assert "/static/app.js?v=issue-280-1" in page.text
+    assert "/static/app.js?v=vsphere-key-providers-170-issue-287-20260810-1" in page.text
     app_css = client.get("/static/app.css")
     assert app_css.status_code == 200
     assert ".split-workspace > .wide-panel" in app_css.text
@@ -1708,9 +1771,9 @@ def test_login_page_includes_pwa_metadata(client):
     assert '<link rel="manifest" href="/manifest.webmanifest">' in response.text
     assert '<meta name="mobile-web-app-capable" content="yes">' in response.text
     assert '<meta name="apple-mobile-web-app-capable" content="yes">' in response.text
-    assert '<form class="form-stack" action="/login" method="post" target="_self">' in response.text
+    assert '<form class="form-stack" action="/ui/management/login" method="post" target="_self">' in response.text
     assert '<meta name="theme-color"' not in response.text
-    assert "/static/pwa.js?v=atlaso-brand-20260725-1" in response.text
+    assert "/static/pwa.js?v=issue-287-2" in response.text
     assert response.text.count("/static/brand/atlaso-logo-horizontal-transparent-1200x300.png") == 1
     assert 'alt="Atlaso — Infrastructure • Connectivity • Automation"' in response.text
     assert "Infrastructure appliance" not in response.text
@@ -1724,15 +1787,29 @@ def test_shared_shells_use_current_mobile_web_app_metadata(client):
     Args:
         client: HTTP test client used to exercise the Atlaso application.
     """
+    from sqlalchemy import select
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import PhysicalInterface
+
+    with SessionLocal() as db:
+        interface = db.execute(select(PhysicalInterface).where(PhysicalInterface.name == "eth2")).scalar_one()
+        interface.role = "access"
+        interface.mode = "access"
+        interface.ip_cidr = "192.168.87.32/24"
+        db.commit()
+
     login(client)
 
     management = client.get("/dashboard")
-    public = client.get("/ca", headers={"host": "192.168.87.32"})
+    public = client.get("/ui/public", headers={"host": "192.168.87.32"})
 
     assert management.status_code == 200
     assert public.status_code == 200
     for response in (management, public):
         assert '<meta name="mobile-web-app-capable" content="yes">' in response.text
+    assert '<link rel="manifest"' not in public.text
+    assert "/static/pwa.js" not in public.text
 
 
 def test_unauthenticated_ui_request_redirects_to_login(client):
@@ -1741,10 +1818,10 @@ def test_unauthenticated_ui_request_redirects_to_login(client):
     Args:
         client: HTTP test client used to exercise the Atlaso application.
     """
-    response = client.get("/certificate-authority", follow_redirects=False)
+    response = client.get("/ui/management/certificate-authority", follow_redirects=False)
 
     assert response.status_code == 303
-    assert response.headers["location"] == "/login?next=/certificate-authority"
+    assert response.headers["location"] == "/ui/management/login?next=/ui/management/certificate-authority"
 
 
 def test_ui_session_is_rejected_after_appliance_instance_changes(client):
@@ -1765,11 +1842,11 @@ def test_ui_session_is_rejected_after_appliance_instance_changes(client):
         setting.value = "redeployed-appliance-instance"
         db.commit()
 
-    response = client.get("/vlan-interfaces", follow_redirects=False)
+    response = client.get("/ui/management/vlan-interfaces", follow_redirects=False)
 
     assert response.status_code == 303
-    assert response.headers["location"] == "/login?next=/vlan-interfaces"
-    assert client.get("/", follow_redirects=False).headers["location"] == "/login"
+    assert response.headers["location"] == "/ui/management/login?next=/ui/management/vlan-interfaces"
+    assert client.get("/", follow_redirects=False).headers["location"] == "/ui/management"
 
 
 def test_sidebar_appliance_apply_uses_bottom_pending_cta(client):
@@ -1783,7 +1860,7 @@ def test_sidebar_appliance_apply_uses_bottom_pending_cta(client):
 
     assert response.status_code == 200
     assert 'class="sidebar-apply-link pending' in response.text
-    assert 'href="/dashboard#appliance-apply-review"' in response.text
+    assert 'href="/ui/management/dashboard#appliance-apply-review"' in response.text
     assert "data-appliance-apply-sidebar" in response.text
     assert "data-appliance-apply-open" in response.text
     assert "data-appliance-apply-sidebar-title" in response.text
@@ -2484,9 +2561,9 @@ def test_appliance_apply_status_api_tracks_autosaved_desired_state(client):
     applied_dns = next(unit for unit in applied.json()["units"] if unit["id"] == "dnsmasq")
     assert applied_dns["changed"] is False
 
-    apply_page = client.get("/appliance-apply", follow_redirects=False)
+    apply_page = client.get("/ui/management/appliance-apply", follow_redirects=False)
     assert apply_page.status_code == 303
-    assert apply_page.headers["location"] == "/dashboard#appliance-apply-review"
+    assert apply_page.headers["location"] == "/ui/management/dashboard#appliance-apply-review"
 
 
 def test_settings_page_renders_autosave_validation_and_preview(client, monkeypatch):
@@ -2512,7 +2589,7 @@ def test_settings_page_renders_autosave_validation_and_preview(client, monkeypat
     response = client.get("/settings")
 
     assert response.status_code == 200
-    assert 'action="/settings"' in response.text
+    assert 'action="/ui/management/settings"' in response.text
     assert 'data-autosave-status-id="appliance-settings-autosave-status"' in response.text
     assert response.text.count('class="help-icon"') >= 2
     assert 'textarea name="external_dns_servers"' not in response.text
@@ -2525,11 +2602,11 @@ def test_settings_page_renders_autosave_validation_and_preview(client, monkeypat
     assert "Root SSH login" in response.text
     assert "VMware Product Preferences" in response.text
     assert "VMware CEIP participation" in response.text
-    assert 'action="/settings/vmware-ceip"' in response.text
+    assert 'action="/ui/management/settings/vmware-ceip"' in response.text
     assert 'name="vmware_ceip_enabled"' in response.text
     assert 'data-vmware-ceip-pill' in response.text
     assert 'data-vmware-ceip-status' in response.text
-    assert 'action="/settings/vmware-ceip" method="post" data-autosave-form data-appliance-settings' in response.text
+    assert 'action="/ui/management/settings/vmware-ceip" method="post" data-autosave-form data-appliance-settings' in response.text
     assert "Service DNS target names" in response.text
     assert response.text.count('class="settings-inline-field"') >= 2
     assert 'select name="service_dns_target_naming"' in response.text
@@ -2537,7 +2614,7 @@ def test_settings_page_renders_autosave_validation_and_preview(client, monkeypat
     assert "Operational Logging" in response.text
     assert "External NTP servers" not in response.text
     assert 'textarea name="ntp_servers"' not in response.text
-    assert 'action="/settings/logging"' in response.text
+    assert 'action="/ui/management/settings/logging"' in response.text
     assert 'select name="level"' in response.text
     assert 'input class="switch-input" type="checkbox" name="syslog_enabled"' in response.text
     assert "Syslog host" in response.text
@@ -2743,7 +2820,7 @@ def test_validation_rails_use_modal_config_previews(client):
         "/dhcp": [],
         "/ntp": ["data-ntp-config-preview"],
         "/certificate-authority": ["data-ca-config-preview"],
-        "/kms": ["data-kms-config-preview"],
+        "/vsphere-key-providers": ["data-kms-config-preview"],
         "/esxi-pxe": ["data-esxi-pxe-preview"],
         "/vcf-offline-depot": ["data-vcf-depot-https-preview"],
         "/vcf-private-registry": ["data-vcf-registry-harbor-preview", "data-vcf-registry-relocation-preview"],
@@ -4023,8 +4100,8 @@ def test_settings_management_https_requires_ca_managed_certificate(client):
         assert certificate.status == "issued"
 
 
-def test_appliance_settings_apply_task_records_dry_run_helper_commands(client, caplog):
-    """Verify that appliance settings apply task records dry run helper commands.
+def test_appliance_settings_apply_task_records_redacted_dry_run_command_evidence(client, caplog):
+    """Verify appliance apply logs redacted dry-run command evidence.
 
     Args:
         client: HTTP test client used to exercise the Atlaso application.
@@ -4054,9 +4131,17 @@ def test_appliance_settings_apply_task_records_dry_run_helper_commands(client, c
     with caplog.at_level(logging.INFO, logger="atlaso.appliance_apply"):
         apply_response = client.post("/appliance-apply", data={"csrf": csrf, "selected_units": "appliance_settings"})
     assert_apply_redirect(apply_response)
-    assert "completed status=succeeded selected_units=appliance_settings" in caplog.text
-    assert "unit=appliance_settings status=succeeded" in caplog.text
-    assert "atlaso-helper appliance-settings validate" in caplog.text
+    apply_logs = "\n".join(
+        record.getMessage()
+        for record in caplog.records
+        if record.name == "atlaso.appliance_apply"
+    )
+    assert "succeeded; desired-state and helper details omitted" in apply_logs
+    assert "selected_units" not in apply_logs
+    assert "unit=appliance_settings" not in apply_logs
+    assert "command_index" not in apply_logs
+    assert "returncode" not in apply_logs
+    assert "atlaso-helper appliance-settings validate" not in apply_logs
     assert "Appliance Settings" in apply_response.text
     assert "data-apply-progress-modal" not in apply_response.text
     with SessionLocal() as db:
@@ -4261,8 +4346,8 @@ def test_backup_restore_page_exports_settings_archive(client):
     assert "Factory reset settings" in page.text
     assert "LDAP Directory Recovery" in page.text
     assert "not part of the normal settings backup" in page.text
-    assert 'action="/backup-restore/ldap/export"' in page.text
-    assert 'action="/backup-restore/ldap/import"' in page.text
+    assert 'action="/ui/management/backup-restore/ldap/export"' in page.text
+    assert 'action="/ui/management/backup-restore/ldap/import"' in page.text
     assert 'accept=".lfldap,application/octet-stream"' in page.text
     assert "Audit events, jobs, API tokens, password hashes, uploaded secret bodies; CA private material stays encrypted" in page.text
     assert "data-confirm-modal" in page.text
@@ -5046,7 +5131,7 @@ def test_esxi_pxe_iso_upload_and_host_selection(client, monkeypatch, tmp_path):
         follow_redirects=False,
     )
     assert uploaded.status_code == 303
-    assert uploaded.headers["location"] == "/esxi-pxe#esxi-pxe-isos-panel"
+    assert uploaded.headers["location"] == "/ui/management/esxi-pxe#esxi-pxe-isos-panel"
     iso_path = iso_root / "VMware-VMvisor-Installer-8.0U3.iso"
     assert iso_path.read_bytes() == b"iso bytes"
 
@@ -5098,7 +5183,7 @@ def test_esxi_pxe_iso_upload_and_host_selection(client, monkeypatch, tmp_path):
         follow_redirects=False,
     )
     assert vcfdt_delete.status_code == 303
-    assert vcfdt_delete.headers["location"] == "/esxi-pxe#esxi-pxe-isos-panel"
+    assert vcfdt_delete.headers["location"] == "/ui/management/esxi-pxe#esxi-pxe-isos-panel"
     assert not vcfdt_iso_path.exists()
     host_response = client.post(
         "/esxi-pxe/hosts",
@@ -5126,7 +5211,7 @@ def test_esxi_pxe_iso_upload_and_host_selection(client, monkeypatch, tmp_path):
         follow_redirects=False,
     )
     assert delete_response.status_code == 303
-    assert delete_response.headers["location"] == "/esxi-pxe#esxi-pxe-isos-panel"
+    assert delete_response.headers["location"] == "/ui/management/esxi-pxe#esxi-pxe-isos-panel"
     assert not iso_path.exists()
     with SessionLocal() as db:
         host = db.get(EsxiPxeHost, host_id)
@@ -5259,7 +5344,7 @@ def test_esxi_pxe_host_reference_wizard_and_grid_responses(client):
         follow_redirects=False,
     )
     assert fallback.status_code == 303
-    assert fallback.headers["location"] == "/network-boot#esxi-pxe-hosts-panel"
+    assert fallback.headers["location"] == "/ui/management/network-boot#esxi-pxe-hosts-panel"
 
     app_js = client.get("/static/app.js").text
     wizard_js = app_js.split("function initializeEsxiHostReferenceWizard()", 1)[1].split(
@@ -6356,8 +6441,6 @@ def test_backup_restore_factory_reset_resets_desired_state_and_stops_services(cl
         DnsRecord,
         DnsSettings,
         FirewallRule,
-        KmsClient,
-        KmsKey,
         KmsSettings,
         NatRule,
         PhysicalInterface,
@@ -6444,8 +6527,6 @@ def test_backup_restore_factory_reset_resets_desired_state_and_stops_services(cl
         assert db.execute(select(FirewallRule)).scalars().all() == []
         assert db.execute(select(CaProfile)).scalars().all() == []
         assert db.execute(select(CaCertificate)).scalars().all() == []
-        assert db.execute(select(KmsClient)).scalars().all() == []
-        assert db.execute(select(KmsKey)).scalars().all() == []
         depot_profiles = db.execute(
             select(VcfDepotDownloadProfile).order_by(VcfDepotDownloadProfile.name)
         ).scalars().all()
@@ -6787,8 +6868,8 @@ def test_local_users_page_separates_ldap_authentication(client):
     assert "managed separately" in authentication.text
 
     legacy = client.get("/ldap-users", follow_redirects=False)
-    assert legacy.status_code == 303
-    assert legacy.headers["location"] == "/ldap"
+    assert legacy.status_code == 307
+    assert legacy.headers["location"] == "/ui/management/ldap-users"
 
     users = client.get("/users")
     assert users.status_code == 200
@@ -6909,7 +6990,7 @@ def test_local_users_page_separates_ldap_authentication(client):
     assert "initializeAtlasoResourceWizard({" in users_table_js
     assert 'height: "100%"' in users_table_js
     assert "initializePasswordToggles(accountForm)" not in users_table_js
-    password_form_js = app_js.text.split("function initializeUserPasswordForm()", 1)[1].split("async function autoSaveKmsClient", 1)[0]
+    password_form_js = app_js.text.split("function initializeUserPasswordForm()", 1)[1].split("function updateCaSettingsPreview", 1)[0]
     assert "initializePasswordToggles(form)" in password_form_js
     assert "resetPasswordVisibility(form)" not in users_table_js
     assert "form.dataset.osPasswordAvailable" not in users_table_js
@@ -7282,7 +7363,7 @@ def test_managed_ldap_generates_complete_synthetic_directory_once(client):
     app_js = client.get("/static/app.js").text
     assert 'generateDialog.addEventListener("close", clearGeneratedResult)' in app_js
     assert 'generateDialog.querySelectorAll("[data-ldap-generated-result]")' in app_js
-    assert 'window.history.replaceState(window.history.state, "", "/vcf-helper")' in app_js
+    assert 'window.history.replaceState(window.history.state, "", managementUiPath("/vcf-helper"))' in app_js
     assert 'generateDialog.querySelector("[data-ldap-generate-user-count]")' in app_js
 
     with SessionLocal() as db:
@@ -8096,6 +8177,59 @@ def test_configure_logging_writes_main_app_log(tmp_path, monkeypatch):
     get_settings.cache_clear()
 
 
+def test_appliance_apply_logging_redacts_commands_and_helper_output(caplog):
+    """Verify appliance apply logging reports evidence without command or helper content.
+
+    Args:
+        caplog: Pytest log capture fixture.
+    """
+    import logging
+
+    from atlaso.app.ui import log_appliance_apply_failures, log_appliance_apply_submission
+
+    unit_results = [
+        {
+            "unit_id": "kms",
+            "label": "KMS",
+            "status": "failed",
+            "dry_run": False,
+            "validation_errors": [],
+            "validation_warnings": [],
+            "summary": "Apply failed.",
+            "commands": [
+                {
+                    "command_line": "atlaso-helper kms apply sensitive-command-value",
+                    "returncode": 2,
+                    "stdout": "sensitive-helper-stdout",
+                    "stderr": "sensitive-helper-stderr",
+                    "dry_run": False,
+                }
+            ],
+        }
+    ]
+
+    with caplog.at_level(logging.INFO, logger="atlaso.appliance_apply"):
+        log_appliance_apply_failures("job_redacted", unit_results)
+        log_appliance_apply_submission(
+            "job_redacted",
+            selected_units=["kms"],
+            skipped_changed_units=[],
+            unit_results=unit_results,
+            succeeded=False,
+        )
+
+    logged = caplog.text
+    assert "sensitive-command-value" not in logged
+    assert "sensitive-helper-stdout" not in logged
+    assert "sensitive-helper-stderr" not in logged
+    assert "job_redacted" in logged
+    assert "helper and desired-state details omitted" in logged
+    assert "desired-state and helper details omitted" in logged
+    assert "command_index" not in logged
+    assert "returncode" not in logged
+    assert "stdout_present" not in logged
+
+
 def test_record_audit_writes_redacted_operational_log(client, tmp_path, monkeypatch):
     """Verify that record audit writes redacted operational log.
 
@@ -8258,13 +8392,13 @@ def test_dns_and_dhcp_pages_render(client):
     assert 'placeholder="Add interface..."' in dns.text
     assert 'placeholder="Add listen address..."' not in dns.text
     assert "eth1 - access / trunk" not in dns.text
-    assert 'action="/dns/zones"' in dns.text
-    assert 'action="/dns/zones/delete"' in dns.text
+    assert 'action="/ui/management/dns/zones"' in dns.text
+    assert 'action="/ui/management/dns/zones/delete"' in dns.text
     assert "data-confirm-modal" in dns.text
     assert "Delete atlaso.internal?" in dns.text
     assert "It will not touch the appliance until global appliance apply runs." in dns.text
-    assert 'action="/dns/zones/import"' in dns.text
-    assert 'href="/dashboard#appliance-apply-review"' in dns.text
+    assert 'action="/ui/management/dns/zones/import"' in dns.text
+    assert 'href="/ui/management/dashboard#appliance-apply-review"' in dns.text
     assert "atlaso.internal or sitea.internal" in dns.text
     assert "Changes save automatically." in dns.text
     assert "Review appliance changes" in dns.text
@@ -8342,7 +8476,7 @@ def test_dns_and_dhcp_pages_render(client):
     assert "initializeAutosaveForms" in app_js.text
     assert "ATLASO_MUTATING_METHODS" in app_js.text
     assert "scheduleApplianceApplySidebarRefresh" in app_js.text
-    assert 'fetch("/appliance-apply/status"' in app_js.text
+    assert 'fetch(managementUiPath("/appliance-apply/status")' in app_js.text
     assert "function updateServerTime" in app_js.text
     assert "window.setInterval(load, 5000)" in app_js.text
     assert "initializeApplianceApplyProgress" in app_js.text
@@ -8474,7 +8608,7 @@ def test_dns_and_dhcp_pages_render(client):
     assert "DNS name / FQDN" in dhcp.text
     assert 'data-autosave-status-id="dhcp-settings-autosave-status"' in dhcp.text
     assert "Changes save automatically." in dhcp.text
-    assert 'href="/dashboard#appliance-apply-review"' in dhcp.text
+    assert 'href="/ui/management/dashboard#appliance-apply-review"' in dhcp.text
     assert "Review appliance changes" in dhcp.text
     assert "Save DHCP" not in dhcp.text
     assert "192.168.50.100" in dhcp.text
@@ -8830,7 +8964,7 @@ def test_dhcp_leases_page_reflects_live_adapter_output(client, monkeypatch):
         follow_redirects=False,
     )
     assert pxe_response.status_code == 303
-    assert pxe_response.headers["location"] == "/esxi-pxe#esxi-pxe-hosts"
+    assert pxe_response.headers["location"] == "/ui/management/esxi-pxe#esxi-pxe-hosts"
     with SessionLocal() as db:
         host = db.execute(select(EsxiPxeHost).where(EsxiPxeHost.mac_address == "02:15:5d:00:20:42")).scalar_one()
         assert host.hostname == "pxe-client.atlaso.internal"
@@ -9119,6 +9253,9 @@ def test_certificate_authority_page_renders(client):
     assert 'label: "Certificate"' in certificate_table_js
     assert 'label: "Certificate chain"' in certificate_table_js
     assert 'label: "Private key"' in certificate_table_js
+    app_js = client.get("/static/app.js").text
+    assert 'window.location.assign(`/certificate-authority/certificates/${data.id}/downloads/${artifact}`)' in app_js
+    assert 'managementUiPath(`/certificate-authority/certificates/${data.id}/downloads/${artifact}`)' not in app_js
     assert 'title: "Exports"' not in certificate_table_js
     assert re.search(r'title: "Status",\s+field: "status",\s+width: 100', certificate_table_js)
     assert 'formatter: (cell) => escapeHtml(cell.getValue() || "")' in certificate_table_js
@@ -9134,7 +9271,7 @@ def test_certificate_authority_page_renders(client):
     assert "Portal hostname" in ca.text
     assert "ca.atlaso.internal" in ca.text
     assert "Open request portal" in ca.text
-    assert 'href="/requests"' in ca.text
+    assert 'href="https://ca.atlaso.internal/ui/public/ca/requests"' in ca.text
     assert 'name="listen_interfaces_present"' in ca.text
     assert 'name="listen_interfaces"' in ca.text
     assert 'data-derived-listen-addresses' in ca.text
@@ -9147,7 +9284,7 @@ def test_certificate_authority_page_renders(client):
     assert 'name="listen_interface"' not in ca.text
     assert 'name="listen_address"' not in ca.text
     assert "Changes save automatically." in ca.text
-    assert 'href="/dashboard#appliance-apply-review"' in ca.text
+    assert 'href="/ui/management/dashboard#appliance-apply-review"' in ca.text
     assert "Review appliance changes" in ca.text
     assert "atlaso-ca.json" in ca.text
     assert 'class="validation-preview-source language-json"' in ca.text
@@ -9162,8 +9299,10 @@ def test_certificate_authority_page_renders(client):
     assert "ca-download-details" in ca.text
     assert 'data-secret-mask="hidden">hidden</span>' in ca.text
     assert 'data-secret-toggle aria-label="Show secrets key source"' in ca.text
-    assert "/certificate-authority/downloads/root-ca.pem" in ca.text
-    assert "/certificate-authority/downloads/ca-bundle.pem" in ca.text
+    assert 'href="/certificate-authority/downloads/root-ca.pem"' in ca.text
+    assert 'href="/certificate-authority/downloads/ca-bundle.pem"' in ca.text
+    assert 'href="/ui/management/certificate-authority/downloads/' not in ca.text
+    assert not re.search(r'href="/ui/management/certificate-authority/certificates/[^"]+/downloads/', ca.text)
 
 
 def test_certificate_request_creation_is_atomic_and_issues_submitted_sans(client):
@@ -9449,11 +9588,12 @@ def test_public_ca_root_page_is_unauthenticated(client):
         eth2.ipv6_cidr = "fd00:87::32/64"
         db.commit()
 
-    page = client.get("/ca")
+    public_headers = {"host": "ca.atlaso.internal"}
+    page = client.get("/ui/public/ca", headers=public_headers)
     assert page.status_code == 200
     assert "Atlaso Certificate Authority" in page.text
     assert "Photon appliance" in page.text
-    assert 'class="brand" href="/"' in page.text
+    assert 'class="brand" href="/ui/public"' in page.text
     assert "Atlaso Internal Root CA" in page.text
     assert "abc123" in page.text
     assert "ca-fingerprint-block" in page.text
@@ -9461,15 +9601,15 @@ def test_public_ca_root_page_is_unauthenticated(client):
     assert "Copy fingerprint" in page.text
     assert "ca.atlaso.internal" in page.text
     assert "/ca/downloads/root-ca.pem" in page.text
-    assert 'href="/requests"' in page.text
-    assert page.text.count('href="/requests"') == 1
+    assert 'href="/ui/public/ca/requests"' in page.text
+    assert page.text.count('href="/ui/public/ca/requests"') == 1
     assert "public-link-panel" in page.text
     assert "Open request portal" not in page.text
-    assert 'href="/ca/login"' in page.text
+    assert 'href="/ui/public/ca/login"' in page.text
     assert "Trust Material" not in page.text
     assert "Appliance Information" not in page.text
     assert "https://github.com/mdaneri/Atlaso" in page.text
-    assert 'href="https://192.168.167.10/"' in page.text
+    assert 'href="https://192.168.167.10/ui/management"' in page.text
     assert ">Management<" in page.text
     assert 'href="https://192.168.167.10/api/docs"' in page.text
     assert ">Swagger<" in page.text
@@ -9478,12 +9618,12 @@ def test_public_ca_root_page_is_unauthenticated(client):
     assert "/certificate-authority" not in page.text
     assert "/appliance-apply" not in page.text
 
-    login_page = client.get("/ca/login")
+    login_page = client.get("/ui/public/ca/login", headers=public_headers)
     assert login_page.status_code == 200
     assert "Sign in to user portal" in login_page.text
     assert "Use your Atlaso user account to continue." in login_page.text
-    assert 'action="/ca/login" method="post" target="_self"' in login_page.text
-    assert 'name="next" value="/ca"' in login_page.text
+    assert 'action="/ui/public/ca/login" method="post" target="_self"' in login_page.text
+    assert 'name="next" value="/ui/public/ca"' in login_page.text
     assert 'data-history-back' in login_page.text
     assert ">Cancel<" in login_page.text
     assert 'class="public-portal-shell"' in login_page.text
@@ -9491,21 +9631,27 @@ def test_public_ca_root_page_is_unauthenticated(client):
     assert 'href="https://192.168.167.10/api/docs"' in login_page.text
     csrf = login_page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
     login_response = client.post(
-        "/ca/login",
+        "/ui/public/ca/login",
+        headers=public_headers,
         data={"username": "admin", "password": "atlaso-admin", "csrf": csrf, "next": "/ca"},
         follow_redirects=False,
     )
     assert login_response.status_code == 303
-    assert login_response.headers["location"] == "/ca"
+    assert login_response.headers["location"] == "/ui/public/ca"
 
-    signed_in_page = client.get("/ca")
+    signed_in_page = client.get("/ui/public/ca", headers=public_headers)
     assert signed_in_page.status_code == 200
     assert "Sign out" in signed_in_page.text
-    assert 'name="next" value="/ca"' in signed_in_page.text
+    assert 'name="next" value="/ui/public/ca"' in signed_in_page.text
     csrf = signed_in_page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
-    logout_response = client.post("/requests/logout", data={"csrf": csrf, "next": "/ca"}, follow_redirects=False)
+    logout_response = client.post(
+        "/ui/public/ca/requests/logout",
+        headers=public_headers,
+        data={"csrf": csrf, "next": "/ui/public/ca"},
+        follow_redirects=False,
+    )
     assert logout_response.status_code == 303
-    assert logout_response.headers["location"] == "/ca"
+    assert logout_response.headers["location"] == "/ui/public/ca"
 
     ca_host_home = client.get("/", headers={"host": "ca.atlaso.internal"})
     assert ca_host_home.status_code == 200
@@ -9522,17 +9668,17 @@ def test_public_ca_root_page_is_unauthenticated(client):
     assert "Certificate Authority" in ca_ip_home.text
     assert "/ca/downloads/root-ca.pem" not in ca_ip_home.text
     assert "Appliance Information" not in ca_ip_home.text
-    assert 'href="/ca/login"' in ca_ip_home.text
+    assert 'href="/ui/public/ca/login"' in ca_ip_home.text
     assert ">Login<" in ca_ip_home.text
     assert "https://github.com/mdaneri/Atlaso" in ca_ip_home.text
-    assert 'href="https://192.168.167.10/"' in ca_ip_home.text
+    assert 'href="https://192.168.167.10/ui/management"' in ca_ip_home.text
     assert ">Management<" in ca_ip_home.text
     assert 'href="https://192.168.167.10/api/docs"' in ca_ip_home.text
     assert ">Swagger<" in ca_ip_home.text
     assert 'href="https://www.python.org/"' in ca_ip_home.text
-    assert 'href="/requests"' not in ca_ip_home.text
+    assert 'href="/ui/public/ca/requests"' not in ca_ip_home.text
     assert "Request certificate" not in ca_ip_home.text
-    assert ca_ip_home.text.index("https://github.com/mdaneri/Atlaso") > ca_ip_home.text.index('href="/ca/login"')
+    assert ca_ip_home.text.index("https://github.com/mdaneri/Atlaso") > ca_ip_home.text.index('href="/ui/public/ca/login"')
     assert ca_ip_home.text.index("https://github.com/mdaneri/Atlaso") > ca_ip_home.text.index("Public Services")
     assert 'class="public-portal-shell"' in ca_ip_home.text
     assert 'class="app-shell"' not in ca_ip_home.text
@@ -9547,7 +9693,7 @@ def test_public_ca_root_page_is_unauthenticated(client):
 
     management_ip_home = client.get("/", headers={"host": "192.168.167.10"}, follow_redirects=False)
     assert management_ip_home.status_code == 303
-    assert management_ip_home.headers["location"] == "/login"
+    assert management_ip_home.headers["location"] == "/ui/management"
 
     root = client.get("/ca/downloads/root-ca.pem")
     assert root.status_code == 200
@@ -9737,23 +9883,23 @@ def test_public_service_home_is_scoped_to_called_ip(client, tmp_path, monkeypatc
     assert 'data-public-address-mode-toggle' in page.text
     assert 'data-public-address-mode-option="name" aria-pressed="true"' in page.text
     assert 'data-public-address-mode-option="ip" aria-pressed="false"' in page.text
-    assert 'href="https://ca.atlaso.internal/ca"' in page.text
-    assert 'data-ip-href="https://192.168.87.32/ca"' in page.text
+    assert 'href="https://ca.atlaso.internal/ui/public/ca"' in page.text
+    assert 'data-ip-href="https://192.168.87.32/ui/public/ca"' in page.text
     assert 'href="https://depot.atlaso.internal:8443/PROD/"' in page.text
     assert 'data-ip-href="https://192.168.87.32:8443/PROD/"' in page.text
     assert 'href="http://esxi-pxe.atlaso.internal:8081/pxe/esxi/"' in page.text
     assert 'data-ip-href="http://192.168.87.32:8081/pxe/esxi/"' in page.text
-    assert 'href="https://192.168.87.32/terminal"' in page.text
-    assert 'data-ip-href="https://192.168.87.32/terminal"' in page.text
+    assert 'href="https://192.168.87.32/ui/public/terminal"' in page.text
+    assert 'data-ip-href="https://192.168.87.32/ui/public/terminal"' in page.text
     assert "Appliance Information" not in page.text
-    assert 'href="/ca/login"' in page.text
+    assert 'href="/ui/public/ca/login"' in page.text
     assert ">Login<" in page.text
     assert "https://github.com/mdaneri/Atlaso" in page.text
     assert ">Management<" in page.text
     assert 'href="https://192.168.167.10/api/docs"' in page.text
     assert ">Swagger<" in page.text
     assert ">Open<" not in page.text
-    assert 'href="/requests"' not in page.text
+    assert 'href="/ui/public/ca/requests"' not in page.text
     assert "Request certificate" not in page.text
     assert 'class="public-portal-shell"' in page.text
     assert 'class="app-shell"' not in page.text
@@ -9769,11 +9915,11 @@ def test_public_service_home_is_scoped_to_called_ip(client, tmp_path, monkeypatc
     requests_direct = client.get("/requests", headers={"host": "192.168.87.32"})
     assert requests_direct.status_code == 200
     assert "Sign in to user portal" in requests_direct.text
-    assert 'action="/requests/login" method="post" target="_self"' in requests_direct.text
+    assert 'action="/ui/public/ca/requests/login" method="post" target="_self"' in requests_direct.text
 
     management_ip_home = client.get("/", headers={"host": "192.168.167.10"}, follow_redirects=False)
     assert management_ip_home.status_code == 303
-    assert management_ip_home.headers["location"] == "/login"
+    assert management_ip_home.headers["location"] == "/ui/management"
 
     login(client)
     apply_page = client.get("/appliance-apply")
@@ -9983,10 +10129,30 @@ def test_certificate_operator_uses_request_page_without_console_access(client):
     from sqlalchemy import select
 
     from atlaso.app.database import SessionLocal
-    from atlaso.app.models import CaCertificate, Role, User, utcnow
+    from atlaso.app.models import (
+        ApplianceSettings,
+        CaCertificate,
+        CaSettings,
+        PhysicalInterface,
+        Role,
+        User,
+        utcnow,
+    )
     from atlaso.app.security import roles_to_json
 
     with SessionLocal() as db:
+        appliance_settings = db.execute(select(ApplianceSettings)).scalar_one()
+        appliance_settings.management_https_enabled = True
+        ca_settings = db.execute(select(CaSettings)).scalar_one()
+        ca_settings.enabled = True
+        ca_settings.listen_interface = "eth2"
+        ca_settings.listen_address = "192.168.87.32"
+        eth0 = db.execute(select(PhysicalInterface).where(PhysicalInterface.name == "eth0")).scalar_one()
+        eth0.role = "management"
+        eth0.ip_cidr = "192.168.167.10/24"
+        eth2 = db.execute(select(PhysicalInterface).where(PhysicalInterface.name == "eth2")).scalar_one()
+        eth2.role = "access"
+        eth2.ip_cidr = "192.168.87.32/24"
         admin = db.execute(select(User).where(User.username == "admin")).scalar_one()
         admin.role = Role.CERTIFICATE_OPERATOR.value
         admin.roles_json = roles_to_json([Role.CERTIFICATE_OPERATOR.value])
@@ -10002,24 +10168,31 @@ def test_certificate_operator_uses_request_page_without_console_access(client):
         )
         db.commit()
 
-    login_page = client.get("/requests")
+    public_headers = {"host": "ca.atlaso.internal"}
+    login_page = client.get("/ui/public/ca/requests", headers=public_headers)
     assert login_page.status_code == 200
     assert "Certificate Request Portal" in login_page.text
     assert "Sign in to user portal" in login_page.text
     assert "Use your Atlaso user account to continue." in login_page.text
     assert "Sign in to the appliance" not in login_page.text
-    assert 'action="/requests/login" method="post" target="_self"' in login_page.text
-    assert 'action="/login"' not in login_page.text
-    assert 'name="next" value="/requests"' in login_page.text
+    assert 'action="/ui/public/ca/requests/login" method="post" target="_self"' in login_page.text
+    assert 'action="/ui/management/login"' not in login_page.text
+    assert 'name="next" value="/ui/public/ca/requests"' in login_page.text
     assert 'data-history-back' in login_page.text
     csrf = login_page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
     login_response = client.post(
-        "/requests/login",
-        data={"username": "admin", "password": "atlaso-admin", "csrf": csrf, "next": "/requests"},
+        "/ui/public/ca/requests/login",
+        headers=public_headers,
+        data={
+            "username": "admin",
+            "password": "atlaso-admin",
+            "csrf": csrf,
+            "next": "/ui/public/ca/requests",
+        },
         follow_redirects=False,
     )
     assert login_response.status_code == 303
-    assert login_response.headers["location"] == "/requests"
+    assert login_response.headers["location"] == "/ui/public/ca/requests"
 
     console = client.get("/certificate-authority")
     assert console.status_code == 403
@@ -10033,7 +10206,7 @@ def test_certificate_operator_uses_request_page_without_console_access(client):
     assert "/certificate-authority" not in page.text
     assert 'id="ca-requests-table"' in page.text
     assert 'data-fallback-id="ca-requests-fallback"' in page.text
-    assert 'data-revoke-url-template="/ca/certificates/__id__/revoke"' in page.text
+    assert 'data-revoke-url-template="/ui/management/ca/certificates/__id__/revoke"' in page.text
     request_rows = json.loads(
         page.text.split('id="ca-requests-table"', 1)[1].split("data-rows='", 1)[1].split("'", 1)[0]
     )
@@ -10052,18 +10225,18 @@ def test_certificate_operator_uses_request_page_without_console_access(client):
     with SessionLocal() as db:
         issued = db.execute(select(CaCertificate).where(CaCertificate.common_name == "issued.atlaso.internal")).scalar_one()
         certificate_id = issued.id
-    portal_page = client.get("/requests", headers={"host": "ca.atlaso.internal"})
+    portal_page = client.get("/ui/public/ca/requests", headers=public_headers)
     assert portal_page.status_code == 200
     assert "Certificate Request Portal" in portal_page.text
-    assert 'class="brand" href="/"' in portal_page.text
-    assert 'action="/requests"' in portal_page.text
-    assert 'action="/requests/logout"' in portal_page.text
+    assert 'class="brand" href="/ui/public"' in portal_page.text
+    assert 'action="/ui/public/ca/requests"' in portal_page.text
+    assert 'action="/ui/public/ca/requests/logout"' in portal_page.text
     assert 'data-history-back' in portal_page.text
-    assert 'name="next" value="/requests"' in portal_page.text
-    assert f'action="/requests/certificates/{certificate_id}/revoke"' in portal_page.text
+    assert 'name="next" value="/ui/public/ca/requests"' in portal_page.text
+    assert f'action="/ui/public/ca/requests/certificates/{certificate_id}/revoke"' in portal_page.text
     assert 'id="ca-requests-table"' in portal_page.text
     assert 'data-fallback-id="ca-requests-fallback"' in portal_page.text
-    assert 'data-revoke-url-template="/requests/certificates/__id__/revoke"' in portal_page.text
+    assert 'data-revoke-url-template="/ui/public/ca/requests/certificates/__id__/revoke"' in portal_page.text
     public_request_rows = json.loads(
         portal_page.text.split('id="ca-requests-table"', 1)[1].split("data-rows='", 1)[1].split("'", 1)[0]
     )
@@ -10079,7 +10252,8 @@ def test_certificate_operator_uses_request_page_without_console_access(client):
     csrf = portal_page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
 
     submitted = client.post(
-        "/requests",
+        "/ui/public/ca/requests",
+        headers=public_headers,
         data={
             "csrf": csrf,
             "common_name": "operator-request.atlaso.internal",
@@ -10089,19 +10263,20 @@ def test_certificate_operator_uses_request_page_without_console_access(client):
         follow_redirects=False,
     )
     assert submitted.status_code == 303
-    assert submitted.headers["location"] == "/requests"
+    assert submitted.headers["location"] == "/ui/public/ca/requests"
 
     with SessionLocal() as db:
         request_row = db.execute(select(CaCertificate).where(CaCertificate.common_name == "operator-request.atlaso.internal")).scalar_one()
         assert request_row.status == "planned"
 
     revoked = client.post(
-        f"/requests/certificates/{certificate_id}/revoke",
+        f"/ui/public/ca/requests/certificates/{certificate_id}/revoke",
+        headers=public_headers,
         data={"csrf": csrf, "reason": "rotation"},
         follow_redirects=False,
     )
     assert revoked.status_code == 303
-    assert revoked.headers["location"] == "/requests"
+    assert revoked.headers["location"] == "/ui/public/ca/requests"
     with SessionLocal() as db:
         issued = db.get(CaCertificate, certificate_id)
         assert issued.status == "revoked"
@@ -10211,88 +10386,99 @@ def test_certificate_authority_issues_encrypted_managed_certs_and_exports(client
     assert "BEGIN PRIVATE KEY" in key.text
 
 
-def test_kms_page_renders(client):
-    """Verify that kms page renders.
+def test_vsphere_key_provider_page_uses_shared_management_contract(client):
+    """Verify the provider-management page and shared UI contract.
 
     Args:
         client: HTTP test client used to exercise the Atlaso application.
     """
-    from sqlalchemy import select
-
-    from atlaso.app.database import SessionLocal
-    from atlaso.app.models import ServiceState
-
     login(client)
-    with SessionLocal() as db:
-        service = db.execute(select(ServiceState).where(ServiceState.service == "kms")).scalar_one()
-        service.enabled = True
-        service.running = True
-        service.health = "healthy"
-        db.commit()
-
-    kms = client.get("/kms")
-    assert kms.status_code == 200
-    assert "KMS / KMIP" in kms.text
-    assert "appliance-native atlaso-kmip service" in kms.text
-    assert "bounded candidate VCF 9.1 profile" in kms.text
-    assert "kms-keys-table" in kms.text
-    assert "kms-clients-table" in kms.text
-    assert "vcf-management" in kms.text
-    assert "vcf-sddc-manager-aes" in kms.text
-    assert "kms.atlaso.internal" in kms.text
-    assert "Listen interfaces" in kms.text
-    assert "Listen addresses" in kms.text
-    assert "service-bind-editor" in kms.text
-    assert "service-bind-editor stacked-service-bind-editor" in kms.text
-    assert '<select name="backend"' not in kms.text
-    assert 'type="hidden" name="backend" value="atlaso-kmip"' in kms.text
-    assert kms.text.index('name="hostname"') < kms.text.index('data-tag-name="listen_interfaces"')
-    assert kms.text.index('data-tag-name="listen_interfaces"') < kms.text.index('data-derived-listen-addresses')
-    assert kms.text.index('data-derived-listen-addresses') < kms.text.index('name="port"')
-    assert 'name="listen_interfaces_present"' in kms.text
-    assert 'data-tag-name="listen_interfaces"' in kms.text
-    assert 'data-tag-name="listen_addresses"' not in kms.text
-    assert "data-tag-single" not in kms.text
-    assert "192.168.50.1" in kms.text
-    assert "eth2 - access / access / 192.168.50.1" in kms.text
-    assert 'data-autosave-status-id="kms-settings-autosave-status"' in kms.text
-    assert "Changes save automatically." in kms.text
-    assert 'href="/dashboard#appliance-apply-review"' in kms.text
-    assert "Review appliance changes" in kms.text
-    assert "server.json" in kms.text
-    assert "/var/lib/atlaso/kmip/store.db" in kms.text
-    assert "<span>Database path</span>" not in kms.text
-    assert "<span>Config path</span>" not in kms.text
-    assert "<span>Client CA path</span>" in kms.text
-    assert "fixed-value-field" in kms.text
-    assert 'name="server_certificate"' not in kms.text
-    assert 'name="ca_certificate_path"' not in kms.text
-    assert 'name="database_path"' not in kms.text
-    assert 'name="config_path"' not in kms.text
-    assert "data-confirm-modal" in kms.text
-    key_wizard = kms.text.split('id="kms-key-dialog"', 1)[1].split("</dialog>", 1)[0]
-    key_identity = key_wizard.split('data-atlaso-wizard-step="identity"', 1)[1].split(
-        "</section>", 1
-    )[0]
-    key_state = key_wizard.split('data-atlaso-wizard-step="state"', 1)[1].split(
-        "</section>", 1
-    )[0]
-    assert '<textarea name="description" rows="3" maxlength="1000">' in key_identity
-    assert 'name="description"' not in key_state
+    page = client.get("/ui/management/vsphere-key-providers")
+    assert page.status_code == 200
+    assert "vSphere Key Providers" in page.text
+    assert "bounded candidate VCF 9.1 profile" in page.text
+    assert "vsphere-providers-table" in page.text
+    assert "vsphere-vcenters-table" in page.text
+    assert "vsphere-certificates-table" in page.text
+    assert "vsphere-health-table" in page.text
+    assert "Providers" in page.text
+    assert "Trusted vCenters" in page.text
+    assert "Certificates" in page.text
+    assert "/ui/management/vsphere-key-providers/server-certificate.pem" not in page.text
+    assert "Health &amp; lifecycle" in page.text
+    assert "Listen interfaces" in page.text
+    assert "Listen addresses" in page.text
+    assert "Internal CA + imported public certificates" in page.text
+    assert "Exact fingerprint to provider UUID" in page.text
+    assert 'id="vsphere-provider-dialog"' in page.text
+    assert 'id="vsphere-vcenter-dialog"' in page.text
+    assert 'id="vsphere-certificate-dialog"' in page.text
+    assert "PRIVATE KEY" not in page.text
+    assert "Managed Keys" not in page.text
+    assert "Create KMS key" not in page.text
+    assert "data-confirm-modal" in page.text
+    assert 'href="/ui/management/dashboard#appliance-apply-review"' in page.text
 
     app_js = client.get("/static/app.js")
     assert app_js.status_code == 200
-    assert "initializeKmsKeysTable" in app_js.text
-    assert "initializeKmsClientsTable" in app_js.text
-    assert "initializeKmsSettings" in app_js.text
-    assert "+ Add key here" in app_js.text
-    assert "+ Add client here" in app_js.text
-    assert "deleteKmsKeyFromMenu" in app_js.text
-    assert "deleteKmsClientFromMenu" in app_js.text
-    assert '<span class="status-pill good">live</span>' in kms.text
-    assert "preview-modal" in kms.text
-    assert "data-preview-modal-code" in kms.text
-    assert "initializeTerminalNoteActions" in app_js.text
+    assert "initializeVsphereKeyProviderTables" in app_js.text
+    assert "window.AtlasoUiPatterns.createGrid" in app_js.text
+    assert "window.AtlasoUiPatterns.createWizard" in app_js.text
+    assert "+ Add provider here" in app_js.text
+    assert "+ Add trusted vCenter here" in app_js.text
+    assert "upsertOption(vcenterProviderSelect" in app_js.text
+    assert "removeOption(vcenterProviderSelect" in app_js.text
+    assert "onSaved: ({ resource }) => upsertOption(" in app_js.text
+    assert "certificateTargetSelect," in app_js.text
+    assert "removeOption(certificateTargetSelect" in app_js.text
+    assert "updateCertificateCounts" in app_js.text
+    assert "await updateCertificateCounts(providerId, vcenterId, 1" in app_js.text
+    assert "await updateCertificateCounts(data.provider_id, data.trusted_vcenter_id, -1" in app_js.text
+    certificate_actions = app_js.text.split("const certificateForm =", 1)[1].split(
+        'const healthElement = document.getElementById("vsphere-health-table")', 1
+    )[0]
+    assert certificate_actions.count("await refreshNetworkSideStack();") == 2
+
+
+def test_vsphere_key_provider_browser_routes_enforce_kms_scopes(client):
+    """Verify browser reads and mutations enforce the renamed KMS scope boundary.
+
+    Args:
+        client: HTTP test client used to exercise browser authorization.
+    """
+    from sqlalchemy import select
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Role, User
+    from atlaso.app.security import roles_to_json
+
+    with SessionLocal() as db:
+        admin = db.execute(select(User).where(User.username == "admin")).scalar_one()
+        admin.role = Role.VIEWER.value
+        admin.roles_json = roles_to_json([Role.VIEWER.value])
+        db.commit()
+
+    login(client)
+    page = client.get("/ui/management/vsphere-key-providers")
+    assert page.status_code == 200
+    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    denied_write = client.post(
+        "/ui/management/vsphere-key-providers/settings",
+        data={"hostname": "kms.atlaso.internal", "port": "5696", "csrf": csrf},
+        headers={"X-Atlaso-Autosave": "1"},
+    )
+    assert denied_write.status_code == 403
+    assert "Missing required scope: write:kms" in denied_write.text
+
+    with SessionLocal() as db:
+        admin = db.execute(select(User).where(User.username == "admin")).scalar_one()
+        admin.role = Role.NETWORK_ADMIN.value
+        admin.roles_json = roles_to_json([Role.NETWORK_ADMIN.value])
+        db.commit()
+
+    denied_read = client.get("/ui/management/vsphere-key-providers")
+    assert denied_read.status_code == 403
+    assert "Missing required scope: read:kms" in denied_read.text
 
 
 def test_root_aware_initializers_do_not_receive_dom_content_loaded_event():
@@ -10337,10 +10523,10 @@ def test_kms_settings_autosave_returns_json(client):
     from atlaso.app.models import DnsRecord
 
     login(client)
-    page = client.get("/kms")
+    page = client.get("/vsphere-key-providers")
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
     response = client.post(
-        "/kms/settings",
+        "/vsphere-key-providers/settings",
         data={
             "enabled": "on",
             "backend": "atlaso-kmip",
@@ -10366,12 +10552,12 @@ def test_kms_settings_autosave_returns_json(client):
     assert payload["listen_addresses"] == ["192.168.50.1"]
     assert payload["server_certificate"] == "kms.atlaso.internal"
     assert "KMS requires Certificate Authority to be enabled before activation." in payload["validation_errors"]
-    refreshed = client.get("/kms")
+    refreshed = client.get("/vsphere-key-providers")
     assert "enabled" in refreshed.text
     assert "/tmp/rogue-kms.db" not in refreshed.text
     assert "/tmp/rogue-kms.conf" not in refreshed.text
     assert "/tmp/rogue-client-ca.crt" not in refreshed.text
-    assert "/etc/atlaso/ca/root.crt" in refreshed.text
+    assert "/etc/atlaso/kmip/client-trust.pem" in refreshed.text
     assert "/var/lib/atlaso/kmip/store.db" in refreshed.text
     assert "/etc/atlaso/kmip/server.json" in refreshed.text
     assert "10.0.0.99" not in refreshed.text
@@ -10391,10 +10577,10 @@ def test_kms_settings_accept_multiple_listen_targets(client):
         client: HTTP test client used to exercise the Atlaso application.
     """
     login(client)
-    page = client.get("/kms")
+    page = client.get("/vsphere-key-providers")
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
     response = client.post(
-        "/kms/settings",
+        "/vsphere-key-providers/settings",
         data={
             "enabled": "on",
             "backend": "atlaso-kmip",
@@ -10417,12 +10603,12 @@ def test_kms_settings_accept_multiple_listen_targets(client):
     assert payload["listen_interfaces"] == ["eth2"]
     assert payload["listen_addresses"] == ["192.168.50.1"]
     config_preview = json.loads(payload["config_preview"])
-    assert config_preview["listen"] == {"host": "192.168.50.1", "port": 5696}
+    assert config_preview["listen"] == {"addresses": ["192.168.50.1"], "port": 5696}
     assert config_preview["schema_version"] == 1
 
 
-def test_kms_enable_autocreates_ca_managed_certificate_rows(client):
-    """Verify that kms enable autocreates ca managed certificate rows.
+def test_vsphere_provider_enable_creates_only_shared_server_identity(client):
+    """Verify provider enablement never generates a vCenter client private key.
 
     Args:
         client: HTTP test client used to exercise the Atlaso application.
@@ -10430,7 +10616,7 @@ def test_kms_enable_autocreates_ca_managed_certificate_rows(client):
     from sqlalchemy import select
 
     from atlaso.app.database import SessionLocal
-    from atlaso.app.models import CaCertificate, CaSettings, KmsClient
+    from atlaso.app.models import CaCertificate, CaSettings
 
     login(client)
     with SessionLocal() as db:
@@ -10438,10 +10624,10 @@ def test_kms_enable_autocreates_ca_managed_certificate_rows(client):
         ca_settings.enabled = True
         db.commit()
 
-    page = client.get("/kms")
+    page = client.get("/vsphere-key-providers")
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
     response = client.post(
-        "/kms/settings",
+        "/vsphere-key-providers/settings",
         data={
             "enabled": "on",
             "backend": "atlaso-kmip",
@@ -10457,108 +10643,24 @@ def test_kms_enable_autocreates_ca_managed_certificate_rows(client):
     )
 
     assert response.status_code == 200
-    assert response.json()["validation_errors"] == []
-    config = json.loads(response.json()["config_preview"])
+    assert any("public client certificate" in error for error in response.json()["validation_errors"])
 
     with SessionLocal() as db:
         server_cert = db.execute(select(CaCertificate).where(CaCertificate.managed_owner == "kms:server")).scalar_one()
-        client_cert = db.execute(select(CaCertificate).where(CaCertificate.managed_owner == "kms:client:vcf-management")).scalar_one()
-        kms_client = db.execute(select(KmsClient).where(KmsClient.name == "vcf-management")).scalar_one()
         assert server_cert.status == "issued"
         assert server_cert.ip_addresses == "192.168.50.1"
         assert server_cert.cert_path == "/etc/atlaso/kmip/certs/kms.atlaso.internal.crt"
-        assert client_cert.status == "issued"
-        assert kms_client.certificate_fingerprint == client_cert.fingerprint
-        assert config["providers"][0]["client_fingerprints"] == [client_cert.fingerprint]
-        assert config["providers"][0]["client_certificate_paths"] == []
+        client_certificates = db.execute(
+            select(CaCertificate).where(CaCertificate.managed_owner.like("kms:client:%"))
+        ).scalars().all()
+        assert client_certificates == []
 
-
-def test_kms_client_certificate_rotation_overlaps_then_retires_previous_fingerprint(
-    client,
-):
-    """Verify that kms client certificate rotation overlaps then retires previous fingerprint.
-
-    Args:
-        client: HTTP test client used to exercise the Atlaso application.
-    """
-    from sqlalchemy import select
-
-    from atlaso.app.database import SessionLocal
-    from atlaso.app.models import CaCertificate, CaSettings, KmsClient, KmsKey, KmsSettings
-    from atlaso.app.services.kms import kms_client_fingerprints, render_kms_config
-
-    login(client)
-    with SessionLocal() as db:
-        ca_settings = db.execute(select(CaSettings)).scalar_one()
-        ca_settings.enabled = True
-        db.commit()
-
-    page = client.get("/kms")
-    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
-    enabled = client.post(
-        "/kms/settings",
-        data={
-            "enabled": "on",
-            "backend": "atlaso-kmip",
-            "listen_interface": "eth2",
-            "port": "5696",
-            "hostname": "kms.atlaso.internal",
-            "server_certificate": "kms.atlaso.internal",
-            "require_client_cert": "on",
-            "allow_register": "on",
-            "csrf": csrf,
-        },
-        headers={"X-Atlaso-Autosave": "1"},
-    )
-    assert enabled.status_code == 200
-    with SessionLocal() as db:
-        kms_client = db.execute(
-            select(KmsClient).where(KmsClient.name == "vcf-management")
-        ).scalar_one()
-        certificate = db.execute(
-            select(CaCertificate).where(
-                CaCertificate.managed_owner == "kms:client:vcf-management"
-            )
-        ).scalar_one()
-        previous_fingerprint = kms_client.certificate_fingerprint
-        current_fingerprint = "f" * 64
-        assert previous_fingerprint != current_fingerprint
-        certificate.fingerprint = current_fingerprint
-        db.commit()
-
-    rotated_page = client.get("/kms")
-    assert rotated_page.status_code == 200
-    with SessionLocal() as db:
-        kms_client = db.execute(
-            select(KmsClient).where(KmsClient.name == "vcf-management")
-        ).scalar_one()
-        assert kms_client_fingerprints(kms_client.certificate_fingerprint) == [
-            previous_fingerprint,
-            current_fingerprint,
-        ]
-        client_id = kms_client.id
-
-    retired = client.post(
-        f"/kms/clients/{client_id}/retire-previous-certificate",
-        data={"csrf": csrf},
-    )
-
-    assert retired.status_code == 200
-    assert retired.json()["client"]["certificate_fingerprints"] == [
-        current_fingerprint
-    ]
-    with SessionLocal() as db:
-        kms_client = db.get(KmsClient, client_id)
-        assert kms_client is not None
-        assert kms_client.certificate_fingerprint == current_fingerprint
-        settings = db.execute(select(KmsSettings)).scalar_one()
-        keys = db.execute(select(KmsKey)).scalars().all()
-        config = json.loads(
-            render_kms_config(settings=settings, clients=[kms_client], keys=keys)
-        )
-        assert config["providers"][0]["client_fingerprints"] == [
-            current_fingerprint
-        ]
+    download = client.get("/vsphere-key-providers/server-certificate.pem")
+    assert download.status_code == 200
+    assert download.text.startswith("-----BEGIN CERTIFICATE-----")
+    assert "PRIVATE KEY" not in download.text
+    assert download.headers["cache-control"] == "no-store"
+    assert "atlaso-kmip-server-chain.pem" in download.headers["content-disposition"]
 
 
 def test_kms_apply_task_captures_current_desired_state(client):
@@ -10573,8 +10675,14 @@ def test_kms_apply_task_captures_current_desired_state(client):
     from atlaso.app.models import DnsRecord, Job
 
     login(client)
-    page = client.get("/kms")
+    page = client.get("/vsphere-key-providers")
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    disabled = client.post(
+        "/vsphere-key-providers/settings",
+        data={"hostname": "kms.atlaso.internal", "port": "5696", "csrf": csrf},
+        headers={"X-Atlaso-Autosave": "1"},
+    )
+    assert disabled.status_code == 200
     response = client.post("/appliance-apply", data={"csrf": csrf, "selected_units": "kms"})
 
     assert_apply_redirect(response)
@@ -10585,6 +10693,68 @@ def test_kms_apply_task_captures_current_desired_state(client):
         assert "atlaso-helper" in (job.result or "")
         assert "/var/lib/atlaso/apply/kms/server.json" in (job.result or "")
         assert "atlaso-helper kms" in (job.result or "")
+
+
+def test_successful_kms_apply_marks_disabled_provider_removal_applied(monkeypatch, tmp_path):
+    """Verify a successful real apply acknowledges disabled-provider runtime removal.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace fixed staging paths.
+        tmp_path: Temporary directory provided for isolated staged files.
+    """
+    from atlaso.app.adapters.system import AdapterResult
+    from atlaso.app.models import VsphereKeyProvider
+    from atlaso.app.ui import execute_appliance_apply_unit
+
+    provider = VsphereKeyProvider(name="Disabled provider removal", enabled=False)
+
+    class SuccessfulKmsAdapter:
+        """Return successful non-dry-run helper results."""
+
+        dry_run = False
+
+        @staticmethod
+        def validate_kms_config(path):
+            """Return successful KMS validation.
+
+            Args:
+                path: Fixed staged KMS configuration path.
+            """
+            return AdapterResult(["kms", "validate", path], False)
+
+        @staticmethod
+        def apply_kms_config(path):
+            """Return successful KMS apply.
+
+            Args:
+                path: Fixed staged KMS configuration path.
+            """
+            return AdapterResult(["kms", "apply", path], False)
+
+    config_path = tmp_path / "kms" / "server.json"
+    trust_path = tmp_path / "kms" / "client-trust.pem"
+    monkeypatch.setattr("atlaso.app.ui.KMS_STAGED_CONFIG_PATH", str(config_path))
+    monkeypatch.setattr("atlaso.app.ui.KMS_STAGED_CLIENT_TRUST_PATH", str(trust_path))
+    unit = {
+        "id": "kms",
+        "label": "vSphere Key Providers",
+        "context": {
+            "vsphere_key_providers": [provider],
+            "kms_client_trust_bundle": "",
+        },
+        "raw_config_preview": "{}",
+        "summary": ["service disabled"],
+        "validation_errors": [],
+        "validation_warnings": [],
+        "config_path": str(config_path),
+        "config_preview": "{}",
+        "config_diff": "",
+    }
+
+    result = execute_appliance_apply_unit(unit, adapter=SuccessfulKmsAdapter())
+
+    assert result["success"] is True
+    assert provider.applied_at is not None
 
 
 def test_vcf_backups_page_uses_local_user_for_sftp(client):
@@ -10602,9 +10772,9 @@ def test_vcf_backups_page_uses_local_user_for_sftp(client):
     assert "vcf-backup" in page.text
     assert "/mnt/atlaso-vcf-backups" in page.text
     assert "/backups" in page.text
-    assert 'action="/vcf-backups/settings"' in page.text
+    assert 'action="/ui/management/vcf-backups/settings"' in page.text
     assert 'data-autosave-status-id="vcf-backup-settings-status"' in page.text
-    assert 'href="/dashboard#appliance-apply-review"' in page.text
+    assert 'href="/ui/management/dashboard#appliance-apply-review"' in page.text
     assert "Review appliance changes" in page.text
     assert "VCF Backup SFTP desired state is disabled" in page.text
     assert "Listen interfaces" in page.text
@@ -10668,7 +10838,7 @@ def test_vcf_private_registry_page_models_harbor_and_bundle_relocation(client):
     assert "Choose CA bundle" in page.text
     assert "file-upload-icon" in page.text
     assert "not uploaded" in page.text
-    assert 'action="/vcf-private-registry/settings"' in page.text
+    assert 'action="/ui/management/vcf-private-registry/settings"' in page.text
     assert 'data-autosave-status-id="vcf-registry-settings-status"' in page.text
     assert "Supervisor Service bundles" in page.text
     assert "Review appliance changes" in page.text
@@ -10918,7 +11088,7 @@ def test_vcf_offline_depot_page_redirect_and_uploads_are_sanitized(client, tmp_p
     login(client)
     legacy = client.get("/https-repository", follow_redirects=False)
     assert legacy.status_code == 307
-    assert legacy.headers["location"] == "/vcf-offline-depot"
+    assert legacy.headers["location"] == "/ui/management/https-repository"
 
     page = client.get("/vcf-offline-depot")
     assert page.status_code == 200
@@ -10959,7 +11129,7 @@ def test_vcf_offline_depot_page_redirect_and_uploads_are_sanitized(client, tmp_p
     assert 'data-vcf-depot-tool-package-open' in page.text
     assert 'id="vcf-depot-tool-package-dialog"' in page.text
     assert 'data-vcf-depot-tool-package-form' in page.text
-    assert 'action="/vcf-offline-depot/tool-package"' in page.text
+    assert 'action="/ui/management/vcf-offline-depot/tool-package"' in page.text
     assert 'data-atlaso-wizard-step="package"' in page.text
     assert 'data-vcf-depot-package-progress hidden' in page.text
     assert 'data-vcf-depot-package-status role="status" aria-live="polite"' in page.text
@@ -10977,7 +11147,7 @@ def test_vcf_offline_depot_page_redirect_and_uploads_are_sanitized(client, tmp_p
     assert 'data-vcf-depot-configuration-open data-vcf-depot-requires-tool disabled' in page.text
     assert "Choose whether to queue a Software Depot ID refresh" in page.text
     assert "No Broadcom credentials staged." in page.text
-    assert 'action="/vcf-offline-depot/tool-configuration"' in page.text
+    assert 'action="/ui/management/vcf-offline-depot/tool-configuration"' in page.text
     assert 'id="vcf-depot-configuration-dialog"' in page.text
     assert 'data-vcf-depot-configuration-form' in page.text
     assert 'data-atlaso-wizard-step="credentials"' in page.text
@@ -11010,7 +11180,7 @@ def test_vcf_offline_depot_page_redirect_and_uploads_are_sanitized(client, tmp_p
     assert '"Schedule download (enable profile first)"' in app_js
     assert "function scheduleVcfDepotProfileDownload(row)" in app_js
     assert page.text.index("<th>Name</th>") < page.text.index("<th>Start</th>") < page.text.index("<th>Type</th>")
-    assert 'href="/logs"' in page.text
+    assert 'href="/ui/management/logs"' in page.text
     assert "Generate the Software Depot ID" in page.text
     assert 'name="refresh_software_depot_id"' in page.text
     assert 'data-vcf-depot-refresh-id checked' in page.text
@@ -11034,7 +11204,7 @@ def test_vcf_offline_depot_page_redirect_and_uploads_are_sanitized(client, tmp_p
     assert "Telemetry choice" not in page.text
     assert "<span>Telemetry</span>" not in page.text
     assert "<span>VMware CEIP</span>" in page.text
-    assert 'href="/settings#vmware-product-preferences"' in page.text
+    assert 'href="/ui/management/settings#vmware-product-preferences"' in page.text
     assert 'name="telemetry_enabled"' not in page.text
     assert 'name="telemetry_choice"' not in page.text
     assert "<span>HTTP user</span>" in page.text
@@ -11070,7 +11240,7 @@ def test_vcf_offline_depot_page_redirect_and_uploads_are_sanitized(client, tmp_p
     assert "service-bind-editor" in page.text
     assert 'data-service-bind-address="192.168.50.1"' in page.text
     assert '<div class="settings-action-row software-depot-id-row">' in page.text
-    assert 'action="/vcf-offline-depot/settings"' in page.text
+    assert 'action="/ui/management/vcf-offline-depot/settings"' in page.text
     assert 'data-autosave-status-id="vcf-depot-settings-status"' in page.text
     assert 'data-components=' in page.text
     assert 'data-esx-platforms=' in page.text
@@ -11078,7 +11248,7 @@ def test_vcf_offline_depot_page_redirect_and_uploads_are_sanitized(client, tmp_p
     assert "VSAN_FILE_SERVICES" in page.text
     assert "embeddedEsx-6.7-INT" in page.text
     assert "esxio-9.1-INTL" in page.text
-    assert 'href="/dashboard#appliance-apply-review"' in page.text
+    assert 'href="/ui/management/dashboard#appliance-apply-review"' in page.text
     app_js = client.get("/static/app.js")
     assert app_js.status_code == 200
     assert "initializeVcfDepotSettings" in app_js.text
@@ -11092,7 +11262,7 @@ def test_vcf_offline_depot_page_redirect_and_uploads_are_sanitized(client, tmp_p
     assert "window.AtlasoUiPatterns.createWizard" in app_js.text
     assert 'body.set("application_properties", content)' in app_js.text
     assert "new TextEncoder().encode(content).length > 512 * 1024" in app_js.text
-    assert 'fetch("/vcf-offline-depot/software-depot-id/generate"' in app_js.text
+    assert 'fetch(managementUiPath("/vcf-offline-depot/software-depot-id/generate")' in app_js.text
     assert 'softwareDepotIdElement.dataset.present === "1"' in app_js.text
     assert 'refreshId.checked = !softwareDepotIdPresent' in app_js.text
     assert 'refreshId.disabled = !softwareDepotIdPresent' in app_js.text
@@ -11117,7 +11287,7 @@ def test_vcf_offline_depot_page_redirect_and_uploads_are_sanitized(client, tmp_p
     assert "initializeTasksPage" in app_js.text
     assert 'query.set("task_type", page.dataset.taskType)' in app_js.text
     apply_refresh_js = app_js.text.split("function refreshCurrentWorkflowAfterApplianceApply", 1)[1].split("async function submitApplianceApplyForm", 1)[0]
-    assert 'new Set(["/esx-storage", "/vcf-offline-depot"])' in apply_refresh_js
+    assert 'new Set([managementUiPath("/esx-storage"), managementUiPath("/vcf-offline-depot")])' in apply_refresh_js
     assert 'task?.status !== "succeeded"' in apply_refresh_js
     assert "window.location.reload()" in apply_refresh_js
     submit_apply_js = app_js.text.split("async function submitApplianceApplyForm", 1)[1].split("async function pollGlobalApplianceApply", 1)[0]
@@ -11156,12 +11326,14 @@ def test_vcf_offline_depot_page_redirect_and_uploads_are_sanitized(client, tmp_p
     assert "updateVcfDepotHttpsPreview" in app_js.text
     assert "if (payload.tool_archive_uploaded)" in app_js.text
     assert "location ^~ /static/" in app_js.text
-    assert "location = /manifest.webmanifest" in app_js.text
-    assert "location = /service-worker.js" in app_js.text
-    assert "location = /ca" in app_js.text
-    assert "location ^~ /ca/" in app_js.text
-    assert "location = /requests" in app_js.text
-    assert "location ^~ /requests/" in app_js.text
+    assert "location = /ui/public" in app_js.text
+    assert "location ^~ /ui/public/" in app_js.text
+    assert "location = /manifest.webmanifest" not in app_js.text
+    assert "location = /service-worker.js" not in app_js.text
+    assert "location = /ca" not in app_js.text
+    assert "location ^~ /ca/" not in app_js.text
+    assert "location = /requests" not in app_js.text
+    assert "location ^~ /requests/" not in app_js.text
     assert "updateVcfDepotValidation" in app_js.text
     assert "initializeVcfDepotSoftwareDepotIdGenerator" not in app_js.text
     assert "initializeVcfDepotCredentialsPaste" in app_js.text
@@ -14397,7 +14569,7 @@ def test_firewall_settings_autosave_updates_desired_state_preview(client):
     page = client.get("/firewall")
     assert page.status_code == 200
     assert "data-firewall-enabled-status" in page.text
-    assert "atlaso-brand-20260725-1" in page.text
+    assert "issue-287-1" in page.text
     monaco = client.get("/static/vendor/monaco/atlaso-monaco.min.js")
     assert monaco.status_code == 200
     assert "AtlasoMonaco" in monaco.text
@@ -14465,9 +14637,9 @@ def test_global_appliance_apply_tracks_baselines_diffs_and_skips(client):
     assert "appliance-apply-modal" in page.text
     assert 'class="button primary hidden" type="submit" data-appliance-apply-submit' in page.text
     assert "data-apply-submit-tracker" not in page.text
-    direct = client.get("/appliance-apply", follow_redirects=False)
+    direct = client.get("/ui/management/appliance-apply", follow_redirects=False)
     assert direct.status_code == 303
-    assert direct.headers["location"] == "/dashboard#appliance-apply-review"
+    assert direct.headers["location"] == "/ui/management/dashboard#appliance-apply-review"
     review = client.get("/appliance-apply/review")
     assert review.status_code == 200
     firewall_review = next(unit for unit in review.json()["units"] if unit["id"] == "firewall")
@@ -14482,7 +14654,7 @@ def test_global_appliance_apply_tracks_baselines_diffs_and_skips(client):
 
     baseline_response = client.post("/appliance-apply", data={"csrf": csrf, "selected_units": "firewall"}, follow_redirects=False)
     assert baseline_response.status_code == 303
-    assert baseline_response.headers["location"].startswith("/tasks?job_id=job_")
+    assert baseline_response.headers["location"].startswith("/ui/management/tasks?job_id=job_")
     with SessionLocal() as db:
         baseline = db.execute(select(Setting).where(Setting.key == "appliance_apply.baselines.v1")).scalar_one()
         assert '"firewall"' in baseline.value
@@ -14913,7 +15085,7 @@ def test_appliance_apply_carries_explicit_vcf_depot_id_refresh_intent_to_executi
         headers={"Accept": "application/json"},
     )
 
-    assert response.status_code == 202
+    assert response.status_code == 202, response.text
     job_id = response.json()["job_id"]
     with SessionLocal() as db:
         submitted_job = db.get(Job, job_id)
@@ -16144,11 +16316,11 @@ def test_appliance_startup_initializes_factory_apply_baseline(monkeypatch, tmp_p
 
     from atlaso.app.main import create_app
 
-    with TestClient(create_app()) as test_client:
+    with TestClient(create_app(), base_url="http://127.0.0.1") as test_client:
         login(test_client)
-        page = test_client.get("/appliance-apply", follow_redirects=False)
+        page = test_client.get("/ui/management/appliance-apply", follow_redirects=False)
         assert page.status_code == 303
-        assert page.headers["location"] == "/dashboard#appliance-apply-review"
+        assert page.headers["location"] == "/ui/management/dashboard#appliance-apply-review"
         review = test_client.get("/appliance-apply/review")
         assert review.status_code == 200
         assert review.json()["units"] == []
@@ -16620,7 +16792,7 @@ def test_services_and_service_pages_derive_composite_runtime_status(client, monk
     assert depot_row["running"] is True
     assert depot_row["enabled"] is True
 
-    assert '<span class="status-pill good">live</span>' in client.get("/kms").text
+    assert '<span class="status-pill good">live</span>' in client.get("/vsphere-key-providers").text
     assert '<span class="status-pill good">live</span>' in client.get("/vcf-offline-depot").text
     ca_page = client.get("/certificate-authority").text
     assert '<span class="status-pill muted">disabled</span>' not in ca_page
@@ -17957,7 +18129,7 @@ def test_vcf_helper_page_renders_domain_dropdown(client):
     assert response.status_code == 200
     assert "Generated VCF FQDNs" in response.text
     assert "DNS Boundary" not in response.text
-    assert 'href="/vcf-helper"' in response.text
+    assert 'href="/ui/management/vcf-helper"' in response.text
     visible_workspace = response.text.split('<section class="split-workspace vcf-helper-workspace"', 1)[1].split("</section>", 1)[0]
     assert "VCF Certificate Trust" in visible_workspace
     assert "Review DNS" not in visible_workspace
@@ -18051,7 +18223,7 @@ def test_vcf_helper_page_renders_domain_dropdown(client):
     assert "initializeVcfSddcDeployment" in app_js
     assert "initializeVcfTargetDepotHelper" in app_js
     assert "/vcf-helper/offline-depot/inspect-target" in app_js
-    assert "window.location.assign(`/tasks?job_id=${encodeURIComponent(data.job_id || \"\")}`)" in app_js
+    assert 'window.location.assign(managementUiPath(`/tasks?job_id=${encodeURIComponent(data.job_id || "")}`))' in app_js
     assert "const hasTargetDetails = Boolean(data.target?.appliance)" in app_js
     assert "tlsConfirm.checked = isConfirmedTls" in app_js
     assert 'return state === "tls" ? "tls" : state === "ready"' in app_js
@@ -18129,7 +18301,7 @@ def test_vcf_helper_renders_certificate_trust_modal(client):
 
     assert response.status_code == 200
     assert "VCF Certificate Trust" in response.text
-    assert 'action="/vcf-trust/root-ca"' in response.text
+    assert 'action="/ui/management/vcf-trust/root-ca"' in response.text
     assert 'name="snapshot_acknowledged"' not in response.text
     assert 'name="confirmed_tls_fingerprint"' in response.text
     assert "SHA-256 fingerprint" in response.text
@@ -18148,7 +18320,7 @@ def test_vcf_helper_renders_certificate_trust_modal(client):
     app_js = Path("atlaso/app/static/app.js").read_text()
     assert 'headers: { "X-Atlaso-VCF-Trust": "1" }' in app_js
     assert "/vcf-helper/trust-root-ca/inspect-target" in app_js
-    assert "window.location.assign(payload.redirect || `/tasks?job_id=" in app_js
+    assert "window.location.assign(payload.redirect || managementUiPath(`/tasks?job_id=" in app_js
     assert "After TLS confirmation" in app_js
     assert "previouslyConfirmedTls" in app_js
     assert "tlsCheckbox.checked = isConfirmedTls" in app_js
@@ -18156,7 +18328,7 @@ def test_vcf_helper_renders_certificate_trust_modal(client):
 
     legacy = client.get("/vcf-trust", follow_redirects=False)
     assert legacy.status_code == 307
-    assert legacy.headers["location"] == "/vcf-helper?vcf_trust=1"
+    assert legacy.headers["location"] == "/ui/management/vcf-trust"
 
 
 def test_vcf_trust_inspects_target_tls_without_persisting_target(client, monkeypatch):

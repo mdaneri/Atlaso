@@ -6,17 +6,45 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def test_ci_separates_approval_gated_bot_checks_from_required_contexts() -> None:
-    """Verify that ci separates approval gated bot checks from required contexts."""
+def test_ci_separates_diagnostic_checks_from_required_contexts() -> None:
+    """Verify that CI separates diagnostic checks from required contexts."""
     workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(
         encoding="utf-8"
     )
 
     assert workflow.count("github.event_name == 'pull_request'") == 3
-    assert workflow.count("github.actor == 'github-actions[bot]'") == 3
+    assert workflow.count("github.actor == 'github-actions[bot]'") == 5
     for context in ("Version policy", "Repository checks", "Python tests"):
         assert f"'Approval-gated {context}'" in workflow
+        assert f"'Trusted {context} validation'" in workflow
         assert f"|| '{context}'" in workflow
+        assert workflow.count(context) >= 5
+
+
+def test_trusted_ci_publishes_revalidated_required_statuses() -> None:
+    """Verify that trusted CI bridges exact-head results into PR statuses."""
+    workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(
+        encoding="utf-8"
+    )
+
+    assert "head_sha:" in workflow
+    assert "pull_number:" in workflow
+    assert "github.workflow }}-${{ github.event_name }}" in workflow
+    assert "inputs.pull_number || github.ref" in workflow
+    assert workflow.count("statuses: write") == 2
+    assert workflow.count("pull-requests: read") == 2
+    assert workflow.count("persist-credentials: false") == 4
+    assert "github.event_name == 'workflow_dispatch'" in workflow
+    assert "github.actor == 'github-actions[bot]'" in workflow
+    assert '"$base_ref" != "main"' in workflow
+    assert '"$base_sha" != "$BASE_SHA"' in workflow
+    assert '"$head_repository" != "$GITHUB_REPOSITORY"' in workflow
+    assert '"$head_sha" != "$HEAD_SHA"' in workflow
+    assert workflow.count('"repos/$GITHUB_REPOSITORY/statuses/$HEAD_SHA"') == 2
+    assert '{state: "pending", context: $context' in workflow
+    assert "Trusted CI run $GITHUB_RUN_ID passed this validation" in workflow
+    finish_job = workflow.split("  trusted-contexts-finish:", maxsplit=1)[1]
+    assert "actions/checkout" not in finish_job
 
 
 def test_auto_merge_branch_updates_are_explicit_and_race_safe() -> None:
@@ -61,6 +89,13 @@ def test_trusted_version_refresh_validates_repository_dispatch_payload() -> None
     assert '"$head_sha" != "$EXPECTED_HEAD_SHA"' in workflow
     assert "ref: ${{ steps.pull-request.outputs.head_sha }}" in workflow
     assert 'git -C target push origin "HEAD:${HEAD_REF}"' in workflow
+    assert "id: candidate" in workflow
+    assert 'candidate_head_sha="$(git -C target rev-parse HEAD)"' in workflow
+    assert "for attempt in {1..12}" in workflow
+    assert "sleep 2" in workflow
+    assert '-f ref=main' in workflow
+    assert '-f "inputs[head_sha]=${HEAD_SHA}"' in workflow
+    assert '-f "inputs[pull_number]=${PR_NUMBER}"' in workflow
     assert (
         "steps.changes.outputs.changed == 'true' || "
         "github.event_name == 'repository_dispatch'"

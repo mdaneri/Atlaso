@@ -19,8 +19,8 @@
       {% if terminal_public %}
         <a class="button secondary" href="/">Back to Public Services</a>
       {% else %}
-        <a class="button secondary" href="/settings">Open Appliance Settings</a>
-        <a class="button secondary" href="/dashboard#appliance-apply-review" data-appliance-apply-open>Review appliance changes</a>
+        <a class="button secondary" href="{{ management_ui_root }}/settings">Open Appliance Settings</a>
+        <a class="button secondary" href="{{ management_ui_root }}/dashboard#appliance-apply-review" data-appliance-apply-open>Review appliance changes</a>
       {% endif %}
     </div>
   {% else %}

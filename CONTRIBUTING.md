@@ -49,11 +49,18 @@ automatically updates only those auto-merge-enabled branches that are in this re
 conflict, and are behind `main`. The update uses the observed head commit as a concurrency guard. Forks and pull requests
 without auto-merge remain maintainer-controlled.
 
-The trusted version workflow may update an internal pull request with `GITHUB_TOKEN`. GitHub places the duplicate
+The trusted version workflow may update an internal pull request with `GITHUB_TOKEN`. GitHub can place the duplicate
 `pull_request` workflow run created by that update behind an approval gate, so those diagnostic jobs use non-required
-names. The trusted dispatch run retains the canonical `Version policy`, `Repository checks`, and `Python tests` names
-required by the `main` ruleset. Automated branch updates request version refresh through a typed repository dispatch,
-which always uses the workflow revision on protected `main`; there is no privileged manual-dispatch entry point.
+names. Automated branch updates request version refresh through a typed repository dispatch, which always uses the
+workflow revision on protected `main`; there is no privileged manual-dispatch entry point.
+
+The protected workflow then dispatches CI from `main` with the exact pull-request number, base SHA, and head SHA. Its
+candidate validation jobs retain read-only permissions. Separate jobs that never check out candidate code revalidate
+the open same-repository pull request and publish pending, success, failure, or error commit statuses named `Version
+policy`, `Repository checks`, and `Python tests`, each linked to the trusted run. Those visible statuses are the
+canonical contexts required by the `main` ruleset; a manual CI dispatch cannot publish them. Trusted dispatches and
+diagnostic pull-request runs use separate concurrency groups, so a delayed diagnostic run cannot cancel trusted status
+publication.
 
 ### Dependabot version updates
 

@@ -1,5 +1,10 @@
 {
   "schema_version": 1,
+  "canonical_browser_roots": {
+    "management": "/ui/management",
+    "public": "/ui/public",
+    "note": "Per-image route values preserve the URL used for the historical capture; documentation generators publish the canonical issue 287 route."
+  },
   "screenshots": [
     {
       "path": "assets/screenshots/about-modal-desktop.webp",
@@ -660,30 +665,30 @@
       "sensitive_data_reviewed": true
     },
     {
-      "path": "assets/screenshots/kms-clean-desktop.webp",
-      "route": "/kms",
+      "path": "assets/screenshots/vsphere-key-providers-clean-desktop.webp",
+      "route": "/vsphere-key-providers",
       "state": "clean",
       "viewport": "1600x1000",
       "source_commit": "0247c34bc85e+working-tree",
       "atlaso_version": "0.9.21",
-      "caption": "KMS and KMIP in the verified clean-appliance desktop state.",
-      "alt": "Atlaso KMS and KMIP page in the clean-appliance desktop viewport.",
+      "caption": "vSphere Key Providers in the verified clean-appliance desktop state.",
+      "alt": "Atlaso vSphere Key Providers page in the clean-appliance desktop viewport.",
       "capture_method": "chrome-browser",
-      "documentation_page": "services/kms.md",
+      "documentation_page": "services/vsphere-key-providers.md",
       "brand_variant": "light",
       "sensitive_data_reviewed": true
     },
     {
-      "path": "assets/screenshots/kms-clean-responsive.webp",
-      "route": "/kms",
+      "path": "assets/screenshots/vsphere-key-providers-clean-responsive.webp",
+      "route": "/vsphere-key-providers",
       "state": "clean",
       "viewport": "900x1200",
       "source_commit": "0247c34bc85e+working-tree",
       "atlaso_version": "0.9.21",
-      "caption": "KMS and KMIP in the verified clean-appliance responsive state.",
-      "alt": "Atlaso KMS and KMIP page in the clean-appliance responsive viewport.",
+      "caption": "vSphere Key Providers in the verified clean-appliance responsive state.",
+      "alt": "Atlaso vSphere Key Providers page in the clean-appliance responsive viewport.",
       "capture_method": "chrome-browser",
-      "documentation_page": "services/kms.md",
+      "documentation_page": "services/vsphere-key-providers.md",
       "brand_variant": "light",
       "sensitive_data_reviewed": true
     },

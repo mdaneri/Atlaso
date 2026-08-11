@@ -39,7 +39,7 @@ PRIMARY_IMAGES = {
     "services/ntp.md": "ntp-clean-desktop.webp",
     "services/esx-storage.md": "esx-storage-clean-desktop.webp",
     "services/ipxe.md": "esxi-pxe-clean-desktop.webp",
-    "services/kms.md": "kms-clean-desktop.webp",
+    "services/vsphere-key-providers.md": "vsphere-key-providers-clean-desktop.webp",
     "services/local-users.md": "users-clean-desktop.webp",
     "services/managed-ldap.md": "ldap-clean-desktop.webp",
     "services/oidc-provider.md": "authentication-clean-desktop.webp",
@@ -67,7 +67,7 @@ ROUTE_TITLES = {
     "/esx-storage": "ESX Storage",
     "/network-boot": "Network Boot",
     "/firewall": "Firewall",
-    "/kms": "KMS and KMIP",
+    "/vsphere-key-providers": "vSphere Key Providers",
     "/ldap": "Managed LDAP",
     "/login": "Sign in",
     "/logs": "Logs",
@@ -91,15 +91,41 @@ ROUTE_TITLES = {
 }
 
 
+def canonical_route(route: str) -> str:
+    """Return the current browser route for historical screenshot metadata.
+
+    Args:
+        route: Historical screenshot route recorded in the manifest.
+    """
+    if route == "/ca":
+        return "/ui/public/ca"
+    if route == "/requests":
+        return "/ui/public/ca/requests"
+    if route == "/ca/requests":
+        return "/ui/management/ca/requests"
+    if route.startswith("/") and not route.startswith(("/api/", "/PROD/")):
+        return f"/ui/management{route}"
+    return route
+
+
 def route_title(route: str) -> str:
     """Return route title.
 
     Args:
         route: Route consumed by route title.
     """
-    if route in ROUTE_TITLES:
-        return ROUTE_TITLES[route]
-    path, separator, fragment = route.partition("#")
+    title_route = route
+    if route.startswith("/ui/management/"):
+        title_route = route.removeprefix("/ui/management")
+    elif route == "/ui/management":
+        title_route = "/"
+    elif route == "/ui/public/ca":
+        title_route = "/ca"
+    elif route == "/ui/public/ca/requests":
+        title_route = "/requests"
+    if title_route in ROUTE_TITLES:
+        return ROUTE_TITLES[title_route]
+    path, separator, fragment = title_route.partition("#")
     title = path.strip("/").replace("-", " ").replace("/", " / ").title() or "Home"
     if separator:
         title = f"{title}: {fragment.replace('-', ' ').title()}"
@@ -217,7 +243,7 @@ def main() -> None:
             ]
             by_route: dict[str, list[dict[str, object]]] = defaultdict(list)
             for entry in additional:
-                by_route[str(entry["route"])].append(entry)
+                by_route[canonical_route(str(entry["route"]))].append(entry)
             for route in sorted(by_route, key=lambda value: (route_title(value), value)):
                 additional_lines.extend([f"### {route_title(route)}", ""])
                 for entry in by_route[route]:

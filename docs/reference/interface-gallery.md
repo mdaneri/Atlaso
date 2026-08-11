@@ -29,7 +29,7 @@ Figure: Swagger API reference in the verified clean-appliance responsive state.
 
 ## Appliance Update
 
-Route: `/appliance-update`
+Route: `/ui/management/appliance-update`
 
 ![Atlaso Appliance Update page in the clean-appliance desktop viewport.](../assets/screenshots/appliance-update-clean-desktop.webp)
 
@@ -41,7 +41,7 @@ Figure: Appliance Update in the verified clean-appliance responsive state.
 
 ## Audit Log
 
-Route: `/audit-log`
+Route: `/ui/management/audit-log`
 
 ![Atlaso Audit Events page in the clean-appliance desktop viewport.](../assets/screenshots/audit-log-clean-desktop.webp)
 
@@ -53,7 +53,7 @@ Figure: Audit Events in the verified clean-appliance responsive state.
 
 ## Automation
 
-Route: `/automation`
+Route: `/ui/management/automation`
 
 ![Atlaso Automation page in the clean-appliance desktop viewport.](../assets/screenshots/automation-clean-desktop.webp)
 
@@ -65,7 +65,7 @@ Figure: Automation in the verified clean-appliance responsive state.
 
 ## Automation: Schedules
 
-Route: `/automation#schedules`
+Route: `/ui/management/automation#schedules`
 
 ![Atlaso Automation schedule wizard with VCF Offline Depot profile download selected at the desktop viewport.](../assets/screenshots/automation-vcf-schedule-wizard-desktop.webp)
 
@@ -77,7 +77,7 @@ Figure: VCF Offline Depot profile scheduling in the shared Automation wizard at 
 
 ## Backup Restore
 
-Route: `/backup-restore`
+Route: `/ui/management/backup-restore`
 
 ![Atlaso Backup and Restore page in the clean-appliance desktop viewport.](../assets/screenshots/backup-restore-clean-desktop.webp)
 
@@ -89,7 +89,7 @@ Figure: Backup and Restore in the verified clean-appliance responsive state.
 
 ## Ca
 
-Route: `/ca`
+Route: `/ui/public/ca`
 
 ![Atlaso Public certificate portal page in the clean-appliance desktop viewport.](../assets/screenshots/ca-public-clean-desktop.webp)
 
@@ -99,21 +99,9 @@ Figure: Public certificate portal in the verified clean-appliance desktop state.
 
 Figure: Public certificate portal in the verified clean-appliance responsive state.
 
-## Ca / Requests
-
-Route: `/ca/requests`
-
-![Atlaso management Certificate Requests page showing issued certificates in a read-only grid.](../assets/screenshots/ca-management-requests-clean-desktop.webp)
-
-Figure: Management certificate requests rendered through the shared read-only grid in the desktop viewport.
-
-![Atlaso management Certificate Requests page showing its read-only grid in the narrow viewport.](../assets/screenshots/ca-management-requests-clean-responsive.webp)
-
-Figure: Management certificate requests remain contained in the narrow viewport.
-
 ## Certificate Authority
 
-Route: `/certificate-authority`
+Route: `/ui/management/certificate-authority`
 
 ![Atlaso Certificate Authority page in the clean-appliance desktop viewport.](../assets/screenshots/certificate-authority-clean-desktop.webp)
 
@@ -125,7 +113,7 @@ Figure: Certificate Authority in the verified clean-appliance responsive state.
 
 ## Dashboard
 
-Route: `/dashboard`
+Route: `/ui/management/dashboard`
 
 ![Atlaso About dialog showing version 0.9.21, build identity, and Python version.](../assets/screenshots/about-modal-desktop.webp)
 
@@ -153,7 +141,7 @@ Figure: Dashboard with valid pending changes and a unit needing attention.
 
 ## Dashboard: Appliance Apply Review
 
-Route: `/dashboard#appliance-apply-review`
+Route: `/ui/management/dashboard#appliance-apply-review`
 
 ![Review appliance changes dialog with selected valid units and one unit needing attention.](../assets/screenshots/appliance-review-modal-desktop.webp)
 
@@ -161,7 +149,7 @@ Figure: Appliance change review with valid and invalid desired-state units.
 
 ## Dhcp
 
-Route: `/dhcp`
+Route: `/ui/management/dhcp`
 
 ![Atlaso DHCP page in the clean-appliance desktop viewport.](../assets/screenshots/dhcp-clean-desktop.webp)
 
@@ -173,7 +161,7 @@ Figure: DHCP in the verified clean-appliance responsive state.
 
 ## Dhcp: Ip Zone Services
 
-Route: `/dhcp#ip-zone-services`
+Route: `/ui/management/dhcp#ip-zone-services`
 
 ![Atlaso DHCP IP zone wizard Services step showing a framed Lease time group and aligned Domain, DNS server, and NTP server fields.](../assets/screenshots/dhcp-ip-zone-wizard-services-desktop.webp)
 
@@ -185,7 +173,7 @@ Figure: DHCP IP zone Services step in the verified narrow viewport.
 
 ## Dns
 
-Route: `/dns`
+Route: `/ui/management/dns`
 
 ![Atlaso DNS page after the desired dnsmasq configuration was applied successfully.](../assets/screenshots/dns-applied-desktop.webp)
 
@@ -201,7 +189,7 @@ Figure: DNS in the verified clean-appliance responsive state.
 
 ## Dns: Managed Domain
 
-Route: `/dns#managed-domain`
+Route: `/ui/management/dns#managed-domain`
 
 ![Atlaso DNS managed domain showing Records, Import Hosts, and Import Zone File tabs with Domain enabled on the right and compact generated authoritative records above.](../assets/screenshots/dns-domain-tools-desktop.webp)
 
@@ -213,7 +201,7 @@ Figure: DNS domain tools in the verified narrow viewport.
 
 ## Esx Storage
 
-Route: `/esx-storage`
+Route: `/ui/management/esx-storage`
 
 ![Atlaso ESX Storage page in the clean-appliance desktop viewport.](../assets/screenshots/esx-storage-clean-desktop.webp)
 
@@ -225,7 +213,7 @@ Figure: ESX Storage in the verified clean-appliance responsive state.
 
 ## Firewall
 
-Route: `/firewall`
+Route: `/ui/management/firewall`
 
 ![Atlaso Firewall page in the clean-appliance desktop viewport.](../assets/screenshots/firewall-clean-desktop.webp)
 
@@ -235,21 +223,21 @@ Figure: Firewall in the verified clean-appliance desktop state.
 
 Figure: Firewall in the verified clean-appliance responsive state.
 
-## Kms
+## vSphere Key Providers
 
-Route: `/kms`
+Route: `/ui/management/vsphere-key-providers`
 
-![Atlaso KMS and KMIP page in the clean-appliance desktop viewport.](../assets/screenshots/kms-clean-desktop.webp)
+![Atlaso vSphere Key Providers page in the clean-appliance desktop viewport.](../assets/screenshots/vsphere-key-providers-clean-desktop.webp)
 
-Figure: KMS and KMIP in the verified clean-appliance desktop state.
+Figure: vSphere Key Providers in the verified clean-appliance desktop state.
 
-![Atlaso KMS and KMIP page in the clean-appliance responsive viewport.](../assets/screenshots/kms-clean-responsive.webp)
+![Atlaso vSphere Key Providers page in the clean-appliance responsive viewport.](../assets/screenshots/vsphere-key-providers-clean-responsive.webp)
 
-Figure: KMS and KMIP in the verified clean-appliance responsive state.
+Figure: vSphere Key Providers in the verified clean-appliance responsive state.
 
 ## Ldap
 
-Route: `/ldap`
+Route: `/ui/management/ldap`
 
 ![Atlaso Managed LDAP page in the clean-appliance desktop viewport.](../assets/screenshots/ldap-clean-desktop.webp)
 
@@ -261,7 +249,7 @@ Figure: Managed LDAP in the verified clean-appliance responsive state.
 
 ## Ldap: Groups
 
-Route: `/ldap#groups`
+Route: `/ui/management/ldap#groups`
 
 ![Atlaso Managed LDAP group wizard Members step showing selectable organization users and nested groups.](../assets/screenshots/managed-ldap-group-members-desktop.webp)
 
@@ -273,7 +261,7 @@ Figure: Managed LDAP group Members step in the verified narrow viewport.
 
 ## Login
 
-Route: `/login`
+Route: `/ui/management/login`
 
 ![Atlaso sign-in page in the desktop viewport.](../assets/screenshots/login-desktop.webp)
 
@@ -285,7 +273,7 @@ Figure: Appliance sign-in in the verified responsive viewport.
 
 ## Logs
 
-Route: `/logs`
+Route: `/ui/management/logs`
 
 ![Atlaso Logs page in the clean-appliance desktop viewport.](../assets/screenshots/logs-clean-desktop.webp)
 
@@ -295,9 +283,21 @@ Figure: Logs in the verified clean-appliance desktop state.
 
 Figure: Logs in the verified clean-appliance responsive state.
 
+## Management CA / Requests
+
+Route: `/ui/management/ca/requests`
+
+![Atlaso management Certificate Requests page showing issued certificates in a read-only grid.](../assets/screenshots/ca-management-requests-clean-desktop.webp)
+
+Figure: Management certificate requests rendered through the shared read-only grid in the desktop viewport.
+
+![Atlaso management Certificate Requests page showing its read-only grid in the narrow viewport.](../assets/screenshots/ca-management-requests-clean-responsive.webp)
+
+Figure: Management certificate requests remain contained in the narrow viewport.
+
 ## Monitor
 
-Route: `/monitor`
+Route: `/ui/management/monitor`
 
 ![Atlaso Monitor page showing live appliance runtime metrics after apply.](../assets/screenshots/monitor-applied-desktop.webp)
 
@@ -321,7 +321,7 @@ Figure: Network-interface and disk-device grids remain readable without page ove
 
 ## Network Boot
 
-Route: `/network-boot`
+Route: `/ui/management/network-boot`
 
 ![Atlaso Network Boot page in the clean-appliance desktop viewport.](../assets/screenshots/esxi-pxe-clean-desktop.webp)
 
@@ -333,7 +333,7 @@ Figure: Network Boot in the verified clean-appliance responsive state.
 
 ## Network Boot: Custom Variables
 
-Route: `/network-boot#custom-variables`
+Route: `/ui/management/network-boot#custom-variables`
 
 ![Atlaso ESXi custom variable wizard showing full-width Description and Default value rows below Name.](../assets/screenshots/esxi-custom-variable-description-desktop.webp)
 
@@ -345,7 +345,7 @@ Figure: ESXi custom variable wizard in the verified narrow viewport.
 
 ## Ntp
 
-Route: `/ntp`
+Route: `/ui/management/ntp`
 
 ![Atlaso NTP and NTS page in the clean-appliance desktop viewport.](../assets/screenshots/ntp-clean-desktop.webp)
 
@@ -357,7 +357,7 @@ Figure: NTP and NTS in the verified clean-appliance responsive state.
 
 ## Openid Connect: Oidc Group Mappings
 
-Route: `/openid-connect#oidc-group-mappings`
+Route: `/ui/management/openid-connect#oidc-group-mappings`
 
 ![Atlaso OpenID Connect page showing the external group mapping grid at the desktop viewport.](../assets/screenshots/authentication-group-mappings-desktop.webp)
 
@@ -369,7 +369,7 @@ Figure: OIDC external group mappings in the responsive direct-edit collection.
 
 ## Openid Connect: Oidc Provider
 
-Route: `/openid-connect#oidc-provider`
+Route: `/ui/management/openid-connect#oidc-provider`
 
 ![Atlaso OpenID Connect provider status with right-column service settings.](../assets/screenshots/authentication-clean-desktop.webp)
 
@@ -381,7 +381,7 @@ Figure: OIDC provider settings with status and issuer information stacked at the
 
 ## Physical Interfaces
 
-Route: `/physical-interfaces`
+Route: `/ui/management/physical-interfaces`
 
 ![Atlaso Physical Interfaces page in the clean-appliance desktop viewport.](../assets/screenshots/physical-interfaces-clean-desktop.webp)
 
@@ -403,9 +403,9 @@ Figure: The public VCF Offline Depot directory renders exact artifact paths as s
 
 Figure: The public VCF Offline Depot browser remains contained in the narrow viewport.
 
-## Requests
+## Public CA / Requests
 
-Route: `/requests`
+Route: `/ui/public/ca/requests`
 
 ![Atlaso public Certificate Request Portal showing issued certificates in a read-only grid.](../assets/screenshots/ca-requests-clean-desktop.webp)
 
@@ -417,7 +417,7 @@ Figure: Public certificate requests remain contained in the narrow viewport.
 
 ## Routes Wan
 
-Route: `/routes-wan`
+Route: `/ui/management/routes-wan`
 
 ![Atlaso Routes and WAN Simulation page in the clean-appliance desktop viewport.](../assets/screenshots/routes-wan-clean-desktop.webp)
 
@@ -429,7 +429,7 @@ Figure: Routes and WAN Simulation in the verified clean-appliance responsive sta
 
 ## Services
 
-Route: `/services`
+Route: `/ui/management/services`
 
 ![Atlaso Services page in the clean-appliance desktop viewport.](../assets/screenshots/services-clean-desktop.webp)
 
@@ -441,7 +441,7 @@ Figure: Services in the verified clean-appliance responsive state.
 
 ## Settings
 
-Route: `/settings`
+Route: `/ui/management/settings`
 
 ![Atlaso Settings page in the clean-appliance desktop viewport.](../assets/screenshots/settings-clean-desktop.webp)
 
@@ -465,7 +465,7 @@ Figure: Appliance Settings validation error for an invalid FQDN.
 
 ## Tasks
 
-Route: `/tasks`
+Route: `/ui/management/tasks`
 
 ![Atlaso task detail dialog for a failed appliance apply.](../assets/screenshots/tasks-apply-failed-detail-desktop.webp)
 
@@ -489,7 +489,7 @@ Figure: Tasks in the verified clean-appliance responsive state.
 
 ## Terminal
 
-Route: `/terminal`
+Route: `/ui/management/terminal`
 
 ![Atlaso Web terminal connected as the admin user in the desktop viewport.](../assets/screenshots/terminal-clean-desktop.webp)
 
@@ -501,7 +501,7 @@ Figure: Web terminal connected to the verified Photon appliance in the responsiv
 
 ## Users
 
-Route: `/users`
+Route: `/ui/management/users`
 
 ![Atlaso Users page in the clean-appliance desktop viewport.](../assets/screenshots/users-clean-desktop.webp)
 
@@ -521,7 +521,7 @@ Figure: VMware console after a successful appliance apply.
 
 ## Vcf Backups
 
-Route: `/vcf-backups`
+Route: `/ui/management/vcf-backups`
 
 ![Atlaso VCF Backups page in the clean-appliance desktop viewport.](../assets/screenshots/vcf-backups-clean-desktop.webp)
 
@@ -533,7 +533,7 @@ Figure: VCF Backups in the verified clean-appliance responsive state.
 
 ## Vcf Helper
 
-Route: `/vcf-helper`
+Route: `/ui/management/vcf-helper`
 
 ![Atlaso VCF Helper page in the clean-appliance desktop viewport.](../assets/screenshots/vcf-helper-clean-desktop.webp)
 
@@ -545,7 +545,7 @@ Figure: VCF Helper in the verified clean-appliance responsive state.
 
 ## Vcf Offline Depot
 
-Route: `/vcf-offline-depot`
+Route: `/ui/management/vcf-offline-depot`
 
 ![Atlaso VCF Offline Depot desktop page showing Metadata before Binaries and ESX profiles and the combined VCFDT configuration action.](../assets/screenshots/vcf-offline-depot-clean-desktop.webp)
 
@@ -565,7 +565,7 @@ Figure: VCF Offline Depot profile scheduling action with the disabled-profile re
 
 ## Vcf Private Registry
 
-Route: `/vcf-private-registry`
+Route: `/ui/management/vcf-private-registry`
 
 ![Atlaso VCF Private Registry page in the clean-appliance desktop viewport.](../assets/screenshots/vcf-private-registry-clean-desktop.webp)
 
@@ -577,7 +577,7 @@ Figure: VCF Private Registry in the verified clean-appliance responsive state.
 
 ## Vlan Interfaces
 
-Route: `/vlan-interfaces`
+Route: `/ui/management/vlan-interfaces`
 
 ![Atlaso VLAN Interfaces page in the clean-appliance desktop viewport.](../assets/screenshots/vlan-interfaces-clean-desktop.webp)
 

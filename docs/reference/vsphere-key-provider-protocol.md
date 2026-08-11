@@ -9,7 +9,7 @@ status: roadmap
 
 # vSphere Key Provider protocol contract
 
-Atlaso replaces its broad PyKMIP lab listener with an appliance-native service for one narrow use case: a
+Atlaso provides an appliance-native service for one narrow use case: a
 **vSphere Key Provider** consumed by VMware Cloud Foundation (VCF) 9.1. This page defines the candidate protocol boundary
 for implementation. The bounded daemon exists, but this contract does not claim that it is interoperable or supported
 yet.

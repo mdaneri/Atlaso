@@ -17,7 +17,7 @@ but they must remain described as experimental until the VCF 9.1 promotion gate 
 ## Architecture decision
 
 Atlaso implements a small Python service with an internal, bounded KMIP 1.4 TTLV codec and operation dispatcher.
-It does not embed the PyKMIP server, request engine, policy engine, storage model, or compatibility wrapper.
+It does not embed a general-purpose KMIP request engine, policy engine, storage model, or compatibility wrapper.
 
 Python keeps the service inside Atlaso's existing build, packaging, logging, testing, and Photon lifecycle. The
 security boundary comes from the narrow checked-in protocol allowlist rather than the language. The adapter must:
@@ -25,7 +25,7 @@ security boundary comes from the narrow checked-in protocol allowlist rather tha
 - decode only the required TTLV types and structures;
 - reject unknown, duplicate, oversized, deeply nested, or malformed input before dispatch;
 - enforce a maximum request size, batch size, nesting depth, connection count, and idle timeout;
-- bind a verified client certificate fingerprint to one or more explicitly selected providers;
+- bind a verified client certificate fingerprint to exactly one provider UUID;
 - authorize every batch item independently inside the provider namespace;
 - never include raw TTLV, key bytes, wrapped blobs, credentials, or private material in logs and errors; and
 - use deterministic protocol errors without falling back to a broader KMIP implementation.
@@ -41,7 +41,7 @@ The service runs as the unprivileged `atlaso-kmip` identity. Only `/appliance-ap
 | Wrapped key blob | Stored under `/var/lib/atlaso/kmip` with provider ID and authenticated metadata |
 | Runtime key-encryption key | Wrapped under `ATLASO_SECRETS_KEY`; never stored or logged in plaintext |
 | Provider server identity | CA-managed certificate and private key readable only by the KMIP service |
-| vCenter client identity | Exact certificate fingerprint mapped to explicit provider IDs |
+| vCenter client identity | Canonical public X.509 PEM and exact SHA-256 fingerprint mapped to one provider UUID; no client private key is accepted or generated |
 | Recovery bundle | Encrypted with a user-supplied passphrase and produced only through an authenticated, audited workflow |
 | Vault-assisted credential | Read only for the selected vCenter operation; never copied into provider records, tasks, or traces |
 | Interop evidence | Metadata-only JSONL validated against the bounded protocol contract |
@@ -56,14 +56,16 @@ Every provider receives an immutable UUID and an independent key namespace. Ever
 whose lookup is always qualified by provider ID. Database constraints and service-layer queries both enforce the
 qualification.
 
-A trusted client record contains a normalized SHA-256 certificate fingerprint and explicit provider membership.
-Multiple vCenters may be trusted by one provider, but a successful TLS handshake alone grants no key access. Missing,
-disabled, expired, ambiguous, or unmapped identities fail closed. LDAP organization membership is irrelevant.
+A provider-scoped trusted-vCenter record contains one or more normalized SHA-256 certificate fingerprints and canonical
+public X.509 certificates. Fingerprints are unique appliance-wide, so the same certificate cannot authorize another
+provider. Multiple vCenters may be trusted by one provider, but a successful TLS handshake alone grants no key access.
+Missing, disabled, expired, ambiguous, or unmapped identities fail closed. LDAP organization membership is irrelevant.
 
-Certificate replacement uses an overlap window. Atlaso adds the exact fingerprint of the current CA-issued managed
-client certificate while retaining the prior exact fingerprint. The administrator installs and verifies the new
-certificate in vCenter, then uses the audited **Retire previous certificate** client action before the next global KMS
-apply. The service never trusts a renewed certificate merely because its subject or CA matches.
+The handshake trust bundle contains the internal CA public root and current imported public leaf certificates. X.509
+partial-chain verification permits explicit leaf trust, but authorization still requires the peer's exact fingerprint.
+Certificate replacement uses an add-apply-verify-retire overlap. The administrator imports the replacement public
+certificate, applies it globally, moves vCenter to that identity, and uses the audited **Retire certificate** action.
+The service never trusts a renewed certificate merely because its subject or CA matches.
 
 ## Key creation and storage
 
@@ -102,6 +104,9 @@ unprivileged process and short request lifetime are part of the memory-exposure 
 
 ## Recovery and disaster recovery
 
+The recovery implementation and final recovery gate belong to issue #172. The requirements below are
+the retained security contract, not a claim that provider recovery is currently available.
+
 The normal Atlaso settings archive excludes operational keys, the runtime KEK, private certificates, and Vault
 passwords. A separate recovery workflow produces a passphrase-encrypted bundle containing the minimum material needed
 to restore provider identity, wrapped keys, the runtime KEK, and integrity metadata.
@@ -120,18 +125,6 @@ Recovery requirements:
 Losing both the running store and a valid recovery bundle is unrecoverable. Losing only
 `ATLASO_SECRETS_KEY` is also unrecoverable unless the recovery bundle contains a separately passphrase-protected KEK.
 
-## Legacy upgrade boundary
-
-There is no PyKMIP key migration. During upgrade:
-
-- an empty or absent legacy `/var/lib/atlaso/kms/pykmip.db` may be replaced;
-- the first KMS apply reconciles the unprivileged `atlaso-kmip` account and state directories on an upgraded appliance;
-- a nonempty legacy store blocks in-place replacement with a clear, secret-free diagnostic;
-- the old appliance must remain available while VMware rekeys workloads into a newly configured provider; and
-- no code may read and rewrite legacy plaintext key rows into the new store.
-
-This boundary avoids silently changing key identifiers, ownership, lifecycle semantics, or protection guarantees.
-
 ## Abuse cases and mitigations
 
 | Abuse case | Required mitigation |
@@ -142,9 +135,9 @@ This boundary avoids silently changing key identifiers, ownership, lifecycle sem
 | Root helper is used as a general service control | Fixed paths, exact verbs, ownership checks, and staged desired state |
 | Wrapped blob is copied or rolled back | AES-GCM authenticated metadata and store integrity checks |
 | Vault credential escapes vCenter automation | One-operation decrypt, no subprocess arguments, no logging, audited presence only |
-| Certificate rotation creates an outage | Add-verify-retire overlap with health proof before removal |
+| Certificate rotation creates an outage | Import-apply-verify-retire public-certificate overlap with health proof before removal |
+| Provider deletion loses operational keys | Disabled and detached state plus authenticated exact zero-key evidence; unavailable evidence fails closed |
 | Recovery overwrites a healthy store | Empty/matching-store precondition, dry-run, atomic install, explicit confirmation |
-| Legacy upgrade loses keys | Nonempty PyKMIP store hard block and documented VMware rekey procedure |
 | Broad KMIP behavior is accidentally exposed | Checked-in allowlist, fail-closed dispatch, and live evidence promotion gate |
 
 ## Security review gates

@@ -24,9 +24,9 @@ This verified appliance view provides visual orientation before you begin.
 
 <!-- END GENERATED INTERFACE OVERVIEW -->
 
-The `/terminal` page, ticket exchange, and WebSocket endpoints are browser and terminal protocol routes documented in
-this guide. They remain operational and are intentionally absent from Swagger rather than being `/api/v1` client
-contracts.
+Management terminal pages, ticket exchange, and WebSocket endpoints are rooted at `/ui/management/terminal`. Selected
+Public Services listeners use `/ui/public/terminal`. They remain intentionally absent from Swagger rather than being
+`/api/v1` client contracts.
 
 Opening **Web terminal** while the feature is globally disabled keeps the authenticated Atlaso application shell and
 shows an unavailable status with links to **Appliance Settings** and pending appliance changes. The browser page does
@@ -47,11 +47,11 @@ Only enabled, addressed access/route physical interfaces and enabled VLANs are v
 disabled, unused, trunk-only, or addressless interfaces fail validation. Atlaso has no WAN interface role and
 web-terminal exposure does not infer internet or WAN connectivity.
 
-On a selected non-management address, nginx exposes only the login/logout, terminal, WebSocket, and required
-static-asset routes. Management dashboard and API routes remain unavailable. The Public Services directory for that
-address includes a **Web Terminal** tile linked to `https://<selected-address>/terminal`; unselected interfaces do not
-show the tile. The terminal and its login page use the Public Services header, sign-out action, and footer rather than
-the admin application shell.
+On a selected non-management address, nginx exposes only `/ui/public`, eligible legacy login/logout and terminal paths,
+and required static assets. Management and API routes remain unavailable. The Public Services directory for that
+address includes a **Web Terminal** tile linked to `https://<selected-address>/ui/public/terminal`; unselected
+interfaces do not show the tile. The terminal and its login page use the Public Services header, sign-out action, and
+footer rather than the admin application shell.
 
 ## Session behavior
 
@@ -109,8 +109,8 @@ If apply fails, inspect the Public Services child task and validate
 `/var/lib/atlaso/apply/public-services/atlaso-public-services.conf`. On the appliance, validate nginx with `nginx -t`,
 confirm `atlaso.service` is active, and verify the selected address separately:
 
-- `https://<address>/terminal` should redirect to login or open the terminal;
-- `https://<address>/dashboard` and `/openapi.json` must remain unavailable on an additional listener;
+- `https://<address>/ui/public/terminal` should redirect to public-plane login or open the terminal;
+- `/ui/management/login` and `/openapi.json` must remain unavailable on an additional listener;
 - the management `/openapi.json` endpoint must remain reachable.
 
 When local DNS and management DHCP are in use, also verify one managed Atlaso name and one external name after the Web

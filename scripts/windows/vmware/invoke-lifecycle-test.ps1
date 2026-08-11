@@ -66,7 +66,7 @@ param(
 
     [Parameter(ParameterSetName = 'Run')]
     [Parameter(ParameterSetName = 'Plan')]
-    [string]$AdminPassword = 'VMware01!',
+    [string]$AdminPassword = 'VMware01!Test',
 
     [Parameter(ParameterSetName = 'Run')]
     [Parameter(ParameterSetName = 'Plan')]
@@ -78,7 +78,7 @@ param(
 
     [Parameter(ParameterSetName = 'Run')]
     [Parameter(ParameterSetName = 'Plan')]
-    [string]$SshPassword = 'VMware01!',
+    [string]$SshPassword = 'VMware01!Test',
 
     [Parameter(ParameterSetName = 'Run')]
     [Parameter(ParameterSetName = 'Plan')]

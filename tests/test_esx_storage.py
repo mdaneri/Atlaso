@@ -481,7 +481,7 @@ def test_esx_storage_page_and_dual_stack_api_contract(client):
     apply_refresh_js = client.get("/static/app.js").text.split("function refreshCurrentWorkflowAfterApplianceApply", 1)[1].split(
         "async function submitApplianceApplyForm", 1
     )[0]
-    assert 'new Set(["/esx-storage", "/vcf-offline-depot"])' in apply_refresh_js
+    assert 'new Set([managementUiPath("/esx-storage"), managementUiPath("/vcf-offline-depot")])' in apply_refresh_js
     assert "refreshableWorkflows.has(window.location.pathname)" in apply_refresh_js
     assert 'label: "Edit datastore"' in client.get("/static/app.js").text
     assert "rowDblClick: (_event, row) => editRow(row)" in client.get("/static/app.js").text

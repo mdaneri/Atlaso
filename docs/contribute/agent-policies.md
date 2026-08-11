@@ -53,6 +53,13 @@ status: current
   issue created or linked before implementation begins, exactly one applicable type label, relevant documentation
   updated in the same change, and a pull request linked with `Closes #<issue>`. Do not commit changes directly to
   `main`.
+- Trusted version refresh must dispatch the CI definition from protected `main` with the exact pull-request number, base
+  SHA, and head SHA. Keep candidate validation jobs read-only. Publish the canonical `Version policy`, `Repository
+  checks`, and `Python tests` commit statuses only from bot-gated jobs that never check out candidate code and that
+  revalidate the open same-repository PR plus exact head/base before publishing pending or final results. Keep every
+  status linked to its trusted run, retain diagnostic names for bot-triggered `pull_request` jobs, and keep trusted and
+  diagnostic events in separate concurrency groups so diagnostic work cannot cancel trusted publication. Never grant
+  candidate workflow revisions status-write permission.
 
 ## API authoring
 
@@ -610,33 +617,32 @@ status: current
   certificate/key files under `/etc/atlaso`, and must not print private keys in stdout, stderr, previews, jobs, docs, or
   final responses. CA custody and managed certificate deployment do not require a public listen interface. Selecting a
   CA interface is the explicit publication boundary for the portal, DNS, firewall, and public-service configuration.
-  The public CA portal defaults to `ca.atlaso.internal`: `/` shows public trust material and `/requests` is the
-  authenticated certificate request/revocation workflow. Do not put Certificate Requests in the primary Atlaso
-  sidebar; link it from CA-associated surfaces instead. Every selected NTS server apply automatically includes the CA
-  material unit and preserves CA-before-NTP execution order, even when the CA baseline appears current.
-- Real KMS apply stages strict JSON under `/var/lib/atlaso/apply/kms/server.json` as the `atlaso` service user before
-  invoking the root helper. KMS can be activated only when CA desired state is enabled and healthy; the page derives
-  IPv4 and IPv6 listen addresses from the selected access interface or enabled VLAN, creates app-owned DNS records for
-  the derived address families, and auto-ensures KMS server/client CA rows. The only backend is `atlaso-kmip`, so do not
-  show a backend selector; keep backend as hidden desired state if needed for form compatibility. The KMS settings rail
-  should show hostname near the top, stack listen interfaces and derived listen addresses on separate rows, keep port
-  as a compact field, and derive the CA-managed server certificate name from the hostname instead of exposing a
-  separate server-certificate input. The helper validates the exact JSON schema, fixed paths, CA-managed material,
-  provider UUIDs, client fingerprints, and resource limits; installs `/etc/atlaso/kmip/server.json`; and manages the
-  hardened, unprivileged `atlaso-kmip.service`. Disabling KMS stops the new and retired service names while preserving
-  `/var/lib/atlaso/kmip`. Never print KMS private keys or plaintext key material in previews, jobs, logs, docs, or final
-  responses.
-- Issue #162 replaces the PyKMIP lab listener in ordered phases. The Python `atlaso-kmip` service implements only the
-  candidate VCF 9.1 contract in
+  The public CA portal defaults to `ca.atlaso.internal`: `/ui/public/ca` shows public trust material and
+  `/ui/public/ca/requests` is the authenticated certificate request/revocation workflow. Do not put Certificate
+  Requests in the primary Atlaso sidebar; link it from CA-associated surfaces instead. Every selected NTS server apply
+  automatically includes the CA material unit and preserves CA-before-NTP execution order, even when the CA baseline
+  appears current.
+- Real internal `kms` apply stages strict JSON and the public-only trust bundle at fixed paths under
+  `/var/lib/atlaso/apply/kms`. vSphere Key Providers can be activated only when CA desired state is enabled and healthy;
+  `/ui/management/vsphere-key-providers` derives IPv4 and IPv6 listen addresses, creates app-owned DNS records, and
+  auto-ensures only the shared KMS server CA row. The only backend is `atlaso-kmip`; expose no backend or
+  server-certificate selector.
+  Keep hostname near the top of the DNS-style settings rail, stack listen interfaces and derived addresses, and keep
+  port compact. The helper validates exact JSON, fixed paths, ownership, modes, symlink resistance, CA-managed server
+  identity, provider UUIDs, globally unique exact fingerprints, and resource limits. It installs
+  `/etc/atlaso/kmip/server.json` and `/etc/atlaso/kmip/client-trust.pem` and manages the hardened unprivileged service.
+  The trust bundle contains only the internal CA public root and imported public vCenter certificates. Never generate,
+  accept, export, or expose a vCenter client private key or plaintext operational key material.
+- The Python `atlaso-kmip` service implements only the candidate VCF 9.1 contract in
   `atlaso/app/kmip/contracts/vcf_9_1.json`; keep the implementation experimental until issue #172 records the live
   VCF 9.1 acceptance and recovery evidence required to promote the contract to `observed`. A provider UUID defines an
-  isolated key namespace and may trust multiple exact vCenter certificate fingerprints. LDAP organizations do not
-  select providers. Generate only AES-256 keys, wrap operational keys with AES-256-GCM under a KEK protected by
+  isolated key namespace and may trust multiple provider-scoped vCenters; every exact certificate fingerprint maps to
+  one provider appliance-wide. LDAP organizations do not select providers. Generate only AES-256 keys, wrap
+  operational keys with AES-256-GCM under a KEK protected by
   `ATLASO_SECRETS_KEY`, and never expose plaintext keys outside the authorized KMIP `Get` response. Reject operations,
   objects, algorithms, formats, and attributes outside the contract. Interop traces contain metadata only and must pass
   `scripts/kmip/validate_interop_trace.py`; raw TTLV and secret-bearing fields are forbidden. Recovery uses a separate
-  passphrase-encrypted bundle. There is no legacy key migration: a nonempty PyKMIP database must block in-place
-  replacement while the old appliance remains available for VMware rekey.
+  passphrase-encrypted bundle in issue #172.
 - Real VCF Offline Depot apply stages nginx config under
   `/var/lib/atlaso/apply/vcf-offline-depot/atlaso-vcf-offline-depot.conf` as the `atlaso` service user before invoking
   the root helper. Uploading `vcf-download-tool-*.tar.gz` uses a shared two-step package wizard and remains desired-state
@@ -767,17 +773,22 @@ status: current
 
 ## Public Services Front Door
 
-- Management-role interface addresses keep the management front door at `/`, including login redirects and
-  management-only routes.
-- Non-management interface addresses render an unauthenticated public service directory at `/` scoped to the called
-  IP/host. The page must list only enabled public services whose desired listen addresses include that IP, and must show
+- Management-role interface addresses dispatch `/` to `/ui/management`; all authenticated management pages and their
+  browser-only support/action endpoints stay under that canonical root.
+- Non-management interface addresses dispatch `/` to an unauthenticated public service directory at `/ui/public`
+  scoped to the called IP/host. The page must list only enabled public services whose desired listen addresses include
+  that IP, and must show
   a minimal `No public services on this interface` state when none match.
 - When web terminal access is enabled for the called non-management interface, include a `Web Terminal` service tile
-  linked to that address's HTTPS `/terminal` route. Do not show the tile on unselected interfaces, and do not invent an
-  interface DNS name for the Name/IP toggle.
-- Direct public paths must also be IP-scoped: CA `/ca`, `/requests`, `/ca/downloads/root-ca.pem`, and
-  `/ca/downloads/ca-bundle.pem`; ESXi PXE `/pxe/esxi/`; VCF Offline Depot `/PROD/` with `/PROD` redirecting to `/PROD/`;
-  and VCF Private Registry as a canonical registry URL card/link only.
+  linked to that address's HTTPS `/ui/public/terminal` route. Do not show the tile on unselected interfaces, and do not
+  invent an interface DNS name for the Name/IP toggle.
+- App-owned public pages must also be IP-scoped: CA `/ui/public/ca`, certificate requests
+  `/ui/public/ca/requests`, and Web Terminal `/ui/public/terminal`. Keep CA downloads
+  `/ca/downloads/root-ca.pem` and `/ca/downloads/ca-bundle.pem`, ESXi PXE `/pxe/esxi/`, VCF Offline Depot `/PROD/`,
+  and VCF Private Registry canonical URLs outside `/ui` as stable machine/protocol contracts.
+- A public listener must return not found for `/ui/management` without rendering login behavior or the management shell;
+  a management listener must not publish `/ui/public`. Safe eligible root-level browser bookmarks use temporary
+  same-host redirects. Legacy mutations bridge internally to canonical handlers and must never use replaying redirects.
 - Do not add `/registry` reverse proxying in the public-services site. Registry DNS and canonical registry URLs remain
   service-owned.
 - Public Services apply stages `/var/lib/atlaso/apply/public-services/atlaso-public-services.conf` as the `atlaso`
@@ -792,13 +803,16 @@ status: current
   while static artifact locations use the same `vcf-depot` htpasswd file generated from the applied Photon OS account.
   Local Users apply must run before exposing the depot with authentication.
 - Public portal/user pages should extend `public_portal_base.html` so they share the compact Atlaso header and bottom
-  appliance footnote. The brand mark links to `/`, the header action is contextual `Login` or `Sign out`, footer
+  appliance footnote. The brand mark links to `/ui/public`, the header action is contextual `Login` or `Sign out`, footer
   metadata should link Swagger `/api/docs` rather than the raw OpenAPI document, and the Python version should link to
   the official Python site. Public service cards should default to service hostnames, use the configured service
   scheme/port, and provide a Name/IP toggle stored as the `atlaso_public_address_mode` cookie. CA fingerprint controls
   should use compact monospace text with a copy icon. Do not apply this public shell to the authenticated admin portal.
 - Styled app-owned directory browsing should wrap depot indexes instead of exposing raw nginx autoindex pages when the
   user navigates from the public portal.
+- The management manifest starts within `/ui/management`, and its service worker may intercept only
+  `/ui/management/` navigation plus shared immutable assets. Keep public UI caching disabled and never intercept API,
+  OIDC, CA download, PXE, depot, registry, or other protocol requests.
 
 ## DNS And DHCP
 
@@ -1000,12 +1014,12 @@ status: current
   hashes, remains outside the settings archive, and stages import for global LDAP apply. Restore and factory reset must
   leave service status rows stopped, disabled, and `unconfigured`; host mutation still belongs only to the global
   `/appliance-apply` workflow. Factory reset must reseed only core defaults and must not recreate demo VLANs, trunk-only
-  parent NIC posture, routes, NAT rules, WAN policies, DHCP scopes/reservations, firewall rules, CA requests, KMS
-  clients/keys, depot download profiles, or service listener bindings, including after service restart. The only DNS
-  record factory reset should reseed is the app-owned appliance FQDN record pointed at the management IP. After factory
-  reset, only `eth0` should be desired admin up; other physical NICs should be desired admin down until an operator
-  enables them. Disabled service settings should have blank listen interfaces and addresses until an operator selects a
-  valid bind target.
+  parent NIC posture, routes, NAT rules, WAN policies, DHCP scopes/reservations, firewall rules, CA requests, vSphere
+  providers/trusted vCenters, depot download profiles, or service listener bindings, including after service restart.
+  The only DNS record factory reset should reseed is the app-owned appliance FQDN record pointed at the management IP.
+  After factory reset, only `eth0` should be desired admin up; other physical NICs should be desired admin down until
+  an operator enables them. Disabled service settings should have blank listen interfaces and addresses until an
+  operator selects a valid bind target.
 - Settings archives must not include vault entries. Restore and factory reset clear vaults and the unused legacy
   Kickstart-binding compatibility table; operators reimport or recreate vault contents afterward.
 - Documentation updates are required for every major product, architecture, workflow, safety-boundary, or

@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-management-ui-root="{{ management_ui_root }}" data-public-ui-root="{{ public_ui_root }}">
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -12,60 +12,60 @@
     <link rel="icon" href="/favicon.ico" type="image/x-icon">
     <link rel="icon" href="/static/brand/atlaso-icon.svg" type="image/svg+xml">
     <link rel="stylesheet" href="/static/vendor/tabulator/tabulator.min.css">
-    <link rel="stylesheet" href="/static/app.css?v=nts-restoration-appliance-update-261-20260809-3">
+    <link rel="stylesheet" href="/static/app.css?v=vsphere-key-providers-170-20260810-1">
     {% block extra_head %}{% endblock %}
   </head>
   <body>
     {% set pending_apply_count = sidebar_pending_apply_count|default(0) %}
     <div class="app-shell">
       <aside class="sidebar">
-        <a class="brand sidebar-brand" href="/" aria-label="Atlaso Dashboard">
+        <a class="brand sidebar-brand" href="{{ management_ui_root }}" aria-label="Atlaso Dashboard">
           <img class="sidebar-brand-logo" src="/static/brand/atlaso-logo-horizontal-transparent-1200x300.png" alt="">
         </a>
         <nav class="nav-stack" aria-label="Primary">
           {% set nav_groups = [
             ("Overview", [
-              ("Dashboard", "/dashboard", "read:dashboard"),
-              ("Monitor", "/monitor", "read:monitoring")
+              ("Dashboard", management_ui_path("/dashboard"), "read:dashboard"),
+              ("Monitor", management_ui_path("/monitor"), "read:monitoring")
             ]),
             ("Appliance Setup", [
-              ("Settings", "/settings", "admin:all"),
-              ("Physical Interfaces", "/physical-interfaces", "read:interfaces"),
-              ("VLAN Interfaces", "/vlan-interfaces", "read:vlans"),
-              ("Routes & WAN Simulation", "/routes-wan", "read:routes"),
-              ("Firewall", "/firewall", "read:firewall")
+              ("Settings", management_ui_path("/settings"), "admin:all"),
+              ("Physical Interfaces", management_ui_path("/physical-interfaces"), "read:interfaces"),
+              ("VLAN Interfaces", management_ui_path("/vlan-interfaces"), "read:vlans"),
+              ("Routes & WAN Simulation", management_ui_path("/routes-wan"), "read:routes"),
+              ("Firewall", management_ui_path("/firewall"), "read:firewall")
             ]),
             ("Core Services", [
-              ("DNS", "/dns", "read:dns"),
-              ("NTP / NTS", "/ntp", "read:services"),
-              ("DHCP", "/dhcp", "read:dhcp")
+              ("DNS", management_ui_path("/dns"), "read:dns"),
+              ("NTP / NTS", management_ui_path("/ntp"), "read:services"),
+              ("DHCP", management_ui_path("/dhcp"), "read:dhcp")
             ]),
             ("Identity & Trust", [
-              ("Authentication", "/authentication", "read:dashboard"),
-              ("OpenID Connect", "/openid-connect", "admin:all"),
-              ("Users", "/users", "admin:all"),
-              ("Managed LDAP", "/ldap", "read:ldap"),
-              ("Certificate Authority", "/certificate-authority", "admin:all"),
-              ("KMS / KMIP", "/kms", "read:kms")
+              ("Authentication", management_ui_path("/authentication"), "read:dashboard"),
+              ("OpenID Connect", management_ui_path("/openid-connect"), "admin:all"),
+              ("Users", management_ui_path("/users"), "admin:all"),
+              ("Managed LDAP", management_ui_path("/ldap"), "read:ldap"),
+              ("Certificate Authority", management_ui_path("/certificate-authority"), "admin:all"),
+              ("vSphere Key Providers", management_ui_path("/vsphere-key-providers"), "read:kms")
             ]),
             ("VCF Workflows", [
-              ("Network Boot", "/network-boot", "read:pxe"),
-              ("ESX Storage", "/esx-storage", "read:esx-storage"),
-              ("Vaults", "/vaults", "admin:all"),
-              ("VCF Helper", "/vcf-helper", "read:dashboard"),
-              ("VCF Offline Depot", "/vcf-offline-depot", "read:repository"),
-              ("VCF Private Registry", "/vcf-private-registry", "read:vcf-registry"),
-              ("VCF Backups", "/vcf-backups", "read:vcf-backups")
+              ("Network Boot", management_ui_path("/network-boot"), "read:pxe"),
+              ("ESX Storage", management_ui_path("/esx-storage"), "read:esx-storage"),
+              ("Vaults", management_ui_path("/vaults"), "admin:all"),
+              ("VCF Helper", management_ui_path("/vcf-helper"), "read:dashboard"),
+              ("VCF Offline Depot", management_ui_path("/vcf-offline-depot"), "read:repository"),
+              ("VCF Private Registry", management_ui_path("/vcf-private-registry"), "read:vcf-registry"),
+              ("VCF Backups", management_ui_path("/vcf-backups"), "read:vcf-backups")
             ]),
             ("Operations", [
-              ("Web terminal", "/terminal", "admin:all"),
-              ("Services", "/services", "read:services"),
-              ("Tasks", "/tasks", "read:dashboard"),
-              ("Logs", "/logs", "read:logs"),
-              ("Audit Events", "/audit-log", "read:audit"),
-              ("Appliance Update", "/appliance-update", "admin:all"),
-              ("Automation", "/automation", "admin:all"),
-              ("Backup / Restore", "/backup-restore", "admin:all")
+              ("Web terminal", management_ui_path("/terminal"), "admin:all"),
+              ("Services", management_ui_path("/services"), "read:services"),
+              ("Tasks", management_ui_path("/tasks"), "read:dashboard"),
+              ("Logs", management_ui_path("/logs"), "read:logs"),
+              ("Audit Events", management_ui_path("/audit-log"), "read:audit"),
+              ("Appliance Update", management_ui_path("/appliance-update"), "admin:all"),
+              ("Automation", management_ui_path("/automation"), "admin:all"),
+              ("Backup / Restore", management_ui_path("/backup-restore"), "admin:all")
             ])
           ] %}
           {% for group_label, links in nav_groups %}
@@ -83,7 +83,7 @@
         </nav>
         {% if identity %}
           <div class="sidebar-apply">
-            <a class="sidebar-apply-link pending {% if not pending_apply_count %}hidden{% endif %}" href="/dashboard#appliance-apply-review" data-appliance-apply-sidebar data-appliance-apply-open data-pending-count="{{ pending_apply_count }}">
+            <a class="sidebar-apply-link pending {% if not pending_apply_count %}hidden{% endif %}" href="{{ management_ui_path('/dashboard') }}#appliance-apply-review" data-appliance-apply-sidebar data-appliance-apply-open data-pending-count="{{ pending_apply_count }}">
               <span class="sidebar-apply-text">
                 <strong data-appliance-apply-sidebar-title>Review appliance changes</strong>
                 <small data-appliance-apply-sidebar-detail>{{ pending_apply_count }} pending {{ 'unit' if pending_apply_count == 1 else 'units' }}</small>
@@ -111,17 +111,17 @@
                 <div class="account-menu-panel" role="menu">
                   <button class="account-menu-item" type="button" role="menuitem" data-about-open>About</button>
                   <div class="account-menu-separator" role="separator"></div>
-                  <form action="/logout" method="post">
+                  <form action="{{ management_ui_path('/logout') }}" method="post">
                     <input type="hidden" name="csrf" value="{{ csrf_token }}">
                     <button class="account-menu-item" type="submit" role="menuitem">Sign out ({{ identity.username }})</button>
                   </form>
                   {% if identity.has_role('admin') %}
                     <div class="account-menu-separator" role="separator"></div>
-                    <form action="/appliance/power/reboot" method="post" data-confirm-modal data-confirm-title="Reboot Atlaso appliance?" data-confirm-message="This creates an appliance reboot task and schedules the reboot after the task is recorded. The management UI and appliance services will be temporarily unavailable." data-confirm-label="Create reboot task">
+                    <form action="{{ management_ui_path('/appliance/power/reboot') }}" method="post" data-confirm-modal data-confirm-title="Reboot Atlaso appliance?" data-confirm-message="This creates an appliance reboot task and schedules the reboot after the task is recorded. The management UI and appliance services will be temporarily unavailable." data-confirm-label="Create reboot task">
                       <input type="hidden" name="csrf" value="{{ csrf_token }}">
                       <button class="account-menu-item" type="submit" role="menuitem">Reboot</button>
                     </form>
-                    <form action="/appliance/power/shutdown" method="post" data-confirm-modal data-confirm-title="Shut down Atlaso appliance?" data-confirm-message="This creates an appliance shutdown task and powers off the appliance after the task is recorded. Physical or hypervisor access is required to start it again." data-confirm-label="Create shutdown task">
+                    <form action="{{ management_ui_path('/appliance/power/shutdown') }}" method="post" data-confirm-modal data-confirm-title="Shut down Atlaso appliance?" data-confirm-message="This creates an appliance shutdown task and powers off the appliance after the task is recorded. Physical or hypervisor access is required to start it again." data-confirm-label="Create shutdown task">
                       <input type="hidden" name="csrf" value="{{ csrf_token }}">
                       <button class="account-menu-item danger" type="submit" role="menuitem">Shutdown</button>
                     </form>
@@ -140,7 +140,7 @@
               <strong>{{ page_apply_status.label }} has pending appliance changes</strong>
               <span>Review and submit them from the global apply workflow.</span>
             </div>
-            <a class="button secondary compact-button" href="/dashboard#appliance-apply-review" data-appliance-apply-open>Review appliance changes</a>
+            <a class="button secondary compact-button" href="{{ management_ui_path('/dashboard') }}#appliance-apply-review" data-appliance-apply-open>Review appliance changes</a>
           </div>
         {% endif %}
 
@@ -308,8 +308,9 @@
     <script src="/static/vendor/prism/prism-diff.min.js"></script>
     <link rel="stylesheet" href="/static/vendor/monaco/atlaso-monaco.min.css?v=atlaso-monaco-20260806-7">
     <script src="/static/vendor/monaco/atlaso-monaco.min.js?v=atlaso-monaco-20260806-7"></script>
-    <script src="/static/app.js?v=issue-280-1"></script>
-    <script src="/static/pwa.js?v=atlaso-brand-20260725-1"></script>
+    <script src="/static/ui-routes.js?v=issue-287-1"></script>
+    <script src="/static/app.js?v=vsphere-key-providers-170-issue-287-20260810-1"></script>
+    <script src="/static/pwa.js?v=issue-287-2"></script>
     {% block extra_scripts %}{% endblock %}
   </body>
 </html>

@@ -59,7 +59,7 @@
                 <td><span class="status-pill {{ 'good' if route.enabled else 'muted' }}">{{ "enabled" if route.enabled else "disabled" }}</span></td>
                 <td>
                   <form
-                    action="/routes-wan/routes/{{ route.id }}/delete"
+                    action="{{ management_ui_root }}/routes-wan/routes/{{ route.id }}/delete"
                     method="post"
                     data-confirm-modal
                     data-confirm-title="Delete route {{ route.destination_cidr }}?"
@@ -129,7 +129,7 @@
                 <td>{{ rule.description or "" }}</td>
                 <td>
                   <form
-                    action="/routes-wan/routing-rules/{{ rule.id }}/delete"
+                    action="{{ management_ui_root }}/routes-wan/routing-rules/{{ rule.id }}/delete"
                     method="post"
                     data-confirm-modal
                     data-confirm-title="Delete routing rule {{ rule.name }}?"
@@ -179,7 +179,7 @@
                 <td>{{ rule.description or "" }}</td>
                 <td>
                   <form
-                    action="/routes-wan/nat-rules/{{ rule.id }}/delete"
+                    action="{{ management_ui_root }}/routes-wan/nat-rules/{{ rule.id }}/delete"
                     method="post"
                     data-confirm-modal
                     data-confirm-title="Delete NAT rule {{ rule.name }}?"
@@ -227,7 +227,7 @@
                 <td>{{ policy.description or "" }}</td>
                 <td>
                   <form
-                    action="/routes-wan/policies/{{ policy.id }}/delete"
+                    action="{{ management_ui_root }}/routes-wan/policies/{{ policy.id }}/delete"
                     method="post"
                     data-confirm-modal
                     data-confirm-title="Delete {{ policy.name }}?"
