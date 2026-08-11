@@ -1001,7 +1001,7 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert service_worker.headers["cache-control"] == "no-cache"
     assert service_worker.headers["service-worker-allowed"] == "/ui/management/"
     assert "ATLASO_CACHE" in service_worker.text
-    assert "atlaso-management-pwa-v243" in service_worker.text
+    assert "atlaso-management-pwa-v245" in service_worker.text
     assert 'fetch(asset, { cache: "reload" })' in service_worker.text
     assert ".catch(() => undefined)" in service_worker.text
     assert 'request.mode === "navigate"' in service_worker.text
@@ -1017,9 +1017,9 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert "/static/vendor/monaco/atlaso-monaco.min.js?v=atlaso-monaco-20260806-7" in service_worker.text
     assert "/static/app.css?v=vsphere-key-providers-170-20260810-1" in service_worker.text
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-8" in service_worker.text
-    assert "/static/appliance-apply-polling.js?v=issue-280-1" in service_worker.text
+    assert "/static/appliance-apply-polling.js?v=issue-294-2" in service_worker.text
     assert "/static/ui-routes.js?v=issue-287-1" in service_worker.text
-    assert "/static/app.js?v=users-refresh-278-279-20260811-1" in service_worker.text
+    assert "/static/app.js?v=appliance-apply-terminal-294-2" in service_worker.text
     assert "/static/terminal.js?v=issue-287-2" in service_worker.text
     assert "/static/pwa.js?v=issue-287-2" in service_worker.text
     assert "vcfdt-configuration-248-20260807-14" not in service_worker.text
@@ -1051,9 +1051,9 @@ def test_shared_ui_pattern_shell_and_wizard_contracts(client):
     base = (templates / "base.html").read_text(encoding="utf-8")
     public_base = (templates / "public_portal_base.html").read_text(encoding="utf-8")
     for shell, app_asset in (
-        (base, "/static/app.js?v=pxe-boot-capability-295-20260811-2"),
-        (public_base, "/static/app.js?v=users-refresh-278-279-20260811-1"),
-        (base, "/static/appliance-apply-polling.js?v=issue-280-1"),
+        (base, "/static/app.js?v=appliance-apply-terminal-294-2"),
+        (public_base, "/static/app.js?v=appliance-apply-terminal-294-2"),
+        (base, "/static/appliance-apply-polling.js?v=issue-294-2"),
     ):
         assert shell.index("/static/vendor/tabulator/tabulator.min.js") < shell.index(
             "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-8"
@@ -1677,7 +1677,7 @@ def test_monitor_page_renders_and_data_endpoint(client):
     assert "swagger-link-icon" in page.text
     assert "/static/app.css?v=vsphere-key-providers-170-20260810-1" in page.text
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-8" in page.text
-    assert "/static/app.js?v=pxe-boot-capability-295-20260811-2" in page.text
+    assert "/static/app.js?v=appliance-apply-terminal-294-2" in page.text
     app_css = client.get("/static/app.css")
     assert app_css.status_code == 200
     assert ".split-workspace > .wide-panel" in app_css.text
@@ -8531,6 +8531,9 @@ def test_dns_and_dhcp_pages_render(client):
     assert "Submit appliance changes" in app_js.text
     assert "openApplianceApplyReview" in app_js.text
     assert "renderApplianceApplyTask" in app_js.text
+    assert "window.AtlasoApplianceApplyPolling.createMonitor" in app_js.text
+    assert 'throw new Error("Unable to reconcile the completed appliance task.")' in app_js.text
+    assert "Live task status is temporarily unavailable. Atlaso will retry automatically." in app_js.text
     assert "const APPLIANCE_APPLY_SUCCESS_AUTO_CLOSE_MS = 15000;" in app_js.text
     assert "function clearApplianceApplyAutoClose()" in app_js.text
     assert "function scheduleApplianceApplyAutoClose(task)" in app_js.text
@@ -8547,6 +8550,7 @@ def test_dns_and_dhcp_pages_render(client):
     assert 'atlasoTasksTable?.on("rowClick"' in app_js.text
     assert "data-appliance-apply-modal" in app_js.text
     assert "data-appliance-apply-connection-warning" in dns.text
+    assert "data-appliance-apply-poll-warning" in dns.text
     assert 'class="button primary hidden" type="submit" data-appliance-apply-submit' in dns.text
     assert "data-apply-submit-tracker" not in app_js.text
     assert "index === 0 ? \"Applying\"" not in app_js.text

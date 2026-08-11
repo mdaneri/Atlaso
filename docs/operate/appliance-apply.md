@@ -85,7 +85,11 @@ count after the task starts.
 2. Choose **Submit appliance changes**.
 3. Keep the task dialog open while the master task and its component rows progress.
 4. Open a component row to inspect its bounded, redacted result.
-5. Wait for the master task to reach a terminal state.
+5. Wait for the master task to reach a terminal state. The dialog, lower-left sidebar badge, pending count, and global
+   write lock update automatically; a page reload is not required.
+
+If another session starts a new Apply immediately after the current master finishes, the monitor completes the current
+task's terminal refresh before following the newer task.
 
 Components run sequentially. If one component fails, Atlaso stops the sequence and marks the remaining components
 **skipped**. Other write operations are locked while the master task is pending or running; read-only pages, task
@@ -94,6 +98,10 @@ inspection, authentication actions, and safe cancellation remain available.
 Safe cancellation does not interrupt the component already running. Every helper or adapter command in that component
 continues to completion. After the component returns, Atlaso skips the remaining components and releases the mutation
 lock when the master task becomes terminal.
+
+If the dialog shows **Live task status is temporarily unavailable**, leave it open while Atlaso retries. The last known
+task and lock remain visible until an authoritative response arrives. If the warning persists, open **Tasks** in another
+tab to inspect the master task and verify appliance connectivity before deciding whether to reload the affected page.
 
 ## Verify the result
 
