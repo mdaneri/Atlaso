@@ -158,7 +158,7 @@ def test_login_and_dashboard_render(client):
     assert '<link rel="icon" href="/favicon.ico" type="image/x-icon">' in response.text
     assert '<link rel="manifest" href="/manifest.webmanifest">' in response.text
     assert '<meta name="theme-color"' not in response.text
-    assert "/static/pwa.js?v=issue-287-1" in response.text
+    assert "/static/pwa.js?v=issue-287-2" in response.text
     assert "Everything your virtualization lab needs." in response.text
     assert "Infrastructure • Storage • Identity • Networking • Lifecycle" in response.text
     assert "simplifying deployment, maintenance, and validation" in response.text
@@ -198,7 +198,7 @@ def test_web_terminal_requires_login_and_renders_admin_only_unavailable_state(cl
     assert "Web terminal access is disabled in Appliance Settings." in response.text
     assert '"detail":' not in response.text
     assert "/static/vendor/xterm/xterm.js?v=5.5.0" in response.text
-    assert "/static/terminal.js?v=issue-287-1" in response.text
+    assert "/static/terminal.js?v=issue-287-2" in response.text
     assert "data-terminal-connect" not in response.text
     assert "data-terminal-disconnect" not in response.text
 
@@ -352,6 +352,11 @@ def test_public_web_terminal_uses_public_shell_and_explicit_user_access(client, 
     assert 'action="/ui/public/logout"' in terminal.text
     assert 'name="next" value="/ui/public/terminal"' in terminal.text
 
+    directory = client.get("/ui/public", headers={"host": "192.168.87.32"})
+    assert directory.status_code == 200
+    assert 'action="/ui/public/logout"' in directory.text
+    assert 'action="/ui/public/ca/requests/logout"' not in directory.text
+
     with SessionLocal() as db:
         user = db.get(User, user_id)
         user.web_terminal_access = False
@@ -367,6 +372,15 @@ def test_public_web_terminal_uses_public_shell_and_explicit_user_access(client, 
     )
     assert logout.status_code == 303
     assert logout.headers["location"] == "/ui/public/terminal"
+
+    expired_ticket = client.post(
+        "/ui/public/terminal/tickets",
+        headers={"host": "192.168.87.32"},
+        data={"csrf": csrf, "browser_session_id": "browser_session_1234"},
+        follow_redirects=False,
+    )
+    assert expired_ticket.status_code == 303
+    assert expired_ticket.headers["location"] == "/ui/public/login?next=/ui/public/terminal"
 
 
 def test_web_terminal_uses_one_use_ticket_and_bridges_websocket_input(client, monkeypatch):
@@ -538,6 +552,8 @@ def test_web_terminal_uses_one_use_ticket_and_bridges_websocket_input(client, mo
     assert favicon.headers["content-type"].startswith("image/x-icon")
     terminal_js = client.get("/static/terminal.js")
     assert 'JSON.stringify({ type: "input", data })' in terminal_js.text
+    assert "if (response.redirected)" in terminal_js.text
+    assert "window.location.assign(response.url)" in terminal_js.text
     assert 'data === "\\u0004" ? "exit\\r" : data' not in terminal_js.text
 
 
@@ -986,7 +1002,7 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert service_worker.headers["cache-control"] == "no-cache"
     assert service_worker.headers["service-worker-allowed"] == "/ui/management/"
     assert "ATLASO_CACHE" in service_worker.text
-    assert "atlaso-management-pwa-v239" in service_worker.text
+    assert "atlaso-management-pwa-v240" in service_worker.text
     assert 'fetch(asset, { cache: "reload" })' in service_worker.text
     assert ".catch(() => undefined)" in service_worker.text
     assert 'request.mode === "navigate"' in service_worker.text
@@ -1005,10 +1021,16 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert "/static/appliance-apply-polling.js?v=issue-280-1" in service_worker.text
     assert "/static/ui-routes.js?v=issue-287-1" in service_worker.text
     assert "/static/app.js?v=issue-287-1" in service_worker.text
+    assert "/static/terminal.js?v=issue-287-2" in service_worker.text
+    assert "/static/pwa.js?v=issue-287-2" in service_worker.text
     assert "vcfdt-configuration-248-20260807-14" not in service_worker.text
 
     registration = client.get("/static/pwa.js")
     assert registration.status_code == 200
+    assert "navigator.serviceWorker.getRegistrations()" in registration.text
+    assert "registration.scope === legacyScope" in registration.text
+    assert "registration.unregister()" in registration.text
+    assert registration.text.index("registration.unregister()") < registration.text.index("navigator.serviceWorker.register")
     assert 'navigator.serviceWorker.register("/service-worker.js", { scope: managementScope })' in registration.text
 
     offline = client.get("/static/offline.html")
@@ -1723,7 +1745,7 @@ def test_login_page_includes_pwa_metadata(client):
     assert '<meta name="apple-mobile-web-app-capable" content="yes">' in response.text
     assert '<form class="form-stack" action="/ui/management/login" method="post" target="_self">' in response.text
     assert '<meta name="theme-color"' not in response.text
-    assert "/static/pwa.js?v=issue-287-1" in response.text
+    assert "/static/pwa.js?v=issue-287-2" in response.text
     assert response.text.count("/static/brand/atlaso-logo-horizontal-transparent-1200x300.png") == 1
     assert 'alt="Atlaso — Infrastructure • Connectivity • Automation"' in response.text
     assert "Infrastructure appliance" not in response.text

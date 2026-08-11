@@ -65,7 +65,8 @@ this removal window.
 The web manifest starts at `/ui/management/dashboard` and declares scope `/ui/management/`. Its service worker is
 registered only from management pages, uses the same narrow scope, and serves an offline fallback only for management
 navigation. It does not intercept API, OIDC, CA download, PXE, depot, registry, or other protocol traffic. Public UI
-caching is intentionally disabled.
+caching is intentionally disabled. On the first management page load after upgrading from the former root-scoped PWA,
+Atlaso unregisters the legacy `/` service-worker registration before installing the management-scoped registration.
 
 ## Verify an applied appliance
 

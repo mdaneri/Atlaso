@@ -156,6 +156,10 @@ const terminalUiPath = (path = "") => {
       body,
       headers: { "X-Requested-With": "Atlaso" },
     });
+    if (response.redirected) {
+      window.location.assign(response.url);
+      return null;
+    }
     let payload = null;
     try {
       payload = await response.json();

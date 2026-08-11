@@ -31,7 +31,7 @@
           {% endif %}
           {% block public_actions %}
             {% if identity %}
-              <form action="{{ public_logout_action|default(public_ui_path('/ca/requests/logout')) }}" method="post">
+              <form action="{{ public_logout_action|default(public_ui_path('/logout')) }}" method="post">
                 <input type="hidden" name="csrf" value="{{ csrf_token }}">
                 <input type="hidden" name="next" value="{{ public_logout_next|default(public_ui_root) }}">
                 <button class="button ghost" type="submit">Sign out</button>

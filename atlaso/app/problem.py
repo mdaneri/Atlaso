@@ -7,7 +7,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, RedirectResponse
 
-from atlaso.app.ui_routes import management_ui_path
+from atlaso.app.ui_routes import PUBLIC_UI_ROOT, management_ui_path, public_ui_path, safe_public_return_path
 
 
 def should_redirect_to_login(request: Request, exc: HTTPException) -> bool:
@@ -77,7 +77,18 @@ def install_problem_handlers(app: FastAPI) -> None:
             target = request.url.path
             if request.url.query:
                 target = f"{target}?{request.url.query}"
-            login_path = management_ui_path("/login")
+            public_plane = (
+                getattr(request.state, "ui_plane", "") == "public"
+                or target == PUBLIC_UI_ROOT
+                or target.startswith(f"{PUBLIC_UI_ROOT}/")
+            )
+            if public_plane:
+                login_path = public_ui_path("/login")
+                target = safe_public_return_path(target, default="/terminal")
+                if target.startswith(public_ui_path("/terminal/")):
+                    target = public_ui_path("/terminal")
+            else:
+                login_path = management_ui_path("/login")
             return RedirectResponse(f"{login_path}?next={quote(target, safe='/?=&%')}", status_code=303)
         title = "Unauthorized" if exc.status_code == 401 else "Request failed"
         return problem_response(
