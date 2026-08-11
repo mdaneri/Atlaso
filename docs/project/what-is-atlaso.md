@@ -19,6 +19,10 @@ An atlas does more than show one destination. It organizes many landscapes, adds
 through unfamiliar territory. Atlaso follows the same idea for virtualization labs: it brings infrastructure, storage,
 identity, networking, and lifecycle workflows into one operator-focused control plane.
 
+![An open illustrated atlas organizing servers, storage, identity, and network paths across its pages.](../assets/illustrations/what-is-atlaso-map.webp)
+
+*One map becomes a guide through the whole virtualization-lab landscape.*
+
 The name also reflects Esperanto's purpose as an international language: make something complicated easier to share
 and understand.
 
@@ -27,6 +31,10 @@ and understand.
 The word carries an older story too. In Greek mythology, Atlas was the Titan condemned to hold up the sky. Despite the
 familiar modern image, the mythological Atlas carried the heavens rather than planet Earth. Later illustrations linked
 him with collections of maps, giving the atlas its enduring visual identity.
+
+![A stylized Atlas supporting a celestial sphere filled with constellations and infrastructure connections.](../assets/illustrations/what-is-atlaso-atlas.webp)
+
+*Atlas carries the heavens; Atlaso helps carry the infrastructure.*
 
 That makes Atlas a fittingly charming mascot for infrastructure work: a steady figure keeping a complicated world
 organized and supported—although Atlaso aims to make the burden considerably lighter.
