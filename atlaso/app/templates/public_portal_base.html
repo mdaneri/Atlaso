@@ -1,11 +1,10 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-management-ui-root="{{ management_ui_root }}" data-public-ui-root="{{ public_ui_root }}">
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>{% block title %}Atlaso - Public Services{% endblock %}</title>
     <meta name="mobile-web-app-capable" content="yes">
-    <link rel="manifest" href="/manifest.webmanifest">
     <link rel="apple-touch-icon" href="/static/brand/atlaso-app-icon-light-180.png">
     <link rel="icon" href="/favicon.ico" type="image/x-icon">
     <link rel="icon" href="/static/brand/atlaso-icon.svg" type="image/svg+xml">
@@ -16,7 +15,7 @@
   <body>
     <div class="public-portal-shell">
       <header class="public-portal-header">
-        <a class="brand" href="/">
+        <a class="brand" href="{{ public_ui_root }}">
           {% include "partials/brand_mark.html" %}
           <span>
             <strong>Atlaso</strong>
@@ -32,9 +31,9 @@
           {% endif %}
           {% block public_actions %}
             {% if identity %}
-              <form action="{{ public_logout_action|default('/requests/logout') }}" method="post">
+              <form action="{{ public_logout_action|default(public_ui_path('/logout')) }}" method="post">
                 <input type="hidden" name="csrf" value="{{ csrf_token }}">
-                <input type="hidden" name="next" value="{{ public_logout_next|default('/') }}">
+                <input type="hidden" name="next" value="{{ public_logout_next|default(public_ui_root) }}">
                 <button class="button ghost" type="submit">Sign out</button>
               </form>
             {% elif public_login_href %}
@@ -74,10 +73,10 @@
       </main>
     </div>
 
-    {% block public_after_main %}{% endblock %}
     <script src="/static/vendor/tabulator/tabulator.min.js"></script>
     <script src="/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-8"></script>
-    <script src="/static/app.js?v=vsphere-key-providers-170-issue-280-20260810-3"></script>
-    <script src="/static/pwa.js?v=atlaso-brand-20260725-1"></script>
+    <script src="/static/ui-routes.js?v=issue-287-1"></script>
+    <script src="/static/app.js?v=vsphere-key-providers-170-issue-287-20260810-1"></script>
+    {% block public_after_main %}{% endblock %}
   </body>
 </html>

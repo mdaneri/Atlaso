@@ -61,7 +61,7 @@ def test_kms_context_requires_tls_1_2_or_newer(monkeypatch, tmp_path):
     monkeypatch.setattr(kmip_server.ssl, "SSLContext", FakeContext)
     config = kmip_server.ServiceConfig(
         enabled=True,
-        host="127.0.0.1",
+        listen_addresses=("127.0.0.1",),
         port=5696,
         certificate_path=certificate_path,
         private_key_path=private_key_path,

@@ -15,9 +15,72 @@ HTML from `atlaso/app/ui.py` or `atlaso/app/web_terminal.py`, plus the shared sh
 used by those routes. API, download, redirect-only, and static-asset routes are outside this matrix because they do not
 render an Atlaso browser surface.
 
-No new `custom/other` interaction was introduced by the final audit. Rows that name an established dashboard, chart,
-terminal, login, or public-directory surface describe a pre-existing reviewed interaction from the #114/#115 baseline;
-the #120 remediation changes only shared accessibility or fallback behavior around those surfaces.
+Issue #287 introduced an explicitly maintainer-approved `custom/other` information-architecture change while preserving
+the established dashboard, chart, terminal, login, and public-directory interactions. Management surfaces now belong to
+`/ui/management`; app-owned public surfaces belong to `/ui/public`; `/` is only the interface-aware dispatcher.
+
+## Canonical browser-route inventory
+
+The route-inventory test fails when an app-owned human route is added outside its declared plane or when a protocol
+exemption changes without review. The management routes rendered by the current templates are:
+
+```text
+/ui/management
+/ui/management/appliance-update
+/ui/management/audit-log
+/ui/management/authentication
+/ui/management/automation
+/ui/management/backup-restore
+/ui/management/ca/requests
+/ui/management/certificate-authority
+/ui/management/dashboard
+/ui/management/dhcp
+/ui/management/dns
+/ui/management/esx-storage
+/ui/management/firewall
+/ui/management/kms
+/ui/management/ldap
+/ui/management/login
+/ui/management/logs
+/ui/management/monitor
+/ui/management/network-boot
+/ui/management/ntp
+/ui/management/openid-connect
+/ui/management/physical-interfaces
+/ui/management/routes-wan
+/ui/management/services
+/ui/management/services/{service}/logs
+/ui/management/settings
+/ui/management/tasks
+/ui/management/terminal
+/ui/management/terminal/remote
+/ui/management/users
+/ui/management/vaults
+/ui/management/vcf-backups
+/ui/management/vcf-helper
+/ui/management/vcf-offline-depot
+/ui/management/vcf-offline-depot/tasks/{job_id}/log
+/ui/management/vcf-private-registry
+/ui/management/vcf-trust
+/ui/management/vlan-interfaces
+/ui/management/{page}
+```
+
+The public routes rendered through `public_portal_base.html` are:
+
+```text
+/ui/public
+/ui/public/ca
+/ui/public/ca/login
+/ui/public/ca/requests
+/ui/public/login
+/ui/public/terminal
+```
+
+For compactness, the detailed rows below retain their recognizable child slugs. Management child slugs are relative to
+`/ui/management`, public child slugs are relative to `/ui/public`, and `/PROD/` remains an explicitly exempt protocol
+and browser contract at its existing root path. Retired root-level browser paths are temporary compatibility entries,
+not canonical route owners.
 
 ## Result and evidence key
 

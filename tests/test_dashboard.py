@@ -55,12 +55,16 @@ def test_dashboard_data_requires_session_and_preserves_public_api_contract(clien
     Args:
         client: HTTP test client used to exercise the Atlaso application.
     """
-    private = client.get("/dashboard/data", follow_redirects=False)
+    legacy = client.get("/dashboard/data", follow_redirects=False)
+    assert legacy.status_code == 307
+    assert legacy.headers["location"] == "/ui/management/dashboard/data"
+
+    private = client.get("/ui/management/dashboard/data", follow_redirects=False)
     assert private.status_code == 303
-    assert private.headers["location"] == "/login?next=/dashboard/data"
+    assert private.headers["location"] == "/ui/management/login?next=/ui/management/dashboard/data"
 
     login(client)
-    private = client.get("/dashboard/data")
+    private = client.get("/ui/management/dashboard/data")
     assert private.status_code == 200
     payload = private.json()
     assert set(payload) == {
@@ -503,7 +507,7 @@ def test_dashboard_html_removes_old_inventory_and_javascript_refresh_is_resilien
     assert "/mnt/atlaso-vcf-offline-depot" not in page.text
     assert "/mnt/atlaso-vcf-backups" not in page.text
     assert "<h2>Routes &amp; WAN Simulation</h2>" not in page.text
-    assert 'data-refresh-url="/dashboard/data"' in page.text
+    assert 'data-refresh-url="/ui/management/dashboard/data"' in page.text
 
     javascript = Path("atlaso/app/static/app.js").read_text(encoding="utf-8")
     assert "function initializeDashboard()" in javascript

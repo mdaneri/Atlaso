@@ -610,14 +610,16 @@ status: current
   certificate/key files under `/etc/atlaso`, and must not print private keys in stdout, stderr, previews, jobs, docs, or
   final responses. CA custody and managed certificate deployment do not require a public listen interface. Selecting a
   CA interface is the explicit publication boundary for the portal, DNS, firewall, and public-service configuration.
-  The public CA portal defaults to `ca.atlaso.internal`: `/` shows public trust material and `/requests` is the
-  authenticated certificate request/revocation workflow. Do not put Certificate Requests in the primary Atlaso
-  sidebar; link it from CA-associated surfaces instead. Every selected NTS server apply automatically includes the CA
-  material unit and preserves CA-before-NTP execution order, even when the CA baseline appears current.
+  The public CA portal defaults to `ca.atlaso.internal`: `/ui/public/ca` shows public trust material and
+  `/ui/public/ca/requests` is the authenticated certificate request/revocation workflow. Do not put Certificate
+  Requests in the primary Atlaso sidebar; link it from CA-associated surfaces instead. Every selected NTS server apply
+  automatically includes the CA material unit and preserves CA-before-NTP execution order, even when the CA baseline
+  appears current.
 - Real internal `kms` apply stages strict JSON and the public-only trust bundle at fixed paths under
   `/var/lib/atlaso/apply/kms`. vSphere Key Providers can be activated only when CA desired state is enabled and healthy;
-  `/vsphere-key-providers` derives IPv4 and IPv6 listen addresses, creates app-owned DNS records, and auto-ensures only
-  the shared KMS server CA row. The only backend is `atlaso-kmip`; expose no backend or server-certificate selector.
+  `/ui/management/vsphere-key-providers` derives IPv4 and IPv6 listen addresses, creates app-owned DNS records, and
+  auto-ensures only the shared KMS server CA row. The only backend is `atlaso-kmip`; expose no backend or
+  server-certificate selector.
   Keep hostname near the top of the DNS-style settings rail, stack listen interfaces and derived addresses, and keep
   port compact. The helper validates exact JSON, fixed paths, ownership, modes, symlink resistance, CA-managed server
   identity, provider UUIDs, globally unique exact fingerprints, and resource limits. It installs
@@ -764,17 +766,22 @@ status: current
 
 ## Public Services Front Door
 
-- Management-role interface addresses keep the management front door at `/`, including login redirects and
-  management-only routes.
-- Non-management interface addresses render an unauthenticated public service directory at `/` scoped to the called
-  IP/host. The page must list only enabled public services whose desired listen addresses include that IP, and must show
+- Management-role interface addresses dispatch `/` to `/ui/management`; all authenticated management pages and their
+  browser-only support/action endpoints stay under that canonical root.
+- Non-management interface addresses dispatch `/` to an unauthenticated public service directory at `/ui/public`
+  scoped to the called IP/host. The page must list only enabled public services whose desired listen addresses include
+  that IP, and must show
   a minimal `No public services on this interface` state when none match.
 - When web terminal access is enabled for the called non-management interface, include a `Web Terminal` service tile
-  linked to that address's HTTPS `/terminal` route. Do not show the tile on unselected interfaces, and do not invent an
-  interface DNS name for the Name/IP toggle.
-- Direct public paths must also be IP-scoped: CA `/ca`, `/requests`, `/ca/downloads/root-ca.pem`, and
-  `/ca/downloads/ca-bundle.pem`; ESXi PXE `/pxe/esxi/`; VCF Offline Depot `/PROD/` with `/PROD` redirecting to `/PROD/`;
-  and VCF Private Registry as a canonical registry URL card/link only.
+  linked to that address's HTTPS `/ui/public/terminal` route. Do not show the tile on unselected interfaces, and do not
+  invent an interface DNS name for the Name/IP toggle.
+- App-owned public pages must also be IP-scoped: CA `/ui/public/ca`, certificate requests
+  `/ui/public/ca/requests`, and Web Terminal `/ui/public/terminal`. Keep CA downloads
+  `/ca/downloads/root-ca.pem` and `/ca/downloads/ca-bundle.pem`, ESXi PXE `/pxe/esxi/`, VCF Offline Depot `/PROD/`,
+  and VCF Private Registry canonical URLs outside `/ui` as stable machine/protocol contracts.
+- A public listener must return not found for `/ui/management` without rendering login behavior or the management shell;
+  a management listener must not publish `/ui/public`. Safe eligible root-level browser bookmarks use temporary
+  same-host redirects. Legacy mutations bridge internally to canonical handlers and must never use replaying redirects.
 - Do not add `/registry` reverse proxying in the public-services site. Registry DNS and canonical registry URLs remain
   service-owned.
 - Public Services apply stages `/var/lib/atlaso/apply/public-services/atlaso-public-services.conf` as the `atlaso`
@@ -789,13 +796,16 @@ status: current
   while static artifact locations use the same `vcf-depot` htpasswd file generated from the applied Photon OS account.
   Local Users apply must run before exposing the depot with authentication.
 - Public portal/user pages should extend `public_portal_base.html` so they share the compact Atlaso header and bottom
-  appliance footnote. The brand mark links to `/`, the header action is contextual `Login` or `Sign out`, footer
+  appliance footnote. The brand mark links to `/ui/public`, the header action is contextual `Login` or `Sign out`, footer
   metadata should link Swagger `/api/docs` rather than the raw OpenAPI document, and the Python version should link to
   the official Python site. Public service cards should default to service hostnames, use the configured service
   scheme/port, and provide a Name/IP toggle stored as the `atlaso_public_address_mode` cookie. CA fingerprint controls
   should use compact monospace text with a copy icon. Do not apply this public shell to the authenticated admin portal.
 - Styled app-owned directory browsing should wrap depot indexes instead of exposing raw nginx autoindex pages when the
   user navigates from the public portal.
+- The management manifest starts within `/ui/management`, and its service worker may intercept only
+  `/ui/management/` navigation plus shared immutable assets. Keep public UI caching disabled and never intercept API,
+  OIDC, CA download, PXE, depot, registry, or other protocol requests.
 
 ## DNS And DHCP
 

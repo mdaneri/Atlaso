@@ -1,6 +1,6 @@
-{% set public_login_href = '/ca/login' %}
-{% set public_logout_action = '/requests/logout' %}
-{% set public_logout_next = '/ca' %}
+{% set public_login_href = public_ui_path('/ca/login') %}
+{% set public_logout_action = public_ui_path('/ca/requests/logout') %}
+{% set public_logout_next = public_ui_path('/ca') %}
 {% extends "public_portal_base.html" %}
 
 {% block title %}Atlaso - Certificate Authority{% endblock %}
@@ -54,7 +54,7 @@
       </div>
     </div>
 
-    <a class="panel public-link-panel" href="/requests" aria-label="Open certificate requests">
+    <a class="panel public-link-panel" href="{{ public_ui_path('/ca/requests') }}" aria-label="Open certificate requests">
       <div class="panel-head">
         <div>
           <h2>Certificate Requests</h2>

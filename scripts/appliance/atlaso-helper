@@ -3656,8 +3656,8 @@ def _kms_config_errors(path: Path) -> list[str]:
     store = payload["store"]
     limits = payload["limits"]
     providers = payload["providers"]
-    if not isinstance(listen, dict) or set(listen) != {"host", "port"}:
-        errors.append("KMS listen must contain only host and port.")
+    if not isinstance(listen, dict) or set(listen) != {"addresses", "port"}:
+        errors.append("KMS listen must contain only addresses and port.")
         listen = {}
     if not isinstance(tls, dict) or set(tls) != {
         "certificate_path",
@@ -3683,12 +3683,23 @@ def _kms_config_errors(path: Path) -> list[str]:
     if enabled and not providers:
         errors.append("Enabled KMS config requires at least one provider.")
 
-    host_value = listen.get("host", "")
-    host = host_value.strip() if isinstance(host_value, str) else ""
-    try:
-        ip_address(host)
-    except ValueError:
-        errors.append("KMS listen host must be the derived listen IP address.")
+    address_values = listen.get("addresses", [])
+    if not isinstance(address_values, list) or not address_values:
+        errors.append("KMS listen addresses must be a nonempty list.")
+        address_values = []
+    elif len(address_values) > 32:
+        errors.append("KMS listen addresses cannot contain more than 32 entries.")
+    normalized_addresses: list[str] = []
+    for value in address_values:
+        if not isinstance(value, str):
+            errors.append("KMS listen address must be a derived IP address.")
+            continue
+        try:
+            normalized_addresses.append(str(ip_address(value.strip())))
+        except ValueError:
+            errors.append("KMS listen address must be a derived IP address.")
+    if len(normalized_addresses) != len(set(normalized_addresses)):
+        errors.append("KMS listen addresses must be unique.")
     port = listen.get("port", 0)
     if isinstance(port, bool) or not isinstance(port, int):
         errors.append("KMS port must be an integer.")
@@ -5137,7 +5148,6 @@ def _public_services_config_errors(path: Path) -> list[str]:
         if _vcf_depot_auth_required(text) and "proxy_pass http://127.0.0.1:8000/PROD/auth-failure;" not in text:
             errors.append("Authenticated public services VCF Offline Depot config must return 401 to non-browser clients.")
     for forbidden in [
-        "location = /favicon.ico",
         "location = /manifest.webmanifest",
         "location = /service-worker.js",
         "location = /requests/login",
@@ -5164,8 +5174,6 @@ def _public_services_config_errors(path: Path) -> list[str]:
             "location ^~ /requests/",
             "location ^~ /static/",
             "location = /favicon.ico",
-            "location = /manifest.webmanifest",
-            "location = /service-worker.js",
             "proxy_set_header X-Forwarded-Proto https;",
         ]:
             if required not in text:
@@ -8542,8 +8550,6 @@ def _vcf_depot_config_errors(path: Path) -> list[str]:
         "location = / {",
         "location ^~ /static/",
         "location = /favicon.ico",
-        "location = /manifest.webmanifest",
-        "location = /service-worker.js",
         "location = /PROD",
         "return 301 /PROD/;",
         "location = /PROD/login",

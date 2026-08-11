@@ -57,7 +57,7 @@
             </td>
             <td>
               <form
-                action="/vlan-interfaces/{{ vlan.id }}/delete"
+                action="{{ management_ui_root }}/vlan-interfaces/{{ vlan.id }}/delete"
                 method="post"
                 data-confirm-modal
                 data-confirm-title="Delete {{ vlan.name }}?"

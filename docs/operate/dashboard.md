@@ -8,9 +8,9 @@ status: current
 
 # Dashboard
 
-`/dashboard` is Atlaso's authenticated operations command center. It is a read-only orientation surface: operators can
-see current health and follow links into the owning workflow, but the dashboard never applies configuration, restarts a
-service, or mutates appliance state.
+`/ui/management/dashboard` is Atlaso's authenticated operations command center. It is a read-only orientation surface:
+operators can see current health and follow links into the owning workflow, but the dashboard never applies
+configuration, restarts a service, or mutates appliance state.
 
 <!-- BEGIN GENERATED INTERFACE OVERVIEW -->
 ## Interface overview
@@ -56,10 +56,10 @@ history; only its actionable dashboard warning is cleared.
 
 ## Private snapshot and refresh
 
-The initial page and session-authenticated `GET /dashboard/data` endpoint use the same snapshot builder. The private
-response contains generated time, overall state, readiness, attention, pending-change and task summaries, service and
-network summaries, and six recent activity rows. Activity rows expose only source, title, outcome, actor, time, and
-destination URL. Task results, command output, raw errors, audit detail, and secrets are never dashboard fields.
+The initial page and session-authenticated `GET /ui/management/dashboard/data` endpoint use the same snapshot builder.
+The private response contains generated time, overall state, readiness, attention, pending-change and task summaries,
+service and network summaries, and six recent activity rows. Activity rows expose only source, title, outcome, actor,
+time, and destination URL. Task results, command output, raw errors, audit detail, and secrets are never dashboard fields.
 
 The browser refreshes every 30 seconds while the page is visible, pauses while hidden, and refreshes immediately after
 becoming visible. A failed refresh keeps the last successful DOM and displays a stale-data notice.

@@ -376,7 +376,7 @@ def render_provider_config(settings: KmsSettings, providers: list[VsphereKeyProv
     """
     certificate_name = safe_certificate_name(settings.server_certificate or settings.hostname)
     listen_addresses = split_addresses(settings.listen_address)
-    host = listen_addresses[0] if settings.enabled and listen_addresses else "127.0.0.1"
+    rendered_listen_addresses = listen_addresses if settings.enabled and listen_addresses else ["127.0.0.1"]
     rendered_providers = []
     for provider in providers:
         if not provider.enabled:
@@ -400,7 +400,7 @@ def render_provider_config(settings: KmsSettings, providers: list[VsphereKeyProv
     document = {
         "schema_version": 1,
         "enabled": bool(settings.enabled),
-        "listen": {"host": host, "port": settings.port},
+        "listen": {"addresses": rendered_listen_addresses, "port": settings.port},
         "tls": {
             "certificate_path": f"{KMS_SERVER_CERT_BASE}/{certificate_name}.crt",
             "private_key_path": f"{KMS_SERVER_CERT_BASE}/{certificate_name}.key",

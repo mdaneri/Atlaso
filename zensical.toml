@@ -38,6 +38,7 @@ nav = [
     { "DHCP" = "services/dhcp.md" },
     { "Firewall" = "services/firewall.md" },
     { "NTP and NTS" = "services/ntp.md" },
+    { "Public Services" = "services/public-services.md" },
     { "Certificate Authority" = "services/certificate-authority.md" },
     { "ESX storage" = "services/esx-storage.md" },
     { "Network boot" = "services/ipxe.md" },

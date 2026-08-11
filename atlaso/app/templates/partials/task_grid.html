@@ -35,7 +35,7 @@
             <td>{{ task.state }}</td>
             <td>{{ task.progress_percent }}%</td>
             <td>{{ task.created_at or "—" }}</td>
-            <td><a class="button secondary compact-button" href="/tasks?job_id={{ task.id }}">Open</a></td>
+            <td><a class="button secondary compact-button" href="{{ management_ui_root }}/tasks?job_id={{ task.id }}">Open</a></td>
           </tr>
           {% for step in task._children %}
             <tr>

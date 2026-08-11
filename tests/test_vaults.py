@@ -732,7 +732,7 @@ def test_remote_vault_uri_launch_uses_one_use_server_side_ticket(client, monkeyp
     launch_url = launched.json()["url"]
     assert "Not-In-The-Browser!" not in launched.text
     launch_token = parse_qs(urlsplit(launch_url).fragment)["remote-launch"][0]
-    assert urlsplit(launch_url).path == "/terminal/remote"
+    assert urlsplit(launch_url).path == "/ui/management/terminal/remote"
     assert launched.json()["target"] == "vcf.example.internal"
 
     terminal_page = client.get("/terminal")
@@ -754,7 +754,7 @@ def test_remote_vault_uri_launch_uses_one_use_server_side_ticket(client, monkeyp
     assert "app-shell" not in remote_page.text
     assert "sidebar" not in remote_page.text
     assert "Primary" not in remote_page.text
-    assert "/static/terminal.js?v=atlaso-vault-uri-20260727-2" in remote_page.text
+    assert "/static/terminal.js?v=issue-287-2" in remote_page.text
     assert "/static/app.css?v=atlaso-horizontal-brand-20260730-2" in remote_page.text
 
     ticket_response = client.post(

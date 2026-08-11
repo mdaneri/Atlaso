@@ -8,7 +8,7 @@
       <h1>VCFDT task log</h1>
       <p class="muted"><code>{{ job.id }}</code> · {{ profile_name or "Unknown profile" }} · {{ job.status }}</p>
     </div>
-    <a class="button secondary" href="/vcf-offline-depot">Back to VCF Offline Depot</a>
+    <a class="button secondary" href="{{ management_ui_root }}/vcf-offline-depot">Back to VCF Offline Depot</a>
   </div>
   <div class="config-preview-block">
     <div class="config-preview-meta"><span>{{ task_log.path }}</span><span>{{ task_log.updated_at or "not written" }}</span></div>

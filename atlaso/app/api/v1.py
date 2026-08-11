@@ -6670,8 +6670,9 @@ def delete_vsphere_key_provider(
 ) -> Response:
     """Delete a disabled, detached, verified-empty provider namespace.
 
-    Requires the `write:kms` API scope. Providers ever applied to the daemon require authenticated
-    runtime evidence of zero operational keys; unavailable evidence fails closed.
+    Requires the `write:kms` API scope. The disabled and detached state must complete global
+    Appliance Apply before authenticated runtime evidence of zero operational keys can authorize
+    deletion; unavailable evidence fails closed.
 
     Args:
         provider_id: Immutable provider UUID.
@@ -6681,6 +6682,11 @@ def delete_vsphere_key_provider(
     provider = _vsphere_provider(db, provider_id)
     if provider.enabled or provider.trusted_vcenters:
         raise HTTPException(status_code=409, detail="Disable the provider and detach every trusted vCenter before deletion.")
+    if provider_requires_appliance_apply(provider):
+        raise HTTPException(
+            status_code=409,
+            detail="Apply the disabled and detached provider state before deletion.",
+        )
     snapshot = runtime_status_snapshot()
     counts = authenticated_provider_counts(snapshot, provider.id)
     if counts is None or counts.get("total") != 0:

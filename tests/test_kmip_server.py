@@ -224,7 +224,7 @@ def service_config(tmp_path: Path, materials: dict[str, Path]) -> ServiceConfig:
     provider_id = str(uuid.uuid4())
     return ServiceConfig(
         enabled=True,
-        host="127.0.0.1",
+        listen_addresses=("127.0.0.1",),
         port=0,
         certificate_path=materials["server_cert"],
         private_key_path=materials["server_key"],
@@ -375,6 +375,41 @@ def test_mtls_server_accepts_mapped_fingerprint_and_writes_redacted_trace(tmp_pa
         thread.join(timeout=3)
 
 
+def test_mtls_server_binds_every_configured_listener_address(tmp_path: Path) -> None:
+    """Verify one provider runtime accepts TLS connections on every configured address.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    materials = material(tmp_path)
+    config = replace(
+        service_config(tmp_path, materials),
+        listen_addresses=("127.0.0.1", "127.0.0.2"),
+    )
+    server = build_server(config, secrets_key="appliance-secrets-key")
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    addresses = server.server_addresses
+    try:
+        assert [address[0] for address in addresses] == ["127.0.0.1", "127.0.0.2"]
+        assert len({address[1] for address in addresses}) == 1
+        for host, port in addresses:
+            with socket.create_connection((host, port), timeout=3) as raw:
+                with client_context(materials, trusted=True).wrap_socket(
+                    raw,
+                    server_hostname="localhost",
+                ) as secured:
+                    secured.sendall(discover_versions_request())
+                    response = decode(secured.recv(4096))
+            status = response.children(Tag.BATCH_ITEM)[0].child(Tag.RESULT_STATUS)
+            assert status is not None
+            assert status.value == ResultStatus.SUCCESS
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=3)
+
+
 def test_mtls_server_rejects_ca_valid_but_unmapped_client(tmp_path: Path) -> None:
     """Verify that mtls server rejects ca valid but unmapped client.
 
@@ -474,7 +509,7 @@ def test_configuration_rejects_ambiguous_client_provider_mapping(tmp_path: Path)
     document = {
         "schema_version": 1,
         "enabled": True,
-        "listen": {"host": "127.0.0.1", "port": 5696},
+        "listen": {"addresses": ["127.0.0.1"], "port": 5696},
         "tls": {
             "certificate_path": str(materials["server_cert"]),
             "private_key_path": str(materials["server_key"]),
@@ -534,7 +569,7 @@ def test_disabled_configuration_accepts_no_provider(tmp_path: Path) -> None:
     document = {
         "schema_version": 1,
         "enabled": False,
-        "listen": {"host": "127.0.0.1", "port": 5696},
+        "listen": {"addresses": ["127.0.0.1"], "port": 5696},
         "tls": {
             "certificate_path": str(tmp_path / "server.crt"),
             "private_key_path": str(tmp_path / "server.key"),
@@ -561,7 +596,7 @@ def test_disabled_configuration_accepts_no_provider(tmp_path: Path) -> None:
     ("path", "value", "message"),
     [
         (("schema_version",), True, "schema_version must be an integer"),
-        (("listen", "host"), 127, "listen host must be a string"),
+        (("listen", "addresses", 0), 127, "listen address must be a string"),
         (("listen", "port"), "5696", "listen port must be an integer"),
         (("limits", "max_connections"), 32.0, "max_connections must be an integer"),
         (("interop_trace_path",), None, "interop trace path must be a string"),
@@ -591,7 +626,7 @@ def test_configuration_rejects_coerced_json_types(
     document: dict[str, object] = {
         "schema_version": 1,
         "enabled": True,
-        "listen": {"host": "127.0.0.1", "port": 5696},
+        "listen": {"addresses": ["127.0.0.1"], "port": 5696},
         "tls": {
             "certificate_path": str(materials["server_cert"]),
             "private_key_path": str(materials["server_key"]),
@@ -754,7 +789,11 @@ def test_tcp_server_selects_ipv6_address_family_before_binding(monkeypatch, tmp_
         observed["handler"] = handler
 
     monkeypatch.setattr(socketserver.TCPServer, "__init__", fake_init)
-    config = replace(service_config(tmp_path, material(tmp_path)), host="::1", interop_trace_path=None)
+    config = replace(
+        service_config(tmp_path, material(tmp_path)),
+        listen_addresses=("::1",),
+        interop_trace_path=None,
+    )
 
     KmipTcpServer(config, object(), object())  # type: ignore[arg-type]
 

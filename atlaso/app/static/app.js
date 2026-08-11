@@ -1,3 +1,5 @@
+const managementUiPath = (path = "") => window.AtlasoRoutes.management(path);
+
 document.addEventListener("click", (event) => {
   const target = event.target;
   if (!(target instanceof HTMLElement)) {
@@ -38,7 +40,7 @@ function isAtlasoSameOriginRequest(input) {
   try {
     const rawUrl = input instanceof Request ? input.url : String(input);
     const url = new URL(rawUrl, window.location.href);
-    return url.origin === window.location.origin && url.pathname !== "/appliance-apply/status";
+    return url.origin === window.location.origin && url.pathname !== managementUiPath("/appliance-apply/status");
   } catch {
     return false;
   }
@@ -1034,7 +1036,7 @@ async function autoSaveDnsRecord(cell, csrf) {
       return;
     }
     try {
-      await postDnsRecordAction("/dns/records", data, csrf, { reload: false });
+      await postDnsRecordAction(managementUiPath("/dns/records"), data, csrf, { reload: false });
       rememberDnsActiveZone(data.domain);
       showTableSuccess("Added");
       window.location.reload();
@@ -1047,7 +1049,7 @@ async function autoSaveDnsRecord(cell, csrf) {
     return;
   }
   try {
-    await postDnsRecordAction(`/dns/records/${data.id}/edit`, data, csrf, { reload: false });
+    await postDnsRecordAction(managementUiPath(`/dns/records/${data.id}/edit`), data, csrf, { reload: false });
     row.update(dnsRecordReverseStatus(row.getData()));
     showTableSuccess("Saved");
   } catch (error) {
@@ -1063,7 +1065,7 @@ async function deleteDnsRecordFromMenu(row, csrf) {
   const data = row.getData();
   try {
     rememberDnsActiveZone(data.domain);
-    await postDnsRecordAction(`/dns/records/${data.id}/delete`, {}, csrf);
+    await postDnsRecordAction(managementUiPath(`/dns/records/${data.id}/delete`), {}, csrf);
   } catch (error) {
     showTableError(error instanceof Error ? error.message : "The DNS record could not be deleted.");
   }
@@ -1923,7 +1925,7 @@ async function autoSaveDhcpOption(cell, csrf) {
       return;
     }
     try {
-      await postDhcpOptionAction("/dhcp/options", data, csrf, { reload: false });
+      await postDhcpOptionAction(managementUiPath("/dhcp/options"), data, csrf, { reload: false });
       showDhcpOptionSuccess("Added");
       window.location.reload();
     } catch (error) {
@@ -1935,7 +1937,7 @@ async function autoSaveDhcpOption(cell, csrf) {
     return;
   }
   try {
-    await postDhcpOptionAction(`/dhcp/options/${data.id}/edit`, data, csrf, { reload: false });
+    await postDhcpOptionAction(managementUiPath(`/dhcp/options/${data.id}/edit`), data, csrf, { reload: false });
     showDhcpOptionSuccess("Saved");
   } catch (error) {
     showDhcpOptionError(error instanceof Error ? error.message : "The DHCP option could not be saved.");
@@ -1960,7 +1962,7 @@ async function deleteDhcpOptionFromMenu(row, csrf) {
     return;
   }
   try {
-    await postDhcpOptionAction(`/dhcp/options/${data.id}/delete`, {}, csrf);
+    await postDhcpOptionAction(managementUiPath(`/dhcp/options/${data.id}/delete`), {}, csrf);
   } catch (error) {
     showDhcpOptionError(error instanceof Error ? error.message : "The DHCP option could not be deleted.");
   }
@@ -1988,7 +1990,7 @@ async function autoSaveDhcpScope(cell, csrf) {
       return;
     }
     try {
-      await postDhcpScopeAction("/dhcp/scopes", data, csrf, { reload: false });
+      await postDhcpScopeAction(managementUiPath("/dhcp/scopes"), data, csrf, { reload: false });
       showDhcpScopeSuccess("Added");
       window.location.reload();
     } catch (error) {
@@ -2000,7 +2002,7 @@ async function autoSaveDhcpScope(cell, csrf) {
     return;
   }
   try {
-    await postDhcpScopeAction(`/dhcp/scopes/${data.id}/edit`, data, csrf, { reload: false });
+    await postDhcpScopeAction(managementUiPath(`/dhcp/scopes/${data.id}/edit`), data, csrf, { reload: false });
     showDhcpScopeSuccess("Saved");
   } catch (error) {
     showDhcpScopeError(error instanceof Error ? error.message : "The DHCP IP zone could not be saved.");
@@ -2025,7 +2027,7 @@ async function deleteDhcpScopeFromMenu(row, csrf) {
     return;
   }
   try {
-    await postDhcpScopeAction(`/dhcp/scopes/${data.id}/delete`, {}, csrf);
+    await postDhcpScopeAction(managementUiPath(`/dhcp/scopes/${data.id}/delete`), {}, csrf);
   } catch (error) {
     showDhcpScopeError(error instanceof Error ? error.message : "The DHCP IP zone could not be deleted.");
   }
@@ -2111,7 +2113,7 @@ async function autoSaveDhcpReservation(cell, csrf) {
       return;
     }
     try {
-      await postDhcpReservationAction("/dhcp/reservations", data, csrf, { reload: false });
+      await postDhcpReservationAction(managementUiPath("/dhcp/reservations"), data, csrf, { reload: false });
       showDhcpReservationSuccess("Added");
       window.location.reload();
     } catch (error) {
@@ -2123,7 +2125,7 @@ async function autoSaveDhcpReservation(cell, csrf) {
     return;
   }
   try {
-    await postDhcpReservationAction(`/dhcp/reservations/${data.id}/edit`, data, csrf, { reload: false });
+    await postDhcpReservationAction(managementUiPath(`/dhcp/reservations/${data.id}/edit`), data, csrf, { reload: false });
     showDhcpReservationSuccess("Saved");
   } catch (error) {
     showDhcpReservationError(error instanceof Error ? error.message : "The DHCP reservation could not be saved.");
@@ -2148,7 +2150,7 @@ async function deleteDhcpReservationFromMenu(row, csrf) {
     return;
   }
   try {
-    await postDhcpReservationAction(`/dhcp/reservations/${data.id}/delete`, {}, csrf);
+    await postDhcpReservationAction(managementUiPath(`/dhcp/reservations/${data.id}/delete`), {}, csrf);
   } catch (error) {
     showDhcpReservationError(error instanceof Error ? error.message : "The DHCP reservation could not be deleted.");
   }
@@ -2332,7 +2334,7 @@ function initializeDhcpLeasesTable() {
               label: "Deny DHCP",
             });
             if (confirmed) {
-              submitDhcpLeaseAction("/dhcp/leases/deny", data, csrf);
+              submitDhcpLeaseAction(managementUiPath("/dhcp/leases/deny"), data, csrf);
             }
           },
         },
@@ -2958,7 +2960,7 @@ function initializeEsxiHostReferenceWizard() {
         if (payload.enabled) body.set("enabled", "on");
         const recordId = form.elements.record_id.value;
         const result = await atlasoGridWizardRequest(
-          recordId ? `/esxi-pxe/hosts/${recordId}` : "/esxi-pxe/hosts",
+          recordId ? managementUiPath(`/esxi-pxe/hosts/${recordId}`) : managementUiPath("/esxi-pxe/hosts"),
           body,
         );
         resource = result.host;
@@ -3076,7 +3078,7 @@ async function autoSaveEsxiHost(cell, csrf) {
   const data = row.getData();
   if (data.is_default) {
     try {
-      await postEsxiHostAction("/esxi-pxe/default-host", data, csrf, { reload: false });
+      await postEsxiHostAction(managementUiPath("/esxi-pxe/default-host"), data, csrf, { reload: false });
       showEsxiHostSuccess("Saved");
     } catch (error) {
       showEsxiHostError(error instanceof Error ? error.message : "The default ESXi PXE host profile could not be saved.");
@@ -3092,7 +3094,7 @@ async function autoSaveEsxiHost(cell, csrf) {
       return;
     }
     try {
-      await postEsxiHostAction("/esxi-pxe/hosts", data, csrf);
+      await postEsxiHostAction(managementUiPath("/esxi-pxe/hosts"), data, csrf);
       showEsxiHostSuccess("Added");
     } catch (error) {
       showEsxiHostError(error instanceof Error ? error.message : "The ESXi PXE host reference could not be added.");
@@ -3103,7 +3105,7 @@ async function autoSaveEsxiHost(cell, csrf) {
     return;
   }
   try {
-    await postEsxiHostAction(`/esxi-pxe/hosts/${data.id}`, data, csrf, { reload: false });
+    await postEsxiHostAction(managementUiPath(`/esxi-pxe/hosts/${data.id}`), data, csrf, { reload: false });
     showEsxiHostSuccess("Saved");
   } catch (error) {
     showEsxiHostError(error instanceof Error ? error.message : "The ESXi PXE host reference could not be saved.");
@@ -3128,7 +3130,7 @@ async function deleteEsxiHost(row, csrf) {
     return;
   }
   try {
-    await postEsxiHostAction(`/esxi-pxe/hosts/${data.id}/delete`, {}, csrf);
+    await postEsxiHostAction(managementUiPath(`/esxi-pxe/hosts/${data.id}/delete`), {}, csrf);
   } catch (error) {
     showEsxiHostError(error instanceof Error ? error.message : "The ESXi PXE host reference could not be deleted.");
   }
@@ -3302,7 +3304,7 @@ async function autoSaveCaProfile(cell, csrf) {
       return;
     }
     try {
-      await postCaAction("/certificate-authority/profiles", data, csrf, { reload: false });
+      await postCaAction(managementUiPath("/certificate-authority/profiles"), data, csrf, { reload: false });
       showTransientGridStatus("Added");
       window.location.reload();
     } catch (error) {
@@ -3314,7 +3316,7 @@ async function autoSaveCaProfile(cell, csrf) {
     return;
   }
   try {
-    await postCaAction(`/certificate-authority/profiles/${data.id}/edit`, data, csrf, { reload: false });
+    await postCaAction(managementUiPath(`/certificate-authority/profiles/${data.id}/edit`), data, csrf, { reload: false });
     showTransientGridStatus("Saved");
   } catch (error) {
     showCaMessage("ca-profile-error", error instanceof Error ? error.message : "The CA profile could not be saved.");
@@ -3339,7 +3341,7 @@ async function deleteCaProfileFromMenu(row, csrf) {
     return;
   }
   try {
-    await postCaAction(`/certificate-authority/profiles/${data.id}/delete`, {}, csrf);
+    await postCaAction(managementUiPath(`/certificate-authority/profiles/${data.id}/delete`), {}, csrf);
   } catch (error) {
     showCaMessage("ca-profile-error", error instanceof Error ? error.message : "The CA profile could not be deleted.");
   }
@@ -3360,7 +3362,7 @@ async function deleteCaCertificateFromMenu(row, csrf) {
     return;
   }
   try {
-    await postCaAction(`/certificate-authority/certificates/${data.id}/delete`, {}, csrf);
+    await postCaAction(managementUiPath(`/certificate-authority/certificates/${data.id}/delete`), {}, csrf);
   } catch (error) {
     showCaMessage("ca-certificate-error", error instanceof Error ? error.message : "The certificate request could not be deleted.");
   }
@@ -3420,7 +3422,7 @@ function openCaCertificateModal(data = null) {
   }
   const isEdit = Boolean(data && data.can_edit && !data.is_new);
   elements.form.reset();
-  elements.form.action = isEdit ? `/certificate-authority/certificates/${data.id}/edit` : "/certificate-authority/certificates";
+  elements.form.action = isEdit ? managementUiPath(`/certificate-authority/certificates/${data.id}/edit`) : managementUiPath("/certificate-authority/certificates");
   elements.form.dataset.certificateId = isEdit ? String(data.id) : "";
   if (elements.title instanceof HTMLElement) {
     elements.title.textContent = isEdit ? "Edit certificate request" : "Create certificate request";
@@ -3547,10 +3549,10 @@ function initializeCaProfilesTable() {
     rows: JSON.parse(element.dataset.profiles || "[]"),
     newRow: newCaProfileRow(),
     resourceName: "profile",
-    createUrl: "/certificate-authority/profiles",
-    editUrl: (id) => `/certificate-authority/profiles/${id}/edit`,
+    createUrl: managementUiPath("/certificate-authority/profiles"),
+    editUrl: (id) => managementUiPath(`/certificate-authority/profiles/${id}/edit`),
     deleteResource: true,
-    deleteUrl: (id) => `/certificate-authority/profiles/${id}/delete`,
+    deleteUrl: (id) => managementUiPath(`/certificate-authority/profiles/${id}/delete`),
     editLabel: "Edit profile",
     deleteLabel: "Delete profile",
     createLabel: "Create profile",
@@ -3638,10 +3640,10 @@ function initializeCaCertificatesTable() {
     rows: JSON.parse(element.dataset.certificates || "[]"),
     newRow: newCaCertificateRow(defaultProfileId),
     resourceName: "certificate",
-    createUrl: "/certificate-authority/certificates",
-    editUrl: (id) => `/certificate-authority/certificates/${id}/edit`,
+    createUrl: managementUiPath("/certificate-authority/certificates"),
+    editUrl: (id) => managementUiPath(`/certificate-authority/certificates/${id}/edit`),
     deleteResource: true,
-    deleteUrl: (id) => `/certificate-authority/certificates/${id}/delete`,
+    deleteUrl: (id) => managementUiPath(`/certificate-authority/certificates/${id}/delete`),
     canEdit: (data) => Boolean(data.can_edit),
     canDelete: (data) => Boolean(data.can_delete),
     editLabel: "Edit request",
@@ -3921,7 +3923,7 @@ async function autoSaveFirewallRule(cell, csrf) {
       return;
     }
     try {
-      await postFirewallRuleAction("/firewall/rules", data, csrf, { reload: false });
+      await postFirewallRuleAction(managementUiPath("/firewall/rules"), data, csrf, { reload: false });
       showTransientGridStatus("Added");
       window.location.reload();
     } catch (error) {
@@ -3933,7 +3935,7 @@ async function autoSaveFirewallRule(cell, csrf) {
     return;
   }
   try {
-    await postFirewallRuleAction(`/firewall/rules/${data.id}/edit`, data, csrf, { reload: false });
+    await postFirewallRuleAction(managementUiPath(`/firewall/rules/${data.id}/edit`), data, csrf, { reload: false });
     showTransientGridStatus("Saved");
     await refreshNetworkSideStack();
   } catch (error) {
@@ -3959,7 +3961,7 @@ async function deleteFirewallRuleFromMenu(row, csrf) {
     return;
   }
   try {
-    await postFirewallRuleAction(`/firewall/rules/${data.id}/delete`, {}, csrf);
+    await postFirewallRuleAction(managementUiPath(`/firewall/rules/${data.id}/delete`), {}, csrf);
   } catch (error) {
     showCaMessage("firewall-rule-error", error instanceof Error ? error.message : "The firewall rule could not be deleted.");
   }
@@ -3979,10 +3981,10 @@ function initializeFirewallRulesTable() {
     rows: existingRows,
     newRow: newFirewallRuleRow(interfaces[0] || ""),
     resourceName: "rule",
-    createUrl: "/firewall/rules",
-    editUrl: (id) => `/firewall/rules/${id}/edit`,
+    createUrl: managementUiPath("/firewall/rules"),
+    editUrl: (id) => managementUiPath(`/firewall/rules/${id}/edit`),
     deleteResource: true,
-    deleteUrl: (id) => `/firewall/rules/${id}/delete`,
+    deleteUrl: (id) => managementUiPath(`/firewall/rules/${id}/delete`),
     editLabel: "Edit rule",
     deleteLabel: "Delete rule",
     createLabel: "Create firewall rule",
@@ -4061,7 +4063,7 @@ async function updateManagedFirewallSourceGroup(cell, csrf) {
   body.set("csrf", csrf);
   body.set("rule_name", data.name || "");
   body.set("source_group_id", data.source_group_id || "");
-  const response = await fetch("/firewall/managed-rules/source-group", {
+  const response = await fetch(managementUiPath("/firewall/managed-rules/source-group"), {
     method: "POST",
     body,
     credentials: "same-origin",
@@ -4157,7 +4159,7 @@ function serviceNameFormatter(cell) {
 function submitServiceAction(service, action, csrf) {
   const form = document.createElement("form");
   form.method = "post";
-  form.action = `/services/${encodeURIComponent(service)}/${encodeURIComponent(action)}`;
+  form.action = managementUiPath(`/services/${encodeURIComponent(service)}/${encodeURIComponent(action)}`);
   const input = document.createElement("input");
   input.type = "hidden";
   input.name = "csrf";
@@ -4219,7 +4221,7 @@ function initializeServicesTable() {
         {
           label: "Open logs",
           action: (_event, row) => {
-            window.location.href = `/services/${encodeURIComponent(row.getData().service)}/logs`;
+            window.location.href = managementUiPath(`/services/${encodeURIComponent(row.getData().service)}/logs`);
           },
         },
         {
@@ -4356,7 +4358,7 @@ function openUserPasswordModal(data) {
   if (!(modal instanceof HTMLDialogElement) || !(form instanceof HTMLFormElement)) {
     return;
   }
-  form.action = `/users/${data.id}/password`;
+  form.action = managementUiPath(`/users/${data.id}/password`);
   form.reset();
   resetPasswordVisibility(form);
   form.querySelectorAll("input").forEach((input) => {
@@ -4384,7 +4386,7 @@ async function unlockUserFromMenu(row, csrf) {
     return;
   }
   try {
-    await postUserAction(`/users/${data.id}/unlock`, {}, csrf, { reload: false });
+    await postUserAction(managementUiPath(`/users/${data.id}/unlock`), {}, csrf, { reload: false });
     showTransientGridStatus("Unlock pending");
     window.location.reload();
   } catch (error) {
@@ -4407,7 +4409,7 @@ async function disableUserFromMenu(row, csrf) {
     return;
   }
   try {
-    await postUserAction(`/users/${data.id}/disable`, {}, csrf, { reload: false });
+    await postUserAction(managementUiPath(`/users/${data.id}/disable`), {}, csrf, { reload: false });
     showTransientGridStatus("Disabled");
     window.location.reload();
   } catch (error) {
@@ -4457,10 +4459,10 @@ function initializeUsersTable() {
     rows: existingRows,
     newRow: newUserRow(),
     resourceName: "user",
-    createUrl: "/users",
-    editUrl: (id) => `/users/${id}/edit`,
+    createUrl: managementUiPath("/users"),
+    editUrl: (id) => managementUiPath(`/users/${id}/edit`),
     deleteResource: true,
-    deleteUrl: (id) => `/users/${id}/delete`,
+    deleteUrl: (id) => managementUiPath(`/users/${id}/delete`),
     editLabel: "Edit user",
     deleteLabel: "Remove user",
     createLabel: "Create local user",
@@ -4827,10 +4829,10 @@ function initializeVsphereKeyProviderTables() {
     rows: JSON.parse(providerElement.dataset.providers || "[]"),
     newRow: { id: "__new_vsphere_provider__", name: "", description: "", enabled: false, is_new: true },
     resourceName: "provider",
-    createUrl: "/vsphere-key-providers/providers",
-    editUrl: (id) => `/vsphere-key-providers/providers/${id}/edit`,
+    createUrl: managementUiPath("/vsphere-key-providers/providers"),
+    editUrl: (id) => managementUiPath(`/vsphere-key-providers/providers/${id}/edit`),
     deleteResource: true,
-    deleteUrl: (id) => `/vsphere-key-providers/providers/${id}/delete`,
+    deleteUrl: (id) => managementUiPath(`/vsphere-key-providers/providers/${id}/delete`),
     createLabel: "Create provider",
     updateLabel: "Update provider",
     editLabel: "Edit provider",
@@ -4879,10 +4881,10 @@ function initializeVsphereKeyProviderTables() {
     rows: JSON.parse(vcenterElement.dataset.vcenters || "[]"),
     newRow: { id: "__new_vsphere_vcenter__", provider_id: providers[0]?.id || "", name: "", hostname: "", description: "", enabled: false, certificate_pem: "", is_new: true },
     resourceName: "trusted_vcenter",
-    createUrl: "/vsphere-key-providers/trusted-vcenters",
-    editUrl: (id) => `/vsphere-key-providers/trusted-vcenters/${id}/edit`,
+    createUrl: managementUiPath("/vsphere-key-providers/trusted-vcenters"),
+    editUrl: (id) => managementUiPath(`/vsphere-key-providers/trusted-vcenters/${id}/edit`),
     deleteResource: true,
-    deleteUrl: (id) => `/vsphere-key-providers/trusted-vcenters/${id}/delete`,
+    deleteUrl: (id) => managementUiPath(`/vsphere-key-providers/trusted-vcenters/${id}/delete`),
     createLabel: "Create trusted vCenter",
     updateLabel: "Update trusted vCenter",
     editLabel: "Edit trusted vCenter",
@@ -4965,7 +4967,7 @@ function initializeVsphereKeyProviderTables() {
         const [providerId, vcenterId] = String(body.get("target") || "").split("|");
         if (!providerId || !vcenterId) return { valid: false, message: "Choose a trusted vCenter." };
         body.set("provider_id", providerId);
-        const payload = await atlasoGridWizardRequest(`/vsphere-key-providers/trusted-vcenters/${vcenterId}/certificates`, body);
+        const payload = await atlasoGridWizardRequest(managementUiPath(`/vsphere-key-providers/trusted-vcenters/${vcenterId}/certificates`), body);
         const certificateTable = document.getElementById("vsphere-certificates-table")?.atlasoTabulator;
         await certificateTable?.addRow?.(payload.certificate, true);
         await updateCertificateCounts(providerId, vcenterId, 1, payload.certificate.status === "valid" ? 1 : 0);
@@ -4985,7 +4987,7 @@ function initializeVsphereKeyProviderTables() {
       if (!confirmed) return;
       const body = new FormData();
       body.set("csrf", csrf);
-      await atlasoGridWizardRequest(`/vsphere-key-providers/trusted-vcenters/${data.trusted_vcenter_id}/certificates/${data.id}/delete`, body, { expectJson: false });
+      await atlasoGridWizardRequest(managementUiPath(`/vsphere-key-providers/trusted-vcenters/${data.trusted_vcenter_id}/certificates/${data.id}/delete`), body, { expectJson: false });
       await row.delete();
       await updateCertificateCounts(data.provider_id, data.trusted_vcenter_id, -1, data.status === "valid" ? -1 : 0);
       await refreshNetworkSideStack();
@@ -5165,7 +5167,7 @@ function initializeLdapOrganizationWizard() {
 }
 
 function initializeLdapSettingsStatus(root = document) {
-  const settingsForm = root.querySelector('form[action="/ldap/settings"]');
+  const settingsForm = root.querySelector(`form[action="${managementUiPath("/ldap/settings")}"]`);
   if (settingsForm instanceof HTMLFormElement) {
     if (settingsForm.dataset.ldapSettingsStatusInitialized === "1") return;
     settingsForm.dataset.ldapSettingsStatusInitialized = "1";
@@ -5263,12 +5265,12 @@ function initializeLdapPageState() {
     });
   });
   window.addEventListener("popstate", () => {
-    if (window.location.pathname !== "/ldap") return;
+    if (window.location.pathname !== managementUiPath("/ldap")) return;
     const organizationId = new URL(window.location.href).searchParams.get("organization_id") || "";
     const targetLink = links.find((link) => link.dataset.ldapOrganizationId === organizationId);
     if (targetLink instanceof HTMLAnchorElement) loadOrganization(targetLink, { history: false });
   });
-  if (window.location.pathname === "/ldap" && !currentId && validStoredLink instanceof HTMLAnchorElement && storedId !== activeId) {
+  if (window.location.pathname === managementUiPath("/ldap") && !currentId && validStoredLink instanceof HTMLAnchorElement && storedId !== activeId) {
     loadOrganization(validStoredLink, { replaceHistory: true });
   }
 }
@@ -5333,7 +5335,7 @@ async function autoSaveLdapUser(cell, csrf, organizationId) {
     reformatPendingNewRecord(cell);
     if (!String(data.uid || "").trim()) return;
     try {
-      await postLdapDirectoryAction(`/ldap/organizations/${organizationId}/users`, data, csrf);
+      await postLdapDirectoryAction(managementUiPath(`/ldap/organizations/${organizationId}/users`), data, csrf);
     } catch (error) {
       showCaMessage("ldap-user-error", error instanceof Error ? error.message : "The LDAP user could not be added.");
       if (typeof cell.restoreOldValue === "function") cell.restoreOldValue();
@@ -5341,7 +5343,7 @@ async function autoSaveLdapUser(cell, csrf, organizationId) {
     return;
   }
   try {
-    await postLdapDirectoryAction(`/ldap/users/${data.id}/edit`, data, csrf, { reload: false });
+    await postLdapDirectoryAction(managementUiPath(`/ldap/users/${data.id}/edit`), data, csrf, { reload: false });
     showTransientGridStatus("Saved");
   } catch (error) {
     showCaMessage("ldap-user-error", error instanceof Error ? error.message : "The LDAP user could not be saved.");
@@ -5354,7 +5356,7 @@ function openLdapPasswordModal(data) {
   const form = document.getElementById("ldap-password-form");
   const title = document.getElementById("ldap-password-modal-title");
   if (!(dialog instanceof HTMLDialogElement) || !(form instanceof HTMLFormElement)) return;
-  form.action = `/ldap/users/${encodeURIComponent(data.id)}/password`;
+  form.action = managementUiPath(`/ldap/users/${encodeURIComponent(data.id)}/password`);
   form.reset();
   if (title) title.textContent = `Reset ${data.uid} password`;
   dialog.showModal();
@@ -5367,14 +5369,14 @@ async function deleteLdapUserFromMenu(row, csrf) {
   if (data.is_new) return;
   const confirmed = await requestConfirmation({ title: `Delete ${data.uid}?`, message: "This permanently removes the user from desired state and from OpenLDAP on the next global appliance apply.", label: "Delete user" });
   if (!confirmed) return;
-  try { await postLdapDirectoryAction(`/ldap/users/${data.id}/delete`, {}, csrf); }
+  try { await postLdapDirectoryAction(managementUiPath(`/ldap/users/${data.id}/delete`), {}, csrf); }
   catch (error) { showCaMessage("ldap-user-error", error instanceof Error ? error.message : "The LDAP user could not be deleted."); }
 }
 
 async function unlockLdapUserFromMenu(row, csrf) {
   const data = row.getData();
   if (data.is_new) return;
-  try { await postLdapDirectoryAction(`/ldap/users/${data.id}/unlock`, {}, csrf); }
+  try { await postLdapDirectoryAction(managementUiPath(`/ldap/users/${data.id}/unlock`), {}, csrf); }
   catch (error) { showCaMessage("ldap-user-error", error instanceof Error ? error.message : "The LDAP user could not be unlocked."); }
 }
 
@@ -5385,7 +5387,7 @@ async function autoSaveLdapGroup(cell, csrf, organizationId) {
   if (data.is_new) {
     reformatPendingNewRecord(cell);
     if (!String(data.name || "").trim()) return;
-    try { await postLdapDirectoryAction(`/ldap/organizations/${organizationId}/groups`, data, csrf); }
+    try { await postLdapDirectoryAction(managementUiPath(`/ldap/organizations/${organizationId}/groups`), data, csrf); }
     catch (error) {
       showCaMessage("ldap-group-error", error instanceof Error ? error.message : "The LDAP group could not be added.");
       if (typeof cell.restoreOldValue === "function") cell.restoreOldValue();
@@ -5393,7 +5395,7 @@ async function autoSaveLdapGroup(cell, csrf, organizationId) {
     return;
   }
   try {
-    await postLdapDirectoryAction(`/ldap/groups/${data.id}/edit`, data, csrf, { reload: false });
+    await postLdapDirectoryAction(managementUiPath(`/ldap/groups/${data.id}/edit`), data, csrf, { reload: false });
     showTransientGridStatus("Saved");
   } catch (error) {
     showCaMessage("ldap-group-error", error instanceof Error ? error.message : "The LDAP group could not be saved.");
@@ -5406,7 +5408,7 @@ function openLdapGroupMembersModal(data) {
   const form = document.getElementById("ldap-group-members-form");
   const title = document.getElementById("ldap-group-members-modal-title");
   if (!(dialog instanceof HTMLDialogElement) || !(form instanceof HTMLFormElement)) return;
-  form.action = `/ldap/groups/${encodeURIComponent(data.id)}/members`;
+  form.action = managementUiPath(`/ldap/groups/${encodeURIComponent(data.id)}/members`);
   if (title) title.textContent = `Edit ${data.name} membership`;
   const selected = new Set((data.members || []).map((member) => `${member.type}:${member.id}`));
   form.querySelectorAll('select[name="members"] option').forEach((option) => {
@@ -5422,7 +5424,7 @@ async function deleteLdapGroupFromMenu(row, csrf) {
   if (data.is_new) return;
   const confirmed = await requestConfirmation({ title: `Delete ${data.name}?`, message: "This removes the group and its nested memberships from desired state and OpenLDAP on the next global appliance apply.", label: "Delete group" });
   if (!confirmed) return;
-  try { await postLdapDirectoryAction(`/ldap/groups/${data.id}/delete`, {}, csrf); }
+  try { await postLdapDirectoryAction(managementUiPath(`/ldap/groups/${data.id}/delete`), {}, csrf); }
   catch (error) { showCaMessage("ldap-group-error", error instanceof Error ? error.message : "The LDAP group could not be deleted."); }
 }
 
@@ -5491,10 +5493,10 @@ function initializeLdapDirectoryTables() {
         newRow: newLdapUserRow(organizationId),
         resourceName: "user",
         normalizeResource: (_resource, payload) => payload,
-        createUrl: `/ldap/organizations/${organizationId}/users`,
-        editUrl: (id) => `/ldap/users/${id}/edit`,
+        createUrl: managementUiPath(`/ldap/organizations/${organizationId}/users`),
+        editUrl: (id) => managementUiPath(`/ldap/users/${id}/edit`),
         deleteResource: true,
-        deleteUrl: (id) => `/ldap/users/${id}/delete`,
+        deleteUrl: (id) => managementUiPath(`/ldap/users/${id}/delete`),
         editLabel: "Edit user",
         deleteLabel: "Delete user",
         createLabel: "Create LDAP user",
@@ -5597,10 +5599,10 @@ function initializeLdapDirectoryTables() {
         newRow: newLdapGroupRow(organizationId),
         resourceName: "group",
         normalizeResource: (_resource, payload) => normalizeGroup(payload),
-        createUrl: `/ldap/organizations/${organizationId}/groups`,
-        editUrl: (id) => `/ldap/groups/${id}/edit`,
+        createUrl: managementUiPath(`/ldap/organizations/${organizationId}/groups`),
+        editUrl: (id) => managementUiPath(`/ldap/groups/${id}/edit`),
         deleteResource: true,
-        deleteUrl: (id) => `/ldap/groups/${id}/delete`,
+        deleteUrl: (id) => managementUiPath(`/ldap/groups/${id}/delete`),
         editLabel: "Edit group",
         deleteLabel: "Delete group",
         createLabel: "Create LDAP group",
@@ -6248,7 +6250,7 @@ function initializeNTPsecSourceHealthModal() {
       refreshButton.disabled = true;
     }
     try {
-      const response = await fetch("/ntp/source-health", {
+      const response = await fetch(managementUiPath("/ntp/source-health"), {
         method: "GET",
         credentials: "same-origin",
         headers: { Accept: "application/json" },
@@ -6426,7 +6428,7 @@ async function autoSaveWanRoute(cell, csrf) {
       return;
     }
     try {
-      await postWanAction("/routes-wan/routes", data, csrf, { reload: false });
+      await postWanAction(managementUiPath("/routes-wan/routes"), data, csrf, { reload: false });
       showTransientGridStatus("Added");
       window.location.reload();
     } catch (error) {
@@ -6438,7 +6440,7 @@ async function autoSaveWanRoute(cell, csrf) {
     return;
   }
   try {
-    await postWanAction(`/routes-wan/routes/${data.id}/edit`, data, csrf, { reload: false });
+    await postWanAction(managementUiPath(`/routes-wan/routes/${data.id}/edit`), data, csrf, { reload: false });
     showTransientGridStatus("Saved");
     await refreshNetworkSideStack();
   } catch (error) {
@@ -6459,7 +6461,7 @@ async function autoSaveWanPolicy(cell, csrf) {
       return;
     }
     try {
-      await postWanAction("/routes-wan/policies", data, csrf, { reload: false });
+      await postWanAction(managementUiPath("/routes-wan/policies"), data, csrf, { reload: false });
       showTransientGridStatus("Added");
       window.location.reload();
     } catch (error) {
@@ -6471,7 +6473,7 @@ async function autoSaveWanPolicy(cell, csrf) {
     return;
   }
   try {
-    await postWanAction(`/routes-wan/policies/${data.id}/edit`, data, csrf, { reload: false });
+    await postWanAction(managementUiPath(`/routes-wan/policies/${data.id}/edit`), data, csrf, { reload: false });
     showTransientGridStatus("Saved");
     await refreshNetworkSideStack();
   } catch (error) {
@@ -6492,7 +6494,7 @@ async function autoSaveWanNatRule(cell, csrf) {
       return;
     }
     try {
-      await postWanAction("/routes-wan/nat-rules", data, csrf, { reload: false });
+      await postWanAction(managementUiPath("/routes-wan/nat-rules"), data, csrf, { reload: false });
       showTransientGridStatus("Added");
       window.location.reload();
     } catch (error) {
@@ -6504,7 +6506,7 @@ async function autoSaveWanNatRule(cell, csrf) {
     return;
   }
   try {
-    await postWanAction(`/routes-wan/nat-rules/${data.id}/edit`, data, csrf, { reload: false });
+    await postWanAction(managementUiPath(`/routes-wan/nat-rules/${data.id}/edit`), data, csrf, { reload: false });
     showTransientGridStatus("Saved");
     await refreshNetworkSideStack();
   } catch (error) {
@@ -6528,7 +6530,7 @@ async function autoSaveWanRoutingRule(cell, csrf) {
       return;
     }
     try {
-      await postWanAction("/routes-wan/routing-rules", data, csrf, { reload: false });
+      await postWanAction(managementUiPath("/routes-wan/routing-rules"), data, csrf, { reload: false });
       showTransientGridStatus("Added");
       window.location.reload();
     } catch (error) {
@@ -6540,7 +6542,7 @@ async function autoSaveWanRoutingRule(cell, csrf) {
     return;
   }
   try {
-    await postWanAction(`/routes-wan/routing-rules/${data.id}/edit`, data, csrf, { reload: false });
+    await postWanAction(managementUiPath(`/routes-wan/routing-rules/${data.id}/edit`), data, csrf, { reload: false });
     showTransientGridStatus("Saved");
     await refreshNetworkSideStack();
   } catch (error) {
@@ -6566,7 +6568,7 @@ async function deleteWanRouteFromMenu(row, csrf) {
     return;
   }
   try {
-    await postWanAction(`/routes-wan/routes/${data.id}/delete`, {}, csrf);
+    await postWanAction(managementUiPath(`/routes-wan/routes/${data.id}/delete`), {}, csrf);
   } catch (error) {
     showWanMessage("routes-wan-route-error", error instanceof Error ? error.message : "The route could not be deleted.");
   }
@@ -6587,7 +6589,7 @@ async function deleteWanNatRuleFromMenu(row, csrf) {
     return;
   }
   try {
-    await postWanAction(`/routes-wan/nat-rules/${data.id}/delete`, {}, csrf);
+    await postWanAction(managementUiPath(`/routes-wan/nat-rules/${data.id}/delete`), {}, csrf);
   } catch (error) {
     showWanMessage("routes-wan-nat-error", error instanceof Error ? error.message : "The NAT rule could not be deleted.");
   }
@@ -6608,7 +6610,7 @@ async function deleteWanPolicyFromMenu(row, csrf) {
     return;
   }
   try {
-    await postWanAction(`/routes-wan/policies/${data.id}/delete`, {}, csrf);
+    await postWanAction(managementUiPath(`/routes-wan/policies/${data.id}/delete`), {}, csrf);
   } catch (error) {
     showWanMessage("routes-wan-policy-error", error instanceof Error ? error.message : "The WAN policy could not be deleted.");
   }
@@ -6629,7 +6631,7 @@ async function deleteWanRoutingRuleFromMenu(row, csrf) {
     return;
   }
   try {
-    await postWanAction(`/routes-wan/routing-rules/${data.id}/delete`, {}, csrf);
+    await postWanAction(managementUiPath(`/routes-wan/routing-rules/${data.id}/delete`), {}, csrf);
   } catch (error) {
     showWanMessage("routes-wan-routing-error", error instanceof Error ? error.message : "The routing rule could not be deleted.");
   }
@@ -7386,7 +7388,7 @@ async function autoSavePhysicalInterface(cell, csrf) {
   }
   if (data.role !== "management" || data.mode === "trunk" || !data.ipv6_cidr) data.ipv6_gateway = "";
   try {
-    await postNetworkAction(`/physical-interfaces/${data.id}/edit`, data, csrf, { reload: false });
+    await postNetworkAction(managementUiPath(`/physical-interfaces/${data.id}/edit`), data, csrf, { reload: false });
     showTransientGridStatus("Saved");
     await refreshNetworkSideStack();
   } catch (error) {
@@ -7412,7 +7414,7 @@ async function savePhysicalInterfaceRow(row, csrf, successMessage = "Saved") {
   }
   if (data.role !== "management" || data.mode === "trunk" || !data.ipv6_cidr) data.ipv6_gateway = "";
   try {
-    await postNetworkAction(`/physical-interfaces/${data.id}/edit`, data, csrf, { reload: false });
+    await postNetworkAction(managementUiPath(`/physical-interfaces/${data.id}/edit`), data, csrf, { reload: false });
     showTransientGridStatus(successMessage);
     await refreshNetworkSideStack();
   } catch (error) {
@@ -7503,7 +7505,7 @@ async function forgetPhysicalInterfaceFromMenu(row, csrf) {
     return;
   }
   try {
-    await postNetworkAction(`/physical-interfaces/${data.id}/forget`, {}, csrf);
+    await postNetworkAction(managementUiPath(`/physical-interfaces/${data.id}/forget`), {}, csrf);
   } catch (error) {
     showNetworkMessage("physical-interface-error", error instanceof Error ? error.message : "The missing interface could not be forgotten.");
   }
@@ -7526,7 +7528,7 @@ async function autoSaveVlanInterface(cell, csrf) {
       return;
     }
     try {
-      await postNetworkAction("/vlan-interfaces", data, csrf, { reload: false });
+      await postNetworkAction(managementUiPath("/vlan-interfaces"), data, csrf, { reload: false });
       showTransientGridStatus("Added");
       window.location.reload();
     } catch (error) {
@@ -7538,7 +7540,7 @@ async function autoSaveVlanInterface(cell, csrf) {
     return;
   }
   try {
-    await postNetworkAction(`/vlan-interfaces/${data.id}/edit`, data, csrf, { reload: false });
+    await postNetworkAction(managementUiPath(`/vlan-interfaces/${data.id}/edit`), data, csrf, { reload: false });
     showTransientGridStatus("Saved");
     await refreshNetworkSideStack();
   } catch (error) {
@@ -7564,7 +7566,7 @@ async function deleteVlanInterfaceFromMenu(row, csrf) {
     return;
   }
   try {
-    await postNetworkAction(`/vlan-interfaces/${data.id}/delete`, {}, csrf);
+    await postNetworkAction(managementUiPath(`/vlan-interfaces/${data.id}/delete`), {}, csrf);
   } catch (error) {
     showNetworkMessage("vlan-interface-error", error instanceof Error ? error.message : "The VLAN interface could not be deleted.");
   }
@@ -7881,7 +7883,7 @@ async function postOidcGroupMappingAction(url, data, csrf, { expectJson = true }
 }
 
 function updateOidcProviderValidation(payload = {}) {
-  const form = document.querySelector('form[action="/authentication/oidc/provider"]');
+  const form = document.querySelector(`form[action="${managementUiPath("/authentication/oidc/provider")}"]`);
   const providerStatus = document.querySelector("[data-oidc-provider-status]");
   const validationPanel = document.querySelector("[data-oidc-provider-validation]");
   const validationStatus = document.querySelector("[data-oidc-provider-validation-status]");
@@ -7928,7 +7930,7 @@ function updateOidcProviderValidation(payload = {}) {
 }
 
 function initializeOidcProviderSettings(root = document) {
-  const form = root.querySelector('form[action="/authentication/oidc/provider"]');
+  const form = root.querySelector(`form[action="${managementUiPath("/authentication/oidc/provider")}"]`);
   if (!(form instanceof HTMLFormElement)) return;
   if (form.dataset.oidcProviderSettingsInitialized === "1") return;
   form.dataset.oidcProviderSettingsInitialized = "1";
@@ -8034,7 +8036,7 @@ function initializeOidcGroupMappingsTable() {
     try {
       const payload = wasNew
         ? await postOidcGroupMappingAction(
-            "/authentication/oidc/group-mappings",
+            managementUiPath("/authentication/oidc/group-mappings"),
             {
               source_type: data.source_type,
               local_role: data.source_type === "local_role"
@@ -8049,7 +8051,7 @@ function initializeOidcGroupMappingsTable() {
             csrf,
           )
         : await postOidcGroupMappingAction(
-            `/authentication/oidc/group-mappings/${data.id}/edit`,
+            managementUiPath(`/authentication/oidc/group-mappings/${data.id}/edit`),
             {
               oidc_client_id: data.oidc_client_id || "",
               external_group_name: data.external_group_name,
@@ -8097,7 +8099,7 @@ function initializeOidcGroupMappingsTable() {
     setOidcGroupMappingMessage("Deleting mapping…", "saving");
     try {
       await postOidcGroupMappingAction(
-        `/authentication/oidc/group-mappings/${data.id}/delete`,
+        managementUiPath(`/authentication/oidc/group-mappings/${data.id}/delete`),
         {},
         csrf,
         { expectJson: false },
@@ -8327,7 +8329,7 @@ function initializeApiTokensTable() {
     if (!confirmed) return;
     const body = new FormData();
     body.set("csrf", csrf);
-    const payload = await atlasoGridWizardRequest(`/authentication/api-tokens/${data.id}/revoke`, body);
+    const payload = await atlasoGridWizardRequest(managementUiPath(`/authentication/api-tokens/${data.id}/revoke`), body);
     await row.update(payload.token);
     showTransientGridStatus("Revoked");
   };
@@ -8349,7 +8351,7 @@ function initializeApiTokensTable() {
       enabled: false,
     },
     resourceName: "token",
-    createUrl: "/authentication/api-tokens",
+    createUrl: managementUiPath("/authentication/api-tokens"),
     editUrl: () => "",
     editResource: false,
     canEdit: () => false,
@@ -8496,7 +8498,7 @@ function initializeOidcClientsTable() {
     if (!confirmed) return;
     const body = new FormData();
     body.set("csrf", csrf);
-    const payload = await oidcFormRequest(`/authentication/oidc/clients/${data.id}/rotate-secret`, body);
+    const payload = await oidcFormRequest(managementUiPath(`/authentication/oidc/clients/${data.id}/rotate-secret`), body);
     setOidcSecretResult(payload.client_id, payload.client_secret);
   };
   const deleteClient = async (data) => {
@@ -8509,11 +8511,11 @@ function initializeOidcClientsTable() {
     if (!confirmed) return;
     const body = new FormData();
     body.set("csrf", csrf);
-    await oidcFormRequest(`/authentication/oidc/clients/${data.id}/delete`, body, { expectJson: false });
+    await oidcFormRequest(managementUiPath(`/authentication/oidc/clients/${data.id}/delete`), body, { expectJson: false });
     await table.getRow(data.id)?.delete();
   };
   const exportClient = async (data) => {
-    const response = await fetch(`/authentication/oidc/clients/${data.id}/integration-export`, { credentials: "same-origin" });
+    const response = await fetch(managementUiPath(`/authentication/oidc/clients/${data.id}/integration-export`), { credentials: "same-origin" });
     if (!response.ok) throw new Error("The redacted integration export could not be generated.");
     const blob = await response.blob();
     const link = document.createElement("a");
@@ -8605,7 +8607,7 @@ function initializeOidcClientsTable() {
     onSubmit: async () => {
       const body = new FormData(form);
       const recordId = body.get("client_record_id");
-      const url = recordId ? `/authentication/oidc/clients/${recordId}/edit` : "/authentication/oidc/clients";
+      const url = recordId ? managementUiPath(`/authentication/oidc/clients/${recordId}/edit`) : managementUiPath("/authentication/oidc/clients");
       const payload = await oidcFormRequest(url, body);
       const client = payload.client || payload;
       await refreshRow(client, recordId ? Number(recordId) : null);
@@ -8637,7 +8639,7 @@ function initializeOidcKeysTable() {
     if (!confirmed) return;
     const body = new FormData();
     body.set("csrf", csrf);
-    await oidcFormRequest(`/authentication/oidc/signing-keys/${data.id}/delete`, body, { expectJson: false });
+    await oidcFormRequest(managementUiPath(`/authentication/oidc/signing-keys/${data.id}/delete`), body, { expectJson: false });
     await table.getRow(data.id)?.delete();
   };
   const grid = window.AtlasoUiPatterns.createGrid({
@@ -8683,7 +8685,7 @@ function initializeOidcKeysTable() {
       { id: "review", title: "Review key lifecycle", description: "Confirm generation and the enforced overlap." },
     ],
     onSubmit: async () => {
-      const payload = await oidcFormRequest("/authentication/oidc/signing-keys", new FormData(form));
+      const payload = await oidcFormRequest(managementUiPath("/authentication/oidc/signing-keys"), new FormData(form));
       if (payload.previous) await table.getRow(payload.previous.id)?.update(payload.previous);
       await table.addRow(payload.key, true);
       form.elements.namedItem("rotate").value = "true";
@@ -8891,7 +8893,7 @@ function initializeDnsDomainWizard() {
       { label: "Enabled", field: "enabled" },
     ]),
     onSubmit: async () => {
-      await atlasoGridWizardRequest("/dns/zones", new FormData(form));
+      await atlasoGridWizardRequest(managementUiPath("/dns/zones"), new FormData(form));
       window.location.reload();
       return { valid: true };
     },
@@ -8906,7 +8908,7 @@ function initializeDnsDomainWizard() {
     toggle.addEventListener("change", async () => {
       const previous = !toggle.checked;
       try {
-        await atlasoGridWizardRequest("/dns/zones/enabled", new FormData(toggleForm));
+        await atlasoGridWizardRequest(managementUiPath("/dns/zones/enabled"), new FormData(toggleForm));
         showTransientGridStatus(toggle.checked ? "Enabled" : "Disabled");
         window.location.reload();
       } catch (error) {
@@ -9110,10 +9112,10 @@ function initializeDhcpScopesTable() {
     rows: JSON.parse(element.dataset.scopes || "[]"),
     newRow: { ...defaults, id: "__new__", is_new: true },
     resourceName: "scope",
-    createUrl: "/dhcp/scopes",
-    editUrl: (id) => `/dhcp/scopes/${id}/edit`,
+    createUrl: managementUiPath("/dhcp/scopes"),
+    editUrl: (id) => managementUiPath(`/dhcp/scopes/${id}/edit`),
     deleteResource: true,
-    deleteUrl: (id) => `/dhcp/scopes/${id}/delete`,
+    deleteUrl: (id) => managementUiPath(`/dhcp/scopes/${id}/delete`),
     editLabel: "Edit IP zone",
     deleteLabel: "Delete IP zone",
     createLabel: "Create IP zone",
@@ -9210,10 +9212,10 @@ function initializeDhcpOptionsTable() {
     rows: JSON.parse(element.dataset.options || "[]"),
     newRow: newDhcpOptionRow(),
     resourceName: "option",
-    createUrl: "/dhcp/options",
-    editUrl: (id) => `/dhcp/options/${id}/edit`,
+    createUrl: managementUiPath("/dhcp/options"),
+    editUrl: (id) => managementUiPath(`/dhcp/options/${id}/edit`),
     deleteResource: true,
-    deleteUrl: (id) => `/dhcp/options/${id}/delete`,
+    deleteUrl: (id) => managementUiPath(`/dhcp/options/${id}/delete`),
     editLabel: "Edit option",
     deleteLabel: "Delete option",
     createLabel: "Create DHCP option",
@@ -9563,7 +9565,7 @@ async function deleteEsxiInstallerIso(row, csrf) {
   const body = new FormData();
   body.set("csrf", csrf);
   body.set("installer_iso_path", data.path);
-  const response = await fetch("/esxi-pxe/isos/delete", {
+  const response = await fetch(managementUiPath("/esxi-pxe/isos/delete"), {
     method: "POST",
     body,
     credentials: "same-origin",
@@ -9572,7 +9574,7 @@ async function deleteEsxiInstallerIso(row, csrf) {
     const payload = await response.json().catch(() => ({}));
     throw new Error(payload.detail || "The installer ISO could not be deleted.");
   }
-  window.location.assign("/network-boot#esxi-pxe-isos-panel");
+  window.location.assign(managementUiPath("/network-boot#esxi-pxe-isos-panel"));
 }
 
 function initializeEsxiInstallerIsosTable() {
@@ -9731,9 +9733,9 @@ function initializeEsxiCustomVariablesTable() {
     rows,
     newRow: { id: "__new__", name: "", description: "", default_value: "", is_new: true },
     resourceName: "variable",
-    createUrl: "/esxi-pxe/custom-variables",
-    editUrl: (id) => `/esxi-pxe/custom-variables/${encodeURIComponent(id)}`,
-    deleteUrl: (id) => `/esxi-pxe/custom-variables/${encodeURIComponent(id)}/delete`,
+    createUrl: managementUiPath("/esxi-pxe/custom-variables"),
+    editUrl: (id) => managementUiPath(`/esxi-pxe/custom-variables/${encodeURIComponent(id)}`),
+    deleteUrl: (id) => managementUiPath(`/esxi-pxe/custom-variables/${encodeURIComponent(id)}/delete`),
     deleteResource: true,
     editLabel: "Edit",
     deleteLabel: "Remove",
@@ -9856,7 +9858,7 @@ function initializeKickstartCollection() {
   const submitAction = (action, id) => {
     const actionForm = document.createElement("form");
     actionForm.method = "post";
-    actionForm.action = `/esxi-pxe/kickstarts/${id}/${action}`;
+    actionForm.action = managementUiPath(`/esxi-pxe/kickstarts/${id}/${action}`);
     actionForm.innerHTML = `<input type="hidden" name="csrf" value="${escapeHtml(element.dataset.csrf || "")}">`;
     document.body.append(actionForm);
     actionForm.submit();
@@ -9870,9 +9872,9 @@ function initializeKickstartCollection() {
     defaults: { enabled: true },
     resourceName: "kickstart",
     recordField: "record_id",
-    createUrl: "/esxi-pxe/kickstarts",
-    editUrl: (id) => `/esxi-pxe/kickstarts/${id}`,
-    deleteUrl: (id) => `/esxi-pxe/kickstarts/${id}/delete`,
+    createUrl: managementUiPath("/esxi-pxe/kickstarts"),
+    editUrl: (id) => managementUiPath(`/esxi-pxe/kickstarts/${id}`),
+    deleteUrl: (id) => managementUiPath(`/esxi-pxe/kickstarts/${id}/delete`),
     deleteResource: true,
     deleteConfirmation: (data) => ({
       title: `Delete ${data.name}?`,
@@ -9906,7 +9908,7 @@ function initializeKickstartCollection() {
       {
         label: "Download Kickstart",
         disabled: (row) => row.getData().is_new,
-        action: (_event, row) => { window.location.href = `/esxi-pxe/kickstarts/${row.getData().id}/download`; },
+        action: (_event, row) => { window.location.href = managementUiPath(`/esxi-pxe/kickstarts/${row.getData().id}/download`); },
       },
     ],
     onOpen: ({ context }) => {
@@ -10172,7 +10174,7 @@ function updatePageApplyNotice(status = {}) {
     main.append(pill, title, detail);
     const review = document.createElement("a");
     review.className = "button secondary compact-button";
-    review.href = "/dashboard#appliance-apply-review";
+    review.href = managementUiPath("/dashboard#appliance-apply-review");
     review.dataset.applianceApplyOpen = "";
     review.textContent = "Review appliance changes";
     notice.append(main, review);
@@ -10194,7 +10196,7 @@ async function refreshApplianceApplySidebar() {
   if (!document.querySelector("[data-appliance-apply-sidebar]")) {
     return;
   }
-  const response = await fetch("/appliance-apply/status", {
+  const response = await fetch(managementUiPath("/appliance-apply/status"), {
     method: "GET",
     credentials: "same-origin",
     headers: { Accept: "application/json" },
@@ -10720,7 +10722,7 @@ function initializeFirewallSourceGroupManager() {
 }
 
 function initializeFirewallSettings(root = document) {
-  root.querySelectorAll('form[action="/firewall/settings"]').forEach((form) => {
+  root.querySelectorAll(`form[action="${managementUiPath("/firewall/settings")}"]`).forEach((form) => {
     if (!(form instanceof HTMLFormElement)) {
       return;
     }
@@ -10935,7 +10937,9 @@ function updateDnsValidation(payload = {}) {
   }
   const dhcpUpstreams = Array.isArray(payload.observed_dhcp_upstream_servers) ? payload.observed_dhcp_upstream_servers : null;
   if (dhcpUpstreams) {
-    const upstreamInput = document.querySelector('form[action="/dns/settings"] textarea[name="upstream_servers"]');
+    const upstreamInput = document.querySelector(
+      `form[action="${managementUiPath("/dns/settings")}"] textarea[name="upstream_servers"]`,
+    );
     if (upstreamInput instanceof HTMLTextAreaElement) {
       upstreamInput.placeholder = dhcpUpstreams.length ? `DHCP: ${dhcpUpstreams.join(", ")}` : "";
     }
@@ -10957,7 +10961,7 @@ function updateDnsValidation(payload = {}) {
 }
 
 function initializeDnsSettings(root = document) {
-  root.querySelectorAll('form[action="/dns/settings"]').forEach((form) => {
+  root.querySelectorAll(`form[action="${managementUiPath("/dns/settings")}"]`).forEach((form) => {
     if (!(form instanceof HTMLFormElement)) {
       return;
     }
@@ -11515,7 +11519,7 @@ async function autoSaveVcfRegistryBundle(cell, csrf) {
     reformatPendingNewRecord(cell);
     return;
   }
-  const url = data.is_new ? "/vcf-private-registry/bundles" : `/vcf-private-registry/bundles/${data.id}/edit`;
+  const url = data.is_new ? managementUiPath("/vcf-private-registry/bundles") : managementUiPath(`/vcf-private-registry/bundles/${data.id}/edit`);
   try {
     await postVcfRegistryBundleAction(url, data, csrf);
   } catch (error) {
@@ -11538,7 +11542,7 @@ async function deleteVcfRegistryBundleFromMenu(row, csrf) {
     return;
   }
   try {
-    await postVcfRegistryBundleAction(`/vcf-private-registry/bundles/${data.id}/delete`, data, csrf);
+    await postVcfRegistryBundleAction(managementUiPath(`/vcf-private-registry/bundles/${data.id}/delete`), data, csrf);
   } catch (error) {
     showVcfRegistryMessage(error instanceof Error ? error.message : "The Supervisor Service bundle could not be deleted.");
   }
@@ -11554,10 +11558,10 @@ function initializeVcfRegistryBundlesTable() {
     rows: JSON.parse(element.dataset.bundles || "[]"),
     newRow: newVcfRegistryBundleRow(),
     resourceName: "bundle",
-    createUrl: "/vcf-private-registry/bundles",
-    editUrl: (id) => `/vcf-private-registry/bundles/${id}/edit`,
+    createUrl: managementUiPath("/vcf-private-registry/bundles"),
+    editUrl: (id) => managementUiPath(`/vcf-private-registry/bundles/${id}/edit`),
     deleteResource: true,
-    deleteUrl: (id) => `/vcf-private-registry/bundles/${id}/delete`,
+    deleteUrl: (id) => managementUiPath(`/vcf-private-registry/bundles/${id}/delete`),
     editLabel: "Edit bundle",
     deleteLabel: "Delete bundle",
     createLabel: "Create bundle",
@@ -11953,7 +11957,7 @@ async function autoSaveVcfDepotProfile(cell, csrf) {
     reformatPendingNewRecord(cell);
     return;
   }
-  const url = data.is_new ? "/vcf-offline-depot/profiles" : `/vcf-offline-depot/profiles/${data.id}/edit`;
+  const url = data.is_new ? managementUiPath("/vcf-offline-depot/profiles") : managementUiPath(`/vcf-offline-depot/profiles/${data.id}/edit`);
   try {
     await postVcfDepotProfileAction(url, data, csrf);
   } catch (error) {
@@ -11976,7 +11980,7 @@ async function deleteVcfDepotProfileFromMenu(row, csrf) {
     return;
   }
   try {
-    await postVcfDepotProfileAction(`/vcf-offline-depot/profiles/${data.id}/delete`, data, csrf);
+    await postVcfDepotProfileAction(managementUiPath(`/vcf-offline-depot/profiles/${data.id}/delete`), data, csrf);
   } catch (error) {
     showVcfDepotMessage(error instanceof Error ? error.message : "The VCFDT download profile could not be deleted.");
   }
@@ -12002,7 +12006,7 @@ async function startVcfDepotProfileDownload(row, csrf) {
   try {
     const body = new FormData();
     body.set("csrf", csrf);
-    const response = await fetch(`/vcf-offline-depot/profiles/${data.id}/download`, {
+    const response = await fetch(managementUiPath(`/vcf-offline-depot/profiles/${data.id}/download`), {
       method: "POST",
       body,
       credentials: "same-origin",
@@ -12042,7 +12046,7 @@ async function previewVcfDepotProfileScript(row) {
     return;
   }
   try {
-    const response = await fetch(`/vcf-offline-depot/profiles/${data.id}/preview`, {
+    const response = await fetch(managementUiPath(`/vcf-offline-depot/profiles/${data.id}/preview`), {
       method: "GET",
       credentials: "same-origin",
       headers: { Accept: "application/json" },
@@ -12069,7 +12073,7 @@ function scheduleVcfDepotProfileDownload(row) {
     new: "vcf_depot_download",
     vcf_profile_id: String(data.id),
   });
-  window.location.assign(`/automation?${query.toString()}#schedules`);
+  window.location.assign(managementUiPath(`/automation?${query.toString()}#schedules`));
 }
 
 let vcfDepotProfilesTable = null;
@@ -12113,10 +12117,10 @@ function initializeVcfDepotProfilesTable() {
     rows: JSON.parse(element.dataset.profiles || "[]").map(normalize),
     newRow: newVcfDepotProfileRow(),
     resourceName: "profile",
-    createUrl: "/vcf-offline-depot/profiles",
-    editUrl: (id) => `/vcf-offline-depot/profiles/${id}/edit`,
+    createUrl: managementUiPath("/vcf-offline-depot/profiles"),
+    editUrl: (id) => managementUiPath(`/vcf-offline-depot/profiles/${id}/edit`),
     deleteResource: true,
-    deleteUrl: (id) => `/vcf-offline-depot/profiles/${id}/delete`,
+    deleteUrl: (id) => managementUiPath(`/vcf-offline-depot/profiles/${id}/delete`),
     editLabel: "Edit profile",
     deleteLabel: "Delete profile",
     createLabel: "Create download profile",
@@ -12517,7 +12521,7 @@ async function refreshTasksPage({ reopen = false } = {}) {
   if (page.dataset.taskType) {
     query.set("task_type", page.dataset.taskType);
   }
-  const response = await fetch(`/tasks/status?${query.toString()}`, { credentials: "same-origin" });
+  const response = await fetch(managementUiPath(`/tasks/status?${query.toString()}`), { credentials: "same-origin" });
   const payload = await response.json();
   if (!response.ok) {
     throw new Error(payload.detail || "Unable to refresh tasks.");
@@ -12535,7 +12539,7 @@ async function requestTasksTableData(_url, _config, params = {}) {
   query.set("page", String(params.page || 1));
   query.set("size", String(params.size || 25));
   query.set("filters", JSON.stringify(params.filters || params.filter || []));
-  const response = await fetch(`/tasks/status?${query.toString()}`, { credentials: "same-origin" });
+  const response = await fetch(managementUiPath(`/tasks/status?${query.toString()}`), { credentials: "same-origin" });
   const payload = await response.json();
   if (!response.ok) {
     throw new Error(payload.detail || "Unable to filter tasks.");
@@ -12546,7 +12550,7 @@ async function requestTasksTableData(_url, _config, params = {}) {
 async function openTaskLog(taskOrId) {
   const task = typeof taskOrId === "object" && taskOrId !== null ? taskOrId : taskById(taskOrId);
   const taskId = task?.id || String(taskOrId || "");
-  const logUrl = task?.log_url || `/tasks/${encodeURIComponent(taskId)}/log`;
+  const logUrl = task?.log_url || managementUiPath(`/tasks/${encodeURIComponent(taskId)}/log`);
   const modal = document.getElementById("task-log-modal");
   const title = document.querySelector("[data-task-log-title]");
   const meta = document.querySelector("[data-task-log-meta]");
@@ -12603,7 +12607,7 @@ async function cancelTask(taskId) {
   }
   const body = new URLSearchParams();
   body.set("csrf", page.dataset.csrf || "");
-  const response = await fetch(`/tasks/${encodeURIComponent(taskId)}/cancel`, {
+  const response = await fetch(managementUiPath(`/tasks/${encodeURIComponent(taskId)}/cancel`), {
     method: "POST",
     credentials: "same-origin",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
@@ -12644,7 +12648,7 @@ function initializeTasksPage() {
     const initialComponentFilter = page.dataset.taskInitialComponentFilter || "";
     const componentFilterLocked = page.dataset.taskLockComponentFilter === "true";
     const atlasoGridOptions28 = {
-      ajaxURL: "/tasks/status",
+      ajaxURL: managementUiPath("/tasks/status"),
       ajaxParams: () => ({ job_id: atlasoSelectedTaskId || page.dataset.selectedTaskId || "" }),
       ajaxRequestFunc: requestTasksTableData,
       ajaxResponse: (_url, _params, response) => {
@@ -13196,6 +13200,22 @@ function updateVcfDepotHttpsPreview(payload = {}) {
     "    proxy_set_header X-Forwarded-Proto https;",
     "  }",
     "",
+    "  location = /ui/public {",
+    "    proxy_pass http://127.0.0.1:8000;",
+    "    proxy_set_header Host $host;",
+    "    proxy_set_header X-Real-IP $remote_addr;",
+    "    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;",
+    "    proxy_set_header X-Forwarded-Proto https;",
+    "  }",
+    "",
+    "  location ^~ /ui/public/ {",
+    "    proxy_pass http://127.0.0.1:8000;",
+    "    proxy_set_header Host $host;",
+    "    proxy_set_header X-Real-IP $remote_addr;",
+    "    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;",
+    "    proxy_set_header X-Forwarded-Proto https;",
+    "  }",
+    "",
     "  location ^~ /static/ {",
     "    proxy_pass http://127.0.0.1:8000;",
     "    proxy_set_header Host $host;",
@@ -13205,54 +13225,6 @@ function updateVcfDepotHttpsPreview(payload = {}) {
     "  }",
     "",
     "  location = /favicon.ico {",
-    "    proxy_pass http://127.0.0.1:8000;",
-    "    proxy_set_header Host $host;",
-    "    proxy_set_header X-Real-IP $remote_addr;",
-    "    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;",
-    "    proxy_set_header X-Forwarded-Proto https;",
-    "  }",
-    "",
-    "  location = /manifest.webmanifest {",
-    "    proxy_pass http://127.0.0.1:8000;",
-    "    proxy_set_header Host $host;",
-    "    proxy_set_header X-Real-IP $remote_addr;",
-    "    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;",
-    "    proxy_set_header X-Forwarded-Proto https;",
-    "  }",
-    "",
-    "  location = /service-worker.js {",
-    "    proxy_pass http://127.0.0.1:8000;",
-    "    proxy_set_header Host $host;",
-    "    proxy_set_header X-Real-IP $remote_addr;",
-    "    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;",
-    "    proxy_set_header X-Forwarded-Proto https;",
-    "  }",
-    "",
-    "  location = /ca {",
-    "    proxy_pass http://127.0.0.1:8000;",
-    "    proxy_set_header Host $host;",
-    "    proxy_set_header X-Real-IP $remote_addr;",
-    "    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;",
-    "    proxy_set_header X-Forwarded-Proto https;",
-    "  }",
-    "",
-    "  location ^~ /ca/ {",
-    "    proxy_pass http://127.0.0.1:8000;",
-    "    proxy_set_header Host $host;",
-    "    proxy_set_header X-Real-IP $remote_addr;",
-    "    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;",
-    "    proxy_set_header X-Forwarded-Proto https;",
-    "  }",
-    "",
-    "  location = /requests {",
-    "    proxy_pass http://127.0.0.1:8000;",
-    "    proxy_set_header Host $host;",
-    "    proxy_set_header X-Real-IP $remote_addr;",
-    "    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;",
-    "    proxy_set_header X-Forwarded-Proto https;",
-    "  }",
-    "",
-    "  location ^~ /requests/ {",
     "    proxy_pass http://127.0.0.1:8000;",
     "    proxy_set_header Host $host;",
     "    proxy_set_header X-Real-IP $remote_addr;",
@@ -13669,7 +13641,7 @@ function initializeVcfDepotConfigurationWizard() {
           queueStatus.dataset.state = "saving";
         }
         try {
-          const response = await fetch("/vcf-offline-depot/software-depot-id/generate", {
+          const response = await fetch(managementUiPath("/vcf-offline-depot/software-depot-id/generate"), {
             method: "POST",
             body,
             credentials: "same-origin",
@@ -13684,7 +13656,7 @@ function initializeVcfDepotConfigurationWizard() {
             queueStatus.dataset.state = "saved";
           }
           if (queuedTaskId) {
-            window.setTimeout(() => window.location.assign(`/tasks?job_id=${encodeURIComponent(queuedTaskId)}`), 0);
+            window.setTimeout(() => window.location.assign(managementUiPath(`/tasks?job_id=${encodeURIComponent(queuedTaskId)}`)), 0);
           }
           return { valid: true };
         } catch (error) {
@@ -14808,7 +14780,7 @@ function initializeLogsPage() {
   }
   const lineSelect = root.querySelector("[data-log-lines]");
   const refreshStatus = root.querySelector("[data-log-refresh-status]");
-  const refreshUrl = root.dataset.logRefreshUrl || "/logs/data";
+  const refreshUrl = root.dataset.logRefreshUrl || managementUiPath("/logs/data");
   const allowedLineCounts = new Set(["100", "200", "500"]);
   if (!(lineSelect instanceof HTMLSelectElement)) {
     return;
@@ -15050,7 +15022,7 @@ function applianceApplyReviewRow(unit) {
   validity.textContent = unit.valid ? "valid" : "needs attention";
   const edit = document.createElement("a");
   edit.className = "text-link";
-  edit.href = unit.page_url || "/dashboard";
+  edit.href = unit.page_url || managementUiPath("/dashboard");
   edit.textContent = "Edit";
   actions.append(validity, edit);
   head.append(label, actions);
@@ -15200,7 +15172,7 @@ async function openApplianceApplyReview() {
   }
   showApplianceApplyModal(elements.modal);
   try {
-    const response = await fetch("/appliance-apply/review", { credentials: "same-origin", headers: { Accept: "application/json" } });
+    const response = await fetch(managementUiPath("/appliance-apply/review"), { credentials: "same-origin", headers: { Accept: "application/json" } });
     const payload = await response.json();
     if (!response.ok) throw new Error(payload.detail || "Unable to load appliance changes.");
     if (payload.active_task) {
@@ -15330,7 +15302,7 @@ function renderApplianceApplyTask(task) {
 }
 
 function refreshCurrentWorkflowAfterApplianceApply(task) {
-  const refreshableWorkflows = new Set(["/esx-storage", "/vcf-offline-depot"]);
+  const refreshableWorkflows = new Set([managementUiPath("/esx-storage"), managementUiPath("/vcf-offline-depot")]);
   if (task?.status !== "succeeded" || !refreshableWorkflows.has(window.location.pathname)) return;
   window.setTimeout(() => window.location.reload(), 300);
 }
@@ -15353,7 +15325,7 @@ async function submitApplianceApplyForm(form) {
     elements.submit.textContent = "Creating task…";
   }
   try {
-    const response = await fetch("/appliance-apply", {
+    const response = await fetch(managementUiPath("/appliance-apply"), {
       method: "POST",
       body: new FormData(form),
       credentials: "same-origin",
@@ -15414,7 +15386,7 @@ function initializeApplianceApplyProgress() {
     if (!confirmed) return;
     const body = new URLSearchParams();
     body.set("csrf", elements.modal.dataset.csrf || "");
-    const response = await fetch(`/tasks/${encodeURIComponent(taskId)}/cancel`, {
+    const response = await fetch(managementUiPath(`/tasks/${encodeURIComponent(taskId)}/cancel`), {
       method: "POST",
       credentials: "same-origin",
       headers: { "Content-Type": "application/x-www-form-urlencoded", Accept: "application/json" },
@@ -15429,7 +15401,7 @@ function initializeApplianceApplyProgress() {
   });
   applianceApplyPollController = window.AtlasoApplianceApplyPolling.createController({
     request: async (refresh) => {
-      const statusUrl = refresh ? "/appliance-apply/status?refresh=true" : "/appliance-apply/status";
+      const statusUrl = refresh ? managementUiPath("/appliance-apply/status?refresh=true") : managementUiPath("/appliance-apply/status");
       const response = await fetch(statusUrl, { credentials: "same-origin", headers: { Accept: "application/json" } });
       if (!response.ok) throw new Error("Unable to read appliance apply status.");
       return response.json();
@@ -15441,7 +15413,7 @@ function initializeApplianceApplyProgress() {
         renderApplianceApplyTask(payload.active_task);
       } else if (applianceApplyActiveJobId) {
         const jobId = applianceApplyActiveJobId;
-        const taskResponse = await fetch(`/tasks/${encodeURIComponent(jobId)}/status`, { credentials: "same-origin", headers: { Accept: "application/json" } });
+        const taskResponse = await fetch(managementUiPath(`/tasks/${encodeURIComponent(jobId)}/status`), { credentials: "same-origin", headers: { Accept: "application/json" } });
         if (taskResponse.ok) {
           const taskPayload = await taskResponse.json();
           renderApplianceApplyTask(taskPayload.task);
@@ -15548,7 +15520,7 @@ function initializeServerTime() {
 
   const sync = async () => {
     try {
-      const response = await fetch("/server-time", {
+      const response = await fetch(managementUiPath("/server-time"), {
         credentials: "same-origin",
         headers: { Accept: "application/json" },
       });
@@ -16165,7 +16137,7 @@ function initializeMonitorPage() {
     loading = true;
     setStatus("Refreshing metrics");
     try {
-      const response = await fetch(`/monitor/data?hours=${hours}`, { credentials: "same-origin" });
+      const response = await fetch(managementUiPath(`/monitor/data?hours=${hours}`), { credentials: "same-origin" });
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}`);
       }
@@ -16457,7 +16429,7 @@ function initializeVcfTrustForm() {
       next.textContent = "Inspecting…";
     }
     try {
-      const response = await fetch("/vcf-helper/trust-root-ca/inspect-target", {
+      const response = await fetch(managementUiPath("/vcf-helper/trust-root-ca/inspect-target"), {
         method: "POST",
         credentials: "same-origin",
         headers: { "Content-Type": "application/json", Accept: "application/json" },
@@ -16542,7 +16514,7 @@ function initializeVcfTrustForm() {
         }
         if (submit instanceof HTMLButtonElement) submit.textContent = "Task queued";
         wizard.markClean();
-        window.location.assign(payload.redirect || `/tasks?job_id=${encodeURIComponent(payload.job_id || "")}`);
+        window.location.assign(payload.redirect || managementUiPath(`/tasks?job_id=${encodeURIComponent(payload.job_id || "")}`));
         return { ok: true, close: false };
       } catch (_error) {
         if (submit instanceof HTMLButtonElement) submit.textContent = "Run trust task";
@@ -16799,7 +16771,7 @@ function initializeVcfSddcDeployment() {
   const poll = async () => {
     if (!activeJob) return;
     try {
-      const { data } = await vcfHelperJson(`/vcf-helper/sddc-manager/tasks/${encodeURIComponent(activeJob)}`, "GET", {});
+      const { data } = await vcfHelperJson(managementUiPath(`/vcf-helper/sddc-manager/tasks/${encodeURIComponent(activeJob)}`), "GET", {});
       form.querySelector("[data-vcf-sddc-task-status]").textContent = data.status;
       form.querySelector("[data-vcf-sddc-state]").textContent = data.result?.state || data.status;
       form.querySelector("[data-vcf-sddc-progress]").textContent = `${data.progress_percent}%`;
@@ -16828,7 +16800,7 @@ function initializeVcfSddcDeployment() {
       next.textContent = "Discovering…";
     }
     try {
-      const { response, data } = await vcfHelperJson("/vcf-helper/sddc-manager/inventory", "POST", basePayload());
+      const { response, data } = await vcfHelperJson(managementUiPath("/vcf-helper/sddc-manager/inventory"), "POST", basePayload());
       if (response.status === 409 && data.status === "tls-confirmation-required") {
         showTlsConfirmation(data.fingerprint || "", handleDiscover);
         return;
@@ -16865,14 +16837,14 @@ function initializeVcfSddcDeployment() {
       depot_password: form.elements.depot_password.value,
     };
     try {
-      const { response, data } = await vcfHelperJson("/vcf-helper/sddc-manager/deploy", "POST", payload);
+      const { response, data } = await vcfHelperJson(managementUiPath("/vcf-helper/sddc-manager/deploy"), "POST", payload);
       if (response.status === 409 && data.status === "tls-confirmation-required") {
         showTlsConfirmation(data.fingerprint || "", handleSubmit);
         return { ok: false };
       }
       activeJob = data.job_id;
       wizard.markClean();
-      window.location.assign(`/tasks?job_id=${encodeURIComponent(activeJob)}`);
+      window.location.assign(managementUiPath(`/tasks?job_id=${encodeURIComponent(activeJob)}`));
       return { ok: true, close: false };
     } catch (error) {
       return { ok: false, message: error.message };
@@ -17005,7 +16977,7 @@ function initializeVcfTargetDepotHelper() {
       next.textContent = "Inspecting…";
     }
     try {
-      const { response, data } = await vcfHelperJson("/vcf-helper/offline-depot/inspect-target", "POST", payload());
+      const { response, data } = await vcfHelperJson(managementUiPath("/vcf-helper/offline-depot/inspect-target"), "POST", payload());
       if (response.status === 409 && data.status === "tls-confirmation-required") {
         renderCurrentDepot(data);
         return "tls";
@@ -17059,7 +17031,7 @@ function initializeVcfTargetDepotHelper() {
       showError("");
       if (submit instanceof HTMLButtonElement) submit.textContent = "Queueing task…";
       try {
-        const { response, data } = await vcfHelperJson("/vcf-helper/offline-depot/configure", "POST", payload());
+        const { response, data } = await vcfHelperJson(managementUiPath("/vcf-helper/offline-depot/configure"), "POST", payload());
         if (response.status === 409 && data.status === "replacement-confirmation-required") {
           form.querySelector("[data-vcf-target-depot-replace-row]")?.classList.remove("hidden");
           wizard.showStep("review", { unlock: true });
@@ -17073,7 +17045,7 @@ function initializeVcfTargetDepotHelper() {
           return { ok: false };
         }
         wizard.markClean();
-        window.location.assign(`/tasks?job_id=${encodeURIComponent(data.job_id || "")}`);
+        window.location.assign(managementUiPath(`/tasks?job_id=${encodeURIComponent(data.job_id || "")}`));
         return { ok: true, close: false };
       } catch (error) {
         if (submit instanceof HTMLButtonElement) submit.textContent = "Configure and sync";
@@ -17118,7 +17090,7 @@ function dashboardSnapshotMarkup(snapshot) {
   const services = snapshot.services || { enabled: 0, running: 0, unhealthy: 0, exceptions: [] };
   const network = snapshot.network || { management: {}, configured: 0, vlans: 0, missing_or_down: 0, exceptions: [] };
   const activity = Array.isArray(snapshot.recent_activity) ? snapshot.recent_activity : [];
-  const action = overall.primary_action || { label: "Open monitor", url: "/monitor" };
+  const action = overall.primary_action || { label: "Open monitor", url: managementUiPath("/monitor") };
   const fqdn = overall.fqdn && overall.fqdn !== overall.hostname ? ` · ${escapeDashboardHtml(overall.fqdn)}` : "";
   const readinessRows = (readiness.items || []).map((item) => `
     <a href="${escapeDashboardHtml(item.url)}" class="dashboard-readiness-row ${item.complete ? "complete" : "incomplete"}">
@@ -17133,7 +17105,7 @@ function dashboardSnapshotMarkup(snapshot) {
       ${dashboardTimeMarkup(item.timestamp)}
     </a>`).join("");
   const pendingUnits = (pending.units || []).slice(0, 4).map((unit) => `<a href="${escapeDashboardHtml(unit.url)}">${escapeDashboardHtml(unit.label)}</a>`).join("");
-  const pendingMore = (pending.units || []).length > 4 ? `<a href="/dashboard#appliance-apply-review" data-appliance-apply-open>+${(pending.units || []).length - 4} more</a>` : "";
+  const pendingMore = (pending.units || []).length > 4 ? `<a href="${managementUiPath("/dashboard#appliance-apply-review")}" data-appliance-apply-open>+${(pending.units || []).length - 4} more</a>` : "";
   const serviceExceptions = (services.exceptions || []).map((item) => `<a href="${escapeDashboardHtml(item.url)}"><span>${escapeDashboardHtml(item.name)}</span><span class="status-pill warn">${escapeDashboardHtml(item.state)}</span></a>`).join("");
   const networkExceptions = (network.exceptions || []).map((item) => `<a href="${escapeDashboardHtml(item.url)}"><span>${escapeDashboardHtml(item.name)}</span><span class="status-pill warn">${escapeDashboardHtml(item.state)}</span></a>`).join("");
   const activityRows = activity.map((item) => `
@@ -17162,28 +17134,28 @@ function dashboardSnapshotMarkup(snapshot) {
       </article>
       <article class="panel dashboard-changes-panel">
         <div class="panel-head compact"><div><h2>Changes &amp; Tasks</h2><p class="muted">Desired-state drift and work in progress.</p></div></div>
-        <a class="dashboard-summary-row" href="/dashboard#appliance-apply-review" data-appliance-apply-open><span><strong>Pending appliance changes</strong><small>Valid changed units ready for review</small></span><span class="dashboard-summary-value">${Number(pending.count) || 0}</span></a>
+        <a class="dashboard-summary-row" href="${managementUiPath("/dashboard#appliance-apply-review")}" data-appliance-apply-open><span><strong>Pending appliance changes</strong><small>Valid changed units ready for review</small></span><span class="dashboard-summary-value">${Number(pending.count) || 0}</span></a>
         ${(pending.units || []).length ? `<div class="dashboard-unit-links" aria-label="Valid pending apply units">${pendingUnits}${pendingMore}</div>` : '<p class="dashboard-inline-empty">No valid pending changes.</p>'}
         ${pending.invalid_count ? `<p class="dashboard-invalid-note"><span class="status-pill error">${Number(pending.invalid_count) || 0} invalid</span> Kept in Needs attention until resolved.</p>` : ""}
-        <a class="dashboard-summary-row" href="/tasks"><span><strong>Tasks</strong><small>Pending and running work</small></span><span class="dashboard-task-counts"><b>${Number(tasks.pending) || 0}</b> pending <b>${Number(tasks.running) || 0}</b> running</span></a>
-        <div class="dashboard-panel-actions"><a class="text-link" href="/dashboard#appliance-apply-review" data-appliance-apply-open>Review changes</a><a class="text-link" href="/tasks">Open tasks</a></div>
+        <a class="dashboard-summary-row" href="${managementUiPath("/tasks")}"><span><strong>Tasks</strong><small>Pending and running work</small></span><span class="dashboard-task-counts"><b>${Number(tasks.pending) || 0}</b> pending <b>${Number(tasks.running) || 0}</b> running</span></a>
+        <div class="dashboard-panel-actions"><a class="text-link" href="${managementUiPath("/dashboard#appliance-apply-review")}" data-appliance-apply-open>Review changes</a><a class="text-link" href="${managementUiPath("/tasks")}">Open tasks</a></div>
       </article>
     </section>
     <section class="dashboard-snapshot-grid">
       <article class="panel dashboard-snapshot-panel">
-        <div class="panel-head compact"><div><h2>Services</h2><p class="muted">Enabled runtime state; exceptions only.</p></div><a class="text-link" href="/services">Open services</a></div>
+        <div class="panel-head compact"><div><h2>Services</h2><p class="muted">Enabled runtime state; exceptions only.</p></div><a class="text-link" href="${managementUiPath("/services")}">Open services</a></div>
         <div class="dashboard-count-strip"><span><strong>${Number(services.enabled) || 0}</strong><small>Enabled</small></span><span><strong>${Number(services.running) || 0}</strong><small>Running</small></span><span><strong>${Number(services.unhealthy) || 0}</strong><small>Unhealthy</small></span></div>
         <div class="dashboard-exception-list">${serviceExceptions || '<p class="dashboard-inline-empty">No enabled service exceptions.</p>'}</div>
       </article>
       <article class="panel dashboard-snapshot-panel">
-        <div class="panel-head compact"><div><h2>Network</h2><p class="muted">Management path and configured interfaces.</p></div><a class="text-link" href="/physical-interfaces">Open interfaces</a></div>
+        <div class="panel-head compact"><div><h2>Network</h2><p class="muted">Management path and configured interfaces.</p></div><a class="text-link" href="${managementUiPath("/physical-interfaces")}">Open interfaces</a></div>
         <div class="dashboard-management-row"><span><strong>${escapeDashboardHtml(network.management?.name || "Not discovered")}</strong><small>${escapeDashboardHtml(network.management?.address || "No management address")}</small></span><span class="status-pill ${network.management?.healthy ? "good" : "warn"}">${escapeDashboardHtml(network.management?.link || "missing")}</span></div>
         <div class="dashboard-count-strip network"><span><strong>${Number(network.configured) || 0}</strong><small>Configured</small></span><span><strong>${Number(network.vlans) || 0}</strong><small>VLANs</small></span><span><strong>${Number(network.missing_or_down) || 0}</strong><small>Missing / down</small></span></div>
         <div class="dashboard-exception-list">${networkExceptions || '<p class="dashboard-inline-empty">No configured interface exceptions.</p>'}</div>
       </article>
     </section>
     <section class="panel dashboard-activity-panel">
-      <div class="panel-head compact"><div><h2>Recent activity</h2><p class="muted">Tasks and audit events in one chronological view.</p></div><div class="dashboard-activity-links"><a class="text-link" href="/tasks">Tasks</a><a class="text-link" href="/audit-log">Audit events</a></div></div>
+      <div class="panel-head compact"><div><h2>Recent activity</h2><p class="muted">Tasks and audit events in one chronological view.</p></div><div class="dashboard-activity-links"><a class="text-link" href="${managementUiPath("/tasks")}">Tasks</a><a class="text-link" href="${managementUiPath("/audit-log")}">Audit events</a></div></div>
       <div class="dashboard-activity-list">${activityRows || '<div class="dashboard-empty-state"><strong>No recent activity</strong><span>Tasks and operator audit events will appear here.</span></div>'}</div>
     </section>`;
 }
@@ -17191,7 +17163,7 @@ function dashboardSnapshotMarkup(snapshot) {
 function initializeDashboard() {
   const root = document.querySelector("[data-dashboard]");
   if (!(root instanceof HTMLElement)) return;
-  const refreshUrl = root.dataset.refreshUrl || "/dashboard/data";
+  const refreshUrl = root.dataset.refreshUrl || managementUiPath("/dashboard/data");
   let timer = 0;
   let refreshing = false;
   const schedule = () => {
@@ -17289,7 +17261,7 @@ function initializeVcfLdapHelper() {
   if (organizationSelect instanceof HTMLSelectElement) {
     organizationSelect.addEventListener("change", () => {
       const query = new URLSearchParams({ ldap_vcf: "1", ldap_organization_id: organizationSelect.value });
-      window.location.assign(`/vcf-helper?${query.toString()}`);
+      window.location.assign(managementUiPath(`/vcf-helper?${query.toString()}`));
     });
   }
   if (generateDialog instanceof HTMLDialogElement) {
@@ -17319,7 +17291,7 @@ function initializeVcfLdapHelper() {
       const recoverButton = generateForm.querySelector("[data-ldap-recover-missing]");
       const actionInput = generateForm.querySelector("[data-ldap-generate-action]");
       const updateGenerateAction = () => {
-        generateForm.action = `/ldap/organizations/${encodeURIComponent(generateOrganization.value)}/generate-directory`;
+        generateForm.action = managementUiPath(`/ldap/organizations/${encodeURIComponent(generateOrganization.value)}/generate-directory`);
       };
       generateOrganization.addEventListener("change", updateGenerateAction);
       updateGenerateAction();
@@ -17351,7 +17323,7 @@ function initializeVcfLdapHelper() {
       });
     }
     if (generateDialog.hasAttribute("data-ldap-generate-auto-open") && !generateDialog.open) {
-      window.history.replaceState(window.history.state, "", "/vcf-helper");
+      window.history.replaceState(window.history.state, "", managementUiPath("/vcf-helper"));
       if (generateWizard) generateWizard.open({ reset: false, step: "review", highestStep: "review" });
       else openGenerateDialog();
       focusGenerateDialog();
@@ -17716,7 +17688,7 @@ function initializeAutomationTables() {
   const openScriptRunModal = (data) => {
     if (!(scriptRunModal instanceof HTMLDialogElement) || !(scriptRunForm instanceof HTMLFormElement) || !data?.latest_revision_id) return;
     scriptRunForm.reset();
-    scriptRunForm.action = `/automation/scripts/revisions/${encodeURIComponent(data.latest_revision_id)}/run`;
+    scriptRunForm.action = managementUiPath(`/automation/scripts/revisions/${encodeURIComponent(data.latest_revision_id)}/run`);
     const name = scriptRunModal.querySelector("[data-automation-script-run-name]");
     const revision = scriptRunModal.querySelector("[data-automation-script-run-revision]");
     const interpreter = scriptRunModal.querySelector("[data-automation-script-run-interpreter]");
@@ -18149,7 +18121,7 @@ function initializeAutomationTables() {
       validateStep: validateScheduleStep,
       prepareReview: populateScheduleReview,
       onOpen: ({ context: rowData }) => {
-      scheduleForm.action = rowData ? `/automation/schedules/${rowData.id}/edit` : "/automation/schedules";
+      scheduleForm.action = rowData ? managementUiPath(`/automation/schedules/${rowData.id}/edit`) : managementUiPath("/automation/schedules");
       if (wizardModalTitle instanceof HTMLElement) wizardModalTitle.textContent = rowData ? `Edit ${rowData.name}` : "Add schedule";
       if (wizardSubmit instanceof HTMLButtonElement) wizardSubmit.textContent = rowData ? "Update schedule" : "Create schedule";
       if (rowData) {
@@ -18281,7 +18253,7 @@ function initializeAutomationTables() {
           minWidth: 250,
           formatter: (cell) => {
             const data = cell.getRow().getData();
-            return `<a href="${escapeHtml(data.task_url || "/tasks")}"><code>${escapeHtml(data.id || "")}</code></a>`;
+            return `<a href="${escapeHtml(data.task_url || managementUiPath("/tasks"))}"><code>${escapeHtml(data.id || "")}</code></a>`;
           },
         },
       ],
@@ -18484,7 +18456,7 @@ function initializeApplianceUpdateSourceWizard() {
   const urlLabel = form.querySelector("[data-update-source-url-label]");
   const dialogTitle = document.getElementById("appliance-update-source-dialog-title");
   const submitButton = form.querySelector("[data-atlaso-wizard-submit]");
-  const createAction = "/appliance-update/sources";
+  const createAction = managementUiPath("/appliance-update/sources");
   let selectedKind = "";
 
   const updateUrlRequirement = () => {
@@ -18623,7 +18595,7 @@ function initializeApplianceUpdateSourceWizard() {
       } catch {
         // Reloading the page still shows the saved repository when storage is unavailable.
       }
-      window.history.replaceState(null, "", "/appliance-update#update-sources");
+      window.history.replaceState(null, "", managementUiPath("/appliance-update#update-sources"));
       window.location.reload();
       return { valid: true };
     },
@@ -18746,7 +18718,7 @@ function initializeManagedPackageWizard() {
       } catch {
         // Reloading the page still shows the saved module when storage is unavailable.
       }
-      window.history.replaceState(null, "", "/appliance-update#managed-packages");
+      window.history.replaceState(null, "", managementUiPath("/appliance-update#managed-packages"));
       window.location.reload();
       return { valid: true };
     },
@@ -18823,7 +18795,7 @@ function initializeEsxStorageTables() {
       body.set("ipv6_clients", (row.ipv6_clients || []).join("\n"));
       if (row.enabled) body.set("enabled", "on");
       try {
-        const response = await fetch(`/esx-storage/shares/${row.id}`, {
+        const response = await fetch(managementUiPath(`/esx-storage/shares/${row.id}`), {
           method: "POST",
           headers: { Accept: "application/json" },
           body,
@@ -18832,7 +18804,7 @@ function initializeEsxStorageTables() {
           const payload = await response.json().catch(() => ({}));
           throw new Error(payload.detail || "The datastore state could not be saved.");
         }
-        window.history.replaceState(null, "", "/esx-storage#nfs-datastores");
+        window.history.replaceState(null, "", managementUiPath("/esx-storage#nfs-datastores"));
         window.location.reload();
       } catch (error) {
         cell.restoreOldValue();
@@ -18971,7 +18943,7 @@ function initializeEsxStorageWizards() {
       prepareReview: populateReview,
       onOpen: ({ context: row }) => {
       const editing = kind === "share" && row && row.id;
-      form.action = editing ? `/esx-storage/shares/${row.id}` : defaultAction;
+      form.action = editing ? managementUiPath(`/esx-storage/shares/${row.id}`) : defaultAction;
       if (modalTitle instanceof HTMLElement) modalTitle.textContent = editing ? "Edit NFS datastore" : kind === "share" ? "Add NFS datastore" : "Add storage volume";
       if (submit instanceof HTMLButtonElement) submit.textContent = editing ? "Update NFS datastore" : kind === "share" ? "Add NFS datastore" : "Add storage volume";
       if (editing) {
@@ -19001,7 +18973,7 @@ function initializeEsxStorageWizards() {
             const payload = await response.json().catch(() => ({}));
             return { ok: false, message: payload.detail || "The ESX Storage change could not be saved." };
           }
-          const target = kind === "volume" ? "/esx-storage#storage-volumes" : "/esx-storage#nfs-datastores";
+          const target = kind === "volume" ? managementUiPath("/esx-storage#storage-volumes") : managementUiPath("/esx-storage#nfs-datastores");
           wizard.markClean();
           window.history.replaceState(null, "", target);
           window.location.reload();
@@ -19193,7 +19165,7 @@ function initializeVaultsPage() {
       body.set("entry_id", String(row.id));
       body.set("uri_index", String(index + 1));
       if (confirmedFingerprint) body.set("confirmed_fingerprint", confirmedFingerprint);
-      const response = await fetch("/terminal/remote-launches", {
+      const response = await fetch(managementUiPath("/terminal/remote-launches"), {
         method: "POST",
         headers: { Accept: "application/json", "X-Requested-With": "Atlaso" },
         cache: "no-store",
@@ -19210,7 +19182,7 @@ function initializeVaultsPage() {
         });
         if (!confirmed) return null;
         remoteWindow = window.open(
-          `/terminal/remote#target=${encodeURIComponent(String(payload.hostname || "Remote host"))}`,
+          managementUiPath(`/terminal/remote#target=${encodeURIComponent(String(payload.hostname || "Remote host"))}`),
           "_blank",
         );
         if (remoteWindow) remoteWindow.opener = null;
@@ -19278,8 +19250,8 @@ function initializeVaultsPage() {
       entryForm.reset();
       if (entryPassword instanceof HTMLInputElement) entryPassword.type = "password";
       entryForm.action = row && !copying
-        ? `/vaults/${vaultId}/entries/${row.id}/edit`
-        : `/vaults/${vaultId}/entries`;
+        ? managementUiPath(`/vaults/${vaultId}/entries/${row.id}/edit`)
+        : managementUiPath(`/vaults/${vaultId}/entries`);
       entryForm.elements.copy_entry_id.value = copying ? String(row.id) : "";
       entryForm.dataset.vaultId = String(vaultId || "");
       entryForm.elements.key.value = copying ? String(context.copyKey || "") : row?.key || "";
@@ -19324,7 +19296,7 @@ function initializeVaultsPage() {
     const body = new FormData();
     body.set("csrf", String(entryForm.elements.csrf.value || ""));
     try {
-      const response = await fetch(`/vaults/${vaultId}/entries/${entryId}/reveal`, {
+      const response = await fetch(managementUiPath(`/vaults/${vaultId}/entries/${entryId}/reveal`), {
         method: "POST",
         headers: { Accept: "application/json" },
         cache: "no-store",
@@ -19464,7 +19436,7 @@ function initializeVaultsPage() {
               body.set("csrf", String(entryForm.elements.csrf.value || ""));
               try {
                 const row = cell.getRow().getData();
-                const response = await fetch(`/vaults/${vaultId}/entries/${row.id}/reveal`, {
+                const response = await fetch(managementUiPath(`/vaults/${vaultId}/entries/${row.id}/reveal`), {
                   method: "POST",
                   headers: { Accept: "application/json" },
                   cache: "no-store",
@@ -19534,7 +19506,7 @@ function initializeVcfVaultImport() {
     });
   };
   const inspectSource = async (controller) => {
-    const response = await fetch("/vcf-helper/vault-import/inspect", {
+    const response = await fetch(managementUiPath("/vcf-helper/vault-import/inspect"), {
       method: "POST",
       headers: { "Content-Type": "application/json", Accept: "application/json" },
       cache: "no-store",
@@ -19619,7 +19591,7 @@ function initializeVcfVaultImport() {
         vault_id: Number(form.elements.vault_id.value || 0),
         candidate_ids: [...form.querySelectorAll('input[name="candidate_ids"]:checked')].map((input) => input.value),
       };
-      const response = await fetch("/vcf-helper/vault-import", {
+      const response = await fetch(managementUiPath("/vcf-helper/vault-import"), {
         method: "POST",
         headers: { "Content-Type": "application/json", Accept: "application/json" },
         cache: "no-store",
@@ -19628,7 +19600,7 @@ function initializeVcfVaultImport() {
       const result = await response.json().catch(() => ({}));
       if (!response.ok) return { ok: false, message: result.detail || "The password import failed." };
       wizard.markClean();
-      window.location.assign(`/vaults#vault-panel-${result.vault_id}`);
+      window.location.assign(managementUiPath(`/vaults#vault-panel-${result.vault_id}`));
       return { ok: true, close: false };
     },
     closeOnSubmit: false,

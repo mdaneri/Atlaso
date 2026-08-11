@@ -78,7 +78,7 @@
                 <td><span class="boolean-glyph {{ 'good' if share.enabled else 'bad' }}" aria-label="{{ 'Enabled' if share.enabled else 'Disabled' }}">{{ '✓' if share.enabled else '✕' }}</span></td>
                 <td>
                   {% if esx_storage_can_write %}
-                    <form id="esx-storage-remove-share-{{ share.id }}" action="/esx-storage/shares/{{ share.id }}/delete" method="post" data-confirm-modal data-confirm-title="Remove {{ share.datastore_name }}?" data-confirm-message="This removes the export from desired state after global appliance apply. Files and the backing volume are preserved." data-confirm-label="Remove datastore">
+                    <form id="esx-storage-remove-share-{{ share.id }}" action="{{ management_ui_root }}/esx-storage/shares/{{ share.id }}/delete" method="post" data-confirm-modal data-confirm-title="Remove {{ share.datastore_name }}?" data-confirm-message="This removes the export from desired state after global appliance apply. Files and the backing volume are preserved." data-confirm-label="Remove datastore">
                       <input type="hidden" name="csrf" value="{{ csrf_token }}"><button class="button tiny danger" type="submit">Remove</button>
                     </form>
                   {% endif %}
@@ -116,7 +116,7 @@
 
     <div class="panel detail-panel">
       <div class="panel-head"><h2>Service Settings</h2><span class="status-pill {{ 'good' if esx_storage_settings.enabled else 'muted' }}">{{ "enabled" if esx_storage_settings.enabled else "disabled" }}</span></div>
-      <form class="form-stack" action="/esx-storage/settings" method="post" data-autosave-form data-autosave-status-id="esx-storage-settings-status">
+      <form class="form-stack" action="{{ management_ui_root }}/esx-storage/settings" method="post" data-autosave-form data-autosave-status-id="esx-storage-settings-status">
         <input type="hidden" name="csrf" value="{{ csrf_token }}">
         <label class="switch-field"><span class="field-label"><span>Service enabled</span><button class="help-icon" type="button" data-help="Enables ESX Storage desired state. Host services change only through global appliance apply, after DNS, exports, disk safety, and firewall validation succeed.">i</button></span><input class="switch-input" type="checkbox" name="enabled" {{ "checked" if esx_storage_settings.enabled else "" }} {{ "disabled" if not esx_storage_can_write else "" }}><span class="switch-track" aria-hidden="true"></span></label>
         <label><span class="field-label"><span>Canonical service hostname</span><button class="help-icon" type="button" data-help="Canonical nfs.&lt;domain&gt; alias. Dual-stack ESX instructions use family-specific generated A or AAAA target names so DNS resolver preference cannot choose a family implicitly.">i</button></span><input name="hostname" value="{{ esx_storage_settings.hostname }}" required {{ "readonly" if not esx_storage_can_write else "" }}></label>
@@ -136,7 +136,7 @@
 
 {% if esx_storage_can_write %}
 <dialog id="esx-storage-volume-modal" class="confirm-modal wide-modal vcf-sddc-wizard-modal" aria-labelledby="esx-storage-volume-modal-title" aria-describedby="esx-storage-volume-modal-description">
-  <form class="confirm-modal-panel vcf-sddc-wizard-panel" action="/esx-storage/volumes" method="post" data-esx-storage-volume-form data-esx-storage-wizard="volume" data-atlaso-wizard>
+  <form class="confirm-modal-panel vcf-sddc-wizard-panel" action="{{ management_ui_root }}/esx-storage/volumes" method="post" data-esx-storage-volume-form data-esx-storage-wizard="volume" data-atlaso-wizard>
     <input type="hidden" name="csrf" value="{{ csrf_token }}">
     <aside class="vcf-sddc-wizard-rail" aria-label="Storage volume steps">
       <p class="kicker">ESX Storage</p><h2 id="esx-storage-volume-modal-title">Add storage volume</h2>
@@ -174,7 +174,7 @@
 </dialog>
 
 <dialog id="esx-storage-share-modal" class="confirm-modal wide-modal vcf-sddc-wizard-modal" aria-labelledby="esx-storage-share-modal-title" aria-describedby="esx-storage-share-modal-description">
-  <form class="confirm-modal-panel vcf-sddc-wizard-panel" action="/esx-storage/shares" method="post" data-esx-storage-share-form data-esx-storage-wizard="share" data-atlaso-wizard>
+  <form class="confirm-modal-panel vcf-sddc-wizard-panel" action="{{ management_ui_root }}/esx-storage/shares" method="post" data-esx-storage-share-form data-esx-storage-wizard="share" data-atlaso-wizard>
     <input type="hidden" name="csrf" value="{{ csrf_token }}">
     <aside class="vcf-sddc-wizard-rail" aria-label="NFS datastore steps">
       <p class="kicker">ESX Storage</p><h2 id="esx-storage-share-modal-title" data-esx-storage-wizard-modal-title>Add NFS datastore</h2>

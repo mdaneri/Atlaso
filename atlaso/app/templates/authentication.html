@@ -11,11 +11,11 @@
     </div>
     <p class="muted">Authentication decides how Atlaso operators sign in. Local accounts remain the only enabled sign-in provider in v1.</p>
     <div class="settings-list">
-      <div><span>Local users</span><strong><a class="text-link" href="/users">managed separately</a></strong></div>
+      <div><span>Local users</span><strong><a class="text-link" href="{{ management_ui_root }}/users">managed separately</a></strong></div>
       <div><span>Atlaso LDAP sign-in</span><strong>not available; operator UI remains local-only</strong></div>
-      <div><span>Managed VCF LDAP service</span><strong><a class="text-link" href="/ldap">configured separately</a></strong></div>
-      <div><span>OIDC provider</span><strong><a class="text-link" href="/openid-connect">managed on OpenID Connect</a></strong></div>
-      <div><span>External groups</span><strong><a class="text-link" href="/openid-connect#oidc-group-mappings">explicit mappings</a></strong></div>
+      <div><span>Managed VCF LDAP service</span><strong><a class="text-link" href="{{ management_ui_root }}/ldap">configured separately</a></strong></div>
+      <div><span>OIDC provider</span><strong><a class="text-link" href="{{ management_ui_root }}/openid-connect">managed on OpenID Connect</a></strong></div>
+      <div><span>External groups</span><strong><a class="text-link" href="{{ management_ui_root }}/openid-connect#oidc-group-mappings">explicit mappings</a></strong></div>
       <div><span>API bearer tokens</span><strong>enabled</strong></div>
     </div>
   </div>
@@ -112,7 +112,7 @@
       <h2>Provider Settings</h2>
       <span class="status-pill {{ 'good' if oidc_provider.enabled else 'muted' }}">{{ 'enabled' if oidc_provider.enabled else 'disabled' }}</span>
     </div>
-    <form class="form-stack" action="/authentication/oidc/provider" method="post" data-autosave-form data-autosave-status-id="oidc-provider-autosave-status">
+    <form class="form-stack" action="{{ management_ui_root }}/authentication/oidc/provider" method="post" data-autosave-form data-autosave-status-id="oidc-provider-autosave-status">
       <input type="hidden" name="csrf" value="{{ csrf_token }}">
       <label class="switch-field">
         <span class="field-label"><span>Provider enabled</span><button class="help-icon" type="button" data-help="Publishes discovery, JWKS, and identity endpoints only after the service listener, DNS, managed certificate, active RS256 key, and protocol readiness all validate.">i</button></span>
@@ -405,7 +405,7 @@
           <td><span class="status-pill {{ 'good' if token.enabled and not token.revoked_at else 'muted' }}">{{ "active" if token.enabled and not token.revoked_at else "revoked" }}</span></td>
           <td>
             {% if token.enabled and not token.revoked_at %}
-              <form action="/authentication/api-tokens/{{ token.id }}/revoke" method="post">
+              <form action="{{ management_ui_root }}/authentication/api-tokens/{{ token.id }}/revoke" method="post">
                 <input type="hidden" name="csrf" value="{{ csrf_token }}">
                 <button class="button tiny" type="submit">Revoke</button>
               </form>
@@ -425,7 +425,7 @@
 {% call resource_wizard(
   "api-token-dialog",
   "api-token-form",
-  "/authentication/api-tokens",
+  management_ui_path("/authentication/api-tokens"),
   api_token_steps,
   "Define the API token",
   "Give the credential an operator-visible identity and purpose.",

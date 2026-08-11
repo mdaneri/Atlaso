@@ -34,9 +34,9 @@ service-specific apply buttons or service-specific apply submit routes.
 `Appliance Apply` is the global review and submit workflow, presented through a shared modal rather than a standalone
 page. The bottom-left review card and page-level review actions open the modal, which lists changed apply units, checks
 valid changed units by default, and lets an operator unselect any unit that should remain pending. A direct GET to
-`/appliance-apply` redirects to `/dashboard#appliance-apply-review`, where the same modal opens automatically. The
-`/appliance-apply` POST, `/appliance-apply/review`, and `/appliance-apply/status` routes remain the backend workflow
-used by the modal.
+`/ui/management/appliance-apply` redirects to `/ui/management/dashboard#appliance-apply-review`, where the same modal
+opens automatically. The `/ui/management/appliance-apply` POST, `/ui/management/appliance-apply/review`, and
+`/ui/management/appliance-apply/status` routes remain the browser-only backend workflow used by the modal.
 
 The status route is deliberately a lightweight desired-state projection: it compares current snapshots with stored
 baselines without running apply-time reconciliation or privileged observation helpers. Full review, validation, and
@@ -439,8 +439,8 @@ Settings backups include encrypted CA private-key material. Restoring usable CA 
 ### vSphere Key Provider apply
 
 The real internal `kms` apply unit uses Atlaso's appliance-native, experimental `atlaso-kmip` daemon. The
-`/vsphere-key-providers` page derives IPv4 and IPv6 listen addresses from selected access interfaces or enabled VLANs,
-creates app-owned DNS records for the shared endpoint, and requires an enabled healthy CA and issued `kms:server`
+`/ui/management/vsphere-key-providers` page derives IPv4 and IPv6 listen addresses from selected access interfaces or
+enabled VLANs, creates app-owned DNS records for the shared endpoint, and requires an enabled healthy CA and issued `kms:server`
 identity before activation. Provider and trusted-vCenter changes remain database desired state until this global apply.
 
 The unit stages `/var/lib/atlaso/apply/kms/server.json` and the public-only
@@ -449,6 +449,7 @@ paths, rejects symbolic links and private-key material, validates exact schema, 
 identity, immutable UUID namespaces, globally unique exact SHA-256 fingerprints, store paths, and resource limits, then
 installs `/etc/atlaso/kmip/server.json` and `/etc/atlaso/kmip/client-trust.pem`. The installed trust bundle is mode
 `0640`, owned by root and `atlaso-kmip`, and contains the internal CA public root plus imported public leaf certificates.
+The daemon binds the shared endpoint port on every exact derived address recorded in the validated configuration.
 
 The daemon runs as the non-login `atlaso-kmip` account with a hardened systemd sandbox. Its SQLite store and KEK
 envelope live under `/var/lib/atlaso/kmip` with service-only permissions; the KEK is protected by

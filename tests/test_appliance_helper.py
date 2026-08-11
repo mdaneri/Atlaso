@@ -638,7 +638,7 @@ def kms_config_text(managed_root: Path, *, enabled: bool = True, database_path: 
         {
             "schema_version": 1,
             "enabled": enabled,
-            "listen": {"host": "192.168.50.1", "port": 5696},
+            "listen": {"addresses": ["192.168.50.1"], "port": 5696},
             "tls": {
                 "certificate_path": str(managed_root / "kmip" / "certs" / "kms.atlaso.internal.crt"),
                 "private_key_path": str(managed_root / "kmip" / "certs" / "kms.atlaso.internal.key"),
@@ -808,14 +808,6 @@ def public_services_ca_https_config_text(cert_path: Path, key_path: Path) -> str
             "    proxy_set_header X-Forwarded-Proto https;",
             "  }",
             "  location = /favicon.ico {",
-            "    proxy_pass http://127.0.0.1:8000;",
-            "    proxy_set_header X-Forwarded-Proto https;",
-            "  }",
-            "  location = /manifest.webmanifest {",
-            "    proxy_pass http://127.0.0.1:8000;",
-            "    proxy_set_header X-Forwarded-Proto https;",
-            "  }",
-            "  location = /service-worker.js {",
             "    proxy_pass http://127.0.0.1:8000;",
             "    proxy_set_header X-Forwarded-Proto https;",
             "  }",
@@ -5256,14 +5248,6 @@ def test_vcf_offline_depot_helper_applies_nginx_site(monkeypatch, tmp_path):
                 "    proxy_pass http://127.0.0.1:8000;",
                 "  }",
                 "",
-                "  location = /manifest.webmanifest {",
-                "    proxy_pass http://127.0.0.1:8000;",
-                "  }",
-                "",
-                "  location = /service-worker.js {",
-                "    proxy_pass http://127.0.0.1:8000;",
-                "  }",
-                "",
                 "  location = /PROD {",
                 "    return 301 /PROD/;",
                 "  }",
@@ -5376,14 +5360,6 @@ def test_vcf_offline_depot_helper_uses_browser_session_or_basic_auth_for_authent
                 "  }",
                 "",
                 "  location = /favicon.ico {",
-                "    proxy_pass http://127.0.0.1:8000;",
-                "  }",
-                "",
-                "  location = /manifest.webmanifest {",
-                "    proxy_pass http://127.0.0.1:8000;",
-                "  }",
-                "",
-                "  location = /service-worker.js {",
                 "    proxy_pass http://127.0.0.1:8000;",
                 "  }",
                 "",
@@ -6572,6 +6548,7 @@ server {
     proxy_set_header Connection "upgrade";
   }
   location ^~ /static/ { proxy_pass http://127.0.0.1:8000; }
+  location = /favicon.ico { proxy_pass http://127.0.0.1:8000; }
   location = /dashboard { proxy_pass http://127.0.0.1:8000; }
   location / { return 404; }
 }
@@ -6582,6 +6559,7 @@ server {
     errors = helper._public_services_config_errors(config_path)
 
     assert "Public services web terminal config must not expose location = /dashboard." in errors
+    assert "Public services HTTP config may serve only ESXi PXE paths." not in errors
 
 
 def test_appliance_settings_helper_rejects_invalid_json(tmp_path):

@@ -107,7 +107,7 @@ class ServiceConfig:
 
     Attributes:
         enabled: Whether the resource is enabled.
-        host: Host maintained by this serviceconfig.
+        listen_addresses: Exact IP addresses maintained by this serviceconfig.
         port: Port maintained by this serviceconfig.
         certificate_path: Filesystem path used for certificate.
         private_key_path: Filesystem path used for private key.
@@ -120,7 +120,7 @@ class ServiceConfig:
         fingerprint_providers: Return fingerprint providers.
     """
     enabled: bool
-    host: str
+    listen_addresses: tuple[str, ...]
     port: int
     certificate_path: Path
     private_key_path: Path
@@ -302,7 +302,7 @@ def parse_config(document: object) -> ServiceConfig:
     limits = document["limits"]
     if not all(isinstance(item, dict) for item in (listen, tls, store, limits)):
         raise ConfigurationError("KMIP listen, TLS, store, and limits must be objects.")
-    _exact_fields(listen, {"host", "port"}, label="KMIP listen")
+    _exact_fields(listen, {"addresses", "port"}, label="KMIP listen")
     _exact_fields(
         tls,
         {"certificate_path", "private_key_path", "ca_path"},
@@ -319,11 +319,23 @@ def parse_config(document: object) -> ServiceConfig:
         },
         label="KMIP limits",
     )
-    if not isinstance(listen["host"], str):
-        raise ConfigurationError("KMIP listen host must be a string.")
-    host = listen["host"].strip()
-    if not host:
-        raise ConfigurationError("KMIP listen host is required.")
+    address_values = listen["addresses"]
+    if not isinstance(address_values, list) or not address_values:
+        raise ConfigurationError("KMIP listen addresses must be a nonempty list.")
+    if len(address_values) > 32:
+        raise ConfigurationError("KMIP listen addresses cannot contain more than 32 entries.")
+    addresses: list[str] = []
+    for value in address_values:
+        if not isinstance(value, str):
+            raise ConfigurationError("KMIP listen address must be a string.")
+        address = value.strip()
+        try:
+            normalized = str(ip_address(address))
+        except ValueError as exc:
+            raise ConfigurationError("KMIP listen address must be an IP address.") from exc
+        addresses.append(normalized)
+    if len(addresses) != len(set(addresses)):
+        raise ConfigurationError("KMIP listen addresses must be unique.")
     port = _integer(listen["port"], label="KMIP listen port")
     if not 1 <= port <= 65535:
         raise ConfigurationError("KMIP listen port must be between 1 and 65535.")
@@ -375,7 +387,7 @@ def parse_config(document: object) -> ServiceConfig:
     trace_value = document["interop_trace_path"].strip()
     return ServiceConfig(
         enabled=document["enabled"],
-        host=host,
+        listen_addresses=tuple(addresses),
         port=port,
         certificate_path=_path(tls["certificate_path"], label="KMIP server certificate"),
         private_key_path=_path(tls["private_key_path"], label="KMIP server private key"),
@@ -719,6 +731,11 @@ class KmipTcpServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
         config: ServiceConfig,
         dispatcher: KmipDispatcher,
         context: ssl.SSLContext,
+        *,
+        listen_address: str | None = None,
+        listen_port: int | None = None,
+        connection_slots: threading.BoundedSemaphore | None = None,
+        close_store: bool = True,
     ) -> None:
         """Initialize the kmip tcp server.
 
@@ -726,6 +743,10 @@ class KmipTcpServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
             config: Validated configuration consumed by the operation.
             dispatcher: Dispatcher consumed by init.
             context: Operation context providing related state and metadata.
+            listen_address: Exact address bound by this server instance.
+            listen_port: Port bound by this server instance.
+            connection_slots: Shared global connection limit across listeners.
+            close_store: Whether this instance owns store cleanup.
         """
         self.config = config
         self.dispatcher = dispatcher
@@ -735,9 +756,12 @@ class KmipTcpServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
             if config.interop_trace_path is not None
             else None
         )
-        self._connection_slots = threading.BoundedSemaphore(config.limits.max_connections)
-        self.address_family = socket.AF_INET6 if ip_address(config.host).version == 6 else socket.AF_INET
-        super().__init__((config.host, config.port), KmipRequestHandler)
+        self._connection_slots = connection_slots or threading.BoundedSemaphore(config.limits.max_connections)
+        self._close_store = close_store
+        address = listen_address or config.listen_addresses[0]
+        port = config.port if listen_port is None else listen_port
+        self.address_family = socket.AF_INET6 if ip_address(address).version == 6 else socket.AF_INET
+        super().__init__((address, port), KmipRequestHandler)
 
     def get_request(self) -> tuple[ssl.SSLSocket, Any]:
         """Return request.
@@ -801,10 +825,95 @@ class KmipTcpServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
         try:
             super().server_close()
         finally:
+            if self._close_store:
+                self.dispatcher.store.close()
+
+
+class KmipTcpServerGroup:
+    """Serve one KMIP runtime on every configured listener address."""
+
+    def __init__(
+        self,
+        config: ServiceConfig,
+        dispatcher: KmipDispatcher,
+        context: ssl.SSLContext,
+    ) -> None:
+        """Bind all configured addresses with shared runtime state.
+
+        Args:
+            config: Validated configuration consumed by the operation.
+            dispatcher: Shared provider dispatcher and operational store.
+            context: Shared mutually authenticated TLS context.
+        """
+        self.config = config
+        self.dispatcher = dispatcher
+        connection_slots = threading.BoundedSemaphore(config.limits.max_connections)
+        servers: list[KmipTcpServer] = []
+        selected_port = config.port
+        try:
+            for address in config.listen_addresses:
+                server = KmipTcpServer(
+                    config,
+                    dispatcher,
+                    context,
+                    listen_address=address,
+                    listen_port=selected_port,
+                    connection_slots=connection_slots,
+                    close_store=False,
+                )
+                servers.append(server)
+                if selected_port == 0:
+                    selected_port = int(server.server_address[1])
+        except Exception:
+            for server in servers:
+                socketserver.TCPServer.server_close(server)
+            raise
+        self._servers = tuple(servers)
+
+    @property
+    def server_address(self) -> tuple[Any, ...]:
+        """Return the first bound address for single-listener callers."""
+        return self._servers[0].server_address
+
+    @property
+    def server_addresses(self) -> tuple[tuple[Any, ...], ...]:
+        """Return every bound address."""
+        return tuple(server.server_address for server in self._servers)
+
+    def serve_forever(self, poll_interval: float = 0.5) -> None:
+        """Serve every bound listener until shutdown.
+
+        Args:
+            poll_interval: Socket-server shutdown polling interval.
+        """
+        threads = [
+            threading.Thread(
+                target=server.serve_forever,
+                kwargs={"poll_interval": poll_interval},
+                daemon=True,
+            )
+            for server in self._servers
+        ]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+
+    def shutdown(self) -> None:
+        """Stop every listener."""
+        for server in self._servers:
+            server.shutdown()
+
+    def server_close(self) -> None:
+        """Close every listener before clearing the shared store credential."""
+        try:
+            for server in self._servers:
+                server.server_close()
+        finally:
             self.dispatcher.store.close()
 
 
-def build_server(config: ServiceConfig, *, secrets_key: str) -> KmipTcpServer:
+def build_server(config: ServiceConfig, *, secrets_key: str) -> KmipTcpServer | KmipTcpServerGroup:
     """Build server.
 
     Args:
@@ -821,7 +930,14 @@ def build_server(config: ServiceConfig, *, secrets_key: str) -> KmipTcpServer:
         config.kek_path,
         secrets_key=secrets_key,
     )
-    return KmipTcpServer(config, KmipDispatcher(store), context)
+    dispatcher = KmipDispatcher(store)
+    try:
+        if len(config.listen_addresses) == 1:
+            return KmipTcpServer(config, dispatcher, context)
+        return KmipTcpServerGroup(config, dispatcher, context)
+    except Exception:
+        store.close()
+        raise
 
 
 def check_config(config: ServiceConfig, *, secrets_key: str) -> None:

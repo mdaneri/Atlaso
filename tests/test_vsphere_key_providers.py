@@ -528,9 +528,68 @@ def test_lifecycle_counts_report_null_when_unavailable_and_verified_counts_when_
         "atlaso.app.services.vsphere_key_providers.SystemAdapter.kms_status",
         lambda _self: AdapterResult(command=[], dry_run=False, stdout=json.dumps(zero_payload)),
     )
+    pending_delete = client.delete(
+        f"/api/v1/vsphere-key-providers/{provider_id}",
+        headers=headers,
+    )
+    assert pending_delete.status_code == 409
+    assert pending_delete.json()["detail"] == "Apply the disabled and detached provider state before deletion."
+
+    with SessionLocal() as db:
+        provider = db.get(VsphereKeyProvider, provider_id)
+        assert provider is not None
+        provider.applied_at = provider.updated_at
+        db.commit()
+
     deleted = client.delete(
         f"/api/v1/vsphere-key-providers/{provider_id}",
         headers=headers,
+    )
+    assert deleted.status_code == 204
+
+
+def test_browser_provider_deletion_requires_applied_disablement(client, monkeypatch) -> None:
+    """Verify the browser cannot delete a provider before runtime trust removal is applied.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+        monkeypatch: Pytest fixture used to replace runtime helper behavior.
+    """
+    provider_id = str(uuid4())
+    with SessionLocal() as db:
+        db.add(VsphereKeyProvider(id=provider_id, name="Browser removal", enabled=False))
+        db.commit()
+
+    zero_payload = {
+        "status": "available",
+        "runtime_state": "running",
+        "store_status": "authenticated",
+        "providers": {provider_id: {"pre_active": 0, "active": 0, "total": 0}},
+    }
+    monkeypatch.setattr(
+        "atlaso.app.services.vsphere_key_providers.SystemAdapter.kms_status",
+        lambda _self: AdapterResult(command=[], dry_run=False, stdout=json.dumps(zero_payload)),
+    )
+    csrf = _login(client)
+    url = f"/ui/management/vsphere-key-providers/providers/{provider_id}/delete"
+    pending = client.post(
+        url,
+        data={"csrf": csrf},
+        headers={"X-Atlaso-Grid": "1", "Accept": "application/json"},
+    )
+    assert pending.status_code == 409
+    assert pending.json()["detail"] == "Apply the disabled and detached provider state before deletion."
+
+    with SessionLocal() as db:
+        provider = db.get(VsphereKeyProvider, provider_id)
+        assert provider is not None
+        provider.applied_at = provider.updated_at
+        db.commit()
+
+    deleted = client.post(
+        url,
+        data={"csrf": csrf},
+        headers={"X-Atlaso-Grid": "1", "Accept": "application/json"},
     )
     assert deleted.status_code == 204
 
@@ -546,6 +605,7 @@ def test_rendered_trust_uses_exact_enabled_fingerprints_and_public_pem_only(clie
     with SessionLocal() as db:
         settings = db.execute(select(KmsSettings)).scalar_one()
         settings.enabled = True
+        settings.listen_address = "192.0.2.10,2001:db8::10"
         provider = VsphereKeyProvider(id=str(uuid4()), name="Rendered provider", enabled=True)
         vcenter = VsphereTrustedVcenter(
             id=str(uuid4()),
@@ -565,6 +625,10 @@ def test_rendered_trust_uses_exact_enabled_fingerprints_and_public_pem_only(clie
         db.commit()
 
         rendered = json.loads(render_provider_config(settings, [provider]))
+        assert rendered["listen"] == {
+            "addresses": ["192.0.2.10", "2001:db8::10"],
+            "port": settings.port,
+        }
         assert rendered["providers"] == [
             {
                 "id": provider.id,

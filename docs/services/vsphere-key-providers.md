@@ -8,7 +8,8 @@ status: current
 
 # vSphere Key Providers
 
-Open **vSphere Key Providers** at `/vsphere-key-providers` to manage Atlaso's appliance-native KMIP endpoint. The
+Open **vSphere Key Providers** at `/ui/management/vsphere-key-providers` to manage Atlaso's appliance-native KMIP
+endpoint. The
 listener and server identity are shared appliance-wide, while every provider UUID is an isolated operational key
 namespace.
 
@@ -74,7 +75,8 @@ key identifiers, and KMIP Destroy remains outside the bounded protocol contract.
 A provider can be deleted only when all of these conditions hold:
 
 - it is disabled;
-- every trusted vCenter has been detached; and
+- every trusted vCenter has been detached;
+- the disabled and detached desired state has completed global Appliance Apply; and
 - authenticated runtime evidence reports exactly zero operational keys for its UUID.
 
 Atlaso fails closed when empty-store evidence is unavailable. A trusted vCenter can be deleted only after it is disabled
@@ -83,7 +85,8 @@ and every certificate record is retired.
 ## Apply and trust-bundle boundary
 
 Saving page or API changes updates database desired state only. Global Appliance Apply renders the enabled providers
-with exact enabled fingerprints, stages `/var/lib/atlaso/apply/kms/server.json` and
+with exact enabled fingerprints, configures the daemon on every derived selected listener address, stages
+`/var/lib/atlaso/apply/kms/server.json` and
 `/var/lib/atlaso/apply/kms/client-trust.pem`, and invokes the constrained helper. The helper accepts only those fixed
 paths, rejects symbolic links and private-key material, and installs the bundle as
 `/etc/atlaso/kmip/client-trust.pem` with root and `atlaso-kmip` ownership.
