@@ -322,14 +322,22 @@ that have auto-merge enabled and report `BEHIND`. Each request includes the obse
 push causes GitHub to reject the stale update instead of merging over it. Forks, conflicted branches, and pull requests
 without auto-merge are never updated by this workflow.
 
-An internal branch update performed with `GITHUB_TOKEN` also creates a `pull_request` CI run that GitHub holds for
-approval. Those approval-gated jobs have diagnostic names and are not required contexts. The version workflow's trusted
-`workflow_dispatch` run uses the canonical `Version policy`, `Repository checks`, and `Python tests` names enforced by
-the `main` ruleset. This preserves required validation without a personal access token or automatic approval of
-untrusted workflow code. Because a token-authenticated update does not trigger `pull_request_target`, the updater waits
-for GitHub's new head SHA and sends a typed repository dispatch. GitHub loads that handler from protected `main`; it
-re-fetches the PR and verifies that it remains open, same-repository, based on `main`, and at the expected head before
-checking out or pushing. The privileged updater has no manual-dispatch trigger.
+An internal branch update performed with `GITHUB_TOKEN` also creates a `pull_request` CI run that GitHub may hold for
+approval. Those approval-gated jobs have diagnostic names and are not required contexts. Because a token-authenticated
+update does not trigger `pull_request_target`, the updater waits for GitHub's new head SHA and sends a typed repository
+dispatch. GitHub loads that handler from protected `main`; it re-fetches the PR and verifies that it remains open,
+same-repository, based on `main`, and at the expected head before checking out or pushing. The privileged updater has no
+manual-dispatch trigger.
+
+Trusted CI is also dispatched from protected `main`, not from the candidate branch's workflow revision. It receives the
+exact pull-request number, base SHA, and head SHA. Read-only jobs check out and validate that candidate. Before and after
+those jobs, separate status-publisher jobs with no candidate checkout revalidate the PR identity and publish the
+canonical `Version policy`, `Repository checks`, and `Python tests` commit statuses on its exact head. Each status names
+the trusted run and links to it, so the checks are visible and attributable in the pull request. Only a bot-authenticated
+dispatch can publish these statuses; manual dispatch remains diagnostic. Trusted dispatches and diagnostic
+pull-request runs use separate concurrency groups, preventing a delayed diagnostic run from canceling the trusted
+publisher. This bridge is required because GitHub does not associate an ordinary `workflow_dispatch` check suite with
+the pull request even when it runs on the same commit.
 
 The application update build continues to append `+g<commit>` metadata to wheel versions. A merged pull request does not
 create a Git tag, GitHub release, or changelog entry; those remain deliberate release-management actions.

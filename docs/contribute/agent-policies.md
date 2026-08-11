@@ -53,6 +53,13 @@ status: current
   issue created or linked before implementation begins, exactly one applicable type label, relevant documentation
   updated in the same change, and a pull request linked with `Closes #<issue>`. Do not commit changes directly to
   `main`.
+- Trusted version refresh must dispatch the CI definition from protected `main` with the exact pull-request number, base
+  SHA, and head SHA. Keep candidate validation jobs read-only. Publish the canonical `Version policy`, `Repository
+  checks`, and `Python tests` commit statuses only from bot-gated jobs that never check out candidate code and that
+  revalidate the open same-repository PR plus exact head/base before publishing pending or final results. Keep every
+  status linked to its trusted run, retain diagnostic names for bot-triggered `pull_request` jobs, and keep trusted and
+  diagnostic events in separate concurrency groups so diagnostic work cannot cancel trusted publication. Never grant
+  candidate workflow revisions status-write permission.
 
 ## API authoring
 
