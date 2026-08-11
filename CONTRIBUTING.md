@@ -58,7 +58,9 @@ The protected workflow then dispatches CI from `main` with the exact pull-reques
 candidate validation jobs retain read-only permissions. Separate jobs that never check out candidate code revalidate
 the open same-repository pull request and publish pending, success, failure, or error commit statuses named `Version
 policy`, `Repository checks`, and `Python tests`, each linked to the trusted run. Those visible statuses are the
-canonical contexts required by the `main` ruleset; a manual CI dispatch cannot publish them.
+canonical contexts required by the `main` ruleset; a manual CI dispatch cannot publish them. Trusted dispatches and
+diagnostic pull-request runs use separate concurrency groups, so a delayed diagnostic run cannot cancel trusted status
+publication.
 
 ### Dependabot version updates
 

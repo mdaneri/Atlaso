@@ -41,7 +41,8 @@ Trusted version refresh dispatches CI from protected `main` with the exact PR nu
 validation jobs remain read-only. Only separate no-checkout jobs may publish the canonical `Version policy`, `Repository
 checks`, and `Python tests` commit statuses after revalidating the open same-repository PR and exact head/base. Preserve
 the bot-only publication gate, visible run links, diagnostic names for bot-triggered `pull_request` jobs, and the active
-ruleset contexts; never dispatch a candidate workflow revision with status-write permission.
+ruleset contexts. Keep trusted dispatch and diagnostic pull-request runs in separate concurrency groups so diagnostic
+work cannot cancel the trusted publisher. Never dispatch a candidate workflow revision with status-write permission.
 
 Use `python scripts/version.py bump` or `.\scripts\version.ps1` to increment and synchronize the current patch version.
 When an explicit target is required, pass the current version or exact next patch through `--version X.Y.Z` to Python or

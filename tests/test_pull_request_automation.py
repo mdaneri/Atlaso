@@ -29,6 +29,7 @@ def test_trusted_ci_publishes_revalidated_required_statuses() -> None:
 
     assert "head_sha:" in workflow
     assert "pull_number:" in workflow
+    assert "github.workflow }}-${{ github.event_name }}" in workflow
     assert "inputs.pull_number || github.ref" in workflow
     assert workflow.count("statuses: write") == 2
     assert workflow.count("pull-requests: read") == 2

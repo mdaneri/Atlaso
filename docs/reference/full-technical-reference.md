@@ -334,8 +334,10 @@ exact pull-request number, base SHA, and head SHA. Read-only jobs check out and 
 those jobs, separate status-publisher jobs with no candidate checkout revalidate the PR identity and publish the
 canonical `Version policy`, `Repository checks`, and `Python tests` commit statuses on its exact head. Each status names
 the trusted run and links to it, so the checks are visible and attributable in the pull request. Only a bot-authenticated
-dispatch can publish these statuses; manual dispatch remains diagnostic. This bridge is required because GitHub does
-not associate an ordinary `workflow_dispatch` check suite with the pull request even when it runs on the same commit.
+dispatch can publish these statuses; manual dispatch remains diagnostic. Trusted dispatches and diagnostic
+pull-request runs use separate concurrency groups, preventing a delayed diagnostic run from canceling the trusted
+publisher. This bridge is required because GitHub does not associate an ordinary `workflow_dispatch` check suite with
+the pull request even when it runs on the same commit.
 
 The application update build continues to append `+g<commit>` metadata to wheel versions. A merged pull request does not
 create a Git tag, GitHub release, or changelog entry; those remain deliberate release-management actions.

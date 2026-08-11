@@ -57,7 +57,8 @@ status: current
   SHA, and head SHA. Keep candidate validation jobs read-only. Publish the canonical `Version policy`, `Repository
   checks`, and `Python tests` commit statuses only from bot-gated jobs that never check out candidate code and that
   revalidate the open same-repository PR plus exact head/base before publishing pending or final results. Keep every
-  status linked to its trusted run, retain diagnostic names for bot-triggered `pull_request` jobs, and never grant
+  status linked to its trusted run, retain diagnostic names for bot-triggered `pull_request` jobs, and keep trusted and
+  diagnostic events in separate concurrency groups so diagnostic work cannot cancel trusted publication. Never grant
   candidate workflow revisions status-write permission.
 
 ## API authoring
