@@ -1120,8 +1120,16 @@ def test_vmware_ovf_customizer_rotates_clone_specific_env_secrets(tmp_path, monk
     customizer.MARKER_PATH = tmp_path / "marker.json"
     customizer.PENDING_MARKER_PATH = tmp_path / "marker.pending.json"
     customizer.NGINX_MANAGEMENT_PATH.write_text("server_name atlaso.internal _;\n", encoding="utf-8")
+    console_restarted = []
+    monkeypatch.setattr(customizer, "restart_console", lambda: console_restarted.append(True))
     synchronized = []
-    monkeypatch.setattr(customizer.os, "sync", lambda: synchronized.append(True), raising=False)
+
+    def sync_host_state():
+        """Prove the console refresh precedes the host durability barrier."""
+        assert console_restarted == [True]
+        synchronized.append(True)
+
+    monkeypatch.setattr(customizer.os, "sync", sync_host_state, raising=False)
     generated = iter(["rotated-secret-key", "rotated-secrets-key"])
     customizer.generate_secret_key = lambda: next(generated)
     customizer.set_password = lambda username, password: None
@@ -1165,6 +1173,7 @@ def test_vmware_ovf_customizer_rotates_clone_specific_env_secrets(tmp_path, monk
     assert 'ATLASO_APPLIANCE_MANAGEMENT_IPV6_ENABLED="true"' in rendered
     assert 'ATLASO_APPLIANCE_ROOT_SSH_ENABLED="true"' in rendered
     marker = json.loads(customizer.MARKER_PATH.read_text(encoding="utf-8"))
+    assert console_restarted == [True]
     assert synchronized == [True]
     assert scrubbed == [True]
     assert marker["cidr"] == "192.168.10.10/24"

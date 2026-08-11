@@ -98,9 +98,11 @@ redacted applied marker only after every mutation succeeds. A validation or appl
 updates the review state without exception-derived command output, and permits another correction. Before that retry
 starts host mutation, it durably invalidates any pending-success record from the preceding attempt so restart recovery
 cannot promote stale state. After every host mutation succeeds, the customizer synchronizes host filesystem state before
-durably writing pending success, so restart recovery cannot promote a marker ahead of its configuration. Success removes
-both handshake documents plus the initialization lock and releases the remaining first-boot units. If interruption
-occurs after marker creation but before cleanup, the next customizer start
+durably writing pending success, so restart recovery cannot promote a marker ahead of its configuration. Because tty1
+starts while that lock is present, customization restarts `atlaso-console.service` after rotating the appliance secret
+keys and before the durability barrier; the replacement process loads the applied keys before privileged actions unlock.
+Success removes both handshake documents plus the initialization lock and releases the remaining first-boot units. If
+interruption occurs after marker creation but before cleanup, the next customizer start
 recovers the pending marker only when the OVF environment is already empty or its non-secret raw-clone deployment
 identifier matches. Any nonempty ID-less environment, including a release OVA redeployment, is reapplied rather than
 promoting possibly stale source state. An interrupted original OVA apply is safe to reapply idempotently. The applied

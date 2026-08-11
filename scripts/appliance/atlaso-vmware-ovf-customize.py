@@ -997,6 +997,21 @@ def configure_root_ssh(enabled: bool) -> None:
         raise OvfCustomizationError("Photon sshd configuration validation failed") from exc
 
 
+def restart_console() -> None:
+    """Restart tty1 so it reloads the newly applied appliance secrets."""
+    systemctl = shutil.which("systemctl")
+    if systemctl is None:
+        if os.name == "nt":
+            return
+        raise OvfCustomizationError("systemctl is required to refresh the Atlaso console")
+    subprocess.run(
+        [systemctl, "restart", "atlaso-console.service"],
+        check=True,
+        text=True,
+        capture_output=True,
+    )
+
+
 def run_initialization_layer(label: str, operation: Callable[[], None]) -> None:
     """Run one mutation while exposing only its bounded non-secret layer name.
 
@@ -1064,6 +1079,7 @@ def apply_customization(config: dict[str, object], *, dry_run: bool = False) -> 
             },
         ),
     )
+    run_initialization_layer("console credential refresh", restart_console)
     run_initialization_layer("host state durability", sync_customized_host_state)
     run_initialization_layer(
         "pending success marker",

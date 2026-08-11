@@ -237,8 +237,9 @@ power interruption between scrub and promotion recoverable on the next boot. A f
 retried with the initialization lock held. Mutation failures identify only a bounded, non-secret initialization layer in
 the customization log. The pending file and its parent directory are synchronized before the external credential scrub;
 all preceding host filesystem mutations are synchronized before pending success is recorded, and the applied-marker
-promotion synchronizes the directory again. If a raw clone accidentally reuses a disk whose applied
-marker already exists, the customizer
+promotion synchronizes the directory again. The early tty1 console is restarted after clone-specific appliance secret
+rotation and before the initialization lock is removed, so it cannot retain baked keys in process memory. If a raw clone
+accidentally reuses a disk whose applied marker already exists, the customizer
 does not reapply the injected credentials, but it does clear the injected OVF environment before its marker early exit so
 those plaintext values cannot remain in the cloned VMX. Inconclusive VMware RPC reads are retried rather than treated as
 proof of an empty property. Raw-clone injection carries a non-secret deployment identifier; if a source was interrupted
