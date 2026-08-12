@@ -508,7 +508,8 @@ new human routes fail tests unless they belong to a declared UI plane or an expl
 
 The public portal uses the compact Atlaso shell across the directory, CA trust page, request portal, and depot browser.
 Public user pages extend `public_portal_base.html`, the brand mark links back to `/ui/public`, the header action is contextual
-`Login` or `Sign out`, and GitHub, Swagger, Python, and version metadata live in the shared bottom footnote. Public
+`Login` or `Sign out`, and GitHub, Documentation, Swagger, Python, and version metadata live in the shared bottom
+footnote. Public
 service cards default to hostname URLs and include a Name/IP switch near the login action; the preference is stored in
 the `atlaso_public_address_mode` cookie. Card links use each service's configured scheme and port, such as the ESXi PXE
 HTTP port, the VCF Offline Depot HTTPS port, and registry canonical URL. Service-owned HTTPS `/PROD/` locations follow

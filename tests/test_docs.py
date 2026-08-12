@@ -8,6 +8,17 @@ from scripts.check_docs import validate_screenshots
 from scripts.overlay_docs_site import overlay
 
 
+def test_documentation_workflow_runs_on_every_main_push() -> None:
+    """Verify that documentation publication is not limited by changed paths."""
+    root = Path(__file__).resolve().parents[1]
+    workflow = (root / ".github" / "workflows" / "docs.yml").read_text(encoding="utf-8")
+    push_trigger = workflow.split("  push:\n", 1)[1].split("  workflow_dispatch:\n", 1)[0]
+
+    assert "    branches:\n      - main\n" in push_trigger
+    assert "paths:" not in push_trigger
+    assert "paths-ignore:" not in push_trigger
+
+
 def test_documentation_overlay_preserves_release_repository(tmp_path: Path) -> None:
     """Verify that documentation overlay preserves release repository.
 

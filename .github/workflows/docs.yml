@@ -4,14 +4,6 @@ on:
   push:
     branches:
       - main
-    paths:
-      - '.github/workflows/docs.yml'
-      - 'docs/**'
-      - 'scripts/check_docs.py'
-      - 'scripts/generate_docs_redirects.py'
-      - 'scripts/overlay_docs_site.py'
-      - 'requirements-docs.lock'
-      - 'zensical.toml'
   workflow_dispatch:
 
 permissions:
