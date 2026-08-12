@@ -4926,7 +4926,9 @@ first. You can also set <code>ATLASO_DEPLOY_SSH_PASSWORD</code> instead of passi
 password, it preserves the original <code>scp</code>/<code>ssh</code> key or agent workflow. Helper sync matters because the privileged helper
 is installed outside the Python virtualenv and is not replaced by <code>pip install</code>. If the app takes longer to import after
 reinstalling the wheel, increase the readiness wait with <code>-ReadinessTimeoutSeconds 120</code>. Use
-<code>-SkipInventoryLinuxSync</code> only when deliberately leaving the appliance's existing Inventory Linux package unchanged.</p>
+<code>-SkipInventoryLinuxSync</code> only when deliberately leaving the appliance's existing Inventory Linux package unchanged.
+The password-backed helper omits skipped optional asset arguments instead of passing empty native-command values, so
+these skip switches behave consistently in Windows PowerShell and PowerShell 7 native-argument modes.</p>
 <p>Pass <code>-IncludeLabNetworkAdapters</code> only after <code>VMnet2</code>, <code>VMnet3</code>, and <code>VMnet4</code> exist for the SiteA, WAN/SiteB, and
 trunk-like validation networks.</p>
 <p>Discover the running Workstation appliance address with:</p>
