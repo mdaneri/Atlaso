@@ -4584,6 +4584,55 @@ def test_settings_restore_rejects_disabled_users_for_enabled_vcf_services(client
         assert db.get(User, disabled_user.id) is not None
 
 
+def test_settings_restore_preflights_complete_vcf_service_state(client):
+    """Verify restored VCF service settings pass their canonical validators.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
+    from copy import deepcopy
+
+    import pytest
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.services.settings_archive import export_settings_archive, restore_settings_archive
+
+    with SessionLocal() as db:
+        archive = export_settings_archive(db, actor="test")
+        candidates = []
+
+        invalid_backup = deepcopy(archive)
+        invalid_backup["data"]["vcf_backup_settings"][0]["port"] = 0
+        candidates.append(
+            (
+                invalid_backup,
+                "VCF Backup state is invalid: SFTP port must be between 1 and 65535",
+            )
+        )
+
+        invalid_registry = deepcopy(archive)
+        invalid_registry["data"]["vcf_private_registry_settings"][0]["harbor_project"] = "BAD"
+        candidates.append(
+            (
+                invalid_registry,
+                "VCF Private Registry state is invalid: Harbor project must use lowercase",
+            )
+        )
+
+        invalid_depot = deepcopy(archive)
+        invalid_depot["data"]["vcf_offline_depot_settings"][0]["config_path"] = "relative/path"
+        candidates.append(
+            (
+                invalid_depot,
+                "VCF Offline Depot state is invalid: HTTPS config path must be an absolute Linux path",
+            )
+        )
+
+        for candidate, message in candidates:
+            with pytest.raises(ValueError, match=message):
+                restore_settings_archive(db, candidate)
+
+
 def test_settings_restore_and_factory_reset_clear_staged_ldap_recovery(client):
     """Verify that settings restore and factory reset clear staged ldap recovery.
 
@@ -4830,6 +4879,8 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
     ] = '["missing-terminal-target"]'
     invalid_network_state = deepcopy(archive)
     invalid_network_state["data"]["physical_interfaces"][0]["mtu"] = 1
+    invalid_appliance_config_path = deepcopy(archive)
+    invalid_appliance_config_path["data"]["appliance_settings"][0]["config_path"] = "relative/path"
     enabled_web_terminal_without_https = deepcopy(archive)
     enabled_web_terminal_without_https["data"]["appliance_settings"][0]["web_terminal_enabled"] = True
     enabled_web_terminal_without_https["data"]["appliance_settings"][0]["management_https_enabled"] = False
@@ -4839,6 +4890,8 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
     invalid_dns_domain["data"]["dns_settings"][0]["domain"] = "bad domain"
     invalid_route_destination = deepcopy(archive)
     invalid_route_destination["data"]["routes"][0]["destination_cidr"] = "not-a-cidr"
+    invalid_firewall_policy = deepcopy(archive)
+    invalid_firewall_policy["data"]["firewall_settings"][0]["default_input_policy"] = "reject"
     empty_required_field = deepcopy(archive)
     empty_required_field["data"]["physical_interfaces"][0]["name"] = "   "
     unresolved_ldap_organization = deepcopy(archive)
@@ -4859,6 +4912,11 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
         {"name": "LDAPS test", "slug": "ldaps-test", "suffix_dn": "dc=ldaps,dc=test"}
     )
     enabled_ldaps_without_ca["data"]["ca_settings"][0]["enabled"] = False
+    enabled_ldap_with_invalid_port = deepcopy(enabled_ldaps_without_ca)
+    enabled_ldap_with_invalid_port["data"]["ca_settings"][0]["enabled"] = True
+    enabled_ldap_with_invalid_port["data"]["ca_settings"][0]["root_certificate_pem"] = "certificate"
+    enabled_ldap_with_invalid_port["data"]["ldap_organizations"][0]["bind_password_encrypted"] = "encrypted"
+    enabled_ldap_with_invalid_port["data"]["ldap_settings"][0]["port"] = 0
     unresolved_oidc_client = deepcopy(archive)
     unresolved_oidc_client["data"]["oidc_client_redirect_uris"].append(
         {"client_id": "missing-client", "kind": "redirect", "uri": "https://example.invalid/callback"}
@@ -4917,6 +4975,9 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
     )
     certificate_profile["enabled"] = False
     enabled_certificate_with_disabled_profile["data"]["ca_certificates"][0]["enabled"] = True
+    weak_ca_profile = deepcopy(archive)
+    weak_ca_profile["data"]["ca_profiles"][0]["key_algorithm"] = "RSA"
+    weak_ca_profile["data"]["ca_profiles"][0]["key_size"] = 1024
     enabled_kms_without_ca = deepcopy(archive)
     enabled_kms_without_ca["data"]["kms_settings"][0]["enabled"] = True
     enabled_kms_without_ca["data"]["kms_settings"][0]["listen_interface"] = "eth2"
@@ -4957,6 +5018,29 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
     enabled_oidc_with_invalid_port = deepcopy(enabled_oidc_with_mismatched_address)
     enabled_oidc_with_invalid_port["data"]["oidc_provider_settings"][0]["listen_address"] = "192.168.50.1"
     enabled_oidc_with_invalid_port["data"]["oidc_provider_settings"][0]["port"] = 0
+    invalid_storage_state = deepcopy(archive)
+    invalid_storage_state["data"]["esx_storage_settings"] = [
+        {"enabled": False, "hostname": "nfs.atlaso.internal"}
+    ]
+    invalid_storage_state["data"]["esx_storage_volumes"].append(
+        {
+            "name": "invalid-volume",
+            "stable_device_id": "/dev/disk/by-id/invalid-volume",
+            "mount_path": "/mnt/atlaso-esx-storage/invalid-volume",
+        }
+    )
+    invalid_storage_state["data"]["esx_nfs_shares"].append(
+        {
+            "datastore_name": "invalid-share",
+            "volume_name": "invalid-volume",
+            "relative_path": "data",
+            "preferred_nfs_version": "2",
+            "interface_name": "eth2",
+            "address_families": "ipv4",
+            "ipv4_clients": "0.0.0.0/0",
+            "enabled": True,
+        }
+    )
     unsupported_setting = deepcopy(archive)
     unsupported_setting["data"]["settings"].append(
         {"key": "unsupported.setting", "value": "must-not-be-silently-dropped"}
@@ -4992,23 +5076,28 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
         (enabled_invalid_listen_address, "has an invalid listen address"),
         (enabled_missing_web_terminal_target, "select an ineligible Web Terminal interface"),
         (invalid_network_state, "network state is invalid: .* MTU must be between 576 and 9000"),
+        (invalid_appliance_config_path, "Appliance Settings are invalid: Appliance settings config path must be absolute"),
         (enabled_web_terminal_without_https, "enables Web Terminal without Management UI HTTPS"),
         (invalid_ntp_port, "NTP settings are invalid: NTP port must be UDP 123"),
         (invalid_dns_domain, "DNS settings are invalid: DNS domain bad domain must not contain whitespace"),
         (invalid_route_destination, "Routes and WAN state is invalid: Route not-a-cidr is not a valid destination CIDR"),
+        (invalid_firewall_policy, "Firewall state is invalid: .*Default input policy"),
         (empty_required_field, "has empty required field 'name'"),
         (unresolved_ldap_organization, "references an unknown LDAP organization"),
         (enabled_ldap_without_organization, "enables LDAP without an LDAP organization"),
         (enabled_ldaps_without_ca, "enables LDAPS without a ready Certificate Authority"),
+        (enabled_ldap_with_invalid_port, "LDAP state is invalid: LDAPS port must be between 1 and 65535"),
         (unresolved_oidc_client, "references an unknown OIDC client"),
         (unresolved_esx_volume, "references an unknown ESX storage volume"),
         (enabled_missing_esx_share_target, "has an ineligible interface or address family"),
         (cyclic_ldap_groups, "contains cyclic LDAP group membership"),
         (enabled_certificate_with_disabled_profile, "references a disabled CA profile"),
+        (weak_ca_profile, "Certificate Authority state is invalid: .*RSA key size must be at least 2048"),
         (enabled_kms_without_ca, "enables KMS without an enabled CA"),
         (enabled_oidc_without_dependencies, "enables OIDC without an active signing key"),
         (enabled_oidc_with_mismatched_address, "has listener addresses not derived from its interfaces"),
         (enabled_oidc_with_invalid_port, "has an invalid HTTPS port"),
+        (invalid_storage_state, "ESX Storage state is invalid: Datastore invalid-share must use NFS 3 or NFS 4.1"),
         (unsupported_setting, "has an unsupported setting key"),
     ]:
         with pytest.raises(ValueError, match=message):
@@ -7024,8 +7113,8 @@ def test_backup_restore_restore_replaces_settings_and_stops_services(client):
     assert payload["data"]["service_states"]
 
 
-def test_backup_restore_recreates_default_vcf_backup_user_from_settings_archive(client):
-    """Verify that backup restore recreates default vcf backup user from settings archive.
+def test_backup_restore_rejects_enabled_settings_archive_without_vcf_backup_user(client):
+    """Verify enabled VCF backup restore requires a retained enabled user.
 
     Args:
         client: HTTP test client used to exercise the Atlaso application.
@@ -7066,13 +7155,13 @@ def test_backup_restore_recreates_default_vcf_backup_user_from_settings_archive(
         files={"archive_file": ("atlaso-settings.json", archive_bytes, "application/json")},
     )
 
-    assert restored.status_code == 200
+    assert restored.status_code == 400
+    assert "Select a local Atlaso user for SFTP authentication" in restored.text
     with SessionLocal() as db:
-        user = db.execute(select(User).where(User.username == "vcf-backup")).scalar_one()
+        user = db.execute(select(User).where(User.username == "vcf-backup")).scalar_one_or_none()
         settings = db.execute(select(VcfBackupSettings)).scalar_one()
-        assert settings.sftp_user_id == user.id
-        assert user.enabled is False
-        assert user.os_sync_status == "password_not_staged"
+        assert user is None
+        assert settings.sftp_user_id is None
 
 
 def test_backup_restore_factory_reset_resets_desired_state_and_stops_services(client):

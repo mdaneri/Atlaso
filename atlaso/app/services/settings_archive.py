@@ -82,8 +82,10 @@ from atlaso.app.services.appliance_settings import (
     management_interface_context,
     normalize_fqdn,
     normalized_web_terminal_interfaces,
+    validate_appliance_settings,
     web_terminal_interface_options,
 )
+from atlaso.app.services.ca import validate_ca_state
 from atlaso.app.services.dnsmasq import (
     DNS_CONDITIONAL_FORWARDERS_SETTING_KEY,
     split_addresses,
@@ -101,9 +103,15 @@ from atlaso.app.services.firewall import (
     FIREWALL_SOURCE_GROUPS_SETTING_KEY,
     firewall_source_group_state,
     validate_firewall_rule,
+    validate_firewall_state,
 )
 from atlaso.app.services.local_users import LOCAL_USERS_PASSWORD_POLICY_KEY
-from atlaso.app.services.ldap import clear_ldap_recovery_payload, ensure_organization_bind_secret
+from atlaso.app.services.esx_storage import StorageInterface, validate_storage_state
+from atlaso.app.services.ldap import (
+    clear_ldap_recovery_payload,
+    ensure_organization_bind_secret,
+    validate_ldap_state,
+)
 from atlaso.app.services.networking import (
     normalize_interface_mode,
     normalize_interface_role,
@@ -119,7 +127,9 @@ from atlaso.app.services.oidc import (
 )
 from atlaso.app.services.routes_wan import validate_nat_source, validate_wan_state
 from atlaso.app.services.update_sources import UPDATE_SOURCE_KINDS
-from atlaso.app.services.vcf_backups import VCF_BACKUP_DEFAULT_USERNAME
+from atlaso.app.services.vcf_backups import VCF_BACKUP_DEFAULT_USERNAME, validate_vcf_backup_state
+from atlaso.app.services.vcf_offline_depot import validate_vcf_depot_state
+from atlaso.app.services.vcf_private_registry import validate_vcf_registry_state
 
 ARCHIVE_SCHEMA_VERSION = 2
 LEGACY_ARCHIVE_SCHEMA_VERSION = 1
@@ -1370,20 +1380,20 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
         oidc_target_addresses[name] = addresses
 
     appliance_row = data["appliance_settings"][0]
+    appliance_settings = ApplianceSettings(
+        **_model_kwargs_with_scalar_defaults(ApplianceSettings, appliance_row)
+    )
+    management_interface = management_interface_context(archived_interfaces)
+    options = web_terminal_interface_options(archived_interfaces, archived_vlans)
     if appliance_row.get("web_terminal_enabled", False):
         if not appliance_row.get("management_https_enabled", False):
             raise ValueError(
                 "The settings archive enables Web Terminal without Management UI HTTPS."
             )
-        appliance_settings = ApplianceSettings(
-            **_model_kwargs(ApplianceSettings, appliance_row)
-        )
-        management_interface = management_interface_context(archived_interfaces)
         selected_interfaces = normalized_web_terminal_interfaces(
             appliance_settings,
             management_interface,
         )
-        options = web_terminal_interface_options(archived_interfaces, archived_vlans)
         options_by_name = {str(option["name"]): option for option in options}
         if not management_interface.get("name") or any(
             name not in options_by_name
@@ -1393,6 +1403,26 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
             raise ValueError(
                 "The settings archive appliance settings select an ineligible Web Terminal interface."
             )
+    ca_row = data["ca_settings"][0]
+    management_certificate_ready = any(
+        str(row.get("managed_owner") or "") == "appliance:https"
+        and str(row.get("status") or "") == "issued"
+        and bool(str(row.get("certificate_pem") or ""))
+        and bool(str(row.get("private_key_encrypted") or ""))
+        for row in data.get("ca_certificates", [])
+    )
+    appliance_errors, _appliance_warnings = validate_appliance_settings(
+        appliance_settings,
+        local_dns_enabled=bool(data["dns_settings"][0].get("enabled", False)),
+        management_interface=management_interface,
+        ca_enabled=bool(ca_row.get("enabled", False)),
+        management_https_cert_available=management_certificate_ready,
+        web_terminal_options=options,
+    )
+    if appliance_errors:
+        raise ValueError(
+            f"The settings archive Appliance Settings are invalid: {appliance_errors[0]}"
+        )
 
     for section_name, target_names, require_listener, address_requirement in (
         ("dns_settings", service_target_names, True, "authoritative"),
@@ -1484,6 +1514,23 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
             raise ValueError(
                 f"The settings archive row {row_index} in 'firewall_rules' has an invalid source or destination."
             )
+    firewall_errors = validate_firewall_state(
+        FirewallSettings(
+            **_model_kwargs_with_scalar_defaults(
+                FirewallSettings,
+                data["firewall_settings"][0],
+            )
+        ),
+        [
+            FirewallRule(**_model_kwargs_with_scalar_defaults(FirewallRule, row))
+            for row in data.get("firewall_rules", [])
+        ],
+        source_groups=firewall_source_groups,
+    )
+    if firewall_errors:
+        raise ValueError(
+            f"The settings archive Firewall state is invalid: {firewall_errors[0]}"
+        )
 
     for row_index, row in enumerate(data.get("routes", []), start=1):
         enabled = row.get("enabled", True)
@@ -1683,6 +1730,38 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
                 f"The settings archive row {row_index} in 'ca_certificates' references a disabled CA profile."
             )
 
+    ca_profile_ids = {
+        str(row["name"]): row_index
+        for row_index, row in enumerate(data.get("ca_profiles", []), start=1)
+    }
+    ca_errors = validate_ca_state(
+        settings=CaSettings(
+            **_model_kwargs_with_scalar_defaults(CaSettings, ca_row)
+        ),
+        profiles=[
+            CaProfile(
+                id=ca_profile_ids[str(row["name"])],
+                **_model_kwargs_with_scalar_defaults(CaProfile, row),
+            )
+            for row in data.get("ca_profiles", [])
+        ],
+        certificates=[
+            CaCertificate(
+                **_model_kwargs_with_scalar_defaults(
+                    CaCertificate,
+                    row,
+                    exclude={"profile_id"},
+                ),
+                profile_id=ca_profile_ids.get(str(row.get("profile_name") or "")),
+            )
+            for row in data.get("ca_certificates", [])
+        ],
+    )
+    if ca_errors:
+        raise ValueError(
+            f"The settings archive Certificate Authority state is invalid: {ca_errors[0]}"
+        )
+
     kms_row = data["kms_settings"][0]
     if kms_row.get("enabled", False):
         ca_row = data["ca_settings"][0]
@@ -1857,6 +1936,39 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
         for group in terminal_groups:
             remaining_edges.pop(group)
 
+    archived_organizations = {
+        str(row["slug"]): LdapOrganization(
+            id=row_index,
+            **_model_kwargs_with_scalar_defaults(LdapOrganization, row),
+        )
+        for row_index, row in enumerate(data.get("ldap_organizations", []), start=1)
+    }
+    for row in data.get("ldap_users", []):
+        organization = archived_organizations.get(str(row.get("organization_slug") or ""))
+        if organization is not None:
+            organization.users.append(
+                LdapUser(
+                    **_model_kwargs_with_scalar_defaults(
+                        LdapUser,
+                        row,
+                        exclude={"organization_id"},
+                    )
+                )
+            )
+    ldap_errors, _ldap_warnings = validate_ldap_state(
+        LdapSettings(
+            **_model_kwargs_with_scalar_defaults(LdapSettings, ldap_row)
+        ),
+        list(archived_organizations.values()),
+        available_interfaces=ldap_target_names,
+        ca_ready=bool(ca_row.get("enabled", False) and str(ca_row.get("root_certificate_pem") or "")),
+        recovery_staged=True,
+    )
+    if ldap_errors:
+        raise ValueError(
+            f"The settings archive LDAP state is invalid: {ldap_errors[0]}"
+        )
+
     oidc_client_ids = {str(row["client_id"]) for row in data.get("oidc_clients", [])}
     for row_index, row in enumerate(data.get("oidc_clients", []), start=1):
         require_reference(
@@ -1952,6 +2064,58 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
         ):
             raise ValueError(
                 f"The settings archive row {row_index} in 'esx_nfs_shares' has an ineligible interface or address family."
+            )
+
+    volume_ids = {
+        str(row["name"]): row_index
+        for row_index, row in enumerate(data.get("esx_storage_volumes", []), start=1)
+    }
+    storage_interfaces: dict[str, StorageInterface] = {}
+    for interface_name in service_target_names:
+        row = physical_interfaces.get(interface_name) or vlan_interfaces.get(interface_name, {})
+        addresses = {"ipv4": [], "ipv6": []}
+        for field_name, family in (("ip_cidr", "ipv4"), ("ipv6_cidr", "ipv6")):
+            try:
+                addresses[family].append(str(ip_interface(str(row.get(field_name) or "")).ip))
+            except ValueError:
+                continue
+        storage_interfaces[interface_name] = StorageInterface(
+            interface_name,
+            tuple(addresses["ipv4"]),
+            tuple(addresses["ipv6"]),
+        )
+    if data.get("esx_storage_settings"):
+        storage_errors, _storage_warnings = validate_storage_state(
+            EsxStorageSettings(
+                **_model_kwargs_with_scalar_defaults(
+                    EsxStorageSettings,
+                    data["esx_storage_settings"][0],
+                )
+            ),
+            [
+                EsxStorageVolume(
+                    id=volume_ids[str(row["name"])],
+                    **_model_kwargs_with_scalar_defaults(EsxStorageVolume, row),
+                )
+                for row in data.get("esx_storage_volumes", [])
+            ],
+            [
+                EsxNfsShare(
+                    **_model_kwargs_with_scalar_defaults(
+                        EsxNfsShare,
+                        row,
+                        exclude={"volume_id"},
+                    ),
+                    volume_id=volume_ids.get(str(row.get("volume_name") or "")),
+                )
+                for row in data.get("esx_nfs_shares", [])
+            ],
+            storage_interfaces,
+            dns_enabled=bool(data["dns_settings"][0].get("enabled", False)),
+        )
+        if storage_errors:
+            raise ValueError(
+                f"The settings archive ESX Storage state is invalid: {storage_errors[0]}"
             )
 
     update_sources = {
@@ -2061,6 +2225,96 @@ def _validate_archive_database_relationships(db: Session, data: dict[str, list[d
             raise ValueError(
                 f"The settings archive row {row_index} in 'vcf_offline_depot_settings' requires an enabled local user."
             )
+
+    archived_users = list(db.execute(select(User)).scalars().all())
+    users_by_name = {user.username: user for user in archived_users}
+    backup_row = data["vcf_backup_settings"][0]
+    backup_username = str(backup_row.get("sftp_username") or "")
+    backup_settings = VcfBackupSettings(
+        **_model_kwargs_with_scalar_defaults(
+            VcfBackupSettings,
+            backup_row,
+            exclude={"sftp_user_id"},
+        ),
+        sftp_user_id=(users_by_name.get(backup_username).id if backup_username in users_by_name else None),
+    )
+    backup_errors = validate_vcf_backup_state(
+        backup_settings,
+        archived_users,
+        interface_names={
+            str(row.get("name") or "")
+            for row in data.get("physical_interfaces", []) + data.get("vlan_interfaces", [])
+        },
+    )
+    if backup_errors:
+        raise ValueError(
+            f"The settings archive VCF Backup state is invalid: {backup_errors[0]}"
+        )
+
+    registry_errors, _registry_warnings = validate_vcf_registry_state(
+        VcfPrivateRegistrySettings(
+            **_model_kwargs_with_scalar_defaults(
+                VcfPrivateRegistrySettings,
+                data["vcf_private_registry_settings"][0],
+            )
+        ),
+        [
+            VcfRegistryBundle(
+                **_model_kwargs_with_scalar_defaults(VcfRegistryBundle, row)
+            )
+            for row in data.get("vcf_registry_bundles", [])
+        ],
+        managed_dns_names={
+            normalize_fqdn(str(row.get("hostname") or ""))
+            for row in data.get("dns_records", [])
+            if row.get("enabled", True)
+        },
+        interface_names={
+            str(row.get("name") or "")
+            for row in data.get("physical_interfaces", []) + data.get("vlan_interfaces", [])
+        },
+        ca_bundle_source="local-ca",
+        ca_bundle_available=True,
+    )
+    if registry_errors:
+        raise ValueError(
+            f"The settings archive VCF Private Registry state is invalid: {registry_errors[0]}"
+        )
+
+    depot_row = data["vcf_offline_depot_settings"][0]
+    depot_username = str(depot_row.get("http_username") or "")
+    depot_errors, _depot_warnings = validate_vcf_depot_state(
+        VcfOfflineDepotSettings(
+            **_model_kwargs_with_scalar_defaults(
+                VcfOfflineDepotSettings,
+                depot_row,
+                exclude={"http_user_id"},
+            ),
+            http_user_id=(users_by_name.get(depot_username).id if depot_username in users_by_name else None),
+        ),
+        [
+            VcfDepotDownloadProfile(
+                **_model_kwargs_with_scalar_defaults(VcfDepotDownloadProfile, row)
+            )
+            for row in data.get("vcf_depot_download_profiles", [])
+        ],
+        download_token_present=True,
+        activation_code_present=True,
+        interface_names={
+            str(row.get("name") or "")
+            for row in data.get("physical_interfaces", []) + data.get("vlan_interfaces", [])
+        },
+        management_interface_names={
+            str(row.get("name") or "")
+            for row in data.get("physical_interfaces", [])
+            if normalize_interface_role(row.get("role")) == "management"
+        },
+        users=archived_users,
+    )
+    if depot_errors:
+        raise ValueError(
+            f"The settings archive VCF Offline Depot state is invalid: {depot_errors[0]}"
+        )
 
     from atlaso.app.services.network_boot import CATALOG_BY_KEY
 
