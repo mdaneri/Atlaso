@@ -1228,12 +1228,23 @@ def main(argv: list[str] | None = None) -> int:
         log("VMware OVF customization already applied; leaving appliance state unchanged.")
         return 0
     if NO_OVF_MARKER_PATH.exists() and not args.dry_run:
-        try:
-            answered, content = try_read_ovf_environment_source(args.ovf_env_file)
-        except OSError as exc:
-            log(f"VMware non-OVF initialization could not inspect a replacement deployment: {type(exc).__name__}")
-            return 2
-        if not answered or not content.strip():
+        logged_unanswered = False
+        while True:
+            try:
+                answered, content = try_read_ovf_environment_source(args.ovf_env_file)
+            except OSError as exc:
+                log(f"VMware non-OVF initialization could not inspect a replacement deployment: {type(exc).__name__}")
+                return 2
+            if answered:
+                break
+            if not logged_unanswered:
+                log(
+                    "VMware non-OVF initialization is retrying an inconclusive deployment-property read before "
+                    "using image defaults."
+                )
+                logged_unanswered = True
+            time.sleep(OVF_ENVIRONMENT_POLL_SECONDS)
+        if not content.strip():
             complete_first_boot_initialization()
             log("VMware non-OVF initialization already completed; using image defaults.")
             return 0

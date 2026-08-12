@@ -901,6 +901,68 @@ def test_vmware_ovf_customizer_replaces_non_ovf_marker_when_envelope_arrives(
     assert not customizer.NO_OVF_MARKER_PATH.exists()
 
 
+def test_vmware_ovf_customizer_waits_for_answer_before_replacing_non_ovf_marker(
+    tmp_path,
+    monkeypatch,
+):
+    """Verify a transient unanswered read cannot skip a later OVF envelope.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+        monkeypatch: Pytest helper used to replace VMware reads and customization mutations.
+    """
+    customizer = load_customizer()
+    customizer.MARKER_PATH = tmp_path / "customization.applied"
+    customizer.PENDING_MARKER_PATH = tmp_path / "customization.pending"
+    customizer.NO_OVF_MARKER_PATH = tmp_path / "no-ovf.applied"
+    customizer.INITIALIZATION_LOCK_PATH = tmp_path / "initializing"
+    customizer.NETWORK_REVIEW_PATH = tmp_path / "network-review.json"
+    customizer.NETWORK_CORRECTION_PATH = tmp_path / "network-correction.json"
+    customizer.write_json_atomic(
+        customizer.NO_OVF_MARKER_PATH,
+        {"completed_at": "2026-08-12T00:00:00Z", "source": "image_defaults"},
+    )
+    reads = iter([(False, ""), (True, OVF_ENV)])
+    read_count = []
+    sleeps = []
+    applied = []
+
+    def read_environment():
+        """Return one unanswered read followed by the persistent OVF envelope."""
+        read_count.append(True)
+        return next(reads, (True, OVF_ENV))
+
+    def apply_replacement(config, *, dry_run=False):
+        """Record and mark the replacement OVF deployment.
+
+        Args:
+            config: Validated replacement customization values.
+            dry_run: Whether host mutation is disabled.
+
+        Returns:
+            The redacted replacement-deployment summary.
+        """
+        assert dry_run is False
+        applied.append(config)
+        summary = customizer.redacted_summary(config)
+        customizer.write_json_atomic(customizer.MARKER_PATH, summary)
+        return summary
+
+    monkeypatch.setattr(customizer, "try_read_ovf_environment", read_environment)
+    monkeypatch.setattr(customizer.time, "sleep", sleeps.append)
+    monkeypatch.setattr(customizer, "apply_customization", apply_replacement)
+    monkeypatch.setattr(customizer, "log", lambda _message: None)
+
+    assert customizer.main([]) == 0
+
+    assert len(read_count) == 3
+    assert sleeps == [customizer.OVF_ENVIRONMENT_POLL_SECONDS]
+    assert len(applied) == 1
+    assert applied[0]["fqdn"] == "appliance.atlaso.internal"
+    assert customizer.MARKER_PATH.exists()
+    assert not customizer.NO_OVF_MARKER_PATH.exists()
+
+
 def test_vmware_ovf_customizer_keeps_unanswered_tools_channel_fail_closed(
     tmp_path,
     monkeypatch,
