@@ -684,6 +684,7 @@ KICKSTART_REFERENCE_VALIDATION_ERROR = "Kickstart source is invalid. Review its 
 KICKSTART_UPLOAD_ERROR = "Kickstart upload is invalid. Review the file, name, and reference markers."
 NETWORK_STAGED_CONFIG_PATH = "/var/lib/atlaso/apply/network/atlaso-network.conf"
 DNSMASQ_STAGED_CONFIG_PATH = "/var/lib/atlaso/apply/dnsmasq/atlaso.conf"
+PUBLIC_DOCUMENTATION_URL = "https://mdaneri.github.io/Atlaso/docs/"
 
 templates = Jinja2Templates(directory=TEMPLATES_DIR)
 
@@ -809,6 +810,7 @@ def render(request: Request, template: str, context: dict, status_code: int = 20
             "csrf_token": csrf_token(request),
             "server_time": utcnow(),
             "public_github_url": "https://github.com/mdaneri/Atlaso",
+            "public_documentation_url": PUBLIC_DOCUMENTATION_URL,
             "current_version_info": current_version_info(),
             "management_ui_root": MANAGEMENT_UI_ROOT,
             "public_ui_root": PUBLIC_UI_ROOT,

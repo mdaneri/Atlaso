@@ -78,6 +78,19 @@ media when a material UI change makes it inaccurate.
 - Keep controls, code, and UI text readable at the published viewport.
 - Avoid autoplay, rapid flashing, and third-party tracking embeds.
 
+## Publication
+
+Every push to `main` runs the Documentation workflow, even when the commit does not change a documentation path. The
+workflow validates the checked-in Markdown and media, builds the site in strict mode, and replaces only the `/docs`
+subtree on the shared `gh-pages` branch. The release-repository landing page and signed content under `/updates` remain
+unchanged. When the generated documentation matches the published site, the workflow succeeds without creating a new
+`gh-pages` commit or entering the shared Pages publication queue. Only a detected `/docs` change enters the serialized
+`atlaso-github-pages` writer, so routine verification runs cannot replace a pending release or promotion publisher.
+
+To request a rebuild manually, open **Actions > Documentation** in GitHub, choose **Run workflow**, select `main`, and
+run the workflow. Maintainers can request the same rebuild from an authenticated GitHub CLI session with
+`gh workflow run docs.yml --ref main` and monitor it with `gh run watch`.
+
 ## Required checks
 
 Run these commands before opening a pull request:

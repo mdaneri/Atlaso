@@ -121,6 +121,14 @@ def test_login_and_dashboard_render(client):
     footer = response.text.split('<footer class="management-info-footnote"', 1)[1].split("</footer>", 1)[0]
     assert 'data-server-time' not in topbar
     assert 'data-server-time' in footer
+    documentation_link = (
+        'href="https://mdaneri.github.io/Atlaso/docs/" target="_blank" rel="noopener" '
+        'title="Atlaso documentation"'
+    )
+    assert documentation_link in footer
+    assert ">Documentation<" in footer
+    assert footer.index("https://github.com/mdaneri/Atlaso") < footer.index(documentation_link)
+    assert footer.index(documentation_link) < footer.index('href="/api/docs"')
     server_time_response = client.get("/server-time")
     assert server_time_response.status_code == 200
     assert server_time_response.json()["label"].startswith("Server ")
@@ -9751,6 +9759,15 @@ def test_public_ca_root_page_is_unauthenticated(client):
     assert "Trust Material" not in page.text
     assert "Appliance Information" not in page.text
     assert "https://github.com/mdaneri/Atlaso" in page.text
+    public_footer = page.text.split('<footer class="public-info-footnote"', 1)[1].split("</footer>", 1)[0]
+    documentation_link = (
+        'href="https://mdaneri.github.io/Atlaso/docs/" target="_blank" rel="noopener" '
+        'title="Atlaso documentation"'
+    )
+    assert documentation_link in public_footer
+    assert ">Documentation<" in public_footer
+    assert public_footer.index("https://github.com/mdaneri/Atlaso") < public_footer.index(documentation_link)
+    assert public_footer.index(documentation_link) < public_footer.index(">Swagger<")
     assert 'href="https://192.168.167.10/ui/management"' in page.text
     assert ">Management<" in page.text
     assert 'href="https://192.168.167.10/api/docs"' in page.text
