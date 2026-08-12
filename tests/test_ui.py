@@ -1009,7 +1009,7 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert service_worker.headers["cache-control"] == "no-cache"
     assert service_worker.headers["service-worker-allowed"] == "/ui/management/"
     assert "ATLASO_CACHE" in service_worker.text
-    assert "atlaso-management-pwa-v247" in service_worker.text
+    assert "atlaso-management-pwa-v248" in service_worker.text
     assert 'fetch(asset, { cache: "reload" })' in service_worker.text
     assert ".catch(() => undefined)" in service_worker.text
     assert 'request.mode === "navigate"' in service_worker.text
@@ -1023,11 +1023,11 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert 'accept.includes("text/html")' in service_worker.text
     assert '!hasDownloadLikePath(url)' in service_worker.text
     assert "/static/vendor/monaco/atlaso-monaco.min.js?v=atlaso-monaco-20260806-7" in service_worker.text
-    assert "/static/app.css?v=vsphere-key-providers-170-20260810-1" in service_worker.text
+    assert "/static/app.css?v=vlan-interface-wizard-304-2" in service_worker.text
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-8" in service_worker.text
     assert "/static/appliance-apply-polling.js?v=issue-294-2" in service_worker.text
     assert "/static/ui-routes.js?v=issue-287-1" in service_worker.text
-    assert "/static/app.js?v=access-management-ui-302-2" in service_worker.text
+    assert "/static/app.js?v=vlan-interface-wizard-304-2" in service_worker.text
     assert "/static/terminal.js?v=issue-287-2" in service_worker.text
     assert "/static/pwa.js?v=issue-287-2" in service_worker.text
     assert "vcfdt-configuration-248-20260807-14" not in service_worker.text
@@ -1043,7 +1043,7 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     offline = client.get("/static/offline.html")
     assert offline.status_code == 200
     assert "Appliance connection unavailable" in offline.text
-    assert "/static/app.css?v=vsphere-key-providers-170-20260810-1" in offline.text
+    assert "/static/app.css?v=vlan-interface-wizard-304-2" in offline.text
 
 
 def test_shared_ui_pattern_shell_and_wizard_contracts(client):
@@ -1059,8 +1059,8 @@ def test_shared_ui_pattern_shell_and_wizard_contracts(client):
     base = (templates / "base.html").read_text(encoding="utf-8")
     public_base = (templates / "public_portal_base.html").read_text(encoding="utf-8")
     for shell, app_asset in (
-        (base, "/static/app.js?v=access-management-ui-302-2"),
-        (public_base, "/static/app.js?v=access-management-ui-302-2"),
+        (base, "/static/app.js?v=vlan-interface-wizard-304-2"),
+        (public_base, "/static/app.js?v=vlan-interface-wizard-304-2"),
         (base, "/static/appliance-apply-polling.js?v=issue-294-2"),
     ):
         assert shell.index("/static/vendor/tabulator/tabulator.min.js") < shell.index(
@@ -1121,9 +1121,9 @@ def test_every_existing_tabulator_uses_the_shared_grid_foundation(client):
     create_grid = "window.AtlasoUiPatterns.createGrid({"
 
     assert app_js.count(create_grid) == 40
-    assert app_js.count('pattern: "direct-edit"') == 13
+    assert app_js.count('pattern: "direct-edit"') == 12
     assert app_js.count('pattern: "read-only"') == 16
-    assert app_js.count('pattern: "wizard-backed"') == 11
+    assert app_js.count('pattern: "wizard-backed"') == 12
     assert "new Tabulator(" not in app_js
     assert "new window.Tabulator(" not in app_js
     assert "atlaso-legacy-tabulator: #117" not in app_js
@@ -1150,7 +1150,7 @@ def test_every_existing_tabulator_uses_the_shared_grid_foundation(client):
         "initializeRoutesWanPoliciesTable": "direct-edit",
         "initializePhysicalInterfacesTable": "direct-edit",
         "initializeOidcGroupMappingsTable": "direct-edit",
-        "initializeVlanInterfacesTable": "direct-edit",
+        "initializeVlanInterfacesTable": "wizard-backed",
         "initializeDnsRecordsTableElement": "direct-edit",
         "initializeDhcpReservationsTable": "direct-edit",
         "initializeEsxiPxeHostsTable": "wizard-backed",
@@ -1683,9 +1683,9 @@ def test_monitor_page_renders_and_data_endpoint(client):
     assert "Loading devices" not in page.text
     assert "<th>Device</th><th>Read/s</th><th>Write/s</th>" in page.text
     assert "swagger-link-icon" in page.text
-    assert "/static/app.css?v=vsphere-key-providers-170-20260810-1" in page.text
+    assert "/static/app.css?v=vlan-interface-wizard-304-2" in page.text
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-8" in page.text
-    assert "/static/app.js?v=access-management-ui-302-2" in page.text
+    assert "/static/app.js?v=vlan-interface-wizard-304-2" in page.text
     app_css = client.get("/static/app.css")
     assert app_css.status_code == 200
     assert ".split-workspace > .wide-panel" in app_css.text
@@ -13759,6 +13759,16 @@ def test_physical_and_vlan_pages_render(client):
     assert "For standard access-mode NICs, assign IPv4/IPv6 CIDR on Physical Interfaces instead." in vlans.text
     assert "vlan-interfaces-table" in vlans.text
     assert "An enabled access VLAN can expose the authenticated management UI" in vlans.text
+    assert "data-vlan-interface-count" in vlans.text
+    assert 'data-can-write="true"' in vlans.text
+    assert "data-vlan-interface-form" in vlans.text
+    assert 'data-atlaso-wizard-step="vlan"' in vlans.text
+    assert 'data-atlaso-wizard-step="addressing"' in vlans.text
+    assert 'data-atlaso-wizard-step="role"' in vlans.text
+    assert 'data-atlaso-wizard-step="admin_state"' in vlans.text
+    assert 'data-atlaso-wizard-step="review"' in vlans.text
+    assert 'name="access_management_ui_enabled"' in vlans.text
+    assert 'name="enabled" checked' in vlans.text
     app_js = client.get("/static/app.js").text
     physical_table_js = app_js.split("function initializePhysicalInterfacesTable()", 1)[1].split(
         "function initializeVlanInterfacesTable()", 1
@@ -13768,22 +13778,33 @@ def test_physical_and_vlan_pages_render(client):
     )[0]
     assert "atlasoBooleanFormatter(cell)" in physical_management_ui_column
     assert '<span class="status-pill good">inherent</span>' in physical_management_ui_column
-    assert "+ Add VLAN" in app_js
+    assert "+ Add VLAN interface here" in app_js
     vlan_table_js = app_js.split("function initializeVlanInterfacesTable()", 1)[1].split("function initializeDnsRecordsTable()", 1)[0]
     vlan_management_ui_column = vlan_table_js.split('title: "Management UI"', 1)[1].split(
         'title: "Admin Up"', 1
     )[0]
-    assert "formatter: atlasoBooleanFormatter" in vlan_management_ui_column
-    assert vlan_table_js.index('field: "add_vlan"') < vlan_table_js.index('field: "vlan_id"') < vlan_table_js.index('field: "parent_interface"') < vlan_table_js.index('field: "name"')
-    assert 'cellClick: (event, cell) => activateNewVlanRow(cell)' in vlan_table_js
-    assert 'markNewRecordRow(row, "vlan_id", "add_vlan")' in vlan_table_js
-    assert "async function activateNewVlanRow(cell)" in client.get("/static/app.js").text
-    assert "data.is_activated" in client.get("/static/app.js").text
+    assert "atlasoBooleanFormatter(cell)" in vlan_management_ui_column
+    assert "editor:" not in vlan_management_ui_column
+    assert "cellEdited:" not in vlan_management_ui_column
+    assert vlan_table_js.index('field: "name"') < vlan_table_js.index('field: "parent_interface"') < vlan_table_js.index('field: "vlan_id"')
+    assert 'pattern: "wizard-backed"' in vlan_table_js
+    assert "window.AtlasoUiPatterns.createWizard({" in vlan_table_js
+    assert 'label: "Edit VLAN"' in vlan_table_js
+    assert "onOpenRow: canWrite" in vlan_table_js
+    assert 'markNewRecordRow(row, "name")' in vlan_table_js
+    assert "atlasoGridWizardRequest(form.action, new FormData(form))" in vlan_table_js
+    assert "const updateVlanCount = () =>" in vlan_table_js
+    assert "table.getData().filter((row) => !row.is_new).length" in vlan_table_js
+    assert "updateVlanCount();" in vlan_table_js
+    assert "context ? Boolean(context.enabled) : true" in vlan_table_js
+    assert "editor:" not in vlan_table_js
+    assert "cellEdited:" not in vlan_table_js
+    assert "autoSaveVlanInterface" not in app_js
+    assert "activateNewVlanRow" not in app_js
     assert "const parentMtus = Object.fromEntries" in vlan_table_js
-    assert "newVlanInterfaceRow(defaultParent, defaultMtu)" in vlan_table_js
-    assert "autoSaveVlanParent(cell, csrf, parentMtus)" in vlan_table_js
-    assert "autoSaveVlanId(cell, csrf)" in vlan_table_js
-    assert "function vlanDerivedName(data)" in app_js
+    assert "newVlanWizardRow()" in vlan_table_js
+    assert "form.elements.mtu.value = parentMtus[parentSelect.value] || 1500" in vlan_table_js
+    assert "derivedName.value = parent && vlanId ? `${parent}.${vlanId}` : \"\"" in vlan_table_js
     assert 'data-parent-options=\'[{"label": "eth1 - trunk' in vlans.text
     assert "data-parent-options" in vlans.text
     assert "deleteVlanInterfaceFromMenu" in app_js
@@ -13818,7 +13839,7 @@ def test_physical_and_vlan_pages_render(client):
     assert ".network-state-icon.down" in app_css
     assert ".network-state-icon.missing" in app_css
     assert ".invalid-cidr-input" in app_css
-    assert ".vlan-interfaces-table .tabulator-row.new-record-row .new-record-primary-cell" in app_css
+    assert ".tabulator .tabulator-row.grid-row-recently-saved" in app_css
     assert "Review appliance changes" in vlans.text
     assert "/var/lib/atlaso/apply/network/atlaso-network.conf" in vlans.text
 
@@ -14509,13 +14530,46 @@ def test_vlan_interface_create_edit_delete_and_apply(client):
             "enabled": "on",
             "csrf": csrf,
         },
-        follow_redirects=False,
+        headers={"X-Atlaso-Grid": "1", "Accept": "application/json"},
     )
-    assert created.status_code == 303
+    assert created.status_code == 200
+    created_row = created.json()["vlan"]
+    assert created_row["name"] == "eth1.50"
+    assert created_row["enabled"] is True
+
+    updated = client.post(
+        f"/vlan-interfaces/{created_row['id']}/edit",
+        data={
+            "parent_interface": "eth1",
+            "vlan_id": "50",
+            "ip_cidr": "192.168.50.1/24",
+            "ipv6_cidr": "fd00:50::1/64",
+            "mtu": "1600",
+            "role": "storage",
+            "enabled": "on",
+            "csrf": csrf,
+        },
+        headers={"X-Atlaso-Grid": "1", "Accept": "application/json"},
+    )
+    assert updated.status_code == 200
+    assert updated.json()["vlan"] == {
+        "id": created_row["id"],
+        "name": "eth1.50",
+        "parent_interface": "eth1",
+        "vlan_id": 50,
+        "ip_cidr": "192.168.50.1/24",
+        "ipv6_cidr": "fd00:50::1/64",
+        "mtu": 1600,
+        "role": "storage",
+        "enabled": True,
+        "access_management_ui_enabled": False,
+        "parent_missing": False,
+    }
 
     page = client.get("/vlan-interfaces")
     assert "eth1.50" in page.text
     assert "192.168.50.1/24" in page.text
+    assert "fd00:50::1/64" in page.text
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
     apply_response = client.post("/appliance-apply", data={"csrf": csrf, "selected_units": "network"})
     assert_apply_redirect(apply_response)
@@ -14678,6 +14732,22 @@ def test_vlan_page_disables_missing_parent_vlan(client):
     assert response.status_code == 409
     assert "missing from host inventory" in response.text
 
+    disabled = client.post(
+        f"/vlan-interfaces/{row['id']}/edit",
+        data={
+            "parent_interface": "missing_155d011d1d",
+            "vlan_id": "11",
+            "ip_cidr": "192.168.11.1/24",
+            "mtu": "1500",
+            "role": "access",
+            "csrf": csrf,
+        },
+        headers={"X-Atlaso-Grid": "1", "Accept": "application/json"},
+    )
+    assert disabled.status_code == 200
+    assert disabled.json()["vlan"]["enabled"] is False
+    assert disabled.json()["vlan"]["parent_missing"] is True
+
 
 def test_vlan_interface_rejects_non_trunk_parent(client):
     """Verify that vlan interface rejects non trunk parent.
@@ -14742,6 +14812,169 @@ def test_vlan_interface_requires_vlan_id_and_ip_cidr(client):
     )
     assert missing_vlan.status_code == 409
     assert "VLAN ID is required" in missing_vlan.text
+
+
+@pytest.mark.parametrize(
+    ("overrides", "expected_message"),
+    [
+        ({"vlan_id": "0"}, "VLAN ID must be between 1 and 4094."),
+        ({"vlan_id": "4095"}, "VLAN ID must be between 1 and 4094."),
+        ({"ip_cidr": "192.168.80.1"}, "VLAN IPv4 CIDR must include an address and prefix."),
+        ({"ip_cidr": "", "ipv6_cidr": "fd00:80::1"}, "VLAN IPv6 CIDR must include an address and prefix."),
+        ({"mtu": "575"}, "VLAN MTU must be between 576 and 9000."),
+        ({"mtu": "9001"}, "VLAN MTU must be between 576 and 9000."),
+        ({"role": "unsupported"}, "VLAN role must be one of"),
+    ],
+)
+def test_vlan_interface_wizard_returns_actionable_validation_errors(client, overrides, expected_message):
+    """Verify recoverable VLAN wizard validation errors retain actionable detail.
+
+    Args:
+        client: Authenticated UI test client fixture.
+        overrides: VLAN form values that should fail validation.
+        expected_message: Actionable validation detail expected in the response.
+    """
+    login(client)
+    page = client.get("/vlan-interfaces")
+    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    data = {
+        "parent_interface": "eth1",
+        "vlan_id": "80",
+        "ip_cidr": "192.168.80.1/24",
+        "ipv6_cidr": "",
+        "mtu": "1500",
+        "role": "access",
+        "enabled": "on",
+        "csrf": csrf,
+    }
+    data.update(overrides)
+
+    response = client.post(
+        "/vlan-interfaces",
+        data=data,
+        headers={"X-Atlaso-Grid": "1", "Accept": "application/json"},
+    )
+
+    assert response.status_code == 409
+    assert expected_message in response.json()["detail"]
+
+
+def test_vlan_interface_wizard_supports_ipv6_only_disabled_creation_and_duplicate_errors(client):
+    """Verify IPv6-only disabled VLAN creation and recoverable duplicate reporting.
+
+    Args:
+        client: Authenticated UI test client fixture.
+    """
+    login(client)
+    page = client.get("/vlan-interfaces")
+    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    data = {
+        "parent_interface": "eth1",
+        "vlan_id": "81",
+        "ip_cidr": "",
+        "ipv6_cidr": "fd00:81::1/64",
+        "mtu": "1500",
+        "role": "services",
+        "csrf": csrf,
+    }
+    created = client.post(
+        "/vlan-interfaces",
+        data=data,
+        headers={"X-Atlaso-Grid": "1", "Accept": "application/json"},
+    )
+    assert created.status_code == 200
+    assert created.json()["vlan"]["ip_cidr"] == ""
+    assert created.json()["vlan"]["ipv6_cidr"] == "fd00:81::1/64"
+    assert created.json()["vlan"]["enabled"] is False
+
+    duplicate = client.post(
+        "/vlan-interfaces",
+        data=data,
+        headers={"X-Atlaso-Grid": "1", "Accept": "application/json"},
+    )
+    assert duplicate.status_code == 409
+    assert duplicate.json() == {"detail": "VLAN eth1.81 already exists."}
+
+
+def test_vlan_interface_wizard_saves_management_ui_state_only_for_access_role(client):
+    """Verify management UI exposure is reviewed with the complete VLAN record.
+
+    Args:
+        client: Authenticated UI test client fixture.
+    """
+    login(client)
+    page = client.get("/vlan-interfaces")
+    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    data = {
+        "parent_interface": "eth1",
+        "vlan_id": "83",
+        "ip_cidr": "192.168.83.1/24",
+        "ipv6_cidr": "",
+        "mtu": "1500",
+        "role": "access",
+        "access_management_ui_enabled": "on",
+        "enabled": "on",
+        "csrf": csrf,
+    }
+    created = client.post(
+        "/vlan-interfaces",
+        data=data,
+        headers={"X-Atlaso-Grid": "1", "Accept": "application/json"},
+    )
+    assert created.status_code == 200
+    assert created.json()["vlan"]["access_management_ui_enabled"] is True
+
+    rejected = client.post(
+        f"/vlan-interfaces/{created.json()['vlan']['id']}/edit",
+        data={**data, "role": "storage"},
+        headers={"X-Atlaso-Grid": "1", "Accept": "application/json"},
+    )
+    assert rejected.status_code == 422
+    assert rejected.json() == {
+        "detail": "Management UI exposure is available only for an access-role VLAN."
+    }
+
+
+def test_vlan_interface_wizard_respects_read_only_permissions(client):
+    """Verify read-only users keep the VLAN grid without mutation launch paths.
+
+    Args:
+        client: Authenticated UI test client fixture.
+    """
+    from sqlalchemy import select
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Role, User
+    from atlaso.app.security import roles_to_json
+
+    with SessionLocal() as db:
+        admin = db.execute(select(User).where(User.username == "admin")).scalar_one()
+        admin.role = Role.VIEWER.value
+        admin.roles_json = roles_to_json([Role.VIEWER.value])
+        db.commit()
+
+    login(client)
+    page = client.get("/vlan-interfaces")
+    assert page.status_code == 200
+    assert 'data-can-write="false"' in page.text
+    assert 'id="vlan-interfaces-table"' in page.text
+    assert 'id="vlan-interface-dialog"' not in page.text
+    assert "+ Add VLAN interface here" not in page.text
+
+    denied = client.post(
+        "/vlan-interfaces",
+        data={
+            "parent_interface": "eth1",
+            "vlan_id": "82",
+            "ip_cidr": "192.168.82.1/24",
+            "mtu": "1500",
+            "role": "access",
+            "enabled": "on",
+            "csrf": "not-used-before-authorization",
+        },
+    )
+    assert denied.status_code == 403
+    assert "Missing required scope: write:vlans" in denied.text
 
 
 def test_firewall_page_create_rule_and_apply_task(client):

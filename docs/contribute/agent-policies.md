@@ -746,6 +746,11 @@ status: current
 
 - Physical Interfaces are for untagged/access networks. VLAN Interfaces are only for tagged VLAN networks on physical
   parent interfaces marked as trunk.
+- VLAN Interfaces use a wizard-backed Tabulator that reuses the ESX Storage interaction. The collection is read-only:
+  add and edit must review parent, VLAN ID, derived name, addressing, MTU, role, and Admin Up together through the shared
+  wizard. This is the approved exception to the ordinary inline-Enabled rule. New VLANs default to Admin Up; edits
+  preserve the saved value. A missing-parent VLAN may remain saved only while disabled and must move to an available
+  trunk before enablement. Saving remains desired-state-only and global `/appliance-apply` owns network enforcement.
 - Physical Interfaces automatically refresh observed Photon/Hyper-V NIC inventory on appliance startup and may also
   refresh it manually from the page, but host inventory is read-only context; desired-state edits remain separate and
   enforcement still goes through `/appliance-apply`.
@@ -770,7 +775,8 @@ status: current
 - If a VLAN has dependent state, protect parent interface mode changes that would invalidate it. A physical interface
   with VLAN children should not be silently changed from trunk to access.
 - Validate required network creation fields before saving. For VLANs, do not persist a new VLAN row unless the parent,
-  VLAN ID, and at least one valid IPv4 or IPv6 CIDR are present.
+  VLAN ID, at least one valid IPv4 or IPv6 CIDR, MTU from 576 through 9000, and a supported role are present. Reject a
+  duplicate parent/VLAN ID pair and reject enablement when the parent is missing or not an available trunk.
 - Keep the validation/config preview current after any network or service change that affects rendered appliance state.
 
 ## Public Services Front Door

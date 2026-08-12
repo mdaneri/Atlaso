@@ -223,18 +223,6 @@ Figure: Firewall in the verified clean-appliance desktop state.
 
 Figure: Firewall in the verified clean-appliance responsive state.
 
-## vSphere Key Providers
-
-Route: `/ui/management/vsphere-key-providers`
-
-![Atlaso vSphere Key Providers page in the clean-appliance desktop viewport.](../assets/screenshots/vsphere-key-providers-clean-desktop.webp)
-
-Figure: vSphere Key Providers in the verified clean-appliance desktop state.
-
-![Atlaso vSphere Key Providers page in the clean-appliance responsive viewport.](../assets/screenshots/vsphere-key-providers-clean-responsive.webp)
-
-Figure: vSphere Key Providers in the verified clean-appliance responsive state.
-
 ## Ldap
 
 Route: `/ui/management/ldap`
@@ -579,10 +567,22 @@ Figure: VCF Private Registry in the verified clean-appliance responsive state.
 
 Route: `/ui/management/vlan-interfaces`
 
-![Atlaso VLAN Interfaces page showing the access VLAN management UI option.](../assets/screenshots/vlan-interfaces-clean-desktop.webp)
+![Atlaso VLAN Interfaces add wizard Role step with the Management UI switch.](../assets/screenshots/vlan-interfaces-clean-desktop.webp)
 
-Figure: VLAN Interfaces showing optional access management UI exposure in the verified appliance desktop state.
+Figure: VLAN Interfaces shared Role step showing access management UI desired state in the verified appliance desktop state.
 
-![Responsive Atlaso VLAN Interfaces page showing the access VLAN management UI option.](../assets/screenshots/vlan-interfaces-clean-responsive.webp)
+![Atlaso VLAN Interfaces page in the clean-appliance responsive viewport.](../assets/screenshots/vlan-interfaces-clean-responsive.webp)
 
-Figure: VLAN Interfaces management UI option in the verified appliance responsive state.
+Figure: VLAN Interfaces in the verified clean-appliance responsive state.
+
+## Vsphere Key Providers
+
+Route: `/ui/management/vsphere-key-providers`
+
+![Atlaso vSphere Key Providers page in the clean-appliance desktop viewport.](../assets/screenshots/vsphere-key-providers-clean-desktop.webp)
+
+Figure: vSphere Key Providers in the verified clean-appliance desktop state.
+
+![Atlaso vSphere Key Providers page in the clean-appliance responsive viewport.](../assets/screenshots/vsphere-key-providers-clean-responsive.webp)
+
+Figure: vSphere Key Providers in the verified clean-appliance responsive state.

@@ -95,6 +95,10 @@ The following cross-cutting boundaries always apply:
   generated metadata, and profile enablement together.
 - Keep development system adapters in dry-run mode unless a reviewed apply unit explicitly promotes real mutation.
 - VMware Workstation is the default live appliance target; use Hyper-V lifecycle coverage for exact VLAN behavior.
+- VLAN Interfaces use the shared wizard-backed Tabulator with the ESX Storage interaction. Keep every persisted field,
+  including Admin Up, out of inline editing and review the complete VLAN record in the add/edit wizard. New VLANs
+  default to Admin Up; edits preserve saved state; a missing-parent VLAN may remain saved only while disabled. Saving
+  changes desired state only, and global Appliance Apply owns host enforcement.
 - VMware OVF first boot and the Atlaso tty1 console share one management-network validation contract. Reject off-link,
   equal-address, incomplete, and malformed gateway relationships before host mutation. Start the console independently
   of management networking and before data-disk initialization; on validation failure, show a recoverable non-secret

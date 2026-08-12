@@ -147,6 +147,12 @@ its existing edit route, restore the previous value on failure, and never invoke
 lifecycle boundary that requires credentials, confirmation, or an irreversible action is not an ordinary Enabled
 boolean and keeps its established guarded workflow.
 
+**VLAN Interfaces is the approved exception to the ordinary inline-Enabled rule.** Parent, VLAN identity, addressing,
+MTU, role, and **Admin Up** form one dependent desired-state record and must be reviewed and saved together through the
+shared add/edit wizard. Its Tabulator is a read-only browse surface; no persisted VLAN field is cell-editable. New VLANs
+default to **Admin Up**, while edits preserve the saved state. A VLAN whose parent is missing may remain saved only while
+disabled and must move to an available trunk before it can be enabled.
+
 Every wizard must:
 
 - use the shared Atlaso wizard panel, step rail, controls, spacing, and status presentation;

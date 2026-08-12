@@ -22,6 +22,8 @@ brings infrastructure, storage, identity, networking, and lifecycle workflows in
 - [Operations](docs/operate/index.md) — run the appliance and review desired-state changes.
 - [Local appliance console](docs/operate/appliance-console.md) — correct management networking from `tty1` and have
   Atlaso reconcile Firewall, retry unfinished first-boot HTTPS, and verify the complete management front door.
+- [Network configuration](docs/operate/networking.md) — inspect physical interfaces and manage each tagged VLAN as one
+  reviewed wizard record, including its trunk parent, addresses, role, and Admin Up desired state, before global apply.
 - [Use the Atlaso API](docs/operate/api.md) — create least-privilege tokens, call the versioned REST contract safely,
   and interpret responses, request IDs, locks, and apply boundaries.
 - [Appliance Update](docs/operate/appliance-update.md) — inspect configured Photon, PowerShell, and signed Atlaso

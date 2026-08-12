@@ -3244,14 +3244,19 @@ textarea {
   background: #dbeafe;
 }
 
-.vlan-interfaces-table .tabulator-row.new-record-row .new-record-primary-cell {
-  background: transparent;
-}
-
 .tabulator .tabulator-row.new-record-row .new-record-action-cell {
   color: var(--accent-dark);
   cursor: pointer;
   font-weight: 800;
+}
+
+.tabulator .tabulator-row.grid-row-recently-saved {
+  background: #eff6ff;
+  box-shadow: inset 3px 0 0 #1769e0;
+}
+
+.tabulator .tabulator-row.grid-row-recently-saved:hover {
+  background: #dbeafe;
 }
 
 .tabulator .tabulator-row.new-record-row-pending .tabulator-cell:not(.new-record-primary-cell):not(.new-record-action-cell) {
