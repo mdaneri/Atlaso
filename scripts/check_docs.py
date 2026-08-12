@@ -33,8 +33,14 @@ BROWSER_PATH_RE = re.compile(
     r"(?:\?[A-Za-z0-9._~{}<>*=&%+-]*)?)"
 )
 LEGACY_BROWSER_ROUTE_ALLOWLIST = {
+    "docs/project/appliance-console-design-qa.md": {
+        "https://192.168.167.219/esx-storage",
+    },
     "docs/project/github-project.md": {
         "https://github.com/users/mdaneri/projects/5",
+    },
+    "docs/project/monitor-apply-ux-design-qa.md": {
+        "https://192.168.167.219/monitor",
     },
     "docs/project/ui-compliance-matrix.md": {
         "/services/{service}/logs",

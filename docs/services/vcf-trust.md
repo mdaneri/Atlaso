@@ -51,14 +51,14 @@ Canonical routes:
 - `POST /ui/management/vcf-helper/trust-root-ca/inspect-target` confirms target HTTPS TLS, validates API credentials,
   and returns
   role/version.
-- `POST /ui/management/vcf-helper/trust-root-ca` queues the task and redirects to
+- `POST /ui/management/vcf-trust/root-ca` queues the task and redirects to
   `/ui/management/tasks?job_id=<id>`.
 
 Temporary compatibility routes for cached clients and retired bookmarks:
 
 - `GET /vcf-trust` redirects to the canonical modal route.
-- `POST /vcf-trust/root-ca` bridges internally to the canonical task submission route.
-- `POST /vcf-helper/trust-root-ca` bridges internally to the canonical task submission route.
+- `POST /vcf-trust/root-ca` bridges internally to `/ui/management/vcf-trust/root-ca`.
+- `POST /vcf-helper/trust-root-ca` bridges internally to `/ui/management/vcf-trust/root-ca`.
 
 <!-- BEGIN GENERATED ADDITIONAL SCREENSHOTS -->
 ## Additional verified states
