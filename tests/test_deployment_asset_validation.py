@@ -267,6 +267,26 @@ def test_inventory_rejects_symlinked_managed_asset(tmp_path: Path) -> None:
     )
 
 
+def test_inventory_rejects_symlinked_required_asset_parent(tmp_path: Path) -> None:
+    """Verify that required paths cannot hide behind a symlinked platform directory."""
+    write_inventory(tmp_path)
+    platform = tmp_path / "image/hyperv"
+    external = tmp_path / "external-hyperv"
+    platform.rename(external)
+    try:
+        platform.symlink_to(external, target_is_directory=True)
+    except OSError as error:
+        pytest.skip(f"symbolic links are unavailable: {error}")
+
+    _, findings = inventory_assets(tmp_path)
+
+    required = platform / "atlaso-photon.pkr.hcl"
+    assert any(
+        finding.path == required and finding.message == "required Packer template is missing"
+        for finding in findings
+    )
+
+
 def test_packer_validation_uses_wrapper_guard_and_template_directory(tmp_path: Path) -> None:
     """Verify that full validation mirrors the wrapper's required values and working directory."""
     template = tmp_path / "image/hyperv/atlaso-photon.pkr.hcl"

@@ -137,6 +137,16 @@ def _files(directory: Path, findings: list[Finding]) -> tuple[Path, ...]:
     return tuple(files)
 
 
+def _has_symlink_component(path: Path, root: Path) -> bool:
+    """Return whether a repository-relative path or any of its ancestors is a symlink."""
+    current = root
+    for part in path.relative_to(root).parts:
+        current /= part
+        if current.is_symlink():
+            return True
+    return False
+
+
 def inventory_assets(root: Path) -> tuple[Inventory, list[Finding]]:
     """Inventory every supported asset and reject unclassified deployment files."""
     findings: list[Finding] = []
@@ -188,7 +198,7 @@ def inventory_assets(root: Path) -> tuple[Inventory, list[Finding]]:
             )
         packer.append(path)
     for path in required_packer:
-        if not path.is_file() or path.is_symlink():
+        if path not in packer or not path.is_file() or _has_symlink_component(path, root):
             findings.append(Finding(path, "required Packer template is missing"))
 
     systemd: list[Path] = []
@@ -211,7 +221,7 @@ def inventory_assets(root: Path) -> tuple[Inventory, list[Finding]]:
             systemd.append(path)
     for relative in SYSTEMD_ASSETS:
         path = root / relative
-        if not path.is_file() or path.is_symlink():
+        if path not in systemd or not path.is_file() or _has_symlink_component(path, root):
             findings.append(Finding(path, "required systemd asset is missing"))
     common_directory = root / SYSTEMD_DIRECTORIES[0]
     common_names = {path.name for path in systemd if path.parent == common_directory}
@@ -248,7 +258,7 @@ def inventory_assets(root: Path) -> tuple[Inventory, list[Finding]]:
             sudoers.append(path)
     for relative in SUDOERS_FRAGMENTS:
         path = root / relative
-        if not path.is_file() or path.is_symlink():
+        if path not in sudoers or not path.is_file() or _has_symlink_component(path, root):
             findings.append(Finding(path, "required sudoers fragment is missing"))
 
     inventory = Inventory(
