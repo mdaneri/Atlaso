@@ -4690,6 +4690,12 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
     )
     disabled_missing_parent_vlan = deepcopy(enabled_missing_parent_vlan)
     disabled_missing_parent_vlan["data"]["vlan_interfaces"][-1]["enabled"] = False
+    enabled_missing_route_target = deepcopy(archive)
+    enabled_missing_route_target["data"]["routes"][0]["interface_name"] = "missing-route-target"
+    enabled_ineligible_route_target = deepcopy(archive)
+    enabled_ineligible_route_target["data"]["routes"][0]["interface_name"] = "eth1"
+    disabled_missing_route_target = deepcopy(enabled_missing_route_target)
+    disabled_missing_route_target["data"]["routes"][0]["enabled"] = False
     empty_required_field = deepcopy(archive)
     empty_required_field["data"]["physical_interfaces"][0]["name"] = "   "
     unresolved_ldap_organization = deepcopy(archive)
@@ -4717,6 +4723,8 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
         (empty_data, "missing a required data section"),
         (enabled_missing_parent_vlan, "has an ineligible parent interface"),
         (enabled_non_trunk_vlan, "has an ineligible parent interface"),
+        (enabled_missing_route_target, "has an ineligible target interface"),
+        (enabled_ineligible_route_target, "has an ineligible target interface"),
         (empty_required_field, "has empty required field 'name'"),
         (unresolved_ldap_organization, "references an unknown LDAP organization"),
         (unresolved_oidc_client, "references an unknown OIDC client"),
@@ -4727,6 +4735,9 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
             archive_summary(candidate)
     assert archive_summary(disabled_missing_parent_vlan)["table_counts"]["vlan_interfaces"] == len(
         disabled_missing_parent_vlan["data"]["vlan_interfaces"]
+    )
+    assert archive_summary(disabled_missing_route_target)["table_counts"]["routes"] == len(
+        disabled_missing_route_target["data"]["routes"]
     )
 
 

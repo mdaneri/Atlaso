@@ -1136,7 +1136,31 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
                 f"The settings archive row {row_index} in 'vlan_interfaces' has an ineligible parent interface."
             )
 
+    route_target_names = {
+        name
+        for name, row in physical_interfaces.items()
+        if str(row.get("oper_state") or "") != "missing"
+        and normalize_interface_mode(row.get("mode")) != "trunk"
+        and str(row.get("role") or "").strip().lower() != "management"
+        and bool(str(row.get("ip_cidr") or "").strip() or str(row.get("ipv6_cidr") or "").strip())
+    }
+    route_target_names.update(
+        str(row["name"])
+        for row in data.get("vlan_interfaces", [])
+        if row.get("enabled", True)
+        and str(row.get("role") or "").strip().lower() != "management"
+        and bool(str(row.get("ip_cidr") or "").strip() or str(row.get("ipv6_cidr") or "").strip())
+    )
     for row_index, row in enumerate(data.get("routes", []), start=1):
+        enabled = row.get("enabled", True)
+        if not isinstance(enabled, bool):
+            raise ValueError(
+                f"The settings archive row {row_index} in 'routes' has an invalid enabled value."
+            )
+        if enabled and str(row.get("interface_name") or "") not in route_target_names:
+            raise ValueError(
+                f"The settings archive row {row_index} in 'routes' has an ineligible target interface."
+            )
         require_reference(
             "routes",
             row_index,
