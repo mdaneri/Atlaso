@@ -2646,6 +2646,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#publication" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Publication
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#required-checks" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -3363,6 +3374,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#publication" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Publication
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#required-checks" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -3539,6 +3561,16 @@ media when a material UI change makes it inaccurate.</p>
 <li>Keep controls, code, and UI text readable at the published viewport.</li>
 <li>Avoid autoplay, rapid flashing, and third-party tracking embeds.</li>
 </ul>
+<h2 id="publication">Publication<a class="headerlink" href="#publication" title="Permanent link">&para;</a></h2>
+<p>Every push to <code>main</code> runs the Documentation workflow, even when the commit does not change a documentation path. The
+workflow validates the checked-in Markdown and media, builds the site in strict mode, and replaces only the <code>/docs</code>
+subtree on the shared <code>gh-pages</code> branch. The release-repository landing page and signed content under <code>/updates</code> remain
+unchanged. When the generated documentation matches the published site, the workflow succeeds without creating a new
+<code>gh-pages</code> commit or entering the shared Pages publication queue. Only a detected <code>/docs</code> change enters the serialized
+<code>atlaso-github-pages</code> writer, so routine verification runs cannot replace a pending release or promotion publisher.</p>
+<p>To request a rebuild manually, open <strong>Actions &gt; Documentation</strong> in GitHub, choose <strong>Run workflow</strong>, select <code>main</code>, and
+run the workflow. Maintainers can request the same rebuild from an authenticated GitHub CLI session with
+<code>gh workflow run docs.yml --ref main</code> and monitor it with <code>gh run watch</code>.</p>
 <h2 id="required-checks">Required checks<a class="headerlink" href="#required-checks" title="Permanent link">&para;</a></h2>
 <p>Run these commands before opening a pull request:</p>
 <div class="language-powershell highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="n">npm</span> <span class="n">ci</span>
