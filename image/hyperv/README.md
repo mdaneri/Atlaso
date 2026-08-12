@@ -22,6 +22,10 @@ pwsh -ExecutionPolicy Bypass -File scripts/windows/hyperv/create-switches.ps1
 The Packer builder uses `Atlaso-Mgmt` by default. The script assigns the host-side switch adapter `192.168.49.254/24`
 and creates `Atlaso-Mgmt-NAT`, which gives the temporary builder VM outbound internet access for `tdnf update`.
 
+Before a build, run `python scripts/check_deployment_assets.py --mode packer` from the repository root. The protected
+validator inventories both Packer templates, checks formatting, initializes their plugins, and performs the same full
+validation used by the wrappers with the required remastered-ISO guard enabled.
+
 ## Build Inputs
 
 Photon publishes the ISO and checksum from the Photon OS download page. The current Atlaso build target uses the Photon

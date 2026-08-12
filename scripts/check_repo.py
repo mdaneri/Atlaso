@@ -45,7 +45,9 @@ SKIP_PREFIXES = (
 )
 
 TEXT_SUFFIXES = {
+    ".conf",
     ".css",
+    ".hcl",
     ".htm",
     ".html",
     ".js",
@@ -54,6 +56,7 @@ TEXT_SUFFIXES = {
     ".ps1",
     ".py",
     ".svg",
+    ".service",
     ".toml",
     ".txt",
     ".yaml",
@@ -207,7 +210,14 @@ def is_checkable(path: Path) -> bool:
     Args:
         path: Filesystem or URL path to read, validate, or update.
     """
-    return path.suffix.lower() in TEXT_SUFFIXES
+    if path.suffix.lower() in TEXT_SUFFIXES:
+        return True
+    rel = relative_path(path)
+    return (
+        len(rel.parts) >= 4
+        and rel.parts[0] == "image"
+        and rel.parent.name == "sudoers.d"
+    )
 
 
 def collect_files(paths: list[str]) -> list[Path]:

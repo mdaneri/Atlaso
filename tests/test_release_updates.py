@@ -298,7 +298,7 @@ def test_release_workflows_use_successful_main_sha_and_promote_without_rebuildin
     assert publication.count("actions/download-artifact@v8") == 1
     assert "python-version: '3.14'" in publication
     assert "python-version: '3.14'" in promotion
-    assert ci.count("python-version: '3.14'") == 2
+    assert ci.count("python-version: '3.14'") == 3
     assert "cp312" not in publication
     assert "cp313" not in publication
     assert "actions/upload-artifact@v4" not in publication

@@ -145,6 +145,9 @@ The following cross-cutting boundaries always apply:
   change the default distribution, elevate, reboot, or remove a distribution. Keep the pinned setup contract, explicit
   distribution selection, native-Linux cache, Linux-only child `PATH`, per-repository `flock`, and checkout-wide output
   serialization described in the canonical contributor guide.
+- Treat Packer HCL, systemd units/manager drop-ins, and sudoers fragments as protected deployment assets. Keep them in
+  the checked-in inventory, run `scripts/check_deployment_assets.py` through pre-commit where native tools are
+  available, and require full Packer validation plus native Linux systemd/sudoers validation in canonical CI.
 - Validate live appliance readiness through `/openapi.json`, not VMware Tools IP discovery or service color alone.
 - A successful tty1 management-network correction must explicitly apply Network and Firewall from the corrected state,
   retry unfinished first-boot HTTPS before applying Appliance Settings, validate nginx before reload, ensure nginx and
