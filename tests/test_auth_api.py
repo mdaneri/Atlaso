@@ -798,6 +798,84 @@ def test_physical_interface_api_rejects_active_service_listener_removal(client):
         assert dns.listen_address == "192.168.50.1"
 
 
+def test_physical_interface_api_clears_ca_portal_without_disabling_custody(client):
+    """Verify loss of the CA portal interface retains internal CA enablement.
+
+    Args:
+        client: Authenticated-capable application test client fixture.
+    """
+    from sqlalchemy import select
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import (
+        CaSettings,
+        DhcpScope,
+        DnsSettings,
+        NtpSettings,
+        OidcProviderSettings,
+        PhysicalInterface,
+        VcfBackupSettings,
+        VcfOfflineDepotSettings,
+        VcfPrivateRegistrySettings,
+    )
+    from atlaso.app.services.esxi_pxe import save_esxi_pxe_boot_settings
+
+    with SessionLocal() as db:
+        interface = db.execute(
+            select(PhysicalInterface).where(PhysicalInterface.name == "eth2")
+        ).scalar_one()
+        interface.role = "access"
+        interface.mode = "access"
+        interface.ipv4_method = "static"
+        interface.ip_cidr = "192.168.50.1/24"
+        for scope in db.execute(
+            select(DhcpScope).where(DhcpScope.interface_name == interface.name)
+        ).scalars().all():
+            scope.enabled = False
+        for model in (
+            DnsSettings,
+            NtpSettings,
+            OidcProviderSettings,
+            VcfBackupSettings,
+            VcfOfflineDepotSettings,
+            VcfPrivateRegistrySettings,
+        ):
+            for settings in db.execute(select(model)).scalars().all():
+                settings.enabled = False
+        ca = db.execute(select(CaSettings)).scalar_one()
+        ca.enabled = True
+        ca.listen_interface = interface.name
+        ca.listen_address = "192.168.50.1"
+        save_esxi_pxe_boot_settings(
+            db,
+            enabled=False,
+            hostname="pxe.atlaso.internal",
+            listen_interface=interface.name,
+            listen_address="192.168.50.1",
+            tftp_root="/var/lib/atlaso/pxe/tftp",
+            bios_bootfile="undionly.kpxe",
+            uefi_bootfile="snponly.efi",
+        )
+        db.commit()
+
+    token, _metadata = create_token(
+        client,
+        scopes=["read:interfaces", "write:interfaces"],
+    )
+    response = client.patch(
+        "/api/v1/interfaces/physical/eth2",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"mode": "trunk"},
+    )
+
+    assert response.status_code == 200, response.text
+    with SessionLocal() as db:
+        ca = db.execute(select(CaSettings)).scalar_one()
+        assert ca.enabled is True
+        assert ca.listen_interface == ""
+        assert ca.listen_address == ""
+
+
 def test_physical_interface_api_rejects_address_removal_with_enabled_dependents(client):
     """Verify enabled DHCP and PXE bindings block removal of their interface addresses.
 

@@ -44,6 +44,9 @@ rejects address removal or trunk conversion while an enabled service, DHCP, or N
 affected address; disable or move the binding before retrying. Saving still does not change Photon until global
 Appliance Apply is submitted.
 
+The internal Certificate Authority does not require a public listener. If its last selected portal interface becomes
+ineligible, reconciliation clears the CA portal interface/address and alias without disabling internal CA custody.
+
 ### Choose where the management UI is available
 
 A physical interface with the **management** role always exposes `/ui/management`; it has no separate management UI

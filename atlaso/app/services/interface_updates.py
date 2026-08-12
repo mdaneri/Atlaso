@@ -364,9 +364,12 @@ def refresh_interface_dependent_addresses(
                 split_interfaces(updated_interfaces),
                 options_by_name,
             )
+            if model is CaSettings and not split_addresses(updated_addresses):
+                updated_interfaces = ""
             if (
                 old_addresses
                 and bool(getattr(row, "enabled", False))
+                and model is not CaSettings
                 and not split_addresses(updated_addresses)
             ):
                 raise PhysicalInterfaceUpdateError(

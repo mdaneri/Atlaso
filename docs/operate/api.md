@@ -83,6 +83,9 @@ scope, or Network Boot/PXE listener still depends on the address; disable or mov
 names the dependent units that were refreshed. This remains a desired-state edit: review the resulting network and service
 previews, then use global Appliance Apply for host enforcement.
 
+The internal Certificate Authority is the exception: if its last selected portal interface becomes ineligible, Atlaso
+clears the public CA portal binding and app-owned alias while leaving internal CA custody enabled.
+
 ## Scopes and authorization
 
 Each Swagger operation describes its required Atlaso scope or authentication posture. A token can call only operations
