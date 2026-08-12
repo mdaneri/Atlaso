@@ -1118,6 +1118,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#add-or-edit-a-vlan-interface" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Add or edit a VLAN interface
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -3353,6 +3364,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#add-or-edit-a-vlan-interface" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Add or edit a VLAN interface
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -3554,7 +3576,7 @@ unreachable after apply.</p>
 <h2 id="configure-the-network">Configure the network<a class="headerlink" href="#configure-the-network" title="Permanent link">&para;</a></h2>
 <ol>
 <li>Inspect physical inventory and link state; do not treat an unused interface as failed.</li>
-<li>Create VLAN interfaces only on the intended parent and use the required VLAN identifier.</li>
+<li>Create VLAN interfaces only on the intended trunk parent and use the required VLAN identifier.</li>
 <li>Define routes and WAN behavior with explicit interface and network boundaries.</li>
 <li>Review validation and rendered network previews.</li>
 <li>Submit the selected network units through <a href="../appliance-apply/">Appliance Apply</a>.</li>
@@ -3583,6 +3605,23 @@ management policy routing. If that role is absent, flagged access interfaces ret
 appliance FQDN and managed HTTPS certificate cover every effective management UI address.</p>
 <p>Management-to-lab and lab-to-management forwarding remain prohibited. Service listeners and firewall rules must bind to
 the same intended interfaces.</p>
+<h3 id="add-or-edit-a-vlan-interface">Add or edit a VLAN interface<a class="headerlink" href="#add-or-edit-a-vlan-interface" title="Permanent link">&para;</a></h3>
+<p>The VLAN table is a read-only browse surface. Select <strong>+ Add VLAN interface here</strong> to create a row, or double-click an
+existing row and use <strong>Edit VLAN</strong> from its context menu to revise it. The shared wizard reviews the complete VLAN
+record in five steps:</p>
+<ol>
+<li>Select an available trunk parent and VLAN ID; Atlaso derives the read-only <code>&lt;parent&gt;.&lt;VLAN ID&gt;</code> interface name.</li>
+<li>Enter a valid IPv4 CIDR, IPv6 CIDR, or both, then confirm the MTU from <code>576</code> through <code>9000</code>. A new record starts with
+   the selected parent MTU.</li>
+<li>Select the VLAN role.</li>
+<li>Confirm <strong>Admin Up</strong>. It is enabled by default for a new VLAN and preserves the saved value when editing.</li>
+<li>Review the full desired-state change and save it.</li>
+</ol>
+<p>The parent and VLAN ID must be unique. A VLAN whose previously saved parent is now missing may remain saved only while
+disabled; select an available trunk before enabling it. Recoverable validation or server errors leave the wizard open
+with its entered values. Saving refreshes validation and the configuration preview but does not change the host. Use
+global <strong>Appliance Apply</strong> with the <code>network</code> unit when the reviewed desired state is ready for enforcement. Delete
+remains a confirmed row-context action.</p>
 <h2 id="verify-and-roll-back">Verify and roll back<a class="headerlink" href="#verify-and-roll-back" title="Permanent link">&para;</a></h2>
 <p>Confirm the management URL, expected routes, and interface state after apply. If access is lost, use the local console
 network recovery action to restore a known-good management configuration, then review desired state before retrying.</p>
@@ -3598,10 +3637,10 @@ network recovery action to restore a known-good management configuration, then r
 <p><img alt="Atlaso Routes and WAN Simulation page in the clean-appliance responsive viewport." src="../../assets/screenshots/routes-wan-clean-responsive.webp" /></p>
 <p><em>Figure: Routes and WAN Simulation in the verified clean-appliance responsive state.</em></p>
 <h3 id="vlan-interfaces">VLAN interfaces<a class="headerlink" href="#vlan-interfaces" title="Permanent link">&para;</a></h3>
-<p><img alt="Atlaso VLAN Interfaces page showing the access VLAN management UI option." src="../../assets/screenshots/vlan-interfaces-clean-desktop.webp" /></p>
-<p><em>Figure: VLAN Interfaces showing optional access management UI exposure in the verified appliance desktop state.</em></p>
-<p><img alt="Responsive Atlaso VLAN Interfaces page showing the access VLAN management UI option." src="../../assets/screenshots/vlan-interfaces-clean-responsive.webp" /></p>
-<p><em>Figure: VLAN Interfaces management UI option in the verified appliance responsive state.</em></p>
+<p><img alt="Atlaso VLAN Interfaces add wizard Role step with the Management UI switch." src="../../assets/screenshots/vlan-interfaces-clean-desktop.webp" /></p>
+<p><em>Figure: VLAN Interfaces shared Role step showing access management UI desired state in the verified appliance desktop state.</em></p>
+<p><img alt="Atlaso VLAN Interfaces page in the clean-appliance responsive viewport." src="../../assets/screenshots/vlan-interfaces-clean-responsive.webp" /></p>
+<p><em>Figure: VLAN Interfaces in the verified clean-appliance responsive state.</em></p>
 <!-- END GENERATED ADDITIONAL SCREENSHOTS -->
 
 
