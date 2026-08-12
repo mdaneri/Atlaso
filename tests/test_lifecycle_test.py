@@ -336,7 +336,13 @@ def test_web_terminal_check_probes_canonical_browser_planes(monkeypatch):
         """Represent the management-plane lifecycle client."""
 
         def request(self, method, path, **kwargs):  # type: ignore[no-untyped-def]
-            """Return the ready management terminal page."""
+            """Return the ready management terminal page.
+
+            Args:
+                method: HTTP method requested by the lifecycle check.
+                path: Browser route requested by the lifecycle check.
+                **kwargs: Additional request options accepted by the test double.
+            """
             calls.append((method, path, kwargs.get("follow_redirects")))
             assert path == "/ui/management/terminal"
             return 200, '<main data-terminal-available="true"></main>', {}
@@ -345,7 +351,13 @@ def test_web_terminal_check_probes_canonical_browser_planes(monkeypatch):
         """Represent the selected public-listener lifecycle client."""
 
         def request(self, method, path, **kwargs):  # type: ignore[no-untyped-def]
-            """Return the expected public terminal, protocol, and isolation responses."""
+            """Return the expected public terminal, protocol, and isolation responses.
+
+            Args:
+                method: HTTP method requested by the lifecycle check.
+                path: Browser or protocol route requested by the lifecycle check.
+                **kwargs: Additional request options accepted by the test double.
+            """
             calls.append((method, path, kwargs.get("follow_redirects")))
             if method == "GET" and path == "/ui/public/terminal":
                 return 200, '<main data-terminal-available="true" data-csrf="csrf-323"></main>', {}
