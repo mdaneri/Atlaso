@@ -2720,8 +2720,8 @@ def test_settings_restore_and_factory_reset_preserve_installed_media_metadata(
     assert reset.active_version == ""
 
 
-def test_legacy_settings_restore_clears_unarchived_network_boot_state(db_session):
-    """Verify that legacy settings restore clears unarchived network boot state.
+def test_settings_restore_clears_explicitly_empty_network_boot_state(db_session):
+    """Verify settings restore clears explicitly empty network boot state.
 
     Args:
         db_session: Active database session used by the operation.
@@ -2742,7 +2742,7 @@ def test_legacy_settings_restore_clears_unarchived_network_boot_state(db_session
         manifest={"schema_version": 1},
     )
     archive = export_settings_archive(db_session, actor="test")
-    archive["data"].pop("network_boot_environments")
+    archive["data"]["network_boot_environments"] = []
     states["inventory"].enabled = True
     states["inventory"].desired_version = media.version
     states["inventory"].active_version = media.version
