@@ -543,7 +543,7 @@ def refresh_interface_dependent_addresses(
                     f"{family_labels} on {share.interface_name}. Disable that address family "
                     "or move the datastore binding before removing its interface address."
                 )
-        if replacement_name and replacement_name != share.interface_name:
+        if replacement_name != share.interface_name:
             share.interface_name = replacement_name
             share.updated_at = utcnow()
             db.add(share)
@@ -569,7 +569,17 @@ def refresh_interface_dependent_addresses(
             scope: DHCP scope or legacy settings row to reconcile.
             label: Operator-facing dependent unit name.
         """
-        if getattr(scope, "interface_name", "") != old_name:
+        bound_name = getattr(scope, "interface_name", "")
+        if bound_name not in affected_interface_names:
+            return
+        if bound_name != old_name:
+            replacement_name = service_replacements.get(bound_name, "")
+            if replacement_name != bound_name:
+                scope.interface_name = replacement_name
+                if hasattr(scope, "updated_at"):
+                    scope.updated_at = utcnow()
+                db.add(scope)
+                mark_changed(label)
             return
         family = _address_family_from_scope(scope) if isinstance(scope, DhcpScope) else 4
         new_address = new_addresses[family]
@@ -800,11 +810,39 @@ def refresh_interface_dependent_addresses(
         managed_host_id = _esxi_managed_host_id(reservation.description)
         if managed_host_id is not None:
             managed_host = db.get(EsxiPxeHost, managed_host_id)
-            if managed_host is not None:
-                managed_host.ip_address = reservation.ip_address
-                managed_host.updated_at = utcnow()
-                db.add(managed_host)
-                mark_changed("ESXi PXE")
+            reservation_hostname = str(reservation.hostname or "").strip().strip(".").lower()
+            managed_hostname = (
+                str(managed_host.hostname or "").strip().strip(".").lower()
+                if managed_host is not None
+                else ""
+            )
+            hostname_matches = bool(
+                managed_hostname
+                and (
+                    reservation_hostname == managed_hostname
+                    or (
+                        "." not in managed_hostname
+                        and reservation_hostname.startswith(f"{managed_hostname}.")
+                    )
+                )
+            )
+            if (
+                managed_host is None
+                or managed_host.enabled is False
+                or not hostname_matches
+                or str(managed_host.mac_address or "").strip().lower()
+                != str(reservation.mac_address or "").strip().lower()
+                or str(managed_host.ip_address or "").strip() != previous_address
+            ):
+                raise PhysicalInterfaceUpdateError(
+                    f"Enabled DHCP reservation {reservation.hostname} has an inconsistent "
+                    "ESXi PXE ownership marker. Repair or disable the reservation before "
+                    "changing the interface network."
+                )
+            managed_host.ip_address = reservation.ip_address
+            managed_host.updated_at = utcnow()
+            db.add(managed_host)
+            mark_changed("ESXi PXE")
         generated_description = f"Created from DHCP reservation for {reservation.mac_address}."
         owned_description = (
             str(reservation.description or "").strip()
@@ -823,6 +861,20 @@ def refresh_interface_dependent_addresses(
                 DnsRecord.record_type == expected_type,
             )
         ).scalars().all():
+            collision = db.execute(
+                select(DnsRecord).where(
+                    DnsRecord.id != record.id,
+                    DnsRecord.hostname == expected_hostname,
+                    DnsRecord.record_type == expected_type,
+                    DnsRecord.address == reservation.ip_address,
+                )
+            ).scalar_one_or_none()
+            if collision is not None:
+                raise PhysicalInterfaceUpdateError(
+                    f"DHCP reservation {reservation.hostname} cannot move its generated DNS "
+                    "record because the destination address already exists. Resolve the DNS "
+                    "conflict before changing the interface network."
+                )
             record.address = reservation.ip_address
             db.add(record)
             mark_changed("DNS")

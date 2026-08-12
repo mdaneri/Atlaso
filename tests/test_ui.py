@@ -1996,7 +1996,7 @@ def test_dns_listen_interface_menu_has_empty_state_when_no_interfaces_available(
         client: HTTP test client used to exercise the Atlaso application.
     """
     from atlaso.app.database import SessionLocal
-    from atlaso.app.models import PhysicalInterface, VlanInterface
+    from atlaso.app.models import DhcpScope, PhysicalInterface, VlanInterface
 
     login(client)
     with SessionLocal() as db:
@@ -2026,7 +2026,7 @@ def test_forget_missing_physical_interface_deletes_only_stale_rows(client):
         client: HTTP test client used to exercise the Atlaso application.
     """
     from atlaso.app.database import SessionLocal
-    from atlaso.app.models import PhysicalInterface, VlanInterface
+    from atlaso.app.models import DhcpScope, PhysicalInterface, VlanInterface
 
     login(client)
     with SessionLocal() as db:
@@ -2040,6 +2040,15 @@ def test_forget_missing_physical_interface_deletes_only_stale_rows(client):
         )
         db.add(missing)
         db.add(VlanInterface(name="missing_eth7.20", parent_interface="missing_eth7", vlan_id=20, enabled=False))
+        db.add(
+            DhcpScope(
+                name="disabled-child-scope",
+                interface_name="missing_eth7.20",
+                site_address="10.20.0.1",
+                prefix_length=24,
+                enabled=False,
+            )
+        )
         active = PhysicalInterface(
             name="eth8",
             mac_address="00:50:56:00:00:08",
@@ -2064,6 +2073,8 @@ def test_forget_missing_physical_interface_deletes_only_stale_rows(client):
     with SessionLocal() as db:
         assert db.get(PhysicalInterface, missing_id) is None
         assert db.query(VlanInterface).filter(VlanInterface.parent_interface == "missing_eth7").count() == 0
+        child_scope = db.query(DhcpScope).filter(DhcpScope.name == "disabled-child-scope").one()
+        assert child_scope.interface_name == ""
         assert db.get(PhysicalInterface, active_id) is not None
 
 

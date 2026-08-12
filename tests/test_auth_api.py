@@ -580,6 +580,151 @@ def test_physical_interface_api_rejects_ambiguous_reservation_scope_move(client)
         assert reservation.ip_address == "192.168.70.10"
 
 
+def test_physical_interface_api_rejects_inconsistent_esxi_reservation_owner(client):
+    """Verify an editable marker cannot redirect a rebase into an unrelated ESXi host.
+
+    Args:
+        client: Authenticated-capable application test client fixture.
+    """
+    from sqlalchemy import select
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import DhcpReservation, DhcpScope, EsxiPxeHost, PhysicalInterface
+
+    with SessionLocal() as db:
+        db.query(DhcpScope).delete()
+        interface = db.execute(
+            select(PhysicalInterface).where(PhysicalInterface.name == "eth2")
+        ).scalar_one()
+        interface.role = "access"
+        interface.mode = "access"
+        interface.ip_cidr = "192.168.71.1/24"
+        host = EsxiPxeHost(
+            hostname="owned-esxi.atlaso.internal",
+            mac_address="02:00:00:00:31:71",
+            ip_address="192.168.71.10",
+            enabled=True,
+        )
+        db.add(host)
+        db.flush()
+        db.add_all(
+            [
+                DhcpScope(
+                    name="esxi-owner-scope",
+                    interface_name=interface.name,
+                    site_address="192.168.71.1",
+                    prefix_length=24,
+                    range_expression="192.168.71.100-192.168.71.120",
+                ),
+                DhcpReservation(
+                    hostname="unrelated.atlaso.internal",
+                    mac_address="02:00:00:00:31:72",
+                    ip_address="192.168.71.11",
+                    description=f"Managed by ESXi PXE host {host.id}.",
+                    enabled=True,
+                ),
+            ]
+        )
+        db.commit()
+        host_id = host.id
+
+    token, _metadata = create_token(
+        client,
+        scopes=["read:interfaces", "write:interfaces"],
+    )
+    response = client.patch(
+        "/api/v1/interfaces/physical/eth2",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"ip_cidr": "192.168.81.1/24"},
+    )
+
+    assert response.status_code == 422
+    assert "inconsistent ESXi PXE ownership marker" in response.text
+    with SessionLocal() as db:
+        assert db.get(EsxiPxeHost, host_id).ip_address == "192.168.71.10"
+        interface = db.execute(
+            select(PhysicalInterface).where(PhysicalInterface.name == "eth2")
+        ).scalar_one()
+        assert interface.ip_cidr == "192.168.71.1/24"
+
+
+def test_physical_interface_api_rejects_reservation_dns_collision(client):
+    """Verify a rebased generated DNS record cannot collide with an existing row.
+
+    Args:
+        client: Authenticated-capable application test client fixture.
+    """
+    from sqlalchemy import select
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import DhcpReservation, DhcpScope, DnsRecord, PhysicalInterface
+
+    mac_address = "02:00:00:00:31:73"
+    hostname = "collision.atlaso.internal"
+    with SessionLocal() as db:
+        db.query(DhcpScope).delete()
+        interface = db.execute(
+            select(PhysicalInterface).where(PhysicalInterface.name == "eth2")
+        ).scalar_one()
+        interface.role = "access"
+        interface.mode = "access"
+        interface.ip_cidr = "192.168.73.1/24"
+        db.add_all(
+            [
+                DhcpScope(
+                    name="dns-collision-scope",
+                    interface_name=interface.name,
+                    site_address="192.168.73.1",
+                    prefix_length=24,
+                    range_expression="192.168.73.100-192.168.73.120",
+                ),
+                DhcpReservation(
+                    hostname=hostname,
+                    mac_address=mac_address,
+                    ip_address="192.168.73.10",
+                    enabled=True,
+                ),
+                DnsRecord(
+                    hostname=hostname,
+                    record_type="A",
+                    address="192.168.73.10",
+                    description=f"Created from DHCP reservation for {mac_address}.",
+                    enabled=True,
+                ),
+                DnsRecord(
+                    hostname=hostname,
+                    record_type="A",
+                    address="192.168.83.10",
+                    description="Operator-owned destination record.",
+                    enabled=True,
+                ),
+            ]
+        )
+        db.commit()
+
+    token, _metadata = create_token(
+        client,
+        scopes=["read:interfaces", "write:interfaces"],
+    )
+    response = client.patch(
+        "/api/v1/interfaces/physical/eth2",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"ip_cidr": "192.168.83.1/24"},
+    )
+
+    assert response.status_code == 422
+    assert "destination address already exists" in response.text
+    with SessionLocal() as db:
+        interface = db.execute(
+            select(PhysicalInterface).where(PhysicalInterface.name == "eth2")
+        ).scalar_one()
+        reservation = db.execute(
+            select(DhcpReservation).where(DhcpReservation.mac_address == mac_address)
+        ).scalar_one()
+        assert interface.ip_cidr == "192.168.73.1/24"
+        assert reservation.ip_address == "192.168.73.10"
+
+
 def test_physical_interface_update_rolls_back_interface_and_dependents(client, monkeypatch):
     """Verify a dependent refresh failure leaves every desired-state row unchanged.
 

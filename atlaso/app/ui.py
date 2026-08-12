@@ -17591,8 +17591,6 @@ def forget_missing_physical_interface_from_ui(
     disabled_vlans = db.execute(select(VlanInterface).where(VlanInterface.parent_interface == interface.name)).scalars().all()
     old_name = interface.name
     try:
-        for vlan in disabled_vlans:
-            db.delete(vlan)
         dependent_updates = refresh_interface_dependent_addresses(
             db,
             old_name=old_name,
@@ -17602,6 +17600,8 @@ def forget_missing_physical_interface_from_ui(
             actor=None,
             dns_refresher=refresh_interface_service_dns_aliases,
         )
+        for vlan in disabled_vlans:
+            db.delete(vlan)
         db.delete(interface)
         db.commit()
     except PhysicalInterfaceUpdateError as exc:
