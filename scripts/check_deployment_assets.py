@@ -272,7 +272,11 @@ def _prepare_systemd_root(root: Path, platform: str, repository: Path) -> tuple[
         destination = unit_directory / name
         if destination.exists():
             continue
-        destination.write_text(f"[Unit]\nDescription=Validation stub for {name}\n", encoding="utf-8")
+        contents = f"[Unit]\nDescription=Validation stub for {name}\n"
+        if name.endswith(".service"):
+            _write_stub_executable(root, "/bin/true")
+            contents += "\n[Service]\nType=oneshot\nExecStart=/bin/true\nRemainAfterExit=yes\n"
+        destination.write_text(contents, encoding="utf-8")
 
     for source in sorted((repository / "image/common/systemd").glob("*.conf")):
         shutil.copyfile(source, manager_directory / source.name)
@@ -347,6 +351,7 @@ def validate_systemd(systemd_analyze: str, repository: Path) -> list[Finding]:
                 repository,
                 repository / f"image/{platform}/systemd",
                 "systemd-analyze verify",
+                stderr_is_failure=True,
             )
             if finding is not None:
                 findings.append(finding)

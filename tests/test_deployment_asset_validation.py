@@ -179,6 +179,20 @@ def test_systemd_validation_rejects_malformed_unit(tmp_path: Path) -> None:
     assert "systemd-analyze verify failed" in findings[0].message
 
 
+@pytest.mark.skipif(shutil.which("systemd-analyze") is None, reason="requires systemd-analyze")
+def test_systemd_validation_rejects_ignored_unit_directive(tmp_path: Path) -> None:
+    """Verify that native systemd diagnostics fail even when verify exits successfully."""
+    write_systemd_fixture(
+        tmp_path,
+        "[Service]\nExecStart=/bin/true\nDefinitelyNotARealSetting=yes\n",
+    )
+
+    findings = validate_systemd(shutil.which("systemd-analyze") or "", tmp_path)
+
+    assert findings
+    assert "systemd-analyze verify failed" in findings[0].message
+
+
 @pytest.mark.skipif(shutil.which("visudo") is None, reason="requires visudo")
 def test_sudoers_validation_rejects_malformed_rule(tmp_path: Path) -> None:
     """Verify that native sudoers parsing rejects malformed command syntax."""
