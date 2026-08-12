@@ -9,7 +9,7 @@
         <h2>VLAN Interfaces</h2>
         <p class="muted">Create tagged lab networks on trunk parent interfaces. For standard access-mode NICs, assign IPv4/IPv6 CIDR on Physical Interfaces instead.</p>
       </div>
-      <span class="status-pill muted">{{ vlan_interfaces|length }} VLANs</span>
+      <span class="status-pill muted" data-vlan-interface-count>{{ vlan_interfaces|length }} VLAN{{ '' if vlan_interfaces|length == 1 else 's' }}</span>
     </div>
     <div class="inline-help-row">
       <span class="field-label"><span>Trunk parents</span><button class="help-icon" type="button" data-help="Only physical NICs marked as trunk are available here. On the Photon appliance, use the Hyper-V trunk NIC for tagged lab networks.">i</button></span>

@@ -13759,6 +13759,7 @@ def test_physical_and_vlan_pages_render(client):
     assert "For standard access-mode NICs, assign IPv4/IPv6 CIDR on Physical Interfaces instead." in vlans.text
     assert "vlan-interfaces-table" in vlans.text
     assert "An enabled access VLAN can expose the authenticated management UI" in vlans.text
+    assert "data-vlan-interface-count" in vlans.text
     assert 'data-can-write="true"' in vlans.text
     assert "data-vlan-interface-form" in vlans.text
     assert 'data-atlaso-wizard-step="vlan"' in vlans.text
@@ -13792,6 +13793,9 @@ def test_physical_and_vlan_pages_render(client):
     assert "onOpenRow: canWrite" in vlan_table_js
     assert 'markNewRecordRow(row, "name")' in vlan_table_js
     assert "atlasoGridWizardRequest(form.action, new FormData(form))" in vlan_table_js
+    assert "const updateVlanCount = () =>" in vlan_table_js
+    assert "table.getData().filter((row) => !row.is_new).length" in vlan_table_js
+    assert "updateVlanCount();" in vlan_table_js
     assert "context ? Boolean(context.enabled) : true" in vlan_table_js
     assert "editor:" not in vlan_table_js
     assert "cellEdited:" not in vlan_table_js

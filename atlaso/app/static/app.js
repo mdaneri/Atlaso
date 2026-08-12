@@ -8714,6 +8714,7 @@ function initializeVlanInterfacesTable() {
   const tableElement = document.getElementById("vlan-interfaces-table");
   const form = document.querySelector("[data-vlan-interface-form]");
   const dialog = document.getElementById("vlan-interface-dialog");
+  const countElement = document.querySelector("[data-vlan-interface-count]");
   if (!(tableElement instanceof HTMLElement)) return;
   const fallback = document.getElementById(tableElement.dataset.fallbackId || "");
   if (typeof Tabulator === "undefined") {
@@ -8739,6 +8740,11 @@ function initializeVlanInterfacesTable() {
     let wizard;
     let highlightedVlanId = "";
     let openVlan = () => {};
+    const updateVlanCount = () => {
+      if (!(countElement instanceof HTMLElement)) return;
+      const count = table.getData().filter((row) => !row.is_new).length;
+      countElement.textContent = `${count} VLAN${count === 1 ? "" : "s"}`;
+    };
     const grid = window.AtlasoUiPatterns.createGrid({
       element: tableElement,
       fallback: fallback instanceof HTMLElement ? `#${fallback.id}` : undefined,
@@ -8988,6 +8994,7 @@ function initializeVlanInterfacesTable() {
         } else {
           const addRow = table.getRows().find((row) => row.getData().is_new);
           savedRow = await table.addRow(payload, true, addRow);
+          updateVlanCount();
         }
         highlightedVlanId = String(payload.id);
         savedRow?.reformat?.();
