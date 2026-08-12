@@ -80,6 +80,7 @@ from atlaso.app.models import (
 from atlaso.app.seed import NTP_NTS_RESTORATION_SETTING_KEY, SEED_EXAMPLES_SETTING_KEY, seed_initial_data, seed_update_sources
 from atlaso.app.services.appliance_settings import (
     management_interface_context,
+    normalize_fqdn,
     normalized_web_terminal_interfaces,
     web_terminal_interface_options,
 )
@@ -88,6 +89,7 @@ from atlaso.app.services.dnsmasq import (
     split_addresses,
     split_interfaces,
     validate_dhcp_scope,
+    validate_dns_settings,
 )
 from atlaso.app.services.esxi_pxe import (
     ESXI_PXE_CUSTOM_VARIABLES_KEY,
@@ -109,7 +111,13 @@ from atlaso.app.services.networking import (
     validate_network_state,
 )
 from atlaso.app.services.ntp import validate_ntp_state
-from atlaso.app.services.routes_wan import validate_nat_source
+from atlaso.app.services.oidc import (
+    OIDC_TOKEN_LIFETIME_SECONDS,
+    OidcConfigurationError,
+    expected_issuer_url,
+    normalize_issuer_url,
+)
+from atlaso.app.services.routes_wan import validate_nat_source, validate_wan_state
 from atlaso.app.services.update_sources import UPDATE_SOURCE_KINDS
 from atlaso.app.services.vcf_backups import VCF_BACKUP_DEFAULT_USERNAME
 
@@ -1427,6 +1435,27 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
                     f"The settings archive row {row_index} in '{section_name}' has an invalid listen address."
                 )
 
+    conditional_forwarders = next(
+        (
+            str(row.get("value") or "")
+            for row in data.get("settings", [])
+            if str(row.get("key") or "") == DNS_CONDITIONAL_FORWARDERS_SETTING_KEY
+        ),
+        "",
+    )
+    dns_errors = validate_dns_settings(
+        DnsSettings(**_model_kwargs_with_scalar_defaults(DnsSettings, data["dns_settings"][0])),
+        [
+            DnsRecord(**_model_kwargs_with_scalar_defaults(DnsRecord, row))
+            for row in data.get("dns_records", [])
+        ],
+        conditional_forwarders,
+    )
+    if dns_errors:
+        raise ValueError(
+            f"The settings archive DNS settings are invalid: {dns_errors[0]}"
+        )
+
     for row in data.get("ntp_settings", []):
         ntp_errors = validate_ntp_state(
             NtpSettings(**_model_kwargs_with_scalar_defaults(NtpSettings, row)),
@@ -1510,6 +1539,45 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
             raise ValueError(
                 f"The settings archive row {row_index} in 'routing_rules' has identical source and destination interfaces."
             )
+
+    policy_ids = {
+        str(row["name"]): row_index
+        for row_index, row in enumerate(data.get("wan_policies", []), start=1)
+    }
+    wan_errors = validate_wan_state(
+        [
+            Route(
+                **_model_kwargs_with_scalar_defaults(Route, row, exclude={"wan_policy_id"}),
+                wan_policy_id=policy_ids.get(str(row.get("wan_policy_name") or "")),
+            )
+            for row in data.get("routes", [])
+        ],
+        [
+            WanPolicy(
+                id=policy_ids[str(row["name"])],
+                **_model_kwargs_with_scalar_defaults(WanPolicy, row),
+            )
+            for row in data.get("wan_policies", [])
+        ],
+        route_target_names,
+        nat_rules=[
+            NatRule(**_model_kwargs_with_scalar_defaults(NatRule, row))
+            for row in data.get("nat_rules", [])
+        ],
+        wan_target_names={
+            name for name, families in route_target_families.items() if "ipv4" in families
+        },
+        source_groups=firewall_source_groups,
+        routing_rules=[
+            RoutingRule(**_model_kwargs_with_scalar_defaults(RoutingRule, row))
+            for row in data.get("routing_rules", [])
+        ],
+        routing_target_names=route_target_names,
+    )
+    if wan_errors:
+        raise ValueError(
+            f"The settings archive Routes and WAN state is invalid: {wan_errors[0]}"
+        )
 
     dhcp_enabled = False
     for row_index, row in enumerate(data.get("dhcp_settings", []), start=1):
@@ -1653,6 +1721,34 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
                 "The settings archive enables OIDC without an active signing key and issued HTTPS certificate."
             )
         for row_index, row in enumerate(enabled_oidc_rows, start=1):
+            provider = OidcProviderSettings(
+                **_model_kwargs_with_scalar_defaults(OidcProviderSettings, row)
+            )
+            if not 1 <= int(provider.port or 0) <= 65535:
+                raise ValueError(
+                    f"The settings archive row {row_index} in 'oidc_provider_settings' has an invalid HTTPS port."
+                )
+            try:
+                normalized_issuer = normalize_issuer_url(provider.issuer_url)
+            except OidcConfigurationError as exc:
+                raise ValueError(
+                    f"The settings archive row {row_index} in 'oidc_provider_settings' is invalid: {exc}"
+                ) from exc
+            if normalized_issuer != expected_issuer_url(provider):
+                raise ValueError(
+                    f"The settings archive row {row_index} in 'oidc_provider_settings' has an issuer URL that does not match its hostname and port."
+                )
+            if not provider.hostname or "." not in normalize_fqdn(provider.hostname):
+                raise ValueError(
+                    f"The settings archive row {row_index} in 'oidc_provider_settings' has an invalid hostname."
+                )
+            if (
+                provider.access_token_lifetime_seconds != OIDC_TOKEN_LIFETIME_SECONDS
+                or provider.id_token_lifetime_seconds != OIDC_TOKEN_LIFETIME_SECONDS
+            ):
+                raise ValueError(
+                    f"The settings archive row {row_index} in 'oidc_provider_settings' has an unsupported token lifetime."
+                )
             derived_addresses: list[str] = []
             for interface_name in split_interfaces(str(row.get("listen_interface") or "")):
                 for address in oidc_target_addresses.get(interface_name, []):
@@ -2238,14 +2334,20 @@ def _model_kwargs(model: type, row: dict[str, Any], *, exclude: set[str] | None 
     return {key: value for key, value in row.items() if key in column_names and key not in excluded}
 
 
-def _model_kwargs_with_scalar_defaults(model: type, row: dict[str, Any]) -> dict[str, Any]:
+def _model_kwargs_with_scalar_defaults(
+    model: type,
+    row: dict[str, Any],
+    *,
+    exclude: set[str] | None = None,
+) -> dict[str, Any]:
     """Return model kwargs with database scalar defaults applied for validation.
 
     Args:
         model: Model consumed by model kwargs.
         row: Persistent database row affected by the operation.
+        exclude: Exclude consumed by model kwargs.
     """
-    payload = _model_kwargs(model, row)
+    payload = _model_kwargs(model, row, exclude=exclude)
     for column in model.__table__.columns:
         if column.name not in payload and column.default is not None and column.default.is_scalar:
             payload[column.name] = column.default.arg

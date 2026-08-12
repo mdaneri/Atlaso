@@ -4835,6 +4835,10 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
     enabled_web_terminal_without_https["data"]["appliance_settings"][0]["management_https_enabled"] = False
     invalid_ntp_port = deepcopy(archive)
     invalid_ntp_port["data"]["ntp_settings"][0]["port"] = 124
+    invalid_dns_domain = deepcopy(archive)
+    invalid_dns_domain["data"]["dns_settings"][0]["domain"] = "bad domain"
+    invalid_route_destination = deepcopy(archive)
+    invalid_route_destination["data"]["routes"][0]["destination_cidr"] = "not-a-cidr"
     empty_required_field = deepcopy(archive)
     empty_required_field["data"]["physical_interfaces"][0]["name"] = "   "
     unresolved_ldap_organization = deepcopy(archive)
@@ -4950,6 +4954,9 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
     oidc_certificate["certificate_pem"] = "certificate"
     oidc_certificate["private_key_encrypted"] = "encrypted-key"
     enabled_oidc_with_mismatched_address["data"]["ca_certificates"].append(oidc_certificate)
+    enabled_oidc_with_invalid_port = deepcopy(enabled_oidc_with_mismatched_address)
+    enabled_oidc_with_invalid_port["data"]["oidc_provider_settings"][0]["listen_address"] = "192.168.50.1"
+    enabled_oidc_with_invalid_port["data"]["oidc_provider_settings"][0]["port"] = 0
     unsupported_setting = deepcopy(archive)
     unsupported_setting["data"]["settings"].append(
         {"key": "unsupported.setting", "value": "must-not-be-silently-dropped"}
@@ -4987,6 +4994,8 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
         (invalid_network_state, "network state is invalid: .* MTU must be between 576 and 9000"),
         (enabled_web_terminal_without_https, "enables Web Terminal without Management UI HTTPS"),
         (invalid_ntp_port, "NTP settings are invalid: NTP port must be UDP 123"),
+        (invalid_dns_domain, "DNS settings are invalid: DNS domain bad domain must not contain whitespace"),
+        (invalid_route_destination, "Routes and WAN state is invalid: Route not-a-cidr is not a valid destination CIDR"),
         (empty_required_field, "has empty required field 'name'"),
         (unresolved_ldap_organization, "references an unknown LDAP organization"),
         (enabled_ldap_without_organization, "enables LDAP without an LDAP organization"),
@@ -4999,6 +5008,7 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
         (enabled_kms_without_ca, "enables KMS without an enabled CA"),
         (enabled_oidc_without_dependencies, "enables OIDC without an active signing key"),
         (enabled_oidc_with_mismatched_address, "has listener addresses not derived from its interfaces"),
+        (enabled_oidc_with_invalid_port, "has an invalid HTTPS port"),
         (unsupported_setting, "has an unsupported setting key"),
     ]:
         with pytest.raises(ValueError, match=message):
