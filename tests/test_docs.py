@@ -101,15 +101,28 @@ def test_documentation_check_rejects_retired_browser_routes(tmp_path: Path) -> N
         tmp_path: Temporary directory provided by pytest for isolated filesystem state.
     """
     page = tmp_path / "example.md"
-    page.write_text("Open `/dashboard?scope=all` to review appliance state.\n", encoding="utf-8")
+    page.write_text(
+        "Open `/dashboard?scope=all` to review appliance state.\n"
+        "Open https://atlaso.example/dashboard for the same view.\n"
+        "Use the [Dashboard](https://atlaso.example/dashboard?scope=all) bookmark.\n",
+        encoding="utf-8",
+    )
 
     findings = validate_legacy_browser_routes([page])
 
-    assert len(findings) == 1
+    assert len(findings) == 3
     assert findings[0].line == 1
     assert findings[0].message.endswith(": /dashboard?scope=all")
+    assert findings[1].line == 2
+    assert findings[1].message.endswith(": https://atlaso.example/dashboard")
+    assert findings[2].line == 3
+    assert findings[2].message.endswith(": https://atlaso.example/dashboard?scope=all")
 
-    page.write_text("Open `/ui/management/dashboard` to review appliance state.\n", encoding="utf-8")
+    page.write_text(
+        "Open `/ui/management/dashboard` or https://atlaso.example/ui/management/dashboard.\n"
+        "Read [Vaults](../services/vaults.md) for details.\n",
+        encoding="utf-8",
+    )
     assert validate_legacy_browser_routes([page]) == []
 
 

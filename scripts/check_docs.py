@@ -24,6 +24,7 @@ ALLOWED_STATUSES = {"current", "roadmap", "historical", "redirect"}
 HEADING_RE = re.compile(r"^(#{1,6})\s+(.+?)\s*$")
 LINK_RE = re.compile(r"!?\[[^\]]+\]\(([^)]+)\)")
 IMAGE_RE = re.compile(r"!\[[^\]]+\]\(([^)]+)\)")
+ABSOLUTE_URL_RE = re.compile(r"https?://[^\s<>()`\[\]]+")
 BROWSER_PATH_RE = re.compile(
     r"(?<![A-Za-z0-9.])"
     r"(?P<path>/[A-Za-z0-9][A-Za-z0-9._~{}<>*-]*"
@@ -31,6 +32,9 @@ BROWSER_PATH_RE = re.compile(
     r"(?:\?[A-Za-z0-9._~{}<>*=&%+-]*)?)"
 )
 LEGACY_BROWSER_ROUTE_ALLOWLIST = {
+    "docs/project/github-project.md": {
+        "https://github.com/users/mdaneri/projects/5",
+    },
     "docs/project/ui-compliance-matrix.md": {
         "/services/{service}/logs",
     },
@@ -98,6 +102,24 @@ def markdown_sources() -> list[Path]:
     return sorted({path for path in paths if path.is_file()})
 
 
+def browser_route_candidates(line: str) -> list[tuple[str, str]]:
+    """Return display values and request paths found in one Markdown line.
+
+    Args:
+        line: Markdown source line to inspect.
+    """
+    candidates: list[tuple[str, str]] = []
+    for match in ABSOLUTE_URL_RE.finditer(line):
+        candidate = match.group(0).rstrip(".,:;")
+        route_path = urlparse(candidate).path
+        if route_path:
+            candidates.append((candidate, route_path))
+    for match in BROWSER_PATH_RE.finditer(line):
+        candidate = match.group("path").rstrip(".,:;")
+        candidates.append((candidate, urlparse(candidate).path))
+    return candidates
+
+
 def validate_legacy_browser_routes(paths: Iterable[Path] | None = None) -> list[Finding]:
     """Reject unqualified retired browser paths in checked-in Markdown.
 
@@ -116,9 +138,7 @@ def validate_legacy_browser_routes(paths: Iterable[Path] | None = None) -> list[
         relative = path.relative_to(ROOT).as_posix() if path.is_relative_to(ROOT) else path.as_posix()
         allowed = LEGACY_BROWSER_ROUTE_ALLOWLIST.get(relative, set())
         for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
-            for match in BROWSER_PATH_RE.finditer(line):
-                candidate = match.group("path").rstrip(".,:;")
-                route_path = urlparse(candidate).path
+            for candidate, route_path in browser_route_candidates(line):
                 if ui_routes.legacy_browser_target(route_path) is None:
                     continue
                 if candidate in allowed:
