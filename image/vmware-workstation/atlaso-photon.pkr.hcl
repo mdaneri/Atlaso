@@ -147,6 +147,7 @@ locals {
   builder_static_dns_text      = join(" ", var.builder_static_dns)
   bootstrap_admin_password     = var.bootstrap_admin_password
   dry_run_system_adapters_text = var.dry_run_system_adapters ? "true" : "false"
+  ssh_password_stdin_base64    = base64encode("${var.ssh_password}\n")
 }
 
 source "vmware-iso" "photon" {
@@ -173,7 +174,7 @@ source "vmware-iso" "photon" {
   ssh_username         = var.ssh_username
   ssh_password         = var.ssh_password
   ssh_timeout          = "45m"
-  shutdown_command     = "echo '${var.ssh_password}' | sudo -S systemctl poweroff"
+  shutdown_command     = "printf '%s' '${local.ssh_password_stdin_base64}' | base64 -d | sudo -S systemctl poweroff"
 
   vmx_data = {
     "firmware"                 = "efi"
@@ -307,7 +308,7 @@ build {
       "ATLASO_PIP_GLOBAL_INDEX=${var.pip_global_index}",
       "ATLASO_PIP_GLOBAL_INDEX_URL=${var.pip_global_index_url}"
     ]
-    execute_command = "echo '${var.ssh_password}' | sudo -S -E sh -c '{{ .Vars }} {{ .Path }}'"
+    execute_command = "printf '%s' '${local.ssh_password_stdin_base64}' | base64 -d | sudo -S -E sh -c '{{ .Vars }} {{ .Path }}'"
     script          = "${path.root}/../common/scripts/provision-atlaso.sh"
   }
 }

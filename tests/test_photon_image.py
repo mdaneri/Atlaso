@@ -357,6 +357,64 @@ def test_wsl_build_module_behavior():
     assert "Atlaso WSL build module behavior tests passed." in result.stdout
 
 
+def test_photon_image_password_transport_is_shell_safe_for_both_wrappers(tmp_path):
+    """Verify shell-safe, byte-exact Photon password transport for both wrappers.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    pwsh = shutil.which("pwsh")
+    bash = shutil.which("bash")
+    if pwsh is None or bash is None:
+        pytest.skip("PowerShell 7 and Bash are required")
+
+    result = subprocess.run(
+        [
+            pwsh,
+            "-NoLogo",
+            "-NoProfile",
+            "-NonInteractive",
+            "-File",
+            "tests/powershell/Test-AtlasoPhotonImage.ps1",
+            "-RepositoryRoot",
+            str(Path.cwd()),
+            "-OutputDirectory",
+            str(tmp_path / "photon-kickstart"),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, "Photon credential transport behavior test failed"
+    assert "Atlaso Photon image credential transport tests passed." in result.stdout
+
+    module = Path("scripts/windows/common/Atlaso.PhotonImage.psm1").read_text(
+        encoding="utf-8"
+    )
+    assert "ConvertTo-AtlasoUtf8Base64" in module
+    assert "| base64 -d | chpasswd" in module
+    assert '"printf \'%s:%s\\n\' \'$BuildUsername\' \'$BuildPassword\' | chpasswd"' not in module
+
+    for wrapper_path in (
+        Path("scripts/windows/hyperv/build-photon-image.ps1"),
+        Path("scripts/windows/vmware/build-photon-image.ps1"),
+    ):
+        wrapper = wrapper_path.read_text(encoding="utf-8")
+        assert "Invoke-AtlasoPhotonImageBuild" in wrapper
+        assert "-SshPassword $SshPassword" in wrapper
+
+    for template_path in (
+        Path("image/hyperv/atlaso-photon.pkr.hcl"),
+        Path("image/vmware-workstation/atlaso-photon.pkr.hcl"),
+    ):
+        template = template_path.read_text(encoding="utf-8")
+        assert 'ssh_password_stdin_base64    = base64encode("${var.ssh_password}\\n")' in template
+        assert template.count("${local.ssh_password_stdin_base64}") == 2
+        assert "echo '${var.ssh_password}'" not in template
+        assert "| base64 -d | sudo -S systemctl poweroff" in template
+        assert "| base64 -d | sudo -S -E sh -c" in template
+
+
 def test_wsl_build_contract_and_setup_are_pinned_idempotent_and_non_destructive():
     """Verify that wsl build contract and setup are pinned idempotent and non destructive."""
     contract = json.loads(
