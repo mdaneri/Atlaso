@@ -102,7 +102,13 @@ from atlaso.app.services.firewall import (
 )
 from atlaso.app.services.local_users import LOCAL_USERS_PASSWORD_POLICY_KEY
 from atlaso.app.services.ldap import clear_ldap_recovery_payload, ensure_organization_bind_secret
-from atlaso.app.services.networking import normalize_interface_mode, normalize_interface_role, normalize_ipv4_method
+from atlaso.app.services.networking import (
+    normalize_interface_mode,
+    normalize_interface_role,
+    normalize_ipv4_method,
+    validate_network_state,
+)
+from atlaso.app.services.ntp import validate_ntp_state
 from atlaso.app.services.routes_wan import validate_nat_source
 from atlaso.app.services.update_sources import UPDATE_SOURCE_KINDS
 from atlaso.app.services.vcf_backups import VCF_BACKUP_DEFAULT_USERNAME
@@ -1214,6 +1220,14 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
         str(row["name"]): row
         for row in data.get("vlan_interfaces", [])
     }
+    archived_interfaces = [
+        PhysicalInterface(**_model_kwargs_with_scalar_defaults(PhysicalInterface, row))
+        for row in data.get("physical_interfaces", [])
+    ]
+    archived_vlans = [
+        VlanInterface(**_model_kwargs_with_scalar_defaults(VlanInterface, row))
+        for row in data.get("vlan_interfaces", [])
+    ]
     for row_index, row in enumerate(data.get("vlan_interfaces", []), start=1):
         enabled = row.get("enabled", True)
         if not isinstance(enabled, bool):
@@ -1234,6 +1248,14 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
             raise ValueError(
                 f"The settings archive row {row_index} in 'vlan_interfaces' has an ineligible parent interface."
             )
+    network_errors = validate_network_state(
+        interfaces=archived_interfaces,
+        vlans=archived_vlans,
+    )
+    if network_errors:
+        raise ValueError(
+            f"The settings archive network state is invalid: {network_errors[0]}"
+        )
 
     def address_families(row: dict[str, Any]) -> set[str]:
         """Return valid IP CIDR families supplied by one archived interface.
@@ -1341,14 +1363,10 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
 
     appliance_row = data["appliance_settings"][0]
     if appliance_row.get("web_terminal_enabled", False):
-        archived_interfaces = [
-            PhysicalInterface(**_model_kwargs(PhysicalInterface, row))
-            for row in data.get("physical_interfaces", [])
-        ]
-        archived_vlans = [
-            VlanInterface(**_model_kwargs(VlanInterface, row))
-            for row in data.get("vlan_interfaces", [])
-        ]
+        if not appliance_row.get("management_https_enabled", False):
+            raise ValueError(
+                "The settings archive enables Web Terminal without Management UI HTTPS."
+            )
         appliance_settings = ApplianceSettings(
             **_model_kwargs(ApplianceSettings, appliance_row)
         )
@@ -1408,6 +1426,16 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
                 raise ValueError(
                     f"The settings archive row {row_index} in '{section_name}' has an invalid listen address."
                 )
+
+    for row in data.get("ntp_settings", []):
+        ntp_errors = validate_ntp_state(
+            NtpSettings(**_model_kwargs_with_scalar_defaults(NtpSettings, row)),
+            service_target_names,
+        )
+        if ntp_errors:
+            raise ValueError(
+                f"The settings archive NTP settings are invalid: {ntp_errors[0]}"
+            )
 
     for row_index, row in enumerate(data.get("firewall_rules", []), start=1):
         candidate = FirewallRule(
@@ -1925,7 +1953,8 @@ def _validate_archive_database_relationships(db: Session, data: dict[str, list[d
 
     for row_index, row in enumerate(data.get("vcf_backup_settings", []), start=1):
         username = str(row.get("sftp_username") or "")
-        if row.get("enabled", False) and not users.get(username, False):
+        creates_default_user = username == VCF_BACKUP_DEFAULT_USERNAME and username not in users
+        if row.get("enabled", False) and not creates_default_user and not users.get(username, False):
             raise ValueError(
                 f"The settings archive row {row_index} in 'vcf_backup_settings' requires an enabled local user."
             )
@@ -2207,6 +2236,20 @@ def _model_kwargs(model: type, row: dict[str, Any], *, exclude: set[str] | None 
     excluded = {"id", "created_at", "updated_at", *(exclude or set())}
     column_names = {column.name for column in model.__table__.columns if not isinstance(column.type, SqlDateTime)}
     return {key: value for key, value in row.items() if key in column_names and key not in excluded}
+
+
+def _model_kwargs_with_scalar_defaults(model: type, row: dict[str, Any]) -> dict[str, Any]:
+    """Return model kwargs with database scalar defaults applied for validation.
+
+    Args:
+        model: Model consumed by model kwargs.
+        row: Persistent database row affected by the operation.
+    """
+    payload = _model_kwargs(model, row)
+    for column in model.__table__.columns:
+        if column.name not in payload and column.default is not None and column.default.is_scalar:
+            payload[column.name] = column.default.arg
+    return payload
 
 
 def _restore_routes(db: Session, rows: list[dict[str, Any]]) -> int:

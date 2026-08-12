@@ -4577,6 +4577,7 @@ def test_settings_restore_rejects_disabled_users_for_enabled_vcf_services(client
         depot_archive["data"]["vcf_offline_depot_settings"][0]["allow_unauthenticated_access"] = False
         depot_archive["data"]["vcf_offline_depot_settings"][0]["http_username"] = disabled_user.username
         depot_archive["data"]["vcf_offline_depot_settings"][0]["listen_interface"] = "eth2"
+        depot_archive["data"]["vcf_offline_depot_settings"][0]["listen_address"] = "192.168.50.1"
         with pytest.raises(ValueError, match="requires an enabled local user"):
             restore_settings_archive(db, depot_archive)
 
@@ -4750,6 +4751,7 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
             "mac_address": "02:00:00:00:00:02",
             "mode": "access",
             "role": "route",
+            "ipv6_enabled": True,
             "ipv6_cidr": "fd00:1234::1/64",
         }
     )
@@ -4822,9 +4824,17 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
     enabled_invalid_listen_address["data"]["ntp_settings"][0]["listen_address"] = "not-an-ip"
     enabled_missing_web_terminal_target = deepcopy(archive)
     enabled_missing_web_terminal_target["data"]["appliance_settings"][0]["web_terminal_enabled"] = True
+    enabled_missing_web_terminal_target["data"]["appliance_settings"][0]["management_https_enabled"] = True
     enabled_missing_web_terminal_target["data"]["appliance_settings"][0][
         "web_terminal_interfaces_json"
     ] = '["missing-terminal-target"]'
+    invalid_network_state = deepcopy(archive)
+    invalid_network_state["data"]["physical_interfaces"][0]["mtu"] = 1
+    enabled_web_terminal_without_https = deepcopy(archive)
+    enabled_web_terminal_without_https["data"]["appliance_settings"][0]["web_terminal_enabled"] = True
+    enabled_web_terminal_without_https["data"]["appliance_settings"][0]["management_https_enabled"] = False
+    invalid_ntp_port = deepcopy(archive)
+    invalid_ntp_port["data"]["ntp_settings"][0]["port"] = 124
     empty_required_field = deepcopy(archive)
     empty_required_field["data"]["physical_interfaces"][0]["name"] = "   "
     unresolved_ldap_organization = deepcopy(archive)
@@ -4974,6 +4984,9 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
         (enabled_missing_listen_address, "has no listen address"),
         (enabled_invalid_listen_address, "has an invalid listen address"),
         (enabled_missing_web_terminal_target, "select an ineligible Web Terminal interface"),
+        (invalid_network_state, "network state is invalid: .* MTU must be between 576 and 9000"),
+        (enabled_web_terminal_without_https, "enables Web Terminal without Management UI HTTPS"),
+        (invalid_ntp_port, "NTP settings are invalid: NTP port must be UDP 123"),
         (empty_required_field, "has empty required field 'name'"),
         (unresolved_ldap_organization, "references an unknown LDAP organization"),
         (enabled_ldap_without_organization, "enables LDAP without an LDAP organization"),
