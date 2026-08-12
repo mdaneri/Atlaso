@@ -724,6 +724,33 @@ def refresh_interface_dependent_addresses(
                 if ntp_bound or scope.ntp_server in stale_addresses
                 else scope.ntp_server
             )
+        if isinstance(scope, DhcpScope):
+            resulting_scope_network = _network_from_cidr(
+                f"{scope.site_address}/{scope.prefix_length}"
+            )
+            source_scope_network = scope_network or old_network
+            for field_name, field_label in (
+                ("dns_server", "DNS server"),
+                ("ntp_server", "NTP server"),
+            ):
+                server_address = str(getattr(scope, field_name, "") or "").strip()
+                if (
+                    not server_address
+                    or resulting_scope_network is None
+                    or _address_in_network(server_address, resulting_scope_network)
+                ):
+                    continue
+                rebased_server = _rebase_address_in_network(
+                    server_address,
+                    source_scope_network,
+                    resulting_scope_network,
+                )
+                if not _address_in_network(rebased_server, resulting_scope_network):
+                    raise PhysicalInterfaceUpdateError(
+                        f"DHCP scope {scope.name} {field_label} cannot fit within the updated "
+                        f"{resulting_scope_network.with_prefixlen} scope network."
+                    )
+                setattr(scope, field_name, rebased_server)
         after = (
             getattr(scope, "interface_name", ""),
             getattr(scope, "site_address", ""),

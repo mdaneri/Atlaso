@@ -320,8 +320,8 @@ def test_physical_interface_api_atomically_refreshes_ipv4_and_ipv6_dependencies(
                     site_address="192.168.50.254",
                     prefix_length=24,
                     range_expression="192.168.50.100-192.168.50.120",
-                    dns_server=old_ipv4,
-                    ntp_server=old_ipv4,
+                    dns_server="192.168.50.53",
+                    ntp_server="192.168.50.54",
                 ),
                 DhcpScope(
                     name="api-ipv6-dependency",
@@ -491,8 +491,8 @@ def test_physical_interface_api_atomically_refreshes_ipv4_and_ipv6_dependencies(
         assert oidc_dns_addresses == {new_ipv4, new_ipv6}
         assert scopes["api-ipv4-dependency"].site_address == new_ipv4
         assert scopes["api-ipv4-dependency"].range_expression == "192.168.60.100-192.168.60.120"
-        assert scopes["api-ipv4-dependency"].dns_server == new_ipv4
-        assert scopes["api-ipv4-dependency"].ntp_server == new_ipv4
+        assert scopes["api-ipv4-dependency"].dns_server == "192.168.60.53"
+        assert scopes["api-ipv4-dependency"].ntp_server == "192.168.60.54"
         assert scopes["api-ipv6-dependency"].site_address == new_ipv6
         assert scopes["api-ipv6-dependency"].range_expression == "fd00:60::100-fd00:60::120"
         assert scopes["api-ipv6-dependency"].dns_server == new_ipv6
@@ -543,6 +543,7 @@ def test_physical_interface_api_rejects_ambiguous_reservation_scope_move(client)
                     site_address="192.168.70.1",
                     prefix_length=24,
                     range_expression="192.168.70.100-192.168.70.110",
+                    dns_server="192.168.70.1",
                 ),
                 DhcpScope(
                     name="overlap-b",
@@ -551,6 +552,7 @@ def test_physical_interface_api_rejects_ambiguous_reservation_scope_move(client)
                     site_address="192.168.70.1",
                     prefix_length=24,
                     range_expression="192.168.70.120-192.168.70.130",
+                    dns_server="192.168.70.1",
                 ),
                 DhcpReservation(
                     hostname="ambiguous.atlaso.internal",
@@ -622,6 +624,7 @@ def test_physical_interface_api_rejects_inconsistent_esxi_reservation_owner(clie
                     site_address="192.168.71.1",
                     prefix_length=24,
                     range_expression="192.168.71.100-192.168.71.120",
+                    dns_server="192.168.71.1",
                 ),
                 DhcpReservation(
                     hostname="unrelated.atlaso.internal",
@@ -684,6 +687,7 @@ def test_physical_interface_api_rejects_reservation_dns_collision(client):
                     site_address="192.168.73.1",
                     prefix_length=24,
                     range_expression="192.168.73.100-192.168.73.120",
+                    dns_server="192.168.73.1",
                 ),
                 DhcpReservation(
                     hostname=hostname,
