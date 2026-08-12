@@ -2680,14 +2680,14 @@ def apply_units(client: HttpClient, units: list[str], args: argparse.Namespace) 
     attempts = 0
     for attempt in range(2):
         attempts = attempt + 1
-        status, body, _headers = client.request("GET", "/appliance-apply")
+        status, body, _headers = client.request("GET", "/ui/management/appliance-apply")
         if status >= 400:
-            raise LifecycleError(f"GET /appliance-apply failed with HTTP {status}")
+            raise LifecycleError(f"GET /ui/management/appliance-apply failed with HTTP {status}")
         csrf = extract_csrf(body)
         form: list[tuple[str, Any]] = [("csrf", csrf)]
         form.extend(("selected_units", unit) for unit in units)
         if "esx_storage" in units:
-            review = client.json_request("GET", "/appliance-apply/review")
+            review = client.json_request("GET", "/ui/management/appliance-apply/review")
             esx_unit = next((item for item in review.get("units", []) if item.get("id") == "esx_storage"), None)
             format_volumes = list((esx_unit or {}).get("format_volumes") or [])
             if format_volumes and not args.confirm_esx_storage_format:
@@ -2703,7 +2703,7 @@ def apply_units(client: HttpClient, units: list[str], args: argparse.Namespace) 
                 )
         status, response_body, _headers = client.request(
             "POST",
-            "/appliance-apply",
+            "/ui/management/appliance-apply",
             form=form,
             headers={"Accept": "application/json"},
             follow_redirects=False,

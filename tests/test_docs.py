@@ -124,19 +124,22 @@ def test_documentation_check_rejects_retired_browser_routes(tmp_path: Path) -> N
     page.write_text(
         "Open `/dashboard?scope=all` to review appliance state.\n"
         "Open https://atlaso.example/dashboard for the same view.\n"
-        "Use the [Dashboard](https://atlaso.example/dashboard?scope=all) bookmark.\n",
+        "Use the [Dashboard](https://atlaso.example/dashboard?scope=all) bookmark.\n"
+        'Open "https://atlaso.example/dashboard" in a browser.\n',
         encoding="utf-8",
     )
 
     findings = validate_legacy_browser_routes([page])
 
-    assert len(findings) == 3
+    assert len(findings) == 4
     assert findings[0].line == 1
     assert findings[0].message.endswith(": /dashboard?scope=all")
     assert findings[1].line == 2
     assert findings[1].message.endswith(": https://atlaso.example/dashboard")
     assert findings[2].line == 3
     assert findings[2].message.endswith(": https://atlaso.example/dashboard?scope=all")
+    assert findings[3].line == 4
+    assert findings[3].message.endswith(": https://atlaso.example/dashboard")
 
     page.write_text(
         "Open `/ui/management/dashboard` or https://atlaso.example/ui/management/dashboard.\n"

@@ -486,8 +486,10 @@ def test_apply_units_requires_and_submits_esx_format_confirmation(monkeypatch):
                 path: Filesystem or URL path to read, validate, or update.
                 **kwargs: Additional keyword arguments forwarded to the wrapped call.
             """
-            if method == "GET":
+            if method == "GET" and path == "/ui/management/appliance-apply":
                 return 200, '<input type="hidden" name="csrf" value="token">', {}
+            assert method == "POST"
+            assert path == "/ui/management/appliance-apply"
             self.form = kwargs["form"]
             return 202, json.dumps({"job_id": "job-1", "status_url": "/tasks/job-1/status"}), {}
 
@@ -499,7 +501,7 @@ def test_apply_units_requires_and_submits_esx_format_confirmation(monkeypatch):
                 path: Filesystem or URL path to read, validate, or update.
                 **_kwargs: Additional keyword arguments accepted by the test double.
             """
-            if path == "/appliance-apply/review":
+            if path == "/ui/management/appliance-apply/review":
                 return {
                     "units": [
                         {
@@ -575,9 +577,9 @@ def test_apply_units_retries_once_when_desired_state_drifts(monkeypatch):
             Raises:
                 AssertionError: If an expected invariant is not satisfied.
             """
-            if method == "GET" and path == "/appliance-apply":
+            if method == "GET" and path == "/ui/management/appliance-apply":
                 return 200, '<input type="hidden" name="csrf" value="token">', {}
-            if method == "POST" and path == "/appliance-apply":
+            if method == "POST" and path == "/ui/management/appliance-apply":
                 self.submissions += 1
                 body = json.dumps(
                     {

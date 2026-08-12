@@ -25,7 +25,7 @@ ALLOWED_STATUSES = {"current", "roadmap", "historical", "redirect"}
 HEADING_RE = re.compile(r"^(#{1,6})\s+(.+?)\s*$")
 LINK_RE = re.compile(r"!?\[[^\]]+\]\(([^)]+)\)")
 IMAGE_RE = re.compile(r"!\[[^\]]+\]\(([^)]+)\)")
-ABSOLUTE_URL_RE = re.compile(r"https?://[^\s<>()`\[\]]+")
+ABSOLUTE_URL_RE = re.compile(r'''https?://[^\s<>()`\[\]"']+''')
 BROWSER_PATH_RE = re.compile(
     r"(?<![A-Za-z0-9.])"
     r"(?P<path>/[A-Za-z0-9][A-Za-z0-9._~{}<>*-]*"
