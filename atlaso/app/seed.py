@@ -127,13 +127,20 @@ def restore_canonical_nts_defaults_once(db: Session, settings: NtpSettings) -> b
     return changed
 
 
-def seed_initial_data(db: Session, *, include_examples: bool = True, appliance_mode: bool = False) -> None:
+def seed_initial_data(
+    db: Session,
+    *,
+    include_examples: bool = True,
+    appliance_mode: bool = False,
+    commit: bool = True,
+) -> None:
     """Handle seed initial data.
 
     Args:
         db: Active database session.
         include_examples: Include examples supplied by the caller.
         appliance_mode: Appliance mode supplied by the caller.
+        commit: Commit seeded rows and emit post-commit restoration audit when true.
     """
     ntp_defaults_restored = False
     ensure_appliance_instance_id(db)
@@ -579,6 +586,9 @@ def seed_initial_data(db: Session, *, include_examples: bool = True, appliance_m
         )
 
     seed_update_sources(db)
+    if not commit:
+        db.flush()
+        return
     db.commit()
     if ntp_defaults_restored:
         record_audit(

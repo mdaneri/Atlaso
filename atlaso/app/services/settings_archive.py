@@ -910,7 +910,7 @@ def factory_reset_desired_state(db: Session) -> dict[str, int]:
     recovery_archives = db.execute(select(LdapRecoveryArchive)).scalars().all()
     try:
         _clear_desired_state(db)
-        seed_initial_data(db, include_examples=False)
+        seed_initial_data(db, include_examples=False, commit=False)
         for state in ensure_environment_rows(db):
             state.enabled = False
             state.desired_version = ""
@@ -1055,6 +1055,55 @@ def _validate_archive(archive: dict[str, Any]) -> None:
         required_fields = _archive_required_fields(section_name)
         for row_index, row in enumerate(rows, start=1):
             _validate_archive_row(section_name, row_index, row, required_fields)
+    _validate_archive_relationships(data)
+
+
+def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> None:
+    """Validate archive relationships that restore resolves by public names.
+
+    Args:
+        data: Structurally validated archive data collections.
+
+    Raises:
+        ValueError: If a relationship target is empty or absent.
+    """
+    organization_slugs = {str(row["slug"]) for row in data.get("ldap_organizations", [])}
+    ldap_users = {
+        (str(row["organization_slug"]), str(row["uid"]))
+        for row in data.get("ldap_users", [])
+    }
+    ldap_groups = {
+        (str(row["organization_slug"]), str(row["name"]))
+        for row in data.get("ldap_groups", [])
+    }
+    for section_name in ("ldap_users", "ldap_groups"):
+        for row_index, row in enumerate(data.get(section_name, []), start=1):
+            organization_slug = str(row["organization_slug"] or "")
+            if not organization_slug or organization_slug not in organization_slugs:
+                raise ValueError(
+                    f"The settings archive row {row_index} in '{section_name}' references an unknown LDAP organization."
+                )
+    for row_index, row in enumerate(data.get("ldap_group_memberships", []), start=1):
+        organization_slug = str(row["organization_slug"] or "")
+        group_name = str(row["group_name"] or "")
+        member_type = str(row["member_type"] or "")
+        member_name = str(row["member_name"] or "")
+        member_exists = (
+            (organization_slug, member_name) in ldap_users
+            if member_type == "user"
+            else (organization_slug, member_name) in ldap_groups
+            if member_type == "group"
+            else False
+        )
+        if (
+            not organization_slug
+            or (organization_slug, group_name) not in ldap_groups
+            or not member_exists
+        ):
+            raise ValueError(
+                "The settings archive row "
+                f"{row_index} in 'ldap_group_memberships' references an unknown LDAP object."
+            )
 
 
 def _archive_required_fields(section_name: str) -> set[str]:

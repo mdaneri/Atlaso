@@ -4673,11 +4673,16 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
     invalid_row["data"]["physical_interfaces"] = ["not an object"]
     missing_required_field = deepcopy(archive)
     del missing_required_field["data"]["physical_interfaces"][0]["name"]
+    unresolved_ldap_organization = deepcopy(archive)
+    unresolved_ldap_organization["data"]["ldap_users"].append(
+        {"organization_slug": "missing-organization", "uid": "orphaned-user"}
+    )
 
     for candidate, message in [
         (invalid_collection, "must be a list"),
         (invalid_row, "must be an object"),
         (missing_required_field, "missing required field 'name'"),
+        (unresolved_ldap_organization, "references an unknown LDAP organization"),
     ]:
         with pytest.raises(ValueError, match=message):
             archive_summary(candidate)
@@ -4732,6 +4737,57 @@ def test_settings_restore_rolls_back_late_failure_without_clearing_staged_ldap_r
             assert db.execute(select(ApplianceSettings)).scalar_one().fqdn == original_fqdn
             assert db.get(LdapRecoveryArchive, staged_id) is not None
             assert LDAP_PENDING_RECOVERY_PAYLOADS[staged_id] == b"pending recovery payload"
+        finally:
+            LDAP_PENDING_RECOVERY_PAYLOADS.pop(staged_id, None)
+
+
+def test_factory_reset_rolls_back_late_failure_without_clearing_staged_ldap_recovery(client, monkeypatch):
+    """Verify late factory-reset failures roll back database and process state.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+    """
+    import pytest
+    from sqlalchemy import select
+
+    import atlaso.app.services.settings_archive as settings_archive
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import ApplianceSettings, LdapRecoveryArchive
+    from atlaso.app.services.ldap import LDAP_PENDING_RECOVERY_PAYLOADS
+
+    with SessionLocal() as db:
+        settings = db.execute(select(ApplianceSettings)).scalar_one()
+        original_fqdn = settings.fqdn
+        staged = LdapRecoveryArchive(
+            filename="staged-late-reset.lfldap",
+            path="memory://pending-ldap-recovery",
+            sha256="e" * 64,
+            state="staged",
+            organization_count=1,
+            created_by="test",
+        )
+        db.add(staged)
+        db.commit()
+        staged_id = staged.id
+        LDAP_PENDING_RECOVERY_PAYLOADS[staged_id] = b"pending reset recovery payload"
+
+        def fail_after_reset_seed(*_args, **_kwargs):
+            """Raise after reset seeding to exercise transaction rollback.
+
+            Args:
+                *_args: Additional positional arguments accepted by the callable.
+                **_kwargs: Additional keyword arguments accepted by the callable.
+            """
+            raise RuntimeError("injected late factory reset failure")
+
+        monkeypatch.setattr(settings_archive, "_force_services_stopped_unconfigured", fail_after_reset_seed)
+        try:
+            with pytest.raises(RuntimeError, match="injected late factory reset failure"):
+                settings_archive.factory_reset_desired_state(db)
+            assert db.execute(select(ApplianceSettings)).scalar_one().fqdn == original_fqdn
+            assert db.get(LdapRecoveryArchive, staged_id) is not None
+            assert LDAP_PENDING_RECOVERY_PAYLOADS[staged_id] == b"pending reset recovery payload"
         finally:
             LDAP_PENDING_RECOVERY_PAYLOADS.pop(staged_id, None)
 
