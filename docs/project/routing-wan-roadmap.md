@@ -12,6 +12,11 @@ status: roadmap
 Atlaso Routing/WAN v1 is intentionally appliance-owned and conservative. Desired state is edited on `/routes-wan`; host
 mutation happens only through the global `/appliance-apply` `wan` unit.
 
+The current UI presents four wizard-backed collections: **Static Routes**, **Routing Permissions**, **NAT**, and
+**WAN Policies**. Static Routes define paths in the lab route table. Routing Permissions separately define forwarding
+between interface/VLAN networks. Add/edit changes are reviewed before one desired-state save, while ordinary Enabled
+state remains directly editable and generated route-role permissions remain read-only.
+
 Atlaso has no `wan` interface role. The `wan` apply-unit name and WAN Simulation UI describe explicit routing, NAT, and
 impairment behavior only; they must not be used as an interface classification.
 

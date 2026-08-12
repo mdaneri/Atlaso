@@ -6394,83 +6394,6 @@ async function postWanAction(url, data, csrf, options = {}) {
   }
 }
 
-function newWanRouteRow(defaultTarget = "") {
-  return {
-    id: "__new__",
-    destination_cidr: "",
-    gateway: "",
-    interface_name: defaultTarget,
-    metric: 100,
-    enabled: true,
-    wan_policy_id: "",
-    wan_policy_name: "",
-    wan_mode: "interface",
-    is_new: true,
-  };
-}
-
-function newWanPolicyRow() {
-  return {
-    id: "__new__",
-    name: "",
-    description: "",
-    enabled: true,
-    latency_ms: 0,
-    jitter_ms: 0,
-    packet_loss_percent: 0,
-    bandwidth_mbit: "",
-    corrupt_percent: 0,
-    duplicate_percent: 0,
-    reorder_percent: 0,
-    is_new: true,
-  };
-}
-
-function newWanNatRuleRow(defaultTarget = "") {
-  return {
-    id: "__new__",
-    name: "",
-    enabled: true,
-    source: "any",
-    outbound_interface: defaultTarget,
-    masquerade: true,
-    priority: 100,
-    description: "",
-    is_new: true,
-  };
-}
-
-function newWanRoutingRuleRow(defaultSource = "", defaultDestination = "") {
-  return {
-    id: "__new__",
-    name: "",
-    kind: "add explicit rule",
-    enabled: true,
-    source_interface: defaultSource,
-    destination_interface: defaultDestination,
-    priority: 100,
-    description: "",
-    generated: false,
-    is_new: true,
-  };
-}
-
-function hasRequiredWanRouteFields(data) {
-  return Boolean((data.destination_cidr || "").trim() && (data.interface_name || "").trim());
-}
-
-function hasRequiredWanNatFields(data) {
-  return Boolean((data.name || "").trim() && (data.outbound_interface || "").trim());
-}
-
-function hasRequiredWanPolicyFields(data) {
-  return Boolean((data.name || "").trim());
-}
-
-function hasRequiredWanRoutingFields(data) {
-  return Boolean((data.name || "").trim() && (data.source_interface || "").trim() && (data.destination_interface || "").trim());
-}
-
 function wanPolicyValues(policyOptions) {
   const values = { "": "none" };
   policyOptions.forEach((policy) => {
@@ -6487,138 +6410,59 @@ function wanPolicyFormatter(cell, policyLabels) {
   return escapeHtml(policyLabels[String(value)] || value);
 }
 
-async function autoSaveWanRoute(cell, csrf) {
-  clearCaMessage("routes-wan-route-error");
-  const row = cell.getRow();
-  const data = row.getData();
-  if (data.is_new) {
-    if (!hasRequiredWanRouteFields(data)) {
-      reformatPendingNewRecord(cell);
-      return;
-    }
-    try {
-      await postWanAction(managementUiPath("/routes-wan/routes"), data, csrf, { reload: false });
-      showTransientGridStatus("Added");
-      window.location.reload();
-    } catch (error) {
-      showWanMessage("routes-wan-route-error", error instanceof Error ? error.message : "The route could not be added.");
-      if (typeof cell.restoreOldValue === "function") {
-        cell.restoreOldValue();
-      }
-    }
-    return;
-  }
+async function saveWanEnabledState(cell, csrf, path, errorId, fallbackMessage) {
+  const data = cell.getRow().getData();
+  clearCaMessage(errorId);
   try {
-    await postWanAction(managementUiPath(`/routes-wan/routes/${data.id}/edit`), data, csrf, { reload: false });
+    await postWanAction(managementUiPath(`${path}/${data.id}/edit`), data, csrf, { reload: false });
     showTransientGridStatus("Saved");
     await refreshNetworkSideStack();
   } catch (error) {
-    showWanMessage("routes-wan-route-error", error instanceof Error ? error.message : "The route could not be saved.");
-    if (typeof cell.restoreOldValue === "function") {
-      cell.restoreOldValue();
-    }
+    cell.restoreOldValue?.();
+    showWanMessage(errorId, error instanceof Error ? error.message : fallbackMessage);
   }
 }
 
-async function autoSaveWanPolicy(cell, csrf) {
-  clearCaMessage("routes-wan-policy-error");
-  const row = cell.getRow();
-  const data = row.getData();
-  if (data.is_new) {
-    if (!hasRequiredWanPolicyFields(data)) {
-      reformatPendingNewRecord(cell);
-      return;
-    }
-    try {
-      await postWanAction(managementUiPath("/routes-wan/policies"), data, csrf, { reload: false });
-      showTransientGridStatus("Added");
-      window.location.reload();
-    } catch (error) {
-      showWanMessage("routes-wan-policy-error", error instanceof Error ? error.message : "The WAN policy could not be added.");
-      if (typeof cell.restoreOldValue === "function") {
-        cell.restoreOldValue();
-      }
-    }
-    return;
-  }
-  try {
-    await postWanAction(managementUiPath(`/routes-wan/policies/${data.id}/edit`), data, csrf, { reload: false });
-    showTransientGridStatus("Saved");
-    await refreshNetworkSideStack();
-  } catch (error) {
-    showWanMessage("routes-wan-policy-error", error instanceof Error ? error.message : "The WAN policy could not be saved.");
-    if (typeof cell.restoreOldValue === "function") {
-      cell.restoreOldValue();
-    }
+const routesWanWizardOpeners = new Map();
+
+function openRoutesWanWizard(kind, rowData = null, launcher = null) {
+  routesWanWizardOpeners.get(kind)?.(rowData, launcher);
+}
+
+function routesWanAddButton(kind, label) {
+  return `<button class="add-row-button" type="button" data-routes-wan-wizard-open="${escapeHtml(kind)}">${escapeHtml(label)}</button>`;
+}
+
+function routesWanField(form, name) {
+  return form.elements.namedItem(name);
+}
+
+function setRoutesWanField(form, name, value) {
+  const field = routesWanField(form, name);
+  if (field instanceof HTMLInputElement && field.type === "checkbox") {
+    field.checked = value !== false;
+  } else if (field instanceof HTMLInputElement || field instanceof HTMLSelectElement || field instanceof HTMLTextAreaElement) {
+    field.value = value ?? "";
   }
 }
 
-async function autoSaveWanNatRule(cell, csrf) {
-  clearCaMessage("routes-wan-nat-error");
-  const row = cell.getRow();
-  const data = row.getData();
-  if (data.is_new) {
-    if (!hasRequiredWanNatFields(data)) {
-      reformatPendingNewRecord(cell);
-      return;
-    }
-    try {
-      await postWanAction(managementUiPath("/routes-wan/nat-rules"), data, csrf, { reload: false });
-      showTransientGridStatus("Added");
-      window.location.reload();
-    } catch (error) {
-      showWanMessage("routes-wan-nat-error", error instanceof Error ? error.message : "The NAT rule could not be added.");
-      if (typeof cell.restoreOldValue === "function") {
-        cell.restoreOldValue();
-      }
-    }
-    return;
-  }
-  try {
-    await postWanAction(managementUiPath(`/routes-wan/nat-rules/${data.id}/edit`), data, csrf, { reload: false });
-    showTransientGridStatus("Saved");
-    await refreshNetworkSideStack();
-  } catch (error) {
-    showWanMessage("routes-wan-nat-error", error instanceof Error ? error.message : "The NAT rule could not be saved.");
-    if (typeof cell.restoreOldValue === "function") {
-      cell.restoreOldValue();
-    }
+function setRoutesWanReview(form, key, value) {
+  const target = form.querySelector(`[data-routes-wan-review="${CSS.escape(key)}"]`);
+  if (target instanceof HTMLElement) {
+    target.textContent = String(value || "not configured");
   }
 }
 
-async function autoSaveWanRoutingRule(cell, csrf) {
-  clearCaMessage("routes-wan-routing-error");
-  const row = cell.getRow();
-  const data = row.getData();
-  if (data.generated) {
-    return;
-  }
-  if (data.is_new) {
-    if (!hasRequiredWanRoutingFields(data)) {
-      reformatPendingNewRecord(cell);
-      return;
-    }
-    try {
-      await postWanAction(managementUiPath("/routes-wan/routing-rules"), data, csrf, { reload: false });
-      showTransientGridStatus("Added");
-      window.location.reload();
-    } catch (error) {
-      showWanMessage("routes-wan-routing-error", error instanceof Error ? error.message : "The routing rule could not be added.");
-      if (typeof cell.restoreOldValue === "function") {
-        cell.restoreOldValue();
-      }
-    }
-    return;
-  }
+function routesWanResponseMessage(text, fallback) {
+  const plainText = String(text || "").trim().replace(/<[^>]+>/g, " ").replace(/\s+/g, " ");
+  return plainText || fallback;
+}
+
+function rememberRoutesWanTab(targetId) {
   try {
-    await postWanAction(managementUiPath(`/routes-wan/routing-rules/${data.id}/edit`), data, csrf, { reload: false });
-    showTransientGridStatus("Saved");
-    await refreshNetworkSideStack();
-  } catch (error) {
-    showWanMessage("routes-wan-routing-error", error instanceof Error ? error.message : "The routing rule could not be saved.");
-    if (typeof cell.restoreOldValue === "function") {
-      cell.restoreOldValue();
-    }
+    window.localStorage.setItem("atlaso:routes-wan:active-tab", targetId);
+  } catch {
+    // The first tab remains a safe fallback when storage is unavailable.
   }
 }
 
@@ -6717,14 +6561,18 @@ function initializeRoutesWanRoutingTable() {
     return;
   }
   const csrf = tableElement.dataset.csrf || "";
+  const canWrite = tableElement.dataset.canWrite === "true";
   const targets = JSON.parse(tableElement.dataset.targetOptions || "[]");
   const targetValues = Object.fromEntries(targets.map((target) => [target.name, target.label]));
-  const defaultSource = targets[0]?.name || "";
-  const defaultDestination = targets.find((target) => target.name !== defaultSource)?.name || "";
   const generatedRows = JSON.parse(tableElement.dataset.generatedRules || "[]");
   const explicitRows = JSON.parse(tableElement.dataset.rules || "[]").map((row) => ({ ...row, kind: "explicit access rule" }));
   const generatedWithKind = generatedRows.map((row) => ({ ...row, kind: "auto route-role rule" }));
-  const rows = [...generatedWithKind, ...explicitRows, newWanRoutingRuleRow(defaultSource, defaultDestination)];
+  const rows = canWrite ? [...generatedWithKind, ...explicitRows, { id: "__new__", is_new: true, generated: false }] : [...generatedWithKind, ...explicitRows];
+  const editRow = (row, launcher = null) => {
+    const data = row?.getData?.() || row;
+    if (!canWrite || !data || data.is_new || data.generated) return;
+    openRoutesWanWizard("routing", data, launcher || row?.getElement?.());
+  };
   try {
     const atlasoGridOptions13 = {
       data: rows,
@@ -6734,22 +6582,27 @@ function initializeRoutesWanRoutingTable() {
       rowHeight: 28,
       placeholder: "No routing permissions configured.",
       reactiveData: false,
-      rowContextMenu: [
+      rowContextMenu: canWrite ? [
         {
-          label: "Delete routing rule",
+          label: "Edit routing permission",
+          action: (_event, row) => editRow(row),
+          disabled: (component) => component.getData().is_new || component.getData().generated,
+        },
+        {
+          label: "Delete routing permission",
           action: (_event, row) => deleteWanRoutingRuleFromMenu(row, csrf),
           disabled: (component) => component.getData().is_new || component.getData().generated,
         },
-      ],
-      columns: lockNewRecordColumns([
+      ] : [],
+      rowDblClick: (_event, row) => editRow(row),
+      columns: [
         {
           title: "Name",
           field: "name",
-          editor: "input",
-          editable: (cell) => !cell.getRow().getData().generated,
-          formatter: (cell) => dnsAddRowHintFormatter(cell, "+ Add explicit access rule"),
+          formatter: (cell) => cell.getRow().getData().is_new
+            ? routesWanAddButton("routing", "+ Add routing permission here")
+            : escapeHtml(cell.getValue()),
           minWidth: 170,
-          cellEdited: (cell) => autoSaveWanRoutingRule(cell, csrf),
         },
         {
           title: "Type",
@@ -6770,51 +6623,39 @@ function initializeRoutesWanRoutingTable() {
         {
           title: "Source",
           field: "source_interface",
-          editor: "list",
-          editable: (cell) => !cell.getRow().getData().generated,
-          editorParams: { values: targetValues },
-          formatter: (cell) => escapeHtml(targetValues[cell.getValue()] || cell.getValue() || "choose source..."),
+          formatter: (cell) => cell.getRow().getData().is_new ? "" : escapeHtml(targetValues[cell.getValue()] || cell.getValue()),
           minWidth: 220,
-          cellEdited: (cell) => autoSaveWanRoutingRule(cell, csrf),
         },
         {
           title: "Destination",
           field: "destination_interface",
-          editor: "list",
-          editable: (cell) => !cell.getRow().getData().generated,
-          editorParams: { values: targetValues },
-          formatter: (cell) => escapeHtml(targetValues[cell.getValue()] || cell.getValue() || "choose destination..."),
+          formatter: (cell) => cell.getRow().getData().is_new ? "" : escapeHtml(targetValues[cell.getValue()] || cell.getValue()),
           minWidth: 220,
-          cellEdited: (cell) => autoSaveWanRoutingRule(cell, csrf),
         },
         {
           title: "Priority",
           field: "priority",
-          editor: "number",
-          editable: (cell) => !cell.getRow().getData().generated,
+          formatter: (cell) => cell.getRow().getData().is_new ? "" : escapeHtml(cell.getValue()),
           width: 100,
-          cellEdited: (cell) => autoSaveWanRoutingRule(cell, csrf),
         },
         {
           title: "Enabled",
           field: "enabled",
           formatter: (cell) => cell.getRow().getData().is_new ? "" : atlasoBooleanFormatter(cell),
           editor: "tickCross",
-          editable: (cell) => !cell.getRow().getData().generated,
+          editable: (cell) => canWrite && !cell.getRow().getData().is_new && !cell.getRow().getData().generated,
           hozAlign: "center",
           width: 100,
           headerSort: false,
-          cellEdited: (cell) => autoSaveWanRoutingRule(cell, csrf),
+          cellEdited: (cell) => saveWanEnabledState(cell, csrf, "/routes-wan/routing-rules", "routes-wan-routing-error", "The routing permission could not be saved."),
         },
         {
           title: "Description",
           field: "description",
-          editor: "input",
-          editable: (cell) => !cell.getRow().getData().generated,
+          formatter: (cell) => cell.getRow().getData().is_new ? "" : escapeHtml(cell.getValue()),
           minWidth: 190,
-          cellEdited: (cell) => autoSaveWanRoutingRule(cell, csrf),
         },
-      ], "name"),
+      ],
       rowFormatter: (row) => {
         const data = row.getData();
         markNewRecordRow(row, "name");
@@ -6823,7 +6664,12 @@ function initializeRoutesWanRoutingTable() {
     };
     window.AtlasoUiPatterns.createGrid({
       element: tableElement,
-      pattern: "direct-edit",
+      pattern: "wizard-backed",
+      permission: {
+        allowed: canWrite,
+        message: "You have read-only access to routing permissions.",
+      },
+      onOpenRow: canWrite ? (rowData) => editRow(rowData) : null,
       options: atlasoGridOptions13,
     }).table;
   } catch (error) {
@@ -6842,10 +6688,16 @@ function initializeRoutesWanNatTable() {
     return;
   }
   const csrf = tableElement.dataset.csrf || "";
+  const canWrite = tableElement.dataset.canWrite === "true";
   const targets = JSON.parse(tableElement.dataset.natTargetOptions || "[]");
   const targetValues = Object.fromEntries(targets.map((target) => [target.name, target.label]));
-  const defaultTarget = targets[0]?.name || "";
-  const rows = [...JSON.parse(tableElement.dataset.natRules || "[]"), newWanNatRuleRow(defaultTarget)];
+  const savedRows = JSON.parse(tableElement.dataset.natRules || "[]");
+  const rows = canWrite ? [...savedRows, { id: "__new__", is_new: true }] : savedRows;
+  const editRow = (row, launcher = null) => {
+    const data = row?.getData?.() || row;
+    if (!canWrite || !data || data.is_new) return;
+    openRoutesWanWizard("nat", data, launcher || row?.getElement?.());
+  };
   try {
     const atlasoGridOptions14 = {
       data: rows,
@@ -6855,75 +6707,79 @@ function initializeRoutesWanNatTable() {
       rowHeight: 28,
       placeholder: "No NAT rules configured.",
       reactiveData: false,
-      rowContextMenu: [
+      rowContextMenu: canWrite ? [
+        {
+          label: "Edit NAT rule",
+          action: (_event, row) => editRow(row),
+          disabled: (component) => component.getData().is_new,
+        },
         {
           label: "Delete NAT rule",
           action: (_event, row) => deleteWanNatRuleFromMenu(row, csrf),
           disabled: (component) => component.getData().is_new,
         },
-      ],
-      columns: lockNewRecordColumns([
+      ] : [],
+      rowDblClick: (_event, row) => editRow(row),
+      columns: [
         {
           title: "Name",
           field: "name",
-          editor: "input",
-          formatter: (cell) => dnsAddRowHintFormatter(cell, "+ Add NAT rule here"),
+          formatter: (cell) => cell.getRow().getData().is_new
+            ? routesWanAddButton("nat", "+ Add NAT rule here")
+            : escapeHtml(cell.getValue()),
           minWidth: 160,
-          cellEdited: (cell) => autoSaveWanNatRule(cell, csrf),
         },
         {
           title: "Source",
           field: "source",
-          editor: "input",
-          formatter: (cell) => dnsAddRowHintFormatter(cell, "any or CIDR"),
+          formatter: (cell) => cell.getRow().getData().is_new ? "" : escapeHtml(cell.getValue()),
           minWidth: 170,
-          cellEdited: (cell) => autoSaveWanNatRule(cell, csrf),
         },
         {
           title: "Outbound",
           field: "outbound_interface",
-          editor: "list",
-          editorParams: { values: targetValues },
-          formatter: (cell) => escapeHtml(targetValues[cell.getValue()] || cell.getValue() || "choose interface..."),
+          formatter: (cell) => cell.getRow().getData().is_new ? "" : escapeHtml(targetValues[cell.getValue()] || cell.getValue()),
           minWidth: 230,
-          cellEdited: (cell) => autoSaveWanNatRule(cell, csrf),
         },
         {
           title: "Masq",
           field: "masquerade",
-          formatter: atlasoBooleanFormatter,
-          editor: "tickCross",
+          formatter: (cell) => cell.getRow().getData().is_new ? "" : atlasoBooleanFormatter(cell),
           hozAlign: "center",
           width: 90,
           headerSort: false,
-          cellEdited: (cell) => autoSaveWanNatRule(cell, csrf),
         },
         {
           title: "Priority",
           field: "priority",
-          editor: "number",
+          formatter: (cell) => cell.getRow().getData().is_new ? "" : escapeHtml(cell.getValue()),
           width: 100,
-          cellEdited: (cell) => autoSaveWanNatRule(cell, csrf),
         },
         {
           title: "Enabled",
           field: "enabled",
-          formatter: atlasoBooleanFormatter,
+          formatter: (cell) => cell.getRow().getData().is_new ? "" : atlasoBooleanFormatter(cell),
           editor: "tickCross",
+          editable: (cell) => canWrite && !cell.getRow().getData().is_new,
           hozAlign: "center",
           width: 100,
           headerSort: false,
-          cellEdited: (cell) => autoSaveWanNatRule(cell, csrf),
+          cellEdited: (cell) => saveWanEnabledState(cell, csrf, "/routes-wan/nat-rules", "routes-wan-nat-error", "The NAT rule could not be saved."),
         },
-        { title: "Description", field: "description", editor: "input", minWidth: 180, cellEdited: (cell) => autoSaveWanNatRule(cell, csrf) },
-      ], "name"),
+        { title: "Description", field: "description", formatter: (cell) => cell.getRow().getData().is_new ? "" : escapeHtml(cell.getValue()), minWidth: 180 },
+      ],
       rowFormatter: (row) => {
         markNewRecordRow(row, "name");
       },
     };
     window.AtlasoUiPatterns.createGrid({
       element: tableElement,
-      pattern: "direct-edit",
+      pattern: "wizard-backed",
+      permission: {
+        allowed: canWrite,
+        message: "You have read-only access to NAT rules.",
+      },
+      onOpenRow: canWrite ? (rowData) => editRow(rowData) : null,
       options: atlasoGridOptions14,
     }).table;
   } catch (error) {
@@ -6942,12 +6798,18 @@ function initializeRoutesWanRoutesTable() {
     return;
   }
   const csrf = tableElement.dataset.csrf || "";
+  const canWrite = tableElement.dataset.canWrite === "true";
   const targets = JSON.parse(tableElement.dataset.targetOptions || "[]");
   const targetValues = Object.fromEntries(targets.map((target) => [target.name, target.label]));
   const policyOptions = JSON.parse(tableElement.dataset.policyOptions || "[]");
   const policyValues = wanPolicyValues(policyOptions);
-  const defaultTarget = targets[0]?.name || "";
-  const rows = [...JSON.parse(tableElement.dataset.routes || "[]"), newWanRouteRow(defaultTarget)];
+  const savedRows = JSON.parse(tableElement.dataset.routes || "[]");
+  const rows = canWrite ? [...savedRows, { id: "__new__", is_new: true }] : savedRows;
+  const editRow = (row, launcher = null) => {
+    const data = row?.getData?.() || row;
+    if (!canWrite || !data || data.is_new) return;
+    openRoutesWanWizard("route", data, launcher || row?.getElement?.());
+  };
   try {
     const atlasoGridOptions15 = {
       data: rows,
@@ -6957,73 +6819,76 @@ function initializeRoutesWanRoutesTable() {
       rowHeight: 28,
       placeholder: "No routes configured.",
       reactiveData: false,
-      rowContextMenu: [
+      rowContextMenu: canWrite ? [
         {
-          label: "Delete route",
+          label: "Edit static route",
+          action: (_event, row) => editRow(row),
+          disabled: (component) => component.getData().is_new,
+        },
+        {
+          label: "Delete static route",
           action: (_event, row) => deleteWanRouteFromMenu(row, csrf),
           disabled: (component) => component.getData().is_new,
         },
-      ],
-      columns: lockNewRecordColumns([
+      ] : [],
+      rowDblClick: (_event, row) => editRow(row),
+      columns: [
         {
           title: "Destination",
           field: "destination_cidr",
-          editor: "input",
-          formatter: (cell) => dnsAddRowHintFormatter(cell, "+ Add route here"),
+          formatter: (cell) => cell.getRow().getData().is_new
+            ? routesWanAddButton("route", "+ Add static route here")
+            : escapeHtml(cell.getValue()),
           minWidth: 160,
-          cellEdited: (cell) => autoSaveWanRoute(cell, csrf),
         },
         {
           title: "Gateway",
           field: "gateway",
-          editor: "input",
-          formatter: (cell) => dnsAddRowHintFormatter(cell, "direct"),
+          formatter: (cell) => cell.getRow().getData().is_new ? "" : escapeHtml(cell.getValue() || "direct"),
           minWidth: 135,
-          cellEdited: (cell) => autoSaveWanRoute(cell, csrf),
         },
         {
           title: "Interface",
           field: "interface_name",
-          editor: "list",
-          editorParams: { values: targetValues },
-          formatter: (cell) => escapeHtml(targetValues[cell.getValue()] || cell.getValue() || "choose target..."),
+          formatter: (cell) => cell.getRow().getData().is_new ? "" : escapeHtml(targetValues[cell.getValue()] || cell.getValue()),
           minWidth: 230,
-          cellEdited: (cell) => autoSaveWanRoute(cell, csrf),
         },
         {
           title: "WAN Policy",
           field: "wan_policy_id",
-          editor: "list",
-          editorParams: { values: policyValues },
-          formatter: (cell) => wanPolicyFormatter(cell, policyValues),
+          formatter: (cell) => cell.getRow().getData().is_new ? "" : wanPolicyFormatter(cell, policyValues),
           minWidth: 150,
-          cellEdited: (cell) => autoSaveWanRoute(cell, csrf),
         },
         {
           title: "Metric",
           field: "metric",
-          editor: "number",
+          formatter: (cell) => cell.getRow().getData().is_new ? "" : escapeHtml(cell.getValue()),
           width: 90,
-          cellEdited: (cell) => autoSaveWanRoute(cell, csrf),
         },
         {
           title: "Enabled",
           field: "enabled",
-          formatter: atlasoBooleanFormatter,
+          formatter: (cell) => cell.getRow().getData().is_new ? "" : atlasoBooleanFormatter(cell),
           editor: "tickCross",
+          editable: (cell) => canWrite && !cell.getRow().getData().is_new,
           hozAlign: "center",
           width: 100,
           headerSort: false,
-          cellEdited: (cell) => autoSaveWanRoute(cell, csrf),
+          cellEdited: (cell) => saveWanEnabledState(cell, csrf, "/routes-wan/routes", "routes-wan-route-error", "The static route could not be saved."),
         },
-      ], "destination_cidr"),
+      ],
       rowFormatter: (row) => {
         markNewRecordRow(row, "destination_cidr");
       },
     };
     window.AtlasoUiPatterns.createGrid({
       element: tableElement,
-      pattern: "direct-edit",
+      pattern: "wizard-backed",
+      permission: {
+        allowed: canWrite,
+        message: "You have read-only access to static routes.",
+      },
+      onOpenRow: canWrite ? (rowData) => editRow(rowData) : null,
       options: atlasoGridOptions15,
     }).table;
   } catch (error) {
@@ -7042,7 +6907,14 @@ function initializeRoutesWanPoliciesTable() {
     return;
   }
   const csrf = tableElement.dataset.csrf || "";
-  const rows = [...JSON.parse(tableElement.dataset.policies || "[]"), newWanPolicyRow()];
+  const canWrite = tableElement.dataset.canWrite === "true";
+  const savedRows = JSON.parse(tableElement.dataset.policies || "[]");
+  const rows = canWrite ? [...savedRows, { id: "__new__", is_new: true }] : savedRows;
+  const editRow = (row, launcher = null) => {
+    const data = row?.getData?.() || row;
+    if (!canWrite || !data || data.is_new) return;
+    openRoutesWanWizard("policy", data, launcher || row?.getElement?.());
+  };
   try {
     const atlasoGridOptions16 = {
       data: rows,
@@ -7052,53 +6924,317 @@ function initializeRoutesWanPoliciesTable() {
       rowHeight: 28,
       placeholder: "No WAN policies configured.",
       reactiveData: false,
-      rowContextMenu: [
+      rowContextMenu: canWrite ? [
+        {
+          label: "Edit WAN policy",
+          action: (_event, row) => editRow(row),
+          disabled: (component) => component.getData().is_new,
+        },
         {
           label: "Delete policy",
           action: (_event, row) => deleteWanPolicyFromMenu(row, csrf),
           disabled: (component) => component.getData().is_new,
         },
-      ],
-      columns: lockNewRecordColumns([
+      ] : [],
+      rowDblClick: (_event, row) => editRow(row),
+      columns: [
         {
           title: "Name",
           field: "name",
-          editor: "input",
-          formatter: (cell) => dnsAddRowHintFormatter(cell, "+ Add policy here"),
+          formatter: (cell) => cell.getRow().getData().is_new
+            ? routesWanAddButton("policy", "+ Add WAN policy here")
+            : escapeHtml(cell.getValue()),
           minWidth: 145,
-          cellEdited: (cell) => autoSaveWanPolicy(cell, csrf),
         },
-        { title: "Latency ms", field: "latency_ms", editor: "number", width: 115, cellEdited: (cell) => autoSaveWanPolicy(cell, csrf) },
-        { title: "Jitter ms", field: "jitter_ms", editor: "number", width: 105, cellEdited: (cell) => autoSaveWanPolicy(cell, csrf) },
-        { title: "Loss %", field: "packet_loss_percent", editor: "number", width: 95, cellEdited: (cell) => autoSaveWanPolicy(cell, csrf) },
-        { title: "Bandwidth Mbps", field: "bandwidth_mbit", editor: "number", width: 145, cellEdited: (cell) => autoSaveWanPolicy(cell, csrf) },
-        { title: "Corrupt %", field: "corrupt_percent", editor: "number", width: 105, cellEdited: (cell) => autoSaveWanPolicy(cell, csrf) },
-        { title: "Duplicate %", field: "duplicate_percent", editor: "number", width: 120, cellEdited: (cell) => autoSaveWanPolicy(cell, csrf) },
-        { title: "Reorder %", field: "reorder_percent", editor: "number", width: 110, cellEdited: (cell) => autoSaveWanPolicy(cell, csrf) },
+        { title: "Latency ms", field: "latency_ms", formatter: (cell) => cell.getRow().getData().is_new ? "" : escapeHtml(cell.getValue()), width: 115 },
+        { title: "Jitter ms", field: "jitter_ms", formatter: (cell) => cell.getRow().getData().is_new ? "" : escapeHtml(cell.getValue()), width: 105 },
+        { title: "Loss %", field: "packet_loss_percent", formatter: (cell) => cell.getRow().getData().is_new ? "" : escapeHtml(cell.getValue()), width: 95 },
+        { title: "Bandwidth Mbps", field: "bandwidth_mbit", formatter: (cell) => cell.getRow().getData().is_new ? "" : escapeHtml(cell.getValue() || "unlimited"), width: 145 },
+        { title: "Corrupt %", field: "corrupt_percent", formatter: (cell) => cell.getRow().getData().is_new ? "" : escapeHtml(cell.getValue()), width: 105 },
+        { title: "Duplicate %", field: "duplicate_percent", formatter: (cell) => cell.getRow().getData().is_new ? "" : escapeHtml(cell.getValue()), width: 120 },
+        { title: "Reorder %", field: "reorder_percent", formatter: (cell) => cell.getRow().getData().is_new ? "" : escapeHtml(cell.getValue()), width: 110 },
         {
           title: "Enabled",
           field: "enabled",
-          formatter: atlasoBooleanFormatter,
+          formatter: (cell) => cell.getRow().getData().is_new ? "" : atlasoBooleanFormatter(cell),
           editor: "tickCross",
+          editable: (cell) => canWrite && !cell.getRow().getData().is_new,
           hozAlign: "center",
           width: 100,
           headerSort: false,
-          cellEdited: (cell) => autoSaveWanPolicy(cell, csrf),
+          cellEdited: (cell) => saveWanEnabledState(cell, csrf, "/routes-wan/policies", "routes-wan-policy-error", "The WAN policy could not be saved."),
         },
-        { title: "Description", field: "description", editor: "input", minWidth: 180, cellEdited: (cell) => autoSaveWanPolicy(cell, csrf) },
-      ], "name"),
+        { title: "Description", field: "description", formatter: (cell) => cell.getRow().getData().is_new ? "" : escapeHtml(cell.getValue()), minWidth: 180 },
+      ],
       rowFormatter: (row) => {
         markNewRecordRow(row, "name");
       },
     };
     window.AtlasoUiPatterns.createGrid({
       element: tableElement,
-      pattern: "direct-edit",
+      pattern: "wizard-backed",
+      permission: {
+        allowed: canWrite,
+        message: "You have read-only access to WAN policies.",
+      },
+      onOpenRow: canWrite ? (rowData) => editRow(rowData) : null,
       options: atlasoGridOptions16,
     }).table;
   } catch (error) {
     showWanMessage("routes-wan-policy-error", error instanceof Error ? error.message : "Tabulator could not render. Showing the fallback table.");
   }
+}
+
+function routesWanWizardErrorTarget(form, kind, message) {
+  const lower = message.toLowerCase();
+  const mappings = {
+    route: [
+      ["destination", "destination_cidr", "path"],
+      ["gateway", "gateway", "path"],
+      ["interface", "interface_name", "path"],
+      ["metric", "metric", "path"],
+      ["wan policy", "wan_policy_id", "simulation"],
+    ],
+    routing: [
+      ["name", "name", "identity"],
+      ["source", "source_interface", "direction"],
+      ["destination", "destination_interface", "direction"],
+      ["priority", "priority", "direction"],
+    ],
+    nat: [
+      ["name", "name", "identity"],
+      ["source", "source", "translation"],
+      ["outbound", "outbound_interface", "translation"],
+      ["interface", "outbound_interface", "translation"],
+      ["priority", "priority", "translation"],
+      ["masquerade", "outbound_interface", "translation"],
+    ],
+    policy: [
+      ["name", "name", "identity"],
+      ["latency", "latency_ms", "delay"],
+      ["jitter", "jitter_ms", "delay"],
+      ["bandwidth", "bandwidth_mbit", "delay"],
+      ["packet loss", "packet_loss_percent", "effects"],
+      ["corruption", "corrupt_percent", "effects"],
+      ["duplication", "duplicate_percent", "effects"],
+      ["reordering", "reorder_percent", "effects"],
+    ],
+  };
+  const match = (mappings[kind] || []).find(([needle]) => lower.includes(needle));
+  if (!match) return {};
+  return { field: routesWanField(form, match[1]), step: match[2] };
+}
+
+function initializeRoutesWanWizards() {
+  const configurations = {
+    route: {
+      noun: "static route",
+      createAction: managementUiPath("/routes-wan/routes"),
+      editAction: (id) => managementUiPath(`/routes-wan/routes/${id}/edit`),
+      tab: "routes-wan-routes-panel",
+      steps: [
+        { id: "path", title: "Define the static path", description: "Choose the destination, optional next hop, and non-management output target." },
+        { id: "simulation", title: "Choose WAN Simulation", description: "Optionally apply one interface-level impairment policy to the selected target." },
+        { id: "state", title: "Choose route state", description: "Enable the route now or retain it as disabled desired state." },
+        { id: "review", title: "Review the static route", description: "Confirm the complete path and global appliance-apply boundary." },
+      ],
+    },
+    routing: {
+      noun: "routing permission",
+      createAction: managementUiPath("/routes-wan/routing-rules"),
+      editAction: (id) => managementUiPath(`/routes-wan/routing-rules/${id}/edit`),
+      tab: "routes-wan-routing-panel",
+      steps: [
+        { id: "identity", title: "Name the permission", description: "Describe the explicit forwarding path required by an Access network." },
+        { id: "direction", title: "Choose forwarding direction", description: "Select different non-management source and destination networks." },
+        { id: "state", title: "Choose permission state", description: "Enable the forwarding permission now or retain it disabled." },
+        { id: "review", title: "Review the permission", description: "Confirm direction, priority, and management isolation." },
+      ],
+    },
+    nat: {
+      noun: "NAT rule",
+      createAction: managementUiPath("/routes-wan/nat-rules"),
+      editAction: (id) => managementUiPath(`/routes-wan/nat-rules/${id}/edit`),
+      tab: "routes-wan-nat-panel",
+      steps: [
+        { id: "identity", title: "Name the NAT rule", description: "Describe the explicit IPv4 outbound masquerade behavior." },
+        { id: "translation", title: "Choose translation", description: "Select the IPv4 source, outbound interface or VLAN, and priority." },
+        { id: "state", title: "Choose NAT rule state", description: "Enable outbound masquerade now or retain it disabled." },
+        { id: "review", title: "Review the NAT rule", description: "Confirm the explicit source and outbound translation boundary." },
+      ],
+    },
+    policy: {
+      noun: "WAN policy",
+      createAction: managementUiPath("/routes-wan/policies"),
+      editAction: (id) => managementUiPath(`/routes-wan/policies/${id}/edit`),
+      tab: "routes-wan-policies-panel",
+      steps: [
+        { id: "identity", title: "Name the WAN policy", description: "Describe the interface-level network impairment profile." },
+        { id: "delay", title: "Configure delay and capacity", description: "Set latency, jitter, and an optional bandwidth limit." },
+        { id: "effects", title: "Configure packet effects", description: "Set bounded loss, corruption, duplication, and reordering percentages." },
+        { id: "state", title: "Choose policy state", description: "Enable this impairment profile now or retain it disabled." },
+        { id: "review", title: "Review the WAN policy", description: "Confirm every tc/netem effect and the interface-level boundary." },
+      ],
+    },
+  };
+
+  document.querySelectorAll("[data-routes-wan-wizard]").forEach((form) => {
+    if (!(form instanceof HTMLFormElement)) return;
+    const kind = form.dataset.routesWanWizard;
+    const config = configurations[kind];
+    const dialog = form.closest("dialog");
+    if (!config || !(dialog instanceof HTMLDialogElement)) return;
+    const modalTitle = form.querySelector("[data-routes-wan-wizard-modal-title]");
+    const submit = form.querySelector("[data-atlaso-wizard-submit]");
+    const natSourceMode = form.querySelector("[data-routes-wan-nat-source-mode]");
+    const natGroup = form.querySelector("[data-routes-wan-nat-group]");
+    const natCidrs = form.querySelector("[data-routes-wan-nat-cidrs]");
+    const natGroupPanel = form.querySelector("[data-routes-wan-nat-source-group]");
+    const natCidrsPanel = form.querySelector("[data-routes-wan-nat-source-cidrs]");
+    const syncNatSource = () => {
+      if (kind !== "nat" || !(natSourceMode instanceof HTMLSelectElement)) return;
+      const mode = natSourceMode.value;
+      if (natGroupPanel instanceof HTMLElement) natGroupPanel.hidden = mode !== "group";
+      if (natCidrsPanel instanceof HTMLElement) natCidrsPanel.hidden = mode !== "cidrs";
+      const value = mode === "group"
+        ? (natGroup instanceof HTMLSelectElement ? natGroup.value : "")
+        : mode === "cidrs"
+          ? (natCidrs instanceof HTMLTextAreaElement ? natCidrs.value.trim() : "")
+          : "any";
+      setRoutesWanField(form, "source", value);
+    };
+    natSourceMode?.addEventListener("change", syncNatSource);
+    natGroup?.addEventListener("change", syncNatSource);
+    natCidrs?.addEventListener("input", syncNatSource);
+
+    const prepareReview = () => {
+      if (kind === "route") {
+        const target = routesWanField(form, "interface_name");
+        const policy = routesWanField(form, "wan_policy_id");
+        const gateway = routesWanField(form, "gateway")?.value.trim() || "direct";
+        setRoutesWanReview(form, "route-destination", routesWanField(form, "destination_cidr")?.value);
+        setRoutesWanReview(form, "route-path", `${gateway} via ${target?.selectedOptions?.[0]?.textContent?.trim() || target?.value} · metric ${routesWanField(form, "metric")?.value}`);
+        setRoutesWanReview(form, "route-policy", policy?.selectedOptions?.[0]?.textContent?.trim() || "None");
+        setRoutesWanReview(form, "route-state", routesWanField(form, "enabled")?.checked ? "Enabled" : "Disabled");
+      } else if (kind === "routing") {
+        const source = routesWanField(form, "source_interface");
+        const destination = routesWanField(form, "destination_interface");
+        setRoutesWanReview(form, "routing-name", routesWanField(form, "name")?.value);
+        setRoutesWanReview(form, "routing-path", `${source?.selectedOptions?.[0]?.textContent?.trim() || source?.value} → ${destination?.selectedOptions?.[0]?.textContent?.trim() || destination?.value}`);
+        setRoutesWanReview(form, "routing-priority", routesWanField(form, "priority")?.value);
+        setRoutesWanReview(form, "routing-state", routesWanField(form, "enabled")?.checked ? "Enabled" : "Disabled");
+      } else if (kind === "nat") {
+        syncNatSource();
+        const outbound = routesWanField(form, "outbound_interface");
+        setRoutesWanReview(form, "nat-name", routesWanField(form, "name")?.value);
+        setRoutesWanReview(form, "nat-source", routesWanField(form, "source")?.value);
+        setRoutesWanReview(form, "nat-outbound", `IPv4 masquerade through ${outbound?.selectedOptions?.[0]?.textContent?.trim() || outbound?.value}`);
+        setRoutesWanReview(form, "nat-priority", routesWanField(form, "priority")?.value);
+        setRoutesWanReview(form, "nat-state", routesWanField(form, "enabled")?.checked ? "Enabled" : "Disabled");
+      } else if (kind === "policy") {
+        const bandwidth = routesWanField(form, "bandwidth_mbit")?.value || "unlimited";
+        setRoutesWanReview(form, "policy-name", routesWanField(form, "name")?.value);
+        setRoutesWanReview(form, "policy-delay", `${routesWanField(form, "latency_ms")?.value} ms latency · ${routesWanField(form, "jitter_ms")?.value} ms jitter · ${bandwidth === "unlimited" ? bandwidth : `${bandwidth} Mbps`}`);
+        setRoutesWanReview(form, "policy-effects", `${routesWanField(form, "packet_loss_percent")?.value}% loss · ${routesWanField(form, "corrupt_percent")?.value}% corruption · ${routesWanField(form, "duplicate_percent")?.value}% duplication · ${routesWanField(form, "reorder_percent")?.value}% reordering`);
+        setRoutesWanReview(form, "policy-state", routesWanField(form, "enabled")?.checked ? "Enabled" : "Disabled");
+      }
+    };
+    const validateStep = ({ step }) => {
+      if (kind === "routing" && step.id === "direction") {
+        const source = routesWanField(form, "source_interface");
+        const destination = routesWanField(form, "destination_interface");
+        if (source?.value === destination?.value) {
+          return { valid: false, message: "Routing source and destination must be different.", field: destination };
+        }
+      }
+      if (kind === "nat" && step.id === "translation") {
+        syncNatSource();
+        if (natSourceMode?.value === "group" && !routesWanField(form, "source")?.value) {
+          return { valid: false, message: "Choose an existing Firewall source group.", field: natGroup };
+        }
+        if (natSourceMode?.value === "cidrs" && !routesWanField(form, "source")?.value) {
+          return { valid: false, message: "Enter at least one IPv4 source CIDR.", field: natCidrs };
+        }
+      }
+      return true;
+    };
+    let wizard;
+    wizard = window.AtlasoUiPatterns.createWizard({
+      form,
+      dialog,
+      steps: config.steps,
+      validateStep,
+      prepareReview,
+      onOpen: ({ context: row }) => {
+        const editing = Boolean(row?.id);
+        form.action = editing ? config.editAction(row.id) : config.createAction;
+        if (modalTitle instanceof HTMLElement) modalTitle.textContent = `${editing ? "Edit" : "Add"} ${config.noun}`;
+        if (submit instanceof HTMLButtonElement) submit.textContent = `${editing ? "Update" : "Add"} ${config.noun}`;
+        if (kind === "route") {
+          setRoutesWanField(form, "destination_cidr", row?.destination_cidr || "");
+          setRoutesWanField(form, "gateway", row?.gateway || "");
+          setRoutesWanField(form, "interface_name", row?.interface_name || routesWanField(form, "interface_name")?.options?.[0]?.value || "");
+          setRoutesWanField(form, "metric", row?.metric ?? 100);
+          setRoutesWanField(form, "wan_policy_id", row?.wan_policy_id || "");
+          setRoutesWanField(form, "enabled", row?.enabled ?? true);
+        } else if (kind === "routing") {
+          setRoutesWanField(form, "name", row?.name || "");
+          setRoutesWanField(form, "description", row?.description || "");
+          const source = routesWanField(form, "source_interface");
+          const destination = routesWanField(form, "destination_interface");
+          setRoutesWanField(form, "source_interface", row?.source_interface || source?.options?.[0]?.value || "");
+          setRoutesWanField(form, "destination_interface", row?.destination_interface || destination?.options?.[1]?.value || destination?.options?.[0]?.value || "");
+          setRoutesWanField(form, "priority", row?.priority ?? 100);
+          setRoutesWanField(form, "enabled", row?.enabled ?? true);
+        } else if (kind === "nat") {
+          setRoutesWanField(form, "name", row?.name || "");
+          setRoutesWanField(form, "description", row?.description || "");
+          setRoutesWanField(form, "outbound_interface", row?.outbound_interface || routesWanField(form, "outbound_interface")?.options?.[0]?.value || "");
+          setRoutesWanField(form, "priority", row?.priority ?? 100);
+          setRoutesWanField(form, "enabled", row?.enabled ?? true);
+          const sourceValue = row?.source || "any";
+          if (natSourceMode instanceof HTMLSelectElement) natSourceMode.value = sourceValue.toLowerCase() === "any" ? "any" : sourceValue.toLowerCase().startsWith("group:") ? "group" : "cidrs";
+          if (natGroup instanceof HTMLSelectElement && sourceValue.toLowerCase().startsWith("group:")) natGroup.value = sourceValue;
+          if (natCidrs instanceof HTMLTextAreaElement && sourceValue.toLowerCase() !== "any" && !sourceValue.toLowerCase().startsWith("group:")) natCidrs.value = sourceValue;
+          syncNatSource();
+        } else if (kind === "policy") {
+          for (const [name, fallback] of [["name", ""], ["description", ""], ["latency_ms", 0], ["jitter_ms", 0], ["packet_loss_percent", 0], ["bandwidth_mbit", ""], ["corrupt_percent", 0], ["duplicate_percent", 0], ["reorder_percent", 0]]) {
+            setRoutesWanField(form, name, row?.[name] ?? fallback);
+          }
+          setRoutesWanField(form, "enabled", row?.enabled ?? true);
+        }
+      },
+      onSubmit: async () => {
+        if (kind === "nat") syncNatSource();
+        try {
+          const response = await fetch(form.action, {
+            method: "POST",
+            body: new FormData(form),
+            credentials: "same-origin",
+          });
+          if (!response.ok) {
+            const message = routesWanResponseMessage(await response.text(), `The ${config.noun} could not be saved.`);
+            return { ok: false, message, ...routesWanWizardErrorTarget(form, kind, message) };
+          }
+          rememberRoutesWanTab(config.tab);
+          window.history.replaceState(null, "", `${managementUiPath("/routes-wan")}#${config.tab}`);
+          window.location.reload();
+          return { valid: true, close: false };
+        } catch (_error) {
+          return { ok: false, message: `The ${config.noun} could not be saved. Check the connection and try again.` };
+        }
+      },
+      closeOnSubmit: false,
+    });
+    routesWanWizardOpeners.set(kind, (row = null, launcher = null) => wizard.open({ context: row, launcher }));
+  });
+
+  document.addEventListener("click", (event) => {
+    if (!(event.target instanceof Element)) return;
+    const launcher = event.target.closest("[data-routes-wan-wizard-open]");
+    if (!(launcher instanceof HTMLElement)) return;
+    openRoutesWanWizard(launcher.dataset.routesWanWizardOpen, null, launcher);
+  });
 }
 
 function showNetworkMessage(elementId, message) {
@@ -20727,6 +20863,7 @@ document.addEventListener("DOMContentLoaded", initializeRoutesWanRoutesTable);
 document.addEventListener("DOMContentLoaded", initializeRoutesWanRoutingTable);
 document.addEventListener("DOMContentLoaded", initializeRoutesWanNatTable);
 document.addEventListener("DOMContentLoaded", initializeRoutesWanPoliciesTable);
+document.addEventListener("DOMContentLoaded", initializeRoutesWanWizards);
 document.addEventListener("DOMContentLoaded", initializePhysicalInterfacesTable);
 document.addEventListener("DOMContentLoaded", initializeApiTokensTable);
 document.addEventListener("DOMContentLoaded", () => initializeOidcProviderSettings());

@@ -1009,7 +1009,7 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert service_worker.headers["cache-control"] == "no-cache"
     assert service_worker.headers["service-worker-allowed"] == "/ui/management/"
     assert "ATLASO_CACHE" in service_worker.text
-    assert "atlaso-management-pwa-v248" in service_worker.text
+    assert "atlaso-management-pwa-v249" in service_worker.text
     assert 'fetch(asset, { cache: "reload" })' in service_worker.text
     assert ".catch(() => undefined)" in service_worker.text
     assert 'request.mode === "navigate"' in service_worker.text
@@ -1027,7 +1027,7 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-8" in service_worker.text
     assert "/static/appliance-apply-polling.js?v=issue-294-2" in service_worker.text
     assert "/static/ui-routes.js?v=issue-287-1" in service_worker.text
-    assert "/static/app.js?v=vlan-interface-wizard-304-2" in service_worker.text
+    assert "/static/app.js?v=routes-wan-wizards-308-3" in service_worker.text
     assert "/static/terminal.js?v=issue-287-2" in service_worker.text
     assert "/static/pwa.js?v=issue-287-2" in service_worker.text
     assert "vcfdt-configuration-248-20260807-14" not in service_worker.text
@@ -1059,8 +1059,8 @@ def test_shared_ui_pattern_shell_and_wizard_contracts(client):
     base = (templates / "base.html").read_text(encoding="utf-8")
     public_base = (templates / "public_portal_base.html").read_text(encoding="utf-8")
     for shell, app_asset in (
-        (base, "/static/app.js?v=vlan-interface-wizard-304-2"),
-        (public_base, "/static/app.js?v=vlan-interface-wizard-304-2"),
+        (base, "/static/app.js?v=routes-wan-wizards-308-3"),
+        (public_base, "/static/app.js?v=routes-wan-wizards-308-3"),
         (base, "/static/appliance-apply-polling.js?v=issue-294-2"),
     ):
         assert shell.index("/static/vendor/tabulator/tabulator.min.js") < shell.index(
@@ -1073,6 +1073,8 @@ def test_shared_ui_pattern_shell_and_wizard_contracts(client):
     wizard_templates = [
         templates / "automation.html",
         templates / "esx_storage.html",
+        templates / "routes_wan.html",
+        templates / "vlan_interfaces.html",
         templates / "partials" / "vcf_trust_modal.html",
         templates / "partials" / "vcf_sddc_deploy_modal.html",
         templates / "partials" / "vcf_target_depot_modal.html",
@@ -1080,7 +1082,7 @@ def test_shared_ui_pattern_shell_and_wizard_contracts(client):
     wizard_markup = "\n".join(
         path.read_text(encoding="utf-8") for path in wizard_templates
     )
-    assert len(re.findall(r"<form\b[^>]*\bdata-atlaso-wizard(?:\s|>)", wizard_markup)) == 6
+    assert len(re.findall(r"<form\b[^>]*\bdata-atlaso-wizard(?:\s|>)", wizard_markup)) == 11
     for marker in (
         "data-atlaso-wizard-step=",
         "data-atlaso-wizard-nav=",
@@ -1090,7 +1092,7 @@ def test_shared_ui_pattern_shell_and_wizard_contracts(client):
         "data-atlaso-wizard-submit",
         "data-atlaso-wizard-error",
     ):
-        assert wizard_markup.count(marker) >= 6
+        assert wizard_markup.count(marker) >= 11
 
     foundation = client.get("/static/ui-patterns.js")
     assert foundation.status_code == 200
@@ -1121,9 +1123,9 @@ def test_every_existing_tabulator_uses_the_shared_grid_foundation(client):
     create_grid = "window.AtlasoUiPatterns.createGrid({"
 
     assert app_js.count(create_grid) == 40
-    assert app_js.count('pattern: "direct-edit"') == 12
+    assert app_js.count('pattern: "direct-edit"') == 8
     assert app_js.count('pattern: "read-only"') == 16
-    assert app_js.count('pattern: "wizard-backed"') == 12
+    assert app_js.count('pattern: "wizard-backed"') == 16
     assert "new Tabulator(" not in app_js
     assert "new window.Tabulator(" not in app_js
     assert "atlaso-legacy-tabulator: #117" not in app_js
@@ -1144,10 +1146,10 @@ def test_every_existing_tabulator_uses_the_shared_grid_foundation(client):
         "initializeManagedFirewallRulesTable": "direct-edit",
         "initializeServicesTable": "direct-edit",
         "initializeNTPsecUpstreamsTable": "wizard-backed",
-        "initializeRoutesWanRoutingTable": "direct-edit",
-        "initializeRoutesWanNatTable": "direct-edit",
-        "initializeRoutesWanRoutesTable": "direct-edit",
-        "initializeRoutesWanPoliciesTable": "direct-edit",
+        "initializeRoutesWanRoutingTable": "wizard-backed",
+        "initializeRoutesWanNatTable": "wizard-backed",
+        "initializeRoutesWanRoutesTable": "wizard-backed",
+        "initializeRoutesWanPoliciesTable": "wizard-backed",
         "initializePhysicalInterfacesTable": "direct-edit",
         "initializeOidcGroupMappingsTable": "direct-edit",
         "initializeVlanInterfacesTable": "wizard-backed",
@@ -1685,7 +1687,7 @@ def test_monitor_page_renders_and_data_endpoint(client):
     assert "swagger-link-icon" in page.text
     assert "/static/app.css?v=vlan-interface-wizard-304-2" in page.text
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-8" in page.text
-    assert "/static/app.js?v=vlan-interface-wizard-304-2" in page.text
+    assert "/static/app.js?v=routes-wan-wizards-308-3" in page.text
     app_css = client.get("/static/app.css")
     assert app_css.status_code == 200
     assert ".split-workspace > .wide-panel" in app_css.text
@@ -6659,7 +6661,10 @@ def test_routes_wan_policy_form_renders(client):
     response = client.get("/routes-wan")
     assert response.status_code == 200
     assert "Routes &amp; WAN Simulation" in response.text
-    assert "Managed Routes" in response.text
+    assert ">Static Routes</button>" in response.text
+    assert ">Routing Permissions</button>" in response.text
+    assert "Static routes choose a destination path" in response.text
+    assert "Routing permissions control forwarding" in response.text
     assert "Routing Permissions" in response.text
     assert "NAT Rules" in response.text
     assert "WAN Policies" in response.text
@@ -6675,10 +6680,27 @@ def test_routes_wan_policy_form_renders(client):
     assert "No automatic route-role paths" in response.text
     assert "data-mode-options" not in response.text
     assert "<th>Mode</th>" not in response.text
-    assert "+ Add route here" in client.get("/static/app.js").text
-    assert "+ Add explicit access rule" in client.get("/static/app.js").text
-    assert "+ Add NAT rule here" in client.get("/static/app.js").text
-    assert "+ Add policy here" in client.get("/static/app.js").text
+    app_js = client.get("/static/app.js").text
+    assert "+ Add static route here" in app_js
+    assert "+ Add routing permission here" in app_js
+    assert "+ Add NAT rule here" in app_js
+    assert "+ Add WAN policy here" in app_js
+    assert "autoSaveWanRoute" not in app_js
+    assert "autoSaveWanRoutingRule" not in app_js
+    assert "autoSaveWanNatRule" not in app_js
+    assert "autoSaveWanPolicy" not in app_js
+    assert app_js.count("window.AtlasoUiPatterns.createWizard({") >= 4
+    for dialog_id in (
+        "routes-wan-route-dialog",
+        "routes-wan-routing-dialog",
+        "routes-wan-nat-dialog",
+        "routes-wan-policy-dialog",
+    ):
+        assert f'id="{dialog_id}"' in response.text
+    assert response.text.count("data-routes-wan-wizard=") == 4
+    assert response.text.count("data-atlaso-wizard>") >= 4
+    assert 'data-routes-wan-nat-source-mode' in response.text
+    assert 'value="IPv4 masquerade" readonly' in response.text
     assert "Europe WAN" in response.text
     assert "SiteA outbound WAN" in response.text
     assert "eth1.20" in response.text
@@ -6714,6 +6736,36 @@ def test_routes_wan_rejects_route_wan_mode(client):
 
     assert response.status_code == 422
     assert "planned but not supported in v1" in response.text
+
+
+def test_routes_wan_wizards_respect_read_only_permissions(client):
+    """Verify that Routes and WAN wizard mutations are hidden from read-only users.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
+    from sqlalchemy import select
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Role, User
+    from atlaso.app.security import roles_to_json
+
+    with SessionLocal() as db:
+        admin = db.execute(select(User).where(User.username == "admin")).scalar_one()
+        admin.role = Role.VIEWER.value
+        admin.roles_json = roles_to_json([Role.VIEWER.value])
+        db.commit()
+
+    login(client)
+    page = client.get("/routes-wan")
+
+    assert page.status_code == 200
+    assert page.text.count('data-can-write="false"') == 4
+    assert 'data-routes-wan-wizard=' not in page.text
+    assert 'id="routes-wan-route-dialog"' not in page.text
+    assert 'id="routes-wan-routing-dialog"' not in page.text
+    assert 'id="routes-wan-nat-dialog"' not in page.text
+    assert 'id="routes-wan-policy-dialog"' not in page.text
 
 
 def test_routes_wan_allows_ipv6_only_route_targets_but_not_nat_targets(client):
@@ -8816,17 +8868,18 @@ def test_new_record_rows_lock_defaults_until_required_field(client):
         end = app_js.text.index(f"function {next_name}", start)
         return app_js.text[start:end]
 
-    expected_blocks = [
-        ("initializeRoutesWanRoutesTable", "initializeRoutesWanPoliciesTable", "destination_cidr"),
-        ("initializeRoutesWanRoutingTable", "initializeRoutesWanNatTable", "name"),
-        ("initializeRoutesWanNatTable", "initializeRoutesWanRoutesTable", "name"),
-        ("initializeRoutesWanPoliciesTable", "showNetworkMessage", "name"),
+    routes_wan_blocks = [
+        ("initializeRoutesWanRoutesTable", "initializeRoutesWanPoliciesTable", "route"),
+        ("initializeRoutesWanRoutingTable", "initializeRoutesWanNatTable", "routing"),
+        ("initializeRoutesWanNatTable", "initializeRoutesWanRoutesTable", "nat"),
+        ("initializeRoutesWanPoliciesTable", "showNetworkMessage", "policy"),
     ]
-    for name, next_name, required_field in expected_blocks:
+    for name, next_name, resource in routes_wan_blocks:
         block = function_block(name, next_name)
-        assert "columns: lockNewRecordColumns([" in block, name
-        assert f'], "{required_field}"),' in block, name
-        assert f'markNewRecordRow(row, "{required_field}")' in block, name
+        assert "columns: lockNewRecordColumns([" not in block, name
+        assert 'pattern: "wizard-backed"' in block, name
+        assert f'openRoutesWanWizard("{resource}",' in block, name
+        assert f'routesWanAddButton("{resource}",' in block, name
 
     ca_certificates_block = function_block("initializeCaCertificatesTable", "initializeFirewallRulesTable")
     assert "columns: lockNewRecordColumns([" not in ca_certificates_block

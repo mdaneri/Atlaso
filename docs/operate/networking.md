@@ -67,6 +67,32 @@ appliance FQDN and managed HTTPS certificate cover every effective management UI
 Management-to-lab and lab-to-management forwarding remain prohibited. Service listeners and firewall rules must bind to
 the same intended interfaces.
 
+## Configure routes and WAN behavior
+
+**Static Routes** and **Routing Permissions** solve different jobs:
+
+- A **Static Route** selects a path to an IPv4 or IPv6 destination through a non-management interface or VLAN. It owns
+  the destination CIDR, optional gateway, output target, metric, enabled state, and optional interface-level WAN policy.
+- A **Routing Permission** authorizes forwarded traffic from one non-management interface/VLAN network to another.
+  Route-role networks generate these paths automatically. Access networks remain blocked until an explicit permission
+  is enabled. Management is never an eligible source or destination.
+
+Use the bottom add row in each tab to open the reviewed wizard. Double-click a saved row or use **Edit** in its row
+menu to update it. Each wizard retains entered values while moving backward, validates before Review, and saves only
+after the final add/update action. A saved row's **Enabled** value remains directly editable; this changes desired state
+only.
+
+The **NAT** wizard creates explicit IPv4 masquerade rules. Choose Any, an existing Firewall source group, or IPv4 source
+CIDRs, then select an eligible IPv4-bearing access interface or enabled VLAN. Atlaso does not infer an outbound target
+from an interface role and does not provide destination NAT, port forwarding, or IPv6 NAT in v1.
+
+The **WAN Policies** wizard groups delay/capacity settings separately from packet loss and error effects. Assigning a
+policy to a Static Route identifies its target interface or VLAN; WAN Simulation v1 impairs all traffic on that target,
+not only traffic matching the route destination.
+
+Saving any of these resources does not change Photon. Review the rendered configuration and submit the global
+**Routes & WAN Simulation** unit through Appliance Apply when the complete desired state is ready.
+
 ### Add or edit a VLAN interface
 
 The VLAN table is a read-only browse surface. Select **+ Add VLAN interface here** to create a row, or double-click an
@@ -111,6 +137,14 @@ These captures show responsive layouts and useful operational states referenced 
 ![Atlaso Routes and WAN Simulation page in the clean-appliance responsive viewport.](../assets/screenshots/routes-wan-clean-responsive.webp)
 
 *Figure: Routes and WAN Simulation in the verified clean-appliance responsive state.*
+
+![Atlaso static route wizard reviewing the destination, interface path, WAN Simulation selection, and enabled state.](../assets/screenshots/routes-wan-static-route-wizard-desktop.webp)
+
+*Figure: The Static Route wizard reviews the complete desired path before saving it.*
+
+![Atlaso WAN policy wizard in a responsive viewport with the five reviewed configuration steps.](../assets/screenshots/routes-wan-policy-wizard-responsive.webp)
+
+*Figure: The WAN Policy wizard remains contained and usable in the responsive viewport.*
 
 ### VLAN interfaces
 

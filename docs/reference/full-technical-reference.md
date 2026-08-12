@@ -633,6 +633,9 @@ interfaces and enabled VLANs with IPv4, IPv6, or dual-stack CIDRs. Route-role ne
 networks by default; access networks require explicit routing rules. NAT v1 is explicit IPv4 outbound masquerade only;
 there is no destination NAT or port forwarding, and the outbound interface must have an IPv4 CIDR. Route-specific WAN
 impairment is roadmap work tracked in `docs/routing-wan-roadmap.md`; v1 exposes only interface/VLAN-level impairment.
+The browser labels path records **Static Routes** and forwarding rules **Routing Permissions**. All four resource grids
+use reviewed add/edit wizards, while persisted Enabled state remains directly editable and generated route-role
+permissions remain read-only. Every edit remains desired state until the global `wan` apply unit is submitted.
 
 DNS and DHCP share one `DNS/DHCP (dnsmasq)` apply unit because they render and reload the same dnsmasq config. The
 Services page shows DNS and DHCP as separate desired-state rows, but their runtime status comes from the shared
