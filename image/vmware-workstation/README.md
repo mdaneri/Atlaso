@@ -53,7 +53,10 @@ TOML, and requires the repository's strict `X.Y.Z` release format before it crea
 log reports the specific version-policy error. The remastered kickstart disables `sshd.socket` and enables
 `sshd.service`. Photon must not enable both conflicting units: the normal daemon provides deterministic
 password-authenticated SSH for Packer after the installed-system boot. The Photon root/build password remains separate
-from the Atlaso web bootstrap administrator password. The template also stages `requirements-appliance.lock` with the
+from the Atlaso web bootstrap administrator password. The shared wrapper encodes that build credential before every
+kickstart or Packer shell boundary and decodes it only to standard input, so apostrophes and common PowerShell or POSIX
+shell metacharacters remain credential data instead of executable syntax. The template also stages
+`requirements-appliance.lock` with the
 application source so bootstrap dependency installation retains hash verification instead of falling back to unpinned
 packages. It stages the third-party notice generator, vendored-component inventory, and Inventory Linux README used by
 that inventory as mandatory build inputs rather than skipping notice generation when any input is missing. The shared

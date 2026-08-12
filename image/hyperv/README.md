@@ -58,6 +58,11 @@ instead of replacing an existing output directory. By default, failed builds sti
 To keep the temporary builder VM for debugging, add `-PackerOnError abort`; to choose at failure time, use
 `-PackerOnError ask`.
 
+The wrapper treats `-SshPassword` as opaque credential data. Apostrophes and common PowerShell or POSIX shell
+metacharacters are encoded before the generated kickstart and Packer shell boundaries, decoded directly to standard
+input, and never evaluated as shell syntax. Quote the PowerShell argument for the caller's shell as usual; Atlaso does
+not add character exclusions for those printable password values.
+
 The wrapper does not build or embed Inventory Linux. New templates leave it uninstalled so an administrator can use
 **Download latest** to retrieve the signed independent release when needed. Contributors building Inventory Linux
 itself use `scripts/windows/common/Build-AtlasoInventoryLinux.ps1` and its `-WslDistribution <name>` option.
