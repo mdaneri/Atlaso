@@ -45,6 +45,7 @@ from atlaso.app.models import (
     ManagedPackage,
     NatRule,
     NetworkBootEnvironment,
+    NetworkBootMedia,
     NtpSettings,
     OidcClient,
     OidcClientRedirectUri,
@@ -1556,7 +1557,8 @@ def _validate_archive_database_relationships(db: Session, data: dict[str, list[d
     Raises:
         ValueError: If a relationship target is absent from retained desired state.
     """
-    usernames = {row.username for row in db.execute(select(User)).scalars().all()}
+    users = {row.username: bool(row.enabled) for row in db.execute(select(User)).scalars().all()}
+    usernames = set(users)
     for row_index, row in enumerate(data.get("oidc_subjects", []), start=1):
         if row["source"] == "local" and str(row["username"] or "") not in usernames:
             raise ValueError(
@@ -1572,6 +1574,42 @@ def _validate_archive_database_relationships(db: Session, data: dict[str, list[d
                 raise ValueError(
                     f"The settings archive row {row_index} in '{section_name}' references an unknown local user."
                 )
+
+    for row_index, row in enumerate(data.get("vcf_backup_settings", []), start=1):
+        username = str(row.get("sftp_username") or "")
+        if row.get("enabled", False) and not users.get(username, False):
+            raise ValueError(
+                f"The settings archive row {row_index} in 'vcf_backup_settings' requires an enabled local user."
+            )
+    for row_index, row in enumerate(data.get("vcf_offline_depot_settings", []), start=1):
+        username = str(row.get("http_username") or "")
+        requires_user = row.get("enabled", False) and not row.get("allow_unauthenticated_access", False)
+        if requires_user and not users.get(username, False):
+            raise ValueError(
+                f"The settings archive row {row_index} in 'vcf_offline_depot_settings' requires an enabled local user."
+            )
+
+    from atlaso.app.services.network_boot import CATALOG_BY_KEY
+
+    installed_media = {
+        (row.environment_key, row.version)
+        for row in db.execute(select(NetworkBootMedia)).scalars().all()
+    }
+    for row_index, row in enumerate(data.get("network_boot_environments", []), start=1):
+        key = str(row.get("key") or "")
+        version = str(row.get("desired_version") or "")
+        if key not in CATALOG_BY_KEY:
+            raise ValueError(
+                f"The settings archive row {row_index} in 'network_boot_environments' has an unsupported environment key."
+            )
+        if row.get("enabled", False) and not version:
+            raise ValueError(
+                f"The settings archive row {row_index} in 'network_boot_environments' has no desired version."
+            )
+        if version and (key, version) not in installed_media:
+            raise ValueError(
+                f"The settings archive row {row_index} in 'network_boot_environments' references unavailable verified media."
+            )
 
 
 def _archive_required_fields(section_name: str) -> set[str]:

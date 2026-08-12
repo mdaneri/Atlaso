@@ -4545,6 +4545,44 @@ def test_settings_archive_round_trips_authoritative_dns_policy(client):
         assert restored.authoritative_expire == 2419200
 
 
+def test_settings_restore_rejects_disabled_users_for_enabled_vcf_services(client):
+    """Verify enabled restored VCF services require enabled retained local users.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
+    from copy import deepcopy
+
+    import pytest
+    from sqlalchemy import select
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import User
+    from atlaso.app.services.settings_archive import export_settings_archive, restore_settings_archive
+
+    with SessionLocal() as db:
+        disabled_user = db.scalar(select(User).where(User.username == "vcf-backup"))
+        assert disabled_user is not None
+        assert disabled_user.enabled is False
+        archive = export_settings_archive(db, actor="test")
+
+        backup_archive = deepcopy(archive)
+        backup_archive["data"]["vcf_backup_settings"][0]["enabled"] = True
+        backup_archive["data"]["vcf_backup_settings"][0]["sftp_username"] = disabled_user.username
+        with pytest.raises(ValueError, match="requires an enabled local user"):
+            restore_settings_archive(db, backup_archive)
+
+        depot_archive = deepcopy(archive)
+        depot_archive["data"]["vcf_offline_depot_settings"][0]["enabled"] = True
+        depot_archive["data"]["vcf_offline_depot_settings"][0]["allow_unauthenticated_access"] = False
+        depot_archive["data"]["vcf_offline_depot_settings"][0]["http_username"] = disabled_user.username
+        depot_archive["data"]["vcf_offline_depot_settings"][0]["listen_interface"] = "eth2"
+        with pytest.raises(ValueError, match="requires an enabled local user"):
+            restore_settings_archive(db, depot_archive)
+
+        assert db.get(User, disabled_user.id) is not None
+
+
 def test_settings_restore_and_factory_reset_clear_staged_ldap_recovery(client):
     """Verify that settings restore and factory reset clear staged ldap recovery.
 

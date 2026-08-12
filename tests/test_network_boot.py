@@ -2757,6 +2757,29 @@ def test_settings_restore_clears_explicitly_empty_network_boot_state(db_session)
     assert db_session.get(NetworkBootMedia, media.id) is not None
 
 
+def test_settings_restore_rejects_unavailable_network_boot_media(db_session):
+    """Verify restore rejects enabled Network Boot versions absent from retained verified media.
+
+    Args:
+        db_session: Active database session used by the operation.
+    """
+    import pytest
+
+    from atlaso.app.services.settings_archive import export_settings_archive, restore_settings_archive
+
+    archive = export_settings_archive(db_session, actor="test")
+    inventory = next(row for row in archive["data"]["network_boot_environments"] if row["key"] == "inventory")
+    inventory["enabled"] = True
+    inventory["desired_version"] = "unavailable-version"
+
+    with pytest.raises(ValueError, match="references unavailable verified media"):
+        restore_settings_archive(db_session, archive)
+
+    retained = db_session.get(NetworkBootEnvironment, "inventory")
+    assert retained is not None
+    assert retained.enabled is False
+
+
 def test_generic_pxe_scopes_do_not_follow_legacy_esxi_scope(client):
     """Verify that generic pxe scopes do not follow legacy esxi scope.
 
