@@ -633,6 +633,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#popular-guides" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Popular guides
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#safety-boundary" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -3224,6 +3235,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#popular-guides" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Popular guides
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#safety-boundary" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -3289,6 +3311,19 @@ proof-of-concept, lab, and test environments.</p>
 <p><strong>Latest documentation:</strong> This site describes the latest supported Atlaso release. Pages marked <strong>Roadmap</strong> or
 <strong>Historical</strong> are context, not statements of current appliance behavior.</p>
 </blockquote>
+<h2 id="popular-guides">Popular guides<a class="headerlink" href="#popular-guides" title="Permanent link">&para;</a></h2>
+<p>Start with these common operator tasks. The section indexes above contain the complete guide set.</p>
+<ul>
+<li><a href="operate/appliance-console/">Recover management access</a> — correct management networking from the local console.</li>
+<li><a href="operate/api/">Use the Atlaso API</a> — create scoped tokens and call the versioned REST contract safely.</li>
+<li><a href="operate/appliance-update/">Update the appliance</a> — review update sources and install signed updates.</li>
+<li><a href="services/dns/">Configure DNS</a> — manage appliance name resolution and authoritative zones.</li>
+<li><a href="services/ipxe/">Prepare Network Boot</a> — discover hosts and stage interactive or scripted boot workflows.</li>
+<li><a href="services/vaults/">Manage credentials with Vaults</a> — scope encrypted VCF and ESX credentials to approved workflows.</li>
+<li><a href="services/oidc-provider/">Configure OpenID Connect</a> — manage clients, identity sources, claims, and key rotation.</li>
+<li><a href="services/vsphere-key-providers/">Explore experimental vSphere Key Providers</a> — review the unverified candidate
+  VCF 9.1 contract and its acceptance gate.</li>
+</ul>
 <h2 id="safety-boundary">Safety boundary<a class="headerlink" href="#safety-boundary" title="Permanent link">&para;</a></h2>
 <p>Development appliances keep system adapters in dry-run mode by default. Desired-state editing does not mutate the host.
 Operators explicitly review and submit selected valid units through the global appliance-change workflow.</p>
