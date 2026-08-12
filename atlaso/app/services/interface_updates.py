@@ -903,13 +903,21 @@ def refresh_interface_dependent_addresses(
         )
         native_uefi_http_url = str(esxi_boot.get("native_uefi_http_url") or "")
         replacement_address = _primary_listen_address(updated_addresses)
-        if replacement_address:
-            for stale_address in stale_boot_addresses:
-                if stale_address and stale_address != replacement_address:
-                    native_uefi_http_url = native_uefi_http_url.replace(
-                        stale_address,
-                        replacement_address,
-                    )
+        direct_address_replacements = {
+            stale_address: new_addresses[family] or replacement_address
+            for family, stale_address in (
+                (4, _address_from_cidr(old_ip_cidr)),
+                (6, _address_from_cidr(old_ipv6_cidr)),
+            )
+            if stale_address
+        }
+        for stale_address in stale_boot_addresses:
+            mapped_address = direct_address_replacements.get(stale_address, "")
+            if mapped_address and stale_address != mapped_address:
+                native_uefi_http_url = native_uefi_http_url.replace(
+                    stale_address,
+                    mapped_address,
+                )
         if (
             updated_interfaces != str(esxi_boot.get("listen_interface") or "")
             or updated_addresses != str(esxi_boot.get("listen_address") or "")

@@ -280,6 +280,14 @@ def test_physical_interface_api_atomically_refreshes_ipv4_and_ipv6_dependencies(
     new_ipv6 = "fd00:60::1"
     with SessionLocal() as db:
         db.query(DhcpScope).delete()
+        primary_pxe_interface = db.execute(
+            select(PhysicalInterface).where(PhysicalInterface.name == "eth1")
+        ).scalar_one()
+        primary_pxe_interface.role = "access"
+        primary_pxe_interface.mode = "access"
+        primary_pxe_interface.admin_state = "up"
+        primary_pxe_interface.oper_state = "up"
+        primary_pxe_interface.ip_cidr = "10.10.0.1/24"
         interface = db.execute(
             select(PhysicalInterface).where(PhysicalInterface.name == "eth2")
         ).scalar_one()
@@ -385,8 +393,8 @@ def test_physical_interface_api_atomically_refreshes_ipv4_and_ipv6_dependencies(
             db,
             enabled=True,
             hostname="pxe.atlaso.internal",
-            listen_interface=interface.name,
-            listen_address=f"{old_ipv4}\n{old_ipv6}",
+            listen_interface=f"{primary_pxe_interface.name}\n{interface.name}",
+            listen_address=f"10.10.0.1\n{old_ipv4}",
             tftp_root="/var/lib/atlaso/pxe/tftp",
             bios_bootfile="undionly.kpxe",
             uefi_bootfile="snponly.efi",
@@ -495,9 +503,8 @@ def test_physical_interface_api_atomically_refreshes_ipv4_and_ipv6_dependencies(
         assert managed_reservation.ip_address == "192.168.60.11"
         assert managed_record.address == "192.168.60.11"
         assert operator_record.address == "192.168.50.10"
-        assert boot["listen_interface"] == "eth2"
-        # Network Boot remains IPv4-only; the IPv6 DHCP dependency is reconciled separately.
-        assert boot["listen_address"] == new_ipv4
+        assert boot["listen_interface"] == "eth1\neth2"
+        assert boot["listen_address"] == f"10.10.0.1\n{new_ipv4}\n{new_ipv6}"
         assert new_ipv4 in boot["native_uefi_http_url"]
         assert old_ipv4 not in boot["native_uefi_http_url"]
         assert audit is not None
