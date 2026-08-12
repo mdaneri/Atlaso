@@ -176,7 +176,8 @@ final result: passed
 
 ### Result
 
-Passed on the VMware test appliance at `https://192.168.167.219/esx-storage` using the annotated 1968 x 1562 browser
+Passed on the VMware test appliance at `https://192.168.167.219/esx-storage` using the annotated
+1968 x 1562 browser
 captures as the source reference.
 
 ### Visual comparison

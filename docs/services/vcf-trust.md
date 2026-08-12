@@ -9,7 +9,8 @@ status: current
 # VCF Certificate Trust
 
 VCF Certificate Trust deploys the active Atlaso root CA to one VCF 9 Installer or SDDC Manager appliance. Open it from
-the `VCF Certificate Trust` button on `/vcf-helper`. It is a remote maintenance task, not DNS desired state and not an
+the `VCF Certificate Trust` button on `/ui/management/vcf-helper`. It is a remote maintenance task, not DNS desired
+state and not an
 Appliance Apply unit.
 
 <!-- BEGIN GENERATED INTERFACE OVERVIEW -->
@@ -44,13 +45,20 @@ VCF Installer and SDDC Manager both use the same API-only flow. Atlaso does not 
 restart SDDC Manager services. API verification means the certificate is present in the VCF trusted-certificate API
 after import. VCF releases before 9.x and certificate deletion are outside this release.
 
-Routes:
+Canonical routes:
 
-- `GET /vcf-trust` redirects compatibility links to `/vcf-helper?vcf_trust=1`, which opens the modal.
-- `POST /vcf-helper/trust-root-ca/inspect-target` confirms target HTTPS TLS, validates API credentials, and returns
+- `GET /ui/management/vcf-helper?vcf_trust=1` opens the modal.
+- `POST /ui/management/vcf-helper/trust-root-ca/inspect-target` confirms target HTTPS TLS, validates API credentials,
+  and returns
   role/version.
-- `POST /vcf-trust/root-ca` queues the task and redirects to `/tasks?job_id=<id>`.
-- `POST /vcf-helper/trust-root-ca` remains a compatibility alias for cached clients.
+- `POST /ui/management/vcf-trust/root-ca` queues the task and redirects to
+  `/ui/management/tasks?job_id=<id>`.
+
+Temporary compatibility routes for cached clients and retired bookmarks:
+
+- `GET /vcf-trust` redirects to the canonical modal route.
+- `POST /vcf-trust/root-ca` bridges internally to `/ui/management/vcf-trust/root-ca`.
+- `POST /vcf-helper/trust-root-ca` bridges internally to `/ui/management/vcf-trust/root-ca`.
 
 <!-- BEGIN GENERATED ADDITIONAL SCREENSHOTS -->
 ## Additional verified states

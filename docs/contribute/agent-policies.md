@@ -122,7 +122,7 @@ status: current
 - Keep enforcement separate from editing. Applying changes to the appliance should be a deliberate task action after the
   user is done, not part of every field change.
 - Do not add service-specific apply cards or service-specific apply submit routes. Applying is a global appliance
-  workflow owned by `/appliance-apply`.
+  workflow owned by `/ui/management/appliance-apply`.
 - In service right-side rails, show a compact `Pending Appliance Changes` card first, then the service-specific
   `Validation` card. The pending card opens the shared appliance-review modal; the validation card owns only
   valid/needs-attention state, validation messages, warnings, and compact rendered config preview actions.
@@ -176,9 +176,11 @@ status: current
 
 ## Dashboard Operations UX
 
-- Keep `/dashboard` as an adaptive, read-only operations command center. Preserve the application shell and send
+- Keep `/ui/management/dashboard` as an adaptive, read-only operations command center. Preserve the application shell
+  and send
   mutating work to existing workflows instead of adding dashboard-side apply, restart, or service actions.
-- Build the initial HTML and `/dashboard/data` response from the same private snapshot builder. Keep `/api/v1/dashboard`
+- Build the initial HTML and `/ui/management/dashboard/data` response from the same private snapshot builder. Keep
+  `/api/v1/dashboard`
   and its public schema independent and backward compatible.
 - Prioritize dashboard attention items as invalid changed apply units, unresolved failed tasks from the last 24 hours,
   unhealthy enabled services, then missing or unexpectedly down configured physical interfaces. Later successful
@@ -186,7 +188,8 @@ status: current
   that did not succeed in the failed task; an unrelated successful apply does not clear it. Preserve the failed tasks
   and audit events as history. Disabled optional services and unused interfaces are not exceptions.
 - Keep valid pending changes separate from invalid changed units. Open changes in the shared appliance-review modal, and
-  link tasks to `/tasks`, service exceptions to `/services`, and interface exceptions to `/physical-interfaces`.
+  link tasks to `/ui/management/tasks`, service exceptions to `/ui/management/services`, and interface exceptions to
+  `/ui/management/physical-interfaces`.
 - Fresh appliances remain in setup readiness until management networking is healthy and one global appliance-apply task
   has succeeded. Show management discovery, addressing/link state, Appliance Settings validity, desired-state validity,
   and first-apply readiness while that mode is active.
@@ -196,7 +199,7 @@ status: current
 
 ## Monitor Operations UX
 
-- Keep `/monitor` read-only and focused on appliance runtime health: CPU, memory pressure, network throughput,
+- Keep `/ui/management/monitor` read-only and focused on appliance runtime health: CPU, memory pressure, network throughput,
   unique-device disk activity, interface state, and virtual-machine context.
 - Do not restore per-mount capacity presentation on the Monitor page, including the top-level Disks metric, Disk Usage
   chart, or capacity table. Filesystem usage may remain in monitor samples and APIs for compatibility and other
@@ -278,9 +281,11 @@ status: current
   `ATLASO_HELPER_USE_SYSTEMD_RUN=1` is set. This escapes the `atlaso.service` read-only `/etc` mount namespace without
   giving the web control plane broad shell/root access. Keep that environment variable in `atlaso.service` and preserve
   it in the Atlaso sudoers rule.
-- The global `/appliance-apply` workflow remains the only host-mutation workflow. Do not add service-specific apply
+- The global `/ui/management/appliance-apply` workflow remains the only host-mutation workflow. Do not add
+  service-specific apply
   routes, service-specific apply jobs, or direct helper calls from desired-state edit forms.
-- Appliance Update is runtime maintenance, not desired-state drift. Keep it separate from `/appliance-apply`, stage
+- Appliance Update is runtime maintenance, not desired-state drift. Keep it separate from
+  `/ui/management/appliance-apply`, stage
   `/var/lib/atlaso/apply/appliance-update/atlaso-update.json`, and run Photon OS, PowerShell module, and signed Atlaso
   release work only through `atlaso-helper appliance-update`. Do not restore the retired Python Libraries or independent
   wheel streams.
@@ -337,7 +342,7 @@ status: current
   use the five-step wizard (identity/type, type-specific configuration, timing, state, review); timing uses the friendly
   cron builder with Custom as the advanced five-field escape hatch. Schedule State is directly editable with the
   standard enable/disable control, while Run now, Edit, and Delete belong in the row context menu. Executions must link
-  every scheduled job to `/tasks`.
+  every scheduled job to `/ui/management/tasks`.
 - Managed scripts are immutable revisions executed as the unprivileged `atlaso-automation` account through the
   constrained helper and transient systemd units. Creation uses the shared four-step wizard for identity, runtime,
   initial source, and review, and stores revision 1 disabled. Grid edits to revision-owned fields create a new disabled
@@ -370,7 +375,7 @@ status: current
   the VM IP first because Hyper-V NAT addresses can drift.
 - Use the running Photon VM for real functionality checks after appliance-impacting changes: validate local tests first,
   then install/test on the VM when behavior depends on Photon, Hyper-V NICs, systemd, nftables, dnsmasq, resolver state,
-  or `/appliance-apply`.
+  or `/ui/management/appliance-apply`.
 - Hyper-V lifecycle interop tests must use a completely separate VM set from the normal `Atlaso` test appliance. Prefer
   `scripts/windows/hyperv/invoke-lifecycle-test.ps1` for one-command runs; it prepares the tiny Linux client image,
   picks the latest appliance VHDX, runs the test, validates backup/restore by redeploying the appliance and comparing
@@ -424,7 +429,8 @@ status: current
   `base.html` static query strings changed after JS/CSS edits.
 - Real firewall apply stages rendered nftables config under `/var/lib/atlaso/apply/firewall/atlaso.nft` as the `atlaso`
   service user before invoking the root helper. Keep `/var/lib/atlaso/apply` and its firewall child owned by
-  `atlaso:atlaso`; root-owned staging files cause `/appliance-apply` to fail before a job is recorded. Atlaso-managed
+  `atlaso:atlaso`; root-owned staging files cause `/ui/management/appliance-apply` to fail before a job is recorded.
+  Atlaso-managed
   service allow rules are generated from enabled service listener desired state, including management, DNS, DHCP, KMS,
   VCF Backup, VCF Offline Depot, and VCF Private Registry. Atlaso-managed routing rules allow route-role network pairs
   and explicit access routing permissions, while always dropping management-to-lab and lab-to-management forwarding.
@@ -739,7 +745,8 @@ status: current
   authorization and immediate helper revalidation before whole-device ext4 formatting. Mount by UUID under
   `/mnt/atlaso-esx-storage`, bind shares under `/srv/atlaso/esx-storage`, preserve formatted data on later failure, and
   never add wipe/reformat/data-delete behavior.
-- Apply only through global `/appliance-apply`. Settings backup and restore include volume/share desired state but never
+- Apply only through global `/ui/management/appliance-apply`. Settings backup and restore include volume/share desired
+  state but never
   format authorization. iSCSI remains a separate kernel/target-stack feasibility issue.
 
 ## Network And Service Binding
@@ -750,10 +757,11 @@ status: current
   add and edit must review parent, VLAN ID, derived name, addressing, MTU, role, and Admin Up together through the shared
   wizard. This is the approved exception to the ordinary inline-Enabled rule. New VLANs default to Admin Up; edits
   preserve the saved value. A missing-parent VLAN may remain saved only while disabled and must move to an available
-  trunk before enablement. Saving remains desired-state-only and global `/appliance-apply` owns network enforcement.
+  trunk before enablement. Saving remains desired-state-only and global `/ui/management/appliance-apply` owns network
+  enforcement.
 - Physical Interfaces automatically refresh observed Photon/Hyper-V NIC inventory on appliance startup and may also
   refresh it manually from the page, but host inventory is read-only context; desired-state edits remain separate and
-  enforcement still goes through `/appliance-apply`.
+  enforcement still goes through `/ui/management/appliance-apply`.
 - Host NIC reconciliation must match observed adapters by MAC address before Linux interface name. When a host NIC
   disappears, mark the missing physical interface inert, set dependent VLANs disabled/admin down where modeled, remove
   the missing interface and derived IP addresses from service listeners, disable services left without any listener, and
@@ -892,7 +900,8 @@ status: current
 - Default local users should be created by seed logic when needed. The VCF Backup SFTP service has a default local user
   named `vcf-backup`, and the VCF Offline Depot HTTP service has a default local user named `vcf-depot`; keep them
   visible under Users and selectable by their services.
-- Local Users owns Photon OS account synchronization through the global `/appliance-apply` unit `local_users`. It stages
+- Local Users owns Photon OS account synchronization through the global `/ui/management/appliance-apply` unit
+  `local_users`. It stages
   `/var/lib/atlaso/apply/local-users/atlaso-users.json`, creates or updates enabled users under `/var/lib/atlaso/users`
   with their desired shell, removes disabled or removed managed users with `userdel -r`, and applies staged unlock
   requests through `passwd -u` plus `faillock --reset`.
@@ -934,7 +943,8 @@ status: current
 
 ## VCF Helper
 
-- VCF Helper lives under VCF Workflows at `/vcf-helper`. Keep deployment component sets versioned; current targets are
+- VCF Helper lives under VCF Workflows at `/ui/management/vcf-helper`. Keep deployment component sets versioned;
+  current targets are
   `VCF 9.1` with all 17 catalog components and `VVF 9.1` with `vc01`, `ops01`, `vsp01`, `fleetlcm`, `shared01`, and
   `license`.
 - Domain choices must come from managed DNS zones. Prefix and suffix are optional hostname fragments; normalize them
@@ -1007,7 +1017,8 @@ status: current
   explicit Routing Permissions, NAT Rules, and WAN Policies as wizard-backed Tabulator collections using the ESX
   Storage reference. Add launches from the bottom row; edit launches from row double-click or its context action;
   generated route-role permissions remain read-only; and ordinary persisted Enabled state remains directly editable.
-- All Routing/WAN host mutation must go through the global `/appliance-apply` `wan` unit. Do not add route-specific,
+- All Routing/WAN host mutation must go through the global `/ui/management/appliance-apply` `wan` unit. Do not add
+  route-specific,
   NAT-specific, or WAN-policy-specific apply routes or direct helper calls from edit forms.
 - The real apply path stages `/var/lib/atlaso/apply/wan/atlaso-wan.conf`; `atlaso-helper wan validate|apply` validates
   targets, routes, NAT rules, and netem values before running `ip route`, `nft`, `sysctl`, and `tc`.
@@ -1036,7 +1047,8 @@ status: current
   recovery export/import is an explicit special case that also lives on Backup / Restore; it preserves slapcat password
   hashes, remains outside the settings archive, and stages import for global LDAP apply. Restore and factory reset must
   leave service status rows stopped, disabled, and `unconfigured`; host mutation still belongs only to the global
-  `/appliance-apply` workflow. Factory reset must reseed only core defaults and must not recreate demo VLANs, trunk-only
+  `/ui/management/appliance-apply` workflow. Factory reset must reseed only core defaults and must not recreate demo
+  VLANs, trunk-only
   parent NIC posture, routes, NAT rules, WAN policies, DHCP scopes/reservations, firewall rules, CA requests, vSphere
   providers/trusted vCenters, depot download profiles, or service listener bindings, including after service restart.
   The only DNS record factory reset should reseed is the app-owned appliance FQDN record pointed at the management IP.

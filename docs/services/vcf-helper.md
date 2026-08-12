@@ -8,7 +8,8 @@ status: current
 
 # VCF Helper
 
-VCF Helper prepares deployment DNS desired state. It is available under `VCF Workflows` at `/vcf-helper`.
+VCF Helper prepares deployment DNS desired state. It is available under `VCF Workflows` at
+`/ui/management/vcf-helper`.
 
 <!-- BEGIN GENERATED INTERFACE OVERVIEW -->
 ## Interface overview
@@ -32,7 +33,7 @@ See [Vaults](vaults.md) for supported entries, managed-script and Kickstart acce
 
 The helper creates DNS records in Atlaso, deploys SDDC Manager OVAs, and configures VCF 9 appliances to use the applied
 local offline depot. DNS does not reload `dnsmasq` or change the appliance directly. Review and submit the changed
-`DNS/DHCP (dnsmasq)` unit through the global `/appliance-apply` workflow after generation or deletion.
+`DNS/DHCP (dnsmasq)` unit through the global `/ui/management/appliance-apply` workflow after generation or deletion.
 
 The `VCF Certificate Trust` button opens the separate remote certificate task in a modal without mixing CA details into
 the main DNS helper workspace. See [VCF Certificate Trust](vcf-trust.md).
@@ -165,15 +166,15 @@ when their description exactly matches the expected component description.
 
 ## Routes And Responses
 
-- `GET /vcf-helper` renders the helper page.
-- `POST /vcf-helper/generated-fqdns` validates and creates missing records.
-- `POST /vcf-helper/generated-fqdns/delete` deletes matching helper-owned records.
-- `POST /vcf-helper/sddc-manager/inventory` confirms TLS and discovers vSphere inventory.
-- `POST /vcf-helper/sddc-manager/deploy` queues an OVA deployment.
-- `GET /vcf-helper/sddc-manager/tasks/{job_id}` reports deployment progress.
-- `POST /vcf-helper/offline-depot/inspect-target` previews remote depot state.
-- `POST /vcf-helper/offline-depot/configure` queues remote depot configuration.
-- `GET /vcf-helper/offline-depot/tasks/{job_id}` reports configuration and sync progress.
+- `GET /ui/management/vcf-helper` renders the helper page.
+- `POST /ui/management/vcf-helper/generated-fqdns` validates and creates missing records.
+- `POST /ui/management/vcf-helper/generated-fqdns/delete` deletes matching helper-owned records.
+- `POST /ui/management/vcf-helper/sddc-manager/inventory` confirms TLS and discovers vSphere inventory.
+- `POST /ui/management/vcf-helper/sddc-manager/deploy` queues an OVA deployment.
+- `GET /ui/management/vcf-helper/sddc-manager/tasks/{job_id}` reports deployment progress.
+- `POST /ui/management/vcf-helper/offline-depot/inspect-target` previews remote depot state.
+- `POST /ui/management/vcf-helper/offline-depot/configure` queues remote depot configuration.
+- `GET /ui/management/vcf-helper/offline-depot/tasks/{job_id}` reports configuration and sync progress.
 
 Fetch responses report created, skipped, deleted, and preserved rows with their assigned addresses, plus validation or
 allocation errors. All mutations use the existing authenticated session, CSRF validation, audit logging, and DNS desired

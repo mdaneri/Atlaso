@@ -133,7 +133,8 @@ never claimed remains pending.
 
 ## Task history and output
 
-Scheduled work always creates normal Atlaso Jobs, so it appears in both the Automation **Executions** tab and `/tasks`.
+Scheduled work always creates normal Atlaso Jobs, so it appears in both the Automation **Executions** tab and
+`/ui/management/tasks`.
 VCFDT scheduled tasks also appear in the profile-scoped task grid. Failed prerequisite checks and skipped overlaps are
 terminal history entries with schedule, profile, planned-time, and active-task context; missed or failed runs are not
 retried outside the next configured occurrence.

@@ -3,12 +3,18 @@
 
 from __future__ import annotations
 
+import importlib.util
 import json
+import posixpath
 import re
+import subprocess
 import sys
 import tomllib
+from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
+from types import ModuleType
+from typing import Iterable
 from urllib.parse import unquote, urlparse
 
 
@@ -20,6 +26,42 @@ ALLOWED_STATUSES = {"current", "roadmap", "historical", "redirect"}
 HEADING_RE = re.compile(r"^(#{1,6})\s+(.+?)\s*$")
 LINK_RE = re.compile(r"!?\[[^\]]+\]\(([^)]+)\)")
 IMAGE_RE = re.compile(r"!\[[^\]]+\]\(([^)]+)\)")
+ABSOLUTE_URL_RE = re.compile(r'''(?:https?:[\\/]{0,2}|//)[^\s<>()`\[\]"']+''', re.IGNORECASE)
+BROWSER_PATH_RE = re.compile(
+    r"(?<![A-Za-z0-9.])"
+    r"(?P<path>[\\/](?:(?:\.{1,2})[\\/])*[A-Za-z0-9%][A-Za-z0-9._~{}%*-]*"
+    r"(?:[\\/][A-Za-z0-9._~{}%*-]+)*"
+    r"(?:\?[A-Za-z0-9._~{}*=&%+-]*)?)"
+)
+LEGACY_BROWSER_ROUTE_ALLOWLIST = {
+    "docs/project/appliance-console-design-qa.md": {
+        "https://192.168.167.219/esx-storage",
+    },
+    "docs/project/github-project.md": {
+        "https://github.com/users/mdaneri/projects/5",
+    },
+    "docs/project/monitor-apply-ux-design-qa.md": {
+        "https://192.168.167.219/monitor",
+    },
+    "docs/project/ui-compliance-matrix.md": {
+        "/services/{service}/logs",
+    },
+    "docs/reference/full-technical-reference.md": {
+        "/certificate-authority/.../downloads",
+    },
+    "docs/services/ipxe.md": {
+        "/esxi-pxe",
+    },
+    "docs/services/public-services.md": {
+        "/certificate-authority/.../downloads/",
+    },
+    "docs/services/vcf-trust.md": {
+        "/vcf-helper/trust-root-ca",
+        "/vcf-trust",
+        "/vcf-trust/root-ca",
+    },
+}
+MARKDOWN_ROUTE_EXCLUDED_PREFIXES = ("third_party/",)
 
 
 @dataclass(frozen=True)
@@ -43,6 +85,157 @@ class Finding:
         """
         path = self.path.relative_to(ROOT)
         return f"{path}:{self.line}: {self.message}" if self.line else f"{path}: {self.message}"
+
+
+def load_ui_routes() -> ModuleType:
+    """Load the browser-route contract without importing the Atlaso application package.
+
+    Returns:
+        The loaded ``atlaso.app.ui_routes`` module.
+    """
+    path = ROOT / "atlaso" / "app" / "ui_routes.py"
+    spec = importlib.util.spec_from_file_location("_atlaso_ui_routes_for_docs", path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"unable to load browser-route contract: {path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def markdown_sources() -> list[Path]:
+    """Return every checked-in Markdown source covered by documentation validation."""
+    result = subprocess.run(
+        ["git", "ls-files", "-z", "--", "*.md"],
+        cwd=ROOT,
+        check=True,
+        capture_output=True,
+    )
+    relative_paths = result.stdout.decode("utf-8").split("\0")
+    return sorted(
+        ROOT / relative
+        for relative in relative_paths
+        if relative
+        and not relative.startswith(MARKDOWN_ROUTE_EXCLUDED_PREFIXES)
+    )
+
+
+def browser_route_candidates(line: str) -> list[tuple[str, str]]:
+    """Return display values and request paths found in one Markdown line.
+
+    Args:
+        line: Markdown source line to inspect.
+    """
+    candidates: list[tuple[str, str]] = []
+    absolute_spans: list[tuple[int, int]] = []
+    for match in ABSOLUTE_URL_RE.finditer(line):
+        absolute_spans.append(match.span())
+        candidate = strip_markdown_wrappers(line, match.start(), match.group(0).rstrip(".,:;"))
+        route_path = browser_url_path(candidate)
+        if route_path:
+            candidates.append((candidate, route_path))
+    for match in BROWSER_PATH_RE.finditer(line):
+        if any(match.start() < end and match.end() > start for start, end in absolute_spans):
+            continue
+        candidate = strip_markdown_wrappers(line, match.start("path"), match.group("path").rstrip(".,:;"))
+        candidates.append((candidate, normalize_browser_path(urlparse(candidate.replace("\\", "/")).path)))
+    return candidates
+
+
+def browser_url_path(candidate: str) -> str:
+    """Return the browser-equivalent path for an authority or same-host URL.
+
+    Args:
+        candidate: Extracted HTTP(S) or protocol-relative URL candidate.
+
+    Returns:
+        The normalized request path used for legacy-route classification.
+    """
+    browser_url = candidate.replace("\\", "/")
+    scheme_match = re.match(r"^(https?):(/*)(.*)$", browser_url, flags=re.IGNORECASE)
+    if scheme_match and len(scheme_match.group(2)) <= 1:
+        remainder = scheme_match.group(3)
+        first_segment = remainder.split("/", 1)[0]
+        if not scheme_match.group(2) or ("." not in first_segment and ":" not in first_segment):
+            return normalize_browser_path(urlparse(f"/{remainder}").path)
+        browser_url = f"{scheme_match.group(1)}://{remainder}"
+    return normalize_browser_path(urlparse(browser_url).path)
+
+
+def normalize_browser_path(path: str) -> str:
+    """Decode and remove browser-equivalent dot segments from a URL path.
+
+    Args:
+        path: Parsed URL path to normalize.
+
+    Returns:
+        A decoded absolute path with dot segments removed.
+    """
+    decoded = unquote(path)
+    normalized = posixpath.normpath(decoded)
+    return f"/{normalized.lstrip('/')}" if decoded.startswith("/") else normalized
+
+
+def strip_markdown_wrappers(line: str, start: int, candidate: str) -> str:
+    """Remove matching Markdown emphasis delimiters surrounding a URL candidate.
+
+    Args:
+        line: Markdown source line containing the candidate.
+        start: Candidate start offset in the line.
+        candidate: Extracted URL or root-relative path.
+
+    Returns:
+        The candidate without matching attached Markdown emphasis delimiters.
+    """
+    prefix = line[:start]
+    for delimiter in ("***", "___", "**", "__", "~~", "*", "_"):
+        if prefix.endswith(delimiter) and candidate.endswith(delimiter):
+            return candidate[: -len(delimiter)]
+    return candidate
+
+
+def validate_legacy_browser_routes(paths: Iterable[Path] | None = None) -> list[Finding]:
+    """Reject unqualified retired browser paths in checked-in Markdown.
+
+    Args:
+        paths: Optional Markdown sources to validate instead of the repository inventory.
+
+    Returns:
+        Findings for legacy browser paths that are not explicitly allowlisted.
+    """
+    ui_routes = load_ui_routes()
+    findings: list[Finding] = []
+    allowed_counts: Counter[tuple[str, str]] = Counter()
+    enforce_allowlist_inventory = paths is None
+    sources = paths if paths is not None else markdown_sources()
+    for path in sources:
+        relative = path.relative_to(ROOT).as_posix() if path.is_relative_to(ROOT) else path.as_posix()
+        allowed = LEGACY_BROWSER_ROUTE_ALLOWLIST.get(relative, set())
+        for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+            for candidate, route_path in browser_route_candidates(line):
+                if ui_routes.legacy_browser_target(route_path) is None:
+                    continue
+                if candidate in allowed:
+                    allowed_counts[(relative, candidate)] += 1
+                    continue
+                findings.append(
+                    Finding(
+                        path,
+                        f"retired browser path must use its canonical namespace: {candidate}",
+                        number,
+                    )
+                )
+    if enforce_allowlist_inventory:
+        for relative, candidates in LEGACY_BROWSER_ROUTE_ALLOWLIST.items():
+            for candidate in candidates:
+                count = allowed_counts[(relative, candidate)]
+                if count != 1:
+                    findings.append(
+                        Finding(
+                            ROOT / relative,
+                            f"allowlisted retired browser path must appear exactly once: {candidate} (found {count})",
+                        )
+                    )
+    return findings
 
 
 def parse_front_matter(path: Path, text: str) -> tuple[dict[str, object], str, list[Finding]]:
@@ -392,6 +585,7 @@ def main() -> int:
         _, page_findings = validate_page(path, nav)
         findings.extend(page_findings)
         findings.extend(validate_links(path))
+    findings.extend(validate_legacy_browser_routes())
     findings.extend(validate_screenshots())
     if findings:
         print(f"Documentation checks failed with {len(findings)} issue(s):", file=sys.stderr)

@@ -2,10 +2,11 @@
 
 import json
 import re
+import subprocess
 from pathlib import Path
 
 from scripts import generate_embedded_screenshot_sections, generate_screenshot_gallery
-from scripts.check_docs import validate_screenshots
+from scripts.check_docs import markdown_sources, validate_legacy_browser_routes, validate_screenshots
 from scripts.overlay_docs_site import overlay
 
 
@@ -87,6 +88,123 @@ def test_documentation_overlay_preserves_release_repository(tmp_path: Path) -> N
 def test_checked_in_screenshot_manifest_is_valid() -> None:
     """Verify that checked in screenshot manifest is valid."""
     assert validate_screenshots() == []
+
+
+def test_checked_in_markdown_uses_canonical_browser_routes() -> None:
+    """Verify current guidance does not promote temporary root-level browser paths."""
+    assert validate_legacy_browser_routes() == []
+
+
+def test_browser_route_validation_covers_tracked_markdown() -> None:
+    """Verify route validation covers every tracked non-vendored Markdown source."""
+    root = Path(__file__).resolve().parents[1]
+    tracked = subprocess.run(
+        ["git", "ls-files", "--", "*.md"],
+        cwd=root,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.splitlines()
+    expected = {
+        (root / relative).resolve()
+        for relative in tracked
+        if not relative.startswith("third_party/")
+    }
+
+    assert {path.resolve() for path in markdown_sources()} == expected
+
+
+def test_documentation_check_rejects_retired_browser_routes(tmp_path: Path) -> None:
+    """Verify a newly introduced root-level browser route fails validation.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    page = tmp_path / "example.md"
+    page.write_text(
+        "Open `/dashboard?scope=all` to review appliance state.\n"
+        "Open https://atlaso.example/dashboard for the same view.\n"
+        "Use the [Dashboard](https://atlaso.example/dashboard?scope=all) bookmark.\n"
+        'Open "https://atlaso.example/dashboard" in a browser.\n'
+        "Open HTTPS://atlaso.example/dashboard with an uppercase scheme.\n"
+        "Open **/dashboard** from emphasized guidance.\n"
+        "Open **https://atlaso.example/dashboard** from an emphasized URL.\n"
+        "Use <code>/dashboard</code> in raw HTML.\n"
+        "Open https://atlaso.example/%64ashboard after decoding.\n"
+        "Open /%64ashboard after decoding.\n"
+        "Use [Dashboard](//atlaso.example/dashboard) on the current scheme.\n"
+        "Open https://atlaso.example/guide/../dashboard after normalization.\n"
+        "Open /guide/../dashboard after normalization.\n"
+        "Open https://atlaso.example\\dashboard after backslash normalization.\n"
+        "Open https:\\atlaso.example\\dashboard after backslash normalization.\n"
+        'Use <a href="\\dashboard">Dashboard</a> after root-path normalization.\n'
+        "Open /./dashboard after leading-dot normalization.\n"
+        "Open \\.\\dashboard after leading-dot normalization.\n"
+        "Open https:/dashboard as a same-host path.\n"
+        "Open https:\\dashboard as a same-host path.\n"
+        "Open https:dashboard as a same-scheme path.\n"
+        "Open https:dashboard?scope=all with a query.\n"
+        "Open https:/dashboard#review with a fragment.\n",
+        encoding="utf-8",
+    )
+
+    findings = validate_legacy_browser_routes([page])
+
+    assert len(findings) == 23
+    assert findings[0].line == 1
+    assert findings[0].message.endswith(": /dashboard?scope=all")
+    assert findings[1].line == 2
+    assert findings[1].message.endswith(": https://atlaso.example/dashboard")
+    assert findings[2].line == 3
+    assert findings[2].message.endswith(": https://atlaso.example/dashboard?scope=all")
+    assert findings[3].line == 4
+    assert findings[3].message.endswith(": https://atlaso.example/dashboard")
+    assert findings[4].line == 5
+    assert findings[4].message.endswith(": HTTPS://atlaso.example/dashboard")
+    assert findings[5].line == 6
+    assert findings[5].message.endswith(": /dashboard")
+    assert findings[6].line == 7
+    assert findings[6].message.endswith(": https://atlaso.example/dashboard")
+    assert findings[7].line == 8
+    assert findings[7].message.endswith(": /dashboard")
+    assert findings[8].line == 9
+    assert findings[8].message.endswith(": https://atlaso.example/%64ashboard")
+    assert findings[9].line == 10
+    assert findings[9].message.endswith(": /%64ashboard")
+    assert findings[10].line == 11
+    assert findings[10].message.endswith(": //atlaso.example/dashboard")
+    assert findings[11].line == 12
+    assert findings[11].message.endswith(": https://atlaso.example/guide/../dashboard")
+    assert findings[12].line == 13
+    assert findings[12].message.endswith(": /guide/../dashboard")
+    assert findings[13].line == 14
+    assert findings[13].message.endswith(": https://atlaso.example\\dashboard")
+    assert findings[14].line == 15
+    assert findings[14].message.endswith(": https:\\atlaso.example\\dashboard")
+    assert findings[15].line == 16
+    assert findings[15].message.endswith(": \\dashboard")
+    assert findings[16].line == 17
+    assert findings[16].message.endswith(": /./dashboard")
+    assert findings[17].line == 18
+    assert findings[17].message.endswith(": \\.\\dashboard")
+    assert findings[18].line == 19
+    assert findings[18].message.endswith(": https:/dashboard")
+    assert findings[19].line == 20
+    assert findings[19].message.endswith(": https:\\dashboard")
+    assert findings[20].line == 21
+    assert findings[20].message.endswith(": https:dashboard")
+    assert findings[21].line == 22
+    assert findings[21].message.endswith(": https:dashboard?scope=all")
+    assert findings[22].line == 23
+    assert findings[22].message.endswith(": https:/dashboard#review")
+
+    page.write_text(
+        "Open `/ui/management/dashboard` or https://atlaso.example/ui/management/dashboard.\n"
+        "Read [Vaults](../services/vaults.md) for details.\n"
+        "Check [health](//monitor/status) on its protocol-relative authority.\n",
+        encoding="utf-8",
+    )
+    assert validate_legacy_browser_routes([page]) == []
 
 
 def test_screenshot_canonical_routes_are_idempotent() -> None:

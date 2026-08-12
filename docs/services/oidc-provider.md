@@ -44,7 +44,8 @@ One credential-verification service resolves only two persisted identity types:
   compatibility; and
 - enabled users in enabled Atlaso-managed OpenLDAP organizations.
 
-Managed LDAP means the integrated organizations under `/ldap`; external LDAP sources are outside the design. Before a
+Managed LDAP means the integrated organizations under `/ui/management/ldap`; external LDAP sources are outside the
+design. Before a
 bind, the control plane resolves the organization and user from the database and rejects disabled or missing records. It
 then calls only `atlaso-helper ldap authenticate <generated-user-dn>`. The helper reads the password from stdin, writes
 it to a mode-`0600` temporary file, invokes `ldapwhoami -x -H ldapi:/// -D <dn> -y <file>`, suppresses command output,
