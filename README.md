@@ -26,7 +26,8 @@ brings infrastructure, storage, identity, networking, and lifecycle workflows in
   reviewed wizard record, including its trunk parent, addresses, role, and Admin Up desired state, before global apply.
 - [Use the Atlaso API](docs/operate/api.md) — create least-privilege tokens, call the versioned REST contract safely,
   and interpret responses, request IDs, locks, and apply boundaries. Typed physical-interface PATCH requests reconcile
-  dependent service, DHCP, and Network Boot listener addresses in the same desired-state transaction.
+  dependent service, ESX Storage, Web Terminal, DHCP, and Network Boot bindings in the same
+  desired-state transaction.
 - [Appliance Update](docs/operate/appliance-update.md) — inspect configured Photon, PowerShell, and signed Atlaso
   sources in read-only repository tabs, then create or edit desired source state through the shared reviewed wizard
   before explicitly synchronizing package clients.

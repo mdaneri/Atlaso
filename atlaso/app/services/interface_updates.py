@@ -16,6 +16,7 @@ from atlaso.app.models import (
     DhcpScope,
     DhcpSettings,
     DnsSettings,
+    EsxNfsShare,
     KmsSettings,
     LdapSettings,
     NtpSettings,
@@ -28,7 +29,12 @@ from atlaso.app.models import (
     VlanInterface,
     utcnow,
 )
-from atlaso.app.services.appliance_settings import management_dhcp_dns_context
+from atlaso.app.services.appliance_settings import (
+    management_dhcp_dns_context,
+    web_terminal_interface_options,
+    web_terminal_interfaces_from_json,
+    web_terminal_interfaces_to_json,
+)
 from atlaso.app.services.dnsmasq import (
     compact_dhcp_range_expression,
     join_addresses,
@@ -47,6 +53,7 @@ from atlaso.app.services.esxi_pxe import (
     esxi_pxe_boot_settings,
     save_esxi_pxe_boot_settings,
 )
+from atlaso.app.services.esx_storage import normalize_families as normalize_esx_storage_families
 from atlaso.app.services.networking import (
     normalize_interface_mode,
     normalize_interface_role,
@@ -164,7 +171,14 @@ def _service_bind_options(db: Session) -> list[dict[str, Any]]:
         parent = interfaces_by_name.get(vlan.parent_interface)
         role = normalize_interface_role(vlan.role)
         addresses = _interface_addresses_from_cidrs(vlan.ip_cidr, vlan.ipv6_cidr)
-        if (parent and parent.oper_state == "missing") or role in {"management", "unused"} or not addresses:
+        if (
+            parent is None
+            or parent.oper_state == "missing"
+            or parent.admin_state != "up"
+            or normalize_interface_mode(parent.mode) != "trunk"
+            or role in {"management", "unused"}
+            or not addresses
+        ):
             continue
         options.append(
             {
@@ -309,6 +323,48 @@ def refresh_interface_dependent_addresses(
         dns_refresher: Optional callback for app-owned service aliases.
     """
     options_by_name = {str(option["name"]): option for option in _service_bind_options(db)}
+    physical_parent = db.execute(
+        select(PhysicalInterface).where(
+            PhysicalInterface.name.in_([name for name in (old_name, new_name) if name])
+        )
+    ).scalars().first()
+    affected_interface_names = [old_name]
+    if physical_parent is not None:
+        affected_interface_names.extend(
+            vlan.name
+            for vlan in db.execute(
+                select(VlanInterface)
+                .where(VlanInterface.parent_interface == physical_parent.name)
+                .order_by(VlanInterface.vlan_id)
+            ).scalars()
+            if vlan.name not in affected_interface_names
+        )
+
+    def selection_replacements(eligible_names: set[str]) -> dict[str, str]:
+        """Return replacements for every directly or transitively affected interface.
+
+        Args:
+            eligible_names: Interface names that remain valid for the dependent feature.
+        """
+        replacements: dict[str, str] = {}
+        for affected_name in affected_interface_names:
+            candidate = new_name if affected_name == old_name else affected_name
+            replacements[affected_name] = candidate if candidate in eligible_names else ""
+        return replacements
+
+    def reconcile_selection(raw_value: str | None, replacements: Mapping[str, str]) -> str:
+        """Apply ordered interface-token replacements to one persisted selection.
+
+        Args:
+            raw_value: Persisted newline- or comma-separated interface selection.
+            replacements: Replacement interface name keyed by affected token.
+        """
+        updated = str(raw_value or "")
+        for affected_name, replacement in replacements.items():
+            updated = _replace_interface_selection(updated, affected_name, replacement)
+        return updated
+
+    service_replacements = selection_replacements(set(options_by_name))
     previous_esxi_boot = esxi_pxe_boot_settings(db)
     raw_esxi_listen_interface = db.execute(
         select(Setting).where(Setting.key == ESXI_PXE_LISTEN_INTERFACE_KEY)
@@ -359,13 +415,11 @@ def refresh_interface_dependent_addresses(
         """
         for row in db.execute(select(model)).scalars().all():
             selected = split_interfaces(getattr(row, "listen_interface", ""))
-            if old_name not in selected and new_name not in selected:
+            if not any(name in selected for name in affected_interface_names):
                 continue
-            eligible_new_name = new_name if new_name in options_by_name else ""
-            updated_interfaces = _replace_interface_selection(
+            updated_interfaces = reconcile_selection(
                 getattr(row, "listen_interface", ""),
-                old_name,
-                eligible_new_name,
+                service_replacements,
             )
             updated_addresses = _derive_addresses_for_interfaces(
                 split_interfaces(updated_interfaces),
@@ -374,8 +428,7 @@ def refresh_interface_dependent_addresses(
             if model is CaSettings and not split_addresses(updated_addresses):
                 updated_interfaces = ""
             if (
-                old_addresses
-                and bool(getattr(row, "enabled", False))
+                bool(getattr(row, "enabled", False))
                 and model is not CaSettings
                 and not split_addresses(updated_addresses)
             ):
@@ -406,6 +459,75 @@ def refresh_interface_dependent_addresses(
         (VcfPrivateRegistrySettings, "VCF Private Registry"),
     ]:
         update_listener_rows(model, label)
+
+    physical_interfaces = db.execute(
+        select(PhysicalInterface).order_by(PhysicalInterface.name)
+    ).scalars().all()
+    vlan_interfaces = db.execute(
+        select(VlanInterface).order_by(VlanInterface.parent_interface, VlanInterface.vlan_id)
+    ).scalars().all()
+    terminal_names = {
+        str(option.get("name") or "")
+        for option in web_terminal_interface_options(physical_interfaces, vlan_interfaces)
+        if option.get("name")
+    }
+    terminal_replacements = selection_replacements(terminal_names)
+    appliance_settings = db.execute(select(ApplianceSettings)).scalar_one_or_none()
+    if appliance_settings is not None:
+        terminal_selection = web_terminal_interfaces_from_json(
+            appliance_settings.web_terminal_interfaces_json
+        )
+        if any(name in terminal_selection for name in affected_interface_names):
+            updated_terminal_selection = split_interfaces(
+                reconcile_selection(
+                    join_interfaces(terminal_selection),
+                    terminal_replacements,
+                )
+            )
+            updated_terminal_json = web_terminal_interfaces_to_json(
+                updated_terminal_selection
+            )
+            if updated_terminal_json != appliance_settings.web_terminal_interfaces_json:
+                appliance_settings.web_terminal_interfaces_json = updated_terminal_json
+                appliance_settings.updated_at = utcnow()
+                db.add(appliance_settings)
+                mark_changed("Appliance Settings")
+
+    for share in db.execute(select(EsxNfsShare)).scalars().all():
+        if share.interface_name not in affected_interface_names:
+            continue
+        replacement_name = service_replacements.get(share.interface_name, "")
+        replacement_option = options_by_name.get(replacement_name)
+        if share.enabled:
+            if not replacement_name or replacement_option is None:
+                raise PhysicalInterfaceUpdateError(
+                    f"Enabled ESX Storage datastore {share.datastore_name} still depends on "
+                    f"{share.interface_name}. Disable or move the datastore binding before "
+                    "making that interface unavailable."
+                )
+            try:
+                families = normalize_esx_storage_families(share.address_families)
+            except ValueError as exc:
+                raise PhysicalInterfaceUpdateError(
+                    f"Enabled ESX Storage datastore {share.datastore_name} has invalid address families."
+                ) from exc
+            missing_families = [
+                family
+                for family in families
+                if not replacement_option.get(f"{family}_address")
+            ]
+            if missing_families:
+                family_labels = ", ".join(family.upper() for family in missing_families)
+                raise PhysicalInterfaceUpdateError(
+                    f"Enabled ESX Storage datastore {share.datastore_name} requires "
+                    f"{family_labels} on {share.interface_name}. Disable that address family "
+                    "or move the datastore binding before removing its interface address."
+                )
+        if replacement_name and replacement_name != share.interface_name:
+            share.interface_name = replacement_name
+            share.updated_at = utcnow()
+            db.add(share)
+            mark_changed("ESX Storage")
 
     dns_settings = db.execute(select(DnsSettings)).scalar_one_or_none()
     ntp_settings = db.execute(select(NtpSettings)).scalar_one_or_none()
@@ -563,24 +685,30 @@ def refresh_interface_dependent_addresses(
     for settings in db.execute(select(DhcpSettings)).scalars().all():
         update_dhcp_scope(settings, "DHCP")
     for scope in db.execute(select(DhcpScope)).scalars().all():
+        if (
+            scope.enabled
+            and scope.interface_name in affected_interface_names
+            and not service_replacements.get(scope.interface_name)
+        ):
+            raise PhysicalInterfaceUpdateError(
+                f"Enabled DHCP scope {scope.name} still depends on {scope.interface_name}. "
+                "Disable or move the DHCP binding before making that interface unavailable."
+            )
         update_dhcp_scope(scope, "DHCP")
 
     esxi_boot = esxi_pxe_boot_settings(db)
     esxi_interfaces = split_interfaces(str(esxi_boot.get("listen_interface") or ""))
-    if old_name in esxi_interfaces or new_name in esxi_interfaces:
-        eligible_new_name = new_name if new_name in options_by_name else ""
-        updated_interfaces = _replace_interface_selection(
+    if any(name in esxi_interfaces for name in affected_interface_names):
+        updated_interfaces = reconcile_selection(
             str(esxi_boot.get("listen_interface") or ""),
-            old_name,
-            eligible_new_name,
+            service_replacements,
         )
         updated_addresses = _derive_addresses_for_interfaces(
             split_interfaces(updated_interfaces),
             options_by_name,
         )
         if (
-            old_addresses
-            and bool(esxi_boot.get("enabled"))
+            bool(esxi_boot.get("enabled"))
             and not split_addresses(updated_addresses)
         ):
             raise PhysicalInterfaceUpdateError(

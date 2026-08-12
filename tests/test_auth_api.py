@@ -1092,6 +1092,225 @@ def test_physical_interface_api_rejects_address_removal_with_enabled_dependents(
         assert interface.ipv6_cidr == "fd00:50::1/64"
 
 
+def test_physical_interface_api_rejects_required_esx_storage_family_removal(client):
+    """Verify an enabled datastore blocks removal of its selected address family.
+
+    Args:
+        client: Authenticated-capable application test client fixture.
+    """
+    from sqlalchemy import select
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import (
+        DhcpScope,
+        EsxNfsShare,
+        EsxStorageVolume,
+        PhysicalInterface,
+    )
+
+    with SessionLocal() as db:
+        interface = db.execute(
+            select(PhysicalInterface).where(PhysicalInterface.name == "eth2")
+        ).scalar_one()
+        interface.role = "access"
+        interface.mode = "access"
+        interface.ipv4_method = "static"
+        interface.ip_cidr = "192.168.50.1/24"
+        interface.ipv6_enabled = True
+        interface.ipv6_cidr = "fd00:50::1/64"
+        interface.admin_state = "up"
+        for scope in db.execute(select(DhcpScope)).scalars().all():
+            scope.enabled = False
+        for share in db.execute(select(EsxNfsShare)).scalars().all():
+            share.enabled = False
+        volume = EsxStorageVolume(
+            name="api-esx-family-volume",
+            source_type="mounted_ext4",
+            stable_device_id="api-esx-family-volume",
+            mount_path="/mnt/api-esx-family-volume",
+            state="ready",
+        )
+        db.add(volume)
+        db.flush()
+        db.add(
+            EsxNfsShare(
+                datastore_name="api-ipv6-datastore",
+                volume_id=volume.id,
+                relative_path="datastore",
+                interface_name=interface.name,
+                address_families="ipv6",
+                ipv6_clients="fd00:50::/64",
+                enabled=True,
+            )
+        )
+        db.commit()
+
+    token, _metadata = create_token(
+        client,
+        scopes=["read:interfaces", "write:interfaces"],
+    )
+    response = client.patch(
+        "/api/v1/interfaces/physical/eth2",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"ipv6_enabled": False},
+    )
+
+    assert response.status_code == 422, response.text
+    assert "ESX Storage datastore api-ipv6-datastore" in response.json()["detail"]
+    assert "IPV6" in response.json()["detail"]
+    with SessionLocal() as db:
+        interface = db.execute(
+            select(PhysicalInterface).where(PhysicalInterface.name == "eth2")
+        ).scalar_one()
+        share = db.execute(
+            select(EsxNfsShare).where(
+                EsxNfsShare.datastore_name == "api-ipv6-datastore"
+            )
+        ).scalar_one()
+        assert interface.ipv6_enabled is True
+        assert interface.ipv6_cidr == "fd00:50::1/64"
+        assert share.interface_name == "eth2"
+
+
+def test_physical_interface_api_prunes_unavailable_web_terminal_selection(client):
+    """Verify Web Terminal drops an additional interface that becomes unavailable.
+
+    Args:
+        client: Authenticated-capable application test client fixture.
+    """
+    from sqlalchemy import select
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import (
+        ApplianceSettings,
+        AuditEvent,
+        DhcpScope,
+        EsxNfsShare,
+        PhysicalInterface,
+    )
+    from atlaso.app.services.appliance_settings import web_terminal_interfaces_from_json
+
+    with SessionLocal() as db:
+        interface = db.execute(
+            select(PhysicalInterface).where(PhysicalInterface.name == "eth2")
+        ).scalar_one()
+        interface.role = "access"
+        interface.mode = "access"
+        interface.ipv4_method = "static"
+        interface.ip_cidr = "192.168.50.1/24"
+        interface.admin_state = "up"
+        for scope in db.execute(select(DhcpScope)).scalars().all():
+            scope.enabled = False
+        for share in db.execute(select(EsxNfsShare)).scalars().all():
+            share.enabled = False
+        settings = db.execute(select(ApplianceSettings)).scalar_one()
+        settings.web_terminal_enabled = True
+        settings.web_terminal_interfaces_json = '["eth0", "eth2"]'
+        db.commit()
+
+    token, _metadata = create_token(
+        client,
+        scopes=["read:interfaces", "write:interfaces"],
+    )
+    response = client.patch(
+        "/api/v1/interfaces/physical/eth2",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"admin_state": "down"},
+    )
+
+    assert response.status_code == 200, response.text
+    with SessionLocal() as db:
+        interface = db.execute(
+            select(PhysicalInterface).where(PhysicalInterface.name == "eth2")
+        ).scalar_one()
+        settings = db.execute(select(ApplianceSettings)).scalar_one()
+        audit = db.execute(
+            select(AuditEvent)
+            .where(AuditEvent.action == "update_interface")
+            .order_by(AuditEvent.id.desc())
+        ).scalars().first()
+        assert interface.admin_state == "down"
+        assert web_terminal_interfaces_from_json(
+            settings.web_terminal_interfaces_json
+        ) == ["eth0"]
+        assert audit is not None
+        assert "Appliance Settings" in (audit.detail or "")
+
+
+def test_physical_interface_api_rejects_child_vlan_listener_on_parent_disable(client):
+    """Verify a child VLAN service binding blocks disabling its physical parent.
+
+    Args:
+        client: Authenticated-capable application test client fixture.
+    """
+    from sqlalchemy import select
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import (
+        DhcpScope,
+        EsxNfsShare,
+        OidcProviderSettings,
+        PhysicalInterface,
+        VlanInterface,
+    )
+
+    vlan_name = "eth2.377"
+    with SessionLocal() as db:
+        parent = db.execute(
+            select(PhysicalInterface).where(PhysicalInterface.name == "eth2")
+        ).scalar_one()
+        parent.role = "unused"
+        parent.mode = "trunk"
+        parent.ipv4_method = "static"
+        parent.ip_cidr = None
+        parent.ipv6_enabled = False
+        parent.ipv6_cidr = None
+        parent.admin_state = "up"
+        for scope in db.execute(select(DhcpScope)).scalars().all():
+            scope.enabled = False
+        for share in db.execute(select(EsxNfsShare)).scalars().all():
+            share.enabled = False
+        db.add(
+            VlanInterface(
+                name=vlan_name,
+                parent_interface=parent.name,
+                vlan_id=377,
+                ip_cidr="192.168.77.1/24",
+                role="access",
+                enabled=True,
+            )
+        )
+        oidc = db.execute(select(OidcProviderSettings)).scalar_one_or_none()
+        if oidc is None:
+            oidc = OidcProviderSettings()
+            db.add(oidc)
+        oidc.enabled = True
+        oidc.listen_interface = vlan_name
+        oidc.listen_address = "192.168.77.1"
+        db.commit()
+
+    token, _metadata = create_token(
+        client,
+        scopes=["read:interfaces", "write:interfaces"],
+    )
+    response = client.patch(
+        "/api/v1/interfaces/physical/eth2",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"admin_state": "down"},
+    )
+
+    assert response.status_code == 422, response.text
+    assert "Enabled OIDC" in response.json()["detail"]
+    with SessionLocal() as db:
+        parent = db.execute(
+            select(PhysicalInterface).where(PhysicalInterface.name == "eth2")
+        ).scalar_one()
+        oidc = db.execute(select(OidcProviderSettings)).scalar_one()
+        assert parent.admin_state == "up"
+        assert oidc.listen_interface == vlan_name
+        assert oidc.listen_address == "192.168.77.1"
+
+
 def test_scope_restrictions_are_enforced(client):
     """Verify that scope restrictions are enforced.
 

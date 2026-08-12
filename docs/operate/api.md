@@ -76,13 +76,15 @@ Recognized role, mode, and IPv4-method spellings are case-insensitive; the legac
 `routed` mode spelling remain supported. Atlaso rejects unsupported properties instead of silently ignoring them.
 
 Changing a physical interface's IPv4 or IPv6 CIDR automatically refreshes dependent desired-state addresses for DNS,
-NTP/NTS, Certificate Authority, KMS, LDAP, OIDC, VCF services, matching DHCP scopes, and Network Boot/PXE. Atlaso
-commits the interface and dependent rows as one transaction. If any dependent update fails, none of those changes are
-saved. Removing an address family or converting an interface to trunk mode is rejected while an enabled service, DHCP
-scope, or Network Boot/PXE listener still depends on the address; administratively disabling an interface follows the
-same rule. If other selected interfaces remain eligible, Atlaso removes only the ineligible selection. Disable or move a
-final binding first. The audit event names the dependent units that were refreshed. This remains a desired-state edit:
-review the resulting network and service previews, then use global Appliance Apply for host enforcement.
+NTP/NTS, Certificate Authority, KMS, LDAP, OIDC, VCF services, ESX Storage, Web Terminal, matching DHCP scopes, and
+Network Boot/PXE. Atlaso commits the interface and dependent rows as one transaction. If any dependent update fails,
+none of those changes are saved. Removing an address family or converting an interface to trunk mode is rejected while
+an enabled service, ESX Storage datastore, DHCP scope, or Network Boot/PXE listener still depends on the address;
+administratively disabling an interface follows the same rule. Disabling a physical parent also evaluates bindings to
+its enabled child VLANs. If other selected interfaces remain eligible, Atlaso removes only the ineligible service,
+Web Terminal, or PXE selection. Disable or move a final binding first. The audit event names the dependent units that
+were refreshed. This remains a desired-state edit: review the resulting network and service previews, then use global
+Appliance Apply for host enforcement.
 
 The internal Certificate Authority is the exception: if its last selected portal interface becomes ineligible, Atlaso
 clears the public CA portal binding and app-owned alias while leaving internal CA custody enabled.

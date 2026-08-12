@@ -1270,9 +1270,10 @@ def update_physical_interface(
 
     Requires the `write:interfaces` API scope. This operation validates and saves the supplied
     physical-interface fields, then atomically reconciles dependent DNS, NTP/NTS, Certificate
-    Authority, KMS, LDAP, VCF service, DHCP, and Network Boot listener addresses. If any dependent
-    update fails, Atlaso rolls back the interface and every dependent row. The call changes desired
-    state only; the global Appliance Apply workflow remains the host-enforcement boundary.
+    Authority, KMS, LDAP, VCF service, ESX Storage, Web Terminal, DHCP, and Network Boot bindings.
+    If any dependent update fails, Atlaso rolls back the interface and every dependent row. The
+    call changes desired state only; the global Appliance Apply workflow remains the
+    host-enforcement boundary.
 
     Args:
         name: Stable name identifying the resource or operation.
