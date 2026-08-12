@@ -285,6 +285,23 @@ structural CSS balancing, JSON/TOML parsing, Markdown fence/local-link checks, S
 unresolved merge-conflict marker detection. It skips vendored static assets, bundled third-party payloads, build output,
 and test-result artifacts.
 
+### Deployment asset validation
+
+Packer HCL, systemd units and manager drop-ins, and extensionless sudoers fragments are part of the repository's
+protected deployment inventory. `scripts/check_repo.py` admits these files to the common UTF-8, conflict-marker, and
+explicit-path checks so a supported deployment file never reports success for zero files. Run the native validator with:
+
+```bash
+python scripts/check_deployment_assets.py --mode auto
+```
+
+Auto mode validates selected assets with locally available tools and is used by pre-commit. Canonical CI is stricter:
+Ubuntu requires `systemd-analyze` and `visudo` for both platform unit sets and every sudoers fragment, while the Windows
+Packer runner performs `packer init`, formatting checks, and full `packer validate` for both Photon templates. The
+Packer validation supplies the same required ISO variables and `iso_contains_kickstart=true` guard as the supported
+build wrappers. Any missing canonical template, empty asset class, or unsupported file type in a managed deployment
+directory fails inventory validation until a validator or reviewed exclusion is added.
+
 ### Pull requests and versions
 
 `main` is protected and accepts squash merges only after the version policy, repository checks, and complete pytest

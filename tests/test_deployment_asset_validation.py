@@ -1,0 +1,165 @@
+"""Test the protected declarative deployment validation contract."""
+
+import shutil
+from pathlib import Path
+from unittest.mock import Mock, call, patch
+
+import pytest
+
+from scripts.check_deployment_assets import (
+    PACKER_CHECKSUM,
+    PACKER_TEMPLATES,
+    inventory_assets,
+    validate_packer,
+    validate_sudoers,
+    validate_systemd,
+)
+
+
+def write_inventory(root: Path) -> None:
+    """Create the minimum complete deployment inventory under a test root."""
+    for relative in PACKER_TEMPLATES:
+        path = root / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text('source "example" "test" {}\n', encoding="utf-8")
+
+    systemd = root / "image/common/systemd/atlaso-worker.service"
+    systemd.parent.mkdir(parents=True, exist_ok=True)
+    systemd.write_text("[Service]\nExecStart=/bin/true\n", encoding="utf-8")
+
+    sudoers = root / "image/hyperv/sudoers.d/atlaso-helper"
+    sudoers.parent.mkdir(parents=True, exist_ok=True)
+    sudoers.write_text("atlaso ALL=(root) /opt/atlaso/bin/atlaso-helper *\n", encoding="utf-8")
+
+
+def test_inventory_covers_packer_systemd_and_extensionless_sudoers(tmp_path: Path) -> None:
+    """Verify that the complete supported inventory is deterministic and non-empty."""
+    write_inventory(tmp_path)
+
+    inventory, findings = inventory_assets(tmp_path)
+
+    assert findings == []
+    assert len(inventory.packer) == 2
+    assert [path.suffix for path in inventory.systemd] == [".service"]
+    assert [path.name for path in inventory.sudoers] == ["atlaso-helper"]
+
+
+def test_inventory_rejects_missing_canonical_packer_target(tmp_path: Path) -> None:
+    """Verify that removing one required platform template fails closed."""
+    write_inventory(tmp_path)
+    (tmp_path / PACKER_TEMPLATES[0]).unlink()
+
+    _, findings = inventory_assets(tmp_path)
+
+    assert any(
+        finding.path == tmp_path / PACKER_TEMPLATES[0]
+        and finding.message == "required Packer template is missing"
+        for finding in findings
+    )
+
+
+def test_inventory_rejects_unclassified_systemd_file_type(tmp_path: Path) -> None:
+    """Verify that a new deployment type requires an explicit validator decision."""
+    write_inventory(tmp_path)
+    unsupported = tmp_path / "image/common/systemd/atlaso.timer"
+    unsupported.write_text("[Timer]\nOnBootSec=1m\n", encoding="utf-8")
+
+    _, findings = inventory_assets(tmp_path)
+
+    assert any(
+        finding.path == unsupported
+        and "add a validator or reviewed exclusion" in finding.message
+        for finding in findings
+    )
+
+
+def test_packer_validation_uses_wrapper_guard_and_template_directory(tmp_path: Path) -> None:
+    """Verify that full validation mirrors the wrapper's required values and working directory."""
+    template = tmp_path / "image/hyperv/atlaso-photon.pkr.hcl"
+    template.parent.mkdir(parents=True)
+    template.write_text("packer {}\n", encoding="utf-8")
+    completed = Mock(returncode=0, stdout="", stderr="")
+
+    with patch("scripts.check_deployment_assets.subprocess.run", return_value=completed) as run:
+        findings = validate_packer((template,), "packer")
+
+    assert findings == []
+    assert run.call_args_list == [
+        call(
+            ["packer", "init", "."],
+            cwd=template.parent,
+            capture_output=True,
+            text=True,
+            check=False,
+        ),
+        call(
+            ["packer", "fmt", "-check", "-diff", template.name],
+            cwd=template.parent,
+            capture_output=True,
+            text=True,
+            check=False,
+        ),
+        call(
+            [
+                "packer",
+                "validate",
+                "-var",
+                "iso_url=https://example.invalid/atlaso-photon.iso",
+                "-var",
+                f"iso_checksum={PACKER_CHECKSUM}",
+                "-var",
+                "iso_contains_kickstart=true",
+                ".",
+            ],
+            cwd=template.parent,
+            capture_output=True,
+            text=True,
+            check=False,
+        ),
+    ]
+
+
+def write_systemd_fixture(root: Path, service_text: str) -> None:
+    """Create both platform unit sets and a valid manager drop-in."""
+    common = root / "image/common/systemd"
+    common.mkdir(parents=True)
+    (common / "atlaso-worker.service").write_text(service_text, encoding="utf-8")
+    (common / "atlaso-console-manager.conf").write_text(
+        "[Manager]\nShowStatus=no\n",
+        encoding="utf-8",
+    )
+    for platform in ("hyperv", "vmware-workstation"):
+        directory = root / f"image/{platform}/systemd"
+        directory.mkdir(parents=True)
+        (directory / "atlaso.service").write_text(
+            "[Service]\nExecStart=/bin/true\n",
+            encoding="utf-8",
+        )
+
+
+@pytest.mark.skipif(shutil.which("systemd-analyze") is None, reason="requires systemd-analyze")
+def test_systemd_validation_rejects_malformed_unit(tmp_path: Path) -> None:
+    """Verify that native systemd parsing rejects an invalid section header."""
+    write_systemd_fixture(tmp_path, "[Service\nExecStart=/bin/true\n")
+
+    findings = validate_systemd(shutil.which("systemd-analyze") or "", tmp_path)
+
+    assert findings
+    assert "systemd-analyze verify failed" in findings[0].message
+
+
+@pytest.mark.skipif(shutil.which("visudo") is None, reason="requires visudo")
+def test_sudoers_validation_rejects_malformed_rule(tmp_path: Path) -> None:
+    """Verify that native sudoers parsing rejects malformed command syntax."""
+    sudoers = tmp_path / "image/hyperv/sudoers.d/atlaso-helper"
+    sudoers.parent.mkdir(parents=True)
+    sudoers.write_text("atlaso ALL=(root) NOPASSWD:\n", encoding="utf-8")
+
+    findings = validate_sudoers(
+        (sudoers,),
+        shutil.which("visudo") or "",
+        tmp_path,
+    )
+
+    assert findings
+    assert "visudo -cf failed" in findings[0].message

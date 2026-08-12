@@ -12,8 +12,8 @@ def test_ci_separates_diagnostic_checks_from_required_contexts() -> None:
         encoding="utf-8"
     )
 
-    assert workflow.count("github.event_name == 'pull_request'") == 3
-    assert workflow.count("github.actor == 'github-actions[bot]'") == 5
+    assert workflow.count("github.event_name == 'pull_request'") == 4
+    assert workflow.count("github.actor == 'github-actions[bot]'") == 6
     for context in ("Version policy", "Repository checks", "Python tests"):
         assert f"'Approval-gated {context}'" in workflow
         assert f"'Trusted {context} validation'" in workflow
@@ -33,7 +33,7 @@ def test_trusted_ci_publishes_revalidated_required_statuses() -> None:
     assert "inputs.pull_number || github.ref" in workflow
     assert workflow.count("statuses: write") == 2
     assert workflow.count("pull-requests: read") == 2
-    assert workflow.count("persist-credentials: false") == 4
+    assert workflow.count("persist-credentials: false") == 5
     assert "github.event_name == 'workflow_dispatch'" in workflow
     assert "github.actor == 'github-actions[bot]'" in workflow
     assert '"$base_ref" != "main"' in workflow
@@ -43,6 +43,9 @@ def test_trusted_ci_publishes_revalidated_required_statuses() -> None:
     assert workflow.count('"repos/$GITHUB_REPOSITORY/statuses/$HEAD_SHA"') == 2
     assert '{state: "pending", context: $context' in workflow
     assert "Trusted CI run $GITHUB_RUN_ID passed this validation" in workflow
+    assert "PACKER_RESULT: ${{ needs.deployment-packer.result }}" in workflow
+    assert 'if [[ "$PACKER_RESULT" != "success" ]]' in workflow
+    assert 'post_status "Repository checks" "$repository_result"' in workflow
     finish_job = workflow.split("  trusted-contexts-finish:", maxsplit=1)[1]
     assert "actions/checkout" not in finish_job
 
