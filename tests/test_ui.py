@@ -1001,7 +1001,7 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert service_worker.headers["cache-control"] == "no-cache"
     assert service_worker.headers["service-worker-allowed"] == "/ui/management/"
     assert "ATLASO_CACHE" in service_worker.text
-    assert "atlaso-management-pwa-v245" in service_worker.text
+    assert "atlaso-management-pwa-v246" in service_worker.text
     assert 'fetch(asset, { cache: "reload" })' in service_worker.text
     assert ".catch(() => undefined)" in service_worker.text
     assert 'request.mode === "navigate"' in service_worker.text
@@ -1019,7 +1019,7 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-8" in service_worker.text
     assert "/static/appliance-apply-polling.js?v=issue-294-2" in service_worker.text
     assert "/static/ui-routes.js?v=issue-287-1" in service_worker.text
-    assert "/static/app.js?v=appliance-apply-terminal-294-2" in service_worker.text
+    assert "/static/app.js?v=access-management-ui-302-1" in service_worker.text
     assert "/static/terminal.js?v=issue-287-2" in service_worker.text
     assert "/static/pwa.js?v=issue-287-2" in service_worker.text
     assert "vcfdt-configuration-248-20260807-14" not in service_worker.text
@@ -1051,8 +1051,8 @@ def test_shared_ui_pattern_shell_and_wizard_contracts(client):
     base = (templates / "base.html").read_text(encoding="utf-8")
     public_base = (templates / "public_portal_base.html").read_text(encoding="utf-8")
     for shell, app_asset in (
-        (base, "/static/app.js?v=appliance-apply-terminal-294-2"),
-        (public_base, "/static/app.js?v=appliance-apply-terminal-294-2"),
+        (base, "/static/app.js?v=access-management-ui-302-1"),
+        (public_base, "/static/app.js?v=access-management-ui-302-1"),
         (base, "/static/appliance-apply-polling.js?v=issue-294-2"),
     ):
         assert shell.index("/static/vendor/tabulator/tabulator.min.js") < shell.index(
@@ -1677,7 +1677,7 @@ def test_monitor_page_renders_and_data_endpoint(client):
     assert "swagger-link-icon" in page.text
     assert "/static/app.css?v=vsphere-key-providers-170-20260810-1" in page.text
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-8" in page.text
-    assert "/static/app.js?v=appliance-apply-terminal-294-2" in page.text
+    assert "/static/app.js?v=access-management-ui-302-1" in page.text
     app_css = client.get("/static/app.css")
     assert app_css.status_code == 200
     assert ".split-workspace > .wide-panel" in app_css.text
@@ -1809,6 +1809,63 @@ def test_shared_shells_use_current_mobile_web_app_metadata(client):
         assert '<meta name="mobile-web-app-capable" content="yes">' in response.text
     assert '<link rel="manifest"' not in public.text
     assert "/static/pwa.js" not in public.text
+
+
+def test_flagged_access_interface_cohosts_management_and_public_ui(client):
+    """Verify access routing remains public while its optional management namespace is available.
+
+    Args:
+        client: Application test client fixture.
+    """
+    from sqlalchemy import select
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import PhysicalInterface
+
+    with SessionLocal() as db:
+        eth2 = db.execute(select(PhysicalInterface).where(PhysicalInterface.name == "eth2")).scalar_one()
+        eth2.role = "access"
+        eth2.mode = "access"
+        eth2.ip_cidr = "192.168.87.32/24"
+        eth2.admin_state = "up"
+        eth2.oper_state = "up"
+        eth2.access_management_ui_enabled = True
+        db.commit()
+
+    headers = {"host": "192.168.87.32"}
+    root = client.get("/", headers=headers, follow_redirects=False)
+    login_page = client.get("/ui/management/login", headers=headers)
+    public = client.get("/ui/public", headers=headers)
+
+    assert root.status_code == 303
+    assert root.headers["location"] == "/ui/management"
+    assert login_page.status_code == 200
+    assert 'href="/ui/public"' in login_page.text
+    assert public.status_code == 200
+
+
+def test_unflagged_access_interface_hides_management_namespace(client):
+    """Verify an ordinary access listener still returns not found for management UI routes.
+
+    Args:
+        client: Application test client fixture.
+    """
+    from sqlalchemy import select
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import PhysicalInterface
+
+    with SessionLocal() as db:
+        eth2 = db.execute(select(PhysicalInterface).where(PhysicalInterface.name == "eth2")).scalar_one()
+        eth2.role = "access"
+        eth2.mode = "access"
+        eth2.ip_cidr = "192.168.87.32/24"
+        eth2.access_management_ui_enabled = False
+        db.commit()
+
+    response = client.get("/ui/management/login", headers={"host": "192.168.87.32"})
+
+    assert response.status_code == 404
 
 
 def test_unauthenticated_ui_request_redirects_to_login(client):
@@ -3687,6 +3744,39 @@ def test_dns_defaults_follow_appliance_fqdn_and_management_ip(client):
         ).scalar_one()
         assert record.address == "192.168.49.1"
         assert "app-owned appliance FQDN" in (record.description or "")
+
+
+def test_seed_reconciles_multiple_management_ui_dns_addresses(client):
+    """Verify startup seeding accepts dedicated and flagged-access appliance records.
+
+    Args:
+        client: Application test client fixture used to initialize seeded state.
+    """
+    from sqlalchemy import select
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import ApplianceSettings, DnsRecord, PhysicalInterface
+    from atlaso.app.seed import _ensure_appliance_dns_record
+
+    with SessionLocal() as db:
+        access = db.execute(
+            select(PhysicalInterface).where(PhysicalInterface.name == "eth2")
+        ).scalar_one()
+        access.access_management_ui_enabled = True
+        settings = db.execute(select(ApplianceSettings)).scalar_one()
+
+        _ensure_appliance_dns_record(db, settings)
+        db.commit()
+        _ensure_appliance_dns_record(db, settings)
+        db.commit()
+
+        records = db.execute(
+            select(DnsRecord).where(
+                DnsRecord.hostname == settings.fqdn,
+                DnsRecord.record_type == "A",
+            )
+        ).scalars().all()
+        assert {record.address for record in records} == {"192.168.49.1", "192.168.50.1"}
 
 
 def test_settings_fqdn_rename_removes_only_old_app_owned_record(client):
@@ -13627,7 +13717,7 @@ def test_physical_and_vlan_pages_render(client):
     physical = client.get("/physical-interfaces")
     assert physical.status_code == 200
     assert "Physical Interfaces" in physical.text
-    assert "Review observed Photon NICs, then edit desired access, trunk, IPv4/IPv6 addressing and management gateways, and admin state" in physical.text
+    assert "optional access management UI exposure, management gateways" in physical.text
     assert "physical-interfaces-table" in physical.text
     assert "Refresh host inventory" in physical.text
     assert "Observed IPv4" in physical.text
@@ -13637,6 +13727,7 @@ def test_physical_and_vlan_pages_render(client):
     assert "Management gateway" in physical.text
     assert "IPv6 CIDR" in physical.text
     assert "IPv6 Gateway" in physical.text
+    assert "Management UI" in physical.text
     assert "network-state-icon up" in physical.text
     assert "eth0" in physical.text
     assert "192.168.49.1/24" in physical.text
@@ -13650,6 +13741,7 @@ def test_physical_and_vlan_pages_render(client):
     assert "VLAN Interfaces" in vlans.text
     assert "For standard access-mode NICs, assign IPv4/IPv6 CIDR on Physical Interfaces instead." in vlans.text
     assert "vlan-interfaces-table" in vlans.text
+    assert "An enabled access VLAN can expose the authenticated management UI" in vlans.text
     app_js = client.get("/static/app.js").text
     assert "+ Add VLAN" in app_js
     vlan_table_js = app_js.split("function initializeVlanInterfacesTable()", 1)[1].split("function initializeDnsRecordsTable()", 1)[0]
@@ -13684,7 +13776,7 @@ def test_physical_and_vlan_pages_render(client):
     assert "physicalRoleFormatter" in app_js
     assert 'editable: (cell) => cell.getRow().getData().mode !== "trunk"' in app_js
     assert app_js.count('editable: (cell) => cell.getRow().getData().mode !== "trunk"') >= 3
-    assert 'role: "unused", ipv4_method: "static", ip_cidr: "", gateway: "", ipv6_enabled: false, ipv6_cidr: "", ipv6_gateway: ""' in app_js
+    assert 'role: "unused", access_management_ui_enabled: false, ipv4_method: "static", ip_cidr: "", gateway: "", ipv6_enabled: false, ipv6_cidr: "", ipv6_gateway: ""' in app_js
     assert "data.requires_activation && !data.is_activated" in app_js
     assert "cidrInputEditor" in app_js
     assert "isValidCidr" in app_js
@@ -14118,6 +14210,58 @@ def test_physical_interface_trunk_mode_clears_non_applicable_role(client):
         assert interface.ipv4_method == "static"
         assert interface.ip_cidr is None
         assert interface.ipv6_cidr is None
+
+
+def test_management_to_access_conversion_preserves_ui_and_reverse_conversion_clears_flag(client):
+    """Verify role conversion applies the access-only management UI invariant atomically.
+
+    Args:
+        client: Application test client fixture.
+    """
+    import html
+    import json
+
+    from sqlalchemy import select
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import PhysicalInterface
+
+    login(client)
+    page = client.get("/physical-interfaces")
+    rows = json.loads(html.unescape(page.text.split("data-interfaces='", 1)[1].split("'", 1)[0]))
+    eth0 = next(row for row in rows if row["name"] == "eth0")
+    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    common = {
+        "mode": "access",
+        "ipv4_method": "static",
+        "ip_cidr": "192.168.167.10/24",
+        "ipv6_cidr": "",
+        "mtu": "1500",
+        "admin_state": "up",
+        "csrf": csrf,
+    }
+
+    converted = client.post(
+        f"/physical-interfaces/{eth0['id']}/edit",
+        data={**common, "role": "access"},
+        follow_redirects=False,
+    )
+    assert converted.status_code == 303
+    with SessionLocal() as db:
+        interface = db.execute(select(PhysicalInterface).where(PhysicalInterface.id == eth0["id"])).scalar_one()
+        assert interface.role == "access"
+        assert interface.access_management_ui_enabled is True
+
+    reverted = client.post(
+        f"/physical-interfaces/{eth0['id']}/edit",
+        data={**common, "role": "management", "access_management_ui_enabled": "on"},
+        follow_redirects=False,
+    )
+    assert reverted.status_code == 303
+    with SessionLocal() as db:
+        interface = db.execute(select(PhysicalInterface).where(PhysicalInterface.id == eth0["id"])).scalar_one()
+        assert interface.role == "management"
+        assert interface.access_management_ui_enabled is False
 
 
 def test_physical_interface_link_type_locked_when_vlans_exist(client):

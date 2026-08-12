@@ -36,6 +36,29 @@ unreachable after apply.
 4. Review validation and rendered network previews.
 5. Submit the selected network units through [Appliance Apply](appliance-apply.md).
 
+### Choose where the management UI is available
+
+A physical interface with the **management** role always exposes `/ui/management`; it has no separate management UI
+switch. An addressed physical interface with the **access** role and **Access (untagged)** link type, or an enabled
+access VLAN, can additionally enable **Management UI**. The interface remains an ordinary access network: it stays
+eligible for public services and access service bindings, and it keeps access routing rather than gaining a
+management-specific gateway or policy route.
+
+The default configuration remains `eth0` as the dedicated management interface with the switch disabled on all access
+interfaces. To use one network for both planes, change `eth0` from management to access; Atlaso enables its management UI
+switch as part of that conversion. You may then disable the unused second interface. Converting an access interface to
+management clears its switch because management exposure is inherent in the role.
+
+Atlaso permits at most one dedicated management-role physical interface. It also prevents desired state with no
+effective management browser path: when no dedicated role exists, at least one active access interface or enabled
+access VLAN must have **Management UI** enabled. Multiple flagged access interfaces are allowed. On a flagged access
+address, `/` prefers the management sign-in, `/ui/management` requires normal authentication, and `/ui/public` remains
+available for the same access network.
+
+Only a dedicated management role owns management DHCP, default gateways, DHCP resolver recovery, and isolated
+management policy routing. If that role is absent, flagged access interfaces retain their normal access routes. The
+appliance FQDN and managed HTTPS certificate cover every effective management UI address.
+
 Management-to-lab and lab-to-management forwarding remain prohibited. Service listeners and firewall rules must bind to
 the same intended interfaces.
 

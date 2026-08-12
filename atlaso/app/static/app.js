@@ -1670,9 +1670,9 @@ async function postDhcpScopeAction(url, data, csrf, options = {}) {
     if (key === "id" || key === "is_new") {
       continue;
     }
-    if (key === "enabled") {
+    if (key === "enabled" || key === "access_management_ui_enabled") {
       if (value) {
-        body.set("enabled", "on");
+        body.set(key, "on");
       }
       continue;
     }
@@ -7162,6 +7162,7 @@ function newVlanInterfaceRow(defaultParent = "eth1", defaultMtu = 1500) {
     mtu: defaultMtu,
     role: "access",
     enabled: true,
+    access_management_ui_enabled: false,
     is_new: true,
     is_activated: false,
     requires_activation: true,
@@ -7843,11 +7844,31 @@ function initializePhysicalInterfacesTable() {
           formatter: physicalRoleFormatter,
           width: 125,
           cellEdited: async (cell) => {
+            const previousRole = typeof cell.getOldValue === "function" ? cell.getOldValue() : "";
             if (cell.getValue() !== "management") {
               await cell.getRow().update({ gateway: "", ipv6_gateway: "" });
             }
+            if (previousRole === "management" && cell.getValue() === "access") {
+              await cell.getRow().update({ access_management_ui_enabled: true });
+            } else if (cell.getValue() !== "access") {
+              await cell.getRow().update({ access_management_ui_enabled: false });
+            }
             await autoSavePhysicalInterface(cell, csrf);
           },
+        },
+        {
+          title: "Management UI",
+          field: "access_management_ui_enabled",
+          formatter: (cell) => cell.getRow().getData().role === "management" ? '<span class="status-pill good">inherent</span>' : (cell.getValue() ? "enabled" : "disabled"),
+          editor: "tickCross",
+          editable: (cell) => {
+            const data = cell.getRow().getData();
+            return data.role === "access" && data.mode === "access" && data.admin_up;
+          },
+          hozAlign: "center",
+          minWidth: 145,
+          headerTooltip: "Access-role interfaces may additionally expose the authenticated management UI. Management-role interfaces expose it inherently.",
+          cellEdited: (cell) => autoSavePhysicalInterface(cell, csrf),
         },
         {
           title: "Link Type",
@@ -7869,7 +7890,7 @@ function initializePhysicalInterfacesTable() {
           minWidth: 220,
           cellEdited: async (cell) => {
             if (cell.getValue() === "trunk") {
-              await cell.getRow().update({ role: "unused", ipv4_method: "static", ip_cidr: "", gateway: "", ipv6_enabled: false, ipv6_cidr: "", ipv6_gateway: "" });
+              await cell.getRow().update({ role: "unused", access_management_ui_enabled: false, ipv4_method: "static", ip_cidr: "", gateway: "", ipv6_enabled: false, ipv6_cidr: "", ipv6_gateway: "" });
             }
             await autoSavePhysicalInterface(cell, csrf);
             cell.getRow().reformat();
@@ -8901,6 +8922,17 @@ function initializeVlanInterfacesTable() {
           editor: "list",
           editorParams: { values: roleOptions },
           minWidth: 130,
+          cellEdited: (cell) => autoSaveVlanInterface(cell, csrf),
+        },
+        {
+          title: "Management UI",
+          field: "access_management_ui_enabled",
+          formatter: "tickCross",
+          editor: "tickCross",
+          editable: (cell) => cell.getRow().getData().role === "access" && cell.getRow().getData().enabled,
+          hozAlign: "center",
+          minWidth: 140,
+          headerTooltip: "Expose the authenticated management UI on this enabled access VLAN while retaining ordinary access routing and services.",
           cellEdited: (cell) => autoSaveVlanInterface(cell, csrf),
         },
         {

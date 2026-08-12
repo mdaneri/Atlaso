@@ -62,6 +62,33 @@ def test_public_service_entries_scope_services_to_matching_address():
     assert "allow_unauthenticated_access" not in open_services_by_id["esxi_pxe"]
 
 
+def test_flagged_access_ip_front_door_proxies_management_namespace_with_management_certificate():
+    """Verify that an exact access-IP server does not hide its enabled management UI."""
+    config = render_public_services_nginx_config(
+        [
+            {
+                "interface": "eth2",
+                "role": "access",
+                "address": "192.168.87.32",
+                "management_ui": True,
+                "services": [
+                    {"id": "ca"},
+                    {"id": "vcf_offline_depot", "port": 443},
+                ],
+            }
+        ],
+        ca_certificate_path="/ca.crt",
+        ca_key_path="/ca.key",
+        management_certificate_path="/management.crt",
+        management_key_path="/management.key",
+    )
+
+    assert "ssl_certificate /management.crt;" in config
+    assert "ssl_certificate_key /management.key;" in config
+    assert "location = /ui/management" in config
+    assert "location ^~ /ui/management/" in config
+
+
 def test_enabled_ca_without_listen_address_is_not_publicly_exposed():
     """Verify that enabled ca without listen address is not publicly exposed."""
     entries = public_service_entries(

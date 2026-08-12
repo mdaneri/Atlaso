@@ -1501,8 +1501,8 @@ def test_network_helper_rejects_static_management_without_ipv4(tmp_path):
     assert "Interface eth0 must set an IPv4 CIDR when IPv4 method is static." in errors
 
 
-def test_network_helper_requires_eth0_management(tmp_path):
-    """Verify that network helper requires eth0 management.
+def test_network_helper_allows_management_role_on_non_eth0_interface(tmp_path):
+    """Verify that network helper does not tie the management role to eth0.
 
     Args:
         tmp_path: Temporary directory provided by pytest for isolated filesystem state.
@@ -1511,9 +1511,22 @@ def test_network_helper_requires_eth0_management(tmp_path):
     config_path = tmp_path / "atlaso-network.conf"
     config_path.write_text(network_config_text().replace("interface=eth0", "interface=eth1", 1), encoding="utf-8")
 
-    errors = helper._network_config_errors(config_path)
+    assert helper._network_config_errors(config_path) == []
 
-    assert "Network config must keep eth0 as the management physical interface." in errors
+
+def test_network_helper_accepts_flagged_access_without_dedicated_management(tmp_path):
+    """Verify that the staged helper contract accepts an access-only management browser path.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    helper = load_helper_module()
+    config_path = tmp_path / "atlaso-network.conf"
+    config = network_config_text(include_vlan=False).replace("  role=management", "  role=access", 1)
+    config = config.replace("  mode=access", "  mode=access\n  access_management_ui_enabled=true", 1)
+    config_path.write_text(config, encoding="utf-8")
+
+    assert helper._network_config_errors(config_path) == []
 
 
 def test_network_helper_renders_dual_stack_networkd_addresses(tmp_path):

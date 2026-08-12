@@ -6,6 +6,7 @@ import logging
 import pytest
 
 from atlaso.app.models import ApplianceSettings, AuditEvent, CaSettings, DhcpScope, DhcpSettings, DnsSettings, Job, KmsSettings, NatRule, PhysicalInterface, Route, RoutingRule, Setting, VlanInterface
+from atlaso.app.services.appliance_settings import management_ui_context
 from atlaso.app.services.networking import (
     HostPhysicalInterface,
     NETWORK_INVENTORY_CLEANUP_WARNING_KEY,
@@ -721,8 +722,8 @@ def test_validate_network_state_rejects_static_management_without_ipv4():
     assert "Interface eth0 must set an IPv4 CIDR when IPv4 method is static." in errors
 
 
-def test_validate_network_state_requires_eth0_management():
-    """Verify that validate network state requires eth0 management."""
+def test_validate_network_state_allows_management_role_on_non_eth0_interface():
+    """Verify that a dedicated management role is not tied to eth0."""
     errors = validate_network_state(
         interfaces=[
             PhysicalInterface(
@@ -732,12 +733,104 @@ def test_validate_network_state_requires_eth0_management():
                 role="management",
                 mode="access",
                 mtu=1500,
+                admin_state="up",
             )
         ],
         vlans=[],
     )
 
-    assert "Network desired state must keep eth0 as the management physical interface." in errors
+    assert errors == []
+
+
+def test_validate_network_state_allows_flagged_access_without_dedicated_management():
+    """Verify that an access interface can be the only management browser path."""
+    errors = validate_network_state(
+        interfaces=[
+            PhysicalInterface(
+                name="eth0",
+                mac_address="00:15:5d:aa:bb:01",
+                ip_cidr="192.168.49.1/24",
+                role="access",
+                mode="access",
+                access_management_ui_enabled=True,
+                admin_state="up",
+                oper_state="up",
+                mtu=1500,
+            )
+        ],
+        vlans=[],
+    )
+
+    assert errors == []
+
+
+def test_management_ui_context_prefers_dedicated_then_flagged_eth0_then_vlan():
+    """Verify deterministic appliance identity selection across management UI listeners."""
+    dedicated = PhysicalInterface(
+        name="eth2",
+        ip_cidr="192.168.52.1/24",
+        role="management",
+        mode="access",
+        admin_state="up",
+        oper_state="up",
+    )
+    flagged_eth1 = PhysicalInterface(
+        name="eth1",
+        ip_cidr="192.168.51.1/24",
+        role="access",
+        mode="access",
+        access_management_ui_enabled=True,
+        admin_state="up",
+        oper_state="up",
+    )
+    flagged_eth0 = PhysicalInterface(
+        name="eth0",
+        ip_cidr="192.168.50.1/24",
+        role="access",
+        mode="access",
+        access_management_ui_enabled=True,
+        admin_state="up",
+        oper_state="up",
+    )
+    flagged_vlan = VlanInterface(
+        name="eth1.20",
+        parent_interface="eth1",
+        vlan_id=20,
+        ip_cidr="192.168.20.1/24",
+        role="access",
+        enabled=True,
+        access_management_ui_enabled=True,
+    )
+
+    assert management_ui_context(
+        [flagged_eth1, dedicated, flagged_eth0],
+        [flagged_vlan],
+    )["name"] == "eth2"
+    assert management_ui_context(
+        [flagged_eth1, flagged_eth0],
+        [flagged_vlan],
+    )["name"] == "eth0"
+    assert management_ui_context([], [flagged_vlan])["name"] == "eth1.20"
+
+
+def test_validate_network_state_rejects_lockout_and_non_access_flag():
+    """Verify that the flag cannot be used outside an effective access listener."""
+    interface = PhysicalInterface(
+        name="eth1",
+        mac_address="00:15:5d:aa:bb:02",
+        ip_cidr="192.168.50.1/24",
+        role="unused",
+        mode="access",
+        access_management_ui_enabled=True,
+        admin_state="up",
+        oper_state="up",
+        mtu=1500,
+    )
+
+    errors = validate_network_state(interfaces=[interface], vlans=[])
+
+    assert "Interface eth1 can expose the management UI only when its role and link type are access." in errors
+    assert "Network desired state must keep a management interface or enable the management UI on at least one access interface." in errors
 
 
 def test_render_network_config_includes_dual_stack_physical_and_vlan_cidrs():

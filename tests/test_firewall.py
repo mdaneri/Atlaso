@@ -278,6 +278,51 @@ def test_managed_service_firewall_rules_skip_ca_portal_when_ca_disabled():
     assert {rule.name for rule in rules} == {"mgmt-console"}
 
 
+def test_access_management_ui_firewall_rule_opens_browser_ports_without_ssh():
+    """Verify a flagged access listener does not inherit dedicated-management SSH exposure."""
+    rules = managed_service_firewall_rules(
+        dns_settings=DnsSettings(enabled=False),
+        dhcp_settings=DhcpSettings(enabled=False),
+        dhcp_scopes=[],
+        ca_settings=CaSettings(enabled=False),
+        kms_settings=KmsSettings(enabled=False),
+        ntp_settings=NtpSettings(enabled=False),
+        vcf_backup_settings=VcfBackupSettings(enabled=False),
+        vcf_depot_settings=VcfOfflineDepotSettings(enabled=False),
+        vcf_registry_settings=VcfPrivateRegistrySettings(enabled=False),
+        interface_networks={"eth0": "192.168.49.0/24"},
+        management_interface="",
+        access_management_ui_interfaces=["eth0"],
+    )
+
+    assert len(rules) == 1
+    assert rules[0].name == "management-ui-eth0"
+    assert rules[0].destination_port == "80,443"
+
+
+def test_dhcp_management_firewall_rule_does_not_require_a_desired_static_network():
+    """Verify DHCP management remains reachable when its desired CIDR is intentionally blank."""
+    rules = managed_service_firewall_rules(
+        dns_settings=DnsSettings(enabled=False),
+        dhcp_settings=DhcpSettings(enabled=False),
+        dhcp_scopes=[],
+        ca_settings=CaSettings(enabled=False),
+        kms_settings=KmsSettings(enabled=False),
+        ntp_settings=NtpSettings(enabled=False),
+        vcf_backup_settings=VcfBackupSettings(enabled=False),
+        vcf_depot_settings=VcfOfflineDepotSettings(enabled=False),
+        vcf_registry_settings=VcfPrivateRegistrySettings(enabled=False),
+        interface_networks={"eth1": "192.168.87.0/24"},
+        management_interface="eth0",
+        access_management_ui_interfaces=["eth1"],
+    )
+
+    by_name = {rule.name: rule for rule in rules}
+    assert by_name["mgmt-console"].interface_name == "eth0"
+    assert by_name["mgmt-console"].destination_port == "22,80,443"
+    assert by_name["management-ui-eth1"].destination_port == "80,443"
+
+
 def test_managed_service_firewall_rules_add_https_for_extra_terminal_interfaces():
     """Verify that managed service firewall rules add https for extra terminal interfaces."""
     rules = managed_service_firewall_rules(

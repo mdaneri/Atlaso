@@ -6,7 +6,7 @@
     <div class="panel-head">
       <div>
         <h2>Physical Interfaces</h2>
-        <p class="muted">Review observed Photon NICs, then edit desired access, trunk, IPv4/IPv6 addressing and management gateways, and admin state for global appliance apply.</p>
+        <p class="muted">Review observed Photon NICs, then edit desired access, trunk, IPv4/IPv6 addressing, optional access management UI exposure, management gateways, and admin state for global appliance apply.</p>
       </div>
       <div class="button-row">
         <form action="{{ management_ui_root }}/physical-interfaces/refresh" method="post">
@@ -20,6 +20,7 @@
       <span class="field-label"><span>Host inventory</span><button class="help-icon" type="button" data-help="Reads current Linux network devices through safe host inventory commands, matching NICs by MAC so Linux eth renumbering does not move desired state. Missing NICs are marked for review; refresh does not apply network changes.">i</button></span>
       <span class="field-label"><span>Desired state</span><button class="help-icon" type="button" data-help="Editable access/trunk, IPv4 addressing, IPv6 enablement and CIDR, MTU, and admin state values are stored in Atlaso and enforced only through global appliance apply. Enabled IPv6 with a blank CIDR uses RA/SLAAC.">i</button></span>
       <span class="field-label"><span>Management gateways</span><button class="help-icon" type="button" data-help="Sets optional IPv4 and IPv6 default gateways for static management addresses. IPv4 must be on-link; IPv6 may be link-local or on-link. Atlaso installs each configured gateway in the main table and management table 100.">i</button></span>
+      <span class="field-label"><span>Management UI</span><button class="help-icon" type="button" data-help="A management-role interface exposes the management UI inherently. An access-role interface can also expose it without changing ordinary access routing, public services, or service binding eligibility.">i</button></span>
       <span class="field-label"><span>IPv6</span><button class="help-icon" type="button" data-help="The IPv6 switch controls the selected physical interface only. Disabled blocks router advertisements and link-local IPv6; enabled with a blank CIDR uses RA/SLAAC; enabled with a CIDR and optional gateway enforces static IPv6 during global appliance apply.">i</button></span>
     </div>
     {% if form_error %}
@@ -38,7 +39,7 @@
     ></div>
     <table id="physical-interfaces-fallback" class="data-table dns-fallback-table">
       <thead>
-        <tr><th>Name</th><th>MAC</th><th>Driver</th><th>Speed</th><th>Observed IPv4</th><th>Observed IPv6</th><th>IPv4 Method</th><th>IPv4 CIDR</th><th>IPv4 Gateway</th><th>IPv6</th><th>IPv6 CIDR</th><th>IPv6 Gateway</th><th>Role</th><th>Link Type</th><th>MTU</th><th>Admin Up</th><th>Oper</th><th>Source</th></tr>
+        <tr><th>Name</th><th>MAC</th><th>Driver</th><th>Speed</th><th>Observed IPv4</th><th>Observed IPv6</th><th>IPv4 Method</th><th>IPv4 CIDR</th><th>IPv4 Gateway</th><th>IPv6</th><th>IPv6 CIDR</th><th>IPv6 Gateway</th><th>Role</th><th>Management UI</th><th>Link Type</th><th>MTU</th><th>Admin Up</th><th>Oper</th><th>Source</th></tr>
       </thead>
       <tbody>
         {% for interface in physical_interface_rows %}
@@ -56,6 +57,7 @@
             <td>{{ interface["ipv6_cidr"] or "" }}</td>
             <td>{{ interface["ipv6_gateway"] or "" }}</td>
             <td>{{ interface["role"] }}</td>
+            <td>{{ "inherent" if interface["role"] == "management" else ("enabled" if interface["access_management_ui_enabled"] else "disabled") }}</td>
             <td>{{ interface["mode"] }}</td>
             <td>{{ interface["mtu"] }}</td>
             <td>

@@ -429,9 +429,7 @@ def management_interface_context(interfaces: list[PhysicalInterface]) -> dict[st
     Args:
         interfaces: Interfaces consumed by management interface context.
     """
-    candidates = [interface for interface in interfaces if interface.role == "management"] + [
-        interface for interface in interfaces if interface.name == "eth0"
-    ]
+    candidates = [interface for interface in interfaces if interface.role == "management"]
     seen: set[str] = set()
     for interface in candidates:
         if interface.name in seen:
@@ -464,6 +462,77 @@ def management_interface_context(interfaces: list[PhysicalInterface]) -> dict[st
             "ipv4_method": normalize_ipv4_method(interface.ipv4_method),
         }
     return {"name": "", "ip": "", "ip_cidr": "", "ipv4_cidr": "", "ipv6_cidr": "", "addresses": [], "ipv4_method": "static"}
+
+
+def management_ui_context(
+    interfaces: list[PhysicalInterface],
+    vlans: list[VlanInterface],
+) -> dict[str, Any]:
+    """Return the preferred appliance identity context for an effective management UI listener.
+
+    Args:
+        interfaces: Desired physical interfaces eligible to host the management UI.
+        vlans: Desired VLAN interfaces eligible to host the management UI.
+    """
+    dedicated = management_interface_context(interfaces)
+    if dedicated.get("ip"):
+        return dedicated
+    physical_candidates = sorted(
+        (
+            interface
+            for interface in interfaces
+            if interface.oper_state != "missing"
+            and interface.admin_state == "up"
+            and normalize_interface_role(interface.role) == "access"
+            and normalize_interface_mode(interface.mode) == "access"
+            and interface.access_management_ui_enabled
+        ),
+        key=lambda interface: (interface.name != "eth0", interface.name),
+    )
+    candidates: list[tuple[str, str | None, str | None]] = [
+        (
+            interface.name,
+            interface.host_ip_cidr
+            if normalize_ipv4_method(interface.ipv4_method) == "dhcp"
+            else interface.ip_cidr,
+            (interface.ipv6_cidr or interface.host_ipv6_cidr)
+            if interface.ipv6_enabled
+            else None,
+        )
+        for interface in physical_candidates
+    ]
+    candidates.extend(
+        (vlan.name, vlan.ip_cidr, vlan.ipv6_cidr)
+        for vlan in sorted(vlans, key=lambda item: (item.parent_interface, item.vlan_id))
+        if vlan.enabled
+        and normalize_interface_role(vlan.role) == "access"
+        and vlan.access_management_ui_enabled
+    )
+    for name, ipv4_cidr, ipv6_cidr in candidates:
+        addresses: list[str] = []
+        for candidate_cidr in (ipv4_cidr, ipv6_cidr):
+            if not candidate_cidr:
+                continue
+            try:
+                parsed = ip_interface(candidate_cidr).ip
+            except ValueError:
+                continue
+            if parsed.is_link_local:
+                continue
+            address = str(parsed)
+            if address not in addresses:
+                addresses.append(address)
+        if addresses:
+            return {
+                "name": name,
+                "ip": addresses[0],
+                "ip_cidr": ipv4_cidr or ipv6_cidr or "",
+                "ipv4_cidr": ipv4_cidr or "",
+                "ipv6_cidr": ipv6_cidr or "",
+                "addresses": addresses,
+                "ipv4_method": "static",
+            }
+    return dedicated
 
 
 def validate_appliance_settings(

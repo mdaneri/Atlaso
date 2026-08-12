@@ -214,6 +214,8 @@ def render_public_services_nginx_config(
     terminal_key_path: str = "",
     oidc_certificate_path: str = "",
     oidc_key_path: str = "",
+    management_certificate_path: str = "",
+    management_key_path: str = "",
 ) -> str:
     """Render public services nginx config.
 
@@ -231,6 +233,8 @@ def render_public_services_nginx_config(
         terminal_key_path: Filesystem path for the terminal key.
         oidc_certificate_path: Filesystem path for the oidc certificate.
         oidc_key_path: Filesystem path for the oidc key.
+        management_certificate_path: Filesystem path for the appliance management certificate.
+        management_key_path: Filesystem path for the appliance management private key.
 
     Returns:
         The rendered public services nginx config.
@@ -244,6 +248,11 @@ def render_public_services_nginx_config(
         service_rows = entry.get("services") or []
         services = {str(service.get("id")) for service in service_rows}
         terminal_enabled = bool(entry.get("web_terminal"))
+        management_ui_enabled = bool(
+            entry.get("management_ui")
+            and management_certificate_path
+            and management_key_path
+        )
         if not address:
             continue
         ca_service = next((service for service in service_rows if str(service.get("id")) == "ca"), None)
@@ -288,6 +297,9 @@ def render_public_services_nginx_config(
                         depot_auth_required=not bool(depot_service.get("allow_unauthenticated_access")),
                         depot_http_username=str(depot_service.get("http_username") or ""),
                         web_terminal=terminal_enabled,
+                        management_ui=management_ui_enabled,
+                        management_certificate_path=management_certificate_path,
+                        management_key_path=management_key_path,
                     )
                 )
                 terminal_enabled = False
@@ -300,6 +312,7 @@ def render_public_services_nginx_config(
                     upstream_host=upstream_host,
                     upstream_port=upstream_port,
                     https_port=https_port,
+                    management_ui=management_ui_enabled,
                 )
             )
         if "esxi_pxe" in services:
@@ -414,6 +427,9 @@ def _ip_scoped_https_server_lines(
     depot_auth_required: bool,
     depot_http_username: str,
     web_terminal: bool = False,
+    management_ui: bool = False,
+    management_certificate_path: str = "",
+    management_key_path: str = "",
 ) -> list[str]:
     """Return ip scoped https server lines.
 
@@ -428,6 +444,9 @@ def _ip_scoped_https_server_lines(
         depot_auth_required: Depot auth required supplied by the caller.
         depot_http_username: Depot http username supplied by the caller.
         web_terminal: Web terminal supplied by the caller.
+        management_ui: Whether the management namespace is cohosted on this access address.
+        management_certificate_path: Filesystem path for the appliance management certificate.
+        management_key_path: Filesystem path for the appliance management private key.
     """
     return [
         "",
@@ -435,8 +454,8 @@ def _ip_scoped_https_server_lines(
         "  # IP-scoped HTTPS public services front door.",
         f"  listen {format_nginx_listen(address, https_port)} ssl;",
         f"  server_name {_nginx_server_name(address)};",
-        f"  ssl_certificate {ca_certificate_path};",
-        f"  ssl_certificate_key {ca_key_path};",
+        f"  ssl_certificate {management_certificate_path if management_ui else ca_certificate_path};",
+        f"  ssl_certificate_key {management_key_path if management_ui else ca_key_path};",
         "  client_max_body_size 1g;",
         "",
         *_proxy_location("= /", upstream_host, upstream_port, forwarded_proto="https"),
@@ -444,6 +463,7 @@ def _ip_scoped_https_server_lines(
         *_proxy_location("= /ui/public", upstream_host, upstream_port, forwarded_proto="https"),
         "",
         *_proxy_location("^~ /ui/public/", upstream_host, upstream_port, forwarded_proto="https"),
+        *(_management_ui_proxy_locations(upstream_host, upstream_port) if management_ui else []),
         "",
         *_proxy_location("= /ca", upstream_host, upstream_port, forwarded_proto="https"),
         "",
@@ -507,6 +527,7 @@ def _terminal_https_server_lines(
     upstream_host: str,
     upstream_port: int,
     https_port: int,
+    management_ui: bool = False,
 ) -> list[str]:
     """Return terminal https server lines.
 
@@ -517,6 +538,7 @@ def _terminal_https_server_lines(
         upstream_host: Hostname or address of the upstream service.
         upstream_port: Port of the upstream service.
         https_port: Https port supplied by the caller.
+        management_ui: Whether the management namespace is cohosted on this access address.
     """
     return [
         "",
@@ -532,6 +554,7 @@ def _terminal_https_server_lines(
         *_proxy_location("= /ui/public", upstream_host, upstream_port, forwarded_proto="https"),
         "",
         *_proxy_location("^~ /ui/public/", upstream_host, upstream_port, forwarded_proto="https"),
+        *(_management_ui_proxy_locations(upstream_host, upstream_port) if management_ui else []),
         "",
         *_proxy_location("= /favicon.ico", upstream_host, upstream_port, forwarded_proto="https"),
         "",
@@ -539,6 +562,21 @@ def _terminal_https_server_lines(
         "",
         "  location / { return 404; }",
         "}",
+    ]
+
+
+def _management_ui_proxy_locations(upstream_host: str, upstream_port: int) -> list[str]:
+    """Return proxy locations for a management UI cohosted on an access listener.
+
+    Args:
+        upstream_host: Atlaso application host receiving proxied browser requests.
+        upstream_port: Atlaso application port receiving proxied browser requests.
+    """
+    return [
+        "",
+        *_proxy_location("= /ui/management", upstream_host, upstream_port, forwarded_proto="https"),
+        "",
+        *_proxy_location("^~ /ui/management/", upstream_host, upstream_port, forwarded_proto="https"),
     ]
 
 

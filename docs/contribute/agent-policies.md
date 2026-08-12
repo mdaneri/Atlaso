@@ -757,9 +757,11 @@ status: current
   `/etc/systemd/network/`, reload networkd, reconfigure non-management links, create/update desired VLAN links, and
   delete VLAN links explicitly derived from successful Atlaso network apply history. The appliance image's default
   management networkd file should match only `eth0`, not `eth*`/`en*`, and Atlaso should retire Photon catchall network
-  defaults such as `50-static-en.network` and `99-dhcp-en.network`. Keep management on `eth0` explicit and do not
-  blindly reconfigure the management link without reachability safeguards. Management uses its own policy-routing table
-  and must never forward traffic from or to access/route networks; non-management lab routes use the lab route table.
+  defaults such as `50-static-en.network` and `99-dhcp-en.network`. The default desired state keeps management on `eth0`,
+  but an operator may assign the single dedicated management role to another physical interface or use only flagged
+  access listeners. Do not blindly reconfigure a dedicated management link without reachability safeguards. When one
+  exists, management uses its own policy-routing table and must never forward traffic from or to access/route networks;
+  non-management lab routes use the lab route table.
 - Do not offer trunk physical interfaces as direct service bind targets. Service bind selectors should include access
   physical interfaces with an IPv4 or IPv6 CIDR and enabled VLAN interfaces with an IPv4 or IPv6 CIDR.
 - When a service bind target is selected, derive IPv4 and IPv6 listen addresses from the selected interface or VLAN
@@ -775,6 +777,12 @@ status: current
 
 - Management-role interface addresses dispatch `/` to `/ui/management`; all authenticated management pages and their
   browser-only support/action endpoints stay under that canonical root.
+- A management-role physical interface exposes the management UI inherently and has no exposure flag. Access-role,
+  access-mode physical interfaces and enabled access-role VLANs may set `access_management_ui_enabled`. They remain
+  ordinary access interfaces for routing, service selectors, public UI, and public services. Allow at most one dedicated
+  management role, allow multiple flagged access listeners, and reject state with neither an effective dedicated role
+  nor an active flagged access listener. A management-to-access conversion enables the flag atomically; an
+  access-to-management conversion clears it.
 - Non-management interface addresses dispatch `/` to an unauthenticated public service directory at `/ui/public`
   scoped to the called IP/host. The page must list only enabled public services whose desired listen addresses include
   that IP, and must show
@@ -786,8 +794,10 @@ status: current
   `/ui/public/ca/requests`, and Web Terminal `/ui/public/terminal`. Keep CA downloads
   `/ca/downloads/root-ca.pem` and `/ca/downloads/ca-bundle.pem`, ESXi PXE `/pxe/esxi/`, VCF Offline Depot `/PROD/`,
   and VCF Private Registry canonical URLs outside `/ui` as stable machine/protocol contracts.
-- A public listener must return not found for `/ui/management` without rendering login behavior or the management shell;
-  a management listener must not publish `/ui/public`. Safe eligible root-level browser bookmarks use temporary
+- An unflagged public listener must return not found for `/ui/management` without rendering login behavior or the
+  management shell. A flagged access listener cohosts both planes: `/` prefers `/ui/management`, the authenticated
+  management shell offers a Public services link, and `/ui/public` remains available. A dedicated management listener
+  must not publish `/ui/public`. Safe eligible root-level browser bookmarks use temporary
   same-host redirects. Legacy mutations bridge internally to canonical handlers and must never use replaying redirects.
 - Do not add `/registry` reverse proxying in the public-services site. Registry DNS and canonical registry URLs remain
   service-owned.

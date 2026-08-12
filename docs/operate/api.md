@@ -60,6 +60,14 @@ Use a certificate trusted by the client. Do not disable TLS verification in save
 change resources should use RFC 1918 lab addresses such as `192.168.50.0/24` and be reviewed against the operation's
 documented authorization and apply behavior before execution.
 
+### Configure management UI exposure on access interfaces
+
+`PhysicalInterfaceResponse` and `VlanCreate`/`VlanResponse` include
+`access_management_ui_enabled`. Set it only on an access-role, access-mode physical interface or an access-role VLAN.
+The switch exposes the authenticated `/ui/management` browser plane without changing that interface's access routing or
+public-service eligibility. A management-role physical interface ignores the switch because it exposes management
+inherently. Network apply rejects a configuration that would leave no effective management UI listener.
+
 ## Scopes and authorization
 
 Each Swagger operation describes its required Atlaso scope or authentication posture. A token can call only operations

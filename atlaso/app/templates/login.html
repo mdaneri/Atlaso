@@ -39,6 +39,9 @@
           </label>
           <button class="button primary" type="submit">Sign in</button>
         </form>
+        {% if cohosted_public_ui %}
+          <p><a href="{{ public_ui_root }}">Open public services on this interface</a></p>
+        {% endif %}
         <p class="hint">Development default: admin / atlaso-admin. Appliance images use the bootstrap admin password set during image build.</p>
       </section>
     </main>

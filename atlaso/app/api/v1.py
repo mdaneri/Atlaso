@@ -278,6 +278,7 @@ from atlaso.app.services.appliance_settings import (
     appliance_settings_to_dict,
     management_dhcp_dns_context,
     management_interface_context,
+    management_ui_context,
     normalized_web_terminal_interfaces,
     normalize_fqdn,
     normalize_multiline_values,
@@ -508,6 +509,12 @@ def validate_vlan_api_payload(payload: VlanCreate, db: Session) -> dict:
     values["parent_interface"] = values["parent_interface"].strip()
     values["ip_cidr"] = values["ip_cidr"].strip()
     values["ipv6_cidr"] = values["ipv6_cidr"].strip()
+    values["role"] = normalize_interface_role(values["role"])
+    if values["access_management_ui_enabled"] and values["role"] != "access":
+        raise HTTPException(
+            status_code=422,
+            detail="access_management_ui_enabled is available only for an access-role VLAN.",
+        )
     if not values["ip_cidr"] and not values["ipv6_cidr"]:
         raise HTTPException(status_code=422, detail="VLAN IPv4 CIDR, IPv6 CIDR, or both are required.")
     if values["ip_cidr"]:
@@ -647,7 +654,7 @@ def appliance_settings_response(db: Session, app_settings: Settings) -> Settings
     local_dns_enabled = bool(dns_settings and dns_settings.enabled)
     interfaces = db.execute(select(PhysicalInterface).order_by(PhysicalInterface.name)).scalars().all()
     vlans = db.execute(select(VlanInterface).order_by(VlanInterface.parent_interface, VlanInterface.vlan_id)).scalars().all()
-    management = management_interface_context(interfaces)
+    management = management_ui_context(interfaces, vlans)
     terminal_options = web_terminal_interface_options(interfaces, vlans)
     validation_errors, validation_warnings = validate_appliance_settings(
         desired,
@@ -832,6 +839,21 @@ def firewall_validation_payload(db: Session) -> tuple[FirewallSettings, list[Fir
         source_group_assignments=source_group_state["assignments"],
         ldap_settings=db.execute(select(LdapSettings)).scalar_one_or_none() or LdapSettings(),
         esx_storage_rules=esx_storage_firewall_rule_specs(esx_storage_state(db)[4]),
+        management_interface=management_interface_context(physical_interfaces).get("name", ""),
+        access_management_ui_interfaces=[
+            interface.name
+            for interface in physical_interfaces
+            if normalize_interface_role(interface.role) == "access"
+            and normalize_interface_mode(interface.mode) == "access"
+            and interface.admin_state == "up"
+            and interface.access_management_ui_enabled
+        ] + [
+            vlan.name
+            for vlan in vlan_interfaces
+            if vlan.enabled
+            and normalize_interface_role(vlan.role) == "access"
+            and vlan.access_management_ui_enabled
+        ],
     )
     generated_rules.extend(
         managed_routing_firewall_rules(
@@ -1253,6 +1275,21 @@ def update_physical_interface(
     if not interface:
         raise HTTPException(status_code=404, detail="Interface not found")
     next_role = normalize_interface_role(payload.get("role", interface.role))
+    requested_management_ui = payload.get(
+        "access_management_ui_enabled",
+        interface.access_management_ui_enabled,
+    )
+    if not isinstance(requested_management_ui, bool):
+        raise HTTPException(status_code=422, detail="access_management_ui_enabled must be a boolean.")
+    if interface.role == "management" and next_role == "access" and "access_management_ui_enabled" not in payload:
+        requested_management_ui = True
+    if next_role == "management":
+        requested_management_ui = False
+    if requested_management_ui and next_role != "access":
+        raise HTTPException(
+            status_code=422,
+            detail="access_management_ui_enabled is available only for an access-role interface.",
+        )
     next_ipv4_method = normalize_ipv4_method(payload.get("ipv4_method", interface.ipv4_method))
     requested_ipv6_enabled = payload.get("ipv6_enabled", interface.ipv6_enabled)
     if not isinstance(requested_ipv6_enabled, bool):
@@ -1303,6 +1340,7 @@ def update_physical_interface(
             setattr(interface, field, payload[field])
             if field == "ipv6_cidr" and not str(payload[field] or "").strip():
                 interface.ipv6_gateway = None
+    interface.access_management_ui_enabled = requested_management_ui
     if "mode" in payload:
         new_mode = normalize_interface_mode(payload["mode"])
         vlan_count = db.scalar(select(func.count()).select_from(VlanInterface).where(VlanInterface.parent_interface == interface.name)) or 0
@@ -1318,6 +1356,7 @@ def update_physical_interface(
         if new_mode == "trunk":
             interface.gateway = None
             interface.ipv6_gateway = None
+            interface.access_management_ui_enabled = False
     if interface.gateway:
         if normalize_interface_role(interface.role) != "management" or normalize_ipv4_method(interface.ipv4_method) != "static" or not interface.ip_cidr:
             raise HTTPException(
@@ -3778,7 +3817,8 @@ def update_app_settings(
     desired.management_https_enabled = payload.management_https_enabled
     desired.web_terminal_enabled = payload.web_terminal_enabled
     interfaces = db.execute(select(PhysicalInterface).order_by(PhysicalInterface.name)).scalars().all()
-    management = management_interface_context(interfaces)
+    vlans = db.execute(select(VlanInterface).order_by(VlanInterface.parent_interface, VlanInterface.vlan_id)).scalars().all()
+    management = management_ui_context(interfaces, vlans)
     requested_terminal_interfaces = list(payload.web_terminal_interfaces)
     if desired.web_terminal_enabled and management.get("name"):
         requested_terminal_interfaces = [

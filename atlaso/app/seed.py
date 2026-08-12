@@ -41,7 +41,7 @@ from atlaso.app.services.appliance_settings import APPLIANCE_DNS_RECORD_DESCRIPT
 from atlaso.app.services.local_users import DEFAULT_LOCAL_USER_SHELL, POWERSHELL_LOCAL_USER_SHELL, stage_user_os_password
 from atlaso.app.services.ldap import LDAP_DEFAULT_HOSTNAME, LDAP_STAGED_CONFIG_PATH
 from atlaso.app.services.dnsmasq import ensure_dns_authoritative_defaults, join_domains, split_domains, validate_dns_record
-from atlaso.app.services.networking import normalize_interface_mode, normalize_ipv4_method
+from atlaso.app.services.networking import normalize_interface_mode, normalize_interface_role, normalize_ipv4_method
 from atlaso.app.services.ntp import (
     NTP_DEFAULT_HOSTNAME,
     NTP_STAGED_CONFIG_PATH,
@@ -665,29 +665,59 @@ def _settings_lines(value: str) -> str:
     return "\n".join(parts)
 
 
-def _management_ip(db: Session) -> str:
-    """Return management ip.
+def _management_ips(db: Session) -> list[str]:
+    """Return every desired address that exposes the management browser plane.
 
     Args:
         db: Active database session.
     """
     interfaces = db.execute(select(PhysicalInterface).order_by(PhysicalInterface.name)).scalars().all()
-    candidates = [interface for interface in interfaces if interface.role == "management"] + [
-        interface for interface in interfaces if interface.name == "eth0"
-    ]
-    seen: set[str] = set()
-    for interface in candidates:
-        if interface.name in seen:
+    addresses: list[str] = []
+    for interface in interfaces:
+        role = normalize_interface_role(interface.role)
+        exposes_management = role == "management" or (
+            role == "access"
+            and normalize_interface_mode(interface.mode) == "access"
+            and interface.admin_state == "up"
+            and interface.access_management_ui_enabled
+        )
+        if interface.oper_state == "missing" or not exposes_management:
             continue
-        seen.add(interface.name)
-        candidate_cidr = interface.host_ip_cidr if normalize_ipv4_method(interface.ipv4_method) == "dhcp" else interface.ip_cidr
-        if not candidate_cidr:
+        ipv4_cidr = interface.host_ip_cidr if normalize_ipv4_method(interface.ipv4_method) == "dhcp" else interface.ip_cidr
+        ipv6_cidr = (interface.ipv6_cidr or interface.host_ipv6_cidr) if interface.ipv6_enabled else None
+        for candidate_cidr in (ipv4_cidr, ipv6_cidr):
+            if not candidate_cidr:
+                continue
+            try:
+                parsed = ip_interface(candidate_cidr).ip
+            except ValueError:
+                continue
+            if parsed.is_link_local:
+                continue
+            address = str(parsed)
+            if address not in addresses:
+                addresses.append(address)
+    vlans = db.execute(
+        select(VlanInterface)
+        .where(VlanInterface.enabled.is_(True))
+        .order_by(VlanInterface.parent_interface, VlanInterface.vlan_id)
+    ).scalars().all()
+    for vlan in vlans:
+        if normalize_interface_role(vlan.role) != "access" or not vlan.access_management_ui_enabled:
             continue
-        try:
-            return str(ip_interface(candidate_cidr).ip)
-        except ValueError:
-            continue
-    return ""
+        for candidate_cidr in (vlan.ip_cidr, vlan.ipv6_cidr):
+            if not candidate_cidr:
+                continue
+            try:
+                parsed = ip_interface(candidate_cidr).ip
+            except ValueError:
+                continue
+            if parsed.is_link_local:
+                continue
+            address = str(parsed)
+            if address not in addresses:
+                addresses.append(address)
+    return addresses
 
 
 def _ensure_appliance_dns_record(db: Session, appliance_settings: ApplianceSettings) -> None:
@@ -698,30 +728,41 @@ def _ensure_appliance_dns_record(db: Session, appliance_settings: ApplianceSetti
         appliance_settings: Appliance settings supplied by the caller.
     """
     fqdn = normalize_fqdn(appliance_settings.fqdn)
-    address = _management_ip(db)
-    if not fqdn or not address:
+    addresses = _management_ips(db)
+    if not fqdn or not addresses:
         return
-    record_type = "AAAA" if ":" in address else "A"
-    if validate_dns_record(fqdn, record_type, address):
-        return
-    existing = db.execute(
+    existing_records = db.execute(
         select(DnsRecord).where(
             DnsRecord.hostname == fqdn,
-            DnsRecord.record_type == record_type,
+            DnsRecord.record_type.in_(["A", "AAAA"]),
         )
-    ).scalar_one_or_none()
-    if existing is None:
-        db.add(
-            DnsRecord(
-                hostname=fqdn,
-                record_type=record_type,
-                address=address,
-                description=APPLIANCE_DNS_RECORD_DESCRIPTION,
-                enabled=True,
+    ).scalars().all()
+    existing_by_key = {(record.record_type, record.address): record for record in existing_records}
+    desired_keys: set[tuple[str, str]] = set()
+    for address in addresses:
+        record_type = "AAAA" if ":" in address else "A"
+        if validate_dns_record(fqdn, record_type, address):
+            continue
+        key = (record_type, address)
+        desired_keys.add(key)
+        existing = existing_by_key.get(key)
+        if existing is None:
+            db.add(
+                DnsRecord(
+                    hostname=fqdn,
+                    record_type=record_type,
+                    address=address,
+                    description=APPLIANCE_DNS_RECORD_DESCRIPTION,
+                    enabled=True,
+                )
             )
-        )
-    elif APPLIANCE_DNS_RECORD_DESCRIPTION in (existing.description or ""):
-        existing.address = address
-        existing.enabled = True
-        existing.description = APPLIANCE_DNS_RECORD_DESCRIPTION
-        db.add(existing)
+        elif APPLIANCE_DNS_RECORD_DESCRIPTION in (existing.description or ""):
+            existing.enabled = True
+            existing.description = APPLIANCE_DNS_RECORD_DESCRIPTION
+            db.add(existing)
+    for record in existing_records:
+        if (
+            APPLIANCE_DNS_RECORD_DESCRIPTION in (record.description or "")
+            and (record.record_type, record.address) not in desired_keys
+        ):
+            db.delete(record)

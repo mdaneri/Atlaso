@@ -131,6 +131,7 @@ from atlaso.app.services.appliance_settings import (
     is_app_owned_appliance_dns_record,
     management_dhcp_dns_context,
     management_interface_context,
+    management_ui_context,
     normalize_fqdn,
     normalize_multiline_values,
     normalize_service_dns_target_naming,
@@ -702,7 +703,7 @@ def management_ui_request_allowed(request: Request, db: Session) -> bool:
         pass
     binding = request_host_interface_binding(request_host, db)
     if binding is not None:
-        return binding.get("role") == "management"
+        return bool(binding.get("management_ui"))
     return getattr(get_settings(), "environment", "development") != "appliance"
 
 
@@ -713,6 +714,8 @@ def require_management_ui_request(request: Request, db: Session = Depends(get_db
         request: Incoming HTTP request.
         db: Active database session.
     """
+    binding = request_host_interface_binding(request_host_name(request), db)
+    request.state.management_interface_binding = binding
     if not management_ui_request_allowed(request, db):
         raise HTTPException(status_code=404, detail="Not found")
 
@@ -809,6 +812,11 @@ def render(request: Request, template: str, context: dict, status_code: int = 20
             "current_version_info": current_version_info(),
             "management_ui_root": MANAGEMENT_UI_ROOT,
             "public_ui_root": PUBLIC_UI_ROOT,
+            "cohosted_public_ui": bool(
+                (binding := getattr(request.state, "management_interface_binding", None))
+                and binding.get("role") == "access"
+                and binding.get("management_ui")
+            ),
             **context,
         },
         status_code=status_code,
@@ -1265,7 +1273,7 @@ def managed_ca_certificate_specs(db: Session) -> list[ManagedCertificateSpec]:
     management, observed_dhcp_dns_servers = management_dhcp_dns_context(interfaces)
     terminal_options = web_terminal_interface_options(interfaces, vlans)
     terminal_ips = web_terminal_addresses(normalized_web_terminal_interfaces(appliance, management), terminal_options) if appliance.web_terminal_enabled else []
-    appliance_ips = list(management.get("addresses") or ([management["ip"]] if management.get("ip") else []))
+    appliance_ips = management_ui_addresses(db)
     appliance_ips.extend(address for address in terminal_ips if address not in appliance_ips)
     appliance_cert, appliance_key, appliance_chain = ca_service_cert_paths("https", appliance.fqdn)
     specs.append(
@@ -2525,14 +2533,56 @@ def set_setting_value(db: Session, key: str, value: str) -> Setting:
     return setting
 
 
-def appliance_settings_management_context(db: Session) -> dict[str, str]:
+def appliance_settings_management_context(db: Session) -> dict[str, Any]:
     """Return appliance settings management context.
 
     Args:
         db: Active database session.
     """
     interfaces = db.execute(select(PhysicalInterface).order_by(PhysicalInterface.name)).scalars().all()
-    return management_interface_context(interfaces)
+    vlans = db.execute(
+        select(VlanInterface)
+        .where(VlanInterface.enabled.is_(True))
+        .order_by(VlanInterface.parent_interface, VlanInterface.vlan_id)
+    ).scalars().all()
+    return management_ui_context(interfaces, vlans)
+
+
+def management_ui_addresses(db: Session) -> list[str]:
+    """Return all desired addresses that expose the management browser plane.
+
+    Args:
+        db: Active database session used to load desired interface state.
+    """
+    interfaces = db.execute(select(PhysicalInterface).order_by(PhysicalInterface.name)).scalars().all()
+    vlans = db.execute(
+        select(VlanInterface)
+        .where(VlanInterface.enabled.is_(True))
+        .order_by(VlanInterface.parent_interface, VlanInterface.vlan_id)
+    ).scalars().all()
+    addresses: list[str] = []
+    for interface in interfaces:
+        role = normalize_interface_role(interface.role)
+        enabled = role == "management" or (
+            role == "access"
+            and normalize_interface_mode(interface.mode) == "access"
+            and interface.admin_state == "up"
+            and interface.access_management_ui_enabled
+        )
+        if interface.oper_state == "missing" or not enabled:
+            continue
+        for cidr in (interface.ip_cidr or interface.host_ip_cidr, interface.ipv6_cidr or interface.host_ipv6_cidr):
+            address = interface_address(cidr)
+            if address and address not in addresses:
+                addresses.append(address)
+    for vlan in vlans:
+        if normalize_interface_role(vlan.role) != "access" or not vlan.access_management_ui_enabled:
+            continue
+        for cidr in (vlan.ip_cidr, vlan.ipv6_cidr):
+            address = interface_address(cidr)
+            if address and address not in addresses:
+                addresses.append(address)
+    return addresses
 
 
 def appliance_dns_record_conflict(db: Session, fqdn: str) -> bool:
@@ -2608,46 +2658,40 @@ def ensure_dns_for_appliance_settings(
     dns_settings = get_dns_settings_row(db)
     ensure_dns_domain_for_appliance_settings(dns_settings, settings.fqdn)
     fqdn = normalize_fqdn(settings.fqdn)
-    management = appliance_settings_management_context(db)
-    if not fqdn or not management["ip"]:
+    desired_addresses = management_ui_addresses(db)
+    if not fqdn or not desired_addresses:
         return None
-    try:
-        parsed_address = ip_address(management["ip"])
-    except ValueError:
-        return None
-    record_type = "AAAA" if parsed_address.version == 6 else "A"
-    address = str(parsed_address)
-    if validate_dns_record(fqdn, record_type, address):
-        return None
-
     actions: list[str] = []
-    existing = db.execute(
+    existing_records = db.execute(
         select(DnsRecord).where(
             DnsRecord.hostname == fqdn,
-            DnsRecord.record_type == record_type,
+            DnsRecord.record_type.in_(["A", "AAAA"]),
         )
-    ).scalar_one_or_none()
-    if existing and not is_app_owned_appliance_dns_record(existing.description):
-        actions.append("conflict")
-    elif existing:
-        if existing.address != address or not existing.enabled:
-            existing.address = address
-            existing.enabled = True
-            existing.description = APPLIANCE_DNS_RECORD_DESCRIPTION
-            db.flush()
-            if actor:
-                record_audit(
-                    db,
-                    actor=actor,
-                    action="update_dns_record_from_appliance_settings",
-                    resource_type="dns_record",
-                    resource_id=str(existing.id),
-                    detail=f"{fqdn} {record_type} -> {address}",
-                )
-            actions.append("updated")
-        else:
-            actions.append("unchanged")
-    else:
+    ).scalars().all()
+    existing_by_key = {(record.record_type, record.address): record for record in existing_records}
+    desired_keys: set[tuple[str, str]] = set()
+    for candidate in desired_addresses:
+        try:
+            parsed_address = ip_address(candidate)
+        except ValueError:
+            continue
+        record_type = "AAAA" if parsed_address.version == 6 else "A"
+        address = str(parsed_address)
+        if validate_dns_record(fqdn, record_type, address):
+            continue
+        key = (record_type, address)
+        desired_keys.add(key)
+        existing = existing_by_key.get(key)
+        if existing and not is_app_owned_appliance_dns_record(existing.description):
+            actions.append("conflict")
+            continue
+        if existing:
+            if not existing.enabled:
+                existing.enabled = True
+                actions.append("updated")
+            else:
+                actions.append("unchanged")
+            continue
         record = DnsRecord(
             hostname=fqdn,
             record_type=record_type,
@@ -2667,32 +2711,11 @@ def ensure_dns_for_appliance_settings(
                 detail=f"{fqdn} {record_type} -> {address}",
             )
         actions.append("created")
-
-    stale_records = db.execute(
-        select(DnsRecord).where(
-            DnsRecord.hostname == fqdn,
-            DnsRecord.record_type.in_(["A", "AAAA"]),
-            DnsRecord.record_type != record_type,
-        )
-    ).scalars().all()
-    removed_stale = 0
-    for record in stale_records:
-        if not is_app_owned_appliance_dns_record(record.description):
-            continue
-        db.delete(record)
-        removed_stale += 1
-        if actor:
-            record_audit(
-                db,
-                actor=actor,
-                action="delete_dns_record_from_appliance_settings_ip_family_change",
-                resource_type="dns_record",
-                resource_id=str(record.id),
-                detail=f"{record.hostname} {record.record_type}",
-            )
-    if removed_stale:
-        db.flush()
-        actions.append("removed-stale")
+    for record in existing_records:
+        if is_app_owned_appliance_dns_record(record.description) and (record.record_type, record.address) not in desired_keys:
+            db.delete(record)
+            actions.append("removed-stale")
+    db.flush()
 
     previous = normalize_fqdn(previous_fqdn)
     if previous and previous != fqdn:
@@ -4313,6 +4336,21 @@ def firewall_context(db: Session, *, reconcile: bool = True) -> dict:
         ldap_settings=get_ldap_settings_row(db),
         oidc_settings=ensure_oidc_provider_settings(db),
         esx_storage_rules=esx_storage_firewall_rule_specs(esx_storage_context(db, reconcile=False)["esx_storage_manifest"]),
+        management_interface=management.get("name", ""),
+        access_management_ui_interfaces=[
+            interface.name
+            for interface in physical_interfaces
+            if normalize_interface_role(interface.role) == "access"
+            and normalize_interface_mode(interface.mode) == "access"
+            and interface.admin_state == "up"
+            and interface.access_management_ui_enabled
+        ] + [
+            vlan.name
+            for vlan in vlan_interfaces
+            if vlan.enabled
+            and normalize_interface_role(vlan.role) == "access"
+            and vlan.access_management_ui_enabled
+        ],
     )
     generated_rules.extend(
         managed_routing_firewall_rules(
@@ -4537,8 +4575,24 @@ def public_services_context(db: Session, *, reconcile: bool = True) -> dict[str,
         vcf_registry_settings=registry_settings,
         oidc_settings=oidc_settings,
     )
+    management_interfaces = {
+        interface.name
+        for interface in interfaces
+        if normalize_interface_role(interface.role) == "access"
+        and normalize_interface_mode(interface.mode) == "access"
+        and interface.admin_state == "up"
+        and interface.access_management_ui_enabled
+    }
+    management_interfaces.update(
+        vlan.name
+        for vlan in vlans
+        if normalize_interface_role(vlan.role) == "access"
+        and vlan.access_management_ui_enabled
+    )
+    for entry in entries:
+        entry["management_ui"] = entry.get("interface") in management_interfaces
     appliance_settings = get_appliance_settings_row(db)
-    management = management_interface_context(interfaces)
+    management = appliance_settings_management_context(db)
     terminal_options = web_terminal_interface_options(interfaces, vlans)
     terminal_interfaces = web_terminal_listener_interfaces(
         normalized_web_terminal_interfaces(appliance_settings, management),
@@ -4601,6 +4655,8 @@ def public_services_context(db: Session, *, reconcile: bool = True) -> dict[str,
         terminal_key_path=terminal_key_path,
         oidc_certificate_path=oidc_cert_path,
         oidc_key_path=oidc_key_path,
+        management_certificate_path=terminal_cert_path,
+        management_key_path=terminal_key_path,
     )
     return {
         "public_service_entries": entries,
@@ -4636,7 +4692,7 @@ def public_portal_links_context(db: Session) -> dict[str, str]:
         db: Active database session.
     """
     interfaces = db.execute(select(PhysicalInterface).order_by(PhysicalInterface.name)).scalars().all()
-    management = management_interface_context(interfaces)
+    management = appliance_settings_management_context(db)
     settings = get_appliance_settings_row(db)
     host = _url_host(management.get("ip") or settings.fqdn)
     scheme = "https" if settings.management_https_enabled else "http"
@@ -4806,7 +4862,7 @@ def request_host_interface_role(request_host: str, db: Session) -> str:
     return ""
 
 
-def request_host_interface_binding(request_host: str, db: Session) -> dict[str, str] | None:
+def request_host_interface_binding(request_host: str, db: Session) -> dict[str, Any] | None:
     """Return request host interface binding.
 
     Args:
@@ -4816,10 +4872,35 @@ def request_host_interface_binding(request_host: str, db: Session) -> dict[str, 
     if not request_host:
         return None
     physical_interfaces = db.execute(select(PhysicalInterface).order_by(PhysicalInterface.name)).scalars().all()
+    enabled_vlans = db.execute(
+        select(VlanInterface)
+        .where(VlanInterface.enabled.is_(True))
+        .order_by(VlanInterface.parent_interface, VlanInterface.vlan_id)
+    ).scalars().all()
     entries = public_service_interface_entries(
         physical_interfaces,
-        db.execute(select(VlanInterface).where(VlanInterface.enabled.is_(True)).order_by(VlanInterface.parent_interface, VlanInterface.vlan_id)).scalars().all(),
+        enabled_vlans,
     )
+    physical_management = {
+        interface.name: normalize_interface_role(interface.role) == "management"
+        or (
+            normalize_interface_role(interface.role) == "access"
+            and normalize_interface_mode(interface.mode) == "access"
+            and interface.admin_state == "up"
+            and interface.access_management_ui_enabled
+        )
+        for interface in physical_interfaces
+    }
+    vlan_management = {
+        vlan.name: normalize_interface_role(vlan.role) == "access"
+        and vlan.access_management_ui_enabled
+        for vlan in enabled_vlans
+    }
+    for entry in entries:
+        entry["management_ui"] = bool(
+            physical_management.get(entry["interface"], False)
+            or vlan_management.get(entry["interface"], False)
+        )
     for interface in physical_interfaces:
         if interface.oper_state == "missing":
             continue
@@ -4831,6 +4912,7 @@ def request_host_interface_binding(request_host: str, db: Session) -> dict[str, 
                         "interface": interface.name,
                         "role": normalize_interface_role(interface.role),
                         "address": address,
+                        "management_ui": physical_management.get(interface.name, False),
                     }
                 )
     by_address = {entry["address"].lower(): entry for entry in entries}
@@ -4855,8 +4937,9 @@ def request_host_interface_binding(request_host: str, db: Session) -> dict[str, 
 
         appliance_settings = db.execute(select(ApplianceSettings).order_by(ApplianceSettings.id)).scalars().first()
         if appliance_settings is not None and hostname == normalize_dns_hostname(appliance_settings.fqdn):
-            management = management_interface_context(db.execute(select(PhysicalInterface).order_by(PhysicalInterface.name)).scalars().all())
-            candidate_addresses.append(management.get("ip", ""))
+            candidate_addresses.extend(
+                entry["address"] for entry in entries if entry.get("management_ui")
+            )
 
         ca_settings = db.execute(select(CaSettings).order_by(CaSettings.id)).scalars().first()
         if ca_settings is not None and hostname == normalize_dns_hostname(ca_settings.portal_hostname or CA_DEFAULT_PORTAL_HOSTNAME):
@@ -4906,7 +4989,7 @@ def public_service_directory_context(db: Session, binding: dict[str, str]) -> di
     appliance_settings = get_appliance_settings_row(db)
     physical_interfaces = db.execute(select(PhysicalInterface).order_by(PhysicalInterface.name)).scalars().all()
     vlan_interfaces = db.execute(select(VlanInterface).where(VlanInterface.enabled.is_(True)).order_by(VlanInterface.parent_interface, VlanInterface.vlan_id)).scalars().all()
-    management = management_interface_context(physical_interfaces)
+    management = appliance_settings_management_context(db)
     terminal_options = web_terminal_interface_options(physical_interfaces, vlan_interfaces)
     terminal_interfaces = web_terminal_listener_interfaces(
         normalized_web_terminal_interfaces(appliance_settings, management),
@@ -12719,10 +12802,10 @@ def root(
         The endpoint response.
     """
     binding = request_host_interface_binding(request_host_name(request), db)
-    if binding and binding.get("role") != "management":
-        return RedirectResponse(PUBLIC_UI_ROOT, status_code=303)
     if management_ui_request_allowed(request, db):
         return RedirectResponse(MANAGEMENT_UI_ROOT, status_code=303)
+    if binding and binding.get("role") != "management":
+        return RedirectResponse(PUBLIC_UI_ROOT, status_code=303)
     raise HTTPException(status_code=404, detail="Not found")
 
 
@@ -17564,6 +17647,7 @@ def edit_physical_interface_from_ui(
     ipv6_gateway: str = Form(""),
     mtu: int = Form(1500),
     admin_state: str = Form("up"),
+    access_management_ui_enabled: str | None = Form(None),
     csrf: str = Form(...),
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
@@ -17583,6 +17667,7 @@ def edit_physical_interface_from_ui(
         ipv6_gateway: Ipv6 gateway supplied by the caller.
         mtu: Mtu supplied by the caller.
         admin_state: Admin state supplied by the caller.
+        access_management_ui_enabled: Whether this access interface also exposes the management UI.
         csrf: Validated CSRF token authorizing the request.
         identity: Authenticated identity authorizing the request.
         db: Active database session.
@@ -17606,7 +17691,19 @@ def edit_physical_interface_from_ui(
             status_code=409,
             media_type="text/plain",
         )
+    old_role = normalize_interface_role(interface.role)
     role_value = "unused" if new_mode == "trunk" else normalize_interface_role(role)
+    management_ui_value = access_management_ui_enabled == "on"
+    if old_role == "management" and role_value == "access" and access_management_ui_enabled is None:
+        management_ui_value = True
+    if role_value == "management" or new_mode == "trunk":
+        management_ui_value = False
+    if management_ui_value and role_value != "access":
+        return Response(
+            "Management UI exposure is available only for an access-role interface.",
+            status_code=422,
+            media_type="text/plain",
+        )
     ipv4_method_value = "static" if new_mode == "trunk" else normalize_ipv4_method(ipv4_method)
     if ipv4_method_value == "dhcp" and role_value != "management":
         return Response("IPv4 DHCP is available only for the management interface.", status_code=422, media_type="text/plain")
@@ -17694,6 +17791,7 @@ def edit_physical_interface_from_ui(
     interface.ipv6_gateway = ipv6_gateway_value or None
     interface.mtu = mtu
     interface.admin_state = admin_state_value
+    interface.access_management_ui_enabled = management_ui_value
     interface.desired_state_source = "user"
     dependent_updates = refresh_interface_dependent_addresses(
         db,
@@ -17802,6 +17900,7 @@ def create_vlan_interface_from_ui(
     mtu: int = Form(1500),
     role: str = Form("access"),
     enabled: str | None = Form(None),
+    access_management_ui_enabled: str | None = Form(None),
     csrf: str = Form(...),
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
@@ -17817,6 +17916,7 @@ def create_vlan_interface_from_ui(
         mtu: Mtu supplied by the caller.
         role: Atlaso role used for authorization.
         enabled: Whether the requested behavior is enabled.
+        access_management_ui_enabled: Whether this access VLAN also exposes the management UI.
         csrf: Validated CSRF token authorizing the request.
         identity: Authenticated identity authorizing the request.
         db: Active database session.
@@ -17830,6 +17930,10 @@ def create_vlan_interface_from_ui(
     if isinstance(parsed, Response):
         return parsed
     parent_name, parsed_vlan_id, ip_value, ipv6_value, parent_missing = parsed
+    role_value = normalize_interface_role(role)
+    management_ui_value = access_management_ui_enabled == "on"
+    if management_ui_value and role_value != "access":
+        return Response("Management UI exposure is available only for an access-role VLAN.", status_code=422, media_type="text/plain")
     vlan = VlanInterface(
         name=f"{parent_name}.{parsed_vlan_id}",
         parent_interface=parent_name,
@@ -17837,8 +17941,9 @@ def create_vlan_interface_from_ui(
         ip_cidr=ip_value,
         ipv6_cidr=ipv6_value,
         mtu=mtu,
-        role=role.strip(),
+        role=role_value,
         enabled=requested_enabled and not parent_missing,
+        access_management_ui_enabled=management_ui_value,
     )
     db.add(vlan)
     try:
@@ -17866,6 +17971,7 @@ def edit_vlan_interface_from_ui(
     mtu: int = Form(1500),
     role: str = Form("access"),
     enabled: str | None = Form(None),
+    access_management_ui_enabled: str | None = Form(None),
     csrf: str = Form(...),
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
@@ -17882,6 +17988,7 @@ def edit_vlan_interface_from_ui(
         mtu: Mtu supplied by the caller.
         role: Atlaso role used for authorization.
         enabled: Whether the requested behavior is enabled.
+        access_management_ui_enabled: Whether this access VLAN also exposes the management UI.
         csrf: Validated CSRF token authorizing the request.
         identity: Authenticated identity authorizing the request.
         db: Active database session.
@@ -17901,6 +18008,10 @@ def edit_vlan_interface_from_ui(
     if isinstance(parsed, Response):
         return parsed
     parent_name, parsed_vlan_id, ip_value, ipv6_value, parent_missing = parsed
+    role_value = normalize_interface_role(role)
+    management_ui_value = access_management_ui_enabled == "on"
+    if management_ui_value and role_value != "access":
+        return Response("Management UI exposure is available only for an access-role VLAN.", status_code=422, media_type="text/plain")
     old_name = vlan.name
     old_ip_cidr = vlan.ip_cidr
     old_ipv6_cidr = vlan.ipv6_cidr
@@ -17910,8 +18021,9 @@ def edit_vlan_interface_from_ui(
     vlan.ip_cidr = ip_value
     vlan.ipv6_cidr = ipv6_value
     vlan.mtu = mtu
-    vlan.role = normalize_interface_role(role)
+    vlan.role = role_value
     vlan.enabled = requested_enabled and not parent_missing
+    vlan.access_management_ui_enabled = management_ui_value
     dependent_updates = refresh_interface_dependent_addresses(
         db,
         old_name=old_name,

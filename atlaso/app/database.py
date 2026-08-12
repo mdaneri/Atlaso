@@ -112,6 +112,18 @@ def init_db() -> None:
     Base.metadata.create_all(bind=engine)
     if engine.dialect.name == "sqlite":
         with engine.begin() as connection:
+            for table_name in ("physical_interfaces", "vlan_interfaces"):
+                interface_columns = {
+                    row[1]
+                    for row in connection.execute(text(f"PRAGMA table_info({table_name})")).all()
+                }
+                if "access_management_ui_enabled" not in interface_columns:
+                    connection.execute(
+                        text(
+                            f"ALTER TABLE {table_name} ADD COLUMN "
+                            "access_management_ui_enabled BOOLEAN NOT NULL DEFAULT 0"
+                        )
+                    )
             columns = {
                 row[1]
                 for row in connection.execute(
