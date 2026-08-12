@@ -440,6 +440,12 @@ def test_physical_interface_update_rolls_back_interface_and_dependents(client, m
         db.commit()
 
         def fail_after_dependent_mutation(session, **_kwargs):
+            """Inject a failure after mutating one dependent row.
+
+            Args:
+                session: Active test database session.
+                **_kwargs: Unused reconciliation keyword arguments.
+            """
             dependent_dns = session.execute(select(DnsSettings)).scalar_one()
             dependent_dns.listen_address = "192.168.60.1"
             session.add(dependent_dns)

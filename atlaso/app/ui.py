@@ -6315,6 +6315,12 @@ def refresh_interface_service_dns_aliases(db: Session, actor: str | None = None)
     changed: list[str] = []
 
     def mark(label: str, action: str | None) -> None:
+        """Record an alias unit only when its reconciler changed state.
+
+        Args:
+            label: Operator-facing dependent unit name.
+            action: Alias reconciliation result.
+        """
         if action not in {None, "unchanged", "conflict"} and label not in changed:
             changed.append(label)
 

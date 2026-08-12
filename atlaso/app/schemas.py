@@ -1375,7 +1375,12 @@ class PhysicalInterfaceUpdate(BaseModel):
     @field_validator("role", "mode", "ipv4_method", mode="before")
     @classmethod
     def normalize_legacy_enum_spellings(cls, value: Any, info: ValidationInfo) -> Any:
-        """Normalize recognized enum spellings accepted by the legacy PATCH handler."""
+        """Normalize recognized enum spellings accepted by the legacy PATCH handler.
+
+        Args:
+            value: Incoming field value to normalize when it is a recognized string.
+            info: Pydantic validation metadata identifying the current field.
+        """
         if not isinstance(value, str):
             return value
         normalized = value.strip().lower()

@@ -82,7 +82,11 @@ class PhysicalInterfaceUpdateResult:
 
 
 def _address_from_cidr(value: str | None) -> str:
-    """Return the host address from a CIDR value."""
+    """Return the host address from a CIDR value.
+
+    Args:
+        value: Optional address and prefix to parse.
+    """
     if not value:
         return ""
     try:
@@ -92,7 +96,11 @@ def _address_from_cidr(value: str | None) -> str:
 
 
 def _prefix_from_cidr(value: str | None) -> int | None:
-    """Return the prefix length from a CIDR value."""
+    """Return the prefix length from a CIDR value.
+
+    Args:
+        value: Optional address and prefix to parse.
+    """
     if not value:
         return None
     try:
@@ -102,7 +110,12 @@ def _prefix_from_cidr(value: str | None) -> int | None:
 
 
 def _interface_addresses_from_cidrs(ipv4_cidr: str | None, ipv6_cidr: str | None) -> list[str]:
-    """Return unique host addresses from IPv4 and IPv6 CIDRs."""
+    """Return unique host addresses from IPv4 and IPv6 CIDRs.
+
+    Args:
+        ipv4_cidr: Optional IPv4 address and prefix.
+        ipv6_cidr: Optional IPv6 address and prefix.
+    """
     addresses: list[str] = []
     for cidr in (ipv4_cidr, ipv6_cidr):
         address = _address_from_cidr(cidr)
@@ -112,7 +125,11 @@ def _interface_addresses_from_cidrs(ipv4_cidr: str | None, ipv6_cidr: str | None
 
 
 def _service_bind_options(db: Session) -> list[dict[str, Any]]:
-    """Return desired interfaces eligible for dependent service binding."""
+    """Return desired interfaces eligible for dependent service binding.
+
+    Args:
+        db: Active database session.
+    """
     physical_interfaces = db.execute(select(PhysicalInterface).order_by(PhysicalInterface.name)).scalars().all()
     vlan_interfaces = db.execute(
         select(VlanInterface)
@@ -157,7 +174,11 @@ def _service_bind_options(db: Session) -> list[dict[str, Any]]:
 
 
 def _network_from_cidr(value: str | None):
-    """Return a parsed network for a CIDR value when valid."""
+    """Return a parsed network for a CIDR value when valid.
+
+    Args:
+        value: Optional address and prefix to parse.
+    """
     if not value:
         return None
     try:
@@ -167,12 +188,22 @@ def _network_from_cidr(value: str | None):
 
 
 def _address_family_from_scope(scope: DhcpScope) -> int:
-    """Return the IP version represented by a DHCP scope."""
+    """Return the IP version represented by a DHCP scope.
+
+    Args:
+        scope: DHCP scope whose configured family is inspected.
+    """
     return 6 if str(scope.address_family or "").strip().lower() == "ipv6" else 4
 
 
 def _replace_interface_selection(raw_value: str | None, old_name: str, new_name: str) -> str:
-    """Replace one interface token while preserving order and uniqueness."""
+    """Replace one interface token while preserving order and uniqueness.
+
+    Args:
+        raw_value: Persisted interface selection.
+        old_name: Previous interface name to replace.
+        new_name: Replacement interface name, or blank when removing it.
+    """
     interfaces = split_interfaces(raw_value)
     if old_name != new_name:
         interfaces = [new_name if item == old_name else item for item in interfaces]
@@ -183,7 +214,12 @@ def _derive_addresses_for_interfaces(
     selected_interfaces: list[str],
     options_by_name: dict[str, dict[str, Any]],
 ) -> str:
-    """Derive listener addresses for the selected desired interfaces."""
+    """Derive listener addresses for the selected desired interfaces.
+
+    Args:
+        selected_interfaces: Ordered desired interface names.
+        options_by_name: Eligible binding metadata keyed by interface name.
+    """
     derived: list[str] = []
     for interface_name in selected_interfaces:
         option = options_by_name.get(interface_name)
@@ -196,7 +232,13 @@ def _derive_addresses_for_interfaces(
 
 
 def _rebase_address_in_network(value: str, old_network, new_network) -> str:
-    """Preserve an address offset while moving it between equivalent networks."""
+    """Preserve an address offset while moving it between equivalent networks.
+
+    Args:
+        value: Address whose host offset should be preserved.
+        old_network: Source IP network.
+        new_network: Destination IP network.
+    """
     if not value or old_network is None or new_network is None or old_network.version != new_network.version:
         return value
     try:
@@ -212,7 +254,12 @@ def _rebase_address_in_network(value: str, old_network, new_network) -> str:
 
 
 def _address_in_network(value: str | None, network) -> bool:
-    """Return whether an address belongs to a parsed network."""
+    """Return whether an address belongs to a parsed network.
+
+    Args:
+        value: Optional address to inspect.
+        network: Parsed network that should contain the address.
+    """
     if not value or network is None:
         return False
     try:
@@ -222,7 +269,11 @@ def _address_in_network(value: str | None, network) -> bool:
 
 
 def _primary_listen_address(raw_address: str | None) -> str:
-    """Return the first configured listener address."""
+    """Return the first configured listener address.
+
+    Args:
+        raw_address: Persisted listener-address selection.
+    """
     addresses = split_addresses(raw_address)
     return addresses[0] if addresses else ""
 
@@ -241,6 +292,15 @@ def refresh_interface_dependent_addresses(
 
     The caller owns the transaction. This function never commits, so every dependent row can be
     rolled back together with the interface row.
+
+    Args:
+        db: Active database session owned by the caller's transaction.
+        old_name: Previous interface name.
+        new_name: Current interface name, or blank when deleting the interface.
+        old_ip_cidr: Previous IPv4 address and prefix.
+        old_ipv6_cidr: Previous IPv6 address and prefix.
+        actor: Optional audit actor passed to DNS reconciliation.
+        dns_refresher: Optional callback for app-owned service aliases.
     """
     options_by_name = {str(option["name"]): option for option in _service_bind_options(db)}
     previous_esxi_boot = esxi_pxe_boot_settings(db)
@@ -276,10 +336,21 @@ def refresh_interface_dependent_addresses(
     changed: list[str] = []
 
     def mark_changed(label: str) -> None:
+        """Record one changed dependent unit.
+
+        Args:
+            label: Operator-facing dependent unit name.
+        """
         if label not in changed:
             changed.append(label)
 
     def update_listener_rows(model, label: str) -> None:
+        """Refresh listeners stored by one dependent settings model.
+
+        Args:
+            model: SQLAlchemy settings model to reconcile.
+            label: Operator-facing dependent unit name.
+        """
         for row in db.execute(select(model)).scalars().all():
             selected = split_interfaces(getattr(row, "listen_interface", ""))
             if old_name not in selected and new_name not in selected:
@@ -331,6 +402,12 @@ def refresh_interface_dependent_addresses(
     )
 
     def update_dhcp_scope(scope: DhcpScope | DhcpSettings, label: str) -> None:
+        """Refresh one DHCP binding and its address-dependent values.
+
+        Args:
+            scope: DHCP scope or legacy settings row to reconcile.
+            label: Operator-facing dependent unit name.
+        """
         if getattr(scope, "interface_name", "") != old_name:
             return
         family = _address_family_from_scope(scope) if isinstance(scope, DhcpScope) else 4
@@ -545,7 +622,15 @@ def _preserve_management_dhcp_dns_on_static_conversion(
     old_ipv4_method: str,
     new_ipv4_method: str,
 ) -> list[str]:
-    """Preserve observed DHCP DNS when management moves to static IPv4."""
+    """Preserve observed DHCP DNS when management moves to static IPv4.
+
+    Args:
+        db: Active database session.
+        interface: Management interface being converted.
+        new_role: Normalized desired interface role.
+        old_ipv4_method: Previous normalized IPv4 method.
+        new_ipv4_method: Desired normalized IPv4 method.
+    """
     if (
         new_role != "management"
         or old_ipv4_method != "dhcp"
@@ -577,7 +662,13 @@ def _preserve_management_dhcp_dns_on_static_conversion(
 
 
 def _parse_cidr(value: Any, version: int, field_name: str) -> str | None:
-    """Normalize and validate an optional interface CIDR."""
+    """Normalize and validate an optional interface CIDR.
+
+    Args:
+        value: Candidate CIDR value.
+        version: Required IP version.
+        field_name: Operator-facing field name used in validation errors.
+    """
     candidate = str(value or "").strip()
     if not candidate:
         return None
@@ -602,7 +693,14 @@ def update_physical_interface_desired_state(
     *,
     dns_refresher: DependentDnsRefresher | None = None,
 ) -> PhysicalInterfaceUpdateResult:
-    """Validate, reconcile, and atomically commit one physical-interface update."""
+    """Validate, reconcile, and atomically commit one physical-interface update.
+
+    Args:
+        db: Active database session.
+        interface: Persisted physical interface to update.
+        changes: Supplied desired-state fields and values.
+        dns_refresher: Optional callback for app-owned service aliases.
+    """
     supported_fields = {
         "role",
         "mode",

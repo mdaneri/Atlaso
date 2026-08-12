@@ -14795,6 +14795,13 @@ def test_vlan_interface_delete_reconciles_aliases_after_flush(client, monkeypatc
     observed_absence: list[bool] = []
 
     def ensure_esx_alias_after_flush(db, *_args, **_kwargs):
+        """Record whether the deleted VLAN is absent during alias reconciliation.
+
+        Args:
+            db: Active test database session.
+            *_args: Unused positional callback arguments.
+            **_kwargs: Unused keyword callback arguments.
+        """
         observed_absence.append(
             db.execute(
                 select(VlanInterface).where(VlanInterface.name == "eth1.85")
