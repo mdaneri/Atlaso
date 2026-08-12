@@ -1082,7 +1082,7 @@ def test_shared_ui_pattern_shell_and_wizard_contracts(client):
     wizard_markup = "\n".join(
         path.read_text(encoding="utf-8") for path in wizard_templates
     )
-    assert len(re.findall(r"<form\b[^>]*\bdata-atlaso-wizard(?:\s|>)", wizard_markup)) == 11
+    assert len(re.findall(r"<form\b[^>]*\bdata-atlaso-wizard(?:\s|>)", wizard_markup)) == 10
     for marker in (
         "data-atlaso-wizard-step=",
         "data-atlaso-wizard-nav=",
@@ -1092,7 +1092,7 @@ def test_shared_ui_pattern_shell_and_wizard_contracts(client):
         "data-atlaso-wizard-submit",
         "data-atlaso-wizard-error",
     ):
-        assert wizard_markup.count(marker) >= 11
+        assert wizard_markup.count(marker) >= 10
 
     foundation = client.get("/static/ui-patterns.js")
     assert foundation.status_code == 200

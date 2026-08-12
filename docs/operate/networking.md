@@ -128,6 +128,18 @@ These captures show responsive layouts and useful operational states referenced 
 
 *Figure: Physical Interfaces showing inherent management exposure and the standard Atlaso true glyph at the responsive viewport.*
 
+### Routes Wan: Policies
+
+![Atlaso WAN policy wizard in a responsive viewport with the five reviewed configuration steps.](../assets/screenshots/routes-wan-policy-wizard-responsive.webp)
+
+*Figure: WAN policy wizard in the verified responsive viewport.*
+
+### Routes Wan: Routes
+
+![Atlaso static route wizard reviewing the destination, interface path, WAN Simulation selection, and enabled state.](../assets/screenshots/routes-wan-static-route-wizard-desktop.webp)
+
+*Figure: Static route wizard review with the complete path and appliance-apply boundary.*
+
 ### Routes and WAN simulation
 
 ![Atlaso Routes and WAN Simulation page in the clean-appliance desktop viewport.](../assets/screenshots/routes-wan-clean-desktop.webp)
@@ -137,14 +149,6 @@ These captures show responsive layouts and useful operational states referenced 
 ![Atlaso Routes and WAN Simulation page in the clean-appliance responsive viewport.](../assets/screenshots/routes-wan-clean-responsive.webp)
 
 *Figure: Routes and WAN Simulation in the verified clean-appliance responsive state.*
-
-![Atlaso static route wizard reviewing the destination, interface path, WAN Simulation selection, and enabled state.](../assets/screenshots/routes-wan-static-route-wizard-desktop.webp)
-
-*Figure: The Static Route wizard reviews the complete desired path before saving it.*
-
-![Atlaso WAN policy wizard in a responsive viewport with the five reviewed configuration steps.](../assets/screenshots/routes-wan-policy-wizard-responsive.webp)
-
-*Figure: The WAN Policy wizard remains contained and usable in the responsive viewport.*
 
 ### VLAN interfaces
 
