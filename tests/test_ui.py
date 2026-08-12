@@ -4677,12 +4677,22 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
     unresolved_ldap_organization["data"]["ldap_users"].append(
         {"organization_slug": "missing-organization", "uid": "orphaned-user"}
     )
+    unresolved_oidc_client = deepcopy(archive)
+    unresolved_oidc_client["data"]["oidc_client_redirect_uris"].append(
+        {"client_id": "missing-client", "kind": "redirect", "uri": "https://example.invalid/callback"}
+    )
+    unresolved_esx_volume = deepcopy(archive)
+    unresolved_esx_volume["data"]["esx_nfs_shares"].append(
+        {"datastore_name": "orphaned-datastore", "volume_name": "missing-volume"}
+    )
 
     for candidate, message in [
         (invalid_collection, "must be a list"),
         (invalid_row, "must be an object"),
         (missing_required_field, "missing required field 'name'"),
         (unresolved_ldap_organization, "references an unknown LDAP organization"),
+        (unresolved_oidc_client, "references an unknown OIDC client"),
+        (unresolved_esx_volume, "references an unknown ESX storage volume"),
     ]:
         with pytest.raises(ValueError, match=message):
             archive_summary(candidate)

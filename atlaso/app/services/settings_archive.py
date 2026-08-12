@@ -754,6 +754,7 @@ def restore_settings_archive(db: Session, archive: dict[str, Any]) -> dict[str, 
         archive: Archive payload or path to process.
     """
     _validate_archive(archive)
+    _validate_archive_database_relationships(db, archive["data"])
     recovery_archives = db.execute(select(LdapRecoveryArchive)).scalars().all()
     try:
         counts = _restore_settings_archive_data(db, archive["data"])
@@ -1067,6 +1068,84 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
     Raises:
         ValueError: If a relationship target is empty or absent.
     """
+    def require_reference(
+        section_name: str,
+        row_index: int,
+        value: Any,
+        known_values: set[Any],
+        reference_name: str,
+        *,
+        optional: bool = False,
+    ) -> None:
+        """Require one archive relationship to resolve.
+
+        Args:
+            section_name: Archive data section being validated.
+            row_index: One-based position used in bounded validation feedback.
+            value: Relationship value supplied by the archive row.
+            known_values: Valid relationship targets from the archive.
+            reference_name: Bounded relationship name used in validation feedback.
+            optional: Allow an empty relationship value when true.
+        """
+        if optional and not value:
+            return
+        if not value or value not in known_values:
+            raise ValueError(
+                f"The settings archive row {row_index} in '{section_name}' references an unknown {reference_name}."
+            )
+
+    wan_policy_names = {str(row["name"]) for row in data.get("wan_policies", [])}
+    for row_index, row in enumerate(data.get("routes", []), start=1):
+        require_reference(
+            "routes",
+            row_index,
+            str(row.get("wan_policy_name") or ""),
+            wan_policy_names,
+            "WAN policy",
+            optional=True,
+        )
+
+    dhcp_scope_names = {str(row["name"]) for row in data.get("dhcp_scopes", [])}
+    for row_index, row in enumerate(data.get("dhcp_options", []), start=1):
+        require_reference(
+            "dhcp_options",
+            row_index,
+            str(row.get("scope_name") or ""),
+            dhcp_scope_names,
+            "DHCP scope",
+            optional=True,
+        )
+
+    ca_profile_names = {str(row["name"]) for row in data.get("ca_profiles", [])}
+    for row_index, row in enumerate(data.get("ca_certificates", []), start=1):
+        require_reference(
+            "ca_certificates",
+            row_index,
+            str(row.get("profile_name") or ""),
+            ca_profile_names,
+            "CA profile",
+            optional=True,
+        )
+
+    provider_ids = {str(row["id"]) for row in data.get("vsphere_key_providers", [])}
+    for row_index, row in enumerate(data.get("vsphere_trusted_vcenters", []), start=1):
+        require_reference(
+            "vsphere_trusted_vcenters",
+            row_index,
+            str(row["provider_id"]),
+            provider_ids,
+            "vSphere Key Provider",
+        )
+    trusted_vcenter_ids = {str(row["id"]) for row in data.get("vsphere_trusted_vcenters", [])}
+    for row_index, row in enumerate(data.get("vsphere_trusted_vcenter_certificates", []), start=1):
+        require_reference(
+            "vsphere_trusted_vcenter_certificates",
+            row_index,
+            str(row["trusted_vcenter_id"]),
+            trusted_vcenter_ids,
+            "trusted vCenter",
+        )
+
     organization_slugs = {str(row["slug"]) for row in data.get("ldap_organizations", [])}
     ldap_users = {
         (str(row["organization_slug"]), str(row["uid"]))
@@ -1079,10 +1158,13 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
     for section_name in ("ldap_users", "ldap_groups"):
         for row_index, row in enumerate(data.get(section_name, []), start=1):
             organization_slug = str(row["organization_slug"] or "")
-            if not organization_slug or organization_slug not in organization_slugs:
-                raise ValueError(
-                    f"The settings archive row {row_index} in '{section_name}' references an unknown LDAP organization."
-                )
+            require_reference(
+                section_name,
+                row_index,
+                organization_slug,
+                organization_slugs,
+                "LDAP organization",
+            )
     for row_index, row in enumerate(data.get("ldap_group_memberships", []), start=1):
         organization_slug = str(row["organization_slug"] or "")
         group_name = str(row["group_name"] or "")
@@ -1104,6 +1186,168 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
                 "The settings archive row "
                 f"{row_index} in 'ldap_group_memberships' references an unknown LDAP object."
             )
+
+    oidc_client_ids = {str(row["client_id"]) for row in data.get("oidc_clients", [])}
+    for row_index, row in enumerate(data.get("oidc_clients", []), start=1):
+        require_reference(
+            "oidc_clients",
+            row_index,
+            str(row.get("organization_slug") or ""),
+            organization_slugs,
+            "LDAP organization",
+            optional=True,
+        )
+    for row_index, row in enumerate(data.get("oidc_client_redirect_uris", []), start=1):
+        require_reference(
+            "oidc_client_redirect_uris",
+            row_index,
+            str(row["client_id"] or ""),
+            oidc_client_ids,
+            "OIDC client",
+        )
+    for row_index, row in enumerate(data.get("oidc_subjects", []), start=1):
+        source = str(row["source"] or "")
+        if source == "managed_ldap":
+            require_reference(
+                "oidc_subjects",
+                row_index,
+                (str(row.get("organization_slug") or ""), str(row["username"] or "")),
+                ldap_users,
+                "managed LDAP user",
+            )
+        elif source != "local":
+            raise ValueError(
+                f"The settings archive row {row_index} in 'oidc_subjects' has an unsupported identity source."
+            )
+    for row_index, row in enumerate(data.get("oidc_group_mappings", []), start=1):
+        source_type = str(row["source_type"] or "")
+        if source_type == "ldap_group":
+            require_reference(
+                "oidc_group_mappings",
+                row_index,
+                (str(row["organization_slug"] or ""), str(row["ldap_group_name"] or "")),
+                ldap_groups,
+                "managed LDAP group",
+            )
+        elif source_type != "local_role":
+            raise ValueError(
+                f"The settings archive row {row_index} in 'oidc_group_mappings' has an unsupported source type."
+            )
+        require_reference(
+            "oidc_group_mappings",
+            row_index,
+            str(row["client_id"] or ""),
+            oidc_client_ids,
+            "OIDC client",
+            optional=True,
+        )
+
+    kickstart_names = {str(row["name"]) for row in data.get("esxi_kickstarts", [])}
+    for row_index, row in enumerate(data.get("esxi_pxe_hosts", []), start=1):
+        require_reference(
+            "esxi_pxe_hosts",
+            row_index,
+            str(row.get("kickstart_name") or ""),
+            kickstart_names,
+            "ESXi Kickstart",
+            optional=True,
+        )
+
+    volume_names = {str(row["name"]) for row in data.get("esx_storage_volumes", [])}
+    for row_index, row in enumerate(data.get("esx_nfs_shares", []), start=1):
+        require_reference(
+            "esx_nfs_shares",
+            row_index,
+            str(row["volume_name"] or ""),
+            volume_names,
+            "ESX storage volume",
+        )
+
+    update_sources = {
+        (str(row["kind"]), str(row["name"]))
+        for row in data.get("update_sources", [])
+        if str(row["kind"]) in UPDATE_SOURCE_KINDS
+    }
+    for row_index, row in enumerate(data.get("update_sources", []), start=1):
+        if str(row["kind"] or "") not in UPDATE_SOURCE_KINDS:
+            raise ValueError(
+                f"The settings archive row {row_index} in 'update_sources' has an unsupported source kind."
+            )
+    for row_index, row in enumerate(data.get("managed_packages", []), start=1):
+        source = (str(row.get("source_kind") or ""), str(row.get("source_name") or ""))
+        require_reference(
+            "managed_packages",
+            row_index,
+            source if any(source) else None,
+            update_sources,
+            "update source",
+            optional=True,
+        )
+
+    profile_names = {str(row["name"]) for row in data.get("vcf_depot_download_profiles", [])}
+    script_revisions: set[tuple[str, int]] = set()
+    for script_index, script in enumerate(data.get("automation_scripts", []), start=1):
+        for revision in script["revisions"]:
+            try:
+                revision_number = int(revision["revision"])
+            except (TypeError, ValueError) as exc:
+                raise ValueError(
+                    "The settings archive row "
+                    f"{script_index} in 'automation_scripts' has an invalid revision number."
+                ) from exc
+            script_revisions.add((str(script["name"]), revision_number))
+    for row_index, row in enumerate(data.get("schedules", []), start=1):
+        task_type = str(row["task_type"] or "")
+        if task_type == "vcf_depot_download":
+            require_reference(
+                "schedules",
+                row_index,
+                str(row.get("vcf_profile_name") or ""),
+                profile_names,
+                "VCF depot download profile",
+            )
+        elif task_type == "managed_script":
+            try:
+                script_revision = int(row.get("script_revision") or 0)
+            except (TypeError, ValueError) as exc:
+                raise ValueError(
+                    f"The settings archive row {row_index} in 'schedules' has an invalid script revision."
+                ) from exc
+            require_reference(
+                "schedules",
+                row_index,
+                (str(row.get("script_name") or ""), script_revision),
+                script_revisions,
+                "automation script revision",
+            )
+
+
+def _validate_archive_database_relationships(db: Session, data: dict[str, list[dict[str, Any]]]) -> None:
+    """Validate archive relationships to desired state retained during restore.
+
+    Args:
+        db: Active database session.
+        data: Structurally validated archive data collections.
+
+    Raises:
+        ValueError: If a relationship target is absent from retained desired state.
+    """
+    usernames = {row.username for row in db.execute(select(User)).scalars().all()}
+    for row_index, row in enumerate(data.get("oidc_subjects", []), start=1):
+        if row["source"] == "local" and str(row["username"] or "") not in usernames:
+            raise ValueError(
+                f"The settings archive row {row_index} in 'oidc_subjects' references an unknown local user."
+            )
+    for section_name, username_field, creatable_username in (
+        ("vcf_backup_settings", "sftp_username", VCF_BACKUP_DEFAULT_USERNAME),
+        ("vcf_offline_depot_settings", "http_username", ""),
+    ):
+        for row_index, row in enumerate(data.get(section_name, []), start=1):
+            username = str(row.get(username_field) or "")
+            if username and username != creatable_username and username not in usernames:
+                raise ValueError(
+                    f"The settings archive row {row_index} in '{section_name}' references an unknown local user."
+                )
 
 
 def _archive_required_fields(section_name: str) -> set[str]:
