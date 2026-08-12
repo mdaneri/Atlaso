@@ -15302,6 +15302,71 @@ def test_vlan_interface_wizard_saves_management_ui_state_only_for_access_role(cl
     }
 
 
+def test_vlan_role_change_prunes_disallowed_web_terminal_target(client):
+    """Verify a VLAN moved to management is removed from Web Terminal selection.
+
+    Args:
+        client: Authenticated UI test client fixture.
+    """
+    from sqlalchemy import select
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import ApplianceSettings, PhysicalInterface, VlanInterface
+    from atlaso.app.services.appliance_settings import web_terminal_interfaces_from_json
+
+    login(client)
+    vlan_name = "eth1.84"
+    with SessionLocal() as db:
+        parent = db.execute(
+            select(PhysicalInterface).where(PhysicalInterface.name == "eth1")
+        ).scalar_one()
+        parent.role = "unused"
+        parent.mode = "trunk"
+        parent.admin_state = "up"
+        parent.oper_state = "up"
+        vlan = VlanInterface(
+            name=vlan_name,
+            parent_interface=parent.name,
+            vlan_id=84,
+            ip_cidr="192.168.84.1/24",
+            mtu=1500,
+            role="access",
+            enabled=True,
+        )
+        settings = db.execute(select(ApplianceSettings)).scalar_one()
+        settings.web_terminal_enabled = True
+        settings.web_terminal_interfaces_json = f'["eth0", "{vlan_name}"]'
+        db.add(vlan)
+        db.commit()
+        vlan_id = vlan.id
+
+    page = client.get("/vlan-interfaces")
+    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    response = client.post(
+        f"/vlan-interfaces/{vlan_id}/edit",
+        data={
+            "parent_interface": "eth1",
+            "vlan_id": "84",
+            "ip_cidr": "192.168.84.1/24",
+            "ipv6_cidr": "",
+            "mtu": "1500",
+            "role": "management",
+            "enabled": "on",
+            "csrf": csrf,
+        },
+        headers={"X-Atlaso-Grid": "1", "Accept": "application/json"},
+    )
+
+    assert response.status_code == 200, response.text
+    with SessionLocal() as db:
+        vlan = db.get(VlanInterface, vlan_id)
+        settings = db.execute(select(ApplianceSettings)).scalar_one()
+        assert vlan.role == "management"
+        assert web_terminal_interfaces_from_json(
+            settings.web_terminal_interfaces_json
+        ) == ["eth0"]
+
+
 def test_vlan_interface_wizard_respects_read_only_permissions(client):
     """Verify read-only users keep the VLAN grid without mutation launch paths.
 

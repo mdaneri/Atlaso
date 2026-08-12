@@ -512,7 +512,7 @@ def refresh_interface_dependent_addresses(
     terminal_names = {
         str(option.get("name") or "")
         for option in web_terminal_interface_options(physical_interfaces, vlan_interfaces)
-        if option.get("name")
+        if option.get("name") and option.get("web_terminal_allowed") is not False
     }
     terminal_replacements = selection_replacements(terminal_names)
     appliance_settings = db.execute(select(ApplianceSettings)).scalar_one_or_none()
