@@ -14330,13 +14330,19 @@ def test_physical_interface_trunk_mode_clears_non_applicable_role(client):
     from sqlalchemy import select
 
     from atlaso.app.database import SessionLocal
-    from atlaso.app.models import PhysicalInterface
+    from atlaso.app.models import DhcpScope, PhysicalInterface
 
     login(client)
     page = client.get("/physical-interfaces")
     rows = json.loads(html.unescape(page.text.split("data-interfaces='", 1)[1].split("'", 1)[0]))
     interface_id = next(row["id"] for row in rows if row["name"] == "eth2")
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    with SessionLocal() as db:
+        for scope in db.execute(
+            select(DhcpScope).where(DhcpScope.interface_name == "eth2")
+        ).scalars().all():
+            scope.enabled = False
+        db.commit()
 
     response = client.post(
         f"/physical-interfaces/{interface_id}/edit",
@@ -14806,6 +14812,68 @@ def test_vlan_interface_delete_reconciles_aliases_after_flush(client, monkeypatc
 
     assert deleted.status_code == 303, deleted.text
     assert observed_absence == [True]
+
+
+def test_vlan_interface_delete_rejects_enabled_dhcp_dependency(client):
+    """Verify VLAN deletion rolls back while an enabled DHCP scope remains bound.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
+    from sqlalchemy import select
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import DhcpScope, VlanInterface
+
+    login(client)
+    page = client.get("/vlan-interfaces")
+    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    created = client.post(
+        "/vlan-interfaces",
+        data={
+            "parent_interface": "eth1",
+            "vlan_id": "86",
+            "ip_cidr": "192.168.86.1/24",
+            "mtu": "1500",
+            "role": "services",
+            "enabled": "on",
+            "csrf": csrf,
+        },
+        headers={"X-Atlaso-Grid": "1", "Accept": "application/json"},
+    )
+    assert created.status_code == 200, created.text
+    vlan_id = created.json()["vlan"]["id"]
+    scope_name = "vlan-delete-dependency"
+    with SessionLocal() as db:
+        db.add(
+            DhcpScope(
+                name=scope_name,
+                address_family="ipv4",
+                interface_name="eth1.86",
+                site_address="192.168.86.1",
+                prefix_length=24,
+                range_expression="192.168.86.100-192.168.86.120",
+                dns_server="192.168.86.1",
+                ntp_server="192.168.86.1",
+                enabled=True,
+            )
+        )
+        db.commit()
+
+    rejected = client.post(
+        f"/vlan-interfaces/{vlan_id}/delete",
+        data={"csrf": csrf},
+        headers={"X-Atlaso-Grid": "1", "Accept": "application/json"},
+        follow_redirects=False,
+    )
+
+    assert rejected.status_code == 422, rejected.text
+    assert "DHCP scope" in rejected.json()["detail"]
+    with SessionLocal() as db:
+        assert db.get(VlanInterface, vlan_id) is not None
+        assert db.execute(
+            select(DhcpScope).where(DhcpScope.name == scope_name)
+        ).scalar_one().enabled is True
 
 
 def test_vlan_page_prefers_real_trunk_parent_when_inventory_has_eth2(client):

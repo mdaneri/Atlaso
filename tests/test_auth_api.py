@@ -620,6 +620,99 @@ def test_physical_interface_api_rejects_dhcp_range_that_cannot_fit(client):
         assert scope.range_expression == "192.168.50.100-192.168.50.120"
 
 
+def test_physical_interface_api_rejects_address_removal_with_enabled_dependents(client):
+    """Verify enabled DHCP and PXE bindings block removal of their interface addresses.
+
+    Args:
+        client: Authenticated-capable application test client fixture.
+    """
+    from sqlalchemy import select
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import DhcpScope, PhysicalInterface
+    from atlaso.app.services.esxi_pxe import save_esxi_pxe_boot_settings
+
+    scope_name = "api-address-removal-dependency"
+    with SessionLocal() as db:
+        interface = db.execute(
+            select(PhysicalInterface).where(PhysicalInterface.name == "eth2")
+        ).scalar_one()
+        interface.role = "access"
+        interface.mode = "access"
+        interface.ipv4_method = "static"
+        interface.ip_cidr = "192.168.50.1/24"
+        interface.ipv6_enabled = True
+        interface.ipv6_cidr = "fd00:50::1/64"
+        db.add(
+            DhcpScope(
+                name=scope_name,
+                address_family="ipv6",
+                interface_name=interface.name,
+                site_address="fd00:50::1",
+                prefix_length=64,
+                range_expression="fd00:50::100-fd00:50::120",
+                dns_server="fd00:50::1",
+                ntp_server="fd00:50::1",
+                enabled=True,
+            )
+        )
+        db.commit()
+
+    token, _metadata = create_token(
+        client,
+        scopes=["read:interfaces", "write:interfaces"],
+    )
+    headers = {"Authorization": f"Bearer {token}"}
+    dhcp_rejected = client.patch(
+        "/api/v1/interfaces/physical/eth2",
+        headers=headers,
+        json={"ipv6_enabled": False},
+    )
+    assert dhcp_rejected.status_code == 422, dhcp_rejected.text
+    assert "DHCP scope" in dhcp_rejected.json()["detail"]
+    assert "Disable or move" in dhcp_rejected.json()["detail"]
+
+    with SessionLocal() as db:
+        interface = db.execute(
+            select(PhysicalInterface).where(PhysicalInterface.name == "eth2")
+        ).scalar_one()
+        scope = db.execute(select(DhcpScope).where(DhcpScope.name == scope_name)).scalar_one()
+        assert interface.ipv6_enabled is True
+        assert interface.ipv6_cidr == "fd00:50::1/64"
+        for bound_scope in db.execute(
+            select(DhcpScope).where(DhcpScope.interface_name == interface.name)
+        ).scalars().all():
+            bound_scope.enabled = False
+        save_esxi_pxe_boot_settings(
+            db,
+            enabled=True,
+            hostname="pxe.atlaso.internal",
+            listen_interface=interface.name,
+            listen_address="192.168.50.1",
+            tftp_root="/var/lib/atlaso/pxe/tftp",
+            bios_bootfile="undionly.kpxe",
+            uefi_bootfile="snponly.efi",
+        )
+        db.commit()
+
+    pxe_rejected = client.patch(
+        "/api/v1/interfaces/physical/eth2",
+        headers=headers,
+        json={"mode": "trunk"},
+    )
+    assert pxe_rejected.status_code == 422, pxe_rejected.text
+    assert "ESXi PXE" in pxe_rejected.json()["detail"]
+    assert "Disable or move" in pxe_rejected.json()["detail"]
+
+    with SessionLocal() as db:
+        interface = db.execute(
+            select(PhysicalInterface).where(PhysicalInterface.name == "eth2")
+        ).scalar_one()
+        assert interface.mode == "access"
+        assert interface.ip_cidr == "192.168.50.1/24"
+        assert interface.ipv6_cidr == "fd00:50::1/64"
+
+
 def test_scope_restrictions_are_enforced(client):
     """Verify that scope restrictions are enforced.
 

@@ -17818,7 +17818,7 @@ def delete_vlan_interface_from_ui(
     csrf: str = Form(...),
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
-) -> RedirectResponse:
+) -> RedirectResponse | Response | JSONResponse:
     """Handle the delete vlan interface from ui endpoint.
 
     Args:
@@ -17841,18 +17841,25 @@ def delete_vlan_interface_from_ui(
     old_name = vlan.name
     old_ip_cidr = vlan.ip_cidr
     old_ipv6_cidr = vlan.ipv6_cidr
-    db.delete(vlan)
-    db.flush()
-    dependent_updates = refresh_interface_dependent_addresses(
-        db,
-        old_name=old_name,
-        new_name="",
-        old_ip_cidr=old_ip_cidr,
-        old_ipv6_cidr=old_ipv6_cidr,
-        actor=None,
-        dns_refresher=refresh_interface_service_dns_aliases,
-    )
-    db.commit()
+    try:
+        db.delete(vlan)
+        db.flush()
+        dependent_updates = refresh_interface_dependent_addresses(
+            db,
+            old_name=old_name,
+            new_name="",
+            old_ip_cidr=old_ip_cidr,
+            old_ipv6_cidr=old_ipv6_cidr,
+            actor=None,
+            dns_refresher=refresh_interface_service_dns_aliases,
+        )
+        db.commit()
+    except PhysicalInterfaceUpdateError as exc:
+        db.rollback()
+        return vlan_form_validation_response(
+            request,
+            Response(exc.detail, status_code=exc.status_code, media_type="text/plain"),
+        )
     details: list[str] = []
     if dependent_updates:
         details.append(f"Refreshed dependent desired-state addresses: {', '.join(dependent_updates)}.")

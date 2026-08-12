@@ -336,6 +336,25 @@ def refresh_interface_dependent_addresses(
         family = _address_family_from_scope(scope) if isinstance(scope, DhcpScope) else 4
         new_address = new_addresses[family]
         if not new_address:
+            if old_networks[family] is not None and bool(getattr(scope, "enabled", False)):
+                family_label = "IPv6" if family == 6 else "IPv4"
+                dependency_label = (
+                    f"DHCP scope {scope.name}"
+                    if isinstance(scope, DhcpScope)
+                    else "DHCP settings"
+                )
+                dependency_verb = "depends" if isinstance(scope, DhcpScope) else "depend"
+                raise PhysicalInterfaceUpdateError(
+                    f"Enabled {dependency_label} still {dependency_verb} on "
+                    f"{old_name} {family_label}. "
+                    "Disable or move the DHCP binding before removing that interface address."
+                )
+            if new_name != old_name:
+                scope.interface_name = new_name
+                if hasattr(scope, "updated_at"):
+                    scope.updated_at = utcnow()
+                db.add(scope)
+                mark_changed(label)
             return
         scope_site_address = getattr(scope, "site_address", "")
         scope_prefix = getattr(scope, "prefix_length", None)
@@ -453,6 +472,15 @@ def refresh_interface_dependent_addresses(
             split_interfaces(updated_interfaces),
             options_by_name,
         )
+        if (
+            old_addresses
+            and bool(esxi_boot.get("enabled"))
+            and not split_addresses(updated_addresses)
+        ):
+            raise PhysicalInterfaceUpdateError(
+                f"Enabled ESXi PXE still depends on {old_name}. "
+                "Disable or move the Network Boot/PXE binding before removing its listen address."
+            )
         stale_boot_addresses = split_addresses(
             str(previous_esxi_boot.get("listen_address") or "")
         )

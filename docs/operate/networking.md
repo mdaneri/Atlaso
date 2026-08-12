@@ -39,8 +39,10 @@ unreachable after apply.
 Edits from Physical Interfaces and `PATCH /api/v1/interfaces/physical/{name}` share the same transaction. When an
 IPv4 or IPv6 CIDR changes, Atlaso derives the replacement addresses for selected DNS, NTP/NTS, CA, KMS, LDAP, VCF,
 DHCP, and Network Boot/PXE bindings before committing. A reconciliation failure, including an existing DHCP range that
-cannot fit after a prefix shrink, rolls back the interface and every dependent desired-state row together. Saving still
-does not change Photon until global Appliance Apply is submitted.
+cannot fit after a prefix shrink, rolls back the interface and every dependent desired-state row together. Atlaso also
+rejects address removal or trunk conversion while an enabled DHCP or Network Boot/PXE binding still needs the affected
+address; disable or move the binding before retrying. Saving still does not change Photon until global Appliance Apply
+is submitted.
 
 ### Choose where the management UI is available
 

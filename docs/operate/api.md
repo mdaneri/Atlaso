@@ -78,8 +78,10 @@ Recognized role, mode, and IPv4-method spellings are case-insensitive; the legac
 Changing a physical interface's IPv4 or IPv6 CIDR automatically refreshes dependent desired-state addresses for DNS,
 NTP/NTS, Certificate Authority, KMS, LDAP, OIDC, VCF services, matching DHCP scopes, and Network Boot/PXE. Atlaso
 commits the interface and dependent rows as one transaction. If any dependent update fails, none of those changes are
-saved. The audit event names the dependent units that were refreshed. This remains a desired-state edit: review the resulting
-network and service previews, then use global Appliance Apply for host enforcement.
+saved. Removing an address family or converting an interface to trunk mode is rejected while an enabled DHCP scope or
+Network Boot/PXE listener still depends on the address; disable or move that binding first. The audit event names the
+dependent units that were refreshed. This remains a desired-state edit: review the resulting network and service
+previews, then use global Appliance Apply for host enforcement.
 
 ## Scopes and authorization
 
