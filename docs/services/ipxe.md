@@ -30,8 +30,8 @@ remain part of the generated REST contract.
 
 ## Operate Network Boot
 
-Open **Network Boot** at `/ui/management/network-boot`. The former `/esxi-pxe` browser route
-redirects here; existing ESXi API paths, the `esxi_pxe` apply unit, staged
+Open **Network Boot** at `/ui/management/network-boot`. The former `/esxi-pxe` browser route is a temporary
+compatibility redirect; existing ESXi API paths, the `esxi_pxe` apply unit, staged
 configuration paths, and helper commands remain compatible.
 
 An unknown or unassigned x86-64 machine receives a per-host iPXE menu from

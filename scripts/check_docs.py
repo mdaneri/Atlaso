@@ -3,12 +3,16 @@
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import re
 import sys
 import tomllib
+from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
+from types import ModuleType
+from typing import Iterable
 from urllib.parse import unquote, urlparse
 
 
@@ -20,6 +24,31 @@ ALLOWED_STATUSES = {"current", "roadmap", "historical", "redirect"}
 HEADING_RE = re.compile(r"^(#{1,6})\s+(.+?)\s*$")
 LINK_RE = re.compile(r"!?\[[^\]]+\]\(([^)]+)\)")
 IMAGE_RE = re.compile(r"!\[[^\]]+\]\(([^)]+)\)")
+BROWSER_PATH_RE = re.compile(
+    r"(?<![A-Za-z0-9.])"
+    r"(?P<path>/[A-Za-z0-9][A-Za-z0-9._~{}<>*-]*"
+    r"(?:/[A-Za-z0-9._~{}<>*-]+)*"
+    r"(?:\?[A-Za-z0-9._~{}<>*=&%+-]*)?)"
+)
+LEGACY_BROWSER_ROUTE_ALLOWLIST = {
+    "docs/project/ui-compliance-matrix.md": {
+        "/services/{service}/logs",
+    },
+    "docs/reference/full-technical-reference.md": {
+        "/certificate-authority/.../downloads",
+    },
+    "docs/services/ipxe.md": {
+        "/esxi-pxe",
+    },
+    "docs/services/public-services.md": {
+        "/certificate-authority/.../downloads/",
+    },
+    "docs/services/vcf-trust.md": {
+        "/vcf-helper/trust-root-ca",
+        "/vcf-trust",
+        "/vcf-trust/root-ca",
+    },
+}
 
 
 @dataclass(frozen=True)
@@ -43,6 +72,77 @@ class Finding:
         """
         path = self.path.relative_to(ROOT)
         return f"{path}:{self.line}: {self.message}" if self.line else f"{path}: {self.message}"
+
+
+def load_ui_routes() -> ModuleType:
+    """Load the browser-route contract without importing the Atlaso application package.
+
+    Returns:
+        The loaded ``atlaso.app.ui_routes`` module.
+    """
+    path = ROOT / "atlaso" / "app" / "ui_routes.py"
+    spec = importlib.util.spec_from_file_location("_atlaso_ui_routes_for_docs", path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"unable to load browser-route contract: {path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def markdown_sources() -> list[Path]:
+    """Return every checked-in Markdown source covered by documentation validation."""
+    paths = [ROOT / "README.md", ROOT / "AGENTS.md", ROOT / "CONTRIBUTING.md"]
+    for directory in (DOCS, ROOT / "image", ROOT / "clients"):
+        if directory.is_dir():
+            paths.extend(directory.rglob("*.md"))
+    return sorted({path for path in paths if path.is_file()})
+
+
+def validate_legacy_browser_routes(paths: Iterable[Path] | None = None) -> list[Finding]:
+    """Reject unqualified retired browser paths in checked-in Markdown.
+
+    Args:
+        paths: Optional Markdown sources to validate instead of the repository inventory.
+
+    Returns:
+        Findings for legacy browser paths that are not explicitly allowlisted.
+    """
+    ui_routes = load_ui_routes()
+    findings: list[Finding] = []
+    allowed_counts: Counter[tuple[str, str]] = Counter()
+    enforce_allowlist_inventory = paths is None
+    sources = paths if paths is not None else markdown_sources()
+    for path in sources:
+        relative = path.relative_to(ROOT).as_posix() if path.is_relative_to(ROOT) else path.as_posix()
+        allowed = LEGACY_BROWSER_ROUTE_ALLOWLIST.get(relative, set())
+        for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+            for match in BROWSER_PATH_RE.finditer(line):
+                candidate = match.group("path").rstrip(".,:;")
+                route_path = urlparse(candidate).path
+                if ui_routes.legacy_browser_target(route_path) is None:
+                    continue
+                if candidate in allowed:
+                    allowed_counts[(relative, candidate)] += 1
+                    continue
+                findings.append(
+                    Finding(
+                        path,
+                        f"retired browser path must use its canonical namespace: {candidate}",
+                        number,
+                    )
+                )
+    if enforce_allowlist_inventory:
+        for relative, candidates in LEGACY_BROWSER_ROUTE_ALLOWLIST.items():
+            for candidate in candidates:
+                count = allowed_counts[(relative, candidate)]
+                if count != 1:
+                    findings.append(
+                        Finding(
+                            ROOT / relative,
+                            f"allowlisted retired browser path must appear exactly once: {candidate} (found {count})",
+                        )
+                    )
+    return findings
 
 
 def parse_front_matter(path: Path, text: str) -> tuple[dict[str, object], str, list[Finding]]:
@@ -392,6 +492,7 @@ def main() -> int:
         _, page_findings = validate_page(path, nav)
         findings.extend(page_findings)
         findings.extend(validate_links(path))
+    findings.extend(validate_legacy_browser_routes())
     findings.extend(validate_screenshots())
     if findings:
         print(f"Documentation checks failed with {len(findings)} issue(s):", file=sys.stderr)

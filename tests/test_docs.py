@@ -5,7 +5,7 @@ import re
 from pathlib import Path
 
 from scripts import generate_embedded_screenshot_sections, generate_screenshot_gallery
-from scripts.check_docs import validate_screenshots
+from scripts.check_docs import validate_legacy_browser_routes, validate_screenshots
 from scripts.overlay_docs_site import overlay
 
 
@@ -87,6 +87,30 @@ def test_documentation_overlay_preserves_release_repository(tmp_path: Path) -> N
 def test_checked_in_screenshot_manifest_is_valid() -> None:
     """Verify that checked in screenshot manifest is valid."""
     assert validate_screenshots() == []
+
+
+def test_checked_in_markdown_uses_canonical_browser_routes() -> None:
+    """Verify current guidance does not promote temporary root-level browser paths."""
+    assert validate_legacy_browser_routes() == []
+
+
+def test_documentation_check_rejects_retired_browser_routes(tmp_path: Path) -> None:
+    """Verify a newly introduced root-level browser route fails validation.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    page = tmp_path / "example.md"
+    page.write_text("Open `/dashboard?scope=all` to review appliance state.\n", encoding="utf-8")
+
+    findings = validate_legacy_browser_routes([page])
+
+    assert len(findings) == 1
+    assert findings[0].line == 1
+    assert findings[0].message.endswith(": /dashboard?scope=all")
+
+    page.write_text("Open `/ui/management/dashboard` to review appliance state.\n", encoding="utf-8")
+    assert validate_legacy_browser_routes([page]) == []
 
 
 def test_screenshot_canonical_routes_are_idempotent() -> None:

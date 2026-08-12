@@ -200,12 +200,13 @@ before a source address exists, and is also installed in management table 100 fo
 Static routes may target IPv4-only, IPv6-only, or dual-stack non-management access physical interfaces and enabled
 VLANs; IPv6 routes render through `ip -6 route`. Lab routes are installed in Atlaso table 200 so their gateways do not
 compete with the management default. NAT v1 is explicit IPv4 masquerade only: no destination NAT, port forwarding, IPv6
-NAT, or automatic broad NAT is created from interface roles. Operators edit NAT rules on `/routes-wan`, choose a
+NAT, or automatic broad NAT is created from interface roles. Operators edit NAT rules on
+`/ui/management/routes-wan`, choose a
 non-management access physical interface or enabled VLAN with an IPv4 CIDR as the outbound interface, and review the
 rendered nftables table and command intent on the global apply page. Route-specific WAN impairment is planned but not
 exposed in v1; the design notes live in `docs/routing-wan-roadmap.md`.
 
-The `/routes-wan` browser surface labels path entries **Static Routes** and forwarding authorization **Routing
+The `/ui/management/routes-wan` browser surface labels path entries **Static Routes** and forwarding authorization **Routing
 Permissions**. Static Routes, explicit Routing Permissions, NAT Rules, and WAN Policies retain Tabulator browse grids
 but use the shared reviewed add/edit wizard. Wizard submission and direct Enabled changes update desired state only;
 they never invoke this helper or apply unit directly. Generated route-role permissions remain read-only.
@@ -646,7 +647,7 @@ when no ID has been recorded or the operator explicitly confirms **Refresh softw
 it does not trust the first UUID printed during first-run initialization. A generation failure leaves the previous ID
 recorded. Successful generation followed by failed or ambiguous readback clears the displayed ID because VCFDT may
 already have replaced its runtime identity. The refresh icon submits explicit refresh intent through the same global
-`/appliance-apply` workflow for `vcf_offline_depot`; it is not a service-specific helper call.
+`/ui/management/appliance-apply` workflow for `vcf_offline_depot`; it is not a service-specific helper call.
 Download tokens and activation codes use the combined VCFDT configuration wizard's state-aware credential selector and
 conditional upload-or-paste step; storage keys remain separate for compatibility.
 Metadata and binaries profiles use whichever credential was staged most recently: the runtime download-token file used

@@ -9,7 +9,8 @@ status: current
 
 # Signed Appliance Releases and Photon Updates
 
-Appliance Update is audited runtime maintenance, separate from desired-state enforcement and `/appliance-apply`. The web
+Appliance Update is audited runtime maintenance, separate from desired-state enforcement and
+`/ui/management/appliance-apply`. The web
 process queues work, and `atlaso-worker.service` executes it as a durable `appliance-update` task. Each manual or
 scheduled check/install is one parent task with an ordered child step for every selected stream. The child owns its
 status, progress, timestamps, compatibility evidence, error, and bounded redacted helper output. The parent retains the

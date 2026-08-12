@@ -135,7 +135,7 @@ prevents a queued task from applying state that the administrator did not inspec
 
 ## Safety boundaries
 
-- `/appliance-apply` is the only desired-state host-mutation workflow.
+- `/ui/management/appliance-apply` is the only desired-state host-mutation workflow.
 - Only one Appliance Apply master can be pending or running.
 - Photon mutations use constrained `atlaso-helper` actions; the web process does not receive broad root access.
 - Previews, diffs, task results, logs, and audit details redact sensitive-looking values.

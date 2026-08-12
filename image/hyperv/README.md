@@ -202,7 +202,7 @@ to Packer.
 The generated appliance keeps `ATLASO_DRY_RUN_SYSTEM_ADAPTERS=true` until each helper-backed apply unit is reviewed and
 promoted. Provisioning writes both `ATLASO_SECRET_KEY` and `ATLASO_SECRETS_KEY`; the latter encrypts CA root and leaf
 private-key material stored in the Atlaso database and must be preserved for settings backup portability. Appliance
-Update is runtime maintenance and stays separate from desired-state `/appliance-apply`. It stages
+Update is runtime maintenance and stays separate from desired-state `/ui/management/appliance-apply`. It stages
 `/var/lib/atlaso/apply/appliance-update/atlaso-update.json` and uses `atlaso-helper appliance-update` for Photon OS,
 PowerShell modules, and signed Atlaso releases. Provisioning installs the named Ed25519 trust keys under
 `/etc/atlaso/update-trust.d` and creates the versioned `/opt/atlaso/releases/<version>` layout with `current` and
@@ -222,7 +222,7 @@ unprivileged managed-script execution. Firewall desired state is nftables-backed
 `/etc/atlaso/nftables.d/atlaso.nft`, and disables the older Photon iptables service so Atlaso has a single firewall
 owner.
 
-DNS/DHCP desired state is dnsmasq-backed. Real `/appliance-apply` stages the rendered config under
+DNS/DHCP desired state is dnsmasq-backed. Real `/ui/management/appliance-apply` stages the rendered config under
 `/var/lib/atlaso/apply/dnsmasq/`, validates it with `dnsmasq --test`, installs `/etc/atlaso/dnsmasq.d/atlaso.conf`, and
 reloads or restarts `dnsmasq` through `atlaso-helper`. The rendered config uses `/var/lib/atlaso/dnsmasq/dhcp.leases`
 for DHCP leases, and the helper exposes only that allowlisted lease readback path. DHCP scopes should bind to access
@@ -238,19 +238,19 @@ HTTP menu and default to this read-only RAM environment. Apply DNS/DHCP,
 Network Boot (`esxi_pxe` internally), and Firewall together when boot settings
 change.
 
-Certificate Authority desired state is Atlaso CA-backed. Real `/appliance-apply` stages
+Certificate Authority desired state is Atlaso CA-backed. Real `/ui/management/appliance-apply` stages
 `/var/lib/atlaso/apply/ca/atlaso-ca.json`, validates the staged CA/certificate payload through `atlaso-helper`, and
 writes public CA bundles plus service certificate/key files under `/etc/atlaso`. Private keys are encrypted in the
 database with `ATLASO_SECRETS_KEY`; previews, jobs, and logs must remain redacted.
 
-KMS / KMIP desired state is PyKMIP-backed for lab compatibility testing. Real `/appliance-apply` stages
+KMS / KMIP desired state is PyKMIP-backed for lab compatibility testing. Real `/ui/management/appliance-apply` stages
 `/var/lib/atlaso/apply/kms/pykmip.conf`, requires an enabled healthy CA with issued KMS server/client certificates,
 installs `/etc/atlaso/kms/pykmip.conf` and `/etc/pykmip/server.conf`, and manages `atlaso-kms.service`. The service
 launches PyKMIP through Atlaso's compatibility wrapper for current Photon Python streams. The KMS listener binds to the
 IP derived from the selected access physical interface or enabled VLAN. Disabling KMS stops and disables the service
 while preserving `/var/lib/atlaso/kms/pykmip.db`.
 
-Local Users desired state is Photon OS account-backed. Real `/appliance-apply` stages
+Local Users desired state is Photon OS account-backed. Real `/ui/management/appliance-apply` stages
 `/var/lib/atlaso/apply/local-users/atlaso-users.json`, validates Atlaso-owned local usernames, creates or updates
 enabled users under `/var/lib/atlaso/users` with the per-user desired shell, removes disabled or removed managed users
 with `userdel -r`, applies staged unlock requests with `passwd -u` and `faillock --reset`, writes the desired
@@ -284,7 +284,7 @@ capacity; the deployed appliance returns to Photon's normal `/tmp` sizing after 
 
 VCF Backups desired state is OpenSSH-backed. Provisioning leaves the default `vcf-backup` account absent from Photon OS
 until Local Users apply creates it. When VCF Backup desired state is off, Atlaso keeps the default `vcf-backup` user
-disabled so the next Local Users apply removes the Photon OS account. Real `/appliance-apply` stages the rendered
+disabled so the next Local Users apply removes the Photon OS account. Real `/ui/management/appliance-apply` stages the rendered
 drop-in under `/var/lib/atlaso/apply/vcf-backups/`, validates that it is a Atlaso-rendered `Match User` config for an
 existing OS account, installs `/etc/ssh/sshd_config.d/atlaso-vcf-backups.conf`, prepares the fixed
 `/mnt/atlaso-vcf-backups` chroot and `/backups` upload directory, and restarts `sshd` through `atlaso-helper`. Firewall
@@ -293,7 +293,8 @@ disabled/enabled, has a pending password, changes shell, or has an unlock reques
 
 The firewall preview derives Atlaso-managed service allow rules from enabled service listener desired state, including
 management, DNS, DHCP, KMS, NTPsec, VCF Backup, VCF Offline Depot, and VCF Private Registry listeners. DHCP VLAN moves
-or service listener moves should be applied with the changed Firewall unit when `/appliance-apply` shows it pending.
+or service listener moves should be applied with the changed Firewall unit when `/ui/management/appliance-apply` shows
+it pending.
 
 Before shutdown, provisioning resets the exported appliance image from the temporary Packer builder network to the
 Atlaso management network:
@@ -377,7 +378,8 @@ curl -fsS http://127.0.0.1:8000/openapi.json >/dev/null
 curl -fsS http://127.0.0.1:8000/api/v1/dashboard >/dev/null || true
 ```
 
-From the host, verify the management URL, login, reboot persistence, and that `/appliance-apply` still records dry-run
+From the host, verify the management URL, login, reboot persistence, and that `/ui/management/appliance-apply` still
+records dry-run
 command intent before any real adapter execution is enabled.
 
 If the VM console prints `systemd-ssh-generator: Failed to query local AF_VSOCK CID: Cannot assign requested address`,
