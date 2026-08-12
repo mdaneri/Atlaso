@@ -3577,7 +3577,8 @@ logged.</p>
 applied and accepts only non-secret management-network values. It cannot open the process monitor, root shell, power
 menu, or ordinary desired-state editor. A root-owned initialization lock is present in the reusable VMware image, so
 those privileged actions are unavailable from the moment tty1 starts until customization applies the deployment root
-password and completes.</p>
+password and completes. A confirmed no-envelope boot removes that lock without opening network review and therefore
+restores the same ordinary authenticated console actions.</p>
 <h2 id="vmware-first-boot-network-review">VMware first-boot network review<a class="headerlink" href="#vmware-first-boot-network-review" title="Permanent link">&para;</a></h2>
 <p><code>atlaso-vmware-ovf-customize.service</code> and the console use <code>atlaso.app.management_network</code> for the same IPv4, IPv6, and
 DNS validation rules. Static gateways must be on-link for their configured prefix and cannot equal the interface
@@ -3585,6 +3586,14 @@ address. IPv4 network and broadcast addresses are rejected for both the interfac
 shorter than <code>/31</code>, while both <code>/31</code> point-to-point peers remain usable; an IPv6 gateway may instead be link-local. The
 customizer validates all OVF management fields before the first host mutation. It first validates the FQDN, required
 properties, credentials, and root-SSH boolean because the network-only console handshake cannot correct those fields.</p>
+<p>The VMware Tools read contract preserves both the answer signal and returned content. Thirty consecutive answered-empty
+reads confirm that no OVF envelope was supplied without racing a delayed injection. Atlaso atomically records
+<code>/var/lib/atlaso/vmware-no-ovf-initialization.applied</code>, clears the review/correction files and initialization lock, and
+logs <strong>No OVF deployment properties supplied; using image defaults.</strong> The normal console and remaining first-boot units
+then continue. An unanswered Tools channel resets empty confirmation and remains fail-closed. Malformed XML, a present
+envelope with no complete property set, invalid non-network properties, and invalid management relationships also remain
+blocked. On reboot, the durable non-OVF marker avoids the confirmation loop. A later nonempty envelope invalidates that
+marker durably before entering the ordinary validation and customization path.</p>
 <p>When validation fails, the customizer atomically writes a bounded, non-secret review document under
 <code>/var/lib/atlaso</code> and waits without starting networkd, data-disk initialization, bootstrap HTTPS, or Atlaso. The console
 prepopulates its existing management form from that document and atomically submits only allowlisted network fields in
@@ -3606,6 +3615,16 @@ promoting possibly stale source state. Empty guestinfo must remain conclusively 
 proves scrub completion; properties that appear during that window are applied as a replacement deployment. An
 interrupted original OVA apply is safe to reapply idempotently. The applied marker removes the stale handshake and lock
 before exiting.</p>
+<p>VMware deployment-property cleanup sets <code>guestinfo.ovfEnv</code> to the explicit empty string through either
+<code>vmware-rpctool</code> or <code>vmtoolsd</code>. A credential-scrub or applied-marker failure after pending success is durable enters the
+finalization retry loop directly and clears the network-review handshake. It must never ask the operator to resubmit
+DHCP or static values after the management network has already validated and applied. VMware Tools may return that
+cleared value as the exact quoted-empty sentinel <code>""</code>; the reader normalizes only that sentinel to answered-empty before
+running the stable-empty confirmation.</p>
+<p>DHCP OVF customization may leave the legacy management-source CIDR empty because the generated Firewall service rules
+bind management access to the effective interface instead. When those generated rules replace the legacy rule, config
+rendering does not parse or emit the unused CIDR. Static deployments continue to validate and use their explicit source
+network.</p>
 <p>OVF XML password attributes are consumed exactly as parsed rather than trimmed. This preserves valid leading or trailing
 spaces supplied through a release deployment instead of applying a different credential or leaving initialization
 locked on a shortened value.</p>
