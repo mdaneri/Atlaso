@@ -1009,7 +1009,7 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert service_worker.headers["cache-control"] == "no-cache"
     assert service_worker.headers["service-worker-allowed"] == "/ui/management/"
     assert "ATLASO_CACHE" in service_worker.text
-    assert "atlaso-management-pwa-v249" in service_worker.text
+    assert "atlaso-management-pwa-v250" in service_worker.text
     assert 'fetch(asset, { cache: "reload" })' in service_worker.text
     assert ".catch(() => undefined)" in service_worker.text
     assert 'request.mode === "navigate"' in service_worker.text
@@ -1027,7 +1027,7 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-8" in service_worker.text
     assert "/static/appliance-apply-polling.js?v=issue-294-2" in service_worker.text
     assert "/static/ui-routes.js?v=issue-287-1" in service_worker.text
-    assert "/static/app.js?v=routes-wan-wizards-308-3" in service_worker.text
+    assert "/static/app.js?v=issue-315-interface-dependencies-1" in service_worker.text
     assert "/static/terminal.js?v=issue-287-2" in service_worker.text
     assert "/static/pwa.js?v=issue-287-2" in service_worker.text
     assert "vcfdt-configuration-248-20260807-14" not in service_worker.text
@@ -1059,8 +1059,8 @@ def test_shared_ui_pattern_shell_and_wizard_contracts(client):
     base = (templates / "base.html").read_text(encoding="utf-8")
     public_base = (templates / "public_portal_base.html").read_text(encoding="utf-8")
     for shell, app_asset in (
-        (base, "/static/app.js?v=routes-wan-wizards-308-3"),
-        (public_base, "/static/app.js?v=routes-wan-wizards-308-3"),
+        (base, "/static/app.js?v=issue-315-interface-dependencies-1"),
+        (public_base, "/static/app.js?v=issue-315-interface-dependencies-1"),
         (base, "/static/appliance-apply-polling.js?v=issue-294-2"),
     ):
         assert shell.index("/static/vendor/tabulator/tabulator.min.js") < shell.index(
@@ -1687,7 +1687,7 @@ def test_monitor_page_renders_and_data_endpoint(client):
     assert "swagger-link-icon" in page.text
     assert "/static/app.css?v=vlan-interface-wizard-304-2" in page.text
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-8" in page.text
-    assert "/static/app.js?v=routes-wan-wizards-308-3" in page.text
+    assert "/static/app.js?v=issue-315-interface-dependencies-1" in page.text
     app_css = client.get("/static/app.css")
     assert app_css.status_code == 200
     assert ".split-workspace > .wide-panel" in app_css.text
@@ -1996,7 +1996,7 @@ def test_dns_listen_interface_menu_has_empty_state_when_no_interfaces_available(
         client: HTTP test client used to exercise the Atlaso application.
     """
     from atlaso.app.database import SessionLocal
-    from atlaso.app.models import PhysicalInterface, VlanInterface
+    from atlaso.app.models import DhcpScope, PhysicalInterface, VlanInterface
 
     login(client)
     with SessionLocal() as db:
@@ -2026,7 +2026,7 @@ def test_forget_missing_physical_interface_deletes_only_stale_rows(client):
         client: HTTP test client used to exercise the Atlaso application.
     """
     from atlaso.app.database import SessionLocal
-    from atlaso.app.models import PhysicalInterface, VlanInterface
+    from atlaso.app.models import DhcpScope, PhysicalInterface, VlanInterface
 
     login(client)
     with SessionLocal() as db:
@@ -2040,6 +2040,15 @@ def test_forget_missing_physical_interface_deletes_only_stale_rows(client):
         )
         db.add(missing)
         db.add(VlanInterface(name="missing_eth7.20", parent_interface="missing_eth7", vlan_id=20, enabled=False))
+        db.add(
+            DhcpScope(
+                name="disabled-child-scope",
+                interface_name="missing_eth7.20",
+                site_address="10.20.0.1",
+                prefix_length=24,
+                enabled=False,
+            )
+        )
         active = PhysicalInterface(
             name="eth8",
             mac_address="00:50:56:00:00:08",
@@ -2064,7 +2073,68 @@ def test_forget_missing_physical_interface_deletes_only_stale_rows(client):
     with SessionLocal() as db:
         assert db.get(PhysicalInterface, missing_id) is None
         assert db.query(VlanInterface).filter(VlanInterface.parent_interface == "missing_eth7").count() == 0
+        child_scope = db.query(DhcpScope).filter(DhcpScope.name == "disabled-child-scope").one()
+        assert child_scope.interface_name == ""
         assert db.get(PhysicalInterface, active_id) is not None
+
+
+def test_forget_missing_physical_interface_reports_enabled_dependency(client):
+    """Verify Forget rolls back and reports an enabled DHCP dependency.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
+    from sqlalchemy import select
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import DhcpScope, DhcpSettings, PhysicalInterface
+
+    login(client)
+    scope_name = "missing-interface-dependency"
+    with SessionLocal() as db:
+        db.execute(select(DhcpSettings)).scalar_one().enabled = True
+        missing = PhysicalInterface(
+            name="missing_eth9",
+            mac_address="00:50:56:00:00:09",
+            role="access",
+            mode="access",
+            ip_cidr="10.9.0.1/24",
+            admin_state="down",
+            oper_state="missing",
+        )
+        db.add(missing)
+        db.flush()
+        db.add(
+            DhcpScope(
+                name=scope_name,
+                address_family="ipv4",
+                interface_name=missing.name,
+                site_address="10.9.0.1",
+                prefix_length=24,
+                range_expression="10.9.0.100-10.9.0.120",
+                dns_server="10.9.0.1",
+                ntp_server="10.9.0.1",
+                enabled=True,
+            )
+        )
+        db.commit()
+        missing_id = missing.id
+
+    page = client.get("/physical-interfaces")
+    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    response = client.post(
+        f"/physical-interfaces/{missing_id}/forget",
+        data={"csrf": csrf},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 422, response.text
+    assert "DHCP scope" in response.text
+    with SessionLocal() as db:
+        assert db.get(PhysicalInterface, missing_id) is not None
+        assert db.execute(
+            select(DhcpScope).where(DhcpScope.name == scope_name)
+        ).scalar_one().enabled is True
 
 
 def test_forget_missing_first_service_interface_moves_dns_alias_to_next_target(client):
@@ -14045,6 +14115,7 @@ def test_physical_interface_edit_updates_desired_state(client):
         DnsRecord,
         DnsSettings,
         KmsSettings,
+        OidcProviderSettings,
         VcfBackupSettings,
         VcfOfflineDepotSettings,
         VcfPrivateRegistrySettings,
@@ -14065,11 +14136,14 @@ def test_physical_interface_edit_updates_desired_state(client):
             NtpSettings,
             CaSettings,
             KmsSettings,
+            OidcProviderSettings,
             VcfBackupSettings,
             VcfOfflineDepotSettings,
             VcfPrivateRegistrySettings,
         ):
-            settings = db.execute(select(model)).scalar_one()
+            settings = db.execute(select(model)).scalar_one_or_none()
+            if settings is None:
+                settings = model()
             settings.enabled = True
             settings.listen_interface = "eth2"
             settings.listen_address = "192.168.50.1"
@@ -14119,7 +14193,7 @@ def test_physical_interface_edit_updates_desired_state(client):
             "mode": "access",
             "ip_cidr": "192.168.70.1/24",
             "mtu": "1400",
-            "admin_state": "down",
+            "admin_state": "up",
             "csrf": csrf,
         },
         follow_redirects=False,
@@ -14131,7 +14205,7 @@ def test_physical_interface_edit_updates_desired_state(client):
     assert '"mode": "access"' in refreshed.text
     assert '"ip_cidr": "192.168.70.1/24"' in refreshed.text
     assert '"mtu": 1400' in refreshed.text
-    assert '"admin_state": "down"' in refreshed.text
+    assert '"admin_state": "up"' in refreshed.text
     assert '"desired_state_source": "user"' in refreshed.text
 
     with SessionLocal() as db:
@@ -14140,6 +14214,7 @@ def test_physical_interface_edit_updates_desired_state(client):
             NtpSettings,
             CaSettings,
             KmsSettings,
+            OidcProviderSettings,
             VcfBackupSettings,
             VcfOfflineDepotSettings,
             VcfPrivateRegistrySettings,
@@ -14166,6 +14241,47 @@ def test_physical_interface_edit_updates_desired_state(client):
         assert pxe_record.address == "esxi-pxe-192-168-70-1.atlaso.internal"
         pxe_interface_record = db.execute(select(DnsRecord).where(DnsRecord.hostname == "esxi-pxe-192-168-70-1.atlaso.internal", DnsRecord.record_type == "A")).scalar_one()
         assert pxe_interface_record.address == "192.168.70.1"
+
+
+def test_interface_dns_alias_refresh_reports_real_changes_and_includes_esx_storage(
+    client,
+    monkeypatch,
+):
+    """Verify interface reconciliation ignores unchanged aliases and refreshes ESX Storage.
+
+    Args:
+        client: HTTP test client used to initialize the application database.
+        monkeypatch: Pytest fixture used to replace DNS alias reconcilers.
+    """
+    from atlaso.app import ui
+    from atlaso.app.database import SessionLocal
+
+    unchanged_helpers = [
+        "ensure_dns_for_kms",
+        "ensure_dns_for_ldap",
+        "ensure_dns_for_oidc",
+        "ensure_dns_for_vcf_offline_depot",
+        "ensure_dns_for_vcf_registry",
+        "ensure_dns_for_ca_portal",
+        "ensure_dns_for_esxi_pxe",
+    ]
+    for helper_name in unchanged_helpers:
+        monkeypatch.setattr(ui, helper_name, lambda *_args, **_kwargs: "unchanged")
+    monkeypatch.setattr(
+        ui,
+        "ensure_dns_for_kms",
+        lambda *_args, **_kwargs: ui.summarize_dns_actions(["conflict", "removed-stale"]),
+    )
+    monkeypatch.setattr(
+        ui,
+        "ensure_dns_for_esx_storage",
+        lambda *_args, **_kwargs: "updated",
+    )
+
+    with SessionLocal() as db:
+        assert ui.refresh_interface_service_dns_aliases(db) == ["KMS", "ESX Storage"]
+
+    assert ui.summarize_dns_actions(["conflict", "unchanged"]) == "conflict"
 
 
 def test_physical_interface_edit_repairs_stale_scope_after_host_inventory_refresh(client):
@@ -14291,13 +14407,19 @@ def test_physical_interface_trunk_mode_clears_non_applicable_role(client):
     from sqlalchemy import select
 
     from atlaso.app.database import SessionLocal
-    from atlaso.app.models import PhysicalInterface
+    from atlaso.app.models import DhcpScope, PhysicalInterface
 
     login(client)
     page = client.get("/physical-interfaces")
     rows = json.loads(html.unescape(page.text.split("data-interfaces='", 1)[1].split("'", 1)[0]))
     interface_id = next(row["id"] for row in rows if row["name"] == "eth2")
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    with SessionLocal() as db:
+        for scope in db.execute(
+            select(DhcpScope).where(DhcpScope.interface_name == "eth2")
+        ).scalars().all():
+            scope.enabled = False
+        db.commit()
 
     response = client.post(
         f"/physical-interfaces/{interface_id}/edit",
@@ -14645,6 +14767,200 @@ def test_vlan_interface_create_edit_delete_and_apply(client):
     assert "eth1.50" not in client.get("/vlan-interfaces").text
 
 
+def test_vlan_interface_edit_reports_unrepresentable_dhcp_range(client):
+    """Verify VLAN prefix shrink failures use the recoverable grid validation response.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
+    from sqlalchemy import select
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import DhcpScope, VlanInterface
+
+    login(client)
+    page = client.get("/vlan-interfaces")
+    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    created = client.post(
+        "/vlan-interfaces",
+        data={
+            "parent_interface": "eth1",
+            "vlan_id": "84",
+            "ip_cidr": "192.168.84.1/24",
+            "mtu": "1500",
+            "role": "services",
+            "enabled": "on",
+            "csrf": csrf,
+        },
+        headers={"X-Atlaso-Grid": "1", "Accept": "application/json"},
+    )
+    assert created.status_code == 200, created.text
+    vlan_id = created.json()["vlan"]["id"]
+
+    scope_name = "vlan-prefix-shrink-dependency"
+    with SessionLocal() as db:
+        db.add(
+            DhcpScope(
+                name=scope_name,
+                address_family="ipv4",
+                interface_name="eth1.84",
+                site_address="192.168.84.1",
+                prefix_length=24,
+                range_expression="192.168.84.100-192.168.84.120",
+                dns_server="192.168.84.1",
+                ntp_server="192.168.84.1",
+            )
+        )
+        db.commit()
+
+    rejected = client.post(
+        f"/vlan-interfaces/{vlan_id}/edit",
+        data={
+            "parent_interface": "eth1",
+            "vlan_id": "84",
+            "ip_cidr": "192.168.84.1/28",
+            "mtu": "1500",
+            "role": "services",
+            "enabled": "on",
+            "csrf": csrf,
+        },
+        headers={"X-Atlaso-Grid": "1", "Accept": "application/json"},
+    )
+
+    assert rejected.status_code == 422, rejected.text
+    assert "cannot fit" in rejected.json()["detail"]
+    with SessionLocal() as db:
+        vlan = db.get(VlanInterface, vlan_id)
+        scope = db.execute(select(DhcpScope).where(DhcpScope.name == scope_name)).scalar_one()
+        assert vlan is not None
+        assert vlan.ip_cidr == "192.168.84.1/24"
+        assert scope.site_address == "192.168.84.1"
+        assert scope.prefix_length == 24
+        assert scope.range_expression == "192.168.84.100-192.168.84.120"
+
+
+def test_vlan_interface_delete_reconciles_aliases_after_flush(client, monkeypatch):
+    """Verify dependent alias reconcilers cannot still select a deleted VLAN.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+        monkeypatch: Pytest fixture used to replace DNS alias reconciliation.
+    """
+    from sqlalchemy import select
+
+    from atlaso.app import ui
+    from atlaso.app.models import VlanInterface
+
+    login(client)
+    page = client.get("/vlan-interfaces")
+    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    created = client.post(
+        "/vlan-interfaces",
+        data={
+            "parent_interface": "eth1",
+            "vlan_id": "85",
+            "ip_cidr": "192.168.85.1/24",
+            "mtu": "1500",
+            "role": "storage",
+            "enabled": "on",
+            "csrf": csrf,
+        },
+        headers={"X-Atlaso-Grid": "1", "Accept": "application/json"},
+    )
+    assert created.status_code == 200, created.text
+    vlan_id = created.json()["vlan"]["id"]
+    observed_absence: list[bool] = []
+
+    def ensure_esx_alias_after_flush(db, *_args, **_kwargs):
+        """Record whether the deleted VLAN is absent during alias reconciliation.
+
+        Args:
+            db: Active test database session.
+            *_args: Unused positional callback arguments.
+            **_kwargs: Unused keyword callback arguments.
+        """
+        observed_absence.append(
+            db.execute(
+                select(VlanInterface).where(VlanInterface.name == "eth1.85")
+            ).scalar_one_or_none()
+            is None
+        )
+        return "removed-old"
+
+    monkeypatch.setattr(ui, "ensure_dns_for_esx_storage", ensure_esx_alias_after_flush)
+    deleted = client.post(
+        f"/vlan-interfaces/{vlan_id}/delete",
+        data={"csrf": csrf},
+        follow_redirects=False,
+    )
+
+    assert deleted.status_code == 303, deleted.text
+    assert observed_absence == [True]
+
+
+def test_vlan_interface_delete_rejects_enabled_dhcp_dependency(client):
+    """Verify VLAN deletion rolls back while an enabled DHCP scope remains bound.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
+    from sqlalchemy import select
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import DhcpScope, DhcpSettings, VlanInterface
+
+    login(client)
+    page = client.get("/vlan-interfaces")
+    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    created = client.post(
+        "/vlan-interfaces",
+        data={
+            "parent_interface": "eth1",
+            "vlan_id": "86",
+            "ip_cidr": "192.168.86.1/24",
+            "mtu": "1500",
+            "role": "services",
+            "enabled": "on",
+            "csrf": csrf,
+        },
+        headers={"X-Atlaso-Grid": "1", "Accept": "application/json"},
+    )
+    assert created.status_code == 200, created.text
+    vlan_id = created.json()["vlan"]["id"]
+    scope_name = "vlan-delete-dependency"
+    with SessionLocal() as db:
+        db.execute(select(DhcpSettings)).scalar_one().enabled = True
+        db.add(
+            DhcpScope(
+                name=scope_name,
+                address_family="ipv4",
+                interface_name="eth1.86",
+                site_address="192.168.86.1",
+                prefix_length=24,
+                range_expression="192.168.86.100-192.168.86.120",
+                dns_server="192.168.86.1",
+                ntp_server="192.168.86.1",
+                enabled=True,
+            )
+        )
+        db.commit()
+
+    rejected = client.post(
+        f"/vlan-interfaces/{vlan_id}/delete",
+        data={"csrf": csrf},
+        headers={"X-Atlaso-Grid": "1", "Accept": "application/json"},
+        follow_redirects=False,
+    )
+
+    assert rejected.status_code == 422, rejected.text
+    assert "DHCP scope" in rejected.json()["detail"]
+    with SessionLocal() as db:
+        assert db.get(VlanInterface, vlan_id) is not None
+        assert db.execute(
+            select(DhcpScope).where(DhcpScope.name == scope_name)
+        ).scalar_one().enabled is True
+
+
 def test_vlan_page_prefers_real_trunk_parent_when_inventory_has_eth2(client):
     """Verify that vlan page prefers real trunk parent when inventory has eth2.
 
@@ -14986,6 +15302,71 @@ def test_vlan_interface_wizard_saves_management_ui_state_only_for_access_role(cl
     assert rejected.json() == {
         "detail": "Management UI exposure is available only for an access-role VLAN."
     }
+
+
+def test_vlan_role_change_prunes_disallowed_web_terminal_target(client):
+    """Verify a VLAN moved to management is removed from Web Terminal selection.
+
+    Args:
+        client: Authenticated UI test client fixture.
+    """
+    from sqlalchemy import select
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import ApplianceSettings, PhysicalInterface, VlanInterface
+    from atlaso.app.services.appliance_settings import web_terminal_interfaces_from_json
+
+    login(client)
+    vlan_name = "eth1.84"
+    with SessionLocal() as db:
+        parent = db.execute(
+            select(PhysicalInterface).where(PhysicalInterface.name == "eth1")
+        ).scalar_one()
+        parent.role = "unused"
+        parent.mode = "trunk"
+        parent.admin_state = "up"
+        parent.oper_state = "up"
+        vlan = VlanInterface(
+            name=vlan_name,
+            parent_interface=parent.name,
+            vlan_id=84,
+            ip_cidr="192.168.84.1/24",
+            mtu=1500,
+            role="access",
+            enabled=True,
+        )
+        settings = db.execute(select(ApplianceSettings)).scalar_one()
+        settings.web_terminal_enabled = True
+        settings.web_terminal_interfaces_json = f'["eth0", "{vlan_name}"]'
+        db.add(vlan)
+        db.commit()
+        vlan_id = vlan.id
+
+    page = client.get("/vlan-interfaces")
+    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    response = client.post(
+        f"/vlan-interfaces/{vlan_id}/edit",
+        data={
+            "parent_interface": "eth1",
+            "vlan_id": "84",
+            "ip_cidr": "192.168.84.1/24",
+            "ipv6_cidr": "",
+            "mtu": "1500",
+            "role": "management",
+            "enabled": "on",
+            "csrf": csrf,
+        },
+        headers={"X-Atlaso-Grid": "1", "Accept": "application/json"},
+    )
+
+    assert response.status_code == 200, response.text
+    with SessionLocal() as db:
+        vlan = db.get(VlanInterface, vlan_id)
+        settings = db.execute(select(ApplianceSettings)).scalar_one()
+        assert vlan.role == "management"
+        assert web_terminal_interfaces_from_json(
+            settings.web_terminal_interfaces_json
+        ) == ["eth0"]
 
 
 def test_vlan_interface_wizard_respects_read_only_permissions(client):

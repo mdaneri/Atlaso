@@ -11164,6 +11164,7 @@ function updateApplianceSettingsValidation(payload = {}) {
       "updated+removed-old": "Updated the appliance DNS record and removed the old app-owned record.",
       "created+removed-old": "Created the appliance DNS record and removed the old app-owned record.",
       conflict: "A user-owned DNS record already uses this appliance FQDN.",
+      "conflict+changed": "Updated app-owned DNS records while preserving a conflicting user-owned record.",
     };
     if (payload.dns_record_action && actionMessages[payload.dns_record_action]) {
       dnsStatus.textContent = actionMessages[payload.dns_record_action];
@@ -13195,6 +13196,7 @@ function updateVcfDepotSummary(form, payload = {}) {
       "updated+removed-old": "DNS alias updated and old endpoint records removed.",
       "unchanged+removed-old": "Old endpoint DNS alias and target records removed.",
       "removed-old": "Old endpoint DNS alias and target records removed.",
+      "conflict+changed": "Updated app-owned endpoint records while preserving a conflicting user-owned record.",
     };
     dnsStatus.textContent = dnsMessages[payload.dns_record_action] || "DNS alias follows the first selected service listener.";
   }
