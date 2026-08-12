@@ -16,9 +16,9 @@ preserving management access.
 
 This verified appliance view provides visual orientation before you begin.
 
-![Atlaso Physical Interfaces page in the clean-appliance desktop viewport.](../assets/screenshots/physical-interfaces-clean-desktop.webp)
+![Atlaso Physical Interfaces page showing inherent management UI on eth0 and enabled management UI on access interface eth1.](../assets/screenshots/physical-interfaces-clean-desktop.webp)
 
-*Figure: Physical Interfaces in the verified clean-appliance desktop state.*
+*Figure: Physical Interfaces showing dedicated and access management UI exposure in the verified appliance desktop state.*
 
 <!-- END GENERATED INTERFACE OVERVIEW -->
 
@@ -74,9 +74,9 @@ These captures show responsive layouts and useful operational states referenced 
 
 ### Physical interfaces
 
-![Atlaso Physical Interfaces page in the clean-appliance responsive viewport.](../assets/screenshots/physical-interfaces-clean-responsive.webp)
+![Responsive Atlaso Physical Interfaces page showing inherent and enabled management UI states.](../assets/screenshots/physical-interfaces-clean-responsive.webp)
 
-*Figure: Physical Interfaces in the verified clean-appliance responsive state.*
+*Figure: Physical Interfaces management UI exposure in the verified appliance responsive state.*
 
 ### Routes and WAN simulation
 
@@ -90,12 +90,12 @@ These captures show responsive layouts and useful operational states referenced 
 
 ### VLAN interfaces
 
-![Atlaso VLAN Interfaces page in the clean-appliance desktop viewport.](../assets/screenshots/vlan-interfaces-clean-desktop.webp)
+![Atlaso VLAN Interfaces page showing the access VLAN management UI option.](../assets/screenshots/vlan-interfaces-clean-desktop.webp)
 
-*Figure: VLAN Interfaces in the verified clean-appliance desktop state.*
+*Figure: VLAN Interfaces showing optional access management UI exposure in the verified appliance desktop state.*
 
-![Atlaso VLAN Interfaces page in the clean-appliance responsive viewport.](../assets/screenshots/vlan-interfaces-clean-responsive.webp)
+![Responsive Atlaso VLAN Interfaces page showing the access VLAN management UI option.](../assets/screenshots/vlan-interfaces-clean-responsive.webp)
 
-*Figure: VLAN Interfaces in the verified clean-appliance responsive state.*
+*Figure: VLAN Interfaces management UI option in the verified appliance responsive state.*
 
 <!-- END GENERATED ADDITIONAL SCREENSHOTS -->

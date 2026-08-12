@@ -3,7 +3,7 @@
 import json
 from pathlib import Path
 
-from scripts import generate_embedded_screenshot_sections
+from scripts import generate_embedded_screenshot_sections, generate_screenshot_gallery
 from scripts.check_docs import validate_screenshots
 from scripts.overlay_docs_site import overlay
 
@@ -37,6 +37,19 @@ def test_documentation_overlay_preserves_release_repository(tmp_path: Path) -> N
 def test_checked_in_screenshot_manifest_is_valid() -> None:
     """Verify that checked in screenshot manifest is valid."""
     assert validate_screenshots() == []
+
+
+def test_screenshot_canonical_routes_are_idempotent() -> None:
+    """Verify documentation generators preserve already canonical browser routes."""
+    route = "/ui/management/physical-interfaces"
+
+    assert generate_embedded_screenshot_sections.canonical_route(route) == route
+    assert generate_screenshot_gallery.canonical_route(route) == route
+    assert generate_embedded_screenshot_sections.route_title(route) == "Physical interfaces"
+    assert generate_screenshot_gallery.route_title(route) == "Physical Interfaces"
+    assert generate_screenshot_gallery.route_title(
+        "/ui/management/vsphere-key-providers"
+    ) == "vSphere Key Providers"
 
 
 def test_embedded_screenshot_generation_is_idempotent(
