@@ -1045,6 +1045,10 @@ status: current
   operator selects a valid bind target.
 - Settings archives must not include vault entries. Restore and factory reset clear vaults and the unused legacy
   Kickstart-binding compatibility table; operators reimport or recreate vault contents afterward.
+- Validate every supplied settings archive collection, row object, nested revision, and required field before deleting
+  desired state. Restore owns rollback for every failure after mutation begins and must retain both the database row and
+  in-memory bytes for any separately staged LDAP recovery import. Remove that staged recovery material only after the
+  settings restore or factory reset database commit succeeds.
 - Documentation updates are required for every major product, architecture, workflow, safety-boundary, or
   operator-experience change. In the same change, update `README.md`, `AGENTS.md`, and any topic-specific file under
   `docs/` whose behavior or operator guidance is affected; do not treat the work as complete while those documents

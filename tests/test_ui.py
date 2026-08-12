@@ -4595,6 +4595,141 @@ def test_settings_restore_and_factory_reset_clear_staged_ldap_recovery(client):
         assert reset_staged_id not in LDAP_PENDING_RECOVERY_PAYLOADS
 
 
+def test_settings_restore_rejects_malformed_archive_without_clearing_staged_ldap_recovery(client):
+    """Verify malformed settings archives preserve staged ldap recovery state.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
+    import json
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import LdapRecoveryArchive
+    from atlaso.app.services.ldap import LDAP_PENDING_RECOVERY_PAYLOADS
+    from atlaso.app.services.settings_archive import export_settings_archive
+
+    login(client)
+    with SessionLocal() as db:
+        archive = export_settings_archive(db, actor="test")
+        staged = LdapRecoveryArchive(
+            filename="staged-invalid-restore.lfldap",
+            path="memory://pending-ldap-recovery",
+            sha256="c" * 64,
+            state="staged",
+            organization_count=1,
+            created_by="test",
+        )
+        db.add(staged)
+        db.commit()
+        staged_id = staged.id
+        LDAP_PENDING_RECOVERY_PAYLOADS[staged_id] = b"pending recovery payload"
+
+    archive["data"]["physical_interfaces"] = {"unexpected": "object"}
+    page = client.get("/backup-restore")
+    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    restored = client.post(
+        "/backup-restore/restore",
+        data={"csrf": csrf},
+        files={
+            "archive_file": (
+                "atlaso-settings.json",
+                json.dumps(archive).encode("utf-8"),
+                "application/json",
+            )
+        },
+    )
+
+    try:
+        assert restored.status_code == 400
+        assert "physical_interfaces" in restored.text
+        assert "must be a list" in restored.text
+        with SessionLocal() as db:
+            assert db.get(LdapRecoveryArchive, staged_id) is not None
+        assert LDAP_PENDING_RECOVERY_PAYLOADS[staged_id] == b"pending recovery payload"
+    finally:
+        LDAP_PENDING_RECOVERY_PAYLOADS.pop(staged_id, None)
+
+
+def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_field_shapes(client):
+    """Verify settings archive preflight rejects malformed structures before restore.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
+    from copy import deepcopy
+
+    import pytest
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.services.settings_archive import archive_summary, export_settings_archive
+
+    with SessionLocal() as db:
+        archive = export_settings_archive(db, actor="test")
+    assert archive["data"]["physical_interfaces"]
+
+    invalid_collection = deepcopy(archive)
+    invalid_collection["data"]["physical_interfaces"] = {}
+    invalid_row = deepcopy(archive)
+    invalid_row["data"]["physical_interfaces"] = ["not an object"]
+    missing_required_field = deepcopy(archive)
+    del missing_required_field["data"]["physical_interfaces"][0]["name"]
+
+    for candidate, message in [
+        (invalid_collection, "must be a list"),
+        (invalid_row, "must be an object"),
+        (missing_required_field, "missing required field 'name'"),
+    ]:
+        with pytest.raises(ValueError, match=message):
+            archive_summary(candidate)
+
+
+def test_settings_restore_rolls_back_late_failure_without_clearing_staged_ldap_recovery(client, monkeypatch):
+    """Verify late settings restore failures roll back database and process state.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+    """
+    import pytest
+    from sqlalchemy import select
+
+    import atlaso.app.services.settings_archive as settings_archive
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import ApplianceSettings, LdapRecoveryArchive
+    from atlaso.app.services.ldap import LDAP_PENDING_RECOVERY_PAYLOADS
+
+    with SessionLocal() as db:
+        settings = db.execute(select(ApplianceSettings)).scalar_one()
+        original_fqdn = settings.fqdn
+        archive = settings_archive.export_settings_archive(db, actor="test")
+        archive["data"]["appliance_settings"][0]["fqdn"] = "uncommitted-restore.atlaso.internal"
+        staged = LdapRecoveryArchive(
+            filename="staged-late-restore.lfldap",
+            path="memory://pending-ldap-recovery",
+            sha256="d" * 64,
+            state="staged",
+            organization_count=1,
+            created_by="test",
+        )
+        db.add(staged)
+        db.commit()
+        staged_id = staged.id
+        LDAP_PENDING_RECOVERY_PAYLOADS[staged_id] = b"pending recovery payload"
+
+        def fail_after_restore_mutation(*_args, **_kwargs):
+            raise RuntimeError("injected late restore failure")
+
+        monkeypatch.setattr(settings_archive, "_restore_schedules", fail_after_restore_mutation)
+        try:
+            with pytest.raises(RuntimeError, match="injected late restore failure"):
+                settings_archive.restore_settings_archive(db, archive)
+            assert db.execute(select(ApplianceSettings)).scalar_one().fqdn == original_fqdn
+            assert db.get(LdapRecoveryArchive, staged_id) is not None
+            assert LDAP_PENDING_RECOVERY_PAYLOADS[staged_id] == b"pending recovery payload"
+        finally:
+            LDAP_PENDING_RECOVERY_PAYLOADS.pop(staged_id, None)
+
+
 def test_esxi_kickstart_api_hides_raw_content_from_read_only_tokens(client):
     """Verify that esxi kickstart api hides raw content from read only tokens.
 

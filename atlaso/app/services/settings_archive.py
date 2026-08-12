@@ -8,6 +8,7 @@ from typing import Any
 
 from sqlalchemy import DateTime as SqlDateTime
 from sqlalchemy import delete, select
+from sqlalchemy.exc import IntegrityError, StatementError
 from sqlalchemy.orm import Session
 
 from atlaso import __version__
@@ -125,6 +126,57 @@ SCALAR_TABLES = {
     "esxi_kickstarts": EsxiKickstart,
     "esx_storage_settings": EsxStorageSettings,
 }
+
+ARCHIVE_SECTION_MODELS = {
+    **SCALAR_TABLES,
+    "routes": Route,
+    "dhcp_options": DhcpOption,
+    "ca_certificates": CaCertificate,
+    "ldap_organizations": LdapOrganization,
+    "ldap_users": LdapUser,
+    "ldap_groups": LdapGroup,
+    "oidc_clients": OidcClient,
+    "oidc_client_redirect_uris": OidcClientRedirectUri,
+    "oidc_signing_keys": OidcSigningKey,
+    "vcf_backup_settings": VcfBackupSettings,
+    "vcf_offline_depot_settings": VcfOfflineDepotSettings,
+    "esxi_pxe_hosts": EsxiPxeHost,
+    "network_boot_environments": NetworkBootEnvironment,
+    "esx_storage_volumes": EsxStorageVolume,
+    "esx_nfs_shares": EsxNfsShare,
+    "update_sources": UpdateSource,
+    "managed_packages": ManagedPackage,
+    "automation_scripts": AutomationScript,
+    "schedules": Schedule,
+    "settings": Setting,
+}
+ARCHIVE_REQUIRED_FIELD_REPLACEMENTS = {
+    "ldap_users": ({"organization_id"}, {"organization_slug"}),
+    "ldap_groups": ({"organization_id"}, {"organization_slug"}),
+    "oidc_client_redirect_uris": ({"oidc_client_id"}, {"client_id"}),
+    "esx_nfs_shares": ({"volume_id"}, {"volume_name"}),
+}
+ARCHIVE_CUSTOM_REQUIRED_FIELDS = {
+    "vsphere_key_providers": {"id", "name"},
+    "vsphere_trusted_vcenters": {"id", "provider_id", "name"},
+    "vsphere_trusted_vcenter_certificates": {
+        "id",
+        "trusted_vcenter_id",
+        "fingerprint_sha256",
+        "certificate_pem",
+    },
+    "ldap_group_memberships": {"organization_slug", "group_name", "member_type", "member_name"},
+    "oidc_subjects": {"subject_uuid", "source", "username"},
+    "oidc_group_mappings": {
+        "source_type",
+        "local_role",
+        "ldap_group_name",
+        "organization_slug",
+        "client_id",
+        "external_group_name",
+    },
+}
+ARCHIVE_SECTION_NAMES = frozenset(ARCHIVE_SECTION_MODELS) | frozenset(ARCHIVE_CUSTOM_REQUIRED_FIELDS)
 
 RESTORE_DELETE_MODELS = [
     OidcGroupMapping,
@@ -701,10 +753,34 @@ def restore_settings_archive(db: Session, archive: dict[str, Any]) -> dict[str, 
         db: Active database session.
         archive: Archive payload or path to process.
     """
+    _validate_archive(archive)
+    recovery_archives = db.execute(select(LdapRecoveryArchive)).scalars().all()
+    try:
+        counts = _restore_settings_archive_data(db, archive["data"])
+        db.commit()
+    except ValueError:
+        db.rollback()
+        raise
+    except (AttributeError, IntegrityError, KeyError, StatementError, TypeError) as exc:
+        db.rollback()
+        raise ValueError("The settings archive contains invalid desired-state values.") from exc
+    except Exception:
+        db.rollback()
+        raise
+    for recovery_archive in recovery_archives:
+        clear_ldap_recovery_payload(recovery_archive)
+    return counts
+
+
+def _restore_settings_archive_data(db: Session, data: dict[str, Any]) -> dict[str, int]:
+    """Restore preflighted archive data within the caller-owned transaction.
+
+    Args:
+        db: Active database session.
+        data: Validated archive data collections.
+    """
     from atlaso.app.services.network_boot import ensure_environment_rows
 
-    _validate_archive(archive)
-    data = archive["data"]
     _clear_desired_state(db)
 
     counts: dict[str, int] = {}
@@ -820,7 +896,6 @@ def restore_settings_archive(db: Session, archive: dict[str, Any]) -> dict[str, 
     counts["schedules"] = _restore_schedules(db, data.get("schedules", []))
     counts["settings"] = _insert_rows(db, Setting, [row for row in data.get("settings", []) if row.get("key") in SAFE_SETTING_KEYS])
     _disable_startup_example_seed(db)
-    db.commit()
     return counts
 
 
@@ -832,16 +907,23 @@ def factory_reset_desired_state(db: Session) -> dict[str, int]:
     """
     from atlaso.app.services.network_boot import ensure_environment_rows
 
-    _clear_desired_state(db)
-    seed_initial_data(db, include_examples=False)
-    for state in ensure_environment_rows(db):
-        state.enabled = False
-        state.desired_version = ""
-        state.active_version = ""
-        db.add(state)
-    _disable_startup_example_seed(db)
-    _force_services_stopped_unconfigured(db)
-    db.commit()
+    recovery_archives = db.execute(select(LdapRecoveryArchive)).scalars().all()
+    try:
+        _clear_desired_state(db)
+        seed_initial_data(db, include_examples=False)
+        for state in ensure_environment_rows(db):
+            state.enabled = False
+            state.desired_version = ""
+            state.active_version = ""
+            db.add(state)
+        _disable_startup_example_seed(db)
+        _force_services_stopped_unconfigured(db)
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    for recovery_archive in recovery_archives:
+        clear_ldap_recovery_payload(recovery_archive)
     return desired_state_counts(db)
 
 
@@ -909,9 +991,6 @@ def _clear_desired_state(db: Session) -> None:
     Args:
         db: Active database session.
     """
-    recovery_archives = db.execute(select(LdapRecoveryArchive)).scalars().all()
-    for recovery_archive in recovery_archives:
-        clear_ldap_recovery_payload(recovery_archive)
     for job in db.execute(select(Job).where(Job.schedule_id.is_not(None))).scalars().all():
         job.schedule_id = None
         db.add(job)
@@ -961,12 +1040,105 @@ def _validate_archive(archive: dict[str, Any]) -> None:
     Raises:
         ValueError: If an input value is invalid.
     """
-    if archive.get("kind") != ARCHIVE_KIND:
+    if not isinstance(archive, dict) or archive.get("kind") != ARCHIVE_KIND:
         raise ValueError("Upload a Atlaso settings archive.")
     if archive.get("schema_version") != ARCHIVE_SCHEMA_VERSION:
         raise ValueError("This settings archive schema is not supported by this Atlaso build.")
     if not isinstance(archive.get("data"), dict):
         raise ValueError("The settings archive is missing its data section.")
+    data = archive["data"]
+    if any(section_name not in ARCHIVE_SECTION_NAMES for section_name in data):
+        raise ValueError("The settings archive contains an unsupported data section.")
+    for section_name, rows in data.items():
+        if not isinstance(rows, list):
+            raise ValueError(f"The settings archive data section '{section_name}' must be a list.")
+        required_fields = _archive_required_fields(section_name)
+        for row_index, row in enumerate(rows, start=1):
+            _validate_archive_row(section_name, row_index, row, required_fields)
+
+
+def _archive_required_fields(section_name: str) -> set[str]:
+    """Return fields that every row in an archive section must provide.
+
+    Args:
+        section_name: Archive data section being validated.
+    """
+    required_fields = set(ARCHIVE_CUSTOM_REQUIRED_FIELDS.get(section_name, set()))
+    model = ARCHIVE_SECTION_MODELS.get(section_name)
+    if model is not None:
+        required_fields.update(_required_model_fields(model))
+    removed_fields, added_fields = ARCHIVE_REQUIRED_FIELD_REPLACEMENTS.get(section_name, (set(), set()))
+    required_fields.difference_update(removed_fields)
+    required_fields.update(added_fields)
+    if section_name == "network_boot_environments":
+        required_fields.add("key")
+    if section_name == "automation_scripts":
+        required_fields.add("revisions")
+    return required_fields
+
+
+def _validate_archive_row(
+    section_name: str,
+    row_index: int,
+    row: Any,
+    required_fields: set[str],
+) -> None:
+    """Validate one archive row without changing database or process state.
+
+    Args:
+        section_name: Archive data section being validated.
+        row_index: One-based position used in bounded validation feedback.
+        row: Candidate archive row.
+        required_fields: Fields required by the section contract.
+    """
+    if not isinstance(row, dict):
+        raise ValueError(f"The settings archive row {row_index} in '{section_name}' must be an object.")
+    missing_fields = sorted(field for field in required_fields if field not in row or row[field] is None)
+    if missing_fields:
+        raise ValueError(
+            f"The settings archive row {row_index} in '{section_name}' is missing required field '{missing_fields[0]}'."
+        )
+    if section_name == "automation_scripts":
+        revisions = row["revisions"]
+        if not isinstance(revisions, list):
+            raise ValueError(
+                f"The settings archive row {row_index} in 'automation_scripts' has a revisions value that must be a list."
+            )
+        revision_required_fields = _required_model_fields(
+            AutomationScriptRevision,
+            exclude={"script_id", "enabled"},
+        )
+        for revision_index, revision in enumerate(revisions, start=1):
+            _validate_archive_row(
+                f"automation_scripts[{row_index}].revisions",
+                revision_index,
+                revision,
+                revision_required_fields,
+            )
+    if section_name == "esxi_pxe_hosts" and "variables" in row and not isinstance(row["variables"], dict):
+        raise ValueError(
+            f"The settings archive row {row_index} in 'esxi_pxe_hosts' has a variables value that must be an object."
+        )
+
+
+def _required_model_fields(model: type, *, exclude: set[str] | None = None) -> set[str]:
+    """Return required non-generated fields for a persisted model.
+
+    Args:
+        model: SQLAlchemy model whose archive inputs are validated.
+        exclude: Fields supplied by the restore relationship or normalization logic.
+    """
+    excluded = {"id", "created_at", "updated_at", *(exclude or set())}
+    return {
+        column.name
+        for column in model.__table__.columns
+        if column.name not in excluded
+        and not column.primary_key
+        and not column.nullable
+        and column.default is None
+        and column.server_default is None
+        and not isinstance(column.type, SqlDateTime)
+    }
 
 
 def _insert_rows(db: Session, model: type, rows: list[dict[str, Any]]) -> int:

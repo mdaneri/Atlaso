@@ -44,6 +44,11 @@ retain their `{{custom.*}}` prerequisites.
 4. Wait for the restore task to finish, then sign in again if the session was invalidated.
 5. Review pending desired state before submitting any appliance apply.
 
+Atlaso validates every supplied archive collection and required row field before it removes current desired state. If
+validation or a later restore phase fails, Atlaso rolls back the database transaction and leaves any separately staged
+LDAP recovery import metadata and in-memory payload available for the next global LDAP apply. A successful settings
+restore or factory reset intentionally clears that staged LDAP recovery material.
+
 Verify identity, DNS, service configuration, and recent tasks after recovery. Restore changes Atlaso state; host
 services are enforced only through their documented workflows.
 
