@@ -317,7 +317,7 @@ def test_physical_interface_api_atomically_refreshes_ipv4_and_ipv6_dependencies(
                     name="api-ipv4-dependency",
                     address_family="ipv4",
                     interface_name=interface.name,
-                    site_address=old_ipv4,
+                    site_address="192.168.50.254",
                     prefix_length=24,
                     range_expression="192.168.50.100-192.168.50.120",
                     dns_server=old_ipv4,
@@ -394,12 +394,12 @@ def test_physical_interface_api_atomically_refreshes_ipv4_and_ipv6_dependencies(
             enabled=True,
             hostname="pxe.atlaso.internal",
             listen_interface=f"{primary_pxe_interface.name}\n{interface.name}",
-            listen_address=f"10.10.0.1\n{old_ipv4}",
+            listen_address="10.10.0.1\n192.168.50.254",
             tftp_root="/var/lib/atlaso/pxe/tftp",
             bios_bootfile="undionly.kpxe",
             uefi_bootfile="snponly.efi",
             native_uefi_http_enabled=True,
-            native_uefi_http_url=f"http://{old_ipv4}:8080/pxe/boot.ipxe",
+            native_uefi_http_url="http://192.168.50.254:8080/pxe/boot.ipxe",
         )
         db.commit()
 
@@ -506,7 +506,7 @@ def test_physical_interface_api_atomically_refreshes_ipv4_and_ipv6_dependencies(
         assert boot["listen_interface"] == "eth1\neth2"
         assert boot["listen_address"] == f"10.10.0.1\n{new_ipv4}\n{new_ipv6}"
         assert new_ipv4 in boot["native_uefi_http_url"]
-        assert old_ipv4 not in boot["native_uefi_http_url"]
+        assert "192.168.50.254" not in boot["native_uefi_http_url"]
         assert audit is not None
         assert "DNS" in (audit.detail or "")
         assert "NTP / NTS" in (audit.detail or "")

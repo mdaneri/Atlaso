@@ -584,6 +584,7 @@ def refresh_interface_dependent_addresses(
         and ntp_settings.enabled
         and new_name in split_interfaces(ntp_settings.listen_interface)
     )
+    dependent_address_replacements: dict[str, str] = {}
 
     def update_dhcp_scope(scope: DhcpScope | DhcpSettings, label: str) -> None:
         """Refresh one DHCP binding and its address-dependent values.
@@ -667,6 +668,8 @@ def refresh_interface_dependent_addresses(
             scope.site_address = new_address
             if scope_site_address:
                 stale_addresses.add(scope_site_address)
+                if new_address and scope_site_address != new_address:
+                    dependent_address_replacements[scope_site_address] = new_address
         if new_prefixes[family] is not None and (
             not getattr(scope, "prefix_length", None)
             or getattr(scope, "prefix_length", None)
@@ -934,6 +937,7 @@ def refresh_interface_dependent_addresses(
             )
             if stale_address
         }
+        direct_address_replacements.update(dependent_address_replacements)
         for stale_address in stale_boot_addresses:
             mapped_address = direct_address_replacements.get(stale_address, "")
             if mapped_address and stale_address != mapped_address:
