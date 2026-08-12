@@ -574,6 +574,8 @@ def refresh_interface_dependent_addresses(
 
     dns_settings = db.execute(select(DnsSettings)).scalar_one_or_none()
     ntp_settings = db.execute(select(NtpSettings)).scalar_one_or_none()
+    dhcp_settings = db.execute(select(DhcpSettings)).scalar_one_or_none()
+    dhcp_globally_enabled = bool(dhcp_settings and dhcp_settings.enabled)
     dns_bound = bool(
         dns_settings
         and dns_settings.enabled
@@ -608,7 +610,10 @@ def refresh_interface_dependent_addresses(
         family = _address_family_from_scope(scope) if isinstance(scope, DhcpScope) else 4
         new_address = new_addresses[family]
         if not new_address:
-            if old_networks[family] is not None and bool(getattr(scope, "enabled", False)):
+            scope_dependency_enabled = bool(getattr(scope, "enabled", False)) and (
+                not isinstance(scope, DhcpScope) or dhcp_globally_enabled
+            )
+            if old_networks[family] is not None and scope_dependency_enabled:
                 family_label = "IPv6" if family == 6 else "IPv4"
                 dependency_label = (
                     f"DHCP scope {scope.name}"
@@ -776,7 +781,8 @@ def refresh_interface_dependent_addresses(
             update_dhcp_scope(settings, "DHCP")
     for scope in scope_rows:
         if (
-            scope.enabled
+            dhcp_globally_enabled
+            and scope.enabled
             and scope.interface_name in affected_interface_names
             and not service_replacements.get(scope.interface_name)
         ):

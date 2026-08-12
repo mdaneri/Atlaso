@@ -956,10 +956,11 @@ def test_physical_interface_api_rejects_dhcp_range_that_cannot_fit(client):
     from sqlalchemy import select
 
     from atlaso.app.database import SessionLocal
-    from atlaso.app.models import DhcpScope, PhysicalInterface
+    from atlaso.app.models import DhcpScope, DhcpSettings, PhysicalInterface
 
     scope_name = "api-prefix-shrink-dependency"
     with SessionLocal() as db:
+        db.execute(select(DhcpSettings)).scalar_one().enabled = True
         interface = db.execute(
             select(PhysicalInterface).where(PhysicalInterface.name == "eth2")
         ).scalar_one()
@@ -1386,11 +1387,12 @@ def test_physical_interface_api_rejects_address_removal_with_enabled_dependents(
     from sqlalchemy import select
 
     from atlaso.app.database import SessionLocal
-    from atlaso.app.models import DhcpScope, PhysicalInterface
+    from atlaso.app.models import DhcpScope, DhcpSettings, PhysicalInterface
     from atlaso.app.services.esxi_pxe import save_esxi_pxe_boot_settings
 
     scope_name = "api-address-removal-dependency"
     with SessionLocal() as db:
+        db.execute(select(DhcpSettings)).scalar_one().enabled = True
         interface = db.execute(
             select(PhysicalInterface).where(PhysicalInterface.name == "eth2")
         ).scalar_one()
@@ -1548,6 +1550,63 @@ def test_physical_interface_api_rejects_required_esx_storage_family_removal(clie
         assert interface.ipv6_enabled is True
         assert interface.ipv6_cidr == "fd00:50::1/64"
         assert share.interface_name == "eth2"
+
+
+def test_physical_interface_api_ignores_scope_dependency_when_dhcp_disabled(client):
+    """Verify globally disabled DHCP leaves enabled scope rows dormant.
+
+    Args:
+        client: Authenticated-capable application test client fixture.
+    """
+    from sqlalchemy import select
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import DhcpScope, DhcpSettings, PhysicalInterface
+
+    with SessionLocal() as db:
+        interface = db.execute(
+            select(PhysicalInterface).where(PhysicalInterface.name == "eth2")
+        ).scalar_one()
+        interface.role = "access"
+        interface.mode = "access"
+        interface.ip_cidr = "192.168.58.1/24"
+        interface.admin_state = "up"
+        settings = db.execute(select(DhcpSettings)).scalar_one()
+        settings.enabled = False
+        db.add(
+            DhcpScope(
+                name="dormant-enabled-scope",
+                interface_name=interface.name,
+                site_address="192.168.58.1",
+                prefix_length=24,
+                range_expression="192.168.58.100-192.168.58.120",
+                dns_server="192.168.58.1",
+                enabled=True,
+            )
+        )
+        db.commit()
+
+    token, _metadata = create_token(
+        client,
+        scopes=["read:interfaces", "write:interfaces"],
+    )
+    response = client.patch(
+        "/api/v1/interfaces/physical/eth2",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"admin_state": "down"},
+    )
+
+    assert response.status_code == 200, response.text
+    with SessionLocal() as db:
+        interface = db.execute(
+            select(PhysicalInterface).where(PhysicalInterface.name == "eth2")
+        ).scalar_one()
+        scope = db.execute(
+            select(DhcpScope).where(DhcpScope.name == "dormant-enabled-scope")
+        ).scalar_one()
+        assert interface.admin_state == "down"
+        assert scope.enabled is True
+        assert scope.interface_name == "eth2"
 
 
 def test_physical_interface_api_ignores_inactive_legacy_dhcp_binding(client):
