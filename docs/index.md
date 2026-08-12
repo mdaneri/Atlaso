@@ -36,7 +36,8 @@ Start with these common operator tasks. The section indexes above contain the co
 - [Prepare Network Boot](services/ipxe.md) — discover hosts and stage interactive or scripted boot workflows.
 - [Manage credentials with Vaults](services/vaults.md) — scope encrypted VCF and ESX credentials to approved workflows.
 - [Configure OpenID Connect](services/oidc-provider.md) — manage clients, identity sources, claims, and key rotation.
-- [Manage vSphere Key Providers](services/vsphere-key-providers.md) — configure provider-scoped VCF 9.1 key services.
+- [Explore experimental vSphere Key Providers](services/vsphere-key-providers.md) — review the unverified candidate
+  VCF 9.1 contract and its acceptance gate.
 
 ## Safety boundary
 
