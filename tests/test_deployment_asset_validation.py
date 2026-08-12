@@ -10,6 +10,7 @@ from scripts.check_deployment_assets import (
     PACKER_CHECKSUM,
     PACKER_TEMPLATES,
     inventory_assets,
+    validate_manager_dropins,
     validate_packer,
     validate_sudoers,
     validate_systemd,
@@ -27,9 +28,13 @@ def write_inventory(root: Path) -> None:
     systemd.parent.mkdir(parents=True, exist_ok=True)
     systemd.write_text("[Service]\nExecStart=/bin/true\n", encoding="utf-8")
 
-    sudoers = root / "image/hyperv/sudoers.d/atlaso-helper"
-    sudoers.parent.mkdir(parents=True, exist_ok=True)
-    sudoers.write_text("atlaso ALL=(root) /opt/atlaso/bin/atlaso-helper *\n", encoding="utf-8")
+    for platform in ("hyperv", "vmware-workstation"):
+        sudoers = root / f"image/{platform}/sudoers.d/atlaso-helper"
+        sudoers.parent.mkdir(parents=True, exist_ok=True)
+        sudoers.write_text(
+            "atlaso ALL=(root) /opt/atlaso/bin/atlaso-helper *\n",
+            encoding="utf-8",
+        )
 
 
 def test_inventory_covers_packer_systemd_and_extensionless_sudoers(tmp_path: Path) -> None:
@@ -41,7 +46,7 @@ def test_inventory_covers_packer_systemd_and_extensionless_sudoers(tmp_path: Pat
     assert findings == []
     assert len(inventory.packer) == 2
     assert [path.suffix for path in inventory.systemd] == [".service"]
-    assert [path.name for path in inventory.sudoers] == ["atlaso-helper"]
+    assert [path.name for path in inventory.sudoers] == ["atlaso-helper", "atlaso-helper"]
 
 
 def test_inventory_rejects_missing_canonical_packer_target(tmp_path: Path) -> None:
@@ -69,6 +74,21 @@ def test_inventory_rejects_unclassified_systemd_file_type(tmp_path: Path) -> Non
     assert any(
         finding.path == unsupported
         and "add a validator or reviewed exclusion" in finding.message
+        for finding in findings
+    )
+
+
+def test_inventory_rejects_missing_canonical_sudoers_fragment(tmp_path: Path) -> None:
+    """Verify that a renamed valid fragment cannot bypass the provisioning filename contract."""
+    write_inventory(tmp_path)
+    required = tmp_path / "image/vmware-workstation/sudoers.d/atlaso-helper"
+    required.rename(required.with_name("renamed-helper"))
+
+    _, findings = inventory_assets(tmp_path)
+
+    assert any(
+        finding.path == required
+        and finding.message == "required sudoers fragment is missing"
         for finding in findings
     )
 
@@ -135,6 +155,17 @@ def write_systemd_fixture(root: Path, service_text: str) -> None:
             "[Service]\nExecStart=/bin/true\n",
             encoding="utf-8",
         )
+
+
+def test_systemd_validation_rejects_malformed_manager_dropin(tmp_path: Path) -> None:
+    """Verify that an unknown manager directive fails even when cat-config accepts it."""
+    manager = tmp_path / "atlaso-console-manager.conf"
+    manager.write_text("[Manager]\nDefinitelyNotARealSetting=yes\n", encoding="utf-8")
+
+    findings = validate_manager_dropins((manager,))
+
+    assert findings
+    assert "unsupported [Manager] directive DefinitelyNotARealSetting" in findings[0].message
 
 
 @pytest.mark.skipif(shutil.which("systemd-analyze") is None, reason="requires systemd-analyze")

@@ -27,7 +27,23 @@ SUDOERS_DIRECTORIES = (
     Path("image/hyperv/sudoers.d"),
     Path("image/vmware-workstation/sudoers.d"),
 )
+SUDOERS_FRAGMENTS = (
+    Path("image/hyperv/sudoers.d/atlaso-helper"),
+    Path("image/vmware-workstation/sudoers.d/atlaso-helper"),
+)
 SYSTEMD_SUFFIXES = {".conf", ".service"}
+MANAGER_DIRECTIVES = {
+    "CtrlAltDelBurstAction": {
+        "exit-force",
+        "exit-immediate",
+        "none",
+        "poweroff-force",
+        "poweroff-immediate",
+        "reboot-force",
+        "reboot-immediate",
+    },
+    "ShowStatus": {"auto", "error", "no", "yes"},
+}
 PACKER_CHECKSUM = "sha512:" + ("0" * 128)
 PACKER_VALIDATION_VARS = (
     "iso_url=https://example.invalid/atlaso-photon.iso",
@@ -127,6 +143,10 @@ def inventory_assets(root: Path) -> tuple[Inventory, list[Finding]]:
     sudoers: list[Path] = []
     for relative in SUDOERS_DIRECTORIES:
         sudoers.extend(_files(root / relative))
+    for relative in SUDOERS_FRAGMENTS:
+        path = root / relative
+        if not path.is_file():
+            findings.append(Finding(path, "required sudoers fragment is missing"))
 
     inventory = Inventory(
         packer=tuple(sorted(packer)),
@@ -174,7 +194,14 @@ def _command_failure(path: Path, label: str, result: subprocess.CompletedProcess
     return Finding(path, f"{label} failed: {message}")
 
 
-def _run(command: list[str], cwd: Path, path: Path, label: str) -> Finding | None:
+def _run(
+    command: list[str],
+    cwd: Path,
+    path: Path,
+    label: str,
+    *,
+    stderr_is_failure: bool = False,
+) -> Finding | None:
     """Run one validator without echoing its arguments or unbounded output."""
     result = subprocess.run(
         command,
@@ -183,7 +210,7 @@ def _run(command: list[str], cwd: Path, path: Path, label: str) -> Finding | Non
         text=True,
         check=False,
     )
-    if result.returncode == 0:
+    if result.returncode == 0 and not (stderr_is_failure and result.stderr.strip()):
         return None
     return _command_failure(path, label, result)
 
@@ -254,9 +281,56 @@ def _prepare_systemd_root(root: Path, platform: str, repository: Path) -> tuple[
     return tuple(copied)
 
 
+def validate_manager_dropins(assets: tuple[Path, ...]) -> list[Finding]:
+    """Strictly parse Atlaso's supported system manager drop-in contract."""
+    findings: list[Finding] = []
+    for path in assets:
+        section: str | None = None
+        for line_number, raw_line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+            line = raw_line.strip()
+            if not line or line.startswith(("#", ";")):
+                continue
+            if line.startswith("["):
+                if not line.endswith("]"):
+                    findings.append(Finding(path, f"line {line_number}: malformed section header"))
+                    continue
+                section = line[1:-1]
+                if section != "Manager":
+                    findings.append(
+                        Finding(path, f"line {line_number}: unsupported manager section [{section}]")
+                    )
+                continue
+            if section != "Manager":
+                findings.append(
+                    Finding(path, f"line {line_number}: assignment must be inside [Manager]")
+                )
+                continue
+            if "=" not in line:
+                findings.append(Finding(path, f"line {line_number}: expected Key=Value assignment"))
+                continue
+            key, value = (part.strip() for part in line.split("=", maxsplit=1))
+            allowed_values = MANAGER_DIRECTIVES.get(key)
+            if allowed_values is None:
+                findings.append(
+                    Finding(path, f"line {line_number}: unsupported [Manager] directive {key}")
+                )
+            elif value.lower() not in allowed_values:
+                findings.append(
+                    Finding(path, f"line {line_number}: invalid value for [Manager] directive {key}")
+                )
+    return findings
+
+
 def validate_systemd(systemd_analyze: str, repository: Path) -> list[Finding]:
     """Verify both platform unit sets and manager drop-ins in isolated roots."""
-    findings: list[Finding] = []
+    manager_assets = tuple(
+        sorted(
+            path
+            for relative in SYSTEMD_DIRECTORIES
+            for path in (repository / relative).glob("*.conf")
+        )
+    )
+    findings = validate_manager_dropins(manager_assets)
     for platform in ("hyperv", "vmware-workstation"):
         with tempfile.TemporaryDirectory(prefix=f"atlaso-systemd-{platform}-") as temporary:
             validation_root = Path(temporary)
@@ -287,6 +361,7 @@ def validate_systemd(systemd_analyze: str, repository: Path) -> list[Finding]:
                 repository,
                 repository / "image/common/systemd/atlaso-console-manager.conf",
                 "systemd-analyze cat-config",
+                stderr_is_failure=True,
             )
             if manager_finding is not None:
                 findings.append(manager_finding)
