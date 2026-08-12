@@ -28,9 +28,9 @@ IMAGE_RE = re.compile(r"!\[[^\]]+\]\(([^)]+)\)")
 ABSOLUTE_URL_RE = re.compile(r'''https?://[^\s<>()`\[\]"']+''', re.IGNORECASE)
 BROWSER_PATH_RE = re.compile(
     r"(?<![A-Za-z0-9.])"
-    r"(?P<path>/[A-Za-z0-9][A-Za-z0-9._~{}<>*-]*"
-    r"(?:/[A-Za-z0-9._~{}<>*-]+)*"
-    r"(?:\?[A-Za-z0-9._~{}<>*=&%+-]*)?)"
+    r"(?P<path>/[A-Za-z0-9%][A-Za-z0-9._~{}%*-]*"
+    r"(?:/[A-Za-z0-9._~{}%*-]+)*"
+    r"(?:\?[A-Za-z0-9._~{}*=&%+-]*)?)"
 )
 LEGACY_BROWSER_ROUTE_ALLOWLIST = {
     "docs/project/appliance-console-design-qa.md": {
@@ -127,12 +127,12 @@ def browser_route_candidates(line: str) -> list[tuple[str, str]]:
     candidates: list[tuple[str, str]] = []
     for match in ABSOLUTE_URL_RE.finditer(line):
         candidate = strip_markdown_wrappers(line, match.start(), match.group(0).rstrip(".,:;"))
-        route_path = urlparse(candidate).path
+        route_path = unquote(urlparse(candidate).path)
         if route_path:
             candidates.append((candidate, route_path))
     for match in BROWSER_PATH_RE.finditer(line):
         candidate = strip_markdown_wrappers(line, match.start("path"), match.group("path").rstrip(".,:;"))
-        candidates.append((candidate, urlparse(candidate).path))
+        candidates.append((candidate, unquote(urlparse(candidate).path)))
     return candidates
 
 
