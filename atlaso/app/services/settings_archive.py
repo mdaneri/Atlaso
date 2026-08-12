@@ -177,6 +177,17 @@ ARCHIVE_CUSTOM_REQUIRED_FIELDS = {
     },
 }
 ARCHIVE_SECTION_NAMES = frozenset(ARCHIVE_SECTION_MODELS) | frozenset(ARCHIVE_CUSTOM_REQUIRED_FIELDS)
+ARCHIVE_BLANK_REQUIRED_TEXT_FIELDS = {
+    "dhcp_reservations": {"hostname"},
+    "oidc_group_mappings": {
+        "client_id",
+        "external_group_name",
+        "ldap_group_name",
+        "local_role",
+        "organization_slug",
+    },
+    "settings": {"value"},
+}
 
 RESTORE_DELETE_MODELS = [
     OidcGroupMapping,
@@ -1396,6 +1407,16 @@ def _validate_archive_row(
     if missing_fields:
         raise ValueError(
             f"The settings archive row {row_index} in '{section_name}' is missing required field '{missing_fields[0]}'."
+        )
+    blank_allowed = ARCHIVE_BLANK_REQUIRED_TEXT_FIELDS.get(section_name, set())
+    blank_fields = sorted(
+        field
+        for field in required_fields
+        if field not in blank_allowed and isinstance(row[field], str) and not row[field].strip()
+    )
+    if blank_fields:
+        raise ValueError(
+            f"The settings archive row {row_index} in '{section_name}' has empty required field '{blank_fields[0]}'."
         )
     if section_name == "automation_scripts":
         revisions = row["revisions"]
