@@ -136,13 +136,14 @@ def test_documentation_check_rejects_retired_browser_routes(tmp_path: Path) -> N
         "Open https://atlaso.example/guide/../dashboard after normalization.\n"
         "Open /guide/../dashboard after normalization.\n"
         "Open https://atlaso.example\\dashboard after backslash normalization.\n"
-        "Open https:\\atlaso.example\\dashboard after backslash normalization.\n",
+        "Open https:\\atlaso.example\\dashboard after backslash normalization.\n"
+        'Use <a href="\\dashboard">Dashboard</a> after root-path normalization.\n',
         encoding="utf-8",
     )
 
     findings = validate_legacy_browser_routes([page])
 
-    assert len(findings) == 15
+    assert len(findings) == 16
     assert findings[0].line == 1
     assert findings[0].message.endswith(": /dashboard?scope=all")
     assert findings[1].line == 2
@@ -173,6 +174,8 @@ def test_documentation_check_rejects_retired_browser_routes(tmp_path: Path) -> N
     assert findings[13].message.endswith(": https://atlaso.example\\dashboard")
     assert findings[14].line == 15
     assert findings[14].message.endswith(": https:\\atlaso.example\\dashboard")
+    assert findings[15].line == 16
+    assert findings[15].message.endswith(": \\dashboard")
 
     page.write_text(
         "Open `/ui/management/dashboard` or https://atlaso.example/ui/management/dashboard.\n"

@@ -29,8 +29,8 @@ IMAGE_RE = re.compile(r"!\[[^\]]+\]\(([^)]+)\)")
 ABSOLUTE_URL_RE = re.compile(r'''(?:https?:[\\/]{1,2}|//)[^\s<>()`\[\]"']+''', re.IGNORECASE)
 BROWSER_PATH_RE = re.compile(
     r"(?<![A-Za-z0-9.])"
-    r"(?P<path>/[A-Za-z0-9%][A-Za-z0-9._~{}%*-]*"
-    r"(?:/[A-Za-z0-9._~{}%*-]+)*"
+    r"(?P<path>[\\/][A-Za-z0-9%][A-Za-z0-9._~{}%*-]*"
+    r"(?:[\\/][A-Za-z0-9._~{}%*-]+)*"
     r"(?:\?[A-Za-z0-9._~{}*=&%+-]*)?)"
 )
 LEGACY_BROWSER_ROUTE_ALLOWLIST = {
@@ -135,7 +135,7 @@ def browser_route_candidates(line: str) -> list[tuple[str, str]]:
             candidates.append((candidate, route_path))
     for match in BROWSER_PATH_RE.finditer(line):
         candidate = strip_markdown_wrappers(line, match.start("path"), match.group("path").rstrip(".,:;"))
-        candidates.append((candidate, normalize_browser_path(urlparse(candidate).path)))
+        candidates.append((candidate, normalize_browser_path(urlparse(candidate.replace("\\", "/")).path)))
     return candidates
 
 
