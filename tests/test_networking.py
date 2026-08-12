@@ -764,6 +764,71 @@ def test_validate_network_state_allows_flagged_access_without_dedicated_manageme
     assert errors == []
 
 
+def test_validate_network_state_rejects_flagged_access_without_usable_address():
+    """Verify that a flag cannot satisfy lockout protection without a usable listener address."""
+    for ip_cidr in (None, "169.254.10.20/16"):
+        errors = validate_network_state(
+            interfaces=[
+                PhysicalInterface(
+                    name="eth0",
+                    mac_address="00:15:5d:aa:bb:01",
+                    ip_cidr=ip_cidr,
+                    role="access",
+                    mode="access",
+                    access_management_ui_enabled=True,
+                    admin_state="up",
+                    oper_state="up",
+                    mtu=1500,
+                )
+            ],
+            vlans=[],
+        )
+
+        assert (
+            "Interface eth0 can expose the management UI only when it has a usable non-link-local address."
+            in errors
+        )
+        assert (
+            "Network desired state must keep a management interface or enable the management UI on at least one access interface."
+            in errors
+        )
+
+
+def test_validate_network_state_rejects_flagged_access_vlan_with_only_link_local_address():
+    """Verify that a link-local-only access VLAN cannot be the management browser path."""
+    errors = validate_network_state(
+        interfaces=[
+            PhysicalInterface(
+                name="eth1",
+                mac_address="00:15:5d:aa:bb:02",
+                role="access",
+                mode="trunk",
+                admin_state="up",
+                oper_state="up",
+                mtu=1500,
+            )
+        ],
+        vlans=[
+            VlanInterface(
+                name="eth1.20",
+                parent_interface="eth1",
+                vlan_id=20,
+                ip_cidr="169.254.20.1/16",
+                role="access",
+                enabled=True,
+                mtu=1500,
+                access_management_ui_enabled=True,
+            )
+        ],
+    )
+
+    assert "VLAN eth1.20 can expose the management UI only when it has a usable non-link-local address." in errors
+    assert (
+        "Network desired state must keep a management interface or enable the management UI on at least one access interface."
+        in errors
+    )
+
+
 def test_management_ui_context_prefers_dedicated_then_flagged_eth0_then_vlan():
     """Verify deterministic appliance identity selection across management UI listeners."""
     dedicated = PhysicalInterface(

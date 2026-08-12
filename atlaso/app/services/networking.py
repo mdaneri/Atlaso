@@ -391,6 +391,20 @@ def _cidr_validation_error(label: str, value: str | None, version: int) -> str |
     return None
 
 
+def _has_usable_non_link_local_address(*cidrs: str | None) -> bool:
+    """Return whether any CIDR contains an address usable by a management listener."""
+    for cidr in cidrs:
+        if not cidr:
+            continue
+        try:
+            address = ip_interface(cidr.strip()).ip
+        except ValueError:
+            continue
+        if not (address.is_link_local or address.is_loopback or address.is_multicast or address.is_unspecified):
+            return True
+    return False
+
+
 def _set_setting_value(db: Session, key: str, value: str) -> Setting:
     """Update setting value.
 
@@ -1006,6 +1020,20 @@ def validate_network_state(
             errors.append(
                 f"Interface {interface.name} can expose the management UI only when its role and link type are access."
             )
+        access_management_address = _has_usable_non_link_local_address(
+            interface.host_ip_cidr if ipv4_method == "dhcp" else interface.ip_cidr,
+            interface.ipv6_cidr if interface.ipv6_enabled else None,
+            interface.host_ipv6_cidr if interface.ipv6_enabled else None,
+        )
+        if (
+            interface.access_management_ui_enabled
+            and role == "access"
+            and normalize_interface_mode(interface.mode) == "access"
+            and not access_management_address
+        ):
+            errors.append(
+                f"Interface {interface.name} can expose the management UI only when it has a usable non-link-local address."
+            )
         if role not in INTERFACE_ROLES:
             errors.append(f"Interface {interface.name} role {interface.role} is not supported.")
         if ipv4_method not in IPV4_METHODS:
@@ -1095,6 +1123,11 @@ def validate_network_state(
             errors.append(f"VLAN {vlan.name} role {vlan.role} is not supported.")
         if vlan.access_management_ui_enabled and role != "access":
             errors.append(f"VLAN {vlan.name} can expose the management UI only when its role is access.")
+        vlan_management_address = _has_usable_non_link_local_address(vlan.ip_cidr, vlan.ipv6_cidr)
+        if vlan.access_management_ui_enabled and role == "access" and not vlan_management_address:
+            errors.append(
+                f"VLAN {vlan.name} can expose the management UI only when it has a usable non-link-local address."
+            )
         if not vlan.ip_cidr and not vlan.ipv6_cidr:
             errors.append(f"VLAN {vlan.name} must include IPv4 CIDR, IPv6 CIDR, or both.")
         if error := _cidr_validation_error(f"VLAN {vlan.name}", vlan.ip_cidr, 4):
@@ -1107,11 +1140,17 @@ def validate_network_state(
         and normalize_interface_role(interface.role) == "access"
         and normalize_interface_mode(interface.mode) == "access"
         and interface.access_management_ui_enabled
+        and _has_usable_non_link_local_address(
+            interface.host_ip_cidr if normalize_ipv4_method(interface.ipv4_method) == "dhcp" else interface.ip_cidr,
+            interface.ipv6_cidr if interface.ipv6_enabled else None,
+            interface.host_ipv6_cidr if interface.ipv6_enabled else None,
+        )
         for interface in interfaces
     ) or any(
         vlan.enabled
         and normalize_interface_role(vlan.role) == "access"
         and vlan.access_management_ui_enabled
+        and _has_usable_non_link_local_address(vlan.ip_cidr, vlan.ipv6_cidr)
         for vlan in vlans
     )
     if not effective_management:

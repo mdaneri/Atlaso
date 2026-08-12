@@ -253,12 +253,14 @@ def render_public_services_nginx_config(
             and management_certificate_path
             and management_key_path
         )
+        ip_scoped_https_emitted = False
         if not address:
             continue
         ca_service = next((service for service in service_rows if str(service.get("id")) == "ca"), None)
         oidc_service = next((service for service in service_rows if str(service.get("id")) == "oidc"), None)
         if oidc_service:
             hostnames = _service_dns_names(*(oidc_service.get("dns_names") or []))
+            oidc_port = _service_port(oidc_service, https_port)
             lines.extend(
                 _oidc_https_server_lines(
                     address,
@@ -267,7 +269,8 @@ def render_public_services_nginx_config(
                     key_path=oidc_key_path,
                     upstream_host=upstream_host,
                     upstream_port=upstream_port,
-                    https_port=_service_port(oidc_service, https_port),
+                    https_port=oidc_port,
+                    management_ui=management_ui_enabled and oidc_port == https_port,
                 )
             )
         if ca_service:
@@ -281,6 +284,7 @@ def render_public_services_nginx_config(
                     upstream_host=upstream_host,
                     upstream_port=upstream_port,
                     https_port=https_port,
+                    management_ui=management_ui_enabled,
                 )
             )
             depot_service = next((service for service in service_rows if str(service.get("id")) == "vcf_offline_depot"), None)
@@ -302,6 +306,7 @@ def render_public_services_nginx_config(
                         management_key_path=management_key_path,
                     )
                 )
+                ip_scoped_https_emitted = True
                 terminal_enabled = False
         if terminal_enabled:
             lines.extend(
@@ -313,6 +318,20 @@ def render_public_services_nginx_config(
                     upstream_port=upstream_port,
                     https_port=https_port,
                     management_ui=management_ui_enabled,
+                    management_certificate_path=management_certificate_path,
+                    management_key_path=management_key_path,
+                )
+            )
+            ip_scoped_https_emitted = True
+        if management_ui_enabled and not ip_scoped_https_emitted:
+            lines.extend(
+                _management_https_server_lines(
+                    address,
+                    certificate_path=management_certificate_path,
+                    key_path=management_key_path,
+                    upstream_host=upstream_host,
+                    upstream_port=upstream_port,
+                    https_port=https_port,
                 )
             )
         if "esxi_pxe" in services:
@@ -329,6 +348,7 @@ def _oidc_https_server_lines(
     upstream_host: str,
     upstream_port: int,
     https_port: int,
+    management_ui: bool = False,
 ) -> list[str]:
     """Return oidc https server lines.
 
@@ -340,6 +360,7 @@ def _oidc_https_server_lines(
         upstream_host: Hostname or address of the upstream service.
         upstream_port: Port of the upstream service.
         https_port: Https port supplied by the caller.
+        management_ui: Whether the management front door is cohosted on this access address and port.
     """
     return [
         "",
@@ -352,9 +373,7 @@ def _oidc_https_server_lines(
         "",
         *_proxy_location("^~ /identity/", upstream_host, upstream_port, forwarded_proto="https"),
         "",
-        "  location / {",
-        "    return 404;",
-        "  }",
+        *_management_or_not_found_location(management_ui, upstream_host, upstream_port),
         "}",
     ]
 
@@ -368,6 +387,7 @@ def _ca_https_server_lines(
     upstream_host: str,
     upstream_port: int,
     https_port: int,
+    management_ui: bool = False,
 ) -> list[str]:
     """Return ca https server lines.
 
@@ -379,6 +399,7 @@ def _ca_https_server_lines(
         upstream_host: Hostname or address of the upstream service.
         upstream_port: Port of the upstream service.
         https_port: Https port supplied by the caller.
+        management_ui: Whether the management front door is cohosted on this access address.
     """
     return [
         "",
@@ -408,9 +429,7 @@ def _ca_https_server_lines(
         "",
         *_proxy_location("= /favicon.ico", upstream_host, upstream_port, forwarded_proto="https"),
         "",
-        "  location / {",
-        "    return 404;",
-        "  }",
+        *_management_or_not_found_location(management_ui, upstream_host, upstream_port),
         "}",
     ]
 
@@ -486,9 +505,7 @@ def _ip_scoped_https_server_lines(
         ),
         *(["", *_terminal_proxy_locations(upstream_host, upstream_port, include_static=False)] if web_terminal else []),
         "",
-        "  location / {",
-        "    return 404;",
-        "  }",
+        *_management_or_not_found_location(management_ui, upstream_host, upstream_port),
         "}",
     ]
 
@@ -528,6 +545,8 @@ def _terminal_https_server_lines(
     upstream_port: int,
     https_port: int,
     management_ui: bool = False,
+    management_certificate_path: str = "",
+    management_key_path: str = "",
 ) -> list[str]:
     """Return terminal https server lines.
 
@@ -539,6 +558,8 @@ def _terminal_https_server_lines(
         upstream_port: Port of the upstream service.
         https_port: Https port supplied by the caller.
         management_ui: Whether the management namespace is cohosted on this access address.
+        management_certificate_path: Filesystem path for the appliance management certificate.
+        management_key_path: Filesystem path for the appliance management private key.
     """
     return [
         "",
@@ -546,8 +567,8 @@ def _terminal_https_server_lines(
         "  # Terminal-only HTTPS front door.",
         f"  listen {format_nginx_listen(address, https_port)} ssl;",
         f"  server_name {_nginx_server_name(address)};",
-        f"  ssl_certificate {certificate_path};",
-        f"  ssl_certificate_key {key_path};",
+        f"  ssl_certificate {management_certificate_path if management_ui else certificate_path};",
+        f"  ssl_certificate_key {management_key_path if management_ui else key_path};",
         "",
         *_proxy_location("= /", upstream_host, upstream_port, forwarded_proto="https"),
         "",
@@ -560,9 +581,45 @@ def _terminal_https_server_lines(
         "",
         *_terminal_proxy_locations(upstream_host, upstream_port),
         "",
-        "  location / { return 404; }",
+        *_management_or_not_found_location(management_ui, upstream_host, upstream_port),
         "}",
     ]
+
+
+def _management_https_server_lines(
+    address: str,
+    *,
+    certificate_path: str,
+    key_path: str,
+    upstream_host: str,
+    upstream_port: int,
+    https_port: int,
+) -> list[str]:
+    """Return the IP-scoped management front door for a flagged access address."""
+    return [
+        "",
+        "server {",
+        "  # IP-scoped management HTTPS front door.",
+        f"  listen {format_nginx_listen(address, https_port)} ssl;",
+        f"  server_name {_nginx_server_name(address)};",
+        f"  ssl_certificate {certificate_path};",
+        f"  ssl_certificate_key {key_path};",
+        "  client_max_body_size 1g;",
+        "",
+        *_proxy_location("/", upstream_host, upstream_port, forwarded_proto="https"),
+        "}",
+    ]
+
+
+def _management_or_not_found_location(
+    management_ui: bool,
+    upstream_host: str,
+    upstream_port: int,
+) -> list[str]:
+    """Return a complete management fallback or a closed public-service fallback."""
+    if management_ui:
+        return _proxy_location("/", upstream_host, upstream_port, forwarded_proto="https")
+    return ["  location / {", "    return 404;", "  }"]
 
 
 def _management_ui_proxy_locations(upstream_host: str, upstream_port: int) -> list[str]:

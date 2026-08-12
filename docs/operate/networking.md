@@ -44,6 +44,10 @@ access VLAN, can additionally enable **Management UI**. The interface remains an
 eligible for public services and access service bindings, and it keeps access routing rather than gaining a
 management-specific gateway or policy route.
 
+Atlaso accepts that flag only when the access interface has a configured or observed usable non-link-local address.
+An unaddressed or link-local-only interface cannot satisfy management lockout protection because no management HTTPS
+listener can bind to it.
+
 The default configuration remains `eth0` as the dedicated management interface with the switch disabled on all access
 interfaces. To use one network for both planes, change `eth0` from management to access; Atlaso enables its management UI
 switch as part of that conversion. You may then disable the unused second interface. Converting an access interface to
@@ -53,7 +57,8 @@ Atlaso permits at most one dedicated management-role physical interface. It also
 effective management browser path: when no dedicated role exists, at least one active access interface or enabled
 access VLAN must have **Management UI** enabled. Multiple flagged access interfaces are allowed. On a flagged access
 address, `/` prefers the management sign-in, `/ui/management` requires normal authentication, and `/ui/public` remains
-available for the same access network.
+available for the same access network. The listener also preserves the complete authenticated management front door,
+including stable API, API documentation, manifest, and service-worker routes required by the management UI and PWA.
 
 Only a dedicated management role owns management DHCP, default gateways, DHCP resolver recovery, and isolated
 management policy routing. If that role is absent, flagged access interfaces retain their normal access routes. The

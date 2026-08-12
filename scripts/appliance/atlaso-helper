@@ -6652,9 +6652,7 @@ def _systemd_networkd_files(path: Path) -> tuple[dict[str, str], list[str], list
         vlans_by_parent.setdefault(vlan.get("parent", ""), []).append(vlan)
 
     management = next((row for row in physical_interfaces if row.get("role") == "management"), None)
-    if management is None:
-        management = next((row for row in physical_interfaces if row.get("name") == "eth0"), None)
-    management_name = management.get("name", "eth0") if management else "eth0"
+    management_name = management.get("name") if management else None
     preserved_management = _read_existing_management_network_values()
     files: dict[str, str] = {}
     reconfigure_links: list[str] = []
@@ -6743,11 +6741,6 @@ def _systemd_networkd_files(path: Path) -> tuple[dict[str, str], list[str], list
 
     for vlan in vlan_interfaces:
         name = vlan.get("name", "")
-        if (
-            vlan.get("access_management_ui_enabled", "false").strip().lower() == "true"
-            and vlan.get("role") != "access"
-        ):
-            errors.append(f"VLAN {name or '<unnamed>'} can expose the management UI only when its role is access.")
         if not _valid_network_interface_name(name):
             raise ValueError(f"invalid VLAN interface name: {name}")
         netdev_lines = [
@@ -6781,6 +6774,21 @@ def _systemd_networkd_files(path: Path) -> tuple[dict[str, str], list[str], list
     return files, reconfigure_links, admin_down_links
 
 
+def _network_row_has_usable_management_address(row: dict[str, str]) -> bool:
+    """Return whether a staged interface row has a usable non-link-local address."""
+    for key in ("ip_cidr", "ipv6_cidr"):
+        value = row.get(key, "").strip()
+        if not value:
+            continue
+        try:
+            address = ip_interface(value).ip
+        except ValueError:
+            continue
+        if not (address.is_link_local or address.is_loopback or address.is_multicast or address.is_unspecified):
+            return True
+    return False
+
+
 def _network_config_errors(path: Path) -> list[str]:
     """Perform network config errors.
 
@@ -6801,6 +6809,15 @@ def _network_config_errors(path: Path) -> list[str]:
         if management_ui_enabled and (role != "access" or interface.get("mode") != "access"):
             errors.append(
                 f"Interface {name or '<missing>'} can expose the management UI only when its role and link type are access."
+            )
+        if (
+            management_ui_enabled
+            and role == "access"
+            and interface.get("mode") == "access"
+            and not _network_row_has_usable_management_address(interface)
+        ):
+            errors.append(
+                f"Interface {name or '<missing>'} can expose the management UI only when it has a usable non-link-local address."
             )
         ipv4_method = (interface.get("ipv4_method") or "static").strip().lower()
         ipv6_enabled_value = (interface.get("ipv6_enabled") or ("true" if interface.get("ipv6_cidr") else "false")).strip().lower()
@@ -6897,6 +6914,13 @@ def _network_config_errors(path: Path) -> list[str]:
             errors.append(f"VLAN {name} should be named {expected_name}.")
         if not vlan.get("ip_cidr") and not vlan.get("ipv6_cidr"):
             errors.append(f"VLAN {name or '<unnamed>'} must include IPv4 CIDR, IPv6 CIDR, or both.")
+        management_ui_enabled = vlan.get("access_management_ui_enabled", "false").strip().lower() == "true"
+        if management_ui_enabled and vlan.get("role") != "access":
+            errors.append(f"VLAN {name or '<unnamed>'} can expose the management UI only when its role is access.")
+        if management_ui_enabled and vlan.get("role") == "access" and not _network_row_has_usable_management_address(vlan):
+            errors.append(
+                f"VLAN {name or '<unnamed>'} can expose the management UI only when it has a usable non-link-local address."
+            )
         for key, version, label in [("ip_cidr", 4, "IPv4 CIDR"), ("ipv6_cidr", 6, "IPv6 CIDR")]:
             value = vlan.get(key, "")
             if not value:
@@ -6940,10 +6964,12 @@ def _network_config_errors(path: Path) -> list[str]:
         and row.get("mode") == "access"
         and row.get("admin_state") == "up"
         and row.get("access_management_ui_enabled", "false").strip().lower() == "true"
+        and _network_row_has_usable_management_address(row)
         for row in physical_interfaces
     ) or any(
         row.get("role") == "access"
         and row.get("access_management_ui_enabled", "false").strip().lower() == "true"
+        and _network_row_has_usable_management_address(row)
         for row in vlan_interfaces
     )
     if not effective_management:
