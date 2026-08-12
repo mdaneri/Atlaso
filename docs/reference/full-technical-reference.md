@@ -1185,7 +1185,10 @@ gateway, and DNS relationships validate before mutation. Invalid management valu
 while the network-independent Atlaso tty1 console accepts a non-secret correction; the applied marker is written only
 after the corrected customization succeeds. A baked root-owned initialization lock keeps privileged tty1 actions
 unavailable until deployment credentials apply, and marker-first startup recovery removes stale review state after an
-interruption.
+interruption. For a raw VM with no envelope, 30 consecutive answered-empty VMware Tools reads produce a durable non-OVF
+completion marker, clear the initialization/review handshake, and continue with image defaults. Unanswered, malformed,
+present-but-incomplete, and invalid environments remain fail-closed. A later real envelope invalidates the non-OVF
+marker before normal validation so replacement deployments are not silently ignored.
 
 Lifecycle testing uses VMX/VMDK artifacts and `vmrun.exe`:
 

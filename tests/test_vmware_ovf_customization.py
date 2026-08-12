@@ -594,6 +594,64 @@ def test_vmware_ovf_customizer_routes_initial_apply_failure_to_waiter(tmp_path, 
     assert not customizer.INITIALIZATION_LOCK_PATH.exists()
 
 
+def test_vmware_ovf_customizer_retries_scrub_failure_without_network_review(
+    tmp_path,
+    monkeypatch,
+):
+    """Verify post-apply finalization cannot masquerade as a DHCP review loop.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+        monkeypatch: Pytest helper used to replace first-boot finalization.
+    """
+    customizer = load_customizer()
+    ovf_path = tmp_path / "ovf-env.xml"
+    ovf_path.write_text(OVF_ENV, encoding="utf-8")
+    customizer.PENDING_MARKER_PATH = tmp_path / "customization.pending"
+    customizer.MARKER_PATH = tmp_path / "customization.applied"
+    customizer.NETWORK_REVIEW_PATH = tmp_path / "network-review.json"
+    customizer.NETWORK_CORRECTION_PATH = tmp_path / "network-correction.json"
+    recovered = []
+
+    def fail_scrub(config, *, dry_run=False):
+        """Persist pending success, then simulate the observed scrub failure.
+
+        Args:
+            config: Validated OVF customization values.
+            dry_run: Whether host mutation is disabled.
+
+        Raises:
+            OvfFinalizationError: Always, after pending state is durable.
+        """
+        assert dry_run is False
+        customizer.write_json_atomic(
+            customizer.PENDING_MARKER_PATH,
+            customizer.redacted_summary(config),
+        )
+        raise customizer.OvfFinalizationError(
+            "First-time initialization failed in the OVF credential scrub layer."
+        )
+
+    def recover_pending():
+        """Record that finalization owns the retry instead of network review."""
+        assert customizer.PENDING_MARKER_PATH.exists()
+        assert not customizer.NETWORK_REVIEW_PATH.exists()
+        recovered.append(True)
+        return 0
+
+    monkeypatch.setattr(customizer, "apply_customization", fail_scrub)
+    monkeypatch.setattr(customizer, "recover_pending_customization", recover_pending)
+    monkeypatch.setattr(
+        customizer,
+        "wait_for_network_review",
+        lambda *_args: pytest.fail("credential scrub failure entered network review"),
+    )
+    monkeypatch.setattr(customizer, "log", lambda _message: None)
+
+    assert customizer.main(["--ovf-env-file", str(ovf_path)]) == 0
+    assert recovered == [True]
+
+
 def test_vmware_ovf_customizer_waits_locked_for_delayed_ovf_properties(tmp_path, monkeypatch):
     """Verify an empty OVF environment never exposes image-build credentials.
 
@@ -659,6 +717,329 @@ def test_vmware_ovf_customizer_waits_locked_for_delayed_ovf_properties(tmp_path,
     assert not customizer.INITIALIZATION_LOCK_PATH.exists()
     assert not customizer.NETWORK_REVIEW_PATH.exists()
     assert not customizer.NETWORK_CORRECTION_PATH.exists()
+
+
+def test_vmware_ovf_customizer_completes_answered_empty_boot_with_image_defaults(
+    tmp_path,
+    monkeypatch,
+):
+    """Verify a stable answered-empty Tools channel completes without OVF review.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+        monkeypatch: Pytest helper used to replace VMware reads and polling.
+    """
+    customizer = load_customizer()
+    customizer.MARKER_PATH = tmp_path / "customization.applied"
+    customizer.PENDING_MARKER_PATH = tmp_path / "customization.pending"
+    customizer.NO_OVF_MARKER_PATH = tmp_path / "no-ovf.applied"
+    customizer.INITIALIZATION_LOCK_PATH = tmp_path / "initializing"
+    customizer.NETWORK_REVIEW_PATH = tmp_path / "network-review.json"
+    customizer.NETWORK_CORRECTION_PATH = tmp_path / "network-correction.json"
+    customizer.INITIALIZATION_LOCK_PATH.touch()
+    customizer.write_json_atomic(
+        customizer.NETWORK_REVIEW_PATH,
+        {"version": 1, "state": "network_review", "error": "Review management networking."},
+    )
+    customizer.write_json_atomic(
+        customizer.NETWORK_CORRECTION_PATH,
+        {
+            "version": 1,
+            "ipv4_method": "dhcp",
+            "ipv4_cidr": "",
+            "ipv4_gateway": "",
+            "ipv6_mode": "disabled",
+            "ipv6_cidr": "",
+            "ipv6_gateway": "",
+            "dns_servers": "",
+        },
+        mode=0o600,
+    )
+    reads = []
+    sleeps = []
+    messages = []
+
+    def read_empty_environment():
+        """Return one authoritative empty VMware Tools response."""
+        reads.append(True)
+        return True, ""
+
+    monkeypatch.setattr(customizer, "try_read_ovf_environment", read_empty_environment)
+    monkeypatch.setattr(customizer.time, "sleep", sleeps.append)
+    monkeypatch.setattr(customizer, "log", messages.append)
+    monkeypatch.setattr(
+        customizer,
+        "apply_customization",
+        lambda *_args, **_kwargs: pytest.fail("OVF customization ran for a no-envelope boot"),
+    )
+
+    assert customizer.main([]) == 0
+
+    assert len(reads) == customizer.PENDING_EMPTY_CONFIRMATION_READS
+    assert len(sleeps) == customizer.PENDING_EMPTY_CONFIRMATION_READS - 1
+    assert json.loads(customizer.NO_OVF_MARKER_PATH.read_text(encoding="utf-8"))["source"] == "image_defaults"
+    assert not customizer.MARKER_PATH.exists()
+    assert not customizer.PENDING_MARKER_PATH.exists()
+    assert not customizer.INITIALIZATION_LOCK_PATH.exists()
+    assert not customizer.NETWORK_REVIEW_PATH.exists()
+    assert not customizer.NETWORK_CORRECTION_PATH.exists()
+    assert messages[-1] == "No OVF deployment properties supplied; using image defaults."
+    assert "OVF management values" not in " ".join(messages)
+
+
+def test_vmware_ovf_customizer_normalizes_tools_empty_string_readback(monkeypatch):
+    """Verify VMware's quoted empty sentinel remains an answered-empty read.
+
+    Args:
+        monkeypatch: Pytest helper used to replace the VMware RPC process.
+    """
+    customizer = load_customizer()
+    monkeypatch.setattr(customizer.shutil, "which", lambda command: f"/usr/bin/{command}")
+    monkeypatch.setattr(
+        customizer.subprocess,
+        "run",
+        lambda *_args, **_kwargs: type(
+            "Result",
+            (),
+            {"returncode": 0, "stdout": '""\n'},
+        )(),
+    )
+
+    assert customizer.try_read_ovf_environment() == (True, "")
+
+
+def test_vmware_ovf_customizer_non_ovf_reboot_is_idempotent(tmp_path, monkeypatch):
+    """Verify completed non-OVF boots do not repeat the confirmation wait.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+        monkeypatch: Pytest helper used to replace VMware reads and polling.
+    """
+    customizer = load_customizer()
+    customizer.NO_OVF_MARKER_PATH = tmp_path / "no-ovf.applied"
+    customizer.INITIALIZATION_LOCK_PATH = tmp_path / "initializing"
+    customizer.NETWORK_REVIEW_PATH = tmp_path / "network-review.json"
+    customizer.NETWORK_CORRECTION_PATH = tmp_path / "network-correction.json"
+    customizer.write_json_atomic(
+        customizer.NO_OVF_MARKER_PATH,
+        {"completed_at": "2026-08-12T00:00:00Z", "source": "image_defaults"},
+    )
+    customizer.INITIALIZATION_LOCK_PATH.touch()
+    reads = []
+
+    def read_empty_environment():
+        """Return the current deployment's authoritative empty environment."""
+        reads.append(True)
+        return True, ""
+
+    monkeypatch.setattr(customizer, "try_read_ovf_environment", read_empty_environment)
+    monkeypatch.setattr(
+        customizer.time,
+        "sleep",
+        lambda _seconds: pytest.fail("completed non-OVF boot re-entered the wait loop"),
+    )
+    messages = []
+    monkeypatch.setattr(customizer, "log", messages.append)
+
+    assert customizer.main([]) == 0
+
+    assert reads == [True]
+    assert customizer.NO_OVF_MARKER_PATH.exists()
+    assert not customizer.INITIALIZATION_LOCK_PATH.exists()
+    assert messages[-1] == "VMware non-OVF initialization already completed; using image defaults."
+
+
+def test_vmware_ovf_customizer_replaces_non_ovf_marker_when_envelope_arrives(
+    tmp_path,
+    monkeypatch,
+):
+    """Verify a later real envelope is applied instead of ignored as image defaults.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+        monkeypatch: Pytest helper used to replace customization mutations.
+    """
+    customizer = load_customizer()
+    customizer.MARKER_PATH = tmp_path / "customization.applied"
+    customizer.PENDING_MARKER_PATH = tmp_path / "customization.pending"
+    customizer.NO_OVF_MARKER_PATH = tmp_path / "no-ovf.applied"
+    customizer.INITIALIZATION_LOCK_PATH = tmp_path / "initializing"
+    customizer.NETWORK_REVIEW_PATH = tmp_path / "network-review.json"
+    customizer.NETWORK_CORRECTION_PATH = tmp_path / "network-correction.json"
+    customizer.write_json_atomic(
+        customizer.NO_OVF_MARKER_PATH,
+        {"completed_at": "2026-08-12T00:00:00Z", "source": "image_defaults"},
+    )
+    applied = []
+    monkeypatch.setattr(customizer, "try_read_ovf_environment", lambda: (True, OVF_ENV))
+
+    def apply_replacement(config, *, dry_run=False):
+        """Record and mark the replacement OVF deployment.
+
+        Args:
+            config: Validated replacement customization values.
+            dry_run: Whether host mutation is disabled.
+
+        Returns:
+            The redacted replacement-deployment summary.
+        """
+        assert dry_run is False
+        assert not customizer.NO_OVF_MARKER_PATH.exists()
+        applied.append(config)
+        summary = customizer.redacted_summary(config)
+        customizer.write_json_atomic(customizer.MARKER_PATH, summary)
+        return summary
+
+    monkeypatch.setattr(customizer, "apply_customization", apply_replacement)
+    monkeypatch.setattr(customizer, "log", lambda _message: None)
+
+    assert customizer.main([]) == 0
+
+    assert len(applied) == 1
+    assert applied[0]["fqdn"] == "appliance.atlaso.internal"
+    assert customizer.MARKER_PATH.exists()
+    assert not customizer.NO_OVF_MARKER_PATH.exists()
+
+
+def test_vmware_ovf_customizer_waits_for_answer_before_replacing_non_ovf_marker(
+    tmp_path,
+    monkeypatch,
+):
+    """Verify a transient unanswered read cannot skip a later OVF envelope.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+        monkeypatch: Pytest helper used to replace VMware reads and customization mutations.
+    """
+    customizer = load_customizer()
+    customizer.MARKER_PATH = tmp_path / "customization.applied"
+    customizer.PENDING_MARKER_PATH = tmp_path / "customization.pending"
+    customizer.NO_OVF_MARKER_PATH = tmp_path / "no-ovf.applied"
+    customizer.INITIALIZATION_LOCK_PATH = tmp_path / "initializing"
+    customizer.NETWORK_REVIEW_PATH = tmp_path / "network-review.json"
+    customizer.NETWORK_CORRECTION_PATH = tmp_path / "network-correction.json"
+    customizer.write_json_atomic(
+        customizer.NO_OVF_MARKER_PATH,
+        {"completed_at": "2026-08-12T00:00:00Z", "source": "image_defaults"},
+    )
+    reads = iter([(False, ""), (True, OVF_ENV)])
+    read_count = []
+    sleeps = []
+    applied = []
+
+    def read_environment():
+        """Return one unanswered read followed by the persistent OVF envelope."""
+        read_count.append(True)
+        return next(reads, (True, OVF_ENV))
+
+    def apply_replacement(config, *, dry_run=False):
+        """Record and mark the replacement OVF deployment.
+
+        Args:
+            config: Validated replacement customization values.
+            dry_run: Whether host mutation is disabled.
+
+        Returns:
+            The redacted replacement-deployment summary.
+        """
+        assert dry_run is False
+        applied.append(config)
+        summary = customizer.redacted_summary(config)
+        customizer.write_json_atomic(customizer.MARKER_PATH, summary)
+        return summary
+
+    monkeypatch.setattr(customizer, "try_read_ovf_environment", read_environment)
+    monkeypatch.setattr(customizer.time, "sleep", sleeps.append)
+    monkeypatch.setattr(customizer, "apply_customization", apply_replacement)
+    monkeypatch.setattr(customizer, "log", lambda _message: None)
+
+    assert customizer.main([]) == 0
+
+    assert len(read_count) == 3
+    assert sleeps == [customizer.OVF_ENVIRONMENT_POLL_SECONDS]
+    assert len(applied) == 1
+    assert applied[0]["fqdn"] == "appliance.atlaso.internal"
+    assert customizer.MARKER_PATH.exists()
+    assert not customizer.NO_OVF_MARKER_PATH.exists()
+
+
+def test_vmware_ovf_customizer_keeps_unanswered_tools_channel_fail_closed(
+    tmp_path,
+    monkeypatch,
+):
+    """Verify an unanswered Tools channel cannot select image defaults.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+        monkeypatch: Pytest helper used to stop the intentional wait loop.
+    """
+    customizer = load_customizer()
+    customizer.NO_OVF_MARKER_PATH = tmp_path / "no-ovf.applied"
+    customizer.INITIALIZATION_LOCK_PATH = tmp_path / "initializing"
+    customizer.INITIALIZATION_LOCK_PATH.touch()
+    messages = []
+
+    class StopPolling(BaseException):
+        """Stop the intentional fail-closed polling loop."""
+
+    monkeypatch.setattr(customizer, "try_read_ovf_environment", lambda: (False, ""))
+    monkeypatch.setattr(
+        customizer.time,
+        "sleep",
+        lambda _seconds: (_ for _ in ()).throw(StopPolling()),
+    )
+    monkeypatch.setattr(customizer, "log", messages.append)
+
+    with pytest.raises(StopPolling):
+        customizer.main([])
+
+    assert customizer.INITIALIZATION_LOCK_PATH.exists()
+    assert not customizer.NO_OVF_MARKER_PATH.exists()
+    assert messages == [
+        "Atlaso VMware OVF deployment properties are unavailable; waiting with tty1 locked."
+    ]
+
+
+def test_vmware_ovf_customizer_keeps_present_empty_envelope_fail_closed(
+    tmp_path,
+    monkeypatch,
+):
+    """Verify a present but incomplete envelope is not classified as no OVF.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+        monkeypatch: Pytest helper used to stop the intentional wait loop.
+    """
+    customizer = load_customizer()
+    customizer.NO_OVF_MARKER_PATH = tmp_path / "no-ovf.applied"
+    customizer.INITIALIZATION_LOCK_PATH = tmp_path / "initializing"
+    customizer.INITIALIZATION_LOCK_PATH.touch()
+    empty_envelope = (
+        '<Environment xmlns="http://schemas.dmtf.org/ovf/environment/1">'
+        "<PropertySection />"
+        "</Environment>"
+    )
+    messages = []
+
+    class StopPolling(BaseException):
+        """Stop the intentional fail-closed polling loop."""
+
+    monkeypatch.setattr(customizer, "try_read_ovf_environment", lambda: (True, empty_envelope))
+    monkeypatch.setattr(
+        customizer.time,
+        "sleep",
+        lambda _seconds: (_ for _ in ()).throw(StopPolling()),
+    )
+    monkeypatch.setattr(customizer, "log", messages.append)
+
+    with pytest.raises(StopPolling):
+        customizer.main([])
+
+    assert customizer.INITIALIZATION_LOCK_PATH.exists()
+    assert not customizer.NO_OVF_MARKER_PATH.exists()
+    assert messages == [
+        "Atlaso VMware OVF deployment properties are incomplete or invalid; waiting with tty1 locked."
+    ]
 
 
 def test_vmware_ovf_customizer_marker_recovers_interrupted_review_cleanup(tmp_path, monkeypatch):
@@ -905,7 +1286,7 @@ def test_vmware_ovf_customizer_scrubs_consumed_guestinfo_credentials(monkeypatch
 
     assert commands == [
         (
-            ["/usr/bin/vmware-rpctool", "info-set guestinfo.ovfEnv "],
+            ["/usr/bin/vmware-rpctool", 'info-set guestinfo.ovfEnv ""'],
             {"check": False, "text": True, "capture_output": True},
         )
     ]

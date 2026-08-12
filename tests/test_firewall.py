@@ -116,6 +116,42 @@ def test_default_management_firewall_source_cidr_can_follow_image_network():
     assert "192.168.49.0/24" not in config
 
 
+def test_generated_management_rules_do_not_validate_unused_empty_legacy_source(monkeypatch):
+    """Verify DHCP first boot can replace the legacy CIDR rule safely.
+
+    Args:
+        monkeypatch: Pytest helper used to replace the runtime settings projection.
+    """
+    settings = FirewallSettings(enabled=True, default_input_policy="drop")
+    generated = FirewallRule(
+        name="atlaso-management-eth0",
+        direction="input",
+        action="accept",
+        protocol="tcp",
+        source="any",
+        destination="any",
+        destination_port="22,80,443",
+        interface_name="eth0",
+        priority=10,
+        enabled=True,
+        description="Allow management access on the DHCP interface.",
+    )
+    monkeypatch.setattr(
+        "atlaso.app.services.firewall.get_settings",
+        lambda: type("Settings", (), {"management_source_cidr": ""})(),
+    )
+
+    config = render_nftables_config(
+        settings,
+        [],
+        [generated],
+        replace_atlaso_service_rules=True,
+    )
+
+    assert 'iifname "eth0" tcp dport { 22, 80, 443 } accept comment "atlaso-management-eth0"' in config
+    assert "ip saddr  tcp" not in config
+
+
 def test_ca_portal_firewall_interfaces_include_non_management_addresses_only():
     """Verify that ca portal firewall interfaces include non management addresses only."""
     interfaces = [

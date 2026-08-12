@@ -1222,6 +1222,43 @@ def test_console_first_boot_lock_ignores_privileged_action_keys(tmp_path, monkey
     assert called == []
 
 
+def test_console_non_ovf_completion_restores_ordinary_actions(tmp_path, monkeypatch):
+    """Verify no-envelope cleanup leaves the normal tty1 workflow usable.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+        monkeypatch: Pytest helper used to replace first-boot state loading.
+    """
+    lock_path = tmp_path / "initializing"
+    called: list[str] = []
+    keys = iter((2,))
+    console = CursesConsole.__new__(CursesConsole)
+    console.curses = SimpleNamespace(
+        KEY_F1=1,
+        KEY_F2=2,
+        KEY_F3=3,
+        KEY_F4=4,
+        KEY_F12=12,
+        KEY_RESIZE=99,
+        KEY_ENTER=10,
+    )
+    console.stdscr = SimpleNamespace(getch=lambda: next(keys))
+    console.draw_main = lambda: None
+    console._recovery_redraws = lambda _last_refresh: []
+    console.customize = lambda: called.append("customize")
+    console.show_help = lambda: called.append("help")
+    console.show_authenticated_top = lambda: called.append("top")
+    console._require_authentication = lambda: False
+    console.power_menu = lambda: called.append("power")
+    monkeypatch.setattr(appliance_console, "FIRST_BOOT_INITIALIZATION_LOCK_PATH", lock_path)
+    monkeypatch.setattr(appliance_console, "load_first_boot_network_review", lambda: None)
+
+    with pytest.raises(StopIteration):
+        console.run()
+
+    assert called == ["customize"]
+
+
 def test_console_appliance_services_use_full_catalog_and_optional_units(monkeypatch):
     """Verify that console appliance services use full catalog and optional units.
 

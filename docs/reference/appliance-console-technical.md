@@ -76,7 +76,8 @@ The bounded VMware first-boot network-review form is the exception: it is availa
 applied and accepts only non-secret management-network values. It cannot open the process monitor, root shell, power
 menu, or ordinary desired-state editor. A root-owned initialization lock is present in the reusable VMware image, so
 those privileged actions are unavailable from the moment tty1 starts until customization applies the deployment root
-password and completes.
+password and completes. A confirmed no-envelope boot removes that lock without opening network review and therefore
+restores the same ordinary authenticated console actions.
 
 ## VMware first-boot network review
 
@@ -86,6 +87,15 @@ address. IPv4 network and broadcast addresses are rejected for both the interfac
 shorter than `/31`, while both `/31` point-to-point peers remain usable; an IPv6 gateway may instead be link-local. The
 customizer validates all OVF management fields before the first host mutation. It first validates the FQDN, required
 properties, credentials, and root-SSH boolean because the network-only console handshake cannot correct those fields.
+
+The VMware Tools read contract preserves both the answer signal and returned content. Thirty consecutive answered-empty
+reads confirm that no OVF envelope was supplied without racing a delayed injection. Atlaso atomically records
+`/var/lib/atlaso/vmware-no-ovf-initialization.applied`, clears the review/correction files and initialization lock, and
+logs **No OVF deployment properties supplied; using image defaults.** The normal console and remaining first-boot units
+then continue. An unanswered Tools channel resets empty confirmation and remains fail-closed. Malformed XML, a present
+envelope with no complete property set, invalid non-network properties, and invalid management relationships also remain
+blocked. On reboot, the durable non-OVF marker avoids the confirmation loop. A later nonempty envelope invalidates that
+marker durably before entering the ordinary validation and customization path.
 
 When validation fails, the customizer atomically writes a bounded, non-secret review document under
 `/var/lib/atlaso` and waits without starting networkd, data-disk initialization, bootstrap HTTPS, or Atlaso. The console
@@ -109,6 +119,18 @@ promoting possibly stale source state. Empty guestinfo must remain conclusively 
 proves scrub completion; properties that appear during that window are applied as a replacement deployment. An
 interrupted original OVA apply is safe to reapply idempotently. The applied marker removes the stale handshake and lock
 before exiting.
+
+VMware deployment-property cleanup sets `guestinfo.ovfEnv` to the explicit empty string through either
+`vmware-rpctool` or `vmtoolsd`. A credential-scrub or applied-marker failure after pending success is durable enters the
+finalization retry loop directly and clears the network-review handshake. It must never ask the operator to resubmit
+DHCP or static values after the management network has already validated and applied. VMware Tools may return that
+cleared value as the exact quoted-empty sentinel `""`; the reader normalizes only that sentinel to answered-empty before
+running the stable-empty confirmation.
+
+DHCP OVF customization may leave the legacy management-source CIDR empty because the generated Firewall service rules
+bind management access to the effective interface instead. When those generated rules replace the legacy rule, config
+rendering does not parse or emit the unused CIDR. Static deployments continue to validate and use their explicit source
+network.
 
 OVF XML password attributes are consumed exactly as parsed rather than trimmed. This preserves valid leading or trailing
 spaces supplied through a release deployment instead of applying a different credential or leaving initialization
