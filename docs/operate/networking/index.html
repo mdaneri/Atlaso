@@ -1104,6 +1104,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Configure the network">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#choose-where-the-management-ui-is-available" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Choose where the management UI is available
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -3322,6 +3339,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Configure the network">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#choose-where-the-management-ui-is-available" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Choose where the management UI is available
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -3509,8 +3543,8 @@ preserving management access.</p>
 <!-- BEGIN GENERATED INTERFACE OVERVIEW -->
 <h2 id="interface-overview">Interface overview<a class="headerlink" href="#interface-overview" title="Permanent link">&para;</a></h2>
 <p>This verified appliance view provides visual orientation before you begin.</p>
-<p><img alt="Atlaso Physical Interfaces page in the clean-appliance desktop viewport." src="../../assets/screenshots/physical-interfaces-clean-desktop.webp" /></p>
-<p><em>Figure: Physical Interfaces in the verified clean-appliance desktop state.</em></p>
+<p><img alt="Atlaso Physical Interfaces page showing inherent management UI on eth0 and the true glyph on access interface eth1." src="../../assets/screenshots/physical-interfaces-clean-desktop.webp" /></p>
+<p><em>Figure: Physical Interfaces showing inherent management exposure and the standard Atlaso true glyph for access exposure.</em></p>
 <!-- END GENERATED INTERFACE OVERVIEW -->
 
 <h2 id="before-you-begin">Before you begin<a class="headerlink" href="#before-you-begin" title="Permanent link">&para;</a></h2>
@@ -3525,6 +3559,28 @@ unreachable after apply.</p>
 <li>Review validation and rendered network previews.</li>
 <li>Submit the selected network units through <a href="../appliance-apply/">Appliance Apply</a>.</li>
 </ol>
+<h3 id="choose-where-the-management-ui-is-available">Choose where the management UI is available<a class="headerlink" href="#choose-where-the-management-ui-is-available" title="Permanent link">&para;</a></h3>
+<p>A physical interface with the <strong>management</strong> role always exposes <code>/ui/management</code>; it has no separate management UI
+switch. An addressed physical interface with the <strong>access</strong> role and <strong>Access (untagged)</strong> link type, or an enabled
+access VLAN, can additionally enable <strong>Management UI</strong>. The interface remains an ordinary access network: it stays
+eligible for public services and access service bindings, and it keeps access routing rather than gaining a
+management-specific gateway or policy route.</p>
+<p>Atlaso accepts that flag only when the access interface has a configured or observed usable non-link-local address.
+An unaddressed or link-local-only interface cannot satisfy management lockout protection because no management HTTPS
+listener can bind to it.</p>
+<p>The default configuration remains <code>eth0</code> as the dedicated management interface with the switch disabled on all access
+interfaces. To use one network for both planes, change <code>eth0</code> from management to access; Atlaso enables its management UI
+switch as part of that conversion. You may then disable the unused second interface. Converting an access interface to
+management clears its switch because management exposure is inherent in the role.</p>
+<p>Atlaso permits at most one dedicated management-role physical interface. It also prevents desired state with no
+effective management browser path: when no dedicated role exists, at least one active access interface or enabled
+access VLAN must have <strong>Management UI</strong> enabled. Multiple flagged access interfaces are allowed. On a flagged access
+address, <code>/</code> prefers the management sign-in, <code>/ui/management</code> requires normal authentication, and <code>/ui/public</code> remains
+available for the same access network. The listener also preserves the complete authenticated management front door,
+including stable API, API documentation, manifest, and service-worker routes required by the management UI and PWA.</p>
+<p>Only a dedicated management role owns management DHCP, default gateways, DHCP resolver recovery, and isolated
+management policy routing. If that role is absent, flagged access interfaces retain their normal access routes. The
+appliance FQDN and managed HTTPS certificate cover every effective management UI address.</p>
 <p>Management-to-lab and lab-to-management forwarding remain prohibited. Service listeners and firewall rules must bind to
 the same intended interfaces.</p>
 <h2 id="verify-and-roll-back">Verify and roll back<a class="headerlink" href="#verify-and-roll-back" title="Permanent link">&para;</a></h2>
@@ -3534,18 +3590,18 @@ network recovery action to restore a known-good management configuration, then r
 <h2 id="additional-verified-states">Additional verified states<a class="headerlink" href="#additional-verified-states" title="Permanent link">&para;</a></h2>
 <p>These captures show responsive layouts and useful operational states referenced by this page.</p>
 <h3 id="physical-interfaces">Physical interfaces<a class="headerlink" href="#physical-interfaces" title="Permanent link">&para;</a></h3>
-<p><img alt="Atlaso Physical Interfaces page in the clean-appliance responsive viewport." src="../../assets/screenshots/physical-interfaces-clean-responsive.webp" /></p>
-<p><em>Figure: Physical Interfaces in the verified clean-appliance responsive state.</em></p>
+<p><img alt="Responsive Atlaso Physical Interfaces page showing inherent management UI and the true glyph for access management UI." src="../../assets/screenshots/physical-interfaces-clean-responsive.webp" /></p>
+<p><em>Figure: Physical Interfaces showing inherent management exposure and the standard Atlaso true glyph at the responsive viewport.</em></p>
 <h3 id="routes-and-wan-simulation">Routes and WAN simulation<a class="headerlink" href="#routes-and-wan-simulation" title="Permanent link">&para;</a></h3>
 <p><img alt="Atlaso Routes and WAN Simulation page in the clean-appliance desktop viewport." src="../../assets/screenshots/routes-wan-clean-desktop.webp" /></p>
 <p><em>Figure: Routes and WAN Simulation in the verified clean-appliance desktop state.</em></p>
 <p><img alt="Atlaso Routes and WAN Simulation page in the clean-appliance responsive viewport." src="../../assets/screenshots/routes-wan-clean-responsive.webp" /></p>
 <p><em>Figure: Routes and WAN Simulation in the verified clean-appliance responsive state.</em></p>
 <h3 id="vlan-interfaces">VLAN interfaces<a class="headerlink" href="#vlan-interfaces" title="Permanent link">&para;</a></h3>
-<p><img alt="Atlaso VLAN Interfaces page in the clean-appliance desktop viewport." src="../../assets/screenshots/vlan-interfaces-clean-desktop.webp" /></p>
-<p><em>Figure: VLAN Interfaces in the verified clean-appliance desktop state.</em></p>
-<p><img alt="Atlaso VLAN Interfaces page in the clean-appliance responsive viewport." src="../../assets/screenshots/vlan-interfaces-clean-responsive.webp" /></p>
-<p><em>Figure: VLAN Interfaces in the verified clean-appliance responsive state.</em></p>
+<p><img alt="Atlaso VLAN Interfaces page showing the access VLAN management UI option." src="../../assets/screenshots/vlan-interfaces-clean-desktop.webp" /></p>
+<p><em>Figure: VLAN Interfaces showing optional access management UI exposure in the verified appliance desktop state.</em></p>
+<p><img alt="Responsive Atlaso VLAN Interfaces page showing the access VLAN management UI option." src="../../assets/screenshots/vlan-interfaces-clean-responsive.webp" /></p>
+<p><em>Figure: VLAN Interfaces management UI option in the verified appliance responsive state.</em></p>
 <!-- END GENERATED ADDITIONAL SCREENSHOTS -->
 
 

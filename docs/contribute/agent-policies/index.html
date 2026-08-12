@@ -4534,9 +4534,11 @@
   <code>/etc/systemd/network/</code>, reload networkd, reconfigure non-management links, create/update desired VLAN links, and
   delete VLAN links explicitly derived from successful Atlaso network apply history. The appliance image's default
   management networkd file should match only <code>eth0</code>, not <code>eth*</code>/<code>en*</code>, and Atlaso should retire Photon catchall network
-  defaults such as <code>50-static-en.network</code> and <code>99-dhcp-en.network</code>. Keep management on <code>eth0</code> explicit and do not
-  blindly reconfigure the management link without reachability safeguards. Management uses its own policy-routing table
-  and must never forward traffic from or to access/route networks; non-management lab routes use the lab route table.</li>
+  defaults such as <code>50-static-en.network</code> and <code>99-dhcp-en.network</code>. The default desired state keeps management on <code>eth0</code>,
+  but an operator may assign the single dedicated management role to another physical interface or use only flagged
+  access listeners. Do not blindly reconfigure a dedicated management link without reachability safeguards. When one
+  exists, management uses its own policy-routing table and must never forward traffic from or to access/route networks;
+  non-management lab routes use the lab route table.</li>
 <li>Do not offer trunk physical interfaces as direct service bind targets. Service bind selectors should include access
   physical interfaces with an IPv4 or IPv6 CIDR and enabled VLAN interfaces with an IPv4 or IPv6 CIDR.</li>
 <li>When a service bind target is selected, derive IPv4 and IPv6 listen addresses from the selected interface or VLAN
@@ -4552,6 +4554,12 @@
 <ul>
 <li>Management-role interface addresses dispatch <code>/</code> to <code>/ui/management</code>; all authenticated management pages and their
   browser-only support/action endpoints stay under that canonical root.</li>
+<li>A management-role physical interface exposes the management UI inherently and has no exposure flag. Access-role,
+  access-mode physical interfaces and enabled access-role VLANs may set <code>access_management_ui_enabled</code>. They remain
+  ordinary access interfaces for routing, service selectors, public UI, and public services. Allow at most one dedicated
+  management role, allow multiple flagged access listeners, and reject state with neither an effective dedicated role
+  nor an active flagged access listener. A management-to-access conversion enables the flag atomically; an
+  access-to-management conversion clears it.</li>
 <li>Non-management interface addresses dispatch <code>/</code> to an unauthenticated public service directory at <code>/ui/public</code>
   scoped to the called IP/host. The page must list only enabled public services whose desired listen addresses include
   that IP, and must show
@@ -4563,8 +4571,10 @@
   <code>/ui/public/ca/requests</code>, and Web Terminal <code>/ui/public/terminal</code>. Keep CA downloads
   <code>/ca/downloads/root-ca.pem</code> and <code>/ca/downloads/ca-bundle.pem</code>, ESXi PXE <code>/pxe/esxi/</code>, VCF Offline Depot <code>/PROD/</code>,
   and VCF Private Registry canonical URLs outside <code>/ui</code> as stable machine/protocol contracts.</li>
-<li>A public listener must return not found for <code>/ui/management</code> without rendering login behavior or the management shell;
-  a management listener must not publish <code>/ui/public</code>. Safe eligible root-level browser bookmarks use temporary
+<li>An unflagged public listener must return not found for <code>/ui/management</code> without rendering login behavior or the
+  management shell. A flagged access listener cohosts both planes: <code>/</code> prefers <code>/ui/management</code>, the authenticated
+  management shell offers a Public services link, and <code>/ui/public</code> remains available. A dedicated management listener
+  must not publish <code>/ui/public</code>. Safe eligible root-level browser bookmarks use temporary
   same-host redirects. Legacy mutations bridge internally to canonical handlers and must never use replaying redirects.</li>
 <li>Do not add <code>/registry</code> reverse proxying in the public-services site. Registry DNS and canonical registry URLs remain
   service-owned.</li>

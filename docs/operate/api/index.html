@@ -1263,6 +1263,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Call the API safely">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#configure-management-ui-exposure-on-access-interfaces" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Configure management UI exposure on access interfaces
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -3294,6 +3311,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Call the API safely">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#configure-management-ui-exposure-on-access-interfaces" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Configure management UI exposure on access interfaces
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -3515,6 +3549,12 @@ address with the appliance management address; do not replace the token variable
 <p>Use a certificate trusted by the client. Do not disable TLS verification in saved automation. Examples that create or
 change resources should use RFC 1918 lab addresses such as <code>192.168.50.0/24</code> and be reviewed against the operation's
 documented authorization and apply behavior before execution.</p>
+<h3 id="configure-management-ui-exposure-on-access-interfaces">Configure management UI exposure on access interfaces<a class="headerlink" href="#configure-management-ui-exposure-on-access-interfaces" title="Permanent link">&para;</a></h3>
+<p><code>PhysicalInterfaceResponse</code> and <code>VlanCreate</code>/<code>VlanResponse</code> include
+<code>access_management_ui_enabled</code>. Set it only on an access-role, access-mode physical interface or an access-role VLAN.
+The switch exposes the authenticated <code>/ui/management</code> browser plane without changing that interface's access routing or
+public-service eligibility. A management-role physical interface ignores the switch because it exposes management
+inherently. Network apply rejects a configuration that would leave no effective management UI listener.</p>
 <h2 id="scopes-and-authorization">Scopes and authorization<a class="headerlink" href="#scopes-and-authorization" title="Permanent link">&para;</a></h2>
 <p>Each Swagger operation describes its required Atlaso scope or authentication posture. A token can call only operations
 covered by its scopes; prefer a read-only token when the client does not mutate desired state. A valid token with
