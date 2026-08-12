@@ -7,7 +7,22 @@ from scripts.check_repo import (
     REQUIRED_POLICY_MARKERS,
     check_agent_policy_gate,
     check_ui_pattern_foundation,
+    collect_files,
+    is_checkable,
 )
+
+
+def test_deployment_assets_are_checkable_text() -> None:
+    """Verify that every protected deployment asset class enters repository checks."""
+    paths = (
+        Path("image/hyperv/atlaso-photon.pkr.hcl"),
+        Path("image/common/systemd/atlaso-worker.service"),
+        Path("image/common/systemd/atlaso-console-manager.conf"),
+        Path("image/vmware-workstation/sudoers.d/atlaso-helper"),
+    )
+
+    assert all(is_checkable(path) for path in paths)
+    assert all(len(collect_files([str(path)])) == 1 for path in paths)
 
 
 def write_policy_files(root: Path) -> None:

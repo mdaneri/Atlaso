@@ -131,6 +131,22 @@ jobs:
       - name: Enforce the exact appliance dependency lock
         run: python scripts/check_appliance_lock.py
       - run: python scripts/check_repo.py
+      - name: Validate systemd and sudoers assets
+        run: python scripts/check_deployment_assets.py --mode linux
+
+  deployment-packer:
+    name: ${{ github.event_name == 'workflow_dispatch' && 'Trusted Packer deployment validation' || github.event_name == 'pull_request' && github.actor == 'github-actions[bot]' && 'Approval-gated Packer deployment validation' || 'Packer deployment validation' }}
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.head_sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.14'
+      - name: Validate both Photon Packer targets
+        run: python scripts/check_deployment_assets.py --mode packer
 
   python-tests:
     name: ${{ github.event_name == 'workflow_dispatch' && 'Trusted Python tests validation' || github.event_name == 'pull_request' && github.actor == 'github-actions[bot]' && 'Approval-gated Python tests' || 'Python tests' }}
@@ -155,6 +171,7 @@ jobs:
       - trusted-contexts-start
       - version-policy
       - repository-checks
+      - deployment-packer
       - python-tests
     runs-on: ubuntu-latest
     permissions:
@@ -167,6 +184,7 @@ jobs:
           BASE_SHA: ${{ inputs.base_sha }}
           GH_TOKEN: ${{ github.token }}
           HEAD_SHA: ${{ inputs.head_sha }}
+          PACKER_RESULT: ${{ needs.deployment-packer.result }}
           PR_NUMBER: ${{ inputs.pull_number }}
           PYTHON_RESULT: ${{ needs.python-tests.result }}
           REPOSITORY_RESULT: ${{ needs.repository-checks.result }}
@@ -215,5 +233,9 @@ jobs:
                 --input -
           }
           post_status "Version policy" "$VERSION_RESULT"
-          post_status "Repository checks" "$REPOSITORY_RESULT"
+          repository_result="$REPOSITORY_RESULT"
+          if [[ "$PACKER_RESULT" != "success" ]]; then
+            repository_result="$PACKER_RESULT"
+          fi
+          post_status "Repository checks" "$repository_result"
           post_status "Python tests" "$PYTHON_RESULT"
