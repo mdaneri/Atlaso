@@ -4482,6 +4482,10 @@ NAT, or automatic broad NAT is created from interface roles. Operators edit NAT 
 non-management access physical interface or enabled VLAN with an IPv4 CIDR as the outbound interface, and review the
 rendered nftables table and command intent on the global apply page. Route-specific WAN impairment is planned but not
 exposed in v1; the design notes live in <code>docs/routing-wan-roadmap.md</code>.</p>
+<p>The <code>/routes-wan</code> browser surface labels path entries <strong>Static Routes</strong> and forwarding authorization <strong>Routing
+Permissions</strong>. Static Routes, explicit Routing Permissions, NAT Rules, and WAN Policies retain Tabulator browse grids
+but use the shared reviewed add/edit wizard. Wizard submission and direct Enabled changes update desired state only;
+they never invoke this helper or apply unit directly. Generated route-role permissions remain read-only.</p>
 <p>Through <code>atlaso-helper wan validate|apply</code>, the helper validates staged routes, routing rules, NAT rules, WAN targets,
 and netem policy values. Apply installs <code>/etc/atlaso/nftables.d/atlaso-nat.nft</code>, enables <code>net.ipv4.ip_forward=1</code> only
 when enabled lab routing or NAT requires forwarding, applies source policy rules with <code>ip rule</code>, applies the NAT table

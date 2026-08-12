@@ -959,6 +959,34 @@
       "sensitive_data_reviewed": true
     },
     {
+      "path": "assets/screenshots/routes-wan-policy-wizard-responsive.webp",
+      "route": "/routes-wan#policies",
+      "state": "wan-policy-wizard",
+      "viewport": "900x1200",
+      "source_commit": "5c8bf3cc07a2+working-tree",
+      "atlaso_version": "0.9.106",
+      "caption": "WAN policy wizard in the verified responsive viewport.",
+      "alt": "Atlaso WAN policy wizard in a responsive viewport with the five reviewed configuration steps.",
+      "capture_method": "codex-in-app-browser",
+      "documentation_page": "operate/networking.md",
+      "brand_variant": "light",
+      "sensitive_data_reviewed": true
+    },
+    {
+      "path": "assets/screenshots/routes-wan-static-route-wizard-desktop.webp",
+      "route": "/routes-wan#routes",
+      "state": "static-route-wizard-review",
+      "viewport": "1600x1000",
+      "source_commit": "5c8bf3cc07a2+working-tree",
+      "atlaso_version": "0.9.106",
+      "caption": "Static route wizard review with the complete path and appliance-apply boundary.",
+      "alt": "Atlaso static route wizard reviewing the destination, interface path, WAN Simulation selection, and enabled state.",
+      "capture_method": "codex-in-app-browser",
+      "documentation_page": "operate/networking.md",
+      "brand_variant": "light",
+      "sensitive_data_reviewed": true
+    },
+    {
       "path": "assets/screenshots/services-clean-desktop.webp",
       "route": "/services",
       "state": "clean",

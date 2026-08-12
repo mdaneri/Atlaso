@@ -3594,10 +3594,10 @@ read-only or unavailable surface has a mutation workflow.</p>
 <td>E1–E8</td>
 </tr>
 <tr>
-<td><code>/routes-wan</code> — routes, permissions, NAT, policies</td>
-<td>Direct-edit Tabulator; Physical Interfaces reference</td>
+<td><code>/routes-wan</code> — static routes, routing permissions, NAT, policies</td>
+<td>Wizard-backed Tabulator; ESX Storage reference</td>
 <td>Four paired fallback tables and rendered validation/config preview</td>
-<td>Role-gated desired-state edits and confirmations; enforcement only through global <code>wan</code> apply</td>
+<td>Role-gated reviewed add/edit, direct Enabled state, shared confirmations; generated permissions read-only; enforcement only through global <code>wan</code> apply</td>
 <td>Pass D/N/K/F/Z/V</td>
 <td>E1–E8</td>
 </tr>
@@ -3953,6 +3953,8 @@ are explicitly inventoried so route/template changes cannot silently escape the 
   <code>network-boot-promote-dialog</code>, <code>esxi-iso-upload-dialog</code>, <code>esxi-custom-variable-wizard-dialog</code>,
   <code>esxi-boot-authorization-dialog</code>, <code>kickstart-wizard-dialog</code>, <code>esx-storage-volume-modal</code>, and
   <code>esx-storage-share-modal</code>.</li>
+<li>Routing and WAN: <code>routes-wan-route-dialog</code>, <code>routes-wan-routing-dialog</code>, <code>routes-wan-nat-dialog</code>, and
+  <code>routes-wan-policy-dialog</code>.</li>
 <li>VCF workflows: <code>vcf-fqdn-modal</code>, <code>vcf-ldap-modal</code>, <code>vcf-trust-modal</code>, <code>vcf-sddc-deploy-modal</code>, <code>vcf-target-depot-modal</code>,
   <code>vcf-vault-import-modal</code>, <code>vcf-depot-profile-dialog</code>, <code>vcf-depot-tool-package-dialog</code>,
   <code>vcf-depot-configuration-dialog</code>, <code>vcf-depot-tool-reset-modal</code>, and <code>vcf-registry-bundle-dialog</code>.</li>

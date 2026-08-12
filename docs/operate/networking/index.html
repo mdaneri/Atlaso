@@ -1118,6 +1118,23 @@
   
 </li>
         
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#configure-routes-and-wan-behavior" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Configure routes and WAN behavior
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Configure routes and WAN behavior">
+      <ul class="md-nav__list">
+        
           <li class="md-nav__item">
   <a href="#add-or-edit-a-vlan-interface" class="md-nav__link">
     <span class="md-ellipsis">
@@ -1162,6 +1179,28 @@
     <span class="md-ellipsis">
       <span class="md-typeset">
         Physical interfaces
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#routes-wan-policies" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Routes Wan: Policies
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#routes-wan-routes" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Routes Wan: Routes
       </span>
     </span>
   </a>
@@ -3364,6 +3403,23 @@
   
 </li>
         
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#configure-routes-and-wan-behavior" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Configure routes and WAN behavior
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Configure routes and WAN behavior">
+      <ul class="md-nav__list">
+        
           <li class="md-nav__item">
   <a href="#add-or-edit-a-vlan-interface" class="md-nav__link">
     <span class="md-ellipsis">
@@ -3408,6 +3464,28 @@
     <span class="md-ellipsis">
       <span class="md-typeset">
         Physical interfaces
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#routes-wan-policies" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Routes Wan: Policies
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#routes-wan-routes" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Routes Wan: Routes
       </span>
     </span>
   </a>
@@ -3605,6 +3683,27 @@ management policy routing. If that role is absent, flagged access interfaces ret
 appliance FQDN and managed HTTPS certificate cover every effective management UI address.</p>
 <p>Management-to-lab and lab-to-management forwarding remain prohibited. Service listeners and firewall rules must bind to
 the same intended interfaces.</p>
+<h2 id="configure-routes-and-wan-behavior">Configure routes and WAN behavior<a class="headerlink" href="#configure-routes-and-wan-behavior" title="Permanent link">&para;</a></h2>
+<p><strong>Static Routes</strong> and <strong>Routing Permissions</strong> solve different jobs:</p>
+<ul>
+<li>A <strong>Static Route</strong> selects a path to an IPv4 or IPv6 destination through a non-management interface or VLAN. It owns
+  the destination CIDR, optional gateway, output target, metric, enabled state, and optional interface-level WAN policy.</li>
+<li>A <strong>Routing Permission</strong> authorizes forwarded traffic from one non-management interface/VLAN network to another.
+  Route-role networks generate these paths automatically. Access networks remain blocked until an explicit permission
+  is enabled. Management is never an eligible source or destination.</li>
+</ul>
+<p>Use the bottom add row in each tab to open the reviewed wizard. Double-click a saved row or use <strong>Edit</strong> in its row
+menu to update it. Each wizard retains entered values while moving backward, validates before Review, and saves only
+after the final add/update action. A saved row's <strong>Enabled</strong> value remains directly editable; this changes desired state
+only.</p>
+<p>The <strong>NAT</strong> wizard creates explicit IPv4 masquerade rules. Choose Any, an existing Firewall source group, or IPv4 source
+CIDRs, then select an eligible IPv4-bearing access interface or enabled VLAN. Atlaso does not infer an outbound target
+from an interface role and does not provide destination NAT, port forwarding, or IPv6 NAT in v1.</p>
+<p>The <strong>WAN Policies</strong> wizard groups delay/capacity settings separately from packet loss and error effects. Assigning a
+policy to a Static Route identifies its target interface or VLAN; WAN Simulation v1 impairs all traffic on that target,
+not only traffic matching the route destination.</p>
+<p>Saving any of these resources does not change Photon. Review the rendered configuration and submit the global
+<strong>Routes &amp; WAN Simulation</strong> unit through Appliance Apply when the complete desired state is ready.</p>
 <h3 id="add-or-edit-a-vlan-interface">Add or edit a VLAN interface<a class="headerlink" href="#add-or-edit-a-vlan-interface" title="Permanent link">&para;</a></h3>
 <p>The VLAN table is a read-only browse surface. Select <strong>+ Add VLAN interface here</strong> to create a row, or double-click an
 existing row and use <strong>Edit VLAN</strong> from its context menu to revise it. The shared wizard reviews the complete VLAN
@@ -3631,6 +3730,12 @@ network recovery action to restore a known-good management configuration, then r
 <h3 id="physical-interfaces">Physical interfaces<a class="headerlink" href="#physical-interfaces" title="Permanent link">&para;</a></h3>
 <p><img alt="Responsive Atlaso Physical Interfaces page showing inherent management UI and the true glyph for access management UI." src="../../assets/screenshots/physical-interfaces-clean-responsive.webp" /></p>
 <p><em>Figure: Physical Interfaces showing inherent management exposure and the standard Atlaso true glyph at the responsive viewport.</em></p>
+<h3 id="routes-wan-policies">Routes Wan: Policies<a class="headerlink" href="#routes-wan-policies" title="Permanent link">&para;</a></h3>
+<p><img alt="Atlaso WAN policy wizard in a responsive viewport with the five reviewed configuration steps." src="../../assets/screenshots/routes-wan-policy-wizard-responsive.webp" /></p>
+<p><em>Figure: WAN policy wizard in the verified responsive viewport.</em></p>
+<h3 id="routes-wan-routes">Routes Wan: Routes<a class="headerlink" href="#routes-wan-routes" title="Permanent link">&para;</a></h3>
+<p><img alt="Atlaso static route wizard reviewing the destination, interface path, WAN Simulation selection, and enabled state." src="../../assets/screenshots/routes-wan-static-route-wizard-desktop.webp" /></p>
+<p><em>Figure: Static route wizard review with the complete path and appliance-apply boundary.</em></p>
 <h3 id="routes-and-wan-simulation">Routes and WAN simulation<a class="headerlink" href="#routes-and-wan-simulation" title="Permanent link">&para;</a></h3>
 <p><img alt="Atlaso Routes and WAN Simulation page in the clean-appliance desktop viewport." src="../../assets/screenshots/routes-wan-clean-desktop.webp" /></p>
 <p><em>Figure: Routes and WAN Simulation in the verified clean-appliance desktop state.</em></p>
