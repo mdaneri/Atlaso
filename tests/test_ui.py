@@ -2067,6 +2067,64 @@ def test_forget_missing_physical_interface_deletes_only_stale_rows(client):
         assert db.get(PhysicalInterface, active_id) is not None
 
 
+def test_forget_missing_physical_interface_reports_enabled_dependency(client):
+    """Verify Forget rolls back and reports an enabled DHCP dependency.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
+    from sqlalchemy import select
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import DhcpScope, PhysicalInterface
+
+    login(client)
+    scope_name = "missing-interface-dependency"
+    with SessionLocal() as db:
+        missing = PhysicalInterface(
+            name="missing_eth9",
+            mac_address="00:50:56:00:00:09",
+            role="access",
+            mode="access",
+            ip_cidr="10.9.0.1/24",
+            admin_state="down",
+            oper_state="missing",
+        )
+        db.add(missing)
+        db.flush()
+        db.add(
+            DhcpScope(
+                name=scope_name,
+                address_family="ipv4",
+                interface_name=missing.name,
+                site_address="10.9.0.1",
+                prefix_length=24,
+                range_expression="10.9.0.100-10.9.0.120",
+                dns_server="10.9.0.1",
+                ntp_server="10.9.0.1",
+                enabled=True,
+            )
+        )
+        db.commit()
+        missing_id = missing.id
+
+    page = client.get("/physical-interfaces")
+    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    response = client.post(
+        f"/physical-interfaces/{missing_id}/forget",
+        data={"csrf": csrf},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 422, response.text
+    assert "DHCP scope" in response.text
+    with SessionLocal() as db:
+        assert db.get(PhysicalInterface, missing_id) is not None
+        assert db.execute(
+            select(DhcpScope).where(DhcpScope.name == scope_name)
+        ).scalar_one().enabled is True
+
+
 def test_forget_missing_first_service_interface_moves_dns_alias_to_next_target(client):
     """Verify that forget missing first service interface moves dns alias to next target.
 

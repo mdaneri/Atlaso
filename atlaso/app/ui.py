@@ -17588,20 +17588,24 @@ def forget_missing_physical_interface_from_ui(
     if active_vlans:
         return Response("Disable or move dependent VLAN interfaces before forgetting this missing interface.", status_code=409, media_type="text/plain")
     disabled_vlans = db.execute(select(VlanInterface).where(VlanInterface.parent_interface == interface.name)).scalars().all()
-    for vlan in disabled_vlans:
-        db.delete(vlan)
     old_name = interface.name
-    dependent_updates = refresh_interface_dependent_addresses(
-        db,
-        old_name=old_name,
-        new_name="",
-        old_ip_cidr=interface.ip_cidr,
-        old_ipv6_cidr=interface.ipv6_cidr,
-        actor=None,
-        dns_refresher=refresh_interface_service_dns_aliases,
-    )
-    db.delete(interface)
-    db.commit()
+    try:
+        for vlan in disabled_vlans:
+            db.delete(vlan)
+        dependent_updates = refresh_interface_dependent_addresses(
+            db,
+            old_name=old_name,
+            new_name="",
+            old_ip_cidr=interface.ip_cidr,
+            old_ipv6_cidr=interface.ipv6_cidr,
+            actor=None,
+            dns_refresher=refresh_interface_service_dns_aliases,
+        )
+        db.delete(interface)
+        db.commit()
+    except PhysicalInterfaceUpdateError as exc:
+        db.rollback()
+        return Response(exc.detail, status_code=exc.status_code, media_type="text/plain")
     details = [f"Forgot missing interface {old_name}; removed {len(disabled_vlans)} disabled dependent VLAN row{'s' if len(disabled_vlans) != 1 else ''}."]
     if dependent_updates:
         details.append(f"Refreshed dependent desired-state addresses: {', '.join(dependent_updates)}.")
