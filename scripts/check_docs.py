@@ -156,7 +156,7 @@ def browser_url_path(candidate: str) -> str:
         remainder = scheme_match.group(3)
         first_segment = remainder.split("/", 1)[0]
         if not scheme_match.group(2) or ("." not in first_segment and ":" not in first_segment):
-            return normalize_browser_path(f"/{remainder}")
+            return normalize_browser_path(urlparse(f"/{remainder}").path)
         browser_url = f"{scheme_match.group(1)}://{remainder}"
     return normalize_browser_path(urlparse(browser_url).path)
 
