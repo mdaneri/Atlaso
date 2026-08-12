@@ -4459,7 +4459,7 @@ def test_backup_restore_page_exports_settings_archive(client):
     assert "atlaso-settings-" in exported.headers["content-disposition"]
     payload = json.loads(exported.content)
     assert payload["kind"] == "atlaso-settings-archive"
-    assert payload["schema_version"] == 1
+    assert payload["schema_version"] == 2
     assert "appliance_settings" in payload["data"]
     assert "dns_records" in payload["data"]
     assert "users" not in payload["data"]
@@ -4717,6 +4717,11 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
     empty_data["data"] = {}
     empty_singleton = deepcopy(archive)
     empty_singleton["data"]["appliance_settings"] = []
+    duplicate_oidc_singleton = deepcopy(archive)
+    duplicate_oidc_singleton["data"]["oidc_provider_settings"] = [{}, {}]
+    legacy_missing_section = deepcopy(archive)
+    legacy_missing_section["schema_version"] = 1
+    del legacy_missing_section["data"]["network_boot_environments"]
     enabled_missing_parent_vlan = deepcopy(archive)
     enabled_missing_parent_vlan["data"]["vlan_interfaces"].append(
         {"name": "missing-parent.123", "parent_interface": "missing-parent", "vlan_id": 123, "enabled": True}
@@ -4947,6 +4952,7 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
         (missing_section, "missing a required data section"),
         (empty_data, "missing a required data section"),
         (empty_singleton, "must contain exactly one row"),
+        (duplicate_oidc_singleton, "must contain at most one row"),
         (enabled_missing_parent_vlan, "has an ineligible parent interface"),
         (enabled_non_trunk_vlan, "has an ineligible parent interface"),
         (enabled_missing_route_target, "has an ineligible target interface"),
@@ -4995,6 +5001,31 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
     archive_summary(disabled_missing_routing_target)
     archive_summary(disabled_missing_dhcp_target)
     archive_summary(disabled_missing_service_target)
+    assert "network_boot_environments" not in archive_summary(legacy_missing_section)["table_counts"]
+
+
+def test_settings_restore_migrates_incomplete_schema_v1_archive(client):
+    """Verify schema-v1 restore retains sections absent from the older archive.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
+    from sqlalchemy import select
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import NetworkBootEnvironment
+    from atlaso.app.services.settings_archive import export_settings_archive, restore_settings_archive
+
+    with SessionLocal() as db:
+        archive = export_settings_archive(db, actor="test")
+        archive["schema_version"] = 1
+        del archive["data"]["network_boot_environments"]
+        expected_keys = set(db.execute(select(NetworkBootEnvironment.key)).scalars().all())
+
+        counts = restore_settings_archive(db, archive)
+
+        assert counts["network_boot_environments"] == len(expected_keys)
+        assert set(db.execute(select(NetworkBootEnvironment.key)).scalars().all()) == expected_keys
 
 
 def test_settings_restore_rolls_back_late_failure_without_clearing_staged_ldap_recovery(client, monkeypatch):

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from copy import deepcopy
 from datetime import datetime, timezone
 from ipaddress import ip_address, ip_interface, ip_network
 from typing import Any
@@ -106,7 +107,8 @@ from atlaso.app.services.routes_wan import validate_nat_source
 from atlaso.app.services.update_sources import UPDATE_SOURCE_KINDS
 from atlaso.app.services.vcf_backups import VCF_BACKUP_DEFAULT_USERNAME
 
-ARCHIVE_SCHEMA_VERSION = 1
+ARCHIVE_SCHEMA_VERSION = 2
+LEGACY_ARCHIVE_SCHEMA_VERSION = 1
 ARCHIVE_KIND = "atlaso-settings-archive"
 SAFE_SETTING_KEYS = {
     DNS_CONDITIONAL_FORWARDERS_SETTING_KEY,
@@ -219,6 +221,12 @@ ARCHIVE_SINGLETON_SECTIONS = frozenset(
         "vcf_backup_settings",
         "vcf_offline_depot_settings",
         "vcf_private_registry_settings",
+    }
+)
+ARCHIVE_OPTIONAL_SINGLETON_SECTIONS = frozenset(
+    {
+        "esx_storage_settings",
+        "oidc_provider_settings",
     }
 )
 
@@ -797,11 +805,12 @@ def restore_settings_archive(db: Session, archive: dict[str, Any]) -> dict[str, 
         db: Active database session.
         archive: Archive payload or path to process.
     """
-    _validate_archive(archive)
-    _validate_archive_database_relationships(db, archive["data"])
+    prepared_archive = _prepare_archive_for_restore(db, archive)
+    _validate_archive(prepared_archive)
+    _validate_archive_database_relationships(db, prepared_archive["data"])
     recovery_archives = db.execute(select(LdapRecoveryArchive)).scalars().all()
     try:
-        counts = _restore_settings_archive_data(db, archive["data"])
+        counts = _restore_settings_archive_data(db, prepared_archive["data"])
         db.commit()
     except ValueError:
         db.rollback()
@@ -1018,7 +1027,7 @@ def archive_summary(archive: dict[str, Any]) -> dict[str, Any]:
     Args:
         archive: Archive consumed by archive summary.
     """
-    _validate_archive(archive)
+    _validate_archive(archive, allow_legacy_incomplete=True)
     data = archive["data"]
     table_counts = {key: len(value) for key, value in data.items() if isinstance(value, list)}
     return {
@@ -1075,11 +1084,38 @@ def _disable_startup_example_seed(db: Session) -> None:
     db.flush()
 
 
-def _validate_archive(archive: dict[str, Any]) -> None:
+def _prepare_archive_for_restore(db: Session, archive: dict[str, Any]) -> dict[str, Any]:
+    """Upgrade a legacy settings archive without discarding newer target state.
+
+    Args:
+        db: Active database session used to export retained sections.
+        archive: Candidate archive supplied by an operator.
+
+    Returns:
+        A schema-v2 archive ready for complete preflight validation.
+    """
+    if not isinstance(archive, dict) or archive.get("schema_version") != LEGACY_ARCHIVE_SCHEMA_VERSION:
+        return archive
+    if not isinstance(archive.get("data"), dict):
+        return archive
+    prepared = deepcopy(archive)
+    retained = export_settings_archive(db, actor="legacy-settings-archive-migration")["data"]
+    for section_name in ARCHIVE_SECTION_NAMES.difference(prepared["data"]):
+        prepared["data"][section_name] = deepcopy(retained[section_name])
+    prepared["schema_version"] = ARCHIVE_SCHEMA_VERSION
+    return prepared
+
+
+def _validate_archive(
+    archive: dict[str, Any],
+    *,
+    allow_legacy_incomplete: bool = False,
+) -> None:
     """Validate archive.
 
     Args:
         archive: Candidate archive to validate.
+        allow_legacy_incomplete: Allow summary validation before database-backed migration.
 
 
     Raises:
@@ -1087,7 +1123,8 @@ def _validate_archive(archive: dict[str, Any]) -> None:
     """
     if not isinstance(archive, dict) or archive.get("kind") != ARCHIVE_KIND:
         raise ValueError("Upload a Atlaso settings archive.")
-    if archive.get("schema_version") != ARCHIVE_SCHEMA_VERSION:
+    schema_version = archive.get("schema_version")
+    if schema_version not in {LEGACY_ARCHIVE_SCHEMA_VERSION, ARCHIVE_SCHEMA_VERSION}:
         raise ValueError("This settings archive schema is not supported by this Atlaso build.")
     if not isinstance(archive.get("data"), dict):
         raise ValueError("The settings archive is missing its data section.")
@@ -1095,7 +1132,12 @@ def _validate_archive(archive: dict[str, Any]) -> None:
     if any(section_name not in ARCHIVE_SECTION_NAMES for section_name in data):
         raise ValueError("The settings archive contains an unsupported data section.")
     missing_sections = ARCHIVE_SECTION_NAMES.difference(data)
-    if missing_sections:
+    legacy_incomplete = bool(
+        missing_sections
+        and allow_legacy_incomplete
+        and schema_version == LEGACY_ARCHIVE_SCHEMA_VERSION
+    )
+    if missing_sections and not legacy_incomplete:
         raise ValueError("The settings archive is missing a required data section.")
     for section_name, rows in data.items():
         if not isinstance(rows, list):
@@ -1104,10 +1146,15 @@ def _validate_archive(archive: dict[str, Any]) -> None:
             raise ValueError(
                 f"The settings archive data section '{section_name}' must contain exactly one row."
             )
+        if section_name in ARCHIVE_OPTIONAL_SINGLETON_SECTIONS and len(rows) > 1:
+            raise ValueError(
+                f"The settings archive data section '{section_name}' must contain at most one row."
+            )
         required_fields = _archive_required_fields(section_name)
         for row_index, row in enumerate(rows, start=1):
             _validate_archive_row(section_name, row_index, row, required_fields)
-    _validate_archive_relationships(data)
+    if not legacy_incomplete:
+        _validate_archive_relationships(data)
 
 
 def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> None:
