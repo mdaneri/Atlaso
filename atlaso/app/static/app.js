@@ -7151,21 +7151,19 @@ async function postNetworkAction(url, data, csrf, options = {}) {
   }
 }
 
-function newVlanInterfaceRow(defaultParent = "eth1", defaultMtu = 1500) {
+function newVlanWizardRow() {
   return {
     id: "__new__",
     name: "",
-    parent_interface: defaultParent,
+    parent_interface: "",
     vlan_id: "",
     ip_cidr: "",
     ipv6_cidr: "",
-    mtu: defaultMtu,
-    role: "access",
-    enabled: true,
+    mtu: "",
+    role: "",
+    enabled: false,
     access_management_ui_enabled: false,
     is_new: true,
-    is_activated: false,
-    requires_activation: true,
   };
 }
 
@@ -7327,72 +7325,11 @@ function vlanEnabledFormatter(cell) {
   return adminStateFormatter(cell);
 }
 
-function hasRequiredVlanFields(data) {
-  return Boolean((data.parent_interface || "").trim() && String(data.vlan_id || "").trim() && (String(data.ip_cidr || "").trim() || String(data.ipv6_cidr || "").trim()));
-}
-
-function editNewRowCell(cell, fieldName) {
-  const row = cell.getRow();
-  if (!row.getData().is_new) {
-    return;
-  }
-  const target = row.getCell(fieldName);
-  if (target && typeof target.edit === "function") {
-    target.edit();
-  }
-}
-
-async function activateNewVlanRow(cell) {
-  const row = cell.getRow();
-  const data = row.getData();
-  if (!data.is_new) {
-    return;
-  }
-  data.is_activated = true;
-  row.reformat();
-  row.getElement().classList.remove("new-record-row-pending");
-  const vlanIdCell = row.getCell("vlan_id");
-  if (vlanIdCell && typeof vlanIdCell.edit === "function") {
-    vlanIdCell.edit();
-  }
-}
-
 function physicalRoleFormatter(cell) {
   if (cell.getRow().getData().mode === "trunk") {
     return "";
   }
   return escapeHtml(cell.getValue());
-}
-
-async function autoSaveVlanParent(cell, csrf, parentMtus) {
-  const row = cell.getRow();
-  const data = row.getData();
-  if (data.is_new) {
-    const parentMtu = Number(parentMtus[data.parent_interface]);
-    if (Number.isInteger(parentMtu) && parentMtu > 0) {
-      await row.update({ mtu: parentMtu });
-    }
-  }
-  await updateVlanDerivedName(row);
-  await autoSaveVlanInterface(cell, csrf);
-}
-
-function vlanDerivedName(data) {
-  const parent = String(data.parent_interface || "").trim();
-  const vlanId = String(data.vlan_id || "").trim();
-  return parent && vlanId ? `${parent}.${vlanId}` : "";
-}
-
-async function updateVlanDerivedName(row) {
-  const name = vlanDerivedName(row.getData());
-  if (row.getData().name !== name) {
-    await row.update({ name });
-  }
-}
-
-async function autoSaveVlanId(cell, csrf) {
-  await updateVlanDerivedName(cell.getRow());
-  await autoSaveVlanInterface(cell, csrf);
 }
 
 function roleValues(options) {
@@ -7578,46 +7515,6 @@ async function forgetPhysicalInterfaceFromMenu(row, csrf) {
     await postNetworkAction(managementUiPath(`/physical-interfaces/${data.id}/forget`), {}, csrf);
   } catch (error) {
     showNetworkMessage("physical-interface-error", error instanceof Error ? error.message : "The missing interface could not be forgotten.");
-  }
-}
-
-async function autoSaveVlanInterface(cell, csrf) {
-  clearCaMessage("vlan-interface-error");
-  const row = cell.getRow();
-  const data = row.getData();
-  if (data.parent_missing) {
-    row.update({ enabled: false });
-    showNetworkMessage("vlan-interface-error", `${data.parent_interface} is missing from host inventory. Move this VLAN to an available trunk parent before enabling it.`);
-    if (typeof cell.restoreOldValue === "function") {
-      cell.restoreOldValue();
-    }
-    return;
-  }
-  if (data.is_new) {
-    if (!hasRequiredVlanFields(data)) {
-      return;
-    }
-    try {
-      await postNetworkAction(managementUiPath("/vlan-interfaces"), data, csrf, { reload: false });
-      showTransientGridStatus("Added");
-      window.location.reload();
-    } catch (error) {
-      showNetworkMessage("vlan-interface-error", error instanceof Error ? error.message : "The VLAN interface could not be added.");
-      if (typeof cell.restoreOldValue === "function") {
-        cell.restoreOldValue();
-      }
-    }
-    return;
-  }
-  try {
-    await postNetworkAction(managementUiPath(`/vlan-interfaces/${data.id}/edit`), data, csrf, { reload: false });
-    showTransientGridStatus("Saved");
-    await refreshNetworkSideStack();
-  } catch (error) {
-    showNetworkMessage("vlan-interface-error", error instanceof Error ? error.message : "The VLAN interface could not be saved.");
-    if (typeof cell.restoreOldValue === "function") {
-      cell.restoreOldValue();
-    }
   }
 }
 
@@ -8815,150 +8712,306 @@ function initializeOidcSubjectsTable() {
 
 function initializeVlanInterfacesTable() {
   const tableElement = document.getElementById("vlan-interfaces-table");
-  if (!(tableElement instanceof HTMLElement)) {
-    return;
-  }
+  const form = document.querySelector("[data-vlan-interface-form]");
+  const dialog = document.getElementById("vlan-interface-dialog");
+  if (!(tableElement instanceof HTMLElement)) return;
   const fallback = document.getElementById(tableElement.dataset.fallbackId || "");
   if (typeof Tabulator === "undefined") {
     showNetworkMessage("vlan-interface-error", "Tabulator did not load. Showing the fallback table.");
     return;
   }
   const csrf = tableElement.dataset.csrf || "";
+  const canWrite = tableElement.dataset.canWrite === "true";
+  if (canWrite && (!(form instanceof HTMLFormElement) || !(dialog instanceof HTMLDialogElement))) {
+    showNetworkMessage("vlan-interface-error", "The VLAN interface wizard could not initialize.");
+    return;
+  }
   const parentOptionRows = JSON.parse(tableElement.dataset.parentOptions || "[]");
   const parentOptions = parentOptionRows.map((item) => (typeof item === "string" ? { name: item, label: item } : item));
-  const roleOptions = roleValues(JSON.parse(tableElement.dataset.roleOptions || "[]"));
-  const parentValues = Object.fromEntries(parentOptions.map((item) => [item.name, item.label || item.name]));
+  const roleOptionRows = JSON.parse(tableElement.dataset.roleOptions || "[]");
   const parentMtus = Object.fromEntries(parentOptions.map((item) => [item.name, Number(item.mtu) || 1500]));
   const defaultParent = parentOptions[0]?.name || "";
   const defaultMtu = parentMtus[defaultParent] || 1500;
-  const rows = [...JSON.parse(tableElement.dataset.vlans || "[]"), newVlanInterfaceRow(defaultParent, defaultMtu)];
+  const rows = [...JSON.parse(tableElement.dataset.vlans || "[]")];
+  if (canWrite) rows.push(newVlanWizardRow());
   try {
-    const atlasoGridOptions19 = {
-      data: rows,
-      index: "id",
-      layout: "fitColumns",
-      height: "420px",
-      rowHeight: 28,
-      placeholder: "No VLAN interfaces configured.",
-      reactiveData: false,
-      rowContextMenu: [
+    let table;
+    let wizard;
+    let highlightedVlanId = "";
+    let openVlan = () => {};
+    const grid = window.AtlasoUiPatterns.createGrid({
+      element: tableElement,
+      fallback: fallback instanceof HTMLElement ? `#${fallback.id}` : undefined,
+      pattern: "wizard-backed",
+      permission: {
+        allowed: canWrite,
+        message: "You have read-only access to VLAN interfaces.",
+      },
+      emptyMessage: "No VLAN interfaces configured.",
+      onOpenRow: canWrite
+        ? (data, row, event) => openVlan(data, event?.currentTarget || row?.getElement?.())
+        : undefined,
+      rowActions: [
+        {
+          label: "Edit VLAN",
+          disabled: (row) => row.getData().is_new,
+          action: (_event, row) => openVlan(row.getData(), row.getElement()),
+        },
         {
           label: "Delete VLAN",
+          disabled: (row) => row.getData().is_new,
           action: (event, row) => deleteVlanInterfaceFromMenu(row, csrf),
         },
       ],
-      columns: lockNewRecordColumns([
+      options: {
+        data: rows,
+        index: "id",
+        layout: "fitColumns",
+        height: "420px",
+        rowHeight: 30,
+        placeholder: "No VLAN interfaces configured.",
+        reactiveData: false,
+        columns: [
         {
-          title: "Add VLAN +",
-          field: "add_vlan",
-          formatter: (cell) => {
-            const data = cell.getRow().getData();
-            if (data.is_new) {
-              return '<span class="add-row-hint">+ Add VLAN</span>';
-            }
-            return "";
-          },
-          width: 115,
-          headerSort: false,
-          editable: false,
-          cellClick: (event, cell) => activateNewVlanRow(cell),
-        },
-        {
-          title: "VLAN ID",
-          field: "vlan_id",
-          editor: "number",
-          width: 100,
-          cellEdited: (cell) => autoSaveVlanId(cell, csrf),
+          title: "Name",
+          field: "name",
+          formatter: (cell) => cell.getRow().getData().is_new
+            ? '<button class="add-row-button" type="button" data-atlaso-wizard-add>+ Add VLAN interface here</button>'
+            : escapeHtml(cell.getValue()),
+          minWidth: 190,
+          widthGrow: 1.2,
         },
         {
           title: "Parent",
           field: "parent_interface",
-          editor: "list",
-          editorParams: { values: parentValues },
           formatter: (cell) => {
+            if (cell.getRow().getData().is_new) return "";
             const value = cell.getValue();
-            if (!value) {
-              return '<span class="add-row-hint">mark a physical NIC as trunk first</span>';
-            }
             return escapeHtml(value);
           },
           minWidth: 120,
-          cellEdited: (cell) => autoSaveVlanParent(cell, csrf, parentMtus),
         },
         {
-          title: "Name",
-          field: "name",
-          formatter: (cell) => escapeHtml(cell.getValue()),
-          minWidth: 140,
-          headerSort: false,
-          editable: false,
+          title: "VLAN ID",
+          field: "vlan_id",
+          formatter: (cell) => cell.getRow().getData().is_new ? "" : escapeHtml(cell.getValue()),
+          width: 100,
         },
         {
           title: "IPv4 CIDR",
           field: "ip_cidr",
-          editor: cidrInputEditor,
-          editorParams: { family: "ipv4", placeholder: "192.168.50.1/24" },
-          formatter: (cell) => dnsAddRowHintFormatter(cell, "192.168.50.1/24"),
+          formatter: (cell) => cell.getRow().getData().is_new ? "" : escapeHtml(cell.getValue() || ""),
           minWidth: 170,
-          cellEdited: (cell) => autoSaveVlanInterface(cell, csrf),
         },
         {
           title: "IPv6 CIDR",
           field: "ipv6_cidr",
-          editor: cidrInputEditor,
-          editorParams: { family: "ipv6", placeholder: "fd00:50::1/64" },
-          formatter: (cell) => dnsAddRowHintFormatter(cell, "fd00:50::1/64"),
+          formatter: (cell) => cell.getRow().getData().is_new ? "" : escapeHtml(cell.getValue() || ""),
           minWidth: 180,
-          cellEdited: (cell) => autoSaveVlanInterface(cell, csrf),
         },
         {
           title: "MTU",
           field: "mtu",
-          editor: "number",
+          formatter: (cell) => cell.getRow().getData().is_new ? "" : escapeHtml(cell.getValue()),
           width: 90,
-          cellEdited: (cell) => autoSaveVlanInterface(cell, csrf),
         },
         {
           title: "Role",
           field: "role",
-          editor: "list",
-          editorParams: { values: roleOptions },
+          formatter: (cell) => cell.getRow().getData().is_new ? "" : escapeHtml(cell.getValue()),
           minWidth: 130,
-          cellEdited: (cell) => autoSaveVlanInterface(cell, csrf),
         },
         {
           title: "Management UI",
           field: "access_management_ui_enabled",
-          formatter: atlasoBooleanFormatter,
-          editor: "tickCross",
-          editable: (cell) => cell.getRow().getData().role === "access" && cell.getRow().getData().enabled,
+          formatter: (cell) => cell.getRow().getData().is_new ? "" : atlasoBooleanFormatter(cell),
           hozAlign: "center",
           minWidth: 140,
           headerTooltip: "Expose the authenticated management UI on this enabled access VLAN while retaining ordinary access routing and services.",
-          cellEdited: (cell) => autoSaveVlanInterface(cell, csrf),
         },
         {
           title: "Admin Up",
           field: "enabled",
-          formatter: vlanEnabledFormatter,
-          editor: "tickCross",
-          editable: (cell) => !cell.getRow().getData().parent_missing,
+          formatter: (cell) => cell.getRow().getData().is_new ? "" : vlanEnabledFormatter(cell),
           hozAlign: "center",
           width: 100,
           headerSort: false,
-          cellEdited: (cell) => autoSaveVlanInterface(cell, csrf),
         },
-      ], "vlan_id"),
-      rowFormatter: (row) => {
-        markNewRecordRow(row, "vlan_id", "add_vlan");
-        row.getElement().classList.toggle("locked-record-row", Boolean(row.getData().parent_missing));
+        ],
+        rowFormatter: (row) => {
+          markNewRecordRow(row, "name");
+          row.getElement().classList.toggle("locked-record-row", Boolean(row.getData().parent_missing));
+          row.getElement().classList.toggle("grid-row-recently-saved", String(row.getData().id) === highlightedVlanId);
+        },
       },
+    });
+    table = grid.table;
+    if (!table) return;
+    tableElement.atlasoTabulator = table;
+    if (!canWrite) return;
+    const parentSelect = form.elements.parent_interface;
+    const derivedName = form.elements.derived_name;
+    const roleSelect = form.elements.role;
+    const managementUiToggle = form.elements.access_management_ui_enabled;
+    const submitButton = form.querySelector("[data-atlaso-wizard-submit]");
+    const removeTemporaryParent = () => {
+      parentSelect.querySelectorAll("[data-vlan-temporary-parent]").forEach((option) => option.remove());
     };
-    window.AtlasoUiPatterns.createGrid({
-      element: tableElement,
-      pattern: "direct-edit",
-      options: atlasoGridOptions19,
-    }).table;
+    const updateDerivedName = () => {
+      const parent = String(parentSelect.value || "").trim();
+      const vlanId = String(form.elements.vlan_id.value || "").trim();
+      derivedName.value = parent && vlanId ? `${parent}.${vlanId}` : "";
+    };
+    const selectedParentIsMissing = () => parentSelect.selectedOptions[0]?.dataset.vlanParentMissing === "true";
+    const duplicateVlan = () => {
+      const recordId = String(form.elements.record_id.value || "");
+      const parent = String(parentSelect.value || "").trim();
+      const vlanId = Number(form.elements.vlan_id.value);
+      return table.getData().some((row) => (
+        !row.is_new
+        && String(row.id) !== recordId
+        && row.parent_interface === parent
+        && Number(row.vlan_id) === vlanId
+      ));
+    };
+    openVlan = (data, launcher) => wizard.open({
+      launcher,
+      context: data?.is_new ? null : data,
+    });
+    wizard = window.AtlasoUiPatterns.createWizard({
+      form,
+      dialog,
+      steps: [
+        { id: "vlan", title: "Choose the VLAN identity", description: "Select the physical trunk and tagged VLAN identifier." },
+        { id: "addressing", title: "Configure VLAN addressing", description: "Provide IPv4, IPv6, or both, then review the interface MTU." },
+        { id: "role", title: "Choose the VLAN role", description: "Classify how Atlaso uses this tagged network." },
+        { id: "admin_state", title: "Choose the admin state", description: "Enable or disable the VLAN in saved desired state." },
+        { id: "review", title: "Review VLAN desired state", description: "Confirm the complete record and global Appliance Apply boundary." },
+      ],
+      onOpen: ({ context }) => {
+        removeTemporaryParent();
+        if (context?.parent_interface && !parentOptions.some((item) => item.name === context.parent_interface)) {
+          const option = document.createElement("option");
+          option.value = context.parent_interface;
+          option.textContent = `${context.parent_interface} - missing parent`;
+          option.dataset.vlanTemporaryParent = "true";
+          option.dataset.vlanParentMissing = "true";
+          parentSelect.appendChild(option);
+        }
+        populateAtlasoWizardForm(form, {
+          ...(context || {}),
+          record_id: context?.id || "",
+          parent_interface: context?.parent_interface || defaultParent,
+          vlan_id: context?.vlan_id || "",
+          mtu: context?.mtu ?? defaultMtu,
+          role: context?.role || roleOptionRows[0] || "access",
+          access_management_ui_enabled: context ? Boolean(context.access_management_ui_enabled) : false,
+          enabled: context ? Boolean(context.enabled) : true,
+        });
+        form.action = context
+          ? managementUiPath(`/vlan-interfaces/${context.id}/edit`)
+          : managementUiPath("/vlan-interfaces");
+        submitButton.textContent = context ? "Update VLAN interface" : "Create VLAN interface";
+        updateDerivedName();
+      },
+      validateStep: ({ step }) => {
+        if (step.id === "vlan") {
+          if (!String(parentSelect.value || "").trim()) {
+            return { valid: false, message: "Choose an available trunk parent.", field: "parent_interface" };
+          }
+          const vlanId = Number(form.elements.vlan_id.value);
+          if (!Number.isInteger(vlanId) || vlanId < 1 || vlanId > 4094) {
+            return { valid: false, message: "VLAN ID must be a whole number between 1 and 4094.", field: "vlan_id" };
+          }
+          if (duplicateVlan()) {
+            return { valid: false, message: `VLAN ${parentSelect.value}.${vlanId} already exists.`, field: "vlan_id" };
+          }
+        }
+        if (step.id === "addressing") {
+          const ipv4 = form.elements.ip_cidr.value.trim();
+          const ipv6 = form.elements.ipv6_cidr.value.trim();
+          if (!ipv4 && !ipv6) {
+            return { valid: false, message: "Enter an IPv4 CIDR, IPv6 CIDR, or both.", field: "ip_cidr" };
+          }
+          if (ipv4 && !isValidCidr(ipv4, "ipv4")) {
+            return { valid: false, message: "Enter a valid IPv4 CIDR such as 192.168.50.1/24.", field: "ip_cidr" };
+          }
+          if (ipv6 && !isValidCidr(ipv6, "ipv6")) {
+            return { valid: false, message: "Enter a valid IPv6 CIDR such as fd00:50::1/64.", field: "ipv6_cidr" };
+          }
+          const mtu = Number(form.elements.mtu.value);
+          if (!Number.isInteger(mtu) || mtu < 576 || mtu > 9000) {
+            return { valid: false, message: "MTU must be a whole number between 576 and 9000.", field: "mtu" };
+          }
+        }
+        if (step.id === "role" && !roleOptionRows.includes(form.elements.role.value)) {
+          return { valid: false, message: "Choose a supported VLAN role.", field: "role" };
+        }
+        if (step.id === "role" && managementUiToggle.checked && roleSelect.value !== "access") {
+          return {
+            valid: false,
+            message: "Management UI exposure is available only for an access-role VLAN.",
+            field: "access_management_ui_enabled",
+          };
+        }
+        if (step.id === "admin_state" && form.elements.enabled.checked && selectedParentIsMissing()) {
+          return {
+            valid: false,
+            message: `${parentSelect.value} is missing from host inventory. Move the VLAN to an available trunk parent before enabling it.`,
+            field: "enabled",
+          };
+        }
+        return { valid: true };
+      },
+      prepareReview: () => renderAtlasoWizardReview(form, [
+        { label: "Interface", field: "derived_name" },
+        { label: "Trunk parent", field: "parent_interface" },
+        { label: "VLAN ID", field: "vlan_id" },
+        { label: "IPv4 CIDR", field: "ip_cidr" },
+        { label: "IPv6 CIDR", field: "ipv6_cidr" },
+        { label: "MTU", field: "mtu" },
+        { label: "Role", field: "role" },
+        { label: "Management UI", field: "access_management_ui_enabled" },
+        { label: "Admin Up", field: "enabled" },
+      ]),
+      onSubmit: async () => {
+        const recordId = String(form.elements.record_id.value || "");
+        const response = await atlasoGridWizardRequest(form.action, new FormData(form));
+        const payload = response?.vlan;
+        if (!payload) {
+          return { valid: false, message: "Atlaso saved the request without returning the VLAN row." };
+        }
+        const existing = recordId ? (table.getRow(recordId) || table.getRow(Number(recordId))) : null;
+        let savedRow = existing;
+        if (existing) {
+          await existing.update(payload);
+        } else {
+          const addRow = table.getRows().find((row) => row.getData().is_new);
+          savedRow = await table.addRow(payload, true, addRow);
+        }
+        highlightedVlanId = String(payload.id);
+        savedRow?.reformat?.();
+        await table.scrollToRow?.(payload.id, "center", false);
+        showTransientGridStatus(recordId ? "VLAN updated" : "VLAN added");
+        await refreshNetworkSideStack();
+        window.setTimeout(() => {
+          highlightedVlanId = "";
+          savedRow?.reformat?.();
+        }, 2400);
+        return { valid: true };
+      },
+    });
+    parentSelect.addEventListener("change", () => {
+      if (!form.elements.record_id.value) {
+        form.elements.mtu.value = parentMtus[parentSelect.value] || 1500;
+      }
+      updateDerivedName();
+    });
+    form.elements.vlan_id.addEventListener("input", updateDerivedName);
+    tableElement.addEventListener("click", (event) => {
+      const launcher = event.target.closest("[data-atlaso-wizard-add]");
+      if (launcher instanceof HTMLButtonElement) openVlan(null, launcher);
+    });
   } catch (error) {
     showNetworkMessage("vlan-interface-error", error instanceof Error ? error.message : "Tabulator could not render. Showing the fallback table.");
   }

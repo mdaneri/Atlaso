@@ -7047,9 +7047,11 @@ def validate_vlan_form_values(
     vlan_id: str,
     ip_cidr: str,
     ipv6_cidr: str,
+    mtu: int,
+    role: str,
     enabled: bool,
     db: Session,
-) -> tuple[str, int, str, str, bool] | Response:
+) -> tuple[str, int, str, str, int, str, bool] | Response:
     """Validate vlan form values.
 
     Args:
@@ -7057,6 +7059,8 @@ def validate_vlan_form_values(
         vlan_id: Identifier of the vlan.
         ip_cidr: Ip cidr supplied by the caller.
         ipv6_cidr: IPv6 network or address in CIDR notation.
+        mtu: Requested interface maximum transmission unit.
+        role: Requested VLAN role.
         enabled: Whether the requested behavior is enabled.
         db: Active database session.
 
@@ -7075,6 +7079,10 @@ def validate_vlan_form_values(
         return Response("VLAN ID must be a number between 1 and 4094.", status_code=409, media_type="text/plain")
     if parsed_vlan_id < 1 or parsed_vlan_id > 4094:
         return Response("VLAN ID must be between 1 and 4094.", status_code=409, media_type="text/plain")
+    if ip_cidr.strip() and "/" not in ip_cidr:
+        return Response("VLAN IPv4 CIDR must include an address and prefix.", status_code=409, media_type="text/plain")
+    if ipv6_cidr.strip() and "/" not in ipv6_cidr:
+        return Response("VLAN IPv6 CIDR must include an address and prefix.", status_code=409, media_type="text/plain")
     ip_value = cidr_for_family(ip_cidr, 4, "VLAN IPv4 CIDR")
     if isinstance(ip_value, Response):
         return ip_value
@@ -7083,6 +7091,15 @@ def validate_vlan_form_values(
         return ipv6_value
     if not ip_value and not ipv6_value:
         return Response("VLAN IPv4 CIDR, IPv6 CIDR, or both are required.", status_code=409, media_type="text/plain")
+    if mtu < 576 or mtu > 9000:
+        return Response("VLAN MTU must be between 576 and 9000.", status_code=409, media_type="text/plain")
+    role_value = normalize_interface_role(role)
+    if role_value not in VLAN_ROLES:
+        return Response(
+            f"VLAN role must be one of: {', '.join(VLAN_ROLES)}.",
+            status_code=409,
+            media_type="text/plain",
+        )
     parent = db.execute(select(PhysicalInterface).where(PhysicalInterface.name == parent_name)).scalar_one_or_none()
     parent_missing = bool(parent and parent.oper_state == "missing")
     if parent_missing:
@@ -7092,14 +7109,30 @@ def validate_vlan_form_values(
                 status_code=409,
                 media_type="text/plain",
             )
-        return parent_name, parsed_vlan_id, ip_value, ipv6_value, True
+        return parent_name, parsed_vlan_id, ip_value, ipv6_value, mtu, role_value, True
     if not parent or normalize_interface_mode(parent.mode) != "trunk":
         return Response(
             f"{parent_name or 'Selected parent'} is not a trunk interface. Mark the physical NIC as trunk before creating VLANs on it.",
             status_code=409,
             media_type="text/plain",
         )
-    return parent_name, parsed_vlan_id, ip_value, ipv6_value, False
+    return parent_name, parsed_vlan_id, ip_value, ipv6_value, mtu, role_value, False
+
+
+def vlan_form_validation_response(request: Request, response: Response) -> Response | JSONResponse:
+    """Return a recoverable wizard error without changing ordinary form behavior.
+
+    Args:
+        request: Incoming HTTP request.
+        response: Plain-text VLAN validation response.
+
+    Returns:
+        JSON for shared grid wizard requests, otherwise the original response.
+    """
+    if not grid_request(request):
+        return response
+    detail = response.body.decode(response.charset or "utf-8", errors="replace")
+    return JSONResponse({"detail": detail}, status_code=response.status_code)
 
 
 def reverse_records_by_zone(records: list[dict[str, str]]) -> list[dict]:
@@ -17928,21 +17961,27 @@ def create_vlan_interface_from_ui(
     """
     verify_csrf(request, csrf)
     requested_enabled = enabled == "on"
-    parsed = validate_vlan_form_values(parent_interface, vlan_id, ip_cidr, ipv6_cidr, requested_enabled, db)
+    parsed = validate_vlan_form_values(parent_interface, vlan_id, ip_cidr, ipv6_cidr, mtu, role, requested_enabled, db)
     if isinstance(parsed, Response):
-        return parsed
-    parent_name, parsed_vlan_id, ip_value, ipv6_value, parent_missing = parsed
-    role_value = normalize_interface_role(role)
+        return vlan_form_validation_response(request, parsed)
+    parent_name, parsed_vlan_id, ip_value, ipv6_value, mtu_value, role_value, parent_missing = parsed
     management_ui_value = access_management_ui_enabled == "on"
     if management_ui_value and role_value != "access":
-        return Response("Management UI exposure is available only for an access-role VLAN.", status_code=422, media_type="text/plain")
+        return vlan_form_validation_response(
+            request,
+            Response(
+                "Management UI exposure is available only for an access-role VLAN.",
+                status_code=422,
+                media_type="text/plain",
+            ),
+        )
     vlan = VlanInterface(
         name=f"{parent_name}.{parsed_vlan_id}",
         parent_interface=parent_name,
         vlan_id=parsed_vlan_id,
         ip_cidr=ip_value,
         ipv6_cidr=ipv6_value,
-        mtu=mtu,
+        mtu=mtu_value,
         role=role_value,
         enabled=requested_enabled and not parent_missing,
         access_management_ui_enabled=management_ui_value,
@@ -17952,14 +17991,20 @@ def create_vlan_interface_from_ui(
         db.commit()
     except IntegrityError:
         db.rollback()
-        return render(
+        return grid_error_response(
             request,
-            "vlan_interfaces.html",
-            {"identity": identity, **network_context(db), "form_error": f"VLAN {vlan.name} already exists."},
+            detail=f"VLAN {vlan.name} already exists.",
             status_code=409,
+            template_name="vlan_interfaces.html",
+            context={"identity": identity, **network_context(db), "form_error": f"VLAN {vlan.name} already exists."},
         )
     record_audit(db, actor=identity.username, action="create_vlan_interface", resource_type="vlan", resource_id=str(vlan.id))
-    return RedirectResponse("/vlan-interfaces", status_code=303)
+    return grid_saved_response(
+        request,
+        redirect_url="/vlan-interfaces",
+        resource_name="vlan",
+        resource=vlan_interface_to_dict(vlan, parent_missing=parent_missing),
+    )
 
 
 @router.post("/vlan-interfaces/{vlan_id}/edit", response_model=None)
@@ -18006,14 +18051,20 @@ def edit_vlan_interface_from_ui(
     if not vlan:
         raise HTTPException(status_code=404, detail="VLAN interface not found")
     requested_enabled = enabled == "on"
-    parsed = validate_vlan_form_values(parent_interface, vlan_id_value, ip_cidr, ipv6_cidr, requested_enabled, db)
+    parsed = validate_vlan_form_values(parent_interface, vlan_id_value, ip_cidr, ipv6_cidr, mtu, role, requested_enabled, db)
     if isinstance(parsed, Response):
-        return parsed
-    parent_name, parsed_vlan_id, ip_value, ipv6_value, parent_missing = parsed
-    role_value = normalize_interface_role(role)
+        return vlan_form_validation_response(request, parsed)
+    parent_name, parsed_vlan_id, ip_value, ipv6_value, mtu_value, role_value, parent_missing = parsed
     management_ui_value = access_management_ui_enabled == "on"
     if management_ui_value and role_value != "access":
-        return Response("Management UI exposure is available only for an access-role VLAN.", status_code=422, media_type="text/plain")
+        return vlan_form_validation_response(
+            request,
+            Response(
+                "Management UI exposure is available only for an access-role VLAN.",
+                status_code=422,
+                media_type="text/plain",
+            ),
+        )
     old_name = vlan.name
     old_ip_cidr = vlan.ip_cidr
     old_ipv6_cidr = vlan.ipv6_cidr
@@ -18022,7 +18073,7 @@ def edit_vlan_interface_from_ui(
     vlan.name = f"{vlan.parent_interface}.{vlan.vlan_id}"
     vlan.ip_cidr = ip_value
     vlan.ipv6_cidr = ipv6_value
-    vlan.mtu = mtu
+    vlan.mtu = mtu_value
     vlan.role = role_value
     vlan.enabled = requested_enabled and not parent_missing
     vlan.access_management_ui_enabled = management_ui_value
@@ -18038,15 +18089,21 @@ def edit_vlan_interface_from_ui(
         db.commit()
     except IntegrityError:
         db.rollback()
-        return render(
+        return grid_error_response(
             request,
-            "vlan_interfaces.html",
-            {"identity": identity, **network_context(db), "form_error": f"VLAN {vlan.name} already exists."},
+            detail=f"VLAN {vlan.name} already exists.",
             status_code=409,
+            template_name="vlan_interfaces.html",
+            context={"identity": identity, **network_context(db), "form_error": f"VLAN {vlan.name} already exists."},
         )
     detail = f"Refreshed dependent desired-state addresses: {', '.join(dependent_updates)}." if dependent_updates else ""
     record_audit(db, actor=identity.username, action="update_vlan_interface", resource_type="vlan", resource_id=str(vlan.id), detail=detail)
-    return RedirectResponse("/vlan-interfaces", status_code=303)
+    return grid_saved_response(
+        request,
+        redirect_url="/vlan-interfaces",
+        resource_name="vlan",
+        resource=vlan_interface_to_dict(vlan, parent_missing=parent_missing),
+    )
 
 
 @router.post("/vlan-interfaces/{vlan_id}/delete", response_model=None)

@@ -31,7 +31,7 @@ unreachable after apply.
 ## Configure the network
 
 1. Inspect physical inventory and link state; do not treat an unused interface as failed.
-2. Create VLAN interfaces only on the intended parent and use the required VLAN identifier.
+2. Create VLAN interfaces only on the intended trunk parent and use the required VLAN identifier.
 3. Define routes and WAN behavior with explicit interface and network boundaries.
 4. Review validation and rendered network previews.
 5. Submit the selected network units through [Appliance Apply](appliance-apply.md).
@@ -66,6 +66,25 @@ appliance FQDN and managed HTTPS certificate cover every effective management UI
 
 Management-to-lab and lab-to-management forwarding remain prohibited. Service listeners and firewall rules must bind to
 the same intended interfaces.
+
+### Add or edit a VLAN interface
+
+The VLAN table is a read-only browse surface. Select **+ Add VLAN interface here** to create a row, or double-click an
+existing row and use **Edit VLAN** from its context menu to revise it. The shared wizard reviews the complete VLAN
+record in five steps:
+
+1. Select an available trunk parent and VLAN ID; Atlaso derives the read-only `<parent>.<VLAN ID>` interface name.
+2. Enter a valid IPv4 CIDR, IPv6 CIDR, or both, then confirm the MTU from `576` through `9000`. A new record starts with
+   the selected parent MTU.
+3. Select the VLAN role.
+4. Confirm **Admin Up**. It is enabled by default for a new VLAN and preserves the saved value when editing.
+5. Review the full desired-state change and save it.
+
+The parent and VLAN ID must be unique. A VLAN whose previously saved parent is now missing may remain saved only while
+disabled; select an available trunk before enabling it. Recoverable validation or server errors leave the wizard open
+with its entered values. Saving refreshes validation and the configuration preview but does not change the host. Use
+global **Appliance Apply** with the `network` unit when the reviewed desired state is ready for enforcement. Delete
+remains a confirmed row-context action.
 
 ## Verify and roll back
 

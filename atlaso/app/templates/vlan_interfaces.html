@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "partials/resource_wizard.html" import resource_wizard %}
 {% block page_title %}VLAN Interfaces{% endblock %}
 {% block content %}
 <section class="split-workspace">
@@ -33,6 +34,7 @@
       data-parent-options='{{ trunk_parent_options | tojson }}'
       data-role-options='{{ vlan_roles | tojson }}'
       data-csrf="{{ csrf_token }}"
+      data-can-write="{{ 'true' if identity.can('write:vlans') else 'false' }}"
       data-fallback-id="vlan-interfaces-fallback"
     ></div>
     <table id="vlan-interfaces-fallback" class="data-table dns-fallback-table">
@@ -58,6 +60,7 @@
               {% endif %}
             </td>
             <td>
+              {% if identity.can("write:vlans") %}
               <form
                 action="{{ management_ui_root }}/vlan-interfaces/{{ vlan.id }}/delete"
                 method="post"
@@ -69,6 +72,9 @@
                 <input type="hidden" name="csrf" value="{{ csrf_token }}">
                 <button class="button tiny danger" type="submit">Delete</button>
               </form>
+              {% else %}
+                <span class="muted">Read only</span>
+              {% endif %}
             </td>
           </tr>
         {% endfor %}
@@ -104,4 +110,96 @@
     </div>
   </aside>
 </section>
+
+{% if identity.can("write:vlans") %}
+{% set vlan_wizard_steps = [
+  {"id": "vlan", "label": "VLAN", "summary": "Parent and VLAN identity"},
+  {"id": "addressing", "label": "Addressing", "summary": "IPv4, IPv6, and MTU"},
+  {"id": "role", "label": "Role", "summary": "Network purpose"},
+  {"id": "admin_state", "label": "Admin state", "summary": "Desired interface state"},
+  {"id": "review", "label": "Review", "summary": "Confirm desired state"}
+] %}
+{% call resource_wizard(
+  "vlan-interface-dialog",
+  "vlan-interface-form",
+  management_ui_path("/vlan-interfaces"),
+  vlan_wizard_steps,
+  "Configure VLAN interface",
+  "Choose the tagged VLAN identity on an available trunk parent.",
+  "Create VLAN interface"
+) %}
+  <input type="hidden" name="record_id" value="">
+  <input type="hidden" name="csrf" value="{{ csrf_token }}">
+  <section data-atlaso-wizard-step="vlan">
+    <div class="form-stack">
+      {% if not trunk_parent_options %}
+        <div class="alert warning">No trunk parent is available. Mark a physical interface as trunk before creating or moving a VLAN.</div>
+      {% endif %}
+      <div class="form-grid">
+        <label>
+          <span class="field-label"><span>Trunk parent</span><button class="help-icon" type="button" data-help="Selects the physical trunk that carries this tagged VLAN. Missing parents may be retained only while the VLAN is disabled.">i</button></span>
+          <select name="parent_interface" required>
+            {% if not trunk_parent_options %}<option value="">No trunk parents available</option>{% endif %}
+            {% for parent in trunk_parent_options %}<option value="{{ parent.name }}" data-mtu="{{ parent.mtu }}">{{ parent.label }}</option>{% endfor %}
+          </select>
+        </label>
+        <label>
+          <span class="field-label"><span>VLAN ID</span><button class="help-icon" type="button" data-help="IEEE 802.1Q VLAN identifier from 1 through 4094. The parent and VLAN ID uniquely identify the interface.">i</button></span>
+          <input type="number" name="vlan_id" min="1" max="4094" step="1" required>
+        </label>
+      </div>
+      <label>
+        <span class="field-label"><span>Derived interface name</span><button class="help-icon" type="button" data-help="Atlaso derives the Linux VLAN interface name from the selected parent and VLAN ID.">i</button></span>
+        <input name="derived_name" readonly aria-readonly="true" placeholder="parent.vlan-id">
+      </label>
+    </div>
+  </section>
+  <section class="hidden" data-atlaso-wizard-step="addressing">
+    <div class="form-stack">
+      <div class="form-grid">
+        <label>
+          <span class="field-label"><span>IPv4 CIDR</span><button class="help-icon" type="button" data-help="Optional IPv4 interface address and prefix. Provide IPv4, IPv6, or both.">i</button></span>
+          <input name="ip_cidr" placeholder="192.168.50.1/24" autocomplete="off" spellcheck="false">
+        </label>
+        <label>
+          <span class="field-label"><span>IPv6 CIDR</span><button class="help-icon" type="button" data-help="Optional IPv6 interface address and prefix. Provide IPv4, IPv6, or both.">i</button></span>
+          <input name="ipv6_cidr" placeholder="fd00:50::1/64" autocomplete="off" spellcheck="false">
+        </label>
+      </div>
+      <label>
+        <span class="field-label"><span>MTU</span><button class="help-icon" type="button" data-help="Desired interface maximum transmission unit from 576 through 9000 bytes. New VLANs start with the selected parent MTU.">i</button></span>
+        <input type="number" name="mtu" min="576" max="9000" step="1" required>
+      </label>
+    </div>
+  </section>
+  <section class="hidden" data-atlaso-wizard-step="role">
+    <div class="form-stack">
+      <label>
+        <span class="field-label"><span>Role</span><button class="help-icon" type="button" data-help="Classifies the VLAN for Atlaso validation, service binding, routing, and firewall desired state.">i</button></span>
+        <select name="role" required>
+          {% for role in vlan_roles %}<option value="{{ role }}">{{ role }}</option>{% endfor %}
+        </select>
+      </label>
+      <label class="switch-field">
+        <span class="field-label"><span>Management UI</span><button class="help-icon" type="button" data-help="Exposes the authenticated management UI on this VLAN when its role is access and Admin Up is enabled. The VLAN remains an ordinary access network for routing and services.">i</button></span>
+        <input class="switch-input" type="checkbox" name="access_management_ui_enabled">
+        <span class="switch-track" aria-hidden="true"></span>
+      </label>
+    </div>
+  </section>
+  <section class="hidden" data-atlaso-wizard-step="admin_state">
+    <div class="form-stack">
+      <label class="switch-field">
+        <span class="field-label"><span>Admin Up</span><button class="help-icon" type="button" data-help="Includes this VLAN as enabled desired state. New VLANs default to enabled; the appliance changes only after global Appliance Apply.">i</button></span>
+        <input class="switch-input" type="checkbox" name="enabled" checked>
+        <span class="switch-track" aria-hidden="true"></span>
+      </label>
+    </div>
+  </section>
+  <section class="hidden" data-atlaso-wizard-step="review">
+    <div class="settings-list" data-atlaso-resource-review></div>
+    <div class="alert warning">Saving updates network desired state only. The host interface is created, changed, or removed only through global Appliance Apply.</div>
+  </section>
+{% endcall %}
+{% endif %}
 {% endblock %}
