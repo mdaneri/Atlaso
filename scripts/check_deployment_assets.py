@@ -166,6 +166,7 @@ def inventory_assets(root: Path) -> tuple[Inventory, list[Finding]]:
             findings.append(Finding(path, "required Packer template is missing"))
 
     systemd: list[Path] = []
+    required_systemd = {root / relative for relative in SYSTEMD_ASSETS}
     for relative in SYSTEMD_DIRECTORIES:
         directory = root / relative
         for path in _files(directory, findings):
@@ -174,6 +175,13 @@ def inventory_assets(root: Path) -> tuple[Inventory, list[Finding]]:
                     Finding(path, "unsupported systemd asset type; add a validator or reviewed exclusion")
                 )
                 continue
+            if path not in required_systemd:
+                findings.append(
+                    Finding(
+                        path,
+                        "systemd asset is absent from the provisioning allowlist; update provisioning and validation together",
+                    )
+                )
             systemd.append(path)
     for relative in SYSTEMD_ASSETS:
         path = root / relative
@@ -193,6 +201,7 @@ def inventory_assets(root: Path) -> tuple[Inventory, list[Finding]]:
                 )
 
     sudoers: list[Path] = []
+    required_sudoers = {root / relative for relative in SUDOERS_FRAGMENTS}
     for relative in SUDOERS_DIRECTORIES:
         for path in _files(root / relative, findings):
             if path.suffix:
@@ -203,6 +212,13 @@ def inventory_assets(root: Path) -> tuple[Inventory, list[Finding]]:
                     )
                 )
                 continue
+            if path not in required_sudoers:
+                findings.append(
+                    Finding(
+                        path,
+                        "sudoers asset is absent from the provisioning allowlist; update provisioning and validation together",
+                    )
+                )
             sudoers.append(path)
     for relative in SUDOERS_FRAGMENTS:
         path = root / relative

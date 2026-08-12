@@ -131,6 +131,37 @@ def test_inventory_rejects_common_platform_systemd_collision(tmp_path: Path) -> 
     )
 
 
+@pytest.mark.parametrize(
+    ("relative", "contents", "expected"),
+    (
+        (
+            Path("image/hyperv/systemd/extra.service"),
+            "[Service]\nExecStart=/bin/true\n",
+            "systemd asset is absent from the provisioning allowlist",
+        ),
+        (
+            Path("image/vmware-workstation/sudoers.d/extra-helper"),
+            "atlaso ALL=(root) /bin/true\n",
+            "sudoers asset is absent from the provisioning allowlist",
+        ),
+    ),
+)
+def test_inventory_rejects_assets_absent_from_provisioning_allowlist(
+    tmp_path: Path,
+    relative: Path,
+    contents: str,
+    expected: str,
+) -> None:
+    """Verify that validated files cannot be silently omitted from image provisioning."""
+    write_inventory(tmp_path)
+    extra = tmp_path / relative
+    extra.write_text(contents, encoding="utf-8")
+
+    _, findings = inventory_assets(tmp_path)
+
+    assert any(finding.path == extra and finding.message.startswith(expected) for finding in findings)
+
+
 def test_inventory_rejects_missing_canonical_systemd_asset(tmp_path: Path) -> None:
     """Verify that renaming a provisioned unit cannot bypass the filename contract."""
     write_inventory(tmp_path)
