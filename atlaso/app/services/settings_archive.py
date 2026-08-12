@@ -85,6 +85,7 @@ from atlaso.app.services.esxi_pxe import (
 from atlaso.app.services.firewall import FIREWALL_SOURCE_GROUPS_SETTING_KEY
 from atlaso.app.services.local_users import LOCAL_USERS_PASSWORD_POLICY_KEY
 from atlaso.app.services.ldap import clear_ldap_recovery_payload, ensure_organization_bind_secret
+from atlaso.app.services.networking import normalize_interface_mode
 from atlaso.app.services.update_sources import UPDATE_SOURCE_KINDS
 from atlaso.app.services.vcf_backups import VCF_BACKUP_DEFAULT_USERNAME
 
@@ -1109,6 +1110,32 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
             )
 
     wan_policy_names = {str(row["name"]) for row in data.get("wan_policies", [])}
+
+    physical_interfaces = {
+        str(row["name"]): row
+        for row in data.get("physical_interfaces", [])
+    }
+    for row_index, row in enumerate(data.get("vlan_interfaces", []), start=1):
+        enabled = row.get("enabled", True)
+        if not isinstance(enabled, bool):
+            raise ValueError(
+                f"The settings archive row {row_index} in 'vlan_interfaces' has an invalid enabled value."
+            )
+        if not enabled:
+            continue
+        parent = physical_interfaces.get(str(row["parent_interface"] or ""))
+        parent_is_missing = (
+            parent is None
+            or (
+                str(parent.get("inventory_source") or "") == "host"
+                and str(parent.get("oper_state") or "") == "missing"
+            )
+        )
+        if parent_is_missing or normalize_interface_mode(parent.get("mode")) != "trunk":
+            raise ValueError(
+                f"The settings archive row {row_index} in 'vlan_interfaces' has an ineligible parent interface."
+            )
+
     for row_index, row in enumerate(data.get("routes", []), start=1):
         require_reference(
             "routes",

@@ -4677,6 +4677,19 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
     del missing_section["data"]["physical_interfaces"]
     empty_data = deepcopy(archive)
     empty_data["data"] = {}
+    enabled_missing_parent_vlan = deepcopy(archive)
+    enabled_missing_parent_vlan["data"]["vlan_interfaces"].append(
+        {"name": "missing-parent.123", "parent_interface": "missing-parent", "vlan_id": 123, "enabled": True}
+    )
+    enabled_non_trunk_vlan = deepcopy(archive)
+    enabled_non_trunk_vlan["data"]["physical_interfaces"].append(
+        {"name": "archive-access", "mac_address": "02:00:00:00:00:01", "mode": "access"}
+    )
+    enabled_non_trunk_vlan["data"]["vlan_interfaces"].append(
+        {"name": "archive-access.124", "parent_interface": "archive-access", "vlan_id": 124, "enabled": True}
+    )
+    disabled_missing_parent_vlan = deepcopy(enabled_missing_parent_vlan)
+    disabled_missing_parent_vlan["data"]["vlan_interfaces"][-1]["enabled"] = False
     empty_required_field = deepcopy(archive)
     empty_required_field["data"]["physical_interfaces"][0]["name"] = "   "
     unresolved_ldap_organization = deepcopy(archive)
@@ -4702,6 +4715,8 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
         (missing_required_field, "missing required field 'name'"),
         (missing_section, "missing a required data section"),
         (empty_data, "missing a required data section"),
+        (enabled_missing_parent_vlan, "has an ineligible parent interface"),
+        (enabled_non_trunk_vlan, "has an ineligible parent interface"),
         (empty_required_field, "has empty required field 'name'"),
         (unresolved_ldap_organization, "references an unknown LDAP organization"),
         (unresolved_oidc_client, "references an unknown OIDC client"),
@@ -4710,6 +4725,9 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
     ]:
         with pytest.raises(ValueError, match=message):
             archive_summary(candidate)
+    assert archive_summary(disabled_missing_parent_vlan)["vlan_interfaces"] == len(
+        disabled_missing_parent_vlan["data"]["vlan_interfaces"]
+    )
 
 
 def test_settings_restore_rolls_back_late_failure_without_clearing_staged_ldap_recovery(client, monkeypatch):
