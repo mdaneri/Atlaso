@@ -19,6 +19,17 @@ def test_documentation_workflow_runs_on_every_main_push() -> None:
     assert "paths-ignore:" not in push_trigger
 
 
+def test_documentation_workflow_only_queues_pages_writer_for_changes() -> None:
+    """Verify routine documentation checks cannot displace pending release publishers."""
+    root = Path(__file__).resolve().parents[1]
+    workflow = (root / ".github" / "workflows" / "docs.yml").read_text(encoding="utf-8")
+    publish_job = workflow.split("  publish:\n", 1)[1]
+
+    assert "    if: needs.verify.outputs.site_changed == 'true'\n" in publish_job
+    assert "      group: atlaso-github-pages\n" in publish_job
+    assert "  group: atlaso-github-pages\n" not in workflow.split("jobs:\n", 1)[0]
+
+
 def test_documentation_overlay_preserves_release_repository(tmp_path: Path) -> None:
     """Verify that documentation overlay preserves release repository.
 

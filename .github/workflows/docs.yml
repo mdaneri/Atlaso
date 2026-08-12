@@ -9,14 +9,12 @@ on:
 permissions:
   contents: write
 
-concurrency:
-  group: atlaso-github-pages
-  cancel-in-progress: false
-
 jobs:
-  publish:
-    name: Publish documentation
+  verify:
+    name: Verify documentation
     runs-on: ubuntu-latest
+    outputs:
+      site_changed: ${{ steps.site-changes.outputs.changed }}
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
@@ -29,6 +27,47 @@ jobs:
       - run: git diff --exit-code
       - run: zensical build --clean --strict
       - run: python scripts/generate_docs_redirects.py
+      - name: Check whether published documentation changed
+        id: site-changes
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          site_root="$(mktemp -d)"
+          git clone --branch gh-pages --single-branch \
+            "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "$site_root"
+          python scripts/overlay_docs_site.py --built-docs site/docs --pages-root "$site_root"
+          git -C "$site_root" add docs
+          if git -C "$site_root" diff --cached --quiet; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Preserve changed documentation output
+        if: steps.site-changes.outputs.changed == 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: documentation-site-${{ github.run_id }}
+          path: site/docs
+          if-no-files-found: error
+          retention-days: 1
+
+  publish:
+    name: Publish documentation
+    needs: verify
+    if: needs.verify.outputs.site_changed == 'true'
+    runs-on: ubuntu-latest
+    concurrency:
+      group: atlaso-github-pages
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.14'
+      - uses: actions/download-artifact@v8
+        with:
+          name: documentation-site-${{ github.run_id }}
+          path: site/docs
       - name: Overlay documentation on the release repository
         env:
           GH_TOKEN: ${{ github.token }}
