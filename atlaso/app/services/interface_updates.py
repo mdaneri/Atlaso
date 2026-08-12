@@ -13,8 +13,10 @@ from sqlalchemy.orm import Session
 from atlaso.app.models import (
     ApplianceSettings,
     CaSettings,
+    DhcpReservation,
     DhcpScope,
     DhcpSettings,
+    DnsRecord,
     DnsSettings,
     EsxNfsShare,
     KmsSettings,
@@ -682,9 +684,16 @@ def refresh_interface_dependent_addresses(
             db.add(scope)
             mark_changed(label)
 
-    for settings in db.execute(select(DhcpSettings)).scalars().all():
-        update_dhcp_scope(settings, "DHCP")
-    for scope in db.execute(select(DhcpScope)).scalars().all():
+    scope_rows = db.execute(select(DhcpScope).order_by(DhcpScope.id)).scalars().all()
+    scope_networks_before = {
+        scope.id: _network_from_cidr(f"{scope.site_address}/{scope.prefix_length}")
+        for scope in scope_rows
+        if scope.id is not None and scope.site_address and scope.prefix_length is not None
+    }
+    if not scope_rows:
+        for settings in db.execute(select(DhcpSettings)).scalars().all():
+            update_dhcp_scope(settings, "DHCP")
+    for scope in scope_rows:
         if (
             scope.enabled
             and scope.interface_name in affected_interface_names
@@ -695,6 +704,87 @@ def refresh_interface_dependent_addresses(
                 "Disable or move the DHCP binding before making that interface unavailable."
             )
         update_dhcp_scope(scope, "DHCP")
+
+    enabled_scope_networks_after = [
+        network
+        for scope in scope_rows
+        if scope.enabled is not False
+        and (
+            network := _network_from_cidr(
+                f"{scope.site_address}/{scope.prefix_length}"
+            )
+        )
+        is not None
+    ]
+    changed_scope_networks = [
+        (old_network, new_network)
+        for scope in scope_rows
+        if scope.enabled is not False
+        and (old_network := scope_networks_before.get(scope.id)) is not None
+        and (
+            new_network := _network_from_cidr(
+                f"{scope.site_address}/{scope.prefix_length}"
+            )
+        )
+        is not None
+        and old_network != new_network
+    ]
+    reservations = (
+        db.execute(
+            select(DhcpReservation).where(DhcpReservation.enabled.is_(True))
+        ).scalars().all()
+        if changed_scope_networks
+        else []
+    )
+    for reservation in reservations:
+        try:
+            reserved_address = ip_address(reservation.ip_address)
+        except ValueError:
+            continue
+        if any(reserved_address in network for network in enabled_scope_networks_after):
+            continue
+        candidate_addresses = {
+            _rebase_address_in_network(
+                str(reserved_address),
+                old_network,
+                new_network,
+            )
+            for old_network, new_network in changed_scope_networks
+            if reserved_address.version == old_network.version
+            and reserved_address in old_network
+        }
+        candidate_addresses = {
+            candidate
+            for candidate in candidate_addresses
+            if any(
+                _address_in_network(candidate, network)
+                for network in enabled_scope_networks_after
+            )
+        }
+        if len(candidate_addresses) != 1:
+            raise PhysicalInterfaceUpdateError(
+                f"Enabled DHCP reservation {reservation.hostname} cannot be mapped unambiguously "
+                "into the updated DHCP IP zones. Move or disable the reservation before changing "
+                "the interface network."
+            )
+        previous_address = reservation.ip_address
+        reservation.ip_address = candidate_addresses.pop()
+        db.add(reservation)
+        mark_changed("DHCP")
+        owned_descriptions = {
+            str(reservation.description or "").strip(),
+            f"Created from DHCP reservation for {reservation.mac_address}.",
+        }
+        owned_descriptions.discard("")
+        for record in db.execute(
+            select(DnsRecord).where(
+                DnsRecord.address == previous_address,
+                DnsRecord.description.in_(owned_descriptions),
+            )
+        ).scalars().all():
+            record.address = reservation.ip_address
+            db.add(record)
+            mark_changed("DNS")
 
     esxi_boot = esxi_pxe_boot_settings(db)
     esxi_interfaces = split_interfaces(str(esxi_boot.get("listen_interface") or ""))

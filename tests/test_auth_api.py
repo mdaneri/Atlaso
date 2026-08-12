@@ -262,6 +262,7 @@ def test_physical_interface_api_atomically_refreshes_ipv4_and_ipv6_dependencies(
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import (
         AuditEvent,
+        DhcpReservation,
         DhcpScope,
         DnsRecord,
         DnsSettings,
@@ -324,6 +325,24 @@ def test_physical_interface_api_atomically_refreshes_ipv4_and_ipv6_dependencies(
                 ),
             ]
         )
+        reservation = DhcpReservation(
+            hostname="reserved.atlaso.internal",
+            mac_address="02:00:00:00:31:50",
+            ip_address="192.168.50.10",
+            description="Created from DHCP reservation for 02:00:00:00:31:50.",
+            enabled=True,
+        )
+        db.add(reservation)
+        db.flush()
+        db.add(
+            DnsRecord(
+                hostname=reservation.hostname,
+                record_type="A",
+                address=reservation.ip_address,
+                description=reservation.description,
+                enabled=True,
+            )
+        )
         save_esxi_pxe_boot_settings(
             db,
             enabled=True,
@@ -376,6 +395,17 @@ def test_physical_interface_api_atomically_refreshes_ipv4_and_ipv6_dependencies(
                 )
             ).scalars()
         }
+        reservation = db.execute(
+            select(DhcpReservation).where(
+                DhcpReservation.mac_address == "02:00:00:00:31:50"
+            )
+        ).scalar_one()
+        reservation_record = db.execute(
+            select(DnsRecord).where(
+                DnsRecord.hostname == "reserved.atlaso.internal",
+                DnsRecord.record_type == "A",
+            )
+        ).scalar_one()
         boot = esxi_pxe_boot_settings(db)
         audit = db.execute(
             select(AuditEvent)
@@ -400,6 +430,8 @@ def test_physical_interface_api_atomically_refreshes_ipv4_and_ipv6_dependencies(
         assert scopes["api-ipv6-dependency"].range_expression == "fd00:60::100-fd00:60::120"
         assert scopes["api-ipv6-dependency"].dns_server == new_ipv6
         assert scopes["api-ipv6-dependency"].ntp_server == new_ipv6
+        assert reservation.ip_address == "192.168.60.10"
+        assert reservation_record.address == "192.168.60.10"
         assert boot["listen_interface"] == "eth2"
         # Network Boot remains IPv4-only; the IPv6 DHCP dependency is reconciled separately.
         assert boot["listen_address"] == new_ipv4
@@ -1170,6 +1202,79 @@ def test_physical_interface_api_rejects_required_esx_storage_family_removal(clie
         assert interface.ipv6_enabled is True
         assert interface.ipv6_cidr == "fd00:50::1/64"
         assert share.interface_name == "eth2"
+
+
+def test_physical_interface_api_ignores_inactive_legacy_dhcp_binding(client):
+    """Verify real DHCP scopes make compatibility binding fields inactive.
+
+    Args:
+        client: Authenticated-capable application test client fixture.
+    """
+    from sqlalchemy import select
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import DhcpScope, DhcpSettings, PhysicalInterface
+
+    with SessionLocal() as db:
+        eth1 = db.execute(
+            select(PhysicalInterface).where(PhysicalInterface.name == "eth1")
+        ).scalar_one()
+        eth2 = db.execute(
+            select(PhysicalInterface).where(PhysicalInterface.name == "eth2")
+        ).scalar_one()
+        for interface, cidr in ((eth1, "192.168.40.1/24"), (eth2, "192.168.50.1/24")):
+            interface.role = "access"
+            interface.mode = "access"
+            interface.ipv4_method = "static"
+            interface.ip_cidr = cidr
+            interface.admin_state = "up"
+        for scope in db.execute(select(DhcpScope)).scalars().all():
+            scope.enabled = False
+        db.add(
+            DhcpScope(
+                name="api-real-dhcp-scope",
+                address_family="ipv4",
+                interface_name="eth1",
+                site_address="192.168.40.1",
+                prefix_length=24,
+                range_expression="192.168.40.100-192.168.40.120",
+                dns_server="192.168.40.1",
+                enabled=True,
+            )
+        )
+        legacy = db.execute(select(DhcpSettings)).scalar_one()
+        legacy.enabled = True
+        legacy.interface_name = "eth2"
+        legacy.site_address = "192.168.50.1"
+        legacy.prefix_length = 24
+        legacy.range_expression = "192.168.50.100-192.168.50.120"
+        legacy.dns_server = "192.168.50.1"
+        db.commit()
+
+    token, _metadata = create_token(
+        client,
+        scopes=["read:interfaces", "write:interfaces"],
+    )
+    response = client.patch(
+        "/api/v1/interfaces/physical/eth2",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"admin_state": "down"},
+    )
+
+    assert response.status_code == 200, response.text
+    with SessionLocal() as db:
+        eth2 = db.execute(
+            select(PhysicalInterface).where(PhysicalInterface.name == "eth2")
+        ).scalar_one()
+        legacy = db.execute(select(DhcpSettings)).scalar_one()
+        real_scope = db.execute(
+            select(DhcpScope).where(DhcpScope.name == "api-real-dhcp-scope")
+        ).scalar_one()
+        assert eth2.admin_state == "down"
+        assert legacy.interface_name == "eth2"
+        assert legacy.site_address == "192.168.50.1"
+        assert real_scope.interface_name == "eth1"
+        assert real_scope.site_address == "192.168.40.1"
 
 
 def test_physical_interface_api_prunes_unavailable_web_terminal_selection(client):

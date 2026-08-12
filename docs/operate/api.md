@@ -90,7 +90,10 @@ The internal Certificate Authority is the exception: if its last selected portal
 clears the public CA portal binding and app-owned alias while leaving internal CA custody enabled.
 
 DHCP scope gateway, DNS, and NTP values remain operator-owned when they are valid and do not match a replaced interface
-address. Interface edits update only blank or stale derived values.
+address. Interface edits update only blank or stale derived values. Enabled reservations that would otherwise leave
+every enabled scope retain their host offset in the uniquely matching rebased scope; Atlaso updates app-owned
+reservation DNS records in the same transaction and rejects ambiguous moves. When real scope rows exist, inactive
+legacy global DHCP binding fields are retained for compatibility but do not constrain interface edits.
 
 ## Scopes and authorization
 

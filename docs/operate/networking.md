@@ -49,7 +49,9 @@ binding before retrying. Saving still does not change Photon until global Applia
 The internal Certificate Authority does not require a public listener. If its last selected portal interface becomes
 ineligible, reconciliation clears the CA portal interface/address and alias without disabling internal CA custody.
 Valid operator-selected DHCP gateway, DNS, and NTP values remain unchanged unless they match a replaced interface
-address or otherwise become stale.
+address or otherwise become stale. Enabled DHCP reservations retain their host offsets when exactly one rebased scope
+can receive them, including app-owned reservation DNS records; an ambiguous reservation move rolls back the interface
+edit. Legacy global DHCP binding fields are inactive when real scope rows exist and do not block unrelated changes.
 
 ### Choose where the management UI is available
 
