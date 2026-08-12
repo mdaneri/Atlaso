@@ -91,6 +91,7 @@ from atlaso.app.services.dnsmasq import (
     split_addresses,
     split_interfaces,
     validate_dhcp_scope,
+    validate_dhcp_settings,
     validate_dns_settings,
 )
 from atlaso.app.services.esxi_pxe import (
@@ -1497,6 +1498,18 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
             raise ValueError(
                 f"The settings archive NTP settings are invalid: {ntp_errors[0]}"
             )
+        if row.get("nts_server_enabled", False):
+            nts_certificate_ready = any(
+                str(certificate.get("managed_owner") or "") == "ntp:nts"
+                and str(certificate.get("status") or "") == "issued"
+                and bool(str(certificate.get("certificate_pem") or ""))
+                and bool(str(certificate.get("private_key_encrypted") or ""))
+                for certificate in data.get("ca_certificates", [])
+            )
+            if not data["ca_settings"][0].get("enabled", False) or not nts_certificate_ready:
+                raise ValueError(
+                    "The settings archive enables NTPsec NTS server mode without an enabled CA and issued NTS certificate."
+                )
 
     for row_index, row in enumerate(data.get("firewall_rules", []), start=1):
         candidate = FirewallRule(
@@ -1676,6 +1689,18 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
                         f"The settings archive row {row_index} in 'dhcp_settings' has an ineligible bind interface."
                     )
                 if row.get("enabled", False):
+                    legacy_errors = validate_dhcp_settings(
+                        DhcpSettings(
+                            **_model_kwargs_with_scalar_defaults(DhcpSettings, row)
+                        ),
+                        [],
+                        scopes=[],
+                        options=[],
+                    )
+                    if legacy_errors:
+                        raise ValueError(
+                            f"The settings archive DHCP settings are invalid: {legacy_errors[0]}"
+                        )
                     try:
                         enabled_dhcp_networks.append(
                             ip_network(
@@ -1683,8 +1708,10 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
                                 strict=False,
                             )
                         )
-                    except (TypeError, ValueError):
-                        continue
+                    except (TypeError, ValueError) as exc:
+                        raise ValueError(
+                            f"The settings archive row {row_index} in 'dhcp_settings' is invalid."
+                        ) from exc
         for row_index, row in enumerate(data.get("dhcp_reservations", []), start=1):
             if not row.get("enabled", True):
                 continue
@@ -2064,6 +2091,11 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
 
     kickstart_names = {str(row["name"]) for row in data.get("esxi_kickstarts", [])}
     for row_index, row in enumerate(data.get("esxi_pxe_hosts", []), start=1):
+        mac_address = str(row.get("mac_address") or "")
+        if mac_address and not normalize_host_mac(mac_address):
+            raise ValueError(
+                f"The settings archive row {row_index} in 'esxi_pxe_hosts' has an invalid MAC address."
+            )
         require_reference(
             "esxi_pxe_hosts",
             row_index,

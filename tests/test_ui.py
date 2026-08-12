@@ -4920,6 +4920,15 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
     enabled_web_terminal_without_https["data"]["appliance_settings"][0]["management_https_enabled"] = False
     invalid_ntp_port = deepcopy(archive)
     invalid_ntp_port["data"]["ntp_settings"][0]["port"] = 124
+    enabled_nts_without_ca = deepcopy(archive)
+    enabled_nts_without_ca["data"]["ntp_settings"][0].update(
+        {
+            "nts_server_enabled": True,
+            "nts_server_cert_path": "/etc/atlaso/ntp/nts-chain.pem",
+            "nts_server_key_path": "/etc/atlaso/ntp/nts-key.pem",
+        }
+    )
+    enabled_nts_without_ca["data"]["ca_settings"][0]["enabled"] = False
     invalid_dns_domain = deepcopy(archive)
     invalid_dns_domain["data"]["dns_settings"][0]["domain"] = "bad domain"
     invalid_route_destination = deepcopy(archive)
@@ -4928,6 +4937,16 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
     invalid_firewall_policy["data"]["firewall_settings"][0]["default_input_policy"] = "reject"
     invalid_kms_port = deepcopy(archive)
     invalid_kms_port["data"]["kms_settings"][0]["port"] = 0
+    invalid_legacy_dhcp = deepcopy(archive)
+    invalid_legacy_dhcp["data"]["dhcp_scopes"] = []
+    invalid_legacy_dhcp["data"]["dhcp_settings"][0].update(
+        {
+            "enabled": True,
+            "interface_name": "eth2",
+            "site_address": "not-an-address",
+            "prefix_length": 24,
+        }
+    )
     empty_required_field = deepcopy(archive)
     empty_required_field["data"]["physical_interfaces"][0]["name"] = "   "
     unresolved_ldap_organization = deepcopy(archive)
@@ -5077,6 +5096,10 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
             "enabled": True,
         }
     )
+    invalid_esxi_host_mac = deepcopy(archive)
+    invalid_esxi_host_mac["data"]["esxi_pxe_hosts"].append(
+        {"hostname": "invalid-mac-host", "mac_address": "not-a-mac"}
+    )
     unsupported_setting = deepcopy(archive)
     unsupported_setting["data"]["settings"].append(
         {"key": "unsupported.setting", "value": "must-not-be-silently-dropped"}
@@ -5116,10 +5139,12 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
         (invalid_appliance_config_path, "Appliance Settings are invalid: Appliance settings config path must be absolute"),
         (enabled_web_terminal_without_https, "enables Web Terminal without Management UI HTTPS"),
         (invalid_ntp_port, "NTP settings are invalid: NTP port must be UDP 123"),
+        (enabled_nts_without_ca, "enables NTPsec NTS server mode without an enabled CA"),
         (invalid_dns_domain, "DNS settings are invalid: DNS domain bad domain must not contain whitespace"),
         (invalid_route_destination, "Routes and WAN state is invalid: Route not-a-cidr is not a valid destination CIDR"),
         (invalid_firewall_policy, "Firewall state is invalid: .*Default input policy"),
         (invalid_kms_port, "KMS state is invalid: KMS port must be between 1 and 65535"),
+        (invalid_legacy_dhcp, "DHCP settings are invalid"),
         (empty_required_field, "has empty required field 'name'"),
         (unresolved_ldap_organization, "references an unknown LDAP organization"),
         (enabled_ldap_without_organization, "enables LDAP without an LDAP organization"),
@@ -5136,6 +5161,7 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
         (enabled_oidc_with_mismatched_address, "has listener addresses not derived from its interfaces"),
         (enabled_oidc_with_invalid_port, "has an invalid HTTPS port"),
         (invalid_storage_state, "ESX Storage state is invalid: Datastore invalid-share must use NFS 3 or NFS 4.1"),
+        (invalid_esxi_host_mac, "esxi_pxe_hosts' has an invalid MAC address"),
         (unsupported_setting, "has an unsupported setting key"),
     ]:
         with pytest.raises(ValueError, match=message):
