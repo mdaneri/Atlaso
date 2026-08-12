@@ -77,7 +77,17 @@ from atlaso.app.models import (
     VsphereTrustedVcenterCertificate,
 )
 from atlaso.app.seed import NTP_NTS_RESTORATION_SETTING_KEY, SEED_EXAMPLES_SETTING_KEY, seed_initial_data, seed_update_sources
-from atlaso.app.services.dnsmasq import DNS_CONDITIONAL_FORWARDERS_SETTING_KEY, split_addresses, split_interfaces
+from atlaso.app.services.appliance_settings import (
+    management_interface_context,
+    normalized_web_terminal_interfaces,
+    web_terminal_interface_options,
+)
+from atlaso.app.services.dnsmasq import (
+    DNS_CONDITIONAL_FORWARDERS_SETTING_KEY,
+    split_addresses,
+    split_interfaces,
+    validate_dhcp_scope,
+)
 from atlaso.app.services.esxi_pxe import (
     ESXI_PXE_CUSTOM_VARIABLES_KEY,
     host_variables_json,
@@ -196,6 +206,21 @@ ARCHIVE_BLANK_REQUIRED_TEXT_FIELDS = {
     },
     "settings": {"value"},
 }
+ARCHIVE_SINGLETON_SECTIONS = frozenset(
+    {
+        "appliance_settings",
+        "ca_settings",
+        "dhcp_settings",
+        "dns_settings",
+        "firewall_settings",
+        "kms_settings",
+        "ldap_settings",
+        "ntp_settings",
+        "vcf_backup_settings",
+        "vcf_offline_depot_settings",
+        "vcf_private_registry_settings",
+    }
+)
 
 RESTORE_DELETE_MODELS = [
     OidcGroupMapping,
@@ -1075,6 +1100,10 @@ def _validate_archive(archive: dict[str, Any]) -> None:
     for section_name, rows in data.items():
         if not isinstance(rows, list):
             raise ValueError(f"The settings archive data section '{section_name}' must be a list.")
+        if section_name in ARCHIVE_SINGLETON_SECTIONS and len(rows) != 1:
+            raise ValueError(
+                f"The settings archive data section '{section_name}' must contain exactly one row."
+            )
         required_fields = _archive_required_fields(section_name)
         for row_index, row in enumerate(rows, start=1):
             _validate_archive_row(section_name, row_index, row, required_fields)
@@ -1232,6 +1261,35 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
         ):
             ldap_target_names.add(name)
 
+    appliance_row = data["appliance_settings"][0]
+    if appliance_row.get("web_terminal_enabled", False):
+        archived_interfaces = [
+            PhysicalInterface(**_model_kwargs(PhysicalInterface, row))
+            for row in data.get("physical_interfaces", [])
+        ]
+        archived_vlans = [
+            VlanInterface(**_model_kwargs(VlanInterface, row))
+            for row in data.get("vlan_interfaces", [])
+        ]
+        appliance_settings = ApplianceSettings(
+            **_model_kwargs(ApplianceSettings, appliance_row)
+        )
+        management_interface = management_interface_context(archived_interfaces)
+        selected_interfaces = normalized_web_terminal_interfaces(
+            appliance_settings,
+            management_interface,
+        )
+        options = web_terminal_interface_options(archived_interfaces, archived_vlans)
+        options_by_name = {str(option["name"]): option for option in options}
+        if not management_interface.get("name") or any(
+            name not in options_by_name
+            or not bool(options_by_name[name].get("web_terminal_allowed", True))
+            for name in selected_interfaces
+        ):
+            raise ValueError(
+                "The settings archive appliance settings select an ineligible Web Terminal interface."
+            )
+
     for section_name, target_names, require_listener, address_requirement in (
         ("dns_settings", service_target_names, True, "authoritative"),
         ("ntp_settings", service_target_names, True, "enabled"),
@@ -1354,6 +1412,7 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
         enabled_dhcp_networks = []
         scopes = data.get("dhcp_scopes", [])
         if scopes:
+            enabled_scope_count = 0
             for row_index, row in enumerate(scopes, start=1):
                 enabled = row.get("enabled", True)
                 if not isinstance(enabled, bool):
@@ -1367,15 +1426,19 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
                         f"The settings archive row {row_index} in 'dhcp_scopes' has an ineligible bind interface."
                     )
                 if enabled:
-                    try:
-                        enabled_dhcp_networks.append(
-                            ip_network(
-                                f"{ip_address(str(row.get('site_address') or ''))}/{int(row.get('prefix_length') or 0)}",
-                                strict=False,
-                            )
+                    enabled_scope_count += 1
+                    scope_errors, network = validate_dhcp_scope(
+                        DhcpScope(**_model_kwargs(DhcpScope, row))
+                    )
+                    if scope_errors or network is None:
+                        raise ValueError(
+                            f"The settings archive row {row_index} in 'dhcp_scopes' is invalid."
                         )
-                    except (TypeError, ValueError):
-                        continue
+                    enabled_dhcp_networks.append(network)
+            if enabled_scope_count == 0:
+                raise ValueError(
+                    "The settings archive enables DHCP without an enabled DHCP scope."
+                )
         else:
             for row_index, row in enumerate(data.get("dhcp_settings", []), start=1):
                 if row.get("enabled", False) and "ipv4" not in dhcp_target_families.get(
@@ -1439,6 +1502,21 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
         if row.get("enabled", True) and profile_name and not ca_profiles[profile_name]:
             raise ValueError(
                 f"The settings archive row {row_index} in 'ca_certificates' references a disabled CA profile."
+            )
+
+    kms_row = data["kms_settings"][0]
+    if kms_row.get("enabled", False):
+        ca_row = data["ca_settings"][0]
+        kms_certificate_ready = any(
+            str(row.get("managed_owner") or "") == "kms:server"
+            and str(row.get("status") or "") == "issued"
+            and bool(str(row.get("certificate_pem") or ""))
+            and bool(str(row.get("private_key_encrypted") or ""))
+            for row in data.get("ca_certificates", [])
+        )
+        if not ca_row.get("enabled", False) or not kms_certificate_ready:
+            raise ValueError(
+                "The settings archive enables KMS without an enabled CA and issued KMS server certificate."
             )
 
     provider_ids = {str(row["id"]) for row in data.get("vsphere_key_providers", [])}

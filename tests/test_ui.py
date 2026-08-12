@@ -4715,6 +4715,8 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
     del missing_section["data"]["physical_interfaces"]
     empty_data = deepcopy(archive)
     empty_data["data"] = {}
+    empty_singleton = deepcopy(archive)
+    empty_singleton["data"]["appliance_settings"] = []
     enabled_missing_parent_vlan = deepcopy(archive)
     enabled_missing_parent_vlan["data"]["vlan_interfaces"].append(
         {"name": "missing-parent.123", "parent_interface": "missing-parent", "vlan_id": 123, "enabled": True}
@@ -4776,6 +4778,11 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
     enabled_wrong_family_dhcp_target["data"]["dhcp_scopes"][0]["address_family"] = "ipv6"
     disabled_missing_dhcp_target = deepcopy(enabled_missing_dhcp_target)
     disabled_missing_dhcp_target["data"]["dhcp_scopes"][0]["enabled"] = False
+    disabled_missing_dhcp_target["data"]["dhcp_settings"][0]["enabled"] = False
+    enabled_without_enabled_dhcp_scope = deepcopy(archive)
+    enabled_without_enabled_dhcp_scope["data"]["dhcp_settings"][0]["enabled"] = True
+    for scope in enabled_without_enabled_dhcp_scope["data"]["dhcp_scopes"]:
+        scope["enabled"] = False
     enabled_outside_dhcp_reservation = deepcopy(archive)
     enabled_outside_dhcp_reservation["data"]["dhcp_settings"][0]["enabled"] = True
     enabled_outside_dhcp_reservation["data"]["dhcp_reservations"][0]["enabled"] = True
@@ -4804,6 +4811,11 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
     enabled_missing_listen_address["data"]["ntp_settings"][0]["enabled"] = True
     enabled_missing_listen_address["data"]["ntp_settings"][0]["listen_interface"] = "eth2"
     enabled_missing_listen_address["data"]["ntp_settings"][0]["listen_address"] = ""
+    enabled_missing_web_terminal_target = deepcopy(archive)
+    enabled_missing_web_terminal_target["data"]["appliance_settings"][0]["web_terminal_enabled"] = True
+    enabled_missing_web_terminal_target["data"]["appliance_settings"][0][
+        "web_terminal_interfaces_json"
+    ] = '["missing-terminal-target"]'
     empty_required_field = deepcopy(archive)
     empty_required_field["data"]["physical_interfaces"][0]["name"] = "   "
     unresolved_ldap_organization = deepcopy(archive)
@@ -4868,6 +4880,11 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
     )
     certificate_profile["enabled"] = False
     enabled_certificate_with_disabled_profile["data"]["ca_certificates"][0]["enabled"] = True
+    enabled_kms_without_ca = deepcopy(archive)
+    enabled_kms_without_ca["data"]["kms_settings"][0]["enabled"] = True
+    enabled_kms_without_ca["data"]["kms_settings"][0]["listen_interface"] = "eth2"
+    enabled_kms_without_ca["data"]["kms_settings"][0]["listen_address"] = "192.168.50.1"
+    enabled_kms_without_ca["data"]["ca_settings"][0]["enabled"] = False
     unsupported_setting = deepcopy(archive)
     unsupported_setting["data"]["settings"].append(
         {"key": "unsupported.setting", "value": "must-not-be-silently-dropped"}
@@ -4879,6 +4896,7 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
         (missing_required_field, "missing required field 'name'"),
         (missing_section, "missing a required data section"),
         (empty_data, "missing a required data section"),
+        (empty_singleton, "must contain exactly one row"),
         (enabled_missing_parent_vlan, "has an ineligible parent interface"),
         (enabled_non_trunk_vlan, "has an ineligible parent interface"),
         (enabled_missing_route_target, "has an ineligible target interface"),
@@ -4891,12 +4909,14 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
         (enabled_identical_routing_targets, "has identical source and destination interfaces"),
         (enabled_missing_dhcp_target, "has an ineligible bind interface"),
         (enabled_wrong_family_dhcp_target, "has an ineligible bind interface"),
+        (enabled_without_enabled_dhcp_scope, "enables DHCP without an enabled DHCP scope"),
         (enabled_outside_dhcp_reservation, "is outside every enabled DHCP scope"),
         *(
             (candidate, "has an ineligible listen interface")
             for candidate in enabled_missing_service_targets
         ),
         (enabled_missing_listen_address, "has no listen address"),
+        (enabled_missing_web_terminal_target, "select an ineligible Web Terminal interface"),
         (empty_required_field, "has empty required field 'name'"),
         (unresolved_ldap_organization, "references an unknown LDAP organization"),
         (unresolved_oidc_client, "references an unknown OIDC client"),
@@ -4904,6 +4924,7 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
         (enabled_missing_esx_share_target, "has an ineligible interface or address family"),
         (cyclic_ldap_groups, "contains cyclic LDAP group membership"),
         (enabled_certificate_with_disabled_profile, "references a disabled CA profile"),
+        (enabled_kms_without_ca, "enables KMS without an enabled CA"),
         (unsupported_setting, "has an unsupported setting key"),
     ]:
         with pytest.raises(ValueError, match=message):
