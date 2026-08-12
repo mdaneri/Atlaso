@@ -126,13 +126,15 @@ def test_documentation_check_rejects_retired_browser_routes(tmp_path: Path) -> N
         "Open https://atlaso.example/dashboard for the same view.\n"
         "Use the [Dashboard](https://atlaso.example/dashboard?scope=all) bookmark.\n"
         'Open "https://atlaso.example/dashboard" in a browser.\n'
-        "Open HTTPS://atlaso.example/dashboard with an uppercase scheme.\n",
+        "Open HTTPS://atlaso.example/dashboard with an uppercase scheme.\n"
+        "Open **/dashboard** from emphasized guidance.\n"
+        "Open **https://atlaso.example/dashboard** from an emphasized URL.\n",
         encoding="utf-8",
     )
 
     findings = validate_legacy_browser_routes([page])
 
-    assert len(findings) == 5
+    assert len(findings) == 7
     assert findings[0].line == 1
     assert findings[0].message.endswith(": /dashboard?scope=all")
     assert findings[1].line == 2
@@ -143,6 +145,10 @@ def test_documentation_check_rejects_retired_browser_routes(tmp_path: Path) -> N
     assert findings[3].message.endswith(": https://atlaso.example/dashboard")
     assert findings[4].line == 5
     assert findings[4].message.endswith(": HTTPS://atlaso.example/dashboard")
+    assert findings[5].line == 6
+    assert findings[5].message.endswith(": /dashboard")
+    assert findings[6].line == 7
+    assert findings[6].message.endswith(": https://atlaso.example/dashboard")
 
     page.write_text(
         "Open `/ui/management/dashboard` or https://atlaso.example/ui/management/dashboard.\n"

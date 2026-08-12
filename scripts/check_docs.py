@@ -126,14 +126,32 @@ def browser_route_candidates(line: str) -> list[tuple[str, str]]:
     """
     candidates: list[tuple[str, str]] = []
     for match in ABSOLUTE_URL_RE.finditer(line):
-        candidate = match.group(0).rstrip(".,:;")
+        candidate = strip_markdown_wrappers(line, match.start(), match.group(0).rstrip(".,:;"))
         route_path = urlparse(candidate).path
         if route_path:
             candidates.append((candidate, route_path))
     for match in BROWSER_PATH_RE.finditer(line):
-        candidate = match.group("path").rstrip(".,:;")
+        candidate = strip_markdown_wrappers(line, match.start("path"), match.group("path").rstrip(".,:;"))
         candidates.append((candidate, urlparse(candidate).path))
     return candidates
+
+
+def strip_markdown_wrappers(line: str, start: int, candidate: str) -> str:
+    """Remove matching Markdown emphasis delimiters surrounding a URL candidate.
+
+    Args:
+        line: Markdown source line containing the candidate.
+        start: Candidate start offset in the line.
+        candidate: Extracted URL or root-relative path.
+
+    Returns:
+        The candidate without matching attached Markdown emphasis delimiters.
+    """
+    prefix = line[:start]
+    for delimiter in ("***", "___", "**", "__", "~~", "*", "_"):
+        if prefix.endswith(delimiter) and candidate.endswith(delimiter):
+            return candidate[: -len(delimiter)]
+    return candidate
 
 
 def validate_legacy_browser_routes(paths: Iterable[Path] | None = None) -> list[Finding]:
