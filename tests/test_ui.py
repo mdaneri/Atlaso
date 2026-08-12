@@ -14756,6 +14756,58 @@ def test_vlan_interface_edit_reports_unrepresentable_dhcp_range(client):
         assert scope.range_expression == "192.168.84.100-192.168.84.120"
 
 
+def test_vlan_interface_delete_reconciles_aliases_after_flush(client, monkeypatch):
+    """Verify dependent alias reconcilers cannot still select a deleted VLAN.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+        monkeypatch: Pytest fixture used to replace DNS alias reconciliation.
+    """
+    from sqlalchemy import select
+
+    from atlaso.app import ui
+    from atlaso.app.models import VlanInterface
+
+    login(client)
+    page = client.get("/vlan-interfaces")
+    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    created = client.post(
+        "/vlan-interfaces",
+        data={
+            "parent_interface": "eth1",
+            "vlan_id": "85",
+            "ip_cidr": "192.168.85.1/24",
+            "mtu": "1500",
+            "role": "storage",
+            "enabled": "on",
+            "csrf": csrf,
+        },
+        headers={"X-Atlaso-Grid": "1", "Accept": "application/json"},
+    )
+    assert created.status_code == 200, created.text
+    vlan_id = created.json()["vlan"]["id"]
+    observed_absence: list[bool] = []
+
+    def ensure_esx_alias_after_flush(db, *_args, **_kwargs):
+        observed_absence.append(
+            db.execute(
+                select(VlanInterface).where(VlanInterface.name == "eth1.85")
+            ).scalar_one_or_none()
+            is None
+        )
+        return "removed-old"
+
+    monkeypatch.setattr(ui, "ensure_dns_for_esx_storage", ensure_esx_alias_after_flush)
+    deleted = client.post(
+        f"/vlan-interfaces/{vlan_id}/delete",
+        data={"csrf": csrf},
+        follow_redirects=False,
+    )
+
+    assert deleted.status_code == 303, deleted.text
+    assert observed_absence == [True]
+
+
 def test_vlan_page_prefers_real_trunk_parent_when_inventory_has_eth2(client):
     """Verify that vlan page prefers real trunk parent when inventory has eth2.
 

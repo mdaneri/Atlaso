@@ -17839,16 +17839,19 @@ def delete_vlan_interface_from_ui(
     if not vlan:
         raise HTTPException(status_code=404, detail="VLAN interface not found")
     old_name = vlan.name
+    old_ip_cidr = vlan.ip_cidr
+    old_ipv6_cidr = vlan.ipv6_cidr
+    db.delete(vlan)
+    db.flush()
     dependent_updates = refresh_interface_dependent_addresses(
         db,
         old_name=old_name,
         new_name="",
-        old_ip_cidr=vlan.ip_cidr,
-        old_ipv6_cidr=vlan.ipv6_cidr,
+        old_ip_cidr=old_ip_cidr,
+        old_ipv6_cidr=old_ipv6_cidr,
         actor=None,
         dns_refresher=refresh_interface_service_dns_aliases,
     )
-    db.delete(vlan)
     db.commit()
     details: list[str] = []
     if dependent_updates:
