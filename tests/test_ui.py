@@ -2087,11 +2087,12 @@ def test_forget_missing_physical_interface_reports_enabled_dependency(client):
     from sqlalchemy import select
 
     from atlaso.app.database import SessionLocal
-    from atlaso.app.models import DhcpScope, PhysicalInterface
+    from atlaso.app.models import DhcpScope, DhcpSettings, PhysicalInterface
 
     login(client)
     scope_name = "missing-interface-dependency"
     with SessionLocal() as db:
+        db.execute(select(DhcpSettings)).scalar_one().enabled = True
         missing = PhysicalInterface(
             name="missing_eth9",
             mac_address="00:50:56:00:00:09",
@@ -14906,7 +14907,7 @@ def test_vlan_interface_delete_rejects_enabled_dhcp_dependency(client):
     from sqlalchemy import select
 
     from atlaso.app.database import SessionLocal
-    from atlaso.app.models import DhcpScope, VlanInterface
+    from atlaso.app.models import DhcpScope, DhcpSettings, VlanInterface
 
     login(client)
     page = client.get("/vlan-interfaces")
@@ -14928,6 +14929,7 @@ def test_vlan_interface_delete_rejects_enabled_dhcp_dependency(client):
     vlan_id = created.json()["vlan"]["id"]
     scope_name = "vlan-delete-dependency"
     with SessionLocal() as db:
+        db.execute(select(DhcpSettings)).scalar_one().enabled = True
         db.add(
             DhcpScope(
                 name=scope_name,
