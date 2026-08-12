@@ -179,7 +179,8 @@ def test_documentation_check_rejects_retired_browser_routes(tmp_path: Path) -> N
 
     page.write_text(
         "Open `/ui/management/dashboard` or https://atlaso.example/ui/management/dashboard.\n"
-        "Read [Vaults](../services/vaults.md) for details.\n",
+        "Read [Vaults](../services/vaults.md) for details.\n"
+        "Check [health](//monitor/status) on its protocol-relative authority.\n",
         encoding="utf-8",
     )
     assert validate_legacy_browser_routes([page]) == []

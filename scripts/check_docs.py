@@ -126,7 +126,9 @@ def browser_route_candidates(line: str) -> list[tuple[str, str]]:
         line: Markdown source line to inspect.
     """
     candidates: list[tuple[str, str]] = []
+    absolute_spans: list[tuple[int, int]] = []
     for match in ABSOLUTE_URL_RE.finditer(line):
+        absolute_spans.append(match.span())
         candidate = strip_markdown_wrappers(line, match.start(), match.group(0).rstrip(".,:;"))
         browser_url = candidate.replace("\\", "/")
         browser_url = re.sub(r"^(https?:)/+", r"\1//", browser_url, flags=re.IGNORECASE)
@@ -134,6 +136,8 @@ def browser_route_candidates(line: str) -> list[tuple[str, str]]:
         if route_path:
             candidates.append((candidate, route_path))
     for match in BROWSER_PATH_RE.finditer(line):
+        if any(match.start() < end and match.end() > start for start, end in absolute_spans):
+            continue
         candidate = strip_markdown_wrappers(line, match.start("path"), match.group("path").rstrip(".,:;"))
         candidates.append((candidate, normalize_browser_path(urlparse(candidate.replace("\\", "/")).path)))
     return candidates
