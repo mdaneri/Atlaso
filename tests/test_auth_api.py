@@ -707,7 +707,7 @@ def test_physical_interface_api_preserves_unchanged_dhcp_timestamp(client):
                 name=scope_name,
                 address_family="ipv4",
                 interface_name=interface.name,
-                site_address="192.168.50.1",
+                site_address="192.168.50.254",
                 prefix_length=24,
                 range_expression="192.168.50.100-192.168.50.120",
                 dns_server="192.168.50.1",
@@ -731,7 +731,71 @@ def test_physical_interface_api_preserves_unchanged_dhcp_timestamp(client):
     assert response.status_code == 200, response.text
     with SessionLocal() as db:
         scope = db.execute(select(DhcpScope).where(DhcpScope.name == scope_name)).scalar_one()
+        assert scope.site_address == "192.168.50.254"
         assert scope.updated_at.replace(tzinfo=timezone.utc) == original_updated_at
+
+
+def test_physical_interface_api_rejects_active_service_listener_removal(client):
+    """Verify an enabled service blocks removal of its final interface listen address.
+
+    Args:
+        client: Authenticated-capable application test client fixture.
+    """
+    from sqlalchemy import select
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import DhcpScope, DnsSettings, PhysicalInterface
+    from atlaso.app.services.esxi_pxe import save_esxi_pxe_boot_settings
+
+    with SessionLocal() as db:
+        interface = db.execute(
+            select(PhysicalInterface).where(PhysicalInterface.name == "eth2")
+        ).scalar_one()
+        interface.role = "access"
+        interface.mode = "access"
+        interface.ipv4_method = "static"
+        interface.ip_cidr = "192.168.50.1/24"
+        for scope in db.execute(
+            select(DhcpScope).where(DhcpScope.interface_name == interface.name)
+        ).scalars().all():
+            scope.enabled = False
+        dns = db.execute(select(DnsSettings)).scalar_one()
+        dns.enabled = True
+        dns.listen_interface = interface.name
+        dns.listen_address = "192.168.50.1"
+        save_esxi_pxe_boot_settings(
+            db,
+            enabled=False,
+            hostname="pxe.atlaso.internal",
+            listen_interface=interface.name,
+            listen_address="192.168.50.1",
+            tftp_root="/var/lib/atlaso/pxe/tftp",
+            bios_bootfile="undionly.kpxe",
+            uefi_bootfile="snponly.efi",
+        )
+        db.commit()
+
+    token, _metadata = create_token(
+        client,
+        scopes=["read:interfaces", "write:interfaces"],
+    )
+    response = client.patch(
+        "/api/v1/interfaces/physical/eth2",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"mode": "trunk"},
+    )
+
+    assert response.status_code == 422, response.text
+    assert "Enabled DNS" in response.json()["detail"]
+    with SessionLocal() as db:
+        interface = db.execute(
+            select(PhysicalInterface).where(PhysicalInterface.name == "eth2")
+        ).scalar_one()
+        dns = db.execute(select(DnsSettings)).scalar_one()
+        assert interface.mode == "access"
+        assert interface.ip_cidr == "192.168.50.1/24"
+        assert dns.listen_interface == "eth2"
+        assert dns.listen_address == "192.168.50.1"
 
 
 def test_physical_interface_api_rejects_address_removal_with_enabled_dependents(client):

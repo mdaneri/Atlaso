@@ -365,6 +365,15 @@ def refresh_interface_dependent_addresses(
                 options_by_name,
             )
             if (
+                old_addresses
+                and bool(getattr(row, "enabled", False))
+                and not split_addresses(updated_addresses)
+            ):
+                raise PhysicalInterfaceUpdateError(
+                    f"Enabled {label} still depends on {old_name}. "
+                    "Disable or move the service binding before removing its listen address."
+                )
+            if (
                 updated_interfaces != getattr(row, "listen_interface", "")
                 or updated_addresses != (getattr(row, "listen_address", "") or "")
             ):
@@ -446,7 +455,7 @@ def refresh_interface_dependent_addresses(
         ):
             old_network = scope_network
         new_network = new_networks[family]
-        stale_addresses = {address for address in [*old_addresses, scope_site_address] if address}
+        stale_addresses = set(old_addresses)
         before = (
             getattr(scope, "interface_name", ""),
             getattr(scope, "site_address", ""),
@@ -464,12 +473,15 @@ def refresh_interface_dependent_addresses(
             and new_network
             and not _address_in_network(scope_site_address, new_network)
         )
-        if (
+        site_address_changed = bool(
             not getattr(scope, "site_address", "")
-            or getattr(scope, "site_address", "") in stale_addresses
+            or getattr(scope, "site_address", "") in old_addresses
             or site_address_is_stale
-        ):
+        )
+        if site_address_changed:
             scope.site_address = new_address
+            if scope_site_address:
+                stale_addresses.add(scope_site_address)
         if new_prefixes[family] is not None and (
             not getattr(scope, "prefix_length", None)
             or getattr(scope, "prefix_length", None)
