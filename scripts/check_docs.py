@@ -26,7 +26,7 @@ ALLOWED_STATUSES = {"current", "roadmap", "historical", "redirect"}
 HEADING_RE = re.compile(r"^(#{1,6})\s+(.+?)\s*$")
 LINK_RE = re.compile(r"!?\[[^\]]+\]\(([^)]+)\)")
 IMAGE_RE = re.compile(r"!\[[^\]]+\]\(([^)]+)\)")
-ABSOLUTE_URL_RE = re.compile(r'''(?:https?:[\\/]{1,2}|//)[^\s<>()`\[\]"']+''', re.IGNORECASE)
+ABSOLUTE_URL_RE = re.compile(r'''(?:https?:[\\/]{0,2}|//)[^\s<>()`\[\]"']+''', re.IGNORECASE)
 BROWSER_PATH_RE = re.compile(
     r"(?<![A-Za-z0-9.])"
     r"(?P<path>[\\/](?:(?:\.{1,2})[\\/])*[A-Za-z0-9%][A-Za-z0-9._~{}%*-]*"
@@ -151,11 +151,11 @@ def browser_url_path(candidate: str) -> str:
         The normalized request path used for legacy-route classification.
     """
     browser_url = candidate.replace("\\", "/")
-    scheme_match = re.match(r"^(https?):(/+)(.*)$", browser_url, flags=re.IGNORECASE)
-    if scheme_match and len(scheme_match.group(2)) == 1:
+    scheme_match = re.match(r"^(https?):(/*)(.*)$", browser_url, flags=re.IGNORECASE)
+    if scheme_match and len(scheme_match.group(2)) <= 1:
         remainder = scheme_match.group(3)
         first_segment = remainder.split("/", 1)[0]
-        if "." not in first_segment and ":" not in first_segment:
+        if not scheme_match.group(2) or ("." not in first_segment and ":" not in first_segment):
             return normalize_browser_path(f"/{remainder}")
         browser_url = f"{scheme_match.group(1)}://{remainder}"
     return normalize_browser_path(urlparse(browser_url).path)
