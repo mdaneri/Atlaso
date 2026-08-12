@@ -4811,6 +4811,10 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
     enabled_missing_listen_address["data"]["ntp_settings"][0]["enabled"] = True
     enabled_missing_listen_address["data"]["ntp_settings"][0]["listen_interface"] = "eth2"
     enabled_missing_listen_address["data"]["ntp_settings"][0]["listen_address"] = ""
+    enabled_invalid_listen_address = deepcopy(archive)
+    enabled_invalid_listen_address["data"]["ntp_settings"][0]["enabled"] = True
+    enabled_invalid_listen_address["data"]["ntp_settings"][0]["listen_interface"] = "eth2"
+    enabled_invalid_listen_address["data"]["ntp_settings"][0]["listen_address"] = "not-an-ip"
     enabled_missing_web_terminal_target = deepcopy(archive)
     enabled_missing_web_terminal_target["data"]["appliance_settings"][0]["web_terminal_enabled"] = True
     enabled_missing_web_terminal_target["data"]["appliance_settings"][0][
@@ -4822,6 +4826,11 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
     unresolved_ldap_organization["data"]["ldap_users"].append(
         {"organization_slug": "missing-organization", "uid": "orphaned-user"}
     )
+    enabled_ldap_without_organization = deepcopy(archive)
+    enabled_ldap_without_organization["data"]["ldap_settings"][0]["enabled"] = True
+    enabled_ldap_without_organization["data"]["ldap_settings"][0]["listen_interface"] = "eth2"
+    enabled_ldap_without_organization["data"]["ldap_settings"][0]["listen_address"] = "192.168.50.1"
+    enabled_ldap_without_organization["data"]["ldap_organizations"] = []
     unresolved_oidc_client = deepcopy(archive)
     unresolved_oidc_client["data"]["oidc_client_redirect_uris"].append(
         {"client_id": "missing-client", "kind": "redirect", "uri": "https://example.invalid/callback"}
@@ -4885,6 +4894,15 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
     enabled_kms_without_ca["data"]["kms_settings"][0]["listen_interface"] = "eth2"
     enabled_kms_without_ca["data"]["kms_settings"][0]["listen_address"] = "192.168.50.1"
     enabled_kms_without_ca["data"]["ca_settings"][0]["enabled"] = False
+    enabled_oidc_without_dependencies = deepcopy(archive)
+    enabled_oidc_without_dependencies["data"]["oidc_provider_settings"] = [
+        {
+            "enabled": True,
+            "listen_interface": "eth2",
+            "listen_address": "192.168.50.1",
+        }
+    ]
+    enabled_oidc_without_dependencies["data"]["oidc_signing_keys"] = []
     unsupported_setting = deepcopy(archive)
     unsupported_setting["data"]["settings"].append(
         {"key": "unsupported.setting", "value": "must-not-be-silently-dropped"}
@@ -4916,15 +4934,18 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
             for candidate in enabled_missing_service_targets
         ),
         (enabled_missing_listen_address, "has no listen address"),
+        (enabled_invalid_listen_address, "has an invalid listen address"),
         (enabled_missing_web_terminal_target, "select an ineligible Web Terminal interface"),
         (empty_required_field, "has empty required field 'name'"),
         (unresolved_ldap_organization, "references an unknown LDAP organization"),
+        (enabled_ldap_without_organization, "enables LDAP without an LDAP organization"),
         (unresolved_oidc_client, "references an unknown OIDC client"),
         (unresolved_esx_volume, "references an unknown ESX storage volume"),
         (enabled_missing_esx_share_target, "has an ineligible interface or address family"),
         (cyclic_ldap_groups, "contains cyclic LDAP group membership"),
         (enabled_certificate_with_disabled_profile, "references a disabled CA profile"),
         (enabled_kms_without_ca, "enables KMS without an enabled CA"),
+        (enabled_oidc_without_dependencies, "enables OIDC without an active signing key"),
         (unsupported_setting, "has an unsupported setting key"),
     ]:
         with pytest.raises(ValueError, match=message):

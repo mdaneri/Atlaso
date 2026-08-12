@@ -1145,6 +1145,18 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
                 f"The settings archive row {row_index} in '{section_name}' references an unknown {reference_name}."
             )
 
+    def valid_ip_address(value: str) -> bool:
+        """Return whether one archive listener token is a valid IP address.
+
+        Args:
+            value: Candidate listener address supplied by an archive row.
+        """
+        try:
+            ip_address(value)
+        except ValueError:
+            return False
+        return True
+
     wan_policy_names = {str(row["name"]) for row in data.get("wan_policies", [])}
 
     physical_interfaces = {
@@ -1321,9 +1333,14 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
             address_required = address_requirement == "enabled" or (
                 address_requirement == "authoritative" and row.get("authoritative", False)
             )
-            if address_required and not split_addresses(str(row.get("listen_address") or "")):
+            selected_addresses = split_addresses(str(row.get("listen_address") or ""))
+            if address_required and not selected_addresses:
                 raise ValueError(
                     f"The settings archive row {row_index} in '{section_name}' has no listen address."
+                )
+            if any(not valid_ip_address(address) for address in selected_addresses):
+                raise ValueError(
+                    f"The settings archive row {row_index} in '{section_name}' has an invalid listen address."
                 )
 
     for row_index, row in enumerate(data.get("firewall_rules", []), start=1):
@@ -1519,6 +1536,26 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
                 "The settings archive enables KMS without an enabled CA and issued KMS server certificate."
             )
 
+    if any(row.get("enabled", False) for row in data.get("oidc_provider_settings", [])):
+        active_signing_key_ready = any(
+            str(row.get("status") or "") == "active"
+            and row.get("active_slot") == 1
+            and bool(str(row.get("private_key_encrypted") or ""))
+            and bool(str(row.get("public_jwk_json") or ""))
+            for row in data.get("oidc_signing_keys", [])
+        )
+        oidc_certificate_ready = any(
+            str(row.get("managed_owner") or "") == "oidc:https"
+            and str(row.get("status") or "") == "issued"
+            and bool(str(row.get("certificate_pem") or ""))
+            and bool(str(row.get("private_key_encrypted") or ""))
+            for row in data.get("ca_certificates", [])
+        )
+        if not active_signing_key_ready or not oidc_certificate_ready:
+            raise ValueError(
+                "The settings archive enables OIDC without an active signing key and issued HTTPS certificate."
+            )
+
     provider_ids = {str(row["id"]) for row in data.get("vsphere_key_providers", [])}
     for row_index, row in enumerate(data.get("vsphere_trusted_vcenters", []), start=1):
         require_reference(
@@ -1539,6 +1576,10 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
         )
 
     organization_slugs = {str(row["slug"]) for row in data.get("ldap_organizations", [])}
+    if data["ldap_settings"][0].get("enabled", False) and not organization_slugs:
+        raise ValueError(
+            "The settings archive enables LDAP without an LDAP organization."
+        )
     ldap_users = {
         (str(row["organization_slug"]), str(row["uid"]))
         for row in data.get("ldap_users", [])
