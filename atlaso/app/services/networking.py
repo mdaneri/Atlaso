@@ -392,7 +392,11 @@ def _cidr_validation_error(label: str, value: str | None, version: int) -> str |
 
 
 def _has_usable_non_link_local_address(*cidrs: str | None) -> bool:
-    """Return whether any CIDR contains an address usable by a management listener."""
+    """Return whether any CIDR contains an address usable by a management listener.
+
+    Args:
+        *cidrs: Candidate interface address and prefix values.
+    """
     for cidr in cidrs:
         if not cidr:
             continue

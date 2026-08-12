@@ -595,7 +595,16 @@ def _management_https_server_lines(
     upstream_port: int,
     https_port: int,
 ) -> list[str]:
-    """Return the IP-scoped management front door for a flagged access address."""
+    """Return the IP-scoped management front door for a flagged access address.
+
+    Args:
+        address: Network address of the flagged access interface.
+        certificate_path: Filesystem path for the appliance management certificate.
+        key_path: Filesystem path for the appliance management private key.
+        upstream_host: Atlaso application host receiving proxied requests.
+        upstream_port: Atlaso application port receiving proxied requests.
+        https_port: HTTPS port for the management listener.
+    """
     return [
         "",
         "server {",
@@ -616,7 +625,13 @@ def _management_or_not_found_location(
     upstream_host: str,
     upstream_port: int,
 ) -> list[str]:
-    """Return a complete management fallback or a closed public-service fallback."""
+    """Return a complete management fallback or a closed public-service fallback.
+
+    Args:
+        management_ui: Whether the listener exposes the management front door.
+        upstream_host: Atlaso application host receiving proxied requests.
+        upstream_port: Atlaso application port receiving proxied requests.
+    """
     if management_ui:
         return _proxy_location("/", upstream_host, upstream_port, forwarded_proto="https")
     return ["  location / {", "    return 404;", "  }"]

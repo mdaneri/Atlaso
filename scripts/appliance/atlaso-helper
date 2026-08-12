@@ -6775,7 +6775,11 @@ def _systemd_networkd_files(path: Path) -> tuple[dict[str, str], list[str], list
 
 
 def _network_row_has_usable_management_address(row: dict[str, str]) -> bool:
-    """Return whether a staged interface row has a usable non-link-local address."""
+    """Return whether a staged interface row has a usable non-link-local address.
+
+    Args:
+        row: Parsed staged network interface values.
+    """
     for key in ("ip_cidr", "ipv6_cidr"):
         value = row.get(key, "").strip()
         if not value:
