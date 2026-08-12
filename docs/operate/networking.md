@@ -16,9 +16,9 @@ preserving management access.
 
 This verified appliance view provides visual orientation before you begin.
 
-![Atlaso Physical Interfaces page in the clean-appliance desktop viewport.](../assets/screenshots/physical-interfaces-clean-desktop.webp)
+![Atlaso Physical Interfaces page showing inherent management UI on eth0 and the true glyph on access interface eth1.](../assets/screenshots/physical-interfaces-clean-desktop.webp)
 
-*Figure: Physical Interfaces in the verified clean-appliance desktop state.*
+*Figure: Physical Interfaces showing inherent management exposure and the standard Atlaso true glyph for access exposure.*
 
 <!-- END GENERATED INTERFACE OVERVIEW -->
 
@@ -36,6 +36,34 @@ unreachable after apply.
 4. Review validation and rendered network previews.
 5. Submit the selected network units through [Appliance Apply](appliance-apply.md).
 
+### Choose where the management UI is available
+
+A physical interface with the **management** role always exposes `/ui/management`; it has no separate management UI
+switch. An addressed physical interface with the **access** role and **Access (untagged)** link type, or an enabled
+access VLAN, can additionally enable **Management UI**. The interface remains an ordinary access network: it stays
+eligible for public services and access service bindings, and it keeps access routing rather than gaining a
+management-specific gateway or policy route.
+
+Atlaso accepts that flag only when the access interface has a configured or observed usable non-link-local address.
+An unaddressed or link-local-only interface cannot satisfy management lockout protection because no management HTTPS
+listener can bind to it.
+
+The default configuration remains `eth0` as the dedicated management interface with the switch disabled on all access
+interfaces. To use one network for both planes, change `eth0` from management to access; Atlaso enables its management UI
+switch as part of that conversion. You may then disable the unused second interface. Converting an access interface to
+management clears its switch because management exposure is inherent in the role.
+
+Atlaso permits at most one dedicated management-role physical interface. It also prevents desired state with no
+effective management browser path: when no dedicated role exists, at least one active access interface or enabled
+access VLAN must have **Management UI** enabled. Multiple flagged access interfaces are allowed. On a flagged access
+address, `/` prefers the management sign-in, `/ui/management` requires normal authentication, and `/ui/public` remains
+available for the same access network. The listener also preserves the complete authenticated management front door,
+including stable API, API documentation, manifest, and service-worker routes required by the management UI and PWA.
+
+Only a dedicated management role owns management DHCP, default gateways, DHCP resolver recovery, and isolated
+management policy routing. If that role is absent, flagged access interfaces retain their normal access routes. The
+appliance FQDN and managed HTTPS certificate cover every effective management UI address.
+
 Management-to-lab and lab-to-management forwarding remain prohibited. Service listeners and firewall rules must bind to
 the same intended interfaces.
 
@@ -51,9 +79,9 @@ These captures show responsive layouts and useful operational states referenced 
 
 ### Physical interfaces
 
-![Atlaso Physical Interfaces page in the clean-appliance responsive viewport.](../assets/screenshots/physical-interfaces-clean-responsive.webp)
+![Responsive Atlaso Physical Interfaces page showing inherent management UI and the true glyph for access management UI.](../assets/screenshots/physical-interfaces-clean-responsive.webp)
 
-*Figure: Physical Interfaces in the verified clean-appliance responsive state.*
+*Figure: Physical Interfaces showing inherent management exposure and the standard Atlaso true glyph at the responsive viewport.*
 
 ### Routes and WAN simulation
 
@@ -67,12 +95,12 @@ These captures show responsive layouts and useful operational states referenced 
 
 ### VLAN interfaces
 
-![Atlaso VLAN Interfaces page in the clean-appliance desktop viewport.](../assets/screenshots/vlan-interfaces-clean-desktop.webp)
+![Atlaso VLAN Interfaces page showing the access VLAN management UI option.](../assets/screenshots/vlan-interfaces-clean-desktop.webp)
 
-*Figure: VLAN Interfaces in the verified clean-appliance desktop state.*
+*Figure: VLAN Interfaces showing optional access management UI exposure in the verified appliance desktop state.*
 
-![Atlaso VLAN Interfaces page in the clean-appliance responsive viewport.](../assets/screenshots/vlan-interfaces-clean-responsive.webp)
+![Responsive Atlaso VLAN Interfaces page showing the access VLAN management UI option.](../assets/screenshots/vlan-interfaces-clean-responsive.webp)
 
-*Figure: VLAN Interfaces in the verified clean-appliance responsive state.*
+*Figure: VLAN Interfaces management UI option in the verified appliance responsive state.*
 
 <!-- END GENERATED ADDITIONAL SCREENSHOTS -->

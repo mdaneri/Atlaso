@@ -216,6 +216,41 @@ def test_physical_interface_api_persists_optional_ipv6_enabled_state(client):
     assert off_link_gateway.status_code == 422
 
 
+def test_physical_interface_api_enforces_access_only_management_ui_flag(client):
+    """Verify the API preserves management access during role conversion and rejects invalid flag use.
+
+    Args:
+        client: Authenticated-capable application test client fixture.
+    """
+    token, _metadata = create_token(client, scopes=["read:interfaces", "write:interfaces"])
+    headers = {"Authorization": f"Bearer {token}"}
+    interfaces = client.get("/api/v1/interfaces/physical", headers=headers).json()
+    management = next(row for row in interfaces if row["role"] == "management")
+
+    converted = client.patch(
+        f"/api/v1/interfaces/physical/{management['name']}",
+        headers=headers,
+        json={"role": "access", "ipv4_method": "static", "ip_cidr": "192.168.49.1/24"},
+    )
+    assert converted.status_code == 200, converted.text
+    assert converted.json()["access_management_ui_enabled"] is True
+
+    invalid = client.patch(
+        f"/api/v1/interfaces/physical/{management['name']}",
+        headers=headers,
+        json={"role": "unused", "access_management_ui_enabled": True},
+    )
+    assert invalid.status_code == 422
+
+    reverted = client.patch(
+        f"/api/v1/interfaces/physical/{management['name']}",
+        headers=headers,
+        json={"role": "management", "access_management_ui_enabled": True},
+    )
+    assert reverted.status_code == 200, reverted.text
+    assert reverted.json()["access_management_ui_enabled"] is False
+
+
 def test_scope_restrictions_are_enforced(client):
     """Verify that scope restrictions are enforced.
 

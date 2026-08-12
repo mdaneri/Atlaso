@@ -203,6 +203,8 @@ def managed_service_firewall_rules(
     ldap_settings: LdapSettings | None = None,
     oidc_settings: OidcProviderSettings | None = None,
     esx_storage_rules: list[dict[str, str]] | None = None,
+    management_interface: str | None = None,
+    access_management_ui_interfaces: list[str] | None = None,
 ) -> list[FirewallRule]:
     """Return managed service firewall rules.
 
@@ -225,20 +227,39 @@ def managed_service_firewall_rules(
         ldap_settings: Ldap settings supplied by the caller.
         oidc_settings: Oidc settings supplied by the caller.
         esx_storage_rules: Esx storage rules supplied by the caller.
+        management_interface: Dedicated management interface, or an empty value when absent.
+        access_management_ui_interfaces: Access interfaces that additionally expose the management UI.
     """
     source_groups_by_id = {str(group.get("id", "")): group for group in source_groups or []}
     source_group_assignments = source_group_assignments or {}
-    rules = [
-        _service_firewall_rule(
-            name="mgmt-console",
-            service="Management console",
-            interface_name="eth0",
-            source=_managed_rule_source("mgmt-console", "eth0", interface_networks, source_groups_by_id, source_group_assignments),
-            protocol="tcp",
-            ports="22,80,443",
-            priority=10,
+    rules: list[FirewallRule] = []
+    effective_management_interface = "eth0" if management_interface is None else management_interface
+    if effective_management_interface:
+        rules.append(
+            _service_firewall_rule(
+                name="mgmt-console",
+                service="Management console",
+                interface_name=effective_management_interface,
+                source=_managed_rule_source("mgmt-console", effective_management_interface, interface_networks, source_groups_by_id, source_group_assignments),
+                protocol="tcp",
+                ports="22,80,443",
+                priority=10,
+            )
         )
-    ]
+    for index, interface_name in enumerate(access_management_ui_interfaces or [], start=1):
+        if interface_name not in interface_networks:
+            continue
+        rules.append(
+            _service_firewall_rule(
+                name=f"management-ui-{interface_name}",
+                service="Management UI",
+                interface_name=interface_name,
+                source=_managed_rule_source("management-ui", interface_name, interface_networks, source_groups_by_id, source_group_assignments),
+                protocol="tcp",
+                ports="80,443",
+                priority=10 + index,
+            )
+        )
     for index, interface_name in enumerate(web_terminal_interfaces or [], start=1):
         if interface_name == "eth0":
             continue

@@ -168,6 +168,15 @@ interfaces and VLANs cannot set these fields. IPv4 DHCP and IPv6 Disabled or Aut
 gateway. Lab route gateways remain owned by Routes & WAN Simulation in table `200`, allowing management and lab traffic
 to use different exits.
 
+A physical management role exposes `/ui/management` inherently. Addressed access-mode physical interfaces and enabled
+access VLANs may additionally persist `access_management_ui_enabled=true`. This does not change their routing domain or
+service-binding eligibility. Desired-state and helper validation allow zero or one dedicated management physical
+interface, but require at least one effective management UI listener. Without a dedicated role, no management DHCP,
+default gateway, resolver-lease recovery, or table `100` ownership is synthesized; flagged access listeners retain lab
+routing. The preferred appliance identity is a flagged `eth0`, then the first stable flagged physical interface, then a
+flagged VLAN. The app-owned appliance FQDN records and `appliance:https` certificate SANs cover all effective management
+UI addresses.
+
 ### Network apply
 
 The real network apply path is Photon `systemd-networkd` backed. The `network` apply unit stages Atlaso's rendered
@@ -176,8 +185,8 @@ gateway intent, installs Atlaso-owned `.network` and `.netdev` files under `/etc
 and reconfigures non-management links. Disabled management IPv6 renders `IPv6AcceptRA=no` with no static IPv6 address or
 route. Automatic renders `IPv6AcceptRA=yes` with IPv6 link-local addressing. Static renders `IPv6AcceptRA=no`, the
 configured address, IPv6 link-local addressing, and the optional default route in both the main and management policy
-tables. Management remains explicit on `eth0`; the helper does not blindly reconfigure the management link during this
-first pass. Management source networks use the Atlaso management route table, while access and route networks use the
+  tables. The helper does not blindly reconfigure a dedicated management link during this first pass. Dedicated
+  management source networks use the Atlaso management route table, while access and route networks use the
 lab route table. When a VLAN was present in successful Atlaso network apply history and is no longer desired, the staged
 config includes an explicit removal target and the helper deletes that VLAN link after verifying it is a VLAN device.
 

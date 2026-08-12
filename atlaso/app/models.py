@@ -222,6 +222,7 @@ class PhysicalInterface(Base):
         oper_state: Persisted oper state for the physicalinterface resource.
         role: Persisted role for the physicalinterface resource.
         mode: Persisted mode for the physicalinterface resource.
+        access_management_ui_enabled: Whether an access interface also exposes the management UI.
         inventory_source: Persisted inventory source for the physicalinterface resource.
         desired_state_source: Persisted desired state source for the physicalinterface resource.
         last_seen_at: UTC timestamp associated with last seen.
@@ -249,6 +250,7 @@ class PhysicalInterface(Base):
     oper_state: Mapped[str] = mapped_column(String(20), default="up")
     role: Mapped[str] = mapped_column(String(40), default="unused")
     mode: Mapped[str] = mapped_column(String(40), default="unused")
+    access_management_ui_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     inventory_source: Mapped[str] = mapped_column(String(40), default="seed")
     desired_state_source: Mapped[str] = mapped_column(String(40), default="seed")
     last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -268,6 +270,7 @@ class VlanInterface(Base):
         mtu: Persisted mtu for the vlaninterface resource.
         role: Persisted role for the vlaninterface resource.
         enabled: Whether the resource is enabled.
+        access_management_ui_enabled: Whether an enabled access VLAN also exposes the management UI.
     """
     __tablename__ = "vlan_interfaces"
     __table_args__ = (UniqueConstraint("parent_interface", "vlan_id", name="uq_vlan_parent_id"),)
@@ -281,6 +284,7 @@ class VlanInterface(Base):
     mtu: Mapped[int] = mapped_column(Integer, default=1500)
     role: Mapped[str] = mapped_column(String(40), default="access")
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    access_management_ui_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
 
 
 class WanPolicy(Base):

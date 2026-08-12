@@ -18,6 +18,8 @@ def canonical_route(route: str) -> str:
     Args:
         route: Historical screenshot route recorded in the manifest.
     """
+    if route.startswith(("/ui/management", "/ui/public")):
+        return route
     if route == "/ca":
         return "/ui/public/ca"
     if route == "/requests":
@@ -39,6 +41,8 @@ def route_title(route: str) -> str:
         return "VMware console"
     if route == "/ui/management/ca/requests":
         return "Management CA / Requests"
+    if route == "/ui/management/vsphere-key-providers":
+        return "vSphere Key Providers"
     if route == "/ui/public/ca/requests":
         return "Public CA / Requests"
     display_route = route

@@ -145,6 +145,7 @@ def physical_interface_to_dict(interface: PhysicalInterface, vlan_count: int = 0
         "oper_state": interface.oper_state,
         "role": role,
         "mode": normalize_interface_mode(interface.mode),
+        "access_management_ui_enabled": bool(interface.access_management_ui_enabled),
         "inventory_source": interface.inventory_source,
         "desired_state_source": interface.desired_state_source,
         "last_seen_at": interface.last_seen_at.isoformat() if interface.last_seen_at else "",
@@ -171,6 +172,7 @@ def vlan_interface_to_dict(vlan: VlanInterface, parent_missing: bool = False) ->
         "mtu": vlan.mtu,
         "role": role,
         "enabled": False if parent_missing else vlan.enabled,
+        "access_management_ui_enabled": bool(vlan.access_management_ui_enabled),
         "parent_missing": parent_missing,
     }
 
@@ -387,6 +389,24 @@ def _cidr_validation_error(label: str, value: str | None, version: int) -> str |
     if parsed.version != version:
         return f"{label} {family} CIDR {value} must be an {family} address and prefix."
     return None
+
+
+def _has_usable_non_link_local_address(*cidrs: str | None) -> bool:
+    """Return whether any CIDR contains an address usable by a management listener.
+
+    Args:
+        *cidrs: Candidate interface address and prefix values.
+    """
+    for cidr in cidrs:
+        if not cidr:
+            continue
+        try:
+            address = ip_interface(cidr.strip()).ip
+        except ValueError:
+            continue
+        if not (address.is_link_local or address.is_loopback or address.is_multicast or address.is_unspecified):
+            return True
+    return False
 
 
 def _set_setting_value(db: Session, key: str, value: str) -> Setting:
@@ -942,6 +962,7 @@ def render_network_config(
                 f"interface={interface.name}",
                 f"  role={role}",
                 f"  mode={mode}",
+                f"  access_management_ui_enabled={'true' if interface.access_management_ui_enabled else 'false'}",
                 f"  ipv4_method={normalize_ipv4_method(interface.ipv4_method)}",
                 f"  ip_cidr={interface.ip_cidr or ''}",
                 f"  gateway={interface.gateway or ''}",
@@ -966,6 +987,7 @@ def render_network_config(
                 f"  ipv6_cidr={vlan.ipv6_cidr or ''}",
                 f"  mtu={vlan.mtu}",
                 f"  role={role}",
+                f"  access_management_ui_enabled={'true' if vlan.access_management_ui_enabled else 'false'}",
             ]
         )
     return "\n".join(lines).strip() + "\n"
@@ -989,15 +1011,33 @@ def validate_network_state(
     errors: list[str] = []
     interface_names = {interface.name for interface in interfaces}
     management_interfaces = [interface for interface in interfaces if interface.oper_state != "missing" and normalize_interface_role(interface.role) == "management"]
-    if len(management_interfaces) != 1:
-        errors.append("Network desired state must include exactly one management physical interface.")
-    elif management_interfaces[0].name != "eth0":
-        errors.append("Network desired state must keep eth0 as the management physical interface.")
+    if len(management_interfaces) > 1:
+        errors.append("Network desired state can include at most one management physical interface.")
     for interface in interfaces:
         if interface.oper_state == "missing":
             continue
         role = normalize_interface_role(interface.role)
         ipv4_method = normalize_ipv4_method(interface.ipv4_method)
+        if interface.access_management_ui_enabled and (
+            role != "access" or normalize_interface_mode(interface.mode) != "access"
+        ):
+            errors.append(
+                f"Interface {interface.name} can expose the management UI only when its role and link type are access."
+            )
+        access_management_address = _has_usable_non_link_local_address(
+            interface.host_ip_cidr if ipv4_method == "dhcp" else interface.ip_cidr,
+            interface.ipv6_cidr if interface.ipv6_enabled else None,
+            interface.host_ipv6_cidr if interface.ipv6_enabled else None,
+        )
+        if (
+            interface.access_management_ui_enabled
+            and role == "access"
+            and normalize_interface_mode(interface.mode) == "access"
+            and not access_management_address
+        ):
+            errors.append(
+                f"Interface {interface.name} can expose the management UI only when it has a usable non-link-local address."
+            )
         if role not in INTERFACE_ROLES:
             errors.append(f"Interface {interface.name} role {interface.role} is not supported.")
         if ipv4_method not in IPV4_METHODS:
@@ -1085,10 +1125,40 @@ def validate_network_state(
         role = normalize_interface_role(vlan.role)
         if role not in VLAN_ROLES:
             errors.append(f"VLAN {vlan.name} role {vlan.role} is not supported.")
+        if vlan.access_management_ui_enabled and role != "access":
+            errors.append(f"VLAN {vlan.name} can expose the management UI only when its role is access.")
+        vlan_management_address = _has_usable_non_link_local_address(vlan.ip_cidr, vlan.ipv6_cidr)
+        if vlan.access_management_ui_enabled and role == "access" and not vlan_management_address:
+            errors.append(
+                f"VLAN {vlan.name} can expose the management UI only when it has a usable non-link-local address."
+            )
         if not vlan.ip_cidr and not vlan.ipv6_cidr:
             errors.append(f"VLAN {vlan.name} must include IPv4 CIDR, IPv6 CIDR, or both.")
         if error := _cidr_validation_error(f"VLAN {vlan.name}", vlan.ip_cidr, 4):
             errors.append(error)
         if error := _cidr_validation_error(f"VLAN {vlan.name}", vlan.ipv6_cidr, 6):
             errors.append(error)
+    effective_management = bool(management_interfaces) or any(
+        interface.oper_state != "missing"
+        and interface.admin_state == "up"
+        and normalize_interface_role(interface.role) == "access"
+        and normalize_interface_mode(interface.mode) == "access"
+        and interface.access_management_ui_enabled
+        and _has_usable_non_link_local_address(
+            interface.host_ip_cidr if normalize_ipv4_method(interface.ipv4_method) == "dhcp" else interface.ip_cidr,
+            interface.ipv6_cidr if interface.ipv6_enabled else None,
+            interface.host_ipv6_cidr if interface.ipv6_enabled else None,
+        )
+        for interface in interfaces
+    ) or any(
+        vlan.enabled
+        and normalize_interface_role(vlan.role) == "access"
+        and vlan.access_management_ui_enabled
+        and _has_usable_non_link_local_address(vlan.ip_cidr, vlan.ipv6_cidr)
+        for vlan in vlans
+    )
+    if not effective_management:
+        errors.append(
+            "Network desired state must keep a management interface or enable the management UI on at least one access interface."
+        )
     return errors

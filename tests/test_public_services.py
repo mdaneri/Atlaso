@@ -62,6 +62,118 @@ def test_public_service_entries_scope_services_to_matching_address():
     assert "allow_unauthenticated_access" not in open_services_by_id["esxi_pxe"]
 
 
+def test_flagged_access_ip_front_door_proxies_management_namespace_with_management_certificate():
+    """Verify that an exact access-IP server does not hide its enabled management UI."""
+    config = render_public_services_nginx_config(
+        [
+            {
+                "interface": "eth2",
+                "role": "access",
+                "address": "192.168.87.32",
+                "management_ui": True,
+                "services": [
+                    {"id": "ca"},
+                    {"id": "vcf_offline_depot", "port": 443},
+                ],
+            }
+        ],
+        ca_certificate_path="/ca.crt",
+        ca_key_path="/ca.key",
+        management_certificate_path="/management.crt",
+        management_key_path="/management.key",
+    )
+
+    assert "ssl_certificate /management.crt;" in config
+    assert "ssl_certificate_key /management.key;" in config
+    assert "location = /ui/management" in config
+    assert "location ^~ /ui/management/" in config
+    assert "location / {\n    proxy_pass http://127.0.0.1:8000;" in config
+    assert "location / {\n    return 404;" not in config
+
+
+def test_flagged_ca_only_access_keeps_hostname_routes_and_adds_complete_ip_management_front_door():
+    """Verify that a CA hostname cannot shadow the management front door on its flagged address."""
+    config = render_public_services_nginx_config(
+        [
+            {
+                "interface": "eth2",
+                "role": "access",
+                "address": "192.168.87.32",
+                "management_ui": True,
+                "services": [{"id": "ca"}],
+            }
+        ],
+        ca_certificate_path="/ca.crt",
+        ca_key_path="/ca.key",
+        management_certificate_path="/management.crt",
+        management_key_path="/management.key",
+    )
+
+    assert "# CA portal HTTPS front door." in config
+    assert "# IP-scoped management HTTPS front door." in config
+    assert "server_name ca.atlaso.internal;" in config
+    assert "server_name _ 192.168.87.32;" in config
+    assert "ssl_certificate /ca.crt;" in config
+    assert "ssl_certificate /management.crt;" in config
+    assert config.count("location / {\n    proxy_pass http://127.0.0.1:8000;") == 2
+    assert "location / {\n    return 404;" not in config
+
+
+def test_flagged_oidc_access_keeps_identity_routes_and_adds_complete_ip_management_front_door():
+    """Verify that an OIDC hostname cannot shadow the management front door on its flagged address."""
+    config = render_public_services_nginx_config(
+        [
+            {
+                "interface": "eth2",
+                "role": "access",
+                "address": "192.168.87.32",
+                "management_ui": True,
+                "services": [{"id": "oidc", "port": 443}],
+            }
+        ],
+        oidc_certificate_path="/oidc.crt",
+        oidc_key_path="/oidc.key",
+        management_certificate_path="/management.crt",
+        management_key_path="/management.key",
+    )
+
+    assert "# OIDC HTTPS front door." in config
+    assert "# IP-scoped management HTTPS front door." in config
+    assert "location ^~ /identity/ {" in config
+    assert "ssl_certificate /oidc.crt;" in config
+    assert "ssl_certificate /management.crt;" in config
+    assert config.count("location / {\n    proxy_pass http://127.0.0.1:8000;") == 2
+    assert "location / {\n    return 404;" not in config
+
+
+def test_flagged_terminal_access_uses_management_certificate_and_complete_front_door():
+    """Verify that terminal sharing preserves the management certificate and all stable routes."""
+    config = render_public_services_nginx_config(
+        [
+            {
+                "interface": "eth2",
+                "role": "access",
+                "address": "192.168.87.32",
+                "management_ui": True,
+                "services": [],
+                "web_terminal": True,
+            }
+        ],
+        terminal_certificate_path="/terminal.crt",
+        terminal_key_path="/terminal.key",
+        management_certificate_path="/management.crt",
+        management_key_path="/management.key",
+    )
+
+    assert "# Terminal-only HTTPS front door." in config
+    assert "ssl_certificate /management.crt;" in config
+    assert "ssl_certificate_key /management.key;" in config
+    assert "ssl_certificate /terminal.crt;" not in config
+    assert "location = /terminal {" in config
+    assert "location / {\n    proxy_pass http://127.0.0.1:8000;" in config
+    assert "location / {\n    return 404;" not in config
+
+
 def test_enabled_ca_without_listen_address_is_not_publicly_exposed():
     """Verify that enabled ca without listen address is not publicly exposed."""
     entries = public_service_entries(

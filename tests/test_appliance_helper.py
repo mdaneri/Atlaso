@@ -1501,8 +1501,8 @@ def test_network_helper_rejects_static_management_without_ipv4(tmp_path):
     assert "Interface eth0 must set an IPv4 CIDR when IPv4 method is static." in errors
 
 
-def test_network_helper_requires_eth0_management(tmp_path):
-    """Verify that network helper requires eth0 management.
+def test_network_helper_allows_management_role_on_non_eth0_interface(tmp_path):
+    """Verify that network helper does not tie the management role to eth0.
 
     Args:
         tmp_path: Temporary directory provided by pytest for isolated filesystem state.
@@ -1511,9 +1511,95 @@ def test_network_helper_requires_eth0_management(tmp_path):
     config_path = tmp_path / "atlaso-network.conf"
     config_path.write_text(network_config_text().replace("interface=eth0", "interface=eth1", 1), encoding="utf-8")
 
+    assert helper._network_config_errors(config_path) == []
+
+
+def test_network_helper_accepts_flagged_access_without_dedicated_management(tmp_path):
+    """Verify that the staged helper contract accepts an access-only management browser path.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    helper = load_helper_module()
+    config_path = tmp_path / "atlaso-network.conf"
+    config = network_config_text(include_vlan=False).replace("  role=management", "  role=access", 1)
+    config = config.replace("  mode=access", "  mode=access\n  access_management_ui_enabled=true", 1)
+    config_path.write_text(config, encoding="utf-8")
+
+    assert helper._network_config_errors(config_path) == []
+
+
+def test_network_helper_rejects_flagged_access_without_usable_address(tmp_path):
+    """Verify that staged access flags require a usable non-link-local listener address.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    helper = load_helper_module()
+    config_path = tmp_path / "atlaso-network.conf"
+    config = network_config_text(include_vlan=False).replace("  role=management", "  role=access", 1)
+    config = config.replace("  mode=access", "  mode=access\n  access_management_ui_enabled=true", 1)
+    config = config.replace("  ip_cidr=192.168.49.1/24", "  ip_cidr=169.254.49.1/16", 1)
+    config_path.write_text(config, encoding="utf-8")
+
     errors = helper._network_config_errors(config_path)
 
-    assert "Network config must keep eth0 as the management physical interface." in errors
+    assert "Interface eth0 can expose the management UI only when it has a usable non-link-local address." in errors
+    assert "Network config must keep a management interface or enable the management UI on at least one access interface." in errors
+
+
+def test_network_helper_does_not_assign_management_routing_without_dedicated_role(monkeypatch, tmp_path):
+    """Verify that an access-only configuration keeps every physical link on ordinary access routing.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    helper = load_helper_module()
+    config_path = tmp_path / "atlaso-network.conf"
+    config_path.write_text(
+        "\n".join(
+            [
+                "[physical_interfaces]",
+                "interface=eth0",
+                "  role=access",
+                "  mode=access",
+                "  access_management_ui_enabled=false",
+                "  ipv4_method=static",
+                "  ip_cidr=192.168.49.1/24",
+                "  admin_state=down",
+                "  mtu=1500",
+                "interface=eth1",
+                "  role=access",
+                "  mode=access",
+                "  access_management_ui_enabled=true",
+                "  ipv4_method=static",
+                "  ip_cidr=192.168.50.1/24",
+                "  admin_state=up",
+                "  mtu=1500",
+                "",
+                "[vlan_interfaces]",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        helper,
+        "_read_existing_management_network_values",
+        lambda: {"DNS": ["192.0.2.53"], "Gateway": ["192.168.49.254"]},
+    )
+
+    files, reconfigure_links, admin_down_links = helper._systemd_networkd_files(config_path)
+
+    assert "00-atlaso-mgmt.network" not in files
+    assert admin_down_links == ["eth0"]
+    assert reconfigure_links == ["eth1"]
+    rendered = files["10-atlaso-eth1.network"]
+    assert "Address=192.168.50.1/24" in rendered
+    assert "DNS=" not in rendered
+    assert "Gateway=" not in rendered
+    assert "Table=100" not in rendered
 
 
 def test_network_helper_renders_dual_stack_networkd_addresses(tmp_path):

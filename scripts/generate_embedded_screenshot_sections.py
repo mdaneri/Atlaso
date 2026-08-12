@@ -97,6 +97,8 @@ def canonical_route(route: str) -> str:
     Args:
         route: Historical screenshot route recorded in the manifest.
     """
+    if route.startswith(("/ui/management", "/ui/public")):
+        return route
     if route == "/ca":
         return "/ui/public/ca"
     if route == "/requests":

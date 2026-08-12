@@ -109,6 +109,9 @@
                   <svg viewBox="0 0 20 20" aria-hidden="true" focusable="false"><path d="m5 7.5 5 5 5-5"/></svg>
                 </summary>
                 <div class="account-menu-panel" role="menu">
+                  {% if cohosted_public_ui %}
+                    <a class="account-menu-item" role="menuitem" href="{{ public_ui_root }}">Public services</a>
+                  {% endif %}
                   <button class="account-menu-item" type="button" role="menuitem" data-about-open>About</button>
                   <div class="account-menu-separator" role="separator"></div>
                   <form action="{{ management_ui_path('/logout') }}" method="post">
@@ -314,7 +317,7 @@
     <link rel="stylesheet" href="/static/vendor/monaco/atlaso-monaco.min.css?v=atlaso-monaco-20260806-7">
     <script src="/static/vendor/monaco/atlaso-monaco.min.js?v=atlaso-monaco-20260806-7"></script>
     <script src="/static/ui-routes.js?v=issue-287-1"></script>
-    <script src="/static/app.js?v=appliance-apply-terminal-294-2"></script>
+    <script src="/static/app.js?v=access-management-ui-302-2"></script>
     <script src="/static/pwa.js?v=issue-287-2"></script>
     {% block extra_scripts %}{% endblock %}
   </body>

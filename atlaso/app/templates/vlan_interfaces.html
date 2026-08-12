@@ -13,6 +13,7 @@
     <div class="inline-help-row">
       <span class="field-label"><span>Trunk parents</span><button class="help-icon" type="button" data-help="Only physical NICs marked as trunk are available here. On the Photon appliance, use the Hyper-V trunk NIC for tagged lab networks.">i</button></span>
       <span class="field-label"><span>Desired VLAN state</span><button class="help-icon" type="button" data-help="Creating or editing a VLAN stores desired state and updates validation previews. The host is changed only by the global appliance apply workflow.">i</button></span>
+      <span class="field-label"><span>Management UI</span><button class="help-icon" type="button" data-help="An enabled access VLAN can expose the authenticated management UI while remaining an ordinary access network for routing and services.">i</button></span>
     </div>
     {% if trunk_parent_options %}
       <div class="compact-summary-list">
@@ -36,7 +37,7 @@
     ></div>
     <table id="vlan-interfaces-fallback" class="data-table dns-fallback-table">
       <thead>
-        <tr><th>Name</th><th>Parent</th><th>VLAN ID</th><th>IPv4 CIDR</th><th>IPv6 CIDR</th><th>MTU</th><th>Role</th><th>Admin Up</th><th>Actions</th></tr>
+        <tr><th>Name</th><th>Parent</th><th>VLAN ID</th><th>IPv4 CIDR</th><th>IPv6 CIDR</th><th>MTU</th><th>Role</th><th>Management UI</th><th>Admin Up</th><th>Actions</th></tr>
       </thead>
       <tbody>
         {% for vlan in vlan_interfaces %}
@@ -48,6 +49,7 @@
             <td>{{ vlan.ipv6_cidr or "" }}</td>
             <td>{{ vlan.mtu }}</td>
             <td>{{ vlan.role }}</td>
+            <td>{{ "enabled" if vlan.access_management_ui_enabled else "disabled" }}</td>
             <td>
               {% if vlan.enabled %}
                 <span class="network-state-icon up" title="up"><span class="state-symbol" aria-hidden="true">&#8593;</span><span class="state-label">up</span></span>

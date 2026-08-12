@@ -1369,6 +1369,7 @@ class PhysicalInterfaceResponse(BaseModel):
         role: Primary compatibility role for the identity; authorization uses the complete roles
             collection.
         mode: Returned mode value for this physical interface resource.
+        access_management_ui_enabled: Whether this access interface also exposes the management UI.
         inventory_source: Returned inventory source value for this physical interface resource.
         desired_state_source: Returned desired state source value for this physical interface
             resource.
@@ -1398,6 +1399,7 @@ class PhysicalInterfaceResponse(BaseModel):
     oper_state: Annotated[str, Field(description='Returned oper state value for this physical interface resource.')]
     role: Annotated[str, Field(description='Primary compatibility role for the identity; authorization uses the complete roles collection.')]
     mode: Annotated[str, Field(description='Returned mode value for this physical interface resource.')]
+    access_management_ui_enabled: Annotated[bool, Field(description='Whether this access-role physical interface also exposes the management UI. Management-role interfaces expose it inherently.')] = False
     inventory_source: Annotated[str, Field(description='Returned inventory source value for this physical interface resource.')]
     desired_state_source: Annotated[str, Field(description='Returned desired state source value for this physical interface resource.')]
     last_seen_at: Annotated[datetime | None, Field(description='UTC timestamp for last seen at on this physical interface resource.')]
@@ -1416,6 +1418,7 @@ class VlanCreate(BaseModel):
         role: Primary compatibility role for the identity; authorization uses the complete roles
             collection.
         enabled: Whether the resource is enabled in saved Atlaso state.
+        access_management_ui_enabled: Whether this enabled access VLAN also exposes the management UI.
     """
 
     parent_interface: Annotated[str, Field(description='Requested parent interface value for this vlan resource.')]
@@ -1425,6 +1428,7 @@ class VlanCreate(BaseModel):
     mtu: Annotated[int, Field(description='Requested mtu value for this vlan resource.')] = Field(default=1500, ge=576, le=9000)
     role: Annotated[str, Field(description='Primary compatibility role for the identity; authorization uses the complete roles collection.')] = "access"
     enabled: Annotated[bool, Field(description='Whether the resource is enabled in saved Atlaso state.')] = True
+    access_management_ui_enabled: Annotated[bool, Field(description='Whether this enabled access-role VLAN also exposes the management UI.')] = False
 
 
 class VlanResponse(VlanCreate):
