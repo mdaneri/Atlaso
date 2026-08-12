@@ -172,6 +172,36 @@ def test_every_openapi_schema_property_has_a_description(client):
         assert len(description) >= 20, f"{location} property {name} has no detailed description"
 
 
+def test_physical_interface_patch_uses_typed_atomic_update_schema(client):
+    """Verify OpenAPI exposes the supported interface fields and reconciliation semantics.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
+    schema = client.get("/openapi.json").json()
+    operation = schema["paths"]["/api/v1/interfaces/physical/{name}"]["patch"]
+    request_schema = operation["requestBody"]["content"]["application/json"]["schema"]
+    update_schema = schema["components"]["schemas"]["PhysicalInterfaceUpdate"]
+
+    assert request_schema == {"$ref": "#/components/schemas/PhysicalInterfaceUpdate"}
+    assert update_schema["additionalProperties"] is False
+    assert set(update_schema["properties"]) == {
+        "role",
+        "mode",
+        "ipv4_method",
+        "ip_cidr",
+        "gateway",
+        "ipv6_enabled",
+        "ipv6_cidr",
+        "ipv6_gateway",
+        "mtu",
+        "admin_state",
+        "access_management_ui_enabled",
+    }
+    assert "atomically reconciles" in operation["description"]
+    assert "Network Boot" in update_schema["properties"]["ip_cidr"]["description"]
+
+
 def test_operation_ids_are_unique(client):
     """Verify that operation ids are unique.
 

@@ -36,6 +36,11 @@ unreachable after apply.
 4. Review validation and rendered network previews.
 5. Submit the selected network units through [Appliance Apply](appliance-apply.md).
 
+Edits from Physical Interfaces and `PATCH /api/v1/interfaces/physical/{name}` share the same transaction. When an
+IPv4 or IPv6 CIDR changes, Atlaso derives the replacement addresses for selected DNS, NTP/NTS, CA, KMS, LDAP, VCF,
+DHCP, and Network Boot/PXE bindings before committing. A reconciliation failure rolls back the interface and every
+dependent desired-state row together. Saving still does not change Photon until global Appliance Apply is submitted.
+
 ### Choose where the management UI is available
 
 A physical interface with the **management** role always exposes `/ui/management`; it has no separate management UI

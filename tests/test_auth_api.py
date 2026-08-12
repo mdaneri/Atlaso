@@ -251,6 +251,192 @@ def test_physical_interface_api_enforces_access_only_management_ui_flag(client):
     assert reverted.json()["access_management_ui_enabled"] is False
 
 
+def test_physical_interface_api_atomically_refreshes_ipv4_and_ipv6_dependencies(client):
+    """Verify the typed API update keeps service, DHCP, and Network Boot addresses aligned.
+
+    Args:
+        client: Authenticated-capable application test client fixture.
+    """
+    from sqlalchemy import select
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import AuditEvent, DhcpScope, DnsSettings, NtpSettings, PhysicalInterface
+    from atlaso.app.services.esxi_pxe import esxi_pxe_boot_settings, save_esxi_pxe_boot_settings
+
+    old_ipv4 = "192.168.50.1"
+    old_ipv6 = "fd00:50::1"
+    new_ipv4 = "192.168.60.1"
+    new_ipv6 = "fd00:60::1"
+    with SessionLocal() as db:
+        interface = db.execute(
+            select(PhysicalInterface).where(PhysicalInterface.name == "eth2")
+        ).scalar_one()
+        interface.role = "access"
+        interface.mode = "access"
+        interface.ip_cidr = f"{old_ipv4}/24"
+        interface.ipv6_enabled = True
+        interface.ipv6_cidr = f"{old_ipv6}/64"
+        dns = db.execute(select(DnsSettings)).scalar_one()
+        dns.enabled = True
+        dns.listen_interface = interface.name
+        dns.listen_address = f"{old_ipv4}\n{old_ipv6}"
+        ntp = db.execute(select(NtpSettings)).scalar_one()
+        ntp.enabled = True
+        ntp.listen_interface = interface.name
+        ntp.listen_address = f"{old_ipv4}\n{old_ipv6}"
+        db.add_all(
+            [
+                DhcpScope(
+                    name="api-ipv4-dependency",
+                    address_family="ipv4",
+                    interface_name=interface.name,
+                    site_address=old_ipv4,
+                    prefix_length=24,
+                    range_expression="192.168.50.100-192.168.50.120",
+                    dns_server=old_ipv4,
+                    ntp_server=old_ipv4,
+                ),
+                DhcpScope(
+                    name="api-ipv6-dependency",
+                    address_family="ipv6",
+                    interface_name=interface.name,
+                    site_address=old_ipv6,
+                    prefix_length=64,
+                    range_expression="fd00:50::100-fd00:50::120",
+                    dns_server=old_ipv6,
+                    ntp_server=old_ipv6,
+                ),
+            ]
+        )
+        save_esxi_pxe_boot_settings(
+            db,
+            enabled=True,
+            hostname="pxe.atlaso.internal",
+            listen_interface=interface.name,
+            listen_address=f"{old_ipv4}\n{old_ipv6}",
+            tftp_root="/var/lib/atlaso/pxe/tftp",
+            bios_bootfile="undionly.kpxe",
+            uefi_bootfile="snponly.efi",
+            native_uefi_http_enabled=True,
+            native_uefi_http_url=f"http://{old_ipv4}:8080/pxe/boot.ipxe",
+        )
+        db.commit()
+
+    token, _metadata = create_token(
+        client,
+        scopes=["read:interfaces", "write:interfaces"],
+    )
+    response = client.patch(
+        "/api/v1/interfaces/physical/eth2",
+        headers={"Authorization": f"Bearer {token}"},
+        json={
+            "ip_cidr": f"{new_ipv4}/24",
+            "ipv6_enabled": True,
+            "ipv6_cidr": f"{new_ipv6}/64",
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    with SessionLocal() as db:
+        interface = db.execute(
+            select(PhysicalInterface).where(PhysicalInterface.name == "eth2")
+        ).scalar_one()
+        dns = db.execute(select(DnsSettings)).scalar_one()
+        ntp = db.execute(select(NtpSettings)).scalar_one()
+        scopes = {
+            scope.name: scope
+            for scope in db.execute(
+                select(DhcpScope).where(
+                    DhcpScope.name.in_(["api-ipv4-dependency", "api-ipv6-dependency"])
+                )
+            ).scalars()
+        }
+        boot = esxi_pxe_boot_settings(db)
+        audit = db.execute(
+            select(AuditEvent)
+            .where(AuditEvent.action == "update_interface")
+            .order_by(AuditEvent.id.desc())
+        ).scalars().first()
+
+        assert interface.ip_cidr == f"{new_ipv4}/24"
+        assert interface.ipv6_cidr == f"{new_ipv6}/64"
+        assert dns.listen_interface == "eth2"
+        assert dns.listen_address == f"{new_ipv4}\n{new_ipv6}"
+        assert ntp.listen_interface == "eth2"
+        assert ntp.listen_address == f"{new_ipv4}\n{new_ipv6}"
+        assert scopes["api-ipv4-dependency"].site_address == new_ipv4
+        assert scopes["api-ipv4-dependency"].range_expression == "192.168.60.100-192.168.60.120"
+        assert scopes["api-ipv4-dependency"].dns_server == new_ipv4
+        assert scopes["api-ipv4-dependency"].ntp_server == new_ipv4
+        assert scopes["api-ipv6-dependency"].site_address == new_ipv6
+        assert scopes["api-ipv6-dependency"].range_expression == "fd00:60::100-fd00:60::120"
+        assert scopes["api-ipv6-dependency"].dns_server == new_ipv6
+        assert scopes["api-ipv6-dependency"].ntp_server == new_ipv6
+        assert boot["listen_interface"] == "eth2"
+        # Network Boot remains IPv4-only; the IPv6 DHCP dependency is reconciled separately.
+        assert boot["listen_address"] == new_ipv4
+        assert new_ipv4 in boot["native_uefi_http_url"]
+        assert old_ipv4 not in boot["native_uefi_http_url"]
+        assert audit is not None
+        assert "DNS" in (audit.detail or "")
+        assert "NTP / NTS" in (audit.detail or "")
+        assert "DHCP" in (audit.detail or "")
+        assert "ESXi PXE" in (audit.detail or "")
+
+
+def test_physical_interface_update_rolls_back_interface_and_dependents(client, monkeypatch):
+    """Verify a dependent refresh failure leaves every desired-state row unchanged.
+
+    Args:
+        client: Authenticated-capable application test client fixture.
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+    """
+    import pytest
+    from sqlalchemy import select
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import DnsSettings, PhysicalInterface
+    from atlaso.app.services import interface_updates
+
+    with SessionLocal() as db:
+        interface = db.execute(
+            select(PhysicalInterface).where(PhysicalInterface.name == "eth2")
+        ).scalar_one()
+        interface.role = "access"
+        interface.mode = "access"
+        interface.ip_cidr = "192.168.50.1/24"
+        dns = db.execute(select(DnsSettings)).scalar_one()
+        dns.listen_interface = "eth2"
+        dns.listen_address = "192.168.50.1"
+        db.commit()
+
+        def fail_after_dependent_mutation(session, **_kwargs):
+            dependent_dns = session.execute(select(DnsSettings)).scalar_one()
+            dependent_dns.listen_address = "192.168.60.1"
+            session.add(dependent_dns)
+            raise RuntimeError("injected dependent failure")
+
+        monkeypatch.setattr(
+            interface_updates,
+            "refresh_interface_dependent_addresses",
+            fail_after_dependent_mutation,
+        )
+        with pytest.raises(RuntimeError, match="injected dependent failure"):
+            interface_updates.update_physical_interface_desired_state(
+                db,
+                interface,
+                {"ip_cidr": "192.168.60.1/24"},
+            )
+
+    with SessionLocal() as db:
+        interface = db.execute(
+            select(PhysicalInterface).where(PhysicalInterface.name == "eth2")
+        ).scalar_one()
+        dns = db.execute(select(DnsSettings)).scalar_one()
+        assert interface.ip_cidr == "192.168.50.1/24"
+        assert dns.listen_address == "192.168.50.1"
+
+
 def test_scope_restrictions_are_enforced(client):
     """Verify that scope restrictions are enforced.
 

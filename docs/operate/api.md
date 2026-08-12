@@ -68,6 +68,18 @@ The switch exposes the authenticated `/ui/management` browser plane without chan
 public-service eligibility. A management-role physical interface ignores the switch because it exposes management
 inherently. Network apply rejects a configuration that would leave no effective management UI listener.
 
+### Update physical-interface desired state
+
+`PATCH /api/v1/interfaces/physical/{name}` accepts the typed `PhysicalInterfaceUpdate` schema. Omit a property to keep
+its saved value; use an empty string or `null` only for the documented CIDR and gateway fields that can be cleared.
+Atlaso rejects unsupported properties instead of silently ignoring them.
+
+Changing a physical interface's IPv4 or IPv6 CIDR automatically refreshes dependent desired-state addresses for DNS,
+NTP/NTS, Certificate Authority, KMS, LDAP, VCF services, matching DHCP scopes, and Network Boot/PXE. Atlaso commits the
+interface and dependent rows as one transaction. If any dependent update fails, none of those changes are saved. The
+audit event names the dependent units that were refreshed. This remains a desired-state edit: review the resulting
+network and service previews, then use global Appliance Apply for host enforcement.
+
 ## Scopes and authorization
 
 Each Swagger operation describes its required Atlaso scope or authentication posture. A token can call only operations
