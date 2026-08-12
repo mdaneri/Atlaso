@@ -30,6 +30,9 @@ brings infrastructure, storage, identity, networking, and lifecycle workflows in
   sources in read-only repository tabs, then create or edit desired source state through the shared reviewed wizard
   before explicitly synchronizing package clients.
 - [Services](docs/services/index.md) — configure DNS, identity, storage, network boot, and VCF integrations.
+- [Network configuration](docs/operate/networking.md) — distinguish static paths from forwarding permissions and manage
+  Static Routes, Routing Permissions, IPv4 masquerade NAT rules, and interface-level WAN Simulation through reviewed
+  add/edit wizards before global appliance apply.
 - [Public Services](docs/services/public-services.md) — use the canonical `/ui/management` and `/ui/public` browser
   planes, understand interface-aware `/` dispatch, and keep machine/protocol routes at their stable paths.
 - [DNS](docs/services/dns.md) — preserve explicit forwarders or usable resolvers from the management interface's exact

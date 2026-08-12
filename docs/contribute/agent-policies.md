@@ -1003,6 +1003,10 @@ status: current
 
 - Routes & WAN Simulation owns static route desired state, IPv4 outbound masquerade NAT rules, and interface/VLAN-level
   `tc/netem` latency/error simulation.
+- Label path entries **Static Routes** and forwarding authorization **Routing Permissions**. Keep Static Routes,
+  explicit Routing Permissions, NAT Rules, and WAN Policies as wizard-backed Tabulator collections using the ESX
+  Storage reference. Add launches from the bottom row; edit launches from row double-click or its context action;
+  generated route-role permissions remain read-only; and ordinary persisted Enabled state remains directly editable.
 - All Routing/WAN host mutation must go through the global `/appliance-apply` `wan` unit. Do not add route-specific,
   NAT-specific, or WAN-policy-specific apply routes or direct helper calls from edit forms.
 - The real apply path stages `/var/lib/atlaso/apply/wan/atlaso-wan.conf`; `atlaso-helper wan validate|apply` validates

@@ -16109,7 +16109,16 @@ def routes_wan(
     Returns:
         The endpoint response.
     """
-    return render(request, "routes_wan.html", {"identity": identity, **routes_wan_context(db), "appliance_apply_status": appliance_apply_status(db, "wan")})
+    return render(
+        request,
+        "routes_wan.html",
+        {
+            "identity": identity,
+            **routes_wan_context(db),
+            "routes_wan_can_write": identity.can("write:routes"),
+            "appliance_apply_status": appliance_apply_status(db, "wan"),
+        },
+    )
 
 
 def parse_int_form_value(value: str, field_label: str, *, default: int = 0, minimum: int | None = None) -> int | Response:

@@ -19,9 +19,9 @@
     <div id="routes-wan-nat-error" class="alert error hidden"></div>
     <div id="routes-wan-policy-error" class="alert error hidden"></div>
 
-    <div class="tab-buttons" role="tablist" aria-label="Route and WAN tools">
-      <button class="tab-button active" type="button" role="tab" data-tab-target="routes-wan-routes-panel" aria-controls="routes-wan-routes-panel" aria-selected="true">Routes</button>
-      <button class="tab-button" type="button" role="tab" data-tab-target="routes-wan-routing-panel" aria-controls="routes-wan-routing-panel" aria-selected="false">Routing</button>
+    <div class="tab-buttons" role="tablist" aria-label="Route and WAN tools" data-tab-storage-key="atlaso:routes-wan:active-tab">
+      <button class="tab-button active" type="button" role="tab" data-tab-target="routes-wan-routes-panel" aria-controls="routes-wan-routes-panel" aria-selected="true">Static Routes</button>
+      <button class="tab-button" type="button" role="tab" data-tab-target="routes-wan-routing-panel" aria-controls="routes-wan-routing-panel" aria-selected="false">Routing Permissions</button>
       <button class="tab-button" type="button" role="tab" data-tab-target="routes-wan-nat-panel" aria-controls="routes-wan-nat-panel" aria-selected="false">NAT</button>
       <button class="tab-button" type="button" role="tab" data-tab-target="routes-wan-policies-panel" aria-controls="routes-wan-policies-panel" aria-selected="false">WAN Policies</button>
     </div>
@@ -30,8 +30,8 @@
       <div id="routes-wan-routes-panel" class="tab-panel active" role="tabpanel">
         <div class="section-head compact-section-head">
           <div>
-            <h3>Managed Routes</h3>
-            <p class="muted">Edit routes directly in the grid. The bottom row creates a new route once destination and interface are filled.</p>
+            <h3>Static Routes</h3>
+            <p class="muted">Static routes choose a destination path through a non-management interface or VLAN. Add and edit complete route desired state in the reviewed wizard.</p>
           </div>
           <span class="status-pill muted">{{ routes|length }} routes</span>
         </div>
@@ -42,6 +42,7 @@
           data-target-options='{{ wan_route_targets | tojson }}'
           data-policy-options='{{ wan_policy_options | tojson }}'
           data-csrf="{{ csrf_token }}"
+          data-can-write="{{ 'true' if routes_wan_can_write else 'false' }}"
           data-fallback-id="routes-wan-routes-fallback"
         ></div>
         <table id="routes-wan-routes-fallback" class="data-table dns-fallback-table">
@@ -80,7 +81,7 @@
         <div class="section-head compact-section-head">
           <div>
             <h3>Routing Permissions</h3>
-            <p class="muted">Route-role networks generate forwarding automatically. Access networks stay blocked until an explicit routing rule allows the path.</p>
+            <p class="muted">Routing permissions control forwarding between interface or VLAN networks. Route-role paths are generated automatically; Access networks require an explicit reviewed permission.</p>
           </div>
           <div class="routing-state-pills" aria-label="Routing state summary">
             <span class="status-pill {{ 'good' if routing_summary.generated_count else 'muted' }}">{{ routing_summary.generated_count }} auto route-role</span>
@@ -101,6 +102,7 @@
           data-generated-rules='{{ generated_routing_rule_rows | tojson }}'
           data-target-options='{{ wan_route_targets | tojson }}'
           data-csrf="{{ csrf_token }}"
+          data-can-write="{{ 'true' if routes_wan_can_write else 'false' }}"
           data-fallback-id="routes-wan-routing-fallback"
         ></div>
         <table id="routes-wan-routing-fallback" class="data-table dns-fallback-table">
@@ -150,7 +152,7 @@
         <div class="section-head compact-section-head">
           <div>
             <h3>NAT Rules</h3>
-            <p class="muted">Edit outbound IPv4 masquerade desired state. The bottom row creates a new rule once a name and outbound interface are filled.</p>
+            <p class="muted">Configure complete outbound IPv4 masquerade desired state through the reviewed add/edit wizard.</p>
           </div>
           <span class="status-pill muted">{{ nat_rules|length }} rules</span>
         </div>
@@ -161,6 +163,7 @@
           data-nat-target-options='{{ wan_nat_targets | tojson }}'
           data-source-groups='{{ wan_source_groups | tojson }}'
           data-csrf="{{ csrf_token }}"
+          data-can-write="{{ 'true' if routes_wan_can_write else 'false' }}"
           data-fallback-id="routes-wan-nat-fallback"
         ></div>
         <table id="routes-wan-nat-fallback" class="data-table dns-fallback-table">
@@ -200,7 +203,7 @@
         <div class="section-head compact-section-head">
           <div>
             <h3>WAN Policies</h3>
-            <p class="muted">Policies translate to tc/netem intent. Changes save to desired state immediately.</p>
+            <p class="muted">WAN policies translate to interface-level tc/netem impairment intent. Add and edit the complete effect through the reviewed wizard.</p>
           </div>
           <span class="status-pill muted">{{ policies|length }} policies</span>
         </div>
@@ -209,6 +212,7 @@
           class="tabulator-shell routes-wan-table"
           data-policies='{{ policy_rows | tojson }}'
           data-csrf="{{ csrf_token }}"
+          data-can-write="{{ 'true' if routes_wan_can_write else 'false' }}"
           data-fallback-id="routes-wan-policies-fallback"
         ></div>
         <table id="routes-wan-policies-fallback" class="data-table dns-fallback-table">
@@ -274,4 +278,113 @@
     </div>
   </aside>
 </section>
+
+{% if routes_wan_can_write %}
+<dialog id="routes-wan-route-dialog" class="confirm-modal wide-modal vcf-sddc-wizard-modal" aria-labelledby="routes-wan-route-dialog-title" aria-describedby="routes-wan-route-dialog-description">
+  <form class="confirm-modal-panel vcf-sddc-wizard-panel" action="{{ management_ui_root }}/routes-wan/routes" method="post" data-routes-wan-wizard="route" data-atlaso-wizard>
+    <input type="hidden" name="csrf" value="{{ csrf_token }}">
+    <input type="hidden" name="wan_mode" value="interface">
+    <div class="confirm-modal-head"><div><p class="kicker">Routes &amp; WAN Simulation</p><h2 id="routes-wan-route-dialog-title" data-routes-wan-wizard-modal-title>Add static route</h2></div></div>
+    <div class="vcf-sddc-wizard-layout">
+      <ol class="vcf-sddc-step-list" aria-label="Static route wizard steps">
+        <li><button class="vcf-sddc-step-button active" type="button" data-atlaso-wizard-nav="path"><span>1</span><strong>Path</strong><small>Destination and next hop</small></button></li>
+        <li><button class="vcf-sddc-step-button" type="button" data-atlaso-wizard-nav="simulation" disabled><span>2</span><strong>WAN Simulation</strong><small>Optional interface impairment</small></button></li>
+        <li><button class="vcf-sddc-step-button" type="button" data-atlaso-wizard-nav="state" disabled><span>3</span><strong>State</strong><small>Enable or disable</small></button></li>
+        <li><button class="vcf-sddc-step-button" type="button" data-atlaso-wizard-nav="review" disabled><span>4</span><strong>Review</strong><small>Confirm desired state</small></button></li>
+      </ol>
+      <div class="vcf-sddc-wizard-body">
+        <div class="vcf-sddc-wizard-heading"><p class="kicker" data-atlaso-wizard-kicker>Step 1 of 4</p><h3 data-atlaso-wizard-title>Define the static path</h3><p id="routes-wan-route-dialog-description" class="muted" data-atlaso-wizard-description>Choose the destination, optional next hop, and non-management output target.</p></div>
+        <div class="alert error hidden" data-atlaso-wizard-error></div>
+        <section class="vcf-sddc-step-page" data-atlaso-wizard-step="path"><div class="form-grid">
+          <label><span class="field-label"><span>Destination CIDR</span><button class="help-icon" type="button" data-help="IPv4 or IPv6 network reached by this static route in Atlaso lab route table 200.">i</button></span><input name="destination_cidr" required placeholder="10.20.0.0/24"></label>
+          <label><span class="field-label"><span>Gateway</span><button class="help-icon" type="button" data-help="Optional next-hop IP. Leave blank for a directly connected destination; when set, its address family must match the destination.">i</button></span><input name="gateway" placeholder="Direct"></label>
+          <label><span class="field-label"><span>Interface or VLAN</span><button class="help-icon" type="button" data-help="Non-management access physical interface or enabled VLAN used to reach the destination.">i</button></span><select name="interface_name" required>{% for target in wan_route_targets %}<option value="{{ target.name }}">{{ target.label }}</option>{% endfor %}</select></label>
+          <label><span class="field-label"><span>Metric</span><button class="help-icon" type="button" data-help="Non-negative route preference. Lower metrics are preferred when multiple routes match.">i</button></span><input type="number" name="metric" min="0" value="100" required></label>
+        </div></section>
+        <section class="vcf-sddc-step-page hidden" data-atlaso-wizard-step="simulation"><div class="form-stack">
+          <label><span class="field-label"><span>WAN policy</span><button class="help-icon" type="button" data-help="Optional tc/netem policy applied to the selected interface or VLAN. In v1 this impairs all traffic on that target, not only this destination.">i</button></span><select name="wan_policy_id"><option value="">None</option>{% for policy in policies %}<option value="{{ policy.id }}">{{ policy.name }}</option>{% endfor %}</select></label>
+          <div class="alert warn">WAN Simulation v1 is interface-level. Selecting a policy affects all traffic on the chosen interface or VLAN after global appliance apply.</div>
+        </div></section>
+        <section class="vcf-sddc-step-page hidden" data-atlaso-wizard-step="state"><label class="switch-field"><span class="field-label"><span>Route enabled</span><button class="help-icon" type="button" data-help="Enabled routes enter rendered desired state. The host changes only when the global Routes &amp; WAN Simulation apply unit runs.">i</button></span><input class="switch-input" type="checkbox" name="enabled" checked><span class="switch-track" aria-hidden="true"></span></label></section>
+        <section class="vcf-sddc-step-page hidden" data-atlaso-wizard-step="review"><div class="settings-list"><div><span>Destination</span><code data-routes-wan-review="route-destination"></code></div><div><span>Path</span><strong data-routes-wan-review="route-path"></strong></div><div><span>WAN Simulation</span><strong data-routes-wan-review="route-policy"></strong></div><div><span>State</span><strong data-routes-wan-review="route-state"></strong></div></div><p class="muted">Saving changes desired state only. Host routing and impairment change through global appliance apply.</p></section>
+      </div>
+    </div>
+    <div class="confirm-modal-actions vcf-sddc-wizard-actions"><button class="button secondary" type="button" data-atlaso-wizard-cancel>Cancel</button><button class="button secondary hidden" type="button" data-atlaso-wizard-back>Back</button><button class="button primary" type="button" data-atlaso-wizard-next>Next</button><button class="button primary hidden" type="submit" data-atlaso-wizard-submit>Add static route</button></div>
+  </form>
+</dialog>
+
+<dialog id="routes-wan-routing-dialog" class="confirm-modal wide-modal vcf-sddc-wizard-modal" aria-labelledby="routes-wan-routing-dialog-title" aria-describedby="routes-wan-routing-dialog-description">
+  <form class="confirm-modal-panel vcf-sddc-wizard-panel" action="{{ management_ui_root }}/routes-wan/routing-rules" method="post" data-routes-wan-wizard="routing" data-atlaso-wizard>
+    <input type="hidden" name="csrf" value="{{ csrf_token }}">
+    <div class="confirm-modal-head"><div><p class="kicker">Routes &amp; WAN Simulation</p><h2 id="routes-wan-routing-dialog-title" data-routes-wan-wizard-modal-title>Add routing permission</h2></div></div>
+    <div class="vcf-sddc-wizard-layout">
+      <ol class="vcf-sddc-step-list" aria-label="Routing permission wizard steps">
+        <li><button class="vcf-sddc-step-button active" type="button" data-atlaso-wizard-nav="identity"><span>1</span><strong>Identity</strong><small>Name and purpose</small></button></li>
+        <li><button class="vcf-sddc-step-button" type="button" data-atlaso-wizard-nav="direction" disabled><span>2</span><strong>Direction</strong><small>Source and destination</small></button></li>
+        <li><button class="vcf-sddc-step-button" type="button" data-atlaso-wizard-nav="state" disabled><span>3</span><strong>State</strong><small>Enable or disable</small></button></li>
+        <li><button class="vcf-sddc-step-button" type="button" data-atlaso-wizard-nav="review" disabled><span>4</span><strong>Review</strong><small>Confirm permission</small></button></li>
+      </ol>
+      <div class="vcf-sddc-wizard-body">
+        <div class="vcf-sddc-wizard-heading"><p class="kicker" data-atlaso-wizard-kicker>Step 1 of 4</p><h3 data-atlaso-wizard-title>Name the permission</h3><p id="routes-wan-routing-dialog-description" class="muted" data-atlaso-wizard-description>Describe the explicit forwarding path required by an Access network.</p></div>
+        <div class="alert error hidden" data-atlaso-wizard-error></div>
+        <section class="vcf-sddc-step-page" data-atlaso-wizard-step="identity"><div class="form-stack"><label><span class="field-label"><span>Name</span><button class="help-icon" type="button" data-help="Unique operator-facing name for this explicit routing permission.">i</button></span><input name="name" maxlength="120" required></label><label><span class="field-label"><span>Description</span><button class="help-icon" type="button" data-help="Why this source network is permitted to forward traffic to the destination network.">i</button></span><textarea name="description" rows="3" maxlength="1000"></textarea></label></div></section>
+        <section class="vcf-sddc-step-page hidden" data-atlaso-wizard-step="direction"><div class="form-grid"><label><span class="field-label"><span>Source interface or VLAN</span><button class="help-icon" type="button" data-help="Non-management network from which forwarded traffic originates.">i</button></span><select name="source_interface" required>{% for target in wan_route_targets %}<option value="{{ target.name }}">{{ target.label }}</option>{% endfor %}</select></label><label><span class="field-label"><span>Destination interface or VLAN</span><button class="help-icon" type="button" data-help="Different non-management network to which traffic may be forwarded.">i</button></span><select name="destination_interface" required>{% for target in wan_route_targets %}<option value="{{ target.name }}">{{ target.label }}</option>{% endfor %}</select></label><label><span class="field-label"><span>Priority</span><button class="help-icon" type="button" data-help="Non-negative ordering value recorded with the explicit forwarding permission.">i</button></span><input type="number" name="priority" min="0" value="100" required></label></div></section>
+        <section class="vcf-sddc-step-page hidden" data-atlaso-wizard-step="state"><label class="switch-field"><span class="field-label"><span>Permission enabled</span><button class="help-icon" type="button" data-help="Enabled permissions enter forwarding desired state. Firewall and host forwarding change only through global appliance apply.">i</button></span><input class="switch-input" type="checkbox" name="enabled" checked><span class="switch-track" aria-hidden="true"></span></label></section>
+        <section class="vcf-sddc-step-page hidden" data-atlaso-wizard-step="review"><div class="settings-list"><div><span>Permission</span><strong data-routes-wan-review="routing-name"></strong></div><div><span>Forwarding path</span><strong data-routes-wan-review="routing-path"></strong></div><div><span>Priority</span><strong data-routes-wan-review="routing-priority"></strong></div><div><span>State</span><strong data-routes-wan-review="routing-state"></strong></div></div><p class="muted">Management remains isolated. Saving changes desired state only; forwarding changes through global appliance apply.</p></section>
+      </div>
+    </div>
+    <div class="confirm-modal-actions vcf-sddc-wizard-actions"><button class="button secondary" type="button" data-atlaso-wizard-cancel>Cancel</button><button class="button secondary hidden" type="button" data-atlaso-wizard-back>Back</button><button class="button primary" type="button" data-atlaso-wizard-next>Next</button><button class="button primary hidden" type="submit" data-atlaso-wizard-submit>Add routing permission</button></div>
+  </form>
+</dialog>
+
+<dialog id="routes-wan-nat-dialog" class="confirm-modal wide-modal vcf-sddc-wizard-modal" aria-labelledby="routes-wan-nat-dialog-title" aria-describedby="routes-wan-nat-dialog-description">
+  <form class="confirm-modal-panel vcf-sddc-wizard-panel" action="{{ management_ui_root }}/routes-wan/nat-rules" method="post" data-routes-wan-wizard="nat" data-atlaso-wizard>
+    <input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="source" value="any"><input type="hidden" name="masquerade" value="on">
+    <div class="confirm-modal-head"><div><p class="kicker">Routes &amp; WAN Simulation</p><h2 id="routes-wan-nat-dialog-title" data-routes-wan-wizard-modal-title>Add NAT rule</h2></div></div>
+    <div class="vcf-sddc-wizard-layout">
+      <ol class="vcf-sddc-step-list" aria-label="NAT rule wizard steps">
+        <li><button class="vcf-sddc-step-button active" type="button" data-atlaso-wizard-nav="identity"><span>1</span><strong>Identity</strong><small>Name and purpose</small></button></li>
+        <li><button class="vcf-sddc-step-button" type="button" data-atlaso-wizard-nav="translation" disabled><span>2</span><strong>Translation</strong><small>Source and outbound target</small></button></li>
+        <li><button class="vcf-sddc-step-button" type="button" data-atlaso-wizard-nav="state" disabled><span>3</span><strong>State</strong><small>Enable or disable</small></button></li>
+        <li><button class="vcf-sddc-step-button" type="button" data-atlaso-wizard-nav="review" disabled><span>4</span><strong>Review</strong><small>Confirm masquerade</small></button></li>
+      </ol>
+      <div class="vcf-sddc-wizard-body">
+        <div class="vcf-sddc-wizard-heading"><p class="kicker" data-atlaso-wizard-kicker>Step 1 of 4</p><h3 data-atlaso-wizard-title>Name the NAT rule</h3><p id="routes-wan-nat-dialog-description" class="muted" data-atlaso-wizard-description>Describe the explicit IPv4 outbound masquerade behavior.</p></div>
+        <div class="alert error hidden" data-atlaso-wizard-error></div>
+        <section class="vcf-sddc-step-page" data-atlaso-wizard-step="identity"><div class="form-stack"><label><span class="field-label"><span>Name</span><button class="help-icon" type="button" data-help="Unique operator-facing name for this outbound NAT rule.">i</button></span><input name="name" maxlength="120" required></label><label><span class="field-label"><span>Description</span><button class="help-icon" type="button" data-help="Why this source traffic needs outbound masquerade on the selected interface.">i</button></span><textarea name="description" rows="3" maxlength="1000"></textarea></label></div></section>
+        <section class="vcf-sddc-step-page hidden" data-atlaso-wizard-step="translation"><div class="form-grid"><label><span class="field-label"><span>Source type</span><button class="help-icon" type="button" data-help="Match any IPv4 source, one existing Firewall source group, or one or more explicit IPv4 CIDRs.">i</button></span><select data-routes-wan-nat-source-mode><option value="any">Any IPv4 source</option><option value="group">Firewall source group</option><option value="cidrs">IPv4 CIDRs</option></select></label><label data-routes-wan-nat-source-group hidden><span class="field-label"><span>Firewall source group</span><button class="help-icon" type="button" data-help="Existing Firewall source group expanded and validated when Routes &amp; WAN desired state is rendered.">i</button></span><select data-routes-wan-nat-group>{% for group in wan_source_groups %}<option value="group:{{ group.id }}">{{ group.name }}</option>{% endfor %}</select></label><label data-routes-wan-nat-source-cidrs hidden><span class="field-label"><span>IPv4 source CIDRs</span><button class="help-icon" type="button" data-help="Comma- or line-separated IPv4 networks. IPv6 NAT is not supported in v1.">i</button></span><textarea rows="3" data-routes-wan-nat-cidrs placeholder="192.168.50.0/24"></textarea></label><label><span class="field-label"><span>Outbound interface or VLAN</span><button class="help-icon" type="button" data-help="Non-management access physical interface or enabled VLAN with an IPv4 CIDR. Atlaso does not infer this from an interface role.">i</button></span><select name="outbound_interface" required>{% for target in wan_nat_targets %}<option value="{{ target.name }}">{{ target.label }}</option>{% endfor %}</select></label><label><span class="field-label"><span>Translation</span><button class="help-icon" type="button" data-help="NAT v1 supports explicit IPv4 masquerade only; destination NAT and port forwarding are not supported.">i</button></span><input value="IPv4 masquerade" readonly></label><label><span class="field-label"><span>Priority</span><button class="help-icon" type="button" data-help="Non-negative ordering value for this Atlaso-owned NAT rule.">i</button></span><input type="number" name="priority" min="0" value="100" required></label></div></section>
+        <section class="vcf-sddc-step-page hidden" data-atlaso-wizard-step="state"><label class="switch-field"><span class="field-label"><span>NAT rule enabled</span><button class="help-icon" type="button" data-help="Enabled NAT rules enter rendered desired state. nftables and forwarding change only through global appliance apply.">i</button></span><input class="switch-input" type="checkbox" name="enabled" checked><span class="switch-track" aria-hidden="true"></span></label></section>
+        <section class="vcf-sddc-step-page hidden" data-atlaso-wizard-step="review"><div class="settings-list"><div><span>Rule</span><strong data-routes-wan-review="nat-name"></strong></div><div><span>Source</span><code data-routes-wan-review="nat-source"></code></div><div><span>Outbound translation</span><strong data-routes-wan-review="nat-outbound"></strong></div><div><span>Priority</span><strong data-routes-wan-review="nat-priority"></strong></div><div><span>State</span><strong data-routes-wan-review="nat-state"></strong></div></div><p class="muted">Saving changes desired state only. nftables masquerade and IPv4 forwarding change through global appliance apply.</p></section>
+      </div>
+    </div>
+    <div class="confirm-modal-actions vcf-sddc-wizard-actions"><button class="button secondary" type="button" data-atlaso-wizard-cancel>Cancel</button><button class="button secondary hidden" type="button" data-atlaso-wizard-back>Back</button><button class="button primary" type="button" data-atlaso-wizard-next>Next</button><button class="button primary hidden" type="submit" data-atlaso-wizard-submit>Add NAT rule</button></div>
+  </form>
+</dialog>
+
+<dialog id="routes-wan-policy-dialog" class="confirm-modal wide-modal vcf-sddc-wizard-modal" aria-labelledby="routes-wan-policy-dialog-title" aria-describedby="routes-wan-policy-dialog-description">
+  <form class="confirm-modal-panel vcf-sddc-wizard-panel" action="{{ management_ui_root }}/routes-wan/policies" method="post" data-routes-wan-wizard="policy" data-atlaso-wizard>
+    <input type="hidden" name="csrf" value="{{ csrf_token }}">
+    <div class="confirm-modal-head"><div><p class="kicker">Routes &amp; WAN Simulation</p><h2 id="routes-wan-policy-dialog-title" data-routes-wan-wizard-modal-title>Add WAN policy</h2></div></div>
+    <div class="vcf-sddc-wizard-layout">
+      <ol class="vcf-sddc-step-list" aria-label="WAN policy wizard steps">
+        <li><button class="vcf-sddc-step-button active" type="button" data-atlaso-wizard-nav="identity"><span>1</span><strong>Identity</strong><small>Name and purpose</small></button></li>
+        <li><button class="vcf-sddc-step-button" type="button" data-atlaso-wizard-nav="delay" disabled><span>2</span><strong>Delay &amp; Capacity</strong><small>Latency, jitter, bandwidth</small></button></li>
+        <li><button class="vcf-sddc-step-button" type="button" data-atlaso-wizard-nav="effects" disabled><span>3</span><strong>Packet Effects</strong><small>Loss and error simulation</small></button></li>
+        <li><button class="vcf-sddc-step-button" type="button" data-atlaso-wizard-nav="state" disabled><span>4</span><strong>State</strong><small>Enable or disable</small></button></li>
+        <li><button class="vcf-sddc-step-button" type="button" data-atlaso-wizard-nav="review" disabled><span>5</span><strong>Review</strong><small>Confirm impairment</small></button></li>
+      </ol>
+      <div class="vcf-sddc-wizard-body">
+        <div class="vcf-sddc-wizard-heading"><p class="kicker" data-atlaso-wizard-kicker>Step 1 of 5</p><h3 data-atlaso-wizard-title>Name the WAN policy</h3><p id="routes-wan-policy-dialog-description" class="muted" data-atlaso-wizard-description>Describe the interface-level network impairment profile.</p></div>
+        <div class="alert error hidden" data-atlaso-wizard-error></div>
+        <section class="vcf-sddc-step-page" data-atlaso-wizard-step="identity"><div class="form-stack"><label><span class="field-label"><span>Name</span><button class="help-icon" type="button" data-help="Unique operator-facing name shown when assigning this policy to a static route target.">i</button></span><input name="name" maxlength="120" required></label><label><span class="field-label"><span>Description</span><button class="help-icon" type="button" data-help="Lab condition represented by this latency, capacity, and packet-effect profile.">i</button></span><textarea name="description" rows="3" maxlength="1000"></textarea></label></div></section>
+        <section class="vcf-sddc-step-page hidden" data-atlaso-wizard-step="delay"><div class="form-grid"><label><span class="field-label"><span>Latency (ms)</span><button class="help-icon" type="button" data-help="Non-negative delay applied by tc/netem to all traffic on the assigned interface or VLAN.">i</button></span><input type="number" name="latency_ms" min="0" value="0" required></label><label><span class="field-label"><span>Jitter (ms)</span><button class="help-icon" type="button" data-help="Non-negative delay variation paired with the configured latency.">i</button></span><input type="number" name="jitter_ms" min="0" value="0" required></label><label><span class="field-label"><span>Bandwidth (Mbps)</span><button class="help-icon" type="button" data-help="Optional rate limit. Leave blank for unlimited; when set it must be at least 1 Mbps.">i</button></span><input type="number" name="bandwidth_mbit" min="1" placeholder="Unlimited"></label></div></section>
+        <section class="vcf-sddc-step-page hidden" data-atlaso-wizard-step="effects"><div class="form-grid"><label><span class="field-label"><span>Packet loss (%)</span><button class="help-icon" type="button" data-help="Percentage of packets dropped, from 0 through 100.">i</button></span><input type="number" name="packet_loss_percent" min="0" max="100" step="0.01" value="0" required></label><label><span class="field-label"><span>Corruption (%)</span><button class="help-icon" type="button" data-help="Percentage of packets modified to simulate corruption, from 0 through 100.">i</button></span><input type="number" name="corrupt_percent" min="0" max="100" step="0.01" value="0" required></label><label><span class="field-label"><span>Duplication (%)</span><button class="help-icon" type="button" data-help="Percentage of packets duplicated, from 0 through 100.">i</button></span><input type="number" name="duplicate_percent" min="0" max="100" step="0.01" value="0" required></label><label><span class="field-label"><span>Reordering (%)</span><button class="help-icon" type="button" data-help="Percentage of packets reordered, from 0 through 100.">i</button></span><input type="number" name="reorder_percent" min="0" max="100" step="0.01" value="0" required></label></div></section>
+        <section class="vcf-sddc-step-page hidden" data-atlaso-wizard-step="state"><label class="switch-field"><span class="field-label"><span>WAN policy enabled</span><button class="help-icon" type="button" data-help="Enabled assigned policies render tc/netem intent. The host changes only through global appliance apply.">i</button></span><input class="switch-input" type="checkbox" name="enabled" checked><span class="switch-track" aria-hidden="true"></span></label></section>
+        <section class="vcf-sddc-step-page hidden" data-atlaso-wizard-step="review"><div class="settings-list"><div><span>Policy</span><strong data-routes-wan-review="policy-name"></strong></div><div><span>Delay and capacity</span><strong data-routes-wan-review="policy-delay"></strong></div><div><span>Packet effects</span><strong data-routes-wan-review="policy-effects"></strong></div><div><span>State</span><strong data-routes-wan-review="policy-state"></strong></div></div><p class="muted">WAN Simulation v1 applies the policy to the complete assigned interface or VLAN after global appliance apply.</p></section>
+      </div>
+    </div>
+    <div class="confirm-modal-actions vcf-sddc-wizard-actions"><button class="button secondary" type="button" data-atlaso-wizard-cancel>Cancel</button><button class="button secondary hidden" type="button" data-atlaso-wizard-back>Back</button><button class="button primary" type="button" data-atlaso-wizard-next>Next</button><button class="button primary hidden" type="submit" data-atlaso-wizard-submit>Add WAN policy</button></div>
+  </form>
+</dialog>
+{% endif %}
 {% endblock %}

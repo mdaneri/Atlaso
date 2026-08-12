@@ -205,6 +205,11 @@ non-management access physical interface or enabled VLAN with an IPv4 CIDR as th
 rendered nftables table and command intent on the global apply page. Route-specific WAN impairment is planned but not
 exposed in v1; the design notes live in `docs/routing-wan-roadmap.md`.
 
+The `/routes-wan` browser surface labels path entries **Static Routes** and forwarding authorization **Routing
+Permissions**. Static Routes, explicit Routing Permissions, NAT Rules, and WAN Policies retain Tabulator browse grids
+but use the shared reviewed add/edit wizard. Wizard submission and direct Enabled changes update desired state only;
+they never invoke this helper or apply unit directly. Generated route-role permissions remain read-only.
+
 Through `atlaso-helper wan validate|apply`, the helper validates staged routes, routing rules, NAT rules, WAN targets,
 and netem policy values. Apply installs `/etc/atlaso/nftables.d/atlaso-nat.nft`, enables `net.ipv4.ip_forward=1` only
 when enabled lab routing or NAT requires forwarding, applies source policy rules with `ip rule`, applies the NAT table

@@ -76,6 +76,12 @@ The following cross-cutting boundaries always apply:
   internally and never replay them through `307`/`308`. Route-inventory coverage must fail for an undeclared human UI
   route. Scope management browser caching to `/ui/management/` and keep public UI caching disabled.
 - `/ui/management/appliance-apply` is the only desired-state host-mutation workflow.
+- Keep **Static Routes** separate from **Routing Permissions** in operator language. Static Routes choose destination,
+  gateway, target interface/VLAN, and metric in the lab route table; Routing Permissions authorize forwarding between
+  interface/VLAN networks, with route-role paths generated automatically and Access networks requiring explicit rules.
+  Static Routes, Routing Permissions, NAT Rules, and WAN Policies are wizard-backed Tabulator collections. Add launches
+  from the bottom row; edit launches from row double-click or the context menu; generated routing permissions remain
+  read-only; and ordinary persisted **Enabled** state remains directly editable without host mutation.
 - Keep ordinary `/ui/management/appliance-apply/status` polling on the non-reconciling desired-state projection.
   Prevent overlapping browser polls, suspend them while hidden, back off when idle, and refresh promptly after successful
   mutations and Apply completion. Retain the tracked master task until a valid terminal task response is rendered, retry
