@@ -9,6 +9,7 @@ import pytest
 from scripts.check_deployment_assets import (
     PACKER_CHECKSUM,
     PACKER_TEMPLATES,
+    SYSTEMD_ASSETS,
     inventory_assets,
     validate_manager_dropins,
     validate_packer,
@@ -24,9 +25,15 @@ def write_inventory(root: Path) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text('source "example" "test" {}\n', encoding="utf-8")
 
-    systemd = root / "image/common/systemd/atlaso-worker.service"
-    systemd.parent.mkdir(parents=True, exist_ok=True)
-    systemd.write_text("[Service]\nExecStart=/bin/true\n", encoding="utf-8")
+    for relative in SYSTEMD_ASSETS:
+        systemd = root / relative
+        systemd.parent.mkdir(parents=True, exist_ok=True)
+        contents = (
+            "[Manager]\nShowStatus=no\n"
+            if systemd.suffix == ".conf"
+            else "[Service]\nExecStart=/bin/true\n"
+        )
+        systemd.write_text(contents, encoding="utf-8")
 
     for platform in ("hyperv", "vmware-workstation"):
         sudoers = root / f"image/{platform}/sudoers.d/atlaso-helper"
@@ -45,7 +52,7 @@ def test_inventory_covers_packer_systemd_and_extensionless_sudoers(tmp_path: Pat
 
     assert findings == []
     assert len(inventory.packer) == 2
-    assert [path.suffix for path in inventory.systemd] == [".service"]
+    assert len(inventory.systemd) == len(SYSTEMD_ASSETS)
     assert [path.name for path in inventory.sudoers] == ["atlaso-helper", "atlaso-helper"]
 
 
@@ -74,6 +81,42 @@ def test_inventory_rejects_unclassified_systemd_file_type(tmp_path: Path) -> Non
     assert any(
         finding.path == unsupported
         and "add a validator or reviewed exclusion" in finding.message
+        for finding in findings
+    )
+
+
+def test_inventory_rejects_missing_canonical_systemd_asset(tmp_path: Path) -> None:
+    """Verify that renaming a provisioned unit cannot bypass the filename contract."""
+    write_inventory(tmp_path)
+    required = tmp_path / "image/common/systemd/atlaso-console.service"
+    required.rename(required.with_name("renamed-console.service"))
+
+    _, findings = inventory_assets(tmp_path)
+
+    assert any(
+        finding.path == required and finding.message == "required systemd asset is missing"
+        for finding in findings
+    )
+
+
+@pytest.mark.parametrize(
+    "relative",
+    (
+        Path("image/common/systemd/atlaso.service.d"),
+        Path("image/hyperv/sudoers.d/nested"),
+    ),
+)
+def test_inventory_rejects_nested_managed_entries(tmp_path: Path, relative: Path) -> None:
+    """Verify that managed directories cannot hide nested deployment assets."""
+    write_inventory(tmp_path)
+    nested = tmp_path / relative
+    nested.mkdir()
+    (nested / "ignored.conf").write_text("ignored\n", encoding="utf-8")
+
+    _, findings = inventory_assets(tmp_path)
+
+    assert any(
+        finding.path == nested and "managed asset directories require direct regular files" in finding.message
         for finding in findings
     )
 

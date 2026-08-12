@@ -23,6 +23,14 @@ SYSTEMD_DIRECTORIES = (
     Path("image/hyperv/systemd"),
     Path("image/vmware-workstation/systemd"),
 )
+SYSTEMD_ASSETS = (
+    Path("image/common/systemd/atlaso-console-manager.conf"),
+    Path("image/common/systemd/atlaso-console.service"),
+    Path("image/common/systemd/atlaso-worker.service"),
+    Path("image/hyperv/systemd/atlaso.service"),
+    Path("image/vmware-workstation/systemd/atlaso-vmware-ovf-customize.service"),
+    Path("image/vmware-workstation/systemd/atlaso.service"),
+)
 SUDOERS_DIRECTORIES = (
     Path("image/hyperv/sudoers.d"),
     Path("image/vmware-workstation/sudoers.d"),
@@ -103,11 +111,22 @@ class Inventory:
         return tuple(sorted((*self.packer, *self.systemd, *self.sudoers)))
 
 
-def _files(directory: Path) -> tuple[Path, ...]:
-    """Return direct regular-file children of a deployment asset directory."""
+def _files(directory: Path, findings: list[Finding]) -> tuple[Path, ...]:
+    """Return direct files and reject nested or special entries in a managed directory."""
     if not directory.is_dir():
         return ()
-    return tuple(sorted(path for path in directory.iterdir() if path.is_file()))
+    files: list[Path] = []
+    for path in sorted(directory.iterdir()):
+        if path.is_file():
+            files.append(path)
+            continue
+        findings.append(
+            Finding(
+                path,
+                "unsupported nested or special entry; managed asset directories require direct regular files",
+            )
+        )
+    return tuple(files)
 
 
 def inventory_assets(root: Path) -> tuple[Inventory, list[Finding]]:
@@ -132,17 +151,21 @@ def inventory_assets(root: Path) -> tuple[Inventory, list[Finding]]:
     systemd: list[Path] = []
     for relative in SYSTEMD_DIRECTORIES:
         directory = root / relative
-        for path in _files(directory):
+        for path in _files(directory, findings):
             if path.suffix not in SYSTEMD_SUFFIXES:
                 findings.append(
                     Finding(path, "unsupported systemd asset type; add a validator or reviewed exclusion")
                 )
                 continue
             systemd.append(path)
+    for relative in SYSTEMD_ASSETS:
+        path = root / relative
+        if not path.is_file():
+            findings.append(Finding(path, "required systemd asset is missing"))
 
     sudoers: list[Path] = []
     for relative in SUDOERS_DIRECTORIES:
-        sudoers.extend(_files(root / relative))
+        sudoers.extend(_files(root / relative, findings))
     for relative in SUDOERS_FRAGMENTS:
         path = root / relative
         if not path.is_file():
