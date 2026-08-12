@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import posixpath
 import re
 import subprocess
 import sys
@@ -127,13 +128,27 @@ def browser_route_candidates(line: str) -> list[tuple[str, str]]:
     candidates: list[tuple[str, str]] = []
     for match in ABSOLUTE_URL_RE.finditer(line):
         candidate = strip_markdown_wrappers(line, match.start(), match.group(0).rstrip(".,:;"))
-        route_path = unquote(urlparse(candidate).path)
+        route_path = normalize_browser_path(urlparse(candidate).path)
         if route_path:
             candidates.append((candidate, route_path))
     for match in BROWSER_PATH_RE.finditer(line):
         candidate = strip_markdown_wrappers(line, match.start("path"), match.group("path").rstrip(".,:;"))
-        candidates.append((candidate, unquote(urlparse(candidate).path)))
+        candidates.append((candidate, normalize_browser_path(urlparse(candidate).path)))
     return candidates
+
+
+def normalize_browser_path(path: str) -> str:
+    """Decode and remove browser-equivalent dot segments from a URL path.
+
+    Args:
+        path: Parsed URL path to normalize.
+
+    Returns:
+        A decoded absolute path with dot segments removed.
+    """
+    decoded = unquote(path)
+    normalized = posixpath.normpath(decoded)
+    return f"/{normalized.lstrip('/')}" if decoded.startswith("/") else normalized
 
 
 def strip_markdown_wrappers(line: str, start: int, candidate: str) -> str:
