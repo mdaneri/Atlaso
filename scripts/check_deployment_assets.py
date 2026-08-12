@@ -132,21 +132,27 @@ def _files(directory: Path, findings: list[Finding]) -> tuple[Path, ...]:
 def inventory_assets(root: Path) -> tuple[Inventory, list[Finding]]:
     """Inventory every supported asset and reject unclassified deployment files."""
     findings: list[Finding] = []
-    packer = tuple(sorted((root / "image").glob("*/*.pkr.hcl")))
+    packer: list[Path] = []
+    for path in sorted((root / "image").rglob("*.pkr.*")):
+        relative = path.relative_to(root / "image")
+        if len(relative.parts) != 2:
+            findings.append(
+                Finding(
+                    path,
+                    "unsupported nested Packer asset; add a validator or reviewed exclusion",
+                )
+            )
+            continue
+        if path.suffixes[-2:] != [".pkr", ".hcl"]:
+            findings.append(
+                Finding(path, "unsupported Packer asset type; add a validator or reviewed exclusion")
+            )
+            continue
+        packer.append(path)
     required_packer = tuple(root / path for path in PACKER_TEMPLATES)
     for path in required_packer:
         if not path.is_file():
             findings.append(Finding(path, "required Packer template is missing"))
-
-    unexpected_packer = sorted(
-        path
-        for path in (root / "image").glob("*/*.pkr.*")
-        if path.suffixes[-2:] != [".pkr", ".hcl"]
-    )
-    for path in unexpected_packer:
-        findings.append(
-            Finding(path, "unsupported Packer asset type; add a validator or reviewed exclusion")
-        )
 
     systemd: list[Path] = []
     for relative in SYSTEMD_DIRECTORIES:
@@ -162,6 +168,18 @@ def inventory_assets(root: Path) -> tuple[Inventory, list[Finding]]:
         path = root / relative
         if not path.is_file():
             findings.append(Finding(path, "required systemd asset is missing"))
+    common_directory = root / SYSTEMD_DIRECTORIES[0]
+    common_names = {path.name for path in systemd if path.parent == common_directory}
+    for relative in SYSTEMD_DIRECTORIES[1:]:
+        platform_directory = root / relative
+        for path in (candidate for candidate in systemd if candidate.parent == platform_directory):
+            if path.name in common_names:
+                findings.append(
+                    Finding(
+                        path,
+                        "systemd asset basename collides with a common asset in the composed validation root",
+                    )
+                )
 
     sudoers: list[Path] = []
     for relative in SUDOERS_DIRECTORIES:
@@ -172,7 +190,7 @@ def inventory_assets(root: Path) -> tuple[Inventory, list[Finding]]:
             findings.append(Finding(path, "required sudoers fragment is missing"))
 
     inventory = Inventory(
-        packer=tuple(sorted(packer)),
+        packer=tuple(packer),
         systemd=tuple(sorted(systemd)),
         sudoers=tuple(sorted(sudoers)),
     )

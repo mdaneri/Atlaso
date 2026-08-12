@@ -85,6 +85,35 @@ def test_inventory_rejects_unclassified_systemd_file_type(tmp_path: Path) -> Non
     )
 
 
+def test_inventory_rejects_nested_packer_asset(tmp_path: Path) -> None:
+    """Verify that nested Packer HCL cannot fall outside the target inventory."""
+    write_inventory(tmp_path)
+    nested = tmp_path / "image/hyperv/modules/example.pkr.hcl"
+    nested.parent.mkdir()
+    nested.write_text('source "example" "nested" {}\n', encoding="utf-8")
+
+    _, findings = inventory_assets(tmp_path)
+
+    assert any(
+        finding.path == nested and finding.message.startswith("unsupported nested Packer asset")
+        for finding in findings
+    )
+
+
+def test_inventory_rejects_common_platform_systemd_collision(tmp_path: Path) -> None:
+    """Verify that a platform unit cannot shadow a common unit during native validation."""
+    write_inventory(tmp_path)
+    collision = tmp_path / "image/hyperv/systemd/atlaso-worker.service"
+    collision.write_text("[Service]\nDefinitelyNotARealSetting=yes\n", encoding="utf-8")
+
+    _, findings = inventory_assets(tmp_path)
+
+    assert any(
+        finding.path == collision and "basename collides with a common asset" in finding.message
+        for finding in findings
+    )
+
+
 def test_inventory_rejects_missing_canonical_systemd_asset(tmp_path: Path) -> None:
     """Verify that renaming a provisioned unit cannot bypass the filename contract."""
     write_inventory(tmp_path)
