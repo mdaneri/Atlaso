@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, timezone
-from ipaddress import ip_interface
+from ipaddress import ip_address, ip_interface, ip_network
 from typing import Any
 
 from sqlalchemy import DateTime as SqlDateTime
@@ -1351,6 +1351,7 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
             )
         dhcp_enabled = dhcp_enabled or enabled
     if dhcp_enabled:
+        enabled_dhcp_networks = []
         scopes = data.get("dhcp_scopes", [])
         if scopes:
             for row_index, row in enumerate(scopes, start=1):
@@ -1365,6 +1366,16 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
                     raise ValueError(
                         f"The settings archive row {row_index} in 'dhcp_scopes' has an ineligible bind interface."
                     )
+                if enabled:
+                    try:
+                        enabled_dhcp_networks.append(
+                            ip_network(
+                                f"{ip_address(str(row.get('site_address') or ''))}/{int(row.get('prefix_length') or 0)}",
+                                strict=False,
+                            )
+                        )
+                    except (TypeError, ValueError):
+                        continue
         else:
             for row_index, row in enumerate(data.get("dhcp_settings", []), start=1):
                 if row.get("enabled", False) and "ipv4" not in dhcp_target_families.get(
@@ -1373,6 +1384,31 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
                     raise ValueError(
                         f"The settings archive row {row_index} in 'dhcp_settings' has an ineligible bind interface."
                     )
+                if row.get("enabled", False):
+                    try:
+                        enabled_dhcp_networks.append(
+                            ip_network(
+                                f"{ip_address(str(row.get('site_address') or ''))}/{int(row.get('prefix_length') or 0)}",
+                                strict=False,
+                            )
+                        )
+                    except (TypeError, ValueError):
+                        continue
+        for row_index, row in enumerate(data.get("dhcp_reservations", []), start=1):
+            if not row.get("enabled", True):
+                continue
+            try:
+                reservation_address = ip_address(str(row.get("ip_address") or ""))
+            except ValueError as exc:
+                raise ValueError(
+                    f"The settings archive row {row_index} in 'dhcp_reservations' has an invalid IP address."
+                ) from exc
+            if enabled_dhcp_networks and not any(
+                reservation_address in network for network in enabled_dhcp_networks
+            ):
+                raise ValueError(
+                    f"The settings archive row {row_index} in 'dhcp_reservations' is outside every enabled DHCP scope."
+                )
 
     dhcp_scope_names = {str(row["name"]) for row in data.get("dhcp_scopes", [])}
     for row_index, row in enumerate(data.get("dhcp_options", []), start=1):

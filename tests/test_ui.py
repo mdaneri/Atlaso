@@ -4776,6 +4776,10 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
     enabled_wrong_family_dhcp_target["data"]["dhcp_scopes"][0]["address_family"] = "ipv6"
     disabled_missing_dhcp_target = deepcopy(enabled_missing_dhcp_target)
     disabled_missing_dhcp_target["data"]["dhcp_scopes"][0]["enabled"] = False
+    enabled_outside_dhcp_reservation = deepcopy(archive)
+    enabled_outside_dhcp_reservation["data"]["dhcp_settings"][0]["enabled"] = True
+    enabled_outside_dhcp_reservation["data"]["dhcp_reservations"][0]["enabled"] = True
+    enabled_outside_dhcp_reservation["data"]["dhcp_reservations"][0]["ip_address"] = "203.0.113.10"
     enabled_missing_service_targets = []
     for section_name in (
         "dns_settings",
@@ -4887,6 +4891,7 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
         (enabled_identical_routing_targets, "has identical source and destination interfaces"),
         (enabled_missing_dhcp_target, "has an ineligible bind interface"),
         (enabled_wrong_family_dhcp_target, "has an ineligible bind interface"),
+        (enabled_outside_dhcp_reservation, "is outside every enabled DHCP scope"),
         *(
             (candidate, "has an ineligible listen interface")
             for candidate in enabled_missing_service_targets
