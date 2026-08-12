@@ -29,7 +29,7 @@ IMAGE_RE = re.compile(r"!\[[^\]]+\]\(([^)]+)\)")
 ABSOLUTE_URL_RE = re.compile(r'''(?:https?:[\\/]{1,2}|//)[^\s<>()`\[\]"']+''', re.IGNORECASE)
 BROWSER_PATH_RE = re.compile(
     r"(?<![A-Za-z0-9.])"
-    r"(?P<path>[\\/][A-Za-z0-9%][A-Za-z0-9._~{}%*-]*"
+    r"(?P<path>[\\/](?:(?:\.{1,2})[\\/])*[A-Za-z0-9%][A-Za-z0-9._~{}%*-]*"
     r"(?:[\\/][A-Za-z0-9._~{}%*-]+)*"
     r"(?:\?[A-Za-z0-9._~{}*=&%+-]*)?)"
 )
@@ -130,9 +130,7 @@ def browser_route_candidates(line: str) -> list[tuple[str, str]]:
     for match in ABSOLUTE_URL_RE.finditer(line):
         absolute_spans.append(match.span())
         candidate = strip_markdown_wrappers(line, match.start(), match.group(0).rstrip(".,:;"))
-        browser_url = candidate.replace("\\", "/")
-        browser_url = re.sub(r"^(https?:)/+", r"\1//", browser_url, flags=re.IGNORECASE)
-        route_path = normalize_browser_path(urlparse(browser_url).path)
+        route_path = browser_url_path(candidate)
         if route_path:
             candidates.append((candidate, route_path))
     for match in BROWSER_PATH_RE.finditer(line):
@@ -141,6 +139,26 @@ def browser_route_candidates(line: str) -> list[tuple[str, str]]:
         candidate = strip_markdown_wrappers(line, match.start("path"), match.group("path").rstrip(".,:;"))
         candidates.append((candidate, normalize_browser_path(urlparse(candidate.replace("\\", "/")).path)))
     return candidates
+
+
+def browser_url_path(candidate: str) -> str:
+    """Return the browser-equivalent path for an authority or same-host URL.
+
+    Args:
+        candidate: Extracted HTTP(S) or protocol-relative URL candidate.
+
+    Returns:
+        The normalized request path used for legacy-route classification.
+    """
+    browser_url = candidate.replace("\\", "/")
+    scheme_match = re.match(r"^(https?):(/+)(.*)$", browser_url, flags=re.IGNORECASE)
+    if scheme_match and len(scheme_match.group(2)) == 1:
+        remainder = scheme_match.group(3)
+        first_segment = remainder.split("/", 1)[0]
+        if "." not in first_segment and ":" not in first_segment:
+            return normalize_browser_path(f"/{remainder}")
+        browser_url = f"{scheme_match.group(1)}://{remainder}"
+    return normalize_browser_path(urlparse(browser_url).path)
 
 
 def normalize_browser_path(path: str) -> str:
