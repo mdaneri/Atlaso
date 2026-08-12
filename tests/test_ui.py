@@ -4732,6 +4732,26 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
     enabled_wrong_family_dhcp_target["data"]["dhcp_scopes"][0]["address_family"] = "ipv6"
     disabled_missing_dhcp_target = deepcopy(enabled_missing_dhcp_target)
     disabled_missing_dhcp_target["data"]["dhcp_scopes"][0]["enabled"] = False
+    enabled_missing_service_targets = []
+    for section_name in (
+        "dns_settings",
+        "ntp_settings",
+        "ca_settings",
+        "kms_settings",
+        "ldap_settings",
+        "oidc_provider_settings",
+        "vcf_backup_settings",
+        "vcf_private_registry_settings",
+        "vcf_offline_depot_settings",
+    ):
+        candidate = deepcopy(archive)
+        if not candidate["data"][section_name]:
+            continue
+        candidate["data"][section_name][0]["enabled"] = True
+        candidate["data"][section_name][0]["listen_interface"] = "missing-service-target"
+        enabled_missing_service_targets.append(candidate)
+    disabled_missing_service_target = deepcopy(enabled_missing_service_targets[0])
+    disabled_missing_service_target["data"]["dns_settings"][0]["enabled"] = False
     empty_required_field = deepcopy(archive)
     empty_required_field["data"]["physical_interfaces"][0]["name"] = "   "
     unresolved_ldap_organization = deepcopy(archive)
@@ -4767,6 +4787,10 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
         (enabled_identical_routing_targets, "has identical source and destination interfaces"),
         (enabled_missing_dhcp_target, "has an ineligible bind interface"),
         (enabled_wrong_family_dhcp_target, "has an ineligible bind interface"),
+        *(
+            (candidate, "has an ineligible listen interface")
+            for candidate in enabled_missing_service_targets
+        ),
         (empty_required_field, "has empty required field 'name'"),
         (unresolved_ldap_organization, "references an unknown LDAP organization"),
         (unresolved_oidc_client, "references an unknown OIDC client"),
@@ -4784,6 +4808,7 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
     archive_summary(disabled_missing_nat_target)
     archive_summary(disabled_missing_routing_target)
     archive_summary(disabled_missing_dhcp_target)
+    archive_summary(disabled_missing_service_target)
 
 
 def test_settings_restore_rolls_back_late_failure_without_clearing_staged_ldap_recovery(client, monkeypatch):

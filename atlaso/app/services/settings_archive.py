@@ -76,7 +76,7 @@ from atlaso.app.models import (
     VsphereTrustedVcenterCertificate,
 )
 from atlaso.app.seed import NTP_NTS_RESTORATION_SETTING_KEY, SEED_EXAMPLES_SETTING_KEY, seed_initial_data, seed_update_sources
-from atlaso.app.services.dnsmasq import DNS_CONDITIONAL_FORWARDERS_SETTING_KEY
+from atlaso.app.services.dnsmasq import DNS_CONDITIONAL_FORWARDERS_SETTING_KEY, split_interfaces
 from atlaso.app.services.esxi_pxe import (
     ESXI_PXE_CUSTOM_VARIABLES_KEY,
     host_variables_json,
@@ -86,7 +86,7 @@ from atlaso.app.services.esxi_pxe import (
 from atlaso.app.services.firewall import FIREWALL_SOURCE_GROUPS_SETTING_KEY
 from atlaso.app.services.local_users import LOCAL_USERS_PASSWORD_POLICY_KEY
 from atlaso.app.services.ldap import clear_ldap_recovery_payload, ensure_organization_bind_secret
-from atlaso.app.services.networking import normalize_interface_mode
+from atlaso.app.services.networking import normalize_interface_mode, normalize_interface_role, normalize_ipv4_method
 from atlaso.app.services.update_sources import UPDATE_SOURCE_KINDS
 from atlaso.app.services.vcf_backups import VCF_BACKUP_DEFAULT_USERNAME
 
@@ -1116,6 +1116,10 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
         str(row["name"]): row
         for row in data.get("physical_interfaces", [])
     }
+    vlan_interfaces = {
+        str(row["name"]): row
+        for row in data.get("vlan_interfaces", [])
+    }
     for row_index, row in enumerate(data.get("vlan_interfaces", []), start=1):
         enabled = row.get("enabled", True)
         if not isinstance(enabled, bool):
@@ -1166,16 +1170,76 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
     route_target_families = {
         name: families
         for name, families in dhcp_target_families.items()
-        if str(
-            (
-                physical_interfaces.get(name)
-                or next((row for row in data.get("vlan_interfaces", []) if str(row["name"]) == name), {})
-            ).get("role")
-            or ""
-        ).strip().lower()
+        if normalize_interface_role((physical_interfaces.get(name) or vlan_interfaces.get(name, {})).get("role"))
         != "management"
     }
     route_target_names = set(route_target_families)
+    service_target_names = {
+        name
+        for name in dhcp_target_families
+        if normalize_interface_role((physical_interfaces.get(name) or vlan_interfaces.get(name, {})).get("role"))
+        not in {"management", "unused"}
+        and (
+            name in physical_interfaces
+            or str(physical_interfaces.get(str(vlan_interfaces[name].get("parent_interface") or ""), {}).get("oper_state") or "")
+            != "missing"
+        )
+    }
+    ldap_target_names: set[str] = set()
+    for name, row in physical_interfaces.items():
+        effective_row = dict(row)
+        if normalize_ipv4_method(row.get("ipv4_method")) == "dhcp":
+            effective_row["ip_cidr"] = row.get("host_ip_cidr")
+        effective_row["ipv6_cidr"] = row.get("ipv6_cidr") or row.get("host_ipv6_cidr")
+        if (
+            str(row.get("oper_state") or "") != "missing"
+            and str(row.get("admin_state") or "up") == "up"
+            and normalize_interface_mode(row.get("mode")) != "trunk"
+            and normalize_interface_role(row.get("role")) not in {"management", "unused"}
+            and address_families(effective_row)
+        ):
+            ldap_target_names.add(name)
+    for name, row in vlan_interfaces.items():
+        parent = physical_interfaces.get(str(row.get("parent_interface") or ""))
+        if (
+            row.get("enabled", True)
+            and parent is not None
+            and str(parent.get("oper_state") or "") != "missing"
+            and str(parent.get("admin_state") or "up") == "up"
+            and normalize_interface_role(row.get("role")) not in {"management", "unused"}
+            and address_families(row)
+        ):
+            ldap_target_names.add(name)
+
+    for section_name, target_names, require_listener in (
+        ("dns_settings", service_target_names, True),
+        ("ntp_settings", service_target_names, True),
+        ("ca_settings", service_target_names, False),
+        ("kms_settings", service_target_names, True),
+        ("ldap_settings", ldap_target_names, True),
+        ("oidc_provider_settings", ldap_target_names, True),
+        ("vcf_backup_settings", service_target_names, True),
+        ("vcf_private_registry_settings", service_target_names, True),
+        ("vcf_offline_depot_settings", service_target_names, True),
+    ):
+        for row_index, row in enumerate(data.get(section_name, []), start=1):
+            enabled = row.get("enabled", False)
+            if not isinstance(enabled, bool):
+                raise ValueError(
+                    f"The settings archive row {row_index} in '{section_name}' has an invalid enabled value."
+                )
+            if not enabled:
+                continue
+            selected_interfaces = split_interfaces(str(row.get("listen_interface") or ""))
+            if require_listener and not selected_interfaces:
+                raise ValueError(
+                    f"The settings archive row {row_index} in '{section_name}' has no listen interface."
+                )
+            if any(interface_name not in target_names for interface_name in selected_interfaces):
+                raise ValueError(
+                    f"The settings archive row {row_index} in '{section_name}' has an ineligible listen interface."
+                )
+
     for row_index, row in enumerate(data.get("routes", []), start=1):
         enabled = row.get("enabled", True)
         if not isinstance(enabled, bool):
