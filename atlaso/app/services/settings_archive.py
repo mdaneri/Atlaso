@@ -1273,6 +1273,25 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
         ):
             ldap_target_names.add(name)
 
+    oidc_target_addresses: dict[str, list[str]] = {}
+    for name in ldap_target_names:
+        row = physical_interfaces.get(name) or vlan_interfaces.get(name, {})
+        ipv4_cidr = row.get("ip_cidr")
+        ipv6_cidr = row.get("ipv6_cidr")
+        if name in physical_interfaces:
+            if normalize_ipv4_method(row.get("ipv4_method")) == "dhcp":
+                ipv4_cidr = row.get("host_ip_cidr")
+            ipv6_cidr = row.get("ipv6_cidr") or row.get("host_ipv6_cidr")
+        addresses: list[str] = []
+        for cidr in (ipv4_cidr, ipv6_cidr):
+            try:
+                address = str(ip_interface(str(cidr or "")).ip)
+            except ValueError:
+                continue
+            if address not in addresses:
+                addresses.append(address)
+        oidc_target_addresses[name] = addresses
+
     appliance_row = data["appliance_settings"][0]
     if appliance_row.get("web_terminal_enabled", False):
         archived_interfaces = [
@@ -1536,7 +1555,10 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
                 "The settings archive enables KMS without an enabled CA and issued KMS server certificate."
             )
 
-    if any(row.get("enabled", False) for row in data.get("oidc_provider_settings", [])):
+    enabled_oidc_rows = [
+        row for row in data.get("oidc_provider_settings", []) if row.get("enabled", False)
+    ]
+    if enabled_oidc_rows:
         active_signing_key_ready = any(
             str(row.get("status") or "") == "active"
             and row.get("active_slot") == 1
@@ -1555,6 +1577,16 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
             raise ValueError(
                 "The settings archive enables OIDC without an active signing key and issued HTTPS certificate."
             )
+        for row_index, row in enumerate(enabled_oidc_rows, start=1):
+            derived_addresses: list[str] = []
+            for interface_name in split_interfaces(str(row.get("listen_interface") or "")):
+                for address in oidc_target_addresses.get(interface_name, []):
+                    if address not in derived_addresses:
+                        derived_addresses.append(address)
+            if split_addresses(str(row.get("listen_address") or "")) != derived_addresses:
+                raise ValueError(
+                    f"The settings archive row {row_index} in 'oidc_provider_settings' has listener addresses not derived from its interfaces."
+                )
 
     provider_ids = {str(row["id"]) for row in data.get("vsphere_key_providers", [])}
     for row_index, row in enumerate(data.get("vsphere_trusted_vcenters", []), start=1):
@@ -1576,9 +1608,22 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
         )
 
     organization_slugs = {str(row["slug"]) for row in data.get("ldap_organizations", [])}
-    if data["ldap_settings"][0].get("enabled", False) and not organization_slugs:
+    ldap_row = data["ldap_settings"][0]
+    if ldap_row.get("enabled", False) and not organization_slugs:
         raise ValueError(
             "The settings archive enables LDAP without an LDAP organization."
+        )
+    ca_row = data["ca_settings"][0]
+    if (
+        ldap_row.get("enabled", False)
+        and ldap_row.get("ldaps_enabled", True)
+        and (
+            not ca_row.get("enabled", False)
+            or not str(ca_row.get("root_certificate_pem") or "")
+        )
+    ):
+        raise ValueError(
+            "The settings archive enables LDAPS without a ready Certificate Authority."
         )
     ldap_users = {
         (str(row["organization_slug"]), str(row["uid"]))

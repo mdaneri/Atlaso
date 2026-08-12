@@ -4831,6 +4831,15 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
     enabled_ldap_without_organization["data"]["ldap_settings"][0]["listen_interface"] = "eth2"
     enabled_ldap_without_organization["data"]["ldap_settings"][0]["listen_address"] = "192.168.50.1"
     enabled_ldap_without_organization["data"]["ldap_organizations"] = []
+    enabled_ldaps_without_ca = deepcopy(archive)
+    enabled_ldaps_without_ca["data"]["ldap_settings"][0]["enabled"] = True
+    enabled_ldaps_without_ca["data"]["ldap_settings"][0]["ldaps_enabled"] = True
+    enabled_ldaps_without_ca["data"]["ldap_settings"][0]["listen_interface"] = "eth2"
+    enabled_ldaps_without_ca["data"]["ldap_settings"][0]["listen_address"] = "192.168.50.1"
+    enabled_ldaps_without_ca["data"]["ldap_organizations"].append(
+        {"name": "LDAPS test", "slug": "ldaps-test", "suffix_dn": "dc=ldaps,dc=test"}
+    )
+    enabled_ldaps_without_ca["data"]["ca_settings"][0]["enabled"] = False
     unresolved_oidc_client = deepcopy(archive)
     unresolved_oidc_client["data"]["oidc_client_redirect_uris"].append(
         {"client_id": "missing-client", "kind": "redirect", "uri": "https://example.invalid/callback"}
@@ -4903,6 +4912,29 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
         }
     ]
     enabled_oidc_without_dependencies["data"]["oidc_signing_keys"] = []
+    enabled_oidc_with_mismatched_address = deepcopy(archive)
+    enabled_oidc_with_mismatched_address["data"]["oidc_provider_settings"] = [
+        {
+            "enabled": True,
+            "listen_interface": "eth2",
+            "listen_address": "192.0.2.1",
+        }
+    ]
+    enabled_oidc_with_mismatched_address["data"]["oidc_signing_keys"] = [
+        {
+            "kid": "archive-active-key",
+            "private_key_encrypted": "encrypted-key",
+            "public_jwk_json": "{}",
+            "status": "active",
+            "active_slot": 1,
+        }
+    ]
+    oidc_certificate = deepcopy(enabled_oidc_with_mismatched_address["data"]["ca_certificates"][0])
+    oidc_certificate["managed_owner"] = "oidc:https"
+    oidc_certificate["status"] = "issued"
+    oidc_certificate["certificate_pem"] = "certificate"
+    oidc_certificate["private_key_encrypted"] = "encrypted-key"
+    enabled_oidc_with_mismatched_address["data"]["ca_certificates"].append(oidc_certificate)
     unsupported_setting = deepcopy(archive)
     unsupported_setting["data"]["settings"].append(
         {"key": "unsupported.setting", "value": "must-not-be-silently-dropped"}
@@ -4939,6 +4971,7 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
         (empty_required_field, "has empty required field 'name'"),
         (unresolved_ldap_organization, "references an unknown LDAP organization"),
         (enabled_ldap_without_organization, "enables LDAP without an LDAP organization"),
+        (enabled_ldaps_without_ca, "enables LDAPS without a ready Certificate Authority"),
         (unresolved_oidc_client, "references an unknown OIDC client"),
         (unresolved_esx_volume, "references an unknown ESX storage volume"),
         (enabled_missing_esx_share_target, "has an ineligible interface or address family"),
@@ -4946,6 +4979,7 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
         (enabled_certificate_with_disabled_profile, "references a disabled CA profile"),
         (enabled_kms_without_ca, "enables KMS without an enabled CA"),
         (enabled_oidc_without_dependencies, "enables OIDC without an active signing key"),
+        (enabled_oidc_with_mismatched_address, "has listener addresses not derived from its interfaces"),
         (unsupported_setting, "has an unsupported setting key"),
     ]:
         with pytest.raises(ValueError, match=message):
