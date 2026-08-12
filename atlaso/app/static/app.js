@@ -7859,7 +7859,9 @@ function initializePhysicalInterfacesTable() {
         {
           title: "Management UI",
           field: "access_management_ui_enabled",
-          formatter: (cell) => cell.getRow().getData().role === "management" ? '<span class="status-pill good">inherent</span>' : (cell.getValue() ? "enabled" : "disabled"),
+          formatter: (cell) => cell.getRow().getData().role === "management"
+            ? '<span class="status-pill good">inherent</span>'
+            : atlasoBooleanFormatter(cell),
           editor: "tickCross",
           editable: (cell) => {
             const data = cell.getRow().getData();
@@ -8927,7 +8929,7 @@ function initializeVlanInterfacesTable() {
         {
           title: "Management UI",
           field: "access_management_ui_enabled",
-          formatter: "tickCross",
+          formatter: atlasoBooleanFormatter,
           editor: "tickCross",
           editable: (cell) => cell.getRow().getData().role === "access" && cell.getRow().getData().enabled,
           hozAlign: "center",

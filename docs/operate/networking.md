@@ -16,9 +16,9 @@ preserving management access.
 
 This verified appliance view provides visual orientation before you begin.
 
-![Atlaso Physical Interfaces page showing inherent management UI on eth0 and enabled management UI on access interface eth1.](../assets/screenshots/physical-interfaces-clean-desktop.webp)
+![Atlaso Physical Interfaces page showing inherent management UI on eth0 and the true glyph on access interface eth1.](../assets/screenshots/physical-interfaces-clean-desktop.webp)
 
-*Figure: Physical Interfaces showing dedicated and access management UI exposure in the verified appliance desktop state.*
+*Figure: Physical Interfaces showing inherent management exposure and the standard Atlaso true glyph for access exposure.*
 
 <!-- END GENERATED INTERFACE OVERVIEW -->
 
@@ -74,9 +74,9 @@ These captures show responsive layouts and useful operational states referenced 
 
 ### Physical interfaces
 
-![Responsive Atlaso Physical Interfaces page showing inherent and enabled management UI states.](../assets/screenshots/physical-interfaces-clean-responsive.webp)
+![Responsive Atlaso Physical Interfaces page showing inherent management UI and the true glyph for access management UI.](../assets/screenshots/physical-interfaces-clean-responsive.webp)
 
-*Figure: Physical Interfaces management UI exposure in the verified appliance responsive state.*
+*Figure: Physical Interfaces showing inherent management exposure and the standard Atlaso true glyph at the responsive viewport.*
 
 ### Routes and WAN simulation
 
