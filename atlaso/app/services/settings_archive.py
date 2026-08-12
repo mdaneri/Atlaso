@@ -1142,7 +1142,11 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
             )
 
     def address_families(row: dict[str, Any]) -> set[str]:
-        """Return valid IP CIDR families supplied by one archived interface."""
+        """Return valid IP CIDR families supplied by one archived interface.
+
+        Args:
+            row: Structurally validated archived interface row.
+        """
         families: set[str] = set()
         for field_name, family, version in (("ip_cidr", "ipv4", 4), ("ipv6_cidr", "ipv6", 6)):
             try:
