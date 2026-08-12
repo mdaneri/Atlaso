@@ -901,7 +901,8 @@ def render_nftables_config(
         )
         return "\n".join(lines) + "\n"
     effective_management_source_cidr = management_source_cidr or get_settings().management_source_cidr
-    ip_network(effective_management_source_cidr, strict=False)
+    if not replace_atlaso_service_rules:
+        ip_network(effective_management_source_cidr, strict=False)
     source_groups_by_id = {str(group.get("id", "")): group for group in source_groups or []}
     lines.append("table inet atlaso {")
     for chain_name, policy in [

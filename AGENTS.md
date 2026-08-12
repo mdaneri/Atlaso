@@ -112,6 +112,12 @@ The following cross-cutting boundaries always apply:
   locked until the deployment root password applies. Validate non-network OVF fields before offering network-only
   correction, keep the waiting customizer alive across post-validation apply failures, make review cleanup recover from
   interruption after marker creation, and write applied state only after successful correction and customization.
+  Preserve whether VMware Tools answered: after 30 consecutive answered-empty reads, classify the boot as non-OVF,
+  record durable image-default completion, clear the initialization/review handshake, and unlock the ordinary console.
+  Never classify unanswered, malformed, present-but-incomplete, or invalid properties as non-OVF, and allow a later
+  real envelope to replace the non-OVF marker and enter the full validation/customization path. Clear consumed
+  `guestinfo.ovfEnv` with an explicit empty value. Once pending success is durable, retry credential scrub and marker
+  promotion directly with the review handshake cleared; never route finalization failure back to network correction.
 - VMware release images use separate compacted Photon OS and required Atlaso system-content payload VMDKs, followed by
   empty 500 GiB depot and backup disks. Preserve `/opt/atlaso` and appliance-wide PowerShell modules on the UUID-mounted
   system-content disk, size-gate individual OVF release assets below 2 GiB, and publish the aggregate OVA only when it

@@ -85,7 +85,9 @@ are size-gated individually, while the combined OVA is published only when it re
 VMware first boot validates management addresses and gateways as one contract before host mutation. Invalid OVF
 networking pauses initialization at the Atlaso `tty1` review screen so an administrator can correct it in place.
 Privileged tty1 actions remain locked until deployment credentials apply, and interrupted review cleanup recovers from
-the applied marker on the next boot.
+the applied marker on the next boot. When VMware Tools authoritatively reports no OVF envelope for 30 consecutive
+reads, Atlaso records a durable non-OVF completion marker, logs that image defaults are in use, clears the initialization
+handshake, and opens the ordinary console without presenting OVF network review.
 
 Development appliances keep host-mutating adapters in dry-run mode by default. Atlaso applies selected desired state
 only through the global appliance-change workflow and its constrained privileged helper. Secret-bearing Local Users,

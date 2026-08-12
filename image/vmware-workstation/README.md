@@ -234,7 +234,11 @@ the marker or customization log. After all first-boot configuration succeeds, th
 marker, clears the consumed OVF environment through VMware Tools, and atomically promotes the pending file to the
 applied marker. This removes raw-clone credentials from the host-side `guestinfo.ovfEnv` VMX setting while keeping a
 power interruption between scrub and promotion recoverable on the next boot. A failed scrub remains unmarked and is
-retried with the initialization lock held. Mutation failures identify only a bounded, non-secret initialization layer in
+retried from pending success with the initialization lock held and the network-review handshake cleared. Cleanup writes
+an explicit empty string through `vmware-rpctool` or `vmtoolsd`; a cleanup failure never returns to DHCP review because
+the management state already applied. VMware Tools can read the cleared value back as the exact `""` sentinel; Atlaso
+normalizes that representation to answered-empty before confirmation. Mutation failures identify only a bounded,
+non-secret initialization layer in
 the customization log. The pending file and its parent directory are synchronized before the external credential scrub;
 all preceding host filesystem mutations are synchronized before pending success is recorded, and the applied-marker
 promotion synchronizes the directory again. The early tty1 console is restarted after clone-specific appliance secret
@@ -250,6 +254,14 @@ pending source state, so
 release OVA redeployment remains safe. Pending recovery requires 30 consecutive successful empty guestinfo reads, and
 applies properties that appear during that confirmation window. Use only pristine, never-booted image outputs as clone
 sources.
+
+When VMware Tools answers successfully but returns no envelope, the customizer requires 30 consecutive empty reads
+before classifying the boot as non-OVF. It writes the durable
+`/var/lib/atlaso/vmware-no-ovf-initialization.applied` marker, removes any initialization/review handshake, logs
+**No OVF deployment properties supplied; using image defaults.**, and lets the ordinary console and appliance services
+continue. An unanswered Tools channel never contributes to that confirmation. Malformed XML, present-but-incomplete
+properties, and invalid properties remain fail-closed. The marker makes reboot idempotent, but a later nonempty envelope
+durably replaces the non-OVF classification and enters the normal OVF validation/customization path.
 
 The customizer validates IPv4, IPv6, gateway, and DNS relationships before any host mutation. Interface and gateway
 addresses must be usable unicast values rather than unspecified, loopback, multicast, or reserved addresses. If

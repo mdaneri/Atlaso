@@ -50,6 +50,7 @@ FIREWALL_CONFIG_PATH = Path("/etc/atlaso/nftables.d/atlaso.nft")
 SSHD_ROOT_LOGIN_CONFIG_PATH = Path("/etc/ssh/sshd_config.d/atlaso-root-login.conf")
 MARKER_PATH = Path("/var/lib/atlaso/vmware-ovf-customization.applied")
 PENDING_MARKER_PATH = Path("/var/lib/atlaso/vmware-ovf-customization.pending")
+NO_OVF_MARKER_PATH = Path("/var/lib/atlaso/vmware-no-ovf-initialization.applied")
 INITIALIZATION_LOCK_PATH = Path("/var/lib/atlaso/vmware-ovf-initializing")
 NETWORK_REVIEW_PATH = Path("/var/lib/atlaso/vmware-ovf-network-review.json")
 NETWORK_CORRECTION_PATH = Path("/var/lib/atlaso/vmware-ovf-network-correction.json")
@@ -68,6 +69,12 @@ class OvfCustomizationError(ValueError):
 
 class OvfManagementNetworkError(OvfCustomizationError):
     """Report recoverable OVF management-network validation failure."""
+
+    pass
+
+
+class OvfFinalizationError(OvfCustomizationError):
+    """Report retryable credential-scrub or marker finalization failure."""
 
     pass
 
@@ -410,6 +417,14 @@ def invalidate_pending_marker() -> None:
     fsync_parent_directory(PENDING_MARKER_PATH)
 
 
+def invalidate_no_ovf_marker() -> None:
+    """Durably remove a prior image-default deployment classification."""
+    if not NO_OVF_MARKER_PATH.exists():
+        return
+    NO_OVF_MARKER_PATH.unlink()
+    fsync_parent_directory(NO_OVF_MARKER_PATH)
+
+
 def write_network_review(properties: dict[str, str], error: str) -> None:
     """Persist recoverable, non-secret first-boot review state.
 
@@ -492,12 +507,31 @@ def complete_first_boot_initialization() -> None:
     INITIALIZATION_LOCK_PATH.unlink(missing_ok=True)
 
 
+def complete_no_ovf_initialization() -> int:
+    """Record image-default initialization and release the ordinary console.
+
+    Returns:
+        Zero after the durable non-OVF marker is written and tty1 is unlocked.
+    """
+    write_json_atomic(
+        NO_OVF_MARKER_PATH,
+        {
+            "completed_at": utc_now(),
+            "source": "image_defaults",
+        },
+    )
+    complete_first_boot_initialization()
+    log("No OVF deployment properties supplied; using image defaults.")
+    return 0
+
+
 def recover_pending_customization() -> int:
     """Finish a crash-interrupted credential scrub and applied-marker promotion.
 
     Returns:
         Zero after the pending state is durably promoted and tty1 is unlocked.
     """
+    clear_network_review()
     logged_failure = False
     while not MARKER_PATH.exists():
         try:
@@ -656,6 +690,9 @@ def wait_for_network_review(properties: dict[str, str], error: str) -> int:
         try:
             run_initialization_layer("pending success marker invalidation", invalidate_pending_marker)
             summary = apply_customization(config)
+        except OvfFinalizationError as exc:
+            log(f"VMware OVF customization is retrying first-boot finalization: {exc}")
+            return recover_pending_customization()
         except OvfCustomizationError as exc:
             write_network_review(
                 corrected_properties,
@@ -713,7 +750,10 @@ def try_read_ovf_environment() -> tuple[bool, str]:
             continue
         result = subprocess.run(command, check=False, text=True, capture_output=True)
         if result.returncode == 0:
-            return True, result.stdout
+            content = result.stdout
+            if content.strip() == '""':
+                content = ""
+            return True, content
     return False, ""
 
 
@@ -730,8 +770,8 @@ def clear_ovf_environment() -> None:
         OvfCustomizationError: If no available VMware Tools command accepts the scrub.
     """
     commands = [
-        ["vmware-rpctool", "info-set guestinfo.ovfEnv "],
-        ["vmtoolsd", "--cmd", "info-set guestinfo.ovfEnv "],
+        ["vmware-rpctool", 'info-set guestinfo.ovfEnv ""'],
+        ["vmtoolsd", "--cmd", 'info-set guestinfo.ovfEnv ""'],
     ]
     for command in commands:
         executable = shutil.which(command[0])
@@ -760,40 +800,77 @@ def read_ovf_environment_source(ovf_env_file: str) -> str:
     return Path(ovf_env_file).read_text(encoding="utf-8") if ovf_env_file else read_ovf_environment()
 
 
-def wait_for_ovf_properties(ovf_env_file: str) -> tuple[dict[str, str], dict[str, object]]:
+def try_read_ovf_environment_source(ovf_env_file: str) -> tuple[bool, str]:
+    """Preserve whether the selected deployment-property source answered.
+
+    Args:
+        ovf_env_file: Optional filesystem path supplied by the command line.
+
+    Returns:
+        Whether the source answered and its current OVF environment text.
+    """
+    if ovf_env_file:
+        return True, Path(ovf_env_file).read_text(encoding="utf-8")
+    return try_read_ovf_environment()
+
+
+def wait_for_ovf_properties(
+    ovf_env_file: str,
+) -> tuple[dict[str, str], dict[str, object]] | None:
     """Wait fail-closed for a complete, valid non-network OVF property set.
 
     Args:
         ovf_env_file: Optional filesystem path supplied by the command line.
 
     Returns:
-        The complete raw properties and validated non-network values.
+        The complete raw properties and validated non-network values, or
+        ``None`` after a stable answered-empty source confirms a non-OVF boot.
     """
     last_state = ""
     messages = {
         "unavailable": "Atlaso VMware OVF deployment properties are unavailable; waiting with tty1 locked.",
+        "empty": (
+            "Atlaso VMware OVF deployment properties are empty; confirming whether image defaults should be used."
+        ),
         "unreadable": "Atlaso VMware OVF deployment properties are unreadable; waiting with tty1 locked.",
         "incomplete": (
             "Atlaso VMware OVF deployment properties are incomplete or invalid; "
             "waiting with tty1 locked."
         ),
     }
+    empty_reads = 0
     while True:
         try:
-            properties = parse_ovf_environment(read_ovf_environment_source(ovf_env_file))
+            answered, content = try_read_ovf_environment_source(ovf_env_file)
         except (OSError, ET.ParseError):
+            empty_reads = 0
             state = "unreadable"
         else:
-            if not properties:
+            if not answered:
+                empty_reads = 0
                 state = "unavailable"
+            elif not content.strip():
+                empty_reads += 1
+                if empty_reads >= PENDING_EMPTY_CONFIRMATION_READS:
+                    return None
+                state = "empty"
             else:
+                empty_reads = 0
                 try:
-                    non_network = validate_non_network_properties(properties)
-                except OvfCustomizationError:
-                    state = "incomplete"
+                    properties = parse_ovf_environment(content)
+                except ET.ParseError:
+                    state = "unreadable"
                 else:
-                    log("Atlaso VMware OVF deployment properties are complete; continuing initialization.")
-                    return properties, non_network
+                    if not properties:
+                        state = "incomplete"
+                    else:
+                        try:
+                            non_network = validate_non_network_properties(properties)
+                        except OvfCustomizationError:
+                            state = "incomplete"
+                        else:
+                            log("Atlaso VMware OVF deployment properties are complete; continuing initialization.")
+                            return properties, non_network
         if state != last_state:
             log(messages[state])
             last_state = state
@@ -1052,6 +1129,22 @@ def run_initialization_layer(label: str, operation: Callable[[], None]) -> None:
         raise OvfCustomizationError(f"First-time initialization failed in the {label} layer.") from exc
 
 
+def run_finalization_layer(label: str, operation: Callable[[], None]) -> None:
+    """Run a retryable OVF credential-scrub or marker operation.
+
+    Args:
+        label: Stable operator-facing name for the finalization layer.
+        operation: Mutation to execute.
+
+    Raises:
+        OvfFinalizationError: If finalization must retry without network review.
+    """
+    try:
+        operation()
+    except (OvfCustomizationError, OSError, subprocess.CalledProcessError) as exc:
+        raise OvfFinalizationError(f"First-time initialization failed in the {label} layer.") from exc
+
+
 def apply_customization(config: dict[str, object], *, dry_run: bool = False) -> dict[str, object]:
     """Update customization.
 
@@ -1109,8 +1202,8 @@ def apply_customization(config: dict[str, object], *, dry_run: bool = False) -> 
         "pending success marker",
         lambda: write_json_atomic(PENDING_MARKER_PATH, summary),
     )
-    run_initialization_layer("OVF credential scrub", clear_ovf_environment)
-    run_initialization_layer("applied marker", promote_pending_marker)
+    run_finalization_layer("OVF credential scrub", clear_ovf_environment)
+    run_finalization_layer("applied marker", promote_pending_marker)
     return summary
 
 
@@ -1134,6 +1227,21 @@ def main(argv: list[str] | None = None) -> int:
         complete_first_boot_initialization()
         log("VMware OVF customization already applied; leaving appliance state unchanged.")
         return 0
+    if NO_OVF_MARKER_PATH.exists() and not args.dry_run:
+        try:
+            answered, content = try_read_ovf_environment_source(args.ovf_env_file)
+        except OSError as exc:
+            log(f"VMware non-OVF initialization could not inspect a replacement deployment: {type(exc).__name__}")
+            return 2
+        if not answered or not content.strip():
+            complete_first_boot_initialization()
+            log("VMware non-OVF initialization already completed; using image defaults.")
+            return 0
+        try:
+            run_initialization_layer("non-OVF marker invalidation", invalidate_no_ovf_marker)
+        except OvfCustomizationError as exc:
+            log(f"VMware non-OVF initialization could not inspect a replacement deployment: {exc}")
+            return 2
     if PENDING_MARKER_PATH.exists() and not args.dry_run:
         if pending_marker_matches_current_deployment(args.ovf_env_file):
             return recover_pending_customization()
@@ -1158,7 +1266,10 @@ def main(argv: list[str] | None = None) -> int:
             log(f"VMware OVF customization failed validation: {exc}")
             return 2
     else:
-        properties, non_network = wait_for_ovf_properties(args.ovf_env_file)
+        ovf_properties = wait_for_ovf_properties(args.ovf_env_file)
+        if ovf_properties is None:
+            return complete_no_ovf_initialization()
+        properties, non_network = ovf_properties
 
     try:
         config = validate_properties(properties, non_network=non_network)
@@ -1173,6 +1284,9 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         summary = apply_customization(config, dry_run=args.dry_run)
+    except OvfFinalizationError as exc:
+        log(f"VMware OVF customization is retrying first-boot finalization: {exc}")
+        return recover_pending_customization()
     except (OvfCustomizationError, OSError, subprocess.CalledProcessError) as exc:
         log(f"VMware OVF customization could not finish after validation: {exc}")
         if args.dry_run:

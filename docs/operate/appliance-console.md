@@ -43,6 +43,13 @@ During the first 30 seconds after startup, a missing interface inventory is show
 **Initializing appliance networking...**. If the interface remains missing after that period, the console reports the
 normal actionable error.
 
+A raw VMware VM with no OVF envelope confirms that state through 30 consecutive successful empty VMware Tools reads.
+Atlaso then records non-OVF first-boot completion, logs **No OVF deployment properties supplied; using image
+defaults.**, clears the initialization lock and any stale network-review handshake, and opens the ordinary console.
+The warning does not require input. A reboot uses the durable marker and does not repeat the confirmation wait. If the
+same disk is later deployed with a real OVF envelope, Atlaso discards the non-OVF classification and validates the
+supplied deployment properties normally.
+
 ## Correct invalid VMware OVF networking on first boot
 
 An OVF/OVA deployment with inconsistent management networking pauses before the network or data disks are initialized.
@@ -68,14 +75,20 @@ Atlaso validates the FQDN, required properties, credentials, and root-SSH boolea
 correction. If initialization stays on the starting screen and no network review appears, correct those non-network OVF
 properties in the hypervisor and restart the deployment, or redeploy with corrected values. When VMware Tools has not
 yet supplied a complete valid set of Atlaso OVF properties, the customizer keeps tty1 privileged actions locked and
-retries empty, unreadable, malformed, incomplete, or invalid non-network responses instead of using the image-build
-credentials; redeploy if valid properties never become available. A reboot after successful customization removes any
-stale review document by trusting the redacted applied marker.
+retries unanswered, unreadable, malformed, incomplete, or invalid non-network responses instead of using the
+image-build credentials; redeploy if valid properties never become available. Only a successful empty response can
+contribute to the bounded non-OVF confirmation. A present envelope without complete valid properties remains blocked.
+A reboot after successful customization removes any stale review document by trusting the redacted applied marker.
 If a later customization step fails after either the original or corrected network validates, the review screen remains
 backed by the waiting customizer. Resolve the safe condition named in
 `/var/log/atlaso/vmware-ovf-customize.log`, then resubmit the network review to retry; the applied marker remains absent
 until the retry succeeds. Before a retry changes the host, Atlaso durably removes any pending-success record left by the
 earlier attempt, so an interruption cannot promote stale state on the next boot.
+
+Credential scrub and applied-marker finalization occur after host customization has already succeeded. Those layers
+retry from the durable pending-success marker without returning to network review, because changing DHCP or static
+values cannot resolve deployment-property cleanup. A successful scrub clears `guestinfo.ovfEnv` through VMware Tools,
+promotes the applied marker, removes the initialization/review handshake, and opens the ordinary console.
 
 Service state uses compact labels:
 
