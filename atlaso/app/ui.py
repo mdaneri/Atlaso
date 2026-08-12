@@ -6340,6 +6340,17 @@ def refresh_interface_service_dns_aliases(db: Session, actor: str | None = None)
                 previous_hostname=ldap_settings.hostname,
             ),
         )
+    oidc_settings = db.execute(select(OidcProviderSettings)).scalar_one_or_none()
+    if oidc_settings:
+        mark(
+            "OIDC",
+            ensure_dns_for_oidc(
+                db,
+                oidc_settings,
+                actor=actor,
+                previous_hostname=oidc_settings.hostname,
+            ),
+        )
     depot_settings = db.execute(select(VcfOfflineDepotSettings)).scalar_one_or_none()
     if depot_settings:
         mark(

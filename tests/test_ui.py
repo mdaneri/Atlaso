@@ -14045,6 +14045,7 @@ def test_physical_interface_edit_updates_desired_state(client):
         DnsRecord,
         DnsSettings,
         KmsSettings,
+        OidcProviderSettings,
         VcfBackupSettings,
         VcfOfflineDepotSettings,
         VcfPrivateRegistrySettings,
@@ -14065,11 +14066,14 @@ def test_physical_interface_edit_updates_desired_state(client):
             NtpSettings,
             CaSettings,
             KmsSettings,
+            OidcProviderSettings,
             VcfBackupSettings,
             VcfOfflineDepotSettings,
             VcfPrivateRegistrySettings,
         ):
-            settings = db.execute(select(model)).scalar_one()
+            settings = db.execute(select(model)).scalar_one_or_none()
+            if settings is None:
+                settings = model()
             settings.enabled = True
             settings.listen_interface = "eth2"
             settings.listen_address = "192.168.50.1"
@@ -14140,6 +14144,7 @@ def test_physical_interface_edit_updates_desired_state(client):
             NtpSettings,
             CaSettings,
             KmsSettings,
+            OidcProviderSettings,
             VcfBackupSettings,
             VcfOfflineDepotSettings,
             VcfPrivateRegistrySettings,
@@ -14184,6 +14189,7 @@ def test_interface_dns_alias_refresh_reports_real_changes_and_includes_esx_stora
     unchanged_helpers = [
         "ensure_dns_for_kms",
         "ensure_dns_for_ldap",
+        "ensure_dns_for_oidc",
         "ensure_dns_for_vcf_offline_depot",
         "ensure_dns_for_vcf_registry",
         "ensure_dns_for_ca_portal",

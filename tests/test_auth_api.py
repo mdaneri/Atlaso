@@ -260,8 +260,17 @@ def test_physical_interface_api_atomically_refreshes_ipv4_and_ipv6_dependencies(
     from sqlalchemy import select
 
     from atlaso.app.database import SessionLocal
-    from atlaso.app.models import AuditEvent, DhcpScope, DnsSettings, NtpSettings, PhysicalInterface
+    from atlaso.app.models import (
+        AuditEvent,
+        DhcpScope,
+        DnsRecord,
+        DnsSettings,
+        NtpSettings,
+        OidcProviderSettings,
+        PhysicalInterface,
+    )
     from atlaso.app.services.esxi_pxe import esxi_pxe_boot_settings, save_esxi_pxe_boot_settings
+    from atlaso.app.services.oidc import OIDC_DNS_RECORD_DESCRIPTION
 
     old_ipv4 = "192.168.50.1"
     old_ipv6 = "fd00:50::1"
@@ -284,6 +293,13 @@ def test_physical_interface_api_atomically_refreshes_ipv4_and_ipv6_dependencies(
         ntp.enabled = True
         ntp.listen_interface = interface.name
         ntp.listen_address = f"{old_ipv4}\n{old_ipv6}"
+        oidc = db.execute(select(OidcProviderSettings)).scalar_one_or_none()
+        if oidc is None:
+            oidc = OidcProviderSettings()
+            db.add(oidc)
+        oidc.enabled = True
+        oidc.listen_interface = interface.name
+        oidc.listen_address = f"{old_ipv4}\n{old_ipv6}"
         db.add_all(
             [
                 DhcpScope(
@@ -343,6 +359,15 @@ def test_physical_interface_api_atomically_refreshes_ipv4_and_ipv6_dependencies(
         ).scalar_one()
         dns = db.execute(select(DnsSettings)).scalar_one()
         ntp = db.execute(select(NtpSettings)).scalar_one()
+        oidc = db.execute(select(OidcProviderSettings)).scalar_one()
+        oidc_dns_addresses = set(
+            db.execute(
+                select(DnsRecord.address).where(
+                    DnsRecord.description == OIDC_DNS_RECORD_DESCRIPTION,
+                    DnsRecord.record_type.in_(["A", "AAAA"]),
+                )
+            ).scalars()
+        )
         scopes = {
             scope.name: scope
             for scope in db.execute(
@@ -364,6 +389,9 @@ def test_physical_interface_api_atomically_refreshes_ipv4_and_ipv6_dependencies(
         assert dns.listen_address == f"{new_ipv4}\n{new_ipv6}"
         assert ntp.listen_interface == "eth2"
         assert ntp.listen_address == f"{new_ipv4}\n{new_ipv6}"
+        assert oidc.listen_interface == "eth2"
+        assert oidc.listen_address == f"{new_ipv4}\n{new_ipv6}"
+        assert oidc_dns_addresses == {new_ipv4, new_ipv6}
         assert scopes["api-ipv4-dependency"].site_address == new_ipv4
         assert scopes["api-ipv4-dependency"].range_expression == "192.168.60.100-192.168.60.120"
         assert scopes["api-ipv4-dependency"].dns_server == new_ipv4
@@ -380,6 +408,7 @@ def test_physical_interface_api_atomically_refreshes_ipv4_and_ipv6_dependencies(
         assert audit is not None
         assert "DNS" in (audit.detail or "")
         assert "NTP / NTS" in (audit.detail or "")
+        assert "OIDC" in (audit.detail or "")
         assert "DHCP" in (audit.detail or "")
         assert "ESXi PXE" in (audit.detail or "")
 
@@ -486,6 +515,63 @@ def test_physical_interface_api_preserves_partial_transition_compatibility(clien
     assert enable_dhcp.json()["ipv4_method"] == "dhcp"
     assert enable_dhcp.json()["ip_cidr"] is None
     assert enable_dhcp.json()["gateway"] is None
+
+
+def test_physical_interface_api_rejects_dhcp_range_that_cannot_fit(client):
+    """Verify a prefix shrink rolls back when a dependent DHCP range cannot be rebased.
+
+    Args:
+        client: Authenticated-capable application test client fixture.
+    """
+    from sqlalchemy import select
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import DhcpScope, PhysicalInterface
+
+    scope_name = "api-prefix-shrink-dependency"
+    with SessionLocal() as db:
+        interface = db.execute(
+            select(PhysicalInterface).where(PhysicalInterface.name == "eth2")
+        ).scalar_one()
+        interface.role = "access"
+        interface.mode = "access"
+        interface.ipv4_method = "static"
+        interface.ip_cidr = "192.168.50.1/24"
+        db.add(
+            DhcpScope(
+                name=scope_name,
+                address_family="ipv4",
+                interface_name=interface.name,
+                site_address="192.168.50.1",
+                prefix_length=24,
+                range_expression="192.168.50.100-192.168.50.120",
+                dns_server="192.168.50.1",
+                ntp_server="192.168.50.1",
+            )
+        )
+        db.commit()
+
+    token, _metadata = create_token(
+        client,
+        scopes=["read:interfaces", "write:interfaces"],
+    )
+    response = client.patch(
+        "/api/v1/interfaces/physical/eth2",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"ip_cidr": "192.168.60.1/28"},
+    )
+
+    assert response.status_code == 422, response.text
+    assert "cannot fit" in response.json()["detail"]
+    with SessionLocal() as db:
+        interface = db.execute(
+            select(PhysicalInterface).where(PhysicalInterface.name == "eth2")
+        ).scalar_one()
+        scope = db.execute(select(DhcpScope).where(DhcpScope.name == scope_name)).scalar_one()
+        assert interface.ip_cidr == "192.168.50.1/24"
+        assert scope.site_address == "192.168.50.1"
+        assert scope.prefix_length == 24
+        assert scope.range_expression == "192.168.50.100-192.168.50.120"
 
 
 def test_scope_restrictions_are_enforced(client):

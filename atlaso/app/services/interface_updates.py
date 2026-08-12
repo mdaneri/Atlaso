@@ -19,6 +19,7 @@ from atlaso.app.models import (
     KmsSettings,
     LdapSettings,
     NtpSettings,
+    OidcProviderSettings,
     PhysicalInterface,
     Setting,
     VcfBackupSettings,
@@ -309,6 +310,7 @@ def refresh_interface_dependent_addresses(
         (CaSettings, "Certificate Authority"),
         (KmsSettings, "KMS"),
         (LdapSettings, "LDAP"),
+        (OidcProviderSettings, "OIDC"),
         (VcfBackupSettings, "VCF Backups"),
         (VcfOfflineDepotSettings, "VCF Offline Depot"),
         (VcfPrivateRegistrySettings, "VCF Private Registry"),
@@ -387,6 +389,14 @@ def refresh_interface_dependent_addresses(
                 rebased_end = _rebase_address_in_network(
                     str(end_address), old_network, new_network
                 )
+                if not _address_in_network(rebased_start, new_network) or not _address_in_network(
+                    rebased_end,
+                    new_network,
+                ):
+                    raise PhysicalInterfaceUpdateError(
+                        f"DHCP scope {scope.name} range cannot fit within the updated "
+                        f"{new_network.with_prefixlen} interface network."
+                    )
                 rebased_ranges.append(
                     rebased_start
                     if rebased_start == rebased_end
