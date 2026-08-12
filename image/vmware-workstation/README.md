@@ -37,6 +37,10 @@ source = "github.com/vmware/vmware"
 
 Run `packer init` from this directory before validating or building.
 
+From the repository root, `python scripts/check_deployment_assets.py --mode packer` performs that initialization plus
+formatting and full wrapper-equivalent validation for both the VMware Workstation and Hyper-V templates. Canonical CI
+runs the same protected inventory on its Windows Packer runner.
+
 ## Build
 
 Use the wrapper instead of raw `packer build`; it creates the remastered Photon ISO with `photon-ks.json` and the Atlaso

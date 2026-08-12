@@ -75,6 +75,8 @@ brings infrastructure, storage, identity, networking, and lifecycle workflows in
   response, compatibility, and topic documentation for every `/api/v1` change.
 - [Windows image-build WSL environment](docs/contribute/windows-image-build-wsl.md) — provision and select the pinned,
   isolated `Atlaso-Build` host used by Inventory Linux and Photon image wrappers.
+- [Deployment asset validation](docs/reference/full-technical-reference.md#deployment-asset-validation) — validate the
+  complete Packer, systemd, and sudoers inventory locally and in protected CI.
 
 ## Supported appliance targets
 

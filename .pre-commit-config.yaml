@@ -6,5 +6,12 @@ repos:
         entry: python scripts/check_repo.py
         language: system
         pass_filenames: true
-        files: '\.(css|html?|js|json|md|ps1|py|svg|toml|ya?ml)$'
+        files: '(\.(conf|css|hcl|html?|js|json|md|ps1|py|service|svg|toml|ya?ml)$|^image/(hyperv|vmware-workstation)/sudoers\.d/[^/]+$)'
         exclude: '^(atlaso/app/static/vendor/|third_party/|VCFDT/|vcfDownloadTool/|dist/|build/|test-results/)'
+      - id: atlaso-deployment-asset-check
+        name: Atlaso deployment asset checks
+        entry: python scripts/check_deployment_assets.py --mode auto
+        language: system
+        pass_filenames: true
+        always_run: true
+        files: '^image/(.*\.pkr\.[^/]+|(common|hyperv|vmware-workstation)/(systemd/|sudoers\.d/))'
