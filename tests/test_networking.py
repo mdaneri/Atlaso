@@ -9,7 +9,9 @@ from atlaso.app.models import ApplianceSettings, AuditEvent, CaSettings, DhcpSco
 from atlaso.app.services.appliance_settings import management_ui_context
 from atlaso.app.services.networking import (
     HostPhysicalInterface,
+    NETWORK_ROLES,
     NETWORK_INVENTORY_CLEANUP_WARNING_KEY,
+    is_canonical_network_role,
     normalize_interface_role,
     parse_linux_ip_interfaces,
     reconcile_host_physical_interfaces,
@@ -22,6 +24,18 @@ from atlaso.app.services.networking import (
 def test_wan_is_not_an_interface_role_alias():
     """Verify that wan is not an interface role alias."""
     assert normalize_interface_role("wan") == "unused"
+
+
+@pytest.mark.parametrize("legacy_role", ["services", "storage"])
+def test_retired_network_roles_normalize_only_for_persisted_compatibility(legacy_role):
+    """Verify retired stored roles map to access but are not valid new role values.
+
+    Args:
+        legacy_role: Retired stored role covered by bounded compatibility.
+    """
+    assert normalize_interface_role(legacy_role) == "access"
+    assert is_canonical_network_role(legacy_role) is False
+    assert NETWORK_ROLES == ["management", "access", "route", "unused"]
 
 
 def test_parse_linux_ip_interfaces_skips_loopback_and_vlans():

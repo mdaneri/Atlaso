@@ -157,7 +157,7 @@ def test_ca_portal_firewall_interfaces_include_non_management_addresses_only():
     interfaces = [
         PhysicalInterface(name="eth0", role="management", ip_cidr="192.168.167.10/24", mac_address="00:50:56:00:00:10"),
         PhysicalInterface(name="eth1", role="access", ip_cidr="192.168.65.1/24", mac_address="00:50:56:00:00:11"),
-        PhysicalInterface(name="eth2", role="services", ip_cidr="192.168.87.32/24", mac_address="00:50:56:00:00:12"),
+        PhysicalInterface(name="eth2", role="access", ip_cidr="192.168.87.32/24", mac_address="00:50:56:00:00:12"),
     ]
     vlans = [
         VlanInterface(name="eth3.10", parent_interface="eth3", vlan_id=10, role="access", ip_cidr="172.20.1.1/24", enabled=True),

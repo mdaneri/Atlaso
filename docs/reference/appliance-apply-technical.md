@@ -161,6 +161,12 @@ desired state to a different NIC. Removed host NICs are made inert, dependent VL
 interfaces and listener addresses are pruned or disabled when no listener remains, and the cleanup is written to the
 Atlaso app log and audit events.
 
+Physical and VLAN interfaces share the canonical `management`, `access`, `route`, and `unused` role set. New UI, API,
+desired-state, and helper inputs reject any other value. A one-time startup reconciliation maps the retired `services`
+and `storage` values to `access`, changes no other interface fields, records an audit event when rows change, and marks
+the migration complete. Settings archives export canonical values and apply the same bounded compatibility mapping on
+restore; unrelated role strings fail closed.
+
 The management physical interface may define optional static IPv4 and IPv6 gateways. IPv4 must be on-link. IPv6 may be
 on-link or link-local (`fe80::/10`); neither gateway may equal its interface address. Network apply writes each
 configured management default to both the main table and management policy table `100`; non-management physical
@@ -207,7 +213,8 @@ exposed in v1; the design notes live in `docs/routing-wan-roadmap.md`.
 
 The `/routes-wan` browser surface labels path entries **Static Routes** and forwarding authorization **Routing
 Permissions**. Static Routes, explicit Routing Permissions, NAT Rules, and WAN Policies retain Tabulator browse grids
-but use the shared reviewed add/edit wizard. Wizard submission and direct Enabled changes update desired state only;
+but use the shared `resource_wizard(...)` structure and `createWizard(...)` behavior for reviewed add/edit flows.
+Wizard submission and direct Enabled changes update desired state only;
 they never invoke this helper or apply unit directly. Generated route-role permissions remain read-only.
 
 Through `atlaso-helper wan validate|apply`, the helper validates staged routes, routing rules, NAT rules, WAN targets,

@@ -142,6 +142,7 @@ from atlaso.app.schemas import (
     NatRuleCreate,
     NatRuleResponse,
     PhysicalInterfaceResponse,
+    PhysicalInterfaceUpdate,
     RouteCreate,
     RouteResponse,
     ServiceActionResponse,
@@ -234,7 +235,12 @@ from atlaso.app.services.ldap import (
     validate_ldap_state,
     vcf_ldap_settings,
 )
-from atlaso.app.services.networking import normalize_interface_mode, normalize_interface_role, normalize_ipv4_method
+from atlaso.app.services.networking import (
+    normalize_interface_mode,
+    normalize_interface_role,
+    normalize_ipv4_method,
+    sync_host_physical_interfaces,
+)
 from atlaso.app.services.network_boot import cleanup_network_boot_upload
 from atlaso.app.services.routes_wan import validate_nat_source
 from atlaso.app.services.service_registry import SERVICE_STATE_IDS, SERVICE_SYSTEMD_UNITS
@@ -306,7 +312,6 @@ from atlaso.app.services.firewall import (
     validate_firewall_rule,
     validate_firewall_state,
 )
-from atlaso.app.services.networking import normalize_interface_mode, sync_host_physical_interfaces
 from atlaso.app.services.vcf_backups import vcf_backup_service_state, vcf_backup_settings_to_dict
 from atlaso.app.services.vcf_private_registry import (
     VCF_REGISTRY_UPLOADED_CA_BUNDLE_PEM_KEY,
@@ -1256,7 +1261,7 @@ def get_physical_interface(
 )
 def update_physical_interface(
     name: Annotated[str, ApiPath(description='Stable name identifying the resource addressed by this operation.')],
-    payload: dict,
+    payload: PhysicalInterfaceUpdate,
     identity: Annotated[Identity, Depends(require_scope("write:interfaces"))],
     db: Session = Depends(get_db),
 ) -> PhysicalInterfaceResponse:
@@ -1271,17 +1276,18 @@ def update_physical_interface(
         identity: Authenticated identity authorizing the operation.
         db: Active database session used by the operation.
     """
+    values = payload.model_dump(exclude_unset=True)
     interface = db.execute(select(PhysicalInterface).where(PhysicalInterface.name == name)).scalar_one_or_none()
     if not interface:
         raise HTTPException(status_code=404, detail="Interface not found")
-    next_role = normalize_interface_role(payload.get("role", interface.role))
-    requested_management_ui = payload.get(
+    next_role = normalize_interface_role(values.get("role", interface.role))
+    requested_management_ui = values.get(
         "access_management_ui_enabled",
         interface.access_management_ui_enabled,
     )
     if not isinstance(requested_management_ui, bool):
         raise HTTPException(status_code=422, detail="access_management_ui_enabled must be a boolean.")
-    if interface.role == "management" and next_role == "access" and "access_management_ui_enabled" not in payload:
+    if interface.role == "management" and next_role == "access" and "access_management_ui_enabled" not in values:
         requested_management_ui = True
     if next_role == "management":
         requested_management_ui = False
@@ -1290,20 +1296,20 @@ def update_physical_interface(
             status_code=422,
             detail="access_management_ui_enabled is available only for an access-role interface.",
         )
-    next_ipv4_method = normalize_ipv4_method(payload.get("ipv4_method", interface.ipv4_method))
-    requested_ipv6_enabled = payload.get("ipv6_enabled", interface.ipv6_enabled)
+    next_ipv4_method = normalize_ipv4_method(values.get("ipv4_method", interface.ipv4_method))
+    requested_ipv6_enabled = values.get("ipv6_enabled", interface.ipv6_enabled)
     if not isinstance(requested_ipv6_enabled, bool):
         raise HTTPException(status_code=422, detail="ipv6_enabled must be a boolean.")
     next_ipv6_enabled = requested_ipv6_enabled
     if next_ipv4_method == "dhcp" and next_role != "management":
         raise HTTPException(status_code=422, detail="IPv4 DHCP is available only for the management interface.")
-    disabling_ipv6 = "ipv6_enabled" in payload and not next_ipv6_enabled
-    requested_ipv6_cidr = str(payload.get("ipv6_cidr", "" if disabling_ipv6 else interface.ipv6_cidr) or "").strip()
-    requested_ipv6_gateway = str(payload.get("ipv6_gateway", "" if disabling_ipv6 else interface.ipv6_gateway) or "").strip()
+    disabling_ipv6 = "ipv6_enabled" in values and not next_ipv6_enabled
+    requested_ipv6_cidr = str(values.get("ipv6_cidr", "" if disabling_ipv6 else interface.ipv6_cidr) or "").strip()
+    requested_ipv6_gateway = str(values.get("ipv6_gateway", "" if disabling_ipv6 else interface.ipv6_gateway) or "").strip()
     if not next_ipv6_enabled and (requested_ipv6_cidr or requested_ipv6_gateway):
         raise HTTPException(status_code=422, detail="IPv6 CIDR and gateway must be blank while IPv6 is disabled.")
     for field in ("role", "mtu", "admin_state", "ip_cidr", "gateway", "ipv6_cidr", "ipv6_gateway", "ipv4_method", "ipv6_enabled"):
-        if field in payload:
+        if field in values:
             if field == "ipv4_method":
                 interface.ipv4_method = next_ipv4_method
                 if next_ipv4_method == "dhcp":
@@ -1316,9 +1322,9 @@ def update_physical_interface(
                     interface.ipv6_cidr = None
                     interface.ipv6_gateway = None
                 continue
-            if field in {"ip_cidr", "ipv6_cidr"} and payload[field]:
+            if field in {"ip_cidr", "ipv6_cidr"} and values[field]:
                 try:
-                    parsed = ip_interface(str(payload[field]).strip())
+                    parsed = ip_interface(str(values[field]).strip())
                 except ValueError as exc:
                     raise HTTPException(status_code=422, detail=f"{field} must be a valid address and prefix.") from exc
                 expected_version = 4 if field == "ip_cidr" else 6
@@ -1333,16 +1339,16 @@ def update_physical_interface(
                 continue
             if field in {"gateway", "ipv6_gateway"}:
                 if field == "ipv6_gateway":
-                    interface.ipv6_gateway = str(payload[field] or "").strip() or None
+                    interface.ipv6_gateway = str(values[field] or "").strip() or None
                 else:
-                    interface.gateway = str(payload[field] or "").strip() or None
+                    interface.gateway = str(values[field] or "").strip() or None
                 continue
-            setattr(interface, field, payload[field])
-            if field == "ipv6_cidr" and not str(payload[field] or "").strip():
+            setattr(interface, field, values[field])
+            if field == "ipv6_cidr" and not str(values[field] or "").strip():
                 interface.ipv6_gateway = None
     interface.access_management_ui_enabled = requested_management_ui
-    if "mode" in payload:
-        new_mode = normalize_interface_mode(payload["mode"])
+    if "mode" in values:
+        new_mode = normalize_interface_mode(values["mode"])
         vlan_count = db.scalar(select(func.count()).select_from(VlanInterface).where(VlanInterface.parent_interface == interface.name)) or 0
         if new_mode != "trunk" and vlan_count:
             raise HTTPException(
@@ -1416,7 +1422,7 @@ def enable_physical_interface(
         identity: Authenticated identity authorizing the operation.
         db: Active database session used by the operation.
     """
-    return update_physical_interface(name, {"admin_state": "up"}, identity, db)
+    return update_physical_interface(name, PhysicalInterfaceUpdate(admin_state="up"), identity, db)
 
 
 @router.post("/interfaces/physical/{name}/disable", response_model=PhysicalInterfaceResponse, tags=["Interfaces"], operation_id="disablePhysicalInterface")
@@ -1436,7 +1442,7 @@ def disable_physical_interface(
         identity: Authenticated identity authorizing the operation.
         db: Active database session used by the operation.
     """
-    return update_physical_interface(name, {"admin_state": "down"}, identity, db)
+    return update_physical_interface(name, PhysicalInterfaceUpdate(admin_state="down"), identity, db)
 
 
 @router.post("/interfaces/refresh", response_model=list[PhysicalInterfaceResponse], tags=["Interfaces"], operation_id="refreshPhysicalInterfaces")
@@ -3898,7 +3904,7 @@ def esx_storage_interfaces(db: Session) -> dict[str, StorageInterface]:
     """
     interfaces: dict[str, StorageInterface] = {}
     for row in db.execute(select(PhysicalInterface).order_by(PhysicalInterface.name)).scalars().all():
-        if row.oper_state == "missing" or row.mode == "trunk" or row.role not in {"access", "services", "storage", "route"}:
+        if row.oper_state == "missing" or row.mode == "trunk" or normalize_interface_role(row.role) not in {"access", "route"}:
             continue
         interfaces[row.name] = StorageInterface(
             row.name,
@@ -3906,7 +3912,7 @@ def esx_storage_interfaces(db: Session) -> dict[str, StorageInterface]:
             tuple(value for value in [row.ipv6_cidr] if value and row.ipv6_enabled),
         )
     for row in db.execute(select(VlanInterface).order_by(VlanInterface.name)).scalars().all():
-        if not row.enabled or row.role not in {"access", "services", "storage", "route"}:
+        if not row.enabled or normalize_interface_role(row.role) not in {"access", "route"}:
             continue
         interfaces[row.name] = StorageInterface(
             row.name,

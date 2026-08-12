@@ -68,6 +68,10 @@ The switch exposes the authenticated `/ui/management` browser plane without chan
 public-service eligibility. A management-role physical interface ignores the switch because it exposes management
 inherently. Network apply rejects a configuration that would leave no effective management UI listener.
 
+Physical-interface and VLAN role fields accept exactly `management`, `access`, `route`, or `unused`. The retired
+`services` and `storage` values are rejected on new requests. Appliance startup and settings-archive restore map those
+values to `access` only when reading compatible persisted state from an older Atlaso release.
+
 ## Scopes and authorization
 
 Each Swagger operation describes its required Atlaso scope or authentication posture. A token can call only operations

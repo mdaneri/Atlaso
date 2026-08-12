@@ -1009,7 +1009,7 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert service_worker.headers["cache-control"] == "no-cache"
     assert service_worker.headers["service-worker-allowed"] == "/ui/management/"
     assert "ATLASO_CACHE" in service_worker.text
-    assert "atlaso-management-pwa-v249" in service_worker.text
+    assert "atlaso-management-pwa-v250" in service_worker.text
     assert 'fetch(asset, { cache: "reload" })' in service_worker.text
     assert ".catch(() => undefined)" in service_worker.text
     assert 'request.mode === "navigate"' in service_worker.text
@@ -1027,7 +1027,7 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-8" in service_worker.text
     assert "/static/appliance-apply-polling.js?v=issue-294-2" in service_worker.text
     assert "/static/ui-routes.js?v=issue-287-1" in service_worker.text
-    assert "/static/app.js?v=routes-wan-wizards-308-3" in service_worker.text
+    assert "/static/app.js?v=network-ui-fixes-318-333-334-1" in service_worker.text
     assert "/static/terminal.js?v=issue-287-2" in service_worker.text
     assert "/static/pwa.js?v=issue-287-2" in service_worker.text
     assert "vcfdt-configuration-248-20260807-14" not in service_worker.text
@@ -1059,8 +1059,8 @@ def test_shared_ui_pattern_shell_and_wizard_contracts(client):
     base = (templates / "base.html").read_text(encoding="utf-8")
     public_base = (templates / "public_portal_base.html").read_text(encoding="utf-8")
     for shell, app_asset in (
-        (base, "/static/app.js?v=routes-wan-wizards-308-3"),
-        (public_base, "/static/app.js?v=routes-wan-wizards-308-3"),
+        (base, "/static/app.js?v=network-ui-fixes-318-333-334-1"),
+        (public_base, "/static/app.js?v=network-ui-fixes-318-333-334-1"),
         (base, "/static/appliance-apply-polling.js?v=issue-294-2"),
     ):
         assert shell.index("/static/vendor/tabulator/tabulator.min.js") < shell.index(
@@ -1082,7 +1082,7 @@ def test_shared_ui_pattern_shell_and_wizard_contracts(client):
     wizard_markup = "\n".join(
         path.read_text(encoding="utf-8") for path in wizard_templates
     )
-    assert len(re.findall(r"<form\b[^>]*\bdata-atlaso-wizard(?:\s|>)", wizard_markup)) == 10
+    assert len(re.findall(r"<form\b[^>]*\bdata-atlaso-wizard(?:\s|>)", wizard_markup)) == 6
     for marker in (
         "data-atlaso-wizard-step=",
         "data-atlaso-wizard-nav=",
@@ -1092,7 +1092,7 @@ def test_shared_ui_pattern_shell_and_wizard_contracts(client):
         "data-atlaso-wizard-submit",
         "data-atlaso-wizard-error",
     ):
-        assert wizard_markup.count(marker) >= 10
+        assert wizard_markup.count(marker) >= 6
 
     foundation = client.get("/static/ui-patterns.js")
     assert foundation.status_code == 200
@@ -1634,6 +1634,7 @@ def test_reported_template_accessibility_contracts():
         "appliance_update.html": '"appliance-update-source-form"',
         "automation.html": '"automation-script-create-form"',
         "dns.html": '"dns-domain-form"',
+        "routes_wan.html": '"routes-wan-wizard"',
     }.items():
         source = (templates / template_name).read_text(encoding="utf-8")
         assert "resource_wizard(" in source
@@ -1687,7 +1688,7 @@ def test_monitor_page_renders_and_data_endpoint(client):
     assert "swagger-link-icon" in page.text
     assert "/static/app.css?v=vlan-interface-wizard-304-2" in page.text
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-8" in page.text
-    assert "/static/app.js?v=routes-wan-wizards-308-3" in page.text
+    assert "/static/app.js?v=network-ui-fixes-318-333-334-1" in page.text
     app_css = client.get("/static/app.css")
     assert app_css.status_code == 200
     assert ".split-workspace > .wide-panel" in app_css.text
@@ -4504,6 +4505,96 @@ def test_settings_archive_round_trips_management_ipv6_gateway(client):
         assert restored.ipv6_gateway == "fe80::1"
 
 
+def test_settings_archive_maps_only_retired_network_roles_to_access(client):
+    """Verify backup export and restore preserve state while canonicalizing retired roles.
+
+    Args:
+        client: HTTP test client used to initialize isolated desired state.
+    """
+    from sqlalchemy import select
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import PhysicalInterface, VlanInterface
+    from atlaso.app.services.settings_archive import export_settings_archive, restore_settings_archive
+
+    with SessionLocal() as db:
+        physical = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == "eth2"))
+        vlan = db.scalar(select(VlanInterface).order_by(VlanInterface.id))
+        assert physical is not None
+        assert vlan is not None
+        physical.role = "services"
+        physical.admin_state = "down"
+        vlan.role = "storage"
+        vlan.enabled = False
+        physical_name = physical.name
+        vlan_name = vlan.name
+        db.commit()
+
+        archive = export_settings_archive(db, actor="test")
+        archived_physical = next(row for row in archive["data"]["physical_interfaces"] if row["name"] == physical_name)
+        archived_vlan = next(row for row in archive["data"]["vlan_interfaces"] if row["name"] == vlan_name)
+        assert archived_physical["role"] == "access"
+        assert archived_physical["admin_state"] == "down"
+        assert archived_vlan["role"] == "access"
+        assert archived_vlan["enabled"] is False
+
+        archived_physical["role"] = "services"
+        archived_vlan["role"] = "storage"
+        restore_settings_archive(db, archive)
+        db.commit()
+
+        restored_physical = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == physical_name))
+        restored_vlan = db.scalar(select(VlanInterface).where(VlanInterface.name == vlan_name))
+        assert restored_physical is not None
+        assert restored_vlan is not None
+        assert restored_physical.role == "access"
+        assert restored_physical.admin_state == "down"
+        assert restored_vlan.role == "access"
+        assert restored_vlan.enabled is False
+
+
+def test_startup_reconciles_retired_network_roles_once_without_state_drift(client):
+    """Verify startup migration is idempotent and changes only the retired role values.
+
+    Args:
+        client: HTTP test client used to initialize isolated desired state.
+    """
+    from sqlalchemy import func, select
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import AuditEvent, PhysicalInterface, Setting, VlanInterface
+    from atlaso.app.seed import NETWORK_ROLE_RECONCILIATION_SETTING_KEY, seed_initial_data
+
+    with SessionLocal() as db:
+        physical = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == "eth2"))
+        vlan = db.scalar(select(VlanInterface).order_by(VlanInterface.id))
+        assert physical is not None
+        assert vlan is not None
+        marker = db.scalar(select(Setting).where(Setting.key == NETWORK_ROLE_RECONCILIATION_SETTING_KEY))
+        assert marker is not None
+        db.delete(marker)
+        physical.role = "services"
+        physical.admin_state = "down"
+        vlan.role = "storage"
+        vlan.enabled = False
+        db.commit()
+
+        seed_initial_data(db)
+        db.refresh(physical)
+        db.refresh(vlan)
+        assert (physical.role, physical.admin_state) == ("access", "down")
+        assert (vlan.role, vlan.enabled) == ("access", False)
+        audit_count = db.scalar(
+            select(func.count()).select_from(AuditEvent).where(AuditEvent.action == "reconcile_network_roles")
+        )
+        assert audit_count == 1
+
+        seed_initial_data(db)
+        assert db.scalar(
+            select(func.count()).select_from(AuditEvent).where(AuditEvent.action == "reconcile_network_roles")
+        ) == audit_count
+
+
 def test_settings_archive_round_trips_authoritative_dns_policy(client):
     """Verify that settings archive round trips authoritative dns policy.
 
@@ -6698,7 +6789,13 @@ def test_routes_wan_policy_form_renders(client):
     ):
         assert f'id="{dialog_id}"' in response.text
     assert response.text.count("data-routes-wan-wizard=") == 4
-    assert response.text.count("data-atlaso-wizard>") >= 4
+    assert len(re.findall(r"<form\b[^>]*\bdata-atlaso-wizard(?:\s|>)", response.text)) == 4
+    assert response.text.count('class="vcf-sddc-wizard-rail"') >= 4
+    assert response.text.count('class="vcf-sddc-wizard-main"') >= 4
+    routes_template = Path("atlaso/app/templates/routes_wan.html").read_text(encoding="utf-8")
+    assert routes_template.count("resource_wizard(") == 4
+    assert "vcf-sddc-wizard-layout" not in routes_template
+    assert "confirm-modal-head" not in routes_template
     assert 'data-routes-wan-nat-source-mode' in response.text
     assert 'value="IPv4 masquerade" readonly' in response.text
     assert "Europe WAN" in response.text
@@ -6785,7 +6882,7 @@ def test_routes_wan_allows_ipv6_only_route_targets_but_not_nat_targets(client):
                 name="eth6",
                 mac_address="00:50:56:aa:bb:66",
                 mode="access",
-                role="services",
+                role="access",
                 ip_cidr="",
                 ipv6_cidr="fd00:66::1/64",
                 admin_state="up",
@@ -9223,7 +9320,7 @@ def test_firewall_preview_derives_dns_dhcp_rule_from_dhcp_scope_vlan(client):
                     parent_interface="eth2",
                     vlan_id=50,
                     ip_cidr="192.168.50.1/24",
-                    role="services",
+                    role="access",
                     enabled=True,
                 )
             )
@@ -9370,7 +9467,7 @@ def test_dns_listen_options_include_access_and_vlans_not_trunks(client):
                 parent_interface="eth1",
                 vlan_id=60,
                 ip_cidr="192.168.60.1/24",
-                role="services",
+                role="access",
                 enabled=True,
             )
         )
@@ -9391,7 +9488,7 @@ def test_dns_listen_options_include_access_and_vlans_not_trunks(client):
 
     assert page.status_code == 200
     assert "eth2 - access / access / 192.168.50.1" in page.text
-    assert "eth1.60 - VLAN 60 on eth1 / services / 192.168.60.1" in page.text
+    assert "eth1.60 - VLAN 60 on eth1 / access / 192.168.60.1" in page.text
     assert "eth1 - access / trunk" not in page.text
     assert "eth9 - unused / access / 192.168.90.1" not in page.text
     assert "eth1.70 - VLAN 70 on eth1 / unused / 192.168.70.1" not in page.text
@@ -13430,7 +13527,7 @@ def test_vcf_backups_listen_interfaces_include_vlans_not_trunks(client):
                 parent_interface="eth1",
                 vlan_id=60,
                 ip_cidr="192.168.60.1/24",
-                role="services",
+                role="access",
                 enabled=True,
             )
         )
@@ -13440,7 +13537,7 @@ def test_vcf_backups_listen_interfaces_include_vlans_not_trunks(client):
     page = client.get("/vcf-backups")
     assert page.status_code == 200
     assert "eth1 - access / trunk" not in page.text
-    assert "eth1.60 - VLAN 60 on eth1 / services / 192.168.60.1" in page.text
+    assert "eth1.60 - VLAN 60 on eth1 / access / 192.168.60.1" in page.text
 
 
 def test_vcf_backups_settings_autosave_and_status_api(client):
@@ -13818,6 +13915,7 @@ def test_physical_and_vlan_pages_render(client):
     assert 'data-atlaso-wizard-step="vlan"' in vlans.text
     assert 'data-atlaso-wizard-step="addressing"' in vlans.text
     assert 'data-atlaso-wizard-step="role"' in vlans.text
+    assert '<option value="access" selected>access</option>' in vlans.text
     assert 'data-atlaso-wizard-step="admin_state"' in vlans.text
     assert 'data-atlaso-wizard-step="review"' in vlans.text
     assert 'name="access_management_ui_enabled"' in vlans.text
@@ -13829,10 +13927,17 @@ def test_physical_and_vlan_pages_render(client):
     physical_management_ui_column = physical_table_js.split('title: "Management UI"', 1)[1].split(
         'title: "Link Type"', 1
     )[0]
+    physical_ipv6_column = physical_table_js.split('title: "IPv6"', 1)[1].split(
+        'title: "IPv6 CIDR"', 1
+    )[0]
+    assert "formatter: atlasoBooleanFormatter" in physical_ipv6_column
+    assert 'editor: "tickCross"' in physical_ipv6_column
+    assert 'formatter: "tickCross"' not in app_js
     assert "atlasoBooleanFormatter(cell)" in physical_management_ui_column
     assert '<span class="status-pill good">inherent</span>' in physical_management_ui_column
     assert "+ Add VLAN interface here" in app_js
     vlan_table_js = app_js.split("function initializeVlanInterfacesTable()", 1)[1].split("function initializeDnsRecordsTable()", 1)[0]
+    assert 'role: context?.role || "access"' in vlan_table_js
     vlan_management_ui_column = vlan_table_js.split('title: "Management UI"', 1)[1].split(
         'title: "Admin Up"', 1
     )[0]
@@ -14579,7 +14684,7 @@ def test_vlan_interface_create_edit_delete_and_apply(client):
             "vlan_id": "50",
             "ip_cidr": "192.168.50.1/24",
             "mtu": "1500",
-            "role": "services",
+            "role": "access",
             "enabled": "on",
             "csrf": csrf,
         },
@@ -14598,7 +14703,7 @@ def test_vlan_interface_create_edit_delete_and_apply(client):
             "ip_cidr": "192.168.50.1/24",
             "ipv6_cidr": "fd00:50::1/64",
             "mtu": "1600",
-            "role": "storage",
+            "role": "route",
             "enabled": "on",
             "csrf": csrf,
         },
@@ -14613,7 +14718,7 @@ def test_vlan_interface_create_edit_delete_and_apply(client):
         "ip_cidr": "192.168.50.1/24",
         "ipv6_cidr": "fd00:50::1/64",
         "mtu": 1600,
-        "role": "storage",
+        "role": "route",
         "enabled": True,
         "access_management_ui_enabled": False,
         "parent_missing": False,
@@ -14877,6 +14982,8 @@ def test_vlan_interface_requires_vlan_id_and_ip_cidr(client):
         ({"mtu": "575"}, "VLAN MTU must be between 576 and 9000."),
         ({"mtu": "9001"}, "VLAN MTU must be between 576 and 9000."),
         ({"role": "unsupported"}, "VLAN role must be one of"),
+        ({"role": "services"}, "VLAN role must be one of"),
+        ({"role": "storage"}, "VLAN role must be one of"),
     ],
 )
 def test_vlan_interface_wizard_returns_actionable_validation_errors(client, overrides, expected_message):
@@ -14927,7 +15034,7 @@ def test_vlan_interface_wizard_supports_ipv6_only_disabled_creation_and_duplicat
         "ip_cidr": "",
         "ipv6_cidr": "fd00:81::1/64",
         "mtu": "1500",
-        "role": "services",
+        "role": "access",
         "csrf": csrf,
     }
     created = client.post(
@@ -14979,7 +15086,7 @@ def test_vlan_interface_wizard_saves_management_ui_state_only_for_access_role(cl
 
     rejected = client.post(
         f"/vlan-interfaces/{created.json()['vlan']['id']}/edit",
-        data={**data, "role": "storage"},
+        data={**data, "role": "route"},
         headers={"X-Atlaso-Grid": "1", "Accept": "application/json"},
     )
     assert rejected.status_code == 422
@@ -16962,7 +17069,7 @@ def test_network_apply_config_includes_removed_vlan_targets_from_baseline():
                 "  vlan_id=20",
                 "  ip_cidr=192.168.20.1/24",
                 "  mtu=1500",
-                "  role=services",
+                "  role=access",
             ]
         )
     }
@@ -17013,7 +17120,7 @@ def test_network_apply_removal_targets_include_successful_apply_history(client):
             "  vlan_id=21",
             "  ip_cidr=192.168.21.1/24",
             "  mtu=1500",
-            "  role=services",
+            "  role=access",
         ]
     )
     current_preview = "\n".join(
@@ -17080,7 +17187,7 @@ def test_network_apply_history_retires_successfully_removed_vlans(client):
             "  vlan_id=21",
             "  ip_cidr=192.168.21.1/24",
             "  mtu=1500",
-            "  role=services",
+            "  role=access",
         ]
     )
     current_preview = "\n".join(

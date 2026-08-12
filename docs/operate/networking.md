@@ -16,9 +16,9 @@ preserving management access.
 
 This verified appliance view provides visual orientation before you begin.
 
-![Atlaso Physical Interfaces page showing inherent management UI on eth0 and the true glyph on access interface eth1.](../assets/screenshots/physical-interfaces-clean-desktop.webp)
+![Atlaso Physical Interfaces page showing false glyphs in the IPv6 column and canonical interface roles.](../assets/screenshots/physical-interfaces-clean-desktop.webp)
 
-*Figure: Physical Interfaces showing inherent management exposure and the standard Atlaso true glyph for access exposure.*
+*Figure: Physical Interfaces showing the standard Atlaso false glyph for disabled IPv6 and canonical network roles.*
 
 <!-- END GENERATED INTERFACE OVERVIEW -->
 
@@ -35,6 +35,21 @@ unreachable after apply.
 3. Define routes and WAN behavior with explicit interface and network boundaries.
 4. Review validation and rendered network previews.
 5. Submit the selected network units through [Appliance Apply](appliance-apply.md).
+
+### Assign an interface role
+
+Physical and VLAN interfaces share one role contract:
+
+- **management** identifies the dedicated management network. Only a physical interface can own management DHCP,
+  default gateways, and management policy routing.
+- **access** identifies an ordinary lab or service network. Access networks require explicit Routing Permissions before
+  Atlaso forwards traffic between them.
+- **route** identifies a lab routing network. Atlaso generates forwarding paths between route-role networks.
+- **unused** keeps an interface outside lab routing and service-listener eligibility.
+
+The retired **services** and **storage** choices no longer appear and cannot be submitted through the UI or API.
+During an upgrade, Atlaso maps either retired value to **access** once and preserves the interface's addresses, Admin
+Up state, enabled state, and management UI switch. Settings backup export and restore apply the same compatibility map.
 
 ### Choose where the management UI is available
 
@@ -77,10 +92,10 @@ the same intended interfaces.
   Route-role networks generate these paths automatically. Access networks remain blocked until an explicit permission
   is enabled. Management is never an eligible source or destination.
 
-Use the bottom add row in each tab to open the reviewed wizard. Double-click a saved row or use **Edit** in its row
-menu to update it. Each wizard retains entered values while moving backward, validates before Review, and saves only
-after the final add/update action. A saved row's **Enabled** value remains directly editable; this changes desired state
-only.
+Use the bottom add row in each tab to open the shared reviewed wizard. Double-click a saved row or use **Edit** in its
+row menu to update it. The standard step rail remains beside the form on wide screens and adapts to the narrow layout.
+Each wizard retains entered values while moving backward, validates before Review, and saves only after the final
+add/update action. A saved row's **Enabled** value remains directly editable; this changes desired state only.
 
 The **NAT** wizard creates explicit IPv4 masquerade rules. Choose Any, an existing Firewall source group, or IPv4 source
 CIDRs, then select an eligible IPv4-bearing access interface or enabled VLAN. Atlaso does not infer an outbound target
@@ -124,21 +139,21 @@ These captures show responsive layouts and useful operational states referenced 
 
 ### Physical interfaces
 
-![Responsive Atlaso Physical Interfaces page showing inherent management UI and the true glyph for access management UI.](../assets/screenshots/physical-interfaces-clean-responsive.webp)
+![Responsive Atlaso Physical Interfaces page showing false glyphs for disabled IPv6.](../assets/screenshots/physical-interfaces-clean-responsive.webp)
 
-*Figure: Physical Interfaces showing inherent management exposure and the standard Atlaso true glyph at the responsive viewport.*
+*Figure: Physical Interfaces showing the standard Atlaso IPv6 glyphs at the responsive viewport.*
 
 ### Routes Wan: Policies
 
-![Atlaso WAN policy wizard in a responsive viewport with the five reviewed configuration steps.](../assets/screenshots/routes-wan-policy-wizard-responsive.webp)
+![Atlaso WAN policy wizard using the standard responsive rail and five reviewed configuration steps.](../assets/screenshots/routes-wan-policy-wizard-responsive.webp)
 
-*Figure: WAN policy wizard in the verified responsive viewport.*
+*Figure: Shared WAN policy wizard in the verified responsive viewport.*
 
 ### Routes Wan: Routes
 
-![Atlaso static route wizard reviewing the destination, interface path, WAN Simulation selection, and enabled state.](../assets/screenshots/routes-wan-static-route-wizard-desktop.webp)
+![Atlaso static route wizard using the standard rail while reviewing the destination, interface path, WAN Simulation selection, and enabled state.](../assets/screenshots/routes-wan-static-route-wizard-desktop.webp)
 
-*Figure: Static route wizard review with the complete path and appliance-apply boundary.*
+*Figure: Shared static route wizard review with the complete path and appliance-apply boundary.*
 
 ### Routes and WAN simulation
 
@@ -152,12 +167,12 @@ These captures show responsive layouts and useful operational states referenced 
 
 ### VLAN interfaces
 
-![Atlaso VLAN Interfaces add wizard Role step with the Management UI switch.](../assets/screenshots/vlan-interfaces-clean-desktop.webp)
+![Atlaso VLAN Interfaces add wizard Role step showing access as the default role with the Management UI switch.](../assets/screenshots/vlan-interfaces-clean-desktop.webp)
 
-*Figure: VLAN Interfaces shared Role step showing access management UI desired state in the verified appliance desktop state.*
+*Figure: VLAN Interfaces shared Role step defaulting a new VLAN to the canonical access role.*
 
-![Atlaso VLAN Interfaces page in the clean-appliance responsive viewport.](../assets/screenshots/vlan-interfaces-clean-responsive.webp)
+![Responsive Atlaso VLAN Interfaces page backed by the canonical management, access, route, and unused roles.](../assets/screenshots/vlan-interfaces-clean-responsive.webp)
 
-*Figure: VLAN Interfaces in the verified clean-appliance responsive state.*
+*Figure: VLAN Interfaces with canonical role data in the verified responsive state.*
 
 <!-- END GENERATED ADDITIONAL SCREENSHOTS -->

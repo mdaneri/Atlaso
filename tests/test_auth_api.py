@@ -2,6 +2,8 @@
 
 from datetime import datetime, timedelta, timezone
 
+import pytest
+
 
 def create_token(client, scopes=None):
     """Create token.
@@ -216,6 +218,31 @@ def test_physical_interface_api_persists_optional_ipv6_enabled_state(client):
     assert off_link_gateway.status_code == 422
 
 
+def test_physical_interface_api_rejects_explicit_null_role(client):
+    """Verify PATCH omission remains valid while an explicit null role is rejected.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
+    token, _metadata = create_token(client, scopes=["read:interfaces", "write:interfaces"])
+    headers = {"Authorization": f"Bearer {token}"}
+    interfaces = client.get("/api/v1/interfaces/physical", headers=headers)
+    assert interfaces.status_code == 200, interfaces.text
+    management = next(row for row in interfaces.json() if row["role"] == "management")
+
+    rejected = client.patch(
+        f"/api/v1/interfaces/physical/{management['name']}",
+        headers=headers,
+        json={"role": None},
+    )
+
+    assert rejected.status_code == 422, rejected.text
+    refreshed = client.get("/api/v1/interfaces/physical", headers=headers)
+    assert refreshed.status_code == 200, refreshed.text
+    unchanged = next(row for row in refreshed.json() if row["name"] == management["name"])
+    assert unchanged["role"] == "management"
+
+
 def test_physical_interface_api_enforces_access_only_management_ui_flag(client):
     """Verify the API preserves management access during role conversion and rejects invalid flag use.
 
@@ -249,6 +276,42 @@ def test_physical_interface_api_enforces_access_only_management_ui_flag(client):
     )
     assert reverted.status_code == 200, reverted.text
     assert reverted.json()["access_management_ui_enabled"] is False
+
+
+@pytest.mark.parametrize("retired_role", ["services", "storage"])
+def test_interface_apis_reject_retired_network_roles(client, retired_role):
+    """Verify new physical-interface and VLAN requests accept only canonical roles.
+
+    Args:
+        client: Authenticated-capable application test client fixture.
+        retired_role: Retired role that new API requests must reject.
+    """
+    token, _metadata = create_token(
+        client,
+        scopes=["read:interfaces", "write:interfaces", "write:vlans"],
+    )
+    headers = {"Authorization": f"Bearer {token}"}
+    interfaces = client.get("/api/v1/interfaces/physical", headers=headers).json()
+    physical = next(row for row in interfaces if row["role"] == "access" and row["mode"] == "access")
+
+    physical_response = client.patch(
+        f"/api/v1/interfaces/physical/{physical['name']}",
+        headers=headers,
+        json={"role": retired_role},
+    )
+    vlan_response = client.post(
+        "/api/v1/vlans",
+        headers=headers,
+        json={
+            "parent_interface": "eth1",
+            "vlan_id": 333,
+            "ip_cidr": "192.0.2.1/24",
+            "role": retired_role,
+        },
+    )
+
+    assert physical_response.status_code == 422
+    assert vlan_response.status_code == 422
 
 
 def test_scope_restrictions_are_enforced(client):

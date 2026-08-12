@@ -1014,6 +1014,9 @@ status: current
 - WAN impairment mode is v1 interface/VLAN-level only. Do not expose a route-specific WAN mode until it is fully
   implemented in the helper; track that design in `docs/project/routing-wan-roadmap.md`.
 - Atlaso has no `wan` interface role and must not infer NAT or internet connectivity from an interface role.
+- Physical and VLAN interfaces share exactly four roles: `management`, `access`, `route`, and `unused`. New UI, API,
+  desired-state, and helper inputs reject retired or unknown roles. Bounded upgrade and settings-archive compatibility
+  maps only the retired `services` and `storage` values to `access` without changing any other interface state.
   `Routes & WAN Simulation` is the explicit routing/NAT/loss workflow, not an interface classification.
 - NAT v1 is explicit IPv4 masquerade only. Do not add destination NAT, port forwarding, automatic broad NAT, or
   non-reviewable NAT inferred only from interface role. Route-role networks may forward to other route-role networks by

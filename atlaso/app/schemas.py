@@ -3,7 +3,7 @@
 from datetime import datetime
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, StrictBool
 
 
 class ProblemDetails(BaseModel):
@@ -1341,6 +1341,25 @@ class EsxiInstallerIsoResponse(BaseModel):
     updated_at: Annotated[str, Field(description='UTC timestamp when the resource was last updated.')]
 
 
+NetworkRole = Literal["management", "access", "route", "unused"]
+
+
+class PhysicalInterfaceUpdate(BaseModel):
+    """Validated desired-state fields accepted for a physical-interface update."""
+
+    role: Annotated[NetworkRole, Field(default=None, description='Canonical interface purpose: management, access, route, or unused.')]
+    mode: Annotated[Literal["access", "trunk", "unused"] | None, Field(description='Desired physical link type.')] = None
+    ipv4_method: Annotated[Literal["static", "dhcp"] | None, Field(description='Desired IPv4 address assignment method.')] = None
+    ip_cidr: Annotated[str | None, Field(description='Desired IPv4 interface address and prefix, or an empty value to clear it.')] = None
+    gateway: Annotated[str | None, Field(description='Desired static IPv4 management gateway, or an empty value to clear it.')] = None
+    ipv6_enabled: Annotated[StrictBool | None, Field(description='Whether IPv6 desired state is enabled.')] = None
+    ipv6_cidr: Annotated[str | None, Field(description='Desired static IPv6 interface address and prefix, or an empty value for automatic IPv6.')] = None
+    ipv6_gateway: Annotated[str | None, Field(description='Desired static IPv6 management gateway, or an empty value to clear it.')] = None
+    mtu: Annotated[int | None, Field(description='Desired maximum transmission unit.', ge=576, le=9000)] = None
+    admin_state: Annotated[Literal["up", "down"] | None, Field(description='Desired physical-link administrative state.')] = None
+    access_management_ui_enabled: Annotated[StrictBool | None, Field(description='Whether this access-role, access-mode interface also exposes the management UI.')] = None
+
+
 class PhysicalInterfaceResponse(BaseModel):
     """Fields returned by the Atlaso physical interface API.
 
@@ -1366,8 +1385,7 @@ class PhysicalInterfaceResponse(BaseModel):
         mtu: Returned mtu value for this physical interface resource.
         admin_state: Returned admin state value for this physical interface resource.
         oper_state: Returned oper state value for this physical interface resource.
-        role: Primary compatibility role for the identity; authorization uses the complete roles
-            collection.
+        role: Canonical purpose assigned to this physical interface.
         mode: Returned mode value for this physical interface resource.
         access_management_ui_enabled: Whether this access interface also exposes the management UI.
         inventory_source: Returned inventory source value for this physical interface resource.
@@ -1397,7 +1415,7 @@ class PhysicalInterfaceResponse(BaseModel):
     mtu: Annotated[int, Field(description='Returned mtu value for this physical interface resource.')]
     admin_state: Annotated[str, Field(description='Returned admin state value for this physical interface resource.')]
     oper_state: Annotated[str, Field(description='Returned oper state value for this physical interface resource.')]
-    role: Annotated[str, Field(description='Primary compatibility role for the identity; authorization uses the complete roles collection.')]
+    role: Annotated[NetworkRole, Field(description='Canonical interface purpose: management, access, route, or unused.')]
     mode: Annotated[str, Field(description='Returned mode value for this physical interface resource.')]
     access_management_ui_enabled: Annotated[bool, Field(description='Whether this access-role physical interface also exposes the management UI. Management-role interfaces expose it inherently.')] = False
     inventory_source: Annotated[str, Field(description='Returned inventory source value for this physical interface resource.')]
@@ -1415,8 +1433,7 @@ class VlanCreate(BaseModel):
         ip_cidr: Validated network or address value for ip cidr in this vlan resource.
         ipv6_cidr: Validated network or address value for ipv6 cidr in this vlan resource.
         mtu: Requested mtu value for this vlan resource.
-        role: Primary compatibility role for the identity; authorization uses the complete roles
-            collection.
+        role: Canonical purpose assigned to this VLAN interface.
         enabled: Whether the resource is enabled in saved Atlaso state.
         access_management_ui_enabled: Whether this enabled access VLAN also exposes the management UI.
     """
@@ -1426,7 +1443,7 @@ class VlanCreate(BaseModel):
     ip_cidr: Annotated[str, Field(description='Validated network or address value for ip cidr in this vlan resource.')] = ""
     ipv6_cidr: Annotated[str, Field(description='Validated network or address value for ipv6 cidr in this vlan resource.')] = ""
     mtu: Annotated[int, Field(description='Requested mtu value for this vlan resource.')] = Field(default=1500, ge=576, le=9000)
-    role: Annotated[str, Field(description='Primary compatibility role for the identity; authorization uses the complete roles collection.')] = "access"
+    role: Annotated[NetworkRole, Field(description='Canonical VLAN purpose: management, access, route, or unused.')] = "access"
     enabled: Annotated[bool, Field(description='Whether the resource is enabled in saved Atlaso state.')] = True
     access_management_ui_enabled: Annotated[bool, Field(description='Whether this enabled access-role VLAN also exposes the management UI.')] = False
 

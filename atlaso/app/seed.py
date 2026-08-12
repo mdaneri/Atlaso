@@ -41,7 +41,12 @@ from atlaso.app.services.appliance_settings import APPLIANCE_DNS_RECORD_DESCRIPT
 from atlaso.app.services.local_users import DEFAULT_LOCAL_USER_SHELL, POWERSHELL_LOCAL_USER_SHELL, stage_user_os_password
 from atlaso.app.services.ldap import LDAP_DEFAULT_HOSTNAME, LDAP_STAGED_CONFIG_PATH
 from atlaso.app.services.dnsmasq import ensure_dns_authoritative_defaults, join_domains, split_domains, validate_dns_record
-from atlaso.app.services.networking import normalize_interface_mode, normalize_interface_role, normalize_ipv4_method
+from atlaso.app.services.networking import (
+    LEGACY_NETWORK_ROLE_REPLACEMENTS,
+    normalize_interface_mode,
+    normalize_interface_role,
+    normalize_ipv4_method,
+)
 from atlaso.app.services.ntp import (
     NTP_DEFAULT_HOSTNAME,
     NTP_STAGED_CONFIG_PATH,
@@ -59,6 +64,7 @@ VCF_BACKUP_USERNAME = VCF_BACKUP_DEFAULT_USERNAME
 VCF_DEPOT_USERNAME = VCF_DEPOT_DEFAULT_USERNAME
 SEED_EXAMPLES_SETTING_KEY = "seed.include_examples"
 NTP_NTS_RESTORATION_SETTING_KEY = "ntp.nts_restoration_v1"
+NETWORK_ROLE_RECONCILIATION_SETTING_KEY = "network.roles_canonical_v1"
 NTP_NTS_CANONICAL_DEFAULTS = {
     "time.cloudflare.com": {
         "ids": {"cloudflare-ntp", "cloudflare-nts"},
@@ -127,6 +133,37 @@ def restore_canonical_nts_defaults_once(db: Session, settings: NtpSettings) -> b
     return changed
 
 
+def reconcile_legacy_network_roles_once(db: Session) -> dict[str, int]:
+    """Replace retired network roles without changing any other interface state.
+
+    Args:
+        db: Active database session.
+    """
+    marker = db.execute(
+        select(Setting).where(Setting.key == NETWORK_ROLE_RECONCILIATION_SETTING_KEY)
+    ).scalar_one_or_none()
+    if marker is not None:
+        return {"physical_interfaces": 0, "vlan_interfaces": 0}
+
+    counts = {"physical_interfaces": 0, "vlan_interfaces": 0}
+    for key, model in (
+        ("physical_interfaces", PhysicalInterface),
+        ("vlan_interfaces", VlanInterface),
+    ):
+        for interface in db.execute(select(model)).scalars().all():
+            raw_role = str(interface.role or "").strip().lower()
+            replacement = LEGACY_NETWORK_ROLE_REPLACEMENTS.get(raw_role)
+            if replacement is None:
+                continue
+            interface.role = replacement
+            db.add(interface)
+            counts[key] += 1
+
+    db.add(Setting(key=NETWORK_ROLE_RECONCILIATION_SETTING_KEY, value="complete"))
+    db.flush()
+    return counts
+
+
 def seed_initial_data(db: Session, *, include_examples: bool = True, appliance_mode: bool = False) -> None:
     """Handle seed initial data.
 
@@ -137,6 +174,7 @@ def seed_initial_data(db: Session, *, include_examples: bool = True, appliance_m
     """
     ntp_defaults_restored = False
     ensure_appliance_instance_id(db)
+    reconciled_network_roles = reconcile_legacy_network_roles_once(db)
     if include_examples:
         seed_examples_setting = db.execute(select(Setting).where(Setting.key == SEED_EXAMPLES_SETTING_KEY)).scalar_one_or_none()
         if seed_examples_setting is not None and seed_examples_setting.value.strip().lower() in {"0", "false", "no"}:
@@ -588,6 +626,18 @@ def seed_initial_data(db: Session, *, include_examples: bool = True, appliance_m
             resource_type="ntpd",
             resource_id=str(ntp_settings.id),
             detail="Reconciled canonical NTS defaults.",
+        )
+    if any(reconciled_network_roles.values()):
+        record_audit(
+            db,
+            actor="system",
+            action="reconcile_network_roles",
+            resource_type="network",
+            resource_id="roles",
+            detail=(
+                f"Mapped {reconciled_network_roles['physical_interfaces']} physical interface and "
+                f"{reconciled_network_roles['vlan_interfaces']} VLAN interface retired roles to access."
+            ),
         )
 
 
