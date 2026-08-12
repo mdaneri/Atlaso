@@ -437,6 +437,57 @@ def test_physical_interface_update_rolls_back_interface_and_dependents(client, m
         assert dns.listen_address == "192.168.50.1"
 
 
+def test_physical_interface_api_preserves_partial_transition_compatibility(client):
+    """Verify controlling-field-only PATCH requests clear fields they make inapplicable.
+
+    Args:
+        client: Authenticated-capable application test client fixture.
+    """
+    from sqlalchemy import select
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import PhysicalInterface
+
+    with SessionLocal() as db:
+        interface = db.execute(
+            select(PhysicalInterface).where(PhysicalInterface.name == "eth0")
+        ).scalar_one()
+        interface.role = "management"
+        interface.mode = "access"
+        interface.ipv4_method = "static"
+        interface.ip_cidr = "192.168.167.10/24"
+        interface.gateway = "192.168.167.2"
+        interface.ipv6_enabled = True
+        interface.ipv6_cidr = "fd00:167::10/64"
+        interface.ipv6_gateway = "fd00:167::2"
+        db.commit()
+
+    token, _metadata = create_token(
+        client,
+        scopes=["read:interfaces", "write:interfaces"],
+    )
+    headers = {"Authorization": f"Bearer {token}"}
+    disable_ipv6 = client.patch(
+        "/api/v1/interfaces/physical/eth0",
+        headers=headers,
+        json={"ipv6_enabled": False},
+    )
+    assert disable_ipv6.status_code == 200, disable_ipv6.text
+    assert disable_ipv6.json()["ipv6_enabled"] is False
+    assert disable_ipv6.json()["ipv6_cidr"] is None
+    assert disable_ipv6.json()["ipv6_gateway"] is None
+
+    enable_dhcp = client.patch(
+        "/api/v1/interfaces/physical/eth0",
+        headers=headers,
+        json={"ipv4_method": "dhcp"},
+    )
+    assert enable_dhcp.status_code == 200, enable_dhcp.text
+    assert enable_dhcp.json()["ipv4_method"] == "dhcp"
+    assert enable_dhcp.json()["ip_cidr"] is None
+    assert enable_dhcp.json()["gateway"] is None
+
+
 def test_scope_restrictions_are_enforced(client):
     """Verify that scope restrictions are enforced.
 

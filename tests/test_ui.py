@@ -14168,6 +14168,39 @@ def test_physical_interface_edit_updates_desired_state(client):
         assert pxe_interface_record.address == "192.168.70.1"
 
 
+def test_interface_dns_alias_refresh_reports_real_changes_and_includes_esx_storage(
+    client,
+    monkeypatch,
+):
+    """Verify interface reconciliation ignores unchanged aliases and refreshes ESX Storage.
+
+    Args:
+        client: HTTP test client used to initialize the application database.
+        monkeypatch: Pytest fixture used to replace DNS alias reconcilers.
+    """
+    from atlaso.app import ui
+    from atlaso.app.database import SessionLocal
+
+    unchanged_helpers = [
+        "ensure_dns_for_kms",
+        "ensure_dns_for_ldap",
+        "ensure_dns_for_vcf_offline_depot",
+        "ensure_dns_for_vcf_registry",
+        "ensure_dns_for_ca_portal",
+        "ensure_dns_for_esxi_pxe",
+    ]
+    for helper_name in unchanged_helpers:
+        monkeypatch.setattr(ui, helper_name, lambda *_args, **_kwargs: "unchanged")
+    monkeypatch.setattr(
+        ui,
+        "ensure_dns_for_esx_storage",
+        lambda *_args, **_kwargs: "updated",
+    )
+
+    with SessionLocal() as db:
+        assert ui.refresh_interface_service_dns_aliases(db) == ["ESX Storage"]
+
+
 def test_physical_interface_edit_repairs_stale_scope_after_host_inventory_refresh(client):
     """Verify that physical interface edit repairs stale scope after host inventory refresh.
 

@@ -6315,7 +6315,7 @@ def refresh_interface_service_dns_aliases(db: Session, actor: str | None = None)
     changed: list[str] = []
 
     def mark(label: str, action: str | None) -> None:
-        if action and label not in changed:
+        if action not in {None, "unchanged", "conflict"} and label not in changed:
             changed.append(label)
 
     kms_settings = db.execute(select(KmsSettings)).scalar_one_or_none()
@@ -6381,6 +6381,15 @@ def refresh_interface_service_dns_aliases(db: Session, actor: str | None = None)
             esxi_boot,
             actor,
             previous_hostname=str(esxi_boot.get("hostname") or ""),
+        ),
+    )
+    esx_settings = get_esx_storage_settings_row(db)
+    mark(
+        "ESX Storage",
+        ensure_dns_for_esx_storage(
+            db,
+            actor,
+            previous_hostname=esx_settings.hostname,
         ),
     )
     return changed

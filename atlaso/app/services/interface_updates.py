@@ -632,10 +632,6 @@ def update_physical_interface_desired_state(
                 "IPv4 DHCP is available only for the management interface."
             )
         requested_ip = changes.get("ip_cidr", interface.ip_cidr)
-        if ipv4_method_value == "dhcp" and str(requested_ip or "").strip():
-            raise PhysicalInterfaceUpdateError(
-                "Clear IPv4 CIDR before switching the management interface to DHCP."
-            )
         ip_value = None
         if new_mode != "trunk" and ipv4_method_value == "static":
             ip_value = _parse_cidr(requested_ip, 4, "ip_cidr")
@@ -669,11 +665,20 @@ def update_physical_interface_desired_state(
         ipv6_enabled_value = bool(
             changes.get("ipv6_enabled", interface.ipv6_enabled)
         ) and new_mode != "trunk"
-        requested_ipv6_cidr = changes.get("ipv6_cidr", interface.ipv6_cidr)
+        disabling_ipv6 = new_mode == "trunk" or (
+            changes.get("ipv6_enabled") is False and "ipv6_enabled" in changes
+        )
+        requested_ipv6_cidr = changes.get(
+            "ipv6_cidr",
+            None if disabling_ipv6 else interface.ipv6_cidr,
+        )
         requested_ipv6_gateway = changes.get(
             "ipv6_gateway",
-            interface.ipv6_gateway,
+            None if disabling_ipv6 else interface.ipv6_gateway,
         )
+        if new_mode == "trunk":
+            requested_ipv6_cidr = None
+            requested_ipv6_gateway = None
         if not ipv6_enabled_value and (
             str(requested_ipv6_cidr or "").strip()
             or str(requested_ipv6_gateway or "").strip()
