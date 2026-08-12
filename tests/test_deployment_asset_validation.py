@@ -102,7 +102,7 @@ def test_inventory_rejects_nested_packer_asset(tmp_path: Path) -> None:
 
 
 def test_pre_commit_selector_covers_inventory_wide_packer_assets() -> None:
-    """Verify that direct future targets and nested rejected HCL enter the deployment hook."""
+    """Verify that future and nested Packer targets enter the deployment hook."""
     repository = Path(__file__).resolve().parents[1]
     config = (repository / ".pre-commit-config.yaml").read_text(encoding="utf-8")
     hook = config.split("- id: atlaso-deployment-asset-check", maxsplit=1)[1]
@@ -115,6 +115,27 @@ def test_pre_commit_selector_covers_inventory_wide_packer_assets() -> None:
     assert selector.search("image/common/systemd/atlaso-worker.service")
     assert selector.search("image/vmware-workstation/sudoers.d/atlaso-helper")
     assert selector.search("image/inventory-linux/wsl-build-contract.json") is None
+    assert re.search(r"^\s*always_run:\s*true\s*$", hook, flags=re.MULTILINE)
+
+
+def test_inventory_rejects_unrecognized_platform_deployment_tree(tmp_path: Path) -> None:
+    """Verify that a future platform requires one explicit platform-wide policy update."""
+    write_inventory(tmp_path)
+    packer = tmp_path / "image/kvm/atlaso-photon.pkr.hcl"
+    packer.parent.mkdir()
+    packer.write_text('source "example" "kvm" {}\n', encoding="utf-8")
+    systemd = tmp_path / "image/kvm/systemd"
+    systemd.mkdir()
+    (systemd / "atlaso.service").write_text("[Service]\nUnknown=yes\n", encoding="utf-8")
+    sudoers = tmp_path / "image/kvm/sudoers.d"
+    sudoers.mkdir()
+    (sudoers / "atlaso-helper").write_text("invalid\n", encoding="utf-8")
+
+    _, findings = inventory_assets(tmp_path)
+
+    assert any(finding.path == packer and "supported platform allowlist" in finding.message for finding in findings)
+    assert any(finding.path == systemd and "unsupported platform systemd directory" in finding.message for finding in findings)
+    assert any(finding.path == sudoers and "unsupported platform sudoers directory" in finding.message for finding in findings)
 
 
 def test_inventory_rejects_common_platform_systemd_collision(tmp_path: Path) -> None:

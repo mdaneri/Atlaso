@@ -140,6 +140,26 @@ def _files(directory: Path, findings: list[Finding]) -> tuple[Path, ...]:
 def inventory_assets(root: Path) -> tuple[Inventory, list[Finding]]:
     """Inventory every supported asset and reject unclassified deployment files."""
     findings: list[Finding] = []
+    required_packer = {root / relative for relative in PACKER_TEMPLATES}
+    known_systemd_directories = {root / relative for relative in SYSTEMD_DIRECTORIES}
+    known_sudoers_directories = {root / relative for relative in SUDOERS_DIRECTORIES}
+    for directory in sorted((root / "image").glob("*/systemd")):
+        if directory not in known_systemd_directories:
+            findings.append(
+                Finding(
+                    directory,
+                    "unsupported platform systemd directory; update platform, provisioning, and validation allowlists together",
+                )
+            )
+    for directory in sorted((root / "image").glob("*/sudoers.d")):
+        if directory not in known_sudoers_directories:
+            findings.append(
+                Finding(
+                    directory,
+                    "unsupported platform sudoers directory; update platform, provisioning, and validation allowlists together",
+                )
+            )
+
     packer: list[Path] = []
     for path in sorted((root / "image").rglob("*.pkr.*")):
         if path.is_symlink():
@@ -159,8 +179,14 @@ def inventory_assets(root: Path) -> tuple[Inventory, list[Finding]]:
                 Finding(path, "unsupported Packer asset type; add a validator or reviewed exclusion")
             )
             continue
+        if path not in required_packer:
+            findings.append(
+                Finding(
+                    path,
+                    "Packer target is absent from the supported platform allowlist; update platform and validation together",
+                )
+            )
         packer.append(path)
-    required_packer = tuple(root / path for path in PACKER_TEMPLATES)
     for path in required_packer:
         if not path.is_file() or path.is_symlink():
             findings.append(Finding(path, "required Packer template is missing"))
