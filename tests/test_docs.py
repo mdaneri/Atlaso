@@ -2,10 +2,11 @@
 
 import json
 import re
+import subprocess
 from pathlib import Path
 
 from scripts import generate_embedded_screenshot_sections, generate_screenshot_gallery
-from scripts.check_docs import validate_legacy_browser_routes, validate_screenshots
+from scripts.check_docs import markdown_sources, validate_legacy_browser_routes, validate_screenshots
 from scripts.overlay_docs_site import overlay
 
 
@@ -92,6 +93,25 @@ def test_checked_in_screenshot_manifest_is_valid() -> None:
 def test_checked_in_markdown_uses_canonical_browser_routes() -> None:
     """Verify current guidance does not promote temporary root-level browser paths."""
     assert validate_legacy_browser_routes() == []
+
+
+def test_browser_route_validation_covers_tracked_markdown() -> None:
+    """Verify route validation covers every tracked non-vendored Markdown source."""
+    root = Path(__file__).resolve().parents[1]
+    tracked = subprocess.run(
+        ["git", "ls-files", "--", "*.md"],
+        cwd=root,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.splitlines()
+    expected = {
+        (root / relative).resolve()
+        for relative in tracked
+        if not relative.startswith("third_party/")
+    }
+
+    assert {path.resolve() for path in markdown_sources()} == expected
 
 
 def test_documentation_check_rejects_retired_browser_routes(tmp_path: Path) -> None:

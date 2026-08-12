@@ -6,6 +6,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import re
+import subprocess
 import sys
 import tomllib
 from collections import Counter
@@ -53,6 +54,7 @@ LEGACY_BROWSER_ROUTE_ALLOWLIST = {
         "/vcf-trust/root-ca",
     },
 }
+MARKDOWN_ROUTE_EXCLUDED_PREFIXES = ("third_party/",)
 
 
 @dataclass(frozen=True)
@@ -95,11 +97,19 @@ def load_ui_routes() -> ModuleType:
 
 def markdown_sources() -> list[Path]:
     """Return every checked-in Markdown source covered by documentation validation."""
-    paths = [ROOT / "README.md", ROOT / "AGENTS.md", ROOT / "CONTRIBUTING.md"]
-    for directory in (DOCS, ROOT / "image", ROOT / "clients"):
-        if directory.is_dir():
-            paths.extend(directory.rglob("*.md"))
-    return sorted({path for path in paths if path.is_file()})
+    result = subprocess.run(
+        ["git", "ls-files", "-z", "--", "*.md"],
+        cwd=ROOT,
+        check=True,
+        capture_output=True,
+    )
+    relative_paths = result.stdout.decode("utf-8").split("\0")
+    return sorted(
+        ROOT / relative
+        for relative in relative_paths
+        if relative
+        and not relative.startswith(MARKDOWN_ROUTE_EXCLUDED_PREFIXES)
+    )
 
 
 def browser_route_candidates(line: str) -> list[tuple[str, str]]:
