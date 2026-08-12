@@ -1321,6 +1321,12 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
                 "automation script revision",
             )
 
+    for row_index, row in enumerate(data.get("settings", []), start=1):
+        if str(row["key"] or "") not in SAFE_SETTING_KEYS:
+            raise ValueError(
+                f"The settings archive row {row_index} in 'settings' has an unsupported setting key."
+            )
+
 
 def _validate_archive_database_relationships(db: Session, data: dict[str, list[dict[str, Any]]]) -> None:
     """Validate archive relationships to desired state retained during restore.

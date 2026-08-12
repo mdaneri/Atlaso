@@ -4685,6 +4685,10 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
     unresolved_esx_volume["data"]["esx_nfs_shares"].append(
         {"datastore_name": "orphaned-datastore", "volume_name": "missing-volume"}
     )
+    unsupported_setting = deepcopy(archive)
+    unsupported_setting["data"]["settings"].append(
+        {"key": "unsupported.setting", "value": "must-not-be-silently-dropped"}
+    )
 
     for candidate, message in [
         (invalid_collection, "must be a list"),
@@ -4693,6 +4697,7 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
         (unresolved_ldap_organization, "references an unknown LDAP organization"),
         (unresolved_oidc_client, "references an unknown OIDC client"),
         (unresolved_esx_volume, "references an unknown ESX storage volume"),
+        (unsupported_setting, "has an unsupported setting key"),
     ]:
         with pytest.raises(ValueError, match=message):
             archive_summary(candidate)
