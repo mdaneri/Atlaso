@@ -165,6 +165,39 @@ def test_inventory_rejects_missing_canonical_sudoers_fragment(tmp_path: Path) ->
     )
 
 
+def test_inventory_rejects_suffixed_sudoers_fragment(tmp_path: Path) -> None:
+    """Verify that backup or other suffixed sudoers files cannot enter validation."""
+    write_inventory(tmp_path)
+    unsupported = tmp_path / "image/hyperv/sudoers.d/atlaso-helper.bak"
+    unsupported.write_text("atlaso ALL=(root) /bin/true\n", encoding="utf-8")
+
+    _, findings = inventory_assets(tmp_path)
+
+    assert any(
+        finding.path == unsupported and "extensionless filenames" in finding.message
+        for finding in findings
+    )
+
+
+def test_inventory_rejects_symlinked_managed_asset(tmp_path: Path) -> None:
+    """Verify that a symlink cannot masquerade as a direct regular deployment file."""
+    write_inventory(tmp_path)
+    target = tmp_path / "outside.service"
+    target.write_text("[Service]\nExecStart=/bin/true\n", encoding="utf-8")
+    link = tmp_path / "image/hyperv/systemd/linked.service"
+    try:
+        link.symlink_to(target)
+    except OSError as error:
+        pytest.skip(f"symbolic links are unavailable: {error}")
+
+    _, findings = inventory_assets(tmp_path)
+
+    assert any(
+        finding.path == link and "unsupported symbolic link" in finding.message
+        for finding in findings
+    )
+
+
 def test_packer_validation_uses_wrapper_guard_and_template_directory(tmp_path: Path) -> None:
     """Verify that full validation mirrors the wrapper's required values and working directory."""
     template = tmp_path / "image/hyperv/atlaso-photon.pkr.hcl"

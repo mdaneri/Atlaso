@@ -117,6 +117,14 @@ def _files(directory: Path, findings: list[Finding]) -> tuple[Path, ...]:
         return ()
     files: list[Path] = []
     for path in sorted(directory.iterdir()):
+        if path.is_symlink():
+            findings.append(
+                Finding(
+                    path,
+                    "unsupported symbolic link; managed asset directories require direct regular files",
+                )
+            )
+            continue
         if path.is_file():
             files.append(path)
             continue
@@ -134,6 +142,9 @@ def inventory_assets(root: Path) -> tuple[Inventory, list[Finding]]:
     findings: list[Finding] = []
     packer: list[Path] = []
     for path in sorted((root / "image").rglob("*.pkr.*")):
+        if path.is_symlink():
+            findings.append(Finding(path, "unsupported symbolic link for Packer asset"))
+            continue
         relative = path.relative_to(root / "image")
         if len(relative.parts) != 2:
             findings.append(
@@ -151,7 +162,7 @@ def inventory_assets(root: Path) -> tuple[Inventory, list[Finding]]:
         packer.append(path)
     required_packer = tuple(root / path for path in PACKER_TEMPLATES)
     for path in required_packer:
-        if not path.is_file():
+        if not path.is_file() or path.is_symlink():
             findings.append(Finding(path, "required Packer template is missing"))
 
     systemd: list[Path] = []
@@ -166,7 +177,7 @@ def inventory_assets(root: Path) -> tuple[Inventory, list[Finding]]:
             systemd.append(path)
     for relative in SYSTEMD_ASSETS:
         path = root / relative
-        if not path.is_file():
+        if not path.is_file() or path.is_symlink():
             findings.append(Finding(path, "required systemd asset is missing"))
     common_directory = root / SYSTEMD_DIRECTORIES[0]
     common_names = {path.name for path in systemd if path.parent == common_directory}
@@ -183,10 +194,19 @@ def inventory_assets(root: Path) -> tuple[Inventory, list[Finding]]:
 
     sudoers: list[Path] = []
     for relative in SUDOERS_DIRECTORIES:
-        sudoers.extend(_files(root / relative, findings))
+        for path in _files(root / relative, findings):
+            if path.suffix:
+                findings.append(
+                    Finding(
+                        path,
+                        "unsupported sudoers asset type; fragments must use extensionless filenames",
+                    )
+                )
+                continue
+            sudoers.append(path)
     for relative in SUDOERS_FRAGMENTS:
         path = root / relative
-        if not path.is_file():
+        if not path.is_file() or path.is_symlink():
             findings.append(Finding(path, "required sudoers fragment is missing"))
 
     inventory = Inventory(
