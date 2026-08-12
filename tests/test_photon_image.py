@@ -1398,6 +1398,40 @@ def test_vmware_deploy_wheel_supports_password_backed_noninteractive_deploy():
     assert "`scp`/`ssh` key or agent workflow" in readme
 
 
+def test_vmware_password_deploy_omits_absent_optional_native_arguments():
+    """Verify skipped deployment assets do not rely on native empty-argument preservation."""
+    script = Path("scripts/windows/vmware/deploy-wheel.ps1").read_text(encoding="utf-8")
+    password_deploy = script.split("function Invoke-PasswordBackedDeploy", 1)[1].split(
+        "$resolvedRepoRoot = Resolve-RepoRoot", 1
+    )[0]
+    argument_construction = password_deploy.split("$deployArguments = @(", 1)[1]
+    mandatory_arguments = argument_construction.split("foreach ($optionalPathPair", 1)[0]
+    optional_arguments = argument_construction.split("foreach ($optionalPathPair", 1)[1]
+
+    for option in (
+        "--local-helper",
+        "--local-console-manager",
+        "--local-boot-installer",
+        "--local-boot-theme",
+        "--local-boot-background",
+        "--local-inventory-linux-package",
+        "--remote-helper",
+        "--remote-console-manager",
+        "--remote-boot-installer",
+        "--remote-boot-theme",
+        "--remote-boot-background",
+        "--remote-inventory-linux-package",
+    ):
+        assert option not in mandatory_arguments
+        assert option in optional_arguments
+
+    assert "if (-not $localPath -and -not $remotePath)" in optional_arguments
+    assert "continue" in optional_arguments
+    assert "if (-not $localPath -or -not $remotePath)" in optional_arguments
+    assert "Optional deployment paths must provide both" in optional_arguments
+    assert "$deployArguments += $optionalPathPair" in optional_arguments
+
+
 def test_lifecycle_hyperv_script_does_not_cleanup_without_explicit_flag():
     """Verify that lifecycle hyperv script does not cleanup without explicit flag."""
     script = Path("scripts/windows/hyperv/run-lifecycle-test.ps1").read_text(encoding="utf-8")
