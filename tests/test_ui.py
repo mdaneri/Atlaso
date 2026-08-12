@@ -5038,6 +5038,34 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
     enabled_kms_without_ca["data"]["kms_settings"][0]["listen_interface"] = "eth2"
     enabled_kms_without_ca["data"]["kms_settings"][0]["listen_address"] = "192.168.50.1"
     enabled_kms_without_ca["data"]["ca_settings"][0]["enabled"] = False
+    enabled_kms_without_ca["data"]["vsphere_key_providers"] = [
+        {
+            "id": "11111111-1111-4111-8111-111111111111",
+            "name": "CA dependency test provider",
+            "enabled": True,
+        }
+    ]
+    enabled_kms_without_provider = deepcopy(archive)
+    enabled_kms_without_provider["data"]["kms_settings"][0].update(
+        {
+            "enabled": True,
+            "listen_interface": "eth2",
+            "listen_address": "192.168.50.1",
+        }
+    )
+    kms_certificate = deepcopy(enabled_kms_without_provider["data"]["ca_certificates"][0])
+    kms_certificate.update(
+        {
+            "managed_owner": "kms:server",
+            "status": "issued",
+            "certificate_pem": "certificate",
+            "private_key_encrypted": "encrypted-key",
+        }
+    )
+    enabled_kms_without_provider["data"]["ca_certificates"].append(kms_certificate)
+    enabled_kms_without_provider["data"]["vsphere_key_providers"] = []
+    enabled_kms_without_provider["data"]["vsphere_trusted_vcenters"] = []
+    enabled_kms_without_provider["data"]["vsphere_trusted_vcenter_certificates"] = []
     enabled_oidc_without_dependencies = deepcopy(archive)
     enabled_oidc_without_dependencies["data"]["oidc_provider_settings"] = [
         {
@@ -5100,6 +5128,23 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
     invalid_esxi_host_mac["data"]["esxi_pxe_hosts"].append(
         {"hostname": "invalid-mac-host", "mac_address": "not-a-mac"}
     )
+    invalid_managed_package_source = deepcopy(archive)
+    photon_source = next(
+        row
+        for row in invalid_managed_package_source["data"]["update_sources"]
+        if row["kind"] == "photon"
+    )
+    invalid_managed_package_source["data"]["managed_packages"].append(
+        {
+            "ecosystem": "powershell",
+            "name": "InvalidRepositoryModule",
+            "policy": "latest",
+            "target_version": "",
+            "enabled": True,
+            "source_kind": photon_source["kind"],
+            "source_name": photon_source["name"],
+        }
+    )
     unsupported_setting = deepcopy(archive)
     unsupported_setting["data"]["settings"].append(
         {"key": "unsupported.setting", "value": "must-not-be-silently-dropped"}
@@ -5157,11 +5202,13 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
         (enabled_certificate_with_disabled_profile, "references a disabled CA profile"),
         (weak_ca_profile, "Certificate Authority state is invalid: .*RSA key size must be at least 2048"),
         (enabled_kms_without_ca, "enables KMS without an enabled CA"),
+        (enabled_kms_without_provider, "KMS trust state is invalid: At least one enabled provider"),
         (enabled_oidc_without_dependencies, "enables OIDC without an active signing key"),
         (enabled_oidc_with_mismatched_address, "has listener addresses not derived from its interfaces"),
         (enabled_oidc_with_invalid_port, "has an invalid HTTPS port"),
         (invalid_storage_state, "ESX Storage state is invalid: Datastore invalid-share must use NFS 3 or NFS 4.1"),
         (invalid_esxi_host_mac, "esxi_pxe_hosts' has an invalid MAC address"),
+        (invalid_managed_package_source, "managed package state is invalid: Choose a PowerShell repository"),
         (unsupported_setting, "has an unsupported setting key"),
     ]:
         with pytest.raises(ValueError, match=message):

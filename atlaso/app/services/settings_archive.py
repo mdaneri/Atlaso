@@ -128,11 +128,15 @@ from atlaso.app.services.oidc import (
     normalize_issuer_url,
 )
 from atlaso.app.services.routes_wan import validate_nat_source, validate_wan_state
-from atlaso.app.services.update_sources import UPDATE_SOURCE_KINDS
+from atlaso.app.services.update_sources import UPDATE_SOURCE_KINDS, validate_managed_package
 from atlaso.app.services.vcf_backups import VCF_BACKUP_DEFAULT_USERNAME, validate_vcf_backup_state
 from atlaso.app.services.vcf_offline_depot import validate_vcf_depot_state
 from atlaso.app.services.vcf_private_registry import validate_vcf_registry_state
-from atlaso.app.services.vsphere_key_providers import normalize_service_hostname
+from atlaso.app.services.vsphere_key_providers import (
+    normalize_service_hostname,
+    parse_public_certificate,
+    validate_provider_state,
+)
 
 ARCHIVE_SCHEMA_VERSION = 2
 LEGACY_ARCHIVE_SCHEMA_VERSION = 1
@@ -1829,6 +1833,13 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
             "The settings archive KMS state is invalid: KMS must retain bounded certificate and operation policy."
         )
     if kms_row.get("enabled", False):
+        if not any(
+            row.get("enabled", False)
+            for row in data.get("vsphere_key_providers", [])
+        ):
+            raise ValueError(
+                "The settings archive KMS trust state is invalid: At least one enabled provider with a current public client certificate is required."
+            )
         ca_row = data["ca_settings"][0]
         kms_certificate_ready = any(
             str(row.get("managed_owner") or "") == "kms:server"
@@ -1921,6 +1932,58 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
             trusted_vcenter_ids,
             "trusted vCenter",
         )
+    if kms_settings.enabled:
+        archived_providers = {
+            str(row["id"]): VsphereKeyProvider(
+                id=str(row["id"]),
+                name=str(row["name"]),
+                description=str(row.get("description") or ""),
+                enabled=bool(row.get("enabled", False)),
+            )
+            for row in data.get("vsphere_key_providers", [])
+        }
+        archived_vcenters: dict[str, VsphereTrustedVcenter] = {}
+        for row in data.get("vsphere_trusted_vcenters", []):
+            provider = archived_providers[str(row["provider_id"])]
+            trusted_vcenter = VsphereTrustedVcenter(
+                id=str(row["id"]),
+                provider_id=provider.id,
+                name=str(row["name"]),
+                hostname=str(row.get("hostname") or ""),
+                description=str(row.get("description") or ""),
+                enabled=bool(row.get("enabled", False)),
+            )
+            provider.trusted_vcenters.append(trusted_vcenter)
+            archived_vcenters[trusted_vcenter.id] = trusted_vcenter
+        for row in data.get("vsphere_trusted_vcenter_certificates", []):
+            fingerprint = str(row["fingerprint_sha256"]).replace(":", "").casefold()
+            parsed = parse_public_certificate(
+                str(row.get("certificate_pem") or ""),
+                require_current=False,
+            )
+            if parsed["fingerprint_sha256"] != fingerprint:
+                raise ValueError(
+                    "The settings archive KMS trust state is invalid: public certificate fingerprint does not match its PEM body."
+                )
+            archived_vcenters[str(row["trusted_vcenter_id"])].certificates.append(
+                VsphereTrustedVcenterCertificate(
+                    id=str(row["id"]),
+                    trusted_vcenter_id=str(row["trusted_vcenter_id"]),
+                    fingerprint_sha256=fingerprint,
+                    certificate_pem=str(parsed["certificate_pem"]),
+                    subject=str(parsed["subject"]),
+                    issuer=str(parsed["issuer"]),
+                    serial_number=str(parsed["serial_number"]),
+                    not_valid_before=parsed["not_valid_before"],
+                    not_valid_after=parsed["not_valid_after"],
+                    source="uploaded_public",
+                )
+            )
+        provider_errors = validate_provider_state(list(archived_providers.values()))
+        if provider_errors:
+            raise ValueError(
+                f"The settings archive KMS trust state is invalid: {provider_errors[0]}"
+            )
 
     organization_slugs = {str(row["slug"]) for row in data.get("ldap_organizations", [])}
     ldap_row = data["ldap_settings"][0]
@@ -2188,11 +2251,15 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
                 f"The settings archive ESX Storage state is invalid: {storage_errors[0]}"
             )
 
-    update_sources = {
-        (str(row["kind"]), str(row["name"]))
-        for row in data.get("update_sources", [])
+    archived_update_sources = {
+        (str(row["kind"]), str(row["name"])): UpdateSource(
+            id=row_index,
+            **_model_kwargs_with_scalar_defaults(UpdateSource, row),
+        )
+        for row_index, row in enumerate(data.get("update_sources", []), start=1)
         if str(row["kind"]) in UPDATE_SOURCE_KINDS
     }
+    update_sources = set(archived_update_sources)
     for row_index, row in enumerate(data.get("update_sources", []), start=1):
         if str(row["kind"] or "") not in UPDATE_SOURCE_KINDS:
             raise ValueError(
@@ -2208,6 +2275,19 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
             "update source",
             optional=True,
         )
+        package = ManagedPackage(
+            **_model_kwargs_with_scalar_defaults(
+                ManagedPackage,
+                row,
+                exclude={"source_id"},
+            )
+        )
+        package.source = archived_update_sources.get(source)
+        package_errors = validate_managed_package(package)
+        if package_errors:
+            raise ValueError(
+                f"The settings archive managed package state is invalid: {package_errors[0]}"
+            )
 
     profile_names = {str(row["name"]) for row in data.get("vcf_depot_download_profiles", [])}
     script_revisions: set[tuple[str, int]] = set()
