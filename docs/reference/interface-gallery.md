@@ -567,13 +567,13 @@ Figure: VCF Private Registry in the verified clean-appliance responsive state.
 
 Route: `/ui/management/vlan-interfaces`
 
-![Atlaso VLAN Interfaces wizard-backed grid showing access management UI desired state.](../assets/screenshots/vlan-interfaces-clean-desktop.webp)
+![Atlaso VLAN Interfaces add wizard Role step with the Management UI switch.](../assets/screenshots/vlan-interfaces-clean-desktop.webp)
 
-Figure: VLAN Interfaces read-only grid and add wizard in the verified appliance desktop state.
+Figure: VLAN Interfaces shared Role step showing access management UI desired state in the verified appliance desktop state.
 
-![Responsive Atlaso VLAN Interfaces wizard showing access management UI desired state.](../assets/screenshots/vlan-interfaces-clean-responsive.webp)
+![Atlaso VLAN Interfaces page in the clean-appliance responsive viewport.](../assets/screenshots/vlan-interfaces-clean-responsive.webp)
 
-Figure: VLAN Interfaces shared add wizard in the verified appliance responsive state.
+Figure: VLAN Interfaces in the verified clean-appliance responsive state.
 
 ## Vsphere Key Providers
 

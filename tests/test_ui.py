@@ -14562,6 +14562,7 @@ def test_vlan_interface_create_edit_delete_and_apply(client):
         "mtu": 1600,
         "role": "storage",
         "enabled": True,
+        "access_management_ui_enabled": False,
         "parent_missing": False,
     }
 
@@ -14893,6 +14894,45 @@ def test_vlan_interface_wizard_supports_ipv6_only_disabled_creation_and_duplicat
     )
     assert duplicate.status_code == 409
     assert duplicate.json() == {"detail": "VLAN eth1.81 already exists."}
+
+
+def test_vlan_interface_wizard_saves_management_ui_state_only_for_access_role(client):
+    """Verify management UI exposure is reviewed with the complete VLAN record.
+
+    Args:
+        client: Authenticated UI test client fixture.
+    """
+    login(client)
+    page = client.get("/vlan-interfaces")
+    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    data = {
+        "parent_interface": "eth1",
+        "vlan_id": "83",
+        "ip_cidr": "192.168.83.1/24",
+        "ipv6_cidr": "",
+        "mtu": "1500",
+        "role": "access",
+        "access_management_ui_enabled": "on",
+        "enabled": "on",
+        "csrf": csrf,
+    }
+    created = client.post(
+        "/vlan-interfaces",
+        data=data,
+        headers={"X-Atlaso-Grid": "1", "Accept": "application/json"},
+    )
+    assert created.status_code == 200
+    assert created.json()["vlan"]["access_management_ui_enabled"] is True
+
+    rejected = client.post(
+        f"/vlan-interfaces/{created.json()['vlan']['id']}/edit",
+        data={**data, "role": "storage"},
+        headers={"X-Atlaso-Grid": "1", "Accept": "application/json"},
+    )
+    assert rejected.status_code == 422
+    assert rejected.json() == {
+        "detail": "Management UI exposure is available only for an access-role VLAN."
+    }
 
 
 def test_vlan_interface_wizard_respects_read_only_permissions(client):
