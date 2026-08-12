@@ -77,14 +77,18 @@ from atlaso.app.models import (
     VsphereTrustedVcenterCertificate,
 )
 from atlaso.app.seed import NTP_NTS_RESTORATION_SETTING_KEY, SEED_EXAMPLES_SETTING_KEY, seed_initial_data, seed_update_sources
-from atlaso.app.services.dnsmasq import DNS_CONDITIONAL_FORWARDERS_SETTING_KEY, split_interfaces
+from atlaso.app.services.dnsmasq import DNS_CONDITIONAL_FORWARDERS_SETTING_KEY, split_addresses, split_interfaces
 from atlaso.app.services.esxi_pxe import (
     ESXI_PXE_CUSTOM_VARIABLES_KEY,
     host_variables_json,
     normalize_host_mac,
     normalize_host_variables,
 )
-from atlaso.app.services.firewall import FIREWALL_SOURCE_GROUPS_SETTING_KEY, firewall_source_group_state
+from atlaso.app.services.firewall import (
+    FIREWALL_SOURCE_GROUPS_SETTING_KEY,
+    firewall_source_group_state,
+    validate_firewall_rule,
+)
 from atlaso.app.services.local_users import LOCAL_USERS_PASSWORD_POLICY_KEY
 from atlaso.app.services.ldap import clear_ldap_recovery_payload, ensure_organization_bind_secret
 from atlaso.app.services.networking import normalize_interface_mode, normalize_interface_role, normalize_ipv4_method
@@ -1228,16 +1232,16 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
         ):
             ldap_target_names.add(name)
 
-    for section_name, target_names, require_listener in (
-        ("dns_settings", service_target_names, True),
-        ("ntp_settings", service_target_names, True),
-        ("ca_settings", service_target_names, False),
-        ("kms_settings", service_target_names, True),
-        ("ldap_settings", ldap_target_names, True),
-        ("oidc_provider_settings", ldap_target_names, True),
-        ("vcf_backup_settings", service_target_names, True),
-        ("vcf_private_registry_settings", service_target_names, True),
-        ("vcf_offline_depot_settings", service_target_names, True),
+    for section_name, target_names, require_listener, address_requirement in (
+        ("dns_settings", service_target_names, True, "authoritative"),
+        ("ntp_settings", service_target_names, True, "enabled"),
+        ("ca_settings", service_target_names, False, "never"),
+        ("kms_settings", service_target_names, True, "enabled"),
+        ("ldap_settings", ldap_target_names, True, "enabled"),
+        ("oidc_provider_settings", ldap_target_names, True, "enabled"),
+        ("vcf_backup_settings", service_target_names, True, "enabled"),
+        ("vcf_private_registry_settings", service_target_names, True, "enabled"),
+        ("vcf_offline_depot_settings", service_target_names, True, "enabled"),
     ):
         for row_index, row in enumerate(data.get(section_name, []), start=1):
             enabled = row.get("enabled", False)
@@ -1256,6 +1260,32 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
                 raise ValueError(
                     f"The settings archive row {row_index} in '{section_name}' has an ineligible listen interface."
                 )
+            address_required = address_requirement == "enabled" or (
+                address_requirement == "authoritative" and row.get("authoritative", False)
+            )
+            if address_required and not split_addresses(str(row.get("listen_address") or "")):
+                raise ValueError(
+                    f"The settings archive row {row_index} in '{section_name}' has no listen address."
+                )
+
+    for row_index, row in enumerate(data.get("firewall_rules", []), start=1):
+        candidate = FirewallRule(
+            name=str(row.get("name") or ""),
+            direction=str(row.get("direction") or "input"),
+            action=str(row.get("action") or "accept"),
+            protocol=str(row.get("protocol") or "tcp"),
+            source=str(row.get("source") or "any"),
+            destination=str(row.get("destination") or "any"),
+            destination_port=str(row.get("destination_port") or ""),
+            interface_name=str(row.get("interface_name") or ""),
+            priority=row.get("priority", 100),
+            enabled=row.get("enabled", True),
+            description=row.get("description"),
+        )
+        if validate_firewall_rule(candidate, firewall_source_groups):
+            raise ValueError(
+                f"The settings archive row {row_index} in 'firewall_rules' has an invalid source or destination."
+            )
 
     for row_index, row in enumerate(data.get("routes", []), start=1):
         enabled = row.get("enabled", True)
@@ -1531,6 +1561,27 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
             volume_names,
             "ESX storage volume",
         )
+        if not row.get("enabled", True):
+            continue
+        interface_name = str(row.get("interface_name") or "")
+        requested_families = {
+            family.strip().lower()
+            for family in str(row.get("address_families") or "").replace(",", "\n").splitlines()
+            if family.strip()
+        }
+        available_families = (
+            dhcp_target_families.get(interface_name, set())
+            if interface_name in service_target_names
+            else set()
+        )
+        if (
+            not requested_families
+            or not requested_families.issubset({"ipv4", "ipv6"})
+            or not requested_families.issubset(available_families)
+        ):
+            raise ValueError(
+                f"The settings archive row {row_index} in 'esx_nfs_shares' has an ineligible interface or address family."
+            )
 
     update_sources = {
         (str(row["kind"]), str(row["name"]))

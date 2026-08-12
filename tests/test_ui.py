@@ -4753,6 +4753,8 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
     enabled_missing_nat_source_group["data"]["nat_rules"][0]["source"] = "group:missing"
     disabled_missing_nat_source_group = deepcopy(enabled_missing_nat_source_group)
     disabled_missing_nat_source_group["data"]["nat_rules"][0]["enabled"] = False
+    missing_firewall_source_group = deepcopy(archive)
+    missing_firewall_source_group["data"]["firewall_rules"][0]["source"] = "group:missing"
     enabled_missing_routing_target = deepcopy(archive)
     enabled_missing_routing_target["data"]["routing_rules"].append(
         {
@@ -4794,6 +4796,10 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
         enabled_missing_service_targets.append(candidate)
     disabled_missing_service_target = deepcopy(enabled_missing_service_targets[0])
     disabled_missing_service_target["data"]["dns_settings"][0]["enabled"] = False
+    enabled_missing_listen_address = deepcopy(archive)
+    enabled_missing_listen_address["data"]["ntp_settings"][0]["enabled"] = True
+    enabled_missing_listen_address["data"]["ntp_settings"][0]["listen_interface"] = "eth2"
+    enabled_missing_listen_address["data"]["ntp_settings"][0]["listen_address"] = ""
     empty_required_field = deepcopy(archive)
     empty_required_field["data"]["physical_interfaces"][0]["name"] = "   "
     unresolved_ldap_organization = deepcopy(archive)
@@ -4807,6 +4813,19 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
     unresolved_esx_volume = deepcopy(archive)
     unresolved_esx_volume["data"]["esx_nfs_shares"].append(
         {"datastore_name": "orphaned-datastore", "volume_name": "missing-volume"}
+    )
+    enabled_missing_esx_share_target = deepcopy(archive)
+    enabled_missing_esx_share_target["data"]["esx_storage_volumes"].append(
+        {"name": "archive-volume"}
+    )
+    enabled_missing_esx_share_target["data"]["esx_nfs_shares"].append(
+        {
+            "datastore_name": "archive-share",
+            "volume_name": "archive-volume",
+            "interface_name": "missing-storage-target",
+            "address_families": "ipv4",
+            "enabled": True,
+        }
     )
     cyclic_ldap_groups = deepcopy(archive)
     cyclic_ldap_groups["data"]["ldap_organizations"].append(
@@ -4863,6 +4882,7 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
         (enabled_missing_nat_target, "has an ineligible outbound interface"),
         (enabled_ipv6_only_nat_target, "has an ineligible outbound interface"),
         (enabled_missing_nat_source_group, "has an invalid source"),
+        (missing_firewall_source_group, "has an invalid source or destination"),
         (enabled_missing_routing_target, "has an ineligible interface"),
         (enabled_identical_routing_targets, "has identical source and destination interfaces"),
         (enabled_missing_dhcp_target, "has an ineligible bind interface"),
@@ -4871,10 +4891,12 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
             (candidate, "has an ineligible listen interface")
             for candidate in enabled_missing_service_targets
         ),
+        (enabled_missing_listen_address, "has no listen address"),
         (empty_required_field, "has empty required field 'name'"),
         (unresolved_ldap_organization, "references an unknown LDAP organization"),
         (unresolved_oidc_client, "references an unknown OIDC client"),
         (unresolved_esx_volume, "references an unknown ESX storage volume"),
+        (enabled_missing_esx_share_target, "has an ineligible interface or address family"),
         (cyclic_ldap_groups, "contains cyclic LDAP group membership"),
         (enabled_certificate_with_disabled_profile, "references a disabled CA profile"),
         (unsupported_setting, "has an unsupported setting key"),
