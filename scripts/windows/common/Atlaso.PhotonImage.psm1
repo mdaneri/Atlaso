@@ -35,6 +35,13 @@ function Get-AtlasoHostIpv4DnsServers {
     return @($servers | Select-Object -Unique)
 }
 
+function ConvertTo-AtlasoUtf8Base64 {
+    param([AllowEmptyString()][string]$Value)
+
+    $bytes = [System.Text.UTF8Encoding]::new($false).GetBytes($Value)
+    return [System.Convert]::ToBase64String($bytes)
+}
+
 function New-AtlasoPhotonKickstart {
     param(
         [Parameter(Mandatory = $true)][string]$Path,
@@ -77,10 +84,13 @@ function New-AtlasoPhotonKickstart {
         'systemd'
     )
 
+    # Keep the credential out of the nested shell grammar. The installer decodes
+    # one complete chpasswd record directly to stdin without evaluating its bytes.
+    $buildCredentialBase64 = ConvertTo-AtlasoUtf8Base64 -Value "${BuildUsername}:$BuildPassword`n"
     $postInstall = @(
         '#!/bin/sh',
         "useradd -m -G sudo -s /bin/bash $BuildUsername || true",
-        "printf '%s:%s\n' '$BuildUsername' '$BuildPassword' | chpasswd",
+        "printf '%s' '$buildCredentialBase64' | base64 -d | chpasswd",
         'systemctl disable sshd.socket',
         'systemctl enable sshd.service',
         "echo '$BuildUsername ALL=(ALL) NOPASSWD:ALL' >/etc/sudoers.d/90-atlaso-build",

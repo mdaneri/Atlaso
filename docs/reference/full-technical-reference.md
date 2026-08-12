@@ -164,6 +164,11 @@ pwsh -ExecutionPolicy Bypass `
   -BootstrapAdminPassword "<initial-atlaso-admin-password>"
 ```
 
+The supported Hyper-V and VMware Workstation wrappers treat the Photon build password as opaque data. They encode the
+credential before inserting it into generated kickstart or Packer shell commands, then decode it directly to standard
+input. Printable passwords containing apostrophes and common PowerShell or POSIX shell metacharacters therefore retain
+their exact credential bytes without becoming shell syntax. Caller-side PowerShell quoting still applies.
+
 Run Packer from an elevated PowerShell 7 session or as a user in the `Hyper-V Administrators` group. Prepare the Atlaso
 Hyper-V management network before building:
 
