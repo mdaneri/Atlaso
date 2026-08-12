@@ -1850,7 +1850,7 @@ def web_terminal_check(client: HttpClient, args: argparse.Namespace) -> dict[str
     Raises:
         LifecycleError: If the operation encounters an invalid state.
     """
-    management_status, management_body, _headers = client.request("GET", "/terminal")
+    management_status, management_body, _headers = client.request("GET", "/ui/management/terminal")
     if management_status != 200 or 'data-terminal-available="true"' not in management_body:
         raise LifecycleError(f"Management web terminal was not ready after apply: HTTP {management_status}")
 
@@ -1867,7 +1867,7 @@ def web_terminal_check(client: HttpClient, args: argparse.Namespace) -> dict[str
     site_address = str(ip_interface(args.site_cidr).ip)
     site_client = HttpClient(f"https://{site_address}")
     ui_login(site_client, args)
-    site_status, site_body, _site_headers = site_client.request("GET", "/terminal")
+    site_status, site_body, _site_headers = site_client.request("GET", "/ui/public/terminal")
     if site_status != 200 or 'data-terminal-available="true"' not in site_body:
         raise LifecycleError(f"Selected extra-interface terminal route was not ready: HTTP {site_status}")
     csrf_match = re.search(r'data-csrf="([^"]+)"', site_body)
@@ -1883,9 +1883,16 @@ def web_terminal_check(client: HttpClient, args: argparse.Namespace) -> dict[str
     ticket_payload = json.loads(ticket_body)
     if ticket_payload.get("websocket_path") != "/terminal/ws" or not ticket_payload.get("ticket"):
         raise LifecycleError("Web terminal ticket response was incomplete.")
-    dashboard_status, _dashboard_body, _dashboard_headers = site_client.request("GET", "/dashboard", follow_redirects=False)
+    dashboard_status, _dashboard_body, _dashboard_headers = site_client.request(
+        "GET",
+        "/ui/management/dashboard",
+        follow_redirects=False,
+    )
     if dashboard_status != 404:
-        raise LifecycleError(f"Extra-interface terminal listener exposed /dashboard with HTTP {dashboard_status}")
+        raise LifecycleError(
+            "Extra-interface terminal listener exposed /ui/management/dashboard "
+            f"with HTTP {dashboard_status}"
+        )
     return {
         "management_status": management_status,
         "extra_interface": args.site_interface,

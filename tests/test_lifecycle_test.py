@@ -323,6 +323,70 @@ def test_full_lifecycle_plan_includes_passwordless_web_terminal_acceptance():
     )
 
 
+def test_web_terminal_check_probes_canonical_browser_planes(monkeypatch):
+    """Verify lifecycle coverage exercises canonical management and public browser paths.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+    """
+    lifecycle = load_lifecycle_module()
+    calls: list[tuple[str, str, bool | None]] = []
+
+    class ManagementClient:
+        """Represent the management-plane lifecycle client."""
+
+        def request(self, method, path, **kwargs):  # type: ignore[no-untyped-def]
+            """Return the ready management terminal page."""
+            calls.append((method, path, kwargs.get("follow_redirects")))
+            assert path == "/ui/management/terminal"
+            return 200, '<main data-terminal-available="true"></main>', {}
+
+    class SiteClient:
+        """Represent the selected public-listener lifecycle client."""
+
+        def request(self, method, path, **kwargs):  # type: ignore[no-untyped-def]
+            """Return the expected public terminal, protocol, and isolation responses."""
+            calls.append((method, path, kwargs.get("follow_redirects")))
+            if method == "GET" and path == "/ui/public/terminal":
+                return 200, '<main data-terminal-available="true" data-csrf="csrf-323"></main>', {}
+            if method == "POST" and path == "/terminal/tickets":
+                assert kwargs["form"] == {"csrf": "csrf-323"}
+                return 200, '{"websocket_path": "/terminal/ws", "ticket": "ticket-323"}', {}
+            if method == "GET" and path == "/ui/management/dashboard":
+                assert kwargs["follow_redirects"] is False
+                return 404, "not found", {}
+            raise AssertionError(f"unexpected request {method} {path}")
+
+    site_client = SiteClient()
+    monkeypatch.setattr(lifecycle, "HttpClient", lambda base_url: site_client)
+    monkeypatch.setattr(lifecycle, "ui_login", lambda client, args: None)
+    monkeypatch.setattr(
+        lifecycle,
+        "ssh_command",
+        lambda *args, **kwargs: {
+            "returncode": 0,
+            "stdout": '{"enabled": true, "ca_public_key": "web-terminal-ca.pub"}',
+            "stderr": "",
+            "command": "redacted",
+        },
+    )
+
+    evidence = lifecycle.web_terminal_check(
+        ManagementClient(),
+        argparse.Namespace(
+            appliance_ssh_host="192.0.2.10",
+            site_cidr="192.0.2.32/24",
+            site_interface="eth2",
+        ),
+    )
+
+    assert evidence["dashboard_status"] == 404
+    assert ("GET", "/ui/management/terminal", None) in calls
+    assert ("GET", "/ui/public/terminal", None) in calls
+    assert ("GET", "/ui/management/dashboard", False) in calls
+    assert ("POST", "/terminal/tickets", None) in calls
+
+
 def test_release_database_identity_uses_privileged_appliance_command(monkeypatch):
     """Verify that release database identity uses privileged appliance command.
 
