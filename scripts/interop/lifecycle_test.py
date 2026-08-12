@@ -1850,7 +1850,7 @@ def web_terminal_check(client: HttpClient, args: argparse.Namespace) -> dict[str
     Raises:
         LifecycleError: If the operation encounters an invalid state.
     """
-    management_status, management_body, _headers = client.request("GET", "/terminal")
+    management_status, management_body, _headers = client.request("GET", "/ui/management/terminal")
     if management_status != 200 or 'data-terminal-available="true"' not in management_body:
         raise LifecycleError(f"Management web terminal was not ready after apply: HTTP {management_status}")
 
@@ -1867,7 +1867,7 @@ def web_terminal_check(client: HttpClient, args: argparse.Namespace) -> dict[str
     site_address = str(ip_interface(args.site_cidr).ip)
     site_client = HttpClient(f"https://{site_address}")
     ui_login(site_client, args)
-    site_status, site_body, _site_headers = site_client.request("GET", "/terminal")
+    site_status, site_body, _site_headers = site_client.request("GET", "/ui/public/terminal")
     if site_status != 200 or 'data-terminal-available="true"' not in site_body:
         raise LifecycleError(f"Selected extra-interface terminal route was not ready: HTTP {site_status}")
     csrf_match = re.search(r'data-csrf="([^"]+)"', site_body)
@@ -1883,9 +1883,16 @@ def web_terminal_check(client: HttpClient, args: argparse.Namespace) -> dict[str
     ticket_payload = json.loads(ticket_body)
     if ticket_payload.get("websocket_path") != "/terminal/ws" or not ticket_payload.get("ticket"):
         raise LifecycleError("Web terminal ticket response was incomplete.")
-    dashboard_status, _dashboard_body, _dashboard_headers = site_client.request("GET", "/dashboard", follow_redirects=False)
+    dashboard_status, _dashboard_body, _dashboard_headers = site_client.request(
+        "GET",
+        "/ui/management/dashboard",
+        follow_redirects=False,
+    )
     if dashboard_status != 404:
-        raise LifecycleError(f"Extra-interface terminal listener exposed /dashboard with HTTP {dashboard_status}")
+        raise LifecycleError(
+            "Extra-interface terminal listener exposed /ui/management/dashboard "
+            f"with HTTP {dashboard_status}"
+        )
     return {
         "management_status": management_status,
         "extra_interface": args.site_interface,
@@ -2673,14 +2680,14 @@ def apply_units(client: HttpClient, units: list[str], args: argparse.Namespace) 
     attempts = 0
     for attempt in range(2):
         attempts = attempt + 1
-        status, body, _headers = client.request("GET", "/appliance-apply")
+        status, body, _headers = client.request("GET", "/ui/management/appliance-apply")
         if status >= 400:
-            raise LifecycleError(f"GET /appliance-apply failed with HTTP {status}")
+            raise LifecycleError(f"GET /ui/management/appliance-apply failed with HTTP {status}")
         csrf = extract_csrf(body)
         form: list[tuple[str, Any]] = [("csrf", csrf)]
         form.extend(("selected_units", unit) for unit in units)
         if "esx_storage" in units:
-            review = client.json_request("GET", "/appliance-apply/review")
+            review = client.json_request("GET", "/ui/management/appliance-apply/review")
             esx_unit = next((item for item in review.get("units", []) if item.get("id") == "esx_storage"), None)
             format_volumes = list((esx_unit or {}).get("format_volumes") or [])
             if format_volumes and not args.confirm_esx_storage_format:
@@ -2696,7 +2703,7 @@ def apply_units(client: HttpClient, units: list[str], args: argparse.Namespace) 
                 )
         status, response_body, _headers = client.request(
             "POST",
-            "/appliance-apply",
+            "/ui/management/appliance-apply",
             form=form,
             headers={"Accept": "application/json"},
             follow_redirects=False,

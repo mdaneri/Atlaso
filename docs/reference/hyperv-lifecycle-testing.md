@@ -155,7 +155,7 @@ The lifecycle runner records structured evidence in `test-results/hyperv-lifecyc
   on the management front door, and HTTPS `/openapi.json` reachability with the locally issued appliance certificate
 - passwordless admin web-terminal desired state on management plus the selected SiteA interface, applied OpenSSH user-CA
   trust, a ready terminal page and one-use ticket on both listeners, and proof that the extra listener returns 404 for
-  `/dashboard`
+  `/ui/management/dashboard`
 - VCF Backups SFTP desired state, `vcf-backup` Local Users password staging and OS sync, global `vcf_backups` appliance
   apply, OpenSSH drop-in host state, and a client-side SFTP probe from Client A to the SiteA appliance address
 - VCF Offline Depot desired state, selected `vcf-depot` Local Users password staging, browser-session login, curl and
@@ -173,7 +173,7 @@ The lifecycle runner records structured evidence in `test-results/hyperv-lifecyc
 - settings backup export, appliance redeploy, settings restore, restored desired-state apply, downloaded Client A
   certificate comparison, and restored CA archive certificate comparison unless `-SkipBackupRestoreTest` is used
 
-The runner submits only global `/appliance-apply` units. It does not call service-specific apply routes.
+The runner submits only global `/ui/management/appliance-apply` units. It does not call service-specific apply routes.
 
 ESX Storage acceptance records the global job IDs, stable disk identity and fingerprint, generated family names, direct
 A/AAAA answers, `exportfs -v`, listening TCP sockets, nftables `ip saddr`/`ip6 saddr` rules, ESX datastore listings, and
@@ -194,7 +194,8 @@ Keep the test stack split by ownership:
   VHDX discovery, switch/NAT preparation, VM cleanup safety, reserved VM protections, and mocked Hyper-V cmdlet
   behavior.
 - Python appliance and guest assertions must remain pytest-covered. The `scripts/interop/lifecycle_test.py` runner owns
-  HTTP/API flows, global `/appliance-apply`, result JSON evidence, SSH probes, DNS/DHCP checks, firewall/routing/NAT
+  HTTP/API flows, global `/ui/management/appliance-apply`, result JSON evidence, SSH probes, DNS/DHCP checks,
+  firewall/routing/NAT
   assertions, and client-side connectivity checks.
 
 Use Pester tags for destructive or host-mutating scenarios. Normal Pester tests should mock Hyper-V cmdlets; real

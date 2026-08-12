@@ -30,7 +30,7 @@ security boundary comes from the narrow checked-in protocol allowlist rather tha
 - never include raw TTLV, key bytes, wrapped blobs, credentials, or private material in logs and errors; and
 - use deterministic protocol errors without falling back to a broader KMIP implementation.
 
-The service runs as the unprivileged `atlaso-kmip` identity. Only `/appliance-apply` may ask the constrained
+The service runs as the unprivileged `atlaso-kmip` identity. Only `/ui/management/appliance-apply` may ask the constrained
 `atlaso-helper` to install configuration, certificates, systemd units, ownership, and firewall state.
 
 ## Assets and trust boundaries

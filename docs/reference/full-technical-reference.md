@@ -223,7 +223,8 @@ apply unit after the helper-backed command path is reviewed. Build disposable de
 Firewall desired state is nftables-backed. The image installs nftables and boots with management access to SSH, HTTPS,
 and the Atlaso web UI.
 
-Appliance Update is a separate runtime-maintenance workflow from global `/appliance-apply`. Repository-style sources
+Appliance Update is a separate runtime-maintenance workflow from global `/ui/management/appliance-apply`.
+Repository-style sources
 cover Photon/tdnf, PowerShell Gallery or internal PowerShell repositories, and signed Atlaso release channels; the
 retired Python Libraries and independent wheel streams are not available. Update work is queued to
 `atlaso-worker.service`; the same worker runs Automation schedules, managed scripts, and VCF Offline Depot downloads.
@@ -416,7 +417,8 @@ Set/reset this account from `Users`, then apply Local Users before exposing the 
 
 ## Vaults
 
-Vaults at `/vaults` store only VCF and ESX passwords. Entries contain a lowercase dotted key, description, optional
+Vaults at `/ui/management/vaults` store only VCF and ESX passwords. Entries contain a lowercase dotted key,
+description, optional
 username, encrypted password, and up to nine credential-free HTTP, HTTPS, SSH, or SFTP URIs. Passwords remain masked in
 the management UI until an administrator explicitly uses the audited, no-cache, 15-second reveal control.
 
@@ -442,7 +444,7 @@ guidance.
 
 ## VCF Helper
 
-VCF Helper at `/vcf-helper` generates DNS desired state, deploys SDDC Manager OVAs found under
+VCF Helper at `/ui/management/vcf-helper` generates DNS desired state, deploys SDDC Manager OVAs found under
 `/mnt/atlaso-vcf-offline-depot/PROD/COMP/SDDC_MANAGER_VCF`, imports the active Atlaso root CA into VCF 9 appliances, and
 configures an existing VCF Installer or SDDC Manager to use the applied local VCF Offline Depot. OVA deployment and
 remote depot configuration are monitored background jobs; target and depot credentials remain transient. DNS creation
@@ -791,8 +793,10 @@ Managed LDAP provides an OpenLDAP 2.6 service for VCF Automation 9.1 while Atlas
 VCF organization receives an isolated suffix and LMDB database, organization-local users and nested groups, and a
 read-only bind identity whose secret is encrypted with `ATLASO_SECRETS_KEY`. Organizations use DNS-style tabs, users and
 groups use editable Tabulator grids with add rows and context menus, and operators can generate counted synthetic
-users/groups with complete profiles, memberships, and one-time passwords for lab testing. The `/ldap` page owns service
-settings and directory data; the Managed LDAP tile in `/vcf-helper` owns manual bundles and guided VCF configuration;
+users/groups with complete profiles, memberships, and one-time passwords for lab testing. The
+`/ui/management/ldap` page owns service
+settings and directory data; the Managed LDAP tile in `/ui/management/vcf-helper` owns manual bundles and guided VCF
+configuration;
 Backup / Restore owns the separate passphrase-encrypted LDAP recovery workflow. CA-managed LDAPS is enabled by default
 with a configurable port; optional plaintext LDAP has its own configurable port and is disabled by default. External
 listeners are limited to addressed non-management access or route interfaces and enabled VLANs, while privileged
@@ -801,7 +805,8 @@ reconciliation uses local `ldapi:///` with SASL EXTERNAL. VCF configuration incl
 confirmation as its trust decision, but Atlaso does not import groups or assign VCF roles. See
 [Managed LDAP for VCF Automation 9.1](../services/managed-ldap.md).
 
-The dedicated `/openid-connect` page contains Atlaso's constrained OIDC provider in Provider, Clients, Signing Keys,
+The dedicated `/ui/management/openid-connect` page contains Atlaso's constrained OIDC provider in Provider, Clients,
+Signing Keys,
 Group Mappings, and Stable Subjects tabs in the main column while its editable settings remain in the standard
 right-hand service column. Provider readiness appears inline rather than in a separate validation frame. The
 service-owned hostname defaults to
@@ -931,7 +936,7 @@ The MVP follows these boundaries:
   mutating helper actions run through `systemd-run` from inside the helper so they are not trapped in the web service's
   read-only `/etc` mount namespace.
 - Subprocess calls must use argument arrays, not arbitrary shell strings.
-- The global `/appliance-apply` workflow is the only appliance enforcement path.
+- The global `/ui/management/appliance-apply` workflow is the only appliance enforcement path.
 
 ## ESX Storage
 
@@ -940,7 +945,8 @@ apply enforces the central VMware CEIP choice for installed VCF PowerCLI and VCF
 optional products are skipped. Appliance Update reapplies the central choice after managed `VCF.PowerCLI` installs or
 updates.
 
-ESX Storage lives at `/esx-storage` under VCF Workflows and publishes ESX 9.x datastores over NFS 3 or NFS 4.1. IPv4 and
+ESX Storage lives at `/ui/management/esx-storage` under VCF Workflows and publishes ESX 9.x datastores over NFS 3 or
+NFS 4.1. IPv4 and
 IPv6 are equal v1 connection families: each share selects one addressed interface/VLAN and enables IPv4, IPv6, or both
 with matching VMkernel client allowlists. Atlaso generates explicit family-specific A/AAAA target names, copyable ESXCLI
 and PowerCLI connection commands, the canonical `nfs.<domain>` alias, PTR-capable app-owned host records, and equivalent
@@ -1133,7 +1139,7 @@ image/hyperv/
 
 Use the existing scripts to create switches, create a VM from the Packer VHDX, start the VM, attach test NICs, and run
 smoke checks. The first appliance smoke pass should verify SSH, `systemctl status atlaso`, web UI login,
-`/openapi.json`, `/api/v1/dashboard`, reboot persistence, and dry-run `/appliance-apply` job output.
+`/openapi.json`, `/api/v1/dashboard`, reboot persistence, and dry-run `/ui/management/appliance-apply` job output.
 
 For a normal Hyper-V test appliance, use the explicit Hyper-V wrapper:
 
