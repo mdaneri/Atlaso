@@ -4619,6 +4619,22 @@ def test_settings_restore_preflights_complete_vcf_service_state(client):
             )
         )
 
+        registry_without_ca = deepcopy(archive)
+        registry_without_ca["data"]["ca_settings"][0]["enabled"] = False
+        registry_without_ca["data"]["vcf_private_registry_settings"][0].update(
+            {
+                "enabled": True,
+                "listen_interface": "eth2",
+                "listen_address": "192.168.50.1",
+            }
+        )
+        candidates.append(
+            (
+                registry_without_ca,
+                "VCF Private Registry state is invalid: Upload a CA bundle or enable the local CA",
+            )
+        )
+
         invalid_depot = deepcopy(archive)
         invalid_depot["data"]["vcf_offline_depot_settings"][0]["config_path"] = "relative/path"
         candidates.append(
@@ -4690,6 +4706,7 @@ def test_settings_restore_rejects_malformed_archive_without_clearing_staged_ldap
         client: HTTP test client used to exercise the Atlaso application.
     """
     import json
+    from copy import deepcopy
 
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import LdapRecoveryArchive
@@ -4712,6 +4729,8 @@ def test_settings_restore_rejects_malformed_archive_without_clearing_staged_ldap
         staged_id = staged.id
         LDAP_PENDING_RECOVERY_PAYLOADS[staged_id] = b"pending recovery payload"
 
+    invalid_scalar_archive = deepcopy(archive)
+    invalid_scalar_archive["data"]["ldap_settings"][0]["port"] = "636"
     archive["data"]["physical_interfaces"] = {"unexpected": "object"}
     page = client.get("/backup-restore")
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
@@ -4726,11 +4745,24 @@ def test_settings_restore_rejects_malformed_archive_without_clearing_staged_ldap
             )
         },
     )
+    invalid_scalar = client.post(
+        "/backup-restore/restore",
+        data={"csrf": csrf},
+        files={
+            "archive_file": (
+                "atlaso-settings.json",
+                json.dumps(invalid_scalar_archive).encode("utf-8"),
+                "application/json",
+            )
+        },
+    )
 
     try:
         assert restored.status_code == 400
         assert "physical_interfaces" in restored.text
         assert "must be a list" in restored.text
+        assert invalid_scalar.status_code == 400
+        assert "field &#39;port&#39; must be an integer" in invalid_scalar.text
         with SessionLocal() as db:
             assert db.get(LdapRecoveryArchive, staged_id) is not None
         assert LDAP_PENDING_RECOVERY_PAYLOADS[staged_id] == b"pending recovery payload"
@@ -4879,6 +4911,8 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
     ] = '["missing-terminal-target"]'
     invalid_network_state = deepcopy(archive)
     invalid_network_state["data"]["physical_interfaces"][0]["mtu"] = 1
+    invalid_scalar_type = deepcopy(archive)
+    invalid_scalar_type["data"]["ldap_settings"][0]["port"] = "636"
     invalid_appliance_config_path = deepcopy(archive)
     invalid_appliance_config_path["data"]["appliance_settings"][0]["config_path"] = "relative/path"
     enabled_web_terminal_without_https = deepcopy(archive)
@@ -4892,6 +4926,8 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
     invalid_route_destination["data"]["routes"][0]["destination_cidr"] = "not-a-cidr"
     invalid_firewall_policy = deepcopy(archive)
     invalid_firewall_policy["data"]["firewall_settings"][0]["default_input_policy"] = "reject"
+    invalid_kms_port = deepcopy(archive)
+    invalid_kms_port["data"]["kms_settings"][0]["port"] = 0
     empty_required_field = deepcopy(archive)
     empty_required_field["data"]["physical_interfaces"][0]["name"] = "   "
     unresolved_ldap_organization = deepcopy(archive)
@@ -5076,12 +5112,14 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
         (enabled_invalid_listen_address, "has an invalid listen address"),
         (enabled_missing_web_terminal_target, "select an ineligible Web Terminal interface"),
         (invalid_network_state, "network state is invalid: .* MTU must be between 576 and 9000"),
+        (invalid_scalar_type, "field 'port' must be an integer"),
         (invalid_appliance_config_path, "Appliance Settings are invalid: Appliance settings config path must be absolute"),
         (enabled_web_terminal_without_https, "enables Web Terminal without Management UI HTTPS"),
         (invalid_ntp_port, "NTP settings are invalid: NTP port must be UDP 123"),
         (invalid_dns_domain, "DNS settings are invalid: DNS domain bad domain must not contain whitespace"),
         (invalid_route_destination, "Routes and WAN state is invalid: Route not-a-cidr is not a valid destination CIDR"),
         (invalid_firewall_policy, "Firewall state is invalid: .*Default input policy"),
+        (invalid_kms_port, "KMS state is invalid: KMS port must be between 1 and 65535"),
         (empty_required_field, "has empty required field 'name'"),
         (unresolved_ldap_organization, "references an unknown LDAP organization"),
         (enabled_ldap_without_organization, "enables LDAP without an LDAP organization"),

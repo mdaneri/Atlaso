@@ -107,6 +107,7 @@ from atlaso.app.services.firewall import (
 )
 from atlaso.app.services.local_users import LOCAL_USERS_PASSWORD_POLICY_KEY
 from atlaso.app.services.esx_storage import StorageInterface, validate_storage_state
+from atlaso.app.services.kms import KMS_DEFAULT_CONFIG_PATH, KMS_DEFAULT_DATABASE_PATH
 from atlaso.app.services.ldap import (
     clear_ldap_recovery_payload,
     ensure_organization_bind_secret,
@@ -130,6 +131,7 @@ from atlaso.app.services.update_sources import UPDATE_SOURCE_KINDS
 from atlaso.app.services.vcf_backups import VCF_BACKUP_DEFAULT_USERNAME, validate_vcf_backup_state
 from atlaso.app.services.vcf_offline_depot import validate_vcf_depot_state
 from atlaso.app.services.vcf_private_registry import validate_vcf_registry_state
+from atlaso.app.services.vsphere_key_providers import normalize_service_hostname
 
 ARCHIVE_SCHEMA_VERSION = 2
 LEGACY_ARCHIVE_SCHEMA_VERSION = 1
@@ -1763,6 +1765,42 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
         )
 
     kms_row = data["kms_settings"][0]
+    kms_settings = KmsSettings(
+        **_model_kwargs_with_scalar_defaults(KmsSettings, kms_row)
+    )
+    if kms_settings.backend != "atlaso-kmip":
+        raise ValueError(
+            "The settings archive KMS state is invalid: KMS backend must be atlaso-kmip."
+        )
+    if not 1 <= kms_settings.port <= 65535:
+        raise ValueError(
+            "The settings archive KMS state is invalid: KMS port must be between 1 and 65535."
+        )
+    try:
+        normalized_kms_hostname = normalize_service_hostname(kms_settings.hostname)
+    except ValueError as exc:
+        raise ValueError(f"The settings archive KMS state is invalid: {exc}") from exc
+    if normalized_kms_hostname != kms_settings.hostname:
+        raise ValueError(
+            "The settings archive KMS state is invalid: KMS hostname must be normalized."
+        )
+    if kms_settings.database_path != KMS_DEFAULT_DATABASE_PATH:
+        raise ValueError(
+            "The settings archive KMS state is invalid: KMS database path must use the fixed appliance path."
+        )
+    if kms_settings.config_path != KMS_DEFAULT_CONFIG_PATH:
+        raise ValueError(
+            "The settings archive KMS state is invalid: KMS config path must use the fixed appliance path."
+        )
+    if (
+        not kms_settings.ca_certificate_path.startswith("/")
+        or not kms_settings.require_client_cert
+        or kms_settings.allow_register
+        or kms_settings.allow_destroy
+    ):
+        raise ValueError(
+            "The settings archive KMS state is invalid: KMS must retain bounded certificate and operation policy."
+        )
     if kms_row.get("enabled", False):
         ca_row = data["ca_settings"][0]
         kms_certificate_ready = any(
@@ -2273,8 +2311,10 @@ def _validate_archive_database_relationships(db: Session, data: dict[str, list[d
             str(row.get("name") or "")
             for row in data.get("physical_interfaces", []) + data.get("vlan_interfaces", [])
         },
-        ca_bundle_source="local-ca",
-        ca_bundle_available=True,
+        ca_bundle_source=(
+            "local-ca" if data["ca_settings"][0].get("enabled", False) else "uploaded"
+        ),
+        ca_bundle_available=bool(data["ca_settings"][0].get("enabled", False)),
     )
     if registry_errors:
         raise ValueError(
@@ -2375,6 +2415,30 @@ def _validate_archive_row(
     """
     if not isinstance(row, dict):
         raise ValueError(f"The settings archive row {row_index} in '{section_name}' must be an object.")
+    model = ARCHIVE_SECTION_MODELS.get(section_name)
+    if model is not None:
+        for column in model.__table__.columns:
+            value = row.get(column.name)
+            if value is None or isinstance(column.type, SqlDateTime):
+                continue
+            try:
+                expected_type = column.type.python_type
+            except NotImplementedError:
+                continue
+            valid_type = (
+                type(value) is expected_type
+                if expected_type in {bool, int, str}
+                else isinstance(value, expected_type)
+            )
+            if not valid_type:
+                type_label = {
+                    bool: "a boolean",
+                    int: "an integer",
+                    str: "a string",
+                }.get(expected_type, f"a {expected_type.__name__}")
+                raise ValueError(
+                    f"The settings archive row {row_index} in '{section_name}' field '{column.name}' must be {type_label}."
+                )
     missing_fields = sorted(field for field in required_fields if field not in row or row[field] is None)
     if missing_fields:
         raise ValueError(
