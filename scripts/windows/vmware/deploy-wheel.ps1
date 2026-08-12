@@ -447,25 +447,36 @@ finally:
             '--host', $HostAddress,
             '--user', $UserName,
             '--local-wheel', $LocalWheelPath,
-            '--local-helper', $LocalHelperPath,
-            '--local-console-manager', $LocalConsoleManagerPath,
-            '--local-boot-installer', $LocalBootInstallerPath,
-            '--local-boot-theme', $LocalBootThemePath,
-            '--local-boot-background', $LocalBootBackgroundPath,
-            '--local-inventory-linux-package', $LocalInventoryLinuxPackagePath,
             '--local-script', $LocalScriptPath,
             '--remote-dir', $RemoteDirectoryPath,
             '--remote-wheel', $RemoteWheel,
-            '--remote-helper', $RemoteHelper,
-            '--remote-console-manager', $RemoteConsoleManager,
-            '--remote-boot-installer', $RemoteBootInstaller,
-            '--remote-boot-theme', $RemoteBootTheme,
-            '--remote-boot-background', $RemoteBootBackground,
-            '--remote-inventory-linux-package', $RemoteInventoryLinuxPackage,
             '--remote-script', $RemoteScript,
             '--timeout', "$TimeoutSeconds",
             '--poll', "$PollSeconds"
         )
+        foreach ($optionalPathPair in @(
+            @('--local-helper', $LocalHelperPath, '--remote-helper', $RemoteHelper),
+            @('--local-console-manager', $LocalConsoleManagerPath, '--remote-console-manager', $RemoteConsoleManager),
+            @('--local-boot-installer', $LocalBootInstallerPath, '--remote-boot-installer', $RemoteBootInstaller),
+            @('--local-boot-theme', $LocalBootThemePath, '--remote-boot-theme', $RemoteBootTheme),
+            @('--local-boot-background', $LocalBootBackgroundPath, '--remote-boot-background', $RemoteBootBackground),
+            @(
+                '--local-inventory-linux-package',
+                $LocalInventoryLinuxPackagePath,
+                '--remote-inventory-linux-package',
+                $RemoteInventoryLinuxPackage
+            )
+        )) {
+            $localPath = [string]$optionalPathPair[1]
+            $remotePath = [string]$optionalPathPair[3]
+            if (-not $localPath -and -not $remotePath) {
+                continue
+            }
+            if (-not $localPath -or -not $remotePath) {
+                throw "Optional deployment paths must provide both $($optionalPathPair[0]) and $($optionalPathPair[2])."
+            }
+            $deployArguments += $optionalPathPair
+        }
         if ($ResetVaultEntryTable) {
             $deployArguments += '--reset-vault-entries'
         }

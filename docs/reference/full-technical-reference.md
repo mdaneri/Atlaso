@@ -1266,6 +1266,8 @@ password, it preserves the original `scp`/`ssh` key or agent workflow. Helper sy
 is installed outside the Python virtualenv and is not replaced by `pip install`. If the app takes longer to import after
 reinstalling the wheel, increase the readiness wait with `-ReadinessTimeoutSeconds 120`. Use
 `-SkipInventoryLinuxSync` only when deliberately leaving the appliance's existing Inventory Linux package unchanged.
+The password-backed helper omits skipped optional asset arguments instead of passing empty native-command values, so
+these skip switches behave consistently in Windows PowerShell and PowerShell 7 native-argument modes.
 
 Pass `-IncludeLabNetworkAdapters` only after `VMnet2`, `VMnet3`, and `VMnet4` exist for the SiteA, WAN/SiteB, and
 trunk-like validation networks.
