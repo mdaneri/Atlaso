@@ -4749,6 +4749,10 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
     enabled_ipv6_only_nat_target["data"]["nat_rules"][0]["outbound_interface"] = "ipv6-only"
     disabled_missing_nat_target = deepcopy(enabled_missing_nat_target)
     disabled_missing_nat_target["data"]["nat_rules"][0]["enabled"] = False
+    enabled_missing_nat_source_group = deepcopy(archive)
+    enabled_missing_nat_source_group["data"]["nat_rules"][0]["source"] = "group:missing"
+    disabled_missing_nat_source_group = deepcopy(enabled_missing_nat_source_group)
+    disabled_missing_nat_source_group["data"]["nat_rules"][0]["enabled"] = False
     enabled_missing_routing_target = deepcopy(archive)
     enabled_missing_routing_target["data"]["routing_rules"].append(
         {
@@ -4804,6 +4808,43 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
     unresolved_esx_volume["data"]["esx_nfs_shares"].append(
         {"datastore_name": "orphaned-datastore", "volume_name": "missing-volume"}
     )
+    cyclic_ldap_groups = deepcopy(archive)
+    cyclic_ldap_groups["data"]["ldap_organizations"].append(
+        {"name": "Cycle test", "slug": "cycle-test", "suffix_dn": "dc=cycle,dc=test"}
+    )
+    cyclic_ldap_groups["data"]["ldap_groups"].extend(
+        [
+            {"organization_slug": "cycle-test", "name": "first"},
+            {"organization_slug": "cycle-test", "name": "second"},
+        ]
+    )
+    cyclic_ldap_groups["data"]["ldap_group_memberships"].extend(
+        [
+            {
+                "organization_slug": "cycle-test",
+                "group_name": "first",
+                "member_type": "group",
+                "member_name": "second",
+            },
+            {
+                "organization_slug": "cycle-test",
+                "group_name": "second",
+                "member_type": "group",
+                "member_name": "first",
+            },
+        ]
+    )
+    enabled_certificate_with_disabled_profile = deepcopy(archive)
+    certificate_profile_name = enabled_certificate_with_disabled_profile["data"]["ca_certificates"][0][
+        "profile_name"
+    ]
+    certificate_profile = next(
+        profile
+        for profile in enabled_certificate_with_disabled_profile["data"]["ca_profiles"]
+        if profile["name"] == certificate_profile_name
+    )
+    certificate_profile["enabled"] = False
+    enabled_certificate_with_disabled_profile["data"]["ca_certificates"][0]["enabled"] = True
     unsupported_setting = deepcopy(archive)
     unsupported_setting["data"]["settings"].append(
         {"key": "unsupported.setting", "value": "must-not-be-silently-dropped"}
@@ -4821,6 +4862,7 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
         (enabled_ineligible_route_target, "has an ineligible target interface"),
         (enabled_missing_nat_target, "has an ineligible outbound interface"),
         (enabled_ipv6_only_nat_target, "has an ineligible outbound interface"),
+        (enabled_missing_nat_source_group, "has an invalid source"),
         (enabled_missing_routing_target, "has an ineligible interface"),
         (enabled_identical_routing_targets, "has identical source and destination interfaces"),
         (enabled_missing_dhcp_target, "has an ineligible bind interface"),
@@ -4833,6 +4875,8 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
         (unresolved_ldap_organization, "references an unknown LDAP organization"),
         (unresolved_oidc_client, "references an unknown OIDC client"),
         (unresolved_esx_volume, "references an unknown ESX storage volume"),
+        (cyclic_ldap_groups, "contains cyclic LDAP group membership"),
+        (enabled_certificate_with_disabled_profile, "references a disabled CA profile"),
         (unsupported_setting, "has an unsupported setting key"),
     ]:
         with pytest.raises(ValueError, match=message):
@@ -4844,6 +4888,7 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
         disabled_missing_route_target["data"]["routes"]
     )
     archive_summary(disabled_missing_nat_target)
+    archive_summary(disabled_missing_nat_source_group)
     archive_summary(disabled_missing_routing_target)
     archive_summary(disabled_missing_dhcp_target)
     archive_summary(disabled_missing_service_target)

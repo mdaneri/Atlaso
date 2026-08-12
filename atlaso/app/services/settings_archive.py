@@ -84,10 +84,11 @@ from atlaso.app.services.esxi_pxe import (
     normalize_host_mac,
     normalize_host_variables,
 )
-from atlaso.app.services.firewall import FIREWALL_SOURCE_GROUPS_SETTING_KEY
+from atlaso.app.services.firewall import FIREWALL_SOURCE_GROUPS_SETTING_KEY, firewall_source_group_state
 from atlaso.app.services.local_users import LOCAL_USERS_PASSWORD_POLICY_KEY
 from atlaso.app.services.ldap import clear_ldap_recovery_payload, ensure_organization_bind_secret
 from atlaso.app.services.networking import normalize_interface_mode, normalize_interface_role, normalize_ipv4_method
+from atlaso.app.services.routes_wan import validate_nat_source
 from atlaso.app.services.update_sources import UPDATE_SOURCE_KINDS
 from atlaso.app.services.vcf_backups import VCF_BACKUP_DEFAULT_USERNAME
 
@@ -1204,6 +1205,17 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
             and address_families(effective_row)
         ):
             ldap_target_names.add(name)
+
+    firewall_source_groups_json = next(
+        (
+            str(row.get("value") or "")
+            for row in data.get("settings", [])
+            if str(row.get("key") or "") == FIREWALL_SOURCE_GROUPS_SETTING_KEY
+        ),
+        "",
+    )
+    firewall_source_groups = firewall_source_group_state(firewall_source_groups_json, {})["groups"]
+    firewall_source_group_ids = {str(group.get("id") or "") for group in firewall_source_groups}
     for name, row in vlan_interfaces.items():
         parent = physical_interfaces.get(str(row.get("parent_interface") or ""))
         if (
@@ -1274,6 +1286,14 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
             raise ValueError(
                 f"The settings archive row {row_index} in 'nat_rules' has an ineligible outbound interface."
             )
+        if enabled and validate_nat_source(
+            str(row.get("source") or ""),
+            firewall_source_group_ids,
+            firewall_source_groups,
+        ):
+            raise ValueError(
+                f"The settings archive row {row_index} in 'nat_rules' has an invalid source."
+            )
 
     for row_index, row in enumerate(data.get("routing_rules", []), start=1):
         enabled = row.get("enabled", True)
@@ -1335,16 +1355,25 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
             optional=True,
         )
 
-    ca_profile_names = {str(row["name"]) for row in data.get("ca_profiles", [])}
+    ca_profiles = {
+        str(row["name"]): bool(row.get("enabled", True))
+        for row in data.get("ca_profiles", [])
+    }
+    ca_profile_names = set(ca_profiles)
     for row_index, row in enumerate(data.get("ca_certificates", []), start=1):
+        profile_name = str(row.get("profile_name") or "")
         require_reference(
             "ca_certificates",
             row_index,
-            str(row.get("profile_name") or ""),
+            profile_name,
             ca_profile_names,
             "CA profile",
             optional=True,
         )
+        if row.get("enabled", True) and profile_name and not ca_profiles[profile_name]:
+            raise ValueError(
+                f"The settings archive row {row_index} in 'ca_certificates' references a disabled CA profile."
+            )
 
     provider_ids = {str(row["id"]) for row in data.get("vsphere_key_providers", [])}
     for row_index, row in enumerate(data.get("vsphere_trusted_vcenters", []), start=1):
@@ -1405,6 +1434,27 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
                 "The settings archive row "
                 f"{row_index} in 'ldap_group_memberships' references an unknown LDAP object."
             )
+
+    ldap_group_edges = {group: set() for group in ldap_groups}
+    for row in data.get("ldap_group_memberships", []):
+        if str(row.get("member_type") or "") != "group":
+            continue
+        organization_slug = str(row.get("organization_slug") or "")
+        ldap_group_edges[(organization_slug, str(row.get("group_name") or ""))].add(
+            (organization_slug, str(row.get("member_name") or ""))
+        )
+    remaining_edges = dict(ldap_group_edges)
+    while remaining_edges:
+        remaining_groups = set(remaining_edges)
+        terminal_groups = {
+            group
+            for group, members in remaining_edges.items()
+            if not members.intersection(remaining_groups)
+        }
+        if not terminal_groups:
+            raise ValueError("The settings archive contains cyclic LDAP group membership.")
+        for group in terminal_groups:
+            remaining_edges.pop(group)
 
     oidc_client_ids = {str(row["client_id"]) for row in data.get("oidc_clients", [])}
     for row_index, row in enumerate(data.get("oidc_clients", []), start=1):
