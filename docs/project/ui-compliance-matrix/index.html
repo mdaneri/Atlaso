@@ -3519,10 +3519,9 @@ exemption changes without review. The management routes rendered by the current 
 </span><span id="__span-1-5"><a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a>/ui/public/login
 </span><span id="__span-1-6"><a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a>/ui/public/terminal
 </span></code></pre></div>
-<p>For compactness, the detailed rows below retain their recognizable child slugs. Management child slugs are relative to
-<code>/ui/management</code>, public child slugs are relative to <code>/ui/public</code>, and <code>/PROD/</code> remains an explicitly exempt protocol
-and browser contract at its existing root path. Retired root-level browser paths are temporary compatibility entries,
-not canonical route owners.</p>
+<p>The detailed rows below use the complete canonical management and public paths. <code>/PROD/</code> remains an explicitly exempt
+protocol and browser contract at its existing root path. Retired root-level browser paths appear only where a row
+explicitly identifies temporary compatibility behavior; they are not canonical route owners.</p>
 <h2 id="result-and-evidence-key">Result and evidence key<a class="headerlink" href="#result-and-evidence-key" title="Permanent link">&para;</a></h2>
 <p>Each result records desktop (<strong>D</strong>, 1600×1000), narrow (<strong>N</strong>, 900×1200), keyboard-only operation (<strong>K</strong>), launcher
 focus restoration (<strong>F</strong>), browser zoom through 200% (<strong>Z</strong>), and validation failure/recovery (<strong>V</strong>). <code>N/A</code> means the
@@ -3562,7 +3561,7 @@ read-only or unavailable surface has a mutation workflow.</p>
 </thead>
 <tbody>
 <tr>
-<td><code>/dashboard</code> — operations command center</td>
+<td><code>/ui/management/dashboard</code> — operations command center</td>
 <td>Established read-only Dashboard; Tasks/Audit navigation and shared application shell</td>
 <td>Initial dashboard snapshot, setup state, attention items, recent activity, and stale/error language are rendered in HTML</td>
 <td>Authenticated read; links enter existing permission-checked workflows; no dashboard mutation or service-specific apply</td>
@@ -3570,7 +3569,7 @@ read-only or unavailable surface has a mutation workflow.</p>
 <td>E1–E5, E7–E8</td>
 </tr>
 <tr>
-<td><code>/monitor</code> — health metrics, charts, interfaces, and devices</td>
+<td><code>/ui/management/monitor</code> — health metrics, charts, interfaces, and devices</td>
 <td>Established Monitor charts plus read-only Tabulator using the Tasks reference</td>
 <td>Initial metrics and truthful interface/device fallback tables; charts degrade to readable metrics and status</td>
 <td>Authenticated read-only; no destructive action or apply boundary</td>
@@ -3578,7 +3577,7 @@ read-only or unavailable surface has a mutation workflow.</p>
 <td>E1–E8</td>
 </tr>
 <tr>
-<td><code>/appliance-update</code> — streams, repositories, modules, tasks</td>
+<td><code>/ui/management/appliance-update</code> — streams, repositories, modules, tasks</td>
 <td>Wizard-backed Tabulator plus non-grid settings; ESX Storage, Automation, and DNS references</td>
 <td>Repository/module details, validation, source data, and shared Tasks fallback remain readable</td>
 <td>Admin write controls; shared confirmation for deletion; maintenance task boundary remains separate from global apply</td>
@@ -3586,7 +3585,7 @@ read-only or unavailable surface has a mutation workflow.</p>
 <td>E1–E8</td>
 </tr>
 <tr>
-<td><code>/automation</code> — schedules, executions, managed scripts</td>
+<td><code>/ui/management/automation</code> — schedules, executions, managed scripts</td>
 <td>Wizard-backed and read-only Tabulator; Automation Schedules reference</td>
 <td>Truthful schedules, executions, and managed-scripts fallback tables added by #120</td>
 <td>Admin writes, shared discard/destructive confirmation, durable worker/task boundary; no direct host mutation</td>
@@ -3594,7 +3593,7 @@ read-only or unavailable surface has a mutation workflow.</p>
 <td>E1–E8</td>
 </tr>
 <tr>
-<td><code>/routes-wan</code> — static routes, routing permissions, NAT, policies</td>
+<td><code>/ui/management/routes-wan</code> — static routes, routing permissions, NAT, policies</td>
 <td>Wizard-backed Tabulator; ESX Storage reference</td>
 <td>Four paired fallback tables and rendered validation/config preview</td>
 <td>Role-gated reviewed add/edit, direct Enabled state, shared confirmations; generated permissions read-only; enforcement only through global <code>wan</code> apply</td>
@@ -3602,7 +3601,7 @@ read-only or unavailable surface has a mutation workflow.</p>
 <td>E1–E8</td>
 </tr>
 <tr>
-<td><code>/firewall</code> — operator and managed rules, source groups</td>
+<td><code>/ui/management/firewall</code> — operator and managed rules, source groups</td>
 <td>Wizard-backed and direct-edit Tabulator plus non-grid settings; DNS/ESX Storage references</td>
 <td>Rule and managed-rule fallbacks, source-group settings, validation, and preview</td>
 <td>Role-gated edits; shared remove confirmation; global <code>firewall</code> apply only</td>
@@ -3610,7 +3609,7 @@ read-only or unavailable surface has a mutation workflow.</p>
 <td>E1–E8</td>
 </tr>
 <tr>
-<td><code>/physical-interfaces</code> — observed and desired interfaces</td>
+<td><code>/ui/management/physical-interfaces</code> — observed and desired interfaces</td>
 <td>Direct-edit Tabulator; Physical Interfaces reference</td>
 <td>Paired interface fallback with observed and desired values, including access management UI exposure</td>
 <td>Role-gated desired-state edits; management-path lockout validation; confirmation for guarded state changes; global <code>network</code> apply only</td>
@@ -3618,7 +3617,7 @@ read-only or unavailable surface has a mutation workflow.</p>
 <td>E1–E8</td>
 </tr>
 <tr>
-<td><code>/vlan-interfaces</code> — VLAN desired state</td>
+<td><code>/ui/management/vlan-interfaces</code> — VLAN desired state</td>
 <td>Wizard-backed Tabulator using <code>vlan-interface-dialog</code>; ESX Storage reference; approved wizard-only persisted-state exception</td>
 <td>Paired VLAN fallback, access management UI exposure, and validation rail</td>
 <td>Role-gated reviewed desired-state edits; management-path and dependent-state validation; confirmed deletion; global <code>network</code> apply only</td>
@@ -3626,7 +3625,7 @@ read-only or unavailable surface has a mutation workflow.</p>
 <td>E1–E8</td>
 </tr>
 <tr>
-<td><code>/dns</code> — service settings, zones, records, previews</td>
+<td><code>/ui/management/dns</code> — service settings, zones, records, previews</td>
 <td>Direct-edit Tabulator and non-grid settings; DNS reference</td>
 <td>Zone/record fallbacks and reviewed reverse-zone semantic summaries; settings and validation render in HTML</td>
 <td>Role-gated autosave, CSRF, explicit fallback labels, shared delete confirmation; global <code>dnsmasq</code> apply only</td>
@@ -3634,7 +3633,7 @@ read-only or unavailable surface has a mutation workflow.</p>
 <td>E1–E8</td>
 </tr>
 <tr>
-<td><code>/dhcp</code> — settings, IP zones, options, reservations, leases</td>
+<td><code>/ui/management/dhcp</code> — settings, IP zones, options, reservations, leases</td>
 <td>Wizard-backed, direct-edit, and read-only Tabulator; DNS/ESX Storage references</td>
 <td>Four paired fallbacks plus reviewed generated PXE option summary</td>
 <td>Role-gated desired-state writes, shared confirmations, validation recovery; global <code>dnsmasq</code> apply only</td>
@@ -3642,7 +3641,7 @@ read-only or unavailable surface has a mutation workflow.</p>
 <td>E1–E8</td>
 </tr>
 <tr>
-<td><code>/certificate-authority</code> — CA settings, profiles, certificates</td>
+<td><code>/ui/management/certificate-authority</code> — CA settings, profiles, certificates</td>
 <td>Wizard-backed Tabulator and non-grid settings; ESX Storage/DNS references</td>
 <td>Certificate/profile fallbacks, settings, validation, and redacted preview</td>
 <td>Role-gated writes, CSRF, shared revoke/delete confirmation; global <code>ca</code> apply only</td>
@@ -3650,7 +3649,7 @@ read-only or unavailable surface has a mutation workflow.</p>
 <td>E1–E8</td>
 </tr>
 <tr>
-<td><code>/ldap</code> — organizations, users, groups, VCF setup</td>
+<td><code>/ui/management/ldap</code> — organizations, users, groups, VCF setup</td>
 <td>Wizard-backed and direct-edit Tabulator plus non-grid settings; DNS zones and ESX Storage references</td>
 <td>Organization/settings content and paired user/group fallbacks</td>
 <td>Admin writes, secret-safe one-time dialogs, confirmation and recovery; global <code>ldap</code> apply only</td>
@@ -3666,7 +3665,7 @@ read-only or unavailable surface has a mutation workflow.</p>
 <td>E1–E8</td>
 </tr>
 <tr>
-<td><code>/ntp</code> — settings, upstreams, source health</td>
+<td><code>/ui/management/ntp</code> — settings, upstreams, source health</td>
 <td>Wizard-backed Tabulator and non-grid settings; ESX Storage/DNS references</td>
 <td>Upstream fallback, settings, validation, and config preview</td>
 <td>Role-gated desired-state writes; NTS remains disabled; global <code>ntpd</code> apply only</td>
@@ -3674,7 +3673,7 @@ read-only or unavailable surface has a mutation workflow.</p>
 <td>E1–E8</td>
 </tr>
 <tr>
-<td><code>/vcf-helper</code> — FQDN and remote VCF workflows</td>
+<td><code>/ui/management/vcf-helper</code> — FQDN and remote VCF workflows</td>
 <td>Established VCF Helper workflows and shared wizards; VCF credential-wizard reference</td>
 <td>Server-rendered forms, reviewed FQDN semantic summary, and recoverable errors</td>
 <td>Admin permission, TLS fingerprint before credentials, shared confirmation; DNS edits remain global-apply desired state</td>
@@ -3682,7 +3681,7 @@ read-only or unavailable surface has a mutation workflow.</p>
 <td>E1–E8</td>
 </tr>
 <tr>
-<td><code>/vcf-trust</code> — certificate-trust handoff</td>
+<td><code>/ui/management/vcf-helper?vcf_trust=1</code> — certificate-trust handoff</td>
 <td>Shared VCF credential wizard on the VCF Helper surface</td>
 <td>Server-rendered VCF Helper state and recoverable validation errors</td>
 <td>Admin, request-local credentials, explicit TLS confirmation, auditable task boundary</td>
@@ -3690,7 +3689,7 @@ read-only or unavailable surface has a mutation workflow.</p>
 <td>E1–E8</td>
 </tr>
 <tr>
-<td><code>/vcf-offline-depot</code> — settings, VCFDT, profiles, tasks</td>
+<td><code>/ui/management/vcf-offline-depot</code> — settings, VCFDT, profiles, tasks</td>
 <td>Wizard-backed Tabulator and non-grid settings; ESX Storage/DNS references</td>
 <td>Profile fallback, settings summaries, validation, Tasks fallback, and task status</td>
 <td>Admin writes; reset confirmation; credential/identity rules and global-apply/task boundaries preserved</td>
@@ -3698,7 +3697,7 @@ read-only or unavailable surface has a mutation workflow.</p>
 <td>E1–E8</td>
 </tr>
 <tr>
-<td><code>/vcf-offline-depot/tasks/{job_id}/log</code> — task log</td>
+<td><code>/ui/management/vcf-offline-depot/tasks/{job_id}/log</code> — task log</td>
 <td>Established read-only task/log detail</td>
 <td>Bounded, redacted log and error state render in HTML</td>
 <td>Authenticated read; no mutation</td>
@@ -3706,7 +3705,7 @@ read-only or unavailable surface has a mutation workflow.</p>
 <td>E1, E3–E5, E7–E8</td>
 </tr>
 <tr>
-<td><code>/vcf-private-registry</code> — settings and bundles</td>
+<td><code>/ui/management/vcf-private-registry</code> — settings and bundles</td>
 <td>Wizard-backed Tabulator and non-grid settings; ESX Storage/DNS references</td>
 <td>Bundle fallback, settings, validation, and redacted previews</td>
 <td>Admin desired-state writes; shared deletion confirmation; global registry apply only</td>
@@ -3714,7 +3713,7 @@ read-only or unavailable surface has a mutation workflow.</p>
 <td>E1–E8</td>
 </tr>
 <tr>
-<td><code>/vcf-backups</code> — SFTP settings and validation</td>
+<td><code>/ui/management/vcf-backups</code> — SFTP settings and validation</td>
 <td>Non-grid settings; DNS reference</td>
 <td>Complete settings, validation, and redacted config preview render in HTML</td>
 <td>Admin autosave with CSRF; selected-user dependency; global <code>vcf_backups</code> apply only</td>
@@ -3722,7 +3721,7 @@ read-only or unavailable surface has a mutation workflow.</p>
 <td>E1–E8</td>
 </tr>
 <tr>
-<td><code>/esx-storage</code> — volumes and NFS datastores</td>
+<td><code>/ui/management/esx-storage</code> — volumes and NFS datastores</td>
 <td>Wizard-backed Tabulator; ESX Storage reference</td>
 <td>Paired volume/share fallback tables and rendered validation/instructions</td>
 <td>Admin writes; format authorization and removal confirmation; global <code>esx_storage</code> apply only</td>
@@ -3730,7 +3729,7 @@ read-only or unavailable surface has a mutation workflow.</p>
 <td>E1–E8</td>
 </tr>
 <tr>
-<td><code>/authentication</code> — provider, clients, keys, mappings, tokens</td>
+<td><code>/ui/management/authentication</code> — provider, clients, keys, mappings, tokens</td>
 <td>Wizard-backed, direct-edit, and read-only Tabulator; ESX Storage/Physical Interfaces/Tasks references</td>
 <td>Five paired fallbacks and complete provider settings</td>
 <td>Admin writes, CSRF, one-time secret display, shared delete confirmation; no host apply side effect</td>
@@ -3738,15 +3737,15 @@ read-only or unavailable surface has a mutation workflow.</p>
 <td>E1–E8</td>
 </tr>
 <tr>
-<td><code>/openid-connect</code> — canonical OIDC entry</td>
-<td>Same authenticated surface and contract as <code>/authentication</code></td>
+<td><code>/ui/management/openid-connect</code> — canonical OIDC entry</td>
+<td>Same authenticated surface and contract as <code>/ui/management/authentication</code></td>
 <td>Same server response and paired fallbacks</td>
 <td>Same role, secret, validation, and confirmation boundaries</td>
 <td>Pass D/N/K/F/Z/V</td>
 <td>E1–E8</td>
 </tr>
 <tr>
-<td><code>/users</code> — local users and password policy</td>
+<td><code>/ui/management/users</code> — local users and password policy</td>
 <td>Wizard-backed Tabulator and non-grid settings; ESX Storage/DNS references</td>
 <td>User fallback, policy settings, and password-not-staged states</td>
 <td>Admin writes; password values never render; confirmation and global <code>local_users</code> apply preserved</td>
@@ -3754,7 +3753,7 @@ read-only or unavailable surface has a mutation workflow.</p>
 <td>E1–E8</td>
 </tr>
 <tr>
-<td><code>/services</code> — service state</td>
+<td><code>/ui/management/services</code> — service state</td>
 <td>Direct-edit Tabulator; Physical Interfaces reference</td>
 <td>Paired service fallback and truthful unavailable states</td>
 <td>Permission-gated desired-state enablement; enforcement remains global apply</td>
@@ -3770,7 +3769,7 @@ read-only or unavailable surface has a mutation workflow.</p>
 <td>E1, E3–E5, E7–E8</td>
 </tr>
 <tr>
-<td><code>/logs</code> — fixed log sources</td>
+<td><code>/ui/management/logs</code> — fixed log sources</td>
 <td>Established read-only Logs tabs</td>
 <td>Initial bounded, redacted log text and unavailable source states</td>
 <td>Authenticated read; helper allowlist and redaction enforced server-side</td>
@@ -3778,7 +3777,7 @@ read-only or unavailable surface has a mutation workflow.</p>
 <td>E1, E3–E5, E7–E8</td>
 </tr>
 <tr>
-<td><code>/tasks</code> — task collection and details</td>
+<td><code>/ui/management/tasks</code> — task collection and details</td>
 <td>Read-only Tabulator; Tasks reference</td>
 <td>Paired task fallback with server filtering/pagination; detail/log dialogs are enhancements</td>
 <td>Authenticated read; cancellation remains permission/CSRF checked and confirmed where destructive</td>
@@ -3786,7 +3785,7 @@ read-only or unavailable surface has a mutation workflow.</p>
 <td>E1–E8</td>
 </tr>
 <tr>
-<td><code>/audit-log</code> — audit events</td>
+<td><code>/ui/management/audit-log</code> — audit events</td>
 <td>Read-only Tabulator; Audit Events reference</td>
 <td>Paired audit fallback remains visible until grid readiness or on error</td>
 <td>Admin read; no mutation</td>
@@ -3794,7 +3793,7 @@ read-only or unavailable surface has a mutation workflow.</p>
 <td>E1–E8</td>
 </tr>
 <tr>
-<td><code>/network-boot</code> — environments, discovered hosts, ESXi references, media</td>
+<td><code>/ui/management/network-boot</code> — environments, discovered hosts, ESXi references, media</td>
 <td>Direct-edit, wizard-backed, and read-only Tabulator; Network Boot/ESX Storage references</td>
 <td>Paired fallbacks for every collection plus semantic inventory reports and no-script editors</td>
 <td>Permission-gated actions, CSRF, confirmations, audited immediate actions; global <code>esxi_pxe</code> apply boundary preserved</td>
@@ -3802,7 +3801,7 @@ read-only or unavailable surface has a mutation workflow.</p>
 <td>E1–E8</td>
 </tr>
 <tr>
-<td><code>/backup-restore</code> — archives, restore, factory reset</td>
+<td><code>/ui/management/backup-restore</code> — archives, restore, factory reset</td>
 <td>Established non-grid settings/task workflow; DNS/shared confirmation references</td>
 <td>Forms, status, and reviewed archive-scope semantic summary render in HTML</td>
 <td>Admin, CSRF, passphrase handling, and destructive confirmation; task/global-apply boundaries preserved</td>
@@ -3810,7 +3809,7 @@ read-only or unavailable surface has a mutation workflow.</p>
 <td>E1–E8</td>
 </tr>
 <tr>
-<td><code>/settings</code> — appliance settings</td>
+<td><code>/ui/management/settings</code> — appliance settings</td>
 <td>Non-grid settings; DNS reference</td>
 <td>Complete settings, validation, and config preview render in HTML</td>
 <td>Admin autosave/CSRF; guarded changes and global <code>appliance_settings</code> apply only</td>
@@ -3818,7 +3817,7 @@ read-only or unavailable surface has a mutation workflow.</p>
 <td>E1–E8</td>
 </tr>
 <tr>
-<td><code>/vaults</code> — password vaults and entries</td>
+<td><code>/ui/management/vaults</code> — password vaults and entries</td>
 <td>Wizard-backed Tabulator; ESX Storage reference</td>
 <td>Paired entry fallbacks and empty states; secrets remain masked/not emitted</td>
 <td>Admin, CSRF, audited bounded reveal, shared confirmations; no host apply</td>
@@ -3826,7 +3825,7 @@ read-only or unavailable surface has a mutation workflow.</p>
 <td>E1–E8</td>
 </tr>
 <tr>
-<td><code>/terminal</code> — management or public terminal and unavailable state</td>
+<td><code>/ui/management/terminal</code> and <code>/ui/public/terminal</code> — terminal and unavailable state</td>
 <td>Established terminal surface and shared management/public shell</td>
 <td>Authenticated unavailable-state page renders when disabled; protocol data is not substituted for browser navigation</td>
 <td>Explicit local-user Web SSH authorization, HTTPS/applied-state checks, no credential in browser state</td>
@@ -3834,7 +3833,7 @@ read-only or unavailable surface has a mutation workflow.</p>
 <td>E1, E3–E8</td>
 </tr>
 <tr>
-<td><code>/terminal/remote</code> — vault-backed remote launch</td>
+<td><code>/ui/management/terminal/remote</code> — vault-backed remote launch</td>
 <td>Established remote-terminal workflow and fingerprint confirmation</td>
 <td>Server-rendered target/credential selector and recoverable unavailable/error state</td>
 <td>Admin, exact host-key confirmation, one-use launch, no password/authenticated URI exposure</td>
@@ -3842,7 +3841,7 @@ read-only or unavailable surface has a mutation workflow.</p>
 <td>E1, E3–E8</td>
 </tr>
 <tr>
-<td><code>/{page}</code> — known unavailable/placeholder pages</td>
+<td><code>/ui/management/{page}</code> — known unavailable/placeholder pages</td>
 <td>Established authenticated unavailable-state shell</td>
 <td>Title and unavailable copy render entirely in HTML</td>
 <td>Authentication required; no mutation</td>
@@ -3873,7 +3872,7 @@ read-only or unavailable surface has a mutation workflow.</p>
 <td>E1, E3–E5, E7–E8</td>
 </tr>
 <tr>
-<td><code>/login</code> — management login and invalid-credential recovery</td>
+<td><code>/ui/management/login</code> — management login and invalid-credential recovery</td>
 <td>Established management login shell</td>
 <td>Form, CSRF value, return path, and invalid-credential error render in HTML</td>
 <td>Unauthenticated entry; safe return path and server authentication</td>
@@ -3881,7 +3880,7 @@ read-only or unavailable surface has a mutation workflow.</p>
 <td>E1, E3–E5, E7–E8</td>
 </tr>
 <tr>
-<td><code>/ca</code> — public CA trust portal</td>
+<td><code>/ui/public/ca</code> — public CA trust portal</td>
 <td>Established public CA portal and public shell</td>
 <td>Trust material, fingerprints, downloads, empty/disabled state, and footer render in HTML</td>
 <td>Interface-scoped unauthenticated read; no custody/private-key exposure</td>
@@ -3889,7 +3888,7 @@ read-only or unavailable surface has a mutation workflow.</p>
 <td>E1, E3–E8</td>
 </tr>
 <tr>
-<td><code>/ca/login</code> — public certificate-request login</td>
+<td><code>/ui/public/ca/login</code> — public certificate-request login</td>
 <td>Established public login shell</td>
 <td>Form and invalid-credential recovery render in HTML</td>
 <td>Interface-scoped authentication, CSRF, safe return target</td>
@@ -3897,7 +3896,7 @@ read-only or unavailable surface has a mutation workflow.</p>
 <td>E1, E3–E5, E7–E8</td>
 </tr>
 <tr>
-<td><code>/ca/requests</code> — management request list</td>
+<td><code>/ui/management/ca/requests</code> — management request list</td>
 <td>Read-only Tabulator; Tasks reference</td>
 <td>Paired request fallback with safe columns and revoke form</td>
 <td>Authenticated permission/CSRF; shared revoke confirmation; global CA apply boundary</td>
@@ -3905,7 +3904,7 @@ read-only or unavailable surface has a mutation workflow.</p>
 <td>E1–E8</td>
 </tr>
 <tr>
-<td><code>/requests</code> — public request list and submission</td>
+<td><code>/ui/public/ca/requests</code> — public request list and submission</td>
 <td>Read-only Tabulator plus non-grid request form; Tasks/DNS references</td>
 <td>Paired request fallback and complete submission form remain usable/readable</td>
 <td>Interface-scoped authentication, authorization, CSRF, revoke confirmation, validation recovery</td>

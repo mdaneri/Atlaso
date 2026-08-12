@@ -3548,7 +3548,8 @@
 
 
 <h1 id="signed-appliance-releases-and-photon-updates">Signed Appliance Releases and Photon Updates<a class="headerlink" href="#signed-appliance-releases-and-photon-updates" title="Permanent link">&para;</a></h1>
-<p>Appliance Update is audited runtime maintenance, separate from desired-state enforcement and <code>/appliance-apply</code>. The web
+<p>Appliance Update is audited runtime maintenance, separate from desired-state enforcement and
+<code>/ui/management/appliance-apply</code>. The web
 process queues work, and <code>atlaso-worker.service</code> executes it as a durable <code>appliance-update</code> task. Each manual or
 scheduled check/install is one parent task with an ordered child step for every selected stream. The child owns its
 status, progress, timestamps, compatibility evidence, error, and bounded redacted helper output. The parent retains the

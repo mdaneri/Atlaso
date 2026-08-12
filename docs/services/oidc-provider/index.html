@@ -3649,7 +3649,8 @@ the restricted nginx listener, DNS records, and firewall rules.</p>
   compatibility; and</li>
 <li>enabled users in enabled Atlaso-managed OpenLDAP organizations.</li>
 </ul>
-<p>Managed LDAP means the integrated organizations under <code>/ldap</code>; external LDAP sources are outside the design. Before a
+<p>Managed LDAP means the integrated organizations under <code>/ui/management/ldap</code>; external LDAP sources are outside the
+design. Before a
 bind, the control plane resolves the organization and user from the database and rejects disabled or missing records. It
 then calls only <code>atlaso-helper ldap authenticate &lt;generated-user-dn&gt;</code>. The helper reads the password from stdin, writes
 it to a mode-<code>0600</code> temporary file, invokes <code>ldapwhoami -x -H ldapi:/// -D &lt;dn&gt; -y &lt;file&gt;</code>, suppresses command output,

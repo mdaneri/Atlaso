@@ -3552,7 +3552,7 @@ the current run that start with the lifecycle lab prefix. Both scripts refuse to
   on the management front door, and HTTPS <code>/openapi.json</code> reachability with the locally issued appliance certificate</li>
 <li>passwordless admin web-terminal desired state on management plus the selected SiteA interface, applied OpenSSH user-CA
   trust, a ready terminal page and one-use ticket on both listeners, and proof that the extra listener returns 404 for
-  <code>/dashboard</code></li>
+  <code>/ui/management/dashboard</code></li>
 <li>VCF Backups SFTP desired state, <code>vcf-backup</code> Local Users password staging and OS sync, global <code>vcf_backups</code> appliance
   apply, OpenSSH drop-in host state, and a client-side SFTP probe from Client A to the SiteA appliance address</li>
 <li>VCF Offline Depot desired state, selected <code>vcf-depot</code> Local Users password staging, browser-session login, curl and
@@ -3570,7 +3570,7 @@ the current run that start with the lifecycle lab prefix. Both scripts refuse to
 <li>settings backup export, appliance redeploy, settings restore, restored desired-state apply, downloaded Client A
   certificate comparison, and restored CA archive certificate comparison unless <code>-SkipBackupRestoreTest</code> is used</li>
 </ul>
-<p>The runner submits only global <code>/appliance-apply</code> units. It does not call service-specific apply routes.</p>
+<p>The runner submits only global <code>/ui/management/appliance-apply</code> units. It does not call service-specific apply routes.</p>
 <p>ESX Storage acceptance records the global job IDs, stable disk identity and fingerprint, generated family names, direct
 A/AAAA answers, <code>exportfs -v</code>, listening TCP sockets, nftables <code>ip saddr</code>/<code>ip6 saddr</code> rules, ESX datastore listings, and
 post-reboot data probes. IPv4 and IPv6 must both pass before the feature PR is ready.</p>
@@ -3586,7 +3586,8 @@ dry-run pass is needed, pass <code>-AllowDryRunApply</code>; otherwise the runne
   VHDX discovery, switch/NAT preparation, VM cleanup safety, reserved VM protections, and mocked Hyper-V cmdlet
   behavior.</li>
 <li>Python appliance and guest assertions must remain pytest-covered. The <code>scripts/interop/lifecycle_test.py</code> runner owns
-  HTTP/API flows, global <code>/appliance-apply</code>, result JSON evidence, SSH probes, DNS/DHCP checks, firewall/routing/NAT
+  HTTP/API flows, global <code>/ui/management/appliance-apply</code>, result JSON evidence, SSH probes, DNS/DHCP checks,
+  firewall/routing/NAT
   assertions, and client-side connectivity checks.</li>
 </ul>
 <p>Use Pester tags for destructive or host-mutating scenarios. Normal Pester tests should mock Hyper-V cmdlets; real

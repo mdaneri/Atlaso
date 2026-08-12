@@ -3585,7 +3585,8 @@ settings archives, but restored revisions and schedules are always disabled and 
 <p>If the worker restarts during a task, that task is marked failed and is not silently replayed. A queued task that was
 never claimed remains pending.</p>
 <h2 id="task-history-and-output">Task history and output<a class="headerlink" href="#task-history-and-output" title="Permanent link">&para;</a></h2>
-<p>Scheduled work always creates normal Atlaso Jobs, so it appears in both the Automation <strong>Executions</strong> tab and <code>/tasks</code>.
+<p>Scheduled work always creates normal Atlaso Jobs, so it appears in both the Automation <strong>Executions</strong> tab and
+<code>/ui/management/tasks</code>.
 VCFDT scheduled tasks also appear in the profile-scoped task grid. Failed prerequisite checks and skipped overlaps are
 terminal history entries with schedule, profile, planned-time, and active-task context; missed or failed runs are not
 retried outside the next configured occurrence.

@@ -3394,8 +3394,8 @@
 
 
 <h1 id="routing-and-wan-roadmap">Routing And WAN Roadmap<a class="headerlink" href="#routing-and-wan-roadmap" title="Permanent link">&para;</a></h1>
-<p>Atlaso Routing/WAN v1 is intentionally appliance-owned and conservative. Desired state is edited on <code>/routes-wan</code>; host
-mutation happens only through the global <code>/appliance-apply</code> <code>wan</code> unit.</p>
+<p>Atlaso Routing/WAN v1 is intentionally appliance-owned and conservative. Desired state is edited on
+<code>/ui/management/routes-wan</code>; host mutation happens only through the global <code>/ui/management/appliance-apply</code> <code>wan</code> unit.</p>
 <p>The current UI presents four wizard-backed collections: <strong>Static Routes</strong>, <strong>Routing Permissions</strong>, <strong>NAT</strong>, and
 <strong>WAN Policies</strong>. Static Routes define paths in the lab route table. Routing Permissions separately define forwarding
 between interface/VLAN networks. Add/edit changes are reviewed before one desired-state save, while ordinary Enabled

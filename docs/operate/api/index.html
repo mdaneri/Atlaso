@@ -3620,12 +3620,13 @@ Record them without recording credentials or sensitive payload values.</p>
 <h2 id="immediate-and-applied-effects">Immediate and applied effects<a class="headerlink" href="#immediate-and-applied-effects" title="Permanent link">&para;</a></h2>
 <p>Read each mutation's description before calling it. Some operations change application state immediately, some queue a
 durable job, and some save desired state only. Desired-state edits do not mutate the host by themselves:
-<code>/appliance-apply</code> remains the reviewed global host-mutation workflow. A successful save means Atlaso accepted the
+<code>/ui/management/appliance-apply</code> remains the reviewed global host-mutation workflow. A successful save means Atlaso
+accepted the
 desired state, not that the corresponding service is already applied. Follow returned job identifiers through the Jobs
 or Tasks interfaces and verify terminal results.</p>
 <p>Legacy <code>/api/v1/dns/apply</code>, <code>/api/v1/dhcp/apply</code>, and <code>/api/v1/firewall/apply</code> routes remain available for compatibility
 but are intentionally absent from Swagger because they predate the reviewed global workflow. New clients must save
-desired state and use <code>/appliance-apply</code>; do not build new automation around the legacy direct-apply routes.</p>
+desired state and use <code>/ui/management/appliance-apply</code>; do not build new automation around the legacy direct-apply routes.</p>
 <h2 id="authorize-one-esxi-boot">Authorize one ESXi boot<a class="headerlink" href="#authorize-one-esxi-boot" title="Permanent link">&para;</a></h2>
 <p><code>POST /api/v1/network-boot/esxi-hosts/{host_id}/authorize-boot-once</code> requires
 <code>write:pxe</code> and accepts JSON containing the <code>boot_code</code> displayed by the exact

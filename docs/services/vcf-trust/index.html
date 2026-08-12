@@ -3447,7 +3447,8 @@
 
 <h1 id="vcf-certificate-trust">VCF Certificate Trust<a class="headerlink" href="#vcf-certificate-trust" title="Permanent link">&para;</a></h1>
 <p>VCF Certificate Trust deploys the active Atlaso root CA to one VCF 9 Installer or SDDC Manager appliance. Open it from
-the <code>VCF Certificate Trust</code> button on <code>/vcf-helper</code>. It is a remote maintenance task, not DNS desired state and not an
+the <code>VCF Certificate Trust</code> button on <code>/ui/management/vcf-helper</code>. It is a remote maintenance task, not DNS desired
+state and not an
 Appliance Apply unit.</p>
 <!-- BEGIN GENERATED INTERFACE OVERVIEW -->
 <h2 id="interface-overview">Interface overview<a class="headerlink" href="#interface-overview" title="Permanent link">&para;</a></h2>
@@ -3473,13 +3474,20 @@ deployed CA fingerprint, and task result metadata.</p>
 <p>VCF Installer and SDDC Manager both use the same API-only flow. Atlaso does not SSH to the appliance and does not
 restart SDDC Manager services. API verification means the certificate is present in the VCF trusted-certificate API
 after import. VCF releases before 9.x and certificate deletion are outside this release.</p>
-<p>Routes:</p>
+<p>Canonical routes:</p>
 <ul>
-<li><code>GET /vcf-trust</code> redirects compatibility links to <code>/vcf-helper?vcf_trust=1</code>, which opens the modal.</li>
-<li><code>POST /vcf-helper/trust-root-ca/inspect-target</code> confirms target HTTPS TLS, validates API credentials, and returns
+<li><code>GET /ui/management/vcf-helper?vcf_trust=1</code> opens the modal.</li>
+<li><code>POST /ui/management/vcf-helper/trust-root-ca/inspect-target</code> confirms target HTTPS TLS, validates API credentials,
+  and returns
   role/version.</li>
-<li><code>POST /vcf-trust/root-ca</code> queues the task and redirects to <code>/tasks?job_id=&lt;id&gt;</code>.</li>
-<li><code>POST /vcf-helper/trust-root-ca</code> remains a compatibility alias for cached clients.</li>
+<li><code>POST /ui/management/vcf-trust/root-ca</code> queues the task and redirects to
+  <code>/ui/management/tasks?job_id=&lt;id&gt;</code>.</li>
+</ul>
+<p>Temporary compatibility routes for cached clients and retired bookmarks:</p>
+<ul>
+<li><code>GET /vcf-trust</code> redirects to the canonical modal route.</li>
+<li><code>POST /vcf-trust/root-ca</code> bridges internally to <code>/ui/management/vcf-trust/root-ca</code>.</li>
+<li><code>POST /vcf-helper/trust-root-ca</code> bridges internally to <code>/ui/management/vcf-trust/root-ca</code>.</li>
 </ul>
 <!-- BEGIN GENERATED ADDITIONAL SCREENSHOTS -->
 <h2 id="additional-verified-states">Additional verified states<a class="headerlink" href="#additional-verified-states" title="Permanent link">&para;</a></h2>

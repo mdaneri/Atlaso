@@ -3578,7 +3578,8 @@
 
 
 <h1 id="vcf-helper">VCF Helper<a class="headerlink" href="#vcf-helper" title="Permanent link">&para;</a></h1>
-<p>VCF Helper prepares deployment DNS desired state. It is available under <code>VCF Workflows</code> at <code>/vcf-helper</code>.</p>
+<p>VCF Helper prepares deployment DNS desired state. It is available under <code>VCF Workflows</code> at
+<code>/ui/management/vcf-helper</code>.</p>
 <!-- BEGIN GENERATED INTERFACE OVERVIEW -->
 <h2 id="interface-overview">Interface overview<a class="headerlink" href="#interface-overview" title="Permanent link">&para;</a></h2>
 <p>This verified appliance view provides visual orientation before you begin.</p>
@@ -3596,7 +3597,7 @@ selected vault. Source credentials are request-local and password values are nev
 See <a href="../vaults/">Vaults</a> for supported entries, managed-script and Kickstart access, URI targets, and restore behavior.</p>
 <p>The helper creates DNS records in Atlaso, deploys SDDC Manager OVAs, and configures VCF 9 appliances to use the applied
 local offline depot. DNS does not reload <code>dnsmasq</code> or change the appliance directly. Review and submit the changed
-<code>DNS/DHCP (dnsmasq)</code> unit through the global <code>/appliance-apply</code> workflow after generation or deletion.</p>
+<code>DNS/DHCP (dnsmasq)</code> unit through the global <code>/ui/management/appliance-apply</code> workflow after generation or deletion.</p>
 <p>The <code>VCF Certificate Trust</code> button opens the separate remote certificate task in a modal without mixing CA details into
 the main DNS helper workspace. See <a href="../vcf-trust/">VCF Certificate Trust</a>.</p>
 <h2 id="use-a-saved-vault-credential">Use a saved vault credential<a class="headerlink" href="#use-a-saved-vault-credential" title="Permanent link">&para;</a></h2>
@@ -3794,15 +3795,15 @@ Unrelated or manually created records are preserved. Legacy helper records witho
 when their description exactly matches the expected component description.</p>
 <h2 id="routes-and-responses">Routes And Responses<a class="headerlink" href="#routes-and-responses" title="Permanent link">&para;</a></h2>
 <ul>
-<li><code>GET /vcf-helper</code> renders the helper page.</li>
-<li><code>POST /vcf-helper/generated-fqdns</code> validates and creates missing records.</li>
-<li><code>POST /vcf-helper/generated-fqdns/delete</code> deletes matching helper-owned records.</li>
-<li><code>POST /vcf-helper/sddc-manager/inventory</code> confirms TLS and discovers vSphere inventory.</li>
-<li><code>POST /vcf-helper/sddc-manager/deploy</code> queues an OVA deployment.</li>
-<li><code>GET /vcf-helper/sddc-manager/tasks/{job_id}</code> reports deployment progress.</li>
-<li><code>POST /vcf-helper/offline-depot/inspect-target</code> previews remote depot state.</li>
-<li><code>POST /vcf-helper/offline-depot/configure</code> queues remote depot configuration.</li>
-<li><code>GET /vcf-helper/offline-depot/tasks/{job_id}</code> reports configuration and sync progress.</li>
+<li><code>GET /ui/management/vcf-helper</code> renders the helper page.</li>
+<li><code>POST /ui/management/vcf-helper/generated-fqdns</code> validates and creates missing records.</li>
+<li><code>POST /ui/management/vcf-helper/generated-fqdns/delete</code> deletes matching helper-owned records.</li>
+<li><code>POST /ui/management/vcf-helper/sddc-manager/inventory</code> confirms TLS and discovers vSphere inventory.</li>
+<li><code>POST /ui/management/vcf-helper/sddc-manager/deploy</code> queues an OVA deployment.</li>
+<li><code>GET /ui/management/vcf-helper/sddc-manager/tasks/{job_id}</code> reports deployment progress.</li>
+<li><code>POST /ui/management/vcf-helper/offline-depot/inspect-target</code> previews remote depot state.</li>
+<li><code>POST /ui/management/vcf-helper/offline-depot/configure</code> queues remote depot configuration.</li>
+<li><code>GET /ui/management/vcf-helper/offline-depot/tasks/{job_id}</code> reports configuration and sync progress.</li>
 </ul>
 <p>Fetch responses report created, skipped, deleted, and preserved rows with their assigned addresses, plus validation or
 allocation errors. All mutations use the existing authenticated session, CSRF validation, audit logging, and DNS desired

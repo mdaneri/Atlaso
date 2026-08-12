@@ -3642,7 +3642,7 @@ master task, and releases the global lock. Review the task before resubmitting.<
 prevents a queued task from applying state that the administrator did not inspect.</p>
 <h2 id="safety-boundaries">Safety boundaries<a class="headerlink" href="#safety-boundaries" title="Permanent link">&para;</a></h2>
 <ul>
-<li><code>/appliance-apply</code> is the only desired-state host-mutation workflow.</li>
+<li><code>/ui/management/appliance-apply</code> is the only desired-state host-mutation workflow.</li>
 <li>Only one Appliance Apply master can be pending or running.</li>
 <li>Photon mutations use constrained <code>atlaso-helper</code> actions; the web process does not receive broad root access.</li>
 <li>Previews, diffs, task results, logs, and audit details redact sensitive-looking values.</li>
