@@ -18,9 +18,16 @@ from scripts.check_deployment_assets import (
     validate_systemd,
 )
 
+SYSTEMD_ANALYZE = shutil.which("systemd-analyze")
+VISUDO = shutil.which("visudo")
+
 
 def write_inventory(root: Path) -> None:
-    """Create the minimum complete deployment inventory under a test root."""
+    """Create the minimum complete deployment inventory under a test root.
+
+    Args:
+        root: Temporary repository root to populate.
+    """
     for relative in PACKER_TEMPLATES:
         path = root / relative
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -46,7 +53,11 @@ def write_inventory(root: Path) -> None:
 
 
 def test_inventory_covers_packer_systemd_and_extensionless_sudoers(tmp_path: Path) -> None:
-    """Verify that the complete supported inventory is deterministic and non-empty."""
+    """Verify that the complete supported inventory is deterministic and non-empty.
+
+    Args:
+        tmp_path: Temporary repository root supplied by pytest.
+    """
     write_inventory(tmp_path)
 
     inventory, findings = inventory_assets(tmp_path)
@@ -58,7 +69,11 @@ def test_inventory_covers_packer_systemd_and_extensionless_sudoers(tmp_path: Pat
 
 
 def test_inventory_rejects_missing_canonical_packer_target(tmp_path: Path) -> None:
-    """Verify that removing one required platform template fails closed."""
+    """Verify that removing one required platform template fails closed.
+
+    Args:
+        tmp_path: Temporary repository root supplied by pytest.
+    """
     write_inventory(tmp_path)
     (tmp_path / PACKER_TEMPLATES[0]).unlink()
 
@@ -72,7 +87,11 @@ def test_inventory_rejects_missing_canonical_packer_target(tmp_path: Path) -> No
 
 
 def test_inventory_rejects_unclassified_systemd_file_type(tmp_path: Path) -> None:
-    """Verify that a new deployment type requires an explicit validator decision."""
+    """Verify that a new deployment type requires an explicit validator decision.
+
+    Args:
+        tmp_path: Temporary repository root supplied by pytest.
+    """
     write_inventory(tmp_path)
     unsupported = tmp_path / "image/common/systemd/atlaso.timer"
     unsupported.write_text("[Timer]\nOnBootSec=1m\n", encoding="utf-8")
@@ -87,7 +106,11 @@ def test_inventory_rejects_unclassified_systemd_file_type(tmp_path: Path) -> Non
 
 
 def test_inventory_rejects_nested_packer_asset(tmp_path: Path) -> None:
-    """Verify that nested Packer HCL cannot fall outside the target inventory."""
+    """Verify that nested Packer HCL cannot fall outside the target inventory.
+
+    Args:
+        tmp_path: Temporary repository root supplied by pytest.
+    """
     write_inventory(tmp_path)
     nested = tmp_path / "image/hyperv/modules/example.pkr.hcl"
     nested.parent.mkdir()
@@ -119,7 +142,11 @@ def test_pre_commit_selector_covers_inventory_wide_packer_assets() -> None:
 
 
 def test_inventory_rejects_unrecognized_platform_deployment_tree(tmp_path: Path) -> None:
-    """Verify that a future platform requires one explicit platform-wide policy update."""
+    """Verify that a future platform requires one explicit platform-wide policy update.
+
+    Args:
+        tmp_path: Temporary repository root supplied by pytest.
+    """
     write_inventory(tmp_path)
     packer = tmp_path / "image/kvm/atlaso-photon.pkr.hcl"
     packer.parent.mkdir()
@@ -139,7 +166,11 @@ def test_inventory_rejects_unrecognized_platform_deployment_tree(tmp_path: Path)
 
 
 def test_inventory_rejects_common_platform_systemd_collision(tmp_path: Path) -> None:
-    """Verify that a platform unit cannot shadow a common unit during native validation."""
+    """Verify that a platform unit cannot shadow a common unit during native validation.
+
+    Args:
+        tmp_path: Temporary repository root supplied by pytest.
+    """
     write_inventory(tmp_path)
     collision = tmp_path / "image/hyperv/systemd/atlaso-worker.service"
     collision.write_text("[Service]\nDefinitelyNotARealSetting=yes\n", encoding="utf-8")
@@ -173,7 +204,14 @@ def test_inventory_rejects_assets_absent_from_provisioning_allowlist(
     contents: str,
     expected: str,
 ) -> None:
-    """Verify that validated files cannot be silently omitted from image provisioning."""
+    """Verify that validated files cannot be silently omitted from image provisioning.
+
+    Args:
+        tmp_path: Temporary repository root supplied by pytest.
+        relative: Extra deployment asset path relative to the repository.
+        contents: Valid-looking contents for the extra asset.
+        expected: Expected allowlist-failure prefix.
+    """
     write_inventory(tmp_path)
     extra = tmp_path / relative
     extra.write_text(contents, encoding="utf-8")
@@ -184,7 +222,11 @@ def test_inventory_rejects_assets_absent_from_provisioning_allowlist(
 
 
 def test_inventory_rejects_missing_canonical_systemd_asset(tmp_path: Path) -> None:
-    """Verify that renaming a provisioned unit cannot bypass the filename contract."""
+    """Verify that renaming a provisioned unit cannot bypass the filename contract.
+
+    Args:
+        tmp_path: Temporary repository root supplied by pytest.
+    """
     write_inventory(tmp_path)
     required = tmp_path / "image/common/systemd/atlaso-console.service"
     required.rename(required.with_name("renamed-console.service"))
@@ -205,7 +247,12 @@ def test_inventory_rejects_missing_canonical_systemd_asset(tmp_path: Path) -> No
     ),
 )
 def test_inventory_rejects_nested_managed_entries(tmp_path: Path, relative: Path) -> None:
-    """Verify that managed directories cannot hide nested deployment assets."""
+    """Verify that managed directories cannot hide nested deployment assets.
+
+    Args:
+        tmp_path: Temporary repository root supplied by pytest.
+        relative: Managed-directory-relative nested entry under test.
+    """
     write_inventory(tmp_path)
     nested = tmp_path / relative
     nested.mkdir()
@@ -220,7 +267,11 @@ def test_inventory_rejects_nested_managed_entries(tmp_path: Path, relative: Path
 
 
 def test_inventory_rejects_missing_canonical_sudoers_fragment(tmp_path: Path) -> None:
-    """Verify that a renamed valid fragment cannot bypass the provisioning filename contract."""
+    """Verify that a renamed valid fragment cannot bypass the provisioning filename contract.
+
+    Args:
+        tmp_path: Temporary repository root supplied by pytest.
+    """
     write_inventory(tmp_path)
     required = tmp_path / "image/vmware-workstation/sudoers.d/atlaso-helper"
     required.rename(required.with_name("renamed-helper"))
@@ -235,7 +286,11 @@ def test_inventory_rejects_missing_canonical_sudoers_fragment(tmp_path: Path) ->
 
 
 def test_inventory_rejects_suffixed_sudoers_fragment(tmp_path: Path) -> None:
-    """Verify that backup or other suffixed sudoers files cannot enter validation."""
+    """Verify that backup or other suffixed sudoers files cannot enter validation.
+
+    Args:
+        tmp_path: Temporary repository root supplied by pytest.
+    """
     write_inventory(tmp_path)
     unsupported = tmp_path / "image/hyperv/sudoers.d/atlaso-helper.bak"
     unsupported.write_text("atlaso ALL=(root) /bin/true\n", encoding="utf-8")
@@ -249,7 +304,11 @@ def test_inventory_rejects_suffixed_sudoers_fragment(tmp_path: Path) -> None:
 
 
 def test_inventory_rejects_symlinked_managed_asset(tmp_path: Path) -> None:
-    """Verify that a symlink cannot masquerade as a direct regular deployment file."""
+    """Verify that a symlink cannot masquerade as a direct regular deployment file.
+
+    Args:
+        tmp_path: Temporary repository root supplied by pytest.
+    """
     write_inventory(tmp_path)
     target = tmp_path / "outside.service"
     target.write_text("[Service]\nExecStart=/bin/true\n", encoding="utf-8")
@@ -268,7 +327,11 @@ def test_inventory_rejects_symlinked_managed_asset(tmp_path: Path) -> None:
 
 
 def test_inventory_rejects_symlinked_required_asset_parent(tmp_path: Path) -> None:
-    """Verify that required paths cannot hide behind a symlinked platform directory."""
+    """Verify that required paths cannot hide behind a symlinked platform directory.
+
+    Args:
+        tmp_path: Temporary repository root supplied by pytest.
+    """
     write_inventory(tmp_path)
     platform = tmp_path / "image/hyperv"
     external = tmp_path / "external-hyperv"
@@ -288,7 +351,11 @@ def test_inventory_rejects_symlinked_required_asset_parent(tmp_path: Path) -> No
 
 
 def test_packer_validation_uses_wrapper_guard_and_template_directory(tmp_path: Path) -> None:
-    """Verify that full validation mirrors the wrapper's required values and working directory."""
+    """Verify that full validation mirrors the wrapper's required values and working directory.
+
+    Args:
+        tmp_path: Temporary repository root supplied by pytest.
+    """
     template = tmp_path / "image/hyperv/atlaso-photon.pkr.hcl"
     template.parent.mkdir(parents=True)
     template.write_text("packer {}\n", encoding="utf-8")
@@ -334,7 +401,12 @@ def test_packer_validation_uses_wrapper_guard_and_template_directory(tmp_path: P
 
 
 def write_systemd_fixture(root: Path, service_text: str) -> None:
-    """Create both platform unit sets and a valid manager drop-in."""
+    """Create both platform unit sets and a valid manager drop-in.
+
+    Args:
+        root: Temporary repository root to populate.
+        service_text: Common worker service contents under test.
+    """
     common = root / "image/common/systemd"
     common.mkdir(parents=True)
     (common / "atlaso-worker.service").write_text(service_text, encoding="utf-8")
@@ -352,7 +424,11 @@ def write_systemd_fixture(root: Path, service_text: str) -> None:
 
 
 def test_systemd_validation_rejects_malformed_manager_dropin(tmp_path: Path) -> None:
-    """Verify that an unknown manager directive fails even when cat-config accepts it."""
+    """Verify that an unknown manager directive fails even when cat-config accepts it.
+
+    Args:
+        tmp_path: Temporary repository root supplied by pytest.
+    """
     manager = tmp_path / "atlaso-console-manager.conf"
     manager.write_text("[Manager]\nDefinitelyNotARealSetting=yes\n", encoding="utf-8")
 
@@ -362,41 +438,53 @@ def test_systemd_validation_rejects_malformed_manager_dropin(tmp_path: Path) -> 
     assert "unsupported [Manager] directive DefinitelyNotARealSetting" in findings[0].message
 
 
-@pytest.mark.skipif(shutil.which("systemd-analyze") is None, reason="requires systemd-analyze")
+@pytest.mark.skipif(SYSTEMD_ANALYZE is None, reason="requires systemd-analyze")
 def test_systemd_validation_rejects_malformed_unit(tmp_path: Path) -> None:
-    """Verify that native systemd parsing rejects an invalid section header."""
+    """Verify that native systemd parsing rejects an invalid section header.
+
+    Args:
+        tmp_path: Temporary repository root supplied by pytest.
+    """
     write_systemd_fixture(tmp_path, "[Service\nExecStart=/bin/true\n")
 
-    findings = validate_systemd(shutil.which("systemd-analyze") or "", tmp_path)
+    findings = validate_systemd(SYSTEMD_ANALYZE or "", tmp_path)
 
     assert findings
     assert "systemd-analyze verify failed" in findings[0].message
 
 
-@pytest.mark.skipif(shutil.which("systemd-analyze") is None, reason="requires systemd-analyze")
+@pytest.mark.skipif(SYSTEMD_ANALYZE is None, reason="requires systemd-analyze")
 def test_systemd_validation_rejects_ignored_unit_directive(tmp_path: Path) -> None:
-    """Verify that native systemd diagnostics fail even when verify exits successfully."""
+    """Verify that native systemd diagnostics fail even when verify exits successfully.
+
+    Args:
+        tmp_path: Temporary repository root supplied by pytest.
+    """
     write_systemd_fixture(
         tmp_path,
         "[Service]\nExecStart=/bin/true\nDefinitelyNotARealSetting=yes\n",
     )
 
-    findings = validate_systemd(shutil.which("systemd-analyze") or "", tmp_path)
+    findings = validate_systemd(SYSTEMD_ANALYZE or "", tmp_path)
 
     assert findings
     assert "systemd-analyze verify failed" in findings[0].message
 
 
-@pytest.mark.skipif(shutil.which("visudo") is None, reason="requires visudo")
+@pytest.mark.skipif(VISUDO is None, reason="requires visudo")
 def test_sudoers_validation_rejects_malformed_rule(tmp_path: Path) -> None:
-    """Verify that native sudoers parsing rejects malformed command syntax."""
+    """Verify that native sudoers parsing rejects malformed command syntax.
+
+    Args:
+        tmp_path: Temporary repository root supplied by pytest.
+    """
     sudoers = tmp_path / "image/hyperv/sudoers.d/atlaso-helper"
     sudoers.parent.mkdir(parents=True)
     sudoers.write_text("atlaso ALL=(root) NOPASSWD:\n", encoding="utf-8")
 
     findings = validate_sudoers(
         (sudoers,),
-        shutil.which("visudo") or "",
+        VISUDO or "",
         tmp_path,
     )
 

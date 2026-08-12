@@ -89,7 +89,11 @@ class Finding:
     message: str
 
     def render(self, root: Path) -> str:
-        """Render the finding with a repository-relative path when possible."""
+        """Render the finding with a repository-relative path when possible.
+
+        Args:
+            root: Repository root used to shorten the finding path.
+        """
         try:
             display = self.path.resolve().relative_to(root.resolve())
         except ValueError:
@@ -112,7 +116,12 @@ class Inventory:
 
 
 def _files(directory: Path, findings: list[Finding]) -> tuple[Path, ...]:
-    """Return direct files and reject nested or special entries in a managed directory."""
+    """Return direct files and reject nested or special entries in a managed directory.
+
+    Args:
+        directory: Managed deployment directory to inspect.
+        findings: Mutable collection that receives unsupported-entry findings.
+    """
     if not directory.is_dir():
         return ()
     files: list[Path] = []
@@ -138,7 +147,12 @@ def _files(directory: Path, findings: list[Finding]) -> tuple[Path, ...]:
 
 
 def _has_symlink_component(path: Path, root: Path) -> bool:
-    """Return whether a repository-relative path or any of its ancestors is a symlink."""
+    """Return whether a repository-relative path or any of its ancestors is a symlink.
+
+    Args:
+        path: Candidate repository path to inspect.
+        root: Repository root that bounds the ancestry check.
+    """
     current = root
     for part in path.relative_to(root).parts:
         current /= part
@@ -148,7 +162,11 @@ def _has_symlink_component(path: Path, root: Path) -> bool:
 
 
 def inventory_assets(root: Path) -> tuple[Inventory, list[Finding]]:
-    """Inventory every supported asset and reject unclassified deployment files."""
+    """Inventory every supported asset and reject unclassified deployment files.
+
+    Args:
+        root: Repository root containing the deployment asset tree.
+    """
     findings: list[Finding] = []
     required_packer = {root / relative for relative in PACKER_TEMPLATES}
     known_systemd_directories = {root / relative for relative in SYSTEMD_DIRECTORIES}
@@ -277,7 +295,13 @@ def inventory_assets(root: Path) -> tuple[Inventory, list[Finding]]:
 
 
 def _selected_assets(inventory: Inventory, raw_paths: list[str], root: Path) -> Inventory:
-    """Select requested assets while retaining full-inventory checks."""
+    """Select requested assets while retaining full-inventory checks.
+
+    Args:
+        inventory: Complete validated deployment inventory.
+        raw_paths: Optional paths supplied by the caller or pre-commit.
+        root: Repository root used to resolve relative requested paths.
+    """
     if not raw_paths:
         return inventory
     requested: set[Path] = set()
@@ -291,6 +315,11 @@ def _selected_assets(inventory: Inventory, raw_paths: list[str], root: Path) -> 
             requested.add(path.resolve())
 
     def selected(paths: tuple[Path, ...]) -> tuple[Path, ...]:
+        """Filter one asset class to requested resolved paths.
+
+        Args:
+            paths: Inventoried paths belonging to one asset class.
+        """
         return tuple(path for path in paths if path.resolve() in requested)
 
     return Inventory(
@@ -301,7 +330,13 @@ def _selected_assets(inventory: Inventory, raw_paths: list[str], root: Path) -> 
 
 
 def _command_failure(path: Path, label: str, result: subprocess.CompletedProcess[str]) -> Finding:
-    """Convert bounded native-validator output into one finding."""
+    """Convert bounded native-validator output into one finding.
+
+    Args:
+        path: Asset path associated with the native command.
+        label: Human-readable validator label.
+        result: Completed native command result.
+    """
     detail = (result.stderr or result.stdout or "").strip().splitlines()
     message = detail[-1] if detail else f"exit code {result.returncode}"
     return Finding(path, f"{label} failed: {message}")
@@ -315,7 +350,15 @@ def _run(
     *,
     stderr_is_failure: bool = False,
 ) -> Finding | None:
-    """Run one validator without echoing its arguments or unbounded output."""
+    """Run one validator without echoing its arguments or unbounded output.
+
+    Args:
+        command: Native validator command and arguments.
+        cwd: Working directory for the validator process.
+        path: Asset path associated with a failure.
+        label: Human-readable validator label.
+        stderr_is_failure: Whether standard error fails a zero-exit command.
+    """
     result = subprocess.run(
         command,
         cwd=cwd,
@@ -329,7 +372,12 @@ def _run(
 
 
 def validate_packer(assets: tuple[Path, ...], packer: str) -> list[Finding]:
-    """Run formatting and wrapper-equivalent validation for selected Packer targets."""
+    """Run formatting and wrapper-equivalent validation for selected Packer targets.
+
+    Args:
+        assets: Selected canonical Packer template paths.
+        packer: Resolved Packer executable path.
+    """
     findings: list[Finding] = []
     for template in assets:
         directory = template.parent
@@ -355,7 +403,12 @@ def validate_packer(assets: tuple[Path, ...], packer: str) -> list[Finding]:
 
 
 def _write_stub_executable(root: Path, absolute_path: str) -> None:
-    """Create an inert executable at a unit's absolute command path."""
+    """Create an inert executable at a unit's absolute command path.
+
+    Args:
+        root: Controlled offline systemd root.
+        absolute_path: Absolute unit executable path to stub beneath the root.
+    """
     destination = root / absolute_path.lstrip("/")
     destination.parent.mkdir(parents=True, exist_ok=True)
     destination.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
@@ -363,7 +416,13 @@ def _write_stub_executable(root: Path, absolute_path: str) -> None:
 
 
 def _prepare_systemd_root(root: Path, platform: str, repository: Path) -> tuple[Path, ...]:
-    """Create a controlled offline systemd root for one image target."""
+    """Create a controlled offline systemd root for one image target.
+
+    Args:
+        root: Temporary controlled filesystem root.
+        platform: Supported image platform directory name.
+        repository: Repository root containing canonical unit assets.
+    """
     unit_directory = root / "etc/systemd/system"
     manager_directory = root / "etc/systemd/system.conf.d"
     unit_directory.mkdir(parents=True)
@@ -399,7 +458,11 @@ def _prepare_systemd_root(root: Path, platform: str, repository: Path) -> tuple[
 
 
 def validate_manager_dropins(assets: tuple[Path, ...]) -> list[Finding]:
-    """Strictly parse Atlaso's supported system manager drop-in contract."""
+    """Strictly parse Atlaso's supported system manager drop-in contract.
+
+    Args:
+        assets: Canonical system manager drop-in paths.
+    """
     findings: list[Finding] = []
     for path in assets:
         section: str | None = None
@@ -439,7 +502,12 @@ def validate_manager_dropins(assets: tuple[Path, ...]) -> list[Finding]:
 
 
 def validate_systemd(systemd_analyze: str, repository: Path) -> list[Finding]:
-    """Verify both platform unit sets and manager drop-ins in isolated roots."""
+    """Verify both platform unit sets and manager drop-ins in isolated roots.
+
+    Args:
+        systemd_analyze: Resolved systemd-analyze executable path.
+        repository: Repository root containing canonical systemd assets.
+    """
     manager_assets = tuple(
         sorted(
             path
@@ -487,7 +555,13 @@ def validate_systemd(systemd_analyze: str, repository: Path) -> list[Finding]:
 
 
 def validate_sudoers(assets: tuple[Path, ...], visudo: str, repository: Path) -> list[Finding]:
-    """Validate every selected sudoers fragment independently."""
+    """Validate every selected sudoers fragment independently.
+
+    Args:
+        assets: Selected canonical sudoers fragment paths.
+        visudo: Resolved visudo executable path.
+        repository: Repository root used as the validator working directory.
+    """
     findings: list[Finding] = []
     for path in assets:
         finding = _run([visudo, "-cf", str(path)], repository, path, "visudo -cf")
@@ -497,7 +571,11 @@ def validate_sudoers(assets: tuple[Path, ...], visudo: str, repository: Path) ->
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Run inventory and the native validators available or required by the selected mode."""
+    """Run inventory and the native validators available or required by the selected mode.
+
+    Args:
+        argv: Optional command-line arguments for testing or direct invocation.
+    """
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--mode",
