@@ -6,6 +6,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from ipaddress import ip_address, ip_interface, ip_network
 from typing import Any
+from urllib.parse import urlsplit, urlunsplit
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -82,6 +83,28 @@ def _esxi_managed_host_id(description: str | None) -> int | None:
     if not identifier.isdecimal():
         return None
     return int(identifier)
+
+
+def _replace_url_host(value: str, old_host: str, new_host: str) -> str:
+    """Replace an exact URL host while preserving valid IP-literal syntax.
+
+    Args:
+        value: Absolute URL whose authority may use the old host.
+        old_host: Exact current hostname or IP literal.
+        new_host: Replacement hostname or IP literal.
+    """
+    try:
+        parsed = urlsplit(value)
+        if parsed.hostname != old_host:
+            return value
+        replacement = ip_address(new_host)
+        rendered_host = f"[{replacement}]" if replacement.version == 6 else str(replacement)
+        netloc = rendered_host
+        if parsed.port is not None:
+            netloc = f"{netloc}:{parsed.port}"
+        return urlunsplit((parsed.scheme, netloc, parsed.path, parsed.query, parsed.fragment))
+    except ValueError:
+        return value
 
 
 class PhysicalInterfaceUpdateError(ValueError):
@@ -914,7 +937,8 @@ def refresh_interface_dependent_addresses(
         for stale_address in stale_boot_addresses:
             mapped_address = direct_address_replacements.get(stale_address, "")
             if mapped_address and stale_address != mapped_address:
-                native_uefi_http_url = native_uefi_http_url.replace(
+                native_uefi_http_url = _replace_url_host(
+                    native_uefi_http_url,
                     stale_address,
                     mapped_address,
                 )

@@ -791,6 +791,61 @@ def test_physical_interface_update_rolls_back_interface_and_dependents(client, m
         assert dns.listen_address == "192.168.50.1"
 
 
+def test_physical_interface_api_rebuilds_pxe_url_for_ipv6_to_ipv4_fallback(client):
+    """Verify removing IPv6 rebuilds the PXE URL without IPv4 literal brackets.
+
+    Args:
+        client: Authenticated-capable application test client fixture.
+    """
+    from sqlalchemy import select
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import DhcpScope, PhysicalInterface
+    from atlaso.app.services.esxi_pxe import esxi_pxe_boot_settings, save_esxi_pxe_boot_settings
+
+    with SessionLocal() as db:
+        db.query(DhcpScope).delete()
+        interface = db.execute(
+            select(PhysicalInterface).where(PhysicalInterface.name == "eth2")
+        ).scalar_one()
+        interface.role = "access"
+        interface.mode = "access"
+        interface.admin_state = "up"
+        interface.oper_state = "up"
+        interface.ip_cidr = "192.168.52.1/24"
+        interface.ipv6_enabled = True
+        interface.ipv6_cidr = "fd00:52::1/64"
+        save_esxi_pxe_boot_settings(
+            db,
+            enabled=True,
+            hostname="pxe.atlaso.internal",
+            listen_interface=interface.name,
+            listen_address="192.168.52.1\nfd00:52::1",
+            tftp_root="/var/lib/atlaso/pxe/tftp",
+            bios_bootfile="undionly.kpxe",
+            uefi_bootfile="snponly.efi",
+            native_uefi_http_enabled=True,
+            native_uefi_http_url="http://[fd00:52::1]:8080/pxe/boot.ipxe",
+        )
+        db.commit()
+
+    token, _metadata = create_token(
+        client,
+        scopes=["read:interfaces", "write:interfaces"],
+    )
+    response = client.patch(
+        "/api/v1/interfaces/physical/eth2",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"ipv6_enabled": False},
+    )
+
+    assert response.status_code == 200, response.text
+    with SessionLocal() as db:
+        boot = esxi_pxe_boot_settings(db)
+        assert boot["listen_address"] == "192.168.52.1"
+        assert boot["native_uefi_http_url"] == "http://192.168.52.1:8080/pxe/boot.ipxe"
+
+
 def test_physical_interface_api_preserves_partial_transition_compatibility(client):
     """Verify controlling-field-only PATCH requests clear fields they make inapplicable.
 
