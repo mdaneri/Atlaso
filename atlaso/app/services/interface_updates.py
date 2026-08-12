@@ -44,6 +44,7 @@ from atlaso.app.services.dnsmasq import (
     join_interfaces,
     join_servers,
     parse_dhcp_range_expression,
+    reservation_dns_record,
     split_addresses,
     split_interfaces,
     split_servers,
@@ -723,7 +724,7 @@ def refresh_interface_dependent_addresses(
         update_dhcp_scope(scope, "DHCP")
 
     enabled_scope_networks_after = [
-        network
+        (scope.id, network)
         for scope in scope_rows
         if scope.enabled is not False
         and (
@@ -734,7 +735,7 @@ def refresh_interface_dependent_addresses(
         is not None
     ]
     changed_scope_networks = [
-        (old_network, new_network)
+        (scope.id, old_network, new_network)
         for scope in scope_rows
         if scope.enabled is not False
         and (old_network := scope_networks_before.get(scope.id)) is not None
@@ -758,34 +759,42 @@ def refresh_interface_dependent_addresses(
             reserved_address = ip_address(reservation.ip_address)
         except ValueError:
             continue
-        if any(reserved_address in network for network in enabled_scope_networks_after):
+        if any(
+            reserved_address in network
+            for _scope_id, network in enabled_scope_networks_after
+        ):
             continue
-        candidate_addresses = {
-            _rebase_address_in_network(
+        applicable_scope_moves: list[tuple[int | None, str]] = []
+        for scope_id, old_network, new_network in changed_scope_networks:
+            if reserved_address.version != old_network.version or reserved_address not in old_network:
+                continue
+            candidate = _rebase_address_in_network(
                 str(reserved_address),
                 old_network,
                 new_network,
             )
-            for old_network, new_network in changed_scope_networks
-            if reserved_address.version == old_network.version
-            and reserved_address in old_network
-        }
-        candidate_addresses = {
-            candidate
-            for candidate in candidate_addresses
-            if any(
-                _address_in_network(candidate, network)
-                for network in enabled_scope_networks_after
+            if _address_in_network(candidate, new_network):
+                applicable_scope_moves.append((scope_id, candidate))
+        if len(applicable_scope_moves) != 1:
+            raise PhysicalInterfaceUpdateError(
+                f"Enabled DHCP reservation {reservation.hostname} cannot be mapped unambiguously "
+                "into the updated DHCP IP zones. Move or disable the reservation before changing "
+                "the interface network."
             )
-        }
-        if len(candidate_addresses) != 1:
+        source_scope_id, candidate_address = applicable_scope_moves[0]
+        destination_scope_ids = [
+            scope_id
+            for scope_id, network in enabled_scope_networks_after
+            if _address_in_network(candidate_address, network)
+        ]
+        if destination_scope_ids != [source_scope_id]:
             raise PhysicalInterfaceUpdateError(
                 f"Enabled DHCP reservation {reservation.hostname} cannot be mapped unambiguously "
                 "into the updated DHCP IP zones. Move or disable the reservation before changing "
                 "the interface network."
             )
         previous_address = reservation.ip_address
-        reservation.ip_address = candidate_addresses.pop()
+        reservation.ip_address = candidate_address
         db.add(reservation)
         mark_changed("DHCP")
         managed_host_id = _esxi_managed_host_id(reservation.description)
@@ -796,15 +805,22 @@ def refresh_interface_dependent_addresses(
                 managed_host.updated_at = utcnow()
                 db.add(managed_host)
                 mark_changed("ESXi PXE")
-        owned_descriptions = {
-            str(reservation.description or "").strip(),
-            f"Created from DHCP reservation for {reservation.mac_address}.",
-        }
-        owned_descriptions.discard("")
+        generated_description = f"Created from DHCP reservation for {reservation.mac_address}."
+        owned_description = (
+            str(reservation.description or "").strip()
+            if managed_host_id is not None
+            else generated_description
+        )
+        record_values = reservation_dns_record(reservation, scope_rows)
+        if record_values is None:
+            continue
+        expected_hostname, expected_type, _expected_address = record_values
         for record in db.execute(
             select(DnsRecord).where(
                 DnsRecord.address == previous_address,
-                DnsRecord.description.in_(owned_descriptions),
+                DnsRecord.description == owned_description,
+                DnsRecord.hostname == expected_hostname,
+                DnsRecord.record_type == expected_type,
             )
         ).scalars().all():
             record.address = reservation.ip_address

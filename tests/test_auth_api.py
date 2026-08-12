@@ -279,6 +279,7 @@ def test_physical_interface_api_atomically_refreshes_ipv4_and_ipv6_dependencies(
     new_ipv4 = "192.168.60.1"
     new_ipv6 = "fd00:60::1"
     with SessionLocal() as db:
+        db.query(DhcpScope).delete()
         interface = db.execute(
             select(PhysicalInterface).where(PhysicalInterface.name == "eth2")
         ).scalar_one()
@@ -330,7 +331,7 @@ def test_physical_interface_api_atomically_refreshes_ipv4_and_ipv6_dependencies(
             hostname="reserved.atlaso.internal",
             mac_address="02:00:00:00:31:50",
             ip_address="192.168.50.10",
-            description="Created from DHCP reservation for 02:00:00:00:31:50.",
+            description="Operator reservation note.",
             enabled=True,
         )
         db.add(reservation)
@@ -338,6 +339,15 @@ def test_physical_interface_api_atomically_refreshes_ipv4_and_ipv6_dependencies(
         db.add(
             DnsRecord(
                 hostname=reservation.hostname,
+                record_type="A",
+                address=reservation.ip_address,
+                description=f"Created from DHCP reservation for {reservation.mac_address}.",
+                enabled=True,
+            )
+        )
+        db.add(
+            DnsRecord(
+                hostname="operator-owned.atlaso.internal",
                 record_type="A",
                 address=reservation.ip_address,
                 description=reservation.description,
@@ -450,6 +460,11 @@ def test_physical_interface_api_atomically_refreshes_ipv4_and_ipv6_dependencies(
                 DnsRecord.record_type == "A",
             )
         ).scalar_one()
+        operator_record = db.execute(
+            select(DnsRecord).where(
+                DnsRecord.hostname == "operator-owned.atlaso.internal"
+            )
+        ).scalar_one()
         boot = esxi_pxe_boot_settings(db)
         audit = db.execute(
             select(AuditEvent)
@@ -479,6 +494,7 @@ def test_physical_interface_api_atomically_refreshes_ipv4_and_ipv6_dependencies(
         assert managed_host.ip_address == "192.168.60.11"
         assert managed_reservation.ip_address == "192.168.60.11"
         assert managed_record.address == "192.168.60.11"
+        assert operator_record.address == "192.168.50.10"
         assert boot["listen_interface"] == "eth2"
         # Network Boot remains IPv4-only; the IPv6 DHCP dependency is reconciled separately.
         assert boot["listen_address"] == new_ipv4
@@ -490,6 +506,78 @@ def test_physical_interface_api_atomically_refreshes_ipv4_and_ipv6_dependencies(
         assert "OIDC" in (audit.detail or "")
         assert "DHCP" in (audit.detail or "")
         assert "ESXi PXE" in (audit.detail or "")
+
+
+def test_physical_interface_api_rejects_ambiguous_reservation_scope_move(client):
+    """Verify overlapping changed scopes cannot choose a reservation move implicitly.
+
+    Args:
+        client: Authenticated-capable application test client fixture.
+    """
+    from sqlalchemy import select
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import DhcpReservation, DhcpScope, PhysicalInterface
+
+    with SessionLocal() as db:
+        db.query(DhcpScope).delete()
+        interface = db.execute(
+            select(PhysicalInterface).where(PhysicalInterface.name == "eth2")
+        ).scalar_one()
+        interface.role = "access"
+        interface.mode = "access"
+        interface.ip_cidr = "192.168.70.1/24"
+        db.add_all(
+            [
+                DhcpScope(
+                    name="overlap-a",
+                    address_family="ipv4",
+                    interface_name=interface.name,
+                    site_address="192.168.70.1",
+                    prefix_length=24,
+                    range_expression="192.168.70.100-192.168.70.110",
+                ),
+                DhcpScope(
+                    name="overlap-b",
+                    address_family="ipv4",
+                    interface_name=interface.name,
+                    site_address="192.168.70.1",
+                    prefix_length=24,
+                    range_expression="192.168.70.120-192.168.70.130",
+                ),
+                DhcpReservation(
+                    hostname="ambiguous.atlaso.internal",
+                    mac_address="02:00:00:00:31:70",
+                    ip_address="192.168.70.10",
+                    enabled=True,
+                ),
+            ]
+        )
+        db.commit()
+
+    token, _metadata = create_token(
+        client,
+        scopes=["read:interfaces", "write:interfaces"],
+    )
+    response = client.patch(
+        "/api/v1/interfaces/physical/eth2",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"ip_cidr": "192.168.80.1/24"},
+    )
+
+    assert response.status_code == 422
+    assert "cannot be mapped unambiguously" in response.text
+    with SessionLocal() as db:
+        interface = db.execute(
+            select(PhysicalInterface).where(PhysicalInterface.name == "eth2")
+        ).scalar_one()
+        reservation = db.execute(
+            select(DhcpReservation).where(
+                DhcpReservation.mac_address == "02:00:00:00:31:70"
+            )
+        ).scalar_one()
+        assert interface.ip_cidr == "192.168.70.1/24"
+        assert reservation.ip_address == "192.168.70.10"
 
 
 def test_physical_interface_update_rolls_back_interface_and_dependents(client, monkeypatch):
