@@ -4028,6 +4028,10 @@ kickstart is attached as a local single remastered ISO instead of depending on e
 </span><span id="__span-1-5"><a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a>  <span class="n">-SshPassword</span> <span class="s2">&quot;&lt;one-time-build-root-password&gt;&quot;</span> <span class="p">`</span>
 </span><span id="__span-1-6"><a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a>  <span class="n">-BootstrapAdminPassword</span> <span class="s2">&quot;&lt;initial-atlaso-admin-password&gt;&quot;</span>
 </span></code></pre></div>
+<p>The supported Hyper-V and VMware Workstation wrappers treat the Photon build password as opaque data. They encode the
+credential before inserting it into generated kickstart or Packer shell commands, then decode it directly to standard
+input. Printable passwords containing apostrophes and common PowerShell or POSIX shell metacharacters therefore retain
+their exact credential bytes without becoming shell syntax. Caller-side PowerShell quoting still applies.</p>
 <p>Run Packer from an elevated PowerShell 7 session or as a user in the <code>Hyper-V Administrators</code> group. Prepare the Atlaso
 Hyper-V management network before building:</p>
 <div class="language-powershell highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="n">pwsh</span> <span class="n">-ExecutionPolicy</span> <span class="n">Bypass</span> <span class="o">-File</span> <span class="n">scripts</span><span class="p">/</span><span class="n">windows</span><span class="p">/</span><span class="n">hyperv</span><span class="p">/</span><span class="n">create-switches</span><span class="p">.</span><span class="n">ps1</span>
