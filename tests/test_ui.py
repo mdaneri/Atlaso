@@ -14684,6 +14684,78 @@ def test_vlan_interface_create_edit_delete_and_apply(client):
     assert "eth1.50" not in client.get("/vlan-interfaces").text
 
 
+def test_vlan_interface_edit_reports_unrepresentable_dhcp_range(client):
+    """Verify VLAN prefix shrink failures use the recoverable grid validation response.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
+    from sqlalchemy import select
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import DhcpScope, VlanInterface
+
+    login(client)
+    page = client.get("/vlan-interfaces")
+    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    created = client.post(
+        "/vlan-interfaces",
+        data={
+            "parent_interface": "eth1",
+            "vlan_id": "84",
+            "ip_cidr": "192.168.84.1/24",
+            "mtu": "1500",
+            "role": "services",
+            "enabled": "on",
+            "csrf": csrf,
+        },
+        headers={"X-Atlaso-Grid": "1", "Accept": "application/json"},
+    )
+    assert created.status_code == 200, created.text
+    vlan_id = created.json()["vlan"]["id"]
+
+    scope_name = "vlan-prefix-shrink-dependency"
+    with SessionLocal() as db:
+        db.add(
+            DhcpScope(
+                name=scope_name,
+                address_family="ipv4",
+                interface_name="eth1.84",
+                site_address="192.168.84.1",
+                prefix_length=24,
+                range_expression="192.168.84.100-192.168.84.120",
+                dns_server="192.168.84.1",
+                ntp_server="192.168.84.1",
+            )
+        )
+        db.commit()
+
+    rejected = client.post(
+        f"/vlan-interfaces/{vlan_id}/edit",
+        data={
+            "parent_interface": "eth1",
+            "vlan_id": "84",
+            "ip_cidr": "192.168.84.1/28",
+            "mtu": "1500",
+            "role": "services",
+            "enabled": "on",
+            "csrf": csrf,
+        },
+        headers={"X-Atlaso-Grid": "1", "Accept": "application/json"},
+    )
+
+    assert rejected.status_code == 422, rejected.text
+    assert "cannot fit" in rejected.json()["detail"]
+    with SessionLocal() as db:
+        vlan = db.get(VlanInterface, vlan_id)
+        scope = db.execute(select(DhcpScope).where(DhcpScope.name == scope_name)).scalar_one()
+        assert vlan is not None
+        assert vlan.ip_cidr == "192.168.84.1/24"
+        assert scope.site_address == "192.168.84.1"
+        assert scope.prefix_length == 24
+        assert scope.range_expression == "192.168.84.100-192.168.84.120"
+
+
 def test_vlan_page_prefers_real_trunk_parent_when_inventory_has_eth2(client):
     """Verify that vlan page prefers real trunk parent when inventory has eth2.
 

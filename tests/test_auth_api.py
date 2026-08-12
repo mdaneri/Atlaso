@@ -517,6 +517,52 @@ def test_physical_interface_api_preserves_partial_transition_compatibility(clien
     assert enable_dhcp.json()["gateway"] is None
 
 
+def test_physical_interface_api_normalizes_legacy_enum_spellings(client):
+    """Verify recognized enum spellings accepted by the legacy PATCH remain compatible.
+
+    Args:
+        client: Authenticated-capable application test client fixture.
+    """
+    from sqlalchemy import select
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import PhysicalInterface
+
+    with SessionLocal() as db:
+        interface = db.execute(
+            select(PhysicalInterface).where(PhysicalInterface.name == "eth2")
+        ).scalar_one()
+        interface.role = "access"
+        interface.mode = "access"
+        interface.ipv4_method = "static"
+        interface.ip_cidr = "192.168.50.1/24"
+        db.commit()
+
+    token, _metadata = create_token(
+        client,
+        scopes=["read:interfaces", "write:interfaces"],
+    )
+    headers = {"Authorization": f"Bearer {token}"}
+    normalized = client.patch(
+        "/api/v1/interfaces/physical/eth2",
+        headers=headers,
+        json={"role": "Access", "mode": "Routed", "ipv4_method": "Static"},
+    )
+    assert normalized.status_code == 200, normalized.text
+    assert normalized.json()["role"] == "access"
+    assert normalized.json()["mode"] == "access"
+    assert normalized.json()["ipv4_method"] == "static"
+
+    for legacy_role in ("services", "storage"):
+        response = client.patch(
+            "/api/v1/interfaces/physical/eth2",
+            headers=headers,
+            json={"role": legacy_role},
+        )
+        assert response.status_code == 200, response.text
+        assert response.json()["role"] == legacy_role
+
+
 def test_physical_interface_api_rejects_dhcp_range_that_cannot_fit(client):
     """Verify a prefix shrink rolls back when a dependent DHCP range cannot be rebased.
 

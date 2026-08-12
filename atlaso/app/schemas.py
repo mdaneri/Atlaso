@@ -3,7 +3,16 @@
 from datetime import datetime
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StrictBool,
+    StrictInt,
+    ValidationInfo,
+    field_validator,
+    model_validator,
+)
 
 
 class ProblemDetails(BaseModel):
@@ -1352,15 +1361,41 @@ class PhysicalInterfaceUpdate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     role: Annotated[
-        Literal["management", "access", "route", "unused"] | None,
+        Literal["management", "access", "route", "services", "storage", "unused"] | None,
         Field(
             description=(
                 "Desired interface role. Management owns the appliance management network; access "
-                "is an untagged lab network; route participates in explicit routing; unused removes "
-                "the interface from active desired networking. Omit to retain the current role."
+                "is an untagged lab network; route participates in explicit routing; services and "
+                "storage retain their legacy service-segmentation meanings; unused removes the "
+                "interface from active desired networking. Omit to retain the current role."
             )
         ),
     ] = None
+
+    @field_validator("role", "mode", "ipv4_method", mode="before")
+    @classmethod
+    def normalize_legacy_enum_spellings(cls, value: Any, info: ValidationInfo) -> Any:
+        """Normalize recognized enum spellings accepted by the legacy PATCH handler."""
+        if not isinstance(value, str):
+            return value
+        normalized = value.strip().lower()
+        if info.field_name == "role" and normalized in {
+            "management",
+            "access",
+            "route",
+            "services",
+            "storage",
+            "unused",
+        }:
+            return normalized
+        if info.field_name == "mode":
+            if normalized == "routed":
+                return "access"
+            if normalized in {"access", "trunk", "unused"}:
+                return normalized
+        if info.field_name == "ipv4_method" and normalized in {"static", "dhcp"}:
+            return normalized
+        return value
     mode: Annotated[
         Literal["access", "trunk", "unused"] | None,
         Field(

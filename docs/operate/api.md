@@ -72,7 +72,8 @@ inherently. Network apply rejects a configuration that would leave no effective 
 
 `PATCH /api/v1/interfaces/physical/{name}` accepts the typed `PhysicalInterfaceUpdate` schema. Omit a property to keep
 its saved value; use an empty string or `null` only for the documented CIDR and gateway fields that can be cleared.
-Atlaso rejects unsupported properties instead of silently ignoring them.
+Recognized role, mode, and IPv4-method spellings are case-insensitive; the legacy `services` and `storage` roles and
+`routed` mode spelling remain supported. Atlaso rejects unsupported properties instead of silently ignoring them.
 
 Changing a physical interface's IPv4 or IPv6 CIDR automatically refreshes dependent desired-state addresses for DNS,
 NTP/NTS, Certificate Authority, KMS, LDAP, OIDC, VCF services, matching DHCP scopes, and Network Boot/PXE. Atlaso

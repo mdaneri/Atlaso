@@ -17775,17 +17775,23 @@ def edit_vlan_interface_from_ui(
     vlan.role = role_value
     vlan.enabled = requested_enabled and not parent_missing
     vlan.access_management_ui_enabled = management_ui_value
-    dependent_updates = refresh_interface_dependent_addresses(
-        db,
-        old_name=old_name,
-        new_name=vlan.name,
-        old_ip_cidr=old_ip_cidr,
-        old_ipv6_cidr=old_ipv6_cidr,
-        actor=None,
-        dns_refresher=refresh_interface_service_dns_aliases,
-    )
     try:
+        dependent_updates = refresh_interface_dependent_addresses(
+            db,
+            old_name=old_name,
+            new_name=vlan.name,
+            old_ip_cidr=old_ip_cidr,
+            old_ipv6_cidr=old_ipv6_cidr,
+            actor=None,
+            dns_refresher=refresh_interface_service_dns_aliases,
+        )
         db.commit()
+    except PhysicalInterfaceUpdateError as exc:
+        db.rollback()
+        return vlan_form_validation_response(
+            request,
+            Response(exc.detail, status_code=exc.status_code, media_type="text/plain"),
+        )
     except IntegrityError:
         db.rollback()
         return grid_error_response(
