@@ -266,6 +266,7 @@ def test_physical_interface_api_atomically_refreshes_ipv4_and_ipv6_dependencies(
         DhcpScope,
         DnsRecord,
         DnsSettings,
+        EsxiPxeHost,
         NtpSettings,
         OidcProviderSettings,
         PhysicalInterface,
@@ -343,6 +344,33 @@ def test_physical_interface_api_atomically_refreshes_ipv4_and_ipv6_dependencies(
                 enabled=True,
             )
         )
+        managed_host = EsxiPxeHost(
+            hostname="managed-esxi.atlaso.internal",
+            mac_address="02:00:00:00:31:51",
+            ip_address="192.168.50.11",
+            enabled=True,
+        )
+        db.add(managed_host)
+        db.flush()
+        managed_description = f"Managed by ESXi PXE host {managed_host.id}."
+        db.add_all(
+            [
+                DhcpReservation(
+                    hostname=managed_host.hostname,
+                    mac_address=managed_host.mac_address,
+                    ip_address=managed_host.ip_address,
+                    description=managed_description,
+                    enabled=True,
+                ),
+                DnsRecord(
+                    hostname=managed_host.hostname,
+                    record_type="A",
+                    address=managed_host.ip_address,
+                    description=managed_description,
+                    enabled=True,
+                ),
+            ]
+        )
         save_esxi_pxe_boot_settings(
             db,
             enabled=True,
@@ -406,6 +434,22 @@ def test_physical_interface_api_atomically_refreshes_ipv4_and_ipv6_dependencies(
                 DnsRecord.record_type == "A",
             )
         ).scalar_one()
+        managed_host = db.execute(
+            select(EsxiPxeHost).where(
+                EsxiPxeHost.mac_address == "02:00:00:00:31:51"
+            )
+        ).scalar_one()
+        managed_reservation = db.execute(
+            select(DhcpReservation).where(
+                DhcpReservation.mac_address == "02:00:00:00:31:51"
+            )
+        ).scalar_one()
+        managed_record = db.execute(
+            select(DnsRecord).where(
+                DnsRecord.hostname == "managed-esxi.atlaso.internal",
+                DnsRecord.record_type == "A",
+            )
+        ).scalar_one()
         boot = esxi_pxe_boot_settings(db)
         audit = db.execute(
             select(AuditEvent)
@@ -432,6 +476,9 @@ def test_physical_interface_api_atomically_refreshes_ipv4_and_ipv6_dependencies(
         assert scopes["api-ipv6-dependency"].ntp_server == new_ipv6
         assert reservation.ip_address == "192.168.60.10"
         assert reservation_record.address == "192.168.60.10"
+        assert managed_host.ip_address == "192.168.60.11"
+        assert managed_reservation.ip_address == "192.168.60.11"
+        assert managed_record.address == "192.168.60.11"
         assert boot["listen_interface"] == "eth2"
         # Network Boot remains IPv4-only; the IPv6 DHCP dependency is reconciled separately.
         assert boot["listen_address"] == new_ipv4

@@ -19,6 +19,7 @@ from atlaso.app.models import (
     DnsRecord,
     DnsSettings,
     EsxNfsShare,
+    EsxiPxeHost,
     KmsSettings,
     LdapSettings,
     NtpSettings,
@@ -49,6 +50,7 @@ from atlaso.app.services.dnsmasq import (
 )
 from atlaso.app.services.esxi_pxe import (
     ESXI_PXE_DEFAULT_HOSTNAME,
+    ESXI_PXE_HOST_MANAGED_DESCRIPTION_PREFIX,
     ESXI_PXE_HTTP_PORT,
     ESXI_PXE_LISTEN_ADDRESS_KEY,
     ESXI_PXE_LISTEN_INTERFACE_KEY,
@@ -64,6 +66,21 @@ from atlaso.app.services.networking import (
 
 
 DependentDnsRefresher = Callable[[Session, str | None], list[str]]
+
+
+def _esxi_managed_host_id(description: str | None) -> int | None:
+    """Return the ESXi PXE host identifier encoded in a managed-row marker.
+
+    Args:
+        description: Persisted DHCP-reservation ownership marker.
+    """
+    marker = str(description or "").strip()
+    if not marker.startswith(ESXI_PXE_HOST_MANAGED_DESCRIPTION_PREFIX) or not marker.endswith("."):
+        return None
+    identifier = marker[len(ESXI_PXE_HOST_MANAGED_DESCRIPTION_PREFIX) : -1]
+    if not identifier.isdecimal():
+        return None
+    return int(identifier)
 
 
 class PhysicalInterfaceUpdateError(ValueError):
@@ -771,6 +788,14 @@ def refresh_interface_dependent_addresses(
         reservation.ip_address = candidate_addresses.pop()
         db.add(reservation)
         mark_changed("DHCP")
+        managed_host_id = _esxi_managed_host_id(reservation.description)
+        if managed_host_id is not None:
+            managed_host = db.get(EsxiPxeHost, managed_host_id)
+            if managed_host is not None:
+                managed_host.ip_address = reservation.ip_address
+                managed_host.updated_at = utcnow()
+                db.add(managed_host)
+                mark_changed("ESXi PXE")
         owned_descriptions = {
             str(reservation.description or "").strip(),
             f"Created from DHCP reservation for {reservation.mac_address}.",
