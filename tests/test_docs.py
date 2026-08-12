@@ -1,11 +1,39 @@
 """Test docs behavior."""
 
 import json
+import re
 from pathlib import Path
 
 from scripts import generate_embedded_screenshot_sections, generate_screenshot_gallery
 from scripts.check_docs import validate_screenshots
 from scripts.overlay_docs_site import overlay
+
+
+def test_documentation_homepage_preserves_paths_and_popular_guides() -> None:
+    """Verify that the homepage keeps section paths and a focused operator guide list."""
+    root = Path(__file__).resolve().parents[1]
+    homepage = (root / "docs" / "index.md").read_text(encoding="utf-8")
+    choose_section = homepage.split("## Choose your path\n", 1)[1].split("## Popular guides\n", 1)[0]
+    popular_section = homepage.split("## Popular guides\n", 1)[1].split("## Safety boundary\n", 1)[0]
+
+    assert re.findall(r"\]\(([^)]+)\)", choose_section) == [
+        "getting-started/index.md",
+        "operate/index.md",
+        "services/index.md",
+        "reference/index.md",
+        "contribute/index.md",
+        "project/index.md",
+    ]
+    assert re.findall(r"\]\(([^)]+)\)", popular_section) == [
+        "operate/appliance-console.md",
+        "operate/api.md",
+        "operate/appliance-update.md",
+        "services/dns.md",
+        "services/ipxe.md",
+        "services/vaults.md",
+        "services/oidc-provider.md",
+        "services/vsphere-key-providers.md",
+    ]
 
 
 def test_documentation_workflow_runs_on_every_main_push() -> None:
