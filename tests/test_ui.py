@@ -14257,12 +14257,19 @@ def test_interface_dns_alias_refresh_reports_real_changes_and_includes_esx_stora
         monkeypatch.setattr(ui, helper_name, lambda *_args, **_kwargs: "unchanged")
     monkeypatch.setattr(
         ui,
+        "ensure_dns_for_kms",
+        lambda *_args, **_kwargs: ui.summarize_dns_actions(["conflict", "removed-stale"]),
+    )
+    monkeypatch.setattr(
+        ui,
         "ensure_dns_for_esx_storage",
         lambda *_args, **_kwargs: "updated",
     )
 
     with SessionLocal() as db:
-        assert ui.refresh_interface_service_dns_aliases(db) == ["ESX Storage"]
+        assert ui.refresh_interface_service_dns_aliases(db) == ["KMS", "ESX Storage"]
+
+    assert ui.summarize_dns_actions(["conflict", "unchanged"]) == "conflict"
 
 
 def test_physical_interface_edit_repairs_stale_scope_after_host_inventory_refresh(client):

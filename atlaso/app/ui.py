@@ -5807,7 +5807,8 @@ def summarize_dns_actions(actions: list[str]) -> str | None:
     if not actions:
         return None
     if "conflict" in actions:
-        return "conflict"
+        changed = any(action in {"created", "updated", "removed-old", "removed-stale"} for action in actions)
+        return "conflict+changed" if changed else "conflict"
     primary = "unchanged"
     for candidate in ["created", "updated"]:
         if candidate in actions:
