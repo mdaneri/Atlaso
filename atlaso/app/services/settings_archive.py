@@ -1061,6 +1061,9 @@ def _validate_archive(archive: dict[str, Any]) -> None:
     data = archive["data"]
     if any(section_name not in ARCHIVE_SECTION_NAMES for section_name in data):
         raise ValueError("The settings archive contains an unsupported data section.")
+    missing_sections = ARCHIVE_SECTION_NAMES.difference(data)
+    if missing_sections:
+        raise ValueError("The settings archive is missing a required data section.")
     for section_name, rows in data.items():
         if not isinstance(rows, list):
             raise ValueError(f"The settings archive data section '{section_name}' must be a list.")

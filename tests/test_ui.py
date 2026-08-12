@@ -4673,6 +4673,10 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
     invalid_row["data"]["physical_interfaces"] = ["not an object"]
     missing_required_field = deepcopy(archive)
     del missing_required_field["data"]["physical_interfaces"][0]["name"]
+    missing_section = deepcopy(archive)
+    del missing_section["data"]["physical_interfaces"]
+    empty_data = deepcopy(archive)
+    empty_data["data"] = {}
     empty_required_field = deepcopy(archive)
     empty_required_field["data"]["physical_interfaces"][0]["name"] = "   "
     unresolved_ldap_organization = deepcopy(archive)
@@ -4696,6 +4700,8 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
         (invalid_collection, "must be a list"),
         (invalid_row, "must be an object"),
         (missing_required_field, "missing required field 'name'"),
+        (missing_section, "missing a required data section"),
+        (empty_data, "missing a required data section"),
         (empty_required_field, "has empty required field 'name'"),
         (unresolved_ldap_organization, "references an unknown LDAP organization"),
         (unresolved_oidc_client, "references an unknown OIDC client"),
