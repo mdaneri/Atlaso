@@ -1277,6 +1277,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#update-physical-interface-desired-state" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Update physical-interface desired state
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -3325,6 +3336,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#update-physical-interface-desired-state" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Update physical-interface desired state
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -3555,6 +3577,28 @@ documented authorization and apply behavior before execution.</p>
 The switch exposes the authenticated <code>/ui/management</code> browser plane without changing that interface's access routing or
 public-service eligibility. A management-role physical interface ignores the switch because it exposes management
 inherently. Network apply rejects a configuration that would leave no effective management UI listener.</p>
+<h3 id="update-physical-interface-desired-state">Update physical-interface desired state<a class="headerlink" href="#update-physical-interface-desired-state" title="Permanent link">&para;</a></h3>
+<p><code>PATCH /api/v1/interfaces/physical/{name}</code> accepts the typed <code>PhysicalInterfaceUpdate</code> schema. Omit a property to keep
+its saved value; use an empty string or <code>null</code> only for the documented CIDR and gateway fields that can be cleared.
+Recognized role, mode, and IPv4-method spellings are case-insensitive; the legacy <code>services</code> and <code>storage</code> roles and
+<code>routed</code> mode spelling remain supported. Atlaso rejects unsupported properties instead of silently ignoring them.</p>
+<p>Changing a physical interface's IPv4 or IPv6 CIDR automatically refreshes dependent desired-state addresses for DNS,
+NTP/NTS, Certificate Authority, KMS, LDAP, OIDC, VCF services, ESX Storage, Web Terminal, matching DHCP scopes, and
+Network Boot/PXE. Atlaso commits the interface and dependent rows as one transaction. If any dependent update fails,
+none of those changes are saved. Removing an address family or converting an interface to trunk mode is rejected while
+an enabled service, ESX Storage datastore, DHCP scope, or Network Boot/PXE listener still depends on the address;
+administratively disabling an interface follows the same rule. Disabling a physical parent also evaluates bindings to
+its enabled child VLANs. If other selected interfaces remain eligible, Atlaso removes only the ineligible service,
+Web Terminal, or PXE selection. Disable or move a final binding first. The audit event names the dependent units that
+were refreshed. This remains a desired-state edit: review the resulting network and service previews, then use global
+Appliance Apply for host enforcement.</p>
+<p>The internal Certificate Authority is the exception: if its last selected portal interface becomes ineligible, Atlaso
+clears the public CA portal binding and app-owned alias while leaving internal CA custody enabled.</p>
+<p>DHCP scope gateway, DNS, and NTP values remain operator-owned when they are valid and do not match a replaced interface
+address. Interface edits update only blank or stale derived values. Enabled reservations that would otherwise leave
+every enabled scope retain their host offset in the uniquely matching rebased scope; Atlaso updates app-owned
+reservation DNS records in the same transaction and rejects ambiguous moves. When real scope rows exist, inactive
+legacy global DHCP binding fields are retained for compatibility but do not constrain interface edits.</p>
 <h2 id="scopes-and-authorization">Scopes and authorization<a class="headerlink" href="#scopes-and-authorization" title="Permanent link">&para;</a></h2>
 <p>Each Swagger operation describes its required Atlaso scope or authentication posture. A token can call only operations
 covered by its scopes; prefer a read-only token when the client does not mutate desired state. A valid token with
