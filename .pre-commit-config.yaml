@@ -13,4 +13,4 @@ repos:
         entry: python scripts/check_deployment_assets.py --mode auto
         language: system
         pass_filenames: true
-        files: '^image/(common|hyperv|vmware-workstation)/(.*\.pkr\.hcl|systemd/|sudoers\.d/)'
+        files: '^image/(.*\.pkr\.[^/]+|(common|hyperv|vmware-workstation)/(systemd/|sudoers\.d/))'

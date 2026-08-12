@@ -1,5 +1,6 @@
 """Test the protected declarative deployment validation contract."""
 
+import re
 import shutil
 from pathlib import Path
 from unittest.mock import Mock, call, patch
@@ -98,6 +99,22 @@ def test_inventory_rejects_nested_packer_asset(tmp_path: Path) -> None:
         finding.path == nested and finding.message.startswith("unsupported nested Packer asset")
         for finding in findings
     )
+
+
+def test_pre_commit_selector_covers_inventory_wide_packer_assets() -> None:
+    """Verify that direct future targets and nested rejected HCL enter the deployment hook."""
+    repository = Path(__file__).resolve().parents[1]
+    config = (repository / ".pre-commit-config.yaml").read_text(encoding="utf-8")
+    hook = config.split("- id: atlaso-deployment-asset-check", maxsplit=1)[1]
+    match = re.search(r"^\s*files:\s*'([^']+)'", hook, flags=re.MULTILINE)
+
+    assert match is not None
+    selector = re.compile(match.group(1))
+    assert selector.search("image/kvm/atlaso-photon.pkr.hcl")
+    assert selector.search("image/hyperv/modules/example.pkr.hcl")
+    assert selector.search("image/common/systemd/atlaso-worker.service")
+    assert selector.search("image/vmware-workstation/sudoers.d/atlaso-helper")
+    assert selector.search("image/inventory-linux/wsl-build-contract.json") is None
 
 
 def test_inventory_rejects_common_platform_systemd_collision(tmp_path: Path) -> None:
