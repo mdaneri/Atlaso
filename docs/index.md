@@ -25,6 +25,20 @@ proof-of-concept, lab, and test environments.
 > **Latest documentation:** This site describes the latest supported Atlaso release. Pages marked **Roadmap** or
 > **Historical** are context, not statements of current appliance behavior.
 
+## Popular guides
+
+Start with these common operator tasks. The section indexes above contain the complete guide set.
+
+- [Recover management access](operate/appliance-console.md) — correct management networking from the local console.
+- [Use the Atlaso API](operate/api.md) — create scoped tokens and call the versioned REST contract safely.
+- [Update the appliance](operate/appliance-update.md) — review update sources and install signed updates.
+- [Configure DNS](services/dns.md) — manage appliance name resolution and authoritative zones.
+- [Prepare Network Boot](services/ipxe.md) — discover hosts and stage interactive or scripted boot workflows.
+- [Manage credentials with Vaults](services/vaults.md) — scope encrypted VCF and ESX credentials to approved workflows.
+- [Configure OpenID Connect](services/oidc-provider.md) — manage clients, identity sources, claims, and key rotation.
+- [Explore experimental vSphere Key Providers](services/vsphere-key-providers.md) — review the unverified candidate
+  VCF 9.1 contract and its acceptance gate.
+
 ## Safety boundary
 
 Development appliances keep system adapters in dry-run mode by default. Desired-state editing does not mutate the host.
