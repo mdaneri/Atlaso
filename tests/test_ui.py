@@ -4725,7 +4725,7 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
     ]:
         with pytest.raises(ValueError, match=message):
             archive_summary(candidate)
-    assert archive_summary(disabled_missing_parent_vlan)["vlan_interfaces"] == len(
+    assert archive_summary(disabled_missing_parent_vlan)["table_counts"]["vlan_interfaces"] == len(
         disabled_missing_parent_vlan["data"]["vlan_interfaces"]
     )
 
