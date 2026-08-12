@@ -620,6 +620,114 @@ def test_physical_interface_api_rejects_dhcp_range_that_cannot_fit(client):
         assert scope.range_expression == "192.168.50.100-192.168.50.120"
 
 
+def test_physical_interface_api_rebases_ranges_within_retained_scope_prefix(client):
+    """Verify a custom DHCP prefix remains internally valid after interface readdressing.
+
+    Args:
+        client: Authenticated-capable application test client fixture.
+    """
+    from sqlalchemy import select
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import DhcpScope, PhysicalInterface
+
+    scope_name = "api-retained-prefix-dependency"
+    with SessionLocal() as db:
+        interface = db.execute(
+            select(PhysicalInterface).where(PhysicalInterface.name == "eth2")
+        ).scalar_one()
+        interface.role = "access"
+        interface.mode = "access"
+        interface.ipv4_method = "static"
+        interface.ip_cidr = "192.168.50.1/24"
+        db.add(
+            DhcpScope(
+                name=scope_name,
+                address_family="ipv4",
+                interface_name=interface.name,
+                site_address="192.168.50.1",
+                prefix_length=25,
+                range_expression="192.168.50.100-192.168.50.120",
+                dns_server="192.168.50.1",
+                ntp_server="192.168.50.1",
+                enabled=True,
+            )
+        )
+        db.commit()
+
+    token, _metadata = create_token(
+        client,
+        scopes=["read:interfaces", "write:interfaces"],
+    )
+    response = client.patch(
+        "/api/v1/interfaces/physical/eth2",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"ip_cidr": "192.168.60.1/16"},
+    )
+
+    assert response.status_code == 200, response.text
+    with SessionLocal() as db:
+        scope = db.execute(select(DhcpScope).where(DhcpScope.name == scope_name)).scalar_one()
+        assert scope.site_address == "192.168.60.1"
+        assert scope.prefix_length == 25
+        assert scope.range_expression == "192.168.60.100-192.168.60.120"
+
+
+def test_physical_interface_api_preserves_unchanged_dhcp_timestamp(client):
+    """Verify an unrelated interface edit does not dirty a bound DHCP row.
+
+    Args:
+        client: Authenticated-capable application test client fixture.
+    """
+    from datetime import datetime, timezone
+
+    from sqlalchemy import select
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import DhcpScope, PhysicalInterface
+
+    scope_name = "api-unchanged-timestamp-dependency"
+    original_updated_at = datetime(2020, 1, 2, 3, 4, 5, tzinfo=timezone.utc)
+    with SessionLocal() as db:
+        interface = db.execute(
+            select(PhysicalInterface).where(PhysicalInterface.name == "eth2")
+        ).scalar_one()
+        interface.role = "access"
+        interface.mode = "access"
+        interface.ipv4_method = "static"
+        interface.ip_cidr = "192.168.50.1/24"
+        db.add(
+            DhcpScope(
+                name=scope_name,
+                address_family="ipv4",
+                interface_name=interface.name,
+                site_address="192.168.50.1",
+                prefix_length=24,
+                range_expression="192.168.50.100-192.168.50.120",
+                dns_server="192.168.50.1",
+                ntp_server="192.168.50.1",
+                enabled=True,
+                updated_at=original_updated_at,
+            )
+        )
+        db.commit()
+
+    token, _metadata = create_token(
+        client,
+        scopes=["read:interfaces", "write:interfaces"],
+    )
+    response = client.patch(
+        "/api/v1/interfaces/physical/eth2",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"mtu": 1600},
+    )
+
+    assert response.status_code == 200, response.text
+    with SessionLocal() as db:
+        scope = db.execute(select(DhcpScope).where(DhcpScope.name == scope_name)).scalar_one()
+        assert scope.updated_at.replace(tzinfo=timezone.utc) == original_updated_at
+
+
 def test_physical_interface_api_rejects_address_removal_with_enabled_dependents(client):
     """Verify enabled DHCP and PXE bindings block removal of their interface addresses.
 

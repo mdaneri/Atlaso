@@ -400,21 +400,28 @@ def refresh_interface_dependent_addresses(
         ):
             scope.prefix_length = int(new_prefixes[family])
         if isinstance(scope, DhcpScope) and not parsed_range_errors and parsed_ranges:
+            resulting_scope_network = _network_from_cidr(
+                f"{scope.site_address}/{scope.prefix_length}"
+            )
+            range_source_network = scope_network or old_network
+            range_target_network = resulting_scope_network or new_network
             rebased_ranges: list[str] = []
             for start_address, end_address in parsed_ranges:
                 rebased_start = _rebase_address_in_network(
-                    str(start_address), old_network, new_network
+                    str(start_address), range_source_network, range_target_network
                 )
                 rebased_end = _rebase_address_in_network(
-                    str(end_address), old_network, new_network
+                    str(end_address), range_source_network, range_target_network
                 )
-                if not _address_in_network(rebased_start, new_network) or not _address_in_network(
+                if not _address_in_network(
+                    rebased_start, range_target_network
+                ) or not _address_in_network(
                     rebased_end,
-                    new_network,
+                    range_target_network,
                 ):
                     raise PhysicalInterfaceUpdateError(
                         f"DHCP scope {scope.name} range cannot fit within the updated "
-                        f"{new_network.with_prefixlen} interface network."
+                        f"{range_target_network.with_prefixlen} scope network."
                     )
                 rebased_ranges.append(
                     rebased_start
@@ -441,8 +448,6 @@ def refresh_interface_dependent_addresses(
                 if ntp_bound or scope.ntp_server in stale_addresses
                 else scope.ntp_server
             )
-        if hasattr(scope, "updated_at"):
-            scope.updated_at = utcnow()
         after = (
             getattr(scope, "interface_name", ""),
             getattr(scope, "site_address", ""),
@@ -452,6 +457,8 @@ def refresh_interface_dependent_addresses(
             getattr(scope, "ntp_server", ""),
         )
         if before != after:
+            if hasattr(scope, "updated_at"):
+                scope.updated_at = utcnow()
             db.add(scope)
             mark_changed(label)
 
