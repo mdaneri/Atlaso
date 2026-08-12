@@ -179,7 +179,7 @@ resource. The add launcher opens the shared wizard and must not displace, sort a
 
 Do not perform host mutation as a side effect of moving between steps. Wizard submission saves desired state unless the
 established workflow is an explicit task action. Appliance configuration enforcement remains owned by the global
-`/appliance-apply` workflow.
+`/ui/management/appliance-apply` workflow.
 
 ### VCF Helper remote-credential wizard contract
 

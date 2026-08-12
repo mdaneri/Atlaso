@@ -9,8 +9,8 @@ status: roadmap
 
 # Routing And WAN Roadmap
 
-Atlaso Routing/WAN v1 is intentionally appliance-owned and conservative. Desired state is edited on `/routes-wan`; host
-mutation happens only through the global `/appliance-apply` `wan` unit.
+Atlaso Routing/WAN v1 is intentionally appliance-owned and conservative. Desired state is edited on
+`/ui/management/routes-wan`; host mutation happens only through the global `/ui/management/appliance-apply` `wan` unit.
 
 The current UI presents four wizard-backed collections: **Static Routes**, **Routing Permissions**, **NAT**, and
 **WAN Policies**. Static Routes define paths in the lab route table. Routing Permissions separately define forwarding

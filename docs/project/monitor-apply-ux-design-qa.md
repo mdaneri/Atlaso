@@ -11,8 +11,8 @@ status: historical
 
 ## Reference and capture setup
 
-- Source: historical browser annotation captured from `https://192.168.167.219/monitor` before the hierarchy changes and
-  before the Disk Usage panel was removed.
+- Source: historical browser annotation captured from `https://192.168.167.219/monitor` before the
+  hierarchy changes and before the Disk Usage panel was removed.
 - Desktop viewport: 1968 × 1562 CSS pixels at the browser's native device density.
 - Narrow viewport: 900 × 1200 CSS pixels.
 - Historical validation target: VMware appliance `192.168.167.219`, deployed with the repository VMware wheel helper.

@@ -113,13 +113,14 @@ Record them without recording credentials or sensitive payload values.
 
 Read each mutation's description before calling it. Some operations change application state immediately, some queue a
 durable job, and some save desired state only. Desired-state edits do not mutate the host by themselves:
-`/appliance-apply` remains the reviewed global host-mutation workflow. A successful save means Atlaso accepted the
+`/ui/management/appliance-apply` remains the reviewed global host-mutation workflow. A successful save means Atlaso
+accepted the
 desired state, not that the corresponding service is already applied. Follow returned job identifiers through the Jobs
 or Tasks interfaces and verify terminal results.
 
 Legacy `/api/v1/dns/apply`, `/api/v1/dhcp/apply`, and `/api/v1/firewall/apply` routes remain available for compatibility
 but are intentionally absent from Swagger because they predate the reviewed global workflow. New clients must save
-desired state and use `/appliance-apply`; do not build new automation around the legacy direct-apply routes.
+desired state and use `/ui/management/appliance-apply`; do not build new automation around the legacy direct-apply routes.
 
 ## Authorize one ESXi boot
 
