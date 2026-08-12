@@ -14181,7 +14181,7 @@ def test_physical_interface_edit_updates_desired_state(client):
             "mode": "access",
             "ip_cidr": "192.168.70.1/24",
             "mtu": "1400",
-            "admin_state": "down",
+            "admin_state": "up",
             "csrf": csrf,
         },
         follow_redirects=False,
@@ -14193,7 +14193,7 @@ def test_physical_interface_edit_updates_desired_state(client):
     assert '"mode": "access"' in refreshed.text
     assert '"ip_cidr": "192.168.70.1/24"' in refreshed.text
     assert '"mtu": 1400' in refreshed.text
-    assert '"admin_state": "down"' in refreshed.text
+    assert '"admin_state": "up"' in refreshed.text
     assert '"desired_state_source": "user"' in refreshed.text
 
     with SessionLocal() as db:

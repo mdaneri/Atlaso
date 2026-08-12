@@ -142,7 +142,13 @@ def _service_bind_options(db: Session) -> list[dict[str, Any]]:
         role = normalize_interface_role(interface.role)
         mode = normalize_interface_mode(interface.mode)
         addresses = _interface_addresses_from_cidrs(interface.ip_cidr, interface.ipv6_cidr)
-        if interface.oper_state == "missing" or role in {"management", "unused"} or mode == "trunk" or not addresses:
+        if (
+            interface.oper_state == "missing"
+            or interface.admin_state != "up"
+            or role in {"management", "unused"}
+            or mode == "trunk"
+            or not addresses
+        ):
             continue
         options.append(
             {
@@ -355,10 +361,11 @@ def refresh_interface_dependent_addresses(
             selected = split_interfaces(getattr(row, "listen_interface", ""))
             if old_name not in selected and new_name not in selected:
                 continue
+            eligible_new_name = new_name if new_name in options_by_name else ""
             updated_interfaces = _replace_interface_selection(
                 getattr(row, "listen_interface", ""),
                 old_name,
-                new_name,
+                eligible_new_name,
             )
             updated_addresses = _derive_addresses_for_interfaces(
                 split_interfaces(updated_interfaces),
@@ -525,7 +532,6 @@ def refresh_interface_dependent_addresses(
         if (
             not getattr(scope, "dns_server", "")
             or getattr(scope, "dns_server", "") in stale_addresses
-            or dns_bound
         ):
             scope.dns_server = (
                 new_address
@@ -533,7 +539,7 @@ def refresh_interface_dependent_addresses(
                 else getattr(scope, "dns_server", "")
             )
         if isinstance(scope, DhcpScope) and (
-            not scope.ntp_server or scope.ntp_server in stale_addresses or ntp_bound
+            not scope.ntp_server or scope.ntp_server in stale_addresses
         ):
             scope.ntp_server = (
                 new_address
@@ -562,10 +568,11 @@ def refresh_interface_dependent_addresses(
     esxi_boot = esxi_pxe_boot_settings(db)
     esxi_interfaces = split_interfaces(str(esxi_boot.get("listen_interface") or ""))
     if old_name in esxi_interfaces or new_name in esxi_interfaces:
+        eligible_new_name = new_name if new_name in options_by_name else ""
         updated_interfaces = _replace_interface_selection(
             str(esxi_boot.get("listen_interface") or ""),
             old_name,
-            new_name,
+            eligible_new_name,
         )
         updated_addresses = _derive_addresses_for_interfaces(
             split_interfaces(updated_interfaces),

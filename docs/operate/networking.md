@@ -40,12 +40,15 @@ Edits from Physical Interfaces and `PATCH /api/v1/interfaces/physical/{name}` sh
 IPv4 or IPv6 CIDR changes, Atlaso derives the replacement addresses for selected DNS, NTP/NTS, CA, KMS, LDAP, VCF,
 DHCP, and Network Boot/PXE bindings before committing. A reconciliation failure, including an existing DHCP range that
 cannot fit after a prefix shrink, rolls back the interface and every dependent desired-state row together. Atlaso also
-rejects address removal or trunk conversion while an enabled service, DHCP, or Network Boot/PXE binding still needs the
-affected address; disable or move the binding before retrying. Saving still does not change Photon until global
-Appliance Apply is submitted.
+rejects address removal, trunk conversion, or administrative disablement while an enabled service, DHCP, or Network
+Boot/PXE binding would lose its final eligible address. When other selected interfaces remain eligible, reconciliation
+removes only the ineligible selection. Disable or move a final binding before retrying. Saving still does not change
+Photon until global Appliance Apply is submitted.
 
 The internal Certificate Authority does not require a public listener. If its last selected portal interface becomes
 ineligible, reconciliation clears the CA portal interface/address and alias without disabling internal CA custody.
+Valid operator-selected DHCP gateway, DNS, and NTP values remain unchanged unless they match a replaced interface
+address or otherwise become stale.
 
 ### Choose where the management UI is available
 

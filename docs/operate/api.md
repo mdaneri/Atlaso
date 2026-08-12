@@ -79,12 +79,16 @@ Changing a physical interface's IPv4 or IPv6 CIDR automatically refreshes depend
 NTP/NTS, Certificate Authority, KMS, LDAP, OIDC, VCF services, matching DHCP scopes, and Network Boot/PXE. Atlaso
 commits the interface and dependent rows as one transaction. If any dependent update fails, none of those changes are
 saved. Removing an address family or converting an interface to trunk mode is rejected while an enabled service, DHCP
-scope, or Network Boot/PXE listener still depends on the address; disable or move that binding first. The audit event
-names the dependent units that were refreshed. This remains a desired-state edit: review the resulting network and service
-previews, then use global Appliance Apply for host enforcement.
+scope, or Network Boot/PXE listener still depends on the address; administratively disabling an interface follows the
+same rule. If other selected interfaces remain eligible, Atlaso removes only the ineligible selection. Disable or move a
+final binding first. The audit event names the dependent units that were refreshed. This remains a desired-state edit:
+review the resulting network and service previews, then use global Appliance Apply for host enforcement.
 
 The internal Certificate Authority is the exception: if its last selected portal interface becomes ineligible, Atlaso
 clears the public CA portal binding and app-owned alias while leaving internal CA custody enabled.
+
+DHCP scope gateway, DNS, and NTP values remain operator-owned when they are valid and do not match a replaced interface
+address. Interface edits update only blank or stale derived values.
 
 ## Scopes and authorization
 

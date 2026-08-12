@@ -690,7 +690,7 @@ def test_physical_interface_api_preserves_unchanged_dhcp_timestamp(client):
     from sqlalchemy import select
 
     from atlaso.app.database import SessionLocal
-    from atlaso.app.models import DhcpScope, PhysicalInterface
+    from atlaso.app.models import DhcpScope, DnsSettings, NtpSettings, PhysicalInterface
 
     scope_name = "api-unchanged-timestamp-dependency"
     original_updated_at = datetime(2020, 1, 2, 3, 4, 5, tzinfo=timezone.utc)
@@ -710,12 +710,20 @@ def test_physical_interface_api_preserves_unchanged_dhcp_timestamp(client):
                 site_address="192.168.50.254",
                 prefix_length=24,
                 range_expression="192.168.50.100-192.168.50.120",
-                dns_server="192.168.50.1",
-                ntp_server="192.168.50.1",
+                dns_server="192.168.50.53",
+                ntp_server="192.168.50.123",
                 enabled=True,
                 updated_at=original_updated_at,
             )
         )
+        dns = db.execute(select(DnsSettings)).scalar_one()
+        dns.enabled = True
+        dns.listen_interface = interface.name
+        dns.listen_address = "192.168.50.1"
+        ntp = db.execute(select(NtpSettings)).scalar_one()
+        ntp.enabled = True
+        ntp.listen_interface = interface.name
+        ntp.listen_address = "192.168.50.1"
         db.commit()
 
     token, _metadata = create_token(
@@ -732,7 +740,122 @@ def test_physical_interface_api_preserves_unchanged_dhcp_timestamp(client):
     with SessionLocal() as db:
         scope = db.execute(select(DhcpScope).where(DhcpScope.name == scope_name)).scalar_one()
         assert scope.site_address == "192.168.50.254"
+        assert scope.dns_server == "192.168.50.53"
+        assert scope.ntp_server == "192.168.50.123"
         assert scope.updated_at.replace(tzinfo=timezone.utc) == original_updated_at
+
+
+def test_physical_interface_api_removes_ineligible_multi_selection_and_blocks_final_disable(client):
+    """Verify service selections follow eligibility and reject loss of their final address.
+
+    Args:
+        client: Authenticated-capable application test client fixture.
+    """
+    from sqlalchemy import select
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import (
+        CaSettings,
+        DhcpScope,
+        DnsSettings,
+        NtpSettings,
+        OidcProviderSettings,
+        PhysicalInterface,
+        VcfBackupSettings,
+        VcfOfflineDepotSettings,
+        VcfPrivateRegistrySettings,
+    )
+    from atlaso.app.services.esxi_pxe import save_esxi_pxe_boot_settings
+
+    with SessionLocal() as db:
+        eth1 = db.execute(
+            select(PhysicalInterface).where(PhysicalInterface.name == "eth1")
+        ).scalar_one()
+        eth2 = db.execute(
+            select(PhysicalInterface).where(PhysicalInterface.name == "eth2")
+        ).scalar_one()
+        for interface, cidr in ((eth1, "192.168.40.1/24"), (eth2, "192.168.50.1/24")):
+            interface.role = "access"
+            interface.mode = "access"
+            interface.ipv4_method = "static"
+            interface.ip_cidr = cidr
+            interface.admin_state = "up"
+        for scope in db.execute(select(DhcpScope)).scalars().all():
+            scope.enabled = False
+        for model in (
+            NtpSettings,
+            OidcProviderSettings,
+            VcfBackupSettings,
+            VcfOfflineDepotSettings,
+            VcfPrivateRegistrySettings,
+        ):
+            for settings in db.execute(select(model)).scalars().all():
+                settings.enabled = False
+        ca = db.execute(select(CaSettings)).scalar_one()
+        ca.enabled = False
+        dns = db.execute(select(DnsSettings)).scalar_one()
+        dns.enabled = True
+        dns.listen_interface = "eth1\neth2"
+        dns.listen_address = "192.168.40.1\n192.168.50.1"
+        save_esxi_pxe_boot_settings(
+            db,
+            enabled=False,
+            hostname="pxe.atlaso.internal",
+            listen_interface="eth2",
+            listen_address="192.168.50.1",
+            tftp_root="/var/lib/atlaso/pxe/tftp",
+            bios_bootfile="undionly.kpxe",
+            uefi_bootfile="snponly.efi",
+        )
+        db.commit()
+
+    token, _metadata = create_token(
+        client,
+        scopes=["read:interfaces", "write:interfaces"],
+    )
+    headers = {"Authorization": f"Bearer {token}"}
+    trunk = client.patch(
+        "/api/v1/interfaces/physical/eth2",
+        headers=headers,
+        json={"mode": "trunk"},
+    )
+    assert trunk.status_code == 200, trunk.text
+    with SessionLocal() as db:
+        dns = db.execute(select(DnsSettings)).scalar_one()
+        assert dns.listen_interface == "eth1"
+        assert dns.listen_address == "192.168.40.1"
+        eth2 = db.execute(
+            select(PhysicalInterface).where(PhysicalInterface.name == "eth2")
+        ).scalar_one()
+        eth2.role = "access"
+        eth2.mode = "access"
+        eth2.ip_cidr = "192.168.50.1/24"
+        eth2.admin_state = "up"
+        dns.enabled = False
+        oidc = db.execute(select(OidcProviderSettings)).scalar_one_or_none()
+        if oidc is None:
+            oidc = OidcProviderSettings()
+            db.add(oidc)
+        oidc.enabled = True
+        oidc.listen_interface = "eth2"
+        oidc.listen_address = "192.168.50.1"
+        db.commit()
+
+    disabled = client.patch(
+        "/api/v1/interfaces/physical/eth2",
+        headers=headers,
+        json={"admin_state": "down"},
+    )
+    assert disabled.status_code == 422, disabled.text
+    assert "Enabled OIDC" in disabled.json()["detail"]
+    with SessionLocal() as db:
+        eth2 = db.execute(
+            select(PhysicalInterface).where(PhysicalInterface.name == "eth2")
+        ).scalar_one()
+        oidc = db.execute(select(OidcProviderSettings)).scalar_one()
+        assert eth2.admin_state == "up"
+        assert oidc.listen_interface == "eth2"
+        assert oidc.listen_address == "192.168.50.1"
 
 
 def test_physical_interface_api_rejects_active_service_listener_removal(client):
