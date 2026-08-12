@@ -4717,6 +4717,12 @@ def test_settings_restore_rolls_back_late_failure_without_clearing_staged_ldap_r
         LDAP_PENDING_RECOVERY_PAYLOADS[staged_id] = b"pending recovery payload"
 
         def fail_after_restore_mutation(*_args, **_kwargs):
+            """Raise after archive mutation to exercise transaction rollback.
+
+            Args:
+                *_args: Additional positional arguments accepted by the callable.
+                **_kwargs: Additional keyword arguments accepted by the callable.
+            """
             raise RuntimeError("injected late restore failure")
 
         monkeypatch.setattr(settings_archive, "_restore_schedules", fail_after_restore_mutation)
