@@ -4696,6 +4696,42 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
     enabled_ineligible_route_target["data"]["routes"][0]["interface_name"] = "eth1"
     disabled_missing_route_target = deepcopy(enabled_missing_route_target)
     disabled_missing_route_target["data"]["routes"][0]["enabled"] = False
+    enabled_missing_nat_target = deepcopy(archive)
+    enabled_missing_nat_target["data"]["nat_rules"][0]["outbound_interface"] = "missing-nat-target"
+    enabled_ipv6_only_nat_target = deepcopy(archive)
+    enabled_ipv6_only_nat_target["data"]["physical_interfaces"].append(
+        {
+            "name": "ipv6-only",
+            "mac_address": "02:00:00:00:00:02",
+            "mode": "access",
+            "role": "route",
+            "ipv6_cidr": "fd00:1234::1/64",
+        }
+    )
+    enabled_ipv6_only_nat_target["data"]["nat_rules"][0]["outbound_interface"] = "ipv6-only"
+    disabled_missing_nat_target = deepcopy(enabled_missing_nat_target)
+    disabled_missing_nat_target["data"]["nat_rules"][0]["enabled"] = False
+    enabled_missing_routing_target = deepcopy(archive)
+    enabled_missing_routing_target["data"]["routing_rules"].append(
+        {
+            "name": "missing route permission",
+            "source_interface": "missing-routing-target",
+            "destination_interface": "eth1.20",
+            "enabled": True,
+        }
+    )
+    enabled_identical_routing_targets = deepcopy(enabled_missing_routing_target)
+    enabled_identical_routing_targets["data"]["routing_rules"][-1]["source_interface"] = "eth1.20"
+    disabled_missing_routing_target = deepcopy(enabled_missing_routing_target)
+    disabled_missing_routing_target["data"]["routing_rules"][-1]["enabled"] = False
+    enabled_missing_dhcp_target = deepcopy(archive)
+    enabled_missing_dhcp_target["data"]["dhcp_settings"][0]["enabled"] = True
+    enabled_missing_dhcp_target["data"]["dhcp_scopes"][0]["interface_name"] = "missing-dhcp-target"
+    enabled_wrong_family_dhcp_target = deepcopy(archive)
+    enabled_wrong_family_dhcp_target["data"]["dhcp_settings"][0]["enabled"] = True
+    enabled_wrong_family_dhcp_target["data"]["dhcp_scopes"][0]["address_family"] = "ipv6"
+    disabled_missing_dhcp_target = deepcopy(enabled_missing_dhcp_target)
+    disabled_missing_dhcp_target["data"]["dhcp_scopes"][0]["enabled"] = False
     empty_required_field = deepcopy(archive)
     empty_required_field["data"]["physical_interfaces"][0]["name"] = "   "
     unresolved_ldap_organization = deepcopy(archive)
@@ -4725,6 +4761,12 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
         (enabled_non_trunk_vlan, "has an ineligible parent interface"),
         (enabled_missing_route_target, "has an ineligible target interface"),
         (enabled_ineligible_route_target, "has an ineligible target interface"),
+        (enabled_missing_nat_target, "has an ineligible outbound interface"),
+        (enabled_ipv6_only_nat_target, "has an ineligible outbound interface"),
+        (enabled_missing_routing_target, "has an ineligible interface"),
+        (enabled_identical_routing_targets, "has identical source and destination interfaces"),
+        (enabled_missing_dhcp_target, "has an ineligible bind interface"),
+        (enabled_wrong_family_dhcp_target, "has an ineligible bind interface"),
         (empty_required_field, "has empty required field 'name'"),
         (unresolved_ldap_organization, "references an unknown LDAP organization"),
         (unresolved_oidc_client, "references an unknown OIDC client"),
@@ -4739,6 +4781,9 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
     assert archive_summary(disabled_missing_route_target)["table_counts"]["routes"] == len(
         disabled_missing_route_target["data"]["routes"]
     )
+    archive_summary(disabled_missing_nat_target)
+    archive_summary(disabled_missing_routing_target)
+    archive_summary(disabled_missing_dhcp_target)
 
 
 def test_settings_restore_rolls_back_late_failure_without_clearing_staged_ldap_recovery(client, monkeypatch):

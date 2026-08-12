@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, timezone
+from ipaddress import ip_interface
 from typing import Any
 
 from sqlalchemy import DateTime as SqlDateTime
@@ -1136,21 +1137,45 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
                 f"The settings archive row {row_index} in 'vlan_interfaces' has an ineligible parent interface."
             )
 
-    route_target_names = {
-        name
+    def address_families(row: dict[str, Any]) -> set[str]:
+        """Return valid IP CIDR families supplied by one archived interface."""
+        families: set[str] = set()
+        for field_name, family, version in (("ip_cidr", "ipv4", 4), ("ipv6_cidr", "ipv6", 6)):
+            try:
+                parsed = ip_interface(str(row.get(field_name) or ""))
+            except ValueError:
+                continue
+            if parsed.version == version:
+                families.add(family)
+        return families
+
+    dhcp_target_families = {
+        name: address_families(row)
         for name, row in physical_interfaces.items()
         if str(row.get("oper_state") or "") != "missing"
         and normalize_interface_mode(row.get("mode")) != "trunk"
-        and str(row.get("role") or "").strip().lower() != "management"
-        and bool(str(row.get("ip_cidr") or "").strip() or str(row.get("ipv6_cidr") or "").strip())
+        and address_families(row)
     }
-    route_target_names.update(
-        str(row["name"])
-        for row in data.get("vlan_interfaces", [])
-        if row.get("enabled", True)
-        and str(row.get("role") or "").strip().lower() != "management"
-        and bool(str(row.get("ip_cidr") or "").strip() or str(row.get("ipv6_cidr") or "").strip())
+    dhcp_target_families.update(
+        {
+            str(row["name"]): address_families(row)
+            for row in data.get("vlan_interfaces", [])
+            if row.get("enabled", True) and address_families(row)
+        }
     )
+    route_target_families = {
+        name: families
+        for name, families in dhcp_target_families.items()
+        if str(
+            (
+                physical_interfaces.get(name)
+                or next((row for row in data.get("vlan_interfaces", []) if str(row["name"]) == name), {})
+            ).get("role")
+            or ""
+        ).strip().lower()
+        != "management"
+    }
+    route_target_names = set(route_target_families)
     for row_index, row in enumerate(data.get("routes", []), start=1):
         enabled = row.get("enabled", True)
         if not isinstance(enabled, bool):
@@ -1169,6 +1194,66 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
             "WAN policy",
             optional=True,
         )
+
+    for row_index, row in enumerate(data.get("nat_rules", []), start=1):
+        enabled = row.get("enabled", True)
+        if not isinstance(enabled, bool):
+            raise ValueError(
+                f"The settings archive row {row_index} in 'nat_rules' has an invalid enabled value."
+            )
+        if enabled and "ipv4" not in route_target_families.get(str(row.get("outbound_interface") or ""), set()):
+            raise ValueError(
+                f"The settings archive row {row_index} in 'nat_rules' has an ineligible outbound interface."
+            )
+
+    for row_index, row in enumerate(data.get("routing_rules", []), start=1):
+        enabled = row.get("enabled", True)
+        if not isinstance(enabled, bool):
+            raise ValueError(
+                f"The settings archive row {row_index} in 'routing_rules' has an invalid enabled value."
+            )
+        source = str(row.get("source_interface") or "")
+        destination = str(row.get("destination_interface") or "")
+        if enabled and (source not in route_target_names or destination not in route_target_names):
+            raise ValueError(
+                f"The settings archive row {row_index} in 'routing_rules' has an ineligible interface."
+            )
+        if enabled and source == destination:
+            raise ValueError(
+                f"The settings archive row {row_index} in 'routing_rules' has identical source and destination interfaces."
+            )
+
+    dhcp_enabled = False
+    for row_index, row in enumerate(data.get("dhcp_settings", []), start=1):
+        enabled = row.get("enabled", False)
+        if not isinstance(enabled, bool):
+            raise ValueError(
+                f"The settings archive row {row_index} in 'dhcp_settings' has an invalid enabled value."
+            )
+        dhcp_enabled = dhcp_enabled or enabled
+    if dhcp_enabled:
+        scopes = data.get("dhcp_scopes", [])
+        if scopes:
+            for row_index, row in enumerate(scopes, start=1):
+                enabled = row.get("enabled", True)
+                if not isinstance(enabled, bool):
+                    raise ValueError(
+                        f"The settings archive row {row_index} in 'dhcp_scopes' has an invalid enabled value."
+                    )
+                family = str(row.get("address_family") or "ipv4").strip().lower()
+                interface_name = str(row.get("interface_name") or "")
+                if enabled and family not in dhcp_target_families.get(interface_name, set()):
+                    raise ValueError(
+                        f"The settings archive row {row_index} in 'dhcp_scopes' has an ineligible bind interface."
+                    )
+        else:
+            for row_index, row in enumerate(data.get("dhcp_settings", []), start=1):
+                if row.get("enabled", False) and "ipv4" not in dhcp_target_families.get(
+                    str(row.get("interface_name") or ""), set()
+                ):
+                    raise ValueError(
+                        f"The settings archive row {row_index} in 'dhcp_settings' has an ineligible bind interface."
+                    )
 
     dhcp_scope_names = {str(row["name"]) for row in data.get("dhcp_scopes", [])}
     for row_index, row in enumerate(data.get("dhcp_options", []), start=1):
