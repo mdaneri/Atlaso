@@ -17758,7 +17758,173 @@ function initializeLdapBindSecretModal() {
   }
 }
 
+function initializeContextualVcfScheduleWizard() {
+  const form = document.querySelector("[data-automation-contextual-vcf-schedule]");
+  if (!(form instanceof HTMLFormElement) || typeof form.atlasoOpenScheduleWizard === "function") return;
+  const dialog = form.closest("dialog");
+  if (!(dialog instanceof HTMLDialogElement)) return;
+
+  const scheduleKind = form.querySelector("[data-automation-schedule-kind]");
+  const cronExpression = form.querySelector("[data-automation-cron-expression]");
+  const cronFrequency = form.querySelector("[data-automation-cron-frequency]");
+  const cronMinute = form.querySelector("[data-automation-cron-minute]");
+  const cronTime = form.querySelector("[data-automation-cron-time]");
+  const cronWeekday = form.querySelector("[data-automation-cron-weekday]");
+  const cronMonthday = form.querySelector("[data-automation-cron-monthday]");
+  const cronCustom = form.querySelector("[data-automation-cron-custom]");
+  const cronSummary = form.querySelector("[data-automation-cron-summary]");
+  const cronPreview = form.querySelector("[data-automation-cron-preview]");
+  const modalTitle = form.querySelector("[data-automation-wizard-modal-title]");
+  const profileName = form.querySelector("[data-automation-context-profile-name]");
+  const submit = form.querySelector("[data-automation-wizard-submit]");
+  let selectedProfile = null;
+
+  const reviewValue = (selector, value) => {
+    const target = form.querySelector(selector);
+    if (target instanceof HTMLElement) target.textContent = value || "not configured";
+  };
+  const cronPartsFromTime = () => {
+    const [hour = "2", minute = "0"] = String(cronTime?.value || "02:00").split(":");
+    return { hour: String(Number(hour)), minute: String(Number(minute)), label: `${hour.padStart(2, "0")}:${minute.padStart(2, "0")}` };
+  };
+  const updateCronBuilder = () => {
+    if (!(cronExpression instanceof HTMLInputElement) || !(cronFrequency instanceof HTMLSelectElement)) return;
+    const frequency = cronFrequency.value;
+    form.querySelectorAll("[data-automation-cron-control]").forEach((element) => {
+      const control = element.getAttribute("data-automation-cron-control");
+      const visible = control === frequency || (control === "time" && ["daily", "weekly", "monthly"].includes(frequency));
+      element.classList.toggle("hidden", !visible);
+      element.querySelectorAll("input, select").forEach((input) => { input.required = visible; });
+    });
+    const timezone = String(form.elements.timezone_name.value || "UTC");
+    const time = cronPartsFromTime();
+    let expression = "0 2 * * *";
+    let summary = `Every day at ${time.label} ${timezone}`;
+    if (frequency === "hourly") {
+      const minute = String(Number(cronMinute?.value || 0));
+      expression = `${minute} * * * *`;
+      summary = `Every hour at minute ${minute} · ${timezone}`;
+    } else if (frequency === "daily") {
+      expression = `${time.minute} ${time.hour} * * *`;
+    } else if (frequency === "weekly") {
+      const weekday = String(cronWeekday?.value || "1");
+      const names = { "0": "Sunday", "1": "Monday", "2": "Tuesday", "3": "Wednesday", "4": "Thursday", "5": "Friday", "6": "Saturday" };
+      expression = `${time.minute} ${time.hour} * * ${weekday}`;
+      summary = `Every ${names[weekday]} at ${time.label} ${timezone}`;
+    } else if (frequency === "monthly") {
+      const monthday = String(Number(cronMonthday?.value || 1));
+      expression = `${time.minute} ${time.hour} ${monthday} * *`;
+      summary = `Every month on day ${monthday} at ${time.label} ${timezone}`;
+    } else {
+      expression = String(cronCustom?.value || "").trim();
+      summary = `Custom schedule in ${timezone}`;
+    }
+    cronExpression.value = expression;
+    if (cronSummary instanceof HTMLElement) cronSummary.textContent = summary;
+    if (cronPreview instanceof HTMLElement) cronPreview.textContent = expression;
+  };
+  const loadCronBuilder = (rawExpression = "0 2 * * *") => {
+    if (!(cronFrequency instanceof HTMLSelectElement)) return;
+    const expression = String(rawExpression || "0 2 * * *").trim();
+    const fields = expression.split(/\s+/);
+    const numeric = (value, minimum, maximum) => /^\d+$/.test(value) && Number(value) >= minimum && Number(value) <= maximum;
+    let frequency = "custom";
+    if (fields.length === 5 && numeric(fields[0], 0, 59) && fields.slice(1).every((value) => value === "*")) {
+      frequency = "hourly";
+      if (cronMinute instanceof HTMLInputElement) cronMinute.value = fields[0];
+    } else if (fields.length === 5 && numeric(fields[0], 0, 59) && numeric(fields[1], 0, 23) && fields[2] === "*" && fields[3] === "*" && fields[4] === "*") {
+      frequency = "daily";
+    } else if (fields.length === 5 && numeric(fields[0], 0, 59) && numeric(fields[1], 0, 23) && fields[2] === "*" && fields[3] === "*" && numeric(fields[4], 0, 6)) {
+      frequency = "weekly";
+      if (cronWeekday instanceof HTMLSelectElement) cronWeekday.value = fields[4];
+    } else if (fields.length === 5 && numeric(fields[0], 0, 59) && numeric(fields[1], 0, 23) && numeric(fields[2], 1, 31) && fields[3] === "*" && fields[4] === "*") {
+      frequency = "monthly";
+      if (cronMonthday instanceof HTMLInputElement) cronMonthday.value = fields[2];
+    }
+    if (["daily", "weekly", "monthly"].includes(frequency) && cronTime instanceof HTMLInputElement) {
+      cronTime.value = `${fields[1].padStart(2, "0")}:${fields[0].padStart(2, "0")}`;
+    }
+    if (cronCustom instanceof HTMLInputElement) cronCustom.value = expression;
+    cronFrequency.value = frequency;
+    updateCronBuilder();
+  };
+  const updateTimingVisibility = () => {
+    const value = scheduleKind instanceof HTMLSelectElement ? scheduleKind.value : "cron";
+    form.querySelectorAll("[data-automation-schedule-timing]").forEach((element) => {
+      const visible = element.getAttribute("data-automation-schedule-timing") === value;
+      element.classList.toggle("hidden", !visible);
+      element.querySelectorAll("[data-automation-timing-required]").forEach((input) => { input.required = visible; });
+    });
+    if (value === "cron") updateCronBuilder();
+  };
+  const prepareReview = () => {
+    const kind = scheduleKind instanceof HTMLSelectElement ? scheduleKind.value : "cron";
+    const timing = kind === "once"
+      ? `One time · ${form.elements.run_once_at.value || "not set"}`
+      : `Cron · ${form.elements.cron_expression.value || "not set"}`;
+    reviewValue("[data-automation-review-name]", String(form.elements.name.value || ""));
+    reviewValue("[data-automation-review-task]", "vcf depot download");
+    reviewValue("[data-automation-review-timing]", timing);
+    reviewValue("[data-automation-review-timezone]", String(form.elements.timezone_name.value || "UTC"));
+    reviewValue("[data-automation-review-state]", form.elements.enabled.checked ? "Enabled" : "Disabled");
+    reviewValue("[data-automation-review-config]", String(selectedProfile?.name || "not selected"));
+  };
+
+  const wizard = window.AtlasoUiPatterns.createWizard({
+    form,
+    dialog,
+    steps: [
+      { id: "identity", title: "Name the schedule", description: "Name this schedule for the selected VCF Offline Depot profile." },
+      { id: "timing", title: "Choose when it runs", description: "Configure recurring or one-time execution in an explicit timezone." },
+      { id: "state", title: "Choose the initial state", description: "Enable the schedule now or save it disabled for review before the worker can queue it." },
+      { id: "review", title: "Review the schedule", description: "Confirm the bound profile, timing, and initial state." },
+    ],
+    prepareReview,
+    onOpen: ({ context }) => {
+      selectedProfile = context;
+      form.action = managementUiPath(`/vcf-offline-depot/profiles/${context?.id || 0}/schedules`);
+      if (modalTitle instanceof HTMLElement) modalTitle.textContent = `Schedule ${context?.name || "profile"}`;
+      if (submit instanceof HTMLButtonElement) submit.textContent = "Create schedule";
+      if (profileName instanceof HTMLElement) profileName.textContent = context?.name || "Selected profile";
+      loadCronBuilder(String(form.elements.cron_expression?.value || "0 2 * * *"));
+      updateTimingVisibility();
+    },
+    onSubmit: async () => {
+      const payload = await atlasoGridWizardRequest(form.action, new FormData(form));
+      showTransientGridStatus(`Created schedule ${payload.schedule_name} for ${selectedProfile?.name || "the selected profile"}. Manage it in Automation Schedules.`);
+      return true;
+    },
+  });
+  const open = (profile = null, launcher = null) => wizard.open({ context: profile, launcher });
+  form.atlasoOpenScheduleWizard = open;
+  scheduleKind?.addEventListener("change", updateTimingVisibility);
+  [cronFrequency, cronMinute, cronTime, cronWeekday, cronMonthday, cronCustom].forEach((control) => {
+    control?.addEventListener("input", updateCronBuilder);
+    control?.addEventListener("change", updateCronBuilder);
+  });
+  form.elements.timezone_name?.addEventListener("input", updateCronBuilder);
+
+  if (form.dataset.contextProfileId) {
+    const serverProfile = {
+      id: Number(form.dataset.contextProfileId),
+      name: form.dataset.contextProfileName || "Selected profile",
+    };
+    const launcher = document.querySelector(`[data-vcf-depot-fallback-schedule="${serverProfile.id}"]`);
+    if (dialog.open) dialog.close();
+    void open(serverProfile, launcher instanceof HTMLElement ? launcher : null).then(() => {
+      if (form.dataset.contextReadOnly === "true") {
+        form.querySelectorAll("input, select, textarea, [data-atlaso-wizard-nav], [data-atlaso-wizard-next], [data-atlaso-wizard-back], [data-atlaso-wizard-submit]").forEach((control) => {
+          control.disabled = true;
+        });
+      }
+      const contextualError = String(form.dataset.contextError || "");
+      if (contextualError) wizard.setError(contextualError);
+    });
+  }
+}
+
 function initializeAutomationTables() {
+  initializeContextualVcfScheduleWizard();
   if (typeof Tabulator === "undefined") return;
 
   const parseTableData = (elementId) => {
@@ -18320,7 +18486,11 @@ function initializeAutomationTables() {
   scriptDiffModal?.querySelector("[data-automation-script-diff-close]")?.addEventListener("click", () => scriptDiffModal.close());
 
   const schedulesElement = document.getElementById("automation-schedules-table");
-  if (scheduleModal instanceof HTMLDialogElement && scheduleForm instanceof HTMLFormElement) {
+  if (
+    scheduleModal instanceof HTMLDialogElement
+    && scheduleForm instanceof HTMLFormElement
+    && !(scheduleForm.hasAttribute("data-automation-contextual-vcf-schedule") && typeof scheduleForm.atlasoOpenScheduleWizard === "function")
+  ) {
     const isContextualVcfSchedule = scheduleForm.hasAttribute("data-automation-contextual-vcf-schedule");
     const wizardSteps = isContextualVcfSchedule
       ? [

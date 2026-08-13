@@ -1009,7 +1009,7 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert service_worker.headers["cache-control"] == "no-cache"
     assert service_worker.headers["service-worker-allowed"] == "/ui/management/"
     assert "ATLASO_CACHE" in service_worker.text
-    assert "atlaso-management-pwa-v252" in service_worker.text
+    assert "atlaso-management-pwa-v253" in service_worker.text
     assert 'fetch(asset, { cache: "reload" })' in service_worker.text
     assert ".catch(() => undefined)" in service_worker.text
     assert 'request.mode === "navigate"' in service_worker.text
@@ -1027,7 +1027,7 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-8" in service_worker.text
     assert "/static/appliance-apply-polling.js?v=issue-294-2" in service_worker.text
     assert "/static/ui-routes.js?v=issue-287-1" in service_worker.text
-    assert "/static/app.js?v=vcf-depot-queue-schedule-351-353-8" in service_worker.text
+    assert "/static/app.js?v=vcf-depot-queue-schedule-351-353-9" in service_worker.text
     assert "/static/terminal.js?v=issue-287-2" in service_worker.text
     assert "/static/pwa.js?v=issue-287-2" in service_worker.text
     assert "vcfdt-configuration-248-20260807-14" not in service_worker.text
@@ -1059,8 +1059,8 @@ def test_shared_ui_pattern_shell_and_wizard_contracts(client):
     base = (templates / "base.html").read_text(encoding="utf-8")
     public_base = (templates / "public_portal_base.html").read_text(encoding="utf-8")
     for shell, app_asset in (
-        (base, "/static/app.js?v=vcf-depot-queue-schedule-351-353-8"),
-        (public_base, "/static/app.js?v=vcf-depot-queue-schedule-351-353-8"),
+        (base, "/static/app.js?v=vcf-depot-queue-schedule-351-353-9"),
+        (public_base, "/static/app.js?v=vcf-depot-queue-schedule-351-353-9"),
         (base, "/static/appliance-apply-polling.js?v=issue-294-2"),
     ):
         assert shell.index("/static/vendor/tabulator/tabulator.min.js") < shell.index(
@@ -1689,7 +1689,7 @@ def test_monitor_page_renders_and_data_endpoint(client):
     assert "swagger-link-icon" in page.text
     assert "/static/app.css?v=vlan-interface-wizard-304-2" in page.text
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-8" in page.text
-    assert "/static/app.js?v=vcf-depot-queue-schedule-351-353-8" in page.text
+    assert "/static/app.js?v=vcf-depot-queue-schedule-351-353-9" in page.text
     app_css = client.get("/static/app.css")
     assert app_css.status_code == 200
     assert ".split-workspace > .wide-panel" in app_css.text
@@ -15414,6 +15414,15 @@ def test_vcf_offline_depot_contextual_schedule_is_server_bound_and_stays_in_page
     assert "openScheduleWizard(serverProfile, launcher instanceof HTMLElement ? launcher : null)" in app_js
     assert 'if (scheduleForm.dataset.contextReadOnly === "true")' in app_js
     assert "if (contextualError) scheduleWizard.setError(contextualError);" in app_js
+    automation_initializer = app_js.split("function initializeAutomationTables()", 1)[1]
+    assert automation_initializer.index("initializeContextualVcfScheduleWizard();") < automation_initializer.index(
+        'if (typeof Tabulator === "undefined") return;'
+    )
+    contextual_initializer = app_js.split(
+        "function initializeContextualVcfScheduleWizard()", 1
+    )[1].split("function initializeAutomationTables()", 1)[0]
+    assert "window.AtlasoUiPatterns.createWizard({" in contextual_initializer
+    assert "Tabulator" not in contextual_initializer
 
     fallback_submit = client.post(
         f"/vcf-offline-depot/profiles/{profile_id}/schedules",
