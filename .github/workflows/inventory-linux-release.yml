@@ -12,18 +12,10 @@ permissions:
   actions: read
   contents: read
 
-concurrency:
-  group: atlaso-github-pages
-  cancel-in-progress: false
-
 jobs:
-  publish:
-    name: Build, sign, and publish final Inventory Linux release
+  build:
+    name: Build reproducible Inventory Linux package
     runs-on: ubuntu-latest
-    environment: appliance-release
-    permissions:
-      actions: read
-      contents: write
     steps:
       - name: Check out the requested commit
         uses: actions/checkout@v7
@@ -65,14 +57,58 @@ jobs:
         with:
           python-version: '3.14'
           cache: pip
-      - name: Install locked release tooling
-        env:
-          PIP_CONFIG_FILE: /dev/null
-        run: python -m pip install --require-hashes --requirement requirements-release-tools.lock
       - name: Build reproducible Inventory Linux package
         run: |
           ./image/inventory-linux/build.sh
           python scripts/build_inventory_linux_package.py
+      - name: Upload Inventory Linux package
+        uses: actions/upload-artifact@v7
+        with:
+          name: inventory-linux-package
+          path: dist/inventory-linux
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    name: Sign and publish final Inventory Linux release
+    needs:
+      - build
+    runs-on: ubuntu-latest
+    concurrency:
+      group: atlaso-github-pages
+      queue: max
+      cancel-in-progress: false
+    environment: appliance-release
+    permissions:
+      actions: read
+      contents: write
+    steps:
+      - name: Check out the requested commit
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.release_sha }}
+          fetch-depth: 0
+      - name: Confirm the commit is still on main
+        env:
+          RELEASE_SHA: ${{ inputs.release_sha }}
+        run: |
+          git fetch origin main --no-tags
+          git merge-base --is-ancestor "$RELEASE_SHA" origin/main
+          test "$(git rev-parse HEAD)" = "$RELEASE_SHA"
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.14'
+          cache: pip
+      - name: Install locked release tooling
+        env:
+          PIP_CONFIG_FILE: /dev/null
+        run: python -m pip install --require-hashes --requirement requirements-release-tools.lock
+      - name: Download Inventory Linux package
+        uses: actions/download-artifact@v8
+        with:
+          name: inventory-linux-package
+          path: dist/inventory-linux
       - name: Materialize the protected signing key
         env:
           RELEASE_SIGNING_PRIVATE_KEY: ${{ secrets.RELEASE_SIGNING_PRIVATE_KEY }}

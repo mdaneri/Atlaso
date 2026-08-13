@@ -373,6 +373,36 @@ def _row_to_dict(row: object, *, exclude: set[str] | None = None) -> dict[str, A
     return payload
 
 
+def _archive_datetime(value: Any, field_name: str) -> datetime | None:
+    """Parse one explicitly retained archive timestamp.
+
+    Args:
+        value: Candidate ISO 8601 timestamp or an empty value.
+        field_name: Bounded field name used in validation feedback.
+
+    Returns:
+        The timezone-aware timestamp, or ``None`` for an empty value.
+
+    Raises:
+        ValueError: If the timestamp is malformed or lacks a timezone.
+    """
+    if value is None or value == "":
+        return None
+    if not isinstance(value, str):
+        raise ValueError(f"The settings archive field '{field_name}' must be an ISO 8601 timestamp.")
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError as exc:
+        raise ValueError(
+            f"The settings archive field '{field_name}' must be an ISO 8601 timestamp."
+        ) from exc
+    if parsed.tzinfo is None:
+        raise ValueError(
+            f"The settings archive field '{field_name}' must include a timezone."
+        )
+    return parsed
+
+
 def _settings_rows(db: Session) -> list[dict[str, str]]:
     """Return settings rows.
 
@@ -500,6 +530,10 @@ def _ca_certificates_to_archive(db: Session) -> list[dict[str, Any]]:
     rows = []
     for certificate in db.execute(select(CaCertificate)).scalars().all():
         payload = _row_to_dict(certificate, exclude={"profile_id", "issued_at", "expires_at"})
+        revoked_at = certificate.revoked_at
+        if revoked_at is not None and revoked_at.tzinfo is None:
+            revoked_at = revoked_at.replace(tzinfo=timezone.utc)
+        payload["revoked_at"] = revoked_at.isoformat() if revoked_at else None
         payload["profile_name"] = profiles.get(certificate.profile_id) if certificate.profile_id else ""
         rows.append(payload)
     return rows
@@ -1936,6 +1970,7 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
                 exclude={"profile_id"},
             ),
             profile_id=ca_profile_ids.get(str(row.get("profile_name") or "")),
+            revoked_at=_archive_datetime(row.get("revoked_at"), "revoked_at"),
         )
         for row in data.get("ca_certificates", [])
     ]
@@ -2789,8 +2824,16 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
             )
 
     profile_names = {str(row["name"]) for row in data.get("vcf_depot_download_profiles", [])}
+    script_names: set[str] = set()
     script_revisions: set[tuple[str, int]] = set()
     for script_index, script in enumerate(data.get("automation_scripts", []), start=1):
+        script_name = str(script["name"])
+        if script_name in script_names:
+            raise ValueError(
+                "The settings archive row "
+                f"{script_index} in 'automation_scripts' duplicates a script name."
+            )
+        script_names.add(script_name)
         for revision in script["revisions"]:
             revision_number = revision["revision"]
             if type(revision_number) is not int or revision_number < 1:
@@ -2798,7 +2841,7 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
                     "The settings archive row "
                     f"{script_index} in 'automation_scripts' has an invalid revision number."
                 )
-            revision_identity = (str(script["name"]), revision_number)
+            revision_identity = (script_name, revision_number)
             if revision_identity in script_revisions:
                 raise ValueError(
                     "The settings archive row "
@@ -3426,9 +3469,14 @@ def _restore_ca_certificates(db: Session, rows: list[dict[str, Any]]) -> int:
     """
     profiles = {profile.name: profile.id for profile in db.execute(select(CaProfile)).scalars().all()}
     for row in rows:
-        payload = _model_kwargs(CaCertificate, row, exclude={"profile_id", "issued_at", "expires_at"})
+        payload = _model_kwargs(
+            CaCertificate,
+            row,
+            exclude={"profile_id", "issued_at", "expires_at", "revoked_at"},
+        )
         profile_name = str(row.get("profile_name") or "")
         payload["profile_id"] = profiles.get(profile_name) if profile_name else None
+        payload["revoked_at"] = _archive_datetime(row.get("revoked_at"), "revoked_at")
         db.add(CaCertificate(**payload))
     db.flush()
     return len(rows)

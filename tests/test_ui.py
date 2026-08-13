@@ -4655,6 +4655,58 @@ def test_settings_archive_round_trips_authoritative_dns_policy(client):
         assert restored.authoritative_expire == 2419200
 
 
+def test_settings_archive_round_trips_ca_revocation_timestamp(client):
+    """Verify CA revocation timestamps survive settings export and restore."""
+    from datetime import datetime, timezone
+
+    from sqlalchemy import select
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import CaCertificate, CaSettings
+    from atlaso.app.services.ca import ensure_root_ca_material
+    from atlaso.app.services.settings_archive import (
+        export_settings_archive,
+        restore_settings_archive,
+    )
+
+    revoked_at = datetime(2026, 8, 12, 12, 30, tzinfo=timezone.utc)
+    with SessionLocal() as db:
+        db.query(CaCertificate).delete()
+        settings = db.scalar(select(CaSettings))
+        assert settings is not None
+        settings.enabled = True
+        assert ensure_root_ca_material(settings) is True
+        db.add(
+            CaCertificate(
+                common_name="revoked-archive.atlaso.internal",
+                status="revoked",
+                serial_number="2a",
+                revoked_at=revoked_at,
+                revoked_by="admin",
+                revocation_reason="rotation",
+                enabled=True,
+            )
+        )
+        db.commit()
+
+        archive = export_settings_archive(db, actor="test")
+        archived = archive["data"]["ca_certificates"][0]
+        assert archived["revoked_at"] == revoked_at.isoformat()
+
+        restore_settings_archive(db, archive)
+        restored = db.scalar(
+            select(CaCertificate).where(
+                CaCertificate.common_name == "revoked-archive.atlaso.internal"
+            )
+        )
+        assert restored is not None
+        restored_revoked_at = restored.revoked_at
+        assert restored_revoked_at is not None
+        if restored_revoked_at.tzinfo is None:
+            restored_revoked_at = restored_revoked_at.replace(tzinfo=timezone.utc)
+        assert restored_revoked_at == revoked_at
+
+
 def test_settings_restore_rejects_disabled_users_for_enabled_vcf_services(client):
     """Verify enabled restored VCF services require enabled retained local users.
 
@@ -5592,6 +5644,13 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
     invalid_script_digest["data"]["automation_scripts"][-1]["name"] = "Invalid digest"
     invalid_script_digest["data"]["automation_scripts"][-1]["revisions"][0]["interpreter"] = "powershell"
     invalid_script_digest["data"]["automation_scripts"][-1]["revisions"][0]["content_sha256"] = "0" * 64
+    duplicate_script_name = deepcopy(archive)
+    duplicate_script_name["data"]["automation_scripts"].extend(
+        [
+            {"name": "Duplicate script", "created_by": "test", "revisions": []},
+            {"name": "Duplicate script", "created_by": "test", "revisions": []},
+        ]
+    )
     unsupported_schedule = deepcopy(archive)
     unsupported_schedule["data"]["schedules"].append(
         {
@@ -5758,6 +5817,7 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
         (duplicate_update_source, "duplicates an update source identity"),
         (invalid_script_interpreter, "Interpreter must be bash, python, or powershell"),
         (invalid_script_digest, "Script content digest does not match"),
+        (duplicate_script_name, "duplicates a script name"),
         (unsupported_schedule, "Choose a supported scheduled task type"),
         (invalid_update_schedule, "retired or unsupported stream"),
         (invalid_managed_package_source, "managed package state is invalid: Choose a PowerShell repository"),

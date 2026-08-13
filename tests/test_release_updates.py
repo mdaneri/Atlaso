@@ -328,6 +328,40 @@ def test_release_workflows_use_successful_main_sha_and_promote_without_rebuildin
     assert "staging" not in inventory
 
 
+def test_pages_writers_share_multi_entry_publication_queue():
+    """Verify every Pages writer preserves multiple pending publications."""
+    workflow_root = ROOT / ".github" / "workflows"
+    writers: set[Path] = set()
+    queue_users: set[Path] = set()
+
+    for path in workflow_root.glob("*.yml"):
+        text = path.read_text(encoding="utf-8")
+        if "HEAD:gh-pages" in text:
+            writers.add(path)
+        if "group: atlaso-github-pages" not in text:
+            continue
+        queue_users.add(path)
+        for declaration in text.split("group: atlaso-github-pages")[1:]:
+            settings = "\n".join(declaration.splitlines()[:3])
+            assert "queue: max" in settings, path
+            assert "cancel-in-progress: false" in settings, path
+
+    assert writers
+    assert queue_users == writers
+
+    inventory = (workflow_root / "inventory-linux-release.yml").read_text(
+        encoding="utf-8"
+    )
+    build_job, publish_job = inventory.split("  build:\n", 1)[1].split(
+        "  publish:\n", 1
+    )
+    assert "atlaso-github-pages" not in build_job
+    assert "actions/upload-artifact@v7" in build_job
+    assert "group: atlaso-github-pages" in publish_job
+    assert "actions/download-artifact@v8" in publish_job
+    assert "HEAD:gh-pages" in publish_job
+
+
 def test_idempotent_publisher_refuses_existing_tag_for_another_commit(monkeypatch, tmp_path):
     """Verify that idempotent publisher refuses existing tag for another commit.
 

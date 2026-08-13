@@ -131,6 +131,7 @@ jobs:
     runs-on: ubuntu-latest
     concurrency:
       group: atlaso-github-pages
+      queue: max
       cancel-in-progress: false
     environment: appliance-release
     permissions:
