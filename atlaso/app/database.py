@@ -129,14 +129,15 @@ def _reconcile_vcf_depot_job_queue(connection: Connection) -> None:
 
     active_downloads = connection.execute(
         text(
-            "SELECT id, vcf_depot_profile_id FROM jobs "
+            "SELECT id, vcf_depot_profile_id, status FROM jobs "
             "WHERE type = 'vcf-depot-download' "
             "AND status IN ('pending', 'running') "
-            "ORDER BY created_at, id"
+            "ORDER BY vcf_depot_profile_id, "
+            "CASE WHEN status = 'running' THEN 0 ELSE 1 END, created_at, id"
         )
     ).all()
     active_profile_ids: set[int] = set()
-    for duplicate_job_id, raw_profile_id in active_downloads:
+    for duplicate_job_id, raw_profile_id, _status in active_downloads:
         profile_id = int(raw_profile_id or 0)
         if not profile_id or profile_id not in active_profile_ids:
             if profile_id:

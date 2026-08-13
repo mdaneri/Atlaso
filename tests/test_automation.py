@@ -1259,6 +1259,52 @@ def test_vcf_queue_reconciliation_preserves_identity_tasks_for_type_specific_rec
     assert "uq_jobs_running_vcf_depot_operation" in indexes
 
 
+def test_vcf_queue_reconciliation_preserves_running_same_profile_job():
+    """Verify an older pending duplicate cannot displace a running process guard."""
+    from sqlalchemy import create_engine, text
+
+    import atlaso.app.database as database
+
+    test_engine = create_engine("sqlite://")
+    with test_engine.begin() as connection:
+        connection.execute(
+            text(
+                "CREATE TABLE jobs ("
+                "id TEXT PRIMARY KEY, type TEXT NOT NULL, status TEXT NOT NULL, "
+                "vcf_depot_operation BOOLEAN NOT NULL DEFAULT FALSE, "
+                "vcf_depot_profile_id INTEGER, task_config_json TEXT, result TEXT, "
+                "created_at TEXT, started_at TEXT, progress_percent INTEGER, "
+                "finished_at TEXT, error TEXT)"
+            )
+        )
+        connection.execute(
+            text(
+                "INSERT INTO jobs "
+                "(id, type, status, vcf_depot_operation, vcf_depot_profile_id, created_at) "
+                "VALUES ('job_pending_older', 'vcf-depot-download', 'pending', TRUE, 41, '2026-01-01')"
+            )
+        )
+        connection.execute(
+            text(
+                "INSERT INTO jobs "
+                "(id, type, status, vcf_depot_operation, vcf_depot_profile_id, created_at, started_at) "
+                "VALUES ('job_running_newer', 'vcf-depot-download', 'running', TRUE, 41, "
+                "'2026-01-02', '2026-01-02')"
+            )
+        )
+
+        database._reconcile_vcf_depot_job_queue(connection)
+        statuses = dict(connection.execute(text("SELECT id, status FROM jobs")).all())
+        indexes = {row[1] for row in connection.execute(text("PRAGMA index_list('jobs')")).all()}
+
+    assert statuses == {
+        "job_pending_older": "skipped",
+        "job_running_newer": "running",
+    }
+    assert "uq_jobs_active_vcf_depot_profile" in indexes
+    assert "uq_jobs_running_vcf_depot_operation" in indexes
+
+
 def test_vcf_queue_reconciliation_uses_only_selected_apply_units():
     """Verify skipped apply metadata does not create a false VCFDT blocker."""
     import json
