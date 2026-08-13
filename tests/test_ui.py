@@ -2301,8 +2301,6 @@ def test_stage_appliance_apply_config_repairs_staging_permission(monkeypatch, tm
     """
     from types import SimpleNamespace
 
-    from pathlib import Path
-
     from atlaso.app import ui
 
     attempts = {"count": 0}
