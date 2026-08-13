@@ -19084,31 +19084,31 @@ def test_queued_vcf_depot_download_can_be_cancelled_before_claim(client):
     Args:
         client: HTTP test client used to exercise the Atlaso application.
     """
-    import json
-
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import Job, JobStatus, VcfDepotDownloadProfile
+    from atlaso.app.services.vcf_depot_downloads import enqueue_vcf_depot_download
 
     login(client)
     page = client.get("/vcf-offline-depot")
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
     with SessionLocal() as db:
-        profile = VcfDepotDownloadProfile(name="pending-cancel-guard", profile_type="metadata", enabled=True)
+        profile = VcfDepotDownloadProfile(
+            name="pending-cancel-guard",
+            profile_type="metadata",
+            enabled=True,
+            status="synced",
+        )
         db.add(profile)
         db.flush()
-        job_id = "job_pending_vcfdt_download_cancel_guard"
-        db.add(
-            Job(
-                id=job_id,
-                type="vcf-depot-download",
-                status=JobStatus.PENDING.value,
-                created_by="admin",
-                vcf_depot_operation=True,
-                vcf_depot_profile_id=profile.id,
-                task_config_json=json.dumps({"profile_id": profile.id}),
-                result=json.dumps({"profile_id": profile.id, "profile_name": profile.name}),
-            )
+        queued = enqueue_vcf_depot_download(
+            db,
+            profile=profile,
+            actor="admin",
+            trigger="manual",
+            job_id="job_pending_vcfdt_download_cancel_guard",
         )
+        job_id = queued.id
+        profile_id = profile.id
         db.commit()
 
     cancel_response = client.post(f"/tasks/{job_id}/cancel", data={"csrf": csrf})
@@ -19117,6 +19117,15 @@ def test_queued_vcf_depot_download_can_be_cancelled_before_claim(client):
     assert cancel_response.json()["task"]["status"] == JobStatus.CANCELLED.value
     with SessionLocal() as db:
         assert db.get(Job, job_id).status == JobStatus.CANCELLED.value
+        assert db.get(VcfDepotDownloadProfile, profile_id).status == "synced"
+    fallback = client.get("/vcf-offline-depot").text.split(
+        'id="vcf-depot-profiles-fallback"', 1
+    )[1].split("</table>", 1)[0]
+    profile_markup = re.search(
+        r"<tr>\s*<td>pending-cancel-guard</td>.*?</tr>", fallback, re.DOTALL
+    )
+    assert profile_markup is not None
+    assert re.search(r"<td>\s*Succeeded\s*</td>", profile_markup.group())
 
 
 def test_vcf_depot_software_id_runner_persists_raw_metadata_before_task_redaction(client, monkeypatch):

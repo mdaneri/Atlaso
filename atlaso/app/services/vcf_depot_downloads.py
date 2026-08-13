@@ -229,6 +229,8 @@ def cancel_pending_vcf_depot_download(
     db: Session,
     job_id: str,
     *,
+    profile_id: int,
+    profile_status_before_enqueue: str,
     finished_at: datetime,
     error: str,
     result: str,
@@ -238,6 +240,8 @@ def cancel_pending_vcf_depot_download(
     Args:
         db: Active database session.
         job_id: Identifier of the queued profile download.
+        profile_id: Identifier of the profile whose queued state is being restored.
+        profile_status_before_enqueue: Durable status observed before queue admission.
         finished_at: Cancellation completion time.
         error: Durable cancellation message.
         result: Redacted durable task result.
@@ -257,7 +261,22 @@ def cancel_pending_vcf_depot_download(
             progress_percent=100,
         )
     )
-    return cancelled.rowcount == 1
+    if cancelled.rowcount != 1:
+        return False
+    restored_status = (
+        profile_status_before_enqueue
+        if profile_status_before_enqueue in {"planned", "synced", "blocked"}
+        else "planned"
+    )
+    db.execute(
+        update(VcfDepotDownloadProfile)
+        .where(
+            VcfDepotDownloadProfile.id == profile_id,
+            VcfDepotDownloadProfile.status == "ready",
+        )
+        .values(status=restored_status, updated_at=finished_at)
+    )
+    return True
 
 
 def lock_vcf_depot_profile_for_deletion(
@@ -317,6 +336,7 @@ def vcf_depot_initial_job_result(
         "profile_id": profile.id,
         "profile_name": profile.name,
         "profile_type": profile.profile_type,
+        "profile_status_before_enqueue": profile.status,
         "trigger": trigger,
         "schedule_id": schedule.id if schedule is not None else None,
         "schedule_name": schedule.name if schedule is not None else "",

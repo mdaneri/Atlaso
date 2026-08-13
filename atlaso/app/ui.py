@@ -28970,6 +28970,8 @@ def cancel_task_from_ui(
         cancelled = cancel_pending_vcf_depot_download(
             db,
             job.id,
+            profile_id=int(job.vcf_depot_profile_id or payload.get("profile_id") or 0),
+            profile_status_before_enqueue=str(payload.get("profile_status_before_enqueue") or "planned"),
             finished_at=finished_at,
             error="Task cancelled by operator.",
             result=json.dumps(_redact_task_value(payload), sort_keys=True),

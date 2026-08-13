@@ -956,6 +956,8 @@ def test_stale_pending_vcf_cancellation_cannot_overwrite_worker_claim(client):
         cancelled = cancel_pending_vcf_depot_download(
             cancellation_db,
             queued_id,
+            profile_id=stale_job.vcf_depot_profile_id,
+            profile_status_before_enqueue="planned",
             finished_at=utcnow(),
             error="Task cancelled by operator.",
             result=json.dumps({"state": "cancelled"}),
