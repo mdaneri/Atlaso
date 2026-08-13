@@ -4952,6 +4952,17 @@ def test_settings_archive_round_trips_ca_certificate_validity(client):
         )
         with pytest.raises(ValueError, match="public certificate is not usable"):
             restore_settings_archive(db, extra_pem_archive)
+        extra_chain_archive = deepcopy(archive)
+        extra_chain_certificate = next(
+            row
+            for row in extra_chain_archive["data"]["ca_certificates"]
+            if row["common_name"] == certificate.common_name
+        )
+        extra_chain_certificate["chain_pem"] += (
+            "-----BEGIN PRIVATE KEY-----\nforbidden\n-----END PRIVATE KEY-----\n"
+        )
+        with pytest.raises(ValueError, match="chain is not usable"):
+            restore_settings_archive(db, extra_chain_archive)
         archive["data"]["ca_settings"][0]["root_serial_number"] = "1"
         archive["data"]["ca_settings"][0]["root_fingerprint"] = "tampered"
         archived["serial_number"] = "2"

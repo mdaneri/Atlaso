@@ -62,7 +62,8 @@ validity, serial numbers, and SHA-256 fingerprints from the archived public PEM,
 revocation timestamps, and preserves OIDC key activation, retirement, and publication-overlap timestamps so still-live
 tokens retain their verification key. Disabled CA certificate rows receive the same bounded status, managed-path, and
 supplied-material checks as enabled rows before any current state is removed. Every restored leaf PEM must contain
-exactly one canonical public certificate with no trailing or private-key material.
+exactly one canonical public certificate, and every restored chain must contain only its canonical parsed certificates;
+neither may include trailing or private-key material.
 
 ESXi Network Boot installer ISO references are normalized beneath the managed ISO root before they are restored, so a
 valid relative archive reference cannot become dependent on the appliance helper's working directory. VCF Offline

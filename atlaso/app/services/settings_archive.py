@@ -585,17 +585,25 @@ def _validate_archived_ca_certificate_rows(
                 )
         if certificate.chain_pem:
             try:
+                raw_chain_pem = certificate.chain_pem.strip()
                 chain = x509.load_pem_x509_certificates(
-                    certificate.chain_pem.encode("utf-8")
+                    raw_chain_pem.encode("utf-8")
                 )
+                canonical_chain_pem = b"".join(
+                    item.public_bytes(serialization.Encoding.PEM) for item in chain
+                ).decode("utf-8").strip()
+                if (
+                    not chain
+                    or raw_chain_pem.count("-----BEGIN CERTIFICATE-----")
+                    != len(chain)
+                    or "PRIVATE KEY" in raw_chain_pem
+                    or raw_chain_pem != canonical_chain_pem
+                ):
+                    raise ValueError
             except (TypeError, ValueError) as exc:
                 raise ValueError(
                     f"The settings archive CA certificate {label} chain is not usable."
                 ) from exc
-            if not chain:
-                raise ValueError(
-                    f"The settings archive CA certificate {label} chain is not usable."
-                )
         if certificate.csr_text:
             try:
                 x509.load_pem_x509_csr(certificate.csr_text.encode("utf-8"))
