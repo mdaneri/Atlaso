@@ -1182,12 +1182,11 @@ def _validate_archive(
     if any(section_name not in ARCHIVE_SECTION_NAMES for section_name in data):
         raise ValueError("The settings archive contains an unsupported data section.")
     missing_sections = ARCHIVE_SECTION_NAMES.difference(data)
-    legacy_incomplete = bool(
-        missing_sections
-        and allow_legacy_incomplete
+    legacy_summary = bool(
+        allow_legacy_incomplete
         and schema_version == LEGACY_ARCHIVE_SCHEMA_VERSION
     )
-    if missing_sections and not legacy_incomplete:
+    if missing_sections and not legacy_summary:
         raise ValueError("The settings archive is missing a required data section.")
     for section_name, rows in data.items():
         if not isinstance(rows, list):
@@ -1203,7 +1202,7 @@ def _validate_archive(
         required_fields = _archive_required_fields(section_name)
         for row_index, row in enumerate(rows, start=1):
             _validate_archive_row(section_name, row_index, row, required_fields)
-    if not legacy_incomplete:
+    if not legacy_summary:
         _validate_archive_relationships(data)
 
 
@@ -2051,6 +2050,10 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
             )
 
     for row_index, row in enumerate(data.get("vsphere_key_providers", []), start=1):
+        if "enabled" in row and not isinstance(row["enabled"], bool):
+            raise ValueError(
+                f"The settings archive row {row_index} in 'vsphere_key_providers' has an invalid enabled value."
+            )
         try:
             normalize_provider_id(str(row["id"]))
         except ValueError as exc:
@@ -2059,6 +2062,10 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
             ) from exc
     provider_ids = {str(row["id"]) for row in data.get("vsphere_key_providers", [])}
     for row_index, row in enumerate(data.get("vsphere_trusted_vcenters", []), start=1):
+        if "enabled" in row and not isinstance(row["enabled"], bool):
+            raise ValueError(
+                f"The settings archive row {row_index} in 'vsphere_trusted_vcenters' has an invalid enabled value."
+            )
         require_reference(
             "vsphere_trusted_vcenters",
             row_index,
@@ -2308,9 +2315,16 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
             raise ValueError(
                 f"The settings archive row {row_index} in 'oidc_subjects' has an unsupported identity source."
             )
+    oidc_mapping_identities: set[tuple[str, ...]] = set()
     for row_index, row in enumerate(data.get("oidc_group_mappings", []), start=1):
         source_type = str(row["source_type"] or "")
         if source_type == "ldap_group":
+            mapping_identity = (
+                str(row.get("client_id") or ""),
+                source_type,
+                str(row.get("organization_slug") or ""),
+                str(row.get("ldap_group_name") or ""),
+            )
             require_reference(
                 "oidc_group_mappings",
                 row_index,
@@ -2318,10 +2332,21 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
                 ldap_groups,
                 "managed LDAP group",
             )
-        elif source_type != "local_role":
+        elif source_type == "local_role":
+            mapping_identity = (
+                str(row.get("client_id") or ""),
+                source_type,
+                str(row.get("local_role") or "").strip().casefold(),
+            )
+        else:
             raise ValueError(
                 f"The settings archive row {row_index} in 'oidc_group_mappings' has an unsupported source type."
             )
+        if mapping_identity in oidc_mapping_identities:
+            raise ValueError(
+                f"The settings archive row {row_index} in 'oidc_group_mappings' duplicates an OIDC group mapping identity."
+            )
+        oidc_mapping_identities.add(mapping_identity)
         require_reference(
             "oidc_group_mappings",
             row_index,

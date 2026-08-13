@@ -5150,6 +5150,25 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
         "authorization_code_lifetime_seconds"
     ] = 60
     oidc_client_with_invalid_hash["data"]["oidc_clients"][-1]["client_secret_hash"] = "not-a-hash"
+    duplicate_oidc_mapping = deepcopy(archive)
+    duplicate_oidc_mapping["data"]["oidc_group_mappings"] = [
+        {
+            "source_type": "local_role",
+            "local_role": "admin",
+            "ldap_group_name": "",
+            "organization_slug": "",
+            "client_id": "",
+            "external_group_name": "Administrators",
+        },
+        {
+            "source_type": "local_role",
+            "local_role": "ADMIN",
+            "ldap_group_name": "",
+            "organization_slug": "",
+            "client_id": "",
+            "external_group_name": "Atlaso admins",
+        },
+    ]
     unresolved_esx_volume = deepcopy(archive)
     unresolved_esx_volume["data"]["esx_nfs_shares"].append(
         {"datastore_name": "orphaned-datastore", "volume_name": "missing-volume"}
@@ -5243,6 +5262,30 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
     invalid_provider_id = deepcopy(archive)
     invalid_provider_id["data"]["vsphere_key_providers"].append(
         {"id": "not-a-uuid", "name": "Invalid provider ID", "enabled": False}
+    )
+    invalid_provider_enabled_type = deepcopy(archive)
+    invalid_provider_enabled_type["data"]["vsphere_key_providers"].append(
+        {
+            "id": "11111111-1111-4111-8111-111111111112",
+            "name": "Invalid enabled type",
+            "enabled": "false",
+        }
+    )
+    invalid_vcenter_enabled_type = deepcopy(archive)
+    invalid_vcenter_enabled_type["data"]["vsphere_key_providers"].append(
+        {
+            "id": "11111111-1111-4111-8111-111111111113",
+            "name": "Enabled type test provider",
+            "enabled": False,
+        }
+    )
+    invalid_vcenter_enabled_type["data"]["vsphere_trusted_vcenters"].append(
+        {
+            "id": "22222222-2222-4222-8222-222222222222",
+            "provider_id": "11111111-1111-4111-8111-111111111113",
+            "name": "Invalid enabled type",
+            "enabled": "false",
+        }
     )
     enabled_oidc_without_dependencies = deepcopy(archive)
     enabled_oidc_without_dependencies["data"]["oidc_provider_settings"] = [
@@ -5449,6 +5492,7 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
         (oidc_client_without_redirect, "At least one exact redirect URI is required"),
         (oidc_client_with_invalid_lifetime, "fixed 60-second authorization-code lifetime"),
         (oidc_client_with_invalid_hash, "OIDC client secret hash is not valid"),
+        (duplicate_oidc_mapping, "duplicates an OIDC group mapping identity"),
         (unresolved_esx_volume, "references an unknown ESX storage volume"),
         (enabled_missing_esx_share_target, "has an ineligible interface or address family"),
         (cyclic_ldap_groups, "contains cyclic LDAP group membership"),
@@ -5457,6 +5501,8 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
         (enabled_kms_without_ca, "enables KMS without an enabled CA"),
         (enabled_kms_without_provider, "KMS trust state is invalid: At least one enabled provider"),
         (invalid_provider_id, "invalid provider ID"),
+        (invalid_provider_enabled_type, "has an invalid enabled value"),
+        (invalid_vcenter_enabled_type, "has an invalid enabled value"),
         (enabled_oidc_without_dependencies, "enables OIDC without an active signing key"),
         (enabled_oidc_with_mismatched_address, "has listener addresses not derived from its interfaces"),
         (enabled_oidc_with_invalid_port, "has an invalid HTTPS port"),
@@ -5499,12 +5545,15 @@ def test_settings_restore_migrates_incomplete_schema_v1_archive(client):
 
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import LdapUser, NetworkBootEnvironment
-    from atlaso.app.services.settings_archive import export_settings_archive, restore_settings_archive
+    from atlaso.app.services.settings_archive import (
+        archive_summary,
+        export_settings_archive,
+        restore_settings_archive,
+    )
 
     with SessionLocal() as db:
         archive = export_settings_archive(db, actor="test")
         archive["schema_version"] = 1
-        del archive["data"]["network_boot_environments"]
         archive["data"]["ldap_organizations"].append(
             {
                 "name": "Legacy directory",
@@ -5520,6 +5569,10 @@ def test_settings_restore_migrates_incomplete_schema_v1_archive(client):
                 "password_status": "not_staged",
             }
         )
+        assert archive_summary(archive)["table_counts"]["ldap_users"] == len(
+            archive["data"]["ldap_users"]
+        )
+        del archive["data"]["network_boot_environments"]
         expected_keys = set(db.execute(select(NetworkBootEnvironment.key)).scalars().all())
 
         counts = restore_settings_archive(db, archive)
