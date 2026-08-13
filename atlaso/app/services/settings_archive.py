@@ -542,7 +542,11 @@ def _validate_archived_oidc_mapping_contexts(
     """
 
     def source_key(row: dict[str, Any]) -> tuple[str, ...]:
-        """Return the stable mapping source identity used for client overrides."""
+        """Return the stable mapping source identity used for client overrides.
+
+        Args:
+            row: Archived OIDC group mapping whose source identity is required.
+        """
         if str(row.get("source_type") or "") == "local_role":
             return ("local_role", str(row.get("local_role") or "").casefold())
         return (
@@ -555,7 +559,12 @@ def _validate_archived_oidc_mapping_contexts(
         relevant_rows: list[dict[str, Any]],
         client_id: str,
     ) -> None:
-        """Validate one global or client-overridden effective mapping context."""
+        """Validate one global or client-overridden effective mapping context.
+
+        Args:
+            relevant_rows: Archived mappings eligible for this identity-source context.
+            client_id: Optional archived client whose overrides form the effective context.
+        """
         effective = {
             source_key(row): row
             for row in relevant_rows
