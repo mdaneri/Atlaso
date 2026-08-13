@@ -3423,39 +3423,44 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
             tuple(addresses["ipv4"]),
             tuple(addresses["ipv6"]),
         )
-    if data.get("esx_storage_settings"):
-        storage_errors, _storage_warnings = validate_storage_state(
-            EsxStorageSettings(
-                **_model_kwargs_with_scalar_defaults(
-                    EsxStorageSettings,
-                    data["esx_storage_settings"][0],
-                )
-            ),
-            [
-                EsxStorageVolume(
-                    id=volume_ids[str(row["name"])],
-                    **_model_kwargs_with_scalar_defaults(EsxStorageVolume, row),
-                )
-                for row in data.get("esx_storage_volumes", [])
-            ],
-            [
-                EsxNfsShare(
-                    **_model_kwargs_with_scalar_defaults(
-                        EsxNfsShare,
-                        row,
-                        exclude={"volume_id"},
-                    ),
-                    volume_id=volume_ids.get(str(row.get("volume_name") or "")),
-                )
-                for row in data.get("esx_nfs_shares", [])
-            ],
-            storage_interfaces,
-            dns_enabled=bool(data["dns_settings"][0].get("enabled", False)),
-        )
-        if storage_errors:
-            raise ValueError(
-                f"The settings archive ESX Storage state is invalid: {storage_errors[0]}"
+    storage_settings_rows = data.get("esx_storage_settings", [])
+    storage_settings = (
+        EsxStorageSettings(
+            **_model_kwargs_with_scalar_defaults(
+                EsxStorageSettings,
+                storage_settings_rows[0],
             )
+        )
+        if storage_settings_rows
+        else EsxStorageSettings(enabled=False)
+    )
+    storage_errors, _storage_warnings = validate_storage_state(
+        storage_settings,
+        [
+            EsxStorageVolume(
+                id=volume_ids[str(row["name"])],
+                **_model_kwargs_with_scalar_defaults(EsxStorageVolume, row),
+            )
+            for row in data.get("esx_storage_volumes", [])
+        ],
+        [
+            EsxNfsShare(
+                **_model_kwargs_with_scalar_defaults(
+                    EsxNfsShare,
+                    row,
+                    exclude={"volume_id"},
+                ),
+                volume_id=volume_ids.get(str(row.get("volume_name") or "")),
+            )
+            for row in data.get("esx_nfs_shares", [])
+        ],
+        storage_interfaces,
+        dns_enabled=bool(data["dns_settings"][0].get("enabled", False)),
+    )
+    if storage_errors:
+        raise ValueError(
+            f"The settings archive ESX Storage state is invalid: {storage_errors[0]}"
+        )
 
     archived_update_sources: dict[tuple[str, str], UpdateSource] = {}
     for row_index, row in enumerate(data.get("update_sources", []), start=1):

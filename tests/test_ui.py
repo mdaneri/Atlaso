@@ -6302,6 +6302,15 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
             "enabled": True,
         }
     )
+    missing_storage_settings_validation = deepcopy(archive)
+    missing_storage_settings_validation["data"]["esx_storage_settings"] = []
+    missing_storage_settings_validation["data"]["esx_storage_volumes"].append(
+        {
+            "name": "invalid-volume-without-settings",
+            "stable_device_id": "/dev/sda",
+            "mount_path": "/mnt/atlaso-esx-storage/invalid-volume-without-settings",
+        }
+    )
     invalid_esxi_host_mac = deepcopy(archive)
     invalid_esxi_host_mac["data"]["esxi_pxe_hosts"].append(
         {"hostname": "invalid-mac-host", "mac_address": "not-a-mac"}
@@ -6620,6 +6629,7 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
         (invalid_disabled_ca_certificate_material, "public certificate is not usable"),
         (duplicate_managed_certificate_owner, "duplicates a managed certificate owner"),
         (invalid_storage_state, "ESX Storage state is invalid: Datastore invalid-share must use NFS 3 or NFS 4.1"),
+        (missing_storage_settings_validation, "must use a stable /dev/disk/by-id identity"),
         (invalid_esxi_host_mac, "esxi_pxe_hosts' has an invalid MAC address"),
         (duplicate_normalized_esxi_host_mac, "duplicates a normalized MAC address"),
         (invalid_esxi_installer_iso, "has an invalid installer ISO"),
