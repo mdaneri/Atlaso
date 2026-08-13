@@ -754,6 +754,7 @@ def test_photon_provisioning_prepares_attached_data_disks():
     data_disks_unit = Path("image/common/systemd/atlaso-data-disks.service").read_text(encoding="utf-8")
     bootstrap_unit = Path("image/common/systemd/atlaso-bootstrap-https.service").read_text(encoding="utf-8")
     nginx_dropin = Path("image/common/systemd/nginx-atlaso-data-disks.conf").read_text(encoding="utf-8")
+    atlaso_dropin = Path("image/common/systemd/atlaso-require-data-disks.conf").read_text(encoding="utf-8")
     disk_identity_rule = Path("image/common/udev/99-atlaso-disk-identity.rules").read_text(encoding="utf-8")
     hyperv_policy = Path("image/hyperv/data-disks.conf").read_text(encoding="utf-8")
     vmware_policy = Path("image/vmware-workstation/data-disks.conf").read_text(encoding="utf-8")
@@ -821,9 +822,12 @@ def test_photon_provisioning_prepares_attached_data_disks():
     assert "fstrim -av" in provision
 
     assert "After=network-online.target atlaso-data-disks.service atlaso-bootstrap-https.service" in hyperv_unit
-    assert "Requires=atlaso-data-disks.service atlaso-bootstrap-https.service" in hyperv_unit
+    assert "Requires=atlaso-bootstrap-https.service" in hyperv_unit
     assert "After=network-online.target atlaso-data-disks.service atlaso-bootstrap-https.service" in vmware_unit
-    assert "Requires=atlaso-data-disks.service atlaso-bootstrap-https.service" in vmware_unit
+    assert "Requires=atlaso-bootstrap-https.service" in vmware_unit
+    assert "Requires=atlaso-data-disks.service" in atlaso_dropin
+    assert "bootstrap-data-disk-safety --real /opt/atlaso/current" in hyperv_unit
+    assert "bootstrap-data-disk-safety --real /opt/atlaso/current" in vmware_unit
     assert "Wants=network-online.target atlaso.service" in worker_unit
     assert "Requires=atlaso-data-disks.service\n" in worker_unit
     assert "Requires=atlaso-data-disks.service atlaso.service" not in worker_unit
@@ -831,6 +835,7 @@ def test_photon_provisioning_prepares_attached_data_disks():
     assert "Requires=atlaso-data-disks.service" in bootstrap_unit
     assert "Requires=atlaso-data-disks.service" in nginx_dropin
     assert "/etc/systemd/system/nginx.service.d/atlaso-data-disks.conf" in provision
+    assert "/etc/systemd/system/atlaso.service.d/atlaso-data-disks.conf" in provision
     assert provision.index("systemctl enable --now nginx") < provision.index(
         '"$ATLASO_HOME/image/common/systemd/nginx-atlaso-data-disks.conf"'
     )

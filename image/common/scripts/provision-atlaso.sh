@@ -450,6 +450,8 @@ chmod 0640 /etc/atlaso/atlaso.env
 chown root:atlaso /etc/atlaso/atlaso.env
 
 install -o root -g root -m 0644 "$ATLASO_HOME/$ATLASO_IMAGE_ASSET_DIR/systemd/atlaso.service" /etc/systemd/system/atlaso.service
+install -d -o root -g root -m 0755 /etc/systemd/system/atlaso.service.d
+install -o root -g root -m 0644 "$ATLASO_HOME/image/common/systemd/atlaso-require-data-disks.conf" /etc/systemd/system/atlaso.service.d/atlaso-data-disks.conf
 install -o root -g root -m 0644 "$ATLASO_HOME/image/common/systemd/atlaso-console.service" /etc/systemd/system/atlaso-console.service
 install -o root -g root -m 0644 "$ATLASO_HOME/image/common/systemd/atlaso-worker.service" /etc/systemd/system/atlaso-worker.service
 install -o root -g root -m 0644 "$ATLASO_HOME/image/common/systemd/atlaso-data-disks.service" /etc/systemd/system/atlaso-data-disks.service

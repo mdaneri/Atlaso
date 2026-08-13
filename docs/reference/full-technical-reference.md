@@ -102,7 +102,12 @@ Storage ext4 volume. Atlaso-formatted disks require their `lf-<hash>` label and 
 Every managed ESX disk requires UUID-backed fstab persistence plus an exact root-owned
 `/etc/atlaso/esx-storage-disks.conf` stable-identity claim. Nginx, the HTTPS bootstrap, control plane, and worker use
 hard systemd requirements on `atlaso-data-disks.service`, so a failed preflight cannot expose the front door or start
-Atlaso against the empty mount directories.
+Atlaso against the empty mount directories. On the first update from a release whose updater does not yet recognize
+these safety assets, the candidate `atlaso.service` uses its root pre-start gate to install the complete signed asset
+set and run the disk preflight directly. It installs the permanent control-plane dependency drop-in only after all
+candidate assets are present, so both that transitional start and subsequent systemd starts retain the same boundary.
+If the legacy updater later rolls back the application, it intentionally leaves this newly bootstrapped boundary in
+place and restarts the previous control plane only when the same disk preflight passes.
 
 Atlaso writes operational events to `/var/log/atlaso/atlaso.log`. Audit events, desired-state edits, and appliance apply
 submissions are mirrored there with sensitive values redacted. The Settings page controls local file verbosity and can

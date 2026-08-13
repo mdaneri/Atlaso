@@ -81,7 +81,7 @@ COMMANDS: dict[str, set[str]] = {
     "esxi-pxe": {"validate", "apply"},
     "esx-storage": {"inventory", "validate", "apply", "status", "logs"},
     "public-services": {"validate", "apply"},
-    "appliance-update": {"check", "apply", "sync-sources", "restart-service"},
+    "appliance-update": {"check", "apply", "sync-sources", "restart-service", "bootstrap-data-disk-safety"},
     "automation": {"run"},
     "appliance-power": {"reboot", "shutdown"},
     "console": {"disable-services", "recover-management-plane", "restore-services", "status"},
@@ -173,6 +173,12 @@ ATLASO_UPDATE_FINALIZER_PATH = ATLASO_STATE_DIR / "apply/appliance-update/finali
 ATLASO_UPDATE_MAINTENANCE_PATH = Path("/run/atlaso-update-maintenance")
 ATLASO_POWERSHELL_HOME = ATLASO_STATE_DIR / "powershell"
 ATLASO_DATA_DISK_POLICY_PATH = Path("/etc/atlaso/data-disks.conf")
+ATLASO_MOUNT_DATA_DISKS_PATH = Path("/opt/atlaso/bin/atlaso-mount-data-disks")
+ATLASO_DATA_DISK_UNIT_PATH = Path("/etc/systemd/system/atlaso-data-disks.service")
+ATLASO_SERVICE_DATA_DISK_DROPIN_PATH = Path("/etc/systemd/system/atlaso.service.d/atlaso-data-disks.conf")
+ATLASO_BOOTSTRAP_HTTPS_UNIT_PATH = Path("/etc/systemd/system/atlaso-bootstrap-https.service")
+ATLASO_NGINX_DATA_DISK_DROPIN_PATH = Path("/etc/systemd/system/nginx.service.d/atlaso-data-disks.conf")
+ATLASO_DISK_IDENTITY_UDEV_PATH = Path("/etc/udev/rules.d/99-atlaso-disk-identity.rules")
 ATLASO_VMWARE_OVF_UNIT_PATH = Path("/etc/systemd/system/atlaso-vmware-ovf-customize.service")
 ATLASO_HYPERV_GENERATOR_PATH = Path("/etc/systemd/system-generators/systemd-ssh-generator")
 ATLASO_DMI_SYS_VENDOR_PATH = Path("/sys/class/dmi/id/sys_vendor")
@@ -10779,40 +10785,11 @@ def _install_release_owned_files(release_root: Path, backup_root: Path) -> list[
     data_disk_platform = _release_data_disk_platform()
     owned = [
         (release_root / "bin/atlaso-helper", Path("/opt/atlaso/bin/atlaso-helper"), 0o755),
-        (
-            release_root / "bin/atlaso-mount-data-disks",
-            Path("/opt/atlaso/bin/atlaso-mount-data-disks"),
-            0o755,
-        ),
         (release_root / "THIRD_PARTY_NOTICES.md", ATLASO_NOTICE_PATH, 0o644),
         (release_root / "systemd/atlaso.service", Path("/etc/systemd/system/atlaso.service"), 0o644),
         (release_root / "systemd/atlaso-worker.service", Path("/etc/systemd/system/atlaso-worker.service"), 0o644),
         (release_root / "systemd/atlaso-console.service", Path("/etc/systemd/system/atlaso-console.service"), 0o644),
-        (
-            release_root / "systemd/atlaso-data-disks.service",
-            Path("/etc/systemd/system/atlaso-data-disks.service"),
-            0o644,
-        ),
-        (
-            release_root / "systemd/atlaso-bootstrap-https.service",
-            Path("/etc/systemd/system/atlaso-bootstrap-https.service"),
-            0o644,
-        ),
-        (
-            release_root / "systemd/nginx.service.d/atlaso-data-disks.conf",
-            Path("/etc/systemd/system/nginx.service.d/atlaso-data-disks.conf"),
-            0o644,
-        ),
-        (
-            release_root / "udev/99-atlaso-disk-identity.rules",
-            Path("/etc/udev/rules.d/99-atlaso-disk-identity.rules"),
-            0o644,
-        ),
-        (
-            release_root / f"data-disks/{data_disk_platform}.conf",
-            ATLASO_DATA_DISK_POLICY_PATH,
-            0o644,
-        ),
+        *_release_data_disk_owned_files(release_root, data_disk_platform),
     ]
     trust = release_root / "trust"
     if trust.is_dir():
@@ -10850,6 +10827,71 @@ def _install_release_owned_files(release_root: Path, backup_root: Path) -> list[
     return backups
 
 
+def _release_data_disk_owned_files(release_root: Path, platform: str) -> list[tuple[Path, Path, int]]:
+    """Return every release asset required by the data-disk safety boundary.
+
+    Args:
+        release_root: Verified extracted release root.
+        platform: Exact signed data-disk policy platform name.
+    """
+    return [
+        (release_root / "bin/atlaso-mount-data-disks", ATLASO_MOUNT_DATA_DISKS_PATH, 0o755),
+        (release_root / "systemd/atlaso-data-disks.service", ATLASO_DATA_DISK_UNIT_PATH, 0o644),
+        (
+            release_root / "systemd/atlaso.service.d/atlaso-data-disks.conf",
+            ATLASO_SERVICE_DATA_DISK_DROPIN_PATH,
+            0o644,
+        ),
+        (release_root / "systemd/atlaso-bootstrap-https.service", ATLASO_BOOTSTRAP_HTTPS_UNIT_PATH, 0o644),
+        (
+            release_root / "systemd/nginx.service.d/atlaso-data-disks.conf",
+            ATLASO_NGINX_DATA_DISK_DROPIN_PATH,
+            0o644,
+        ),
+        (release_root / "udev/99-atlaso-disk-identity.rules", ATLASO_DISK_IDENTITY_UDEV_PATH, 0o644),
+        (release_root / f"data-disks/{platform}.conf", ATLASO_DATA_DISK_POLICY_PATH, 0o644),
+    ]
+
+
+def _bootstrap_release_data_disk_safety(release_root: Path) -> list[dict]:
+    """Install and validate safety assets when the previous updater copied only known files.
+
+    Args:
+        release_root: Active verified release root selected by the previous updater.
+
+    Raises:
+        ValueError: If the root is not active, an asset is missing, or validation fails.
+    """
+    resolved_release = release_root.resolve(strict=True)
+    if not ATLASO_CURRENT_LINK.is_symlink() or ATLASO_CURRENT_LINK.resolve(strict=True) != resolved_release:
+        raise ValueError("data-disk safety bootstrap requires the active Atlaso release")
+    if not resolved_release.is_relative_to(ATLASO_RELEASES_DIR.resolve(strict=True)):
+        raise ValueError("data-disk safety bootstrap release is outside the signed release directory")
+    assets = _release_data_disk_owned_files(resolved_release, _release_data_disk_platform())
+    for source, _destination, _mode in assets:
+        if not source.is_file():
+            raise ValueError(f"Atlaso release is missing {source.relative_to(resolved_release)}")
+    for source, destination, mode in assets:
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        if (
+            destination.is_file()
+            and destination.read_bytes() == source.read_bytes()
+            and destination.stat().st_mode & 0o777 == mode
+        ):
+            continue
+        temporary = destination.with_suffix(destination.suffix + ".bootstrap")
+        shutil.copy2(source, temporary)
+        temporary.chmod(mode)
+        os.replace(temporary, destination)
+    commands = _refresh_release_data_disk_identity(validate=True)
+    systemctl = _command_path("systemctl") or "systemctl"
+    if all(command["success"] for command in commands):
+        commands.append(_command_payload([systemctl, "daemon-reload"]))
+    if not all(command["success"] for command in commands):
+        raise ValueError("release data-disk safety bootstrap validation failed")
+    return commands
+
+
 def _restore_release_owned_files(backups: list[tuple[Path | None, Path]]) -> None:
     """Perform restore release owned files.
 
@@ -10877,7 +10919,7 @@ def _refresh_release_data_disk_identity(*, validate: bool) -> list[dict]:
     if all(command["success"] for command in commands):
         commands.append(_command_payload([udevadm, "settle"]))
     if validate and all(command["success"] for command in commands):
-        commands.append(_command_payload(["/opt/atlaso/bin/atlaso-mount-data-disks"]))
+        commands.append(_command_payload([ATLASO_MOUNT_DATA_DISKS_PATH.as_posix()]))
     return commands
 
 
@@ -12781,6 +12823,18 @@ def _handle_appliance_update(action: str, args: list[str]) -> int:
         action: Action consumed by handle appliance update.
         args: Parsed command-line options consumed by the operation.
     """
+    if action == "bootstrap-data-disk-safety":
+        if len(args) != 1:
+            print("bootstrap-data-disk-safety requires exactly one active release path", file=sys.stderr)
+            return 2
+        try:
+            commands = _bootstrap_release_data_disk_safety(Path(args[0]))
+        except (OSError, ValueError) as exc:
+            print(str(exc), file=sys.stderr)
+            return 1
+        print(json.dumps({"status": "succeeded", "commands": commands}, indent=2, sort_keys=True))
+        return 0
+
     try:
         config_path = _validate_appliance_update_config_path(args[0])
         payload = _load_appliance_update_config(config_path)

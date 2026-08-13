@@ -8,6 +8,7 @@ from unittest.mock import Mock, call, patch
 import pytest
 
 from scripts.check_deployment_assets import (
+    ATLASO_DATA_DISK_DROPIN,
     NGINX_DATA_DISK_DROPIN,
     PACKER_CHECKSUM,
     PACKER_TEMPLATES,
@@ -37,7 +38,7 @@ def write_inventory(root: Path) -> None:
     for relative in SYSTEMD_ASSETS:
         systemd = root / relative
         systemd.parent.mkdir(parents=True, exist_ok=True)
-        if relative == NGINX_DATA_DISK_DROPIN:
+        if relative in {ATLASO_DATA_DISK_DROPIN, NGINX_DATA_DISK_DROPIN}:
             contents = "[Unit]\nRequires=atlaso-data-disks.service\n"
         elif systemd.suffix == ".conf":
             contents = "[Manager]\nShowStatus=no\n"
@@ -417,6 +418,10 @@ def write_systemd_fixture(root: Path, service_text: str) -> None:
         encoding="utf-8",
     )
     (common / NGINX_DATA_DISK_DROPIN.name).write_text(
+        "[Unit]\nAfter=atlaso-data-disks.service\nRequires=atlaso-data-disks.service\n",
+        encoding="utf-8",
+    )
+    (common / ATLASO_DATA_DISK_DROPIN.name).write_text(
         "[Unit]\nAfter=atlaso-data-disks.service\nRequires=atlaso-data-disks.service\n",
         encoding="utf-8",
     )

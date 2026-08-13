@@ -41,6 +41,10 @@ RELEASE_OWNED_ASSETS = (
     (ROOT / "image/common/systemd/atlaso-worker.service", Path("systemd/atlaso-worker.service")),
     (ROOT / "image/common/systemd/atlaso-console.service", Path("systemd/atlaso-console.service")),
     (ROOT / "image/common/systemd/atlaso-data-disks.service", Path("systemd/atlaso-data-disks.service")),
+    (
+        ROOT / "image/common/systemd/atlaso-require-data-disks.conf",
+        Path("systemd/atlaso.service.d/atlaso-data-disks.conf"),
+    ),
     (ROOT / "image/common/systemd/atlaso-bootstrap-https.service", Path("systemd/atlaso-bootstrap-https.service")),
     (
         ROOT / "image/common/systemd/nginx-atlaso-data-disks.conf",

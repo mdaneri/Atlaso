@@ -803,9 +803,87 @@ def test_release_bundle_carries_transactional_data_disk_safety_assets():
         "data-disks/vmware.conf",
         "systemd/atlaso-bootstrap-https.service",
         "systemd/atlaso-data-disks.service",
+        "systemd/atlaso.service.d/atlaso-data-disks.conf",
         "systemd/nginx.service.d/atlaso-data-disks.conf",
         "udev/99-atlaso-disk-identity.rules",
     } <= destinations
+
+
+def test_previous_updater_service_bootstraps_every_new_data_disk_safety_asset(monkeypatch, tmp_path):
+    """Prove the previous installer can enter the new root bootstrap through atlaso.service.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    from tests.test_appliance_update import load_helper_module
+
+    helper = load_helper_module()
+    release_root = tmp_path / "opt/atlaso/releases/candidate"
+    release_root.mkdir(parents=True)
+    current = tmp_path / "opt/atlaso/current"
+    current.parent.mkdir(parents=True, exist_ok=True)
+    current.symlink_to(release_root, target_is_directory=True)
+    sources = {
+        "bin/atlaso-mount-data-disks": b"mount-script",
+        "systemd/atlaso-data-disks.service": b"disk-unit",
+        "systemd/atlaso.service.d/atlaso-data-disks.conf": b"atlaso-dropin",
+        "systemd/atlaso-bootstrap-https.service": b"bootstrap-unit",
+        "systemd/nginx.service.d/atlaso-data-disks.conf": b"nginx-dropin",
+        "udev/99-atlaso-disk-identity.rules": b"udev-rule",
+        "data-disks/vmware.conf": b"disk-policy",
+    }
+    destinations = {
+        "ATLASO_MOUNT_DATA_DISKS_PATH": tmp_path / "host/bin/atlaso-mount-data-disks",
+        "ATLASO_DATA_DISK_UNIT_PATH": tmp_path / "host/systemd/atlaso-data-disks.service",
+        "ATLASO_SERVICE_DATA_DISK_DROPIN_PATH": tmp_path / "host/systemd/atlaso.service.d/atlaso-data-disks.conf",
+        "ATLASO_BOOTSTRAP_HTTPS_UNIT_PATH": tmp_path / "host/systemd/atlaso-bootstrap-https.service",
+        "ATLASO_NGINX_DATA_DISK_DROPIN_PATH": tmp_path / "host/systemd/nginx.service.d/atlaso-data-disks.conf",
+        "ATLASO_DISK_IDENTITY_UDEV_PATH": tmp_path / "host/udev/99-atlaso-disk-identity.rules",
+        "ATLASO_DATA_DISK_POLICY_PATH": tmp_path / "host/etc/atlaso/data-disks.conf",
+    }
+    for relative_path, content in sources.items():
+        source = release_root / relative_path
+        source.parent.mkdir(parents=True, exist_ok=True)
+        source.write_bytes(content)
+    monkeypatch.setattr(helper, "ATLASO_RELEASES_DIR", release_root.parent)
+    monkeypatch.setattr(helper, "ATLASO_CURRENT_LINK", current)
+    for name, destination in destinations.items():
+        monkeypatch.setattr(helper, name, destination)
+    monkeypatch.setattr(helper, "_release_data_disk_platform", lambda: "vmware")
+    commands: list[list[str]] = []
+
+    def command_payload(command, **_kwargs):
+        """Return a successful bootstrap command result.
+
+        Args:
+            command: Command and arguments issued by the bootstrap.
+            **_kwargs: Optional command execution arguments.
+        """
+        commands.append(command)
+        return {"command": command, "returncode": 0, "success": True, "stdout": "", "stderr": ""}
+
+    monkeypatch.setattr(helper, "_command_payload", command_payload)
+    monkeypatch.setattr(helper, "_command_path", lambda name: f"/usr/bin/{name}")
+
+    helper._bootstrap_release_data_disk_safety(release_root)
+
+    for (relative_path, content), destination in zip(sources.items(), destinations.values(), strict=True):
+        assert destination.read_bytes() == content, relative_path
+        expected_mode = 0o755 if relative_path == "bin/atlaso-mount-data-disks" else 0o644
+        if os.name == "posix":
+            assert destination.stat().st_mode & 0o777 == expected_mode, relative_path
+    assert ["/usr/bin/udevadm", "control", "--reload-rules"] in commands
+    assert [destinations["ATLASO_MOUNT_DATA_DISKS_PATH"].as_posix()] in commands
+    assert ["/usr/bin/systemctl", "daemon-reload"] in commands
+    for unit_path in [
+        ROOT / "image/hyperv/systemd/atlaso.service",
+        ROOT / "image/vmware-workstation/systemd/atlaso.service",
+    ]:
+        assert (
+            "ExecStartPre=+/opt/atlaso/bin/atlaso-helper appliance-update "
+            "bootstrap-data-disk-safety --real /opt/atlaso/current"
+        ) in unit_path.read_text(encoding="utf-8")
 
 
 @pytest.mark.parametrize(
