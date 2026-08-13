@@ -551,6 +551,40 @@ def test_cleanup_safety_content_read_errors_are_terminating() -> None:
     assert module.count("Get-Content") == module.count("Get-Content -LiteralPath") == 2
 
 
+def test_general_removal_rejects_a_truncated_registration_inventory(tmp_path: Path) -> None:
+    """A truncated inventory file must not hide vmrun's registered target.
+
+    Args:
+        tmp_path: Isolated test directory.
+    """
+    vm_directory = tmp_path / "Atlaso-Truncated-Registration"
+    vmx_path = vm_directory / "Atlaso-Truncated-Registration.vmx"
+    _write_vmx(vmx_path, "Atlaso-Truncated-Registration")
+    vmrun_path, environment, _ = _write_fake_vmrun(
+        tmp_path / "fake",
+        [vmx_path],
+        running=False,
+        registered=True,
+    )
+    inventory_path = Path(environment["ATLASO_FAKE_VMRUN_INVENTORY"])
+    inventory_path.write_text('.encoding = "UTF-8"\n', encoding="utf-8")
+
+    result = _run_script(
+        VMWARE_SCRIPT_ROOT / "remove-atlaso-vm.ps1",
+        "-VmxPath",
+        str(vmx_path),
+        "-VmrunPath",
+        str(vmrun_path),
+        "-ExpectedName",
+        "Atlaso-Truncated-Registration",
+        environment=environment,
+    )
+
+    assert result.returncode != 0
+    assert "registration inventories disagree" in result.stderr
+    assert vmx_path.exists()
+
+
 def test_general_removal_matches_a_running_vmx_by_filesystem_identity(
     tmp_path: Path,
 ) -> None:

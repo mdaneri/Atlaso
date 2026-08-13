@@ -347,10 +347,54 @@ function Resolve-AtlasoWorkstationInventoryPath {
     return (Resolve-Path -LiteralPath $inventoryPath).Path
 }
 
+function Get-AtlasoWorkstationVmrunRegisteredVmPaths {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$VmrunPath
+    )
+
+    $output = @(Invoke-AtlasoVmrunChecked `
+            -VmrunPath $VmrunPath `
+            -Arguments @('-T', 'ws', 'listRegisteredVM') `
+            -Action 'List registered VMware Workstation VMs')
+    if ($output.Count -lt 1 -or $output[0].ToString() -notmatch '^Total registered VMs:\s*(\d+)\s*$') {
+        throw 'vmrun listRegisteredVM returned an unrecognized registration inventory; refusing filesystem cleanup.'
+    }
+
+    $declaredCount = [int]$Matches[1]
+    $reportedPaths = @(
+        $output |
+            Select-Object -Skip 1 |
+            ForEach-Object { ConvertFrom-AtlasoVmrunInventoryPath -InventoryLine $_.ToString() } |
+            Where-Object { $_ }
+    )
+    if ($reportedPaths.Count -ne $declaredCount) {
+        throw "vmrun listRegisteredVM reported $declaredCount VMs but returned $($reportedPaths.Count) paths; refusing filesystem cleanup."
+    }
+    $paths = @(
+        $reportedPaths | ForEach-Object {
+            Resolve-AtlasoVerifiedVmxInventoryPath `
+                -Path $_ `
+                -InventoryDescription 'vmrun registered-VM inventory'
+        }
+    )
+    $fileIdentities = @(
+        $paths | ForEach-Object {
+            Get-AtlasoVmxFileIdentity -Path $_ -InventoryDescription 'vmrun registered-VM inventory'
+        }
+    )
+    if (@($fileIdentities | Select-Object -Unique).Count -ne $paths.Count) {
+        throw 'vmrun registered-VM inventory contains duplicate VMX paths; refusing filesystem cleanup.'
+    }
+    return $paths
+}
+
 function Get-AtlasoWorkstationRegisteredVmPaths {
     param(
         [Parameter(Mandatory = $true)]
-        [string]$InventoryPath
+        [string]$InventoryPath,
+        [Parameter(Mandatory = $true)]
+        [string]$VmrunPath
     )
 
     $paths = @()
@@ -383,6 +427,15 @@ function Get-AtlasoWorkstationRegisteredVmPaths {
     $uniqueFileIdentities = @($fileIdentities | Select-Object -Unique)
     if ($uniqueFileIdentities.Count -ne $paths.Count) {
         throw "VMware Workstation registration inventory contains duplicate VMX paths; refusing filesystem cleanup: $InventoryPath"
+    }
+    $vmrunPaths = @(Get-AtlasoWorkstationVmrunRegisteredVmPaths -VmrunPath $VmrunPath)
+    if ($paths.Count -ne $vmrunPaths.Count) {
+        throw 'VMware Workstation registration inventories disagree; refusing filesystem cleanup.'
+    }
+    foreach ($path in $paths) {
+        if (-not (Test-AtlasoWorkstationVmListed -Paths $vmrunPaths -VmxPath $path)) {
+            throw 'VMware Workstation registration inventories disagree; refusing filesystem cleanup.'
+        }
     }
     return $paths
 }
@@ -466,13 +519,13 @@ function Confirm-AtlasoWorkstationVmInactiveAndUnregistered {
         }
     }
 
-    $registeredPaths = @(Get-AtlasoWorkstationRegisteredVmPaths -InventoryPath $InventoryPath)
+    $registeredPaths = @(Get-AtlasoWorkstationRegisteredVmPaths -InventoryPath $InventoryPath -VmrunPath $VmrunPath)
     if (Test-AtlasoWorkstationVmListed -Paths $registeredPaths -VmxPath $VmxPath) {
         Invoke-AtlasoVmrunChecked `
             -VmrunPath $VmrunPath `
             -Arguments @('-T', 'ws', 'unregister', $VmxPath) `
             -Action "Unregister VMware Workstation VM '$VmxPath'" | Out-Null
-        $registeredPaths = @(Get-AtlasoWorkstationRegisteredVmPaths -InventoryPath $InventoryPath)
+        $registeredPaths = @(Get-AtlasoWorkstationRegisteredVmPaths -InventoryPath $InventoryPath -VmrunPath $VmrunPath)
         if (Test-AtlasoWorkstationVmListed -Paths $registeredPaths -VmxPath $VmxPath) {
             throw "VMware Workstation VM remains registered after unregister succeeded: $VmxPath"
         }
@@ -527,7 +580,7 @@ function Remove-AtlasoWorkstationVmArtifacts {
     }
 
     $finalRunningPaths = @(Get-AtlasoWorkstationVmPaths -VmrunPath $VmrunPath -State running)
-    $finalRegisteredPaths = @(Get-AtlasoWorkstationRegisteredVmPaths -InventoryPath $inventoryPath)
+    $finalRegisteredPaths = @(Get-AtlasoWorkstationRegisteredVmPaths -InventoryPath $inventoryPath -VmrunPath $VmrunPath)
     foreach ($resolvedVmxPath in $resolvedVmxPaths) {
         if (
             (Test-AtlasoWorkstationVmListed -Paths $finalRunningPaths -VmxPath $resolvedVmxPath) -or
