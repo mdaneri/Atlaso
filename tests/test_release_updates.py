@@ -8,6 +8,8 @@ import importlib.util
 import io
 import json
 import os
+import subprocess
+import sys
 import tarfile
 from pathlib import Path
 from urllib.error import HTTPError
@@ -319,6 +321,12 @@ def test_release_workflows_use_successful_main_sha_and_promote_without_rebuildin
     assert "Stable channel (default)" in publication
     assert "python scripts/check_published_release_channel.py" in publication
     assert "--expected-channel stable" in publication
+    publication_check = publication.split(
+        "- name: Verify the published default channel",
+        1,
+    )[1]
+    assert '--expected-version "$VERSION"' in publication_check
+    assert '--expected-commit "$RELEASE_SHA"' in publication_check
     assert "<script" not in publication
     assert publication.count("ref: ${{ needs.prepare.outputs.release_sha }}") == 2
     assert "actions/upload-artifact@v7" in publication
@@ -339,6 +347,12 @@ def test_release_workflows_use_successful_main_sha_and_promote_without_rebuildin
     assert "--expected-version \"$RELEASE_VERSION\"" in promotion
     assert "python scripts/check_published_release_channel.py" in promotion
     assert '--expected-channel "$RELEASE_CHANNEL"' in promotion
+    promotion_check = promotion.split(
+        "- name: Verify the published signed channel",
+        1,
+    )[1]
+    assert '--expected-version "$RELEASE_VERSION"' in promotion_check
+    assert '--expected-commit "$RELEASE_COMMIT"' in promotion_check
     assert "workflow_dispatch:" in inventory
     assert "workflow_run:" not in inventory
     assert "schedule:" not in inventory
@@ -415,6 +429,8 @@ def test_published_channel_check_verifies_pointer_release_and_compatibility(
     result = published_channel_check.verify_channel(
         channel_url,
         expected_channel="stable",
+        expected_version="0.9.0",
+        expected_commit="a" * 40,
         expected_python_abi="cp314",
         trusted_key=trust_dir / f"{KEY_ID}.pem",
         timeout_seconds=1,
@@ -427,10 +443,46 @@ def test_published_channel_check_verifies_pointer_release_and_compatibility(
         published_channel_check.verify_channel(
             channel_url,
             expected_channel="stable",
+            expected_version="0.9.0",
+            expected_commit="a" * 40,
             expected_python_abi="cp313",
             trusted_key=trust_dir / f"{KEY_ID}.pem",
             timeout_seconds=1,
         )
+
+    with pytest.raises(ValueError, match="expected v0.9.1"):
+        published_channel_check.verify_channel(
+            channel_url,
+            expected_channel="stable",
+            expected_version="0.9.1",
+            expected_commit="b" * 40,
+            expected_python_abi="cp314",
+            trusted_key=trust_dir / f"{KEY_ID}.pem",
+            timeout_seconds=1,
+        )
+
+
+def test_published_channel_check_imports_atlaso_from_a_clean_checkout(tmp_path: Path):
+    """Verify direct workflow execution imports Atlaso without an installation.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-I",
+            str(ROOT / "scripts" / "check_published_release_channel.py"),
+            "--help",
+        ],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "Verify a published Atlaso channel" in result.stdout
 
 
 def test_published_channel_check_fails_when_default_pointer_is_absent(
@@ -459,6 +511,10 @@ def test_published_channel_check_fails_when_default_pointer_is_absent(
                 "https://updates.example.test/channels/stable/manifest.json",
                 "--expected-channel",
                 "stable",
+                "--expected-version",
+                "0.9.0",
+                "--expected-commit",
+                "a" * 40,
                 "--trusted-key",
                 str(trust_dir / f"{KEY_ID}.pem"),
                 "--attempts",

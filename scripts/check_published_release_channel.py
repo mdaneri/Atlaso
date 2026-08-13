@@ -4,13 +4,22 @@
 from __future__ import annotations
 
 import argparse
+import re
+import sys
 import time
 from pathlib import Path
 from typing import Any, Sequence
 from urllib.parse import urlparse
 from urllib.request import urlopen
 
-from atlaso.app.services.release_updates import signature_document, verify_signed_json
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from atlaso.app.services.release_updates import (  # noqa: E402 - add the checkout root before importing Atlaso.
+    signature_document,
+    verify_signed_json,
+)
 
 MAX_DOCUMENT_BYTES = 1024 * 1024
 
@@ -42,6 +51,8 @@ def verify_channel(
     channel_url: str,
     *,
     expected_channel: str,
+    expected_version: str,
+    expected_commit: str,
     expected_python_abi: str,
     trusted_key: Path,
     timeout_seconds: float,
@@ -51,6 +62,8 @@ def verify_channel(
     Args:
         channel_url: Published channel-manifest URL.
         expected_channel: Channel name required in the signed pointer.
+        expected_version: Release version the publication must expose.
+        expected_commit: Full release commit the publication must expose.
         expected_python_abi: Appliance Python ABI required by the release.
         trusted_key: Exact checked-in public key selected for verification.
         timeout_seconds: Per-request network timeout.
@@ -80,6 +93,11 @@ def verify_channel(
     if channel["channel"] != expected_channel:
         raise ValueError(
             f"Published channel is {channel['channel']}, expected {expected_channel}."
+        )
+    if channel["version"] != expected_version or channel["git_commit"] != expected_commit:
+        raise ValueError(
+            f"Published {expected_channel} channel identifies v{channel['version']} at "
+            f"{channel['git_commit']}, expected v{expected_version} at {expected_commit}."
         )
 
     release_url = str(channel["release_manifest_url"])
@@ -126,6 +144,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         required=True,
         choices=("stable", "preview", "development"),
     )
+    parser.add_argument("--expected-version", required=True)
+    parser.add_argument("--expected-commit", required=True)
     parser.add_argument("--expected-python-abi", default="cp314")
     parser.add_argument("--trusted-key", type=Path, required=True)
     parser.add_argument("--attempts", type=int, default=12)
@@ -134,6 +154,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if args.attempts < 1:
         parser.error("--attempts must be at least 1")
+    if re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", args.expected_version) is None:
+        parser.error("--expected-version must use X.Y.Z semantic versioning")
+    if re.fullmatch(r"[0-9a-f]{40}", args.expected_commit) is None:
+        parser.error("--expected-commit must be a full lowercase hexadecimal commit")
     if args.retry_delay_seconds < 0 or args.timeout_seconds <= 0:
         parser.error("retry delay cannot be negative and timeout must be positive")
 
@@ -143,6 +167,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             result = verify_channel(
                 args.channel_url,
                 expected_channel=args.expected_channel,
+                expected_version=args.expected_version,
+                expected_commit=args.expected_commit,
                 expected_python_abi=args.expected_python_abi,
                 trusted_key=args.trusted_key,
                 timeout_seconds=args.timeout_seconds,

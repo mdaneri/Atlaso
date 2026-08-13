@@ -279,8 +279,12 @@ jobs:
       - name: Verify the published default channel
         env:
           RELEASE_KEY_ID: atlaso-release-2026-01
+          RELEASE_SHA: ${{ needs.prepare.outputs.release_sha }}
         run: |
+          VERSION="$(python scripts/version.py get)"
           python scripts/check_published_release_channel.py \
             --channel-url "https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/updates/channels/stable/manifest.json" \
             --expected-channel stable \
+            --expected-version "$VERSION" \
+            --expected-commit "$RELEASE_SHA" \
             --trusted-key "image/common/update-trust/${RELEASE_KEY_ID}.pem"

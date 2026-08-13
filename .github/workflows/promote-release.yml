@@ -92,8 +92,12 @@ jobs:
         env:
           RELEASE_CHANNEL: ${{ inputs.channel }}
           RELEASE_KEY_ID: atlaso-release-2026-01
+          RELEASE_VERSION: ${{ inputs.version }}
         run: |
+          RELEASE_COMMIT="$(python -c 'import json; print(json.load(open("release/release-manifest.json", encoding="utf-8"))["git_commit"])')"
           python scripts/check_published_release_channel.py \
             --channel-url "https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/updates/channels/${RELEASE_CHANNEL}/manifest.json" \
             --expected-channel "$RELEASE_CHANNEL" \
+            --expected-version "$RELEASE_VERSION" \
+            --expected-commit "$RELEASE_COMMIT" \
             --trusted-key "image/common/update-trust/${RELEASE_KEY_ID}.pem"
