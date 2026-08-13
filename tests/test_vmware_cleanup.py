@@ -31,6 +31,19 @@ def _write_fake_vmrun(
     stop_exit: int = 0,
     unregister_exit: int = 0,
 ) -> tuple[Path, dict[str, str], Path]:
+    """Create a stateful fake ``vmrun`` command and Workstation inventory.
+
+    Args:
+        directory: Directory that receives the fake command and mutable state.
+        vmx_paths: VMX paths available to the fake running and registered inventories.
+        running: Whether the supplied VMX paths begin in the running inventory.
+        registered: Whether the supplied VMX paths begin in the registration inventory.
+        stop_exit: Exit code returned by a requested stop operation.
+        unregister_exit: Exit code returned by a requested unregister operation.
+
+    Returns:
+        The fake command path, its environment, and the command-log path.
+    """
     directory.mkdir(parents=True, exist_ok=True)
     state_directory = directory / "state"
     state_directory.mkdir()
@@ -157,6 +170,16 @@ raise SystemExit(64)
 
 
 def _run_script(script: Path, *arguments: str, environment: dict[str, str]) -> subprocess.CompletedProcess[str]:
+    """Run a PowerShell test script without prompts.
+
+    Args:
+        script: PowerShell script to execute.
+        *arguments: Command-line arguments passed to the script.
+        environment: Environment containing the fake Workstation state.
+
+    Returns:
+        Completed process with captured text output.
+    """
     return subprocess.run(
         [
             _pwsh_path(),
@@ -178,6 +201,12 @@ def _run_script(script: Path, *arguments: str, environment: dict[str, str]) -> s
 
 
 def _write_vmx(path: Path, display_name: str) -> None:
+    """Write a minimal VMX with a known display name.
+
+    Args:
+        path: VMX path to create.
+        display_name: Display name stored in the VMX.
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(f'displayName = "{display_name}"\n', encoding="utf-8")
 
@@ -197,7 +226,16 @@ def test_general_removal_preserves_artifacts_after_vmrun_failure(
     unregister_exit: int,
     expected_error: str,
 ) -> None:
-    """A failed stop or unregister must prevent recursive VM-directory deletion."""
+    """A failed stop or unregister must prevent recursive VM-directory deletion.
+
+    Args:
+        tmp_path: Isolated test directory.
+        running: Whether the VM begins in the running inventory.
+        registered: Whether the VM begins in the registration inventory.
+        stop_exit: Exit code returned by the fake stop operation.
+        unregister_exit: Exit code returned by the fake unregister operation.
+        expected_error: Action text expected in the propagated failure.
+    """
     vm_directory = tmp_path / "Atlaso-Test"
     vmx_path = vm_directory / "Atlaso-Test.vmx"
     sentinel = vm_directory / "sentinel.txt"
@@ -232,7 +270,13 @@ def test_general_removal_preserves_artifacts_after_vmrun_failure(
 def test_general_removal_is_verified_and_idempotent(
     tmp_path: Path, running: bool, registered: bool
 ) -> None:
-    """Successful and already-inactive cleanup both remove the exact VM artifact directory."""
+    """Successful and already-inactive cleanup both remove the exact VM artifact directory.
+
+    Args:
+        tmp_path: Isolated test directory.
+        running: Whether the VM begins in the running inventory.
+        registered: Whether the VM begins in the registration inventory.
+    """
     vm_directory = tmp_path / f"Atlaso-{running}-{registered}"
     display_name = vm_directory.name
     vmx_path = vm_directory / f"{display_name}.vmx"
@@ -266,7 +310,11 @@ def test_general_removal_is_verified_and_idempotent(
 def test_general_removal_rejects_an_unvalidated_vmx_in_the_removal_root(
     tmp_path: Path,
 ) -> None:
-    """Recursive deletion must not include a VMX omitted by the caller."""
+    """Recursive deletion must not include a VMX omitted by the caller.
+
+    Args:
+        tmp_path: Isolated test directory.
+    """
     vm_directory = tmp_path / "Atlaso-Multiple"
     requested_vmx = vm_directory / "Atlaso-Multiple.vmx"
     unvalidated_vmx = vm_directory / "copied-source" / "Source.vmx"
@@ -299,7 +347,11 @@ def test_general_removal_rejects_an_unvalidated_vmx_in_the_removal_root(
 def test_general_removal_rejects_a_relative_running_inventory_path(
     tmp_path: Path,
 ) -> None:
-    """A malformed vmrun entry must not let cleanup mistake a running VM for inactive."""
+    """A malformed vmrun entry must not let cleanup mistake a running VM for inactive.
+
+    Args:
+        tmp_path: Isolated test directory.
+    """
     vm_directory = tmp_path / "Atlaso-Relative-Running"
     vmx_path = vm_directory / "Atlaso-Relative-Running.vmx"
     _write_vmx(vmx_path, "Atlaso-Relative-Running")
@@ -341,7 +393,12 @@ def test_general_removal_rejects_malformed_registration_entries(
     tmp_path: Path,
     registration_entry: str,
 ) -> None:
-    """Incomplete or relative Workstation registrations must preserve artifacts."""
+    """Incomplete or relative Workstation registrations must preserve artifacts.
+
+    Args:
+        tmp_path: Isolated test directory.
+        registration_entry: Registration line written to the fake inventory.
+    """
     vm_directory = tmp_path / "Atlaso-Malformed-Registration"
     vmx_path = vm_directory / "Atlaso-Malformed-Registration.vmx"
     _write_vmx(vmx_path, "Atlaso-Malformed-Registration")
@@ -373,7 +430,11 @@ def test_general_removal_rejects_malformed_registration_entries(
 def test_general_removal_matches_a_running_vmx_by_filesystem_identity(
     tmp_path: Path,
 ) -> None:
-    """A Windows path alias must still trigger the required running-VM transition."""
+    """A Windows path alias must still trigger the required running-VM transition.
+
+    Args:
+        tmp_path: Isolated test directory.
+    """
     vm_directory = tmp_path / "Atlaso-Alias"
     vmx_path = vm_directory / "Atlaso-Alias.vmx"
     vmx_alias = tmp_path / "aliases" / "Atlaso-Alias-Link.vmx"
@@ -407,7 +468,11 @@ def test_general_removal_matches_a_running_vmx_by_filesystem_identity(
 def test_general_removal_accepts_an_empty_registration_tombstone(
     tmp_path: Path,
 ) -> None:
-    """A complete empty Workstation inventory slot is not a malformed registration."""
+    """A complete empty Workstation inventory slot is not a malformed registration.
+
+    Args:
+        tmp_path: Isolated test directory.
+    """
     vm_directory = tmp_path / "Atlaso-Empty-Registration"
     vmx_path = vm_directory / "Atlaso-Empty-Registration.vmx"
     _write_vmx(vmx_path, "Atlaso-Empty-Registration")
@@ -436,7 +501,11 @@ def test_general_removal_accepts_an_empty_registration_tombstone(
 
 
 def test_general_removal_honors_explicit_confirmation(tmp_path: Path) -> None:
-    """Explicit confirmation cannot be suppressed by the nested cleanup helper."""
+    """Explicit confirmation cannot be suppressed by the nested cleanup helper.
+
+    Args:
+        tmp_path: Isolated test directory.
+    """
     vm_directory = tmp_path / "Atlaso-Confirm"
     vmx_path = vm_directory / "Atlaso-Confirm.vmx"
     _write_vmx(vmx_path, "Atlaso-Confirm")
@@ -467,7 +536,11 @@ def test_general_removal_honors_explicit_confirmation(tmp_path: Path) -> None:
 def test_general_removal_allows_explicit_confirmation_suppression(
     tmp_path: Path,
 ) -> None:
-    """Automation may still opt out of confirmation through the common parameter."""
+    """Automation may still opt out of confirmation through the common parameter.
+
+    Args:
+        tmp_path: Isolated test directory.
+    """
     vm_directory = tmp_path / "Atlaso-No-Confirm"
     vmx_path = vm_directory / "Atlaso-No-Confirm.vmx"
     _write_vmx(vmx_path, "Atlaso-No-Confirm")
@@ -495,7 +568,11 @@ def test_general_removal_allows_explicit_confirmation_suppression(
 
 
 def test_redeploy_missing_target_and_sibling_disk_fail_closed(tmp_path: Path) -> None:
-    """Redeploy and data-disk reset must preserve unproven or sibling-prefix paths."""
+    """Redeploy and data-disk reset must preserve unproven or sibling-prefix paths.
+
+    Args:
+        tmp_path: Isolated test directory.
+    """
     source_vmx = tmp_path / "source" / "source.vmx"
     _write_vmx(source_vmx, "Source")
     vmrun_path, environment, _ = _write_fake_vmrun(
@@ -569,7 +646,15 @@ def test_standalone_lifecycle_cleanup_preserves_artifacts_after_vmrun_failure(
     stop_exit: int,
     unregister_exit: int,
 ) -> None:
-    """The standalone lifecycle remover propagates vmrun failures without deleting files."""
+    """The standalone lifecycle remover propagates vmrun failures without deleting files.
+
+    Args:
+        tmp_path: Isolated test directory.
+        running: Whether the lifecycle VM begins in the running inventory.
+        registered: Whether the lifecycle VM begins in the registration inventory.
+        stop_exit: Exit code returned by the fake stop operation.
+        unregister_exit: Exit code returned by the fake unregister operation.
+    """
     copied_script_root = tmp_path / "repo" / "scripts" / "windows" / "vmware"
     copied_script_root.mkdir(parents=True)
     for name in ("remove-lifecycle-vms.ps1", "Atlaso.WorkstationCleanup.psm1"):
