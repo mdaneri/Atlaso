@@ -1244,7 +1244,9 @@ authoritative for that VLAN-specific behavior. Details live in
 Workstation test-VM and lifecycle cleanup fails closed around recursive removal. Redeploy requires the exact named VMX
 with its expected display name, data-disk reset accepts only strict non-reparse-point descendants of the selected VM
 output, and cleanup verifies checked running and registered inventories plus successful stop/unregister transitions
-before deleting an artifact root. Any unresolved `vmrun` state preserves the files and returns failure.
+before deleting an artifact root. Inventory entries must be canonical absolute VMX paths whose Windows volume and file
+identities can be resolved, so 8.3, mapped-drive, and other filesystem aliases cannot bypass state detection. Any
+malformed inventory or unresolved `vmrun` state preserves the files and returns failure.
 
 For a normal Workstation test appliance on the management vmnet:
 

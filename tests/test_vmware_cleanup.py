@@ -79,6 +79,12 @@ def read_paths(name: str) -> list[str]:
 def write_paths(name: str, paths: list[str]) -> None:
     (state / f"{name}.json").write_text(json.dumps(paths), encoding="utf-8")
 
+def same_file(left: str, right: str) -> bool:
+    try:
+        return os.path.samefile(left, right)
+    except (FileNotFoundError, OSError):
+        return Path(left) == Path(right)
+
 if command == "list":
     paths = read_paths("running")
     print(f"Total running VMs: {len(paths)}")
@@ -98,14 +104,14 @@ if command == "stop":
     if exit_code:
         print("simulated stop failure", file=sys.stderr)
         raise SystemExit(exit_code)
-    write_paths("running", [path for path in read_paths("running") if Path(path) != Path(target)])
+    write_paths("running", [path for path in read_paths("running") if not same_file(path, target)])
     raise SystemExit(0)
 if command == "unregister":
     exit_code = int(os.environ.get("ATLASO_FAKE_VMRUN_UNREGISTER_EXIT", "0"))
     if exit_code:
         print("simulated unregister failure", file=sys.stderr)
         raise SystemExit(exit_code)
-    registered_paths = [path for path in read_paths("registered") if Path(path) != Path(target)]
+    registered_paths = [path for path in read_paths("registered") if not same_file(path, target)]
     write_paths("registered", registered_paths)
     inventory.write_text(
         '.encoding = "UTF-8"\\n'
@@ -362,6 +368,71 @@ def test_general_removal_rejects_malformed_registration_entries(
     assert result.returncode != 0
     assert "refusing filesystem cleanup" in result.stderr
     assert vmx_path.exists()
+
+
+def test_general_removal_matches_a_running_vmx_by_filesystem_identity(
+    tmp_path: Path,
+) -> None:
+    """A Windows path alias must still trigger the required running-VM transition."""
+    vm_directory = tmp_path / "Atlaso-Alias"
+    vmx_path = vm_directory / "Atlaso-Alias.vmx"
+    vmx_alias = tmp_path / "aliases" / "Atlaso-Alias-Link.vmx"
+    _write_vmx(vmx_path, "Atlaso-Alias")
+    vmx_alias.parent.mkdir()
+    os.link(vmx_path, vmx_alias)
+    vmrun_path, environment, log_path = _write_fake_vmrun(
+        tmp_path / "fake",
+        [vmx_alias],
+        running=True,
+        registered=False,
+    )
+
+    result = _run_script(
+        VMWARE_SCRIPT_ROOT / "remove-atlaso-vm.ps1",
+        "-VmxPath",
+        str(vmx_path),
+        "-VmrunPath",
+        str(vmrun_path),
+        "-ExpectedName",
+        "Atlaso-Alias",
+        environment=environment,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert not vm_directory.exists()
+    commands = [json.loads(line) for line in log_path.read_text(encoding="utf-8").splitlines()]
+    assert "stop" in [command[2] for command in commands]
+
+
+def test_general_removal_accepts_an_empty_registration_tombstone(
+    tmp_path: Path,
+) -> None:
+    """A complete empty Workstation inventory slot is not a malformed registration."""
+    vm_directory = tmp_path / "Atlaso-Empty-Registration"
+    vmx_path = vm_directory / "Atlaso-Empty-Registration.vmx"
+    _write_vmx(vmx_path, "Atlaso-Empty-Registration")
+    vmrun_path, environment, _ = _write_fake_vmrun(
+        tmp_path / "fake",
+        [vmx_path],
+        running=False,
+        registered=False,
+    )
+    inventory_path = Path(environment["ATLASO_FAKE_VMRUN_INVENTORY"])
+    inventory_path.write_text('vmlist0.config = ""\n', encoding="utf-8")
+
+    result = _run_script(
+        VMWARE_SCRIPT_ROOT / "remove-atlaso-vm.ps1",
+        "-VmxPath",
+        str(vmx_path),
+        "-VmrunPath",
+        str(vmrun_path),
+        "-ExpectedName",
+        "Atlaso-Empty-Registration",
+        environment=environment,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert not vm_directory.exists()
 
 
 def test_redeploy_missing_target_and_sibling_disk_fail_closed(tmp_path: Path) -> None:

@@ -1,5 +1,90 @@
 Set-StrictMode -Version Latest
 
+if (-not ('Atlaso.WorkstationFileIdentity' -as [type])) {
+    Add-Type -TypeDefinition @'
+using System;
+using System.ComponentModel;
+using System.Runtime.InteropServices;
+using Microsoft.Win32.SafeHandles;
+
+namespace Atlaso
+{
+    public static class WorkstationFileIdentity
+    {
+        private const uint FileReadAttributes = 0x80;
+        private const uint FileShareRead = 0x1;
+        private const uint FileShareWrite = 0x2;
+        private const uint FileShareDelete = 0x4;
+        private const uint OpenExisting = 3;
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct ByHandleFileInformation
+        {
+            public uint FileAttributes;
+            public System.Runtime.InteropServices.ComTypes.FILETIME CreationTime;
+            public System.Runtime.InteropServices.ComTypes.FILETIME LastAccessTime;
+            public System.Runtime.InteropServices.ComTypes.FILETIME LastWriteTime;
+            public uint VolumeSerialNumber;
+            public uint FileSizeHigh;
+            public uint FileSizeLow;
+            public uint NumberOfLinks;
+            public uint FileIndexHigh;
+            public uint FileIndexLow;
+        }
+
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        private static extern SafeFileHandle CreateFileW(
+            string fileName,
+            uint desiredAccess,
+            uint shareMode,
+            IntPtr securityAttributes,
+            uint creationDisposition,
+            uint flagsAndAttributes,
+            IntPtr templateFile
+        );
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern bool GetFileInformationByHandle(
+            SafeFileHandle file,
+            out ByHandleFileInformation information
+        );
+
+        public static string Get(string path)
+        {
+            using (SafeFileHandle handle = CreateFileW(
+                path,
+                FileReadAttributes,
+                FileShareRead | FileShareWrite | FileShareDelete,
+                IntPtr.Zero,
+                OpenExisting,
+                0,
+                IntPtr.Zero
+            ))
+            {
+                if (handle.IsInvalid)
+                {
+                    throw new Win32Exception(Marshal.GetLastWin32Error());
+                }
+
+                ByHandleFileInformation information;
+                if (!GetFileInformationByHandle(handle, out information))
+                {
+                    throw new Win32Exception(Marshal.GetLastWin32Error());
+                }
+
+                return String.Format(
+                    "{0:X8}:{1:X8}{2:X8}",
+                    information.VolumeSerialNumber,
+                    information.FileIndexHigh,
+                    information.FileIndexLow
+                );
+            }
+        }
+    }
+}
+'@
+}
+
 function Get-AtlasoCanonicalPath {
     param(
         [Parameter(Mandatory = $true)]
@@ -123,6 +208,25 @@ function Invoke-AtlasoVmrunChecked {
     return $output
 }
 
+function Get-AtlasoVmxFileIdentity {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Path,
+        [Parameter(Mandatory = $true)]
+        [string]$InventoryDescription
+    )
+
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
+        throw "$InventoryDescription contains a VMX path whose filesystem identity cannot be resolved; refusing filesystem cleanup: $Path"
+    }
+    try {
+        return [Atlaso.WorkstationFileIdentity]::Get($Path)
+    }
+    catch {
+        throw "$InventoryDescription contains a VMX path whose filesystem identity cannot be resolved; refusing filesystem cleanup: $Path"
+    }
+}
+
 function Resolve-AtlasoVerifiedVmxInventoryPath {
     param(
         [Parameter(Mandatory = $true)]
@@ -142,6 +246,7 @@ function Resolve-AtlasoVerifiedVmxInventoryPath {
     if (-not $Path.Equals($canonicalPath, [System.StringComparison]::OrdinalIgnoreCase)) {
         throw "$InventoryDescription contains a non-canonical VMX path; refusing filesystem cleanup: $Path"
     }
+    Get-AtlasoVmxFileIdentity -Path $canonicalPath -InventoryDescription $InventoryDescription | Out-Null
     return $canonicalPath
 }
 
@@ -179,8 +284,13 @@ function Get-AtlasoWorkstationVmPaths {
                 -InventoryDescription 'vmrun running-VM inventory'
         }
     )
-    $uniquePaths = @($paths | Select-Object -Unique)
-    if ($uniquePaths.Count -ne $paths.Count) {
+    $fileIdentities = @(
+        $paths | ForEach-Object {
+            Get-AtlasoVmxFileIdentity -Path $_ -InventoryDescription 'vmrun running-VM inventory'
+        }
+    )
+    $uniqueFileIdentities = @($fileIdentities | Select-Object -Unique)
+    if ($uniqueFileIdentities.Count -ne $paths.Count) {
         throw 'vmrun running-VM inventory contains duplicate VMX paths; refusing filesystem cleanup.'
     }
     return $paths
@@ -213,12 +323,20 @@ function Get-AtlasoWorkstationRegisteredVmPaths {
             throw "VMware Workstation inventory contains an unrecognized registration entry; refusing filesystem cleanup: $InventoryPath"
         }
         $registeredPath = $Matches[1]
+        if (-not $registeredPath) {
+            continue
+        }
         $paths += Resolve-AtlasoVerifiedVmxInventoryPath `
             -Path $registeredPath `
             -InventoryDescription 'VMware Workstation registration inventory'
     }
-    $uniquePaths = @($paths | Select-Object -Unique)
-    if ($uniquePaths.Count -ne $paths.Count) {
+    $fileIdentities = @(
+        $paths | ForEach-Object {
+            Get-AtlasoVmxFileIdentity -Path $_ -InventoryDescription 'VMware Workstation registration inventory'
+        }
+    )
+    $uniqueFileIdentities = @($fileIdentities | Select-Object -Unique)
+    if ($uniqueFileIdentities.Count -ne $paths.Count) {
         throw "VMware Workstation registration inventory contains duplicate VMX paths; refusing filesystem cleanup: $InventoryPath"
     }
     return $paths
@@ -233,8 +351,10 @@ function Test-AtlasoWorkstationVmListed {
         [string]$VmxPath
     )
 
+    $targetIdentity = Get-AtlasoVmxFileIdentity -Path $VmxPath -InventoryDescription 'VMware cleanup target'
     foreach ($candidate in $Paths) {
-        if (Test-AtlasoSamePath -Left $candidate -Right $VmxPath) {
+        $candidateIdentity = Get-AtlasoVmxFileIdentity -Path $candidate -InventoryDescription 'VMware Workstation inventory'
+        if ($candidateIdentity.Equals($targetIdentity, [System.StringComparison]::Ordinal)) {
             return $true
         }
     }
