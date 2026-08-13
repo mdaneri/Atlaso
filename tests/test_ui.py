@@ -6325,6 +6325,42 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
             ),
         }
     )
+    malformed_firewall_source_group = deepcopy(archive)
+    malformed_firewall_source_group["data"]["settings"].append(
+        {
+            "key": "firewall.managed_source_groups",
+            "value": json.dumps(
+                {
+                    "groups": [
+                        {
+                            "id": "custom:restricted",
+                            "name": "Restricted",
+                            "entries": 42,
+                        }
+                    ],
+                    "assignments": {},
+                }
+            ),
+        }
+    )
+    unresolved_firewall_source_group_assignment = deepcopy(archive)
+    unresolved_firewall_source_group_assignment["data"]["settings"].append(
+        {
+            "key": "firewall.managed_source_groups",
+            "value": json.dumps(
+                {
+                    "groups": [
+                        {
+                            "id": "custom:restricted",
+                            "name": "Restricted",
+                            "entries": ["192.0.2.0/24"],
+                        }
+                    ],
+                    "assignments": {"management-ui": "missing"},
+                }
+            ),
+        }
+    )
     malformed_conditional_forwarder = deepcopy(archive)
     malformed_conditional_forwarder["data"]["settings"].append(
         {"key": "dns.conditional_forwarders", "value": "corp.example"}
@@ -6448,6 +6484,11 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
         (invalid_nts_restoration_marker, "NTPsec NTS restoration marker is invalid"),
         (invalid_firewall_source_groups, "firewall source groups state is invalid"),
         (duplicate_firewall_source_group, "firewall source groups state is invalid"),
+        (malformed_firewall_source_group, "firewall source groups state is invalid"),
+        (
+            unresolved_firewall_source_group_assignment,
+            "firewall source groups state is invalid",
+        ),
         (malformed_conditional_forwarder, "DNS conditional forwarders state is invalid"),
     ]:
         with pytest.raises(ValueError, match=message):

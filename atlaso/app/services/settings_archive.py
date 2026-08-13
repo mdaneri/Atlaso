@@ -126,6 +126,7 @@ from atlaso.app.services.esxi_pxe import (
     normalize_installer_iso_path,
 )
 from atlaso.app.services.firewall import (
+    FIREWALL_ANY_SOURCE_GROUP_ID,
     FIREWALL_SOURCE_GROUPS_SETTING_KEY,
     firewall_source_group_state,
     validate_firewall_rule,
@@ -1748,22 +1749,51 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
             if firewall_source_groups_json.strip()
             else {}
         )
+        if not isinstance(firewall_source_groups_payload, dict):
+            raise ValueError
+        raw_firewall_source_groups = firewall_source_groups_payload.get("groups", [])
+        raw_firewall_source_group_assignments = firewall_source_groups_payload.get(
+            "assignments", {}
+        )
         if (
-            not isinstance(firewall_source_groups_payload, dict)
-            or not isinstance(firewall_source_groups_payload.get("groups", []), list)
-            or not isinstance(firewall_source_groups_payload.get("assignments", {}), dict)
-            or any(
-                not isinstance(group, dict)
-                for group in firewall_source_groups_payload.get("groups", [])
-            )
+            not isinstance(raw_firewall_source_groups, list)
+            or not isinstance(raw_firewall_source_group_assignments, dict)
+            or any(not isinstance(group, dict) for group in raw_firewall_source_groups)
         ):
             raise ValueError
         raw_firewall_source_group_ids = [
-            str(group.get("id") or "")
-            for group in firewall_source_groups_payload.get("groups", [])
+            group.get("id") for group in raw_firewall_source_groups
         ]
-        if len(raw_firewall_source_group_ids) != len(
-            set(raw_firewall_source_group_ids)
+        if (
+            any(
+                not isinstance(group_id, str) or not group_id.strip()
+                for group_id in raw_firewall_source_group_ids
+            )
+            or len(raw_firewall_source_group_ids)
+            != len(set(raw_firewall_source_group_ids))
+            or any(
+                not isinstance(group.get("name"), str)
+                or not group["name"].strip()
+                or not isinstance(group.get("entries"), list)
+                or not group["entries"]
+                or any(
+                    not isinstance(entry, str) or not entry.strip()
+                    for entry in group["entries"]
+                )
+                for group in raw_firewall_source_groups
+            )
+        ):
+            raise ValueError
+        valid_raw_firewall_source_group_ids = {
+            *raw_firewall_source_group_ids,
+            FIREWALL_ANY_SOURCE_GROUP_ID,
+        }
+        if any(
+            not isinstance(rule_name, str)
+            or not rule_name.strip()
+            or not isinstance(group_id, str)
+            or group_id not in valid_raw_firewall_source_group_ids
+            for rule_name, group_id in raw_firewall_source_group_assignments.items()
         ):
             raise ValueError
         firewall_source_groups = firewall_source_group_state(

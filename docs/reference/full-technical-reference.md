@@ -878,9 +878,8 @@ Before replacement begins, restore validates every supplied collection, row obje
 required field, relationship, and enabled VLAN or static-route target. Any later restore failure rolls back the database
 transaction and preserves separately staged LDAP recovery metadata plus its in-memory payload. That staged material is
 removed only after a successful settings restore or factory reset commit.
-Schema-v2 settings archives carry the complete current section inventory. Schema-v1 archives remain accepted; missing
-sections introduced after the older export are populated from retained target desired state before the migrated archive
-receives complete v2 preflight validation.
+Settings restore accepts only schema-v2 archives with the complete current section inventory. Older schemas are
+rejected before current desired state is removed.
 
 ## Brand Assets
 
