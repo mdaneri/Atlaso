@@ -24469,6 +24469,7 @@ def vcf_offline_depot_task_status(
     tasks, total = vcf_depot_download_job_rows(db, page=page, page_size=size)
     active_jobs = active_vcf_depot_download_jobs(db)
     active_job = active_jobs[0] if active_jobs else None
+    exclusive_job = active_vcf_depot_exclusive_job(db)
     last_page = max(1, (total + size - 1) // size)
     return JSONResponse(
         {
@@ -24486,6 +24487,16 @@ def vcf_offline_depot_task_status(
                 }
                 for job in active_jobs
             ],
+            "active_exclusive_operation": (
+                {
+                    "job_id": exclusive_job.id,
+                    "status": exclusive_job.status,
+                    "type": exclusive_job.type,
+                    "detail": vcf_depot_execution_conflict_detail(exclusive_job),
+                }
+                if exclusive_job is not None
+                else None
+            ),
         }
     )
 
@@ -25689,17 +25700,12 @@ def delete_vcf_depot_profile_from_ui(
             status_code=409,
             detail=f"Delete the attached Automation schedule(s) first: {schedule_names}.",
         )
-    active_job = active_vcf_depot_download_job(db)
+    active_job = active_vcf_depot_download_job(db, profile.id)
     if active_job is not None:
-        try:
-            active_profile_id = int(json.loads(active_job.task_config_json or "{}").get("profile_id") or 0)
-        except (json.JSONDecodeError, TypeError, ValueError):
-            active_profile_id = 0
-        if active_profile_id == profile.id:
-            raise HTTPException(
-                status_code=409,
-                detail=f"Wait for active VCFDT task {active_job.id} to finish before deleting this profile.",
-            )
+        raise HTTPException(
+            status_code=409,
+            detail=f"Wait for active VCFDT task {active_job.id} to finish before deleting this profile.",
+        )
     db.delete(profile)
     db.commit()
     record_audit(db, actor=identity.username, action="delete_vcf_depot_profile", resource_type="vcf_depot_profile", resource_id=str(profile_id))
@@ -28757,6 +28763,11 @@ def tasks_status(
         if normalized_task_type == "vcf-depot-download"
         else []
     )
+    exclusive_job = (
+        active_vcf_depot_exclusive_job(db)
+        if normalized_task_type == "vcf-depot-download"
+        else None
+    )
     return JSONResponse(
         {
             "last_page": last_page,
@@ -28767,6 +28778,16 @@ def tasks_status(
             "filtered_count": filtered_count,
             "total_count": total_count,
             "active_downloads": active_downloads,
+            "active_exclusive_operation": (
+                {
+                    "job_id": exclusive_job.id,
+                    "status": exclusive_job.status,
+                    "type": exclusive_job.type,
+                    "detail": vcf_depot_execution_conflict_detail(exclusive_job),
+                }
+                if exclusive_job is not None
+                else None
+            ),
             "server_time": utcnow().isoformat(),
         }
     )

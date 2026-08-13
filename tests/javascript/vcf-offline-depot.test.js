@@ -216,3 +216,43 @@ test("VCFDT schedule action opens the selected profile in the in-page wizard", (
   assert.equal(opened.length, 1);
   assert.equal(errors.at(-1), "Enable the VCFDT download profile before scheduling it.");
 });
+
+test("VCFDT task refresh preserves an exclusive-operation blocker", () => {
+  const updates = [];
+  const row = {
+    getData: () => ({ id: 9, is_new: false }),
+    update: (value) => updates.push(value),
+  };
+  const context = vm.createContext({
+    Boolean,
+    Map,
+    Number,
+    String,
+  });
+  vm.runInContext(
+    "let vcfDepotProfilesTable = { getRows: () => [globalThis.testRow] };\n" +
+      `${functionSource("setVcfDepotDownloadStates")}\n` +
+      "globalThis.setVcfDepotDownloadStates = setVcfDepotDownloadStates;",
+    context,
+  );
+  context.testRow = row;
+
+  context.setVcfDepotDownloadStates([], {
+    job_id: "job_software_id",
+    status: "pending",
+    type: "vcf-depot-software-id",
+    detail: "Wait for Software Depot ID replacement to finish.",
+  });
+
+  assert.equal(updates.at(-1).download_active, true);
+  assert.equal(updates.at(-1).active_job_id, "job_software_id");
+  assert.equal(updates.at(-1).active_task_status, "pending");
+  assert.equal(
+    updates.at(-1).active_task_blocker,
+    "Wait for Software Depot ID replacement to finish.",
+  );
+
+  context.setVcfDepotDownloadStates([], null);
+  assert.equal(updates.at(-1).download_active, false);
+  assert.equal(updates.at(-1).active_task_blocker, "");
+});

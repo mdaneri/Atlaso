@@ -12388,7 +12388,7 @@ function scheduleVcfDepotProfileDownload(row, launcher = null) {
 
 let vcfDepotProfilesTable = null;
 
-function setVcfDepotDownloadStates(activeTasks = []) {
+function setVcfDepotDownloadStates(activeTasks = [], activeExclusiveOperation = null) {
   if (!vcfDepotProfilesTable) {
     return;
   }
@@ -12404,13 +12404,14 @@ function setVcfDepotDownloadStates(activeTasks = []) {
       const status = String(task?.status || "");
       const state = status === "running" ? "running" : "queued";
       const jobId = task?.id || task?.job_id || "";
+      const exclusiveJobId = activeExclusiveOperation?.id || activeExclusiveOperation?.job_id || "";
       row.update({
-        download_active: Boolean(task),
-        active_job_id: jobId,
-        active_task_status: status,
+        download_active: Boolean(task || activeExclusiveOperation),
+        active_job_id: jobId || exclusiveJobId,
+        active_task_status: status || String(activeExclusiveOperation?.status || ""),
         active_task_blocker: task
           ? `VCFDT task ${jobId} is ${state} for this profile. Wait for it to finish before starting the same profile again.`
-          : "",
+          : String(activeExclusiveOperation?.detail || ""),
       });
     }
   });
@@ -12572,7 +12573,7 @@ function initializeVcfDepotProfilesTable() {
     const activeTasks = Array.isArray(event.detail?.activeDownloads)
       ? event.detail.activeDownloads
       : tasks.filter((task) => !task.is_step && taskStatusActive(task.status));
-    setVcfDepotDownloadStates(activeTasks);
+    setVcfDepotDownloadStates(activeTasks, event.detail?.activeExclusiveOperation || null);
   });
 }
 
@@ -12814,6 +12815,7 @@ function applyTasksStatusPayload(payload, { reopen = false } = {}) {
     detail: {
       tasks: atlasoTasks,
       activeDownloads: Array.isArray(payload.active_downloads) ? payload.active_downloads : null,
+      activeExclusiveOperation: payload.active_exclusive_operation || null,
       activeCount: Number(payload.active_count || 0),
     },
   }));

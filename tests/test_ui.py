@@ -15481,6 +15481,81 @@ def test_vcf_offline_depot_marks_only_each_profiles_own_queued_download(client):
     assert rows[available_id]["active_job_id"] == ""
 
 
+def test_vcf_offline_depot_prevents_deleting_any_queued_profile(client):
+    """Verify deletion checks the target against the complete profile queue."""
+    import json
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job, JobStatus, VcfDepotDownloadProfile
+
+    login(client)
+    page = client.get("/vcf-offline-depot")
+    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    with SessionLocal() as db:
+        first = VcfDepotDownloadProfile(name="first-queued-delete", profile_type="metadata", enabled=True)
+        second = VcfDepotDownloadProfile(name="second-queued-delete", profile_type="binaries", enabled=True)
+        db.add_all([first, second])
+        db.flush()
+        for job_id, profile in (("job_delete_first", first), ("job_delete_second", second)):
+            db.add(
+                Job(
+                    id=job_id,
+                    type="vcf-depot-download",
+                    status=JobStatus.PENDING.value,
+                    created_by="admin",
+                    vcf_depot_operation=True,
+                    vcf_depot_profile_id=profile.id,
+                    task_config_json=json.dumps({"profile_id": profile.id}),
+                )
+            )
+        db.commit()
+        second_id = second.id
+
+    response = client.post(
+        f"/vcf-offline-depot/profiles/{second_id}/delete",
+        data={"csrf": csrf},
+        headers={"X-Atlaso-Grid": "1"},
+    )
+
+    assert response.status_code == 409
+    assert "job_delete_second" in response.json()["detail"]
+    with SessionLocal() as db:
+        assert db.get(VcfDepotDownloadProfile, second_id) is not None
+
+
+def test_vcf_download_task_refresh_includes_exclusive_operation(client):
+    """Verify scoped task refresh preserves the queue-wide exclusive blocker."""
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job, JobStatus
+
+    login(client)
+    with SessionLocal() as db:
+        db.add(
+            Job(
+                id="job_refresh_exclusive",
+                type="vcf-depot-software-id",
+                status=JobStatus.PENDING.value,
+                created_by="admin",
+                vcf_depot_operation=True,
+            )
+        )
+        db.commit()
+
+    response = client.get("/tasks/status", params={"task_type": "vcf-depot-download"})
+
+    assert response.status_code == 200
+    assert response.json()["active_downloads"] == []
+    assert response.json()["active_exclusive_operation"] == {
+        "job_id": "job_refresh_exclusive",
+        "status": "pending",
+        "type": "vcf-depot-software-id",
+        "detail": (
+            "VCFDT Software Depot ID task job_refresh_exclusive is already pending. "
+            "Wait for it to finish before starting another VCFDT operation."
+        ),
+    }
+
+
 def test_vcf_offline_depot_startup_recovers_interrupted_download(client):
     """Verify that vcf offline depot startup recovers interrupted download.
 
