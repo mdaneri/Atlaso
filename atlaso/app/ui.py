@@ -8140,7 +8140,7 @@ def _can_cancel_task(job: Job, identity: Identity | None = None) -> bool:
             return False
     if job.type == "appliance-apply" and _job_payload(job).get("cancel_requested"):
         return False
-    if job.type == "vcf-depot-software-id" and job.status == JobStatus.RUNNING.value:
+    if job.type == "vcf-depot-software-id":
         return False
     if job.type == "vcf-depot-download" and job.status == JobStatus.RUNNING.value:
         return False
@@ -28993,12 +28993,12 @@ def cancel_task_from_ui(
                 status_code=status.HTTP_409_CONFLICT,
                 detail="A running Network Boot media deletion cannot be cancelled.",
             )
-    if job.type == "vcf-depot-software-id" and job.status == JobStatus.RUNNING.value:
+    if job.type == "vcf-depot-software-id":
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=(
-                "A running VCFDT Software Depot ID task cannot be cancelled because identity replacement "
-                "may already be in progress."
+                "A queued or running VCFDT Software Depot ID task cannot be cancelled because identity "
+                "replacement may already be in progress."
             ),
         )
     if job.type == "vcf-depot-download" and job.status == JobStatus.RUNNING.value:

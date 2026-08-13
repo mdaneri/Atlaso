@@ -19035,8 +19035,8 @@ def test_vcf_depot_appliance_apply_submission_rejects_active_software_id_task(cl
     assert "VCFDT Software Depot ID" in response.json()["detail"]
 
 
-def test_queued_vcf_depot_software_id_task_can_be_cancelled_before_start(client, monkeypatch):
-    """Verify that queued vcf depot software id task can be cancelled before start.
+def test_queued_vcf_depot_software_id_task_rejects_cancellation(client, monkeypatch):
+    """Verify queued identity replacement remains guarded against a claim race.
 
     Args:
         client: HTTP test client used to exercise the Atlaso application.
@@ -19044,6 +19044,7 @@ def test_queued_vcf_depot_software_id_task_can_be_cancelled_before_start(client,
     """
     from atlaso.app import ui
     from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job, JobStatus
     from atlaso.app.ui import get_vcf_offline_depot_settings_row
 
     login(client)
@@ -19061,12 +19062,11 @@ def test_queued_vcf_depot_software_id_task_can_be_cancelled_before_start(client,
 
     response = client.post(f"/tasks/{queued['id']}/cancel", data={"csrf": csrf})
 
-    assert response.status_code == 200
-    cancelled = response.json()["task"]
-    assert cancelled["status"] == "cancelled"
-    assert cancelled["state"] == "cancelled"
-    assert cancelled["can_start"] is False
-    assert len(cancelled["_children"]) == 4
+    assert response.status_code == 409
+    assert "cannot be cancelled" in response.json()["detail"]
+    with SessionLocal() as db:
+        job = db.get(Job, queued["id"])
+        assert job.status == JobStatus.PENDING.value
 
 
 def test_running_vcf_depot_software_id_task_rejects_cancellation(client, monkeypatch):
