@@ -145,6 +145,8 @@ and preserved path.
 
 The read-only Workstation registration inventory may reside beneath a redirected `%APPDATA%` junction or symbolic link.
 The non-reparse-point requirement remains enforced on the artifact root that cleanup recursively deletes.
+Recursive deletion errors are terminating, and cleanup reports success only after confirming that the artifact root is
+absent.
 
 The normal test-VM `-Redeploy` path also requires the exact named VMX and exactly one well-formed, matching
 `displayName`; missing, duplicate, malformed, or conflicting assignments preserve the existing directory.

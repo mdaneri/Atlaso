@@ -594,7 +594,10 @@ function Remove-AtlasoWorkstationVmArtifacts {
     }
 
     if (Test-Path -LiteralPath $resolvedRemovalRoot) {
-        Remove-Item -LiteralPath $resolvedRemovalRoot -Recurse -Force
+        Remove-Item -LiteralPath $resolvedRemovalRoot -Recurse -Force -ErrorAction Stop
+    }
+    if (Test-Path -LiteralPath $resolvedRemovalRoot) {
+        throw "VMware artifact directory remains after recursive cleanup; refusing to report success: $resolvedRemovalRoot"
     }
 }
 
