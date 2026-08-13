@@ -5842,6 +5842,41 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
             "external_group_name": "Atlaso admins",
         },
     ]
+    effective_oidc_mapping_collision = deepcopy(archive)
+    effective_oidc_mapping_collision["data"]["oidc_clients"].append(
+        {
+            "name": "Effective mapping client",
+            "client_id": "effective-mapping-client",
+            "client_secret_hash": valid_client_hash,
+            "organization_slug": "",
+            "enabled": True,
+        }
+    )
+    effective_oidc_mapping_collision["data"]["oidc_client_redirect_uris"].append(
+        {
+            "client_id": "effective-mapping-client",
+            "kind": "redirect",
+            "uri": "https://effective-mapping.example.test/callback",
+        }
+    )
+    effective_oidc_mapping_collision["data"]["oidc_group_mappings"] = [
+        {
+            "source_type": "local_role",
+            "local_role": "admin",
+            "ldap_group_name": "",
+            "organization_slug": "",
+            "client_id": "",
+            "external_group_name": "Shared external group",
+        },
+        {
+            "source_type": "local_role",
+            "local_role": "viewer",
+            "ldap_group_name": "",
+            "organization_slug": "",
+            "client_id": "effective-mapping-client",
+            "external_group_name": "shared EXTERNAL group",
+        },
+    ]
     cross_organization_oidc_mapping = deepcopy(archive)
     cross_organization_oidc_mapping["data"]["ldap_organizations"].extend(
         [
@@ -6508,6 +6543,10 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
         (invalid_oidc_subject_scalar, "subject_uuid field that must be a string"),
         (invalid_oidc_subject_uuid, "has an invalid subject UUID"),
         (duplicate_oidc_mapping, "duplicates an OIDC group mapping identity"),
+        (
+            effective_oidc_mapping_collision,
+            "Effective external group names must be unique case-insensitively",
+        ),
         (cross_organization_oidc_mapping, "outside its OIDC client's organization"),
         (bound_client_local_role_mapping, "assigns a local role to an organization-bound OIDC client"),
         (unresolved_esx_volume, "references an unknown ESX storage volume"),

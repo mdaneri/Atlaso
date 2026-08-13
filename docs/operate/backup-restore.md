@@ -57,6 +57,10 @@ global LDAP apply. If validation or a later restore phase fails, Atlaso rolls ba
 any separately staged LDAP recovery import metadata and in-memory payload available. A successful settings restore or
 factory reset intentionally clears that staged LDAP recovery material.
 
+OIDC group mappings are preflighted in their effective global, client, and managed-LDAP organization contexts. A
+client-specific mapping may replace the global mapping for the same source, but effective external group names must
+remain unique case-insensitively within every context before current desired state is removed.
+
 Certificate and signing-key lifecycle state is restored with the desired state. Atlaso reconstructs CA certificate
 validity, serial numbers, and SHA-256 fingerprints from the archived public PEM, preserves CA issue, expiry, and
 revocation timestamps, and preserves OIDC key activation, retirement, and publication-overlap timestamps so still-live

@@ -525,6 +525,83 @@ def _normalize_ca_certificate_metadata(
         row["fingerprint"] = certificate.fingerprint(hashes.SHA256()).hex()
 
 
+def _validate_archived_oidc_mapping_contexts(
+    rows: list[dict[str, Any]],
+    client_organizations: dict[str, str],
+    organization_slugs: set[str],
+) -> None:
+    """Validate effective external group names without restoring database rows.
+
+    Args:
+        rows: Structurally validated archived OIDC group mappings.
+        client_organizations: Archived client IDs mapped to organization slugs.
+        organization_slugs: Archived managed LDAP organization slugs.
+
+    Raises:
+        ValueError: If one effective client/source context reuses an external name.
+    """
+
+    def source_key(row: dict[str, Any]) -> tuple[str, ...]:
+        """Return the stable mapping source identity used for client overrides."""
+        if str(row.get("source_type") or "") == "local_role":
+            return ("local_role", str(row.get("local_role") or "").casefold())
+        return (
+            "ldap_group",
+            str(row.get("organization_slug") or ""),
+            str(row.get("ldap_group_name") or ""),
+        )
+
+    def validate_context(
+        relevant_rows: list[dict[str, Any]],
+        client_id: str,
+    ) -> None:
+        """Validate one global or client-overridden effective mapping context."""
+        effective = {
+            source_key(row): row
+            for row in relevant_rows
+            if not str(row.get("client_id") or "")
+        }
+        if client_id:
+            effective.update(
+                {
+                    source_key(row): row
+                    for row in relevant_rows
+                    if str(row.get("client_id") or "") == client_id
+                }
+            )
+        names: dict[str, tuple[str, ...]] = {}
+        for mapping_key, row in effective.items():
+            normalized_name = str(row.get("external_group_name") or "").casefold()
+            existing_key = names.get(normalized_name)
+            if existing_key is not None and existing_key != mapping_key:
+                raise ValueError(
+                    "The settings archive OIDC group mapping state is invalid: "
+                    "Effective external group names must be unique case-insensitively "
+                    "for each client and organization."
+                )
+            names[normalized_name] = mapping_key
+
+    local_rows = [
+        row for row in rows if str(row.get("source_type") or "") == "local_role"
+    ]
+    validate_context(local_rows, "")
+    for client_id, organization_slug in client_organizations.items():
+        if not organization_slug:
+            validate_context(local_rows, client_id)
+
+    for organization_slug in organization_slugs:
+        organization_rows = [
+            row
+            for row in rows
+            if str(row.get("source_type") or "") == "ldap_group"
+            and str(row.get("organization_slug") or "") == organization_slug
+        ]
+        validate_context(organization_rows, "")
+        for client_id, client_organization in client_organizations.items():
+            if client_organization in {"", organization_slug}:
+                validate_context(organization_rows, client_id)
+
+
 def _validate_archived_ca_certificate_rows(
     settings: CaSettings,
     certificates: list[CaCertificate],
@@ -3115,6 +3192,11 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
             "OIDC client",
             optional=True,
         )
+    _validate_archived_oidc_mapping_contexts(
+        data.get("oidc_group_mappings", []),
+        oidc_client_organizations,
+        organization_slugs,
+    )
 
     _validate_archived_ca_certificate_rows(
         archived_ca_settings,
