@@ -56,6 +56,10 @@ $invalidPaths = @(
     '/tmp/atlaso`build',
     '/tmp/atlaso;build',
     "/tmp/atlaso`nbuild",
+    "/tmp/atlaso`n",
+    "/tmp/atlaso`r",
+    "/tmp/atlaso`t",
+    "/tmp/atlaso$([char]0)",
     'relative/path',
     '/tmp/../etc'
 )

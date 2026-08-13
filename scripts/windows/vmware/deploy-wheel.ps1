@@ -189,7 +189,8 @@ function Resolve-RemoteDirectoryPath {
     if (
         [string]::IsNullOrWhiteSpace($Path) -or
         -not $Path.StartsWith('/', [System.StringComparison]::Ordinal) -or
-        $Path -notmatch '^/[A-Za-z0-9._/-]*$' -or
+        $Path -match '[\x00-\x1F\x7F]' -or
+        $Path -notmatch '^/[A-Za-z0-9._/-]*\z' -or
         $Path.Contains('//', [System.StringComparison]::Ordinal)
     ) {
         throw $contractError
