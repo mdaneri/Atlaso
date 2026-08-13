@@ -129,7 +129,9 @@ async def lifespan(app: FastAPI):
         recover_interrupted_appliance_apply_jobs(db)
         recover_interrupted_vcf_depot_software_id_jobs(db)
         if not ensure_vcf_depot_running_operation_index():
-            raise RuntimeError("VCFDT startup recovery left multiple operations running.")
+            REQUEST_LOGGER.warning(
+                "VCFDT runtime index remains deferred while independently owned operations are running."
+            )
         recover_interrupted_vcf_helper_jobs(db)
         refresh_startup_host_inventory(db, environment=settings.environment)
         if appliance_mode:

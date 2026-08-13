@@ -107,7 +107,7 @@
                 </td>
                 <td>
                   {% if profile.enabled %}
-                    <a class="button tiny secondary" href="{{ management_ui_root }}/automation?new=vcf_depot_download&amp;vcf_profile_id={{ profile.id }}#schedules">Schedule</a>
+                    <a class="button tiny secondary" href="{{ management_ui_root }}/vcf-offline-depot?schedule_profile_id={{ profile.id }}#vcf-depot-schedule-modal">Schedule</a>
                   {% else %}
                     <span class="button tiny secondary disabled" title="Enable the VCFDT download profile before scheduling it." aria-disabled="true">Schedule</span>
                   {% endif %}
@@ -305,8 +305,8 @@
     </div>
   </aside>
 </section>
-<dialog id="vcf-depot-schedule-modal" class="confirm-modal wide-modal vcf-sddc-wizard-modal" aria-labelledby="vcf-depot-schedule-modal-title" aria-describedby="vcf-depot-schedule-modal-description">
-  <form id="vcf-depot-schedule-form" class="confirm-modal-panel vcf-sddc-wizard-panel" method="post" data-automation-schedule-form data-automation-contextual-vcf-schedule data-atlaso-wizard>
+<dialog id="vcf-depot-schedule-modal" class="confirm-modal wide-modal vcf-sddc-wizard-modal" aria-labelledby="vcf-depot-schedule-modal-title" aria-describedby="vcf-depot-schedule-modal-description" {{ "open" if vcf_depot_contextual_schedule_profile else "" }}>
+  <form id="vcf-depot-schedule-form" class="confirm-modal-panel vcf-sddc-wizard-panel" method="post" action="{{ management_ui_root }}/vcf-offline-depot/profiles/{{ vcf_depot_contextual_schedule_profile.id if vcf_depot_contextual_schedule_profile else 0 }}/schedules" data-automation-schedule-form data-automation-contextual-vcf-schedule data-atlaso-wizard>
     <input type="hidden" name="csrf" value="{{ csrf_token }}">
     <aside class="vcf-sddc-wizard-rail" aria-label="Contextual depot schedule steps">
       <p class="kicker">Depot profile schedule</p>
@@ -325,13 +325,13 @@
           <h3 data-automation-wizard-title data-atlaso-wizard-title>Name the schedule</h3>
           <p id="vcf-depot-schedule-modal-description" class="muted" data-automation-wizard-description data-atlaso-wizard-description>Name this schedule for the selected VCF Offline Depot profile.</p>
         </div>
-        <div class="alert error hidden" data-automation-wizard-errors data-atlaso-wizard-error></div>
+        <div class="alert error {{ 'hidden' if not vcf_depot_contextual_schedule_error else '' }}" data-automation-wizard-errors data-atlaso-wizard-error>{{ vcf_depot_contextual_schedule_error }}</div>
         <section class="vcf-sddc-step-page" data-automation-wizard-step="identity" data-atlaso-wizard-step="identity">
           <div class="form-stack automation-schedule-form">
             <label><span class="field-label"><span>Schedule name</span><button class="help-icon" type="button" data-help="Names this automation and appears as the scheduler identity in task history.">i</button></span><input name="name" required autocomplete="off"></label>
             <div class="settings-list compact-settings-list">
               <div><span>Workflow</span><strong>VCF Offline Depot download</strong></div>
-              <div><span>Download profile</span><strong data-automation-context-profile-name>Selected profile</strong></div>
+              <div><span>Download profile</span><strong data-automation-context-profile-name>{{ vcf_depot_contextual_schedule_profile.name if vcf_depot_contextual_schedule_profile else "Selected profile" }}</strong></div>
             </div>
             <p class="muted">The task type and profile are bound by the server to the row that opened this wizard.</p>
           </div>
@@ -382,6 +382,16 @@
     </div>
   </form>
 </dialog>
+{% if vcf_depot_contextual_schedule_profile %}
+<noscript><style>
+  #vcf-depot-schedule-modal [data-atlaso-wizard-step] { display: block !important; }
+  #vcf-depot-schedule-modal [data-atlaso-wizard-nav],
+  #vcf-depot-schedule-modal [data-atlaso-wizard-next],
+  #vcf-depot-schedule-modal [data-atlaso-wizard-back],
+  #vcf-depot-schedule-modal [data-atlaso-wizard-cancel] { display: none !important; }
+  #vcf-depot-schedule-modal [data-atlaso-wizard-submit] { display: inline-flex !important; }
+</style></noscript>
+{% endif %}
 {% set vcf_depot_profile_steps = [
   {"id": "identity", "label": "Profile", "summary": "Name, type, and notes"},
   {"id": "release", "label": "Release", "summary": "SKU, release, and mode"},

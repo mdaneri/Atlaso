@@ -136,22 +136,27 @@ def _reconcile_vcf_depot_job_queue(connection: Connection) -> None:
             "CASE WHEN status = 'running' THEN 0 ELSE 1 END, created_at, id"
         )
     ).all()
-    active_profile_ids: set[int] = set()
-    for duplicate_job_id, raw_profile_id, _status in active_downloads:
+    downloads_by_profile: dict[int, list[tuple[str, str]]] = {}
+    for job_id, raw_profile_id, job_status in active_downloads:
         profile_id = int(raw_profile_id or 0)
-        if not profile_id or profile_id not in active_profile_ids:
-            if profile_id:
-                active_profile_ids.add(profile_id)
-            continue
-        connection.execute(
-            text(
-                "UPDATE jobs SET status = 'skipped', progress_percent = 100, "
-                "finished_at = CURRENT_TIMESTAMP, "
-                "error = 'Skipped during database upgrade because this VCFDT profile already had an active task.' "
-                "WHERE id = :job_id"
-            ),
-            {"job_id": duplicate_job_id},
-        )
+        if profile_id:
+            downloads_by_profile.setdefault(profile_id, []).append((job_id, job_status))
+    duplicate_running_profile = False
+    for profile_jobs in downloads_by_profile.values():
+        running_jobs = [job_id for job_id, job_status in profile_jobs if job_status == "running"]
+        pending_jobs = [job_id for job_id, job_status in profile_jobs if job_status == "pending"]
+        duplicate_running_profile = duplicate_running_profile or len(running_jobs) > 1
+        retained_pending = pending_jobs[:1] if not running_jobs else []
+        for duplicate_job_id in pending_jobs[len(retained_pending):]:
+            connection.execute(
+                text(
+                    "UPDATE jobs SET status = 'skipped', progress_percent = 100, "
+                    "finished_at = CURRENT_TIMESTAMP, "
+                    "error = 'Skipped during database upgrade because this VCFDT profile already had an active task.' "
+                    "WHERE id = :job_id"
+                ),
+                {"job_id": duplicate_job_id},
+            )
 
     running_operations = connection.execute(
         text(
@@ -159,40 +164,21 @@ def _reconcile_vcf_depot_job_queue(connection: Connection) -> None:
             "AND status = 'running' ORDER BY started_at, created_at, id"
         )
     ).all()
-    running_identity_count = sum(
-        1 for _job_id, job_type in running_operations if job_type == "vcf-depot-software-id"
-    )
-    retained_non_identity = False
-    remaining_running_operations = running_identity_count
-    for interrupted_job_id, job_type in running_operations:
-        if job_type == "vcf-depot-software-id":
-            continue
-        if not running_identity_count and not retained_non_identity:
-            retained_non_identity = True
-            remaining_running_operations += 1
-            continue
-        connection.execute(
-            text(
-                "UPDATE jobs SET status = 'failed', progress_percent = 100, "
-                "finished_at = CURRENT_TIMESTAMP, "
-                "error = 'The Atlaso worker restarted while this VCFDT operation was running.' "
-                "WHERE id = :job_id"
-            ),
-            {"job_id": interrupted_job_id},
-        )
+    remaining_running_operations = len(running_operations)
 
     connection.execute(text("DROP INDEX IF EXISTS uq_jobs_active_vcf_depot_download"))
     connection.execute(text("DROP INDEX IF EXISTS uq_jobs_active_vcf_depot_operation"))
     connection.execute(text("DROP INDEX IF EXISTS uq_jobs_running_vcf_depot_operation"))
-    connection.execute(
-        text(
-            "CREATE UNIQUE INDEX IF NOT EXISTS uq_jobs_active_vcf_depot_profile "
-            "ON jobs (vcf_depot_profile_id) "
-            "WHERE type = 'vcf-depot-download' "
-            "AND vcf_depot_profile_id IS NOT NULL "
-            "AND status IN ('pending', 'running')"
+    if not duplicate_running_profile:
+        connection.execute(
+            text(
+                "CREATE UNIQUE INDEX IF NOT EXISTS uq_jobs_active_vcf_depot_profile "
+                "ON jobs (vcf_depot_profile_id) "
+                "WHERE type = 'vcf-depot-download' "
+                "AND vcf_depot_profile_id IS NOT NULL "
+                "AND status IN ('pending', 'running')"
+            )
         )
-    )
     if remaining_running_operations <= 1:
         _create_vcf_depot_running_operation_index(connection)
 

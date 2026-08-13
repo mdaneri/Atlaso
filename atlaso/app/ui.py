@@ -14714,7 +14714,7 @@ def create_contextual_vcf_depot_schedule(
     csrf: str = Form(...),
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
-) -> JSONResponse:
+) -> JSONResponse | RedirectResponse:
     """Create a server-bound depot download schedule from its selected profile.
 
     Args:
@@ -14737,6 +14737,7 @@ def create_contextual_vcf_depot_schedule(
     """
     verify_csrf(request, csrf)
     require_admin_identity(identity)
+    wants_html = "text/html" in request.headers.get("accept", "").lower()
     if task_type is not None and task_type != "vcf_depot_download":
         return JSONResponse(
             {"detail": "The contextual depot wizard can create only VCF Offline Depot download schedules."},
@@ -14765,6 +14766,14 @@ def create_contextual_vcf_depot_schedule(
             actor=identity.username,
         )
     except AutomationScheduleInputError as exc:
+        if wants_html:
+            return RedirectResponse(
+                management_ui_path(
+                    f"/vcf-offline-depot?schedule_profile_id={profile_id}"
+                    f"&schedule_error={quote(exc.public_detail)}#vcf-depot-schedule-modal"
+                ),
+                status_code=303,
+            )
         return JSONResponse({"detail": exc.public_detail}, status_code=exc.status_code)
     record_audit(
         db,
@@ -14774,6 +14783,11 @@ def create_contextual_vcf_depot_schedule(
         resource_id=str(schedule.id),
         detail=f"task_type=vcf_depot_download; profile_id={profile_id}; source=vcf_offline_depot",
     )
+    if wants_html:
+        return RedirectResponse(
+            management_ui_path("/vcf-offline-depot#vcf-depot-profiles-panel"),
+            status_code=303,
+        )
     return JSONResponse(
         {
             "status": "created",
@@ -24391,6 +24405,8 @@ def delete_vcf_fqdns_from_ui(
 @router.get("/vcf-offline-depot", response_class=HTMLResponse, response_model=None)
 def vcf_offline_depot_page(
     request: Request,
+    schedule_profile_id: int | None = Query(None),
+    schedule_error: str = Query(""),
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> HTMLResponse:
@@ -24398,6 +24414,8 @@ def vcf_offline_depot_page(
 
     Args:
         request: Incoming HTTP request.
+        schedule_profile_id: Optional profile selected by the no-script schedule fallback.
+        schedule_error: Public validation feedback for the no-script schedule fallback.
         identity: Authenticated identity authorizing the request.
         db: Active database session.
 
@@ -24411,6 +24429,14 @@ def vcf_offline_depot_page(
         .order_by(desc(Job.created_at))
         .limit(500)
     ).scalars().all()
+    schedule_profile = (
+        db.get(VcfDepotDownloadProfile, schedule_profile_id)
+        if schedule_profile_id is not None
+        else None
+    )
+    if schedule_profile is not None and not schedule_profile.enabled:
+        schedule_profile = None
+        schedule_error = "Enable the VCFDT download profile before scheduling it."
     return render(
         request,
         "vcf_offline_depot.html",
@@ -24420,6 +24446,8 @@ def vcf_offline_depot_page(
             "vcf_depot_task_rows": [_task_row(job, identity) for job in jobs],
             "vcf_depot_task_component_options": ["VCF Depot Download"],
             "appliance_apply_status": appliance_apply_status(db, "vcf_offline_depot"),
+            "vcf_depot_contextual_schedule_profile": schedule_profile,
+            "vcf_depot_contextual_schedule_error": schedule_error,
         },
     )
 

@@ -13809,7 +13809,9 @@ def test_vcf_offline_depot_page_redirect_and_uploads_are_sanitized(client, tmp_p
     assert "Start" in page.text
     assert "Start, schedule, and preview actions" in page.text
     assert "Schedule" in page.text
-    assert "new=vcf_depot_download" in Path("atlaso/app/templates/vcf_offline_depot.html").read_text(encoding="utf-8")
+    template_text = Path("atlaso/app/templates/vcf_offline_depot.html").read_text(encoding="utf-8")
+    assert "new=vcf_depot_download" not in template_text
+    assert "?schedule_profile_id={{ profile.id }}#vcf-depot-schedule-modal" in template_text
     contextual_schedule = page.text.split('id="vcf-depot-schedule-modal"', 1)[1].split("</dialog>", 1)[0]
     assert contextual_schedule.count("data-atlaso-wizard-nav=") == 4
     assert all(f">{label}<" in contextual_schedule for label in ("Schedule", "Timing", "State", "Review"))
@@ -15387,6 +15389,44 @@ def test_vcf_offline_depot_contextual_schedule_is_server_bound_and_stays_in_page
             )
         ).scalar_one()
         assert f"profile_id={profile_id}" in audit.detail
+
+    fallback_page = client.get(
+        "/vcf-offline-depot",
+        params={"schedule_profile_id": profile_id},
+    )
+    assert fallback_page.status_code == 200
+    fallback_schedule = fallback_page.text.split(
+        'id="vcf-depot-schedule-modal"', 1
+    )[1].split("</dialog>", 1)[0]
+    assert " open" in fallback_schedule.split(">", 1)[0]
+    assert (
+        f'action="/ui/management/vcf-offline-depot/profiles/{profile_id}/schedules"'
+        in fallback_schedule
+    )
+    assert "contextual-schedule-profile" in fallback_schedule
+    assert "<noscript><style>" in fallback_page.text
+
+    fallback_submit = client.post(
+        f"/vcf-offline-depot/profiles/{profile_id}/schedules",
+        data={
+            "csrf": csrf,
+            "name": "contextual-profile-fallback",
+            "schedule_kind": "cron",
+            "cron_expression": "30 4 * * *",
+            "timezone_name": "UTC",
+        },
+        headers={"Accept": "text/html"},
+        follow_redirects=False,
+    )
+    assert fallback_submit.status_code == 303
+    assert fallback_submit.headers["location"] == (
+        "/ui/management/vcf-offline-depot#vcf-depot-profiles-panel"
+    )
+    with SessionLocal() as db:
+        fallback_schedule_row = db.execute(
+            select(Schedule).where(Schedule.name == "contextual-profile-fallback")
+        ).scalar_one()
+        assert json.loads(fallback_schedule_row.task_config_json) == {"profile_id": profile_id}
 
     task_tamper = client.post(
         f"/vcf-offline-depot/profiles/{profile_id}/schedules",

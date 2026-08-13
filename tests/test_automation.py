@@ -1246,7 +1246,7 @@ def test_vcf_queue_reconciliation_preserves_identity_tasks_for_type_specific_rec
 
     assert statuses["job_identity_first"] == "running"
     assert statuses["job_identity_second"] == "running"
-    assert statuses["job_download"] == "failed"
+    assert statuses["job_download"] == "running"
     assert "uq_jobs_running_vcf_depot_operation" not in indexes
 
     with test_engine.begin() as connection:
@@ -1257,6 +1257,45 @@ def test_vcf_queue_reconciliation_preserves_identity_tasks_for_type_specific_rec
     with test_engine.connect() as connection:
         indexes = {row[1] for row in connection.execute(text("PRAGMA index_list('jobs')")).all()}
     assert "uq_jobs_running_vcf_depot_operation" in indexes
+
+
+def test_vcf_queue_reconciliation_preserves_distinct_running_operation_owners():
+    """Verify web startup cannot terminalize live worker-owned VCFDT operations."""
+    from sqlalchemy import create_engine, text
+
+    import atlaso.app.database as database
+
+    test_engine = create_engine("sqlite://")
+    with test_engine.begin() as connection:
+        connection.execute(
+            text(
+                "CREATE TABLE jobs ("
+                "id TEXT PRIMARY KEY, type TEXT NOT NULL, status TEXT NOT NULL, "
+                "vcf_depot_operation BOOLEAN NOT NULL DEFAULT FALSE, "
+                "vcf_depot_profile_id INTEGER, task_config_json TEXT, result TEXT, "
+                "created_at TEXT, started_at TEXT, progress_percent INTEGER, "
+                "finished_at TEXT, error TEXT)"
+            )
+        )
+        for job_id, profile_id in (("job_live_first", 51), ("job_live_second", 52)):
+            connection.execute(
+                text(
+                    "INSERT INTO jobs "
+                    "(id, type, status, vcf_depot_operation, vcf_depot_profile_id, created_at, started_at) "
+                    "VALUES (:job_id, 'vcf-depot-download', 'running', TRUE, :profile_id, "
+                    ":job_id, :job_id)"
+                ),
+                {"job_id": job_id, "profile_id": profile_id},
+            )
+
+        database._reconcile_vcf_depot_job_queue(connection)
+        statuses = dict(connection.execute(text("SELECT id, status FROM jobs")).all())
+        indexes = {row[1] for row in connection.execute(text("PRAGMA index_list('jobs')")).all()}
+
+    assert statuses == {"job_live_first": "running", "job_live_second": "running"}
+    assert "uq_jobs_active_vcf_depot_profile" in indexes
+    assert "uq_jobs_running_vcf_depot_operation" not in indexes
+    assert database.ensure_vcf_depot_running_operation_index(test_engine) is False
 
 
 def test_vcf_queue_reconciliation_preserves_running_same_profile_job():
