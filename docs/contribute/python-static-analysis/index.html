@@ -6,19 +6,19 @@
       <meta charset="utf-8">
       <meta name="viewport" content="width=device-width,initial-scale=1">
       
-        <meta name="description" content="Schedule supported tasks and manage immutable automation scripts safely.">
+        <meta name="description" content="Run and extend Atlaso's enforced Ruff and scoped mypy baselines.">
       
       
         <meta name="author" content="Atlaso contributors">
       
       
-        <link rel="canonical" href="https://mdaneri.github.io/Atlaso/docs/operate/automation/">
+        <link rel="canonical" href="https://mdaneri.github.io/Atlaso/docs/contribute/python-static-analysis/">
       
       
-        <link rel="prev" href="../backup-restore/">
+        <link rel="prev" href="../python-documentation/">
       
       
-        <link rel="next" href="../api/">
+        <link rel="next" href="../api-authoring/">
       
       
         
@@ -29,7 +29,7 @@
     
     
       
-        <title>Automation - Atlaso Documentation</title>
+        <title>Python static analysis - Atlaso Documentation</title>
       
     
     
@@ -87,7 +87,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#automation" class="md-skip">
+        <a href="#python-static-analysis" class="md-skip">
           Skip to content
         </a>
       
@@ -122,7 +122,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Automation
+              Python static analysis
             
           </span>
         </div>
@@ -242,8 +242,6 @@
   
   
   
-    
-  
   
     
       
@@ -284,8 +282,8 @@
     
     
     
-      <li class="md-tabs__item md-tabs__item--active">
-        <a href="../" class="md-tabs__link">
+      <li class="md-tabs__item">
+        <a href="../../operate/" class="md-tabs__link">
           
   
   Operate
@@ -410,6 +408,8 @@
   
   
   
+    
+  
   
     
       
@@ -438,8 +438,8 @@
     
     
     
-      <li class="md-tabs__item">
-        <a href="../../contribute/" class="md-tabs__link">
+      <li class="md-tabs__item md-tabs__item--active">
+        <a href="../" class="md-tabs__link">
           
   
   Contribute
@@ -657,8 +657,6 @@
       
   
   
-    
-  
   
   
     
@@ -700,23 +698,20 @@
     
     
       
-        
-        
-      
       
         
       
     
     
-    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" checked>
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
         
           
           <div class="md-nav__link md-nav__container">
-            <a href="../" class="md-nav__link ">
+            <a href="../../operate/" class="md-nav__link ">
               
   
   
@@ -740,13 +735,13 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_3" id="__nav_3_label" tabindex="">
+              <label class="md-nav__link " for="__nav_3" id="__nav_3_label" tabindex="0">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="true">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
           <label class="md-nav__title" for="__nav_3">
             <span class="md-nav__icon md-icon"></span>
             
@@ -765,7 +760,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../dashboard/" class="md-nav__link">
+      <a href="../../operate/dashboard/" class="md-nav__link">
         
   
   
@@ -799,7 +794,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../monitor/" class="md-nav__link">
+      <a href="../../operate/monitor/" class="md-nav__link">
         
   
   
@@ -833,7 +828,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../logs/" class="md-nav__link">
+      <a href="../../operate/logs/" class="md-nav__link">
         
   
   
@@ -867,7 +862,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../audit-log/" class="md-nav__link">
+      <a href="../../operate/audit-log/" class="md-nav__link">
         
   
   
@@ -901,7 +896,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../tasks/" class="md-nav__link">
+      <a href="../../operate/tasks/" class="md-nav__link">
         
   
   
@@ -935,7 +930,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../appliance-apply/" class="md-nav__link">
+      <a href="../../operate/appliance-apply/" class="md-nav__link">
         
   
   
@@ -969,7 +964,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../appliance-settings/" class="md-nav__link">
+      <a href="../../operate/appliance-settings/" class="md-nav__link">
         
   
   
@@ -1003,7 +998,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../networking/" class="md-nav__link">
+      <a href="../../operate/networking/" class="md-nav__link">
         
   
   
@@ -1037,7 +1032,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../appliance-console/" class="md-nav__link">
+      <a href="../../operate/appliance-console/" class="md-nav__link">
         
   
   
@@ -1071,7 +1066,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../appliance-update/" class="md-nav__link">
+      <a href="../../operate/appliance-update/" class="md-nav__link">
         
   
   
@@ -1105,7 +1100,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../backup-restore/" class="md-nav__link">
+      <a href="../../operate/backup-restore/" class="md-nav__link">
         
   
   
@@ -1136,43 +1131,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      
-      
-      
-        
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    
-  
-  Automation
-
-    
-  </span>
-  
-  
-    
-  
-  
-    <span class="md-status md-status--current"></span>
-  
-
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="././" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../../operate/automation/" class="md-nav__link">
         
   
   
@@ -1194,110 +1156,6 @@
   
 
       </a>
-      
-        
-
-
-<nav class="md-nav md-nav--secondary" aria-label="On this page">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      On this page
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#interface-overview" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Interface overview
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#managed-scripts" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Managed scripts
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#service-operations" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Service operations
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#task-history-and-output" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Task history and output
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#additional-verified-states" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Additional verified states
-      </span>
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Additional verified states">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#automation_1" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Automation
-      </span>
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#automation-schedules" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Automation: Schedules
-      </span>
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -1310,7 +1168,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../api/" class="md-nav__link">
+      <a href="../../operate/api/" class="md-nav__link">
         
   
   
@@ -1344,7 +1202,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../web-terminal/" class="md-nav__link">
+      <a href="../../operate/web-terminal/" class="md-nav__link">
         
   
   
@@ -2512,6 +2370,8 @@
       
   
   
+    
+  
   
   
     
@@ -2541,20 +2401,23 @@
     
     
       
+        
+        
+      
       
         
       
     
     
-    <li class="md-nav__item md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6" checked>
         
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../contribute/" class="md-nav__link ">
+            <a href="../" class="md-nav__link ">
               
   
   
@@ -2578,13 +2441,13 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_6" id="__nav_6_label" tabindex="0">
+              <label class="md-nav__link " for="__nav_6" id="__nav_6_label" tabindex="">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="true">
           <label class="md-nav__title" for="__nav_6">
             <span class="md-nav__icon md-icon"></span>
             
@@ -2603,7 +2466,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contribute/dependency-management/" class="md-nav__link">
+      <a href="../dependency-management/" class="md-nav__link">
         
   
   
@@ -2637,7 +2500,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contribute/documentation-authoring/" class="md-nav__link">
+      <a href="../documentation-authoring/" class="md-nav__link">
         
   
   
@@ -2671,7 +2534,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contribute/python-documentation/" class="md-nav__link">
+      <a href="../python-documentation/" class="md-nav__link">
         
   
   
@@ -2702,10 +2565,43 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../../contribute/python-static-analysis/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Python static analysis
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="././" class="md-nav__link md-nav__link--active">
         
   
   
@@ -2727,6 +2623,60 @@
   
 
       </a>
+      
+        
+
+
+<nav class="md-nav md-nav--secondary" aria-label="On this page">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      On this page
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#set-up-the-analyzers" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Set up the analyzers
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#run-the-baseline" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Run the baseline
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#justify-suppressions" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Justify suppressions
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -2739,7 +2689,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contribute/api-authoring/" class="md-nav__link">
+      <a href="../api-authoring/" class="md-nav__link">
         
   
   
@@ -2773,7 +2723,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contribute/windows-image-build-wsl/" class="md-nav__link">
+      <a href="../windows-image-build-wsl/" class="md-nav__link">
         
   
   
@@ -2807,7 +2757,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contribute/ui-design-guide/" class="md-nav__link">
+      <a href="../ui-design-guide/" class="md-nav__link">
         
   
   
@@ -2841,7 +2791,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contribute/agent-policies/" class="md-nav__link">
+      <a href="../agent-policies/" class="md-nav__link">
         
   
   
@@ -3319,10 +3269,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#interface-overview" class="md-nav__link">
+  <a href="#set-up-the-analyzers" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Interface overview
+        Set up the analyzers
       </span>
     </span>
   </a>
@@ -3330,10 +3280,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#managed-scripts" class="md-nav__link">
+  <a href="#run-the-baseline" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Managed scripts
+        Run the baseline
       </span>
     </span>
   </a>
@@ -3341,63 +3291,13 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#service-operations" class="md-nav__link">
+  <a href="#justify-suppressions" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Service operations
+        Justify suppressions
       </span>
     </span>
   </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#task-history-and-output" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Task history and output
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#additional-verified-states" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Additional verified states
-      </span>
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Additional verified states">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#automation_1" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Automation
-      </span>
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#automation-schedules" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Automation: Schedules
-      </span>
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
   
 </li>
       
@@ -3465,18 +3365,6 @@
       
         
       
-        
-      
-        
-      
-        
-      
-        
-      
-        
-      
-        
-      
     
     
     
@@ -3486,7 +3374,7 @@
           
   
   <span class="md-ellipsis">
-    Operate
+    Contribute
   </span>
 
         </a>
@@ -3503,7 +3391,7 @@
                 
                   
   
-    <a href="https://github.com/mdaneri/Atlaso/edit/main/docs/operate/automation.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
+    <a href="https://github.com/mdaneri/Atlaso/edit/main/docs/contribute/python-static-analysis.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
       
       <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-file-pen" viewBox="0 0 24 24"><path d="M12.659 22H18a2 2 0 0 0 2-2V8a2.4 2.4 0 0 0-.706-1.706l-3.588-3.588A2.4 2.4 0 0 0 14 2H6a2 2 0 0 0-2 2v9.34"/><path d="M14 2v5a1 1 0 0 0 1 1h5M10.378 12.622a1 1 0 0 1 3 3.003L8.36 20.637a2 2 0 0 1-.854.506l-2.867.837a.5.5 0 0 1-.62-.62l.836-2.869a2 2 0 0 1 .506-.853z"/></svg>
     </a>
@@ -3512,141 +3400,49 @@
     
       
     
-    <a href="https://github.com/mdaneri/Atlaso/raw/main/docs/operate/automation.md" title="View source of this page" class="md-content__button md-icon">
+    <a href="https://github.com/mdaneri/Atlaso/raw/main/docs/contribute/python-static-analysis.md" title="View source of this page" class="md-content__button md-icon">
       
       <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-file-code-2" viewBox="0 0 24 24"><path d="M4 12.15V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.706.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2h-3.35"/><path d="M14 2v5a1 1 0 0 0 1 1h5M5 16l-3 3 3 3M9 22l3-3-3-3"/></svg>
     </a>
   
 
 
-<h1 id="automation">Automation<a class="headerlink" href="#automation" title="Permanent link">&para;</a></h1>
-<p>Atlaso's core scheduler runs in the separate persistent <code>atlaso-worker.service</code>. The web process creates task and
-schedule records; the worker claims pending work and writes the normal task, audit, result, and error history. It
-supports:</p>
-<!-- BEGIN GENERATED INTERFACE OVERVIEW -->
-<h2 id="interface-overview">Interface overview<a class="headerlink" href="#interface-overview" title="Permanent link">&para;</a></h2>
-<p>This verified appliance view provides visual orientation before you begin.</p>
-<p><img alt="Atlaso Automation page in the clean-appliance desktop viewport." src="../../assets/screenshots/automation-clean-desktop.webp" /></p>
-<p><em>Figure: Automation in the verified clean-appliance desktop state.</em></p>
-<!-- END GENERATED INTERFACE OVERVIEW -->
-
-<ul>
-<li>Appliance Update checks and installs with selected update streams.</li>
-<li>Enabled VCF Offline Depot download profiles. Manual starts, <strong>Run now</strong>, and scheduled starts share one server-owned
-  admission and execution path. The worker rechecks the applied VCF Download Tool, staged credential, current profile
-  state, and generated command set immediately before execution, so a prerequisite removed after queueing fails closed
-  before VCFDT starts.</li>
-<li>Explicitly enabled immutable managed-script revisions.</li>
-</ul>
-<p>Schedules use either a one-time local date/time or a standard five-field cron expression
-(<code>minute hour day month weekday</code>) with an IANA timezone such as <code>UTC</code> or <code>America/Los_Angeles</code>. Execution timestamps are
-stored in UTC. Missed runs are not replayed. Every due occurrence advances to the next time; when a profile download,
-Software Depot ID task, or VCF Offline Depot Appliance Apply is already pending or running, the occurrence is recorded
-as a terminal skipped task that links to the active task instead of starting a second VCFDT process. The shared
-database admission guard applies across web and scheduler processes.</p>
-<p>Schedules can be edited, enabled or disabled, run immediately, and deleted. <strong>Run now</strong> creates a normal queued task
-with a <code>manual_schedule</code> trigger and does not change the next calculated recurring run. The Automation table shows the
-latest task state; full execution output remains on the Tasks page.</p>
-<p>The Automation workspace uses three tabs:</p>
-<ul>
-<li><strong>Schedules</strong> fills the available workspace with the schedule grid. The standard State control enables or disables a
-  schedule directly. Run now, Edit, and Delete live in the row context menu rather than consuming columns.</li>
-<li><strong>Executions</strong> lists every task queued by a schedule, including succeeded and failed runs, and links each row to the
-  associated Tasks detail view.</li>
-<li><strong>Managed Scripts</strong> provides the immutable script-revision grid and source editor.</li>
-</ul>
-<p>Adding or editing a schedule opens the five-step wizard: schedule identity and task type, task-specific inputs, timing,
-enabled state, and review. The second step changes with the selected task: update streams, a VCF Offline Depot profile,
-or an enabled managed-script revision and its parameters. The timing step includes an hourly/daily/weekly/monthly cron
-builder with a generated summary; advanced operators can choose Custom for a standard five-field expression. The same
-wizard is used for edits.</p>
-<p>The <strong>Schedule download</strong> action in a VCF Offline Depot profile row opens this same wizard with the VCF task type and
-stable profile ID preselected. Schedule definitions contain that ID and timing only; they never contain Broadcom
-credentials, authenticated URLs, generated commands, or credential-bearing output. Profile renames and content edits
-therefore affect future runs without rewriting history. Disabling a profile disables its attached schedules and clears
-their next-run timestamps; re-enabling the profile does not silently re-enable them. Delete the attached schedules
-before deleting a profile.</p>
-<p>The profile selector shows every configured VCF Offline Depot profile so unavailable entries are not mistaken for
-missing data. Disabled profiles are labeled and cannot be selected. When no profile is enabled, the wizard reports that
-state and links back to <strong>VCF Offline Depot</strong>, where an administrator can review and enable the intended profile before
-creating the schedule.</p>
-<h2 id="managed-scripts">Managed scripts<a class="headerlink" href="#managed-scripts" title="Permanent link">&para;</a></h2>
-<p>Creating or editing a script always creates a new immutable, disabled revision. An administrator must review and enable
-a particular revision before it can be run manually or selected by a schedule. Schedules remain pinned to that exact
-revision; disabling it makes execution fail closed.</p>
-<p>Selecting <strong>+ Add managed script here</strong> opens a four-step wizard for identity, runtime, the first source revision, and
-review. The source editor expands through the available wizard workspace and accepts direct Monaco Editor input or imports
-<code>.sh</code>, <code>.bash</code>, <code>.py</code>, <code>.ps1</code>, or <code>.txt</code> files up to 1 MiB. Bash, PowerShell, and Python selections load matching syntax
-highlighting. Creation always stores immutable revision 1 in the disabled state and refreshes the managed-script grid so
-the new row is visible immediately.</p>
-<p>Existing managed-script rows edit name, description, interpreter, timeout, and state in the grid. Their compact source
-action opens a nearly full-window Monaco Editor modal for creating another disabled immutable revision. An edit that
-changes revision-owned fields creates a new disabled immutable revision; it never rewrites historical source. When a
-script has at least two revisions, selecting its revision cell opens a near-full-window, two-column comparison. Base
-and comparison selectors list every immutable revision with its creation date and state, so operators can compare any
-two revisions. The viewer aligns corresponding rows, shows original line numbers, collapses long unchanged runs,
-colors removals and additions, and uses a Prism grammar selected from the script interpreter.</p>
-<p><strong>Run latest revision</strong> opens a confirmation modal instead of immediately creating a task. The modal names the exact
-revision and interpreter and accepts the same literal parameter syntax used by schedules. Schedule and manual-run
-parameters are entered as one logical command line. Bash and Python use backslash line continuation and POSIX-style
-literal argument parsing; PowerShell uses the backtick continuation marker and PowerShell-style quoting. Atlaso passes
-the resulting argument vector directly to the selected script without a second shell-expansion pass. Parameters are
-bounded, stored with the schedule and task history, and must not contain secrets.</p>
-<p>Atlaso prevents disabling a revision used by an enabled schedule and prevents deleting a script while any schedule
-references one of its revisions. The operator must disable, edit, or delete those schedules first. Script deletion
-removes its stored revisions but preserves existing task history.</p>
-<p>Interpreters are allowlisted to Bash, system Python, and PowerShell. The helper runs scripts as the dedicated
-<code>atlaso-automation</code> account in a transient systemd unit with:</p>
-<ul>
-<li>no sudo or root identity;</li>
-<li><code>NoNewPrivileges=yes</code>;</li>
-<li>a private temporary directory and protected home directories;</li>
-<li>a read-only system filesystem except for <code>/var/lib/atlaso/automation/runs</code>;</li>
-<li>the revision's configured timeout, capped at 24 hours.</li>
-</ul>
-<p>Atlaso canonicalizes imported and pasted source to Unix LF line endings before storing and again before execution, so
-scripts authored on Windows do not pass carriage returns to Bash. A Bash shebang is optional because Atlaso invokes the
-selected interpreter explicitly; when supplied, it must begin with <code>#!</code> (for example, <code>#!/bin/bash</code>). A malformed Bash
-shebang reports the stable recovery guidance <strong>A Bash shebang must start with #!; add the missing # or remove the shebang
-line.</strong> Other source validation failures use bounded generic guidance. Neither response includes backend exception
-detail, and Atlaso does not create a rejected revision.</p>
-<p>Scripts receive no Atlaso credentials by default. A schedule or manual run may select one named VCF/ESX password vault.
-Atlaso stages that vault as a transient systemd credential and provides <code>atlaso-vault get --key &lt;key&gt;</code> to Bash/Python
-and <code>Get-AtlasoVault -Key &lt;key&gt;</code> to PowerShell. The helper fails outside the scoped process and exact injected values are
-redacted from captured output. Output is bounded in task history. Script definitions and schedules are included in
-settings archives, but restored revisions and schedules are always disabled and vault contents are never exported. See
-<a href="../../services/vaults/">Vaults</a> for the complete key, scope, and recovery contract.</p>
-<h2 id="service-operations">Service operations<a class="headerlink" href="#service-operations" title="Permanent link">&para;</a></h2>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>systemctl<span class="w"> </span>status<span class="w"> </span>atlaso-worker<span class="w"> </span>--no-pager
-</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>journalctl<span class="w"> </span>-u<span class="w"> </span>atlaso-worker<span class="w"> </span>-n<span class="w"> </span><span class="m">120</span><span class="w"> </span>--no-pager
+<h1 id="python-static-analysis">Python static analysis<a class="headerlink" href="#python-static-analysis" title="Permanent link">&para;</a></h1>
+<p>Atlaso enforces a high-signal Python lint baseline across the application, scripts, and tests, plus a strict typed
+ratchet for selected shared service modules. The baseline runs in the existing <strong>Repository checks</strong> status, so a new
+violation blocks a pull request instead of creating a separate advisory result.</p>
+<h2 id="set-up-the-analyzers">Set up the analyzers<a class="headerlink" href="#set-up-the-analyzers" title="Permanent link">&para;</a></h2>
+<p>Use Python 3.14 and install the development dependencies and hash-locked analyzers from the repository root:</p>
+<div class="language-powershell highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="n">python</span> <span class="n">-m</span> <span class="n">pip</span> <span class="n">install</span> <span class="n">-e</span> <span class="s2">&quot;.[dev]&quot;</span>
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="n">python</span> <span class="n">-m</span> <span class="n">pip</span> <span class="n">install</span> <span class="p">-</span><span class="n">-require-hashes</span> <span class="n">-r</span> <span class="n">requirements-static-analysis</span><span class="p">.</span><span class="n">lock</span>
 </span></code></pre></div>
-<p>If the worker restarts during a task, that task is marked failed and is not silently replayed. A queued task that was
-never claimed remains pending.</p>
-<h2 id="task-history-and-output">Task history and output<a class="headerlink" href="#task-history-and-output" title="Permanent link">&para;</a></h2>
-<p>Scheduled work always creates normal Atlaso Jobs, so it appears in both the Automation <strong>Executions</strong> tab and
-<code>/ui/management/tasks</code>.
-VCFDT scheduled tasks also appear in the profile-scoped task grid. Failed prerequisite checks and skipped overlaps are
-terminal history entries with schedule, profile, planned-time, and active-task context; missed or failed runs are not
-retried outside the next configured occurrence.
-The Tasks grid uses backend-owned filtering and pagination. Status and state are fixed lists; Task / Component is an
-autocomplete list built from recorded job types and component labels while still accepting a custom job id, task, or
-component fragment.</p>
-<p>Task detail keeps the complete redacted result payload for audit and diagnosis, but <strong>Console output</strong> shows only the
-managed process stdout and stderr. The helper execution envelope is removed from that console view, stdout keeps the
-normal terminal colors, and stderr is shown separately in red. Result and log previews keep copy/open controls overlaid
-in the corner without reserving blank text rows.</p>
-<!-- BEGIN GENERATED ADDITIONAL SCREENSHOTS -->
-<h2 id="additional-verified-states">Additional verified states<a class="headerlink" href="#additional-verified-states" title="Permanent link">&para;</a></h2>
-<p>These captures show responsive layouts and useful operational states referenced by this page.</p>
-<h3 id="automation_1">Automation<a class="headerlink" href="#automation_1" title="Permanent link">&para;</a></h3>
-<p><img alt="Atlaso Automation page in the clean-appliance responsive viewport." src="../../assets/screenshots/automation-clean-responsive.webp" /></p>
-<p><em>Figure: Automation in the verified clean-appliance responsive state.</em></p>
-<h3 id="automation-schedules">Automation: Schedules<a class="headerlink" href="#automation-schedules" title="Permanent link">&para;</a></h3>
-<p><img alt="Atlaso Automation schedule wizard with VCF Offline Depot profile download selected at the desktop viewport." src="../../assets/screenshots/automation-vcf-schedule-wizard-desktop.webp" /></p>
-<p><em>Figure: VCF Offline Depot profile scheduling in the shared Automation wizard.</em></p>
-<p><img alt="Atlaso Automation schedule wizard with VCF Offline Depot profile download selected at the responsive viewport." src="../../assets/screenshots/automation-vcf-schedule-wizard-responsive.webp" /></p>
-<p><em>Figure: VCF Offline Depot profile scheduling in the shared Automation wizard at the responsive viewport.</em></p>
-<!-- END GENERATED ADDITIONAL SCREENSHOTS -->
+<p><code>requirements-static-analysis.in</code> pins Ruff and mypy exactly. Its generated lock constrains their transitive
+dependencies and enforces the same seven-day package-age policy as every other Python lock. Analyzer dependency changes
+must use the wrapper described in <a href="../dependency-management/">Dependency management</a>.</p>
+<h2 id="run-the-baseline">Run the baseline<a class="headerlink" href="#run-the-baseline" title="Permanent link">&para;</a></h2>
+<p>Run the same entry point used by pre-commit and CI:</p>
+<div class="language-powershell highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="n">python</span> <span class="n">scripts</span><span class="p">/</span><span class="n">check_python_static_analysis</span><span class="p">.</span><span class="n">py</span>
+</span></code></pre></div>
+<p>For focused diagnostics, run the analyzers directly:</p>
+<div class="language-powershell highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="n">python</span> <span class="n">-m</span> <span class="n">ruff</span> <span class="n">check</span> <span class="n">atlaso</span> <span class="n">scripts</span> <span class="n">tests</span>
+</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="n">python</span> <span class="n">-m</span> <span class="n">mypy</span>
+</span></code></pre></div>
+<p>Ruff checks pycodestyle syntax/error rules, Pyflakes, flake8-bugbear, blind exceptions, and import ordering. Generated
+or vendored Python under <code>VCFDT</code>, <code>vcfDownloadTool</code>, and <code>third_party</code> is excluded. Ruff rule <code>B008</code> is excluded because
+FastAPI dependency declarations intentionally call factories such as <code>Depends</code> and <code>Form</code> in function defaults.</p>
+<p>Mypy runs in strict mode against the explicit <code>files</code> list in <code>pyproject.toml</code>. That list is the typed-analysis ratchet:
+new shared mutation or service modules should be made strict-clean and added to the list; existing entries must not be
+removed or weakened to accommodate unrelated debt. Imported type information remains available, but silent import
+following prevents diagnostics from unlisted transitive modules from expanding the ratchet implicitly.</p>
+<h2 id="justify-suppressions">Justify suppressions<a class="headerlink" href="#justify-suppressions" title="Permanent link">&para;</a></h2>
+<p>Prefer correcting the code. When an analyzer cannot model an intentional boundary, keep the exception on the narrowest
+line and include both the exact rule code and a reviewable rationale:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="n">handler</span><span class="o">.</span><span class="n">runtime_flag</span> <span class="o">=</span> <span class="kc">True</span>  <span class="c1"># type: ignore[attr-defined]  # The adapter adds this runtime-only marker.</span>
+</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="kn">from</span><span class="w"> </span><span class="nn">local_tool</span><span class="w"> </span><span class="kn">import</span> <span class="n">run</span>  <span class="c1"># noqa: E402 - the script adds its checked-in module path first.</span>
+</span></code></pre></div>
+<p>Bare <code># noqa</code>, code-free <code># type: ignore</code>, and suppressions without a rationale fail
+<code>scripts/check_python_static_analysis.py</code>. Do not add file-wide ignores or reduce the configured rule families to make
+a change pass.</p>
 
 
 
@@ -3687,7 +3483,7 @@ in the corner without reserving blank text rows.</p>
       <nav class="md-footer__inner md-grid" aria-label="Footer" >
         
           
-          <a href="../backup-restore/" class="md-footer__link md-footer__link--prev" aria-label="Previous: Backup and restore">
+          <a href="../python-documentation/" class="md-footer__link md-footer__link--prev" aria-label="Previous: Python documentation">
             <div class="md-footer__button md-icon">
               
               <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-arrow-left" viewBox="0 0 24 24"><path d="m12 19-7-7 7-7M19 12H5"/></svg>
@@ -3697,20 +3493,20 @@ in the corner without reserving blank text rows.</p>
                 Previous
               </span>
               <div class="md-ellipsis">
-                Backup and restore
+                Python documentation
               </div>
             </div>
           </a>
         
         
           
-          <a href="../api/" class="md-footer__link md-footer__link--next" aria-label="Next: Use the API">
+          <a href="../api-authoring/" class="md-footer__link md-footer__link--next" aria-label="Next: API authoring standard">
             <div class="md-footer__title">
               <span class="md-footer__direction">
                 Next
               </span>
               <div class="md-ellipsis">
-                Use the API
+                API authoring standard
               </div>
             </div>
             <div class="md-footer__button md-icon">
