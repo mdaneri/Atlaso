@@ -55,6 +55,7 @@ ESXI_PXE_DEFAULT_HOST_ENABLED_KEY = "esxi_pxe.default_host.enabled"
 ESXI_PXE_DEFAULT_HOST_KICKSTART_ID_KEY = "esxi_pxe.default_host.kickstart_id"
 ESXI_PXE_DEFAULT_HOST_INSTALLER_ISO_KEY = "esxi_pxe.default_host.installer_iso_path"
 ESXI_PXE_CUSTOM_VARIABLES_KEY = "esxi_pxe.custom_variables.v1"
+ESXI_PXE_CUSTOM_VARIABLE_LIMIT = 64
 ESXI_PXE_IPXE_SCRIPT_NAME = "esxi.ipxe"
 ESXI_PXE_DEFAULT_HOSTNAME = "esxi-pxe.atlaso.internal"
 ESXI_PXE_HTTP_PORT = 8080
@@ -394,8 +395,10 @@ def save_custom_variable_definition(
         raise ValueError("A custom variable with that name already exists.")
     updated = [item for item in definitions if item["name"] != original and item["name"] != definition["name"]]
     updated.append(definition)
-    if len(updated) > 64:
-        raise ValueError("Custom variables are limited to 64 entries.")
+    if len(updated) > ESXI_PXE_CUSTOM_VARIABLE_LIMIT:
+        raise ValueError(
+            f"Custom variables are limited to {ESXI_PXE_CUSTOM_VARIABLE_LIMIT} entries."
+        )
     row = db.execute(select(Setting).where(Setting.key == ESXI_PXE_CUSTOM_VARIABLES_KEY)).scalar_one_or_none()
     serialized = json.dumps(sorted(updated, key=lambda item: item["name"].lower()), separators=(",", ":"), sort_keys=True)
     if row is None:
@@ -1511,11 +1514,12 @@ def installer_iso_inventory() -> list[dict[str, Any]]:
     return rows
 
 
-def normalize_installer_iso_path(value: str) -> str:
+def normalize_installer_iso_path(value: str, *, ensure_root: bool = True) -> str:
     """Normalize installer iso path.
 
     Args:
         value: Candidate value consumed by normalize installer ISO path.
+        ensure_root: Create the managed ISO root before interactive selection when true.
 
 
     Returns:
@@ -1527,7 +1531,9 @@ def normalize_installer_iso_path(value: str) -> str:
     raw = (value or "").strip()
     if not raw:
         return ""
-    root = ensure_installer_iso_root().resolve()
+    root = (
+        ensure_installer_iso_root() if ensure_root else ESXI_INSTALLER_ISO_ROOT
+    ).resolve()
     path = Path(raw)
     if not path.is_absolute():
         path = root / raw

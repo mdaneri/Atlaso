@@ -20,6 +20,8 @@ brings infrastructure, storage, identity, networking, and lifecycle workflows in
   Atlaso name.
 - [Getting started](docs/getting-started/index.md) — choose an appliance path and complete initial setup.
 - [Operations](docs/operate/index.md) — run the appliance and review desired-state changes.
+- [Backup and restore](docs/operate/backup-restore.md) — export desired state and restore it atomically; malformed or
+  failed restores leave existing settings and separately staged LDAP recovery material unchanged.
 - [Local appliance console](docs/operate/appliance-console.md) — correct management networking from `tty1` and have
   Atlaso reconcile Firewall, retry unfinished first-boot HTTPS, and verify the complete management front door.
 - [Network configuration](docs/operate/networking.md) — inspect physical interfaces and manage each tagged VLAN as one

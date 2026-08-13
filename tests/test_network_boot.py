@@ -2720,8 +2720,8 @@ def test_settings_restore_and_factory_reset_preserve_installed_media_metadata(
     assert reset.active_version == ""
 
 
-def test_legacy_settings_restore_clears_unarchived_network_boot_state(db_session):
-    """Verify that legacy settings restore clears unarchived network boot state.
+def test_settings_restore_clears_explicitly_empty_network_boot_state(db_session):
+    """Verify settings restore clears explicitly empty network boot state.
 
     Args:
         db_session: Active database session used by the operation.
@@ -2742,7 +2742,7 @@ def test_legacy_settings_restore_clears_unarchived_network_boot_state(db_session
         manifest={"schema_version": 1},
     )
     archive = export_settings_archive(db_session, actor="test")
-    archive["data"].pop("network_boot_environments")
+    archive["data"]["network_boot_environments"] = []
     states["inventory"].enabled = True
     states["inventory"].desired_version = media.version
     states["inventory"].active_version = media.version
@@ -2755,6 +2755,32 @@ def test_legacy_settings_restore_clears_unarchived_network_boot_state(db_session
     assert restored.desired_version == ""
     assert restored.active_version == ""
     assert db_session.get(NetworkBootMedia, media.id) is not None
+
+
+def test_settings_restore_rejects_unavailable_network_boot_media(db_session):
+    """Verify restore rejects enabled Network Boot versions absent from retained verified media.
+
+    Args:
+        db_session: Active database session used by the operation.
+    """
+    import pytest
+
+    from atlaso.app.services.settings_archive import (
+        export_settings_archive,
+        restore_settings_archive,
+    )
+
+    archive = export_settings_archive(db_session, actor="test")
+    inventory = next(row for row in archive["data"]["network_boot_environments"] if row["key"] == "inventory")
+    inventory["enabled"] = True
+    inventory["desired_version"] = "unavailable-version"
+
+    with pytest.raises(ValueError, match="references unavailable verified media"):
+        restore_settings_archive(db_session, archive)
+
+    retained = db_session.get(NetworkBootEnvironment, "inventory")
+    assert retained is not None
+    assert retained.enabled is False
 
 
 def test_generic_pxe_scopes_do_not_follow_legacy_esxi_scope(client):

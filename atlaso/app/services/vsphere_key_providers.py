@@ -389,7 +389,7 @@ def render_provider_config(settings: KmsSettings, providers: list[VsphereKeyProv
         )
         rendered_providers.append(
             {
-                "id": str(UUID(provider.id)),
+                "id": normalize_provider_id(provider.id),
                 "name": provider.name,
                 "client_fingerprints": fingerprints,
                 "client_certificate_paths": [],
@@ -418,6 +418,24 @@ def render_provider_config(settings: KmsSettings, providers: list[VsphereKeyProv
         "interop_trace_path": "",
     }
     return json.dumps(document, indent=2, sort_keys=True) + "\n"
+
+
+def normalize_provider_id(value: str) -> str:
+    """Return a canonical vSphere Key Provider UUID.
+
+    Args:
+        value: Provider identifier candidate.
+
+    Returns:
+        Canonical lowercase hyphenated UUID.
+
+    Raises:
+        ValueError: If the identifier is not already a canonical UUID.
+    """
+    normalized = str(UUID(str(value)))
+    if str(value) != normalized:
+        raise ValueError("Provider ID must be a canonical UUID.")
+    return normalized
 
 
 def render_client_trust_bundle(db: Session, providers: list[VsphereKeyProvider]) -> str:

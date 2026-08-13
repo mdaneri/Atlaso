@@ -233,6 +233,10 @@ The following cross-cutting boundaries always apply:
 - Keep secret-bearing Local Users, Certificate Authority, and Managed LDAP apply inputs mode `0600` and present only
   for the constrained helper execution window. Remove them on success, validation or apply failure, and startup
   recovery; read-only Local Users status must use a separate short-lived file.
+- Preflight every settings archive section, required row field, relationship, and enabled VLAN or static-route target
+  before clearing desired state. A failed restore must roll back database changes and preserve separately staged LDAP
+  recovery metadata and in-memory bytes. Clear staged recovery material only after a successful restore commit or
+  factory reset commit.
 - Keep internal CA custody and managed service-certificate deployment available without a public CA listen interface.
   Interface selection owns portal publication only. Every selected NTS server apply includes the CA unit and executes
   it before NTP/NTS validation so runtime certificate material is present even when the CA baseline is current. Turning

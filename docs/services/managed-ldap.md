@@ -138,7 +138,8 @@ when NTS server selection adds Certificate Authority to the task.
 Normal settings backup contains LDAP metadata but no bind secrets or password hashes. Use the separate
 passphrase-encrypted LDAP recovery export to preserve `slapcat` data. Recovery import decrypts and validates the archive
 in memory, then stages it for the next global LDAP apply. A restart before apply requires the archive and passphrase
-again.
+again. A rejected or failed settings-archive restore leaves the staged recovery metadata and in-memory payload intact;
+only a successfully committed settings restore or factory reset clears it.
 
 <!-- BEGIN GENERATED ADDITIONAL SCREENSHOTS -->
 ## Additional verified states
