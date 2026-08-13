@@ -329,6 +329,11 @@ from atlaso.app.services.networking import (
     validate_network_state,
     vlan_interface_to_dict,
 )
+from atlaso.app.services.interface_updates import (
+    PhysicalInterfaceUpdateError,
+    refresh_interface_dependent_addresses,
+    update_physical_interface_desired_state,
+)
 from atlaso.app.services.public_services import (
     PUBLIC_SERVICES_STAGED_CONFIG_PATH,
     public_service_entries,
@@ -1880,300 +1885,6 @@ def _network_from_cidr(value: str | None):
         return ip_network(value, strict=False)
     except ValueError:
         return None
-
-
-def _address_family_from_scope(scope: DhcpScope) -> int:
-    """Return address family from scope.
-
-    Args:
-        scope: Scope consumed by address family from scope.
-    """
-    return 6 if str(scope.address_family or "").strip().lower() == "ipv6" else 4
-
-
-def _interface_option_by_name(db: Session) -> dict[str, dict[str, Any]]:
-    """Return interface option by name.
-
-    Args:
-        db: Active database session.
-    """
-    return {str(option.get("name")): option for option in service_bind_options(db)}
-
-
-def _derive_addresses_for_interfaces(selected_interfaces: list[str], options_by_name: dict[str, dict[str, Any]]) -> str:
-    """Return derive addresses for interfaces.
-
-    Args:
-        selected_interfaces: Selected interfaces consumed by derive addresses for interfaces.
-        options_by_name: Options by name consumed by derive addresses for interfaces.
-    """
-    derived: list[str] = []
-    for interface_name in selected_interfaces:
-        option = options_by_name.get(interface_name)
-        if not option:
-            continue
-        for address in option.get("addresses") or [option.get("address")]:
-            if address and address not in derived:
-                derived.append(address)
-    return join_addresses(derived)
-
-
-def _replace_interface_selection(raw_value: str | None, old_name: str, new_name: str) -> str:
-    """Return replace interface selection.
-
-    Args:
-        raw_value: Raw value consumed by replace interface selection.
-        old_name: Old name consumed by replace interface selection.
-        new_name: New name consumed by replace interface selection.
-    """
-    interfaces = split_interfaces(raw_value)
-    if old_name != new_name:
-        interfaces = [new_name if item == old_name else item for item in interfaces]
-    return join_interfaces(interfaces)
-
-
-def _rebase_address_in_network(value: str, old_network, new_network) -> str:
-    """Return rebase address in network.
-
-    Args:
-        value: Candidate value consumed by rebase address in network.
-        old_network: Old network consumed by rebase address in network.
-        new_network: New network consumed by rebase address in network.
-    """
-    if not value or old_network is None or new_network is None or old_network.version != new_network.version:
-        return value
-    try:
-        address = ip_address(value)
-    except ValueError:
-        return value
-    if address not in old_network:
-        return value
-    offset = int(address) - int(old_network.network_address)
-    if offset < 0 or offset >= new_network.num_addresses:
-        return value
-    return str(ip_address(int(new_network.network_address) + offset))
-
-
-def _address_in_network(value: str | None, network) -> bool:
-    """Return address in network.
-
-    Args:
-        value: Candidate value consumed by address in network.
-        network: Network consumed by address in network.
-    """
-    if not value or network is None:
-        return False
-    try:
-        return ip_address(value) in network
-    except ValueError:
-        return False
-
-
-def refresh_interface_dependent_addresses(
-    db: Session,
-    *,
-    old_name: str,
-    new_name: str,
-    old_ip_cidr: str | None,
-    old_ipv6_cidr: str | None,
-    actor: str | None = None,
-) -> list[str]:
-    """Return refresh interface dependent addresses.
-
-    Args:
-        db: Active database session.
-        old_name: Old name supplied by the caller.
-        new_name: New name supplied by the caller.
-        old_ip_cidr: Old ip cidr supplied by the caller.
-        old_ipv6_cidr: Old ipv6 cidr supplied by the caller.
-        actor: Authenticated identity attributed to the audit record.
-    """
-    options_by_name = _interface_option_by_name(db)
-    previous_esxi_boot = esxi_pxe_boot_settings(db)
-    raw_esxi_listen_interface = db.execute(select(Setting).where(Setting.key == ESXI_PXE_LISTEN_INTERFACE_KEY)).scalar_one_or_none()
-    raw_esxi_listen_address = db.execute(select(Setting).where(Setting.key == ESXI_PXE_LISTEN_ADDRESS_KEY)).scalar_one_or_none()
-    old_addresses = {address for address in interface_addresses_from_cidrs(old_ip_cidr, old_ipv6_cidr) if address}
-    old_networks = {4: _network_from_cidr(old_ip_cidr), 6: _network_from_cidr(old_ipv6_cidr)}
-    new_option = options_by_name.get(new_name, {})
-    new_addresses = {
-        4: str(new_option.get("ipv4_address") or ""),
-        6: str(new_option.get("ipv6_address") or ""),
-    }
-    new_prefixes = {
-        4: new_option.get("ipv4_prefix"),
-        6: new_option.get("ipv6_prefix"),
-    }
-    new_networks = {
-        4: _network_from_cidr(f"{new_addresses[4]}/{new_prefixes[4]}") if new_addresses[4] and new_prefixes[4] else None,
-        6: _network_from_cidr(f"{new_addresses[6]}/{new_prefixes[6]}") if new_addresses[6] and new_prefixes[6] else None,
-    }
-    changed: list[str] = []
-
-    def update_listener_rows(model, label: str) -> None:
-        """Update listener rows.
-
-        Args:
-            model: Model consumed by update listener rows.
-            label: Human-readable label used to identify the result.
-        """
-        for row in db.execute(select(model)).scalars().all():
-            selected = split_interfaces(getattr(row, "listen_interface", ""))
-            if old_name not in selected and new_name not in selected:
-                continue
-            updated_interfaces = _replace_interface_selection(getattr(row, "listen_interface", ""), old_name, new_name)
-            updated_addresses = _derive_addresses_for_interfaces(split_interfaces(updated_interfaces), options_by_name)
-            if updated_interfaces != getattr(row, "listen_interface", "") or updated_addresses != (getattr(row, "listen_address", "") or ""):
-                row.listen_interface = updated_interfaces
-                row.listen_address = updated_addresses
-                if hasattr(row, "updated_at"):
-                    row.updated_at = utcnow()
-                db.add(row)
-                if label not in changed:
-                    changed.append(label)
-
-    for model, label in [
-        (DnsSettings, "DNS"),
-        (NtpSettings, "NTP / NTS"),
-        (CaSettings, "Certificate Authority"),
-        (KmsSettings, "KMS"),
-        (LdapSettings, "LDAP"),
-        (VcfBackupSettings, "VCF Backups"),
-        (VcfOfflineDepotSettings, "VCF Offline Depot"),
-        (VcfPrivateRegistrySettings, "VCF Private Registry"),
-    ]:
-        update_listener_rows(model, label)
-
-    dns_settings = db.execute(select(DnsSettings)).scalar_one_or_none()
-    ntp_settings = db.execute(select(NtpSettings)).scalar_one_or_none()
-    dns_bound = bool(dns_settings and dns_settings.enabled and new_name in split_interfaces(dns_settings.listen_interface))
-    ntp_bound = bool(ntp_settings and ntp_settings.enabled and new_name in split_interfaces(ntp_settings.listen_interface))
-
-    def update_dhcp_scope(scope: DhcpScope | DhcpSettings, label: str) -> None:
-        """Update dhcp scope.
-
-        Args:
-            scope: Scope consumed by update dhcp scope.
-            label: Human-readable label used to identify the result.
-        """
-        if getattr(scope, "interface_name", "") != old_name:
-            return
-        family = _address_family_from_scope(scope) if isinstance(scope, DhcpScope) else 4
-        new_address = new_addresses[family]
-        if not new_address:
-            return
-        scope_site_address = getattr(scope, "site_address", "")
-        scope_prefix = getattr(scope, "prefix_length", None)
-        scope_network = _network_from_cidr(f"{scope_site_address}/{scope_prefix}") if scope_site_address and scope_prefix else None
-        old_network = old_networks[family]
-        if old_network is None or (scope_site_address and not _address_in_network(scope_site_address, old_network)):
-            old_network = scope_network
-        new_network = new_networks[family]
-        stale_addresses = {address for address in [*old_addresses, scope_site_address] if address}
-        before = (
-            getattr(scope, "interface_name", ""),
-            getattr(scope, "site_address", ""),
-            getattr(scope, "prefix_length", None),
-            getattr(scope, "range_expression", ""),
-            getattr(scope, "dns_server", ""),
-            getattr(scope, "ntp_server", ""),
-        )
-        parsed_range_errors, parsed_ranges = parse_dhcp_range_expression(scope) if isinstance(scope, DhcpScope) else ([], [])
-        scope.interface_name = new_name
-        site_address_is_stale = bool(scope_site_address and new_network and not _address_in_network(scope_site_address, new_network))
-        if not getattr(scope, "site_address", "") or getattr(scope, "site_address", "") in stale_addresses or site_address_is_stale:
-            scope.site_address = new_address
-        if new_prefixes[family] and (not getattr(scope, "prefix_length", None) or getattr(scope, "prefix_length", None) == (old_network.prefixlen if old_network else None)):
-            scope.prefix_length = int(new_prefixes[family])
-        if isinstance(scope, DhcpScope) and not parsed_range_errors and parsed_ranges:
-            rebased_ranges = []
-            for start_address, end_address in parsed_ranges:
-                rebased_start = _rebase_address_in_network(str(start_address), old_network, new_network)
-                rebased_end = _rebase_address_in_network(str(end_address), old_network, new_network)
-                rebased_ranges.append(rebased_start if rebased_start == rebased_end else f"{rebased_start}-{rebased_end}")
-            scope.range_expression = ", ".join(rebased_ranges)
-            scope.range_expression = compact_dhcp_range_expression(scope)
-        if not getattr(scope, "dns_server", "") or getattr(scope, "dns_server", "") in stale_addresses or dns_bound:
-            scope.dns_server = new_address if dns_bound or getattr(scope, "dns_server", "") in stale_addresses else getattr(scope, "dns_server", "")
-        if isinstance(scope, DhcpScope) and (not scope.ntp_server or scope.ntp_server in stale_addresses or ntp_bound):
-            scope.ntp_server = new_address if ntp_bound or scope.ntp_server in stale_addresses else scope.ntp_server
-        if hasattr(scope, "updated_at"):
-            scope.updated_at = utcnow()
-        after = (
-            getattr(scope, "interface_name", ""),
-            getattr(scope, "site_address", ""),
-            getattr(scope, "prefix_length", None),
-            getattr(scope, "range_expression", ""),
-            getattr(scope, "dns_server", ""),
-            getattr(scope, "ntp_server", ""),
-        )
-        if before != after:
-            db.add(scope)
-            if label not in changed:
-                changed.append(label)
-
-    for settings in db.execute(select(DhcpSettings)).scalars().all():
-        update_dhcp_scope(settings, "DHCP")
-    for scope in db.execute(select(DhcpScope)).scalars().all():
-        update_dhcp_scope(scope, "DHCP")
-
-    kms_settings = db.execute(select(KmsSettings)).scalar_one_or_none()
-    if kms_settings:
-        ensure_dns_for_kms(db, kms_settings, actor=actor, previous_hostname=kms_settings.hostname)
-    ldap_settings = db.execute(select(LdapSettings)).scalar_one_or_none()
-    if ldap_settings:
-        ensure_dns_for_ldap(db, ldap_settings, actor=actor, previous_hostname=ldap_settings.hostname)
-    depot_settings = db.execute(select(VcfOfflineDepotSettings)).scalar_one_or_none()
-    if depot_settings:
-        ensure_dns_for_vcf_offline_depot(db, depot_settings, actor=actor or "system")
-    registry_settings = db.execute(select(VcfPrivateRegistrySettings)).scalar_one_or_none()
-    if registry_settings:
-        ensure_dns_for_vcf_registry(db, registry_settings, actor=actor or "system")
-    ca_settings = db.execute(select(CaSettings)).scalar_one_or_none()
-    if ca_settings:
-        ensure_dns_for_ca_portal(db, ca_settings, actor=actor, previous_hostname=ca_settings.portal_hostname)
-
-    esxi_boot = esxi_pxe_boot_settings(db)
-    esxi_interfaces = split_interfaces(str(esxi_boot.get("listen_interface") or ""))
-    if old_name in esxi_interfaces or new_name in esxi_interfaces:
-        updated_interfaces = _replace_interface_selection(str(esxi_boot.get("listen_interface") or ""), old_name, new_name)
-        updated_addresses = _derive_addresses_for_interfaces(split_interfaces(updated_interfaces), options_by_name)
-        stale_boot_addresses = split_addresses(str(previous_esxi_boot.get("listen_address") or ""))
-        native_uefi_http_url = str(esxi_boot.get("native_uefi_http_url") or "")
-        replacement_address = primary_listen_address(updated_addresses)
-        if replacement_address:
-            for stale_address in stale_boot_addresses:
-                if stale_address and stale_address != replacement_address:
-                    native_uefi_http_url = native_uefi_http_url.replace(stale_address, replacement_address)
-        if (
-            updated_interfaces != str(esxi_boot.get("listen_interface") or "")
-            or updated_addresses != str(esxi_boot.get("listen_address") or "")
-            or updated_interfaces != str(previous_esxi_boot.get("listen_interface") or "")
-            or updated_addresses != str(previous_esxi_boot.get("listen_address") or "")
-            or updated_interfaces != (raw_esxi_listen_interface.value if raw_esxi_listen_interface else "")
-            or updated_addresses != (raw_esxi_listen_address.value if raw_esxi_listen_address else "")
-            or native_uefi_http_url != str(esxi_boot.get("native_uefi_http_url") or "")
-        ):
-            esxi_boot = save_esxi_pxe_boot_settings(
-                db,
-                enabled=bool(esxi_boot.get("enabled")),
-                hostname=str(esxi_boot.get("hostname") or ESXI_PXE_DEFAULT_HOSTNAME),
-                listen_interface=updated_interfaces,
-                listen_address=updated_addresses,
-                dhcp_scope_ids=list(esxi_boot.get("dhcp_scope_ids") or []),
-                tftp_root=str(esxi_boot.get("tftp_root") or ""),
-                http_port=int(esxi_boot.get("http_port") or ESXI_PXE_HTTP_PORT),
-                bios_bootfile=str(esxi_boot.get("bios_bootfile") or ""),
-                uefi_bootfile=str(esxi_boot.get("uefi_bootfile") or ""),
-                native_uefi_http_enabled=bool(esxi_boot.get("native_uefi_http_enabled")),
-                native_uefi_http_url=native_uefi_http_url,
-            )
-            if "ESXi PXE" not in changed:
-                changed.append("ESXi PXE")
-        dns_record_action = ensure_dns_for_esxi_pxe(db, esxi_boot, actor, previous_hostname=str(previous_esxi_boot.get("hostname") or ""))
-        if dns_record_action and "ESXi PXE" not in changed:
-            changed.append("ESXi PXE")
-
-    return changed
 
 
 def resolve_single_service_bind(db: Session, listen_interface: str, listen_address: str) -> tuple[str, str]:
@@ -6095,7 +5806,8 @@ def summarize_dns_actions(actions: list[str]) -> str | None:
     if not actions:
         return None
     if "conflict" in actions:
-        return "conflict"
+        changed = any(action in {"created", "updated", "removed-old", "removed-stale"} for action in actions)
+        return "conflict+changed" if changed else "conflict"
     primary = "unchanged"
     for candidate in ["created", "updated"]:
         if candidate in actions:
@@ -6590,6 +6302,114 @@ def ensure_dns_for_esxi_pxe(db: Session, boot: dict[str, Any], actor: str | None
         previous_hostname=previous_hostname,
         enabled=bool(boot.get("enabled")),
     )
+
+
+def refresh_interface_service_dns_aliases(db: Session, actor: str | None = None) -> list[str]:
+    """Refresh app-owned service DNS aliases after interface listener changes.
+
+    Args:
+        db: Active database session owned by the interface mutation transaction.
+        actor: Optional audit actor. Atomic interface mutations pass ``None`` so nested audit commits
+            cannot split the transaction.
+    """
+    changed: list[str] = []
+
+    def mark(label: str, action: str | None) -> None:
+        """Record an alias unit only when its reconciler changed state.
+
+        Args:
+            label: Operator-facing dependent unit name.
+            action: Alias reconciliation result.
+        """
+        if action not in {None, "unchanged", "conflict"} and label not in changed:
+            changed.append(label)
+
+    kms_settings = db.execute(select(KmsSettings)).scalar_one_or_none()
+    if kms_settings:
+        mark(
+            "KMS",
+            ensure_dns_for_kms(
+                db,
+                kms_settings,
+                actor=actor,
+                previous_hostname=kms_settings.hostname,
+            ),
+        )
+    ldap_settings = db.execute(select(LdapSettings)).scalar_one_or_none()
+    if ldap_settings:
+        mark(
+            "LDAP",
+            ensure_dns_for_ldap(
+                db,
+                ldap_settings,
+                actor=actor,
+                previous_hostname=ldap_settings.hostname,
+            ),
+        )
+    oidc_settings = db.execute(select(OidcProviderSettings)).scalar_one_or_none()
+    if oidc_settings:
+        mark(
+            "OIDC",
+            ensure_dns_for_oidc(
+                db,
+                oidc_settings,
+                actor=actor,
+                previous_hostname=oidc_settings.hostname,
+            ),
+        )
+    depot_settings = db.execute(select(VcfOfflineDepotSettings)).scalar_one_or_none()
+    if depot_settings:
+        mark(
+            "VCF Offline Depot",
+            ensure_dns_for_vcf_offline_depot(
+                db,
+                depot_settings,
+                actor=actor,
+                previous_hostname=depot_settings.hostname,
+            ),
+        )
+    registry_settings = db.execute(select(VcfPrivateRegistrySettings)).scalar_one_or_none()
+    if registry_settings:
+        mark(
+            "VCF Private Registry",
+            ensure_dns_for_vcf_registry(
+                db,
+                registry_settings,
+                actor=actor,
+                previous_hostname=registry_settings.hostname,
+            ),
+        )
+    ca_settings = db.execute(select(CaSettings)).scalar_one_or_none()
+    if ca_settings:
+        mark(
+            "Certificate Authority",
+            ensure_dns_for_ca_portal(
+                db,
+                ca_settings,
+                actor=actor,
+                previous_hostname=ca_settings.portal_hostname,
+            ),
+        )
+    esxi_boot = esxi_pxe_boot_settings(db)
+    mark(
+        "ESXi PXE",
+        ensure_dns_for_esxi_pxe(
+            db,
+            esxi_boot,
+            actor,
+            previous_hostname=str(esxi_boot.get("hostname") or ""),
+        ),
+    )
+    esx_settings = get_esx_storage_settings_row(db)
+    mark(
+        "ESX Storage",
+        ensure_dns_for_esx_storage(
+            db,
+            actor,
+            previous_hostname=esx_settings.hostname,
+        ),
+    )
+    return changed
 
 
 def get_esx_storage_settings_row(db: Session) -> EsxStorageSettings:
@@ -14126,7 +13946,7 @@ def delete_managed_update_package(
     csrf: str = Form(...),
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
-) -> RedirectResponse:
+) -> RedirectResponse | Response:
     """Handle the delete managed update package endpoint.
 
     Args:
@@ -17638,44 +17458,6 @@ def refresh_physical_interfaces_from_ui(
     return RedirectResponse("/physical-interfaces", status_code=303)
 
 
-def preserve_management_dhcp_dns_on_static_conversion(
-    db: Session,
-    interface: PhysicalInterface,
-    *,
-    new_role: str,
-    old_ipv4_method: str,
-    new_ipv4_method: str,
-) -> list[str]:
-    """Return preserve management dhcp dns on static conversion.
-
-    Args:
-        db: Active database session.
-        interface: Interface supplied by the caller.
-        new_role: New role supplied by the caller.
-        old_ipv4_method: Old ipv4 method supplied by the caller.
-        new_ipv4_method: New ipv4 method supplied by the caller.
-    """
-    if new_role != "management" or old_ipv4_method != "dhcp" or new_ipv4_method != "static":
-        return []
-    _management, observed_servers = management_dhcp_dns_context([interface])
-    if not observed_servers:
-        return []
-    preserved: list[str] = []
-    appliance_settings = get_appliance_settings_row(db)
-    dns_settings = get_dns_settings_row(db)
-    if not dns_settings.enabled and not split_servers(appliance_settings.external_dns_servers):
-        appliance_settings.external_dns_servers = join_servers(observed_servers)
-        appliance_settings.updated_at = utcnow()
-        db.add(appliance_settings)
-        preserved.append("appliance resolver DNS")
-    if not split_servers(dns_settings.upstream_servers):
-        dns_settings.upstream_servers = join_servers(observed_servers)
-        dns_settings.updated_at = utcnow()
-        db.add(dns_settings)
-        preserved.append("DNS service forwarders")
-    return preserved
-
-
 @router.post("/physical-interfaces/{interface_id}/edit", response_model=None)
 def edit_physical_interface_from_ui(
     request: Request,
@@ -17694,7 +17476,7 @@ def edit_physical_interface_from_ui(
     csrf: str = Form(...),
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
-) -> RedirectResponse:
+) -> RedirectResponse | Response:
     """Handle the edit physical interface from ui endpoint.
 
     Args:
@@ -17725,139 +17507,49 @@ def edit_physical_interface_from_ui(
     interface = db.get(PhysicalInterface, interface_id)
     if not interface:
         raise HTTPException(status_code=404, detail="Physical interface not found")
-    new_mode = normalize_interface_mode(mode)
-    vlan_count = db.scalar(select(func.count()).select_from(VlanInterface).where(VlanInterface.parent_interface == interface.name)) or 0
-    if new_mode != "trunk" and vlan_count:
-        return Response(
-            f"{interface.name} is the parent of {vlan_count} VLAN interface{'s' if vlan_count != 1 else ''}. "
-            "Move or delete those VLANs before changing the link type.",
-            status_code=409,
-            media_type="text/plain",
+    changes = {
+        "role": role,
+        "mode": mode,
+        "ipv4_method": ipv4_method,
+        "ip_cidr": ip_cidr,
+        "gateway": interface.gateway if gateway is None else gateway,
+        "ipv6_enabled": bool(ipv6_enabled),
+        "ipv6_cidr": ipv6_cidr,
+        "ipv6_gateway": ipv6_gateway,
+        "mtu": mtu,
+        "admin_state": admin_state,
+    }
+    if access_management_ui_enabled is not None:
+        changes["access_management_ui_enabled"] = access_management_ui_enabled == "on"
+    try:
+        result = update_physical_interface_desired_state(
+            db,
+            interface,
+            changes,
+            dns_refresher=refresh_interface_service_dns_aliases,
         )
-    old_role = normalize_interface_role(interface.role)
-    if new_mode != "trunk" and not is_canonical_network_role(role):
-        return Response(
-            f"Interface role must be one of: {', '.join(NETWORK_ROLES)}.",
-            status_code=422,
-            media_type="text/plain",
-        )
-    role_value = "unused" if new_mode == "trunk" else normalize_interface_role(role)
-    management_ui_value = access_management_ui_enabled == "on"
-    if old_role == "management" and role_value == "access" and access_management_ui_enabled is None:
-        management_ui_value = True
-    if role_value == "management" or new_mode == "trunk":
-        management_ui_value = False
-    if management_ui_value and role_value != "access":
-        return Response(
-            "Management UI exposure is available only for an access-role interface.",
-            status_code=422,
-            media_type="text/plain",
-        )
-    ipv4_method_value = "static" if new_mode == "trunk" else normalize_ipv4_method(ipv4_method)
-    if ipv4_method_value == "dhcp" and role_value != "management":
-        return Response("IPv4 DHCP is available only for the management interface.", status_code=422, media_type="text/plain")
-    if ipv4_method_value == "dhcp" and ip_cidr.strip():
-        return Response("Clear IPv4 CIDR before switching the management interface to DHCP.", status_code=422, media_type="text/plain")
-    admin_state_value = admin_state.strip().lower() or "up"
-    if admin_state_value not in {"up", "down"}:
-        return Response("Interface admin state must be up or down.", status_code=422, media_type="text/plain")
-    if role_value == "management" and admin_state_value != "up":
-        return Response("The management interface must stay enabled.", status_code=422, media_type="text/plain")
-    ip_value = None
-    if new_mode != "trunk" and ipv4_method_value == "static":
-        ip_value = cidr_for_family(ip_cidr, 4, "Interface IPv4 CIDR")
-        if isinstance(ip_value, Response):
-            return ip_value
-    gateway_value = (interface.gateway or "") if gateway is None else gateway.strip()
-    if role_value != "management" or ipv4_method_value != "static" or new_mode == "trunk":
-        gateway_value = ""
-    if gateway_value:
-        if role_value != "management" or ipv4_method_value != "static" or not ip_value:
-            return Response(
-                "IPv4 gateway is available only for a management interface using static IPv4.",
-                status_code=422,
-                media_type="text/plain",
-            )
-        try:
-            parsed_gateway = ip_address(gateway_value)
-            parsed_interface = ip_interface(ip_value)
-        except ValueError:
-            return Response(f"{gateway_value} is not a valid IPv4 gateway.", status_code=422, media_type="text/plain")
-        if parsed_gateway.version != 4:
-            return Response("Management gateway must be an IPv4 address.", status_code=422, media_type="text/plain")
-        if parsed_gateway not in parsed_interface.network:
-            return Response(
-                f"Management gateway {gateway_value} must be on-link for {ip_value}.",
-                status_code=422,
-                media_type="text/plain",
-            )
-        if parsed_gateway == parsed_interface.ip:
-            return Response("Management gateway cannot equal the management interface address.", status_code=422, media_type="text/plain")
-    ipv6_value = None
-    ipv6_enabled_value = bool(ipv6_enabled) and new_mode != "trunk"
-    if new_mode != "trunk" and not ipv6_enabled_value and ipv6_cidr.strip():
-        return Response("Clear IPv6 CIDR before disabling IPv6.", status_code=422, media_type="text/plain")
-    if ipv6_enabled_value:
-        ipv6_value = cidr_for_family(ipv6_cidr, 6, "Interface IPv6 CIDR")
-        if isinstance(ipv6_value, Response):
-            return ipv6_value
-    ipv6_gateway_value = ipv6_gateway.strip()
-    if role_value != "management" or new_mode == "trunk" or not ipv6_enabled_value or not ipv6_value:
-        ipv6_gateway_value = ""
-    if ipv6_gateway_value:
-        try:
-            parsed_ipv6_gateway = ip_address(ipv6_gateway_value)
-            parsed_ipv6_interface = ip_interface(ipv6_value)
-        except ValueError:
-            return Response(f"{ipv6_gateway_value} is not a valid IPv6 gateway.", status_code=422, media_type="text/plain")
-        if parsed_ipv6_gateway.version != 6:
-            return Response("Management IPv6 gateway must be an IPv6 address.", status_code=422, media_type="text/plain")
-        if not parsed_ipv6_gateway.is_link_local and parsed_ipv6_gateway not in parsed_ipv6_interface.network:
-            return Response(
-                f"Management IPv6 gateway {ipv6_gateway_value} must be link-local or on-link for {ipv6_value}.",
-                status_code=422,
-                media_type="text/plain",
-            )
-        if parsed_ipv6_gateway == parsed_ipv6_interface.ip:
-            return Response("Management IPv6 gateway cannot equal the management interface address.", status_code=422, media_type="text/plain")
-    old_ip_cidr = interface.ip_cidr
-    old_ipv6_cidr = interface.ipv6_cidr
-    old_ipv4_method = normalize_ipv4_method(interface.ipv4_method)
-    preserved_dhcp_dns = preserve_management_dhcp_dns_on_static_conversion(
-        db,
-        interface,
-        new_role=role_value,
-        old_ipv4_method=old_ipv4_method,
-        new_ipv4_method=ipv4_method_value,
-    )
-    interface.role = role_value
-    interface.mode = new_mode
-    interface.ipv4_method = ipv4_method_value
-    interface.ip_cidr = ip_value or None
-    interface.gateway = gateway_value or None
-    interface.ipv6_enabled = ipv6_enabled_value
-    interface.ipv6_cidr = ipv6_value or None
-    interface.ipv6_gateway = ipv6_gateway_value or None
-    interface.mtu = mtu
-    interface.admin_state = admin_state_value
-    interface.access_management_ui_enabled = management_ui_value
-    interface.desired_state_source = "user"
-    dependent_updates = refresh_interface_dependent_addresses(
-        db,
-        old_name=interface.name,
-        new_name=interface.name,
-        old_ip_cidr=old_ip_cidr,
-        old_ipv6_cidr=old_ipv6_cidr,
-        actor=identity.username,
-    )
-    db.commit()
+    except PhysicalInterfaceUpdateError as exc:
+        return Response(exc.detail, status_code=exc.status_code, media_type="text/plain")
     detail_parts = []
-    if dependent_updates:
-        detail_parts.append(f"Refreshed dependent desired-state addresses: {', '.join(dependent_updates)}.")
-    if preserved_dhcp_dns:
-        detail_parts.append(f"Preserved DHCP-provided DNS in desired state: {', '.join(preserved_dhcp_dns)}.")
+    if result.dependent_updates:
+        detail_parts.append(
+            "Refreshed dependent desired-state addresses: "
+            f"{', '.join(result.dependent_updates)}."
+        )
+    if result.preserved_dhcp_dns:
+        detail_parts.append(
+            "Preserved DHCP-provided DNS in desired state: "
+            f"{', '.join(result.preserved_dhcp_dns)}."
+        )
     detail = " ".join(detail_parts)
-    record_audit(db, actor=identity.username, action="update_physical_interface", resource_type="interface", resource_id=interface.name, detail=detail)
+    record_audit(
+        db,
+        actor=identity.username,
+        action="update_physical_interface",
+        resource_type="interface",
+        resource_id=result.interface.name,
+        detail=detail,
+    )
     return RedirectResponse("/physical-interfaces", status_code=303)
 
 
@@ -17896,25 +17588,27 @@ def forget_missing_physical_interface_from_ui(
     if active_vlans:
         return Response("Disable or move dependent VLAN interfaces before forgetting this missing interface.", status_code=409, media_type="text/plain")
     disabled_vlans = db.execute(select(VlanInterface).where(VlanInterface.parent_interface == interface.name)).scalars().all()
-    for vlan in disabled_vlans:
-        db.delete(vlan)
     old_name = interface.name
-    dependent_updates = refresh_interface_dependent_addresses(
-        db,
-        old_name=old_name,
-        new_name="",
-        old_ip_cidr=interface.ip_cidr,
-        old_ipv6_cidr=interface.ipv6_cidr,
-        actor=identity.username,
-    )
-    db.delete(interface)
-    dns_updates = reconcile_service_dns_aliases(db, actor=identity.username)
-    db.commit()
+    try:
+        dependent_updates = refresh_interface_dependent_addresses(
+            db,
+            old_name=old_name,
+            new_name="",
+            old_ip_cidr=interface.ip_cidr,
+            old_ipv6_cidr=interface.ipv6_cidr,
+            actor=None,
+            dns_refresher=refresh_interface_service_dns_aliases,
+        )
+        for vlan in disabled_vlans:
+            db.delete(vlan)
+        db.delete(interface)
+        db.commit()
+    except PhysicalInterfaceUpdateError as exc:
+        db.rollback()
+        return Response(exc.detail, status_code=exc.status_code, media_type="text/plain")
     details = [f"Forgot missing interface {old_name}; removed {len(disabled_vlans)} disabled dependent VLAN row{'s' if len(disabled_vlans) != 1 else ''}."]
     if dependent_updates:
         details.append(f"Refreshed dependent desired-state addresses: {', '.join(dependent_updates)}.")
-    if dns_updates:
-        details.append(f"Reconciled service DNS aliases: {', '.join(dns_updates)}.")
     detail = " ".join(details)
     record_audit(db, actor=identity.username, action="forget_missing_physical_interface", resource_type="interface", resource_id=old_name, detail=detail)
     return RedirectResponse("/physical-interfaces", status_code=303)
@@ -18091,16 +17785,23 @@ def edit_vlan_interface_from_ui(
     vlan.role = role_value
     vlan.enabled = requested_enabled and not parent_missing
     vlan.access_management_ui_enabled = management_ui_value
-    dependent_updates = refresh_interface_dependent_addresses(
-        db,
-        old_name=old_name,
-        new_name=vlan.name,
-        old_ip_cidr=old_ip_cidr,
-        old_ipv6_cidr=old_ipv6_cidr,
-        actor=identity.username,
-    )
     try:
+        dependent_updates = refresh_interface_dependent_addresses(
+            db,
+            old_name=old_name,
+            new_name=vlan.name,
+            old_ip_cidr=old_ip_cidr,
+            old_ipv6_cidr=old_ipv6_cidr,
+            actor=None,
+            dns_refresher=refresh_interface_service_dns_aliases,
+        )
         db.commit()
+    except PhysicalInterfaceUpdateError as exc:
+        db.rollback()
+        return vlan_form_validation_response(
+            request,
+            Response(exc.detail, status_code=exc.status_code, media_type="text/plain"),
+        )
     except IntegrityError:
         db.rollback()
         return grid_error_response(
@@ -18127,7 +17828,7 @@ def delete_vlan_interface_from_ui(
     csrf: str = Form(...),
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
-) -> RedirectResponse:
+) -> RedirectResponse | Response | JSONResponse:
     """Handle the delete vlan interface from ui endpoint.
 
     Args:
@@ -18148,22 +17849,30 @@ def delete_vlan_interface_from_ui(
     if not vlan:
         raise HTTPException(status_code=404, detail="VLAN interface not found")
     old_name = vlan.name
-    dependent_updates = refresh_interface_dependent_addresses(
-        db,
-        old_name=old_name,
-        new_name="",
-        old_ip_cidr=vlan.ip_cidr,
-        old_ipv6_cidr=vlan.ipv6_cidr,
-        actor=identity.username,
-    )
-    db.delete(vlan)
-    dns_updates = reconcile_service_dns_aliases(db, actor=identity.username)
-    db.commit()
+    old_ip_cidr = vlan.ip_cidr
+    old_ipv6_cidr = vlan.ipv6_cidr
+    try:
+        db.delete(vlan)
+        db.flush()
+        dependent_updates = refresh_interface_dependent_addresses(
+            db,
+            old_name=old_name,
+            new_name="",
+            old_ip_cidr=old_ip_cidr,
+            old_ipv6_cidr=old_ipv6_cidr,
+            actor=None,
+            dns_refresher=refresh_interface_service_dns_aliases,
+        )
+        db.commit()
+    except PhysicalInterfaceUpdateError as exc:
+        db.rollback()
+        return vlan_form_validation_response(
+            request,
+            Response(exc.detail, status_code=exc.status_code, media_type="text/plain"),
+        )
     details: list[str] = []
     if dependent_updates:
         details.append(f"Refreshed dependent desired-state addresses: {', '.join(dependent_updates)}.")
-    if dns_updates:
-        details.append(f"Reconciled service DNS aliases: {', '.join(dns_updates)}.")
     record_audit(db, actor=identity.username, action="delete_vlan_interface", resource_type="vlan", resource_id=str(vlan_id), detail=" ".join(details))
     return RedirectResponse("/vlan-interfaces", status_code=303)
 

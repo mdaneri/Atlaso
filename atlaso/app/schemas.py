@@ -3,7 +3,16 @@
 from datetime import datetime
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, StrictBool
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StrictBool,
+    StrictInt,
+    ValidationInfo,
+    field_validator,
+    model_validator,
+)
 
 
 class ProblemDetails(BaseModel):
@@ -1345,19 +1354,168 @@ NetworkRole = Literal["management", "access", "route", "unused"]
 
 
 class PhysicalInterfaceUpdate(BaseModel):
-    """Validated desired-state fields accepted for a physical-interface update."""
+    """Fields accepted when updating physical-interface desired state.
 
-    role: Annotated[NetworkRole, Field(default=None, description='Canonical interface purpose: management, access, route, or unused.')]
-    mode: Annotated[Literal["access", "trunk", "unused"] | None, Field(description='Desired physical link type.')] = None
-    ipv4_method: Annotated[Literal["static", "dhcp"] | None, Field(description='Desired IPv4 address assignment method.')] = None
-    ip_cidr: Annotated[str | None, Field(description='Desired IPv4 interface address and prefix, or an empty value to clear it.')] = None
-    gateway: Annotated[str | None, Field(description='Desired static IPv4 management gateway, or an empty value to clear it.')] = None
-    ipv6_enabled: Annotated[StrictBool | None, Field(description='Whether IPv6 desired state is enabled.')] = None
-    ipv6_cidr: Annotated[str | None, Field(description='Desired static IPv6 interface address and prefix, or an empty value for automatic IPv6.')] = None
-    ipv6_gateway: Annotated[str | None, Field(description='Desired static IPv6 management gateway, or an empty value to clear it.')] = None
-    mtu: Annotated[int | None, Field(description='Desired maximum transmission unit.', ge=576, le=9000)] = None
-    admin_state: Annotated[Literal["up", "down"] | None, Field(description='Desired physical-link administrative state.')] = None
-    access_management_ui_enabled: Annotated[StrictBool | None, Field(description='Whether this access-role, access-mode interface also exposes the management UI.')] = None
+    Omitted properties retain their current values. CIDR and gateway properties accept an empty
+    string or null to clear the saved value. Saving desired state does not mutate the host; the
+    global Appliance Apply workflow remains the enforcement boundary.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    role: Annotated[
+        NetworkRole,
+        Field(
+            default=None,
+            description=(
+                "Canonical desired interface purpose: management, access, route, or unused. "
+                "Omit to retain the current role."
+            ),
+        ),
+    ]
+
+    @field_validator("role", "mode", "ipv4_method", mode="before")
+    @classmethod
+    def normalize_legacy_enum_spellings(cls, value: Any, info: ValidationInfo) -> Any:
+        """Normalize recognized case-insensitive enum spellings.
+
+        Args:
+            value: Incoming field value to normalize when it is a recognized string.
+            info: Pydantic validation metadata identifying the current field.
+        """
+        if not isinstance(value, str):
+            return value
+        normalized = value.strip().lower()
+        if info.field_name == "role" and normalized in {
+            "management",
+            "access",
+            "route",
+            "unused",
+        }:
+            return normalized
+        if info.field_name == "mode":
+            if normalized == "routed":
+                return "access"
+            if normalized in {"access", "trunk", "unused"}:
+                return normalized
+        if info.field_name == "ipv4_method" and normalized in {"static", "dhcp"}:
+            return normalized
+        return value
+    mode: Annotated[
+        Literal["access", "trunk", "unused"] | None,
+        Field(
+            description=(
+                "Desired link type. Trunk interfaces host VLAN children and cannot bind services "
+                "directly. Omit to retain the current link type."
+            )
+        ),
+    ] = None
+    ipv4_method: Annotated[
+        Literal["static", "dhcp"] | None,
+        Field(
+            description=(
+                "Desired IPv4 address source. DHCP is supported only by the management interface; "
+                "omit to retain the current method."
+            )
+        ),
+    ] = None
+    ip_cidr: Annotated[
+        str | None,
+        Field(
+            description=(
+                "Desired static IPv4 host address and prefix in CIDR notation, such as "
+                "192.168.50.10/24. Empty or null clears the value. When it changes, dependent "
+                "listener, DHCP, and Network Boot addresses are reconciled in the same transaction."
+            )
+        ),
+    ] = None
+    gateway: Annotated[
+        str | None,
+        Field(
+            description=(
+                "Optional on-link IPv4 default gateway for a static management interface. Empty or "
+                "null clears the value."
+            )
+        ),
+    ] = None
+    ipv6_enabled: Annotated[
+        StrictBool | None,
+        Field(
+            description=(
+                "Whether IPv6 desired state is enabled. Disabling IPv6 requires the IPv6 CIDR and "
+                "gateway to be cleared; omit to retain the current state."
+            )
+        ),
+    ] = None
+    ipv6_cidr: Annotated[
+        str | None,
+        Field(
+            description=(
+                "Desired IPv6 host address and prefix in CIDR notation, such as "
+                "2001:db8:50::10/64. Empty or null clears the value. Dependent IPv6 listener, DHCP, "
+                "and Network Boot addresses follow changes atomically."
+            )
+        ),
+    ] = None
+    ipv6_gateway: Annotated[
+        str | None,
+        Field(
+            description=(
+                "Optional link-local or on-link IPv6 default gateway for an enabled management "
+                "interface. Empty or null clears the value."
+            )
+        ),
+    ] = None
+    mtu: Annotated[
+        StrictInt | None,
+        Field(
+            ge=576,
+            le=9000,
+            description="Desired interface MTU in bytes, from 576 through 9000; omit to retain it.",
+        ),
+    ] = None
+    admin_state: Annotated[
+        Literal["up", "down"] | None,
+        Field(
+            description=(
+                "Desired administrative state. The management interface must remain up; omit to "
+                "retain the current state."
+            )
+        ),
+    ] = None
+    access_management_ui_enabled: Annotated[
+        StrictBool | None,
+        Field(
+            description=(
+                "Whether an access-role, access-mode interface also exposes the authenticated "
+                "management UI. Management-role exposure is inherent. Omit to retain the current "
+                "setting, except a management-to-access conversion enables it to preserve access."
+            )
+        ),
+    ] = None
+
+    @model_validator(mode="after")
+    def reject_explicit_null_for_non_nullable_fields(self) -> "PhysicalInterfaceUpdate":
+        """Reject null where omission, rather than clearing, is the supported PATCH meaning."""
+        non_nullable = {
+            "role",
+            "mode",
+            "ipv4_method",
+            "ipv6_enabled",
+            "mtu",
+            "admin_state",
+            "access_management_ui_enabled",
+        }
+        explicit_nulls = sorted(
+            field_name
+            for field_name in self.model_fields_set & non_nullable
+            if getattr(self, field_name) is None
+        )
+        if explicit_nulls:
+            raise ValueError(
+                f"{', '.join(explicit_nulls)} must be omitted instead of set to null."
+            )
+        return self
 
 
 class PhysicalInterfaceResponse(BaseModel):

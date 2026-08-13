@@ -76,6 +76,12 @@ The following cross-cutting boundaries always apply:
   internally and never replay them through `307`/`308`. Route-inventory coverage must fail for an undeclared human UI
   route. Scope management browser caching to `/ui/management/` and keep public UI caching disabled.
 - `/ui/management/appliance-apply` is the only desired-state host-mutation workflow.
+- Physical-interface desired-state updates from the API and UI use one atomic domain service. Capture the previous
+  IPv4 and IPv6 CIDRs before mutation, refresh dependent service, ESX Storage, Web Terminal, DHCP, and Network Boot
+  bindings before one commit, include child VLAN dependencies when their parent becomes unavailable, roll back every
+  row when reconciliation fails, rebase reservations and their app-owned DNS records only when one updated DHCP scope
+  is unambiguous, ignore inactive legacy DHCP binding fields when real scopes exist, and audit the dependent units that
+  changed.
 - Keep **Static Routes** separate from **Routing Permissions** in operator language. Static Routes choose destination,
   gateway, target interface/VLAN, and metric in the lab route table; Routing Permissions authorize forwarding between
   interface/VLAN networks, with route-role paths generated automatically and Access networks requiring explicit rules.
