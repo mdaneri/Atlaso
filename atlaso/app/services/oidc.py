@@ -232,6 +232,8 @@ def signing_key_cryptographic_validation_errors(
     """
     try:
         public_jwk = json.loads(signing_key.public_jwk_json)
+        if not isinstance(public_jwk, dict):
+            raise ValueError
         if (
             signing_key.algorithm != OIDC_SIGNING_ALGORITHM
             or public_jwk.get("kid") != signing_key.kid

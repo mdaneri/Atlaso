@@ -5640,6 +5640,24 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
         {"key": "dns.conditional_forwarders", "value": "[]"},
         {"key": "dns.conditional_forwarders", "value": "[]"},
     ]
+    malformed_password_policy = deepcopy(archive)
+    malformed_password_policy["data"]["settings"].append(
+        {"key": "local_users.password_policy.v1", "value": "not-json"}
+    )
+    coerced_password_policy = deepcopy(archive)
+    coerced_password_policy["data"]["settings"].append(
+        {
+            "key": "local_users.password_policy.v1",
+            "value": '{"require_uppercase":"false"}',
+        }
+    )
+    invalid_nts_restoration_marker = deepcopy(archive)
+    nts_marker = next(
+        row
+        for row in invalid_nts_restoration_marker["data"]["settings"]
+        if row["key"] == "ntp.nts_restoration_v1"
+    )
+    nts_marker["value"] = "pending"
     invalid_firewall_source_groups = deepcopy(archive)
     invalid_firewall_source_groups["data"]["settings"].append(
         {
@@ -5745,6 +5763,9 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
         (invalid_managed_package_source, "managed package state is invalid: Choose a PowerShell repository"),
         (unsupported_setting, "has an unsupported setting key"),
         (duplicate_setting, "duplicates a setting key"),
+        (malformed_password_policy, "local user password policy is invalid"),
+        (coerced_password_policy, "field require_uppercase must be a Boolean"),
+        (invalid_nts_restoration_marker, "NTPsec NTS restoration marker is invalid"),
         (invalid_firewall_source_groups, "firewall source groups state is invalid"),
     ]:
         with pytest.raises(ValueError, match=message):

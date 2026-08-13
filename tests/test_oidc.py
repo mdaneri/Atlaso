@@ -775,6 +775,14 @@ def test_oidc_cryptographic_validation_rejects_mismatched_public_jwk(client):
             signing_key,
         ) == ["The active OIDC signing key is not protocol-ready."]
 
+        signing_key.public_jwk_json = "[]"
+
+        assert oidc.provider_cryptographic_validation_errors(
+            provider,
+            certificate,
+            signing_key,
+        ) == ["The active OIDC signing key is not protocol-ready."]
+
         private_jwk = RSAKey.import_key(
             decrypt_secret(signing_key.private_key_encrypted)
         ).as_dict(private=True)

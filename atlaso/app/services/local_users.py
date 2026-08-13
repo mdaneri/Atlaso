@@ -137,6 +137,35 @@ def password_policy_from_json(raw_value: str | None) -> dict[str, bool | int]:
     return policy
 
 
+def validate_password_policy_json(raw_value: str | None) -> list[str]:
+    """Validate a persisted local-user password-policy payload without coercion.
+
+    Args:
+        raw_value: Serialized password-policy value to validate.
+
+    Returns:
+        Public-safe validation errors for malformed or lossy policy values.
+    """
+    try:
+        payload = json.loads(raw_value or "")
+    except (TypeError, json.JSONDecodeError):
+        return ["Local user password policy must be a JSON object."]
+    if not isinstance(payload, dict):
+        return ["Local user password policy must be a JSON object."]
+    unknown_keys = sorted(set(payload) - set(DEFAULT_PASSWORD_POLICY))
+    if unknown_keys:
+        return [f"Local user password policy contains an unsupported field: {unknown_keys[0]}." ]
+    min_length = payload.get("min_length", DEFAULT_PASSWORD_POLICY["min_length"])
+    if isinstance(min_length, bool) or not isinstance(min_length, int) or not 8 <= min_length <= 128:
+        return ["Local user password policy minimum length must be an integer between 8 and 128."]
+    for key in DEFAULT_PASSWORD_POLICY:
+        if key == "min_length" or key not in payload:
+            continue
+        if not isinstance(payload[key], bool):
+            return [f"Local user password policy field {key} must be a Boolean."]
+    return []
+
+
 def password_policy_to_json(policy: dict[str, bool | int]) -> str:
     """Return password policy to json.
 

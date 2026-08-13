@@ -896,6 +896,12 @@ def validate_ca_private_key_material(
 
     errors: list[str] = []
     root_certificate: x509.Certificate | None = None
+    if bool((settings.root_certificate_pem or "").strip()) != bool(
+        (settings.root_private_key_encrypted or "").strip()
+    ):
+        errors.append(
+            "CA root certificate and encrypted private key must be restored together."
+        )
     if settings.root_certificate_pem:
         try:
             root_pem = settings.root_certificate_pem.strip()

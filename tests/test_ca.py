@@ -118,6 +118,31 @@ def test_ca_private_key_validation_rejects_mismatched_certificate():
     ]
 
 
+@pytest.mark.parametrize("missing_field", ["certificate", "private_key"])
+def test_ca_private_key_validation_rejects_incomplete_root_pair(missing_field):
+    """Verify restored CA root material is always a complete key pair."""
+    settings = CaSettings(
+        enabled=True,
+        root_common_name="Atlaso Test Root",
+        organization="Atlaso",
+        key_algorithm="RSA",
+        key_size=2048,
+        digest_algorithm="sha256",
+        root_valid_days=3650,
+        storage_path="/etc/atlaso/ca",
+    )
+    assert ensure_root_ca_material(settings) is True
+    if missing_field == "certificate":
+        settings.root_certificate_pem = ""
+    else:
+        settings.root_private_key_encrypted = ""
+
+    assert (
+        "CA root certificate and encrypted private key must be restored together."
+        in validate_ca_private_key_material(settings, [])
+    )
+
+
 def test_ca_private_key_validation_rejects_leaf_from_another_root():
     """Verify issued leaf certificates chain to the restored root."""
     restored_root = CaSettings(

@@ -127,7 +127,10 @@ from atlaso.app.services.ldap import (
     ensure_organization_bind_secret,
     validate_ldap_state,
 )
-from atlaso.app.services.local_users import LOCAL_USERS_PASSWORD_POLICY_KEY
+from atlaso.app.services.local_users import (
+    LOCAL_USERS_PASSWORD_POLICY_KEY,
+    validate_password_policy_json,
+)
 from atlaso.app.services.networking import (
     normalize_interface_mode,
     normalize_interface_role,
@@ -2875,6 +2878,19 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
         if setting_key in setting_keys:
             raise ValueError(
                 f"The settings archive row {row_index} in 'settings' duplicates a setting key."
+            )
+        if setting_key == LOCAL_USERS_PASSWORD_POLICY_KEY:
+            policy_errors = validate_password_policy_json(str(row.get("value") or ""))
+            if policy_errors:
+                raise ValueError(
+                    f"The settings archive local user password policy is invalid: {policy_errors[0]}"
+                )
+        if (
+            setting_key == NTP_NTS_RESTORATION_SETTING_KEY
+            and str(row.get("value") or "") != "complete"
+        ):
+            raise ValueError(
+                "The settings archive NTPsec NTS restoration marker is invalid."
             )
         setting_keys.add(setting_key)
 
