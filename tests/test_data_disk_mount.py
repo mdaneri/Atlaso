@@ -60,6 +60,7 @@ def _run_mount_script(
     backup_tuple: str,
     mounts: dict[str, str] | None = None,
     mount_sources: dict[str, str] | None = None,
+    mount_options: dict[str, str] | None = None,
     fstab: str = "",
     esx_allowlist: str = "",
 ) -> tuple[subprocess.CompletedProcess[str], list[list[str]]]:
@@ -72,6 +73,7 @@ def _run_mount_script(
         backup_tuple: Trusted backup SCSI identity from image policy.
         mounts: Initial mapping from mountpoints to fake disk paths.
         mount_sources: Fake fstab mount selections keyed by mountpoint.
+        mount_options: Fake mount options keyed by mountpoint.
         fstab: Initial fake fstab content.
         esx_allowlist: Initial root-owned managed ESX Storage disk claims.
 
@@ -109,7 +111,14 @@ def _run_mount_script(
 
     state_path = tmp_path / "state.json"
     state_path.write_text(
-        json.dumps({"disks": disks, "mounts": mounts or {}, "mount_sources": mount_sources or {}}),
+        json.dumps(
+            {
+                "disks": disks,
+                "mounts": mounts or {},
+                "mount_sources": mount_sources or {},
+                "mount_options": mount_options or {},
+            }
+        ),
         encoding="utf-8",
     )
     mkfs_log = tmp_path / "mkfs.jsonl"
@@ -134,6 +143,7 @@ def _run_mount_script(
             disks = state["disks"]
             mounts = state["mounts"]
             mount_sources = state["mount_sources"]
+            mount_options = state["mount_options"]
 
             def disk_for(value):
                 resolved = str(Path(value).resolve())
@@ -190,6 +200,11 @@ def _run_mount_script(
                     source = mounts.get(args[2])
                     if source:
                         print(source)
+                        raise SystemExit(0)
+                    raise SystemExit(1)
+                if len(args) == 5 and args[:2] == ["-rn", "-M"] and args[3:] == ["-o", "OPTIONS"]:
+                    if args[2] in mounts:
+                        print(mount_options.get(args[2], "rw,relatime"))
                         raise SystemExit(0)
                     raise SystemExit(1)
                 raise SystemExit(1)
@@ -694,11 +709,16 @@ def test_initialized_appliance_rejects_relabelled_formatted_esx_disk(tmp_path: P
     assert calls == []
 
 
-def test_initialized_appliance_allows_claimed_mounted_ext4_whole_disk(tmp_path: Path):
-    """Allow one stable UUID-persisted mounted ext4 disk claimed by ESX Storage.
+@pytest.mark.parametrize(("esx_mount_options", "accepted"), [("rw,relatime", True), ("ro,relatime", False)])
+def test_initialized_appliance_requires_writable_claimed_mounted_ext4_whole_disk(
+    tmp_path: Path, esx_mount_options: str, accepted: bool
+):
+    """Require a stable UUID-persisted mounted ext4 disk to remain writable.
 
     Args:
         tmp_path: Pytest-provided isolated filesystem root.
+        esx_mount_options: Mount options returned for the claimed ESX Storage path.
+        accepted: Whether boot validation should accept the mount options.
     """
     disks = _vmware_disks(tmp_path)
     disks[2].update(filesystem="ext4", label="ATLASO_DEPOT", uuid="depot-uuid")
@@ -726,9 +746,14 @@ def test_initialized_appliance_allows_claimed_mounted_ext4_whole_disk(tmp_path: 
             "/mnt/atlaso-vcf-backups": str(disks[3]["path"]),
             esx_mount: str(esx_disk["path"]),
         },
+        mount_options={esx_mount: esx_mount_options},
         fstab=fstab,
         esx_allowlist=allowlist,
     )
 
-    assert completed.returncode == 0, completed.stdout + completed.stderr
+    if accepted:
+        assert completed.returncode == 0, completed.stdout + completed.stderr
+    else:
+        assert completed.returncode != 0
+        assert "unexpected whole disk" in completed.stdout + completed.stderr
     assert calls == []

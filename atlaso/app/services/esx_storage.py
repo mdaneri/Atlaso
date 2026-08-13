@@ -650,6 +650,7 @@ def normalize_disk_inventory_entry(entry: dict[str, Any], *, claimed_ids: set[st
     filesystem_uuid = str(entry.get("filesystem_uuid") or "")
     stable_id = str(entry.get("stable_device_id") or entry.get("by_id") or (f"UUID={filesystem_uuid}" if filesystem_uuid else ""))
     mount_path = str(entry.get("mount_path") or "")
+    mount_paths = [str(candidate_mount) for candidate_mount in (entry.get("mount_paths") or [])]
     writable_mount_paths = {
         str(candidate_mount)
         for candidate_mount in (entry.get("writable_mount_paths") or [])
@@ -672,6 +673,13 @@ def normalize_disk_inventory_entry(entry: dict[str, Any], *, claimed_ids: set[st
             reasons.append("has device holders")
         if entry.get("read_only"):
             reasons.append("is read-only")
+        unexpected_mounts = [
+            candidate_mount
+            for candidate_mount in mount_paths
+            if candidate_mount != mount_path and not candidate_mount.startswith(f"{ESX_STORAGE_EXPORT_ROOT}/")
+        ]
+        if unexpected_mounts:
+            reasons.append("has unexpected additional mounts")
         if mount_path and mount_path not in writable_mount_paths:
             reasons.append("selected mount is read-only")
         if not entry.get("persistent_uuid_mount"):

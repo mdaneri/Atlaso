@@ -379,6 +379,11 @@ ensure_managed_esx_primary_mount() {
   [ -n "$mounted_source" ] || return 1
   [ "$(readlink -f "$mounted_source" 2>/dev/null || true)" = "$disk" ] || return 1
   [ "$(findmnt -rn -M "$primary_mount" -o UUID 2>/dev/null || true)" = "$uuid" ] || return 1
+  mount_options="$(findmnt -rn -M "$primary_mount" -o OPTIONS 2>/dev/null || true)"
+  case ",$mount_options," in
+    *,rw,*) ;;
+    *) return 1 ;;
+  esac
 }
 
 valid_atlaso_esx_label() {
