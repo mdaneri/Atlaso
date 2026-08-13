@@ -4482,6 +4482,11 @@ address before Linux interface name, so Hyper-V/Linux <code>ethN</code> renumber
 desired state to a different NIC. Removed host NICs are made inert, dependent VLANs are disabled, service listener
 interfaces and listener addresses are pruned or disabled when no listener remains, and the cleanup is written to the
 Atlaso app log and audit events.</p>
+<p>Physical and VLAN interfaces share the canonical <code>management</code>, <code>access</code>, <code>route</code>, and <code>unused</code> role set. New UI, API,
+desired-state, and helper inputs reject any other value. A one-time startup reconciliation maps the retired <code>services</code>
+and <code>storage</code> values to <code>access</code>, changes no other interface fields, records an audit event when rows change, and marks
+the migration complete. Settings archives export canonical values and apply the same bounded compatibility mapping on
+restore; unrelated role strings fail closed.</p>
 <p>The management physical interface may define optional static IPv4 and IPv6 gateways. IPv4 must be on-link. IPv6 may be
 on-link or link-local (<code>fe80::/10</code>); neither gateway may equal its interface address. Network apply writes each
 configured management default to both the main table and management policy table <code>100</code>; non-management physical
@@ -4523,7 +4528,8 @@ rendered nftables table and command intent on the global apply page. Route-speci
 exposed in v1; the design notes live in <code>docs/routing-wan-roadmap.md</code>.</p>
 <p>The <code>/ui/management/routes-wan</code> browser surface labels path entries <strong>Static Routes</strong> and forwarding authorization <strong>Routing
 Permissions</strong>. Static Routes, explicit Routing Permissions, NAT Rules, and WAN Policies retain Tabulator browse grids
-but use the shared reviewed add/edit wizard. Wizard submission and direct Enabled changes update desired state only;
+but use the shared <code>resource_wizard(...)</code> structure and <code>createWizard(...)</code> behavior for reviewed add/edit flows.
+Wizard submission and direct Enabled changes update desired state only;
 they never invoke this helper or apply unit directly. Generated route-role permissions remain read-only.</p>
 <p>Through <code>atlaso-helper wan validate|apply</code>, the helper validates staged routes, routing rules, NAT rules, WAN targets,
 and netem policy values. Apply installs <code>/etc/atlaso/nftables.d/atlaso-nat.nft</code>, enables <code>net.ipv4.ip_forward=1</code> only

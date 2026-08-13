@@ -3615,11 +3615,15 @@ documented authorization and apply behavior before execution.</p>
 The switch exposes the authenticated <code>/ui/management</code> browser plane without changing that interface's access routing or
 public-service eligibility. A management-role physical interface ignores the switch because it exposes management
 inherently. Network apply rejects a configuration that would leave no effective management UI listener.</p>
+<p>Physical-interface and VLAN role fields accept exactly <code>management</code>, <code>access</code>, <code>route</code>, or <code>unused</code>. The retired
+<code>services</code> and <code>storage</code> values are rejected on new requests. Appliance startup and settings-archive restore map those
+values to <code>access</code> only when reading compatible persisted state from an older Atlaso release.</p>
 <h3 id="update-physical-interface-desired-state">Update physical-interface desired state<a class="headerlink" href="#update-physical-interface-desired-state" title="Permanent link">&para;</a></h3>
 <p><code>PATCH /api/v1/interfaces/physical/{name}</code> accepts the typed <code>PhysicalInterfaceUpdate</code> schema. Omit a property to keep
 its saved value; use an empty string or <code>null</code> only for the documented CIDR and gateway fields that can be cleared.
-Recognized role, mode, and IPv4-method spellings are case-insensitive; the legacy <code>services</code> and <code>storage</code> roles and
-<code>routed</code> mode spelling remain supported. Atlaso rejects unsupported properties instead of silently ignoring them.</p>
+Recognized role, mode, and IPv4-method spellings are case-insensitive. New requests reject the retired <code>services</code> and
+<code>storage</code> roles; the legacy <code>routed</code> mode spelling remains supported. Atlaso rejects unsupported properties instead of
+silently ignoring them.</p>
 <p>Changing a physical interface's IPv4 or IPv6 CIDR automatically refreshes dependent desired-state addresses for DNS,
 NTP/NTS, Certificate Authority, KMS, LDAP, OIDC, VCF services, ESX Storage, Web Terminal, matching DHCP scopes, and
 Network Boot/PXE. Atlaso commits the interface and dependent rows as one transaction. If any dependent update fails,

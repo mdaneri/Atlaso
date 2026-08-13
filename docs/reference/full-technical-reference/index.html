@@ -4478,15 +4478,17 @@ routing permissions, IPv4 masquerade NAT rules, and interface/VLAN-level <code>t
 interface role: WAN Simulation is an explicit traffic-behavior workflow, not an interface classification, and NAT
 eligibility is never inferred from role. Physical Interfaces owns optional static management IPv4 and IPv6 gateways and
 installs each configured default in both the main table and policy-routing table <code>100</code>; IPv6 accepts an on-link or
-link-local gateway. Routes &amp; WAN owns non-management route gateways in table <code>200</code>, so management and lab traffic can
+link-local gateway. Physical and VLAN interfaces accept only <code>management</code>, <code>access</code>, <code>route</code>, or <code>unused</code>; startup and
+settings-archive compatibility map the retired <code>services</code> and <code>storage</code> values to <code>access</code> without altering other
+interface state. Routes &amp; WAN owns non-management route gateways in table <code>200</code>, so management and lab traffic can
 use different default gateways without forwarding through management. Routes can target non-management access physical
 interfaces and enabled VLANs with IPv4, IPv6, or dual-stack CIDRs. Route-role networks forward to other route-role
 networks by default; access networks require explicit routing rules. NAT v1 is explicit IPv4 outbound masquerade only;
 there is no destination NAT or port forwarding, and the outbound interface must have an IPv4 CIDR. Route-specific WAN
 impairment is roadmap work tracked in <code>docs/routing-wan-roadmap.md</code>; v1 exposes only interface/VLAN-level impairment.
 The browser labels path records <strong>Static Routes</strong> and forwarding rules <strong>Routing Permissions</strong>. All four resource grids
-use reviewed add/edit wizards, while persisted Enabled state remains directly editable and generated route-role
-permissions remain read-only. Every edit remains desired state until the global <code>wan</code> apply unit is submitted.</p>
+use the shared reviewed add/edit wizard structure, while persisted Enabled state remains directly editable and generated
+route-role permissions remain read-only. Every edit remains desired state until the global <code>wan</code> apply unit is submitted.</p>
 <p>DNS and DHCP share one <code>DNS/DHCP (dnsmasq)</code> apply unit because they render and reload the same dnsmasq config. The
 Services page shows DNS and DHCP as separate desired-state rows, but their runtime status comes from the shared
 <code>dnsmasq.service</code>. DNS listen addresses are derived from selected access physical or enabled VLAN interface CIDRs,

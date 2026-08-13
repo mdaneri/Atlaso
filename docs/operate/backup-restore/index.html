@@ -3507,6 +3507,9 @@ retain their <code>{{custom.*}}</code> prerequisites.</p>
 </ol>
 <p>Verify identity, DNS, service configuration, and recent tasks after recovery. Restore changes Atlaso state; host
 services are enforced only through their documented workflows.</p>
+<p>Every archived physical-interface and VLAN row must include a non-empty role. Atlaso rejects a missing or null role
+before clearing current desired state; only the retired <code>services</code> and <code>storage</code> values receive the bounded compatibility
+mapping to <code>access</code>.</p>
 <!-- BEGIN GENERATED ADDITIONAL SCREENSHOTS -->
 <h2 id="additional-verified-states">Additional verified states<a class="headerlink" href="#additional-verified-states" title="Permanent link">&para;</a></h2>
 <p>These captures show responsive layouts and useful operational states referenced by this page.</p>

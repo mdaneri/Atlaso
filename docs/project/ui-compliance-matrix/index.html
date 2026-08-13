@@ -3632,7 +3632,7 @@ read-only or unavailable surface has a mutation workflow.</p>
 </tr>
 <tr>
 <td><code>/ui/management/routes-wan</code> — static routes, routing permissions, NAT, policies</td>
-<td>Wizard-backed Tabulator; ESX Storage reference</td>
+<td>Wizard-backed Tabulator using four shared <code>resource_wizard(...)</code> dialogs; ESX Storage reference</td>
 <td>Four paired fallback tables and rendered validation/config preview</td>
 <td>Role-gated reviewed add/edit, direct Enabled state, shared confirmations; generated permissions read-only; enforcement only through global <code>wan</code> apply</td>
 <td>Pass D/N/K/F/Z/V</td>
@@ -3648,7 +3648,7 @@ read-only or unavailable surface has a mutation workflow.</p>
 </tr>
 <tr>
 <td><code>/ui/management/physical-interfaces</code> — observed and desired interfaces</td>
-<td>Direct-edit Tabulator; Physical Interfaces reference</td>
+<td>Direct-edit Tabulator with the shared boolean glyph formatter; Physical Interfaces reference</td>
 <td>Paired interface fallback with observed and desired values, including access management UI exposure</td>
 <td>Role-gated desired-state edits; management-path lockout validation; confirmation for guarded state changes; global <code>network</code> apply only</td>
 <td>Pass D/N/K/F/Z/V</td>

@@ -4845,7 +4845,10 @@
   targets, routes, NAT rules, and netem values before running <code>ip route</code>, <code>nft</code>, <code>sysctl</code>, and <code>tc</code>.</li>
 <li>WAN impairment mode is v1 interface/VLAN-level only. Do not expose a route-specific WAN mode until it is fully
   implemented in the helper; track that design in <code>docs/project/routing-wan-roadmap.md</code>.</li>
-<li>Atlaso has no <code>wan</code> interface role and must not infer NAT or internet connectivity from an interface role.
+<li>Atlaso has no <code>wan</code> interface role and must not infer NAT or internet connectivity from an interface role.</li>
+<li>Physical and VLAN interfaces share exactly four roles: <code>management</code>, <code>access</code>, <code>route</code>, and <code>unused</code>. New UI, API,
+  desired-state, and helper inputs reject retired or unknown roles. Bounded upgrade and settings-archive compatibility
+  maps only the retired <code>services</code> and <code>storage</code> values to <code>access</code> without changing any other interface state.
   <code>Routes &amp; WAN Simulation</code> is the explicit routing/NAT/loss workflow, not an interface classification.</li>
 <li>NAT v1 is explicit IPv4 masquerade only. Do not add destination NAT, port forwarding, automatic broad NAT, or
   non-reviewable NAT inferred only from interface role. Route-role networks may forward to other route-role networks by
