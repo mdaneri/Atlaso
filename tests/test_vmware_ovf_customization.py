@@ -2,6 +2,8 @@
 
 import importlib.util
 import json
+import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -1658,6 +1660,9 @@ def test_vmware_ovf_export_and_image_plumbing_are_present():
     assert "MaximumReleaseAssetBytes = 2147483647" in export_script
     assert "Publish-AtlasoReleaseAssets" in export_script
     assert "Assert-AtlasoReleaseProvenance" in export_script
+    assert "Atlaso.OvfExport.psm1" in export_script
+    assert "Clear-AtlasoOvfOutputDirectory" in export_script
+    assert "$PSBoundParameters.ContainsKey('OutputDirectory')" in export_script
     assert "[switch]$Release" in export_script
     assert "[string]$ReleaseTag" not in export_script
     assert "[string]$Repository" not in export_script
@@ -1730,3 +1735,28 @@ def test_vmware_ovf_export_and_image_plumbing_are_present():
     assert 'guest_os_type        = "vmware-photon-64"' in packer_template
     assert 'disk_adapter_type    = "pvscsi"' in packer_template
     assert '"sata0:0.present" = "FALSE"' in packer_template
+
+
+def test_vmware_ovf_export_replacement_boundaries():
+    """Verify OVF export replacement stays inside its approved temporary boundary."""
+    pwsh = shutil.which("pwsh")
+    if pwsh is None:
+        pytest.skip("PowerShell 7 is not available")
+
+    result = subprocess.run(
+        [
+            pwsh,
+            "-NoLogo",
+            "-NoProfile",
+            "-NonInteractive",
+            "-File",
+            "tests/powershell/Test-AtlasoOvfExport.ps1",
+            "-RepositoryRoot",
+            str(Path.cwd()),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
