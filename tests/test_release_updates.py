@@ -913,6 +913,67 @@ def test_release_data_disk_refresh_settles_before_preflight(monkeypatch):
     ]
 
 
+def test_release_migrates_boot_safe_configured_mounted_disk_claim(monkeypatch, tmp_path):
+    """Verify that an older applied mounted-ext4 volume is claimed before preflight.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    import sqlite3
+
+    from tests.test_appliance_update import load_helper_module
+
+    helper = load_helper_module()
+    database = tmp_path / "atlaso.db"
+    with sqlite3.connect(database) as connection:
+        connection.execute(
+            "create table esx_storage_volumes (source_type text, stable_device_id text, "
+            "filesystem_uuid text, mount_path text, applied integer)"
+        )
+        connection.execute(
+            "insert into esx_storage_volumes values (?, ?, ?, ?, 1)",
+            (
+                "mounted_ext4",
+                "/dev/disk/by-id/atlaso-path-pci-0000_03_00_0-scsi-0_0_3_0",
+                "3f832583-beec-4be7-969c-92519ea77273",
+                "/mnt/operator-existing-ext4",
+            ),
+        )
+    allowlist = tmp_path / "etc/atlaso/esx-storage-disks.conf"
+    monkeypatch.setattr(helper, "ATLASO_DATABASE_PATH", database)
+    monkeypatch.setattr(helper, "ESX_STORAGE_DISK_ALLOWLIST_PATH", allowlist)
+    monkeypatch.setattr(
+        helper,
+        "_esx_storage_inventory",
+        lambda: [
+            {
+                "candidate_type": "mounted_ext4",
+                "type": "disk",
+                "stable_device_id": "/dev/disk/by-id/atlaso-path-pci-0000_03_00_0-scsi-0_0_3_0",
+                "filesystem_type": "ext4",
+                "filesystem_uuid": "3f832583-beec-4be7-969c-92519ea77273",
+                "mount_paths": ["/mnt/operator-existing-ext4"],
+                "partitions": [],
+                "holders": [],
+                "os_related": False,
+                "read_only": False,
+                "persistent_uuid_mount": True,
+            }
+        ],
+    )
+    backups: list[tuple[Path | None, Path]] = []
+
+    helper._migrate_release_esx_storage_claims(tmp_path / "backups", backups)
+
+    assert allowlist.read_text(encoding="utf-8") == (
+        "3f832583-beec-4be7-969c-92519ea77273\t"
+        "/dev/disk/by-id/atlaso-path-pci-0000_03_00_0-scsi-0_0_3_0\t"
+        "/mnt/operator-existing-ext4\n"
+    )
+    assert backups == [(None, allowlist)]
+
+
 def test_abi_wheelhouse_lock_covers_exact_checked_in_versions(monkeypatch, tmp_path):
     """Verify that abi wheelhouse lock covers exact checked in versions.
 
@@ -1403,6 +1464,7 @@ def test_failed_candidate_restores_previous_release_and_database(monkeypatch, tm
 
     monkeypatch.setattr(helper, "_install_release_venv", install_venv)
     monkeypatch.setattr(helper, "_install_release_owned_files", lambda *_args: [])
+    monkeypatch.setattr(helper, "_migrate_release_esx_storage_claims", lambda *_args: None)
     monkeypatch.setattr(
         helper,
         "_refresh_release_data_disk_identity",
@@ -1416,6 +1478,26 @@ def test_failed_candidate_restores_previous_release_and_database(monkeypatch, tm
             }
         ],
     )
+    original_command_payload = helper._command_payload
+
+    def command_payload(command, **kwargs):
+        """Return a successful disk preflight and preserve other command behavior.
+
+        Args:
+            command: Command and arguments supplied by the helper.
+            **kwargs: Optional command execution arguments.
+        """
+        if command == ["/opt/atlaso/bin/atlaso-mount-data-disks"]:
+            return {
+                "command": command,
+                "returncode": 0,
+                "success": True,
+                "stdout": "",
+                "stderr": "",
+            }
+        return original_command_payload(command, **kwargs)
+
+    monkeypatch.setattr(helper, "_command_payload", command_payload)
     migration_injected = False
 
     def service_command(action, *units):

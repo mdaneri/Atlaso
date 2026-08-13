@@ -456,6 +456,29 @@ def test_helper_rejects_mounted_ext4_without_boot_contract():
     ]
 
 
+def test_helper_preserves_validated_disk_claims_until_apply_succeeds(monkeypatch, tmp_path: Path):
+    """Verify that later apply failures cannot leave a mounted disk unclaimed.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+        tmp_path: Pytest-provided isolated filesystem root.
+    """
+    helper = load_helper_module()
+    allowlist = tmp_path / "esx-storage-disks.conf"
+    allowlist.write_text("old-uuid\t/dev/disk/by-id/old\t/mnt/old\n", encoding="utf-8")
+    monkeypatch.setattr(helper, "ESX_STORAGE_DISK_ALLOWLIST_PATH", allowlist)
+    new_claim = "new-uuid\t/dev/disk/by-id/new\t/mnt/new"
+
+    helper._esx_storage_write_disk_allowlist([new_claim], preserve_existing=True)
+
+    assert allowlist.read_text(encoding="utf-8").splitlines() == [
+        "old-uuid\t/dev/disk/by-id/old\t/mnt/old",
+        new_claim,
+    ]
+    helper._esx_storage_write_disk_allowlist([new_claim], preserve_existing=False)
+    assert allowlist.read_text(encoding="utf-8") == f"{new_claim}\n"
+
+
 def test_helper_initialized_disk_retry_accepts_expected_mount_among_bind_mounts():
     """Verify that helper initialized disk retry accepts expected mount among bind mounts."""
     helper = load_helper_module()

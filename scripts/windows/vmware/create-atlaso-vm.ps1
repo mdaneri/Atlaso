@@ -12,7 +12,9 @@ param(
     [string]$VdiskManagerPath = '',
     [string]$DepotVmdkPath = '',
     [string]$BackupVmdkPath = '',
+    [ValidateScript({ $_ -eq '500GB' })]
     [string]$DepotDiskSize = '500GB',
+    [ValidateScript({ $_ -eq '500GB' })]
     [string]$BackupDiskSize = '500GB',
     [switch]$SkipLabNetworkAdapters
 )
@@ -159,6 +161,25 @@ function New-DataVmdk {
     )
 
     if (Test-Path -LiteralPath $Path) {
+        $stream = [System.IO.File]::OpenRead($Path)
+        try {
+            $buffer = [byte[]]::new([Math]::Min([int64]1MB, $stream.Length))
+            $bytesRead = $stream.Read($buffer, 0, $buffer.Length)
+        } finally {
+            $stream.Dispose()
+        }
+        $descriptor = [System.Text.Encoding]::ASCII.GetString($buffer, 0, $bytesRead)
+        $extents = [regex]::Matches($descriptor, '(?im)(?:^|[\r\n\x00])\s*RW\s+(?<sectors>\d+)\s+')
+        if ($extents.Count -eq 0) {
+            throw "$Label data disk does not expose a readable VMDK capacity descriptor: $Path"
+        }
+        [int64]$capacityBytes = 0
+        foreach ($extent in $extents) {
+            $capacityBytes += [int64]$extent.Groups['sectors'].Value * 512
+        }
+        if ($capacityBytes -ne 500GB) {
+            throw "$Label data disk must expose exactly 536870912000 bytes, but '$Path' exposes $capacityBytes bytes."
+        }
         Write-Host "$Label data disk already exists: $Path"
         return
     }

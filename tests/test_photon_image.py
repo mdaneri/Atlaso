@@ -1335,6 +1335,10 @@ def test_create_atlaso_vmware_test_vm_wrapper_uses_common_helpers():
     assert "vmware-vdiskmanager.exe was not found" in vm_script
     assert "vmrun $($Arguments -join ' ') failed" in vm_script
     assert "New-DataVmdk" in vm_script
+    assert vm_script.count("[ValidateScript({ $_ -eq '500GB' })]") == 2
+    assert "[regex]::Matches($descriptor" in vm_script
+    assert "$capacityBytes -ne 500GB" in vm_script
+    assert "does not expose a readable VMDK capacity descriptor" in vm_script
     assert "Set-VmxScsiDisk" in vm_script
     assert "disk.EnableUUID" in vm_script
     assert "scsi0:$Unit" in vm_script

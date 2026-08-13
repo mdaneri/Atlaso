@@ -10829,7 +10829,7 @@ def _install_release_owned_files(release_root: Path, backup_root: Path) -> list[
             and destination.read_bytes() != source.read_bytes()
         ):
             raise ValueError(f"Atlaso release cannot replace trusted key {destination.stem}")
-        backup = backup_root / destination.relative_to("/")
+        backup = backup_root / Path(*destination.parts[1:])
         if destination.exists():
             backup.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(destination, backup)
@@ -10879,6 +10879,70 @@ def _refresh_release_data_disk_identity(*, validate: bool) -> list[dict]:
     if validate and all(command["success"] for command in commands):
         commands.append(_command_payload(["/opt/atlaso/bin/atlaso-mount-data-disks"]))
     return commands
+
+
+def _migrate_release_esx_storage_claims(
+    backup_root: Path,
+    backups: list[tuple[Path | None, Path]],
+) -> None:
+    """Claim boot-safe mounted ESX disks configured by an older release.
+
+    Args:
+        backup_root: Transaction backup root used for rollback.
+        backups: Release-owned file backups extended before any claim mutation.
+    """
+    if not ATLASO_DATABASE_PATH.is_file():
+        return
+    connection = sqlite3.connect(f"file:{ATLASO_DATABASE_PATH}?mode=ro", uri=True)
+    try:
+        table = connection.execute(
+            "select 1 from sqlite_master where type = 'table' and name = 'esx_storage_volumes'"
+        ).fetchone()
+        if table is None:
+            return
+        configured = connection.execute(
+            "select stable_device_id, filesystem_uuid, mount_path "
+            "from esx_storage_volumes where source_type = 'mounted_ext4' and applied = 1"
+        ).fetchall()
+    finally:
+        connection.close()
+    if not configured:
+        return
+
+    inventory = _esx_storage_inventory()
+    claims: list[str] = []
+    for stable_id, configured_uuid, configured_mount in configured:
+        mount_path = PurePosixPath(str(configured_mount or ""))
+        matches = [
+            entry
+            for entry in inventory
+            if entry.get("candidate_type") == "mounted_ext4"
+            and str(entry.get("stable_device_id") or "") == str(stable_id or "")
+            and str(entry.get("filesystem_uuid") or "") == str(configured_uuid or "")
+            and str(mount_path) in [str(path) for path in entry.get("mount_paths", [])]
+        ]
+        if len(matches) != 1:
+            raise ValueError(f"configured mounted ESX Storage disk no longer has one exact identity: {stable_id}")
+        safety_errors = _esx_storage_mounted_disk_errors(matches[0], mount_path=mount_path)
+        if safety_errors:
+            raise ValueError(f"configured mounted ESX Storage disk is not boot-safe: {', '.join(safety_errors)}")
+        values = (str(configured_uuid), str(stable_id), str(mount_path))
+        if any(character in value for value in values for character in "\t\r\n"):
+            raise ValueError("configured mounted ESX Storage disk has an unsupported identity or mount path")
+        claims.append("\t".join(values))
+
+    destination = ESX_STORAGE_DISK_ALLOWLIST_PATH
+    backup = backup_root / Path(*destination.parts[1:])
+    if destination.exists():
+        backup.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(destination, backup)
+        backups.append((backup, destination))
+        existing = destination.read_text(encoding="utf-8").splitlines()
+    else:
+        backups.append((None, destination))
+        existing = []
+    merged = list(dict.fromkeys([line for line in existing if line.strip()] + claims))
+    _write_secret_file(destination, "\n".join(merged) + "\n", 0o644)
 
 
 def _set_release_maintenance(enabled: bool) -> dict:
@@ -11065,9 +11129,14 @@ def _apply_atlaso_release(
         _sqlite_backup(database_backup)
         database_backed_up = True
         file_backups = _install_release_owned_files(release_root, backup_root)
-        disk_identity_commands = _refresh_release_data_disk_identity(validate=True)
+        disk_identity_commands = _refresh_release_data_disk_identity(validate=False)
         commands.extend(disk_identity_commands)
         if not all(command["success"] for command in disk_identity_commands):
+            raise ValueError("Candidate Atlaso release failed data-disk identity refresh")
+        _migrate_release_esx_storage_claims(backup_root, file_backups)
+        disk_preflight = _command_payload(["/opt/atlaso/bin/atlaso-mount-data-disks"])
+        commands.append(disk_preflight)
+        if not disk_preflight["success"]:
             raise ValueError("Candidate Atlaso release failed data-disk policy validation")
         _atomic_symlink(release_root, ATLASO_CURRENT_LINK)
         commands.append(_service_command("daemon-reload"))
@@ -11974,6 +12043,26 @@ def _esx_storage_replace_managed_fstab(lines: list[str]) -> None:
     _write_secret_file(ESX_STORAGE_FSTAB_PATH, f"{cleaned}\n\n{block}\n" if cleaned else f"{block}\n", 0o644)
 
 
+def _esx_storage_write_disk_allowlist(lines: list[str], *, preserve_existing: bool) -> None:
+    """Persist exact mounted-disk claims before boot-sensitive host changes.
+
+    Args:
+        lines: Validated tab-separated UUID, stable identity, and mount claims.
+        preserve_existing: Whether to retain prior claims until apply succeeds.
+    """
+    existing = (
+        ESX_STORAGE_DISK_ALLOWLIST_PATH.read_text(encoding="utf-8").splitlines()
+        if preserve_existing and ESX_STORAGE_DISK_ALLOWLIST_PATH.is_file()
+        else []
+    )
+    claims = list(dict.fromkeys([line for line in existing if line.strip()] + lines))
+    _write_secret_file(
+        ESX_STORAGE_DISK_ALLOWLIST_PATH,
+        "\n".join(claims) + ("\n" if claims else ""),
+        0o644,
+    )
+
+
 def _esx_storage_write_runtime_config(payload: dict[str, object]) -> None:
     """Perform ESX storage write runtime config.
 
@@ -12119,6 +12208,7 @@ def _esx_storage_apply(payload: dict[str, object]) -> dict[str, object]:
             if any(character in value for value in (fs_uuid, stable_id, str(mount_path)) for character in "\t\r\n"):
                 raise ValueError(f"existing volume {volume.get('name')} has an unsupported identity or mount path")
             disk_allowlist_lines.append(f"{fs_uuid}\t{stable_id}\t{mount_path}")
+            _esx_storage_write_disk_allowlist(disk_allowlist_lines, preserve_existing=True)
             volume["filesystem_uuid"] = fs_uuid
     _esx_storage_replace_managed_fstab(fstab_lines)
     mount = _command_path("mount")
@@ -12193,11 +12283,7 @@ def _esx_storage_apply(payload: dict[str, object]) -> dict[str, object]:
     else:
         _run([exportfs, "-ua"])
         _run([systemctl, "disable", "--now", "nfs-server.service", "rpcbind.service", "rpcbind.socket"], timeout=120)
-    _write_secret_file(
-        ESX_STORAGE_DISK_ALLOWLIST_PATH,
-        "\n".join(disk_allowlist_lines) + ("\n" if disk_allowlist_lines else ""),
-        0o644,
-    )
+    _esx_storage_write_disk_allowlist(disk_allowlist_lines, preserve_existing=False)
     return {"status": "applied", "volumes": payload.get("volumes", []), "shares": len(payload.get("shares", [])), "commands": commands}
 
 
