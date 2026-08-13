@@ -82,7 +82,8 @@ brings infrastructure, storage, identity, networking, and lifecycle workflows in
 - [Windows image-build WSL environment](docs/contribute/windows-image-build-wsl.md) — provision and select the pinned,
   isolated `Atlaso-Build` host used by Inventory Linux and Photon image wrappers.
 - [Deployment asset validation](docs/reference/full-technical-reference.md#deployment-asset-validation) — validate the
-  complete Packer, systemd, and sudoers inventory locally and in protected CI.
+  complete Packer, systemd, and sudoers inventory locally and in protected CI; canonical Packer plugin discovery uses
+  the step-scoped read-only Actions token without persisting checkout credentials or exposing the token to fork code.
 
 ## Supported appliance targets
 
