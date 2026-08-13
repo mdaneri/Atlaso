@@ -25,6 +25,10 @@ MYPY_SUPPRESSION_RE = re.compile(
     r"# type:\s*ignore\[(?P<codes>[a-z][a-z0-9-]*(?:\s*,\s*[a-z][a-z0-9-]*)*)\]"
     r"\s{2,}#\s+(?P<reason>\S.*)$"
 )
+FILE_WIDE_RUFF_SUPPRESSION_RE = re.compile(
+    r"#\s*(?:ruff|flake8):\s*noqa\b",
+    re.IGNORECASE,
+)
 
 
 def tracked_python_files(root: Path = ROOT) -> list[Path]:
@@ -69,6 +73,12 @@ def suppression_errors(paths: Iterable[Path], *, root: Path = ROOT) -> list[str]
         for token in comments:
             line_number = token.start[0]
             comment = token.string
+            if FILE_WIDE_RUFF_SUPPRESSION_RE.search(comment) is not None:
+                errors.append(
+                    f"{path.relative_to(root)}:{line_number}: file-wide Ruff "
+                    "suppressions are forbidden."
+                )
+                continue
             if "# noqa" in comment and RUFF_SUPPRESSION_RE.search(comment) is None:
                 errors.append(
                     f"{path.relative_to(root)}:{line_number}: Ruff suppression must use "

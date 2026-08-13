@@ -47,6 +47,17 @@ def test_suppressions_accept_rule_codes_with_rationales(tmp_path: Path) -> None:
     assert suppression_errors([source], root=tmp_path) == []
 
 
+def test_suppressions_reject_file_wide_ruff_directives(tmp_path: Path) -> None:
+    """Reject directives that disable Ruff for an entire source file."""
+    for directive in ("# ruff: noqa", "# flake8: noqa"):
+        source = tmp_path / "sample.py"
+        source.write_text(f"{directive}\nvalue = object()\n", encoding="utf-8")
+
+        errors = suppression_errors([source], root=tmp_path)
+
+        assert errors == ["sample.py:1: file-wide Ruff suppressions are forbidden."]
+
+
 def test_static_analysis_configuration_is_pinned_and_scoped() -> None:
     """Keep analyzer versions exact and the typed ratchet explicit."""
     project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
