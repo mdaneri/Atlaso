@@ -134,7 +134,8 @@ cannot make a running or registered target appear unrelated. Already-stopped and
 idempotent cleanup cases. A nonzero command, malformed (including asymmetrically quoted paths or nonnumeric registration
 keys) or unresolvable inventory,
 target still listed after an apparently successful transition, or missing VMX preserves the artifact directory and
-makes the command fail. When lifecycle
+makes the command fail. Registration inventory reads are terminating, so access denial or an incomplete I/O read cannot
+be interpreted as an empty or partial registered-VM set. When lifecycle
 execution and cleanup both fail, the final error reports the original scenario failure together with the cleanup failure
 and preserved path.
 

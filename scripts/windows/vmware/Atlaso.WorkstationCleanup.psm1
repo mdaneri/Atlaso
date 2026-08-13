@@ -354,7 +354,7 @@ function Get-AtlasoWorkstationRegisteredVmPaths {
     )
 
     $paths = @()
-    foreach ($line in Get-Content -LiteralPath $InventoryPath) {
+    foreach ($line in Get-Content -LiteralPath $InventoryPath -ErrorAction Stop) {
         if ($line -notmatch '^\s*vmlist[^\s=]*\.config\b') {
             continue
         }

@@ -503,6 +503,13 @@ def test_general_removal_rejects_malformed_registration_entries(
     assert vmx_path.exists()
 
 
+def test_registration_inventory_read_errors_are_terminating() -> None:
+    """An incomplete inventory read must abort cleanup instead of returning partial state."""
+    module = (VMWARE_SCRIPT_ROOT / "Atlaso.WorkstationCleanup.psm1").read_text(encoding="utf-8")
+
+    assert "Get-Content -LiteralPath $InventoryPath -ErrorAction Stop" in module
+
+
 def test_general_removal_matches_a_running_vmx_by_filesystem_identity(
     tmp_path: Path,
 ) -> None:
