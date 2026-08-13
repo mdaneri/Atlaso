@@ -10974,7 +10974,12 @@ def _migrate_release_esx_storage_baseline(
     connection: sqlite3.Connection,
     identity_migrations: list[tuple[str, str, str, str, str]],
 ) -> None:
-    """Move applied ESX aliases inside a verified baseline without hiding other drift."""
+    """Move applied ESX aliases inside a verified baseline without hiding other drift.
+
+    Args:
+        connection: Open appliance database connection participating in the migration transaction.
+        identity_migrations: Verified source type, new alias, old alias, UUID, and mount tuples.
+    """
     migrations = {
         (source_type, stable_id, configured_uuid, configured_mount): migrated_identity
         for source_type, migrated_identity, stable_id, configured_uuid, configured_mount in identity_migrations
@@ -11954,7 +11959,11 @@ def _esx_storage_inventory() -> list[dict[str, object]]:
 
 
 def _esx_storage_mount_is_writable(mount_path: str) -> bool:
-    """Return whether one exact active mount has the read-write option."""
+    """Return whether one exact active mount has the read-write option.
+
+    Args:
+        mount_path: Exact active mount path to inspect.
+    """
     findmnt = _command_path("findmnt")
     if findmnt is None or not mount_path:
         return False
@@ -11964,12 +11973,20 @@ def _esx_storage_mount_is_writable(mount_path: str) -> bool:
 
 
 def _esx_storage_fstab_escape_field(value: object) -> str:
-    """Escape one fstab field without changing its filesystem meaning."""
+    """Escape one fstab field without changing its filesystem meaning.
+
+    Args:
+        value: Field value to encode for fstab storage.
+    """
     return str(value).replace("\\", "\\134").replace(" ", "\\040").replace("\t", "\\011")
 
 
 def _esx_storage_fstab_decode_field(value: str) -> str:
-    """Decode the standard octal escapes accepted in one fstab field."""
+    """Decode the standard octal escapes accepted in one fstab field.
+
+    Args:
+        value: Encoded fstab field to decode.
+    """
     escapes = {"040": " ", "011": "\t", "012": "\n", "134": "\\"}
     return re.sub(r"\\(040|011|012|134)", lambda match: escapes[match.group(1)], value)
 
@@ -11984,15 +12001,43 @@ def _esx_storage_uuid_fstab_entry_exists(filesystem_uuid: str, mount_path: str) 
     if not filesystem_uuid or not mount_path or not ESX_STORAGE_FSTAB_PATH.exists():
         return False
     source = f"UUID={filesystem_uuid}"
+    matches: list[bool] = []
     for raw_line in ESX_STORAGE_FSTAB_PATH.read_text(encoding="utf-8").splitlines():
         line = raw_line.strip()
         if not line or line.startswith("#"):
             continue
         fields = line.split()
-        decoded_fields = [_esx_storage_fstab_decode_field(field) for field in fields[:3]]
-        if len(fields) >= 3 and decoded_fields == [source, mount_path, "ext4"]:
-            return True
-    return False
+        decoded_fields = [_esx_storage_fstab_decode_field(field) for field in fields[:4]]
+        if len(fields) < 4 or decoded_fields[:3] != [source, mount_path, "ext4"]:
+            continue
+        writable = True
+        for option in decoded_fields[3].split(","):
+            if option == "ro":
+                writable = False
+            elif option == "rw":
+                writable = True
+        matches.append(writable)
+    return matches == [True]
+
+
+def _esx_storage_managed_bind_fstab_entry_exists(mount_path: str) -> bool:
+    """Return whether the root-owned ESX Storage block defines one bind target.
+
+    Args:
+        mount_path: Exact additional bind mount target to verify.
+    """
+    matches = 0
+    for line in _esx_storage_managed_fstab_lines():
+        fields = line.split()
+        decoded_fields = [_esx_storage_fstab_decode_field(field) for field in fields[:4]]
+        if (
+            len(fields) >= 4
+            and decoded_fields[1] == mount_path
+            and decoded_fields[2] == "none"
+            and "bind" in decoded_fields[3].split(",")
+        ):
+            matches += 1
+    return matches == 1
 
 
 def _esx_storage_blank_disk_errors(entry: dict[str, object]) -> list[str]:
@@ -12045,7 +12090,7 @@ def _esx_storage_mounted_disk_errors(entry: dict[str, object], *, mount_path: Pa
     unexpected_mounts = [
         path
         for path in mount_paths
-        if path != selected_mount and not path.startswith(f"{ESX_STORAGE_EXPORT_ROOT.as_posix().rstrip('/')}/")
+        if path != selected_mount and not _esx_storage_managed_bind_fstab_entry_exists(path)
     ]
     if unexpected_mounts:
         errors.append("has unexpected additional mounts")

@@ -438,6 +438,11 @@ def test_helper_inventory_prefers_uuid_mount_and_keeps_all_mountpoints(monkeypat
     }
     monkeypatch.setattr(helper, "_command_path", lambda command: f"/usr/bin/{command}")
     def run(command):
+        """Return deterministic lsblk or findmnt output for inventory.
+
+        Args:
+            command: Helper subprocess argument list.
+        """
         if "--mountpoint" in command:
             return subprocess.CompletedProcess(command, 0, stdout="rw,relatime\n", stderr="")
         return subprocess.CompletedProcess(command, 0, stdout=json.dumps(lsblk_payload), stderr="")
@@ -476,6 +481,70 @@ def test_helper_fstab_field_encoding_round_trips_spaces_and_backslashes():
 
     assert encoded == "/mnt/operator\\040data\\134archive"
     assert helper._esx_storage_fstab_decode_field(encoded) == value
+
+
+@pytest.mark.parametrize(
+    ("options", "expected"),
+    [("defaults", True), ("defaults,ro", False), ("ro,rw", True), ("rw,ro", False)],
+)
+def test_helper_requires_one_writable_persistent_uuid_mount(
+    monkeypatch, tmp_path: Path, options: str, expected: bool
+):
+    """Require one unambiguous writable fstab entry for an existing disk.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+        tmp_path: Pytest-provided isolated filesystem root.
+        options: Candidate fstab mount options.
+        expected: Whether the persistent mount contract should pass.
+    """
+    helper = load_helper_module()
+    fstab = tmp_path / "fstab"
+    fstab.write_text(f"UUID=existing /mnt/existing ext4 {options} 0 2\n", encoding="utf-8")
+    monkeypatch.setattr(helper, "ESX_STORAGE_FSTAB_PATH", fstab)
+
+    assert helper._esx_storage_uuid_fstab_entry_exists("existing", "/mnt/existing") is expected
+    if expected:
+        fstab.write_text(fstab.read_text(encoding="utf-8") * 2, encoding="utf-8")
+        assert helper._esx_storage_uuid_fstab_entry_exists("existing", "/mnt/existing") is False
+
+
+def test_helper_requires_additional_esx_bind_mount_to_be_managed(monkeypatch, tmp_path: Path):
+    """Exempt an additional ESX bind target only inside the managed fstab block.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+        tmp_path: Pytest-provided isolated filesystem root.
+    """
+    helper = load_helper_module()
+    fstab = tmp_path / "fstab"
+    bind_mount = "/srv/atlaso/esx-storage/existing"
+    managed_entry = f"/mnt/existing/share {bind_mount} none bind,nofail 0 0"
+    entry = {
+        "type": "disk",
+        "stable_device_id": "/dev/disk/by-id/wwn-existing",
+        "filesystem_type": "ext4",
+        "filesystem_uuid": "existing-uuid",
+        "mount_paths": ["/mnt/existing", bind_mount],
+        "writable_mount_paths": ["/mnt/existing", bind_mount],
+        "partitions": [],
+        "holders": [],
+        "os_related": False,
+        "read_only": False,
+        "persistent_uuid_mount": True,
+    }
+    monkeypatch.setattr(helper, "ESX_STORAGE_FSTAB_PATH", fstab)
+    fstab.write_text(
+        f"{helper.ESX_STORAGE_FSTAB_BEGIN}\n{managed_entry}\n{helper.ESX_STORAGE_FSTAB_END}\n",
+        encoding="utf-8",
+    )
+
+    assert helper._esx_storage_mounted_disk_errors(entry, mount_path=PurePosixPath("/mnt/existing")) == []
+
+    fstab.write_text(f"{managed_entry}\n", encoding="utf-8")
+    assert helper._esx_storage_mounted_disk_errors(
+        entry, mount_path=PurePosixPath("/mnt/existing")
+    ) == ["has unexpected additional mounts"]
 
 
 def test_helper_rejects_mounted_ext4_without_boot_contract():
@@ -520,7 +589,13 @@ def test_helper_rejects_mounted_ext4_without_boot_contract():
 def test_helper_rejects_mounted_ext4_state_that_cannot_pass_boot(
     mount_paths: list[str], writable_mount_paths: list[str], expected: str
 ):
-    """Keep apply-time mounted-disk admission consistent with boot checks."""
+    """Keep apply-time mounted-disk admission consistent with boot checks.
+
+    Args:
+        mount_paths: Active mount targets reported for the disk.
+        writable_mount_paths: Active mount targets with the read-write option.
+        expected: Exact admission error expected for the unsafe state.
+    """
     helper = load_helper_module()
     entry = {
         "type": "disk",

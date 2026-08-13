@@ -667,7 +667,11 @@ def test_initialized_appliance_rejects_formatted_esx_disk_with_wrong_claim(tmp_p
 
 
 def test_initialized_appliance_rejects_relabelled_formatted_esx_disk(tmp_path: Path):
-    """Reject a typed formatted-disk claim after its Atlaso label is replaced."""
+    """Reject a typed formatted-disk claim after its Atlaso label is replaced.
+
+    Args:
+        tmp_path: Pytest-provided isolated filesystem root.
+    """
     disks = _vmware_disks(tmp_path)
     disks[2].update(filesystem="ext4", label="ATLASO_DEPOT", uuid="depot-uuid")
     disks[3].update(filesystem="ext4", label="ATLASO_BKUP", uuid="backup-uuid")
@@ -709,15 +713,23 @@ def test_initialized_appliance_rejects_relabelled_formatted_esx_disk(tmp_path: P
     assert calls == []
 
 
-@pytest.mark.parametrize(("esx_mount_options", "accepted"), [("rw,relatime", True), ("ro,relatime", False)])
+@pytest.mark.parametrize(
+    ("esx_mount_options", "fstab_options", "accepted"),
+    [
+        ("rw,relatime", "defaults", True),
+        ("ro,relatime", "defaults", False),
+        ("rw,relatime", "defaults,ro", False),
+    ],
+)
 def test_initialized_appliance_requires_writable_claimed_mounted_ext4_whole_disk(
-    tmp_path: Path, esx_mount_options: str, accepted: bool
+    tmp_path: Path, esx_mount_options: str, fstab_options: str, accepted: bool
 ):
     """Require a stable UUID-persisted mounted ext4 disk to remain writable.
 
     Args:
         tmp_path: Pytest-provided isolated filesystem root.
         esx_mount_options: Mount options returned for the claimed ESX Storage path.
+        fstab_options: Persistent mount options configured for the claimed path.
         accepted: Whether boot validation should accept the mount options.
     """
     disks = _vmware_disks(tmp_path)
@@ -733,7 +745,7 @@ def test_initialized_appliance_requires_writable_claimed_mounted_ext4_whole_disk
     disks.append(esx_disk)
     esx_mount = "/mnt/operator esx data"
     stable_id = tmp_path / "dev" / "disk" / "by-id" / "atlaso-path-test-sde"
-    fstab = "UUID=external-uuid /mnt/operator\\040esx\\040data ext4 defaults 0 2\n"
+    fstab = f"UUID=external-uuid /mnt/operator\\040esx\\040data ext4 {fstab_options} 0 2\n"
     allowlist = f"external-uuid\t{stable_id}\t{esx_mount}\tmounted_ext4\n"
 
     completed, calls = _run_mount_script(

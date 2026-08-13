@@ -676,7 +676,7 @@ def normalize_disk_inventory_entry(entry: dict[str, Any], *, claimed_ids: set[st
         unexpected_mounts = [
             candidate_mount
             for candidate_mount in mount_paths
-            if candidate_mount != mount_path and not candidate_mount.startswith(f"{ESX_STORAGE_EXPORT_ROOT}/")
+            if candidate_mount != mount_path
         ]
         if unexpected_mounts:
             reasons.append("has unexpected additional mounts")

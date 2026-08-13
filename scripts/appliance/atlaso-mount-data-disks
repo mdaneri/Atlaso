@@ -293,8 +293,16 @@ fstab_uuid_mount_exists() {
       gsub(/\\134/, sprintf("%c", 92), value)
       return value
     }
-    decode_fstab($1) == source && decode_fstab($2) == mountpoint && $3 == "ext4" { found = 1 }
-    END { exit found ? 0 : 1 }
+    decode_fstab($1) == source && decode_fstab($2) == mountpoint && $3 == "ext4" {
+      found++
+      writable = 1
+      count = split($4, options, ",")
+      for (option_index = 1; option_index <= count; option_index++) {
+        if (options[option_index] == "ro") writable = 0
+        else if (options[option_index] == "rw") writable = 1
+      }
+    }
+    END { exit found == 1 && writable ? 0 : 1 }
   ' "$FSTAB_PATH"
 }
 
