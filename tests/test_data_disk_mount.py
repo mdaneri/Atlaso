@@ -527,6 +527,50 @@ def test_initialized_appliance_allows_only_managed_esx_storage_disk(tmp_path: Pa
     assert calls == []
 
 
+def test_initialized_appliance_mounts_managed_esx_storage_before_preflight(tmp_path: Path):
+    """Mount and verify a claimed managed disk without relying on systemd fstab timing.
+
+    Args:
+        tmp_path: Pytest-provided isolated filesystem root.
+    """
+    disks = _vmware_disks(tmp_path)
+    disks[2].update(filesystem="ext4", label="ATLASO_DEPOT", uuid="depot-uuid")
+    disks[3].update(filesystem="ext4", label="ATLASO_BKUP", uuid="backup-uuid")
+    esx_disk = _disk(
+        tmp_path / "dev" / "sde",
+        "0:4:0",
+        filesystem="ext4",
+        label="lf-0123456789ab",
+        uuid="esx-uuid",
+    )
+    disks.append(esx_disk)
+    esx_mount = "/mnt/atlaso-esx-storage/datastore"
+    fstab = "\n".join(
+        [
+            "# BEGIN ATLASO ESX STORAGE",
+            f"UUID=esx-uuid {esx_mount} ext4 defaults,nofail,x-systemd.device-timeout=30 0 2",
+            "# END ATLASO ESX STORAGE",
+            "",
+        ]
+    )
+
+    completed, calls = _run_mount_script(
+        tmp_path,
+        disks,
+        depot_tuple="0:2:0",
+        backup_tuple="0:3:0",
+        mounts={
+            "/mnt/atlaso-vcf-offline-depot": str(disks[2]["path"]),
+            "/mnt/atlaso-vcf-backups": str(disks[3]["path"]),
+        },
+        mount_sources={esx_mount: str(esx_disk["path"])},
+        fstab=fstab,
+    )
+
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    assert calls == []
+
+
 def test_initialized_appliance_allows_claimed_mounted_ext4_whole_disk(tmp_path: Path):
     """Allow one stable UUID-persisted mounted ext4 disk claimed by ESX Storage.
 

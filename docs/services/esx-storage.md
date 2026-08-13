@@ -163,6 +163,9 @@ root-owned existing-disk claims in `/etc/atlaso/esx-storage-disks.conf`,
 services. Reapply recognizes an existing bind target by its mountpoint and filesystem object identity, so a healthy
 share is not mounted again; an unexpected mount at a managed target fails closed instead of being replaced. At boot,
 nginx, the HTTPS bootstrap, Atlaso control plane, and worker require successful fixed/managed data-disk verification.
+The preflight mounts each positively claimed primary ESX Storage path from its UUID-backed fstab entry when it is not
+already active, then verifies the mounted UUID and block-device source before accepting the extra whole disk. Boot
+safety therefore does not depend on `nofail` mount-unit timing.
 
 Settings backups include the service, volume fingerprints/UUIDs/mounts, and shares but never a format authorization.
 Restore marks volumes for runtime verification before reapply. Factory reset removes Atlaso desired state, exports, and

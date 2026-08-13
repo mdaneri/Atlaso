@@ -304,6 +304,21 @@ validate_managed_esx_mounts() {
   [ "$found_primary" = "true" ]
 }
 
+ensure_managed_esx_primary_mount() {
+  disk="$1"
+  uuid="$2"
+  primary_mount="$3"
+
+  mounted_source="$(findmnt -rn -M "$primary_mount" -o SOURCE 2>/dev/null || true)"
+  if [ -z "$mounted_source" ]; then
+    mount "$primary_mount" >/dev/null 2>&1 || return 1
+    mounted_source="$(findmnt -rn -M "$primary_mount" -o SOURCE 2>/dev/null || true)"
+  fi
+  [ -n "$mounted_source" ] || return 1
+  [ "$(readlink -f "$mounted_source" 2>/dev/null || true)" = "$disk" ] || return 1
+  [ "$(findmnt -rn -M "$primary_mount" -o UUID 2>/dev/null || true)" = "$uuid" ] || return 1
+}
+
 is_managed_esx_storage_disk() {
   disk="$1"
   [ "$(blkid -s TYPE -o value "$disk" 2>/dev/null || true)" = "ext4" ] || return 1
@@ -327,6 +342,7 @@ is_managed_esx_storage_disk() {
     *) primary_mount="$(allowlisted_esx_mount "$uuid" "$disk" || true)" ;;
   esac
   [ -n "$primary_mount" ] || return 1
+  ensure_managed_esx_primary_mount "$disk" "$uuid" "$primary_mount" || return 1
   validate_managed_esx_mounts "$disk" "$uuid" "$primary_mount"
 }
 
