@@ -248,7 +248,6 @@ jobs:
                 <code class="source">https://mdaneri.github.io/Atlaso/updates</code>
                 <nav aria-label="Release repository links">
                   <a href="./docs/">Documentation</a>
-                  <a href="./updates/channels/stable/manifest.json">Stable channel (default)</a>
                   <a href="./updates/channels/development/manifest.json">Development channel</a>
                   <a href="https://github.com/mdaneri/Atlaso/releases">GitHub Releases</a>
                   <a href="https://github.com/mdaneri/Atlaso">Source repository</a>

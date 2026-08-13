@@ -318,7 +318,6 @@ def test_release_workflows_use_successful_main_sha_and_promote_without_rebuildin
     assert "Everything your virtualization lab needs." in publication
     assert "Infrastructure • Storage • Identity • Networking • Lifecycle" in publication
     assert "The HTML page is informational." in publication
-    assert "Stable channel (default)" in publication
     assert "python scripts/check_published_release_channel.py" in publication
     assert "--expected-channel development" in publication
     publication_check = publication.split(
