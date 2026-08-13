@@ -12,6 +12,14 @@ Repeat this gate whenever the repository, worktree, or working directory changes
 delegating agent must include the gate in every delegated prompt and verify completion before using delegated work. Stop
 for maintainer direction if a policy is missing, conflicting, or unclear.
 
+## Codex Task Title Traceability
+
+After identifying or creating the linked GitHub issue, rename the current Codex task to
+`Short description · Issue #<issue>`. After opening or discovering the pull request, rename it again to
+`Short description · Issue #<issue> · PR #<pr>`. Keep the short description concise and stable, and omit only a
+segment whose identifier does not exist yet. When one task spans multiple items, list every identifier in its segment,
+for example `Short description · Issues #123, #124 · PRs #456, #457`.
+
 ## Mandatory UI Design Guide Gate
 
 Before planning or implementing any user-interface change, read the
