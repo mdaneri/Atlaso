@@ -6275,6 +6275,13 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
     invalid_esxi_host_mac["data"]["esxi_pxe_hosts"].append(
         {"hostname": "invalid-mac-host", "mac_address": "not-a-mac"}
     )
+    duplicate_normalized_esxi_host_mac = deepcopy(archive)
+    duplicate_normalized_esxi_host_mac["data"]["esxi_pxe_hosts"].extend(
+        [
+            {"hostname": "duplicate-mac-host-one", "mac_address": "02:11:22:33:44:55"},
+            {"hostname": "duplicate-mac-host-two", "mac_address": "0211.2233.4455"},
+        ]
+    )
     invalid_esxi_installer_iso = deepcopy(archive)
     invalid_esxi_installer_iso["data"]["esxi_pxe_hosts"].append(
         {
@@ -6580,6 +6587,7 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
         (duplicate_managed_certificate_owner, "duplicates a managed certificate owner"),
         (invalid_storage_state, "ESX Storage state is invalid: Datastore invalid-share must use NFS 3 or NFS 4.1"),
         (invalid_esxi_host_mac, "esxi_pxe_hosts' has an invalid MAC address"),
+        (duplicate_normalized_esxi_host_mac, "duplicates a normalized MAC address"),
         (invalid_esxi_installer_iso, "has an invalid installer ISO"),
         (invalid_vcf_depot_store, "Depot store path must be /mnt/atlaso-vcf-offline-depot"),
         (invalid_esxi_kickstart, "multiple install/upgrade directives"),

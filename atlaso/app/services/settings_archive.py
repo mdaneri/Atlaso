@@ -1655,7 +1655,6 @@ ARCHIVE_UNGUARDED_UNIQUE_IDENTITIES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("ldap_organizations", ("suffix_dn",)),
     ("oidc_clients", ("client_id",)),
     ("oidc_client_redirect_uris", ("client_id", "kind", "uri")),
-    ("esxi_pxe_hosts", ("mac_address",)),
     ("esx_storage_volumes", ("name",)),
     ("esx_storage_volumes", ("stable_device_id",)),
     ("esx_nfs_shares", ("datastore_name",)),
@@ -3234,12 +3233,20 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
                 f"The settings archive ESXi Kickstart {kickstart.name} is invalid: {kickstart_errors[0]}"
             )
     archived_hosts: list[EsxiPxeHost] = []
+    archived_host_macs: set[str] = set()
     for row_index, row in enumerate(data.get("esxi_pxe_hosts", []), start=1):
         mac_address = str(row.get("mac_address") or "")
-        if mac_address and not normalize_host_mac(mac_address):
+        normalized_mac_address = normalize_host_mac(mac_address)
+        if mac_address and not normalized_mac_address:
             raise ValueError(
                 f"The settings archive row {row_index} in 'esxi_pxe_hosts' has an invalid MAC address."
             )
+        if normalized_mac_address in archived_host_macs:
+            raise ValueError(
+                f"The settings archive row {row_index} in 'esxi_pxe_hosts' duplicates a normalized MAC address."
+            )
+        archived_host_macs.add(normalized_mac_address)
+        row["mac_address"] = normalized_mac_address
         try:
             normalized_installer_iso_path = normalize_installer_iso_path(
                 str(row.get("installer_iso_path") or ""),
