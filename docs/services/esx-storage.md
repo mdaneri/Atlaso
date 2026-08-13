@@ -171,7 +171,8 @@ the same identity during apply, release migration, and reboot validation.
 
 An existing ext4 source must be read-write at its selected mount and cannot have another non-Atlaso mount. Apply rejects
 state that the boot verifier would later reject, preventing a successful configuration change from making the next boot
-fail closed.
+fail closed. The root-owned disk claim records whether Atlaso formatted the disk or accepted an existing filesystem;
+boot checks use that source type rather than treating a label pattern as ownership.
 
 For a blank fixed disk, the boot helper revalidates the topology link, resolved device, controller, capacity, contents,
 read-only state, holders, raw-device users, and mounts immediately before formatting. The format command uses that

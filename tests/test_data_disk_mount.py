@@ -664,14 +664,14 @@ def test_initialized_appliance_allows_claimed_mounted_ext4_whole_disk(tmp_path: 
         tmp_path / "dev" / "sde",
         "0:4:0",
         filesystem="ext4",
-        label="operator-data",
+        label="lf-0123456789ab",
         uuid="external-uuid",
     )
     disks.append(esx_disk)
     esx_mount = "/mnt/operator esx data"
     stable_id = tmp_path / "dev" / "disk" / "by-id" / "atlaso-path-test-sde"
     fstab = "UUID=external-uuid /mnt/operator\\040esx\\040data ext4 defaults 0 2\n"
-    allowlist = f"external-uuid\t{stable_id}\t{esx_mount}\n"
+    allowlist = f"external-uuid\t{stable_id}\t{esx_mount}\tmounted_ext4\n"
 
     completed, calls = _run_mount_script(
         tmp_path,

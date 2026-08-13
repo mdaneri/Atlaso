@@ -1071,10 +1071,10 @@ def test_release_migrates_boot_safe_configured_mounted_disk_claim(monkeypatch, t
     assert allowlist.read_text(encoding="utf-8") == (
         "3f832583-beec-4be7-969c-92519ea77273\t"
         "/dev/disk/by-id/atlaso-path-pci-0000_03_00_0-scsi-0_0_3_0\t"
-        "/mnt/operator-existing-ext4\n"
+        "/mnt/operator-existing-ext4\tmounted_ext4\n"
         "aa0a2164-220e-4dbb-acb8-f4215f3e1b1f\t"
         "/dev/disk/by-id/atlaso-path-pci-0000_03_00_0-scsi-0_0_4_0\t"
-        "/mnt/atlaso-esx-storage/formatted\n"
+        "/mnt/atlaso-esx-storage/formatted\tblank_disk\n"
     )
     with sqlite3.connect(database) as connection:
         assert connection.execute(

@@ -320,9 +320,11 @@ allowlisted_esx_mount() {
   uuid="$1"
   disk="$2"
   [ -f "$ESX_STORAGE_ALLOWLIST_PATH" ] || return 1
-  entry="$(awk -F '\t' -v uuid="$uuid" '$1 == uuid { if (found++) exit 2; stable = $2; mountpoint = $3 } END { if (found == 1) print stable "\t" mountpoint; else exit 1 }' "$ESX_STORAGE_ALLOWLIST_PATH")" || return 1
+  entry="$(awk -F '\t' -v uuid="$uuid" '$1 == uuid { if (found++) exit 2; stable = $2; mountpoint = $3; source_type = $4 } END { if (found == 1) print stable "\t" mountpoint "\t" (source_type ? source_type : "legacy"); else exit 1 }' "$ESX_STORAGE_ALLOWLIST_PATH")" || return 1
   stable_id="${entry%%	*}"
-  mountpoint="${entry#*	}"
+  remainder="${entry#*	}"
+  mountpoint="${remainder%%	*}"
+  source_type="${remainder#*	}"
   case "$stable_id" in
     "$BY_ID_ROOT"/*) ;;
     *) return 1 ;;
@@ -330,7 +332,11 @@ allowlisted_esx_mount() {
   [ -L "$stable_id" ] || return 1
   [ "$(readlink -f "$stable_id" 2>/dev/null || true)" = "$disk" ] || return 1
   fstab_uuid_mount_exists "$uuid" "$mountpoint" || return 1
-  printf '%s\n' "$mountpoint"
+  case "$source_type" in
+    blank_disk|mounted_ext4|legacy) ;;
+    *) return 1 ;;
+  esac
+  printf '%s\t%s\n' "$source_type" "$mountpoint"
 }
 
 validate_managed_esx_mounts() {
@@ -386,19 +392,24 @@ is_managed_esx_storage_disk() {
     return 1
   fi
 
-  label="$(blkid -s LABEL -o value "$disk" 2>/dev/null || true)"
-  case "$label" in
-    lf-????????????)
-      suffix="${label#lf-}"
-      case "$suffix" in
-        *[!0-9a-f]*) return 1 ;;
-      esac
-      primary_mount="$(managed_esx_primary_mount "$uuid" || true)"
-      claimed_mount="$(allowlisted_esx_mount "$uuid" "$disk" || true)"
-      [ -n "$claimed_mount" ] && [ "$claimed_mount" = "$primary_mount" ] || return 1
-      ;;
-    *) primary_mount="$(allowlisted_esx_mount "$uuid" "$disk" || true)" ;;
-  esac
+  claim="$(allowlisted_esx_mount "$uuid" "$disk" || true)"
+  [ -n "$claim" ] || return 1
+  source_type="${claim%%	*}"
+  primary_mount="${claim#*	}"
+  if [ "$source_type" = "blank_disk" ]; then
+    [ "$primary_mount" = "$(managed_esx_primary_mount "$uuid" || true)" ] || return 1
+  elif [ "$source_type" = "legacy" ]; then
+    label="$(blkid -s LABEL -o value "$disk" 2>/dev/null || true)"
+    case "$label" in
+      lf-????????????)
+        suffix="${label#lf-}"
+        case "$suffix" in
+          *[!0-9a-f]*) return 1 ;;
+        esac
+        [ "$primary_mount" = "$(managed_esx_primary_mount "$uuid" || true)" ] || return 1
+        ;;
+    esac
+  fi
   [ -n "$primary_mount" ] || return 1
   ensure_managed_esx_primary_mount "$disk" "$uuid" "$primary_mount" || return 1
   validate_managed_esx_mounts "$disk" "$uuid" "$primary_mount"

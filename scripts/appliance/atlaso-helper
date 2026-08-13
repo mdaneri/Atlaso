@@ -10929,7 +10929,7 @@ def _migrate_release_esx_storage_claims(
         if safety_errors:
             raise ValueError(f"configured mounted ESX Storage disk is not boot-safe: {', '.join(safety_errors)}")
         migrated_identity = str(matches[0]["stable_device_id"])
-        values = (str(configured_uuid), migrated_identity, str(mount_path))
+        values = (str(configured_uuid), migrated_identity, str(mount_path), str(source_type))
         if any(character in value for value in values for character in "\t\r\n"):
             raise ValueError("configured mounted ESX Storage disk has an unsupported identity or mount path")
         claims.append("\t".join(values))
@@ -12230,7 +12230,13 @@ def _esx_storage_write_disk_allowlist(lines: list[str], *, preserve_existing: bo
         if preserve_existing and ESX_STORAGE_DISK_ALLOWLIST_PATH.is_file()
         else []
     )
-    claims = list(dict.fromkeys([line for line in existing if line.strip()] + lines))
+    incoming_uuids = {line.split("\t", 1)[0] for line in lines if line.strip()}
+    retained = [
+        line
+        for line in existing
+        if line.strip() and line.split("\t", 1)[0] not in incoming_uuids
+    ]
+    claims = list(dict.fromkeys(retained + lines))
     _write_secret_file(
         ESX_STORAGE_DISK_ALLOWLIST_PATH,
         "\n".join(claims) + ("\n" if claims else ""),
@@ -12367,7 +12373,7 @@ def _esx_storage_apply(payload: dict[str, object]) -> dict[str, object]:
             )
             if any(character in value for value in (fs_uuid, stable_id, str(mount_path)) for character in "\t\r\n"):
                 raise ValueError(f"disk {stable_id} has an unsupported identity or mount path")
-            disk_allowlist_lines.append(f"{fs_uuid}\t{stable_id}\t{mount_path}")
+            disk_allowlist_lines.append(f"{fs_uuid}\t{stable_id}\t{mount_path}\tblank_disk")
             _esx_storage_write_disk_allowlist(disk_allowlist_lines, preserve_existing=True)
             volume["filesystem_uuid"] = fs_uuid
         else:
@@ -12394,7 +12400,7 @@ def _esx_storage_apply(payload: dict[str, object]) -> dict[str, object]:
             stable_id = str(entry["stable_device_id"])
             if any(character in value for value in (fs_uuid, stable_id, str(mount_path)) for character in "\t\r\n"):
                 raise ValueError(f"existing volume {volume.get('name')} has an unsupported identity or mount path")
-            disk_allowlist_lines.append(f"{fs_uuid}\t{stable_id}\t{mount_path}")
+            disk_allowlist_lines.append(f"{fs_uuid}\t{stable_id}\t{mount_path}\tmounted_ext4")
             _esx_storage_write_disk_allowlist(disk_allowlist_lines, preserve_existing=True)
             volume["filesystem_uuid"] = fs_uuid
     _esx_storage_replace_managed_fstab(
