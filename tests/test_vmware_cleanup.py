@@ -462,6 +462,8 @@ def test_general_removal_accepts_balanced_running_inventory_quotes(tmp_path: Pat
         "vmlist0.config\n",
         'vmlist.config = "C:\\VMs\\Atlaso.vmx"\n',
         'vmlistA.config = "C:\\VMs\\Atlaso.vmx"\n',
+        'vmlist 0.config = "C:\\VMs\\Atlaso.vmx"\n',
+        'vmlist0 .config = "C:\\VMs\\Atlaso.vmx"\n',
         'vmlist0.config = "relative-registered.vmx"\n',
     ],
 )
@@ -501,6 +503,41 @@ def test_general_removal_rejects_malformed_registration_entries(
     assert result.returncode != 0
     assert "refusing filesystem cleanup" in result.stderr
     assert vmx_path.exists()
+
+
+def test_general_removal_ignores_config_text_in_unrelated_registration_values(
+    tmp_path: Path,
+) -> None:
+    """A non-config inventory key remains unrelated when its value contains config text.
+
+    Args:
+        tmp_path: Isolated test directory.
+    """
+    vm_directory = tmp_path / "Atlaso-Unrelated-Registration"
+    vmx_path = vm_directory / "Atlaso-Unrelated-Registration.vmx"
+    _write_vmx(vmx_path, "Atlaso-Unrelated-Registration")
+    vmrun_path, environment, _ = _write_fake_vmrun(
+        tmp_path / "fake",
+        [vmx_path],
+        running=False,
+        registered=False,
+    )
+    inventory_path = Path(environment["ATLASO_FAKE_VMRUN_INVENTORY"])
+    inventory_path.write_text('vmlist0.DisplayName = "Atlaso.config"\n', encoding="utf-8")
+
+    result = _run_script(
+        VMWARE_SCRIPT_ROOT / "remove-atlaso-vm.ps1",
+        "-VmxPath",
+        str(vmx_path),
+        "-VmrunPath",
+        str(vmrun_path),
+        "-ExpectedName",
+        "Atlaso-Unrelated-Registration",
+        environment=environment,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert not vm_directory.exists()
 
 
 def test_cleanup_safety_content_read_errors_are_terminating() -> None:

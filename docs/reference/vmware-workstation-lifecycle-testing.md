@@ -131,8 +131,8 @@ non-reparse-point artifact root. It reads checked running and registered VM inve
 VMX to its Windows volume and file identity, stops a listed running VM, unregisters a listed registration, and confirms
 that each transition completed before deleting files. Filesystem aliases such as DOS 8.3 or mapped-drive forms therefore
 cannot make a running or registered target appear unrelated. Already-stopped and already-unregistered VMs remain
-idempotent cleanup cases. A nonzero command, malformed (including asymmetrically quoted paths or nonnumeric registration
-keys) or unresolvable inventory,
+idempotent cleanup cases. A nonzero command, malformed (including asymmetrically quoted paths or nonnumeric and
+whitespace-corrupted registration keys) or unresolvable inventory,
 target still listed after an apparently successful transition, or missing VMX preserves the artifact directory and
 makes the command fail. Registration inventory reads are terminating, so access denial or an incomplete I/O read cannot
 be interpreted as an empty or partial registered-VM set. VMX identity reads use the same terminating contract, preventing
