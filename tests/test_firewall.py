@@ -1,10 +1,10 @@
 """Test firewall behavior."""
 
 from atlaso.app.models import (
+    CaSettings,
     DhcpScope,
     DhcpSettings,
     DnsSettings,
-    CaSettings,
     FirewallRule,
     FirewallSettings,
     KmsSettings,

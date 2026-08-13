@@ -16,7 +16,6 @@ from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import urlsplit, urlunsplit
 
-
 SDDC_MANAGER_OVA_ROOT = Path("/mnt/atlaso-vcf-offline-depot/PROD/COMP/SDDC_MANAGER_VCF")
 OVF_NS = "http://schemas.dmtf.org/ovf/envelope/1"
 OVF = f"{{{OVF_NS}}}"
@@ -106,7 +105,7 @@ class _LeaseProgress:
         while not stop_event.wait(5):
             try:
                 self.update(self.value)
-            except Exception:
+            except Exception:  # noqa: BLE001 - progress callbacks must not interrupt the vSphere transfer.
                 return
 
 
@@ -863,7 +862,7 @@ def deploy_ova(
         if lease is not None and str(getattr(lease, "state", "")) not in {"done", "error"}:
             try:
                 lease.HttpNfcLeaseAbort()
-            except Exception:
+            except Exception:  # noqa: BLE001 - cleanup must continue after a best-effort lease abort.
                 pass
         if imported_vm_result is not None:
             message = str(exc) if isinstance(exc, VcfSddcDeploymentError) else f"vSphere deployment failed after VM import: {_safe_vsphere_message(exc)}"

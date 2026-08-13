@@ -1,12 +1,12 @@
 """Test oidc behavior."""
 
 import base64
-from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timedelta, timezone
 import hashlib
-from ipaddress import ip_address
 import json
 import re
+from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timedelta, timezone
+from ipaddress import ip_address
 from urllib.parse import parse_qs, urlsplit
 
 from sqlalchemy import select, text
@@ -373,7 +373,7 @@ def test_oidc_public_documents_require_complete_protocol_readiness(client):
 
     with SessionLocal() as db:
         _set_oidc_service_ready(db)
-        provider_row = oidc.ensure_provider_settings(db)
+        oidc.ensure_provider_settings(db)
         oidc.generate_signing_key(db, rotate=False)
         db.commit()
 
@@ -682,9 +682,8 @@ def test_oidc_rsa_key_is_encrypted_and_rotation_keeps_public_overlap(client, mon
         client: HTTP test client used to exercise the Atlaso application.
         monkeypatch: Pytest fixture used to replace dependencies for the test.
     """
-    from atlaso.app import services
     from atlaso.app.database import SessionLocal
-    from atlaso.app.models import ApplianceSettings, OidcProviderSettings, OidcSigningKey
+    from atlaso.app.models import ApplianceSettings, OidcSigningKey
     from atlaso.app.secrets import decrypt_secret
     from atlaso.app.services import oidc
 
@@ -726,7 +725,10 @@ def test_oidc_subject_is_stable_across_metadata_changes_and_new_after_recreation
     """
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import OidcSubject, User
-    from atlaso.app.services.identity_credentials import VerifiedIdentity, ensure_oidc_subject
+    from atlaso.app.services.identity_credentials import (
+        VerifiedIdentity,
+        ensure_oidc_subject,
+    )
 
     with SessionLocal() as db:
         user = db.execute(select(User).where(User.username == "admin")).scalar_one()
@@ -850,9 +852,22 @@ def test_oidc_backup_restore_preserves_subject_client_mapping_and_encrypted_key(
         client: HTTP test client used to exercise the Atlaso application.
     """
     from atlaso.app.database import SessionLocal
-    from atlaso.app.models import OidcClient, OidcGroupMapping, OidcSigningKey, OidcSubject, User
-    from atlaso.app.services.identity_credentials import VerifiedIdentity, ensure_oidc_subject
-    from atlaso.app.services.oidc import create_client, create_group_mapping, generate_signing_key
+    from atlaso.app.models import (
+        OidcClient,
+        OidcGroupMapping,
+        OidcSigningKey,
+        OidcSubject,
+        User,
+    )
+    from atlaso.app.services.identity_credentials import (
+        VerifiedIdentity,
+        ensure_oidc_subject,
+    )
+    from atlaso.app.services.oidc import (
+        create_client,
+        create_group_mapping,
+        generate_signing_key,
+    )
     from atlaso.app.services.settings_archive import (
         export_settings_archive,
         factory_reset_desired_state,
@@ -1683,8 +1698,13 @@ def test_authorization_code_local_flow_rotates_session_and_rejects_replay(client
     """
     from joserfc import jwt
     from joserfc.jwk import RSAKey
+
     from atlaso.app.database import SessionLocal
-    from atlaso.app.models import OidcAuthorizationCode, OidcAuthorizationTransaction, OidcSigningKey
+    from atlaso.app.models import (
+        OidcAuthorizationCode,
+        OidcAuthorizationTransaction,
+        OidcSigningKey,
+    )
 
     client_id, secret = _configure_protocol_client()
     verifier = "v" * 64
@@ -2020,6 +2040,33 @@ def test_userinfo_rejects_algorithm_and_kid_confusion(client):
         assert response.status_code == 401
 
 
+def test_userinfo_rejects_forged_signature(client):
+    """Return an authentication error instead of leaking a JOSE decode failure.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
+    client_id, secret = _configure_protocol_client()
+    verifier = "u" * 64
+    transaction, csrf, _cookie = _start_login(
+        client, _authorization_parameters(client_id, verifier)
+    )
+    login = _finish_local_login(client, transaction, csrf)
+    code = parse_qs(urlsplit(login.headers["location"]).query)["code"][0]
+    token = _exchange_code(
+        client, client_id=client_id, secret=secret, code=code, verifier=verifier
+    ).json()["access_token"]
+    segments = token.split(".")
+    segments[2] = ("A" if segments[2][0] != "A" else "B") + segments[2][1:]
+
+    response = client.get(
+        "https://testserver/identity/userinfo",
+        headers={"Authorization": f"Bearer {'.'.join(segments)}"},
+    )
+
+    assert response.status_code == 401
+
+
 def test_logout_requires_valid_hint_and_exact_registered_redirect(client):
     """Verify that logout requires valid hint and exact registered redirect.
 
@@ -2199,8 +2246,8 @@ def test_oidc_login_throttle_is_bounded_and_never_persists_password(client):
     Args:
         client: HTTP test client used to exercise the Atlaso application.
     """
-    from atlaso.app.oidc import OIDC_LOGIN_BUCKET_LIMIT, _OIDC_LOGIN_BUCKETS
     from atlaso.app.database import SessionLocal
+    from atlaso.app.oidc import _OIDC_LOGIN_BUCKETS, OIDC_LOGIN_BUCKET_LIMIT
 
     client_id, _secret = _configure_protocol_client()
     transaction, csrf, _cookie = _start_login(
@@ -2284,7 +2331,11 @@ def test_begin_authorization_purges_expired_transactions_and_codes(client):
         client: HTTP test client used to exercise the Atlaso application.
     """
     from atlaso.app.database import SessionLocal
-    from atlaso.app.models import OidcAuthorizationCode, OidcAuthorizationTransaction, utcnow
+    from atlaso.app.models import (
+        OidcAuthorizationCode,
+        OidcAuthorizationTransaction,
+        utcnow,
+    )
 
     client_id, _secret = _configure_protocol_client()
     params = _authorization_parameters(client_id, "r" * 64)

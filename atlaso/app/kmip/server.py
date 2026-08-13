@@ -31,8 +31,14 @@ from atlaso.app.kmip.protocol import (
 )
 from atlaso.app.kmip.store import KeyStoreError, WrappedKeyStore
 from atlaso.app.kmip.trace import TraceValidationError, validate_trace
-from atlaso.app.kmip.ttlv import MAX_MESSAGE_BYTES, Ttlv, TtlvError, TtlvType, decode, encode
-
+from atlaso.app.kmip.ttlv import (
+    MAX_MESSAGE_BYTES,
+    Ttlv,
+    TtlvError,
+    TtlvType,
+    decode,
+    encode,
+)
 
 LOGGER = logging.getLogger("atlaso.kmip")
 CONFIG_FIELDS = {

@@ -21,14 +21,17 @@ from pathlib import Path
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
-
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS_DIR = ROOT / "scripts"
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
-from generate_third_party_notices import generate_notice, locked_packages, vendored_records, wheel_records
-
+from generate_third_party_notices import (  # noqa: E402 - local script path is established before importing the sibling module.
+    generate_notice,
+    locked_packages,
+    vendored_records,
+    wheel_records,
+)
 
 SUPPORTED_ABIS = ("cp314",)
 SYSTEMD_FILES = (

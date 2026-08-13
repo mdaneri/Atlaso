@@ -11,8 +11,11 @@ from typing import Any
 
 from atlaso.app.models import ApplianceSettings, PhysicalInterface, VlanInterface
 from atlaso.app.services.dnsmasq import split_servers
-from atlaso.app.services.networking import normalize_interface_mode, normalize_interface_role, normalize_ipv4_method
-
+from atlaso.app.services.networking import (
+    normalize_interface_mode,
+    normalize_interface_role,
+    normalize_ipv4_method,
+)
 
 APPLIANCE_SETTINGS_DEFAULT_FQDN = "core.atlaso.internal"
 APPLIANCE_SETTINGS_DEFAULT_EXTERNAL_DNS_SERVERS = "1.1.1.1\n9.9.9.9"

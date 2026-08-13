@@ -14,14 +14,14 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from atlaso.app.models import (
+    AuditEvent,
     AutomationScript,
     AutomationScriptRevision,
-    AuditEvent,
     Job,
     JobStatus,
     Schedule,
-    VcfDepotDownloadProfile,
     Vault,
+    VcfDepotDownloadProfile,
     utcnow,
 )
 from atlaso.app.services.appliance_update import ensure_appliance_update_job_steps
@@ -33,7 +33,6 @@ from atlaso.app.services.vcf_depot_downloads import (
     vcf_depot_initial_job_result,
     vcf_depot_task_log_reference,
 )
-
 
 SCHEDULE_TASK_TYPES = {
     "appliance_update_check",

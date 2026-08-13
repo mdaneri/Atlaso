@@ -5,12 +5,27 @@ import logging
 
 import pytest
 
-from atlaso.app.models import ApplianceSettings, AuditEvent, CaSettings, DhcpScope, DhcpSettings, DnsSettings, Job, KmsSettings, NatRule, PhysicalInterface, Route, RoutingRule, Setting, VlanInterface
+from atlaso.app.models import (
+    ApplianceSettings,
+    AuditEvent,
+    CaSettings,
+    DhcpScope,
+    DhcpSettings,
+    DnsSettings,
+    Job,
+    KmsSettings,
+    NatRule,
+    PhysicalInterface,
+    Route,
+    RoutingRule,
+    Setting,
+    VlanInterface,
+)
 from atlaso.app.services.appliance_settings import management_ui_context
 from atlaso.app.services.networking import (
-    HostPhysicalInterface,
-    NETWORK_ROLES,
     NETWORK_INVENTORY_CLEANUP_WARNING_KEY,
+    NETWORK_ROLES,
+    HostPhysicalInterface,
     is_canonical_network_role,
     normalize_interface_role,
     parse_linux_ip_interfaces,

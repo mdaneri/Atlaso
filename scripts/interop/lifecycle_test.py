@@ -31,11 +31,10 @@ from typing import Any
 try:
     from cryptography import x509
     from cryptography.hazmat.primitives import hashes, serialization
-    from cryptography.hazmat.primitives.asymmetric import padding
-    from cryptography.hazmat.primitives.asymmetric import rsa
+    from cryptography.hazmat.primitives.asymmetric import padding, rsa
     from cryptography.x509.oid import ExtendedKeyUsageOID, NameOID
 except ImportError:  # pragma: no cover - Photon image should include cryptography
-    x509 = None  # type: ignore[assignment]
+    x509 = None  # type: ignore[assignment]  # Optional cryptography import keeps the lifecycle runner usable without extras.
 
 
 ALL_SCOPES = [
@@ -409,7 +408,7 @@ def header_value(headers: dict[str, str], name: str) -> str:
 
 class NoRedirectHandler(urllib.request.HTTPRedirectHandler):
     """Represent no redirect handler."""
-    def redirect_request(self, req, fp, code, msg, headers, newurl):  # type: ignore[no-untyped-def]
+    def redirect_request(self, req, fp, code, msg, headers, newurl):  # type: ignore[no-untyped-def]  # urllib's handler override lacks a typed callback protocol.
         """Return redirect request.
 
         Args:
@@ -2359,10 +2358,12 @@ def stage_vcf_depot_password(client: HttpClient, args: argparse.Namespace, passw
             follow_redirects=False,
         )
         if status not in {200, 302, 303, 409}:
-            raise LifecycleError(f"VCF depot user creation failed with HTTP {status}: {create_body[:500]}")
+            raise LifecycleError(
+                f"VCF depot user creation failed with HTTP {status}: {create_body[:500]}"
+            ) from None
         status, body, _headers = client.request("GET", "/users")
         if status >= 400:
-            raise LifecycleError(f"GET /users failed with HTTP {status}")
+            raise LifecycleError(f"GET /users failed with HTTP {status}") from None
         csrf = extract_csrf(body)
         try:
             user_id = extract_user_id_from_users_page(body, "vcf-depot")
@@ -2522,7 +2523,6 @@ def configure_kms(client: HttpClient, args: argparse.Namespace) -> dict[str, Any
         "listen_address": payload.get("listen_address"),
         "port": payload.get("port"),
         "config_path": payload.get("config_path"),
-        "legacy_route_status": legacy_status,
         "client_trust": "not-configured-without-external-public-certificate",
         "valid": payload.get("valid"),
     }
@@ -3693,7 +3693,6 @@ def vcf_depot_auth_check(client: HttpClient, args: argparse.Namespace, password:
         if invalid_status != 401 or basic_status != 200:
             raise LifecycleError(f"VCF depot Basic auth returned invalid={invalid_status}, valid={basic_status}")
         return {"browser_status": browser_status, "basic_status": basic_status, "invalid_status": invalid_status, "artifact": artifact_result}
-    quoted_password = shell_single_quote(password)
     quoted_password_form = shell_single_quote(f"password={password}")
     valid_basic = base64.b64encode(f"vcf-depot:{password}".encode("utf-8")).decode("ascii")
     invalid_basic = base64.b64encode(b"vcf-depot:not-the-password").decode("ascii")
@@ -3825,7 +3824,6 @@ def ca_client_certificate_check(client: HttpClient, args: argparse.Namespace) ->
         raise LifecycleError(f"CA root certificate download failed with HTTP {status}")
     crypto_summary = verify_certificate_signed_by_root(certificate_pem, root_ca_pem, common_name)
     cookie_header = session_cookie_header(ca_client)
-    ca_request = ip_interface(args.client_ca_request_cidr)
     ca_request_url = (args.client_ca_request_url or ca_client.base_url).rstrip("/")
     ca_request_host = urllib.parse.urlparse(ca_request_url).hostname or ""
     ca_probe_setup = client_ca_probe_setup(args.client_ca_request_interface, args.client_ca_request_cidr, ca_request_host)
@@ -4192,7 +4190,7 @@ def wan_packet_loss_check(client: HttpClient, args: argparse.Namespace) -> dict[
             client_a_recovery = ssh_command(args.client_a_host, args, recovery_ping, role="client")
             require_success(client_a_recovery, "client A WAN recovery ping")
             cleanup_evidence["client_a_recovery_ping"] = client_a_recovery
-        except Exception as cleanup_exc:  # noqa: BLE001
+        except Exception as cleanup_exc:  # noqa: BLE001 - retain cleanup evidence without hiding the original failure.
             if original_error is not None:
                 raise LifecycleError(f"{original_error}; WAN loss cleanup also failed: {cleanup_exc}") from cleanup_exc
             raise
@@ -4202,7 +4200,7 @@ def wan_packet_loss_check(client: HttpClient, args: argparse.Namespace) -> dict[
     return evidence
 
 
-def run_step(results: list[StepResult], name: str, func, *args) -> Any:  # type: ignore[no-untyped-def]
+def run_step(results: list[StepResult], name: str, func, *args) -> Any:  # type: ignore[no-untyped-def]  # Lifecycle steps intentionally accept heterogeneous call signatures.
     """Run step.
 
     Args:
@@ -4718,7 +4716,7 @@ def main() -> int:
             run_full_lifecycle(results, client, args)
         result["status"] = "passed"
         return_code = 0
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:  # noqa: BLE001 - record a final safe lifecycle result for any integration failure.
         result["status"] = "failed"
         result["error"] = str(exc)
         return_code = 1

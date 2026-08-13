@@ -11,7 +11,6 @@ import httpx
 
 from atlaso.app.services.vcf_sddc_deployment import tls_sha256_fingerprint
 
-
 Progress = Callable[[int, str], None]
 SUPPORTED_ROLES = {"VcfInstaller", "SddcManager"}
 

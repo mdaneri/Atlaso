@@ -1605,6 +1605,17 @@ class VlanCreate(BaseModel):
     enabled: Annotated[bool, Field(description='Whether the resource is enabled in saved Atlaso state.')] = True
     access_management_ui_enabled: Annotated[bool, Field(description='Whether this enabled access-role VLAN also exposes the management UI.')] = False
 
+    @field_validator("role", mode="before")
+    @classmethod
+    def normalize_canonical_role(cls, value: Any) -> Any:
+        """Normalize case-insensitive canonical VLAN role spellings."""
+        if not isinstance(value, str):
+            return value
+        normalized = value.strip().lower()
+        if normalized in {"management", "access", "route", "unused"}:
+            return normalized
+        return value
+
 
 class VlanResponse(VlanCreate):
     """Fields returned by the Atlaso vlan API.

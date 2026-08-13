@@ -13,6 +13,7 @@ status: current
 - [Dependency management](dependency-management.md)
 - [Documentation authoring](documentation-authoring.md)
 - [Python documentation](python-documentation.md)
+- [Python static analysis](python-static-analysis.md)
 - [API authoring standard](api-authoring.md)
 - [Windows image-build WSL environment](windows-image-build-wsl.md)
 - [Atlaso UI Design Guide](ui-design-guide.md)

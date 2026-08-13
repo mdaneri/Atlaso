@@ -18,7 +18,10 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from atlaso.app.services.release_updates import validate_release_manifest, verify_signed_json
+from atlaso.app.services.release_updates import (  # noqa: E402 - repository root is added before importing Atlaso.
+    validate_release_manifest,
+    verify_signed_json,
+)
 
 
 def canonical_json(payload: dict) -> bytes:

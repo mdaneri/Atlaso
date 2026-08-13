@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, replace
-from typing import Any
 
 from atlaso.app.services.vcf_depot_target import VcfDepotApiClient, VcfDepotTargetError
 

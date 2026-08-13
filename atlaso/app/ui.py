@@ -18,7 +18,15 @@ import time
 import zipfile
 from contextlib import nullcontext
 from datetime import datetime, timedelta, timezone
-from ipaddress import IPv4Address, IPv4Network, IPv6Address, IPv6Network, ip_address, ip_interface, ip_network
+from ipaddress import (
+    IPv4Address,
+    IPv4Network,
+    IPv6Address,
+    IPv6Network,
+    ip_address,
+    ip_interface,
+    ip_network,
+)
 from pathlib import Path, PurePosixPath
 from secrets import token_urlsafe
 from typing import Any, Callable
@@ -26,24 +34,41 @@ from urllib.parse import quote, unquote, urlsplit
 from uuid import uuid4
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Query, Request, UploadFile, status
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Depends,
+    File,
+    Form,
+    HTTPException,
+    Query,
+    Request,
+    UploadFile,
+    status,
+)
 from fastapi.encoders import jsonable_encoder
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
+from fastapi.responses import (
+    FileResponse,
+    HTMLResponse,
+    JSONResponse,
+    RedirectResponse,
+    Response,
+)
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import String, and_, cast, delete, desc, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
-from atlaso.app.audit import record_audit
 from atlaso.app.adapters.system import AdapterResult, SystemAdapter
+from atlaso.app.audit import record_audit
 from atlaso.app.config import get_settings
 from atlaso.app.database import SessionLocal, get_db
 from atlaso.app.models import (
+    ApiToken,
     ApplianceSettings,
+    AuditEvent,
     AutomationScript,
     AutomationScriptRevision,
-    ApiToken,
-    AuditEvent,
     CaCertificate,
     CaProfile,
     CaSettings,
@@ -61,13 +86,9 @@ from atlaso.app.models import (
     FirewallRule,
     FirewallSettings,
     Job,
-    JobStep,
     JobStatus,
-    NetworkBootEsxiBootCapability,
+    JobStep,
     KmsSettings,
-    VsphereKeyProvider,
-    VsphereTrustedVcenter,
-    VsphereTrustedVcenterCertificate,
     LdapGroup,
     LdapGroupMembership,
     LdapOrganization,
@@ -76,6 +97,7 @@ from atlaso.app.models import (
     LdapUser,
     ManagedPackage,
     NatRule,
+    NetworkBootEsxiBootCapability,
     NtpSettings,
     OidcGroupMapping,
     OidcProviderSettings,
@@ -87,33 +109,22 @@ from atlaso.app.models import (
     Schedule,
     ServiceState,
     Setting,
-    User,
     UpdateSource,
+    User,
+    Vault,
+    VaultEntry,
     VcfBackupSettings,
     VcfDepotDownloadProfile,
     VcfOfflineDepotSettings,
     VcfPrivateRegistrySettings,
     VcfRegistryBundle,
     VcfTrustTarget,
-    Vault,
-    VaultEntry,
     VlanInterface,
+    VsphereKeyProvider,
+    VsphereTrustedVcenter,
+    VsphereTrustedVcenterCertificate,
     WanPolicy,
     utcnow,
-)
-from atlaso.app.services.vaults import (
-    VaultEntryInput,
-    create_vault,
-    kickstart_vault_marker_catalog,
-    kickstart_vault_values_for_markers,
-    list_vaults,
-    parse_vault_uris_json,
-    redact_secret_values,
-    update_vault_entry,
-    upsert_vault_entry,
-    vault_entry_metadata,
-    vault_marker_name,
-    vault_scope_identity,
 )
 from atlaso.app.operational_logging import (
     configure_operational_logging,
@@ -122,10 +133,26 @@ from atlaso.app.operational_logging import (
     logging_preferences_to_dict,
     save_logging_preferences,
 )
-from atlaso.app.schemas import ApiTokenCreate, WanPolicyCreate
+from atlaso.app.schemas import ApiTokenCreate
+from atlaso.app.secrets import decrypt_secret, encrypt_secret, secret_key_status
+from atlaso.app.security import (
+    SESSION_APPLIANCE_INSTANCE_SESSION_KEY,
+    Identity,
+    authenticate_user,
+    ensure_appliance_instance_id,
+    get_session_identity,
+    normalize_roles,
+    primary_role,
+    require_session_identity,
+    role_label,
+    roles_to_json,
+    scopes_for_roles,
+    user_roles,
+)
 from atlaso.app.services.appliance_settings import (
     APPLIANCE_DNS_RECORD_DESCRIPTION,
     APPLIANCE_SETTINGS_STAGED_CONFIG_PATH,
+    SERVICE_DNS_TARGET_NAMING_CHOICES,
     appliance_settings_preview_payload,
     appliance_settings_to_dict,
     is_app_owned_appliance_dns_record,
@@ -136,7 +163,6 @@ from atlaso.app.services.appliance_settings import (
     normalize_multiline_values,
     normalize_service_dns_target_naming,
     normalized_web_terminal_interfaces,
-    SERVICE_DNS_TARGET_NAMING_CHOICES,
     validate_appliance_settings,
     web_terminal_addresses,
     web_terminal_interface_options,
@@ -177,88 +203,7 @@ from atlaso.app.services.automation import (
     parse_script_arguments,
     validate_schedule_values,
 )
-from atlaso.app.services.vcf_depot_downloads import (
-    ActiveVcfDepotDownloadError,
-    active_vcf_depot_download_job,
-    active_vcf_depot_operation_job,
-    disable_vcf_depot_profile_schedules,
-    enqueue_vcf_depot_download,
-    vcf_depot_schedules_for_profile,
-    vcf_depot_task_log_reference,
-)
-from atlaso.app.services.update_sources import (
-    ATLASO_CHANNELS,
-    UPDATE_SOURCE_KINDS,
-    default_source_settings,
-    effective_update_settings,
-    managed_package_rows,
-    source_rows,
-    unsynchronized_photon_repositories,
-    unsynchronized_powershell_repositories,
-    update_source_payload,
-    update_source_settings,
-    validate_update_source,
-    validate_managed_package,
-)
-from atlaso.app.security import (
-    Identity,
-    authenticate_user,
-    ensure_appliance_instance_id,
-    get_session_identity,
-    normalize_roles,
-    primary_role,
-    require_session_identity,
-    role_label,
-    roles_to_json,
-    scopes_for_roles,
-    user_roles,
-    SESSION_APPLIANCE_INSTANCE_SESSION_KEY,
-)
-from atlaso.app.services.dnsmasq import (
-    DHCP_DENY_RESERVATION_DESCRIPTION_PREFIX,
-    DNS_CONDITIONAL_FORWARDERS_SETTING_KEY,
-    DNS_HOSTNAME_PATTERN,
-    authoritative_zone_metadata,
-    dump_dns_record_data,
-    compact_dhcp_range_expression,
-    dhcp_bind_target_families,
-    dhcp_dns_upstream_required,
-    dns_domain_warnings,
-    dns_reverse_records,
-    dhcp_option_to_dict,
-    dhcp_scope_to_dict,
-    dnsmasq_tag,
-    effective_dns_upstream_servers,
-    ensure_dns_authoritative_defaults,
-    join_conditional_forwarders,
-    join_addresses,
-    join_domains,
-    join_interfaces,
-    join_servers,
-    parse_hosts_records,
-    parse_dnsmasq_leases,
-    parse_dhcp_range_expression,
-    parse_zone_records,
-    record_data,
-    render_hosts_records,
-    render_zone_file,
-    render_zone_hosts_records,
-    render_dnsmasq_config,
-    reservation_dns_record,
-    split_addresses,
-    split_conditional_forwarders,
-    split_domains,
-    split_interfaces,
-    split_servers,
-    validate_dns_record,
-    validate_dhcp_bind_targets,
-    validate_dhcp_settings,
-    validate_dns_listen_targets,
-    validate_authoritative_dns_record,
-    validate_dns_settings,
-)
 from atlaso.app.services.ca import (
-    CA_CLIENT_PROFILE_NAME,
     CA_DEFAULT_PORTAL_HOSTNAME,
     CA_SERVER_PROFILE_NAME,
     CA_STAGED_CONFIG_PATH,
@@ -268,8 +213,8 @@ from atlaso.app.services.ca import (
     ca_certificate_to_dict,
     ca_profile_to_dict,
     ca_service_state,
-    ensure_ca_issued_state,
     ensure_aware,
+    ensure_ca_issued_state,
     ensure_default_ca_profiles,
     ensure_managed_certificate_rows,
     ensure_root_ca_material,
@@ -282,42 +227,249 @@ from atlaso.app.services.ca import (
     validate_ca_certificate_request,
     validate_ca_state,
 )
-from atlaso.app.services.vcf_trust import (
-    RootCaInfo,
-    VcfApiClient,
-    VcfTrustCredentials,
-    VcfTrustError,
-    execute_vcf_trust,
-    inspect_vcf_trust_target,
-    root_ca_info,
-    sanitized_result,
+from atlaso.app.services.dnsmasq import (
+    DHCP_DENY_RESERVATION_DESCRIPTION_PREFIX,
+    DNS_CONDITIONAL_FORWARDERS_SETTING_KEY,
+    DNS_HOSTNAME_PATTERN,
+    authoritative_zone_metadata,
+    compact_dhcp_range_expression,
+    dhcp_bind_target_families,
+    dhcp_dns_upstream_required,
+    dhcp_option_to_dict,
+    dhcp_scope_to_dict,
+    dns_domain_warnings,
+    dns_reverse_records,
+    dnsmasq_tag,
+    dump_dns_record_data,
+    effective_dns_upstream_servers,
+    ensure_dns_authoritative_defaults,
+    join_addresses,
+    join_conditional_forwarders,
+    join_domains,
+    join_interfaces,
+    join_servers,
+    parse_dhcp_range_expression,
+    parse_dnsmasq_leases,
+    parse_hosts_records,
+    parse_zone_records,
+    record_data,
+    render_dnsmasq_config,
+    render_hosts_records,
+    render_zone_file,
+    render_zone_hosts_records,
+    reservation_dns_record,
+    split_addresses,
+    split_conditional_forwarders,
+    split_domains,
+    split_interfaces,
+    split_servers,
+    validate_authoritative_dns_record,
+    validate_dhcp_bind_targets,
+    validate_dhcp_settings,
+    validate_dns_listen_targets,
+    validate_dns_record,
+    validate_dns_settings,
 )
-from atlaso.app.services.vcf_sddc_deployment import (
-    SDDC_MANAGER_OVA_ROOT,
-    VcfSddcDeploymentCancelled,
-    VcfSddcDeploymentError,
-    VcfSddcPostImportError,
-    deploy_ova,
-    inspect_ova,
-    normalize_disk_provisioning,
-    ova_inventory,
-    tls_sha256_fingerprint,
-    vsphere_inventory,
+from atlaso.app.services.esx_storage import (
+    ESX_STORAGE_DNS_DESCRIPTION,
+    ESX_STORAGE_STAGED_CONFIG_PATH,
+    StorageInterface,
 )
-from atlaso.app.services.vcf_depot_target import (
-    LocalDepotEndpoint,
-    VcfDepotTargetError,
-    VcfDepotTargetPartialError,
-    configure_target_depot,
-    inspect_target_depot,
+from atlaso.app.services.esx_storage import (
+    desired_dns_records as desired_esx_storage_dns_records,
 )
-from atlaso.app.services.vcf_vault_import import discover_vcf_passwords
-from atlaso.app.secrets import decrypt_secret, encrypt_secret, secret_key_status
+from atlaso.app.services.esx_storage import (
+    firewall_rule_specs as esx_storage_firewall_rule_specs,
+)
+from atlaso.app.services.esx_storage import (
+    format_authorization as esx_storage_format_authorization,
+)
+from atlaso.app.services.esx_storage import (
+    manifest_json as esx_storage_manifest_json,
+)
+from atlaso.app.services.esx_storage import (
+    normalize_families as normalize_esx_storage_families,
+)
+from atlaso.app.services.esx_storage import (
+    normalize_relative_path as normalize_esx_storage_relative_path,
+)
+from atlaso.app.services.esx_storage import (
+    parse_disk_inventory_output as parse_esx_storage_disk_inventory_output,
+)
+from atlaso.app.services.esx_storage import (
+    render_manifest as render_esx_storage_manifest,
+)
+from atlaso.app.services.esx_storage import (
+    rpcbind_required as esx_storage_rpcbind_required,
+)
+from atlaso.app.services.esx_storage import (
+    select_inventory_candidate as select_esx_storage_inventory_candidate,
+)
+from atlaso.app.services.esx_storage import (
+    split_lines as split_esx_storage_lines,
+)
+from atlaso.app.services.esx_storage import (
+    storage_slug as esx_storage_slug,
+)
+from atlaso.app.services.esx_storage import (
+    validate_mounted_volume_path as validate_esx_storage_mounted_volume_path,
+)
+from atlaso.app.services.esxi_pxe import (
+    DEFAULT_ESXI_KICKSTART_CONTENT,
+    DEFAULT_ESXI_KICKSTART_NAME,
+    ESXI_IPXE_HTTP_SCRIPT_PATH,
+    ESXI_PXE_DEFAULT_HOSTNAME,
+    ESXI_PXE_DNS_RECORD_DESCRIPTION,
+    ESXI_PXE_HTTP_PORT,
+    ESXI_PXE_STAGED_CONFIG_PATH,
+    assign_kickstart_content,
+    canonical_http_path,
+    content_hash,
+    custom_variable_definitions,
+    decode_kickstart_upload,
+    default_host_to_dict,
+    delete_custom_variable_definition,
+    esxi_pxe_boot_settings,
+    esxi_pxe_default_host_settings,
+    esxi_pxe_host_artifacts,
+    esxi_pxe_service_state_from_boot,
+    generated_kickstart_path,
+    host_to_dict,
+    host_variables_json,
+    installer_iso_inventory,
+    installer_iso_root_path,
+    kickstart_drift_state,
+    kickstart_template_validation_errors,
+    kickstart_template_variables,
+    kickstart_to_dict,
+    kickstart_validation,
+    mark_kickstarts_applied,
+    normalize_host_mac,
+    normalize_installer_iso_path,
+    normalize_kickstart_content,
+    normalize_kickstart_name,
+    normalize_pxe_mac,
+    render_esxi_pxe_manifest,
+    render_esxi_pxe_preview,
+    save_custom_variable_definition,
+    save_esxi_pxe_boot_settings,
+    save_esxi_pxe_default_host_settings,
+    store_installer_iso_upload,
+    strict_validation_enabled,
+    sync_esxi_pxe_host_network_records,
+    validate_kickstart_custom_references,
+    validate_kickstart_vault_references,
+)
+from atlaso.app.services.firewall import (
+    ATLASO_DHCP_FIREWALL_RULE_MARKER,
+    FIREWALL_ACTIONS,
+    FIREWALL_ANY_SOURCE_GROUP_ID,
+    FIREWALL_DIRECTIONS,
+    FIREWALL_POLICIES,
+    FIREWALL_PROTOCOLS,
+    FIREWALL_SOURCE_GROUP_REFERENCE_PREFIX,
+    FIREWALL_SOURCE_GROUPS_SETTING_KEY,
+    FIREWALL_STAGED_CONFIG_PATH,
+    ca_portal_firewall_interfaces,
+    firewall_interface_networks,
+    firewall_rule_to_dict,
+    firewall_settings_to_dict,
+    firewall_source_group_state,
+    is_atlaso_managed_firewall_rule,
+    managed_routing_firewall_rules,
+    managed_service_firewall_rules,
+    render_nftables_config,
+    validate_firewall_rule,
+    validate_firewall_source_groups,
+    validate_firewall_state,
+)
+from atlaso.app.services.interface_updates import (
+    PhysicalInterfaceUpdateError,
+    refresh_interface_dependent_addresses,
+    update_physical_interface_desired_state,
+)
+from atlaso.app.services.kms import (
+    KMS_DEFAULT_CONFIG_PATH,
+    KMS_DEFAULT_DATABASE_PATH,
+    KMS_DNS_RECORD_DESCRIPTION,
+    KMS_STAGED_CLIENT_TRUST_PATH,
+    KMS_STAGED_CONFIG_PATH,
+)
+from atlaso.app.services.ldap import (
+    LDAP_CERT_PATH,
+    LDAP_CHAIN_PATH,
+    LDAP_DEFAULT_HOSTNAME,
+    LDAP_DEFAULT_PLAINTEXT_PORT,
+    LDAP_DEFAULT_PORT,
+    LDAP_DNS_RECORD_DESCRIPTION,
+    LDAP_GROUP_PATTERN,
+    LDAP_KEY_PATH,
+    LDAP_PENDING_RECOVERY_PAYLOADS,
+    LDAP_RECOVERY_DIR,
+    LDAP_STAGED_CONFIG_PATH,
+    LDAP_UID_PATTERN,
+    VcfAutomationLdapClient,
+    VcfLdapError,
+    clear_ldap_recovery_payload,
+    clear_pending_ldap_password,
+    decrypt_recovery_payload,
+    default_organization_suffix,
+    encrypt_recovery_payload,
+    ensure_organization_bind_secret,
+    has_pending_ldap_password,
+    invalidate_ldap_user_password_for_uid_change,
+    ldap_group_to_dict,
+    ldap_organization_to_dict,
+    ldap_settings_to_dict,
+    ldap_user_to_dict,
+    manual_vcf_bundle,
+    mark_ldap_apply_complete,
+    normalize_dn,
+    normalize_ldap_slug,
+    normalize_vcf_target_url,
+    recovery_sha256,
+    render_ldap_apply_config,
+    render_ldap_preview,
+    rotate_organization_bind_secret,
+    stage_ldap_recovery_payload,
+    stage_ldap_user_password,
+    validate_group_cycles,
+    validate_ldap_state,
+    vcf_ldap_settings,
+)
+from atlaso.app.services.ldap import (
+    tls_sha256_fingerprint as ldap_vcf_tls_fingerprint,
+)
+from atlaso.app.services.local_users import (
+    DEFAULT_LOCAL_USER_SHELL,
+    DEFAULT_PASSWORD_POLICY,
+    LOCAL_USER_SHELLS,
+    LOCAL_USERS_PASSWORD_POLICY_KEY,
+    LOCAL_USERS_STAGED_CONFIG_PATH,
+    clear_pending_os_password,
+    has_pending_os_password,
+    is_valid_user_shell,
+    local_user_sync_rows,
+    mark_local_users_applied,
+    mark_local_users_failed,
+    normalize_user_shell,
+    password_policy_from_json,
+    password_policy_summary,
+    password_policy_to_json,
+    pending_os_password_count,
+    rename_pending_os_password,
+    render_local_users_apply_config,
+    render_local_users_preview,
+    stage_user_os_password,
+    validate_local_usernames,
+    validate_password,
+)
+from atlaso.app.services.monitoring import monitor_payload
 from atlaso.app.services.networking import (
     INTERFACE_MODES,
     IPV4_METHODS,
-    NETWORK_ROLES,
     NETWORK_INVENTORY_CLEANUP_WARNING_KEY,
+    NETWORK_ROLES,
     is_canonical_network_role,
     normalize_interface_mode,
     normalize_interface_role,
@@ -329,10 +481,86 @@ from atlaso.app.services.networking import (
     validate_network_state,
     vlan_interface_to_dict,
 )
-from atlaso.app.services.interface_updates import (
-    PhysicalInterfaceUpdateError,
-    refresh_interface_dependent_addresses,
-    update_physical_interface_desired_state,
+from atlaso.app.services.ntp import (
+    NTP_DEFAULT_HOSTNAME,
+    NTP_STAGED_CONFIG_PATH,
+    default_ntp_upstream_fields,
+    dump_ntp_upstream_sources,
+    duplicate_ntp_upstream_source,
+    join_allow_clients,
+    ntp_settings_to_dict,
+    ntp_upstream_sources,
+    render_ntp_config,
+    split_allow_clients,
+    validate_ntp_state,
+)
+from atlaso.app.services.oidc import (
+    OIDC_AUTHORIZATION_FLOW_AVAILABLE,
+    OIDC_DEFAULT_HOSTNAME,
+    OIDC_DNS_RECORD_DESCRIPTION,
+    OidcConfigurationError,
+    OidcConflictError,
+    oidc_client_to_dict,
+)
+from atlaso.app.services.oidc import (
+    create_client as create_oidc_client_record,
+)
+from atlaso.app.services.oidc import (
+    create_group_mapping as create_oidc_group_mapping_record,
+)
+from atlaso.app.services.oidc import (
+    delete_retired_signing_key as delete_retired_oidc_signing_key_record,
+)
+from atlaso.app.services.oidc import (
+    ensure_provider_settings as ensure_oidc_provider_settings,
+)
+from atlaso.app.services.oidc import (
+    expected_issuer_url as expected_oidc_issuer_url,
+)
+from atlaso.app.services.oidc import (
+    generate_signing_key as generate_oidc_signing_key,
+)
+from atlaso.app.services.oidc import (
+    get_client as get_oidc_client,
+)
+from atlaso.app.services.oidc import (
+    group_mapping_to_dict as oidc_group_mapping_to_dict,
+)
+from atlaso.app.services.oidc import (
+    integration_export as oidc_integration_export,
+)
+from atlaso.app.services.oidc import (
+    issuer_endpoint_urls as oidc_issuer_endpoint_urls,
+)
+from atlaso.app.services.oidc import (
+    list_clients as list_oidc_clients,
+)
+from atlaso.app.services.oidc import (
+    list_group_mappings as list_oidc_group_mappings,
+)
+from atlaso.app.services.oidc import (
+    list_subjects as list_oidc_subjects,
+)
+from atlaso.app.services.oidc import (
+    normalize_issuer_url as normalize_oidc_issuer_url,
+)
+from atlaso.app.services.oidc import (
+    provider_validation_errors as oidc_provider_validation_errors,
+)
+from atlaso.app.services.oidc import (
+    rotate_client_secret as rotate_oidc_client_secret_value,
+)
+from atlaso.app.services.oidc import (
+    signing_key_to_dict as oidc_signing_key_to_dict,
+)
+from atlaso.app.services.oidc import (
+    update_client as update_oidc_client_record,
+)
+from atlaso.app.services.oidc import (
+    update_group_mapping as update_oidc_group_mapping_record,
+)
+from atlaso.app.services.oidc import (
+    validate_all_mapping_contexts as validate_oidc_mapping_contexts,
 )
 from atlaso.app.services.public_services import (
     PUBLIC_SERVICES_STAGED_CONFIG_PATH,
@@ -341,20 +569,22 @@ from atlaso.app.services.public_services import (
     public_services_for_address,
     render_public_services_nginx_config,
 )
-from atlaso.app.services.monitoring import monitor_payload
 from atlaso.app.services.routes_wan import (
     WAN_CONFIG_PATH,
     WAN_MODES,
     generated_route_role_rules,
     nat_rule_to_dict,
     render_wan_config,
-    routing_rule_to_dict,
     route_to_dict,
+    routing_rule_to_dict,
     validate_nat_source,
     validate_wan_state,
     wan_policy_to_dict,
 )
-from atlaso.app.services.service_registry import SERVICE_STATE_IDS, SERVICE_SYSTEMD_UNITS
+from atlaso.app.services.service_registry import (
+    SERVICE_STATE_IDS,
+    SERVICE_SYSTEMD_UNITS,
+)
 from atlaso.app.services.settings_archive import (
     archive_summary,
     desired_state_counts,
@@ -362,184 +592,36 @@ from atlaso.app.services.settings_archive import (
     factory_reset_desired_state,
     restore_settings_archive,
 )
-from atlaso.app.services.oidc import (
-    OIDC_AUTHORIZATION_FLOW_AVAILABLE,
-    OIDC_DEFAULT_HOSTNAME,
-    OIDC_DNS_RECORD_DESCRIPTION,
-    OidcConfigurationError,
-    OidcConflictError,
-    create_client as create_oidc_client_record,
-    create_group_mapping as create_oidc_group_mapping_record,
-    delete_retired_signing_key as delete_retired_oidc_signing_key_record,
-    ensure_provider_settings as ensure_oidc_provider_settings,
-    generate_signing_key as generate_oidc_signing_key,
-    get_client as get_oidc_client,
-    issuer_endpoint_urls as oidc_issuer_endpoint_urls,
-    integration_export as oidc_integration_export,
-    list_clients as list_oidc_clients,
-    list_group_mappings as list_oidc_group_mappings,
-    list_subjects as list_oidc_subjects,
-    normalize_issuer_url as normalize_oidc_issuer_url,
-    expected_issuer_url as expected_oidc_issuer_url,
-    oidc_client_to_dict,
-    group_mapping_to_dict as oidc_group_mapping_to_dict,
-    provider_validation_errors as oidc_provider_validation_errors,
-    rotate_client_secret as rotate_oidc_client_secret_value,
-    signing_key_to_dict as oidc_signing_key_to_dict,
-    update_group_mapping as update_oidc_group_mapping_record,
-    update_client as update_oidc_client_record,
-    validate_all_mapping_contexts as validate_oidc_mapping_contexts,
+from atlaso.app.services.update_sources import (
+    ATLASO_CHANNELS,
+    UPDATE_SOURCE_KINDS,
+    default_source_settings,
+    effective_update_settings,
+    managed_package_rows,
+    source_rows,
+    unsynchronized_photon_repositories,
+    unsynchronized_powershell_repositories,
+    update_source_payload,
+    update_source_settings,
+    validate_managed_package,
+    validate_update_source,
 )
-from atlaso.app.services.local_users import (
-    LOCAL_USERS_PASSWORD_POLICY_KEY,
-    LOCAL_USERS_STAGED_CONFIG_PATH,
-    DEFAULT_PASSWORD_POLICY,
-    DEFAULT_LOCAL_USER_SHELL,
-    LOCAL_USER_SHELLS,
-    clear_pending_os_password,
-    has_pending_os_password,
-    is_valid_user_shell,
-    local_user_sync_rows,
-    mark_local_users_applied,
-    mark_local_users_failed,
-    normalize_user_shell,
-    password_policy_from_json,
-    pending_os_password_count,
-    password_policy_summary,
-    password_policy_to_json,
-    rename_pending_os_password,
-    render_local_users_apply_config,
-    render_local_users_preview,
-    stage_user_os_password,
-    validate_local_usernames,
-    validate_password,
-)
-from atlaso.app.services.firewall import (
-    FIREWALL_ACTIONS,
-    FIREWALL_DIRECTIONS,
-    FIREWALL_POLICIES,
-    FIREWALL_PROTOCOLS,
-    FIREWALL_ANY_SOURCE_GROUP_ID,
-    FIREWALL_SOURCE_GROUP_REFERENCE_PREFIX,
-    FIREWALL_SOURCE_GROUPS_SETTING_KEY,
-    FIREWALL_STAGED_CONFIG_PATH,
-    ATLASO_DHCP_FIREWALL_RULE_MARKER,
-    ca_portal_firewall_interfaces,
-    firewall_interface_networks,
-    firewall_rule_to_dict,
-    firewall_settings_to_dict,
-    firewall_source_group_state,
-    is_atlaso_managed_firewall_rule,
-    managed_routing_firewall_rules,
-    managed_service_firewall_rules,
-    render_nftables_config,
-    validate_firewall_source_groups,
-    validate_firewall_rule,
-    validate_firewall_state,
-)
-from atlaso.app.services.esx_storage import (
-    ESX_STORAGE_DNS_DESCRIPTION,
-    ESX_STORAGE_STAGED_CONFIG_PATH,
-    StorageInterface,
-    desired_dns_records as desired_esx_storage_dns_records,
-    firewall_rule_specs as esx_storage_firewall_rule_specs,
-    format_authorization as esx_storage_format_authorization,
-    manifest_json as esx_storage_manifest_json,
-    normalize_families as normalize_esx_storage_families,
-    normalize_relative_path as normalize_esx_storage_relative_path,
-    parse_disk_inventory_output as parse_esx_storage_disk_inventory_output,
-    render_manifest as render_esx_storage_manifest,
-    rpcbind_required as esx_storage_rpcbind_required,
-    select_inventory_candidate as select_esx_storage_inventory_candidate,
-    split_lines as split_esx_storage_lines,
-    storage_slug as esx_storage_slug,
-    validate_mounted_volume_path as validate_esx_storage_mounted_volume_path,
-)
-from atlaso.app.services.kms import (
-    KMS_DEFAULT_CONFIG_PATH,
-    KMS_DEFAULT_DATABASE_PATH,
-    KMS_DNS_RECORD_DESCRIPTION,
-    KMS_STAGED_CONFIG_PATH,
-    KMS_STAGED_CLIENT_TRUST_PATH,
-    join_csv,
-)
-from atlaso.app.services.vsphere_key_providers import (
-    authenticated_provider_counts,
-    certificate_to_dict,
-    mark_provider_desired_changed,
-    normalize_service_hostname as normalize_vsphere_service_hostname,
-    normalize_vcenter_hostname as normalize_vsphere_vcenter_hostname,
-    parse_public_certificate,
-    provider_requires_appliance_apply,
-    provider_rows,
-    provider_to_dict,
-    render_client_trust_bundle,
-    render_provider_config,
-    runtime_status_snapshot,
-    trusted_vcenter_to_dict,
-    usable_certificates,
-    validate_provider_state,
-)
-from atlaso.app.services.ldap import (
-    LDAP_CERT_PATH,
-    LDAP_CHAIN_PATH,
-    LDAP_DEFAULT_HOSTNAME,
-    LDAP_DEFAULT_PLAINTEXT_PORT,
-    LDAP_DEFAULT_PORT,
-    LDAP_DNS_RECORD_DESCRIPTION,
-    LDAP_GROUP_PATTERN,
-    LDAP_KEY_PATH,
-    LDAP_RECOVERY_DIR,
-    LDAP_ROOT_CA_PATH,
-    LDAP_STAGED_CONFIG_PATH,
-    LDAP_PENDING_RECOVERY_PAYLOADS,
-    LDAP_UID_PATTERN,
-    VcfAutomationLdapClient,
-    VcfLdapError,
-    default_organization_suffix,
-    decrypt_recovery_payload,
-    encrypt_recovery_payload,
-    ensure_organization_bind_secret,
-    has_pending_ldap_password,
-    ldap_group_to_dict,
-    ldap_organization_to_dict,
-    ldap_settings_to_dict,
-    ldap_user_to_dict,
-    invalidate_ldap_user_password_for_uid_change,
-    manual_vcf_bundle,
-    mark_ldap_apply_complete,
-    normalize_dn,
-    normalize_ldap_slug,
-    normalize_vcf_target_url,
-    recovery_sha256,
-    render_ldap_apply_config,
-    render_ldap_preview,
-    rotate_organization_bind_secret,
-    stage_ldap_user_password,
-    stage_ldap_recovery_payload,
-    clear_ldap_recovery_payload,
-    clear_pending_ldap_password,
-    tls_sha256_fingerprint as ldap_vcf_tls_fingerprint,
-    validate_group_cycles,
-    validate_ldap_state,
-    vcf_ldap_settings,
-)
-from atlaso.app.services.ntp import (
-    NTP_DEFAULT_HOSTNAME,
-    NTP_STAGED_CONFIG_PATH,
-    default_ntp_upstream_fields,
-    duplicate_ntp_upstream_source,
-    dump_ntp_upstream_sources,
-    join_allow_clients,
-    ntp_settings_to_dict,
-    ntp_upstream_sources,
-    render_ntp_config,
-    split_allow_clients,
-    validate_ntp_state,
+from atlaso.app.services.vaults import (
+    VaultEntryInput,
+    create_vault,
+    kickstart_vault_marker_catalog,
+    list_vaults,
+    parse_vault_uris_json,
+    redact_secret_values,
+    update_vault_entry,
+    upsert_vault_entry,
+    vault_entry_metadata,
+    vault_marker_name,
+    vault_scope_identity,
 )
 from atlaso.app.services.vcf_backups import (
-    VCF_BACKUP_DEFAULT_VOLUME_MOUNT,
     VCF_BACKUP_DEFAULT_USERNAME,
+    VCF_BACKUP_DEFAULT_VOLUME_MOUNT,
     VCF_BACKUP_EFFECTIVE_CONFIG_PATH,
     VCF_BACKUP_STAGED_CONFIG_PATH,
     render_vcf_backup_config,
@@ -548,21 +630,21 @@ from atlaso.app.services.vcf_backups import (
     vcf_backup_service_state,
     vcf_backup_settings_to_dict,
 )
-from atlaso.app.services.vcf_private_registry import (
-    VCF_REGISTRY_DEFAULT_CONFIG_PATH,
-    VCF_REGISTRY_DEFAULT_HOSTNAME,
-    VCF_REGISTRY_DEFAULT_PROJECT,
-    VCF_REGISTRY_DEFAULT_STORAGE_PATH,
-    VCF_REGISTRY_UPLOADED_CA_BUNDLE_NAME_KEY,
-    VCF_REGISTRY_UPLOADED_CA_BUNDLE_PATH,
-    VCF_REGISTRY_UPLOADED_CA_BUNDLE_PEM_KEY,
-    default_target_reference,
-    render_harbor_config,
-    render_imgpkg_relocation_preview,
-    validate_vcf_registry_state,
-    vcf_registry_bundle_to_dict,
-    vcf_registry_endpoint,
-    vcf_registry_settings_to_dict,
+from atlaso.app.services.vcf_depot_downloads import (
+    ActiveVcfDepotDownloadError,
+    active_vcf_depot_download_job,
+    active_vcf_depot_operation_job,
+    disable_vcf_depot_profile_schedules,
+    enqueue_vcf_depot_download,
+    vcf_depot_schedules_for_profile,
+    vcf_depot_task_log_reference,
+)
+from atlaso.app.services.vcf_depot_target import (
+    LocalDepotEndpoint,
+    VcfDepotTargetError,
+    VcfDepotTargetPartialError,
+    configure_target_depot,
+    inspect_target_depot,
 )
 from atlaso.app.services.vcf_offline_depot import (
     VCF_DEPOT_ACTIVATION_NAME_KEY,
@@ -582,22 +664,24 @@ from atlaso.app.services.vcf_offline_depot import (
     VCF_DEPOT_EXTRACT_DIR,
     VCF_DEPOT_LEGACY_STORE_PATH,
     VCF_DEPOT_PROFILE_TYPES,
-    VCF_DEPOT_RUNTIME_TOOL_DIR,
     VCF_DEPOT_RUNTIME_RESET_PENDING_KEY,
+    VCF_DEPOT_RUNTIME_TOOL_DIR,
     VCF_DEPOT_SKUS,
-    VCF_DEPOT_STAGED_ACTIVATION_FILE,
     VCF_DEPOT_SOFTWARE_DEPOT_ID_ERROR_KEY,
     VCF_DEPOT_SOFTWARE_DEPOT_ID_GENERATED_AT_KEY,
     VCF_DEPOT_SOFTWARE_DEPOT_ID_KEY,
+    VCF_DEPOT_STAGED_ACTIVATION_FILE,
     VCF_DEPOT_STAGED_APPLICATION_PROPERTIES_PATH,
     VCF_DEPOT_STAGED_CONFIG_PATH,
     VCF_DEPOT_STAGED_TOKEN_FILE,
     VCF_DEPOT_STAGED_TOOL_DIR,
-    VCF_DEPOT_TOOL_VERSION_SOURCE_COMMAND,
-    VCF_DEPOT_TOOL_VERSION_SOURCE_KEY,
     VCF_DEPOT_TOKEN_NAME_KEY,
     VCF_DEPOT_TOKEN_VALUE_KEY,
+    VCF_DEPOT_TOOL_VERSION_SOURCE_COMMAND,
+    VCF_DEPOT_TOOL_VERSION_SOURCE_KEY,
     VCF_DEPOT_UPLOAD_DIR,
+    _find_vcf_download_tool_binary,
+    _safe_extract_tar_gz,
     find_local_vcf_download_tool_archive,
     generate_vcf_software_depot_id,
     render_nginx_depot_config,
@@ -605,67 +689,75 @@ from atlaso.app.services.vcf_offline_depot import (
     safe_archive_upload_name,
     setting_secret_state,
     staged_vcf_download_tool_version,
-    vcf_depot_application_properties_from_tool,
     validate_vcf_depot_state,
     validate_vcf_download_tool_upload_envelope,
+    vcf_depot_application_properties_from_tool,
     vcf_depot_endpoint,
     vcf_depot_profile_start_blocker,
     vcf_depot_profile_to_dict,
     vcf_depot_service_state,
     vcf_depot_settings_to_dict,
     vcfdt_commands_for_profile,
-    _find_vcf_download_tool_binary,
-    _safe_extract_tar_gz,
 )
-from atlaso.app.services.esxi_pxe import (
-    DEFAULT_ESXI_KICKSTART_CONTENT,
-    DEFAULT_ESXI_KICKSTART_NAME,
-    ESXI_PXE_DEFAULT_HOSTNAME,
-    ESXI_PXE_DNS_RECORD_DESCRIPTION,
-    ESXI_PXE_HTTP_PORT,
-    ESXI_PXE_LISTEN_ADDRESS_KEY,
-    ESXI_PXE_LISTEN_INTERFACE_KEY,
-    ESXI_PXE_STAGED_CONFIG_PATH,
-    ESXI_IPXE_HTTP_SCRIPT_PATH,
-    assign_kickstart_content,
-    canonical_http_path,
-    content_hash,
-    custom_variable_defaults,
-    custom_variable_definitions,
-    decode_kickstart_upload,
-    default_host_to_dict,
-    delete_custom_variable_definition,
-    esxi_pxe_boot_settings,
-    esxi_pxe_default_host_settings,
-    esxi_pxe_host_artifacts,
-    esxi_pxe_service_state_from_boot,
-    generated_kickstart_path,
-    host_to_dict,
-    host_variables_json,
-    installer_iso_inventory,
-    installer_iso_root_path,
-    kickstart_drift_state,
-    kickstart_template_variables,
-    kickstart_template_validation_errors,
-    kickstart_to_dict,
-    kickstart_validation,
-    validate_kickstart_custom_references,
-    validate_kickstart_vault_references,
-    mark_kickstarts_applied,
-    normalize_host_mac,
-    normalize_kickstart_content,
-    normalize_kickstart_name,
-    normalize_installer_iso_path,
-    normalize_pxe_mac,
-    render_kickstart_for_host,
-    render_esxi_pxe_manifest,
-    render_esxi_pxe_preview,
-    save_custom_variable_definition,
-    save_esxi_pxe_default_host_settings,
-    save_esxi_pxe_boot_settings,
-    store_installer_iso_upload,
-    sync_esxi_pxe_host_network_records,
-    strict_validation_enabled,
+from atlaso.app.services.vcf_private_registry import (
+    VCF_REGISTRY_DEFAULT_CONFIG_PATH,
+    VCF_REGISTRY_DEFAULT_HOSTNAME,
+    VCF_REGISTRY_DEFAULT_PROJECT,
+    VCF_REGISTRY_DEFAULT_STORAGE_PATH,
+    VCF_REGISTRY_UPLOADED_CA_BUNDLE_NAME_KEY,
+    VCF_REGISTRY_UPLOADED_CA_BUNDLE_PATH,
+    VCF_REGISTRY_UPLOADED_CA_BUNDLE_PEM_KEY,
+    default_target_reference,
+    render_harbor_config,
+    render_imgpkg_relocation_preview,
+    validate_vcf_registry_state,
+    vcf_registry_bundle_to_dict,
+    vcf_registry_endpoint,
+    vcf_registry_settings_to_dict,
+)
+from atlaso.app.services.vcf_sddc_deployment import (
+    SDDC_MANAGER_OVA_ROOT,
+    VcfSddcDeploymentCancelled,
+    VcfSddcDeploymentError,
+    VcfSddcPostImportError,
+    deploy_ova,
+    inspect_ova,
+    normalize_disk_provisioning,
+    ova_inventory,
+    tls_sha256_fingerprint,
+    vsphere_inventory,
+)
+from atlaso.app.services.vcf_trust import (
+    RootCaInfo,
+    VcfApiClient,
+    VcfTrustCredentials,
+    VcfTrustError,
+    execute_vcf_trust,
+    inspect_vcf_trust_target,
+    root_ca_info,
+    sanitized_result,
+)
+from atlaso.app.services.vcf_vault_import import discover_vcf_passwords
+from atlaso.app.services.vsphere_key_providers import (
+    authenticated_provider_counts,
+    certificate_to_dict,
+    mark_provider_desired_changed,
+    parse_public_certificate,
+    provider_requires_appliance_apply,
+    provider_rows,
+    provider_to_dict,
+    render_client_trust_bundle,
+    render_provider_config,
+    runtime_status_snapshot,
+    trusted_vcenter_to_dict,
+    usable_certificates,
+    validate_provider_state,
+)
+from atlaso.app.services.vsphere_key_providers import (
+    normalize_service_hostname as normalize_vsphere_service_hostname,
+)
+from atlaso.app.services.vsphere_key_providers import (
+    normalize_vcenter_hostname as normalize_vsphere_vcenter_hostname,
 )
 from atlaso.app.token_service import create_token_for_user
 from atlaso.app.ui_routes import (
@@ -4404,7 +4496,6 @@ def public_portal_links_context(db: Session) -> dict[str, str]:
     Args:
         db: Active database session.
     """
-    interfaces = db.execute(select(PhysicalInterface).order_by(PhysicalInterface.name)).scalars().all()
     management = appliance_settings_management_context(db)
     settings = get_appliance_settings_row(db)
     host = _url_host(management.get("ip") or settings.fqdn)
@@ -8427,11 +8518,11 @@ def _wait_for_vcf_api(address: str, username: str, password: str, *, timeout: fl
         try:
             with VcfApiClient(address, username, password, timeout=30.0) as api:
                 return api.appliance_info()
-        except Exception as exc:  # appliance startup returns connection/auth failures until services settle.
+        except Exception as exc:  # noqa: BLE001 - startup can surface transport, auth, or SDK readiness failures.
             last_error = exc
             for _ in range(15):
                 if cancelled and cancelled():
-                    raise JobCancelled("Task was cancelled by an operator.")
+                    raise JobCancelled("Task was cancelled by an operator.") from exc
                 time.sleep(1)
     raise VcfSddcDeploymentError("VCF API did not become ready before the 90-minute timeout.") from last_error
 
@@ -12205,12 +12296,18 @@ def cleanup_transient_secret_staging_files() -> None:
         status_temp_path.unlink(missing_ok=True)
 
 
-def execute_appliance_apply_unit(unit: dict[str, Any], *, adapter: SystemAdapter | None = None) -> dict[str, Any]:
+def execute_appliance_apply_unit(
+    unit: dict[str, Any],
+    *,
+    adapter: SystemAdapter | None = None,
+    db: Session | None = None,
+) -> dict[str, Any]:
     """Run appliance apply unit.
 
     Args:
         unit: Unit consumed by execute appliance apply unit.
         adapter: Adapter consumed by execute appliance apply unit.
+        db: Active database session for successful apply bookkeeping.
 
 
     Returns:
@@ -12474,6 +12571,8 @@ def execute_appliance_apply_unit(unit: dict[str, Any], *, adapter: SystemAdapter
             error = "\n".join(result.stderr for result in results if result.stderr).strip() or "Local user OS sync failed."
             mark_local_users_failed(users, error)
     if unit_id == "esxi_pxe" and succeeded and not any(result.dry_run for result in results):
+        if db is None:
+            raise RuntimeError("A database session is required to finalize an ESXi PXE apply.")
         db.execute(delete(NetworkBootEsxiBootCapability))
         mark_kickstarts_applied(list(context["esxi_kickstarts"]))
     if unit_id == "kms" and succeeded and not any(result.dry_run for result in results):
@@ -13293,7 +13392,7 @@ def appliance_power_action(
     db.commit()
     try:
         result = SystemAdapter().schedule_appliance_power(action)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - normalize adapter boundary failures into a safe result.
         result = AdapterResult(
             command=["atlaso-helper", "appliance-power", action],
             returncode=1,
@@ -15073,7 +15172,9 @@ def appliance_apply_review(
     Returns:
         The endpoint response.
     """
-    from atlaso.app.services.appliance_settings import invalidate_observed_management_dhcp_dns
+    from atlaso.app.services.appliance_settings import (
+        invalidate_observed_management_dhcp_dns,
+    )
 
     invalidate_observed_management_dhcp_dns()
     context = appliance_apply_context(db)
@@ -15242,7 +15343,9 @@ def run_appliance_apply_job(job_id: str, *, force_real: bool = False) -> None:
                 for unit in job_result.get("captured_units", [])
                 if isinstance(unit, dict) and unit.get("unit_id")
             }
-            from atlaso.app.services.appliance_settings import invalidate_observed_management_dhcp_dns
+            from atlaso.app.services.appliance_settings import (
+                invalidate_observed_management_dhcp_dns,
+            )
 
             invalidate_observed_management_dhcp_dns()
             invalidate_appliance_apply_status_projection()
@@ -15310,6 +15413,7 @@ def run_appliance_apply_job(job_id: str, *, force_real: bool = False) -> None:
                 result = execute_appliance_apply_unit(
                     execution_unit,
                     adapter=SystemAdapter(dry_run=False) if force_real else None,
+                    db=db,
                 )
                 persist_vcf_depot_metadata_from_apply(db, [result])
                 result = _redact_task_value(result)
@@ -15561,7 +15665,7 @@ def run_vcf_depot_software_id_job(job_id: str) -> None:
                 "refresh_vcf_depot_software_depot_id": True,
                 "vcf_depot_id_only": True,
             }
-            raw_result = execute_appliance_apply_unit(execution_unit)
+            raw_result = execute_appliance_apply_unit(execution_unit, db=db)
             persist_vcf_depot_metadata_from_apply(db, [raw_result])
             software_depot_id = str(vcf_depot_software_depot_id_context(db).get("id") or "").strip()
             id_readback_valid = bool(software_depot_id) and (not previous_id or software_depot_id != previous_id)
@@ -15705,7 +15809,9 @@ def submit_appliance_apply(
     """
     verify_csrf(request, csrf)
     wants_json = "application/json" in request.headers.get("accept", "")
-    from atlaso.app.services.appliance_settings import invalidate_observed_management_dhcp_dns
+    from atlaso.app.services.appliance_settings import (
+        invalidate_observed_management_dhcp_dns,
+    )
 
     invalidate_observed_management_dhcp_dns()
     units = appliance_apply_units(db)
@@ -28091,6 +28197,8 @@ def esxi_pxe_page_context(
     from atlaso.app.services.network_boot import (
         catalog_rows,
         esxi_host_assignments_by_mac,
+    )
+    from atlaso.app.services.network_boot import (
         host_to_dict as inventory_host_to_dict,
     )
 

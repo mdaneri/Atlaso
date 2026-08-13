@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
 import hashlib
-from ipaddress import ip_address
 import json
 import re
+from datetime import datetime, timezone
+from ipaddress import ip_address
 from uuid import UUID
 
 from cryptography import x509
@@ -17,7 +17,6 @@ from sqlalchemy.orm import Session, selectinload
 
 from atlaso.app.adapters.system import SystemAdapter
 from atlaso.app.models import (
-    CaCertificate,
     CaSettings,
     KmsSettings,
     VsphereKeyProvider,
@@ -25,15 +24,14 @@ from atlaso.app.models import (
     VsphereTrustedVcenterCertificate,
     utcnow,
 )
+from atlaso.app.services.appliance_settings import HOSTNAME_PATTERN
+from atlaso.app.services.ca import safe_certificate_name
+from atlaso.app.services.dnsmasq import split_addresses
 from atlaso.app.services.kms import (
     KMS_DEFAULT_DATABASE_PATH,
     KMS_DEFAULT_KEK_PATH,
     KMS_SERVER_CERT_BASE,
 )
-from atlaso.app.services.appliance_settings import HOSTNAME_PATTERN
-from atlaso.app.services.ca import safe_certificate_name
-from atlaso.app.services.dnsmasq import split_addresses
-
 
 MAX_PUBLIC_CERTIFICATE_BYTES = 65_536
 PRIVATE_KEY_MARKERS = (

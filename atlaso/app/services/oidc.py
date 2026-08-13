@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
 import base64
-from hashlib import sha256
-from ipaddress import ip_address, ip_interface
 import json
 import re
+from datetime import datetime, timedelta, timezone
+from hashlib import sha256
+from ipaddress import ip_address, ip_interface
 from secrets import token_urlsafe
 from urllib.parse import urlsplit
 
@@ -18,6 +18,7 @@ from cryptography import x509
 from cryptography.hazmat.primitives import hashes
 from cryptography.x509.oid import NameOID
 from joserfc import jwt
+from joserfc.errors import JoseError
 from joserfc.jwk import RSAKey
 from sqlalchemy import delete, select, update
 from sqlalchemy.orm import Session, selectinload
@@ -32,10 +33,10 @@ from atlaso.app.models import (
     LdapOrganization,
     LdapSettings,
     LdapUser,
-    OidcClient,
-    OidcClientRedirectUri,
     OidcAuthorizationCode,
     OidcAuthorizationTransaction,
+    OidcClient,
+    OidcClientRedirectUri,
     OidcGroupMapping,
     OidcProviderSettings,
     OidcSigningKey,
@@ -47,14 +48,18 @@ from atlaso.app.models import (
     VlanInterface,
     utcnow,
 )
+from atlaso.app.secrets import decrypt_secret, encrypt_secret
 from atlaso.app.security import user_roles
-from atlaso.app.secrets import encrypt_secret
-from atlaso.app.secrets import decrypt_secret
-from atlaso.app.services.identity_credentials import VerifiedIdentity, ensure_oidc_subject
 from atlaso.app.services.appliance_settings import normalize_fqdn
 from atlaso.app.services.dnsmasq import split_addresses, split_interfaces
-from atlaso.app.services.networking import normalize_interface_mode, normalize_interface_role
-
+from atlaso.app.services.identity_credentials import (
+    VerifiedIdentity,
+    ensure_oidc_subject,
+)
+from atlaso.app.services.networking import (
+    normalize_interface_mode,
+    normalize_interface_role,
+)
 
 OIDC_ISSUER_PATH = "/identity"
 OIDC_SCOPES = ("openid", "profile", "email", "groups")
@@ -327,7 +332,7 @@ def provider_validation_errors(
             ):
                 raise ValueError
             RSAKey.import_key(decrypt_secret(signing_key.private_key_encrypted))
-        except Exception:
+        except Exception:  # noqa: BLE001 - cryptographic backends expose several key-import exception types.
             errors.append("The active OIDC signing key is not protocol-ready.")
     if provider.access_token_lifetime_seconds != OIDC_TOKEN_LIFETIME_SECONDS:
         errors.append("OIDC access tokens must use the fixed five-minute lifetime.")
@@ -1940,7 +1945,8 @@ def begin_authorization(
         max_age=max_age, login_hint=login_hint[:240],
         expires_at=now + timedelta(seconds=provider.authorization_code_lifetime_seconds),
     )
-    db.add(row); db.flush()
+    db.add(row)
+    db.flush()
     return row
 
 
@@ -2020,7 +2026,8 @@ def issue_authorization_code(
         auth_time=auth_time,
         expires_at=utcnow() + timedelta(seconds=client.authorization_code_lifetime_seconds),
     ))
-    db.delete(transaction); db.flush()
+    db.delete(transaction)
+    db.flush()
     return raw
 
 
@@ -2117,7 +2124,8 @@ def issue_tokens(db: Session, *, code: OidcAuthorizationCode, client: OidcClient
         identity=identity,
         scopes=code.scopes,
     )
-    now = utcnow(); issued = int(now.timestamp())
+    now = utcnow()
+    issued = int(now.timestamp())
     common = {"iss": normalize_issuer_url(provider.issuer_url), "sub": subject.subject_uuid, "aud": client.client_id, "iat": issued, "auth_time": int(_aware(code.auth_time).timestamp())}
     id_claims = common | {
         "exp": issued + OIDC_TOKEN_LIFETIME_SECONDS,
@@ -2237,7 +2245,7 @@ def validate_bearer_token(
         provider = protocol_provider(db)
         exp = int(claims.get("exp", 0))
         iat = int(claims.get("iat", 0))
-    except Exception:
+    except (JoseError, TypeError, ValueError):
         raise OidcConfigurationError("Invalid token.") from None
     now_epoch = int(now.timestamp())
     if (

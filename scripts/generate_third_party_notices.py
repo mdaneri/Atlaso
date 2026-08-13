@@ -6,11 +6,9 @@ from __future__ import annotations
 import argparse
 import json
 import re
-import sys
 import zipfile
 from email.parser import Parser
 from pathlib import Path
-
 
 ROOT = Path(__file__).resolve().parents[1]
 LOCK_ENTRY_RE = re.compile(r"^([A-Za-z0-9_.-]+)==([^\\\s]+)")

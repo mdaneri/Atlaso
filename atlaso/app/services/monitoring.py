@@ -2,25 +2,29 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
 import os
-from pathlib import Path
 import platform
 import shutil
 import socket
 import subprocess
 import threading
-import time
+from dataclasses import dataclass, field
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Any
 
-from sqlalchemy import desc, delete, select
+from sqlalchemy import delete, desc, select
 from sqlalchemy.orm import Session, selectinload
 
 from atlaso.app.config import Settings, get_settings
 from atlaso.app.database import SessionLocal
-from atlaso.app.models import MonitorCpuSample, MonitorDiskSample, MonitorNetworkSample, MonitorSample, utcnow
-
+from atlaso.app.models import (
+    MonitorCpuSample,
+    MonitorDiskSample,
+    MonitorNetworkSample,
+    MonitorSample,
+    utcnow,
+)
 
 SECTOR_SIZE = 512
 VIRTUAL_FILESYSTEMS = {
@@ -1047,7 +1051,7 @@ class MonitorSampler:
             try:
                 with SessionLocal() as db:
                     record_monitor_sample(db)
-            except Exception:
+            except Exception:  # noqa: BLE001 - the sampler must survive any backend collection failure.
                 pass
             self._stop.wait(self.interval_seconds)
 

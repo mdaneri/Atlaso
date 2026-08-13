@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-
 KMS_DEFAULT_DATABASE_PATH = "/var/lib/atlaso/kmip/store.db"
 KMS_DEFAULT_KEK_PATH = "/var/lib/atlaso/kmip/kek.json"
 KMS_DEFAULT_CONFIG_PATH = "/etc/atlaso/kmip/server.json"

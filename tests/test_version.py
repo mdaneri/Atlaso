@@ -8,7 +8,6 @@ from pathlib import Path
 
 import pytest
 
-
 SCRIPT = Path("scripts/version.py")
 POWERSHELL_WRAPPER = Path("scripts/version.ps1")
 SPEC = importlib.util.spec_from_file_location("atlaso_version_script", SCRIPT)

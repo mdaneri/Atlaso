@@ -107,7 +107,9 @@ def _advance_dns_authoritative_serial(session: Session, _flush_context, _instanc
 
 def init_db() -> None:
     """Handle init db."""
-    from atlaso.app import models  # noqa: F401
+    from atlaso.app import (  # noqa: F401 - importing models registers SQLAlchemy metadata.
+        models,
+    )
 
     Base.metadata.create_all(bind=engine)
     if engine.dialect.name == "sqlite":

@@ -12,10 +12,14 @@ from dataclasses import dataclass
 from ipaddress import ip_address
 from pathlib import Path
 
-from atlaso.app.models import Setting, User, VcfDepotDownloadProfile, VcfOfflineDepotSettings
+from atlaso.app.models import (
+    Setting,
+    User,
+    VcfDepotDownloadProfile,
+    VcfOfflineDepotSettings,
+)
 from atlaso.app.services.dnsmasq import split_addresses, split_interfaces
 from atlaso.app.services.nginx import format_nginx_listen
-
 
 VCF_DEPOT_DEFAULT_HOSTNAME = "depot.atlaso.internal"
 VCF_DEPOT_LEGACY_STORE_PATH = "/srv/repository"

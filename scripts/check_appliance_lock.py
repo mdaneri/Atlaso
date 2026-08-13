@@ -3,16 +3,15 @@
 
 from __future__ import annotations
 
-import re
 import hashlib
 import json
+import re
 import sys
 import tomllib
 from pathlib import Path
 
 from packaging.requirements import Requirement
 from packaging.utils import canonicalize_name
-
 
 ROOT = Path(__file__).resolve().parents[1]
 LOCK_PATH = ROOT / "requirements-appliance.lock"

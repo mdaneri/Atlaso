@@ -314,6 +314,51 @@ def test_interface_apis_reject_retired_network_roles(client, retired_role):
     assert vlan_response.status_code == 422
 
 
+def test_vlan_api_preserves_case_insensitive_canonical_roles(client):
+    """Verify VLAN create and update normalize recognized role capitalization.
+
+    Args:
+        client: Authenticated-capable application test client fixture.
+    """
+    from sqlalchemy import select
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import PhysicalInterface
+
+    with SessionLocal() as db:
+        parent = db.execute(select(PhysicalInterface).where(PhysicalInterface.name == "eth2")).scalar_one()
+        parent.mode = "trunk"
+        db.commit()
+
+    token, _metadata = create_token(client, scopes=["write:vlans"])
+    headers = {"Authorization": f"Bearer {token}"}
+    created = client.post(
+        "/api/v1/vlans",
+        headers=headers,
+        json={
+            "parent_interface": "eth2",
+            "vlan_id": 334,
+            "ip_cidr": "192.0.2.1/24",
+            "role": "Access",
+        },
+    )
+    assert created.status_code == 201, created.text
+    assert created.json()["role"] == "access"
+
+    updated = client.patch(
+        f"/api/v1/vlans/{created.json()['id']}",
+        headers=headers,
+        json={
+            "parent_interface": "eth2",
+            "vlan_id": 334,
+            "ip_cidr": "192.0.2.1/24",
+            "role": "ROUTE",
+        },
+    )
+    assert updated.status_code == 200, updated.text
+    assert updated.json()["role"] == "route"
+
+
 def test_physical_interface_api_atomically_refreshes_ipv4_and_ipv6_dependencies(client):
     """Verify the typed API update keeps service, DHCP, and Network Boot addresses aligned.
 
@@ -334,7 +379,10 @@ def test_physical_interface_api_atomically_refreshes_ipv4_and_ipv6_dependencies(
         OidcProviderSettings,
         PhysicalInterface,
     )
-    from atlaso.app.services.esxi_pxe import esxi_pxe_boot_settings, save_esxi_pxe_boot_settings
+    from atlaso.app.services.esxi_pxe import (
+        esxi_pxe_boot_settings,
+        save_esxi_pxe_boot_settings,
+    )
     from atlaso.app.services.oidc import OIDC_DNS_RECORD_DESCRIPTION
 
     old_ipv4 = "192.168.50.1"
@@ -661,7 +709,12 @@ def test_physical_interface_api_rejects_inconsistent_esxi_reservation_owner(clie
     from sqlalchemy import select
 
     from atlaso.app.database import SessionLocal
-    from atlaso.app.models import DhcpReservation, DhcpScope, EsxiPxeHost, PhysicalInterface
+    from atlaso.app.models import (
+        DhcpReservation,
+        DhcpScope,
+        EsxiPxeHost,
+        PhysicalInterface,
+    )
 
     with SessionLocal() as db:
         db.query(DhcpScope).delete()
@@ -730,7 +783,12 @@ def test_physical_interface_api_rejects_reservation_dns_collision(client):
     from sqlalchemy import select
 
     from atlaso.app.database import SessionLocal
-    from atlaso.app.models import DhcpReservation, DhcpScope, DnsRecord, PhysicalInterface
+    from atlaso.app.models import (
+        DhcpReservation,
+        DhcpScope,
+        DnsRecord,
+        PhysicalInterface,
+    )
 
     mac_address = "02:00:00:00:31:73"
     hostname = "collision.atlaso.internal"
@@ -868,7 +926,10 @@ def test_physical_interface_api_rebuilds_pxe_url_for_ipv6_to_ipv4_fallback(clien
 
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import DhcpScope, PhysicalInterface
-    from atlaso.app.services.esxi_pxe import esxi_pxe_boot_settings, save_esxi_pxe_boot_settings
+    from atlaso.app.services.esxi_pxe import (
+        esxi_pxe_boot_settings,
+        save_esxi_pxe_boot_settings,
+    )
 
     with SessionLocal() as db:
         db.query(DhcpScope).delete()
@@ -1489,7 +1550,7 @@ def test_physical_interface_api_rejects_address_removal_with_enabled_dependents(
         interface = db.execute(
             select(PhysicalInterface).where(PhysicalInterface.name == "eth2")
         ).scalar_one()
-        scope = db.execute(select(DhcpScope).where(DhcpScope.name == scope_name)).scalar_one()
+        db.execute(select(DhcpScope).where(DhcpScope.name == scope_name)).scalar_one()
         assert interface.ipv6_enabled is True
         assert interface.ipv6_cidr == "fd00:50::1/64"
         for bound_scope in db.execute(

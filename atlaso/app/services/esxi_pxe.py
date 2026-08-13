@@ -14,7 +14,15 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from atlaso.app.models import DhcpReservation, DhcpScope, DnsRecord, EsxiKickstart, EsxiPxeHost, Setting, utcnow
+from atlaso.app.models import (
+    DhcpReservation,
+    DhcpScope,
+    DnsRecord,
+    EsxiKickstart,
+    EsxiPxeHost,
+    Setting,
+    utcnow,
+)
 from atlaso.app.services.dnsmasq import reservation_dns_record
 from atlaso.app.services.vaults import validate_kickstart_vault_markers
 

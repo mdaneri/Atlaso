@@ -6,7 +6,11 @@ import subprocess
 from pathlib import Path
 
 from scripts import generate_embedded_screenshot_sections, generate_screenshot_gallery
-from scripts.check_docs import markdown_sources, validate_legacy_browser_routes, validate_screenshots
+from scripts.check_docs import (
+    markdown_sources,
+    validate_legacy_browser_routes,
+    validate_screenshots,
+)
 from scripts.overlay_docs_site import overlay
 
 

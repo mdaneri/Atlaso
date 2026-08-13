@@ -5,16 +5,16 @@ import importlib.util
 import json
 import sqlite3
 import subprocess
-from types import SimpleNamespace
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from sqlalchemy.exc import OperationalError as SQLAlchemyOperationalError
 
 import atlaso.app.appliance_console as appliance_console
 from atlaso.app.appliance_console import (
-    CursesConsole,
     ConsoleOperationError,
+    CursesConsole,
     ServiceStatus,
     configure_firewall,
     management_urls,
@@ -23,7 +23,6 @@ from atlaso.app.appliance_console import (
     validate_ipv6_management_values,
     validate_management_values,
 )
-
 
 HELPER_PATH = Path(__file__).resolve().parents[1] / "scripts" / "appliance" / "atlaso-helper"
 

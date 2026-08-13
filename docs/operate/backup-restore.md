@@ -47,6 +47,10 @@ retain their `{{custom.*}}` prerequisites.
 Verify identity, DNS, service configuration, and recent tasks after recovery. Restore changes Atlaso state; host
 services are enforced only through their documented workflows.
 
+Every archived physical-interface and VLAN row must include a non-empty role. Atlaso rejects a missing or null role
+before clearing current desired state; only the retired `services` and `storage` values receive the bounded compatibility
+mapping to `access`.
+
 <!-- BEGIN GENERATED ADDITIONAL SCREENSHOTS -->
 ## Additional verified states
 

@@ -7,7 +7,6 @@ import re
 import subprocess
 from pathlib import Path
 
-
 ARGUMENT_ENTRY = re.compile(
     r"^    (?P<stars>\*{0,2})(?P<name>[A-Za-z_]\w*)"
     r"(?:\s*\([^)]*\))?:\s+(?P<description>\S.*)$"

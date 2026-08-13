@@ -32,8 +32,8 @@ from atlaso.app.models import (
     EsxStorageVolume,
     FirewallRule,
     FirewallSettings,
-    KmsSettings,
     Job,
+    KmsSettings,
     LdapGroup,
     LdapGroupMembership,
     LdapOrganization,
@@ -44,10 +44,10 @@ from atlaso.app.models import (
     NatRule,
     NetworkBootEnvironment,
     NtpSettings,
-    OidcClient,
-    OidcClientRedirectUri,
     OidcAuthorizationCode,
     OidcAuthorizationTransaction,
+    OidcClient,
+    OidcClientRedirectUri,
     OidcGroupMapping,
     OidcProviderSettings,
     OidcSigningKey,
@@ -55,25 +55,30 @@ from atlaso.app.models import (
     PhysicalInterface,
     Route,
     RoutingRule,
+    Schedule,
     ServiceState,
     Setting,
-    Schedule,
     UpdateSource,
     User,
+    Vault,
+    VaultEntry,
     VcfBackupSettings,
     VcfDepotDownloadProfile,
     VcfOfflineDepotSettings,
     VcfPrivateRegistrySettings,
     VcfRegistryBundle,
-    Vault,
-    VaultEntry,
     VlanInterface,
-    WanPolicy,
     VsphereKeyProvider,
     VsphereTrustedVcenter,
     VsphereTrustedVcenterCertificate,
+    WanPolicy,
 )
-from atlaso.app.seed import NTP_NTS_RESTORATION_SETTING_KEY, SEED_EXAMPLES_SETTING_KEY, seed_initial_data, seed_update_sources
+from atlaso.app.seed import (
+    NTP_NTS_RESTORATION_SETTING_KEY,
+    SEED_EXAMPLES_SETTING_KEY,
+    seed_initial_data,
+    seed_update_sources,
+)
 from atlaso.app.services.dnsmasq import DNS_CONDITIONAL_FORWARDERS_SETTING_KEY
 from atlaso.app.services.esxi_pxe import (
     ESXI_PXE_CUSTOM_VARIABLES_KEY,
@@ -82,9 +87,15 @@ from atlaso.app.services.esxi_pxe import (
     normalize_host_variables,
 )
 from atlaso.app.services.firewall import FIREWALL_SOURCE_GROUPS_SETTING_KEY
+from atlaso.app.services.ldap import (
+    clear_ldap_recovery_payload,
+    ensure_organization_bind_secret,
+)
 from atlaso.app.services.local_users import LOCAL_USERS_PASSWORD_POLICY_KEY
-from atlaso.app.services.ldap import clear_ldap_recovery_payload, ensure_organization_bind_secret
-from atlaso.app.services.networking import LEGACY_NETWORK_ROLE_REPLACEMENTS, NETWORK_ROLES
+from atlaso.app.services.networking import (
+    LEGACY_NETWORK_ROLE_REPLACEMENTS,
+    NETWORK_ROLES,
+)
 from atlaso.app.services.update_sources import UPDATE_SOURCE_KINDS
 from atlaso.app.services.vcf_backups import VCF_BACKUP_DEFAULT_USERNAME
 
@@ -708,13 +719,15 @@ def restore_settings_archive(db: Session, archive: dict[str, Any]) -> dict[str, 
 
     _validate_archive(archive)
     data = archive["data"]
+    canonical_interface_rows = {
+        key: _canonical_network_role_rows(data.get(key, []))
+        for key in ("physical_interfaces", "vlan_interfaces")
+    }
     _clear_desired_state(db)
 
     counts: dict[str, int] = {}
     for key in ["physical_interfaces", "vlan_interfaces", "wan_policies", "nat_rules", "routing_rules"]:
-        rows = data.get(key, [])
-        if key in {"physical_interfaces", "vlan_interfaces"}:
-            rows = _canonical_network_role_rows(rows)
+        rows = canonical_interface_rows.get(key, data.get(key, []))
         counts[key] = _insert_rows(db, SCALAR_TABLES[key], rows)
     db.flush()
 
@@ -1001,7 +1014,11 @@ def _canonical_network_role_rows(rows: list[dict[str, Any]]) -> list[dict[str, A
     canonical_rows: list[dict[str, Any]] = []
     for row in rows:
         canonical_row = dict(row)
-        raw_role = str(canonical_row.get("role") or "unused").strip().lower()
+        archived_role = canonical_row.get("role")
+        if not isinstance(archived_role, str) or not archived_role.strip():
+            interface_name = str(canonical_row.get("name") or "<unnamed>")
+            raise ValueError(f"Archived interface {interface_name} is missing its required role.")
+        raw_role = archived_role.strip().lower()
         if raw_role in LEGACY_NETWORK_ROLE_REPLACEMENTS:
             raw_role = LEGACY_NETWORK_ROLE_REPLACEMENTS[raw_role]
         if raw_role not in NETWORK_ROLES:
