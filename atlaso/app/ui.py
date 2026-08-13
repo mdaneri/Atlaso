@@ -14490,6 +14490,7 @@ class AutomationScheduleInputError(ValueError):
             message: Operator-facing validation detail.
             status_code: HTTP status appropriate for the validation failure.
         """
+        self.public_detail = message
         self.status_code = status_code
         super().__init__(message)
 
@@ -14583,7 +14584,7 @@ def create_automation_schedule_record(
         try:
             schedule.next_run_at = next_schedule_run(schedule, after=utcnow())
         except ValueError as exc:
-            raise AutomationScheduleInputError(str(exc)) from exc
+            raise AutomationScheduleInputError("The schedule does not have a valid future run time.") from exc
         if schedule.next_run_at is None:
             raise AutomationScheduleInputError("The enabled schedule does not have a future run time.")
     db.add(schedule)
@@ -14660,7 +14661,7 @@ def create_automation_schedule(
             actor=identity.username,
         )
     except AutomationScheduleInputError as exc:
-        return _automation_render_error(request, identity, db, str(exc), status_code=exc.status_code)
+        return _automation_render_error(request, identity, db, exc.public_detail, status_code=exc.status_code)
     record_audit(db, actor=identity.username, action="create_automation_schedule", resource_type="schedule", resource_id=str(schedule.id), detail=f"task_type={task_type}")
     return RedirectResponse("/automation#schedules", status_code=303)
 
@@ -14731,7 +14732,7 @@ def create_contextual_vcf_depot_schedule(
             actor=identity.username,
         )
     except AutomationScheduleInputError as exc:
-        return JSONResponse({"detail": str(exc)}, status_code=exc.status_code)
+        return JSONResponse({"detail": exc.public_detail}, status_code=exc.status_code)
     record_audit(
         db,
         actor=identity.username,

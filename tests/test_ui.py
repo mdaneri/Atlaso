@@ -15396,6 +15396,22 @@ def test_vcf_offline_depot_contextual_schedule_is_server_bound_and_stays_in_page
     )
     assert profile_tamper.status_code == 422
 
+    invalid_schedule = client.post(
+        f"/vcf-offline-depot/profiles/{profile_id}/schedules",
+        data={
+            "csrf": csrf,
+            "name": "invalid-contextual-schedule",
+            "schedule_kind": "cron",
+            "cron_expression": "invalid",
+            "timezone_name": "UTC",
+        },
+        headers={"Accept": "application/json"},
+    )
+    assert invalid_schedule.status_code == 422
+    assert invalid_schedule.json()["detail"] == (
+        "Cron expression must contain five fields: minute hour day month weekday."
+    )
+
     with SessionLocal() as db:
         disabled = VcfDepotDownloadProfile(
             name="disabled-contextual-profile",
