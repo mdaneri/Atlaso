@@ -158,11 +158,23 @@ def _run_mount_script(
                 if args == ["-n", "-o", "SOURCE", "/"]:
                     print(os.environ["ATLASO_TEST_ROOT_PARTITION"])
                     raise SystemExit(0)
-                if len(args) == 5 and args[:2] == ["-rn", "-S"] and args[3:] == ["-o", "TARGET"]:
-                    disk = disk_for(args[2])
+                if (
+                    len(args) == 5
+                    and args[:2] == ["-rn", "-S"]
+                    and args[3:] == ["-o", "TARGET"]
+                ) or (
+                    len(args) == 6
+                    and args[:3] == ["-rn", "--raw", "-S"]
+                    and args[4:] == ["-o", "TARGET"]
+                ):
+                    disk = disk_for(args[3] if "--raw" in args else args[2])
                     for target, source in mounts.items():
                         if disk and disk_for(source) is disk:
-                            print(target)
+                            print(
+                                target.replace("\\\\", "\\\\x5c").replace(" ", "\\\\x20")
+                                if "--raw" in args
+                                else target
+                            )
                     raise SystemExit(0)
                 if len(args) == 5 and args[:2] == ["-rn", "-M"] and args[3:] == ["-o", "UUID"]:
                     source = mounts.get(args[2])
@@ -649,9 +661,9 @@ def test_initialized_appliance_allows_claimed_mounted_ext4_whole_disk(tmp_path: 
         uuid="external-uuid",
     )
     disks.append(esx_disk)
-    esx_mount = "/mnt/operator-esx-data"
+    esx_mount = "/mnt/operator esx data"
     stable_id = tmp_path / "dev" / "disk" / "by-id" / "atlaso-path-test-sde"
-    fstab = f"UUID=external-uuid {esx_mount} ext4 defaults 0 2\n"
+    fstab = "UUID=external-uuid /mnt/operator\\040esx\\040data ext4 defaults 0 2\n"
     allowlist = f"external-uuid\t{stable_id}\t{esx_mount}\n"
 
     completed, calls = _run_mount_script(

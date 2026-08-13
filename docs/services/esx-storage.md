@@ -165,7 +165,9 @@ share is not mounted again; an unexpected mount at a managed target fails closed
 nginx, the HTTPS bootstrap, Atlaso control plane, and worker require successful fixed/managed data-disk verification.
 The preflight mounts each positively claimed primary ESX Storage path from its UUID-backed fstab entry when it is not
 already active, then verifies the mounted UUID and block-device source before accepting the extra whole disk. Boot
-safety therefore does not depend on `nofail` mount-unit timing.
+safety therefore does not depend on `nofail` mount-unit timing. Atlaso escapes generated fstab fields and decodes
+standard fstab path escapes before comparing mounted and persisted paths, so a claimed path containing whitespace keeps
+the same identity during apply, release migration, and reboot validation.
 
 Settings backups include the service, volume fingerprints/UUIDs/mounts, and shares but never a format authorization.
 Restore marks volumes for runtime verification before reapply. Factory reset removes Atlaso desired state, exports, and

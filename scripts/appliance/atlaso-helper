@@ -11870,6 +11870,17 @@ def _esx_storage_inventory() -> list[dict[str, object]]:
     return inventory
 
 
+def _esx_storage_fstab_escape_field(value: object) -> str:
+    """Escape one fstab field without changing its filesystem meaning."""
+    return str(value).replace("\\", "\\134").replace(" ", "\\040").replace("\t", "\\011")
+
+
+def _esx_storage_fstab_decode_field(value: str) -> str:
+    """Decode the standard octal escapes accepted in one fstab field."""
+    escapes = {"040": " ", "011": "\t", "012": "\n", "134": "\\"}
+    return re.sub(r"\\(040|011|012|134)", lambda match: escapes[match.group(1)], value)
+
+
 def _esx_storage_uuid_fstab_entry_exists(filesystem_uuid: str, mount_path: str) -> bool:
     """Return whether fstab persistently mounts one ext4 UUID at the expected path.
 
@@ -11885,7 +11896,8 @@ def _esx_storage_uuid_fstab_entry_exists(filesystem_uuid: str, mount_path: str) 
         if not line or line.startswith("#"):
             continue
         fields = line.split()
-        if len(fields) >= 3 and fields[:3] == [source, mount_path, "ext4"]:
+        decoded_fields = [_esx_storage_fstab_decode_field(field) for field in fields[:3]]
+        if len(fields) >= 3 and decoded_fields == [source, mount_path, "ext4"]:
             return True
     return False
 
@@ -12240,7 +12252,11 @@ def _esx_storage_apply(payload: dict[str, object]) -> dict[str, object]:
             type_result = _run([blkid, "-s", "TYPE", "-o", "value", stable_id])
             if uuid_result.returncode != 0 or not fs_uuid or type_result.stdout.strip() != "ext4":
                 raise ValueError(f"disk {stable_id} is not a readable ext4 filesystem after initialization")
-            fstab_lines.append(f"UUID={fs_uuid} {mount_path} ext4 defaults,nofail,x-systemd.device-timeout=30 0 2")
+            fstab_lines.append(
+                f"{_esx_storage_fstab_escape_field(f'UUID={fs_uuid}')} "
+                f"{_esx_storage_fstab_escape_field(mount_path)} "
+                "ext4 defaults,nofail,x-systemd.device-timeout=30 0 2"
+            )
             _esx_storage_replace_managed_fstab(
                 list(dict.fromkeys([*rollback_safe_fstab_lines, *fstab_lines]))
             )
@@ -12329,7 +12345,11 @@ def _esx_storage_apply(payload: dict[str, object]) -> dict[str, object]:
             commands.append([mount, "--bind", str(resolved_source), str(bind_path)])
             if bind_result.returncode != 0:
                 raise ValueError(bind_result.stderr.strip() or f"unable to bind {resolved_source} to {bind_path}")
-        fstab_lines.append(f"{resolved_source} {bind_path} none bind,nofail,x-systemd.requires-mounts-for={volume_root} 0 0")
+        fstab_lines.append(
+            f"{_esx_storage_fstab_escape_field(resolved_source)} "
+            f"{_esx_storage_fstab_escape_field(bind_path)} none "
+            f"{_esx_storage_fstab_escape_field(f'bind,nofail,x-systemd.requires-mounts-for={volume_root}')} 0 0"
+        )
     _esx_storage_replace_managed_fstab(
         list(dict.fromkeys([*rollback_safe_fstab_lines, *fstab_lines]))
     )

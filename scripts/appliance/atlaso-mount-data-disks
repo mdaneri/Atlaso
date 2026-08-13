@@ -246,11 +246,19 @@ managed_esx_primary_mount() {
   uuid="$1"
   [ -f "$FSTAB_PATH" ] || return 1
   awk -v source="UUID=$uuid" '
+    function decode_fstab(value) {
+      gsub(/\\040/, sprintf("%c", 32), value)
+      gsub(/\\011/, sprintf("%c", 9), value)
+      gsub(/\\012/, sprintf("%c", 10), value)
+      gsub(/\\134/, sprintf("%c", 92), value)
+      return value
+    }
     $0 == "# BEGIN ATLASO ESX STORAGE" { managed = 1; next }
     $0 == "# END ATLASO ESX STORAGE" { managed = 0; next }
     managed && $1 == source && $3 == "ext4" {
-      if (mountpoint && mountpoint != $2) { duplicate = 1 }
-      mountpoint = $2
+      decoded_mountpoint = decode_fstab($2)
+      if (mountpoint && mountpoint != decoded_mountpoint) { duplicate = 1 }
+      mountpoint = decoded_mountpoint
     }
     END {
       if (mountpoint && !duplicate) { print mountpoint; exit 0 }
@@ -264,7 +272,14 @@ fstab_uuid_mount_exists() {
   mountpoint="$2"
   [ -f "$FSTAB_PATH" ] || return 1
   awk -v source="UUID=$uuid" -v mountpoint="$mountpoint" '
-    $1 == source && $2 == mountpoint && $3 == "ext4" { found = 1 }
+    function decode_fstab(value) {
+      gsub(/\\040/, sprintf("%c", 32), value)
+      gsub(/\\011/, sprintf("%c", 9), value)
+      gsub(/\\012/, sprintf("%c", 10), value)
+      gsub(/\\134/, sprintf("%c", 92), value)
+      return value
+    }
+    decode_fstab($1) == source && decode_fstab($2) == mountpoint && $3 == "ext4" { found = 1 }
     END { exit found ? 0 : 1 }
   ' "$FSTAB_PATH"
 }
@@ -273,9 +288,16 @@ managed_esx_bind_entry_exists() {
   mountpoint="$1"
   [ -f "$FSTAB_PATH" ] || return 1
   awk -v mountpoint="$mountpoint" '
+    function decode_fstab(value) {
+      gsub(/\\040/, sprintf("%c", 32), value)
+      gsub(/\\011/, sprintf("%c", 9), value)
+      gsub(/\\012/, sprintf("%c", 10), value)
+      gsub(/\\134/, sprintf("%c", 92), value)
+      return value
+    }
     $0 == "# BEGIN ATLASO ESX STORAGE" { managed = 1; next }
     $0 == "# END ATLASO ESX STORAGE" { managed = 0; next }
-    managed && $2 == mountpoint && $3 == "none" && $4 ~ /(^|,)bind(,|$)/ { found = 1 }
+    managed && decode_fstab($2) == mountpoint && $3 == "none" && $4 ~ /(^|,)bind(,|$)/ { found = 1 }
     END { exit found ? 0 : 1 }
   ' "$FSTAB_PATH"
 }
@@ -302,10 +324,13 @@ validate_managed_esx_mounts() {
   uuid="$2"
   primary_mount="$3"
 
-  mounted_targets="$(findmnt -rn -S "$disk" -o TARGET 2>/dev/null || true)"
+  mounted_targets="$(
+    findmnt -rn --raw -S "$disk" -o TARGET 2>/dev/null |
+      awk '{ gsub(/\\x20/, sprintf("%c", 32)); gsub(/\\x5[cC]/, sprintf("%c", 92)); print }' || true
+  )"
   [ -n "$mounted_targets" ] || return 1
   found_primary=false
-  for mountpoint in $mounted_targets; do
+  while IFS= read -r mountpoint; do
     [ "$(findmnt -rn -M "$mountpoint" -o UUID 2>/dev/null || true)" = "$uuid" ] || return 1
     if [ "$mountpoint" = "$primary_mount" ]; then
       found_primary=true
@@ -315,7 +340,9 @@ validate_managed_esx_mounts() {
       /srv/atlaso/esx-storage/*) managed_esx_bind_entry_exists "$mountpoint" || return 1 ;;
       *) return 1 ;;
     esac
-  done
+  done <<EOF
+$mounted_targets
+EOF
   [ "$found_primary" = "true" ]
 }
 

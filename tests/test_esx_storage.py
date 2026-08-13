@@ -396,7 +396,7 @@ def test_helper_inventory_prefers_uuid_mount_and_keeps_all_mountpoints(monkeypat
             "label": "lf-ad26e4d9384f",
             "mountpoints": [
                 "/srv/atlaso/esx-storage/vmware-nfs3",
-                "/mnt/operator-existing-ext4",
+                "/mnt/operator existing-ext4",
             ],
         }]
     }
@@ -414,19 +414,30 @@ def test_helper_inventory_prefers_uuid_mount_and_keeps_all_mountpoints(monkeypat
     monkeypatch.setattr(helper, "_esx_storage_os_devices", lambda: set())
     fstab = tmp_path / "fstab"
     fstab.write_text(
-        "UUID=3f832583-beec-4be7-969c-92519ea77273 /mnt/operator-existing-ext4 ext4 defaults 0 2\n",
+        "UUID=3f832583-beec-4be7-969c-92519ea77273 /mnt/operator\\040existing-ext4 ext4 defaults 0 2\n",
         encoding="utf-8",
     )
     monkeypatch.setattr(helper, "ESX_STORAGE_FSTAB_PATH", fstab)
 
     disk = helper._esx_storage_inventory()[0]
 
-    assert disk["mount_path"] == "/mnt/operator-existing-ext4"
+    assert disk["mount_path"] == "/mnt/operator existing-ext4"
     assert disk["mount_paths"] == [
         "/srv/atlaso/esx-storage/vmware-nfs3",
-        "/mnt/operator-existing-ext4",
+        "/mnt/operator existing-ext4",
     ]
     assert disk["persistent_uuid_mount"] is True
+
+
+def test_helper_fstab_field_encoding_round_trips_spaces_and_backslashes():
+    """Keep generated fstab fields parseable without changing their paths."""
+    helper = load_helper_module()
+    value = "/mnt/operator data\\archive"
+
+    encoded = helper._esx_storage_fstab_escape_field(value)
+
+    assert encoded == "/mnt/operator\\040data\\134archive"
+    assert helper._esx_storage_fstab_decode_field(encoded) == value
 
 
 def test_helper_rejects_mounted_ext4_without_boot_contract():

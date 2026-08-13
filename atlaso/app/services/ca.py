@@ -10,8 +10,9 @@ from ipaddress import ip_address
 from pathlib import PurePosixPath
 
 from cryptography import x509
+from cryptography.exceptions import InvalidSignature, UnsupportedAlgorithm
 from cryptography.hazmat.primitives import hashes, serialization
-from cryptography.hazmat.primitives.asymmetric import ec, rsa
+from cryptography.hazmat.primitives.asymmetric import ec, padding, rsa
 from cryptography.x509.oid import ExtendedKeyUsageOID, NameOID
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -22,6 +23,7 @@ from atlaso.app.secrets import decrypt_secret, encrypt_secret, secret_key_status
 
 CA_STAGED_CONFIG_PATH = "/var/lib/atlaso/apply/ca/atlaso-ca.json"
 CA_DEFAULT_PORTAL_HOSTNAME = "ca.atlaso.internal"
+CA_MANAGED_PATH_BASE = PurePosixPath("/etc/atlaso")
 CA_SERVER_PROFILE_NAME = "VCF service TLS"
 CA_CLIENT_PROFILE_NAME = "VCF KMIP client"
 CA_STATUS_VALUES = {"planned", "csr-staged", "issued", "revoked"}
@@ -853,6 +855,189 @@ def render_ca_apply_payload(settings: CaSettings, certificates: list[CaCertifica
     return json.dumps(payload, indent=2, sort_keys=True) + "\n"
 
 
+def validate_ca_private_key_material(
+    settings: CaSettings,
+    certificates: list[CaCertificate],
+) -> list[str]:
+    """Validate encrypted private keys consumed by the CA apply payload.
+
+    Args:
+        settings: Saved CA settings containing optional encrypted root material.
+        certificates: Certificate records that may contain deployable encrypted keys.
+
+    Returns:
+        Public-safe validation errors for encrypted keys that cannot be decrypted and imported.
+    """
+    def certificate_signature_is_valid(
+        certificate: x509.Certificate,
+        issuer: x509.Certificate,
+    ) -> bool:
+        """Return whether one supported certificate signature verifies.
+
+        Args:
+            certificate: Certificate whose signature is verified.
+            issuer: Certificate containing the expected issuer public key.
+        """
+        public_key = issuer.public_key()
+        try:
+            if isinstance(public_key, rsa.RSAPublicKey):
+                public_key.verify(
+                    certificate.signature,
+                    certificate.tbs_certificate_bytes,
+                    padding.PKCS1v15(),
+                    certificate.signature_hash_algorithm,
+                )
+            elif isinstance(public_key, ec.EllipticCurvePublicKey):
+                public_key.verify(
+                    certificate.signature,
+                    certificate.tbs_certificate_bytes,
+                    ec.ECDSA(certificate.signature_hash_algorithm),
+                )
+            else:
+                return False
+        except (InvalidSignature, TypeError, UnsupportedAlgorithm, ValueError):
+            return False
+        return True
+
+    errors: list[str] = []
+    root_certificate: x509.Certificate | None = None
+    if bool((settings.root_certificate_pem or "").strip()) != bool(
+        (settings.root_private_key_encrypted or "").strip()
+    ):
+        errors.append(
+            "CA root certificate and encrypted private key must be restored together."
+        )
+    if settings.root_certificate_pem:
+        try:
+            root_pem = settings.root_certificate_pem.strip()
+            if (
+                root_pem.count("-----BEGIN CERTIFICATE-----") != 1
+                or "PRIVATE KEY" in root_pem
+            ):
+                raise ValueError
+            root_certificate = x509.load_pem_x509_certificate(
+                root_pem.encode("utf-8")
+            )
+            constraints = root_certificate.extensions.get_extension_for_class(
+                x509.BasicConstraints
+            ).value
+            canonical_pem = root_certificate.public_bytes(
+                serialization.Encoding.PEM
+            ).decode("utf-8").strip()
+            if (
+                not constraints.ca
+                or root_certificate.issuer != root_certificate.subject
+                or not certificate_signature_is_valid(root_certificate, root_certificate)
+                or root_pem != canonical_pem
+            ):
+                raise ValueError
+            now = datetime.now(timezone.utc)
+            if root_certificate.not_valid_before_utc > now:
+                errors.append("CA root certificate is not yet valid.")
+                root_certificate = None
+            elif root_certificate.not_valid_after_utc <= now:
+                errors.append("CA root certificate has expired.")
+                root_certificate = None
+        except (
+            TypeError,
+            UnsupportedAlgorithm,
+            ValueError,
+            x509.ExtensionNotFound,
+        ):
+            errors.append("CA root certificate is not a valid self-signed certificate.")
+            root_certificate = None
+
+    parsed_certificates: dict[int, x509.Certificate] = {}
+    now = datetime.now(timezone.utc)
+    for certificate in certificates:
+        if not certificate.enabled:
+            continue
+        label = f"Certificate {certificate.common_name}"
+        if not certificate.certificate_pem:
+            continue
+        try:
+            parsed_certificate = x509.load_pem_x509_certificate(
+                certificate.certificate_pem.encode("utf-8")
+            )
+            parsed_certificates[id(certificate)] = parsed_certificate
+        except (TypeError, ValueError):
+            errors.append(f"{label} certificate is not usable on this appliance.")
+            continue
+        if certificate.status == "issued" and (
+            parsed_certificate.not_valid_before_utc > now
+            or parsed_certificate.not_valid_after_utc <= now
+        ):
+            errors.append(f"{label} is not currently valid.")
+        if certificate.status in {"issued", "revoked"} and (
+            root_certificate is None
+            or parsed_certificate.issuer != root_certificate.subject
+            or not certificate_signature_is_valid(parsed_certificate, root_certificate)
+        ):
+            errors.append(f"{label} is not issued by the restored CA root.")
+        if (
+            certificate.status in {"issued", "revoked"}
+            and certificate.chain_pem
+            and root_certificate is not None
+        ):
+            try:
+                chain = x509.load_pem_x509_certificates(
+                    certificate.chain_pem.encode("utf-8")
+                )
+                expected_chain = [parsed_certificate, root_certificate]
+                if len(chain) != len(expected_chain) or any(
+                    actual.fingerprint(hashes.SHA256())
+                    != expected.fingerprint(hashes.SHA256())
+                    for actual, expected in zip(chain, expected_chain, strict=True)
+                ):
+                    raise ValueError
+            except (TypeError, ValueError):
+                errors.append(f"{label} chain does not match the restored CA root.")
+
+    candidates: list[tuple[str, str, x509.Certificate | None]] = []
+    if settings.root_private_key_encrypted:
+        candidates.append(
+            (
+                "CA root",
+                settings.root_private_key_encrypted,
+                root_certificate,
+            )
+        )
+    candidates.extend(
+        (
+            f"Certificate {certificate.common_name}",
+            certificate.private_key_encrypted,
+            parsed_certificates.get(id(certificate)),
+        )
+        for certificate in certificates
+        if certificate.enabled
+        and certificate.status != "revoked"
+        and certificate.private_key_encrypted
+    )
+    for label, encrypted_key, certificate in candidates:
+        try:
+            private_key_pem = decrypt_secret(encrypted_key)
+            private_key = serialization.load_pem_private_key(
+                private_key_pem.encode("utf-8"),
+                password=None,
+            )
+        except (TypeError, UnsupportedAlgorithm, ValueError):
+            errors.append(f"{label} encrypted private key is not usable on this appliance.")
+            continue
+        if certificate is None:
+            continue
+        private_public_key = private_key.public_key().public_bytes(
+            serialization.Encoding.DER,
+            serialization.PublicFormat.SubjectPublicKeyInfo,
+        )
+        certificate_public_key = certificate.public_key().public_bytes(
+            serialization.Encoding.DER,
+            serialization.PublicFormat.SubjectPublicKeyInfo,
+        )
+        if private_public_key != certificate_public_key:
+            errors.append(f"{label} encrypted private key does not match its certificate.")
+    return errors
+
+
 def validate_ca_state(
     *,
     settings: CaSettings,
@@ -872,6 +1057,34 @@ def validate_ca_state(
         The validate ca state result.
     """
     errors: list[str] = []
+
+    def managed_path_error(value: str, label: str, *, required: bool = False) -> str:
+        """Return a bounded error when a CA apply path escapes its managed directory.
+
+        Args:
+            value: Candidate managed filesystem path.
+            label: Public-safe field label used in validation feedback.
+            required: Require a nonempty path when true.
+        """
+        raw_value = value.strip()
+        if not raw_value:
+            return f"{label} is required." if required else ""
+        path = PurePosixPath(raw_value)
+        if (
+            not path.is_absolute()
+            or ".." in path.parts
+            or not path.is_relative_to(CA_MANAGED_PATH_BASE)
+        ):
+            return f"{label} must stay under {CA_MANAGED_PATH_BASE}."
+        return ""
+
+    storage_path_error = managed_path_error(
+        settings.storage_path,
+        "CA storage path",
+        required=True,
+    )
+    if storage_path_error:
+        errors.append(storage_path_error)
     if settings.enabled and not secret_key_status(get_settings()).dedicated and get_settings().environment not in {"development", "test"}:
         errors.append("ATLASO_SECRETS_KEY is required before enabling the CA outside development.")
     if not settings.portal_hostname.strip() or "." not in settings.portal_hostname.strip():
@@ -905,6 +1118,14 @@ def validate_ca_state(
     for certificate in certificates:
         if not certificate.enabled:
             continue
+        for value, label in (
+            (certificate.cert_path, f"Certificate {certificate.common_name or certificate.id} certificate path"),
+            (certificate.key_path, f"Certificate {certificate.common_name or certificate.id} private-key path"),
+            (certificate.chain_path, f"Certificate {certificate.common_name or certificate.id} chain path"),
+        ):
+            path_error = managed_path_error(value, label)
+            if path_error:
+                errors.append(path_error)
         if certificate.status not in CA_STATUS_VALUES:
             errors.append(f"Certificate {certificate.common_name or certificate.id} has unsupported status {certificate.status}.")
         if not certificate.common_name.strip():
