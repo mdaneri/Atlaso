@@ -11,6 +11,7 @@ from typing import Any
 from uuid import UUID
 
 from cryptography import x509
+from cryptography.hazmat.primitives import hashes
 from sqlalchemy import DateTime as SqlDateTime
 from sqlalchemy import delete, select
 from sqlalchemy.exc import IntegrityError, StatementError
@@ -481,6 +482,46 @@ def _root_ca_validity_timestamps(
         issued_at = certificate.not_valid_before_utc
         expires_at = certificate.not_valid_after_utc
     return issued_at, expires_at
+
+
+def _normalize_ca_certificate_metadata(
+    data: dict[str, list[dict[str, Any]]],
+) -> None:
+    """Derive CA serial and fingerprint metadata from archived public PEM.
+
+    Args:
+        data: Structurally validated archive data collections.
+    """
+    ca_rows = data.get("ca_settings", [])
+    if ca_rows:
+        root_pem = ca_rows[0].get("root_certificate_pem")
+        if isinstance(root_pem, str) and root_pem.strip():
+            try:
+                root_certificate = x509.load_pem_x509_certificate(
+                    root_pem.encode("utf-8")
+                )
+            except ValueError:
+                pass
+            else:
+                ca_rows[0]["root_serial_number"] = format(
+                    root_certificate.serial_number,
+                    "x",
+                )
+                ca_rows[0]["root_fingerprint"] = root_certificate.fingerprint(
+                    hashes.SHA256()
+                ).hex()
+    for row in data.get("ca_certificates", []):
+        certificate_pem = row.get("certificate_pem")
+        if not isinstance(certificate_pem, str) or not certificate_pem.strip():
+            continue
+        try:
+            certificate = x509.load_pem_x509_certificate(
+                certificate_pem.encode("utf-8")
+            )
+        except ValueError:
+            continue
+        row["serial_number"] = format(certificate.serial_number, "x")
+        row["fingerprint"] = certificate.fingerprint(hashes.SHA256()).hex()
 
 
 def _validate_archived_ca_certificate_rows(
@@ -2275,6 +2316,7 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
         str(row["name"]): row_index
         for row_index, row in enumerate(data.get("ca_profiles", []), start=1)
     }
+    _normalize_ca_certificate_metadata(data)
     root_issued_at, root_expires_at = _root_ca_validity_timestamps(ca_row)
     archived_ca_settings = CaSettings(
         **_model_kwargs_with_scalar_defaults(CaSettings, ca_row),

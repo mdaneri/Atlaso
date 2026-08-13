@@ -57,10 +57,10 @@ separately staged LDAP recovery import metadata and in-memory payload available.
 factory reset intentionally clears that staged LDAP recovery material.
 
 Certificate and signing-key lifecycle state is restored with the desired state. Atlaso reconstructs CA certificate
-validity from the archived public PEM, preserves CA issue, expiry, and revocation timestamps, and preserves OIDC key
-activation, retirement, and publication-overlap timestamps so still-live tokens retain their verification key. Disabled
-CA certificate rows receive the same bounded status, managed-path, and supplied-material checks as enabled rows before
-any current state is removed.
+validity, serial numbers, and SHA-256 fingerprints from the archived public PEM, preserves CA issue, expiry, and
+revocation timestamps, and preserves OIDC key activation, retirement, and publication-overlap timestamps so still-live
+tokens retain their verification key. Disabled CA certificate rows receive the same bounded status, managed-path, and
+supplied-material checks as enabled rows before any current state is removed.
 
 ESXi Network Boot installer ISO references are normalized beneath the managed ISO root before they are restored, so a
 valid relative archive reference cannot become dependent on the appliance helper's working directory. VCF Offline

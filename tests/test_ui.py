@@ -4888,7 +4888,7 @@ def test_settings_archive_round_trips_ca_certificate_validity(client):
     Args:
         client: HTTP test client used to initialize isolated desired state.
     """
-    from datetime import timezone
+    from datetime import datetime, timezone
 
     from sqlalchemy import select
 
@@ -4919,8 +4919,16 @@ def test_settings_archive_round_trips_ca_certificate_validity(client):
         assert issue_certificate(settings, [profile], certificate) is True
         expected_issued_at = certificate.issued_at
         expected_expires_at = certificate.expires_at
+        expected_serial_number = certificate.serial_number
+        expected_fingerprint = certificate.fingerprint
+        expected_root_serial_number = settings.root_serial_number
+        expected_root_fingerprint = settings.root_fingerprint
         assert expected_issued_at is not None
         assert expected_expires_at is not None
+        assert expected_serial_number
+        assert expected_fingerprint
+        assert expected_root_serial_number
+        assert expected_root_fingerprint
         db.commit()
 
         archive = export_settings_archive(db, actor="test")
@@ -4931,6 +4939,19 @@ def test_settings_archive_round_trips_ca_certificate_validity(client):
         )
         assert archived["issued_at"]
         assert archived["expires_at"]
+        archive["data"]["ca_settings"][0]["root_serial_number"] = "1"
+        archive["data"]["ca_settings"][0]["root_fingerprint"] = "tampered"
+        archived["serial_number"] = "2"
+        archived["fingerprint"] = "tampered"
+        archived["status"] = "revoked"
+        archived["revoked_at"] = datetime(
+            2026,
+            8,
+            13,
+            14,
+            0,
+            tzinfo=timezone.utc,
+        ).isoformat()
 
         restore_settings_archive(db, archive)
         restored = db.scalar(
@@ -4939,6 +4960,8 @@ def test_settings_archive_round_trips_ca_certificate_validity(client):
             )
         )
         assert restored is not None
+        restored_settings = db.scalar(select(CaSettings))
+        assert restored_settings is not None
         restored_issued_at = restored.issued_at
         restored_expires_at = restored.expires_at
         assert restored_issued_at is not None
@@ -4953,6 +4976,11 @@ def test_settings_archive_round_trips_ca_certificate_validity(client):
             expected_expires_at = expected_expires_at.replace(tzinfo=timezone.utc)
         assert restored_issued_at == expected_issued_at
         assert restored_expires_at == expected_expires_at
+        assert restored.status == "revoked"
+        assert restored.serial_number == expected_serial_number
+        assert restored.fingerprint == expected_fingerprint
+        assert restored_settings.root_serial_number == expected_root_serial_number
+        assert restored_settings.root_fingerprint == expected_root_fingerprint
 
 
 def test_settings_archive_preserves_oidc_retired_key_overlap(client):
