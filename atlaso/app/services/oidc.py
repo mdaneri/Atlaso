@@ -1443,6 +1443,39 @@ def _normalize_external_group_name(value: str) -> str:
     return normalized
 
 
+def validate_group_mapping_values(
+    *,
+    source_type: str,
+    local_role: str,
+    ldap_group_id: int | None,
+    external_group_name: str,
+) -> tuple[str, str]:
+    """Validate and normalize persisted OIDC group-mapping values.
+
+    Args:
+        source_type: Mapping source type supplied by the caller.
+        local_role: Local Atlaso role supplied by the caller.
+        ldap_group_id: Managed LDAP group identifier supplied by the caller.
+        external_group_name: External group claim supplied by the caller.
+
+    Returns:
+        The normalized local role and external group name.
+
+    Raises:
+        OidcConfigurationError: If the mapping values are not canonical.
+    """
+    normalized_role = local_role.strip().casefold()
+    if source_type == "local_role":
+        if normalized_role not in {role.value for role in Role} or ldap_group_id is not None:
+            raise OidcConfigurationError("Select one supported local Atlaso role.")
+    elif source_type == "ldap_group":
+        if normalized_role or ldap_group_id is None:
+            raise OidcConfigurationError("Select one managed LDAP group.")
+    else:
+        raise OidcConfigurationError("Unsupported OIDC group mapping source.")
+    return normalized_role, _normalize_external_group_name(external_group_name)
+
+
 def list_group_mappings(db: Session) -> list[OidcGroupMapping]:
     """Return group mappings.
 
@@ -1652,19 +1685,20 @@ def create_group_mapping(
         OidcConflictError: If the operation encounters an invalid state.
     """
     client = get_client(db, oidc_client_id) if oidc_client_id is not None else None
-    normalized_role = local_role.strip().casefold()
+    normalized_role, normalized_external_group_name = validate_group_mapping_values(
+        source_type=source_type,
+        local_role=local_role,
+        ldap_group_id=ldap_group_id,
+        external_group_name=external_group_name,
+    )
     organization_id: int | None = None
     group: LdapGroup | None = None
     if source_type == "local_role":
-        if normalized_role not in {role.value for role in Role} or ldap_group_id is not None:
-            raise OidcConfigurationError("Select one supported local Atlaso role.")
         if client is not None and client.organization_id is not None:
             raise OidcConfigurationError(
                 "Local role overrides are valid only for unbound OIDC clients."
             )
-    elif source_type == "ldap_group":
-        if normalized_role or ldap_group_id is None:
-            raise OidcConfigurationError("Select one managed LDAP group.")
+    else:
         group = db.get(LdapGroup, ldap_group_id)
         if group is None:
             raise OidcConfigurationError("Managed LDAP group not found.")
@@ -1677,8 +1711,6 @@ def create_group_mapping(
             raise OidcConfigurationError(
                 "A client override must use a group from its bound organization."
             )
-    else:
-        raise OidcConfigurationError("Unsupported OIDC group mapping source.")
     mapping_key = _mapping_key(
         source_type=source_type,
         local_role=normalized_role,
@@ -1699,7 +1731,7 @@ def create_group_mapping(
         ldap_group_id=group.id if group is not None else None,
         organization_id=organization_id,
         oidc_client_id=client.id if client is not None else None,
-        external_group_name=_normalize_external_group_name(external_group_name),
+        external_group_name=normalized_external_group_name,
         updated_at=utcnow(),
     )
     db.add(row)

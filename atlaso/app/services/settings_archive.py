@@ -136,6 +136,7 @@ from atlaso.app.services.oidc import (
     normalize_issuer_url,
     provider_cryptographic_validation_errors,
     signing_key_cryptographic_validation_errors,
+    validate_group_mapping_values,
     validate_persisted_client_policy,
     validate_redirect_uri_list,
 )
@@ -2195,7 +2196,14 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
                 f"The settings archive KMS trust state is invalid: {provider_errors[0]}"
             )
 
-    organization_slugs = {str(row["slug"]) for row in data.get("ldap_organizations", [])}
+    organization_slugs: set[str] = set()
+    for row_index, row in enumerate(data.get("ldap_organizations", []), start=1):
+        organization_slug = str(row["slug"])
+        if organization_slug in organization_slugs:
+            raise ValueError(
+                f"The settings archive row {row_index} in 'ldap_organizations' duplicates an LDAP organization slug."
+            )
+        organization_slugs.add(organization_slug)
     ldap_row = data["ldap_settings"][0]
     if ldap_row.get("enabled", False) and not organization_slugs:
         raise ValueError(
@@ -2213,15 +2221,12 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
         raise ValueError(
             "The settings archive enables LDAPS without a ready Certificate Authority."
         )
-    ldap_users = {
-        (str(row["organization_slug"]), str(row["uid"]))
-        for row in data.get("ldap_users", [])
-    }
-    ldap_groups = {
-        (str(row["organization_slug"]), str(row["name"]))
-        for row in data.get("ldap_groups", [])
-    }
-    for section_name in ("ldap_users", "ldap_groups"):
+    ldap_users: set[tuple[str, str]] = set()
+    ldap_groups: set[tuple[str, str]] = set()
+    for section_name, identity_field, identities in (
+        ("ldap_users", "uid", ldap_users),
+        ("ldap_groups", "name", ldap_groups),
+    ):
         for row_index, row in enumerate(data.get(section_name, []), start=1):
             organization_slug = str(row["organization_slug"] or "")
             require_reference(
@@ -2231,6 +2236,13 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
                 organization_slugs,
                 "LDAP organization",
             )
+            identity = (organization_slug, str(row[identity_field]))
+            if identity in identities:
+                raise ValueError(
+                    f"The settings archive row {row_index} in '{section_name}' duplicates an LDAP identity."
+                )
+            identities.add(identity)
+    ldap_memberships: set[tuple[str, str, str, str]] = set()
     for row_index, row in enumerate(data.get("ldap_group_memberships", []), start=1):
         organization_slug = str(row["organization_slug"] or "")
         group_name = str(row["group_name"] or "")
@@ -2252,6 +2264,17 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
                 "The settings archive row "
                 f"{row_index} in 'ldap_group_memberships' references an unknown LDAP object."
             )
+        membership_identity = (
+            organization_slug,
+            group_name,
+            member_type,
+            member_name,
+        )
+        if membership_identity in ldap_memberships:
+            raise ValueError(
+                f"The settings archive row {row_index} in 'ldap_group_memberships' duplicates an LDAP membership."
+            )
+        ldap_memberships.add(membership_identity)
 
     ldap_group_edges = {group: set() for group in ldap_groups}
     for row in data.get("ldap_group_memberships", []):
@@ -2283,18 +2306,60 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
     }
     for organization in archived_organizations.values():
         ensure_organization_bind_secret(organization)
-    for row in data.get("ldap_users", []):
+    archived_users: dict[tuple[str, str], LdapUser] = {}
+    for row_index, row in enumerate(data.get("ldap_users", []), start=1):
         organization = archived_organizations.get(str(row.get("organization_slug") or ""))
         if organization is not None:
-            organization.users.append(
-                LdapUser(
-                    **_model_kwargs_with_scalar_defaults(
-                        LdapUser,
-                        row,
-                        exclude={"organization_id"},
-                    )
+            user = LdapUser(
+                id=row_index,
+                organization_id=organization.id,
+                **_model_kwargs_with_scalar_defaults(
+                    LdapUser,
+                    row,
+                    exclude={"organization_id"},
                 )
             )
+            organization.users.append(user)
+            archived_users[(organization.slug, user.uid)] = user
+    archived_groups: dict[tuple[str, str], LdapGroup] = {}
+    for row_index, row in enumerate(data.get("ldap_groups", []), start=1):
+        organization = archived_organizations.get(str(row.get("organization_slug") or ""))
+        if organization is not None:
+            group = LdapGroup(
+                id=row_index,
+                organization_id=organization.id,
+                **_model_kwargs_with_scalar_defaults(
+                    LdapGroup,
+                    row,
+                    exclude={"organization_id"},
+                ),
+            )
+            organization.groups.append(group)
+            archived_groups[(organization.slug, group.name)] = group
+    for row_index, row in enumerate(data.get("ldap_group_memberships", []), start=1):
+        organization_slug = str(row.get("organization_slug") or "")
+        group = archived_groups[(organization_slug, str(row.get("group_name") or ""))]
+        member_name = str(row.get("member_name") or "")
+        member_user = (
+            archived_users[(organization_slug, member_name)]
+            if row.get("member_type") == "user"
+            else None
+        )
+        member_group = (
+            archived_groups[(organization_slug, member_name)]
+            if row.get("member_type") == "group"
+            else None
+        )
+        group.members.append(
+            LdapGroupMembership(
+                id=row_index,
+                group_id=group.id,
+                member_user_id=member_user.id if member_user is not None else None,
+                member_group_id=member_group.id if member_group is not None else None,
+                member_user=member_user,
+                member_group=member_group,
+            )
+        )
     ldap_errors, _ldap_warnings = validate_ldap_state(
         LdapSettings(
             **_model_kwargs_with_scalar_defaults(LdapSettings, ldap_row)
@@ -2417,6 +2482,17 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
             raise ValueError(
                 f"The settings archive row {row_index} in 'oidc_group_mappings' has an unsupported source type."
             )
+        try:
+            validate_group_mapping_values(
+                source_type=source_type,
+                local_role=str(row.get("local_role") or ""),
+                ldap_group_id=1 if source_type == "ldap_group" else None,
+                external_group_name=str(row.get("external_group_name") or ""),
+            )
+        except OidcConfigurationError as exc:
+            raise ValueError(
+                f"The settings archive row {row_index} in 'oidc_group_mappings' is invalid: {exc}"
+            ) from exc
         if mapping_identity in oidc_mapping_identities:
             raise ValueError(
                 f"The settings archive row {row_index} in 'oidc_group_mappings' duplicates an OIDC group mapping identity."

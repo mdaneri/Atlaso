@@ -5188,6 +5188,7 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
         {
             "organization_slug": "mapping-organization-a",
             "name": "Mapping group A",
+            "enabled": False,
         }
     )
     cross_organization_oidc_mapping["data"]["oidc_clients"].append(
@@ -5272,6 +5273,37 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
             },
         ]
     )
+    invalid_ldap_group = deepcopy(archive)
+    invalid_ldap_group["data"]["ldap_organizations"].append(
+        {"name": "Group validation", "slug": "group-validation", "suffix_dn": "dc=group,dc=test"}
+    )
+    invalid_ldap_group["data"]["ldap_groups"].append(
+        {"organization_slug": "group-validation", "name": "invalid/group", "enabled": True}
+    )
+    duplicate_ldap_group = deepcopy(archive)
+    duplicate_ldap_group["data"]["ldap_organizations"].append(
+        {"name": "Duplicate group", "slug": "duplicate-group", "suffix_dn": "dc=duplicate,dc=test"}
+    )
+    duplicate_ldap_group["data"]["ldap_groups"].extend(
+        [
+            {"organization_slug": "duplicate-group", "name": "same", "enabled": False},
+            {"organization_slug": "duplicate-group", "name": "same", "enabled": False},
+        ]
+    )
+    invalid_oidc_mapping_role = deepcopy(archive)
+    invalid_oidc_mapping_role["data"]["oidc_group_mappings"].append(
+        {
+            "source_type": "local_role",
+            "local_role": "superadmin",
+            "ldap_group_name": "",
+            "organization_slug": "",
+            "client_id": "",
+            "external_group_name": "Administrators",
+        }
+    )
+    invalid_oidc_external_group = deepcopy(invalid_oidc_mapping_role)
+    invalid_oidc_external_group["data"]["oidc_group_mappings"][-1]["local_role"] = "admin"
+    invalid_oidc_external_group["data"]["oidc_group_mappings"][-1]["external_group_name"] = "\x00"
     enabled_certificate_with_disabled_profile = deepcopy(archive)
     certificate_profile_name = enabled_certificate_with_disabled_profile["data"]["ca_certificates"][0][
         "profile_name"
@@ -5597,6 +5629,10 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
         (unresolved_esx_volume, "references an unknown ESX storage volume"),
         (enabled_missing_esx_share_target, "has an ineligible interface or address family"),
         (cyclic_ldap_groups, "contains cyclic LDAP group membership"),
+        (invalid_ldap_group, "LDAP state is invalid: .*invalid name"),
+        (duplicate_ldap_group, "duplicates an LDAP identity"),
+        (invalid_oidc_mapping_role, "Select one supported local Atlaso role"),
+        (invalid_oidc_external_group, "External group names must contain"),
         (enabled_certificate_with_disabled_profile, "references a disabled CA profile"),
         (weak_ca_profile, "Certificate Authority state is invalid: .*RSA key size must be at least 2048"),
         (enabled_kms_without_ca, "enables KMS without an enabled CA"),
