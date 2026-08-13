@@ -116,6 +116,7 @@ from atlaso.app.services.dnsmasq import (
 )
 from atlaso.app.services.esx_storage import StorageInterface, validate_storage_state
 from atlaso.app.services.esxi_pxe import (
+    ESXI_PXE_CUSTOM_VARIABLE_LIMIT,
     ESXI_PXE_CUSTOM_VARIABLES_KEY,
     host_variables_json,
     kickstart_template_validation_errors,
@@ -3342,6 +3343,11 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
             not isinstance(item, dict) for item in raw_custom_variables
         ):
             raise ValueError("The settings archive ESXi custom variable definitions are invalid.")
+        if len(raw_custom_variables) > ESXI_PXE_CUSTOM_VARIABLE_LIMIT:
+            raise ValueError(
+                "The settings archive ESXi custom variable definitions are limited "
+                f"to {ESXI_PXE_CUSTOM_VARIABLE_LIMIT} entries."
+            )
         try:
             normalized_custom_variables = [
                 normalize_custom_variable_definition(

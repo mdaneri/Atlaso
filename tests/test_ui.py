@@ -6525,6 +6525,22 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
     malformed_conditional_forwarder["data"]["settings"].append(
         {"key": "dns.conditional_forwarders", "value": "corp.example"}
     )
+    oversized_esxi_custom_variables = deepcopy(archive)
+    oversized_esxi_custom_variables["data"]["settings"].append(
+        {
+            "key": "esxi_pxe.custom_variables.v1",
+            "value": json.dumps(
+                [
+                    {
+                        "name": f"archive_variable_{item_index}",
+                        "description": "",
+                        "default_value": "",
+                    }
+                    for item_index in range(65)
+                ]
+            ),
+        }
+    )
 
     for candidate, message in [
         (invalid_collection, "must be a list"),
@@ -6659,6 +6675,7 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
             "firewall source groups state is invalid",
         ),
         (malformed_conditional_forwarder, "DNS conditional forwarders state is invalid"),
+        (oversized_esxi_custom_variables, "limited to 64 entries"),
     ]:
         with pytest.raises(ValueError, match=message):
             archive_summary(candidate)

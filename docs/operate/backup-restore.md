@@ -79,8 +79,9 @@ ESXi Network Boot host MAC addresses are normalized and checked for duplicate id
 references are normalized beneath the managed ISO root before they are restored, so a valid relative archive reference
 cannot become dependent on the appliance helper's working directory. VCF Offline Depot archives must retain Atlaso's
 fixed `/mnt/atlaso-vcf-offline-depot` store path; another absolute path is rejected before current desired state is
-removed. ESX Storage resources receive canonical validation even when the optional settings row is absent; Atlaso uses
-the same default disabled settings applied during later state reads.
+removed. Archived ESXi custom-variable definitions retain the same 64-entry limit enforced by the management workflow.
+ESX Storage resources receive canonical validation even when the optional settings row is absent; Atlaso uses the same
+default disabled settings applied during later state reads.
 
 Settings restore accepts only the current settings-archive schema v2 and requires its complete section inventory.
 Older archive schemas are rejected before current desired state is removed; export a fresh archive from a current
