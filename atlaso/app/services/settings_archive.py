@@ -11,7 +11,7 @@ from typing import Any
 from uuid import UUID
 
 from cryptography import x509
-from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives import hashes, serialization
 from sqlalchemy import DateTime as SqlDateTime
 from sqlalchemy import delete, select
 from sqlalchemy.exc import IntegrityError, StatementError
@@ -545,6 +545,25 @@ def _validate_archived_ca_certificate_rows(
             raise ValueError(
                 f"The settings archive row {row_index} in 'ca_certificates' has no common name."
             )
+        if certificate.certificate_pem:
+            try:
+                raw_certificate_pem = certificate.certificate_pem.strip()
+                parsed_certificate = x509.load_pem_x509_certificate(
+                    raw_certificate_pem.encode("utf-8")
+                )
+                canonical_certificate_pem = parsed_certificate.public_bytes(
+                    serialization.Encoding.PEM
+                ).decode("utf-8").strip()
+                if (
+                    raw_certificate_pem.count("-----BEGIN CERTIFICATE-----") != 1
+                    or "PRIVATE KEY" in raw_certificate_pem
+                    or raw_certificate_pem != canonical_certificate_pem
+                ):
+                    raise ValueError
+            except (TypeError, ValueError) as exc:
+                raise ValueError(
+                    f"The settings archive CA certificate {label} public certificate is not usable."
+                ) from exc
         for value, path_label in (
             (certificate.cert_path, "certificate path"),
             (certificate.key_path, "private-key path"),
@@ -3439,8 +3458,7 @@ def _validate_archive_database_relationships(db: Session, data: dict[str, list[d
 
     for row_index, row in enumerate(data.get("vcf_backup_settings", []), start=1):
         username = str(row.get("sftp_username") or "")
-        creates_default_user = username == VCF_BACKUP_DEFAULT_USERNAME and username not in users
-        if row.get("enabled", False) and not creates_default_user and not users.get(username, False):
+        if row.get("enabled", False) and not users.get(username, False):
             raise ValueError(
                 f"The settings archive row {row_index} in 'vcf_backup_settings' requires an enabled local user."
             )

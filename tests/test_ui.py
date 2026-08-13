@@ -4888,8 +4888,10 @@ def test_settings_archive_round_trips_ca_certificate_validity(client):
     Args:
         client: HTTP test client used to initialize isolated desired state.
     """
+    from copy import deepcopy
     from datetime import datetime, timezone
 
+    import pytest
     from sqlalchemy import select
 
     from atlaso.app.database import SessionLocal
@@ -4939,6 +4941,17 @@ def test_settings_archive_round_trips_ca_certificate_validity(client):
         )
         assert archived["issued_at"]
         assert archived["expires_at"]
+        extra_pem_archive = deepcopy(archive)
+        extra_pem_certificate = next(
+            row
+            for row in extra_pem_archive["data"]["ca_certificates"]
+            if row["common_name"] == certificate.common_name
+        )
+        extra_pem_certificate["certificate_pem"] += (
+            "-----BEGIN PRIVATE KEY-----\nforbidden\n-----END PRIVATE KEY-----\n"
+        )
+        with pytest.raises(ValueError, match="public certificate is not usable"):
+            restore_settings_archive(db, extra_pem_archive)
         archive["data"]["ca_settings"][0]["root_serial_number"] = "1"
         archive["data"]["ca_settings"][0]["root_fingerprint"] = "tampered"
         archived["serial_number"] = "2"
@@ -5102,7 +5115,7 @@ def test_settings_restore_rejects_disabled_users_for_enabled_vcf_services(client
     from sqlalchemy import select
 
     from atlaso.app.database import SessionLocal
-    from atlaso.app.models import User
+    from atlaso.app.models import User, VcfBackupSettings
     from atlaso.app.services.settings_archive import (
         export_settings_archive,
         restore_settings_archive,
@@ -5129,7 +5142,24 @@ def test_settings_restore_rejects_disabled_users_for_enabled_vcf_services(client
         with pytest.raises(ValueError, match="requires an enabled local user"):
             restore_settings_archive(db, depot_archive)
 
-        assert db.get(User, disabled_user.id) is not None
+        missing_user_archive = deepcopy(archive)
+        missing_user_archive["data"]["vcf_backup_settings"][0].update(
+            {
+                "enabled": True,
+                "sftp_username": "vcf-backup",
+                "listen_interface": "eth2",
+                "listen_address": "192.168.50.1",
+            }
+        )
+        retained_backup_settings = db.scalar(select(VcfBackupSettings))
+        assert retained_backup_settings is not None
+        retained_backup_settings.sftp_user_id = None
+        db.flush()
+        db.delete(disabled_user)
+        db.commit()
+        with pytest.raises(ValueError, match="requires an enabled local user"):
+            restore_settings_archive(db, missing_user_archive)
+        assert db.get(User, disabled_user.id) is None
 
 
 def test_settings_restore_preflights_complete_vcf_service_state(client):
@@ -6393,7 +6423,7 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
         (invalid_ca_private_key, "Certificate Authority key state is invalid"),
         (invalid_ca_storage_path, "CA storage path must stay under /etc/atlaso"),
         (invalid_ca_certificate_path, "certificate path must stay under /etc/atlaso"),
-        (invalid_disabled_ca_certificate_material, "certificate .* material is invalid"),
+        (invalid_disabled_ca_certificate_material, "public certificate is not usable"),
         (duplicate_managed_certificate_owner, "duplicates a managed certificate owner"),
         (invalid_storage_state, "ESX Storage state is invalid: Datastore invalid-share must use NFS 3 or NFS 4.1"),
         (invalid_esxi_host_mac, "esxi_pxe_hosts' has an invalid MAC address"),
@@ -8470,7 +8500,7 @@ def test_backup_restore_rejects_enabled_settings_archive_without_vcf_backup_user
     )
 
     assert restored.status_code == 400
-    assert "Select a local Atlaso user for SFTP authentication" in restored.text
+    assert "requires an enabled local user" in restored.text
     with SessionLocal() as db:
         user = db.execute(select(User).where(User.username == "vcf-backup")).scalar_one_or_none()
         settings = db.execute(select(VcfBackupSettings)).scalar_one()
