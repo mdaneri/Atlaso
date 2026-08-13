@@ -4976,6 +4976,15 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
     unresolved_oidc_client["data"]["oidc_client_redirect_uris"].append(
         {"client_id": "missing-client", "kind": "redirect", "uri": "https://example.invalid/callback"}
     )
+    oidc_client_without_redirect = deepcopy(archive)
+    oidc_client_without_redirect["data"]["oidc_clients"].append(
+        {
+            "name": "Missing redirect client",
+            "client_id": "missing-redirect-client",
+            "client_secret_hash": "hashed-secret",
+            "enabled": True,
+        }
+    )
     unresolved_esx_volume = deepcopy(archive)
     unresolved_esx_volume["data"]["esx_nfs_shares"].append(
         {"datastore_name": "orphaned-datastore", "volume_name": "missing-volume"}
@@ -5128,6 +5137,23 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
     invalid_esxi_host_mac["data"]["esxi_pxe_hosts"].append(
         {"hostname": "invalid-mac-host", "mac_address": "not-a-mac"}
     )
+    invalid_esxi_kickstart = deepcopy(archive)
+    invalid_esxi_kickstart["data"]["esxi_kickstarts"].append(
+        {
+            "name": "Duplicate install directives",
+            "content": "install\nupgrade\nnetwork --bootproto=dhcp\nrootpw Example\nreboot\n%firstboot\n%end\n",
+            "content_hash": "0" * 64,
+            "enabled": True,
+        }
+    )
+    invalid_update_source = deepcopy(archive)
+    powershell_source = next(
+        row
+        for row in invalid_update_source["data"]["update_sources"]
+        if row["kind"] == "powershell"
+    )
+    powershell_source["enabled"] = True
+    powershell_source["url"] = "not-a-url"
     invalid_managed_package_source = deepcopy(archive)
     photon_source = next(
         row
@@ -5196,6 +5222,7 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
         (enabled_ldaps_without_ca, "enables LDAPS without a ready Certificate Authority"),
         (enabled_ldap_with_invalid_port, "LDAP state is invalid: LDAPS port must be between 1 and 65535"),
         (unresolved_oidc_client, "references an unknown OIDC client"),
+        (oidc_client_without_redirect, "At least one exact redirect URI is required"),
         (unresolved_esx_volume, "references an unknown ESX storage volume"),
         (enabled_missing_esx_share_target, "has an ineligible interface or address family"),
         (cyclic_ldap_groups, "contains cyclic LDAP group membership"),
@@ -5208,6 +5235,8 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
         (enabled_oidc_with_invalid_port, "has an invalid HTTPS port"),
         (invalid_storage_state, "ESX Storage state is invalid: Datastore invalid-share must use NFS 3 or NFS 4.1"),
         (invalid_esxi_host_mac, "esxi_pxe_hosts' has an invalid MAC address"),
+        (invalid_esxi_kickstart, "multiple install/upgrade directives"),
+        (invalid_update_source, r"update source state is invalid: .*URL must be an HTTP\(S\) URL"),
         (invalid_managed_package_source, "managed package state is invalid: Choose a PowerShell repository"),
         (unsupported_setting, "has an unsupported setting key"),
     ]:

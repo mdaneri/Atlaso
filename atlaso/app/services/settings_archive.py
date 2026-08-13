@@ -14,6 +14,7 @@ from sqlalchemy.exc import IntegrityError, StatementError
 from sqlalchemy.orm import Session
 
 from atlaso import __version__
+from atlaso.app.config import get_settings
 from atlaso.app.models import (
     ApplianceSettings,
     AutomationScript,
@@ -97,6 +98,9 @@ from atlaso.app.services.dnsmasq import (
 from atlaso.app.services.esxi_pxe import (
     ESXI_PXE_CUSTOM_VARIABLES_KEY,
     host_variables_json,
+    kickstart_template_validation_errors,
+    kickstart_validation,
+    normalize_custom_variable_definition,
     normalize_host_mac,
     normalize_host_variables,
 )
@@ -126,9 +130,10 @@ from atlaso.app.services.oidc import (
     OidcConfigurationError,
     expected_issuer_url,
     normalize_issuer_url,
+    validate_redirect_uri_list,
 )
 from atlaso.app.services.routes_wan import validate_nat_source, validate_wan_state
-from atlaso.app.services.update_sources import UPDATE_SOURCE_KINDS, validate_managed_package
+from atlaso.app.services.update_sources import UPDATE_SOURCE_KINDS, validate_managed_package, validate_update_source
 from atlaso.app.services.vcf_backups import VCF_BACKUP_DEFAULT_USERNAME, validate_vcf_backup_state
 from atlaso.app.services.vcf_offline_depot import validate_vcf_depot_state
 from atlaso.app.services.vcf_private_registry import validate_vcf_registry_state
@@ -2115,6 +2120,31 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
             oidc_client_ids,
             "OIDC client",
         )
+        if str(row.get("kind") or "") not in {"redirect", "post_logout"}:
+            raise ValueError(
+                f"The settings archive row {row_index} in 'oidc_client_redirect_uris' has an unsupported redirect kind."
+            )
+    redirect_rows_by_client: dict[str, list[dict[str, Any]]] = {}
+    for row in data.get("oidc_client_redirect_uris", []):
+        redirect_rows_by_client.setdefault(str(row.get("client_id") or ""), []).append(row)
+    for row in data.get("oidc_clients", []):
+        client_id = str(row["client_id"])
+        redirect_rows = redirect_rows_by_client.get(client_id, [])
+        try:
+            validate_redirect_uri_list(
+                [str(item.get("uri") or "") for item in redirect_rows if item.get("kind") == "redirect"],
+                allow_loopback=bool(row.get("allow_loopback_redirects", False)),
+                required=True,
+            )
+            validate_redirect_uri_list(
+                [str(item.get("uri") or "") for item in redirect_rows if item.get("kind") == "post_logout"],
+                allow_loopback=bool(row.get("allow_loopback_redirects", False)),
+                required=False,
+            )
+        except OidcConfigurationError as exc:
+            raise ValueError(
+                f"The settings archive OIDC client {client_id} redirect configuration is invalid: {exc}"
+            ) from exc
     for row_index, row in enumerate(data.get("oidc_subjects", []), start=1):
         source = str(row["source"] or "")
         if source == "managed_ldap":
@@ -2152,7 +2182,29 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
             optional=True,
         )
 
-    kickstart_names = {str(row["name"]) for row in data.get("esxi_kickstarts", [])}
+    kickstart_ids = {
+        str(row["name"]): row_index
+        for row_index, row in enumerate(data.get("esxi_kickstarts", []), start=1)
+    }
+    kickstart_names = set(kickstart_ids)
+    archived_kickstarts = [
+        EsxiKickstart(
+            id=kickstart_ids[str(row["name"])],
+            **_model_kwargs_with_scalar_defaults(EsxiKickstart, row),
+        )
+        for row in data.get("esxi_kickstarts", [])
+    ]
+    for kickstart in archived_kickstarts:
+        kickstart_errors, _kickstart_warnings = kickstart_validation(
+            kickstart.content,
+            strict=False,
+            max_bytes=get_settings().esxi_kickstart_max_bytes,
+        )
+        if kickstart_errors:
+            raise ValueError(
+                f"The settings archive ESXi Kickstart {kickstart.name} is invalid: {kickstart_errors[0]}"
+            )
+    archived_hosts: list[EsxiPxeHost] = []
     for row_index, row in enumerate(data.get("esxi_pxe_hosts", []), start=1):
         mac_address = str(row.get("mac_address") or "")
         if mac_address and not normalize_host_mac(mac_address):
@@ -2166,6 +2218,67 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
             kickstart_names,
             "ESXi Kickstart",
             optional=True,
+        )
+        archived_hosts.append(
+            EsxiPxeHost(
+                id=row_index,
+                **_model_kwargs(
+                    EsxiPxeHost,
+                    row,
+                    exclude={"kickstart_id", "variables_json"},
+                ),
+                kickstart_id=kickstart_ids.get(str(row.get("kickstart_name") or "")),
+                variables_json=host_variables_json(row.get("variables", {})),
+            )
+        )
+    custom_defaults: dict[str, str] = {}
+    custom_variables_row = next(
+        (
+            row
+            for row in data.get("settings", [])
+            if row.get("key") == ESXI_PXE_CUSTOM_VARIABLES_KEY
+        ),
+        None,
+    )
+    if custom_variables_row is not None:
+        try:
+            raw_custom_variables = json.loads(str(custom_variables_row.get("value") or "[]"))
+        except json.JSONDecodeError as exc:
+            raise ValueError("The settings archive ESXi custom variable definitions are invalid.") from exc
+        if not isinstance(raw_custom_variables, list) or any(
+            not isinstance(item, dict) for item in raw_custom_variables
+        ):
+            raise ValueError("The settings archive ESXi custom variable definitions are invalid.")
+        try:
+            normalized_custom_variables = [
+                normalize_custom_variable_definition(
+                    str(item.get("name") or ""),
+                    str(item.get("description") or ""),
+                    str(item.get("default_value") or ""),
+                )
+                for item in raw_custom_variables
+            ]
+        except ValueError as exc:
+            raise ValueError(
+                f"The settings archive ESXi custom variable definitions are invalid: {exc}"
+            ) from exc
+        custom_defaults = {
+            item["name"]: item["default_value"]
+            for item in normalized_custom_variables
+        }
+        if len(custom_defaults) != len(normalized_custom_variables):
+            raise ValueError(
+                "The settings archive ESXi custom variable definitions contain a duplicate name."
+            )
+    kickstart_template_errors = kickstart_template_validation_errors(
+        archived_kickstarts,
+        archived_hosts,
+        {},
+        custom_defaults=custom_defaults,
+    )
+    if kickstart_template_errors:
+        raise ValueError(
+            f"The settings archive ESXi Kickstart state is invalid: {kickstart_template_errors[0]}"
         )
 
     volume_names = {str(row["name"]) for row in data.get("esx_storage_volumes", [])}
@@ -2264,6 +2377,13 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
         if str(row["kind"] or "") not in UPDATE_SOURCE_KINDS:
             raise ValueError(
                 f"The settings archive row {row_index} in 'update_sources' has an unsupported source kind."
+            )
+        source_errors = validate_update_source(
+            archived_update_sources[(str(row["kind"]), str(row["name"]))]
+        )
+        if source_errors:
+            raise ValueError(
+                f"The settings archive update source state is invalid: {source_errors[0]}"
             )
     for row_index, row in enumerate(data.get("managed_packages", []), start=1):
         source = (str(row.get("source_kind") or ""), str(row.get("source_name") or ""))
