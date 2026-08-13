@@ -31,6 +31,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'Atlaso.WorkstationFirstBoot.ps1')
+Import-Module (Join-Path $PSScriptRoot 'Atlaso.WorkstationCleanup.psm1') -Force
 
 function Find-LatestApplianceVmx {
     param([string]$RepoRoot)
@@ -225,15 +226,15 @@ if (-not $SkipNetworkPrepare) {
 }
 
 if ((Test-Path -LiteralPath $resolvedOutputDirectory) -and $Redeploy) {
+    if (-not (Test-Path -LiteralPath $targetVmx -PathType Leaf)) {
+        throw "Refusing redeploy cleanup because the expected Atlaso VMX is missing: $targetVmx. Choose the correct -Name/-OutputDirectory or remove the directory manually after reviewing its contents."
+    }
     if ($PSCmdlet.ShouldProcess($targetVmx, 'Remove existing Atlaso Workstation test VM')) {
-        if (Test-Path -LiteralPath $targetVmx) {
-            & (Join-Path $PSScriptRoot 'remove-atlaso-vm.ps1') `
-                -VmxPath $targetVmx `
-                -VmrunPath $VmrunPath
-        }
-        else {
-            Remove-Item -LiteralPath $resolvedOutputDirectory -Recurse -Force
-        }
+        & (Join-Path $PSScriptRoot 'remove-atlaso-vm.ps1') `
+            -VmxPath $targetVmx `
+            -VmrunPath $VmrunPath `
+            -ExpectedName $Name `
+            -Confirm:$false
     }
 }
 
@@ -243,9 +244,10 @@ if ($ResetDataDisks) {
             continue
         }
         $resolvedDiskPath = (Resolve-Path -LiteralPath $diskPath).Path
-        if (-not $resolvedDiskPath.StartsWith($resolvedOutputDirectory, [System.StringComparison]::OrdinalIgnoreCase)) {
-            throw "Refusing to reset VMware data disk outside the VM output directory: $resolvedDiskPath"
-        }
+        Assert-AtlasoStrictDescendantPath `
+            -ParentPath $resolvedOutputDirectory `
+            -ChildPath $resolvedDiskPath `
+            -FailureMessage 'Refusing to reset VMware data disk outside the VM output directory'
         if ($PSCmdlet.ShouldProcess($resolvedDiskPath, 'Remove existing Atlaso VMware data disk')) {
             Remove-Item -LiteralPath $resolvedDiskPath -Force
             Write-Host "Removed existing data disk: $resolvedDiskPath"

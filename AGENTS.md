@@ -147,6 +147,11 @@ The following cross-cutting boundaries always apply:
   generated metadata, and profile enablement together.
 - Keep development system adapters in dry-run mode unless a reviewed apply unit explicitly promotes real mutation.
 - VMware Workstation is the default live appliance target; use Hyper-V lifecycle coverage for exact VLAN behavior.
+- VMware Workstation recursive cleanup requires an exact non-reparse-point artifact root containing every expected VMX.
+  Test-VM redeploy fails closed when its named VMX is missing or has another display name, and data-disk reset accepts
+  only strict path-component descendants of that VM output. Before deleting files, cleanup must use the checked
+  `vmrun` running inventory and Workstation registration inventory, stop running targets, unregister registered targets,
+  and verify both transitions; any unresolved command or state preserves the artifacts and returns failure.
 - VLAN Interfaces use the shared wizard-backed Tabulator with the ESX Storage interaction. Keep every persisted field,
   including Admin Up, out of inline editing and review the complete VLAN record in the add/edit wizard. New VLANs
   default to Admin Up; edits preserve saved state; a missing-parent VLAN may remain saved only while disabled. Saving

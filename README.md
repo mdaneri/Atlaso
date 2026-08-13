@@ -84,8 +84,9 @@ brings infrastructure, storage, identity, networking, and lifecycle workflows in
 
 ## Supported appliance targets
 
-Photon OS 5.0 is the appliance operating system. VMware Workstation is the default live-test target; Hyper-V remains the
-authoritative lifecycle interoperability environment for exact access and trunk VLAN behavior.
+Photon OS 5.0 is the appliance operating system. VMware Workstation is the default live-test target; its cleanup tools
+verify stop and unregister state before removing exact VM artifact directories. Hyper-V remains the authoritative
+lifecycle interoperability environment for exact access and trunk VLAN behavior.
 
 The VMware release appliance uses separate compacted Photon OS and Atlaso/tools payload VMDKs, followed by empty
 500 GiB VCF Offline Depot and VCF Backups disks. The OVF package is the canonical GitHub-distributable form; its assets

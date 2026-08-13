@@ -5,6 +5,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+Import-Module (Join-Path $PSScriptRoot 'Atlaso.WorkstationCleanup.psm1') -Force
 
 if (-not $LabName.StartsWith('AtlasoWorkstationLifecycle')) {
     throw "Refusing VM cleanup for prefix '$LabName'. Cleanup is limited to AtlasoWorkstationLifecycle* VM names."
@@ -58,7 +59,6 @@ if (-not (Test-Path -LiteralPath $lifecycleRoot)) {
 
 $resolvedLifecycleRoot = (Resolve-Path -LiteralPath $lifecycleRoot).Path
 $resolvedVmrun = Resolve-VmrunPath -Path $VmrunPath
-$runningVmxPaths = @(& $resolvedVmrun -T ws list 2>$null | Select-Object -Skip 1)
 $candidates = @(
     Get-ChildItem -LiteralPath $resolvedLifecycleRoot -Recurse -Filter '*.vmx' -File |
         ForEach-Object {
@@ -68,7 +68,6 @@ $candidates = @(
                 Path        = $resolvedPath
                 DisplayName = $displayName
                 Directory   = $_.DirectoryName
-                IsRunning   = $runningVmxPaths -contains $resolvedPath
             }
         } |
         Where-Object { $_.DisplayName.StartsWith($LabName) } |
@@ -80,22 +79,25 @@ if (-not $candidates) {
     return
 }
 
-foreach ($candidate in $candidates | Sort-Object -Property DisplayName) {
-    if (-not $candidate.Path.StartsWith($resolvedLifecycleRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
-        throw "Refusing to remove VM outside Workstation lifecycle results: $($candidate.Path)"
-    }
-    if (-not $candidate.DisplayName.StartsWith($LabName)) {
-        throw "Refusing to remove VM '$($candidate.DisplayName)' because it does not start with '$LabName'."
+foreach ($candidateGroup in $candidates | Group-Object -Property Directory) {
+    $groupCandidates = @($candidateGroup.Group | Sort-Object -Property DisplayName)
+    foreach ($candidate in $groupCandidates) {
+        Assert-AtlasoStrictDescendantPath `
+            -ParentPath $resolvedLifecycleRoot `
+            -ChildPath $candidate.Path `
+            -FailureMessage 'Refusing to remove VM outside Workstation lifecycle results'
+        if (-not $candidate.DisplayName.StartsWith($LabName)) {
+            throw "Refusing to remove VM '$($candidate.DisplayName)' because it does not start with '$LabName'."
+        }
     }
 
-    if ($PSCmdlet.ShouldProcess($candidate.DisplayName, 'Stop and remove Workstation lifecycle VM')) {
-        & $resolvedVmrun -T ws stop $candidate.Path hard 2>$null | Out-Null
-        & $resolvedVmrun -T ws unregister $candidate.Path 2>$null | Out-Null
-        if (Test-Path -LiteralPath $candidate.Directory) {
-            Remove-Item -LiteralPath $candidate.Directory -Recurse -Force
-            Write-Host "Removed Workstation lifecycle VM: $($candidate.DisplayName)"
-        } else {
-            Write-Host "Workstation lifecycle VM already removed: $($candidate.DisplayName)"
-        }
+    Remove-AtlasoWorkstationVmArtifacts `
+        -VmrunPath $resolvedVmrun `
+        -VmxPaths @($groupCandidates.Path) `
+        -RemovalRoot $candidateGroup.Name `
+        -WhatIf:$WhatIfPreference `
+        -Confirm:$false
+    if (-not $WhatIfPreference) {
+        Write-Host "Removed Workstation lifecycle VM directory: $($candidateGroup.Name)"
     }
 }

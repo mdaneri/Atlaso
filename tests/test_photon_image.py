@@ -1277,6 +1277,10 @@ def test_create_atlaso_vmware_test_vm_wrapper_uses_common_helpers():
     assert "$effectiveSkipLabNetworkAdapters = -not $IncludeLabNetworkAdapters" in script
     assert "Atlaso-Depot.vmdk" in script
     assert "Atlaso-Backups.vmdk" in script
+    assert "Atlaso.WorkstationCleanup.psm1" in script
+    assert "expected Atlaso VMX is missing" in script
+    assert "-ExpectedName $Name" in script
+    assert "Assert-AtlasoStrictDescendantPath" in script
     assert "Assert-ClonedPayloadDisks -VmxPath $targetVmx" in vm_script
     assert "VMware clone did not retain the $($payloadDisk.Name) disk" in vm_script
     assert "Set-VmxScsiDisk -Path $targetVmx -Unit 2 -DiskPath $resolvedDepotVmdkPath" in vm_script
@@ -1552,6 +1556,8 @@ def test_vmware_lifecycle_cleanup_only_removes_existing_lifecycle_vms():
     """Verify that vmware lifecycle cleanup only removes existing lifecycle vms."""
     wrapper = Path("scripts/windows/vmware/invoke-lifecycle-test.ps1").read_text(encoding="utf-8")
     cleanup_script = Path("scripts/windows/vmware/remove-lifecycle-vms.ps1").read_text(encoding="utf-8")
+    cleanup_module = Path("scripts/windows/vmware/Atlaso.WorkstationCleanup.psm1").read_text(encoding="utf-8")
+    runner = Path("scripts/windows/vmware/run-lifecycle-test.ps1").read_text(encoding="utf-8")
     docs = Path("docs/reference/vmware-workstation-lifecycle-testing.md").read_text(encoding="utf-8")
 
     assert "ParameterSetName = 'CleanupVms'" in wrapper
@@ -1569,7 +1575,20 @@ def test_vmware_lifecycle_cleanup_only_removes_existing_lifecycle_vms():
     assert "vmrun.exe was not found" in cleanup_script
     assert "Get-VmxDisplayName" in cleanup_script
     assert "Refusing to remove VM outside Workstation lifecycle results" in cleanup_script
-    assert "Remove-Item -LiteralPath $candidate.Directory -Recurse -Force" in cleanup_script
+    assert "Atlaso.WorkstationCleanup.psm1" in cleanup_script
+    assert "Remove-AtlasoWorkstationVmArtifacts" in cleanup_script
+    assert "Remove-Item -LiteralPath $candidate.Directory -Recurse -Force" not in cleanup_script
+    assert "VMware\\inventory.vmls" in cleanup_module
+    assert "failed with exit code $exitCode" in cleanup_module
+    assert "VMware Workstation VM remains running after stop succeeded" in cleanup_module
+    assert "VMware Workstation VM remains registered after unregister succeeded" in cleanup_module
+    assert cleanup_module.index("Confirm-AtlasoWorkstationVmInactiveAndUnregistered") < cleanup_module.index(
+        "Remove-Item -LiteralPath $resolvedRemovalRoot -Recurse -Force"
+    )
+    assert "Atlaso.WorkstationCleanup.psm1" in runner
+    assert "Remove-AtlasoWorkstationVmArtifacts" in runner
+    assert "Cleanup also failed; VM artifacts were preserved" in runner
+    assert "Remove-Item -LiteralPath $vmRoot -Recurse -Force" not in runner
     assert "-CleanupVmsOnly" in docs
 
 
@@ -1599,6 +1618,7 @@ def test_lifecycle_vmware_script_supports_routing_wan_only_and_esxi_pxe_install(
     """Verify that lifecycle vmware script supports routing wan only and esxi pxe install."""
     wrapper = Path("scripts/windows/vmware/invoke-lifecycle-test.ps1").read_text(encoding="utf-8")
     runner = Path("scripts/windows/vmware/run-lifecycle-test.ps1").read_text(encoding="utf-8")
+    cleanup_module = Path("scripts/windows/vmware/Atlaso.WorkstationCleanup.psm1").read_text(encoding="utf-8")
 
     assert "[switch]$RoutingWanOnly" in wrapper
     assert "[switch]$OidcOnly" in wrapper
@@ -1640,7 +1660,7 @@ def test_lifecycle_vmware_script_supports_routing_wan_only_and_esxi_pxe_install(
     assert "function Register-WorkstationVm" in runner
     assert "$resolvedVmrun @Arguments" in runner
     assert "ws register $Path" in runner
-    assert "ws unregister $Path" in runner
+    assert "'unregister', $VmxPath" in cleanup_module
     assert "Register-WorkstationVm -Path $Path" in runner
     assert "function New-EsxiPxeVm" in runner
     assert "[string]$PxeClientIPAddress = ''" in runner

@@ -39,6 +39,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'Atlaso.WorkstationFirstBoot.ps1')
+Import-Module (Join-Path $PSScriptRoot 'Atlaso.WorkstationCleanup.psm1') -Force
 
 $repoRoot = Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..\..')
 if (-not $SshPassword) {
@@ -527,22 +528,12 @@ function Register-WorkstationVm {
     }
 }
 
-function Unregister-WorkstationVm {
-    param([string]$Path)
-    & $resolvedVmrun -T ws unregister $Path 2>$null | Out-Null
-}
-
 function Start-WorkstationVm {
     param([string]$Path)
     if ($PSCmdlet.ShouldProcess($Path, 'Start Workstation VM')) {
         Register-WorkstationVm -Path $Path
         Invoke-Vmrun -Arguments @('-T', 'ws', 'start', $Path, 'nogui')
     }
-}
-
-function Stop-WorkstationVm {
-    param([string]$Path)
-    & $resolvedVmrun -T ws stop $Path hard 2>$null | Out-Null
 }
 
 function Test-TcpPort {
@@ -982,6 +973,7 @@ if (-not $OidcOnly) {
     New-CloudInitSeedIso -Path $clientBSeedIso -HostName ($clientBName.ToLowerInvariant())
 }
 
+$scenarioFailure = $null
 try {
     $applianceVmx = Copy-VmDirectory -SourceVmx $ApplianceVmxPath -DestinationDirectory (Join-Path $vmRoot $applianceName) -Name $applianceName
     Set-VmxNetworkAdapter -Path $applianceVmx -Index 0 -Vmnet $ManagementNetwork
@@ -1130,16 +1122,36 @@ try {
             }
         }
     }
-} finally {
-    if ($CleanupCreatedLab) {
-        foreach ($vmx in @($createdVmxPaths.ToArray())) {
-            Stop-WorkstationVm -Path $vmx
-            Unregister-WorkstationVm -Path $vmx
+} catch {
+    $scenarioFailure = $_
+}
+
+$cleanupFailure = $null
+if ($CleanupCreatedLab) {
+    $createdVmxPathArray = @($createdVmxPaths.ToArray())
+    if ($createdVmxPathArray.Count -gt 0) {
+        try {
+            Remove-AtlasoWorkstationVmArtifacts `
+                -VmrunPath $resolvedVmrun `
+                -VmxPaths $createdVmxPathArray `
+                -RemovalRoot $vmRoot `
+                -WhatIf:$WhatIfPreference `
+                -Confirm:$false
+        } catch {
+            $cleanupFailure = $_
         }
-        if (Test-Path -LiteralPath $vmRoot) {
-            Remove-Item -LiteralPath $vmRoot -Recurse -Force
-        }
-    } else {
-        Write-Host "Workstation lifecycle VMs were left in place under: $vmRoot"
     }
+} else {
+    Write-Host "Workstation lifecycle VMs were left in place under: $vmRoot"
+}
+
+if ($scenarioFailure) {
+    if ($cleanupFailure) {
+        $combinedMessage = "Lifecycle scenario failed: $($scenarioFailure.Exception.Message) Cleanup also failed; VM artifacts were preserved at '$vmRoot': $($cleanupFailure.Exception.Message)"
+        throw [System.InvalidOperationException]::new($combinedMessage, $scenarioFailure.Exception)
+    }
+    throw $scenarioFailure
+}
+if ($cleanupFailure) {
+    throw $cleanupFailure
 }

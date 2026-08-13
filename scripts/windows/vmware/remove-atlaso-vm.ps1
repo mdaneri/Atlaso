@@ -3,10 +3,12 @@ param(
     [Parameter(Mandatory = $true)]
     [string]$VmxPath,
     [string]$VmrunPath = '',
+    [string]$ExpectedName = '',
     [switch]$AllowImageOutputRemoval
 )
 
 $ErrorActionPreference = 'Stop'
+Import-Module (Join-Path $PSScriptRoot 'Atlaso.WorkstationCleanup.psm1') -Force
 
 function Resolve-VmrunPath {
     param([string]$Path)
@@ -22,6 +24,18 @@ function Resolve-VmrunPath {
     throw 'vmrun.exe was not found. Install VMware Workstation Pro or pass -VmrunPath.'
 }
 
+function Get-VmxDisplayName {
+    param([string]$Path)
+
+    $line = Get-Content -LiteralPath $Path |
+        Where-Object { $_ -match '^\s*displayName\s*=' } |
+        Select-Object -First 1
+    if ($line -and $line -match '^\s*displayName\s*=\s*"(.+)"\s*$') {
+        return $Matches[1]
+    }
+    return ''
+}
+
 $resolvedVmxPath = (Resolve-Path -LiteralPath $VmxPath).Path
 $vmDirectory = Split-Path -Parent $resolvedVmxPath
 $repoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..\..')).Path
@@ -29,18 +43,32 @@ $imageOutputRoot = Join-Path $repoRoot 'image\vmware-workstation\output'
 
 if (-not $AllowImageOutputRemoval -and (Test-Path -LiteralPath $imageOutputRoot)) {
     $resolvedImageOutputRoot = (Resolve-Path -LiteralPath $imageOutputRoot).Path
-    if ($vmDirectory.StartsWith($resolvedImageOutputRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
+    if (
+        $vmDirectory.Equals($resolvedImageOutputRoot, [System.StringComparison]::OrdinalIgnoreCase) -or
+        (Test-AtlasoStrictDescendantPath -ParentPath $resolvedImageOutputRoot -ChildPath $vmDirectory)
+    ) {
         throw "Refusing to remove a VM under built image output: $vmDirectory. Pass -AllowImageOutputRemoval only for intentional image cleanup."
+    }
+}
+
+if ($ExpectedName) {
+    $displayName = Get-VmxDisplayName -Path $resolvedVmxPath
+    if (-not $displayName) {
+        throw "Refusing to remove VMware artifacts because the target VMX has no displayName: $resolvedVmxPath"
+    }
+    if (-not $displayName.Equals($ExpectedName, [System.StringComparison]::Ordinal)) {
+        throw "Refusing to remove VMware artifacts because VMX displayName '$displayName' does not match expected name '$ExpectedName'."
     }
 }
 
 $resolvedVmrun = Resolve-VmrunPath -Path $VmrunPath
 
-if ($PSCmdlet.ShouldProcess($resolvedVmxPath, 'Stop VMware Workstation VM')) {
-    & $resolvedVmrun -T ws stop $resolvedVmxPath hard 2>$null | Out-Null
-}
-
-if ($PSCmdlet.ShouldProcess($vmDirectory, 'Remove VMware Workstation VM directory')) {
-    Remove-Item -LiteralPath $vmDirectory -Recurse -Force
+Remove-AtlasoWorkstationVmArtifacts `
+    -VmrunPath $resolvedVmrun `
+    -VmxPaths @($resolvedVmxPath) `
+    -RemovalRoot $vmDirectory `
+    -WhatIf:$WhatIfPreference `
+    -Confirm:$false
+if (-not $WhatIfPreference) {
     Write-Host "Removed VMware Workstation VM directory: $vmDirectory"
 }
