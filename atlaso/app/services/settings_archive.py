@@ -1281,6 +1281,55 @@ def _validate_archive(
         _validate_archive_relationships(data)
 
 
+ARCHIVE_UNGUARDED_UNIQUE_IDENTITIES: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("physical_interfaces", ("name",)),
+    ("vlan_interfaces", ("name",)),
+    ("vlan_interfaces", ("parent_interface", "vlan_id")),
+    ("wan_policies", ("name",)),
+    ("nat_rules", ("name",)),
+    ("routing_rules", ("name",)),
+    ("service_states", ("service",)),
+    ("dns_records", ("hostname", "record_type", "address")),
+    ("dhcp_scopes", ("name",)),
+    ("dhcp_reservations", ("mac_address",)),
+    ("firewall_rules", ("name",)),
+    ("ca_profiles", ("name",)),
+    ("vcf_registry_bundles", ("name",)),
+    ("vcf_depot_download_profiles", ("name",)),
+    ("esxi_kickstarts", ("name",)),
+    ("ldap_organizations", ("suffix_dn",)),
+    ("oidc_clients", ("client_id",)),
+    ("oidc_client_redirect_uris", ("client_id", "kind", "uri")),
+    ("esxi_pxe_hosts", ("mac_address",)),
+    ("esx_storage_volumes", ("name",)),
+    ("esx_storage_volumes", ("stable_device_id",)),
+    ("esx_nfs_shares", ("datastore_name",)),
+    ("schedules", ("name",)),
+)
+
+
+def _validate_archive_unique_identities(data: dict[str, list[dict[str, Any]]]) -> None:
+    """Reject database uniqueness conflicts before restore mutates desired state.
+
+    Args:
+        data: Structurally validated archive data collections.
+
+    Raises:
+        ValueError: If rows duplicate an identity enforced by the database.
+    """
+    for section_name, identity_fields in ARCHIVE_UNGUARDED_UNIQUE_IDENTITIES:
+        seen_identities: set[tuple[Any, ...]] = set()
+        for row_index, row in enumerate(data.get(section_name, []), start=1):
+            identity = tuple(row.get(field_name) for field_name in identity_fields)
+            if identity in seen_identities:
+                field_names = ", ".join(identity_fields)
+                raise ValueError(
+                    f"The settings archive row {row_index} in '{section_name}' duplicates "
+                    f"the unique {field_names} identity."
+                )
+            seen_identities.add(identity)
+
+
 def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> None:
     """Validate archive relationships that restore resolves by public names.
 
@@ -1290,6 +1339,8 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
     Raises:
         ValueError: If a relationship target is empty or absent.
     """
+    _validate_archive_unique_identities(data)
+
     def require_reference(
         section_name: str,
         row_index: int,

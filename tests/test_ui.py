@@ -4987,6 +4987,35 @@ def test_settings_restore_rejects_malformed_archive_without_clearing_staged_ldap
         LDAP_PENDING_RECOVERY_PAYLOADS.pop(staged_id, None)
 
 
+def test_settings_archive_unique_identity_preflight_covers_all_unguarded_constraints():
+    """Verify every unguarded database identity rejects duplicate archive rows."""
+    import pytest
+
+    from atlaso.app.services.settings_archive import (
+        ARCHIVE_UNGUARDED_UNIQUE_IDENTITIES,
+        _validate_archive_unique_identities,
+    )
+
+    for section_name, duplicate_fields in ARCHIVE_UNGUARDED_UNIQUE_IDENTITIES:
+        section_specs = [
+            fields
+            for candidate_section, fields in ARCHIVE_UNGUARDED_UNIQUE_IDENTITIES
+            if candidate_section == section_name
+        ]
+        section_fields = {field_name for fields in section_specs for field_name in fields}
+        rows = [
+            {field_name: f"{field_name}-{row_index}" for field_name in section_fields}
+            for row_index in (1, 2)
+        ]
+        for field_name in duplicate_fields:
+            rows[1][field_name] = rows[0][field_name]
+        with pytest.raises(
+            ValueError,
+            match=rf"'{section_name}'.*unique {', '.join(duplicate_fields)} identity",
+        ):
+            _validate_archive_unique_identities({section_name: rows})
+
+
 def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_field_shapes(client):
     """Verify settings archive preflight rejects malformed structures before restore.
 
@@ -5288,6 +5317,10 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
         "authorization_code_lifetime_seconds"
     ] = 60
     oidc_client_with_invalid_hash["data"]["oidc_clients"][-1]["client_secret_hash"] = "not-a-hash"
+    duplicate_oidc_client = deepcopy(oidc_client_with_invalid_lifetime)
+    duplicate_oidc_client["data"]["oidc_clients"].append(
+        deepcopy(duplicate_oidc_client["data"]["oidc_clients"][-1])
+    )
     duplicate_oidc_mapping = deepcopy(archive)
     duplicate_oidc_mapping["data"]["oidc_group_mappings"] = [
         {
@@ -5718,6 +5751,10 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
             "task_config_json": '{"selected_streams":["retired"]}',
         }
     )
+    duplicate_schedule = deepcopy(unsupported_schedule)
+    duplicate_schedule["data"]["schedules"].append(
+        deepcopy(duplicate_schedule["data"]["schedules"][-1])
+    )
     invalid_managed_package_source = deepcopy(archive)
     photon_source = next(
         row
@@ -5830,6 +5867,7 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
         (oidc_client_without_redirect, "At least one exact redirect URI is required"),
         (oidc_client_with_invalid_lifetime, "fixed 60-second authorization-code lifetime"),
         (oidc_client_with_invalid_hash, "OIDC client secret hash is not valid"),
+        (duplicate_oidc_client, "duplicates the unique client_id identity"),
         (duplicate_oidc_mapping, "duplicates an OIDC group mapping identity"),
         (cross_organization_oidc_mapping, "outside its OIDC client's organization"),
         (bound_client_local_role_mapping, "assigns a local role to an organization-bound OIDC client"),
@@ -5869,6 +5907,7 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
         (duplicate_script_name, "duplicates a script name"),
         (unsupported_schedule, "Choose a supported scheduled task type"),
         (invalid_update_schedule, "retired or unsupported stream"),
+        (duplicate_schedule, "duplicates the unique name identity"),
         (invalid_managed_package_source, "managed package state is invalid: Choose a PowerShell repository"),
         (duplicate_managed_package, "duplicates a managed package identity"),
         (unsupported_setting, "has an unsupported setting key"),
