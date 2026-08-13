@@ -173,6 +173,10 @@ An existing ext4 source must be read-write at its selected mount and cannot have
 state that the boot verifier would later reject, preventing a successful configuration change from making the next boot
 fail closed.
 
+For a blank fixed disk, the boot helper revalidates the topology link, resolved device, controller, capacity, contents,
+read-only state, holders, raw-device users, and mounts immediately before formatting. The format command uses that
+validated resolved device rather than dereferencing the topology link again.
+
 Settings backups include the service, volume fingerprints/UUIDs/mounts, and shares but never a format authorization.
 Restore marks volumes for runtime verification before reapply. Factory reset removes Atlaso desired state, exports, and
 service enablement after apply; it does not erase, reformat, unmount, detach, or delete files on storage disks. UUID

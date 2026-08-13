@@ -774,7 +774,8 @@ def test_photon_provisioning_prepares_attached_data_disks():
     assert "ATLASO_BKUP" in mount_script
     assert "/mnt/atlaso-vcf-offline-depot" in mount_script
     assert "/mnt/atlaso-vcf-backups" in mount_script
-    assert 'mkfs.ext4 -F -L "$label" "$stable_path"' in mount_script
+    assert 'format_disk="$(revalidate_blank_format_target' in mount_script
+    assert 'mkfs.ext4 -F -L "$label" "$format_disk"' in mount_script
     assert "UUID=%s %s ext4 defaults,nofail,x-systemd.device-timeout=30s 0 2" in mount_script
     assert "findmnt -n -o SOURCE /" in mount_script
     assert 'image/common/udev/99-atlaso-disk-identity.rules" /etc/udev/rules.d/99-atlaso-disk-identity.rules' in provision

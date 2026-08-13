@@ -477,8 +477,14 @@ ensure_mount() {
   observed_label="$(blkid -s LABEL -o value "$disk" 2>/dev/null || true)"
   if [ "$observed_label" != "$label" ]; then
     stable_path="$(stable_path_for_disk "$disk")"
+    case "$label" in
+      ATLASO_DEPOT) format_tuple="$ATLASO_DEPOT_SCSI_TUPLE" ;;
+      ATLASO_BKUP) format_tuple="$ATLASO_BACKUP_SCSI_TUPLE" ;;
+      *) fail "unsupported fixed-disk format label $label" ;;
+    esac
     log "Formatting trusted $stable_path as $label for $mountpoint"
-    mkfs.ext4 -F -L "$label" "$stable_path" >/dev/null
+    format_disk="$(revalidate_blank_format_target "$label" "$format_tuple" "$disk" "$os_disk" "$stable_path")"
+    mkfs.ext4 -F -L "$label" "$format_disk" >/dev/null
     observed_label="$(blkid -s LABEL -o value "$disk" 2>/dev/null || true)"
     [ "$observed_label" = "$label" ] || fail "$label was not readable from its trusted disk after formatting"
   fi
@@ -500,6 +506,47 @@ ensure_mount() {
   chown "$owner:$group" "$mountpoint"
   chmod "$mode" "$mountpoint"
   log "Mounted $label on $mountpoint from $(stable_path_for_disk "$disk")"
+}
+
+revalidate_blank_format_target() {
+  format_label="$1"
+  format_tuple="$2"
+  format_expected_disk="$(readlink -f "$3" 2>/dev/null || true)"
+  format_os_disk="$(readlink -f "$4" 2>/dev/null || true)"
+  format_stable_path="$5"
+
+  [ -n "$format_expected_disk" ] || fail "$format_label format target cannot be resolved"
+  [ -L "$format_stable_path" ] || fail "$format_label stable identity disappeared before formatting"
+  format_resolved_link="$(readlink -f "$format_stable_path" 2>/dev/null || true)"
+  [ "$format_resolved_link" = "$format_expected_disk" ] ||
+    fail "$format_label stable identity changed before formatting"
+  [ "$format_expected_disk" != "$format_os_disk" ] || fail "$format_label format target became the operating-system disk"
+  [ "$(lsblk -dn -o TYPE "$format_expected_disk" 2>/dev/null | head -n 1 || true)" = "disk" ] ||
+    fail "$format_label format target is no longer a whole disk"
+  [ "$(scsi_tuple "$format_expected_disk" || true)" = "$format_tuple" ] ||
+    fail "$format_label format target changed SCSI identity"
+  [ "$(scsi_host "$format_expected_disk" || true)" = "$(scsi_host "$format_os_disk" || true)" ] ||
+    fail "$format_label format target changed SCSI controller"
+  format_size="$(lsblk -bdn -o SIZE "$format_expected_disk" 2>/dev/null | head -n 1 || true)"
+  [ "$format_size" = "$ATLASO_DATA_DISK_SIZE_BYTES" ] ||
+    fail "$format_label format target changed capacity"
+  [ "$(lsblk -dn -o RO "$format_expected_disk" 2>/dev/null | head -n 1 || true)" = "0" ] ||
+    fail "$format_label format target became read-only"
+  has_partitions "$format_expected_disk" && fail "$format_label format target gained partitions"
+  has_filesystem "$format_expected_disk" && fail "$format_label format target gained a filesystem"
+  has_holders "$format_expected_disk" && fail "$format_label format target gained active block holders"
+  has_open_file_descriptors "$format_expected_disk" && fail "$format_label format target is open by a raw-device process"
+  [ -z "$(findmnt -rn -S "$format_expected_disk" -o TARGET 2>/dev/null || true)" ] ||
+    fail "$format_label format target became mounted"
+
+  format_label_matches=0
+  for format_candidate in $(lsblk -nr -o PATH,TYPE | awk '$2 == "disk" || $2 == "part" { print $1 }'); do
+    if [ "$(blkid -s LABEL -o value "$format_candidate" 2>/dev/null || true)" = "$format_label" ]; then
+      format_label_matches=$((format_label_matches + 1))
+    fi
+  done
+  [ "$format_label_matches" -eq 0 ] || fail "$format_label appeared on another block device before formatting"
+  printf '%s\n' "$format_expected_disk"
 }
 
 main() {

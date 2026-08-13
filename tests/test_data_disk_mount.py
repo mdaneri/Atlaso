@@ -340,7 +340,8 @@ def test_vmware_first_boot_formats_only_fixed_identity_disks(tmp_path: Path):
 
     assert completed.returncode == 0, completed.stdout + completed.stderr
     assert [call[call.index("-L") + 1] for call in calls] == ["ATLASO_DEPOT", "ATLASO_BKUP"]
-    assert all("atlaso-path-test-" in call[-1] for call in calls)
+    assert [Path(call[-1]).name for call in calls] == ["sdc", "sdd"]
+    assert all("atlaso-path-test-" not in call[-1] for call in calls)
 
 
 def test_hyperv_first_boot_uses_fixed_controller_locations(tmp_path: Path):
