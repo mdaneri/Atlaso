@@ -215,6 +215,56 @@ def test_ca_private_key_validation_requires_current_ca_root(is_ca, expired, not_
     assert expected_error in validate_ca_private_key_material(settings, [])
 
 
+def test_ca_private_key_validation_rejects_noncurrent_issued_leaf():
+    """Verify deployable restored leaf certificates must be currently valid."""
+    from datetime import datetime, timedelta, timezone
+
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import rsa
+    from cryptography.x509.oid import NameOID
+
+    settings = CaSettings(
+        enabled=True,
+        root_common_name="Atlaso Test Root",
+        organization="Atlaso",
+        key_algorithm="RSA",
+        key_size=2048,
+        digest_algorithm="sha256",
+        root_valid_days=3650,
+        storage_path="/etc/atlaso/ca",
+    )
+    assert ensure_root_ca_material(settings) is True
+    root = x509.load_pem_x509_certificate(settings.root_certificate_pem.encode("ascii"))
+    root_key = serialization.load_pem_private_key(
+        decrypt_secret(settings.root_private_key_encrypted).encode("ascii"),
+        password=None,
+    )
+    leaf_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    now = datetime.now(timezone.utc)
+    leaf = (
+        x509.CertificateBuilder()
+        .subject_name(x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "future.example.test")]))
+        .issuer_name(root.subject)
+        .public_key(leaf_key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(now + timedelta(days=1))
+        .not_valid_after(now + timedelta(days=30))
+        .sign(root_key, hashes.SHA256())
+    )
+    certificate = CaCertificate(
+        common_name="future.example.test",
+        status="issued",
+        enabled=True,
+        certificate_pem=leaf.public_bytes(serialization.Encoding.PEM).decode("ascii"),
+    )
+
+    assert "Certificate future.example.test is not currently valid." in validate_ca_private_key_material(
+        settings,
+        [certificate],
+    )
+
+
 def test_ca_certificate_row_capabilities_follow_lifecycle_and_ownership():
     """Verify that ca certificate row capabilities follow lifecycle and ownership."""
     planned = ca_certificate_to_dict(CaCertificate(common_name="planned.example.test", status="planned"))

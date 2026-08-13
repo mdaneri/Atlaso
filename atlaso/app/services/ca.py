@@ -932,6 +932,7 @@ def validate_ca_private_key_material(
             root_certificate = None
 
     parsed_certificates: dict[int, x509.Certificate] = {}
+    now = datetime.now(timezone.utc)
     for certificate in certificates:
         if not certificate.enabled or certificate.status == "revoked":
             continue
@@ -946,6 +947,11 @@ def validate_ca_private_key_material(
         except Exception:
             errors.append(f"{label} certificate is not usable on this appliance.")
             continue
+        if certificate.status == "issued" and (
+            parsed_certificate.not_valid_before_utc > now
+            or parsed_certificate.not_valid_after_utc <= now
+        ):
+            errors.append(f"{label} is not currently valid.")
         if certificate.status == "issued" and (
             root_certificate is None
             or parsed_certificate.issuer != root_certificate.subject

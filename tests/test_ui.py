@@ -5049,6 +5049,17 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
     enabled_web_terminal_without_https = deepcopy(archive)
     enabled_web_terminal_without_https["data"]["appliance_settings"][0]["web_terminal_enabled"] = True
     enabled_web_terminal_without_https["data"]["appliance_settings"][0]["management_https_enabled"] = False
+    appliance_dns_ownership_conflict = deepcopy(archive)
+    appliance_dns_ownership_conflict["data"]["dns_settings"][0]["enabled"] = True
+    appliance_dns_ownership_conflict["data"]["dns_records"].append(
+        {
+            "hostname": appliance_dns_ownership_conflict["data"]["appliance_settings"][0]["fqdn"],
+            "record_type": "A",
+            "address": "192.0.2.10",
+            "description": "Operator-owned record",
+            "enabled": True,
+        }
+    )
     invalid_ntp_port = deepcopy(archive)
     invalid_ntp_port["data"]["ntp_settings"][0]["port"] = 124
     enabled_nts_without_ca = deepcopy(archive)
@@ -5512,6 +5523,10 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
             "enabled": True,
         }
     )
+    duplicate_network_boot_environment = deepcopy(archive)
+    duplicate_network_boot_environment["data"]["network_boot_environments"].append(
+        deepcopy(duplicate_network_boot_environment["data"]["network_boot_environments"][0])
+    )
     invalid_update_source = deepcopy(archive)
     powershell_source = next(
         row
@@ -5641,6 +5656,7 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
         (invalid_scalar_type, "field 'port' must be an integer"),
         (invalid_appliance_config_path, "Appliance Settings are invalid: Appliance settings config path must be absolute"),
         (enabled_web_terminal_without_https, "enables Web Terminal without Management UI HTTPS"),
+        (appliance_dns_ownership_conflict, "user-owned DNS A/AAAA record"),
         (invalid_ntp_port, "NTP settings are invalid: NTP port must be UDP 123"),
         (enabled_nts_without_ca, "enables NTPsec NTS server mode without an enabled CA"),
         (invalid_dns_domain, "DNS settings are invalid: DNS domain bad domain must not contain whitespace"),
@@ -5689,6 +5705,7 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
         (invalid_storage_state, "ESX Storage state is invalid: Datastore invalid-share must use NFS 3 or NFS 4.1"),
         (invalid_esxi_host_mac, "esxi_pxe_hosts' has an invalid MAC address"),
         (invalid_esxi_kickstart, "multiple install/upgrade directives"),
+        (duplicate_network_boot_environment, "duplicates an environment key"),
         (invalid_update_source, r"update source state is invalid: .*URL must be an HTTP\(S\) URL"),
         (duplicate_update_source, "duplicates an update source identity"),
         (invalid_script_interpreter, "Interpreter must be bash, python, or powershell"),

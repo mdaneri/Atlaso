@@ -80,6 +80,7 @@ from atlaso.app.models import (
 )
 from atlaso.app.seed import NTP_NTS_RESTORATION_SETTING_KEY, SEED_EXAMPLES_SETTING_KEY, seed_initial_data, seed_update_sources
 from atlaso.app.services.appliance_settings import (
+    is_app_owned_appliance_dns_record,
     management_interface_context,
     normalize_fqdn,
     normalized_web_terminal_interfaces,
@@ -1474,10 +1475,19 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
         and bool(str(row.get("private_key_encrypted") or ""))
         for row in data.get("ca_certificates", [])
     )
+    local_dns_enabled = bool(data["dns_settings"][0].get("enabled", False))
+    appliance_fqdn = normalize_fqdn(appliance_settings.fqdn)
+    appliance_dns_conflict = local_dns_enabled and any(
+        normalize_fqdn(str(row.get("hostname") or "")) == appliance_fqdn
+        and str(row.get("record_type") or "").upper() in {"A", "AAAA"}
+        and not is_app_owned_appliance_dns_record(str(row.get("description") or ""))
+        for row in data.get("dns_records", [])
+    )
     appliance_errors, _appliance_warnings = validate_appliance_settings(
         appliance_settings,
-        local_dns_enabled=bool(data["dns_settings"][0].get("enabled", False)),
+        local_dns_enabled=local_dns_enabled,
         management_interface=management_interface,
+        dns_record_conflict=appliance_dns_conflict,
         ca_enabled=bool(ca_row.get("enabled", False)),
         management_https_cert_available=management_certificate_ready,
         web_terminal_options=options,
@@ -2855,6 +2865,15 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
                 f"The settings archive row {row_index} in 'settings' duplicates a setting key."
             )
         setting_keys.add(setting_key)
+
+    environment_keys: set[str] = set()
+    for row_index, row in enumerate(data.get("network_boot_environments", []), start=1):
+        environment_key = str(row.get("key") or "")
+        if environment_key in environment_keys:
+            raise ValueError(
+                f"The settings archive row {row_index} in 'network_boot_environments' duplicates an environment key."
+            )
+        environment_keys.add(environment_key)
 
 
 def _validate_archive_database_relationships(db: Session, data: dict[str, list[dict[str, Any]]]) -> None:
