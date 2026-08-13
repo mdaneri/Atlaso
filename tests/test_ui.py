@@ -5362,9 +5362,8 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
     empty_singleton["data"]["appliance_settings"] = []
     duplicate_oidc_singleton = deepcopy(archive)
     duplicate_oidc_singleton["data"]["oidc_provider_settings"] = [{}, {}]
-    legacy_missing_section = deepcopy(archive)
-    legacy_missing_section["schema_version"] = 1
-    del legacy_missing_section["data"]["network_boot_environments"]
+    unsupported_schema = deepcopy(archive)
+    unsupported_schema["schema_version"] = 1
     enabled_missing_parent_vlan = deepcopy(archive)
     enabled_missing_parent_vlan["data"]["vlan_interfaces"].append(
         {"name": "missing-parent.123", "parent_interface": "missing-parent", "vlan_id": 123, "enabled": True}
@@ -6250,6 +6249,7 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
 
     for candidate, message in [
         (invalid_collection, "must be a list"),
+        (unsupported_schema, "schema is not supported"),
         (invalid_row, "must be an object"),
         (missing_required_field, "missing required field 'name'"),
         (missing_section, "missing a required data section"),
@@ -6378,75 +6378,6 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
     archive_summary(disabled_missing_dhcp_target)
     archive_summary(disabled_missing_service_target)
     archive_summary(unbound_client_ldap_mapping)
-    assert "network_boot_environments" not in archive_summary(legacy_missing_section)["table_counts"]
-
-
-def test_settings_restore_migrates_incomplete_schema_v1_archive(client):
-    """Verify schema-v1 restore retains sections absent from the older archive.
-
-    Args:
-        client: HTTP test client used to exercise the Atlaso application.
-    """
-    from sqlalchemy import select
-
-    from atlaso.app.database import SessionLocal
-    from atlaso.app.models import (
-        LdapUser,
-        NetworkBootEnvironment,
-        VcfPrivateRegistrySettings,
-    )
-    from atlaso.app.services.settings_archive import (
-        archive_summary,
-        export_settings_archive,
-        restore_settings_archive,
-    )
-    from atlaso.app.services.vcf_private_registry import (
-        VCF_REGISTRY_UPLOADED_CA_BUNDLE_PATH,
-    )
-
-    with SessionLocal() as db:
-        archive = export_settings_archive(db, actor="test")
-        archive["schema_version"] = 1
-        archive["data"]["ldap_organizations"].append(
-            {
-                "name": "Legacy directory",
-                "slug": "legacy-directory",
-                "suffix_dn": "dc=legacy,dc=test",
-            }
-        )
-        archive["data"]["ldap_users"].append(
-            {
-                "organization_slug": "legacy-directory",
-                "uid": "legacy-user",
-                "enabled": True,
-                "password_status": "not_staged",
-            }
-        )
-        archive["data"]["ca_settings"][0]["enabled"] = False
-        archive["data"]["vcf_private_registry_settings"][0].update(
-            {
-                "enabled": True,
-                "ca_bundle_path": VCF_REGISTRY_UPLOADED_CA_BUNDLE_PATH,
-            }
-        )
-        assert archive_summary(archive)["table_counts"]["ldap_users"] == len(
-            archive["data"]["ldap_users"]
-        )
-        del archive["data"]["network_boot_environments"]
-        expected_keys = set(db.execute(select(NetworkBootEnvironment.key)).scalars().all())
-
-        counts = restore_settings_archive(db, archive)
-
-        assert counts["network_boot_environments"] == len(expected_keys)
-        assert set(db.execute(select(NetworkBootEnvironment.key)).scalars().all()) == expected_keys
-        restored_user = db.execute(
-            select(LdapUser).where(LdapUser.uid == "legacy-user")
-        ).scalar_one()
-        assert restored_user.enabled is False
-        assert restored_user.password_status == "not_staged"
-        restored_registry = db.scalar(select(VcfPrivateRegistrySettings))
-        assert restored_registry is not None
-        assert restored_registry.enabled is False
 
 
 def test_settings_restore_rolls_back_late_failure_without_clearing_staged_ldap_recovery(client, monkeypatch):

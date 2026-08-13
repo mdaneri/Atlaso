@@ -186,7 +186,6 @@ from atlaso.app.services.vsphere_key_providers import (
 )
 
 ARCHIVE_SCHEMA_VERSION = 2
-LEGACY_ARCHIVE_SCHEMA_VERSION = 1
 ARCHIVE_KIND = "atlaso-settings-archive"
 SAFE_SETTING_KEYS = {
     DNS_CONDITIONAL_FORWARDERS_SETTING_KEY,
@@ -1126,7 +1125,7 @@ def restore_settings_archive(db: Session, archive: dict[str, Any]) -> dict[str, 
         db: Active database session.
         archive: Archive payload or path to process.
     """
-    prepared_archive = deepcopy(_prepare_archive_for_restore(db, archive))
+    prepared_archive = deepcopy(archive)
     prepared_data = prepared_archive.get("data") if isinstance(prepared_archive, dict) else None
     if isinstance(prepared_data, dict):
         for key in ("physical_interfaces", "vlan_interfaces"):
@@ -1365,7 +1364,7 @@ def archive_summary(archive: dict[str, Any]) -> dict[str, Any]:
     Args:
         archive: Archive consumed by archive summary.
     """
-    _validate_archive(archive, allow_legacy_incomplete=True)
+    _validate_archive(archive)
     data = archive["data"]
     table_counts = {key: len(value) for key, value in data.items() if isinstance(value, list)}
     return {
@@ -1422,49 +1421,11 @@ def _disable_startup_example_seed(db: Session) -> None:
     db.flush()
 
 
-def _prepare_archive_for_restore(db: Session, archive: dict[str, Any]) -> dict[str, Any]:
-    """Upgrade a legacy settings archive without discarding newer target state.
-
-    Args:
-        db: Active database session used to export retained sections.
-        archive: Candidate archive supplied by an operator.
-
-    Returns:
-        A schema-v2 archive ready for complete preflight validation.
-    """
-    if not isinstance(archive, dict) or archive.get("schema_version") != LEGACY_ARCHIVE_SCHEMA_VERSION:
-        return archive
-    if not isinstance(archive.get("data"), dict):
-        return archive
-    prepared = deepcopy(archive)
-    retained = export_settings_archive(db, actor="legacy-settings-archive-migration")["data"]
-    for section_name in ARCHIVE_SECTION_NAMES.difference(prepared["data"]):
-        prepared["data"][section_name] = deepcopy(retained[section_name])
-    legacy_ldap_users = prepared["data"].get("ldap_users")
-    if isinstance(legacy_ldap_users, list):
-        for row in legacy_ldap_users:
-            if isinstance(row, dict):
-                row["enabled"] = False
-                row["password_status"] = "not_staged"
-    _normalize_registry_uploaded_ca_handoff(
-        prepared["data"],
-        prepared.get("notes") if isinstance(prepared.get("notes"), list) else None,
-    )
-    prepared["schema_version"] = ARCHIVE_SCHEMA_VERSION
-    return prepared
-
-
-def _validate_archive(
-    archive: dict[str, Any],
-    *,
-    allow_legacy_incomplete: bool = False,
-) -> None:
+def _validate_archive(archive: dict[str, Any]) -> None:
     """Validate archive.
 
     Args:
         archive: Candidate archive to validate.
-        allow_legacy_incomplete: Allow summary validation before database-backed migration.
-
 
     Raises:
         ValueError: If an input value is invalid.
@@ -1472,7 +1433,7 @@ def _validate_archive(
     if not isinstance(archive, dict) or archive.get("kind") != ARCHIVE_KIND:
         raise ValueError("Upload a Atlaso settings archive.")
     schema_version = archive.get("schema_version")
-    if schema_version not in {LEGACY_ARCHIVE_SCHEMA_VERSION, ARCHIVE_SCHEMA_VERSION}:
+    if schema_version != ARCHIVE_SCHEMA_VERSION:
         raise ValueError("This settings archive schema is not supported by this Atlaso build.")
     if not isinstance(archive.get("data"), dict):
         raise ValueError("The settings archive is missing its data section.")
@@ -1480,11 +1441,7 @@ def _validate_archive(
     if any(section_name not in ARCHIVE_SECTION_NAMES for section_name in data):
         raise ValueError("The settings archive contains an unsupported data section.")
     missing_sections = ARCHIVE_SECTION_NAMES.difference(data)
-    legacy_summary = bool(
-        allow_legacy_incomplete
-        and schema_version == LEGACY_ARCHIVE_SCHEMA_VERSION
-    )
-    if missing_sections and not legacy_summary:
+    if missing_sections:
         raise ValueError("The settings archive is missing a required data section.")
     for section_name, rows in data.items():
         if not isinstance(rows, list):
@@ -1500,8 +1457,7 @@ def _validate_archive(
         required_fields = _archive_required_fields(section_name)
         for row_index, row in enumerate(rows, start=1):
             _validate_archive_row(section_name, row_index, row, required_fields)
-    if not legacy_summary:
-        _validate_archive_relationships(data)
+    _validate_archive_relationships(data)
 
 
 ARCHIVE_UNGUARDED_UNIQUE_IDENTITIES: tuple[tuple[str, tuple[str, ...]], ...] = (
