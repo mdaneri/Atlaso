@@ -7,6 +7,7 @@ from copy import deepcopy
 from datetime import datetime, timezone
 from ipaddress import ip_address, ip_interface, ip_network
 from typing import Any
+from uuid import UUID
 
 from sqlalchemy import DateTime as SqlDateTime
 from sqlalchemy import delete, select
@@ -114,6 +115,7 @@ from atlaso.app.services.esxi_pxe import (
     normalize_custom_variable_definition,
     normalize_host_mac,
     normalize_host_variables,
+    normalize_installer_iso_path,
 )
 from atlaso.app.services.firewall import (
     FIREWALL_SOURCE_GROUPS_SETTING_KEY,
@@ -2648,16 +2650,31 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
     oidc_subject_uuids: set[str] = set()
     oidc_subject_sources: set[tuple[str, str, str]] = set()
     for row_index, row in enumerate(data.get("oidc_subjects", []), start=1):
-        source = str(row["source"] or "")
-        subject_uuid = str(row["subject_uuid"])
+        for field_name in ("subject_uuid", "source", "username", "organization_slug"):
+            if field_name in row and not isinstance(row[field_name], str):
+                raise ValueError(
+                    f"The settings archive row {row_index} in 'oidc_subjects' has a {field_name} field that must be a string."
+                )
+        source = row["source"]
+        subject_uuid = row["subject_uuid"]
+        try:
+            parsed_subject_uuid = UUID(subject_uuid)
+        except ValueError as exc:
+            raise ValueError(
+                f"The settings archive row {row_index} in 'oidc_subjects' has an invalid subject UUID."
+            ) from exc
+        if parsed_subject_uuid.version != 4 or str(parsed_subject_uuid) != subject_uuid:
+            raise ValueError(
+                f"The settings archive row {row_index} in 'oidc_subjects' has an invalid subject UUID."
+            )
         if subject_uuid in oidc_subject_uuids:
             raise ValueError(
                 f"The settings archive row {row_index} in 'oidc_subjects' duplicates a subject UUID."
             )
         source_identity = (
             source,
-            str(row.get("organization_slug") or "") if source == "managed_ldap" else "",
-            str(row["username"]),
+            row.get("organization_slug", "") if source == "managed_ldap" else "",
+            row["username"],
         )
         if source_identity in oidc_subject_sources:
             raise ValueError(
@@ -2778,6 +2795,15 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
             raise ValueError(
                 f"The settings archive row {row_index} in 'esxi_pxe_hosts' has an invalid MAC address."
             )
+        try:
+            normalize_installer_iso_path(
+                str(row.get("installer_iso_path") or ""),
+                ensure_root=False,
+            )
+        except ValueError as exc:
+            raise ValueError(
+                f"The settings archive row {row_index} in 'esxi_pxe_hosts' has an invalid installer ISO: {exc}"
+            ) from exc
         require_reference(
             "esxi_pxe_hosts",
             row_index,

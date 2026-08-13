@@ -1511,11 +1511,12 @@ def installer_iso_inventory() -> list[dict[str, Any]]:
     return rows
 
 
-def normalize_installer_iso_path(value: str) -> str:
+def normalize_installer_iso_path(value: str, *, ensure_root: bool = True) -> str:
     """Normalize installer iso path.
 
     Args:
         value: Candidate value consumed by normalize installer ISO path.
+        ensure_root: Create the managed ISO root before interactive selection when true.
 
 
     Returns:
@@ -1527,7 +1528,9 @@ def normalize_installer_iso_path(value: str) -> str:
     raw = (value or "").strip()
     if not raw:
         return ""
-    root = ensure_installer_iso_root().resolve()
+    root = (
+        ensure_installer_iso_root() if ensure_root else ESXI_INSTALLER_ISO_ROOT
+    ).resolve()
     path = Path(raw)
     if not path.is_absolute():
         path = root / raw

@@ -5368,6 +5368,24 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
     duplicate_oidc_subject_source["data"]["oidc_subjects"][1][
         "username"
     ] = "subject-source-a"
+    invalid_oidc_subject_scalar = deepcopy(archive)
+    invalid_oidc_subject_scalar["data"]["oidc_subjects"].append(
+        {
+            "subject_uuid": 123,
+            "source": "local",
+            "username": "invalid-scalar-subject",
+            "organization_slug": "",
+        }
+    )
+    invalid_oidc_subject_uuid = deepcopy(archive)
+    invalid_oidc_subject_uuid["data"]["oidc_subjects"].append(
+        {
+            "subject_uuid": "not-a-uuid",
+            "source": "local",
+            "username": "invalid-uuid-subject",
+            "organization_slug": "",
+        }
+    )
     duplicate_oidc_mapping = deepcopy(archive)
     duplicate_oidc_mapping["data"]["oidc_group_mappings"] = [
         {
@@ -5760,6 +5778,14 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
     invalid_esxi_host_mac["data"]["esxi_pxe_hosts"].append(
         {"hostname": "invalid-mac-host", "mac_address": "not-a-mac"}
     )
+    invalid_esxi_installer_iso = deepcopy(archive)
+    invalid_esxi_installer_iso["data"]["esxi_pxe_hosts"].append(
+        {
+            "hostname": "invalid-installer-iso-host",
+            "mac_address": "00:50:56:aa:bb:dd",
+            "installer_iso_path": "C:\\outside\\missing.iso",
+        }
+    )
     invalid_esxi_kickstart = deepcopy(archive)
     invalid_esxi_kickstart["data"]["esxi_kickstarts"].append(
         {
@@ -5957,6 +5983,8 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
         (duplicate_oidc_client, "duplicates the unique client_id identity"),
         (duplicate_oidc_subject_uuid, "duplicates a subject UUID"),
         (duplicate_oidc_subject_source, "duplicates an identity source"),
+        (invalid_oidc_subject_scalar, "subject_uuid field that must be a string"),
+        (invalid_oidc_subject_uuid, "has an invalid subject UUID"),
         (duplicate_oidc_mapping, "duplicates an OIDC group mapping identity"),
         (cross_organization_oidc_mapping, "outside its OIDC client's organization"),
         (bound_client_local_role_mapping, "assigns a local role to an organization-bound OIDC client"),
@@ -5989,6 +6017,7 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
         (duplicate_managed_certificate_owner, "duplicates a managed certificate owner"),
         (invalid_storage_state, "ESX Storage state is invalid: Datastore invalid-share must use NFS 3 or NFS 4.1"),
         (invalid_esxi_host_mac, "esxi_pxe_hosts' has an invalid MAC address"),
+        (invalid_esxi_installer_iso, "has an invalid installer ISO"),
         (invalid_esxi_kickstart, "multiple install/upgrade directives"),
         (duplicate_network_boot_environment, "duplicates an environment key"),
         (invalid_update_source, r"update source state is invalid: .*URL must be an HTTP\(S\) URL"),
@@ -7881,16 +7910,19 @@ def test_esxi_pxe_boot_settings_migrate_legacy_first_stage_defaults(client):
         assert saved_bios.value == "pxelinux.0"
 
 
-def test_esxi_kickstarts_round_trip_in_settings_archive(client):
+def test_esxi_kickstarts_round_trip_in_settings_archive(client, monkeypatch, tmp_path):
     """Verify that esxi kickstarts round trip in settings archive.
 
     Args:
         client: HTTP test client used to exercise the Atlaso application.
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
     """
     import json
 
     from sqlalchemy import select
 
+    import atlaso.app.services.esxi_pxe as esxi_pxe
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import EsxiKickstart, EsxiPxeHost, Setting
     from atlaso.app.seed import NTP_NTS_RESTORATION_SETTING_KEY
@@ -7899,6 +7931,12 @@ def test_esxi_kickstarts_round_trip_in_settings_archive(client):
         custom_variable_definitions,
         save_custom_variable_definition,
     )
+
+    iso_root = tmp_path / "installer-isos"
+    iso_root.mkdir()
+    archive_iso_path = iso_root / "archive.iso"
+    archive_iso_path.touch()
+    monkeypatch.setattr(esxi_pxe, "ESXI_INSTALLER_ISO_ROOT", iso_root)
 
     login(client)
     with SessionLocal() as db:
@@ -7930,7 +7968,7 @@ def test_esxi_kickstarts_round_trip_in_settings_archive(client):
                 mac_address="00:50:56:aa:bb:cc",
                 ip_address="192.168.50.150",
                 kickstart_id=kickstart.id,
-                installer_iso_path="/mnt/atlaso-vcf-offline-depot/PROD/COMP/ESX_HOST/archive.iso",
+                installer_iso_path=str(archive_iso_path),
                 variables_json='{"rack":"r42"}',
                 enabled=True,
             )
@@ -7945,7 +7983,9 @@ def test_esxi_kickstarts_round_trip_in_settings_archive(client):
     assert payload["data"]["esxi_kickstarts"][0]["name"] == "Archive ESXi"
     assert payload["data"]["esxi_pxe_hosts"][0]["kickstart_name"] == "Archive ESXi"
     assert payload["data"]["esxi_pxe_hosts"][0]["ip_address"] == "192.168.50.150"
-    assert payload["data"]["esxi_pxe_hosts"][0]["installer_iso_path"].endswith("/archive.iso")
+    assert payload["data"]["esxi_pxe_hosts"][0]["installer_iso_path"] == str(
+        archive_iso_path
+    )
     assert payload["data"]["esxi_pxe_hosts"][0]["variables"] == {"rack": "r42"}
     assert payload["data"]["settings"] == [
         {
@@ -7973,7 +8013,7 @@ def test_esxi_kickstarts_round_trip_in_settings_archive(client):
         restored_host = db.execute(select(EsxiPxeHost).where(EsxiPxeHost.hostname == "esxi-archive")).scalar_one()
         assert restored_host.kickstart_id == restored_kickstart.id
         assert restored_host.ip_address == "192.168.50.150"
-        assert restored_host.installer_iso_path.endswith("/archive.iso")
+        assert restored_host.installer_iso_path == str(archive_iso_path)
         assert restored_host.variables_json == '{"rack": "r42"}'
         assert custom_variable_definitions(db) == [
             {
