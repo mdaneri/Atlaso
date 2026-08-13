@@ -4505,7 +4505,25 @@ def test_backup_restore_page_exports_settings_archive(client):
     from sqlalchemy import select
 
     from atlaso.app.database import SessionLocal
-    from atlaso.app.models import AuditEvent
+    from atlaso.app.models import AuditEvent, LdapOrganization, LdapUser
+
+    with SessionLocal() as db:
+        organization = LdapOrganization(
+            name="Archive safety test",
+            slug="archive-safety-test",
+            suffix_dn="dc=archive-safety,dc=test",
+        )
+        db.add(organization)
+        db.flush()
+        db.add(
+            LdapUser(
+                organization_id=organization.id,
+                uid="archive-user",
+                enabled=True,
+                password_status="applied",
+            )
+        )
+        db.commit()
 
     login(client)
     page = client.get("/backup-restore")
@@ -4536,6 +4554,11 @@ def test_backup_restore_page_exports_settings_archive(client):
     assert "api_tokens" not in payload["data"]
     assert "audit_events" not in payload["data"]
     assert "jobs" not in payload["data"]
+    archived_ldap_user = next(
+        row for row in payload["data"]["ldap_users"] if row["uid"] == "archive-user"
+    )
+    assert archived_ldap_user["enabled"] is False
+    assert archived_ldap_user["password_status"] == "not_staged"
 
     with SessionLocal() as db:
         event = db.execute(select(AuditEvent).where(AuditEvent.action == "export_settings_backup")).scalar_one()
@@ -4975,6 +4998,25 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
     enabled_invalid_listen_address["data"]["ntp_settings"][0]["enabled"] = True
     enabled_invalid_listen_address["data"]["ntp_settings"][0]["listen_interface"] = "eth2"
     enabled_invalid_listen_address["data"]["ntp_settings"][0]["listen_address"] = "not-an-ip"
+    enabled_mismatched_service_addresses = []
+    for section_name in (
+        "dns_settings",
+        "ntp_settings",
+        "ca_settings",
+        "kms_settings",
+        "ldap_settings",
+        "oidc_provider_settings",
+        "vcf_backup_settings",
+        "vcf_private_registry_settings",
+        "vcf_offline_depot_settings",
+    ):
+        candidate = deepcopy(archive)
+        if not candidate["data"][section_name]:
+            continue
+        candidate["data"][section_name][0]["enabled"] = True
+        candidate["data"][section_name][0]["listen_interface"] = "eth2"
+        candidate["data"][section_name][0]["listen_address"] = "192.0.2.20"
+        enabled_mismatched_service_addresses.append(candidate)
     enabled_missing_web_terminal_target = deepcopy(archive)
     enabled_missing_web_terminal_target["data"]["appliance_settings"][0]["web_terminal_enabled"] = True
     enabled_missing_web_terminal_target["data"]["appliance_settings"][0]["management_https_enabled"] = True
@@ -5044,6 +5086,23 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
     enabled_ldap_with_invalid_port["data"]["ca_settings"][0]["root_certificate_pem"] = "certificate"
     enabled_ldap_with_invalid_port["data"]["ldap_organizations"][0]["bind_password_encrypted"] = "encrypted"
     enabled_ldap_with_invalid_port["data"]["ldap_settings"][0]["port"] = 0
+    enabled_ldap_user_without_password = deepcopy(archive)
+    enabled_ldap_user_without_password["data"]["ldap_organizations"].append(
+        {
+            "name": "Password recovery test",
+            "slug": "password-recovery-test",
+            "suffix_dn": "dc=password-recovery,dc=test",
+            "bind_password_encrypted": "encrypted",
+        }
+    )
+    enabled_ldap_user_without_password["data"]["ldap_users"].append(
+        {
+            "organization_slug": "password-recovery-test",
+            "uid": "missing-password",
+            "enabled": True,
+            "password_status": "not_staged",
+        }
+    )
     unresolved_oidc_client = deepcopy(archive)
     unresolved_oidc_client["data"]["oidc_client_redirect_uris"].append(
         {"client_id": "missing-client", "kind": "redirect", "uri": "https://example.invalid/callback"}
@@ -5346,6 +5405,10 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
         ),
         (enabled_missing_listen_address, "has no listen address"),
         (enabled_invalid_listen_address, "has an invalid listen address"),
+        *(
+            (candidate, "has listener addresses not derived from its interfaces")
+            for candidate in enabled_mismatched_service_addresses
+        ),
         (enabled_missing_web_terminal_target, "select an ineligible Web Terminal interface"),
         (invalid_network_state, "network state is invalid: .* MTU must be between 576 and 9000"),
         (invalid_scalar_type, "field 'port' must be an integer"),
@@ -5363,6 +5426,7 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
         (enabled_ldap_without_organization, "enables LDAP without an LDAP organization"),
         (enabled_ldaps_without_ca, "enables LDAPS without a ready Certificate Authority"),
         (enabled_ldap_with_invalid_port, "LDAP state is invalid: LDAPS port must be between 1 and 65535"),
+        (enabled_ldap_user_without_password, "enabled user needs staged passwords"),
         (unresolved_oidc_client, "references an unknown OIDC client"),
         (oidc_client_without_redirect, "At least one exact redirect URI is required"),
         (oidc_client_with_invalid_lifetime, "fixed 60-second authorization-code lifetime"),

@@ -45,9 +45,12 @@ retain their `{{custom.*}}` prerequisites.
 5. Review pending desired state before submitting any appliance apply.
 
 Atlaso validates every supplied archive collection, required row field, relationship, and enabled VLAN or static-route
-target before it removes current desired state. If validation or a later restore phase fails, Atlaso rolls back the
-database transaction and leaves any separately staged LDAP recovery import metadata and in-memory payload available for
-the next global LDAP apply. A successful settings restore or factory reset intentionally clears that staged LDAP
+target before it removes current desired state. Enabled service listener addresses must exactly match the addresses
+derived from their selected interfaces. Because password hashes remain outside settings archives, exported Managed LDAP
+users are disabled and restored archives that try to enable a user without a staged password are rejected. Recover the
+directory passwords and review user enablement before the next global LDAP apply. If validation or a later restore phase
+fails, Atlaso rolls back the database transaction and leaves any separately staged LDAP recovery import metadata and
+in-memory payload available. A successful settings restore or factory reset intentionally clears that staged LDAP
 recovery material.
 
 Current exports use settings-archive schema v2, which requires the complete section inventory. Atlaso continues to

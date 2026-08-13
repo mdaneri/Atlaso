@@ -571,6 +571,7 @@ def _ldap_users_to_archive(db: Session) -> list[dict[str, Any]]:
     for user in db.execute(select(LdapUser).order_by(LdapUser.uid)).scalars().all():
         payload = _row_to_dict(user, exclude={"organization_id", "unlock_requested_at"})
         payload["organization_slug"] = organizations.get(user.organization_id, "")
+        payload["enabled"] = False
         payload["password_status"] = "not_staged"
         rows.append(payload)
     return rows
@@ -1379,24 +1380,37 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
         ):
             ldap_target_names.add(name)
 
-    oidc_target_addresses: dict[str, list[str]] = {}
-    for name in ldap_target_names:
-        row = physical_interfaces.get(name) or vlan_interfaces.get(name, {})
-        ipv4_cidr = row.get("ip_cidr")
-        ipv6_cidr = row.get("ipv6_cidr")
-        if name in physical_interfaces:
-            if normalize_ipv4_method(row.get("ipv4_method")) == "dhcp":
-                ipv4_cidr = row.get("host_ip_cidr")
-            ipv6_cidr = row.get("ipv6_cidr") or row.get("host_ipv6_cidr")
-        addresses: list[str] = []
-        for cidr in (ipv4_cidr, ipv6_cidr):
-            try:
-                address = str(ip_interface(str(cidr or "")).ip)
-            except ValueError:
-                continue
-            if address not in addresses:
-                addresses.append(address)
-        oidc_target_addresses[name] = addresses
+    def listener_target_addresses(
+        target_names: set[str],
+        *,
+        use_observed_dhcp_addresses: bool = False,
+    ) -> dict[str, list[str]]:
+        """Return the canonical archived listener addresses for eligible interfaces."""
+        target_addresses: dict[str, list[str]] = {}
+        for name in target_names:
+            row = physical_interfaces.get(name) or vlan_interfaces.get(name, {})
+            ipv4_cidr = row.get("ip_cidr")
+            ipv6_cidr = row.get("ipv6_cidr")
+            if use_observed_dhcp_addresses and name in physical_interfaces:
+                if normalize_ipv4_method(row.get("ipv4_method")) == "dhcp":
+                    ipv4_cidr = row.get("host_ip_cidr")
+                ipv6_cidr = row.get("ipv6_cidr") or row.get("host_ipv6_cidr")
+            addresses: list[str] = []
+            for cidr in (ipv4_cidr, ipv6_cidr):
+                try:
+                    address = str(ip_interface(str(cidr or "")).ip)
+                except ValueError:
+                    continue
+                if address not in addresses:
+                    addresses.append(address)
+            target_addresses[name] = addresses
+        return target_addresses
+
+    service_target_addresses = listener_target_addresses(service_target_names)
+    ldap_target_addresses = listener_target_addresses(
+        ldap_target_names,
+        use_observed_dhcp_addresses=True,
+    )
 
     appliance_row = data["appliance_settings"][0]
     appliance_settings = ApplianceSettings(
@@ -1443,16 +1457,22 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
             f"The settings archive Appliance Settings are invalid: {appliance_errors[0]}"
         )
 
-    for section_name, target_names, require_listener, address_requirement in (
-        ("dns_settings", service_target_names, True, "authoritative"),
-        ("ntp_settings", service_target_names, True, "enabled"),
-        ("ca_settings", service_target_names, False, "never"),
-        ("kms_settings", service_target_names, True, "enabled"),
-        ("ldap_settings", ldap_target_names, True, "enabled"),
-        ("oidc_provider_settings", ldap_target_names, True, "enabled"),
-        ("vcf_backup_settings", service_target_names, True, "enabled"),
-        ("vcf_private_registry_settings", service_target_names, True, "enabled"),
-        ("vcf_offline_depot_settings", service_target_names, True, "enabled"),
+    for section_name, target_names, target_addresses, require_listener, address_requirement in (
+        ("dns_settings", service_target_names, service_target_addresses, True, "authoritative"),
+        ("ntp_settings", service_target_names, service_target_addresses, True, "enabled"),
+        ("ca_settings", service_target_names, service_target_addresses, False, "never"),
+        ("kms_settings", service_target_names, service_target_addresses, True, "enabled"),
+        ("ldap_settings", ldap_target_names, ldap_target_addresses, True, "enabled"),
+        ("oidc_provider_settings", ldap_target_names, ldap_target_addresses, True, "enabled"),
+        ("vcf_backup_settings", service_target_names, service_target_addresses, True, "enabled"),
+        (
+            "vcf_private_registry_settings",
+            service_target_names,
+            service_target_addresses,
+            True,
+            "enabled",
+        ),
+        ("vcf_offline_depot_settings", service_target_names, service_target_addresses, True, "enabled"),
     ):
         for row_index, row in enumerate(data.get(section_name, []), start=1):
             enabled = row.get("enabled", False)
@@ -1482,6 +1502,15 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
             if any(not valid_ip_address(address) for address in selected_addresses):
                 raise ValueError(
                     f"The settings archive row {row_index} in '{section_name}' has an invalid listen address."
+                )
+            derived_addresses: list[str] = []
+            for interface_name in selected_interfaces:
+                for address in target_addresses.get(interface_name, []):
+                    if address not in derived_addresses:
+                        derived_addresses.append(address)
+            if selected_addresses != derived_addresses:
+                raise ValueError(
+                    f"The settings archive row {row_index} in '{section_name}' has listener addresses not derived from its interfaces."
                 )
 
     conditional_forwarders = next(
@@ -1919,15 +1948,6 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
                 raise ValueError(
                     f"The settings archive row {row_index} in 'oidc_provider_settings' has an unsupported token lifetime."
                 )
-            derived_addresses: list[str] = []
-            for interface_name in split_interfaces(str(row.get("listen_interface") or "")):
-                for address in oidc_target_addresses.get(interface_name, []):
-                    if address not in derived_addresses:
-                        derived_addresses.append(address)
-            if split_addresses(str(row.get("listen_address") or "")) != derived_addresses:
-                raise ValueError(
-                    f"The settings archive row {row_index} in 'oidc_provider_settings' has listener addresses not derived from its interfaces."
-                )
         provider = OidcProviderSettings(
             **_model_kwargs_with_scalar_defaults(
                 OidcProviderSettings,
@@ -2162,7 +2182,7 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
         list(archived_organizations.values()),
         available_interfaces=ldap_target_names,
         ca_ready=bool(ca_row.get("enabled", False) and str(ca_row.get("root_certificate_pem") or "")),
-        recovery_staged=True,
+        recovery_staged=False,
     )
     if ldap_errors:
         raise ValueError(
