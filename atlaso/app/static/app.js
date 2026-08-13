@@ -17914,7 +17914,7 @@ function initializeContextualVcfScheduleWizard() {
     if (dialog.open) dialog.close();
     void open(serverProfile, launcher instanceof HTMLElement ? launcher : null).then(() => {
       if (form.dataset.contextReadOnly === "true") {
-        form.querySelectorAll("input, select, textarea, [data-atlaso-wizard-nav], [data-atlaso-wizard-next], [data-atlaso-wizard-back], [data-atlaso-wizard-submit]").forEach((control) => {
+        form.querySelectorAll("input, select, textarea, [data-atlaso-wizard-submit]").forEach((control) => {
           control.disabled = true;
         });
       }

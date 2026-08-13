@@ -63,6 +63,34 @@ DNS_AUTHORITY_SERIAL_FIELDS = {
     "listen_interface",
     "listen_address",
 }
+ATLASO_SCHEMA_LOCK_ID = 0x41544C41534F
+
+
+def _create_database_schema(bind: Engine) -> None:
+    """Create registered tables while serializing concurrent service startup.
+
+    Args:
+        bind: Database engine whose registered schema should be created.
+    """
+    if bind.dialect.name == "sqlite":
+        with bind.connect() as connection:
+            connection.exec_driver_sql("BEGIN IMMEDIATE")
+            try:
+                Base.metadata.create_all(bind=connection)
+            except Exception:
+                connection.rollback()
+                raise
+            connection.commit()
+        return
+    if bind.dialect.name == "postgresql":
+        with bind.begin() as connection:
+            connection.execute(
+                text("SELECT pg_advisory_xact_lock(:lock_id)"),
+                {"lock_id": ATLASO_SCHEMA_LOCK_ID},
+            )
+            Base.metadata.create_all(bind=connection)
+        return
+    Base.metadata.create_all(bind=bind)
 
 
 def _reconcile_vcf_depot_job_queue(connection: Connection) -> None:
@@ -323,7 +351,7 @@ def init_db() -> None:
         models,
     )
 
-    Base.metadata.create_all(bind=engine)
+    _create_database_schema(engine)
     with engine.begin() as connection:
         if engine.dialect.name == "sqlite":
             connection.execute(

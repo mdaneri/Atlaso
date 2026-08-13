@@ -15589,6 +15589,11 @@ def test_vcf_offline_depot_contextual_schedule_is_server_bound_and_stays_in_page
     )[1].split("</dialog>", 1)[0]
     assert " open" in disabled_dialog.split(">", 1)[0]
     assert 'data-context-read-only="true"' in disabled_dialog
+    assert 'data-automation-wizard-next data-atlaso-wizard-next disabled' not in disabled_dialog
+    assert 'form.querySelectorAll("input, select, textarea, [data-atlaso-wizard-submit]")' in app_js
+    assert "[data-atlaso-wizard-nav], [data-atlaso-wizard-next]" not in app_js.split(
+        'if (form.dataset.contextReadOnly === "true")', 1
+    )[1].split("const contextualError", 1)[0]
     assert "disabled-contextual-profile" in disabled_dialog
     assert "Choose an enabled VCF Offline Depot download profile." in disabled_dialog
     assert 'value="disabled-race-fallback"' in disabled_dialog

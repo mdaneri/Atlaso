@@ -1250,6 +1250,35 @@ def test_vcf_queue_sqlite_column_upgrade_serializes_concurrent_startup(tmp_path)
     assert {"vcf_depot_operation", "vcf_depot_profile_id"} <= columns
 
 
+def test_sqlite_schema_creation_serializes_concurrent_service_startup(tmp_path):
+    """Verify first-time web and worker startup cannot race table creation.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    from sqlalchemy import create_engine, inspect
+
+    from atlaso.app import database, models  # noqa: F401 - register mapped tables.
+
+    test_engine = create_engine(
+        f"sqlite:///{tmp_path / 'concurrent-schema.db'}",
+        connect_args={"check_same_thread": False, "timeout": 10},
+    )
+    ready = Barrier(2)
+
+    def create_schema() -> None:
+        """Start one simulated service schema initialization."""
+        ready.wait()
+        database._create_database_schema(test_engine)
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        futures = [executor.submit(create_schema) for _ in range(2)]
+        for future in futures:
+            future.result()
+
+    assert "vcf_depot_admission_gate" in inspect(test_engine).get_table_names()
+
+
 def test_vcf_queue_reconciliation_preserves_identity_tasks_for_type_specific_recovery():
     """Verify database startup leaves running identity tasks for canonical readback."""
     from sqlalchemy import create_engine, text
