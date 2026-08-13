@@ -90,6 +90,7 @@ def claim_next_job(db: Session) -> Job | None:
     Args:
         db: Active database session.
     """
+    ensure_vcf_depot_running_operation_index(db.get_bind())
     while True:
         running_vcf_operation = db.execute(
             select(Job.id)
@@ -124,7 +125,6 @@ def claim_next_job(db: Session) -> Job | None:
                     progress_percent=1,
                 )
             )
-            db.commit()
         except IntegrityError:
             # The partial VCFDT runtime index keeps a second worker from
             # starting another queued profile while one VCFDT operation runs.
@@ -133,7 +133,9 @@ def claim_next_job(db: Session) -> Job | None:
         if claimed.rowcount != 1:
             db.rollback()
             continue
-        return db.get(Job, candidate)
+        claimed_job = db.get(Job, candidate)
+        db.commit()
+        return claimed_job
 
 
 def _release_finalizer() -> dict[str, Any]:

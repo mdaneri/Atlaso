@@ -1386,6 +1386,62 @@ def test_vcf_queue_indexes_restore_after_duplicate_running_profile_recovery():
     assert "uq_jobs_running_vcf_depot_operation" in indexes
 
 
+def test_worker_claim_restores_deferred_vcf_runtime_guard_before_next_profile():
+    """Verify a later worker claim restores the guard after legacy operations drain."""
+    from sqlalchemy import create_engine, text
+    from sqlalchemy.orm import sessionmaker
+
+    import atlaso.app.database as database
+    from atlaso.app.models import Job, JobStatus
+    from atlaso.app.worker import claim_next_job
+
+    test_engine = create_engine("sqlite://")
+    database.Base.metadata.create_all(test_engine)
+    with test_engine.begin() as connection:
+        connection.execute(text("DROP INDEX IF EXISTS uq_jobs_running_vcf_depot_operation"))
+    TestSession = sessionmaker(bind=test_engine, expire_on_commit=False)
+    with TestSession() as db:
+        db.add_all(
+            [
+                Job(
+                    id=f"job_deferred_{profile_id}",
+                    type="vcf-depot-download",
+                    status=JobStatus.RUNNING.value,
+                    created_by="admin",
+                    vcf_depot_operation=True,
+                    vcf_depot_profile_id=profile_id,
+                )
+                for profile_id in (71, 72)
+            ]
+        )
+        db.commit()
+    assert database.ensure_vcf_depot_running_operation_index(test_engine) is False
+
+    with TestSession() as db:
+        for job in db.query(Job).filter(Job.status == JobStatus.RUNNING.value):
+            job.status = JobStatus.FAILED.value
+        db.add(
+            Job(
+                id="job_after_deferred_guard",
+                type="vcf-depot-download",
+                status=JobStatus.PENDING.value,
+                created_by="admin",
+                vcf_depot_operation=True,
+                vcf_depot_profile_id=73,
+            )
+        )
+        db.commit()
+
+    with TestSession() as db:
+        claimed = claim_next_job(db)
+        assert claimed is not None
+        assert claimed.id == "job_after_deferred_guard"
+        assert claimed.status == JobStatus.RUNNING.value
+    with test_engine.connect() as connection:
+        indexes = {row[1] for row in connection.execute(text("PRAGMA index_list('jobs')")).all()}
+    assert "uq_jobs_running_vcf_depot_operation" in indexes
+
+
 def test_vcf_queue_reconciliation_preserves_running_same_profile_job():
     """Verify an older pending duplicate cannot displace a running process guard."""
     from sqlalchemy import create_engine, text
