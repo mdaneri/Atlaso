@@ -19,8 +19,10 @@ EXTENSIONLESS_PYTHON_PATHS = (
 RUFF_PATHS = ("atlaso", "scripts", "tests", *EXTENSIONLESS_PYTHON_PATHS)
 RUFF_SUPPRESSION_RE = re.compile(
     r"# noqa:\s*(?P<codes>[A-Z][A-Z0-9]*\d{3}(?:\s*,\s*[A-Z][A-Z0-9]*\d{3})*)"
-    r"\s+-\s+(?P<reason>\S.*)$"
+    r"\s+-\s+(?P<reason>\S.*)$",
+    re.IGNORECASE,
 )
+LINE_RUFF_SUPPRESSION_RE = re.compile(r"#\s*noqa\b", re.IGNORECASE)
 MYPY_SUPPRESSION_RE = re.compile(
     r"# type:\s*ignore\[(?P<codes>[a-z][a-z0-9-]*(?:\s*,\s*[a-z][a-z0-9-]*)*)\]"
     r"\s{2,}#\s+(?P<reason>\S.*)$"
@@ -79,7 +81,10 @@ def suppression_errors(paths: Iterable[Path], *, root: Path = ROOT) -> list[str]
                     "suppressions are forbidden."
                 )
                 continue
-            if "# noqa" in comment and RUFF_SUPPRESSION_RE.search(comment) is None:
+            if (
+                LINE_RUFF_SUPPRESSION_RE.search(comment) is not None
+                and RUFF_SUPPRESSION_RE.search(comment) is None
+            ):
                 errors.append(
                     f"{path.relative_to(root)}:{line_number}: Ruff suppression must use "
                     "'# noqa: RULE123 - rationale'."
