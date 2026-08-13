@@ -4,13 +4,12 @@ from __future__ import annotations
 
 import json
 import os
-from pathlib import Path
 import shutil
 import subprocess
 import sys
+from pathlib import Path
 
 import pytest
-
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 VMWARE_SCRIPT_ROOT = REPOSITORY_ROOT / "scripts" / "windows" / "vmware"
@@ -256,6 +255,39 @@ def test_general_removal_is_verified_and_idempotent(
     action_names = [command[2] for command in commands]
     assert ("stop" in action_names) is running
     assert ("unregister" in action_names) is registered
+
+
+def test_general_removal_rejects_an_unvalidated_vmx_in_the_removal_root(
+    tmp_path: Path,
+) -> None:
+    """Recursive deletion must not include a VMX omitted by the caller."""
+    vm_directory = tmp_path / "Atlaso-Multiple"
+    requested_vmx = vm_directory / "Atlaso-Multiple.vmx"
+    unvalidated_vmx = vm_directory / "copied-source" / "Source.vmx"
+    _write_vmx(requested_vmx, "Atlaso-Multiple")
+    _write_vmx(unvalidated_vmx, "Source")
+    vmrun_path, environment, _ = _write_fake_vmrun(
+        tmp_path / "fake",
+        [requested_vmx, unvalidated_vmx],
+        running=False,
+        registered=False,
+    )
+
+    result = _run_script(
+        VMWARE_SCRIPT_ROOT / "remove-atlaso-vm.ps1",
+        "-VmxPath",
+        str(requested_vmx),
+        "-VmrunPath",
+        str(vmrun_path),
+        "-ExpectedName",
+        "Atlaso-Multiple",
+        environment=environment,
+    )
+
+    assert result.returncode != 0
+    assert "contains an unvalidated VMX" in result.stderr
+    assert requested_vmx.exists()
+    assert unvalidated_vmx.exists()
 
 
 def test_redeploy_missing_target_and_sibling_disk_fail_closed(tmp_path: Path) -> None:

@@ -204,6 +204,44 @@ function Test-AtlasoWorkstationVmListed {
     return $false
 }
 
+function Assert-AtlasoWorkstationRemovalVmxSet {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$RemovalRoot,
+        [Parameter(Mandatory = $true)]
+        [string[]]$ValidatedVmxPaths
+    )
+
+    $discoveredVmxPaths = @(
+        Get-ChildItem `
+            -LiteralPath $RemovalRoot `
+            -Filter '*.vmx' `
+            -File `
+            -Recurse `
+            -Force `
+            -ErrorAction Stop |
+            ForEach-Object {
+                Assert-AtlasoStrictDescendantPath `
+                    -ParentPath $RemovalRoot `
+                    -ChildPath $_.FullName `
+                    -FailureMessage 'Refusing to inspect a VMware VMX outside the exact artifact directory'
+                (Resolve-Path -LiteralPath $_.FullName).Path
+            }
+    )
+    $hasUnvalidatedVmx = $discoveredVmxPaths.Count -ne $ValidatedVmxPaths.Count
+    if (-not $hasUnvalidatedVmx) {
+        foreach ($discoveredVmxPath in $discoveredVmxPaths) {
+            if (-not (Test-AtlasoWorkstationVmListed -Paths $ValidatedVmxPaths -VmxPath $discoveredVmxPath)) {
+                $hasUnvalidatedVmx = $true
+                break
+            }
+        }
+    }
+    if ($hasUnvalidatedVmx) {
+        throw "Refusing to remove VMware artifacts because the directory contains an unvalidated VMX: $RemovalRoot"
+    }
+}
+
 function Confirm-AtlasoWorkstationVmInactiveAndUnregistered {
     param(
         [Parameter(Mandatory = $true)]
@@ -271,6 +309,10 @@ function Remove-AtlasoWorkstationVmArtifacts {
         throw "Refusing to remove VMware artifacts without at least one validated VMX: $resolvedRemovalRoot"
     }
 
+    Assert-AtlasoWorkstationRemovalVmxSet `
+        -RemovalRoot $resolvedRemovalRoot `
+        -ValidatedVmxPaths $resolvedVmxPaths
+
     if (-not $PSCmdlet.ShouldProcess($resolvedRemovalRoot, 'Stop, unregister, and remove VMware Workstation VM artifacts')) {
         return
     }
@@ -292,6 +334,10 @@ function Remove-AtlasoWorkstationVmArtifacts {
             throw "VMware Workstation VM state changed before filesystem cleanup; artifacts were preserved: $resolvedVmxPath"
         }
     }
+
+    Assert-AtlasoWorkstationRemovalVmxSet `
+        -RemovalRoot $resolvedRemovalRoot `
+        -ValidatedVmxPaths $resolvedVmxPaths
 
     if (Test-Path -LiteralPath $resolvedRemovalRoot) {
         Remove-Item -LiteralPath $resolvedRemovalRoot -Recurse -Force
