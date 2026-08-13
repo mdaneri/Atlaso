@@ -57,8 +57,9 @@ its visible editor is not nested in the source textarea's label.
    shared [Tasks](../operate/tasks.md) grid scoped to VCF Download Tool profile downloads, with the same filters,
    pagination, detail view, live state refresh, and access to the active or archived VCFDT task log. Use **Open full
    task history** when you need the appliance-wide view.
-9. Use **Schedule download** in an enabled profile's row menu to open the shared Automation schedule wizard with that
-   profile selected. Disabled profiles cannot be scheduled.
+9. Use **Schedule download** in an enabled profile's row menu to open the shared Automation schedule wizard directly on
+   the depot page. Its contextual **Schedule**, **Timing**, **State**, and **Review** steps show the selected profile but
+   no task-type or profile selectors; Atlaso binds both values server-side. Disabled profiles cannot be scheduled.
 
 Download-profile creation uses a reviewed wizard. Notes stay with profile identity, task execution owns lifecycle
 status, and profile enablement has its own step so availability is an explicit decision before review.
@@ -69,13 +70,19 @@ the profiles, while the add row remains last.
 
 *Figure: VCFDT configuration starts with the safe Software Depot ID apply choice and contains no credential contents.*
 
-Manual and scheduled starts share one execution path and a database-backed admission guard with Software Depot ID
-tasks and any Appliance Apply that includes VCF Offline Depot. Only one of those VCFDT operations may be pending or
-running across web and scheduler processes. At execution, Atlaso revalidates the applied tool, current profile
-enablement, the credential required by the profile type, depot desired state, and the generated command set before it
-writes runtime files or launches VCFDT. A scheduled occurrence that overlaps another VCFDT operation is recorded as
-skipped and points to the active task; it is not replayed. Other prerequisite failures are recorded as failed tasks with
-a sanitized archived log.
+Manual and scheduled starts share one execution path. Starting a profile reports queued or failed admission through the
+standard accessible bottom-right transient notification while the durable task, audit, and log records remain the
+authoritative history. A database-backed per-profile guard atomically deduplicates the same profile across browser and
+scheduler processes, while distinct profiles remain pending in deterministic FIFO order. Exactly one VCFDT process
+executes at a time. At claim, Atlaso revalidates the applied tool, current profile enablement, the credential required by
+the profile type, depot desired state, and the generated command set before it writes runtime files or launches VCFDT.
+A same-profile scheduled occurrence is recorded as skipped and points to the active task; it is not replayed. Other
+prerequisite failures are recorded as failed tasks with a sanitized archived log.
+
+Software Depot ID replacement and any Appliance Apply containing VCF Offline Depot keep the stronger exclusive
+boundary: neither may be admitted until all queued and running profile downloads finish, and either pending/running
+exclusive task blocks new profile downloads. A restart fails an interrupted running download but retains downloads that
+were still queued and never claimed.
 
 Schedules keep the profile ID, so renames and profile updates apply to future runs while completed task metadata keeps
 the profile and schedule names used at queue time. Disabling a profile also disables every attached schedule and clears
@@ -100,7 +107,8 @@ dispatches a dedicated VCFDT identity task. Atlaso opens the ordinary Tasks view
 required VCFDT runtime inputs, applies the properties and CEIP prerequisites, and generates and reads back the identity
 without invoking nginx or global Appliance Apply. The task exposes those four safe child operations and sanitized logs.
 Atlaso serializes this identity task with profile downloads and any Appliance Apply task that includes VCF Offline
-Depot. A queued identity task can be cancelled before it starts; once VCFDT execution begins, cancellation is disabled
+Depot. It can be admitted only after the complete download queue drains. A queued identity task can be cancelled before
+it starts; once VCFDT execution begins, cancellation is disabled
 because the identity may already have changed.
 It succeeds only after Atlaso persists a non-empty Software Depot ID (and a different ID for refresh). Once
 VCFDT changes the identity, Atlaso removes both the staged and runtime download token and activation code. A generation
@@ -139,9 +147,9 @@ These captures show responsive layouts and useful operational states referenced 
 
 *Figure: VCFDT Software Depot ID generation ends at Review, which immediately dispatches a dedicated identity task.*
 
-![VCF Offline Depot profile row menu showing Schedule download disabled until the profile is enabled.](../assets/screenshots/vcf-offline-depot-schedule-action-desktop.webp)
+![VCF Offline Depot contextual Schedule wizard Review showing Schedule, Timing, State, and Review steps with Binaries fixed as the selected profile.](../assets/screenshots/vcf-offline-depot-schedule-action-desktop.webp)
 
-*Figure: VCF Offline Depot profile scheduling action with the disabled-profile reason.*
+*Figure: VCF Offline Depot review binds the selected profile in the contextual schedule flow.*
 
 ### VCF Offline Depot browser
 

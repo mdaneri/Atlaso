@@ -13809,9 +13809,22 @@ def test_vcf_offline_depot_page_redirect_and_uploads_are_sanitized(client, tmp_p
     assert "Start, schedule, and preview actions" in page.text
     assert "Schedule" in page.text
     assert "new=vcf_depot_download" in Path("atlaso/app/templates/vcf_offline_depot.html").read_text(encoding="utf-8")
+    contextual_schedule = page.text.split('id="vcf-depot-schedule-modal"', 1)[1].split("</dialog>", 1)[0]
+    assert contextual_schedule.count("data-atlaso-wizard-nav=") == 4
+    assert all(f">{label}<" in contextual_schedule for label in ("Schedule", "Timing", "State", "Review"))
+    assert 'name="task_type"' not in contextual_schedule
+    assert 'name="vcf_profile_id"' not in contextual_schedule
+    assert "The task type and profile are bound by the server" in contextual_schedule
     app_js = client.get("/static/app.js").text
     assert '"Schedule download (enable profile first)"' in app_js
-    assert "function scheduleVcfDepotProfileDownload(row)" in app_js
+    assert "function scheduleVcfDepotProfileDownload(row, launcher = null)" in app_js
+    schedule_action_source = app_js.split("function scheduleVcfDepotProfileDownload", 1)[1].split("let vcfDepotProfilesTable", 1)[0]
+    assert "atlasoOpenScheduleWizard" in schedule_action_source
+    assert "window.location.assign" not in schedule_action_source
+    start_action_source = app_js.split("async function startVcfDepotProfileDownload", 1)[1].split("async function previewVcfDepotProfileScript", 1)[0]
+    assert "showTransientGridStatus" in start_action_source
+    assert "showTransientGridError" in start_action_source
+    assert "showVcfDepotMessage" not in start_action_source
     assert page.text.index("<th>Name</th>") < page.text.index("<th>Start</th>") < page.text.index("<th>Type</th>")
     assert 'href="/ui/management/logs"' in page.text
     assert "Generate the Software Depot ID" in page.text
@@ -13992,7 +14005,8 @@ def test_vcf_offline_depot_page_redirect_and_uploads_are_sanitized(client, tmp_p
     assert "startVcfDepotProfileDownload" in app_js.text
     start_download_js = app_js.text.split("async function startVcfDepotProfileDownload", 1)[1].split("async function ", 1)[0]
     assert "window.location.reload()" not in start_download_js
-    assert "setVcfDepotDownloadActive(true, payload.job_id)" in start_download_js
+    assert "await row.update({" in start_download_js
+    assert "active_job_id: payload.job_id" in start_download_js
     assert "await atlasoTasksTable.setPage(1)" in start_download_js
     assert "await refreshTasksPage()" in start_download_js
     assert 'title: "Download mode"' in app_js.text
@@ -14009,7 +14023,8 @@ def test_vcf_offline_depot_page_redirect_and_uploads_are_sanitized(client, tmp_p
     assert "rowHeight: 34" in profiles_table_js.split("columns:", 1)[0]
     assert "!data.can_start" in profiles_table_js
     assert "data.download_active" in profiles_table_js
-    assert "setVcfDepotDownloadActive" in app_js.text
+    assert "function setVcfDepotDownloadStates(activeTasks = [])" in app_js.text
+    assert "const byProfile = new Map" in app_js.text
     assert "data.start_blocker" in profiles_table_js
 
     app_css = client.get("/static/app.css")
@@ -15223,7 +15238,7 @@ def test_vcf_offline_depot_manual_profile_download_starts_job(client, tmp_path):
     )
     assert concurrent_response.status_code == 409
     assert payload["job_id"] in concurrent_response.json()["detail"]
-    assert "Wait for it to finish" in concurrent_response.json()["detail"]
+    assert "Wait for that profile task to finish" in concurrent_response.json()["detail"]
 
     active_page = client.get("/vcf-offline-depot")
     active_rows_payload = active_page.text.split("data-profiles='", 1)[1].split("'", 1)[0]
@@ -15282,6 +15297,9 @@ def test_vcf_offline_depot_manual_profile_download_starts_job(client, tmp_path):
     assert task_status_payload.json()["last_row"] >= 1
     assert task_status_payload.json()["download_active"] is True
     assert task_status_payload.json()["active_job_id"] == payload["job_id"]
+    assert task_status_payload.json()["active_downloads"] == [
+        {"job_id": payload["job_id"], "profile_id": profile_id, "status": "pending"}
+    ]
     task_row = next(task for task in task_status_payload.json()["tasks"] if task["id"] == payload["job_id"])
     assert task_row["status"] == "pending"
     assert task_row["progress_percent"] == "0"
@@ -15292,7 +15310,159 @@ def test_vcf_offline_depot_manual_profile_download_starts_job(client, tmp_path):
     assert shared_task_payload.status_code == 200
     assert shared_task_payload.json()["selected_task"]["id"] == payload["job_id"]
     assert shared_task_payload.json()["selected_task"]["log_url"] == f"/vcf-offline-depot/tasks/{payload['job_id']}/log"
+    assert shared_task_payload.json()["active_downloads"] == [
+        {"job_id": payload["job_id"], "profile_id": profile_id, "status": "pending"}
+    ]
     assert all(task["type"] == "vcf-depot-download" for task in shared_task_payload.json()["tasks"])
+
+
+def test_vcf_offline_depot_contextual_schedule_is_server_bound_and_stays_in_page(client):
+    """Verify the depot schedule endpoint binds task and profile server-side."""
+    import json
+
+    from sqlalchemy import select
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import AuditEvent, Schedule, VcfDepotDownloadProfile
+
+    login(client)
+    with SessionLocal() as db:
+        profile = VcfDepotDownloadProfile(
+            name="contextual-schedule-profile",
+            profile_type="metadata",
+            enabled=True,
+        )
+        other = VcfDepotDownloadProfile(
+            name="other-contextual-profile",
+            profile_type="metadata",
+            enabled=True,
+        )
+        db.add_all([profile, other])
+        db.commit()
+        profile_id, other_id = profile.id, other.id
+
+    page = client.get("/automation")
+    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    response = client.post(
+        f"/vcf-offline-depot/profiles/{profile_id}/schedules",
+        data={
+            "csrf": csrf,
+            "name": "contextual-profile-nightly",
+            "schedule_kind": "cron",
+            "cron_expression": "15 3 * * *",
+            "timezone_name": "UTC",
+            "enabled": "on",
+        },
+        headers={"Accept": "application/json"},
+    )
+
+    assert response.status_code == 201
+    assert response.json()["profile_id"] == profile_id
+    assert response.json()["automation_url"] == "/ui/management/automation#schedules"
+    with SessionLocal() as db:
+        schedule = db.execute(select(Schedule).where(Schedule.name == "contextual-profile-nightly")).scalar_one()
+        assert schedule.task_type == "vcf_depot_download"
+        assert json.loads(schedule.task_config_json) == {"profile_id": profile_id}
+        audit = db.execute(
+            select(AuditEvent).where(
+                AuditEvent.action == "create_automation_schedule",
+                AuditEvent.resource_id == str(schedule.id),
+            )
+        ).scalar_one()
+        assert f"profile_id={profile_id}" in audit.detail
+
+    task_tamper = client.post(
+        f"/vcf-offline-depot/profiles/{profile_id}/schedules",
+        data={
+            "csrf": csrf,
+            "name": "tampered-task",
+            "task_type": "managed_script",
+            "schedule_kind": "cron",
+            "cron_expression": "0 4 * * *",
+            "timezone_name": "UTC",
+        },
+    )
+    assert task_tamper.status_code == 422
+    profile_tamper = client.post(
+        f"/vcf-offline-depot/profiles/{profile_id}/schedules",
+        data={
+            "csrf": csrf,
+            "name": "tampered-profile",
+            "vcf_profile_id": str(other_id),
+            "schedule_kind": "cron",
+            "cron_expression": "0 4 * * *",
+            "timezone_name": "UTC",
+        },
+    )
+    assert profile_tamper.status_code == 422
+
+    with SessionLocal() as db:
+        disabled = VcfDepotDownloadProfile(
+            name="disabled-contextual-profile",
+            profile_type="metadata",
+            enabled=False,
+        )
+        deleted = VcfDepotDownloadProfile(
+            name="deleted-contextual-profile",
+            profile_type="metadata",
+            enabled=True,
+        )
+        db.add_all([disabled, deleted])
+        db.commit()
+        disabled_id, deleted_id = disabled.id, deleted.id
+        db.delete(deleted)
+        db.commit()
+
+    for invalid_profile_id in (disabled_id, deleted_id, 999_999):
+        invalid = client.post(
+            f"/vcf-offline-depot/profiles/{invalid_profile_id}/schedules",
+            data={
+                "csrf": csrf,
+                "name": f"invalid-contextual-{invalid_profile_id}",
+                "schedule_kind": "cron",
+                "cron_expression": "0 4 * * *",
+                "timezone_name": "UTC",
+            },
+        )
+        assert invalid.status_code == 422
+        assert invalid.json()["detail"] == "Choose an enabled VCF Offline Depot download profile."
+
+
+def test_vcf_offline_depot_marks_only_each_profiles_own_queued_download(client):
+    """Verify per-row task state does not globally disable distinct profiles."""
+    import html
+    import json
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job, JobStatus, VcfDepotDownloadProfile
+
+    login(client)
+    with SessionLocal() as db:
+        queued = VcfDepotDownloadProfile(name="queued-row", profile_type="metadata", enabled=True)
+        available = VcfDepotDownloadProfile(name="available-row", profile_type="binaries", enabled=True)
+        db.add_all([queued, available])
+        db.flush()
+        db.add(
+            Job(
+                id="job_queued_profile_row",
+                type="vcf-depot-download",
+                status=JobStatus.PENDING.value,
+                created_by="admin",
+                vcf_depot_profile_id=queued.id,
+                task_config_json=json.dumps({"profile_id": queued.id}),
+                result=json.dumps({"profile_id": queued.id, "profile_name": queued.name}),
+            )
+        )
+        db.commit()
+        queued_id, available_id = queued.id, available.id
+
+    page = client.get("/vcf-offline-depot")
+    rows_payload = page.text.split("data-profiles='", 1)[1].split("'", 1)[0]
+    rows = {row["id"]: row for row in json.loads(html.unescape(rows_payload))}
+    assert rows[queued_id]["download_active"] is True
+    assert rows[queued_id]["active_job_id"] == "job_queued_profile_row"
+    assert rows[available_id]["download_active"] is False
+    assert rows[available_id]["active_job_id"] == ""
 
 
 def test_vcf_offline_depot_startup_recovers_interrupted_download(client):
@@ -15309,18 +15479,29 @@ def test_vcf_offline_depot_startup_recovers_interrupted_download(client):
 
     with SessionLocal() as db:
         profile = VcfDepotDownloadProfile(name="interrupted", profile_type="binaries", enabled=True, status="ready")
-        db.add(profile)
+        queued_profile = VcfDepotDownloadProfile(name="queued-after-restart", profile_type="metadata", enabled=True, status="ready")
+        db.add_all([profile, queued_profile])
         db.flush()
-        db.add(
+        db.add_all([
             Job(
                 id="job_interrupted_vcfdt",
                 type="vcf-depot-download",
                 status=JobStatus.RUNNING.value,
                 created_by="admin",
                 progress_percent=35,
+                vcf_depot_profile_id=profile.id,
                 result=json.dumps({"profile_id": profile.id, "profile_name": profile.name}),
-            )
-        )
+            ),
+            Job(
+                id="job_queued_vcfdt",
+                type="vcf-depot-download",
+                status=JobStatus.PENDING.value,
+                created_by="admin",
+                progress_percent=0,
+                vcf_depot_profile_id=queued_profile.id,
+                result=json.dumps({"profile_id": queued_profile.id, "profile_name": queued_profile.name}),
+            ),
+        ])
         db.commit()
 
         assert recover_interrupted_vcf_depot_download_jobs(db) == 1
@@ -15332,6 +15513,7 @@ def test_vcf_offline_depot_startup_recovers_interrupted_download(client):
         assert job.finished_at is not None
         assert "restart" in (job.error or "")
         assert profile.status == "blocked"
+        assert db.get(Job, "job_queued_vcfdt").status == JobStatus.PENDING.value
         assert recover_interrupted_vcf_depot_download_jobs(db) == 0
 
 

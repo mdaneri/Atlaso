@@ -333,6 +333,8 @@ def test_managed_script_revision_is_immutable_enabled_and_run_by_worker(client):
     assert 'data-automation-wizard-step="state"' in page.text
     assert 'data-automation-wizard-step="review"' in page.text
     assert 'data-automation-wizard-nav' in page.text
+    schedule_modal = page.text.split('id="automation-schedule-modal"', 1)[1].split("</dialog>", 1)[0]
+    assert schedule_modal.count("data-atlaso-wizard-nav=") == 5
     assert 'automation-fill-grid' in page.text
     assert 'id="automation-schedule-edit-' not in page.text
     assert 'id="automation-script-modal"' in page.text
@@ -742,19 +744,14 @@ def test_worker_rejects_queued_vcf_download_when_profile_was_disabled(client, mo
         assert audit.success is False
 
 
-def test_due_vcf_schedules_share_global_download_lock_and_record_skipped_run(client):
-    """Verify that due vcf schedules share global download lock and record skipped run.
+def test_due_vcf_schedules_queue_distinct_profiles_in_fifo_order(client):
+    """Verify that due VCF schedules queue distinct profiles in FIFO order.
 
     Args:
         client: HTTP test client used to exercise the Atlaso application.
     """
     from atlaso.app.database import SessionLocal
-    from atlaso.app.models import (
-        AuditEvent,
-        JobStatus,
-        Schedule,
-        VcfDepotDownloadProfile,
-    )
+    from atlaso.app.models import JobStatus, Schedule, VcfDepotDownloadProfile
     from atlaso.app.services.automation import enqueue_due_schedules
 
     client.get("/login")
@@ -794,29 +791,26 @@ def test_due_vcf_schedules_share_global_download_lock_and_record_skipped_run(cli
 
     with SessionLocal() as db:
         jobs = enqueue_due_schedules(db, now=now)
-        assert [job.status for job in jobs] == [JobStatus.PENDING.value, JobStatus.SKIPPED.value]
-        skipped = jobs[1]
-        result = json.loads(skipped.result)
-        assert result["profile_name"] == "scheduled-esx"
-        assert result["schedule_name"] == "scheduled-esx-nightly"
-        assert result["planned_for"]
-        assert result["active_job_id"] == jobs[0].id
-        assert db.execute(
-            select(AuditEvent).where(
-                AuditEvent.resource_id == skipped.id,
-                AuditEvent.action == "skip_scheduled_vcf_depot_download",
-            )
-        ).scalar_one().success is False
+        assert [job.status for job in jobs] == [JobStatus.PENDING.value, JobStatus.PENDING.value]
+        assert [json.loads(job.result)["profile_name"] for job in jobs] == [
+            "scheduled-metadata",
+            "scheduled-esx",
+        ]
+        assert [job.vcf_depot_profile_id for job in jobs] == [
+            json.loads(jobs[0].task_config_json)["profile_id"],
+            json.loads(jobs[1].task_config_json)["profile_id"],
+        ]
+        assert jobs[0].created_at <= jobs[1].created_at
 
 
-def test_vcf_download_database_guard_rejects_second_active_job(client):
-    """Verify that vcf download database guard rejects second active job.
+def test_vcf_download_database_guard_deduplicates_only_the_same_profile(client):
+    """Verify that the database guard deduplicates only the same profile.
 
     Args:
         client: HTTP test client used to exercise the Atlaso application.
     """
     from atlaso.app.database import SessionLocal
-    from atlaso.app.models import VcfDepotDownloadProfile
+    from atlaso.app.models import JobStatus, VcfDepotDownloadProfile
     from atlaso.app.services.vcf_depot_downloads import (
         ActiveVcfDepotDownloadError,
         enqueue_vcf_depot_download,
@@ -826,14 +820,19 @@ def test_vcf_download_database_guard_rejects_second_active_job(client):
     client.get("/login")
     with SessionLocal() as db:
         profile = VcfDepotDownloadProfile(name="atomic-profile", profile_type="metadata", enabled=True)
-        db.add(profile)
+        distinct = VcfDepotDownloadProfile(name="distinct-profile", profile_type="esx", enabled=True)
+        db.add_all([profile, distinct])
         db.flush()
         first = enqueue_vcf_depot_download(db, profile=profile, actor="admin", trigger="manual")
+        second = enqueue_vcf_depot_download(db, profile=distinct, actor="scheduler:distinct", trigger="scheduled")
         expected_log = f"/var/lib/atlaso/vcfDownloadTool/task-logs/{first.id}.log"
         assert vcf_depot_task_log_reference(first.id, "before-rename") == expected_log
         assert vcf_depot_task_log_reference(first.id, "after-rename") == expected_log
         with pytest.raises(ActiveVcfDepotDownloadError, match=first.id):
             enqueue_vcf_depot_download(db, profile=profile, actor="admin", trigger="manual")
+        assert first.status == JobStatus.PENDING.value
+        assert second.status == JobStatus.PENDING.value
+        assert second.vcf_depot_profile_id == distinct.id
         db.commit()
 
 
@@ -846,7 +845,7 @@ def test_vcf_download_database_guard_covers_software_id_and_appliance_apply(clie
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import Job, JobStatus, VcfDepotDownloadProfile
     from atlaso.app.services.vcf_depot_downloads import (
-        ActiveVcfDepotDownloadError,
+        VcfDepotExclusiveOperationError,
         enqueue_vcf_depot_download,
     )
 
@@ -865,7 +864,7 @@ def test_vcf_download_database_guard_covers_software_id_and_appliance_apply(clie
         db.commit()
         assert software_id_job.vcf_depot_operation is True
 
-        with pytest.raises(ActiveVcfDepotDownloadError, match=software_id_job.id):
+        with pytest.raises(VcfDepotExclusiveOperationError, match=software_id_job.id):
             enqueue_vcf_depot_download(db, profile=profile, actor="admin", trigger="manual")
 
         software_id_job.status = JobStatus.SUCCEEDED.value
@@ -882,9 +881,130 @@ def test_vcf_download_database_guard_covers_software_id_and_appliance_apply(clie
         db.add(apply_job)
         db.commit()
 
-        with pytest.raises(ActiveVcfDepotDownloadError, match=apply_job.id):
+        with pytest.raises(VcfDepotExclusiveOperationError, match=apply_job.id):
             enqueue_vcf_depot_download(db, profile=profile, actor="admin", trigger="manual")
         db.commit()
+
+
+def test_worker_claims_distinct_vcf_profiles_one_at_a_time_in_fifo_order(client):
+    """Verify that one VCFDT process runs while distinct profiles remain queued."""
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import JobStatus, VcfDepotDownloadProfile
+    from atlaso.app.services.vcf_depot_downloads import enqueue_vcf_depot_download
+    from atlaso.app.worker import claim_next_job
+
+    client.get("/login")
+    with SessionLocal() as db:
+        first_profile = VcfDepotDownloadProfile(name="claim-first", profile_type="metadata", enabled=True)
+        second_profile = VcfDepotDownloadProfile(name="claim-second", profile_type="binaries", enabled=True)
+        db.add_all([first_profile, second_profile])
+        db.flush()
+        first = enqueue_vcf_depot_download(db, profile=first_profile, actor="admin", trigger="manual")
+        second = enqueue_vcf_depot_download(db, profile=second_profile, actor="admin", trigger="manual")
+        first_id, second_id = first.id, second.id
+        db.commit()
+
+    with SessionLocal() as db:
+        claimed = claim_next_job(db)
+        assert claimed is not None
+        assert claimed.id == first_id
+        assert claimed.status == JobStatus.RUNNING.value
+        assert db.get(type(claimed), second_id).status == JobStatus.PENDING.value
+        assert claim_next_job(db) is None
+        claimed.status = JobStatus.SUCCEEDED.value
+        claimed.progress_percent = 100
+        db.commit()
+        next_claimed = claim_next_job(db)
+        assert next_claimed is not None
+        assert next_claimed.id == second_id
+        assert next_claimed.status == JobStatus.RUNNING.value
+
+
+def test_same_profile_manual_and_scheduled_admission_deduplicates_atomically(client):
+    """Verify that manual and scheduled callers share the per-profile guard."""
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Schedule, VcfDepotDownloadProfile
+    from atlaso.app.services.automation import enqueue_schedule_now
+    from atlaso.app.services.vcf_depot_downloads import (
+        ActiveVcfDepotDownloadError,
+        enqueue_vcf_depot_download,
+    )
+
+    client.get("/login")
+    with SessionLocal() as db:
+        profile = VcfDepotDownloadProfile(name="shared-admission", profile_type="metadata", enabled=True)
+        db.add(profile)
+        db.flush()
+        schedule = Schedule(
+            name="shared-admission-schedule",
+            task_type="vcf_depot_download",
+            task_config_json=json.dumps({"profile_id": profile.id}),
+            schedule_kind="cron",
+            cron_expression="0 2 * * *",
+            timezone_name="UTC",
+            enabled=True,
+            created_by="admin",
+        )
+        db.add(schedule)
+        db.flush()
+        manual = enqueue_vcf_depot_download(db, profile=profile, actor="admin", trigger="manual")
+        db.commit()
+        with pytest.raises(ActiveVcfDepotDownloadError, match=manual.id):
+            enqueue_schedule_now(db, schedule=schedule, actor="admin")
+
+
+def test_concurrent_same_profile_admission_creates_exactly_one_active_job(client):
+    """Verify concurrent manual and scheduled admissions serialize atomically."""
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job, JobStatus, VcfDepotDownloadProfile
+    from atlaso.app.services.vcf_depot_downloads import (
+        ActiveVcfDepotDownloadError,
+        enqueue_vcf_depot_download,
+    )
+
+    client.get("/login")
+    with SessionLocal() as db:
+        profile = VcfDepotDownloadProfile(name="concurrent-admission", profile_type="metadata", enabled=True)
+        db.add(profile)
+        db.commit()
+        profile_id = profile.id
+
+    barrier = Barrier(2)
+
+    def admit(trigger: str) -> tuple[str, str]:
+        with SessionLocal() as db:
+            profile = db.get(VcfDepotDownloadProfile, profile_id)
+            barrier.wait()
+            try:
+                job = enqueue_vcf_depot_download(
+                    db,
+                    profile=profile,
+                    actor=f"test:{trigger}",
+                    trigger=trigger,
+                )
+                db.commit()
+                return "queued", job.id
+            except ActiveVcfDepotDownloadError as exc:
+                db.rollback()
+                return "duplicate", exc.active_job_id
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        results = list(executor.map(admit, ("manual", "scheduled")))
+
+    assert sorted(result[0] for result in results) == ["duplicate", "queued"]
+    queued_id = next(result[1] for result in results if result[0] == "queued")
+    assert next(result[1] for result in results if result[0] == "duplicate") == queued_id
+    with SessionLocal() as db:
+        active = db.execute(
+            select(Job).where(
+                Job.vcf_depot_profile_id == profile_id,
+                Job.status.in_([JobStatus.PENDING.value, JobStatus.RUNNING.value]),
+            )
+        ).scalars().all()
+        assert [job.id for job in active] == [queued_id]
 
 
 def test_due_vcf_schedule_records_software_id_collision_as_skipped(client):

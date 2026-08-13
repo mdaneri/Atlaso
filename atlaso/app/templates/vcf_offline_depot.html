@@ -297,6 +297,83 @@
     </div>
   </aside>
 </section>
+<dialog id="vcf-depot-schedule-modal" class="confirm-modal wide-modal vcf-sddc-wizard-modal" aria-labelledby="vcf-depot-schedule-modal-title" aria-describedby="vcf-depot-schedule-modal-description">
+  <form id="vcf-depot-schedule-form" class="confirm-modal-panel vcf-sddc-wizard-panel" method="post" data-automation-schedule-form data-automation-contextual-vcf-schedule data-atlaso-wizard>
+    <input type="hidden" name="csrf" value="{{ csrf_token }}">
+    <aside class="vcf-sddc-wizard-rail" aria-label="Contextual depot schedule steps">
+      <p class="kicker">Depot profile schedule</p>
+      <h2 id="vcf-depot-schedule-modal-title" data-automation-wizard-modal-title>Schedule profile</h2>
+      <ol class="vcf-sddc-step-list">
+        <li><button class="vcf-sddc-step-button active" type="button" data-automation-wizard-nav data-atlaso-wizard-nav="identity"><span>1</span><strong>Schedule</strong><small>Name and profile context</small></button></li>
+        <li><button class="vcf-sddc-step-button" type="button" data-automation-wizard-nav data-atlaso-wizard-nav="timing" disabled><span>2</span><strong>Timing</strong><small>When it runs</small></button></li>
+        <li><button class="vcf-sddc-step-button" type="button" data-automation-wizard-nav data-atlaso-wizard-nav="state" disabled><span>3</span><strong>State</strong><small>Enable or stage</small></button></li>
+        <li><button class="vcf-sddc-step-button" type="button" data-automation-wizard-nav data-atlaso-wizard-nav="review" disabled><span>4</span><strong>Review</strong><small>Confirm schedule</small></button></li>
+      </ol>
+    </aside>
+    <div class="vcf-sddc-wizard-main">
+      <div class="confirm-modal-body vcf-sddc-wizard-body">
+        <div class="vcf-sddc-wizard-heading">
+          <p class="kicker" data-automation-wizard-kicker data-atlaso-wizard-kicker>Step 1 of 4</p>
+          <h3 data-automation-wizard-title data-atlaso-wizard-title>Name the schedule</h3>
+          <p id="vcf-depot-schedule-modal-description" class="muted" data-automation-wizard-description data-atlaso-wizard-description>Name this schedule for the selected VCF Offline Depot profile.</p>
+        </div>
+        <div class="alert error hidden" data-automation-wizard-errors data-atlaso-wizard-error></div>
+        <section class="vcf-sddc-step-page" data-automation-wizard-step="identity" data-atlaso-wizard-step="identity">
+          <div class="form-stack automation-schedule-form">
+            <label><span class="field-label"><span>Schedule name</span><button class="help-icon" type="button" data-help="Names this automation and appears as the scheduler identity in task history.">i</button></span><input name="name" required autocomplete="off"></label>
+            <div class="settings-list compact-settings-list">
+              <div><span>Workflow</span><strong>VCF Offline Depot download</strong></div>
+              <div><span>Download profile</span><strong data-automation-context-profile-name>Selected profile</strong></div>
+            </div>
+            <p class="muted">The task type and profile are bound by the server to the row that opened this wizard.</p>
+          </div>
+        </section>
+        <section class="vcf-sddc-step-page hidden" data-automation-wizard-step="timing" data-atlaso-wizard-step="timing">
+          <div class="form-grid automation-schedule-form">
+            <label><span class="field-label"><span>Schedule kind</span><button class="help-icon" type="button" data-help="Cron repeats using five fields. One-time schedules disable themselves after their due run is queued.">i</button></span><select name="schedule_kind" data-automation-schedule-kind><option value="cron">Cron</option><option value="once">One time</option></select></label>
+            <label><span class="field-label"><span>Timezone</span><button class="help-icon" type="button" data-help="IANA timezone used to interpret cron and one-time values. Stored execution timestamps remain UTC.">i</button></span><input name="timezone_name" value="UTC" placeholder="America/Los_Angeles" required autocomplete="off"></label>
+            <div class="full automation-cron-builder" data-automation-schedule-timing="cron">
+              <input type="hidden" name="cron_expression" value="0 2 * * *" data-automation-cron-expression>
+              <div class="form-grid">
+                <label><span class="field-label"><span>Repeat</span><button class="help-icon" type="button" data-help="Builds a standard five-field cron schedule without requiring cron syntax. Choose Custom only for advanced expressions.">i</button></span><select data-automation-cron-frequency><option value="hourly">Hourly</option><option value="daily" selected>Daily</option><option value="weekly">Weekly</option><option value="monthly">Monthly</option><option value="custom">Custom</option></select></label>
+                <label data-automation-cron-control="hourly"><span class="field-label"><span>At minute</span><button class="help-icon" type="button" data-help="Minute from 0 through 59 when the task runs every hour.">i</button></span><input type="number" min="0" max="59" value="0" data-automation-cron-minute></label>
+                <label data-automation-cron-control="time"><span class="field-label"><span>At time</span><button class="help-icon" type="button" data-help="Local time in the schedule timezone for daily, weekly, and monthly runs.">i</button></span><input type="time" value="02:00" data-automation-cron-time></label>
+                <label class="hidden" data-automation-cron-control="weekly"><span class="field-label"><span>Day of week</span><button class="help-icon" type="button" data-help="Local weekday in the selected timezone.">i</button></span><select data-automation-cron-weekday><option value="1">Monday</option><option value="2">Tuesday</option><option value="3">Wednesday</option><option value="4">Thursday</option><option value="5">Friday</option><option value="6">Saturday</option><option value="0">Sunday</option></select></label>
+                <label class="hidden" data-automation-cron-control="monthly"><span class="field-label"><span>Day of month</span><button class="help-icon" type="button" data-help="Calendar day from 1 through 31. Months without that day do not run the task.">i</button></span><input type="number" min="1" max="31" value="1" data-automation-cron-monthday></label>
+                <label class="full hidden" data-automation-cron-control="custom"><span class="field-label"><span>Custom cron expression</span><button class="help-icon" type="button" data-help="Advanced five-field minute, hour, day, month, weekday expression. Missed and overlapping runs are skipped.">i</button></span><input value="0 2 * * *" autocomplete="off" data-automation-cron-custom></label>
+              </div>
+              <div class="automation-cron-summary"><span>Generated schedule</span><strong data-automation-cron-summary>Every day at 02:00 UTC</strong><code data-automation-cron-preview>0 2 * * *</code></div>
+            </div>
+            <label class="full hidden" data-automation-schedule-timing="once"><span class="field-label"><span>One-time run</span><button class="help-icon" type="button" data-help="Local date and time interpreted in the selected timezone. The schedule disables itself after the due run is queued.">i</button></span><input type="datetime-local" name="run_once_at" data-automation-timing-required></label>
+          </div>
+        </section>
+        <section class="vcf-sddc-step-page hidden" data-automation-wizard-step="state" data-atlaso-wizard-step="state">
+          <div class="form-grid automation-schedule-form">
+            <label class="switch-field automation-policy-row full"><span class="field-label"><span>Schedule enabled</span><button class="help-icon" type="button" data-help="Allows the durable worker to queue this schedule when due. Leave it disabled to save the complete definition for review without execution.">i</button></span><input class="switch-input" type="checkbox" name="enabled"><span class="switch-track" aria-hidden="true"></span></label>
+            <div class="alert info full"><strong>Disabled is safe for staging.</strong> Manage the finished schedule and its State from Automation Schedules.</div>
+          </div>
+        </section>
+        <section class="vcf-sddc-step-page hidden" data-automation-wizard-step="review" data-atlaso-wizard-step="review">
+          <div class="settings-list compact-settings-list automation-schedule-review">
+            <div><span>Name</span><strong data-automation-review-name></strong></div>
+            <div><span>Workflow</span><strong data-automation-review-task></strong></div>
+            <div><span>Schedule</span><strong data-automation-review-timing></strong></div>
+            <div><span>Timezone</span><strong data-automation-review-timezone></strong></div>
+            <div><span>State</span><strong data-automation-review-state></strong></div>
+            <div><span>Profile</span><strong data-automation-review-config></strong></div>
+          </div>
+          <p class="muted">The durable worker queues this profile as a normal Atlaso task. Distinct profiles may wait in FIFO order while VCFDT runtime execution remains serialized.</p>
+        </section>
+      </div>
+      <div class="confirm-modal-actions vcf-sddc-wizard-actions">
+        <button class="button ghost" type="button" data-automation-schedule-modal-cancel data-atlaso-wizard-cancel>Cancel</button>
+        <button class="button secondary hidden" type="button" data-automation-wizard-back data-atlaso-wizard-back>Back</button>
+        <button class="button primary" type="button" data-automation-wizard-next data-atlaso-wizard-next>Next</button>
+        <button class="button primary hidden" type="submit" data-automation-wizard-submit data-atlaso-wizard-submit>Create schedule</button>
+      </div>
+    </div>
+  </form>
+</dialog>
 {% set vcf_depot_profile_steps = [
   {"id": "identity", "label": "Profile", "summary": "Name, type, and notes"},
   {"id": "release", "label": "Release", "summary": "SKU, release, and mode"},

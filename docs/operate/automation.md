@@ -25,17 +25,19 @@ This verified appliance view provides visual orientation before you begin.
 
 - Appliance Update checks and installs with selected update streams.
 - Enabled VCF Offline Depot download profiles. Manual starts, **Run now**, and scheduled starts share one server-owned
-  admission and execution path. The worker rechecks the applied VCF Download Tool, staged credential, current profile
-  state, and generated command set immediately before execution, so a prerequisite removed after queueing fails closed
-  before VCFDT starts.
+  admission and execution path. The same profile is atomically deduplicated while distinct profiles queue in FIFO order
+  behind exactly one executing VCFDT process. The worker rechecks the applied VCF Download Tool, staged credential,
+  current profile state, and generated command set immediately before execution, so a prerequisite removed after
+  queueing fails closed before VCFDT starts.
 - Explicitly enabled immutable managed-script revisions.
 
 Schedules use either a one-time local date/time or a standard five-field cron expression
 (`minute hour day month weekday`) with an IANA timezone such as `UTC` or `America/Los_Angeles`. Execution timestamps are
-stored in UTC. Missed runs are not replayed. Every due occurrence advances to the next time; when a profile download,
-Software Depot ID task, or VCF Offline Depot Appliance Apply is already pending or running, the occurrence is recorded
-as a terminal skipped task that links to the active task instead of starting a second VCFDT process. The shared
-database admission guard applies across web and scheduler processes.
+stored in UTC. Missed runs are not replayed. Every due occurrence advances to the next time. An occurrence for a profile
+that is already queued or running becomes a terminal skipped task linked to that profile's active task. A distinct
+profile remains queued and begins only after earlier VCFDT work reaches a terminal state. Pending or running Software
+Depot ID and VCF Offline Depot Appliance Apply tasks block new downloads; those exclusive operations cannot be admitted
+until the entire download queue drains. The shared database admission guard applies across web and scheduler processes.
 
 Schedules can be edited, enabled or disabled, run immediately, and deleted. **Run now** creates a normal queued task
 with a `manual_schedule` trigger and does not change the next calculated recurring run. The Automation table shows the
@@ -55,12 +57,14 @@ or an enabled managed-script revision and its parameters. The timing step includ
 builder with a generated summary; advanced operators can choose Custom for a standard five-field expression. The same
 wizard is used for edits.
 
-The **Schedule download** action in a VCF Offline Depot profile row opens this same wizard with the VCF task type and
-stable profile ID preselected. Schedule definitions contain that ID and timing only; they never contain Broadcom
-credentials, authenticated URLs, generated commands, or credential-bearing output. Profile renames and content edits
-therefore affect future runs without rewriting history. Disabling a profile disables its attached schedules and clears
-their next-run timestamps; re-enabling the profile does not silently re-enable them. Delete the attached schedules
-before deleting a profile.
+The **Schedule download** action in a VCF Offline Depot profile row opens the shared schedule form in place, without
+leaving the depot page. This contextual version has **Schedule**, **Timing**, **State**, and **Review** steps; it omits
+task-type and profile controls because the server binds `vcf_depot_download` and the selected row's stable profile ID.
+The generic Automation add/edit wizard remains the five-step flow described above. Schedule definitions contain that
+ID and timing only; they never contain Broadcom credentials, authenticated URLs, generated commands, or
+credential-bearing output. Profile renames and content edits therefore affect future runs without rewriting history.
+Disabling a profile disables its attached schedules and clears their next-run timestamps; re-enabling the profile does
+not silently re-enable them. Delete the attached schedules before deleting a profile.
 
 The profile selector shows every configured VCF Offline Depot profile so unavailable entries are not mistaken for
 missing data. Disabled profiles are labeled and cannot be selected. When no profile is enabled, the wizard reports that
@@ -135,9 +139,10 @@ never claimed remains pending.
 
 Scheduled work always creates normal Atlaso Jobs, so it appears in both the Automation **Executions** tab and
 `/ui/management/tasks`.
-VCFDT scheduled tasks also appear in the profile-scoped task grid. Failed prerequisite checks and skipped overlaps are
-terminal history entries with schedule, profile, planned-time, and active-task context; missed or failed runs are not
-retried outside the next configured occurrence.
+VCFDT scheduled tasks also appear in the profile-scoped task grid. Queued rows remain durable across worker restarts;
+only an interrupted running task is failed during recovery. Failed prerequisite checks and skipped same-profile or
+exclusive-operation overlaps are terminal history entries with schedule, profile, planned-time, and active-task
+context; missed or failed runs are not retried outside the next configured occurrence.
 The Tasks grid uses backend-owned filtering and pagination. Status and state are fixed lists; Task / Component is an
 autocomplete list built from recorded job types and component labels while still accepting a custom job id, task, or
 component fragment.

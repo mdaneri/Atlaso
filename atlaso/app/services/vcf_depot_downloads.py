@@ -7,11 +7,18 @@ from datetime import datetime
 from typing import Any
 from uuid import uuid4
 
-from sqlalchemy import desc, select
+from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from atlaso.app.models import Job, JobStatus, Schedule, VcfDepotDownloadProfile, utcnow
+from atlaso.app.models import (
+    Job,
+    JobStatus,
+    Schedule,
+    VcfDepotAdmissionGate,
+    VcfDepotDownloadProfile,
+    utcnow,
+)
 
 VCF_DEPOT_JOB_TYPE = "vcf-depot-download"
 ACTIVE_VCF_DEPOT_JOB_STATUSES = (JobStatus.PENDING.value, JobStatus.RUNNING.value)
@@ -24,15 +31,36 @@ class ActiveVcfDepotDownloadError(ValueError):
     Attributes:
         active_job_id: Identifier of the associated active job.
     """
-    def __init__(self, active_job_id: str) -> None:
+    def __init__(self, active_job_id: str, profile_id: int) -> None:
         """Initialize the active vcf depot download error.
 
         Args:
             active_job_id: Stable identifier of the associated active job resource.
+            profile_id: Identifier of the duplicate VCFDT profile.
         """
         self.active_job_id = active_job_id
+        self.profile_id = profile_id
         super().__init__(
-            f"VCFDT task {active_job_id} is already active. Wait for it to finish before starting another VCFDT operation."
+            f"VCFDT task {active_job_id} is already queued or running for this profile. "
+            "Wait for that profile task to finish before starting it again."
+        )
+
+
+class VcfDepotExclusiveOperationError(ValueError):
+    """Report a Software Depot ID or Appliance Apply queue boundary conflict."""
+
+    def __init__(self, active_job_id: str, operation_type: str) -> None:
+        """Initialize the exclusive-operation conflict.
+
+        Args:
+            active_job_id: Stable identifier of the exclusive task.
+            operation_type: Persisted task type holding the exclusive boundary.
+        """
+        self.active_job_id = active_job_id
+        self.operation_type = operation_type
+        super().__init__(
+            f"VCFDT operation {active_job_id} ({operation_type}) is already pending or running. "
+            "Wait for it to finish before queueing a profile download."
         )
 
 
@@ -103,23 +131,84 @@ def active_vcf_depot_operation_job(db: Session) -> Job | None:
             Job.vcf_depot_operation.is_(True),
             Job.status.in_(ACTIVE_VCF_DEPOT_JOB_STATUSES),
         )
-        .order_by(desc(Job.created_at), desc(Job.id))
+        .order_by(Job.created_at, Job.id)
         .limit(1)
     ).first()
 
 
-def active_vcf_depot_download_job(db: Session) -> Job | None:
-    """Return active vcf depot download job.
+def active_vcf_depot_exclusive_job(db: Session) -> Job | None:
+    """Return the pending or running operation that excludes the download queue.
 
     Args:
         db: Active database session.
     """
     return db.scalars(
         select(Job)
-        .where(Job.type == VCF_DEPOT_JOB_TYPE, Job.status.in_(ACTIVE_VCF_DEPOT_JOB_STATUSES))
-        .order_by(desc(Job.created_at), desc(Job.id))
+        .where(
+            Job.vcf_depot_operation.is_(True),
+            Job.type != VCF_DEPOT_JOB_TYPE,
+            Job.status.in_(ACTIVE_VCF_DEPOT_JOB_STATUSES),
+        )
+        .order_by(Job.created_at, Job.id)
         .limit(1)
     ).first()
+
+
+def vcf_depot_job_profile_id(job: Job) -> int:
+    """Return the stable VCFDT profile identifier recorded on a job.
+
+    Args:
+        job: VCFDT job being inspected.
+    """
+    if job.vcf_depot_profile_id:
+        return int(job.vcf_depot_profile_id)
+    return vcf_depot_profile_id(job.task_config_json)
+
+
+def active_vcf_depot_download_jobs(db: Session) -> list[Job]:
+    """Return every queued or running profile download in FIFO order.
+
+    Args:
+        db: Active database session.
+    """
+    return list(
+        db.scalars(
+            select(Job)
+            .where(Job.type == VCF_DEPOT_JOB_TYPE, Job.status.in_(ACTIVE_VCF_DEPOT_JOB_STATUSES))
+            .order_by(Job.created_at, Job.id)
+        )
+    )
+
+
+def active_vcf_depot_download_job(db: Session, profile_id: int | None = None) -> Job | None:
+    """Return active vcf depot download job.
+
+    Args:
+        db: Active database session.
+    """
+    jobs = active_vcf_depot_download_jobs(db)
+    if profile_id is None:
+        return jobs[0] if jobs else None
+    return next((job for job in jobs if vcf_depot_job_profile_id(job) == profile_id), None)
+
+
+def acquire_vcf_depot_admission_gate(db: Session) -> None:
+    """Acquire the singleton database write gate for one admission decision.
+
+    Args:
+        db: Active database session.
+
+    Raises:
+        RuntimeError: If database initialization did not create the gate row.
+    """
+    acquired = db.execute(
+        update(VcfDepotAdmissionGate)
+        .where(VcfDepotAdmissionGate.id == 1)
+        .values(generation=VcfDepotAdmissionGate.generation + 1)
+    )
+    if acquired.rowcount != 1:
+        raise RuntimeError("The VCFDT admission gate is unavailable. Restart Atlaso and try again.")
+    db.flush()
 
 
 def vcf_depot_task_log_reference(job_id: str, _profile_name: str = "") -> str:
@@ -183,14 +272,21 @@ def enqueue_vcf_depot_download(
         job_id: Identifier of the job.
 
     Raises:
-        ActiveVcfDepotDownloadError: If the operation encounters an invalid state.
+        ActiveVcfDepotDownloadError: If this profile already has a queued or running task.
+        VcfDepotExclusiveOperationError: If an exclusive VCFDT operation is queued or running.
     """
     identifier = job_id or f"job_{uuid4().hex[:12]}"
+    acquire_vcf_depot_admission_gate(db)
+    db.refresh(profile)
+    exclusive = active_vcf_depot_exclusive_job(db)
+    if exclusive is not None:
+        raise VcfDepotExclusiveOperationError(exclusive.id, exclusive.type)
     job = Job(
         id=identifier,
         type=VCF_DEPOT_JOB_TYPE,
         status=JobStatus.PENDING.value,
         vcf_depot_operation=True,
+        vcf_depot_profile_id=profile.id,
         created_by=actor,
         progress_percent=0,
         schedule_id=schedule.id if schedule is not None else None,
@@ -214,8 +310,11 @@ def enqueue_vcf_depot_download(
             db.add(job)
             db.flush()
     except IntegrityError as exc:
-        active = active_vcf_depot_operation_job(db)
-        raise ActiveVcfDepotDownloadError(active.id if active is not None else "unknown") from exc
+        active = active_vcf_depot_download_job(db, profile.id)
+        raise ActiveVcfDepotDownloadError(
+            active.id if active is not None else "unknown",
+            profile.id,
+        ) from exc
     if profile.enabled:
         profile.status = "ready"
         profile.updated_at = utcnow()
