@@ -63,7 +63,8 @@ revocation timestamps, and preserves OIDC key activation, retirement, and public
 tokens retain their verification key. Disabled CA certificate rows receive the same bounded status, managed-path, and
 supplied-material checks as enabled rows before any current state is removed. Every restored leaf PEM must contain
 exactly one canonical public certificate, and every restored chain must contain only its canonical parsed certificates;
-neither may include trailing or private-key material.
+every restored CSR must likewise contain only its single canonical public request. None may include trailing or
+private-key material. Disabled issued certificate rows are still verified against the restored CA root before mutation.
 
 ESXi Network Boot installer ISO references are normalized beneath the managed ISO root before they are restored, so a
 valid relative archive reference cannot become dependent on the appliance helper's working directory. VCF Offline

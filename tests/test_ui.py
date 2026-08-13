@@ -4892,6 +4892,10 @@ def test_settings_archive_round_trips_ca_certificate_validity(client):
     from datetime import datetime, timezone
 
     import pytest
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import rsa
+    from cryptography.x509.oid import NameOID
     from sqlalchemy import select
 
     from atlaso.app.database import SessionLocal
@@ -4941,6 +4945,28 @@ def test_settings_archive_round_trips_ca_certificate_validity(client):
         )
         assert archived["issued_at"]
         assert archived["expires_at"]
+        extra_csr_archive = deepcopy(archive)
+        extra_csr_certificate = next(
+            row
+            for row in extra_csr_archive["data"]["ca_certificates"]
+            if row["common_name"] == certificate.common_name
+        )
+        csr_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+        extra_csr_certificate["csr_text"] = (
+            x509.CertificateSigningRequestBuilder()
+            .subject_name(
+                x509.Name(
+                    [x509.NameAttribute(NameOID.COMMON_NAME, certificate.common_name)]
+                )
+            )
+            .sign(csr_key, hashes.SHA256())
+            .public_bytes(serialization.Encoding.PEM)
+            .decode("utf-8")
+        ) + (
+            "-----BEGIN PRIVATE KEY-----\nforbidden\n-----END PRIVATE KEY-----\n"
+        )
+        with pytest.raises(ValueError, match="request is not usable"):
+            restore_settings_archive(db, extra_csr_archive)
         extra_pem_archive = deepcopy(archive)
         extra_pem_certificate = next(
             row
@@ -4963,6 +4989,47 @@ def test_settings_archive_round_trips_ca_certificate_validity(client):
         )
         with pytest.raises(ValueError, match="chain is not usable"):
             restore_settings_archive(db, extra_chain_archive)
+        foreign_settings = CaSettings(
+            enabled=True,
+            root_common_name="Foreign Archive Root CA",
+            organization=settings.organization,
+            organizational_unit=settings.organizational_unit,
+            country=settings.country,
+            state=settings.state,
+            locality=settings.locality,
+            key_algorithm=settings.key_algorithm,
+            key_size=settings.key_size,
+            digest_algorithm=settings.digest_algorithm,
+            root_valid_days=settings.root_valid_days,
+        )
+        assert ensure_root_ca_material(foreign_settings) is True
+        foreign_certificate = CaCertificate(
+            common_name="foreign-archive.atlaso.internal",
+            profile_id=profile.id,
+            enabled=True,
+        )
+        assert issue_certificate(
+            foreign_settings,
+            [profile],
+            foreign_certificate,
+        ) is True
+        foreign_certificate_archive = deepcopy(archive)
+        foreign_archived_certificate = next(
+            row
+            for row in foreign_certificate_archive["data"]["ca_certificates"]
+            if row["common_name"] == certificate.common_name
+        )
+        foreign_archived_certificate.update(
+            {
+                "enabled": False,
+                "status": "issued",
+                "certificate_pem": foreign_certificate.certificate_pem,
+                "private_key_encrypted": foreign_certificate.private_key_encrypted,
+                "chain_pem": foreign_certificate.chain_pem,
+            }
+        )
+        with pytest.raises(ValueError, match="not issued by the restored CA root"):
+            restore_settings_archive(db, foreign_certificate_archive)
         archive["data"]["ca_settings"][0]["root_serial_number"] = "1"
         archive["data"]["ca_settings"][0]["root_fingerprint"] = "tampered"
         archived["serial_number"] = "2"

@@ -526,11 +526,13 @@ def _normalize_ca_certificate_metadata(
 
 
 def _validate_archived_ca_certificate_rows(
+    settings: CaSettings,
     certificates: list[CaCertificate],
 ) -> None:
     """Validate every archived certificate row regardless of enabled state.
 
     Args:
+        settings: Reconstructed archive CA settings containing the restored root.
         certificates: Reconstructed archive certificate rows to validate.
 
     Raises:
@@ -606,7 +608,17 @@ def _validate_archived_ca_certificate_rows(
                 ) from exc
         if certificate.csr_text:
             try:
-                x509.load_pem_x509_csr(certificate.csr_text.encode("utf-8"))
+                raw_csr_pem = certificate.csr_text.strip()
+                parsed_csr = x509.load_pem_x509_csr(raw_csr_pem.encode("utf-8"))
+                canonical_csr_pem = parsed_csr.public_bytes(
+                    serialization.Encoding.PEM
+                ).decode("utf-8").strip()
+                if (
+                    raw_csr_pem.count("-----BEGIN CERTIFICATE REQUEST-----") != 1
+                    or "PRIVATE KEY" in raw_csr_pem
+                    or raw_csr_pem != canonical_csr_pem
+                ):
+                    raise ValueError
             except (TypeError, ValueError) as exc:
                 raise ValueError(
                     f"The settings archive CA certificate {label} request is not usable."
@@ -628,6 +640,24 @@ def _validate_archived_ca_certificate_rows(
                 f"The settings archive CA certificate {label} material is invalid: "
                 f"{material_errors[0]}"
             )
+        if not certificate.enabled and certificate.status == "issued":
+            issued_certificate = CaCertificate(
+                common_name=certificate.common_name,
+                certificate_pem=certificate.certificate_pem,
+                private_key_encrypted=certificate.private_key_encrypted,
+                chain_pem=certificate.chain_pem,
+                status=certificate.status,
+                enabled=True,
+            )
+            issued_errors = validate_ca_private_key_material(
+                settings,
+                [issued_certificate],
+            )
+            if issued_errors:
+                raise ValueError(
+                    f"The settings archive CA certificate {label} material is invalid: "
+                    f"{issued_errors[0]}"
+                )
 
 
 def _settings_rows(db: Session) -> list[dict[str, str]]:
@@ -3086,7 +3116,10 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
             optional=True,
         )
 
-    _validate_archived_ca_certificate_rows(archived_ca_certificates)
+    _validate_archived_ca_certificate_rows(
+        archived_ca_settings,
+        archived_ca_certificates,
+    )
     ca_key_errors = validate_ca_private_key_material(
         archived_ca_settings,
         archived_ca_certificates,
