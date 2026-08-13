@@ -9,7 +9,6 @@ from atlaso.app.ui import router as ui_router
 from atlaso.app.web_terminal import management_router as web_terminal_management_router
 from atlaso.app.web_terminal import protocol_router as web_terminal_protocol_router
 
-
 HTTP_METHODS = {"get", "post", "put", "patch", "delete", "head", "options", "trace"}
 LEGACY_DIRECT_APPLY_PATHS = {
     "/api/v1/dns/apply",

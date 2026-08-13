@@ -37,6 +37,7 @@ label on active work.
 2. Create or identify the labeled issue, then describe the intended approach.
 3. Make the smallest focused change and update relevant documentation in the same pull request.
 4. Run focused tests, `git diff --check`, and the repository validation checks.
+   Python changes must also pass the [static-analysis baseline](docs/contribute/python-static-analysis.md).
 5. Update the branch version with `python scripts/version.py bump --base-root /path/to/main-checkout` when required by
    the pull-request version policy. Version sources are discovered independently in the base and target checkouts so an
    intentional package or module rename can still be validated.

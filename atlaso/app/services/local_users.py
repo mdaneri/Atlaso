@@ -9,7 +9,6 @@ from typing import Any
 
 from atlaso.app.models import User, utcnow
 
-
 LOCAL_USERS_PASSWORD_POLICY_KEY = "local_users.password_policy.v1"
 LOCAL_USERS_STAGED_CONFIG_PATH = "/var/lib/atlaso/apply/local-users/atlaso-users.json"
 LOCAL_USERS_CONFIG_VERSION = 1

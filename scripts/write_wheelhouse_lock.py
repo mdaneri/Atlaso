@@ -10,7 +10,6 @@ from pathlib import Path
 
 from packaging.utils import canonicalize_name, parse_wheel_filename
 
-
 ROOT = Path(__file__).resolve().parents[1]
 PIN_RE = re.compile(r"^([A-Za-z0-9_.-]+)==([^\s\\]+)")
 

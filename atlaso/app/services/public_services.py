@@ -5,7 +5,14 @@ from __future__ import annotations
 from ipaddress import ip_address
 from typing import Any
 
-from atlaso.app.models import CaSettings, OidcProviderSettings, PhysicalInterface, VcfOfflineDepotSettings, VcfPrivateRegistrySettings, VlanInterface
+from atlaso.app.models import (
+    CaSettings,
+    OidcProviderSettings,
+    PhysicalInterface,
+    VcfOfflineDepotSettings,
+    VcfPrivateRegistrySettings,
+    VlanInterface,
+)
 from atlaso.app.services.ca import CA_DEFAULT_PORTAL_HOSTNAME
 from atlaso.app.services.dnsmasq import split_addresses
 from atlaso.app.services.esxi_pxe import ESXI_PXE_DEFAULT_HOSTNAME
@@ -15,10 +22,11 @@ from atlaso.app.services.vcf_offline_depot import (
     VCF_DEPOT_DEFAULT_HOSTNAME,
     VCF_DEPOT_DEFAULT_STORE_PATH,
     VCF_DEPOT_HTPASSWD_PATH,
-    vcf_depot_endpoint,
 )
-from atlaso.app.services.vcf_private_registry import VCF_REGISTRY_DEFAULT_HOSTNAME, vcf_registry_endpoint
-
+from atlaso.app.services.vcf_private_registry import (
+    VCF_REGISTRY_DEFAULT_HOSTNAME,
+    vcf_registry_endpoint,
+)
 
 PUBLIC_SERVICES_STAGED_CONFIG_PATH = "/var/lib/atlaso/apply/public-services/atlaso-public-services.conf"
 PUBLIC_SERVICES_NGINX_SITE_PATH = "/etc/atlaso/nginx/sites.d/public-services.conf"

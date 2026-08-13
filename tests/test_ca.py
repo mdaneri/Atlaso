@@ -5,7 +5,11 @@ import pytest
 from atlaso.app.config import Settings
 from atlaso.app.models import CaCertificate, CaSettings, utcnow
 from atlaso.app.secrets import decrypt_secret, encrypt_secret
-from atlaso.app.services.ca import ca_certificate_to_dict, ensure_root_ca_material, render_ca_apply_payload
+from atlaso.app.services.ca import (
+    ca_certificate_to_dict,
+    ensure_root_ca_material,
+    render_ca_apply_payload,
+)
 
 
 def test_encrypted_secret_round_trip_and_wrong_key_failure():

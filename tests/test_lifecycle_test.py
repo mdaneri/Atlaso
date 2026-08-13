@@ -154,7 +154,7 @@ def test_set_lifecycle_wan_policy_updates_duplicate_restored_rows():
             """Initialize the fake client."""
             self.patched: list[tuple[str, dict[str, object]]] = []
 
-        def json_request(self, method: str, path: str, json_body=None):  # type: ignore[no-untyped-def]
+        def json_request(self, method: str, path: str, json_body=None):  # type: ignore[no-untyped-def]  # Fake accepts the production client's dynamic payload shape.
             """Return json request.
 
             Args:
@@ -204,7 +204,7 @@ def test_appliance_health_checks_version_before_authentication(monkeypatch):
         """
         base_url = "https://192.0.2.10"
 
-        def request(self, method, path):  # type: ignore[no-untyped-def]
+        def request(self, method, path):  # type: ignore[no-untyped-def]  # Minimal fake models only arguments exercised by this test.
             """Return request.
 
             Args:
@@ -214,7 +214,7 @@ def test_appliance_health_checks_version_before_authentication(monkeypatch):
             calls.append((method, path))
             return 200, "{}", {}
 
-        def json_request(self, method, path):  # type: ignore[no-untyped-def]
+        def json_request(self, method, path):  # type: ignore[no-untyped-def]  # Minimal fake models only arguments exercised by this test.
             """Return json request.
 
             Args:
@@ -227,7 +227,7 @@ def test_appliance_health_checks_version_before_authentication(monkeypatch):
 
     class AnonymousVersionClient:
         """Represent anonymous version client."""
-        def __init__(self, base_url):  # type: ignore[no-untyped-def]
+        def __init__(self, base_url):  # type: ignore[no-untyped-def]  # Minimal fake stores the untyped lifecycle URL.
             """Initialize the anonymous version client.
 
             Args:
@@ -235,7 +235,7 @@ def test_appliance_health_checks_version_before_authentication(monkeypatch):
             """
             assert base_url == FakeClient.base_url
 
-        def json_request(self, method, path):  # type: ignore[no-untyped-def]
+        def json_request(self, method, path):  # type: ignore[no-untyped-def]  # Minimal fake models only arguments exercised by this test.
             """Return json request.
 
             Args:
@@ -335,7 +335,7 @@ def test_web_terminal_check_probes_canonical_browser_planes(monkeypatch):
     class ManagementClient:
         """Represent the management-plane lifecycle client."""
 
-        def request(self, method, path, **kwargs):  # type: ignore[no-untyped-def]
+        def request(self, method, path, **kwargs):  # type: ignore[no-untyped-def]  # Fake accepts the production client's dynamic request options.
             """Return the ready management terminal page.
 
             Args:
@@ -350,7 +350,7 @@ def test_web_terminal_check_probes_canonical_browser_planes(monkeypatch):
     class SiteClient:
         """Represent the selected public-listener lifecycle client."""
 
-        def request(self, method, path, **kwargs):  # type: ignore[no-untyped-def]
+        def request(self, method, path, **kwargs):  # type: ignore[no-untyped-def]  # Fake accepts the production client's dynamic request options.
             """Return the expected public terminal, protocol, and isolation responses.
 
             Args:
@@ -409,7 +409,7 @@ def test_release_database_identity_uses_privileged_appliance_command(monkeypatch
     args = lifecycle.parse_args(["--password", "test", "--ssh-password", "test", "--plan-only"])
     captured: dict[str, str] = {}
 
-    def fake_ssh_command(host, command_args, command, *, role):  # type: ignore[no-untyped-def]
+    def fake_ssh_command(host, command_args, command, *, role):  # type: ignore[no-untyped-def]  # Fake mirrors the heterogeneous integration helper signature.
         """Return fake ssh command.
 
         Args:
@@ -490,7 +490,7 @@ def test_apply_units_requires_and_submits_esx_format_confirmation(monkeypatch):
             """Initialize the fake client."""
             self.form = []
 
-        def request(self, method, path, **kwargs):  # type: ignore[no-untyped-def]
+        def request(self, method, path, **kwargs):  # type: ignore[no-untyped-def]  # Fake accepts the production client's dynamic request options.
             """Return request.
 
             Args:
@@ -505,7 +505,7 @@ def test_apply_units_requires_and_submits_esx_format_confirmation(monkeypatch):
             self.form = kwargs["form"]
             return 202, json.dumps({"job_id": "job-1", "status_url": "/tasks/job-1/status"}), {}
 
-        def json_request(self, method, path, **_kwargs):  # type: ignore[no-untyped-def]
+        def json_request(self, method, path, **_kwargs):  # type: ignore[no-untyped-def]  # Fake accepts the production client's dynamic request options.
             """Return json request.
 
             Args:

@@ -18,7 +18,6 @@ from atlaso.app.services.vcf_sddc_deployment import (
     validate_ova_manifest,
 )
 
-
 OVF = b"""<?xml version="1.0"?>
 <Envelope xmlns="http://schemas.dmtf.org/ovf/envelope/1">
   <References><File ovf:id="file0" ovf:href="disk.vmdk" ovf:size="4" xmlns:ovf="http://schemas.dmtf.org/ovf/envelope/1"/></References>

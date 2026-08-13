@@ -3,6 +3,7 @@
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
+from atlaso.app import web_terminal
 from atlaso.app.models import ApplianceSettings, PhysicalInterface, VlanInterface
 from atlaso.app.services.appliance_settings import (
     normalized_web_terminal_interfaces,
@@ -11,7 +12,6 @@ from atlaso.app.services.appliance_settings import (
     web_terminal_interface_options,
     web_terminal_listener_interfaces,
 )
-from atlaso.app import web_terminal
 
 
 def test_web_terminal_interface_options_require_addressed_non_trunk_interfaces():

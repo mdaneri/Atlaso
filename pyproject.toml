@@ -1,6 +1,6 @@
 [project]
 name = "atlaso"
-version = "0.9.117"
+version = "0.9.118"
 description = "Atlaso supports POC, lab, and test environments by simplifying deployment, maintenance, and validation."
 readme = "README.md"
 license = "MIT"
@@ -34,9 +34,11 @@ atlaso-worker = "atlaso.app.worker:main"
 dev = [
   "httpx>=0.27.2",
   "httpx2>=2.5.0",
+  "mypy==2.3.0",
   "pre-commit>=4.2.0",
   "pytest>=8.3.3",
   "pytest-asyncio>=0.24.0",
+  "ruff==0.16.1",
 ]
 
 [build-system]
@@ -57,4 +59,31 @@ addopts = "-q"
 filterwarnings = [
   "error::DeprecationWarning",
   "error::PendingDeprecationWarning",
+]
+
+[tool.ruff]
+target-version = "py314"
+extend-exclude = [
+  "VCFDT",
+  "third_party",
+  "vcfDownloadTool",
+]
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "B", "BLE", "I"]
+ignore = [
+  # FastAPI dependency injection intentionally calls Depends, Form, and similar
+  # factories in function defaults.
+  "B008",
+]
+
+[tool.mypy]
+python_version = "3.14"
+strict = true
+show_error_codes = true
+warn_unused_configs = true
+files = [
+  "atlaso/app/services/identity_credentials.py",
+  "atlaso/app/services/interface_updates.py",
+  "atlaso/app/services/service_registry.py",
 ]

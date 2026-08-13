@@ -10,7 +10,6 @@ from pathlib import PurePosixPath
 from atlaso.app.models import NtpSettings
 from atlaso.app.services.dnsmasq import split_addresses, split_interfaces, split_servers
 
-
 NTP_DEFAULT_HOSTNAME = "ntp.atlaso.internal"
 NTP_DEFAULT_UPSTREAM_SOURCE_ROWS: list[dict[str, object]] = [
     {
@@ -147,7 +146,7 @@ def parse_ntp_source(value: str) -> tuple[str, int | None, bool]:
     except ValueError:
         normalized_host = normalize_hostname(host)
         if not HOSTNAME_PATTERN.fullmatch(normalized_host):
-            raise ValueError("host must be an IPv4 address, IPv6 address, or fully qualified DNS name")
+            raise ValueError("host must be an IPv4 address, IPv6 address, or fully qualified DNS name") from None
         return normalized_host, port, False
     return str(parsed_host), port, True
 

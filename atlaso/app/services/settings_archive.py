@@ -32,8 +32,8 @@ from atlaso.app.models import (
     EsxStorageVolume,
     FirewallRule,
     FirewallSettings,
-    KmsSettings,
     Job,
+    KmsSettings,
     LdapGroup,
     LdapGroupMembership,
     LdapOrganization,
@@ -44,10 +44,10 @@ from atlaso.app.models import (
     NatRule,
     NetworkBootEnvironment,
     NtpSettings,
-    OidcClient,
-    OidcClientRedirectUri,
     OidcAuthorizationCode,
     OidcAuthorizationTransaction,
+    OidcClient,
+    OidcClientRedirectUri,
     OidcGroupMapping,
     OidcProviderSettings,
     OidcSigningKey,
@@ -55,25 +55,30 @@ from atlaso.app.models import (
     PhysicalInterface,
     Route,
     RoutingRule,
+    Schedule,
     ServiceState,
     Setting,
-    Schedule,
     UpdateSource,
     User,
+    Vault,
+    VaultEntry,
     VcfBackupSettings,
     VcfDepotDownloadProfile,
     VcfOfflineDepotSettings,
     VcfPrivateRegistrySettings,
     VcfRegistryBundle,
-    Vault,
-    VaultEntry,
     VlanInterface,
-    WanPolicy,
     VsphereKeyProvider,
     VsphereTrustedVcenter,
     VsphereTrustedVcenterCertificate,
+    WanPolicy,
 )
-from atlaso.app.seed import NTP_NTS_RESTORATION_SETTING_KEY, SEED_EXAMPLES_SETTING_KEY, seed_initial_data, seed_update_sources
+from atlaso.app.seed import (
+    NTP_NTS_RESTORATION_SETTING_KEY,
+    SEED_EXAMPLES_SETTING_KEY,
+    seed_initial_data,
+    seed_update_sources,
+)
 from atlaso.app.services.dnsmasq import DNS_CONDITIONAL_FORWARDERS_SETTING_KEY
 from atlaso.app.services.esxi_pxe import (
     ESXI_PXE_CUSTOM_VARIABLES_KEY,
@@ -82,8 +87,11 @@ from atlaso.app.services.esxi_pxe import (
     normalize_host_variables,
 )
 from atlaso.app.services.firewall import FIREWALL_SOURCE_GROUPS_SETTING_KEY
+from atlaso.app.services.ldap import (
+    clear_ldap_recovery_payload,
+    ensure_organization_bind_secret,
+)
 from atlaso.app.services.local_users import LOCAL_USERS_PASSWORD_POLICY_KEY
-from atlaso.app.services.ldap import clear_ldap_recovery_payload, ensure_organization_bind_secret
 from atlaso.app.services.update_sources import UPDATE_SOURCE_KINDS
 from atlaso.app.services.vcf_backups import VCF_BACKUP_DEFAULT_USERNAME
 

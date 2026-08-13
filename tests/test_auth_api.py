@@ -271,7 +271,10 @@ def test_physical_interface_api_atomically_refreshes_ipv4_and_ipv6_dependencies(
         OidcProviderSettings,
         PhysicalInterface,
     )
-    from atlaso.app.services.esxi_pxe import esxi_pxe_boot_settings, save_esxi_pxe_boot_settings
+    from atlaso.app.services.esxi_pxe import (
+        esxi_pxe_boot_settings,
+        save_esxi_pxe_boot_settings,
+    )
     from atlaso.app.services.oidc import OIDC_DNS_RECORD_DESCRIPTION
 
     old_ipv4 = "192.168.50.1"
@@ -598,7 +601,12 @@ def test_physical_interface_api_rejects_inconsistent_esxi_reservation_owner(clie
     from sqlalchemy import select
 
     from atlaso.app.database import SessionLocal
-    from atlaso.app.models import DhcpReservation, DhcpScope, EsxiPxeHost, PhysicalInterface
+    from atlaso.app.models import (
+        DhcpReservation,
+        DhcpScope,
+        EsxiPxeHost,
+        PhysicalInterface,
+    )
 
     with SessionLocal() as db:
         db.query(DhcpScope).delete()
@@ -667,7 +675,12 @@ def test_physical_interface_api_rejects_reservation_dns_collision(client):
     from sqlalchemy import select
 
     from atlaso.app.database import SessionLocal
-    from atlaso.app.models import DhcpReservation, DhcpScope, DnsRecord, PhysicalInterface
+    from atlaso.app.models import (
+        DhcpReservation,
+        DhcpScope,
+        DnsRecord,
+        PhysicalInterface,
+    )
 
     mac_address = "02:00:00:00:31:73"
     hostname = "collision.atlaso.internal"
@@ -805,7 +818,10 @@ def test_physical_interface_api_rebuilds_pxe_url_for_ipv6_to_ipv4_fallback(clien
 
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import DhcpScope, PhysicalInterface
-    from atlaso.app.services.esxi_pxe import esxi_pxe_boot_settings, save_esxi_pxe_boot_settings
+    from atlaso.app.services.esxi_pxe import (
+        esxi_pxe_boot_settings,
+        save_esxi_pxe_boot_settings,
+    )
 
     with SessionLocal() as db:
         db.query(DhcpScope).delete()
@@ -1435,7 +1451,7 @@ def test_physical_interface_api_rejects_address_removal_with_enabled_dependents(
         interface = db.execute(
             select(PhysicalInterface).where(PhysicalInterface.name == "eth2")
         ).scalar_one()
-        scope = db.execute(select(DhcpScope).where(DhcpScope.name == scope_name)).scalar_one()
+        db.execute(select(DhcpScope).where(DhcpScope.name == scope_name)).scalar_one()
         assert interface.ipv6_enabled is True
         assert interface.ipv6_cidr == "fd00:50::1/64"
         for bound_scope in db.execute(

@@ -18,7 +18,6 @@ from pathlib import Path
 from typing import Any, Callable
 from uuid import uuid4
 
-
 ENV_PATH = Path("/etc/atlaso/atlaso.env")
 
 
@@ -40,21 +39,44 @@ def _load_environment() -> None:
 
 _load_environment()
 
-from sqlalchemy import select
-from sqlalchemy.exc import IntegrityError, OperationalError as SQLAlchemyOperationalError
+from sqlalchemy import (  # noqa: E402 - appliance environment must load before configured imports.
+    select,
+)
+from sqlalchemy.exc import (  # noqa: E402 - appliance environment must load before configured imports.
+    IntegrityError,
+)
+from sqlalchemy.exc import (  # noqa: E402 - appliance environment must load before configured imports.
+    OperationalError as SQLAlchemyOperationalError,
+)
 
-from atlaso.app.audit import record_audit
-from atlaso.app.database import SessionLocal
-from atlaso.app.management_network import (
+from atlaso.app.audit import (  # noqa: E402 - appliance environment must load before configured imports.
+    record_audit,
+)
+from atlaso.app.database import (  # noqa: E402 - appliance environment must load before configured imports.
+    SessionLocal,
+)
+from atlaso.app.management_network import (  # noqa: E402 - appliance environment must load before configured imports.
     ManagementNetworkValidationError,
     validate_ipv4_management_values,
-    validate_ipv6_management_values as validate_shared_ipv6_management_values,
     validate_management_dns_servers,
     validate_management_network,
 )
-from atlaso.app.models import ApplianceSettings, FirewallSettings, Job, JobStatus, JobStep, PhysicalInterface, utcnow
-from atlaso.app.services.dnsmasq import join_servers, split_servers
-
+from atlaso.app.management_network import (  # noqa: E402 - appliance environment must load before configured imports.
+    validate_ipv6_management_values as validate_shared_ipv6_management_values,
+)
+from atlaso.app.models import (  # noqa: E402 - appliance environment must load before configured imports.
+    ApplianceSettings,
+    FirewallSettings,
+    Job,
+    JobStatus,
+    JobStep,
+    PhysicalInterface,
+    utcnow,
+)
+from atlaso.app.services.dnsmasq import (  # noqa: E402 - appliance environment must load before configured imports.
+    join_servers,
+    split_servers,
+)
 
 HELPER_PATH = Path("/opt/atlaso/bin/atlaso-helper")
 PHOTON_RELEASE_PATH = Path("/etc/photon-release")
@@ -2365,7 +2387,9 @@ class CursesConsole:
                 )
                 if confirm == 0:
                     self._apply_action(
-                        lambda: configure_management(
+                        lambda ipv4_method=ipv4_method, cidr=cidr, gateway=gateway,
+                        ipv6_mode=ipv6_mode, ipv6_cidr=ipv6_cidr,
+                        ipv6_gateway=ipv6_gateway, dns_servers=dns_servers: configure_management(
                             ipv4_method,
                             cidr,
                             gateway,
@@ -2387,7 +2411,10 @@ class CursesConsole:
                 )
                 confirm = self._dialog(firewall_label, [warning], [firewall_label, "Cancel"])
                 if confirm == 0:
-                    self._apply_action(lambda: configure_firewall(enabling_firewall), f"{firewall_label} completed")
+                    self._apply_action(
+                        lambda enabling_firewall=enabling_firewall: configure_firewall(enabling_firewall),
+                        f"{firewall_label} completed",
+                    )
             elif choice == 2:
                 enabling = not status.maintenance_isolation
                 warning = (
@@ -2401,7 +2428,10 @@ class CursesConsole:
                     [isolation_label, "Cancel"],
                 )
                 if confirm == 0:
-                    self._apply_action(lambda: set_maintenance_isolation(enabling), f"{isolation_label} completed")
+                    self._apply_action(
+                        lambda enabling=enabling: set_maintenance_isolation(enabling),
+                        f"{isolation_label} completed",
+                    )
 
     def review_first_boot_network(self, review: FirstBootNetworkReview) -> None:
         """Reuse the management form for unauthenticated first-boot correction.

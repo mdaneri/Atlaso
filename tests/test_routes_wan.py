@@ -1,7 +1,11 @@
 """Test routes wan behavior."""
 
 from atlaso.app.models import NatRule, Route, RoutingRule
-from atlaso.app.services.routes_wan import render_wan_config, validate_nat_source, validate_wan_state
+from atlaso.app.services.routes_wan import (
+    render_wan_config,
+    validate_nat_source,
+    validate_wan_state,
+)
 
 
 def test_render_wan_config_uses_ipv6_route_commands():

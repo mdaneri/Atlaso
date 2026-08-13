@@ -131,6 +131,8 @@ jobs:
       - name: Enforce the exact appliance dependency lock
         run: python scripts/check_appliance_lock.py
       - run: python scripts/check_repo.py
+      - name: Enforce Python static-analysis baseline
+        run: python scripts/check_python_static_analysis.py
       - name: Validate systemd and sudoers assets
         run: python scripts/check_deployment_assets.py --mode linux
 

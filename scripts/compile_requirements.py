@@ -18,7 +18,6 @@ from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from urllib.parse import urlsplit
 
-
 ROOT = Path(__file__).resolve().parents[1]
 EXPECTED_PYTHON = (3, 14)
 EXPECTED_PIP_TOOLS = "7.6.0"

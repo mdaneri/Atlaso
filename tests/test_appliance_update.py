@@ -400,9 +400,8 @@ def test_appliance_update_check_runs_every_child_after_failure(client, monkeypat
         monkeypatch: Pytest fixture used to replace dependencies for the test.
     """
     import atlaso.app.ui as ui
-
     from atlaso.app.database import SessionLocal
-    from atlaso.app.models import Job, JobStep, JobStatus
+    from atlaso.app.models import Job, JobStatus, JobStep
     from atlaso.app.services.appliance_update import ensure_appliance_update_job_steps
     from atlaso.app.worker import run_worker_once
 
@@ -475,9 +474,8 @@ def test_appliance_update_install_skips_photon_after_earlier_failure(client, mon
         monkeypatch: Pytest fixture used to replace dependencies for the test.
     """
     import atlaso.app.ui as ui
-
     from atlaso.app.database import SessionLocal
-    from atlaso.app.models import Job, JobStep, JobStatus
+    from atlaso.app.models import Job, JobStatus, JobStep
     from atlaso.app.services.appliance_update import ensure_appliance_update_job_steps
     from atlaso.app.worker import run_worker_once
 
@@ -545,7 +543,10 @@ def test_appliance_update_install_skips_photon_after_earlier_failure(client, mon
 
 def test_appliance_update_service_version_helpers():
     """Verify that appliance update service version helpers."""
-    from atlaso.app.services.appliance_update import redact_url_userinfo, version_with_git
+    from atlaso.app.services.appliance_update import (
+        redact_url_userinfo,
+        version_with_git,
+    )
 
     assert version_with_git("0.1.0", "abcdef1234567890") == "0.1.0+gabcdef123456"
     assert version_with_git("0.1.0+gold", "abcdef") == "0.1.0+gabcdef"
@@ -760,7 +761,6 @@ def test_source_sync_helper_results_are_promoted_to_task_result(client, monkeypa
         monkeypatch: Pytest fixture used to replace dependencies for the test.
     """
     import atlaso.app.ui as ui
-
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import UpdateSource
     from atlaso.app.services.update_sources import effective_update_settings
@@ -913,8 +913,8 @@ def test_software_source_and_managed_module_lifecycle(client):
         f'id="delete-update-source-{source_id}"', 1
     )[0]
     assert 'data-update-source-mode="edit"' in private_source_panel
-    assert f'aria-label="Edit PrivateGallery repository"' in private_source_panel
-    assert f'aria-label="Delete PrivateGallery repository"' in private_source_panel
+    assert 'aria-label="Edit PrivateGallery repository"' in private_source_panel
+    assert 'aria-label="Delete PrivateGallery repository"' in private_source_panel
     assert private_source_panel.index('class="source-readonly-heading"') < private_source_panel.index(
         'class="settings-list source-readonly-list"'
     )
@@ -1099,7 +1099,10 @@ def test_source_credentials_use_protected_runtime_channel_without_manifest_discl
     from atlaso.app.models import UpdateSource
     from atlaso.app.secrets import encrypt_secret
     from atlaso.app.services.appliance_update import render_update_manifest
-    from atlaso.app.services.update_sources import effective_update_settings, update_source_credentials
+    from atlaso.app.services.update_sources import (
+        effective_update_settings,
+        update_source_credentials,
+    )
 
     client.get("/login")
     with SessionLocal() as db:

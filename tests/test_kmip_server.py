@@ -39,12 +39,21 @@ from atlaso.app.kmip.server import (
     _load_secrets_key,
     build_server,
     certificate_sha256,
-    main as kmip_main,
     parse_config,
 )
+from atlaso.app.kmip.server import (
+    main as kmip_main,
+)
 from atlaso.app.kmip.store import WrappedKeyStore
-from atlaso.app.kmip.ttlv import decode, encode, enumeration, integer, structure, text_string
 from atlaso.app.kmip.trace import validate_trace
+from atlaso.app.kmip.ttlv import (
+    decode,
+    encode,
+    enumeration,
+    integer,
+    structure,
+    text_string,
+)
 
 
 def test_load_secrets_key_from_systemd_credential(monkeypatch, tmp_path):
@@ -654,8 +663,8 @@ def test_configuration_rejects_coerced_json_types(
     }
     target: object = document
     for segment in path[:-1]:
-        target = target[segment]  # type: ignore[index]
-    target[path[-1]] = value  # type: ignore[index]
+        target = target[segment]  # type: ignore[index]  # Test helper traverses a deliberately heterogeneous payload.
+    target[path[-1]] = value  # type: ignore[index]  # Test helper mutates a deliberately heterogeneous payload.
 
     with pytest.raises(ConfigurationError, match=message):
         parse_config(document)
@@ -795,7 +804,7 @@ def test_tcp_server_selects_ipv6_address_family_before_binding(monkeypatch, tmp_
         interop_trace_path=None,
     )
 
-    KmipTcpServer(config, object(), object())  # type: ignore[arg-type]
+    KmipTcpServer(config, object(), object())  # type: ignore[arg-type]  # Constructor validation occurs before dependency use.
 
     assert observed["family"] == socket.AF_INET6
     assert observed["address"] == ("::1", 0)

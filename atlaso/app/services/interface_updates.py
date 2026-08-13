@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from ipaddress import ip_address, ip_interface, ip_network
+from ipaddress import IPv4Network, IPv6Network, ip_address, ip_interface, ip_network
 from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 
@@ -19,8 +19,8 @@ from atlaso.app.models import (
     DhcpSettings,
     DnsRecord,
     DnsSettings,
-    EsxNfsShare,
     EsxiPxeHost,
+    EsxNfsShare,
     KmsSettings,
     LdapSettings,
     NtpSettings,
@@ -50,6 +50,9 @@ from atlaso.app.services.dnsmasq import (
     split_interfaces,
     split_servers,
 )
+from atlaso.app.services.esx_storage import (
+    normalize_families as normalize_esx_storage_families,
+)
 from atlaso.app.services.esxi_pxe import (
     ESXI_PXE_DEFAULT_HOSTNAME,
     ESXI_PXE_HOST_MANAGED_DESCRIPTION_PREFIX,
@@ -59,13 +62,11 @@ from atlaso.app.services.esxi_pxe import (
     esxi_pxe_boot_settings,
     save_esxi_pxe_boot_settings,
 )
-from atlaso.app.services.esx_storage import normalize_families as normalize_esx_storage_families
 from atlaso.app.services.networking import (
     normalize_interface_mode,
     normalize_interface_role,
     normalize_ipv4_method,
 )
-
 
 DependentDnsRefresher = Callable[[Session, str | None], list[str]]
 
@@ -236,7 +237,7 @@ def _service_bind_options(db: Session) -> list[dict[str, Any]]:
     return options
 
 
-def _network_from_cidr(value: str | None):
+def _network_from_cidr(value: str | None) -> IPv4Network | IPv6Network | None:
     """Return a parsed network for a CIDR value when valid.
 
     Args:
@@ -294,7 +295,11 @@ def _derive_addresses_for_interfaces(
     return join_addresses(derived)
 
 
-def _rebase_address_in_network(value: str, old_network, new_network) -> str:
+def _rebase_address_in_network(
+    value: str,
+    old_network: IPv4Network | IPv6Network | None,
+    new_network: IPv4Network | IPv6Network | None,
+) -> str:
     """Preserve an address offset while moving it between equivalent networks.
 
     Args:
@@ -316,7 +321,10 @@ def _rebase_address_in_network(value: str, old_network, new_network) -> str:
     return str(ip_address(int(new_network.network_address) + offset))
 
 
-def _address_in_network(value: str | None, network) -> bool:
+def _address_in_network(
+    value: str | None,
+    network: IPv4Network | IPv6Network | None,
+) -> bool:
     """Return whether an address belongs to a parsed network.
 
     Args:
@@ -449,7 +457,7 @@ def refresh_interface_dependent_addresses(
         if label not in changed:
             changed.append(label)
 
-    def update_listener_rows(model, label: str) -> None:
+    def update_listener_rows(model: type[Any], label: str) -> None:
         """Refresh listeners stored by one dependent settings model.
 
         Args:
@@ -511,7 +519,10 @@ def refresh_interface_dependent_addresses(
     ).scalars().all()
     terminal_names = {
         str(option.get("name") or "")
-        for option in web_terminal_interface_options(physical_interfaces, vlan_interfaces)
+        for option in web_terminal_interface_options(
+            list(physical_interfaces),
+            list(vlan_interfaces),
+        )
         if option.get("name") and option.get("web_terminal_allowed") is not False
     }
     terminal_replacements = selection_replacements(terminal_names)
@@ -675,18 +686,23 @@ def refresh_interface_dependent_addresses(
                 stale_addresses.add(scope_site_address)
                 if new_address and scope_site_address != new_address:
                     dependent_address_replacements[scope_site_address] = new_address
-        if new_prefixes[family] is not None and (
+        new_prefix = new_prefixes[family]
+        if new_prefix is not None and (
             not getattr(scope, "prefix_length", None)
             or getattr(scope, "prefix_length", None)
             == (old_network.prefixlen if old_network else None)
         ):
-            scope.prefix_length = int(new_prefixes[family])
+            scope.prefix_length = int(new_prefix)
         if isinstance(scope, DhcpScope) and not parsed_range_errors and parsed_ranges:
             resulting_scope_network = _network_from_cidr(
                 f"{scope.site_address}/{scope.prefix_length}"
             )
             range_source_network = scope_network or old_network
             range_target_network = resulting_scope_network or new_network
+            if range_target_network is None:
+                raise PhysicalInterfaceUpdateError(
+                    f"DHCP scope {scope.name} no longer has a valid target network."
+                )
             rebased_ranges: list[str] = []
             for start_address, end_address in parsed_ranges:
                 rebased_start = _rebase_address_in_network(
@@ -908,7 +924,7 @@ def refresh_interface_dependent_addresses(
             if managed_host_id is not None
             else generated_description
         )
-        record_values = reservation_dns_record(reservation, scope_rows)
+        record_values = reservation_dns_record(reservation, list(scope_rows))
         if record_values is None:
             continue
         expected_hostname, expected_type, _expected_address = record_values
@@ -1240,6 +1256,10 @@ def update_physical_interface_desired_state(
         if role_value != "management" or not ipv6_enabled_value or not ipv6_value:
             ipv6_gateway_value = ""
         if ipv6_gateway_value:
+            if not ipv6_value:
+                raise PhysicalInterfaceUpdateError(
+                    "ipv6_cidr is required when an IPv6 gateway is configured."
+                )
             try:
                 parsed_ipv6_gateway = ip_address(ipv6_gateway_value)
                 parsed_ipv6_interface = ip_interface(ipv6_value)

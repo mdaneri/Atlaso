@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 import logging
-from logging.handlers import RotatingFileHandler, SysLogHandler
 import re
 import socket
+from dataclasses import dataclass
+from logging.handlers import RotatingFileHandler, SysLogHandler
 from pathlib import Path
 from typing import Any
 
@@ -339,7 +339,7 @@ def _ensure_file_handler(log_path: Path, level: int) -> None:
     handler = RotatingFileHandler(log_path, maxBytes=2 * 1024 * 1024, backupCount=3, encoding="utf-8")
     handler.setFormatter(FORMATTER)
     handler.setLevel(level)
-    handler._atlaso_file_handler = True  # type: ignore[attr-defined]
+    handler._atlaso_file_handler = True  # type: ignore[attr-defined]  # Atlaso adds a private runtime marker to Handler.
     root_logger.addHandler(handler)
 
 
@@ -361,7 +361,7 @@ def _ensure_syslog_handler(preferences: LoggingPreferences) -> bool:
     handler = SysLogHandler(address=(preferences.syslog_host, preferences.syslog_port), facility=facility, socktype=socktype)
     handler.setFormatter(logging.Formatter("atlaso %(levelname)s [%(name)s] %(message)s"))
     handler.setLevel(_level_number(preferences.syslog_level))
-    handler._atlaso_syslog_handler = True  # type: ignore[attr-defined]
+    handler._atlaso_syslog_handler = True  # type: ignore[attr-defined]  # Atlaso adds a private runtime marker to Handler.
     logging.getLogger().addHandler(handler)
     return True
 

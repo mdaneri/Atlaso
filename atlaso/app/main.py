@@ -1,8 +1,8 @@
 """Construct the FastAPI application and manage process lifecycle hooks."""
 
-from contextlib import asynccontextmanager
 import asyncio
 import logging
+from contextlib import asynccontextmanager
 from pathlib import Path
 from uuid import uuid4
 
@@ -18,19 +18,19 @@ from atlaso.app.api.network_boot import router as network_boot_api_router
 from atlaso.app.api.v1 import router as api_v1_router
 from atlaso.app.config import get_settings
 from atlaso.app.database import SessionLocal, init_db
-from atlaso.app.operational_logging import configure_operational_logging
 from atlaso.app.oidc import admin_router as oidc_admin_router
 from atlaso.app.oidc import public_router as oidc_public_router
 from atlaso.app.openapi import API_VALIDATION_RESPONSES, OPENAPI_TAGS
+from atlaso.app.operational_logging import configure_operational_logging
 from atlaso.app.problem import install_problem_handlers, redacted_request_path
 from atlaso.app.seed import seed_initial_data
 from atlaso.app.services.monitoring import start_monitor_sampler
-from atlaso.app.services.networking import sync_host_physical_interfaces
 from atlaso.app.services.network_boot import (
     ensure_environment_rows,
     recover_interrupted_network_boot_media_swaps,
     register_bundled_inventory_media,
 )
+from atlaso.app.services.networking import sync_host_physical_interfaces
 from atlaso.app.services.oidc import validate_enabled_provider_at_startup
 from atlaso.app.ui import (
     active_appliance_apply_job,
@@ -58,8 +58,8 @@ from atlaso.app.ui_routes import (
     public_ui_path,
 )
 from atlaso.app.web_terminal import management_router as web_terminal_management_router
-from atlaso.app.web_terminal import public_router as web_terminal_public_router
 from atlaso.app.web_terminal import protocol_router as web_terminal_protocol_router
+from atlaso.app.web_terminal import public_router as web_terminal_public_router
 
 APP_DIR = Path(__file__).resolve().parent
 STATIC_DIR = APP_DIR / "static"

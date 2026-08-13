@@ -15,7 +15,6 @@ from sqlalchemy.orm import Session, selectinload
 from atlaso.app.models import Vault, VaultEntry, utcnow
 from atlaso.app.secrets import decrypt_secret, encrypt_secret
 
-
 VAULT_KEY_PATTERN = re.compile(r"^[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)*$")
 VAULT_SECRET_TYPES = {"vcf_password", "esx_password"}
 VAULT_SOURCE_TYPES = {"manual", "sddc_manager", "vcf_installer"}
@@ -137,7 +136,7 @@ def normalize_vault_uris(values: list[str] | tuple[str, ...]) -> tuple[str, ...]
         if parsed.username is not None or parsed.password is not None:
             raise ValueError("Vault URIs must not contain credentials; use the entry username and password.")
         try:
-            parsed.port
+            _ = parsed.port
         except ValueError as exc:
             raise ValueError("Vault URI ports must be valid numbers.") from exc
         normalized_value = urlunsplit((scheme, parsed.netloc, parsed.path, parsed.query, parsed.fragment))

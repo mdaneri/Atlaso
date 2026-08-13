@@ -280,7 +280,13 @@ def test_dashboard_attention_priority_pending_separation_and_false_positive_filt
     """
     from atlaso.app import ui
     from atlaso.app.database import SessionLocal
-    from atlaso.app.models import Job, JobStatus, PhysicalInterface, ServiceState, utcnow
+    from atlaso.app.models import (
+        Job,
+        JobStatus,
+        PhysicalInterface,
+        ServiceState,
+        utcnow,
+    )
 
     monkeypatch.setattr(
         ui,

@@ -1,22 +1,21 @@
 """Test appliance helper behavior."""
 
 import base64
+import hashlib
 import importlib.machinery
 import importlib.util
 import io
 import json
 import os
-import subprocess
-import tarfile
-import hashlib
 import re
 import stat
+import subprocess
+import tarfile
 from ipaddress import ip_network
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-
 
 HELPER_PATH = Path(__file__).resolve().parents[1] / "scripts" / "appliance" / "atlaso-helper"
 
@@ -3538,7 +3537,6 @@ def test_kms_helper_validates_disabled_staged_config(monkeypatch, tmp_path):
     apply_dir.mkdir(parents=True)
     state_dir.mkdir(parents=True)
     config_path = apply_dir / "server.json"
-    trust_path = apply_dir / "client-trust.pem"
     config_path.write_text(kms_config_text(managed_root, enabled=False, database_path=state_dir / "store.db"), encoding="utf-8")
 
     monkeypatch.setattr(helper, "KMS_APPLY_DIR", apply_dir)

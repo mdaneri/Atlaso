@@ -1,7 +1,16 @@
 """Test public services behavior."""
 
-from atlaso.app.models import CaSettings, OidcProviderSettings, PhysicalInterface, VcfOfflineDepotSettings, VcfPrivateRegistrySettings
-from atlaso.app.services.public_services import public_service_entries, render_public_services_nginx_config
+from atlaso.app.models import (
+    CaSettings,
+    OidcProviderSettings,
+    PhysicalInterface,
+    VcfOfflineDepotSettings,
+    VcfPrivateRegistrySettings,
+)
+from atlaso.app.services.public_services import (
+    public_service_entries,
+    render_public_services_nginx_config,
+)
 
 
 def test_public_service_entries_scope_services_to_matching_address():
