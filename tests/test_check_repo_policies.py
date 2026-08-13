@@ -97,6 +97,33 @@ def test_agent_policy_gate_rejects_missing_task_title_traceability(
     )
 
 
+def test_agent_policy_gate_rejects_missing_task_title_capability_fallback(
+    tmp_path: Path,
+) -> None:
+    """Verify that task title traceability remains capability-aware.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    write_policy_files(tmp_path)
+    agents_path = tmp_path / "AGENTS.md"
+    agents_path.write_text(
+        agents_path.read_text(encoding="utf-8").replace(
+            "supported task-title controls are unavailable", ""
+        ),
+        encoding="utf-8",
+    )
+
+    findings = check_agent_policy_gate(tmp_path)
+
+    assert len(findings) == 1
+    assert findings[0].path == agents_path
+    assert findings[0].message == (
+        "required agent policy marker is missing: "
+        "supported task-title controls are unavailable"
+    )
+
+
 def test_agent_policy_gate_rejects_missing_entry_point(tmp_path: Path) -> None:
     """Verify that agent policy gate rejects missing entry point.
 

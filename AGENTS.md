@@ -14,11 +14,16 @@ for maintainer direction if a policy is missing, conflicting, or unclear.
 
 ## Codex Task Title Traceability
 
-After identifying or creating the linked GitHub issue, rename the current Codex task to
-`Short description · Issue #<issue>`. After opening or discovering the pull request, rename it again to
-`Short description · Issue #<issue> · PR #<pr>`. Keep the short description concise and stable, and omit only a
-segment whose identifier does not exist yet. When one task spans multiple items, list every identifier in its segment,
-for example `Short description · Issues #123, #124 · PRs #456, #457`.
+When the current Codex runtime exposes supported task-title controls, use them after identifying or creating the linked
+GitHub issue to rename the current task to `Short description · Issue #<issue>`. After opening or discovering the pull
+request, rename it again to `Short description · Issue #<issue> · PR #<pr>`. Keep the short description concise and
+stable, and omit only a segment whose identifier does not exist yet. When one task spans multiple items, list every
+identifier in its segment, for example `Short description · Issues #123, #124 · PRs #456, #457`.
+
+When supported task-title controls are unavailable, or the runtime does not have a mutable Codex task, continue without
+blocking on the rename. Include every linked issue and pull-request identifier in the first progress update and final
+response whenever the runtime provides those reporting surfaces. Do not invent or depend on an undocumented CLI
+fallback.
 
 ## Mandatory UI Design Guide Gate
 

@@ -94,6 +94,8 @@ REQUIRED_POLICY_MARKERS = {
     Path("AGENTS.md"): (
         "## Mandatory Agent Startup Gate",
         "## Codex Task Title Traceability",
+        "Short description · Issue #<issue> · PR #<pr>",
+        "supported task-title controls are unavailable",
         "## Mandatory UI Design Guide Gate",
         "CONTRIBUTING.md",
         "CODE_OF_CONDUCT.md",
