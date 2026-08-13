@@ -1698,6 +1698,14 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
             )
         ):
             raise ValueError
+        raw_firewall_source_group_ids = [
+            str(group.get("id") or "")
+            for group in firewall_source_groups_payload.get("groups", [])
+        ]
+        if len(raw_firewall_source_group_ids) != len(
+            set(raw_firewall_source_group_ids)
+        ):
+            raise ValueError
         firewall_source_groups = firewall_source_group_state(
             firewall_source_groups_json,
             {},
@@ -1874,6 +1882,26 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
         ),
         "",
     )
+    for raw_line in conditional_forwarders.splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if "=" in line:
+            domain, server_text = line.split("=", 1)
+        else:
+            parts = line.split(None, 1)
+            if len(parts) != 2:
+                raise ValueError(
+                    "The settings archive DNS conditional forwarders state is invalid."
+                )
+            domain, server_text = parts
+        servers = server_text.split(",")
+        if not domain.strip().strip(".") or not servers or any(
+            not server.strip() for server in servers
+        ):
+            raise ValueError(
+                "The settings archive DNS conditional forwarders state is invalid."
+            )
     dns_errors = validate_dns_settings(
         DnsSettings(**_model_kwargs_with_scalar_defaults(DnsSettings, data["dns_settings"][0])),
         [

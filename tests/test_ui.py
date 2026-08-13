@@ -6224,8 +6224,8 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
     )
     duplicate_setting = deepcopy(archive)
     duplicate_setting["data"]["settings"] = [
-        {"key": "dns.conditional_forwarders", "value": "[]"},
-        {"key": "dns.conditional_forwarders", "value": "[]"},
+        {"key": "dns.conditional_forwarders", "value": ""},
+        {"key": "dns.conditional_forwarders", "value": ""},
     ]
     malformed_password_policy = deepcopy(archive)
     malformed_password_policy["data"]["settings"].append(
@@ -6251,6 +6251,25 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
             "key": "firewall.managed_source_groups",
             "value": '{"groups":null}',
         }
+    )
+    duplicate_firewall_source_group = deepcopy(archive)
+    duplicate_firewall_source_group["data"]["settings"].append(
+        {
+            "key": "firewall.managed_source_groups",
+            "value": json.dumps(
+                {
+                    "groups": [
+                        {"id": "duplicate", "entries": ["192.0.2.0/24"]},
+                        {"id": "duplicate", "entries": ["198.51.100.0/24"]},
+                    ],
+                    "assignments": {},
+                }
+            ),
+        }
+    )
+    malformed_conditional_forwarder = deepcopy(archive)
+    malformed_conditional_forwarder["data"]["settings"].append(
+        {"key": "dns.conditional_forwarders", "value": "corp.example"}
     )
 
     for candidate, message in [
@@ -6370,6 +6389,8 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
         (coerced_password_policy, "field require_uppercase must be a Boolean"),
         (invalid_nts_restoration_marker, "NTPsec NTS restoration marker is invalid"),
         (invalid_firewall_source_groups, "firewall source groups state is invalid"),
+        (duplicate_firewall_source_group, "firewall source groups state is invalid"),
+        (malformed_conditional_forwarder, "DNS conditional forwarders state is invalid"),
     ]:
         with pytest.raises(ValueError, match=message):
             archive_summary(candidate)

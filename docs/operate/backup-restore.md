@@ -48,12 +48,13 @@ upload the CA bundle again and review the registry settings before re-enabling i
 
 Atlaso validates every supplied archive collection, required row field, relationship, and enabled VLAN or static-route
 target before it removes current desired state. Enabled service listener addresses must exactly match the addresses
-derived from their selected interfaces. Because password hashes remain outside settings archives, exported Managed LDAP
-users are disabled and restored archives that try to enable a user without a staged password are rejected. Recover the
-directory passwords and review user enablement before the next global LDAP apply. If validation or a later restore phase
-fails, Atlaso rolls back the database transaction and leaves any separately staged LDAP recovery import metadata and
-in-memory payload available. A successful settings restore or factory reset intentionally clears that staged LDAP
-recovery material.
+derived from their selected interfaces. Firewall source-group identifiers must be unique, and every non-comment DNS
+conditional-forwarder line must include a domain and one or more servers. Because password hashes remain outside
+settings archives, exported Managed LDAP users are disabled and restored archives that try to enable a user without a
+staged password are rejected. Recover the directory passwords and review user enablement before the next global LDAP
+apply. If validation or a later restore phase fails, Atlaso rolls back the database transaction and leaves any
+separately staged LDAP recovery import metadata and in-memory payload available. A successful settings restore or
+factory reset intentionally clears that staged LDAP recovery material.
 
 Certificate and signing-key lifecycle state is restored with the desired state. Atlaso reconstructs CA certificate
 validity from the archived public PEM, preserves CA issue, expiry, and revocation timestamps, and preserves OIDC key
