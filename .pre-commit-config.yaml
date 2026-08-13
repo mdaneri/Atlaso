@@ -20,4 +20,4 @@ repos:
         entry: python scripts/check_python_static_analysis.py
         language: system
         pass_filenames: false
-        files: '(\.py$|^pyproject\.toml$|^scripts/check_python_static_analysis\.py$)'
+        files: '(\.py$|^pyproject\.toml$|^scripts/check_python_static_analysis\.py$|^scripts/appliance/atlaso-(bootstrap-https|helper)$)'

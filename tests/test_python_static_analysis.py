@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import tomllib
 from pathlib import Path
 
@@ -84,6 +85,14 @@ def test_static_analysis_includes_privileged_extensionless_python() -> None:
     checker = (ROOT / "scripts/check_python_static_analysis.py").read_text(
         encoding="utf-8"
     )
+    pre_commit = (ROOT / ".pre-commit-config.yaml").read_text(encoding="utf-8")
+    hook = re.search(
+        r"(?ms)- id: atlaso-python-static-analysis.*?files: '([^']+)'",
+        pre_commit,
+    )
 
     assert '"scripts/appliance/atlaso-bootstrap-https"' in checker
     assert '"scripts/appliance/atlaso-helper"' in checker
+    assert hook is not None
+    assert re.search(hook.group(1), "scripts/appliance/atlaso-bootstrap-https")
+    assert re.search(hook.group(1), "scripts/appliance/atlaso-helper")
