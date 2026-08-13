@@ -381,6 +381,20 @@ ensure_managed_esx_primary_mount() {
   [ "$(findmnt -rn -M "$primary_mount" -o UUID 2>/dev/null || true)" = "$uuid" ] || return 1
 }
 
+valid_atlaso_esx_label() {
+  label="$1"
+  case "$label" in
+    lf-????????????)
+      suffix="${label#lf-}"
+      case "$suffix" in
+        *[!0-9a-f]*) return 1 ;;
+        *) return 0 ;;
+      esac
+      ;;
+    *) return 1 ;;
+  esac
+}
+
 is_managed_esx_storage_disk() {
   disk="$1"
   [ "$(blkid -s TYPE -o value "$disk" 2>/dev/null || true)" = "ext4" ] || return 1
@@ -397,18 +411,13 @@ is_managed_esx_storage_disk() {
   source_type="${claim%%	*}"
   primary_mount="${claim#*	}"
   if [ "$source_type" = "blank_disk" ]; then
+    valid_atlaso_esx_label "$(blkid -s LABEL -o value "$disk" 2>/dev/null || true)" || return 1
     [ "$primary_mount" = "$(managed_esx_primary_mount "$uuid" || true)" ] || return 1
   elif [ "$source_type" = "legacy" ]; then
     label="$(blkid -s LABEL -o value "$disk" 2>/dev/null || true)"
-    case "$label" in
-      lf-????????????)
-        suffix="${label#lf-}"
-        case "$suffix" in
-          *[!0-9a-f]*) return 1 ;;
-        esac
-        [ "$primary_mount" = "$(managed_esx_primary_mount "$uuid" || true)" ] || return 1
-        ;;
-    esac
+    if valid_atlaso_esx_label "$label"; then
+      [ "$primary_mount" = "$(managed_esx_primary_mount "$uuid" || true)" ] || return 1
+    fi
   fi
   [ -n "$primary_mount" ] || return 1
   ensure_managed_esx_primary_mount "$disk" "$uuid" "$primary_mount" || return 1
