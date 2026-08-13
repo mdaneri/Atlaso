@@ -134,6 +134,18 @@ has_holders() {
   return 1
 }
 
+has_open_file_descriptors() {
+  disk="$(readlink -f "$1" 2>/dev/null || true)"
+  [ -n "$disk" ] || return 1
+  for descriptor in /proc/[0-9]*/fd/*; do
+    [ -L "$descriptor" ] || continue
+    if [ "$(readlink -f "$descriptor" 2>/dev/null || true)" = "$disk" ]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
 validate_identity() {
   label="$1"
   tuple="$2"
@@ -157,6 +169,9 @@ validate_identity() {
   [ "$read_only" = "0" ] || fail "$label disk at $stable_path is read-only"
   if has_holders "$resolved"; then
     fail "$label disk at $stable_path has active block holders"
+  fi
+  if has_open_file_descriptors "$resolved"; then
+    fail "$label disk at $stable_path is open by a raw-device process"
   fi
 }
 

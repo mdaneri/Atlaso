@@ -276,13 +276,18 @@ def _run_mount_script(
             "ATLASO_TEST_MKFS_LOG": str(mkfs_log),
         }
     )
-    completed = subprocess.run(
-        ["sh", str(MOUNT_SCRIPT.resolve())],
-        check=False,
-        capture_output=True,
-        text=True,
-        env=env,
-    )
+    open_handles = [Path(str(disk["path"])).open("rb") for disk in disks if disk.get("open_raw")]
+    try:
+        completed = subprocess.run(
+            ["sh", str(MOUNT_SCRIPT.resolve())],
+            check=False,
+            capture_output=True,
+            text=True,
+            env=env,
+        )
+    finally:
+        for handle in open_handles:
+            handle.close()
     calls = [json.loads(line) for line in mkfs_log.read_text(encoding="utf-8").splitlines()] if mkfs_log.exists() else []
     return completed, calls
 
@@ -360,6 +365,7 @@ def test_hyperv_first_boot_uses_fixed_controller_locations(tmp_path: Path):
         "partition_label",
         "read_only",
         "in_use",
+        "raw_open",
         "mounted_elsewhere",
         "destination_occupied",
     ],
@@ -406,6 +412,8 @@ def test_first_boot_fails_before_mkfs_for_unsafe_topology(tmp_path: Path, scenar
         disks[2]["read_only"] = True
     elif scenario == "in_use":
         disks[2]["holders"] = True
+    elif scenario == "raw_open":
+        disks[2]["open_raw"] = True
     elif scenario == "mounted_elsewhere":
         disks[2].update(filesystem="ext4", label="ATLASO_DEPOT", uuid="mounted-depot")
     else:

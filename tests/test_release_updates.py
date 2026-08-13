@@ -940,6 +940,15 @@ def test_release_migrates_boot_safe_configured_mounted_disk_claim(monkeypatch, t
                 "/mnt/operator-existing-ext4",
             ),
         )
+        connection.execute(
+            "insert into esx_storage_volumes values (?, ?, ?, ?, 1)",
+            (
+                "blank_disk",
+                "/dev/disk/by-id/scsi-formatted-older-alias",
+                "aa0a2164-220e-4dbb-acb8-f4215f3e1b1f",
+                "/mnt/atlaso-esx-storage/formatted",
+            ),
+        )
     allowlist = tmp_path / "etc/atlaso/esx-storage-disks.conf"
     monkeypatch.setattr(helper, "ATLASO_DATABASE_PATH", database)
     monkeypatch.setattr(helper, "ESX_STORAGE_DISK_ALLOWLIST_PATH", allowlist)
@@ -959,18 +968,40 @@ def test_release_migrates_boot_safe_configured_mounted_disk_claim(monkeypatch, t
                 "os_related": False,
                 "read_only": False,
                 "persistent_uuid_mount": True,
-            }
+            },
+            {
+                "candidate_type": "mounted_ext4",
+                "type": "disk",
+                "stable_device_id": "/dev/disk/by-id/atlaso-path-pci-0000_03_00_0-scsi-0_0_4_0",
+                "filesystem_type": "ext4",
+                "filesystem_uuid": "aa0a2164-220e-4dbb-acb8-f4215f3e1b1f",
+                "mount_paths": ["/mnt/atlaso-esx-storage/formatted"],
+                "partitions": [],
+                "holders": [],
+                "os_related": False,
+                "read_only": False,
+                "persistent_uuid_mount": True,
+            },
         ],
     )
     monkeypatch.setattr(
         helper,
         "_esx_storage_resolved_by_id_device",
-        lambda value: Path("/dev/sdd")
-        if value in {
-            "/dev/disk/by-id/scsi-older-alias",
-            "/dev/disk/by-id/atlaso-path-pci-0000_03_00_0-scsi-0_0_3_0",
-        }
-        else (_ for _ in ()).throw(ValueError(value)),
+        lambda value: (
+            Path("/dev/sdd")
+            if value
+            in {
+                "/dev/disk/by-id/scsi-older-alias",
+                "/dev/disk/by-id/atlaso-path-pci-0000_03_00_0-scsi-0_0_3_0",
+            }
+            else Path("/dev/sde")
+            if value
+            in {
+                "/dev/disk/by-id/scsi-formatted-older-alias",
+                "/dev/disk/by-id/atlaso-path-pci-0000_03_00_0-scsi-0_0_4_0",
+            }
+            else (_ for _ in ()).throw(ValueError(value))
+        ),
     )
     backups: list[tuple[Path | None, Path]] = []
 
@@ -982,9 +1013,12 @@ def test_release_migrates_boot_safe_configured_mounted_disk_claim(monkeypatch, t
         "/mnt/operator-existing-ext4\n"
     )
     with sqlite3.connect(database) as connection:
-        assert connection.execute("select stable_device_id from esx_storage_volumes").fetchone() == (
-            "/dev/disk/by-id/atlaso-path-pci-0000_03_00_0-scsi-0_0_3_0",
-        )
+        assert connection.execute(
+            "select source_type, stable_device_id from esx_storage_volumes order by source_type"
+        ).fetchall() == [
+            ("blank_disk", "/dev/disk/by-id/atlaso-path-pci-0000_03_00_0-scsi-0_0_4_0"),
+            ("mounted_ext4", "/dev/disk/by-id/atlaso-path-pci-0000_03_00_0-scsi-0_0_3_0"),
+        ]
     assert backups == [(None, allowlist)]
 
 

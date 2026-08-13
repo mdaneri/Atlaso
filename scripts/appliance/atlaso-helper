@@ -10901,8 +10901,8 @@ def _migrate_release_esx_storage_claims(
         if table is None:
             return
         configured = connection.execute(
-            "select stable_device_id, filesystem_uuid, mount_path "
-            "from esx_storage_volumes where source_type = 'mounted_ext4' and applied = 1"
+            "select source_type, stable_device_id, filesystem_uuid, mount_path "
+            "from esx_storage_volumes where source_type in ('mounted_ext4', 'blank_disk') and applied = 1"
         ).fetchall()
     finally:
         connection.close()
@@ -10911,8 +10911,8 @@ def _migrate_release_esx_storage_claims(
 
     inventory = _esx_storage_inventory()
     claims: list[str] = []
-    identity_migrations: list[tuple[str, str, str, str]] = []
-    for stable_id, configured_uuid, configured_mount in configured:
+    identity_migrations: list[tuple[str, str, str, str, str]] = []
+    for source_type, stable_id, configured_uuid, configured_mount in configured:
         mount_path = PurePosixPath(str(configured_mount or ""))
         stored_device = _esx_storage_resolved_by_id_device(str(stable_id or ""))
         matches = [
@@ -10932,9 +10932,10 @@ def _migrate_release_esx_storage_claims(
         values = (str(configured_uuid), migrated_identity, str(mount_path))
         if any(character in value for value in values for character in "\t\r\n"):
             raise ValueError("configured mounted ESX Storage disk has an unsupported identity or mount path")
-        claims.append("\t".join(values))
+        if source_type == "mounted_ext4":
+            claims.append("\t".join(values))
         identity_migrations.append(
-            (migrated_identity, str(stable_id), str(configured_uuid), str(configured_mount))
+            (str(source_type), migrated_identity, str(stable_id), str(configured_uuid), str(configured_mount))
         )
 
     destination = ESX_STORAGE_DISK_ALLOWLIST_PATH
@@ -10949,14 +10950,14 @@ def _migrate_release_esx_storage_claims(
         existing = []
     merged = list(dict.fromkeys([line for line in existing if line.strip()] + claims))
     with sqlite3.connect(ATLASO_DATABASE_PATH) as connection:
-        for migrated_identity, stable_id, configured_uuid, configured_mount in identity_migrations:
+        for source_type, migrated_identity, stable_id, configured_uuid, configured_mount in identity_migrations:
             if migrated_identity == stable_id:
                 continue
             updated = connection.execute(
                 "update esx_storage_volumes set stable_device_id = ? "
-                "where source_type = 'mounted_ext4' and applied = 1 and stable_device_id = ? "
+                "where source_type = ? and applied = 1 and stable_device_id = ? "
                 "and filesystem_uuid = ? and mount_path = ?",
-                (migrated_identity, stable_id, configured_uuid, configured_mount),
+                (migrated_identity, source_type, stable_id, configured_uuid, configured_mount),
             )
             if updated.rowcount != 1:
                 raise ValueError(f"configured mounted ESX Storage disk changed during identity migration: {stable_id}")
