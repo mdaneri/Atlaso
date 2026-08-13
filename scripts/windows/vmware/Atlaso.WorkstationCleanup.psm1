@@ -579,6 +579,10 @@ function Remove-AtlasoWorkstationVmArtifacts {
             -InventoryPath $inventoryPath
     }
 
+    Assert-AtlasoWorkstationRemovalVmxSet `
+        -RemovalRoot $resolvedRemovalRoot `
+        -ValidatedVmxPaths $resolvedVmxPaths
+
     $finalRunningPaths = @(Get-AtlasoWorkstationVmPaths -VmrunPath $VmrunPath -State running)
     $finalRegisteredPaths = @(Get-AtlasoWorkstationRegisteredVmPaths -InventoryPath $inventoryPath -VmrunPath $VmrunPath)
     foreach ($resolvedVmxPath in $resolvedVmxPaths) {
@@ -589,10 +593,6 @@ function Remove-AtlasoWorkstationVmArtifacts {
             throw "VMware Workstation VM state changed before filesystem cleanup; artifacts were preserved: $resolvedVmxPath"
         }
     }
-
-    Assert-AtlasoWorkstationRemovalVmxSet `
-        -RemovalRoot $resolvedRemovalRoot `
-        -ValidatedVmxPaths $resolvedVmxPaths
 
     if (Test-Path -LiteralPath $resolvedRemovalRoot) {
         Remove-Item -LiteralPath $resolvedRemovalRoot -Recurse -Force

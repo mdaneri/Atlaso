@@ -138,7 +138,8 @@ makes the command fail. Registration inventory reads are terminating, so access 
 be interpreted as an empty or partial registered-VM set. VMX identity reads use the same terminating contract, preventing
 a partial file from validating one displayed name while unread content remains unresolved. Cleanup also requires the
 checked `vmrun listRegisteredVM` inventory and `inventory.vmls` snapshot to contain the same VMX filesystem identities,
-so a truncated but readable file cannot masquerade as an empty registration set. When lifecycle
+so a truncated but readable file cannot masquerade as an empty registration set. After the final recursive VMX-set scan,
+cleanup refreshes running and both corroborated registration inventories as its last safety gate before deletion. When lifecycle
 execution and cleanup both fail, the final error reports the original scenario failure together with the cleanup failure
 and preserved path.
 

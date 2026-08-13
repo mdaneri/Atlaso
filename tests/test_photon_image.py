@@ -1622,6 +1622,11 @@ def test_vmware_lifecycle_cleanup_only_removes_existing_lifecycle_vms():
     assert cleanup_module.index("Confirm-AtlasoWorkstationVmInactiveAndUnregistered") < cleanup_module.index(
         "Remove-Item -LiteralPath $resolvedRemovalRoot -Recurse -Force"
     )
+    final_scan = cleanup_module.rindex("Assert-AtlasoWorkstationRemovalVmxSet")
+    final_running_state = cleanup_module.rindex("$finalRunningPaths = @(")
+    final_registered_state = cleanup_module.rindex("$finalRegisteredPaths = @(")
+    recursive_delete = cleanup_module.rindex("Remove-Item -LiteralPath $resolvedRemovalRoot -Recurse -Force")
+    assert final_scan < final_running_state < final_registered_state < recursive_delete
     assert "Atlaso.WorkstationCleanup.psm1" in runner
     assert "Remove-AtlasoWorkstationVmArtifacts" in runner
     assert "Cleanup also failed; VM artifacts were preserved" in runner
