@@ -10913,11 +10913,12 @@ def _migrate_release_esx_storage_claims(
     claims: list[str] = []
     for stable_id, configured_uuid, configured_mount in configured:
         mount_path = PurePosixPath(str(configured_mount or ""))
+        stored_device = _esx_storage_resolved_by_id_device(str(stable_id or ""))
         matches = [
             entry
             for entry in inventory
             if entry.get("candidate_type") == "mounted_ext4"
-            and str(entry.get("stable_device_id") or "") == str(stable_id or "")
+            and _esx_storage_resolved_by_id_device(str(entry.get("stable_device_id") or "")) == stored_device
             and str(entry.get("filesystem_uuid") or "") == str(configured_uuid or "")
             and str(mount_path) in [str(path) for path in entry.get("mount_paths", [])]
         ]
@@ -10926,7 +10927,8 @@ def _migrate_release_esx_storage_claims(
         safety_errors = _esx_storage_mounted_disk_errors(matches[0], mount_path=mount_path)
         if safety_errors:
             raise ValueError(f"configured mounted ESX Storage disk is not boot-safe: {', '.join(safety_errors)}")
-        values = (str(configured_uuid), str(stable_id), str(mount_path))
+        migrated_identity = str(matches[0]["stable_device_id"])
+        values = (str(configured_uuid), migrated_identity, str(mount_path))
         if any(character in value for value in values for character in "\t\r\n"):
             raise ValueError("configured mounted ESX Storage disk has an unsupported identity or mount path")
         claims.append("\t".join(values))
@@ -10943,6 +10945,21 @@ def _migrate_release_esx_storage_claims(
         existing = []
     merged = list(dict.fromkeys([line for line in existing if line.strip()] + claims))
     _write_secret_file(destination, "\n".join(merged) + "\n", 0o644)
+
+
+def _esx_storage_resolved_by_id_device(value: str) -> Path:
+    """Resolve a stable by-id alias to its exact block-device path.
+
+    Args:
+        value: Candidate stable device alias.
+
+    Raises:
+        ValueError: If the alias is not an available `/dev/disk/by-id` link.
+    """
+    identity = Path(value)
+    if not value.startswith("/dev/disk/by-id/") or not identity.exists():
+        raise ValueError(f"configured mounted ESX Storage identity is unavailable: {value}")
+    return identity.resolve(strict=True)
 
 
 def _set_release_maintenance(enabled: bool) -> dict:
@@ -12058,6 +12075,16 @@ def _esx_storage_managed_fstab_lines() -> list[str]:
     return [line for line in match.group("body").splitlines() if line.strip()]
 
 
+def _esx_storage_managed_disk_fstab_lines() -> list[str]:
+    """Return retained UUID/ext4 disk mounts without stale bind entries."""
+    retained: list[str] = []
+    for line in _esx_storage_managed_fstab_lines():
+        fields = line.split()
+        if len(fields) >= 3 and fields[0].startswith("UUID=") and fields[2] == "ext4":
+            retained.append(line)
+    return retained
+
+
 def _esx_storage_write_disk_allowlist(lines: list[str], *, preserve_existing: bool) -> None:
     """Persist exact mounted-disk claims before boot-sensitive host changes.
 
@@ -12147,7 +12174,7 @@ def _esx_storage_apply(payload: dict[str, object]) -> dict[str, object]:
     inventory = _esx_storage_inventory()
     inventory_by_id = {str(item.get("stable_device_id") or ""): item for item in inventory}
     fstab_lines: list[str] = []
-    rollback_safe_fstab_lines = _esx_storage_managed_fstab_lines()
+    rollback_safe_fstab_lines = _esx_storage_managed_disk_fstab_lines()
     disk_allowlist_lines: list[str] = []
     commands: list[list[str]] = []
     volumes_by_id: dict[object, dict[str, object]] = {}
@@ -12229,7 +12256,9 @@ def _esx_storage_apply(payload: dict[str, object]) -> dict[str, object]:
             disk_allowlist_lines.append(f"{fs_uuid}\t{stable_id}\t{mount_path}")
             _esx_storage_write_disk_allowlist(disk_allowlist_lines, preserve_existing=True)
             volume["filesystem_uuid"] = fs_uuid
-    _esx_storage_replace_managed_fstab(fstab_lines)
+    _esx_storage_replace_managed_fstab(
+        list(dict.fromkeys([*rollback_safe_fstab_lines, *fstab_lines]))
+    )
     mount = _command_path("mount")
     if mount is None:
         raise ValueError("mount is required for ESX Storage")
@@ -12281,7 +12310,9 @@ def _esx_storage_apply(payload: dict[str, object]) -> dict[str, object]:
             if bind_result.returncode != 0:
                 raise ValueError(bind_result.stderr.strip() or f"unable to bind {resolved_source} to {bind_path}")
         fstab_lines.append(f"{resolved_source} {bind_path} none bind,nofail,x-systemd.requires-mounts-for={volume_root} 0 0")
-    _esx_storage_replace_managed_fstab(fstab_lines)
+    _esx_storage_replace_managed_fstab(
+        list(dict.fromkeys([*rollback_safe_fstab_lines, *fstab_lines]))
+    )
     _esx_storage_write_runtime_config(payload)
     systemctl = _command_path("systemctl")
     exportfs = _command_path("exportfs")
@@ -12302,7 +12333,7 @@ def _esx_storage_apply(payload: dict[str, object]) -> dict[str, object]:
     else:
         _run([exportfs, "-ua"])
         _run([systemctl, "disable", "--now", "nfs-server.service", "rpcbind.service", "rpcbind.socket"], timeout=120)
-    _esx_storage_write_disk_allowlist(disk_allowlist_lines, preserve_existing=False)
+    _esx_storage_write_disk_allowlist(disk_allowlist_lines, preserve_existing=True)
     return {"status": "applied", "volumes": payload.get("volumes", []), "shares": len(payload.get("shares", [])), "commands": commands}
 
 

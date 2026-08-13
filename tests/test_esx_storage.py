@@ -456,8 +456,8 @@ def test_helper_rejects_mounted_ext4_without_boot_contract():
     ]
 
 
-def test_helper_preserves_validated_disk_claims_until_apply_succeeds(monkeypatch, tmp_path: Path):
-    """Verify that later apply failures cannot leave a mounted disk unclaimed.
+def test_helper_preserves_validated_disk_claims_after_apply_succeeds(monkeypatch, tmp_path: Path):
+    """Verify that removed attached disks retain boot claims after apply succeeds.
 
     Args:
         monkeypatch: Pytest fixture used to replace dependencies for the test.
@@ -475,8 +475,11 @@ def test_helper_preserves_validated_disk_claims_until_apply_succeeds(monkeypatch
         "old-uuid\t/dev/disk/by-id/old\t/mnt/old",
         new_claim,
     ]
-    helper._esx_storage_write_disk_allowlist([new_claim], preserve_existing=False)
-    assert allowlist.read_text(encoding="utf-8") == f"{new_claim}\n"
+    helper._esx_storage_write_disk_allowlist([new_claim], preserve_existing=True)
+    assert allowlist.read_text(encoding="utf-8").splitlines() == [
+        "old-uuid\t/dev/disk/by-id/old\t/mnt/old",
+        new_claim,
+    ]
 
 
 def test_helper_preserves_each_formatted_disk_mount_until_apply_succeeds(monkeypatch, tmp_path: Path):
@@ -492,11 +495,12 @@ def test_helper_preserves_each_formatted_disk_mount_until_apply_succeeds(monkeyp
         "UUID=os-root / ext4 defaults 0 1\n"
         f"{helper.ESX_STORAGE_FSTAB_BEGIN}\n"
         "UUID=old /mnt/old ext4 defaults,nofail 0 2\n"
+        "/mnt/old/share /srv/atlaso/esx-storage/old none bind,nofail 0 0\n"
         f"{helper.ESX_STORAGE_FSTAB_END}\n",
         encoding="utf-8",
     )
     monkeypatch.setattr(helper, "ESX_STORAGE_FSTAB_PATH", fstab)
-    existing = helper._esx_storage_managed_fstab_lines()
+    existing = helper._esx_storage_managed_disk_fstab_lines()
     new_line = "UUID=new /mnt/new ext4 defaults,nofail,x-systemd.device-timeout=30 0 2"
 
     helper._esx_storage_replace_managed_fstab(list(dict.fromkeys([*existing, new_line])))

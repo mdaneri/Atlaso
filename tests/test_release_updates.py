@@ -935,7 +935,7 @@ def test_release_migrates_boot_safe_configured_mounted_disk_claim(monkeypatch, t
             "insert into esx_storage_volumes values (?, ?, ?, ?, 1)",
             (
                 "mounted_ext4",
-                "/dev/disk/by-id/atlaso-path-pci-0000_03_00_0-scsi-0_0_3_0",
+                "/dev/disk/by-id/scsi-older-alias",
                 "3f832583-beec-4be7-969c-92519ea77273",
                 "/mnt/operator-existing-ext4",
             ),
@@ -961,6 +961,16 @@ def test_release_migrates_boot_safe_configured_mounted_disk_claim(monkeypatch, t
                 "persistent_uuid_mount": True,
             }
         ],
+    )
+    monkeypatch.setattr(
+        helper,
+        "_esx_storage_resolved_by_id_device",
+        lambda value: Path("/dev/sdd")
+        if value in {
+            "/dev/disk/by-id/scsi-older-alias",
+            "/dev/disk/by-id/atlaso-path-pci-0000_03_00_0-scsi-0_0_3_0",
+        }
+        else (_ for _ in ()).throw(ValueError(value)),
     )
     backups: list[tuple[Path | None, Path]] = []
 
