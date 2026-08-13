@@ -5,6 +5,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+Import-Module (Join-Path $PSScriptRoot 'Atlaso.WorkstationCleanup.psm1') -Force
 
 if (-not $LabName.StartsWith('AtlasoWorkstationLifecycle')) {
     throw "Refusing VM cleanup for prefix '$LabName'. Cleanup is limited to AtlasoWorkstationLifecycle* VM names."
@@ -36,18 +37,6 @@ function Resolve-VmrunPath {
     throw 'vmrun.exe was not found. Install VMware Workstation Pro or pass -VmrunPath.'
 }
 
-function Get-VmxDisplayName {
-    param([string]$Path)
-
-    $line = Get-Content -LiteralPath $Path |
-        Where-Object { $_ -match '^\s*displayName\s*=' } |
-        Select-Object -First 1
-    if ($line -and $line -match '^\s*displayName\s*=\s*"(.+)"\s*$') {
-        return $Matches[1]
-    }
-    return [System.IO.Path]::GetFileNameWithoutExtension($Path)
-}
-
 $repoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..\..')).Path
 $lifecycleRoot = Join-Path $repoRoot 'test-results\vmware-workstation-lifecycle'
 
@@ -58,17 +47,15 @@ if (-not (Test-Path -LiteralPath $lifecycleRoot)) {
 
 $resolvedLifecycleRoot = (Resolve-Path -LiteralPath $lifecycleRoot).Path
 $resolvedVmrun = Resolve-VmrunPath -Path $VmrunPath
-$runningVmxPaths = @(& $resolvedVmrun -T ws list 2>$null | Select-Object -Skip 1)
 $candidates = @(
     Get-ChildItem -LiteralPath $resolvedLifecycleRoot -Recurse -Filter '*.vmx' -File |
         ForEach-Object {
             $resolvedPath = $_.FullName
-            $displayName = Get-VmxDisplayName -Path $resolvedPath
+            $displayName = Get-AtlasoVmxDisplayName -Path $resolvedPath
             [pscustomobject]@{
                 Path        = $resolvedPath
                 DisplayName = $displayName
                 Directory   = $_.DirectoryName
-                IsRunning   = $runningVmxPaths -contains $resolvedPath
             }
         } |
         Where-Object { $_.DisplayName.StartsWith($LabName) } |
@@ -80,22 +67,24 @@ if (-not $candidates) {
     return
 }
 
-foreach ($candidate in $candidates | Sort-Object -Property DisplayName) {
-    if (-not $candidate.Path.StartsWith($resolvedLifecycleRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
-        throw "Refusing to remove VM outside Workstation lifecycle results: $($candidate.Path)"
-    }
-    if (-not $candidate.DisplayName.StartsWith($LabName)) {
-        throw "Refusing to remove VM '$($candidate.DisplayName)' because it does not start with '$LabName'."
+foreach ($candidateGroup in $candidates | Group-Object -Property Directory) {
+    $groupCandidates = @($candidateGroup.Group | Sort-Object -Property DisplayName)
+    foreach ($candidate in $groupCandidates) {
+        Assert-AtlasoStrictDescendantPath `
+            -ParentPath $resolvedLifecycleRoot `
+            -ChildPath $candidate.Path `
+            -FailureMessage 'Refusing to remove VM outside Workstation lifecycle results'
+        if (-not $candidate.DisplayName.StartsWith($LabName)) {
+            throw "Refusing to remove VM '$($candidate.DisplayName)' because it does not start with '$LabName'."
+        }
     }
 
-    if ($PSCmdlet.ShouldProcess($candidate.DisplayName, 'Stop and remove Workstation lifecycle VM')) {
-        & $resolvedVmrun -T ws stop $candidate.Path hard 2>$null | Out-Null
-        & $resolvedVmrun -T ws unregister $candidate.Path 2>$null | Out-Null
-        if (Test-Path -LiteralPath $candidate.Directory) {
-            Remove-Item -LiteralPath $candidate.Directory -Recurse -Force
-            Write-Host "Removed Workstation lifecycle VM: $($candidate.DisplayName)"
-        } else {
-            Write-Host "Workstation lifecycle VM already removed: $($candidate.DisplayName)"
-        }
+    if ($PSCmdlet.ShouldProcess($candidateGroup.Name, 'Stop, unregister, and remove VMware Workstation lifecycle artifacts')) {
+        Remove-AtlasoWorkstationVmArtifacts `
+            -VmrunPath $resolvedVmrun `
+            -VmxPaths @($groupCandidates.Path) `
+            -RemovalRoot $candidateGroup.Name `
+            -Confirm:$false
+        Write-Host "Removed Workstation lifecycle VM directory: $($candidateGroup.Name)"
     }
 }

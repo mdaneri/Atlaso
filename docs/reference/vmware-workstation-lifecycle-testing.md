@@ -17,6 +17,9 @@ Atlaso can run a VMware Workstation lifecycle lab alongside the Hyper-V lab. The
 artifacts and `vmrun.exe`, then delegates appliance behavior checks to the shared Python lifecycle runner.
 
 Run all Windows commands in PowerShell 7.x (`pwsh`). Windows PowerShell 5.1 (`powershell.exe`) is not supported.
+The single-command wrapper enforces that runtime, resolves the installed `pwsh` application, and launches its lifecycle
+child in PowerShell 7 so the default cleanup path cannot fall back to Windows PowerShell 5.1. A missing `pwsh`
+installation fails before any lifecycle VM is created.
 
 Appliance VMX files set `disk.EnableUUID = "TRUE"` so Photon exposes stable `/dev/disk/by-id` identities. ESX Storage
 blank-disk claims depend on those identities and reject transient `/dev/sdX` names.
@@ -120,6 +123,35 @@ pwsh -ExecutionPolicy Bypass `
   -File scripts/windows/vmware/invoke-lifecycle-test.ps1 `
   -CleanupVmsOnly
 ```
+
+## Cleanup Safety
+
+Workstation cleanup removes a VM directory only after validating that every target VMX is inside the exact
+non-reparse-point artifact root. It reads checked running and registered VM inventories, resolves each canonical absolute
+VMX to its Windows volume and file identity, stops a listed running VM, unregisters a listed registration, and confirms
+that each transition completed before deleting files. Filesystem aliases such as DOS 8.3 or mapped-drive forms therefore
+cannot make a running or registered target appear unrelated. Already-stopped and already-unregistered VMs remain
+idempotent cleanup cases. A nonzero command, malformed (including asymmetrically quoted paths or nonnumeric and
+separator/whitespace-corrupted registration keys) or unresolvable inventory,
+target still listed after an apparently successful transition, or missing VMX preserves the artifact directory and
+makes the command fail. Registration inventory reads are terminating, so access denial or an incomplete I/O read cannot
+be interpreted as an empty or partial registered-VM set. VMX identity reads use the same terminating contract, preventing
+a partial file from validating one displayed name while unread content remains unresolved. Cleanup also requires the
+checked `vmrun listRegisteredVM` inventory and `inventory.vmls` snapshot to contain the same VMX filesystem identities,
+so a truncated but readable file cannot masquerade as an empty registration set. After the final recursive VMX-set scan,
+cleanup refreshes running and both corroborated registration inventories as its last safety gate before deletion. When lifecycle
+execution and cleanup both fail, the final error reports the original scenario failure together with the cleanup failure
+and preserved path.
+
+The read-only Workstation registration inventory may reside beneath a redirected `%APPDATA%` junction or symbolic link.
+The non-reparse-point requirement remains enforced on the artifact root that cleanup recursively deletes.
+Recursive deletion errors are terminating, and cleanup reports success only after confirming that the artifact root is
+absent.
+
+The normal test-VM `-Redeploy` path also requires the exact named VMX and exactly one well-formed, matching
+`displayName`; missing, duplicate, malformed, or conflicting assignments preserve the existing directory.
+`-ResetDataDisks` accepts only strict canonical
+descendants of the selected VM output, so sibling-prefix and reparse-point paths are refused.
 
 ## Normal Test VM
 

@@ -3,10 +3,12 @@ param(
     [Parameter(Mandatory = $true)]
     [string]$VmxPath,
     [string]$VmrunPath = '',
+    [string]$ExpectedName = '',
     [switch]$AllowImageOutputRemoval
 )
 
 $ErrorActionPreference = 'Stop'
+Import-Module (Join-Path $PSScriptRoot 'Atlaso.WorkstationCleanup.psm1') -Force
 
 function Resolve-VmrunPath {
     param([string]$Path)
@@ -29,18 +31,28 @@ $imageOutputRoot = Join-Path $repoRoot 'image\vmware-workstation\output'
 
 if (-not $AllowImageOutputRemoval -and (Test-Path -LiteralPath $imageOutputRoot)) {
     $resolvedImageOutputRoot = (Resolve-Path -LiteralPath $imageOutputRoot).Path
-    if ($vmDirectory.StartsWith($resolvedImageOutputRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
+    if (
+        $vmDirectory.Equals($resolvedImageOutputRoot, [System.StringComparison]::OrdinalIgnoreCase) -or
+        (Test-AtlasoStrictDescendantPath -ParentPath $resolvedImageOutputRoot -ChildPath $vmDirectory)
+    ) {
         throw "Refusing to remove a VM under built image output: $vmDirectory. Pass -AllowImageOutputRemoval only for intentional image cleanup."
+    }
+}
+
+if ($ExpectedName) {
+    $displayName = Get-AtlasoVmxDisplayName -Path $resolvedVmxPath
+    if (-not $displayName.Equals($ExpectedName, [System.StringComparison]::Ordinal)) {
+        throw "Refusing to remove VMware artifacts because VMX displayName '$displayName' does not match expected name '$ExpectedName'."
     }
 }
 
 $resolvedVmrun = Resolve-VmrunPath -Path $VmrunPath
 
-if ($PSCmdlet.ShouldProcess($resolvedVmxPath, 'Stop VMware Workstation VM')) {
-    & $resolvedVmrun -T ws stop $resolvedVmxPath hard 2>$null | Out-Null
-}
-
-if ($PSCmdlet.ShouldProcess($vmDirectory, 'Remove VMware Workstation VM directory')) {
-    Remove-Item -LiteralPath $vmDirectory -Recurse -Force
+if ($PSCmdlet.ShouldProcess($vmDirectory, 'Stop, unregister, and remove VMware Workstation VM artifacts')) {
+    Remove-AtlasoWorkstationVmArtifacts `
+        -VmrunPath $resolvedVmrun `
+        -VmxPaths @($resolvedVmxPath) `
+        -RemovalRoot $vmDirectory `
+        -Confirm:$false
     Write-Host "Removed VMware Workstation VM directory: $vmDirectory"
 }

@@ -1272,6 +1272,14 @@ layer-2 segments, but they do not model Hyper-V access/trunk VLAN port controls 
 authoritative for that VLAN-specific behavior. Details live in
 [VMware Workstation Lifecycle Testing](vmware-workstation-lifecycle-testing.md).
 
+Workstation test-VM and lifecycle cleanup fails closed around recursive removal. Redeploy requires the exact named VMX
+with exactly one well-formed expected display-name assignment; duplicate, malformed, or conflicting assignments preserve
+the artifacts. Data-disk reset accepts only strict non-reparse-point descendants of the selected VM
+output, and cleanup verifies checked running and registered inventories plus successful stop/unregister transitions
+before deleting an artifact root. Inventory entries must be canonical absolute VMX paths whose Windows volume and file
+identities can be resolved, so 8.3, mapped-drive, and other filesystem aliases cannot bypass state detection. Any
+malformed inventory or unresolved `vmrun` state preserves the files and returns failure.
+
 For a normal Workstation test appliance on the management vmnet:
 
 ```powershell
