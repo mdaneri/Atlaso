@@ -1350,6 +1350,9 @@ class EsxiInstallerIsoResponse(BaseModel):
     updated_at: Annotated[str, Field(description='UTC timestamp when the resource was last updated.')]
 
 
+NetworkRole = Literal["management", "access", "route", "unused"]
+
+
 class PhysicalInterfaceUpdate(BaseModel):
     """Fields accepted when updating physical-interface desired state.
 
@@ -1361,21 +1364,20 @@ class PhysicalInterfaceUpdate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     role: Annotated[
-        Literal["management", "access", "route", "services", "storage", "unused"] | None,
+        NetworkRole,
         Field(
+            default=None,
             description=(
-                "Desired interface role. Management owns the appliance management network; access "
-                "is an untagged lab network; route participates in explicit routing; services and "
-                "storage retain their legacy service-segmentation meanings; unused removes the "
-                "interface from active desired networking. Omit to retain the current role."
-            )
+                "Canonical desired interface purpose: management, access, route, or unused. "
+                "Omit to retain the current role."
+            ),
         ),
-    ] = None
+    ]
 
     @field_validator("role", "mode", "ipv4_method", mode="before")
     @classmethod
     def normalize_legacy_enum_spellings(cls, value: Any, info: ValidationInfo) -> Any:
-        """Normalize recognized enum spellings accepted by the legacy PATCH handler.
+        """Normalize recognized case-insensitive enum spellings.
 
         Args:
             value: Incoming field value to normalize when it is a recognized string.
@@ -1388,8 +1390,6 @@ class PhysicalInterfaceUpdate(BaseModel):
             "management",
             "access",
             "route",
-            "services",
-            "storage",
             "unused",
         }:
             return normalized
@@ -1543,8 +1543,7 @@ class PhysicalInterfaceResponse(BaseModel):
         mtu: Returned mtu value for this physical interface resource.
         admin_state: Returned admin state value for this physical interface resource.
         oper_state: Returned oper state value for this physical interface resource.
-        role: Primary compatibility role for the identity; authorization uses the complete roles
-            collection.
+        role: Canonical purpose assigned to this physical interface.
         mode: Returned mode value for this physical interface resource.
         access_management_ui_enabled: Whether this access interface also exposes the management UI.
         inventory_source: Returned inventory source value for this physical interface resource.
@@ -1574,7 +1573,7 @@ class PhysicalInterfaceResponse(BaseModel):
     mtu: Annotated[int, Field(description='Returned mtu value for this physical interface resource.')]
     admin_state: Annotated[str, Field(description='Returned admin state value for this physical interface resource.')]
     oper_state: Annotated[str, Field(description='Returned oper state value for this physical interface resource.')]
-    role: Annotated[str, Field(description='Primary compatibility role for the identity; authorization uses the complete roles collection.')]
+    role: Annotated[NetworkRole, Field(description='Canonical interface purpose: management, access, route, or unused.')]
     mode: Annotated[str, Field(description='Returned mode value for this physical interface resource.')]
     access_management_ui_enabled: Annotated[bool, Field(description='Whether this access-role physical interface also exposes the management UI. Management-role interfaces expose it inherently.')] = False
     inventory_source: Annotated[str, Field(description='Returned inventory source value for this physical interface resource.')]
@@ -1592,8 +1591,7 @@ class VlanCreate(BaseModel):
         ip_cidr: Validated network or address value for ip cidr in this vlan resource.
         ipv6_cidr: Validated network or address value for ipv6 cidr in this vlan resource.
         mtu: Requested mtu value for this vlan resource.
-        role: Primary compatibility role for the identity; authorization uses the complete roles
-            collection.
+        role: Canonical purpose assigned to this VLAN interface.
         enabled: Whether the resource is enabled in saved Atlaso state.
         access_management_ui_enabled: Whether this enabled access VLAN also exposes the management UI.
     """
@@ -1603,9 +1601,24 @@ class VlanCreate(BaseModel):
     ip_cidr: Annotated[str, Field(description='Validated network or address value for ip cidr in this vlan resource.')] = ""
     ipv6_cidr: Annotated[str, Field(description='Validated network or address value for ipv6 cidr in this vlan resource.')] = ""
     mtu: Annotated[int, Field(description='Requested mtu value for this vlan resource.')] = Field(default=1500, ge=576, le=9000)
-    role: Annotated[str, Field(description='Primary compatibility role for the identity; authorization uses the complete roles collection.')] = "access"
+    role: Annotated[NetworkRole, Field(description='Canonical VLAN purpose: management, access, route, or unused.')] = "access"
     enabled: Annotated[bool, Field(description='Whether the resource is enabled in saved Atlaso state.')] = True
     access_management_ui_enabled: Annotated[bool, Field(description='Whether this enabled access-role VLAN also exposes the management UI.')] = False
+
+    @field_validator("role", mode="before")
+    @classmethod
+    def normalize_canonical_role(cls, value: Any) -> Any:
+        """Normalize case-insensitive canonical VLAN role spellings.
+
+        Args:
+            value: Incoming VLAN role value to normalize when it is a recognized string.
+        """
+        if not isinstance(value, str):
+            return value
+        normalized = value.strip().lower()
+        if normalized in {"management", "access", "route", "unused"}:
+            return normalized
+        return value
 
 
 class VlanResponse(VlanCreate):

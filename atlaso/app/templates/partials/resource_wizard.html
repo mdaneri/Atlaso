@@ -1,11 +1,11 @@
-{% macro resource_wizard(dialog_id, form_data_name, action, steps, title, description, submit_label, enctype=None) -%}
+{% macro resource_wizard(dialog_id, form_data_name, action, steps, title, description, submit_label, enctype=None, form_data_value=None) -%}
 <dialog id="{{ dialog_id }}" class="confirm-modal wide-modal vcf-sddc-wizard-modal resource-wizard-dialog" aria-labelledby="{{ dialog_id }}-title" aria-describedby="{{ dialog_id }}-description">
   <form
     class="confirm-modal-panel vcf-sddc-wizard-panel"
     action="{{ action }}"
     method="post"
     {% if enctype %}enctype="{{ enctype }}"{% endif %}
-    data-{{ form_data_name }}
+    data-{{ form_data_name }}{% if form_data_value is not none %}="{{ form_data_value }}"{% endif %}
     data-atlaso-wizard
   >
     {# Callers provide the ordered data-atlaso-wizard-step sections. #}

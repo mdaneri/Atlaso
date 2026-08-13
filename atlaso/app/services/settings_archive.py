@@ -134,6 +134,8 @@ from atlaso.app.services.local_users import (
     validate_password_policy_json,
 )
 from atlaso.app.services.networking import (
+    LEGACY_NETWORK_ROLE_REPLACEMENTS,
+    NETWORK_ROLES,
     normalize_interface_mode,
     normalize_interface_role,
     normalize_ipv4_method,
@@ -475,6 +477,8 @@ def export_settings_archive(db: Session, *, actor: str) -> dict[str, Any]:
     for key, model in SCALAR_TABLES.items():
         rows = db.execute(select(model)).scalars().all()
         data[key] = [_row_to_dict(row) for row in rows]
+    for key in ("physical_interfaces", "vlan_interfaces"):
+        data[key] = _canonical_network_role_rows(data[key])
 
     _normalize_registry_uploaded_ca_handoff(data, payload["notes"])
 
@@ -935,7 +939,13 @@ def restore_settings_archive(db: Session, archive: dict[str, Any]) -> dict[str, 
         db: Active database session.
         archive: Archive payload or path to process.
     """
-    prepared_archive = _prepare_archive_for_restore(db, archive)
+    prepared_archive = deepcopy(_prepare_archive_for_restore(db, archive))
+    prepared_data = prepared_archive.get("data") if isinstance(prepared_archive, dict) else None
+    if isinstance(prepared_data, dict):
+        for key in ("physical_interfaces", "vlan_interfaces"):
+            rows = prepared_data.get(key)
+            if isinstance(rows, list) and all(isinstance(row, dict) for row in rows):
+                prepared_data[key] = _canonical_network_role_rows(rows)
     _validate_archive(prepared_archive)
     _validate_archive_database_relationships(db, prepared_archive["data"])
     recovery_archives = db.execute(select(LdapRecoveryArchive)).scalars().all()
@@ -3454,6 +3464,32 @@ def _insert_rows(db: Session, model: type, rows: list[dict[str, Any]]) -> int:
         db.add(model(**_model_kwargs(model, row)))
     db.flush()
     return len(rows)
+
+
+def _canonical_network_role_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Copy archived interface rows while mapping only recognized retired roles.
+
+    Args:
+        rows: Archived physical-interface or VLAN-interface records.
+    """
+    canonical_rows: list[dict[str, Any]] = []
+    for row in rows:
+        canonical_row = dict(row)
+        archived_role = canonical_row.get("role")
+        if not isinstance(archived_role, str) or not archived_role.strip():
+            interface_name = str(canonical_row.get("name") or "<unnamed>")
+            raise ValueError(f"Archived interface {interface_name} is missing its required role.")
+        raw_role = archived_role.strip().lower()
+        if raw_role in LEGACY_NETWORK_ROLE_REPLACEMENTS:
+            raw_role = LEGACY_NETWORK_ROLE_REPLACEMENTS[raw_role]
+        if raw_role not in NETWORK_ROLES:
+            raise ValueError(
+                f"Interface role {canonical_row.get('role')} is not supported; "
+                f"expected one of {', '.join(NETWORK_ROLES)}."
+            )
+        canonical_row["role"] = raw_role
+        canonical_rows.append(canonical_row)
+    return canonical_rows
 
 
 def _restore_update_sources(db: Session, rows: list[dict[str, Any]]) -> int:

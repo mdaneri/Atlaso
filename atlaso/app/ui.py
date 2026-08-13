@@ -467,10 +467,10 @@ from atlaso.app.services.local_users import (
 from atlaso.app.services.monitoring import monitor_payload
 from atlaso.app.services.networking import (
     INTERFACE_MODES,
-    INTERFACE_ROLES,
     IPV4_METHODS,
     NETWORK_INVENTORY_CLEANUP_WARNING_KEY,
-    VLAN_ROLES,
+    NETWORK_ROLES,
+    is_canonical_network_role,
     normalize_interface_mode,
     normalize_interface_role,
     normalize_ipv4_method,
@@ -5191,10 +5191,9 @@ def network_context(db: Session) -> dict:
         "interface_names": [interface.name for interface in interfaces],
         "trunk_interface_names": [interface.name for interface in trunk_interfaces],
         "trunk_parent_options": [trunk_parent_option(interface) for interface in trunk_interfaces],
-        "interface_roles": INTERFACE_ROLES,
+        "network_roles": NETWORK_ROLES,
         "interface_modes": INTERFACE_MODES,
         "ipv4_methods": IPV4_METHODS,
-        "vlan_roles": VLAN_ROLES,
         "network_config_preview": config_preview,
         "network_validation_errors": validation_errors,
         "network_inventory_cleanup_warning": setting_value(db, NETWORK_INVENTORY_CLEANUP_WARNING_KEY),
@@ -7004,13 +7003,13 @@ def validate_vlan_form_values(
         return Response("VLAN IPv4 CIDR, IPv6 CIDR, or both are required.", status_code=409, media_type="text/plain")
     if mtu < 576 or mtu > 9000:
         return Response("VLAN MTU must be between 576 and 9000.", status_code=409, media_type="text/plain")
-    role_value = normalize_interface_role(role)
-    if role_value not in VLAN_ROLES:
+    if not is_canonical_network_role(role):
         return Response(
-            f"VLAN role must be one of: {', '.join(VLAN_ROLES)}.",
+            f"VLAN role must be one of: {', '.join(NETWORK_ROLES)}.",
             status_code=409,
             media_type="text/plain",
         )
+    role_value = normalize_interface_role(role)
     parent = db.execute(select(PhysicalInterface).where(PhysicalInterface.name == parent_name)).scalar_one_or_none()
     parent_missing = bool(parent and parent.oper_state == "missing")
     if parent_missing:

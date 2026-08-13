@@ -724,7 +724,7 @@ def network_config_text(
                 "  ip_cidr=192.168.20.1/24",
                 f"  ipv6_cidr={'2001:db8:20::1/64' if dual_stack else ''}",
                 "  mtu=1500",
-                "  role=services",
+                "  role=access",
             ]
         )
     if include_removed_vlan:
@@ -1439,6 +1439,26 @@ def test_network_helper_accepts_valid_vlan_config(tmp_path):
     config_path.write_text(network_config_text(), encoding="utf-8")
 
     assert helper._network_config_errors(config_path) == []
+
+
+@pytest.mark.parametrize("retired_role", ["services", "storage"])
+def test_network_helper_rejects_retired_interface_roles(tmp_path, retired_role):
+    """Verify staged host configuration accepts only the canonical role contract.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+        retired_role: Retired interface role that the helper must reject.
+    """
+    helper = load_helper_module()
+    config_path = tmp_path / f"retired-{retired_role}.conf"
+    config_path.write_text(
+        network_config_text().replace("  role=access", f"  role={retired_role}", 1),
+        encoding="utf-8",
+    )
+
+    errors = helper._network_config_errors(config_path)
+
+    assert any(f"role {retired_role} is invalid" in error for error in errors)
 
 
 def test_network_helper_validates_explicit_management_gateway(tmp_path):

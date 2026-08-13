@@ -32,7 +32,7 @@
       class="tabulator-shell vlan-interfaces-table"
       data-vlans='{{ vlan_interface_rows | tojson }}'
       data-parent-options='{{ trunk_parent_options | tojson }}'
-      data-role-options='{{ vlan_roles | tojson }}'
+      data-role-options='{{ network_roles | tojson }}'
       data-csrf="{{ csrf_token }}"
       data-can-write="{{ 'true' if identity.can('write:vlans') else 'false' }}"
       data-fallback-id="vlan-interfaces-fallback"
@@ -177,7 +177,7 @@
       <label>
         <span class="field-label"><span>Role</span><button class="help-icon" type="button" data-help="Classifies the VLAN for Atlaso validation, service binding, routing, and firewall desired state.">i</button></span>
         <select name="role" required>
-          {% for role in vlan_roles %}<option value="{{ role }}">{{ role }}</option>{% endfor %}
+          {% for role in network_roles %}<option value="{{ role }}"{% if role == "access" %} selected{% endif %}>{{ role }}</option>{% endfor %}
         </select>
       </label>
       <label class="switch-field">

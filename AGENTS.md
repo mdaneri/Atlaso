@@ -93,6 +93,9 @@ The following cross-cutting boundaries always apply:
   Static Routes, Routing Permissions, NAT Rules, and WAN Policies are wizard-backed Tabulator collections. Add launches
   from the bottom row; edit launches from row double-click or the context menu; generated routing permissions remain
   read-only; and ordinary persisted **Enabled** state remains directly editable without host mutation.
+- Physical and VLAN interfaces share exactly `management`, `access`, `route`, and `unused` roles. Reject retired or
+  unknown values on new UI, API, desired-state, and helper inputs. Upgrade and settings-archive compatibility may map
+  only retired `services` and `storage` values to `access` while preserving every other interface field.
 - Keep ordinary `/ui/management/appliance-apply/status` polling on the non-reconciling desired-state projection.
   Prevent overlapping browser polls, suspend them while hidden, back off when idle, and refresh promptly after successful
   mutations and Apply completion. Retain the tracked master task until a valid terminal task response is rendered, retry

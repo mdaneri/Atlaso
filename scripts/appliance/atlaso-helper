@@ -313,6 +313,7 @@ NETWORKD_DEFAULT_APPLIANCE_FILES = {
     "99-dhcp-en.network",
 }
 NETWORK_INTERFACE_NAME_PATTERN = re.compile(r"^[A-Za-z0-9_.:-]+$")
+NETWORK_ROLES = {"management", "access", "route", "unused"}
 ATLASO_SERVICE_DROPIN_DIR = Path("/etc/systemd/system/atlaso.service.d")
 ATLASO_SERVICE_HTTPS_DROPIN_PATH = ATLASO_SERVICE_DROPIN_DIR / "management-https.conf"
 ATLASO_UVICORN_COMMAND = "/opt/atlaso/.venv/bin/python -m uvicorn atlaso.app.main:app --host {host} --port {port}"
@@ -6853,6 +6854,11 @@ def _network_config_errors(path: Path) -> list[str]:
         ipv6_enabled_value = (interface.get("ipv6_enabled") or ("true" if interface.get("ipv6_cidr") else "false")).strip().lower()
         if not _valid_network_interface_name(name):
             errors.append(f"Interface name {name or '<missing>'} is invalid.")
+        if role not in NETWORK_ROLES:
+            errors.append(
+                f"Interface {name or '<missing>'} role {role or '<missing>'} is invalid; "
+                "expected management, access, route, or unused."
+            )
         if ipv4_method not in {"static", "dhcp"}:
             errors.append(f"Interface {name or '<missing>'} IPv4 method {ipv4_method or '<missing>'} is invalid.")
         if ipv4_method == "dhcp" and role != "management":
@@ -6924,6 +6930,7 @@ def _network_config_errors(path: Path) -> list[str]:
         name = vlan.get("name", "")
         parent = vlan.get("parent", "")
         raw_vlan_id = vlan.get("vlan_id", "")
+        role = vlan.get("role", "")
         if not name:
             errors.append("VLAN entry is missing a name.")
         elif not _valid_network_interface_name(name):
@@ -6942,12 +6949,17 @@ def _network_config_errors(path: Path) -> list[str]:
         expected_name = f"{parent}.{vlan_id}" if parent and vlan_id else ""
         if expected_name and name != expected_name:
             errors.append(f"VLAN {name} should be named {expected_name}.")
+        if role not in NETWORK_ROLES:
+            errors.append(
+                f"VLAN {name or '<unnamed>'} role {role or '<missing>'} is invalid; "
+                "expected management, access, route, or unused."
+            )
         if not vlan.get("ip_cidr") and not vlan.get("ipv6_cidr"):
             errors.append(f"VLAN {name or '<unnamed>'} must include IPv4 CIDR, IPv6 CIDR, or both.")
         management_ui_enabled = vlan.get("access_management_ui_enabled", "false").strip().lower() == "true"
-        if management_ui_enabled and vlan.get("role") != "access":
+        if management_ui_enabled and role != "access":
             errors.append(f"VLAN {name or '<unnamed>'} can expose the management UI only when its role is access.")
-        if management_ui_enabled and vlan.get("role") == "access" and not _network_row_has_usable_management_address(vlan):
+        if management_ui_enabled and role == "access" and not _network_row_has_usable_management_address(vlan):
             errors.append(
                 f"VLAN {name or '<unnamed>'} can expose the management UI only when it has a usable non-link-local address."
             )

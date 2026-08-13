@@ -68,12 +68,17 @@ The switch exposes the authenticated `/ui/management` browser plane without chan
 public-service eligibility. A management-role physical interface ignores the switch because it exposes management
 inherently. Network apply rejects a configuration that would leave no effective management UI listener.
 
+Physical-interface and VLAN role fields accept exactly `management`, `access`, `route`, or `unused`. The retired
+`services` and `storage` values are rejected on new requests. Appliance startup and settings-archive restore map those
+values to `access` only when reading compatible persisted state from an older Atlaso release.
+
 ### Update physical-interface desired state
 
 `PATCH /api/v1/interfaces/physical/{name}` accepts the typed `PhysicalInterfaceUpdate` schema. Omit a property to keep
 its saved value; use an empty string or `null` only for the documented CIDR and gateway fields that can be cleared.
-Recognized role, mode, and IPv4-method spellings are case-insensitive; the legacy `services` and `storage` roles and
-`routed` mode spelling remain supported. Atlaso rejects unsupported properties instead of silently ignoring them.
+Recognized role, mode, and IPv4-method spellings are case-insensitive. New requests reject the retired `services` and
+`storage` roles; the legacy `routed` mode spelling remains supported. Atlaso rejects unsupported properties instead of
+silently ignoring them.
 
 Changing a physical interface's IPv4 or IPv6 CIDR automatically refreshes dependent desired-state addresses for DNS,
 NTP/NTS, Certificate Authority, KMS, LDAP, OIDC, VCF services, ESX Storage, Web Terminal, matching DHCP scopes, and
