@@ -77,6 +77,9 @@ private-key material. Disabled issued or revoked certificate rows are still veri
 mutation, so an unrelated certificate serial cannot enter Atlaso's restored revocation state.
 Every revoked row must retain both its certificate serial number and revocation timestamp even while the CA or row is
 disabled, ensuring later CA enablement can publish a complete CRL.
+Certificate, private-key, and chain deployment paths must be unique across archived CA rows and cannot reuse the root,
+legacy root, bundle, or CRL publication paths. Enabled NTS settings must reference the exact chain and private-key paths
+owned by the restored enabled `ntp:nts` certificate.
 
 ESXi Network Boot host MAC addresses are normalized and checked for duplicate identities before restore. Installer ISO
 references are normalized beneath the managed ISO root before they are restored, so a valid relative archive reference

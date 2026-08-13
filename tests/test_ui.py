@@ -5514,6 +5514,26 @@ def test_settings_archive_managed_certificate_readiness_requires_enabled_row(
     assert _archive_managed_certificate_ready([certificate], managed_owner)
 
 
+def test_settings_archive_nts_paths_match_managed_certificate():
+    """Verify restored NTS settings use the managed certificate deployment paths."""
+    from atlaso.app.services.settings_archive import (
+        _archive_nts_certificate_paths_match,
+    )
+
+    settings = {
+        "nts_server_cert_path": "/etc/atlaso/ntp/certs/ntp-chain.pem",
+        "nts_server_key_path": "/etc/atlaso/ntp/certs/ntp.key",
+    }
+    certificate = {
+        "chain_path": "/etc/atlaso/ntp/certs/ntp-chain.pem",
+        "key_path": "/etc/atlaso/ntp/certs/ntp.key",
+    }
+
+    assert _archive_nts_certificate_paths_match(settings, certificate)
+    settings["nts_server_cert_path"] = "/tmp/missing-chain.pem"
+    assert not _archive_nts_certificate_paths_match(settings, certificate)
+
+
 def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_field_shapes(client):
     """Verify settings archive preflight rejects malformed structures before restore.
 
@@ -6327,6 +6347,17 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
     invalid_ca_certificate_path = deepcopy(archive)
     invalid_ca_certificate_path["data"]["ca_certificates"][0]["enabled"] = False
     invalid_ca_certificate_path["data"]["ca_certificates"][0]["cert_path"] = "/tmp/archive.crt"
+    reserved_ca_deployment_path = deepcopy(archive)
+    reserved_ca_deployment_path["data"]["ca_certificates"][0][
+        "cert_path"
+    ] = "/etc/atlaso/ca/root-ca.pem"
+    duplicate_ca_deployment_path = deepcopy(archive)
+    duplicate_ca_deployment_path["data"]["ca_certificates"][0].update(
+        {
+            "cert_path": "/etc/atlaso/ca/archive-shared.pem",
+            "chain_path": "/etc/atlaso/ca/archive-shared.pem",
+        }
+    )
     invalid_disabled_ca_certificate_material = deepcopy(archive)
     invalid_disabled_ca_certificate_material["data"]["ca_certificates"][0].update(
         {
@@ -6745,6 +6776,8 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
         (invalid_ca_private_key, "Certificate Authority key state is invalid"),
         (invalid_ca_storage_path, "CA storage path must stay under /etc/atlaso"),
         (invalid_ca_certificate_path, "certificate path must stay under /etc/atlaso"),
+        (reserved_ca_deployment_path, "uses a path reserved for CA root publication"),
+        (duplicate_ca_deployment_path, "duplicates the deployment path"),
         (invalid_disabled_ca_certificate_material, "public certificate is not usable"),
         (revoked_without_timestamp, "has no revocation timestamp"),
         (revoked_without_serial, "has no serial number"),

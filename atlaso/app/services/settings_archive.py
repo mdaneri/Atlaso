@@ -626,6 +626,16 @@ def _validate_archived_ca_certificate_rows(
     Raises:
         ValueError: If status, deployment paths, or supplied material is invalid.
     """
+    reserved_paths = {
+        str(PurePosixPath(settings.storage_path) / filename)
+        for filename in (
+            "root-ca.pem",
+            "root.crt",
+            "ca-bundle.pem",
+            "atlaso-ca.crl",
+        )
+    }
+    claimed_paths: dict[str, str] = {}
     for row_index, certificate in enumerate(certificates, start=1):
         label = certificate.common_name or f"row {row_index}"
         if certificate.status not in CA_STATUS_VALUES:
@@ -681,6 +691,19 @@ def _validate_archived_ca_certificate_rows(
                     f"The settings archive CA certificate {label} {path_label} "
                     f"must stay under {CA_MANAGED_PATH_BASE}."
                 )
+            canonical_path = str(path)
+            if canonical_path in reserved_paths:
+                raise ValueError(
+                    f"The settings archive CA certificate {label} {path_label} "
+                    "uses a path reserved for CA root publication."
+                )
+            existing_owner = claimed_paths.get(canonical_path)
+            if existing_owner is not None:
+                raise ValueError(
+                    f"The settings archive CA certificate {label} {path_label} "
+                    f"duplicates the deployment path used by {existing_owner}."
+                )
+            claimed_paths[canonical_path] = f"{label} {path_label}"
         if certificate.chain_pem:
             try:
                 raw_chain_pem = certificate.chain_pem.strip()
@@ -783,6 +806,24 @@ def _archive_managed_certificate_ready(
         and bool(str(row.get("certificate_pem") or ""))
         and bool(str(row.get("private_key_encrypted") or ""))
         for row in certificates
+    )
+
+
+def _archive_nts_certificate_paths_match(
+    ntp_settings: dict[str, Any],
+    certificate: dict[str, Any],
+) -> bool:
+    """Return whether NTS settings consume the restored managed certificate paths.
+
+    Args:
+        ntp_settings: Structurally validated archived NTP settings row.
+        certificate: Restored deployable `ntp:nts` certificate row.
+    """
+    return (
+        str(ntp_settings.get("nts_server_cert_path") or "").strip()
+        == str(certificate.get("chain_path") or "").strip()
+        and str(ntp_settings.get("nts_server_key_path") or "").strip()
+        == str(certificate.get("key_path") or "").strip()
     )
 
 
@@ -2174,13 +2215,25 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
                 f"The settings archive NTP settings are invalid: {ntp_errors[0]}"
             )
         if row.get("nts_server_enabled", False):
-            nts_certificate_ready = _archive_managed_certificate_ready(
-                data.get("ca_certificates", []),
-                "ntp:nts",
+            nts_certificate = next(
+                (
+                    certificate
+                    for certificate in data.get("ca_certificates", [])
+                    if _archive_managed_certificate_ready(
+                        [certificate],
+                        "ntp:nts",
+                    )
+                ),
+                None,
             )
-            if not data["ca_settings"][0].get("enabled", False) or not nts_certificate_ready:
+            if not data["ca_settings"][0].get("enabled", False) or nts_certificate is None:
                 raise ValueError(
                     "The settings archive enables NTPsec NTS server mode without an enabled CA and issued NTS certificate."
+                )
+            if not _archive_nts_certificate_paths_match(row, nts_certificate):
+                raise ValueError(
+                    "The settings archive NTPsec NTS certificate and key paths do not "
+                    "match the restored managed certificate."
                 )
 
     for row_index, row in enumerate(data.get("firewall_rules", []), start=1):
