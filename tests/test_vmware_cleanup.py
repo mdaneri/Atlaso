@@ -567,6 +567,52 @@ def test_general_removal_allows_explicit_confirmation_suppression(
     assert not vm_directory.exists()
 
 
+@pytest.mark.parametrize(
+    "vmx_content",
+    [
+        'displayName = "Atlaso-Ambiguous"\ndisplayName = "Other"\n',
+        'displayName = "Atlaso-Ambiguous"\ndisplayName\n',
+        "displayName = Atlaso-Ambiguous\n",
+    ],
+)
+def test_general_removal_rejects_ambiguous_display_name_assignments(
+    tmp_path: Path,
+    vmx_content: str,
+) -> None:
+    """Cleanup must preserve a VMX whose display identity is not unambiguous.
+
+    Args:
+        tmp_path: Isolated test directory.
+        vmx_content: Duplicate or malformed VMX display-name content.
+    """
+    vm_directory = tmp_path / "Atlaso-Ambiguous"
+    vmx_path = vm_directory / "Atlaso-Ambiguous.vmx"
+    vmx_path.parent.mkdir(parents=True)
+    vmx_path.write_text(vmx_content, encoding="utf-8")
+    vmrun_path, environment, _ = _write_fake_vmrun(
+        tmp_path / "fake",
+        [vmx_path],
+        running=False,
+        registered=False,
+    )
+
+    result = _run_script(
+        VMWARE_SCRIPT_ROOT / "remove-atlaso-vm.ps1",
+        "-VmxPath",
+        str(vmx_path),
+        "-VmrunPath",
+        str(vmrun_path),
+        "-ExpectedName",
+        "Atlaso-Ambiguous",
+        "-Confirm:$false",
+        environment=environment,
+    )
+
+    assert result.returncode != 0
+    assert "Refusing VMware cleanup" in result.stderr
+    assert vmx_path.exists()
+
+
 def test_redeploy_missing_target_and_sibling_disk_fail_closed(tmp_path: Path) -> None:
     """Redeploy and data-disk reset must preserve unproven or sibling-prefix paths.
 

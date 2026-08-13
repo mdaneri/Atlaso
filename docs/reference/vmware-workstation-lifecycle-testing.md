@@ -133,8 +133,9 @@ successful transition, or missing VMX preserves the artifact directory and makes
 execution and cleanup both fail, the final error reports the original scenario failure together with the cleanup failure
 and preserved path.
 
-The normal test-VM `-Redeploy` path also requires the exact named VMX and matching `displayName`; it never treats an
-existing directory as disposable merely because that VMX is absent. `-ResetDataDisks` accepts only strict canonical
+The normal test-VM `-Redeploy` path also requires the exact named VMX and exactly one well-formed, matching
+`displayName`; missing, duplicate, malformed, or conflicting assignments preserve the existing directory.
+`-ResetDataDisks` accepts only strict canonical
 descendants of the selected VM output, so sibling-prefix and reparse-point paths are refused.
 
 ## Normal Test VM

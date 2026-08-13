@@ -1573,7 +1573,8 @@ def test_vmware_lifecycle_cleanup_only_removes_existing_lifecycle_vms():
     assert "AtlasoWorkstationLifecycle" in cleanup_script
     assert "test-results\\vmware-workstation-lifecycle" in cleanup_script
     assert "vmrun.exe was not found" in cleanup_script
-    assert "Get-VmxDisplayName" in cleanup_script
+    assert "Get-AtlasoVmxDisplayName" in cleanup_script
+    assert "'Get-AtlasoVmxDisplayName'" in cleanup_module
     assert "Refusing to remove VM outside Workstation lifecycle results" in cleanup_script
     assert "Atlaso.WorkstationCleanup.psm1" in cleanup_script
     assert "Remove-AtlasoWorkstationVmArtifacts" in cleanup_script

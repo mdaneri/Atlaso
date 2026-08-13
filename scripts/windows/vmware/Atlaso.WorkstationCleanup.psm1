@@ -227,6 +227,25 @@ function Get-AtlasoVmxFileIdentity {
     }
 }
 
+function Get-AtlasoVmxDisplayName {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Path
+    )
+
+    $displayNameLines = @(
+        Get-Content -LiteralPath $Path |
+            Where-Object { $_ -match '^\s*displayName\b' }
+    )
+    if ($displayNameLines.Count -ne 1) {
+        throw "Refusing VMware cleanup because the VMX must contain exactly one displayName assignment: $Path"
+    }
+    if ($displayNameLines[0] -notmatch '^\s*displayName\s*=\s*"([^"\r\n]+)"\s*$') {
+        throw "Refusing VMware cleanup because the VMX displayName assignment is malformed: $Path"
+    }
+    return $Matches[1]
+}
+
 function Resolve-AtlasoVerifiedVmxInventoryPath {
     param(
         [Parameter(Mandatory = $true)]
@@ -503,6 +522,7 @@ function Remove-AtlasoWorkstationVmArtifacts {
 
 Export-ModuleMember -Function @(
     'Assert-AtlasoStrictDescendantPath',
+    'Get-AtlasoVmxDisplayName',
     'Remove-AtlasoWorkstationVmArtifacts',
     'Test-AtlasoStrictDescendantPath'
 )

@@ -37,18 +37,6 @@ function Resolve-VmrunPath {
     throw 'vmrun.exe was not found. Install VMware Workstation Pro or pass -VmrunPath.'
 }
 
-function Get-VmxDisplayName {
-    param([string]$Path)
-
-    $line = Get-Content -LiteralPath $Path |
-        Where-Object { $_ -match '^\s*displayName\s*=' } |
-        Select-Object -First 1
-    if ($line -and $line -match '^\s*displayName\s*=\s*"(.+)"\s*$') {
-        return $Matches[1]
-    }
-    return [System.IO.Path]::GetFileNameWithoutExtension($Path)
-}
-
 $repoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..\..')).Path
 $lifecycleRoot = Join-Path $repoRoot 'test-results\vmware-workstation-lifecycle'
 
@@ -63,7 +51,7 @@ $candidates = @(
     Get-ChildItem -LiteralPath $resolvedLifecycleRoot -Recurse -Filter '*.vmx' -File |
         ForEach-Object {
             $resolvedPath = $_.FullName
-            $displayName = Get-VmxDisplayName -Path $resolvedPath
+            $displayName = Get-AtlasoVmxDisplayName -Path $resolvedPath
             [pscustomobject]@{
                 Path        = $resolvedPath
                 DisplayName = $displayName

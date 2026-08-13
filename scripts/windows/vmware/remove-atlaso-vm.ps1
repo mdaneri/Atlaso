@@ -24,18 +24,6 @@ function Resolve-VmrunPath {
     throw 'vmrun.exe was not found. Install VMware Workstation Pro or pass -VmrunPath.'
 }
 
-function Get-VmxDisplayName {
-    param([string]$Path)
-
-    $line = Get-Content -LiteralPath $Path |
-        Where-Object { $_ -match '^\s*displayName\s*=' } |
-        Select-Object -First 1
-    if ($line -and $line -match '^\s*displayName\s*=\s*"(.+)"\s*$') {
-        return $Matches[1]
-    }
-    return ''
-}
-
 $resolvedVmxPath = (Resolve-Path -LiteralPath $VmxPath).Path
 $vmDirectory = Split-Path -Parent $resolvedVmxPath
 $repoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..\..')).Path
@@ -52,10 +40,7 @@ if (-not $AllowImageOutputRemoval -and (Test-Path -LiteralPath $imageOutputRoot)
 }
 
 if ($ExpectedName) {
-    $displayName = Get-VmxDisplayName -Path $resolvedVmxPath
-    if (-not $displayName) {
-        throw "Refusing to remove VMware artifacts because the target VMX has no displayName: $resolvedVmxPath"
-    }
+    $displayName = Get-AtlasoVmxDisplayName -Path $resolvedVmxPath
     if (-not $displayName.Equals($ExpectedName, [System.StringComparison]::Ordinal)) {
         throw "Refusing to remove VMware artifacts because VMX displayName '$displayName' does not match expected name '$ExpectedName'."
     }

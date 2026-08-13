@@ -330,7 +330,8 @@ pwsh -ExecutionPolicy Bypass `
 The wrapper requires the cloned Photon OS and Atlaso system-content VMDKs at SCSI units 0 and 1, then creates fresh
 Depot and Backups data VMDKs at units 2 and 3 when needed. `-ResetDataDisks` removes those data VMDKs before recreating
 them only when their canonical paths are strict, non-reparse-point descendants of the selected VM output directory.
-`-Redeploy` requires the exact named VMX and matching `displayName`; a missing or mismatched target preserves the
+`-Redeploy` requires the exact named VMX and exactly one well-formed, matching `displayName`; a missing, malformed,
+duplicate, or mismatched target preserves the
 directory and returns an actionable failure. Cleanup checks the running and registered Workstation inventories by
 Windows filesystem identity, stops and unregisters only when needed, verifies both transitions, and preserves all
 artifacts if an inventory path is malformed or cannot be resolved, or if `vmrun` fails or returns unverifiable state.
