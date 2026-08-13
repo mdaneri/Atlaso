@@ -3073,6 +3073,33 @@ def vcf_depot_secret_context(db: Session) -> dict[str, object]:
     }
 
 
+def vcf_depot_profile_start_states(db: Session) -> list[dict[str, object]]:
+    """Return current non-secret profile prerequisites for task refresh.
+
+    Args:
+        db: Active database session.
+    """
+    secrets = vcf_depot_secret_context(db)
+    profiles = db.execute(
+        select(VcfDepotDownloadProfile).order_by(VcfDepotDownloadProfile.id)
+    ).scalars().all()
+    states: list[dict[str, object]] = []
+    for profile in profiles:
+        row = vcf_depot_profile_to_dict(
+            profile,
+            download_token_present=bool(secrets["download_token_present"]),
+            activation_code_present=bool(secrets["activation_code_present"]),
+        )
+        states.append(
+            {
+                "profile_id": profile.id,
+                "can_start": bool(row["prerequisite_can_start"]),
+                "start_blocker": str(row["prerequisite_start_blocker"]),
+            }
+        )
+    return states
+
+
 def vcf_depot_application_properties_context(db: Session, settings: VcfOfflineDepotSettings) -> dict[str, str | bool]:
     """Return vcf depot application properties context.
 
@@ -24492,6 +24519,7 @@ def vcf_offline_depot_task_status(
                 }
                 for job in active_jobs
             ],
+            "profile_start_states": vcf_depot_profile_start_states(db),
             "active_exclusive_operation": (
                 {
                     "job_id": exclusive_job.id,
@@ -28795,6 +28823,11 @@ def tasks_status(
             "filtered_count": filtered_count,
             "total_count": total_count,
             "active_downloads": active_downloads,
+            "profile_start_states": (
+                vcf_depot_profile_start_states(db)
+                if normalized_task_type == "vcf-depot-download"
+                else []
+            ),
             "active_exclusive_operation": (
                 {
                     "job_id": exclusive_job.id,

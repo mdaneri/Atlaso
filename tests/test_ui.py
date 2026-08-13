@@ -1027,7 +1027,7 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-8" in service_worker.text
     assert "/static/appliance-apply-polling.js?v=issue-294-2" in service_worker.text
     assert "/static/ui-routes.js?v=issue-287-1" in service_worker.text
-    assert "/static/app.js?v=vcf-depot-queue-schedule-351-353-5" in service_worker.text
+    assert "/static/app.js?v=vcf-depot-queue-schedule-351-353-6" in service_worker.text
     assert "/static/terminal.js?v=issue-287-2" in service_worker.text
     assert "/static/pwa.js?v=issue-287-2" in service_worker.text
     assert "vcfdt-configuration-248-20260807-14" not in service_worker.text
@@ -1059,8 +1059,8 @@ def test_shared_ui_pattern_shell_and_wizard_contracts(client):
     base = (templates / "base.html").read_text(encoding="utf-8")
     public_base = (templates / "public_portal_base.html").read_text(encoding="utf-8")
     for shell, app_asset in (
-        (base, "/static/app.js?v=vcf-depot-queue-schedule-351-353-5"),
-        (public_base, "/static/app.js?v=vcf-depot-queue-schedule-351-353-5"),
+        (base, "/static/app.js?v=vcf-depot-queue-schedule-351-353-6"),
+        (public_base, "/static/app.js?v=vcf-depot-queue-schedule-351-353-6"),
         (base, "/static/appliance-apply-polling.js?v=issue-294-2"),
     ):
         assert shell.index("/static/vendor/tabulator/tabulator.min.js") < shell.index(
@@ -1689,7 +1689,7 @@ def test_monitor_page_renders_and_data_endpoint(client):
     assert "swagger-link-icon" in page.text
     assert "/static/app.css?v=vlan-interface-wizard-304-2" in page.text
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-8" in page.text
-    assert "/static/app.js?v=vcf-depot-queue-schedule-351-353-5" in page.text
+    assert "/static/app.js?v=vcf-depot-queue-schedule-351-353-6" in page.text
     app_css = client.get("/static/app.css")
     assert app_css.status_code == 200
     assert ".split-workspace > .wide-panel" in app_css.text
@@ -14024,8 +14024,13 @@ def test_vcf_offline_depot_page_redirect_and_uploads_are_sanitized(client, tmp_p
     assert "rowHeight: 34" in profiles_table_js.split("columns:", 1)[0]
     assert "!data.can_start" in profiles_table_js
     assert "data.download_active" in profiles_table_js
-    assert "function setVcfDepotDownloadStates(activeTasks = [], activeExclusiveOperation = null)" in app_js.text
+    assert (
+        "function setVcfDepotDownloadStates(activeTasks = [], activeExclusiveOperation = null, "
+        "profileStartStates = [])"
+    ) in app_js.text
     assert "const byProfile = new Map" in app_js.text
+    assert "const prerequisitesByProfile = new Map" in app_js.text
+    assert "profileStartStates: Array.isArray(payload.profile_start_states)" in app_js.text
     assert "data.start_blocker" in profiles_table_js
 
     app_css = client.get("/static/app.css")
@@ -15564,8 +15569,11 @@ def test_vcf_download_task_refresh_includes_exclusive_operation(client):
     import json
     import re
 
+    from sqlalchemy import select
+
     from atlaso.app.database import SessionLocal
-    from atlaso.app.models import Job, JobStatus, VcfDepotDownloadProfile
+    from atlaso.app.models import Job, JobStatus, Setting, VcfDepotDownloadProfile
+    from atlaso.app.services.vcf_offline_depot import VCF_DEPOT_TOKEN_VALUE_KEY
 
     login(client)
     with SessionLocal() as db:
@@ -15578,6 +15586,7 @@ def test_vcf_download_task_refresh_includes_exclusive_operation(client):
         db.add_all(
             [
                 profile,
+                Setting(key=VCF_DEPOT_TOKEN_VALUE_KEY, value="non-secret-refresh-fixture"),
                 Job(
                     id="job_refresh_exclusive",
                     type="vcf-depot-software-id",
@@ -15593,6 +15602,10 @@ def test_vcf_download_task_refresh_includes_exclusive_operation(client):
     response = client.get("/tasks/status", params={"task_type": "vcf-depot-download"})
 
     assert response.status_code == 200
+    initial_start_state = next(
+        state for state in response.json()["profile_start_states"] if state["profile_id"] == profile_id
+    )
+    assert initial_start_state == {"profile_id": profile_id, "can_start": True, "start_blocker": ""}
     assert response.json()["active_downloads"] == []
     assert response.json()["active_exclusive_operation"] == {
         "job_id": "job_refresh_exclusive",
@@ -15602,6 +15615,21 @@ def test_vcf_download_task_refresh_includes_exclusive_operation(client):
             "VCFDT Software Depot ID task job_refresh_exclusive is already pending. "
             "Wait for it to finish before starting another VCFDT operation."
         ),
+    }
+    with SessionLocal() as db:
+        token = db.scalar(select(Setting).where(Setting.key == VCF_DEPOT_TOKEN_VALUE_KEY))
+        assert token is not None
+        db.delete(token)
+        db.commit()
+    refreshed = client.get("/tasks/status", params={"task_type": "vcf-depot-download"})
+    assert refreshed.status_code == 200
+    refreshed_start_state = next(
+        state for state in refreshed.json()["profile_start_states"] if state["profile_id"] == profile_id
+    )
+    assert refreshed_start_state == {
+        "profile_id": profile_id,
+        "can_start": False,
+        "start_blocker": "Upload a Broadcom download token or activation code before starting this profile.",
     }
     page = client.get("/vcf-offline-depot")
     rows_payload = page.text.split("data-profiles='", 1)[1].split("'", 1)[0]

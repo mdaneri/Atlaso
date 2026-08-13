@@ -12390,13 +12390,18 @@ function scheduleVcfDepotProfileDownload(row, launcher = null) {
 
 let vcfDepotProfilesTable = null;
 
-function setVcfDepotDownloadStates(activeTasks = [], activeExclusiveOperation = null) {
+function setVcfDepotDownloadStates(activeTasks = [], activeExclusiveOperation = null, profileStartStates = []) {
   if (!vcfDepotProfilesTable) {
     return;
   }
   const byProfile = new Map(
     activeTasks
       .map((task) => [Number(task?.result?.profile_id || task?.profile_id || 0), task])
+      .filter(([profileId]) => profileId > 0),
+  );
+  const prerequisitesByProfile = new Map(
+    profileStartStates
+      .map((state) => [Number(state?.profile_id || 0), state])
       .filter(([profileId]) => profileId > 0),
   );
   vcfDepotProfilesTable.getRows().forEach((row) => {
@@ -12410,15 +12415,24 @@ function setVcfDepotDownloadStates(activeTasks = [], activeExclusiveOperation = 
       const activeTaskBlocker = task
         ? `VCFDT task ${jobId} is ${state} for this profile. Wait for it to finish before starting the same profile again.`
         : String(activeExclusiveOperation?.detail || "");
+      const currentPrerequisite = prerequisitesByProfile.get(Number(data.id));
+      const prerequisiteCanStart = currentPrerequisite
+        ? Boolean(currentPrerequisite.can_start)
+        : Boolean(data.prerequisite_can_start);
+      const prerequisiteStartBlocker = currentPrerequisite
+        ? String(currentPrerequisite.start_blocker || "")
+        : String(data.prerequisite_start_blocker || "");
       row.update({
         download_active: downloadActive,
         active_job_id: jobId,
         active_task_status: status,
         active_task_blocker: activeTaskBlocker,
-        can_start: downloadActive ? false : Boolean(data.prerequisite_can_start),
+        prerequisite_can_start: prerequisiteCanStart,
+        prerequisite_start_blocker: prerequisiteStartBlocker,
+        can_start: downloadActive ? false : prerequisiteCanStart,
         start_blocker: downloadActive
           ? activeTaskBlocker
-          : String(data.prerequisite_start_blocker || ""),
+          : prerequisiteStartBlocker,
       });
     }
   });
@@ -12580,7 +12594,11 @@ function initializeVcfDepotProfilesTable() {
     const activeTasks = Array.isArray(event.detail?.activeDownloads)
       ? event.detail.activeDownloads
       : tasks.filter((task) => !task.is_step && taskStatusActive(task.status));
-    setVcfDepotDownloadStates(activeTasks, event.detail?.activeExclusiveOperation || null);
+    setVcfDepotDownloadStates(
+      activeTasks,
+      event.detail?.activeExclusiveOperation || null,
+      Array.isArray(event.detail?.profileStartStates) ? event.detail.profileStartStates : [],
+    );
   });
 }
 
@@ -12830,6 +12848,7 @@ function applyTasksStatusPayload(payload, { reopen = false } = {}) {
       tasks: atlasoTasks,
       activeDownloads: Array.isArray(payload.active_downloads) ? payload.active_downloads : null,
       activeExclusiveOperation: payload.active_exclusive_operation || null,
+      profileStartStates: Array.isArray(payload.profile_start_states) ? payload.profile_start_states : [],
       activeCount: Number(payload.active_count || 0),
     },
   }));
