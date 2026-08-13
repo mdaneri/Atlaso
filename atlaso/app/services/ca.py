@@ -867,26 +867,52 @@ def validate_ca_private_key_material(
     Returns:
         Public-safe validation errors for encrypted keys that cannot be decrypted and imported.
     """
-    candidates: list[tuple[str, str]] = []
+    candidates: list[tuple[str, str, str]] = []
     if settings.root_private_key_encrypted:
-        candidates.append(("CA root", settings.root_private_key_encrypted))
+        candidates.append(
+            (
+                "CA root",
+                settings.root_private_key_encrypted,
+                settings.root_certificate_pem,
+            )
+        )
     candidates.extend(
-        (f"Certificate {certificate.common_name}", certificate.private_key_encrypted)
+        (
+            f"Certificate {certificate.common_name}",
+            certificate.private_key_encrypted,
+            certificate.certificate_pem,
+        )
         for certificate in certificates
         if certificate.enabled
         and certificate.status != "revoked"
         and certificate.private_key_encrypted
     )
     errors: list[str] = []
-    for label, encrypted_key in candidates:
+    for label, encrypted_key, certificate_pem in candidates:
         try:
             private_key_pem = decrypt_secret(encrypted_key)
-            serialization.load_pem_private_key(
+            private_key = serialization.load_pem_private_key(
                 private_key_pem.encode("utf-8"),
                 password=None,
             )
         except Exception:
             errors.append(f"{label} encrypted private key is not usable on this appliance.")
+            continue
+        try:
+            certificate = x509.load_pem_x509_certificate(certificate_pem.encode("utf-8"))
+        except Exception:
+            errors.append(f"{label} certificate is not usable on this appliance.")
+            continue
+        private_public_key = private_key.public_key().public_bytes(
+            serialization.Encoding.DER,
+            serialization.PublicFormat.SubjectPublicKeyInfo,
+        )
+        certificate_public_key = certificate.public_key().public_bytes(
+            serialization.Encoding.DER,
+            serialization.PublicFormat.SubjectPublicKeyInfo,
+        )
+        if private_public_key != certificate_public_key:
+            errors.append(f"{label} encrypted private key does not match its certificate.")
     return errors
 
 

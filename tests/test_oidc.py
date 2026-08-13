@@ -732,6 +732,39 @@ def test_oidc_rsa_key_is_encrypted_and_rotation_keeps_public_overlap(client, mon
         assert all("d" not in key for key in jwks["keys"])
 
 
+def test_oidc_cryptographic_validation_rejects_mismatched_public_jwk(client):
+    """Verify persisted OIDC public JWK values match the signing private key."""
+    from joserfc.jwk import RSAKey
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import CaCertificate
+    from atlaso.app.services import oidc
+
+    with SessionLocal() as db:
+        _set_oidc_service_ready(db)
+        provider = oidc.ensure_provider_settings(db)
+        signing_key, _ = oidc.generate_signing_key(db, rotate=False)
+        unrelated = RSAKey.generate_key(
+            key_size=2048,
+            parameters={"alg": oidc.OIDC_SIGNING_ALGORITHM, "use": "sig"},
+            private=True,
+            auto_kid=True,
+        )
+        mismatched_public_jwk = unrelated.as_dict(private=False)
+        mismatched_public_jwk["kid"] = signing_key.kid
+        mismatched_public_jwk["alg"] = oidc.OIDC_SIGNING_ALGORITHM
+        signing_key.public_jwk_json = json.dumps(mismatched_public_jwk)
+        certificate = db.execute(
+            select(CaCertificate).where(CaCertificate.managed_owner == "oidc:https")
+        ).scalar_one()
+
+        assert oidc.provider_cryptographic_validation_errors(
+            provider,
+            certificate,
+            signing_key,
+        ) == ["The active OIDC signing key is not protocol-ready."]
+
+
 def test_oidc_subject_is_stable_across_metadata_changes_and_new_after_recreation(client):
     """Verify that oidc subject is stable across metadata changes and new after recreation.
 

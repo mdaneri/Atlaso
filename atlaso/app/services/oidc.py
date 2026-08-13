@@ -280,7 +280,17 @@ def provider_cryptographic_validation_errors(
                 or public_jwk.get("alg") != OIDC_SIGNING_ALGORITHM
             ):
                 raise ValueError
-            RSAKey.import_key(decrypt_secret(signing_key.private_key_encrypted))
+            private_key = RSAKey.import_key(
+                decrypt_secret(signing_key.private_key_encrypted)
+            )
+            persisted_public_key = RSAKey.import_key(public_jwk)
+            private_public_values = private_key.as_dict(private=False)
+            persisted_public_values = persisted_public_key.as_dict(private=False)
+            if any(
+                private_public_values.get(field) != persisted_public_values.get(field)
+                for field in ("kty", "n", "e")
+            ):
+                raise ValueError
         except Exception:
             errors.append("The active OIDC signing key is not protocol-ready.")
     return errors

@@ -5,7 +5,12 @@ import pytest
 from atlaso.app.config import Settings
 from atlaso.app.models import CaCertificate, CaSettings, utcnow
 from atlaso.app.secrets import decrypt_secret, encrypt_secret
-from atlaso.app.services.ca import ca_certificate_to_dict, ensure_root_ca_material, render_ca_apply_payload
+from atlaso.app.services.ca import (
+    ca_certificate_to_dict,
+    ensure_root_ca_material,
+    render_ca_apply_payload,
+    validate_ca_private_key_material,
+)
 
 
 def test_encrypted_secret_round_trip_and_wrong_key_failure():
@@ -79,6 +84,37 @@ def test_existing_root_ca_material_is_not_rotated_by_identity_edits():
     assert settings.root_certificate_pem == original_certificate
     assert settings.root_private_key_encrypted == original_private_key
     assert settings.root_fingerprint == original_fingerprint
+
+
+def test_ca_private_key_validation_rejects_mismatched_certificate():
+    """Verify CA private-key validation requires the matching public certificate."""
+    first = CaSettings(
+        enabled=True,
+        root_common_name="First Atlaso Root",
+        organization="Atlaso",
+        key_algorithm="RSA",
+        key_size=2048,
+        digest_algorithm="sha256",
+        root_valid_days=3650,
+        storage_path="/etc/atlaso/ca",
+    )
+    second = CaSettings(
+        enabled=True,
+        root_common_name="Second Atlaso Root",
+        organization="Atlaso",
+        key_algorithm="RSA",
+        key_size=2048,
+        digest_algorithm="sha256",
+        root_valid_days=3650,
+        storage_path="/etc/atlaso/ca",
+    )
+    assert ensure_root_ca_material(first) is True
+    assert ensure_root_ca_material(second) is True
+    first.root_private_key_encrypted = second.root_private_key_encrypted
+
+    assert validate_ca_private_key_material(first, []) == [
+        "CA root encrypted private key does not match its certificate."
+    ]
 
 
 def test_ca_certificate_row_capabilities_follow_lifecycle_and_ownership():
