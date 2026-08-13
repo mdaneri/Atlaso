@@ -57,13 +57,18 @@ def test_packer_ci_authenticates_plugins_without_exposing_fork_tokens() -> None:
     packer_job = workflow.split("  deployment-packer:", maxsplit=1)[1].split(
         "  python-tests:", maxsplit=1
     )[0]
-    authenticated_step, fork_step = packer_job.split(
+    job_preamble, authenticated_step = packer_job.split(
+        "      - name: Validate both Photon Packer targets with authenticated plugin downloads",
+        maxsplit=1,
+    )
+    authenticated_step, fork_step = authenticated_step.split(
         "      - name: Validate fork Packer targets without repository credentials",
         maxsplit=1,
     )
 
     assert "permissions:\n      contents: read" in packer_job
     assert "persist-credentials: false" in packer_job
+    assert "PACKER_GITHUB_API_TOKEN" not in job_preamble
     assert (
         "if: github.event_name != 'pull_request' || "
         "github.event.pull_request.head.repo.full_name == github.repository"
