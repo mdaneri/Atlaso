@@ -14770,7 +14770,7 @@ def create_contextual_vcf_depot_schedule(
             return RedirectResponse(
                 management_ui_path(
                     f"/vcf-offline-depot?schedule_profile_id={profile_id}"
-                    f"&schedule_error={quote(exc.public_detail)}#vcf-depot-schedule-modal"
+                    "&schedule_invalid=true#vcf-depot-schedule-modal"
                 ),
                 status_code=303,
             )
@@ -24406,7 +24406,7 @@ def delete_vcf_fqdns_from_ui(
 def vcf_offline_depot_page(
     request: Request,
     schedule_profile_id: int | None = Query(None),
-    schedule_error: str = Query(""),
+    schedule_invalid: bool = Query(False),
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> HTMLResponse:
@@ -24415,7 +24415,7 @@ def vcf_offline_depot_page(
     Args:
         request: Incoming HTTP request.
         schedule_profile_id: Optional profile selected by the no-script schedule fallback.
-        schedule_error: Public validation feedback for the no-script schedule fallback.
+        schedule_invalid: Whether fixed validation feedback is shown for the no-script fallback.
         identity: Authenticated identity authorizing the request.
         db: Active database session.
 
@@ -24433,6 +24433,11 @@ def vcf_offline_depot_page(
         db.get(VcfDepotDownloadProfile, schedule_profile_id)
         if schedule_profile_id is not None
         else None
+    )
+    schedule_error = (
+        "Review the schedule fields and provide a valid timing definition."
+        if schedule_invalid
+        else ""
     )
     if schedule_profile is not None and not schedule_profile.enabled:
         schedule_profile = None

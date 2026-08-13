@@ -15428,6 +15428,26 @@ def test_vcf_offline_depot_contextual_schedule_is_server_bound_and_stays_in_page
         ).scalar_one()
         assert json.loads(fallback_schedule_row.task_config_json) == {"profile_id": profile_id}
 
+    fallback_invalid = client.post(
+        f"/vcf-offline-depot/profiles/{profile_id}/schedules",
+        data={
+            "csrf": csrf,
+            "name": "contextual-profile-fallback-invalid",
+            "schedule_kind": "cron",
+            "cron_expression": "invalid",
+            "timezone_name": "UTC",
+        },
+        headers={"Accept": "text/html"},
+        follow_redirects=False,
+    )
+    assert fallback_invalid.status_code == 303
+    assert fallback_invalid.headers["location"] == (
+        f"/ui/management/vcf-offline-depot?schedule_profile_id={profile_id}"
+        "&schedule_invalid=true#vcf-depot-schedule-modal"
+    )
+    invalid_page = client.get(fallback_invalid.headers["location"])
+    assert "Review the schedule fields and provide a valid timing definition." in invalid_page.text
+
     task_tamper = client.post(
         f"/vcf-offline-depot/profiles/{profile_id}/schedules",
         data={
