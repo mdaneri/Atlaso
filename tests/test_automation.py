@@ -1365,6 +1365,54 @@ def test_due_vcf_schedule_records_software_id_collision_as_skipped(client):
         ).scalar_one().success is False
 
 
+def test_due_vcf_schedule_records_disappearing_profile_as_skipped(client, monkeypatch):
+    """Verify a profile deleted during admission cannot terminate scheduling.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+        monkeypatch: Pytest fixture used to replace queue admission.
+    """
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import JobStatus, Schedule, VcfDepotDownloadProfile
+    from atlaso.app.services import automation
+    from atlaso.app.services.vcf_depot_downloads import VcfDepotProfileUnavailableError
+
+    client.get("/login")
+    now = datetime.now(timezone.utc)
+    with SessionLocal() as db:
+        profile = VcfDepotDownloadProfile(name="disappearing-profile", profile_type="metadata", enabled=True)
+        db.add(profile)
+        db.flush()
+        profile_id = profile.id
+        schedule = Schedule(
+            name="disappearing-profile-nightly",
+            task_type="vcf_depot_download",
+            task_config_json=json.dumps({"profile_id": profile_id}),
+            schedule_kind="cron",
+            cron_expression="0 2 * * *",
+            timezone_name="UTC",
+            enabled=True,
+            next_run_at=now - timedelta(minutes=1),
+            created_by="admin",
+        )
+        db.add(schedule)
+        db.commit()
+
+    def reject_disappearing_profile(*_args, **_kwargs):
+        """Model deletion after the scheduler's initial profile lookup."""
+        raise VcfDepotProfileUnavailableError(profile_id)
+
+    monkeypatch.setattr(automation, "enqueue_vcf_depot_download", reject_disappearing_profile)
+    with SessionLocal() as db:
+        jobs = automation.enqueue_due_schedules(db, now=now)
+        assert len(jobs) == 1
+        skipped = jobs[0]
+        result = json.loads(skipped.result)
+        assert skipped.status == JobStatus.SKIPPED.value
+        assert result["error"] == f"VCFDT download profile {profile_id} is no longer available."
+        assert "active_job_id" not in result
+
+
 def test_disabling_vcf_profile_disables_schedules_and_delete_requires_detach(client):
     """Verify that disabling vcf profile disables schedules and delete requires detach.
 

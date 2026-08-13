@@ -671,6 +671,20 @@ def enqueue_due_schedules(db: Session, *, now: datetime | None = None) -> list[J
                     VcfDepotExclusiveOperationError,
                     VcfDepotProfileUnavailableError,
                 ) as exc:
+                    skipped_result = {
+                        **vcf_depot_initial_job_result(
+                            job_id=job_id,
+                            profile=profile,
+                            trigger="scheduled",
+                            schedule=schedule,
+                            planned_for=planned_for,
+                        ),
+                        "status": JobStatus.SKIPPED.value,
+                        "success": False,
+                        "error": str(exc),
+                    }
+                    if not isinstance(exc, VcfDepotProfileUnavailableError):
+                        skipped_result["active_job_id"] = exc.active_job_id
                     job = Job(
                         id=job_id,
                         type="vcf-depot-download",
@@ -681,23 +695,7 @@ def enqueue_due_schedules(db: Session, *, now: datetime | None = None) -> list[J
                         trigger="scheduled",
                         planned_for=planned_for,
                         task_config_json=vcf_task_config,
-                        result=json.dumps(
-                            {
-                                **vcf_depot_initial_job_result(
-                                    job_id=job_id,
-                                    profile=profile,
-                                    trigger="scheduled",
-                                    schedule=schedule,
-                                    planned_for=planned_for,
-                                ),
-                                "active_job_id": exc.active_job_id,
-                                "status": JobStatus.SKIPPED.value,
-                                "success": False,
-                                "error": str(exc),
-                            },
-                            indent=2,
-                            sort_keys=True,
-                        ),
+                        result=json.dumps(skipped_result, indent=2, sort_keys=True),
                         error=str(exc),
                         finished_at=current,
                     )
