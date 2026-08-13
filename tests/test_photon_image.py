@@ -818,6 +818,9 @@ def test_photon_provisioning_prepares_attached_data_disks():
     assert "Requires=atlaso-data-disks.service" in bootstrap_unit
     assert "Requires=atlaso-data-disks.service" in nginx_dropin
     assert "/etc/systemd/system/nginx.service.d/atlaso-data-disks.conf" in provision
+    assert provision.index("systemctl enable --now nginx") < provision.index(
+        '"$ATLASO_HOME/image/common/systemd/nginx-atlaso-data-disks.conf"'
+    )
 
     assert "atlaso-data-disks.service" in root_docs
     assert "atlaso-data-disks.service" in hyperv_docs

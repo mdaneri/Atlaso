@@ -454,8 +454,6 @@ install -o root -g root -m 0644 "$ATLASO_HOME/image/common/systemd/atlaso-consol
 install -o root -g root -m 0644 "$ATLASO_HOME/image/common/systemd/atlaso-worker.service" /etc/systemd/system/atlaso-worker.service
 install -o root -g root -m 0644 "$ATLASO_HOME/image/common/systemd/atlaso-data-disks.service" /etc/systemd/system/atlaso-data-disks.service
 install -o root -g root -m 0644 "$ATLASO_HOME/image/common/systemd/atlaso-bootstrap-https.service" /etc/systemd/system/atlaso-bootstrap-https.service
-install -d -o root -g root -m 0755 /etc/systemd/system/nginx.service.d
-install -o root -g root -m 0644 "$ATLASO_HOME/image/common/systemd/nginx-atlaso-data-disks.conf" /etc/systemd/system/nginx.service.d/atlaso-data-disks.conf
 install -d -o root -g root -m 0755 /etc/systemd/system.conf.d
 install -o root -g root -m 0644 "$ATLASO_HOME/image/common/systemd/atlaso-console-manager.conf" /etc/systemd/system.conf.d/atlaso-console.conf
 install -o root -g root -m 0755 "$ATLASO_HOME/scripts/appliance/atlaso-helper" "$ATLASO_HOME/bin/atlaso-helper"
@@ -494,7 +492,7 @@ if [ "$ATLASO_GUEST_PLATFORM" = "vmware" ]; then
   install -o root -g root -m 0644 "$ATLASO_HOME/$ATLASO_IMAGE_ASSET_DIR/systemd/atlaso-vmware-ovf-customize.service" /etc/systemd/system/atlaso-vmware-ovf-customize.service
 fi
 install -o root -g root -m 0440 "$ATLASO_HOME/$ATLASO_IMAGE_ASSET_DIR/sudoers.d/atlaso-helper" /etc/sudoers.d/atlaso-helper
-sed -i 's/\r$//' /etc/systemd/system/atlaso.service /etc/systemd/system/atlaso-worker.service /etc/systemd/system/atlaso-console.service /etc/systemd/system/nginx.service.d/atlaso-data-disks.conf /etc/systemd/system.conf.d/atlaso-console.conf "$ATLASO_HOME/bin/atlaso-helper" "$ATLASO_HOME/bin/atlaso-install-boot-branding" "$ATLASO_HOME/bin/atlaso-mount-data-disks" "$ATLASO_HOME/bin/atlaso-bootstrap-https" /etc/sudoers.d/atlaso-helper
+sed -i 's/\r$//' /etc/systemd/system/atlaso.service /etc/systemd/system/atlaso-worker.service /etc/systemd/system/atlaso-console.service /etc/systemd/system.conf.d/atlaso-console.conf "$ATLASO_HOME/bin/atlaso-helper" "$ATLASO_HOME/bin/atlaso-install-boot-branding" "$ATLASO_HOME/bin/atlaso-mount-data-disks" "$ATLASO_HOME/bin/atlaso-bootstrap-https" /etc/sudoers.d/atlaso-helper
 if [ "$ATLASO_GUEST_PLATFORM" = "vmware" ]; then
   sed -i 's/\r$//' "$ATLASO_HOME/bin/atlaso-vmware-ovf-customize.py" /etc/systemd/system/atlaso-vmware-ovf-customize.service
 fi
@@ -612,6 +610,10 @@ systemctl mask getty@tty1.service
 systemctl mask --force ctrl-alt-del.target
 systemctl enable atlaso-console.service
 systemctl enable --now nginx
+install -d -o root -g root -m 0755 /etc/systemd/system/nginx.service.d
+install -o root -g root -m 0644 "$ATLASO_HOME/image/common/systemd/nginx-atlaso-data-disks.conf" /etc/systemd/system/nginx.service.d/atlaso-data-disks.conf
+sed -i 's/\r$//' /etc/systemd/system/nginx.service.d/atlaso-data-disks.conf
+systemctl daemon-reload
 
 log_step "configuring Atlaso nftables firewall"
 if [ -z "$ATLASO_MGMT_SOURCE_CIDR" ]; then
