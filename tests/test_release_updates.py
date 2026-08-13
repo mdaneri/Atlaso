@@ -848,10 +848,12 @@ def test_previous_updater_service_bootstraps_every_new_data_disk_safety_asset(mo
         source.write_bytes(content)
     monkeypatch.setattr(helper, "ATLASO_RELEASES_DIR", release_root.parent)
     monkeypatch.setattr(helper, "ATLASO_CURRENT_LINK", current)
+    monkeypatch.setattr(helper, "ATLASO_UPDATE_BACKUP_DIR", tmp_path / "backups")
     for name, destination in destinations.items():
         monkeypatch.setattr(helper, name, destination)
     monkeypatch.setattr(helper, "_release_data_disk_platform", lambda: "vmware")
     commands: list[list[str]] = []
+    events: list[str] = []
 
     def command_payload(command, **_kwargs):
         """Return a successful bootstrap command result.
@@ -861,10 +863,17 @@ def test_previous_updater_service_bootstraps_every_new_data_disk_safety_asset(mo
             **_kwargs: Optional command execution arguments.
         """
         commands.append(command)
+        if command == [destinations["ATLASO_MOUNT_DATA_DISKS_PATH"].as_posix()]:
+            events.append("preflight")
         return {"command": command, "returncode": 0, "success": True, "stdout": "", "stderr": ""}
 
     monkeypatch.setattr(helper, "_command_payload", command_payload)
     monkeypatch.setattr(helper, "_command_path", lambda name: f"/usr/bin/{name}")
+    monkeypatch.setattr(
+        helper,
+        "_migrate_release_esx_storage_claims",
+        lambda _backup_root, _backups: events.append("migration"),
+    )
 
     helper._bootstrap_release_data_disk_safety(release_root)
 
@@ -876,6 +885,8 @@ def test_previous_updater_service_bootstraps_every_new_data_disk_safety_asset(mo
     assert ["/usr/bin/udevadm", "control", "--reload-rules"] in commands
     assert [destinations["ATLASO_MOUNT_DATA_DISKS_PATH"].as_posix()] in commands
     assert ["/usr/bin/systemctl", "daemon-reload"] in commands
+    assert events == ["migration", "preflight"]
+    assert not any((tmp_path / "backups").iterdir())
     for unit_path in [
         ROOT / "image/hyperv/systemd/atlaso.service",
         ROOT / "image/vmware-workstation/systemd/atlaso.service",
@@ -884,6 +895,125 @@ def test_previous_updater_service_bootstraps_every_new_data_disk_safety_asset(mo
             "ExecStartPre=+/opt/atlaso/bin/atlaso-helper appliance-update "
             "bootstrap-data-disk-safety --real /opt/atlaso/current"
         ) in unit_path.read_text(encoding="utf-8")
+
+
+def test_previous_updater_bootstrap_restores_assets_claims_and_database(monkeypatch, tmp_path):
+    """Restore every compatibility mutation when the first candidate preflight fails.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    import sqlite3
+
+    from tests.test_appliance_update import load_helper_module
+
+    helper = load_helper_module()
+    release_root = tmp_path / "opt/atlaso/releases/candidate"
+    release_root.mkdir(parents=True)
+    current = tmp_path / "opt/atlaso/current"
+    current.parent.mkdir(parents=True, exist_ok=True)
+    current.symlink_to(release_root, target_is_directory=True)
+    source = release_root / "safety-asset"
+    source.write_bytes(b"candidate-asset")
+    destination = tmp_path / "host/safety-asset"
+    destination.parent.mkdir(parents=True)
+    destination.write_bytes(b"previous-asset")
+    new_source = release_root / "new-safety-asset"
+    new_source.write_bytes(b"candidate-new-asset")
+    new_destination = tmp_path / "host/new-safety-asset"
+    allowlist = tmp_path / "host/esx-storage-disks.conf"
+    allowlist.write_text("previous-claim\n", encoding="utf-8")
+    database = tmp_path / "host/atlaso.db"
+    connection = sqlite3.connect(database)
+    try:
+        connection.execute("create table bootstrap_state (value text)")
+        connection.execute("insert into bootstrap_state values ('previous')")
+        connection.commit()
+    finally:
+        connection.close()
+
+    monkeypatch.setattr(helper, "ATLASO_RELEASES_DIR", release_root.parent)
+    monkeypatch.setattr(helper, "ATLASO_CURRENT_LINK", current)
+    monkeypatch.setattr(helper, "ATLASO_UPDATE_BACKUP_DIR", tmp_path / "backups")
+    monkeypatch.setattr(helper, "ATLASO_DATABASE_PATH", database)
+    monkeypatch.setattr(helper, "_release_data_disk_platform", lambda: "vmware")
+    monkeypatch.setattr(
+        helper,
+        "_release_data_disk_owned_files",
+        lambda _release_root, _platform: [
+            (source, destination, 0o644),
+            (new_source, new_destination, 0o644),
+        ],
+    )
+    events: list[str] = []
+
+    def migrate_claims(backup_root, backups):
+        """Simulate the real claim and database migration inside the transaction.
+
+        Args:
+            backup_root: Bootstrap transaction backup directory.
+            backups: Asset backups extended with the allowlist backup.
+        """
+        events.append("migration")
+        backup = backup_root / "esx-storage-disks.conf"
+        backup.write_bytes(allowlist.read_bytes())
+        backups.append((backup, allowlist))
+        allowlist.write_text("candidate-claim\n", encoding="utf-8")
+        connection = sqlite3.connect(database)
+        try:
+            connection.execute("update bootstrap_state set value = 'candidate'")
+            connection.commit()
+        finally:
+            connection.close()
+
+    def refresh_identity(*, validate):
+        """Fail candidate validation and accept the restored identity refresh.
+
+        Args:
+            validate: Whether this invocation is the candidate preflight.
+        """
+        events.append("preflight" if validate else "rollback-refresh")
+        return [
+            {
+                "command": ["disk-preflight" if validate else "udev-refresh"],
+                "returncode": 1 if validate else 0,
+                "success": not validate,
+                "stdout": "",
+                "stderr": "unsafe disk" if validate else "",
+            }
+        ]
+
+    monkeypatch.setattr(helper, "_migrate_release_esx_storage_claims", migrate_claims)
+    monkeypatch.setattr(helper, "_refresh_release_data_disk_identity", refresh_identity)
+    monkeypatch.setattr(helper, "_command_path", lambda name: f"/usr/bin/{name}")
+    monkeypatch.setattr(
+        helper,
+        "_command_payload",
+        lambda command, **_kwargs: {
+            "command": command,
+            "returncode": 0,
+            "success": True,
+            "stdout": "",
+            "stderr": "",
+        },
+    )
+
+    with pytest.raises(ValueError, match="prior safety state restored"):
+        helper._bootstrap_release_data_disk_safety(release_root)
+
+    assert destination.read_bytes() == b"previous-asset"
+    assert not new_destination.exists()
+    assert not destination.with_suffix(".bootstrap").exists()
+    assert not new_destination.with_suffix(".bootstrap").exists()
+    assert allowlist.read_text(encoding="utf-8") == "previous-claim\n"
+    connection = sqlite3.connect(database)
+    try:
+        assert connection.execute("select value from bootstrap_state").fetchone()[0] == "previous"
+    finally:
+        connection.close()
+    assert events == ["migration", "preflight", "rollback-refresh"]
+    assert not any((tmp_path / "backups").iterdir())
 
 
 @pytest.mark.parametrize(

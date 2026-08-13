@@ -10854,13 +10854,13 @@ def _release_data_disk_owned_files(release_root: Path, platform: str) -> list[tu
 
 
 def _bootstrap_release_data_disk_safety(release_root: Path) -> list[dict]:
-    """Install and validate safety assets when the previous updater copied only known files.
+    """Transactionally migrate, install, and validate safety for a previous updater.
 
     Args:
         release_root: Active verified release root selected by the previous updater.
 
     Raises:
-        ValueError: If the root is not active, an asset is missing, or validation fails.
+        ValueError: If the root is not active or the transaction cannot validate or roll back.
     """
     resolved_release = release_root.resolve(strict=True)
     if not ATLASO_CURRENT_LINK.is_symlink() or ATLASO_CURRENT_LINK.resolve(strict=True) != resolved_release:
@@ -10871,25 +10871,81 @@ def _bootstrap_release_data_disk_safety(release_root: Path) -> list[dict]:
     for source, _destination, _mode in assets:
         if not source.is_file():
             raise ValueError(f"Atlaso release is missing {source.relative_to(resolved_release)}")
-    for source, destination, mode in assets:
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        if (
-            destination.is_file()
-            and destination.read_bytes() == source.read_bytes()
-            and destination.stat().st_mode & 0o777 == mode
-        ):
-            continue
-        temporary = destination.with_suffix(destination.suffix + ".bootstrap")
-        shutil.copy2(source, temporary)
-        temporary.chmod(mode)
-        os.replace(temporary, destination)
-    commands = _refresh_release_data_disk_identity(validate=True)
+
+    backup_root = ATLASO_UPDATE_BACKUP_DIR / f"data-disk-bootstrap-{uuid.uuid4().hex}"
+    backup_root.mkdir(parents=True)
+    backup_root.chmod(0o700)
+    database_backup = backup_root / "atlaso.db"
+    database_backed_up = False
+    backups: list[tuple[Path | None, Path]] = []
+    temporary_paths: list[Path] = []
+    commands: list[dict] = []
     systemctl = _command_path("systemctl") or "systemctl"
-    if all(command["success"] for command in commands):
+    try:
+        database_backed_up = ATLASO_DATABASE_PATH.is_file()
+        if database_backed_up:
+            _sqlite_backup(database_backup)
+        for _source, destination, _mode in assets:
+            backup = backup_root.joinpath(*destination.parts[1:])
+            if destination.exists():
+                backup.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(destination, backup)
+                backups.append((backup, destination))
+            else:
+                backups.append((None, destination))
+        for source, destination, mode in assets:
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            if (
+                destination.is_file()
+                and destination.read_bytes() == source.read_bytes()
+                and destination.stat().st_mode & 0o777 == mode
+            ):
+                continue
+            temporary = destination.with_suffix(destination.suffix + ".bootstrap")
+            temporary_paths.append(temporary)
+            shutil.copy2(source, temporary)
+            temporary.chmod(mode)
+            os.replace(temporary, destination)
+        _migrate_release_esx_storage_claims(backup_root, backups)
+        commands = _refresh_release_data_disk_identity(validate=True)
+        if not all(command["success"] for command in commands):
+            raise ValueError("release data-disk safety bootstrap validation failed")
         commands.append(_command_payload([systemctl, "daemon-reload"]))
-    if not all(command["success"] for command in commands):
-        raise ValueError("release data-disk safety bootstrap validation failed")
-    return commands
+        if not all(command["success"] for command in commands):
+            raise ValueError("release data-disk safety bootstrap daemon reload failed")
+        return commands
+    except Exception as exc:
+        rollback_errors: list[str] = []
+        try:
+            if database_backed_up:
+                _restore_sqlite_backup(database_backup)
+        except OSError as rollback_exc:
+            rollback_errors.append(f"database restore failed: {rollback_exc}")
+        for backup, destination in reversed(backups):
+            try:
+                if backup is None:
+                    destination.unlink(missing_ok=True)
+                else:
+                    shutil.copy2(backup, destination)
+            except OSError as rollback_exc:
+                rollback_errors.append(f"asset restore failed for {destination}: {rollback_exc}")
+        rollback_commands = _refresh_release_data_disk_identity(validate=False)
+        rollback_commands.append(_command_payload([systemctl, "daemon-reload"]))
+        rollback_errors.extend(
+            str(command.get("stderr") or "data-disk safety rollback command failed")
+            for command in rollback_commands
+            if not command["success"]
+        )
+        if rollback_errors:
+            raise ValueError(
+                "release data-disk safety bootstrap failed and rollback was incomplete: "
+                + "; ".join(rollback_errors)
+            ) from exc
+        raise ValueError("release data-disk safety bootstrap failed; prior safety state restored") from exc
+    finally:
+        for temporary in temporary_paths:
+            temporary.unlink(missing_ok=True)
+        shutil.rmtree(backup_root, ignore_errors=True)
 
 
 def _restore_release_owned_files(backups: list[tuple[Path | None, Path]]) -> None:

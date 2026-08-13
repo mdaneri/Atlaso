@@ -218,19 +218,21 @@ transaction reloads the identity rule and runs the release-owned data-disk prefl
 an unsafe disk, or a missing release-owned safety asset fails the update and restores the prior files. When upgrading
 from an updater that predates these safety assets, the candidate helper is still installed through the updater's
 existing helper path. The candidate `atlaso.service` then runs that helper as a root pre-start gate to install the
-complete signed safety set, reload disk identities, and pass the release-owned disk preflight before the control plane
-can start. That bootstrap also installs the permanent systemd dependency used by later service starts. Because the
-legacy updater cannot restore files it never owned, these bootstrapped safety assets remain fail-closed if a later
-candidate health check rolls the application back; the previous control plane can restart only after the same disk
-preflight succeeds. When upgrading
+complete signed safety set, migrate exact claims for already applied ESX Storage disks, reload disk identities, and pass
+the release-owned disk preflight before the control plane can start. The bootstrap backs up its safety assets, claim
+allowlist, and database first; a migration or preflight failure restores all three plus the prior systemd and udev
+state. After that bootstrap succeeds, its permanent systemd dependency remains fail-closed if a later candidate health
+check rolls the application back; the previous control plane can restart only after the same disk preflight succeeds.
+When upgrading
 an older release, the transaction first derives exact root-owned claims for already applied, boot-safe ESX Storage
 volumes from the database and live block inventory and migrates persisted stable-device aliases for both operator-mounted
 and Atlaso-formatted volumes to the selected live identity. The database identity and boot claim
 participate in the same rollback boundary; an ambiguous, unsafe, or concurrently changed configured volume fails closed.
 
 Any failure restores the previous release link, helper, service, current-updater-owned disk-safety files, and database
-snapshot before maintenance mode is removed. The first legacy-updater transition retains its bootstrapped safety assets
-as described above. A root-owned finalizer at
+snapshot before maintenance mode is removed. The first legacy-updater transition restores its private bootstrap
+transaction on migration or preflight failure and retains the validated safety boundary only after that transaction
+succeeds, as described above. A root-owned finalizer at
 `/var/lib/atlaso/apply/appliance-update/finalizer-status.json` records the definitive transaction result so the worker
 can persist the durable task outcome. Without a matching definitive finalizer, worker startup marks an interrupted
 running parent failed even when every child step committed before the restart; child results remain available as
