@@ -11823,6 +11823,7 @@ def _esx_storage_inventory() -> list[dict[str, object]]:
                 mountpoints[0] if mountpoints else "",
             ),
         )
+        writable_mount_paths = [path for path in mountpoints if _esx_storage_mount_is_writable(path)]
         kname = str(item.get("kname") or item.get("name") or "")
         holders_root = Path("/sys/class/block") / kname / "holders"
         holders = sorted(path.name for path in holders_root.iterdir()) if holders_root.is_dir() else []
@@ -11850,6 +11851,7 @@ def _esx_storage_inventory() -> list[dict[str, object]]:
                 "filesystem_label": str(item.get("label") or ""),
                 "mount_path": primary_mount_path,
                 "mount_paths": mountpoints,
+                "writable_mount_paths": writable_mount_paths,
                 "partitions": [str(child.get("path") or child.get("name") or "") for child in children],
                 "swap": device_path in swap_devices or filesystem_type == "swap",
                 "lvm": filesystem_type == "LVM2_member" or any("dm-" in holder for holder in holders),
@@ -11868,6 +11870,16 @@ def _esx_storage_inventory() -> list[dict[str, object]]:
     for block_device in payload.get("blockdevices", []):
         walk(block_device)
     return inventory
+
+
+def _esx_storage_mount_is_writable(mount_path: str) -> bool:
+    """Return whether one exact active mount has the read-write option."""
+    findmnt = _command_path("findmnt")
+    if findmnt is None or not mount_path:
+        return False
+    result = _run([findmnt, "-nro", "OPTIONS", "--mountpoint", mount_path])
+    lines = [line.strip() for line in result.stdout.splitlines() if line.strip()]
+    return result.returncode == 0 and len(lines) == 1 and "rw" in lines[0].split(",")
 
 
 def _esx_storage_fstab_escape_field(value: object) -> str:
@@ -11945,8 +11957,20 @@ def _esx_storage_mounted_disk_errors(entry: dict[str, object], *, mount_path: Pa
         errors.append("not ext4")
     if not str(entry.get("filesystem_uuid") or ""):
         errors.append("missing filesystem UUID")
-    if str(mount_path) not in [str(path) for path in entry.get("mount_paths", [])]:
+    selected_mount = str(mount_path)
+    mount_paths = [str(path) for path in entry.get("mount_paths", [])]
+    if selected_mount not in mount_paths:
         errors.append("not mounted at the selected path")
+    unexpected_mounts = [
+        path
+        for path in mount_paths
+        if path != selected_mount and not path.startswith(f"{ESX_STORAGE_EXPORT_ROOT.as_posix().rstrip('/')}/")
+    ]
+    if unexpected_mounts:
+        errors.append("has unexpected additional mounts")
+    writable_mount_paths = [str(path) for path in entry.get("writable_mount_paths", [])]
+    if selected_mount not in writable_mount_paths:
+        errors.append("selected mount is read-only")
     for key, label in [
         ("partitions", "has partitions"),
         ("holders", "has holders"),

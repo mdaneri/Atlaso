@@ -57,16 +57,28 @@ root_disk() {
   readlink -f "$root_source" 2>/dev/null || printf '%s\n' "$root_source"
 }
 
-scsi_tuple() {
+scsi_address() {
   disk="$(readlink -f "$1" 2>/dev/null || true)"
   [ -n "$disk" ] || return 1
   block_name="${disk##*/}"
   device_path="$(readlink -f "$SYS_BLOCK_ROOT/$block_name/device" 2>/dev/null || true)"
   scsi_address="${device_path##*/}"
   case "$scsi_address" in
-    *:*:*:*) printf '%s\n' "${scsi_address#*:}" ;;
+    *:*:*:*) printf '%s\n' "$scsi_address" ;;
     *) return 1 ;;
   esac
+}
+
+scsi_tuple() {
+  address="$(scsi_address "$1" || true)"
+  [ -n "$address" ] || return 1
+  printf '%s\n' "${address#*:}"
+}
+
+scsi_host() {
+  address="$(scsi_address "$1" || true)"
+  [ -n "$address" ] || return 1
+  printf '%s\n' "${address%%:*}"
 }
 
 disk_for_tuple() {
@@ -159,6 +171,8 @@ validate_identity() {
     fail "$label identity does not resolve to a whole disk"
   [ "$(scsi_tuple "$resolved" || true)" = "$tuple" ] ||
     fail "$label disk no longer matches SCSI identity $tuple"
+  [ "$(scsi_host "$resolved" || true)" = "$(scsi_host "$os_disk" || true)" ] ||
+    fail "$label disk no longer matches the operating-system SCSI controller"
   stable_path="$(stable_path_for_disk "$resolved" || true)"
   [ -n "$stable_path" ] ||
     fail "$label disk at SCSI identity $tuple has no stable atlaso-path identity"
@@ -402,6 +416,8 @@ validate_exact_disk_set() {
     fi
     tuple="$(scsi_tuple "$resolved" || printf 'unknown')"
     if [ -n "$ATLASO_SYSTEM_SCSI_TUPLE" ] && [ "$tuple" = "$ATLASO_SYSTEM_SCSI_TUPLE" ]; then
+      [ "$(scsi_host "$resolved" || true)" = "$(scsi_host "$os_disk" || true)" ] ||
+        fail "VMware system-content identity $tuple is attached to an unexpected SCSI controller"
       [ "$(blkid -s LABEL -o value "$resolved" 2>/dev/null || true)" = "ATLASO_SYSTEM" ] ||
         fail "VMware system-content identity $tuple does not contain ATLASO_SYSTEM"
       continue

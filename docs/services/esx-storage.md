@@ -169,6 +169,10 @@ safety therefore does not depend on `nofail` mount-unit timing. Atlaso escapes g
 standard fstab path escapes before comparing mounted and persisted paths, so a claimed path containing whitespace keeps
 the same identity during apply, release migration, and reboot validation.
 
+An existing ext4 source must be read-write at its selected mount and cannot have another non-Atlaso mount. Apply rejects
+state that the boot verifier would later reject, preventing a successful configuration change from making the next boot
+fail closed.
+
 Settings backups include the service, volume fingerprints/UUIDs/mounts, and shares but never a format authorization.
 Restore marks volumes for runtime verification before reapply. Factory reset removes Atlaso desired state, exports, and
 service enablement after apply; it does not erase, reformat, unmount, detach, or delete files on storage disks. UUID

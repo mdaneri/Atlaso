@@ -23,6 +23,7 @@ def _disk(
     filesystem: str = "",
     label: str = "",
     uuid: str = "",
+    scsi_host: int = 1,
 ) -> dict[str, object]:
     """Build one fake whole-disk record.
 
@@ -33,6 +34,7 @@ def _disk(
         filesystem: Whole-disk filesystem type, when present.
         label: Whole-disk filesystem label, when present.
         uuid: Whole-disk filesystem UUID, when present.
+        scsi_host: Linux SCSI host/controller number for the fake device.
 
     Returns:
         Mutable disk state consumed by the fake command harness.
@@ -44,6 +46,7 @@ def _disk(
         "filesystem": filesystem,
         "label": label,
         "uuid": uuid,
+        "scsi_host": scsi_host,
         "partitions": False,
         "read_only": False,
     }
@@ -98,7 +101,7 @@ def _run_mount_script(
         (block_root / "holders").mkdir(parents=True)
         if disk.get("holders"):
             (block_root / "holders" / "dm-test").touch()
-        scsi_device = tmp_path / "scsi" / f"1:{disk['tuple']}"
+        scsi_device = tmp_path / "scsi" / f"{disk['scsi_host']}:{disk['tuple']}"
         scsi_device.mkdir(parents=True, exist_ok=True)
         (block_root / "device").symlink_to(scsi_device, target_is_directory=True)
         if path.name != "sda":
@@ -370,6 +373,7 @@ def test_hyperv_first_boot_uses_fixed_controller_locations(tmp_path: Path):
         "extra",
         "extra_formatted",
         "identity",
+        "controller",
         "ambiguous",
         "undersized",
         "oversized",
@@ -404,6 +408,8 @@ def test_first_boot_fails_before_mkfs_for_unsafe_topology(tmp_path: Path, scenar
         )
     elif scenario == "identity":
         disks[2]["tuple"] = "0:4:0"
+    elif scenario == "controller":
+        disks[2]["scsi_host"] = 2
     elif scenario == "ambiguous":
         disks.append(_disk(tmp_path / "dev" / "sde", "0:2:0"))
     elif scenario == "undersized":

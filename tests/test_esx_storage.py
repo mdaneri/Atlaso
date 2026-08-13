@@ -6,6 +6,8 @@ import json
 import subprocess
 from pathlib import Path, PurePosixPath
 
+import pytest
+
 from atlaso.app.models import EsxNfsShare, EsxStorageSettings, EsxStorageVolume
 from atlaso.app.services.esx_storage import (
     StorageInterface,
@@ -401,11 +403,12 @@ def test_helper_inventory_prefers_uuid_mount_and_keeps_all_mountpoints(monkeypat
         }]
     }
     monkeypatch.setattr(helper, "_command_path", lambda command: f"/usr/bin/{command}")
-    monkeypatch.setattr(
-        helper,
-        "_run",
-        lambda command: subprocess.CompletedProcess(command, 0, stdout=json.dumps(lsblk_payload), stderr=""),
-    )
+    def run(command):
+        if "--mountpoint" in command:
+            return subprocess.CompletedProcess(command, 0, stdout="rw,relatime\n", stderr="")
+        return subprocess.CompletedProcess(command, 0, stdout=json.dumps(lsblk_payload), stderr="")
+
+    monkeypatch.setattr(helper, "_run", run)
     monkeypatch.setattr(
         helper,
         "_esx_storage_by_id_map",
@@ -427,6 +430,7 @@ def test_helper_inventory_prefers_uuid_mount_and_keeps_all_mountpoints(monkeypat
         "/mnt/operator existing-ext4",
     ]
     assert disk["persistent_uuid_mount"] is True
+    assert disk["writable_mount_paths"] == disk["mount_paths"]
 
 
 def test_helper_fstab_field_encoding_round_trips_spaces_and_backslashes():
@@ -451,6 +455,7 @@ def test_helper_rejects_mounted_ext4_without_boot_contract():
             "filesystem_type": "ext4",
             "filesystem_uuid": "existing-uuid",
             "mount_paths": ["/mnt/existing-ext4"],
+            "writable_mount_paths": ["/mnt/existing-ext4"],
             "partitions": [],
             "holders": [],
             "os_related": False,
@@ -465,6 +470,41 @@ def test_helper_rejects_mounted_ext4_without_boot_contract():
         "missing stable /dev/disk/by-id identity",
         "is not persisted by UUID in /etc/fstab",
     ]
+
+
+@pytest.mark.parametrize(
+    ("mount_paths", "writable_mount_paths", "expected"),
+    [
+        (
+            ["/mnt/existing-ext4", "/mnt/unrelated"],
+            ["/mnt/existing-ext4", "/mnt/unrelated"],
+            "has unexpected additional mounts",
+        ),
+        (["/mnt/existing-ext4"], [], "selected mount is read-only"),
+    ],
+)
+def test_helper_rejects_mounted_ext4_state_that_cannot_pass_boot(
+    mount_paths: list[str], writable_mount_paths: list[str], expected: str
+):
+    """Keep apply-time mounted-disk admission consistent with boot checks."""
+    helper = load_helper_module()
+    entry = {
+        "type": "disk",
+        "stable_device_id": "/dev/disk/by-id/wwn-existing",
+        "filesystem_type": "ext4",
+        "filesystem_uuid": "existing-uuid",
+        "mount_paths": mount_paths,
+        "writable_mount_paths": writable_mount_paths,
+        "partitions": [],
+        "holders": [],
+        "os_related": False,
+        "read_only": False,
+        "persistent_uuid_mount": True,
+    }
+
+    assert helper._esx_storage_mounted_disk_errors(
+        entry, mount_path=PurePosixPath("/mnt/existing-ext4")
+    ) == [expected]
 
 
 def test_helper_preserves_validated_disk_claims_after_apply_succeeds(monkeypatch, tmp_path: Path):
