@@ -15673,7 +15673,12 @@ def test_vcf_download_task_refresh_includes_exclusive_operation(client):
     initial_start_state = next(
         state for state in response.json()["profile_start_states"] if state["profile_id"] == profile_id
     )
-    assert initial_start_state == {"profile_id": profile_id, "can_start": True, "start_blocker": ""}
+    assert initial_start_state == {
+        "profile_id": profile_id,
+        "status": "synced",
+        "can_start": True,
+        "start_blocker": "",
+    }
     assert response.json()["active_downloads"] == []
     assert response.json()["active_exclusive_operation"] == {
         "job_id": "job_refresh_exclusive",
@@ -15696,6 +15701,7 @@ def test_vcf_download_task_refresh_includes_exclusive_operation(client):
     )
     assert refreshed_start_state == {
         "profile_id": profile_id,
+        "status": "synced",
         "can_start": False,
         "start_blocker": "Upload a Broadcom download token or activation code before starting this profile.",
     }
@@ -19186,6 +19192,11 @@ def test_queued_vcf_depot_download_can_be_cancelled_before_claim(client):
     with SessionLocal() as db:
         assert db.get(Job, job_id).status == JobStatus.CANCELLED.value
         assert db.get(VcfDepotDownloadProfile, profile_id).status == "synced"
+    refresh = client.get("/tasks/status", params={"task_type": "vcf-depot-download"})
+    refreshed_state = next(
+        state for state in refresh.json()["profile_start_states"] if state["profile_id"] == profile_id
+    )
+    assert refreshed_state["status"] == "synced"
     fallback = client.get("/vcf-offline-depot").text.split(
         'id="vcf-depot-profiles-fallback"', 1
     )[1].split("</table>", 1)[0]

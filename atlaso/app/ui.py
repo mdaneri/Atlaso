@@ -3094,6 +3094,7 @@ def vcf_depot_profile_start_states(db: Session) -> list[dict[str, object]]:
         states.append(
             {
                 "profile_id": profile.id,
+                "status": profile.status,
                 "can_start": bool(row["prerequisite_can_start"]),
                 "start_blocker": str(row["prerequisite_start_blocker"]),
             }

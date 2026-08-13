@@ -12423,6 +12423,7 @@ function setVcfDepotDownloadStates(activeTasks = [], activeExclusiveOperation = 
         ? String(currentPrerequisite.start_blocker || "")
         : String(data.prerequisite_start_blocker || "");
       row.update({
+        status: currentPrerequisite?.status || data.status,
         download_active: downloadActive,
         active_job_id: jobId,
         active_task_status: status,
