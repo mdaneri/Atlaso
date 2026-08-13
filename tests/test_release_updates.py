@@ -449,11 +449,21 @@ def test_published_channel_check_verifies_pointer_release_and_compatibility(
         )
 
 
-def test_published_channel_check_cancels_fetch_worker_at_deadline(monkeypatch):
-    """Verify DNS and response transfer cannot extend the publication deadline.
+@pytest.mark.parametrize(
+    ("deadline", "expected_timeout"),
+    [(10.0, 10.0), (60.0, 30.0)],
+)
+def test_published_channel_check_cancels_fetch_worker_at_deadline(
+    monkeypatch,
+    deadline: float,
+    expected_timeout: float,
+):
+    """Verify fetches cannot extend the request or publication deadline.
 
     Args:
         monkeypatch: Pytest fixture used to replace dependencies for the test.
+        deadline: Absolute publication deadline supplied to the fetch.
+        expected_timeout: Tighter request or publication timeout expected in the parent.
     """
     command: list[str] = []
     worker_timeout = 0.0
@@ -471,13 +481,13 @@ def test_published_channel_check_cancels_fetch_worker_at_deadline(monkeypatch):
         published_channel_check.fetch_document(
             "https://updates.example.test/manifest.json",
             timeout_seconds=30.0,
-            deadline=10.0,
+            deadline=deadline,
         )
 
     assert command[2] == published_channel_check.FETCH_WORKER_FLAG
     assert command[3] == "https://updates.example.test/manifest.json"
-    assert command[4] == "10.0"
-    assert worker_timeout == 10.0
+    assert command[4] == str(expected_timeout)
+    assert worker_timeout == expected_timeout
 
 
 def test_published_channel_check_imports_atlaso_from_a_clean_checkout(tmp_path: Path):

@@ -89,19 +89,20 @@ def fetch_document(
     remaining_seconds = deadline - time.monotonic()
     if remaining_seconds <= 0:
         raise TimeoutError("Published release verification exceeded its publication window.")
+    request_timeout_seconds = min(timeout_seconds, remaining_seconds)
     command = [
         sys.executable,
         str(Path(__file__).resolve()),
         FETCH_WORKER_FLAG,
         url,
-        str(min(timeout_seconds, remaining_seconds)),
+        str(request_timeout_seconds),
     ]
     try:
         result = subprocess.run(
             command,
             capture_output=True,
             check=False,
-            timeout=remaining_seconds,
+            timeout=request_timeout_seconds,
         )
     except subprocess.TimeoutExpired as exc:
         raise TimeoutError(
