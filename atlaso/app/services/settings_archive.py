@@ -2779,6 +2779,18 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
             "vSphere Key Provider",
         )
         trusted_vcenter_id = str(row["id"])
+        try:
+            canonical_trusted_vcenter_id = str(UUID(trusted_vcenter_id))
+        except ValueError as exc:
+            raise ValueError(
+                f"The settings archive row {row_index} in 'vsphere_trusted_vcenters' has an invalid trusted vCenter ID."
+            ) from exc
+        if trusted_vcenter_id != canonical_trusted_vcenter_id:
+            raise ValueError(
+                f"The settings archive row {row_index} in 'vsphere_trusted_vcenters' has an invalid trusted vCenter ID: ID must be a canonical UUID."
+            )
+        row["id"] = canonical_trusted_vcenter_id
+        trusted_vcenter_id = canonical_trusted_vcenter_id
         if trusted_vcenter_id in trusted_vcenter_ids:
             raise ValueError(
                 f"The settings archive row {row_index} in 'vsphere_trusted_vcenters' duplicates a trusted vCenter ID."

@@ -61,6 +61,9 @@ OIDC group mappings are preflighted in their effective global, client, and manag
 client-specific mapping may replace the global mapping for the same source, but effective external group names must
 remain unique case-insensitively within every context before current desired state is removed.
 
+Restored vSphere Key Provider and trusted-vCenter identities must use canonical UUIDs so every retained record remains
+addressable through the management UI and API after restore.
+
 Certificate and signing-key lifecycle state is restored with the desired state. Atlaso reconstructs CA certificate
 validity, serial numbers, and SHA-256 fingerprints from the archived public PEM, preserves CA issue, expiry, and
 revocation timestamps, and preserves OIDC key activation, retirement, and publication-overlap timestamps so still-live

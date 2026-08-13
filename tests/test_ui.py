@@ -6063,6 +6063,22 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
     invalid_provider_id["data"]["vsphere_key_providers"].append(
         {"id": "not-a-uuid", "name": "Invalid provider ID", "enabled": False}
     )
+    invalid_vcenter_id = deepcopy(archive)
+    invalid_vcenter_id["data"]["vsphere_key_providers"].append(
+        {
+            "id": "11111111-1111-4111-8111-111111111111",
+            "name": "Invalid vCenter ID provider",
+            "enabled": False,
+        }
+    )
+    invalid_vcenter_id["data"]["vsphere_trusted_vcenters"].append(
+        {
+            "id": "not-a-uuid",
+            "provider_id": "11111111-1111-4111-8111-111111111111",
+            "name": "Invalid vCenter ID",
+            "enabled": False,
+        }
+    )
     invalid_provider_enabled_type = deepcopy(archive)
     invalid_provider_enabled_type["data"]["vsphere_key_providers"].append(
         {
@@ -6568,6 +6584,7 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
         (enabled_kms_without_ca, "enables KMS without an enabled CA"),
         (enabled_kms_without_provider, "KMS trust state is invalid: At least one enabled provider"),
         (invalid_provider_id, "invalid provider ID"),
+        (invalid_vcenter_id, "invalid trusted vCenter ID"),
         (invalid_provider_enabled_type, "has an invalid enabled value"),
         (duplicate_provider_name, "duplicates a provider name"),
         (duplicate_vcenter_name, "duplicates a trusted vCenter name within its provider"),
