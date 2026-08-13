@@ -1,3 +1,5 @@
+#requires -Version 7.0
+
 [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSAvoidUsingPlainTextForPassword', '')]
 [CmdletBinding(DefaultParameterSetName = 'Run')]
 param(
@@ -156,6 +158,15 @@ function Find-LatestApplianceVmx {
     return $selected.FullName
 }
 
+function Resolve-PowerShell7Path {
+    $powerShell7 = Get-Command -Name 'pwsh' -CommandType Application -ErrorAction SilentlyContinue |
+        Select-Object -First 1
+    if (-not $powerShell7 -or [string]::IsNullOrWhiteSpace($powerShell7.Source)) {
+        throw "PowerShell 7 (pwsh) is required to run the VMware Workstation lifecycle test."
+    }
+    return $powerShell7.Source
+}
+
 function Get-Ipv4AddressFromSubnetOffset {
     param(
         [Parameter(Mandatory = $true)][string]$Subnet,
@@ -286,8 +297,12 @@ if (-not $SkipClientPrepare -and -not $PlanOnly) {
 }
 
 $effectiveSkipBackupRestoreTest = [bool]($SkipBackupRestoreTest -or $RoutingWanOnly -or $OidcOnly)
+$powerShell7Path = Resolve-PowerShell7Path
 
 $arguments = @(
+    '-NoLogo',
+    '-NoProfile',
+    '-NonInteractive',
     '-ExecutionPolicy', 'Bypass',
     '-File', (Join-Path $PSScriptRoot 'run-lifecycle-test.ps1'),
     '-LabName', $LabName,
@@ -331,7 +346,7 @@ Write-Host ("Full ESXi PXE install: {0}" -f ([bool]$FullEsxiPxeInstall))
 Write-Host ("Backup/restore validation: {0}" -f (-not $effectiveSkipBackupRestoreTest))
 Write-Host ("Cleanup created VMs: {0}" -f (-not $KeepVms))
 
-& powershell.exe @arguments
+& $powerShell7Path @arguments
 if ($LASTEXITCODE -ne 0) {
     throw "VMware Workstation lifecycle test failed with exit code $LASTEXITCODE"
 }

@@ -1600,6 +1600,11 @@ def test_vmware_lifecycle_cleanup_only_removes_existing_lifecycle_vms():
     assert "ApplianceVmxPath" not in cleanup_block
     assert "ClientVmdkPath" not in cleanup_block
     assert "CleanupCreatedLab" not in cleanup_block
+    assert "#requires -Version 7.0" in wrapper
+    assert "Get-Command -Name 'pwsh' -CommandType Application" in wrapper
+    assert "PowerShell 7 (pwsh) is required to run the VMware Workstation lifecycle test." in wrapper
+    assert "& $powerShell7Path @arguments" in wrapper
+    assert "powershell.exe" not in wrapper.lower()
     assert "Refusing VM cleanup for prefix '$LabName'" in cleanup_script
     assert "AtlasoWorkstationLifecycle" in cleanup_script
     assert "test-results\\vmware-workstation-lifecycle" in cleanup_script

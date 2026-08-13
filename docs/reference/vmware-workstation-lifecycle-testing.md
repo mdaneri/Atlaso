@@ -17,6 +17,9 @@ Atlaso can run a VMware Workstation lifecycle lab alongside the Hyper-V lab. The
 artifacts and `vmrun.exe`, then delegates appliance behavior checks to the shared Python lifecycle runner.
 
 Run all Windows commands in PowerShell 7.x (`pwsh`). Windows PowerShell 5.1 (`powershell.exe`) is not supported.
+The single-command wrapper enforces that runtime, resolves the installed `pwsh` application, and launches its lifecycle
+child in PowerShell 7 so the default cleanup path cannot fall back to Windows PowerShell 5.1. A missing `pwsh`
+installation fails before any lifecycle VM is created.
 
 Appliance VMX files set `disk.EnableUUID = "TRUE"` so Photon exposes stable `/dev/disk/by-id` identities. ESX Storage
 blank-disk claims depend on those identities and reject transient `/dev/sdX` names.
