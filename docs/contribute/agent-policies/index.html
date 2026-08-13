@@ -4242,6 +4242,10 @@
   <code>-VmxPath "&lt;path-to-vmx&gt;"</code> for VMware discovery; do not pipe the VMX path or put the <code>.vmx</code> path on a separate line
   because PowerShell will try to execute it. If uvicorn needs longer after reinstall, pass
   <code>-ReadinessTimeoutSeconds 120</code>. Use <code>-SkipHelperSync</code> only when the appliance helper is intentionally unchanged.</li>
+<li>The wheel helper's <code>RemoteDirectory</code> is one shared pre-upload contract for key/agent and password-backed SSH. Accept
+  only absolute POSIX paths composed of ASCII letters, digits, <code>/</code>, <code>.</code>, <code>_</code>, and <code>-</code>, reject <code>.</code> and <code>..</code> components,
+  whitespace, shell metacharacters, and control characters before local build work, and serialize every key-backed
+  remote command argument with the shared POSIX quoting helper. Do not depend on <code>scp</code> version-specific remote quoting.</li>
 <li>For manual live appliance patching, build a local wheel with <code>python -m pip wheel . -w dist</code>, copy only the Atlaso
   wheel to the VM, install it with <code>/opt/atlaso/.venv/bin/python -m pip install --force-reinstall --no-deps</code>, then
   restore venv readability for the <code>atlaso</code> service user with directory <code>0755</code>, file <code>0644</code>, and executable bits under

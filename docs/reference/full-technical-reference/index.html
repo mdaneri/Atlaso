@@ -5024,6 +5024,11 @@ reinstalling the wheel, increase the readiness wait with <code>-ReadinessTimeout
 <code>-SkipInventoryLinuxSync</code> only when deliberately leaving the appliance's existing Inventory Linux package unchanged.
 The password-backed helper omits skipped optional asset arguments instead of passing empty native-command values, so
 these skip switches behave consistently in Windows PowerShell and PowerShell 7 native-argument modes.</p>
+<p><code>-RemoteDirectory</code> defaults to <code>/tmp</code> and accepts an absolute POSIX path made only from ASCII letters, digits, <code>/</code>,
+<code>.</code>, <code>_</code>, and <code>-</code>; <code>.</code> and <code>..</code> path components are not allowed. The helper normalizes a trailing slash and applies the
+same validation before build or upload for password-backed and key/agent-backed SSH. Paths containing whitespace,
+apostrophes, dollar signs, backticks, semicolons, other shell metacharacters, or control characters are rejected rather
+than reinterpreted. The key/agent branch also serializes each argument at the remote shell boundary.</p>
 <p>Pass <code>-IncludeLabNetworkAdapters</code> only after <code>VMnet2</code>, <code>VMnet3</code>, and <code>VMnet4</code> exist for the SiteA, WAN/SiteB, and
 trunk-like validation networks.</p>
 <p>Discover the running Workstation appliance address with:</p>
