@@ -5631,6 +5631,11 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
     enabled_outside_dhcp_reservation["data"]["dhcp_settings"][0]["enabled"] = True
     enabled_outside_dhcp_reservation["data"]["dhcp_reservations"][0]["enabled"] = True
     enabled_outside_dhcp_reservation["data"]["dhcp_reservations"][0]["ip_address"] = "203.0.113.10"
+    disabled_invalid_dhcp_reservation = deepcopy(archive)
+    disabled_invalid_dhcp_reservation["data"]["dhcp_settings"][0]["enabled"] = False
+    disabled_invalid_dhcp_reservation["data"]["dhcp_reservations"][0].update(
+        {"enabled": False, "ip_address": "not-an-address"}
+    )
     enabled_missing_service_targets = []
     for section_name in (
         "dns_settings",
@@ -6618,6 +6623,7 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
         (enabled_with_invalid_disabled_dhcp_scope, "DHCP settings are invalid"),
         (disabled_with_invalid_disabled_dhcp_scope, "DHCP settings are invalid"),
         (enabled_outside_dhcp_reservation, "must be inside an enabled DHCP IP zone"),
+        (disabled_invalid_dhcp_reservation, "has an invalid IP address"),
         *(
             (candidate, "has an ineligible listen interface")
             for candidate in enabled_missing_service_targets

@@ -2313,8 +2313,6 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
                 f"The settings archive DHCP settings are invalid: {scope_errors[0]}"
             )
     for row_index, row in enumerate(data.get("dhcp_reservations", []), start=1):
-        if not row.get("enabled", True):
-            continue
         try:
             ip_address(str(row.get("ip_address") or ""))
         except ValueError as exc:

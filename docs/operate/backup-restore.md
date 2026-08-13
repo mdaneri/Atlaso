@@ -88,6 +88,8 @@ Preflight also requires every canonical service-status row, limits DHCP scopes t
 VLANs with a matching address family, and reserves firewall source-group ID `any` for Atlaso's built-in unrestricted
 group. These checks prevent a successful restore from creating missing service controls, publishing DHCP on management
 networks, or widening a restricted firewall assignment.
+All nonempty DHCP reservation addresses are parsed during preflight, including disabled rows; enabled reservations alone
+receive the additional enabled-scope membership check.
 
 Settings restore accepts only the current settings-archive schema v2 and requires its complete section inventory.
 Older archive schemas are rejected before current desired state is removed; export a fresh archive from a current
