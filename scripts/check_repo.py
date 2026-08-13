@@ -94,6 +94,10 @@ REQUIRED_POLICY_MARKERS = {
     Path("AGENTS.md"): (
         "## Mandatory Agent Startup Gate",
         "## Codex Task Title Traceability",
+        "### Supported title controls",
+        "Short description · Issue #<issue> · PR #<pr>",
+        "### Unsupported title controls",
+        "### Schema-constrained reporting",
         "## Mandatory UI Design Guide Gate",
         "CONTRIBUTING.md",
         "CODE_OF_CONDUCT.md",
@@ -104,6 +108,7 @@ REQUIRED_POLICY_MARKERS = {
         "direct-edit Tabulator",
         "custom/other",
         "explicit maintainer approval",
+        "### Extended merge descriptions",
         "AtlasoUiPatterns.createGrid",
         "AtlasoUiPatterns.createWizard",
     ),
