@@ -2443,6 +2443,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#cleanup-safety" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Cleanup Safety
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#normal-test-vm" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -3324,6 +3335,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#cleanup-safety" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Cleanup Safety
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#normal-test-vm" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -3459,7 +3481,10 @@
 command check run directly as the unprivileged appliance SSH user rather than through sudo.</p>
 <p>Atlaso can run a VMware Workstation lifecycle lab alongside the Hyper-V lab. The Workstation path uses VMX/VMDK
 artifacts and <code>vmrun.exe</code>, then delegates appliance behavior checks to the shared Python lifecycle runner.</p>
-<p>Run all Windows commands in PowerShell 7.x (<code>pwsh</code>). Windows PowerShell 5.1 (<code>powershell.exe</code>) is not supported.</p>
+<p>Run all Windows commands in PowerShell 7.x (<code>pwsh</code>). Windows PowerShell 5.1 (<code>powershell.exe</code>) is not supported.
+The single-command wrapper enforces that runtime, resolves the installed <code>pwsh</code> application, and launches its lifecycle
+child in PowerShell 7 so the default cleanup path cannot fall back to Windows PowerShell 5.1. A missing <code>pwsh</code>
+installation fails before any lifecycle VM is created.</p>
 <p>Appliance VMX files set <code>disk.EnableUUID = "TRUE"</code> so Photon exposes stable <code>/dev/disk/by-id</code> identities. ESX Storage
 blank-disk claims depend on those identities and reject transient <code>/dev/sdX</code> names.</p>
 <h2 id="topology">Topology<a class="headerlink" href="#topology" title="Permanent link">&para;</a></h2>
@@ -3538,6 +3563,31 @@ and the backup/restore pass.</p>
 </span><span id="__span-4-13"><a id="__codelineno-4-13" name="__codelineno-4-13" href="#__codelineno-4-13"></a>  <span class="o">-File</span> <span class="n">scripts</span><span class="p">/</span><span class="n">windows</span><span class="p">/</span><span class="n">vmware</span><span class="p">/</span><span class="nb">invoke-lifecycle</span><span class="n">-test</span><span class="p">.</span><span class="n">ps1</span> <span class="p">`</span>
 </span><span id="__span-4-14"><a id="__codelineno-4-14" name="__codelineno-4-14" href="#__codelineno-4-14"></a>  <span class="n">-CleanupVmsOnly</span>
 </span></code></pre></div>
+<h2 id="cleanup-safety">Cleanup Safety<a class="headerlink" href="#cleanup-safety" title="Permanent link">&para;</a></h2>
+<p>Workstation cleanup removes a VM directory only after validating that every target VMX is inside the exact
+non-reparse-point artifact root. It reads checked running and registered VM inventories, resolves each canonical absolute
+VMX to its Windows volume and file identity, stops a listed running VM, unregisters a listed registration, and confirms
+that each transition completed before deleting files. Filesystem aliases such as DOS 8.3 or mapped-drive forms therefore
+cannot make a running or registered target appear unrelated. Already-stopped and already-unregistered VMs remain
+idempotent cleanup cases. A nonzero command, malformed (including asymmetrically quoted paths or nonnumeric and
+separator/whitespace-corrupted registration keys) or unresolvable inventory,
+target still listed after an apparently successful transition, or missing VMX preserves the artifact directory and
+makes the command fail. Registration inventory reads are terminating, so access denial or an incomplete I/O read cannot
+be interpreted as an empty or partial registered-VM set. VMX identity reads use the same terminating contract, preventing
+a partial file from validating one displayed name while unread content remains unresolved. Cleanup also requires the
+checked <code>vmrun listRegisteredVM</code> inventory and <code>inventory.vmls</code> snapshot to contain the same VMX filesystem identities,
+so a truncated but readable file cannot masquerade as an empty registration set. After the final recursive VMX-set scan,
+cleanup refreshes running and both corroborated registration inventories as its last safety gate before deletion. When lifecycle
+execution and cleanup both fail, the final error reports the original scenario failure together with the cleanup failure
+and preserved path.</p>
+<p>The read-only Workstation registration inventory may reside beneath a redirected <code>%APPDATA%</code> junction or symbolic link.
+The non-reparse-point requirement remains enforced on the artifact root that cleanup recursively deletes.
+Recursive deletion errors are terminating, and cleanup reports success only after confirming that the artifact root is
+absent.</p>
+<p>The normal test-VM <code>-Redeploy</code> path also requires the exact named VMX and exactly one well-formed, matching
+<code>displayName</code>; missing, duplicate, malformed, or conflicting assignments preserve the existing directory.
+<code>-ResetDataDisks</code> accepts only strict canonical
+descendants of the selected VM output, so sibling-prefix and reparse-point paths are refused.</p>
 <h2 id="normal-test-vm">Normal Test VM<a class="headerlink" href="#normal-test-vm" title="Permanent link">&para;</a></h2>
 <p>For a normal Workstation appliance VM, separate from the lifecycle lab, use:</p>
 <div class="language-powershell highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="n">pwsh</span> <span class="n">-ExecutionPolicy</span> <span class="n">Bypass</span> <span class="p">`</span>

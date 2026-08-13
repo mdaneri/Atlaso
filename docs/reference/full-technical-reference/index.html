@@ -4994,6 +4994,13 @@ marker before normal validation so replacement deployments are not silently igno
 layer-2 segments, but they do not model Hyper-V access/trunk VLAN port controls exactly; keep Hyper-V lifecycle evidence
 authoritative for that VLAN-specific behavior. Details live in
 <a href="../vmware-workstation-lifecycle-testing/">VMware Workstation Lifecycle Testing</a>.</p>
+<p>Workstation test-VM and lifecycle cleanup fails closed around recursive removal. Redeploy requires the exact named VMX
+with exactly one well-formed expected display-name assignment; duplicate, malformed, or conflicting assignments preserve
+the artifacts. Data-disk reset accepts only strict non-reparse-point descendants of the selected VM
+output, and cleanup verifies checked running and registered inventories plus successful stop/unregister transitions
+before deleting an artifact root. Inventory entries must be canonical absolute VMX paths whose Windows volume and file
+identities can be resolved, so 8.3, mapped-drive, and other filesystem aliases cannot bypass state detection. Any
+malformed inventory or unresolved <code>vmrun</code> state preserves the files and returns failure.</p>
 <p>For a normal Workstation test appliance on the management vmnet:</p>
 <div class="language-powershell highlight"><pre><span></span><code><span id="__span-33-1"><a id="__codelineno-33-1" name="__codelineno-33-1" href="#__codelineno-33-1"></a><span class="n">pwsh</span> <span class="n">-ExecutionPolicy</span> <span class="n">Bypass</span> <span class="p">`</span>
 </span><span id="__span-33-2"><a id="__codelineno-33-2" name="__codelineno-33-2" href="#__codelineno-33-2"></a>  <span class="o">-File</span> <span class="n">scripts</span><span class="p">/</span><span class="n">windows</span><span class="p">/</span><span class="n">vmware</span><span class="p">/</span><span class="n">create-atlaso-test-vm</span><span class="p">.</span><span class="n">ps1</span> <span class="p">`</span>
