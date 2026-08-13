@@ -12361,6 +12361,37 @@ def _esx_storage_managed_disk_fstab_lines() -> list[str]:
     return retained
 
 
+def _esx_storage_reject_retained_mount_collision(
+    lines: list[str],
+    *,
+    filesystem_uuid: str,
+    mount_path: Path,
+) -> None:
+    """Reject a retained UUID mount owned by another filesystem.
+
+    Args:
+        lines: Retained root-owned UUID/ext4 fstab entries.
+        filesystem_uuid: Filesystem UUID requested by the current volume.
+        mount_path: Exact primary mount path requested by the current volume.
+
+    Raises:
+        ValueError: If another retained filesystem already owns the mount path.
+    """
+    requested_source = f"UUID={filesystem_uuid}"
+    requested_target = mount_path.as_posix()
+    for line in lines:
+        fields = line.split()
+        if len(fields) < 3:
+            continue
+        source, target, filesystem_type = (
+            _esx_storage_fstab_decode_field(field) for field in fields[:3]
+        )
+        if filesystem_type == "ext4" and target == requested_target and source != requested_source:
+            raise ValueError(
+                f"ESX Storage mount path {mount_path} is retained for a different filesystem"
+            )
+
+
 def _esx_storage_write_disk_allowlist(lines: list[str], *, preserve_existing: bool) -> None:
     """Persist exact mounted-disk claims before boot-sensitive host changes.
 
@@ -12506,6 +12537,11 @@ def _esx_storage_apply(payload: dict[str, object]) -> dict[str, object]:
             type_result = _run([blkid, "-s", "TYPE", "-o", "value", stable_id])
             if uuid_result.returncode != 0 or not fs_uuid or type_result.stdout.strip() != "ext4":
                 raise ValueError(f"disk {stable_id} is not a readable ext4 filesystem after initialization")
+            _esx_storage_reject_retained_mount_collision(
+                rollback_safe_fstab_lines,
+                filesystem_uuid=fs_uuid,
+                mount_path=mount_path,
+            )
             fstab_lines.append(
                 f"{_esx_storage_fstab_escape_field(f'UUID={fs_uuid}')} "
                 f"{_esx_storage_fstab_escape_field(mount_path)} "

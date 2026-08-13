@@ -672,6 +672,28 @@ def test_helper_preserves_each_formatted_disk_mount_until_apply_succeeds(monkeyp
     assert "UUID=os-root / ext4 defaults 0 1" in fstab.read_text(encoding="utf-8")
 
 
+def test_helper_rejects_retained_mount_path_owned_by_another_uuid():
+    """Prevent a removed disk from satisfying a replacement volume's mount."""
+    helper = load_helper_module()
+    retained = [
+        "UUID=old-uuid /mnt/atlaso-esx-storage/reused\\040name ext4 defaults,nofail 0 2"
+    ]
+    mount_path = Path("/mnt/atlaso-esx-storage/reused name")
+
+    with pytest.raises(ValueError, match="retained for a different filesystem"):
+        helper._esx_storage_reject_retained_mount_collision(
+            retained,
+            filesystem_uuid="new-uuid",
+            mount_path=mount_path,
+        )
+
+    helper._esx_storage_reject_retained_mount_collision(
+        retained,
+        filesystem_uuid="old-uuid",
+        mount_path=mount_path,
+    )
+
+
 def test_helper_initialized_disk_retry_accepts_expected_mount_among_bind_mounts():
     """Verify that helper initialized disk retry accepts expected mount among bind mounts."""
     helper = load_helper_module()

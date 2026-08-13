@@ -996,7 +996,8 @@ immediate safety revalidation, whole-device ext4 formatting, and UUID mounts und
 mounted ext4 whole disks are supported only with stable identity, UUID-backed fstab persistence, an active matching
 mount, and a root-owned Atlaso claim. Global apply stages
 `/var/lib/atlaso/apply/esx-storage/atlaso-esx-storage.json`, manages bind exports under `/srv/atlaso/esx-storage`, and
-enables `rpcbind`/`nfs-server` only while valid shares are active. Removing desired state never deletes stored data.
+enables `rpcbind`/`nfs-server` only while valid shares are active. Removing desired state never deletes stored data, and
+a retained UUID mount prevents a different filesystem from reusing the same managed mount path.
 Settings backup/restore includes the service, volume identities, and shares but never format authorization. See
 [ESX Storage over NFS](../services/esx-storage.md) for network, DNS, mount, safety, lifecycle, and iSCSI-boundary
 details.

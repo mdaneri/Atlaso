@@ -110,7 +110,9 @@ The helper inventories the disk again immediately before `mkfs.ext4`. If any saf
 formatting. Formatting is deliberately not rolled back. If a later mount, export, service, DNS, or firewall step fails,
 the successfully created ext4 filesystem and its UUID-based managed fstab entry remain intact, so boot verification and
 an idempotent retry continue from it. Each formatted disk is persisted before apply advances to another failure-prone
-volume. V1 has no wipe, reformat, or delete-data action.
+volume. A retained filesystem keeps ownership of its managed mount path: a later blank volume cannot reuse that path
+with a different UUID, even when it uses the same volume name. Resolve or detach the retained disk before assigning
+that name to another filesystem. V1 has no wipe, reformat, or delete-data action.
 
 ## Share paths and exports
 
