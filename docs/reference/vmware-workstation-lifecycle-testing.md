@@ -143,6 +143,9 @@ cleanup refreshes running and both corroborated registration inventories as its 
 execution and cleanup both fail, the final error reports the original scenario failure together with the cleanup failure
 and preserved path.
 
+The read-only Workstation registration inventory may reside beneath a redirected `%APPDATA%` junction or symbolic link.
+The non-reparse-point requirement remains enforced on the artifact root that cleanup recursively deletes.
+
 The normal test-VM `-Redeploy` path also requires the exact named VMX and exactly one well-formed, matching
 `displayName`; missing, duplicate, malformed, or conflicting assignments preserve the existing directory.
 `-ResetDataDisks` accepts only strict canonical

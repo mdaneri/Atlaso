@@ -343,7 +343,6 @@ function Resolve-AtlasoWorkstationInventoryPath {
     if (-not (Test-Path -LiteralPath $inventoryPath -PathType Leaf)) {
         throw "VMware Workstation inventory was not found; refusing cleanup because registration state cannot be verified: $inventoryPath"
     }
-    Assert-AtlasoPathHasNoReparsePoint -Path $inventoryPath
     return (Resolve-Path -LiteralPath $inventoryPath).Path
 }
 
