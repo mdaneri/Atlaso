@@ -17851,7 +17851,8 @@ function initializeContextualVcfScheduleWizard() {
   const updateTimingVisibility = () => {
     const value = scheduleKind instanceof HTMLSelectElement ? scheduleKind.value : "cron";
     form.querySelectorAll("[data-automation-schedule-timing]").forEach((element) => {
-      const visible = element.getAttribute("data-automation-schedule-timing") === value;
+      const visible = element.getAttribute("data-automation-schedule-timing") === value
+        && !element.hasAttribute("data-automation-cron-native-expression");
       element.classList.toggle("hidden", !visible);
       element.querySelectorAll("[data-automation-timing-required]").forEach((input) => { input.required = visible; });
     });
