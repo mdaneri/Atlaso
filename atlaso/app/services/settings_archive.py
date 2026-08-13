@@ -2249,7 +2249,11 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
             f"The settings archive LDAP state is invalid: {ldap_errors[0]}"
         )
 
-    oidc_client_ids = {str(row["client_id"]) for row in data.get("oidc_clients", [])}
+    oidc_client_organizations = {
+        str(row["client_id"]): str(row.get("organization_slug") or "")
+        for row in data.get("oidc_clients", [])
+    }
+    oidc_client_ids = set(oidc_client_organizations)
     for row_index, row in enumerate(data.get("oidc_clients", []), start=1):
         require_reference(
             "oidc_clients",
@@ -2318,11 +2322,14 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
     oidc_mapping_identities: set[tuple[str, ...]] = set()
     for row_index, row in enumerate(data.get("oidc_group_mappings", []), start=1):
         source_type = str(row["source_type"] or "")
+        client_id = str(row.get("client_id") or "")
+        client_organization = oidc_client_organizations.get(client_id, "")
         if source_type == "ldap_group":
+            mapping_organization = str(row.get("organization_slug") or "")
             mapping_identity = (
-                str(row.get("client_id") or ""),
+                client_id,
                 source_type,
-                str(row.get("organization_slug") or ""),
+                mapping_organization,
                 str(row.get("ldap_group_name") or ""),
             )
             require_reference(
@@ -2332,12 +2339,20 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
                 ldap_groups,
                 "managed LDAP group",
             )
+            if client_organization and client_organization != mapping_organization:
+                raise ValueError(
+                    f"The settings archive row {row_index} in 'oidc_group_mappings' uses a managed LDAP group outside its OIDC client's organization."
+                )
         elif source_type == "local_role":
             mapping_identity = (
-                str(row.get("client_id") or ""),
+                client_id,
                 source_type,
                 str(row.get("local_role") or "").strip().casefold(),
             )
+            if client_organization:
+                raise ValueError(
+                    f"The settings archive row {row_index} in 'oidc_group_mappings' assigns a local role to an organization-bound OIDC client."
+                )
         else:
             raise ValueError(
                 f"The settings archive row {row_index} in 'oidc_group_mappings' has an unsupported source type."

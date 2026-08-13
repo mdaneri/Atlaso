@@ -5169,6 +5169,66 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
             "external_group_name": "Atlaso admins",
         },
     ]
+    cross_organization_oidc_mapping = deepcopy(archive)
+    cross_organization_oidc_mapping["data"]["ldap_organizations"].extend(
+        [
+            {
+                "name": "Mapping organization A",
+                "slug": "mapping-organization-a",
+                "suffix_dn": "dc=mapping-a,dc=test",
+            },
+            {
+                "name": "Mapping organization B",
+                "slug": "mapping-organization-b",
+                "suffix_dn": "dc=mapping-b,dc=test",
+            },
+        ]
+    )
+    cross_organization_oidc_mapping["data"]["ldap_groups"].append(
+        {
+            "organization_slug": "mapping-organization-a",
+            "name": "Mapping group A",
+        }
+    )
+    cross_organization_oidc_mapping["data"]["oidc_clients"].append(
+        {
+            "name": "Mapping client B",
+            "client_id": "mapping-client-b",
+            "client_secret_hash": valid_client_hash,
+            "organization_slug": "mapping-organization-b",
+            "enabled": True,
+        }
+    )
+    cross_organization_oidc_mapping["data"]["oidc_client_redirect_uris"].append(
+        {
+            "client_id": "mapping-client-b",
+            "kind": "redirect",
+            "uri": "https://mapping.example.test/callback",
+        }
+    )
+    cross_organization_oidc_mapping["data"]["oidc_group_mappings"].append(
+        {
+            "source_type": "ldap_group",
+            "local_role": "",
+            "ldap_group_name": "Mapping group A",
+            "organization_slug": "mapping-organization-a",
+            "client_id": "mapping-client-b",
+            "external_group_name": "Mapping group",
+        }
+    )
+    bound_client_local_role_mapping = deepcopy(cross_organization_oidc_mapping)
+    bound_client_local_role_mapping["data"]["oidc_group_mappings"] = [
+        {
+            "source_type": "local_role",
+            "local_role": "admin",
+            "ldap_group_name": "",
+            "organization_slug": "",
+            "client_id": "mapping-client-b",
+            "external_group_name": "Administrators",
+        }
+    ]
+    unbound_client_ldap_mapping = deepcopy(cross_organization_oidc_mapping)
+    unbound_client_ldap_mapping["data"]["oidc_clients"][-1]["organization_slug"] = ""
     unresolved_esx_volume = deepcopy(archive)
     unresolved_esx_volume["data"]["esx_nfs_shares"].append(
         {"datastore_name": "orphaned-datastore", "volume_name": "missing-volume"}
@@ -5493,6 +5553,8 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
         (oidc_client_with_invalid_lifetime, "fixed 60-second authorization-code lifetime"),
         (oidc_client_with_invalid_hash, "OIDC client secret hash is not valid"),
         (duplicate_oidc_mapping, "duplicates an OIDC group mapping identity"),
+        (cross_organization_oidc_mapping, "outside its OIDC client's organization"),
+        (bound_client_local_role_mapping, "assigns a local role to an organization-bound OIDC client"),
         (unresolved_esx_volume, "references an unknown ESX storage volume"),
         (enabled_missing_esx_share_target, "has an ineligible interface or address family"),
         (cyclic_ldap_groups, "contains cyclic LDAP group membership"),
@@ -5532,6 +5594,7 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
     archive_summary(disabled_missing_routing_target)
     archive_summary(disabled_missing_dhcp_target)
     archive_summary(disabled_missing_service_target)
+    archive_summary(unbound_client_ldap_mapping)
     assert "network_boot_environments" not in archive_summary(legacy_missing_section)["table_counts"]
 
 
