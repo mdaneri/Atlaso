@@ -6,6 +6,11 @@ BY_ID_ROOT="${ATLASO_DATA_DISK_BY_ID_ROOT:-/dev/disk/by-id}"
 SYS_BLOCK_ROOT="${ATLASO_DATA_DISK_SYS_BLOCK_ROOT:-/sys/class/block}"
 FSTAB_PATH="${ATLASO_DATA_DISK_FSTAB_PATH:-/etc/fstab}"
 ESX_STORAGE_ALLOWLIST_PATH="${ATLASO_ESX_STORAGE_ALLOWLIST_PATH:-/etc/atlaso/esx-storage-disks.conf}"
+SCSI_GENERIC_DEVICE_ROOT="${ATLASO_DATA_DISK_SCSI_GENERIC_DEVICE_ROOT:-/dev}"
+SCSI_GENERIC_SYS_ROOT="${ATLASO_DATA_DISK_SCSI_GENERIC_SYS_ROOT:-/sys/class/scsi_generic}"
+BSG_DEVICE_ROOT="${ATLASO_DATA_DISK_BSG_DEVICE_ROOT:-/dev/bsg}"
+BSG_SYS_ROOT="${ATLASO_DATA_DISK_BSG_SYS_ROOT:-/sys/class/bsg}"
+RAW_DEVICE_ROOT="${ATLASO_DATA_DISK_RAW_DEVICE_ROOT:-/dev/raw}"
 
 log() {
   printf '%s\n' "$*"
@@ -151,10 +156,47 @@ has_open_file_descriptors() {
   [ -n "$disk" ] || return 1
   for descriptor in /proc/[0-9]*/fd/*; do
     [ -L "$descriptor" ] || continue
-    if [ "$(readlink -f "$descriptor" 2>/dev/null || true)" = "$disk" ]; then
+    descriptor_path="$(readlink -f "$descriptor" 2>/dev/null || true)"
+    if descriptor_targets_disk "$descriptor_path" "$disk"; then
       return 0
     fi
   done
+  return 1
+}
+
+descriptor_targets_disk() {
+  descriptor_path="$1"
+  disk="$2"
+  [ -n "$descriptor_path" ] || return 1
+  [ "$descriptor_path" = "$disk" ] && return 0
+  disk_address="$(scsi_address "$disk" || true)"
+  case "$descriptor_path" in
+    "$SCSI_GENERIC_DEVICE_ROOT"/sg[0-9]*)
+      generic_name="${descriptor_path##*/}"
+      generic_device="$(readlink -f "$SCSI_GENERIC_SYS_ROOT/$generic_name/device" 2>/dev/null || true)"
+      generic_address="${generic_device##*/}"
+      [ -n "$disk_address" ] && [ "$generic_address" = "$disk_address" ] && return 0
+      [ -n "$generic_device" ] || return 0
+      ;;
+    "$BSG_DEVICE_ROOT"/*)
+      bsg_name="${descriptor_path##*/}"
+      bsg_device="$(readlink -f "$BSG_SYS_ROOT/$bsg_name/device" 2>/dev/null || true)"
+      bsg_address="${bsg_device##*/}"
+      [ -n "$disk_address" ] && [ "$bsg_address" = "$disk_address" ] && return 0
+      [ -n "$bsg_device" ] || return 0
+      ;;
+    "$RAW_DEVICE_ROOT"/raw[0-9]*)
+      raw_command="$(command -v raw 2>/dev/null || true)"
+      [ -n "$raw_command" ] || return 0
+      raw_binding="$($raw_command -q "$descriptor_path" 2>/dev/null || true)"
+      raw_major="$(printf '%s\n' "$raw_binding" | sed -n 's/.*major[[:space:]]\+\([0-9][0-9]*\),[[:space:]]*minor[[:space:]]\+\([0-9][0-9]*\).*/\1/p')"
+      raw_minor="$(printf '%s\n' "$raw_binding" | sed -n 's/.*major[[:space:]]\+\([0-9][0-9]*\),[[:space:]]*minor[[:space:]]\+\([0-9][0-9]*\).*/\2/p')"
+      disk_major_hex="$(stat -Lc '%t' "$disk" 2>/dev/null || true)"
+      disk_minor_hex="$(stat -Lc '%T' "$disk" 2>/dev/null || true)"
+      [ -n "$raw_major" ] && [ -n "$raw_minor" ] && [ -n "$disk_major_hex" ] && [ -n "$disk_minor_hex" ] || return 0
+      [ "$raw_major" -eq "$((0x$disk_major_hex))" ] && [ "$raw_minor" -eq "$((0x$disk_minor_hex))" ] && return 0
+      ;;
+  esac
   return 1
 }
 
@@ -583,7 +625,7 @@ revalidate_blank_format_target() {
 }
 
 main() {
-  for command in findmnt lsblk blkid readlink mkfs.ext4 mount awk head; do
+  for command in findmnt lsblk blkid readlink mkfs.ext4 mount awk head sed stat; do
     if ! command -v "$command" >/dev/null 2>&1; then
       fail "$command is required to prepare Atlaso data disks"
     fi

@@ -86,14 +86,24 @@ def _run_mount_script(
     dev_root = tmp_path / "dev"
     by_id_root = dev_root / "disk" / "by-id"
     sys_root = tmp_path / "sys" / "class" / "block"
+    scsi_generic_sys_root = tmp_path / "sys" / "class" / "scsi_generic"
+    scsi_generic_device_root = dev_root / "scsi-generic"
+    bsg_sys_root = tmp_path / "sys" / "class" / "bsg"
+    bsg_device_root = dev_root / "bsg"
+    raw_device_root = dev_root / "raw"
     fake_bin = tmp_path / "bin"
     by_id_root.mkdir(parents=True)
     sys_root.mkdir(parents=True)
+    scsi_generic_sys_root.mkdir(parents=True)
+    scsi_generic_device_root.mkdir(parents=True)
+    bsg_sys_root.mkdir(parents=True)
+    bsg_device_root.mkdir(parents=True)
+    raw_device_root.mkdir(parents=True)
     fake_bin.mkdir()
 
     root_partition = dev_root / "sda1"
     root_partition.touch()
-    for disk in disks:
+    for disk_index, disk in enumerate(disks):
         path = Path(str(disk["path"]))
         path.parent.mkdir(parents=True, exist_ok=True)
         path.touch()
@@ -106,6 +116,25 @@ def _run_mount_script(
         scsi_device = tmp_path / "scsi" / f"{disk['scsi_host']}:{disk['tuple']}"
         scsi_device.mkdir(parents=True, exist_ok=True)
         (block_root / "device").symlink_to(scsi_device, target_is_directory=True)
+        generic_name = f"sg{disk_index}"
+        generic_path = scsi_generic_device_root / generic_name
+        generic_path.touch()
+        generic_sys_root = scsi_generic_sys_root / generic_name
+        generic_sys_root.mkdir()
+        (generic_sys_root / "device").symlink_to(scsi_device, target_is_directory=True)
+        disk["scsi_generic_path"] = str(generic_path)
+        bsg_name = f"{disk['scsi_host']}:{disk['tuple']}"
+        bsg_path = bsg_device_root / bsg_name
+        bsg_path.touch()
+        bsg_sys_device_root = bsg_sys_root / bsg_name
+        bsg_sys_device_root.mkdir(exist_ok=True)
+        bsg_device_link = bsg_sys_device_root / "device"
+        if not bsg_device_link.exists():
+            bsg_device_link.symlink_to(scsi_device, target_is_directory=True)
+        disk["bsg_path"] = str(bsg_path)
+        raw_path = raw_device_root / f"raw{disk_index + 1}"
+        raw_path.touch()
+        disk["raw_path"] = str(raw_path)
         if path.name != "sda":
             (by_id_root / f"atlaso-path-test-{path.name}").symlink_to(path)
 
@@ -268,6 +297,12 @@ def _run_mount_script(
                 mounts[target] = selected_source
                 state_path.write_text(json.dumps(state), encoding="utf-8")
                 raise SystemExit(0)
+            if command == "raw":
+                disk = next((disk for disk in disks if disk.get("raw_path") == args[-1]), None)
+                if args[:1] == ["-q"] and disk:
+                    print(f'{args[-1]}: bound to major 0, minor 0')
+                    raise SystemExit(0)
+                raise SystemExit(1)
             if command in {"install", "chown", "chmod", "logger"}:
                 raise SystemExit(0)
             raise SystemExit(2)
@@ -276,7 +311,7 @@ def _run_mount_script(
         encoding="utf-8",
     )
     fake_command.chmod(0o755)
-    for command in ["findmnt", "lsblk", "blkid", "mkfs.ext4", "install", "mount", "chown", "chmod", "logger"]:
+    for command in ["findmnt", "lsblk", "blkid", "mkfs.ext4", "install", "mount", "chown", "chmod", "logger", "raw"]:
         (fake_bin / command).symlink_to(fake_command)
 
     policy_path = tmp_path / "data-disks.conf"
@@ -299,6 +334,11 @@ def _run_mount_script(
             "ATLASO_DATA_DISK_POLICY_PATH": str(policy_path),
             "ATLASO_DATA_DISK_BY_ID_ROOT": str(by_id_root),
             "ATLASO_DATA_DISK_SYS_BLOCK_ROOT": str(sys_root),
+            "ATLASO_DATA_DISK_SCSI_GENERIC_DEVICE_ROOT": str(scsi_generic_device_root),
+            "ATLASO_DATA_DISK_SCSI_GENERIC_SYS_ROOT": str(scsi_generic_sys_root),
+            "ATLASO_DATA_DISK_BSG_DEVICE_ROOT": str(bsg_device_root),
+            "ATLASO_DATA_DISK_BSG_SYS_ROOT": str(bsg_sys_root),
+            "ATLASO_DATA_DISK_RAW_DEVICE_ROOT": str(raw_device_root),
             "ATLASO_DATA_DISK_FSTAB_PATH": str(fstab_path),
             "ATLASO_ESX_STORAGE_ALLOWLIST_PATH": str(esx_allowlist_path),
             "ATLASO_TEST_STATE": str(state_path),
@@ -307,6 +347,11 @@ def _run_mount_script(
         }
     )
     open_handles = [Path(str(disk["path"])).open("rb") for disk in disks if disk.get("open_raw")]
+    open_handles.extend(
+        Path(str(disk["scsi_generic_path"])).open("rb") for disk in disks if disk.get("open_scsi_generic")
+    )
+    open_handles.extend(Path(str(disk["bsg_path"])).open("rb") for disk in disks if disk.get("open_bsg"))
+    open_handles.extend(Path(str(disk["raw_path"])).open("rb") for disk in disks if disk.get("open_bound_raw"))
     try:
         completed = subprocess.run(
             ["sh", str(MOUNT_SCRIPT.resolve())],
@@ -398,6 +443,9 @@ def test_hyperv_first_boot_uses_fixed_controller_locations(tmp_path: Path):
         "read_only",
         "in_use",
         "raw_open",
+        "scsi_generic_open",
+        "bsg_open",
+        "bound_raw_open",
         "mounted_elsewhere",
         "destination_occupied",
     ],
@@ -448,6 +496,12 @@ def test_first_boot_fails_before_mkfs_for_unsafe_topology(tmp_path: Path, scenar
         disks[2]["holders"] = True
     elif scenario == "raw_open":
         disks[2]["open_raw"] = True
+    elif scenario == "scsi_generic_open":
+        disks[2]["open_scsi_generic"] = True
+    elif scenario == "bsg_open":
+        disks[2]["open_bsg"] = True
+    elif scenario == "bound_raw_open":
+        disks[2]["open_bound_raw"] = True
     elif scenario == "mounted_elsewhere":
         disks[2].update(filesystem="ext4", label="ATLASO_DEPOT", uuid="mounted-depot")
     else:
