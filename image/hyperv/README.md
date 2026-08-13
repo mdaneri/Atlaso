@@ -48,9 +48,12 @@ and uses them for both the temporary Photon builder and the final appliance mana
 Hyper-V Server 2025 path when public resolvers such as `1.1.1.1` are blocked upstream. Pass
 `-BuilderStaticDns <server1>,<server2>` only when the builder VM should use a specific resolver set.
 
-The wrapper renders `photon-ks.json`, embeds it into `image/hyperv/build/kickstart/atlaso-photon-with-kickstart.iso`,
-and passes that single remastered Photon ISO to Packer. The remastered ISO also replaces the UEFI GRUB config with a
-Atlaso auto-install entry, so Photon boots with `ks=cdrom:/photon-ks.json` without Packer typing boot commands. This
+The wrapper renders `photon-ks.json` through `New-AtlasoPhotonKickstart` in the shared
+`scripts/windows/common/Atlaso.PhotonImage.psm1` module, embeds it into
+`image/hyperv/build/kickstart/atlaso-photon-with-kickstart.iso`, and passes that single remastered Photon ISO to Packer.
+That generator is the only kickstart source for both Hyper-V and VMware; the focused image tests invoke it and parse
+each provider's generated JSON. The remastered ISO also replaces the UEFI GRUB config with an Atlaso auto-install entry,
+so Photon boots with `ks=cdrom:/photon-ks.json` without Packer typing boot commands. This
 avoids the Windows Server 2025 early-installer networking failure mode, the fragile two-DVD Hyper-V path, and boot-menu
 timing races. Build runs pass Packer's `-force` flag by default so the fixed output directory can be rebuilt in one
 command. Use `-OutputDirectory <path>` to keep multiple artifacts or `-KeepExistingOutput` when you want Packer to fail

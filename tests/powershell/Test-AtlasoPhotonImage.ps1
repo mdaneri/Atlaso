@@ -11,6 +11,22 @@ $ErrorActionPreference = 'Stop'
 
 $modulePath = Join-Path $RepositoryRoot 'scripts/windows/common/Atlaso.PhotonImage.psm1'
 $module = Import-Module $modulePath -Force -PassThru
+$providers = @(
+    [pscustomobject]@{
+        Name                = 'hyperv'
+        AdditionalPackages  = @('hyper-v')
+        PostInstallCommands = @(
+            'systemctl enable hv_kvp_daemon || true',
+            'systemctl enable hv_fcopy_daemon || true',
+            'systemctl enable hv_vss_daemon || true'
+        )
+    },
+    [pscustomobject]@{
+        Name                = 'vmware-workstation'
+        AdditionalPackages  = @('open-vm-tools')
+        PostInstallCommands = @('systemctl enable vmtoolsd || true')
+    }
+)
 $passwords = @(
     [string]::Concat('quote', [char]39, 'break'),
     [string]::Concat(
@@ -32,58 +48,58 @@ $passwords = @(
 )
 
 New-Item -ItemType Directory -Force -Path $OutputDirectory | Out-Null
-try {
-    foreach ($target in @('hyperv', 'vmware-workstation')) {
-        foreach ($password in $passwords) {
-            $path = Join-Path $OutputDirectory "$target-kickstart.json"
-            & $module {
-                param($KickstartPath, $Credential)
-                New-AtlasoPhotonKickstart `
-                    -Path $KickstartPath `
-                    -RootPassword $Credential `
-                    -BuildPassword $Credential `
-                    -BuildUsername 'atlaso-build'
-            } $path $password
+foreach ($provider in $providers) {
+    foreach ($password in $passwords) {
+        $path = Join-Path $OutputDirectory "$($provider.Name)-kickstart.json"
+        & $module {
+            param($KickstartPath, $Credential, $AdditionalPackages, $PostInstallCommands)
+            New-AtlasoPhotonKickstart `
+                -Path $KickstartPath `
+                -RootPassword $Credential `
+                -BuildPassword $Credential `
+                -BuildUsername 'atlaso-build' `
+                -AdditionalPackages $AdditionalPackages `
+                -PostInstallCommands $PostInstallCommands
+        } $path $password $provider.AdditionalPackages $provider.PostInstallCommands
 
-            $kickstart = Get-Content -LiteralPath $path -Raw | ConvertFrom-Json
-            if ($kickstart.password.text -cne $password) {
-                throw 'Photon kickstart did not preserve the root password exactly.'
-            }
+        $kickstart = Get-Content -LiteralPath $path -Raw | ConvertFrom-Json
+        if ($kickstart.password.text -cne $password) {
+            throw 'Photon kickstart did not preserve the root password exactly.'
+        }
 
-            $postInstall = @($kickstart.postinstall)
-            if (($postInstall -join "`n").Contains($password)) {
-                throw 'Photon post-install commands contain the raw build password.'
-            }
+        $postInstall = @($kickstart.postinstall)
+        if (($postInstall -join "`n").Contains($password)) {
+            throw 'Photon post-install commands contain the raw build password.'
+        }
 
-            $credentialCommand = @(
-                $postInstall | Where-Object { $_ -like "*base64 -d | chpasswd" }
-            )
-            if ($credentialCommand.Count -ne 1) {
-                throw 'Photon kickstart must contain exactly one encoded chpasswd command.'
-            }
+        $credentialCommand = @(
+            $postInstall | Where-Object { $_ -like "*base64 -d | chpasswd" }
+        )
+        if ($credentialCommand.Count -ne 1) {
+            throw 'Photon kickstart must contain exactly one encoded chpasswd command.'
+        }
 
-            $match = [regex]::Match(
-                [string]$credentialCommand[0],
-                "^printf '%s' '([A-Za-z0-9+/=]+)' \| base64 -d \| chpasswd$"
-            )
-            if (-not $match.Success) {
-                throw 'Photon chpasswd command does not use the bounded Base64 stdin contract.'
-            }
+        $match = [regex]::Match(
+            [string]$credentialCommand[0],
+            "^printf '%s' '([A-Za-z0-9+/=]+)' \| base64 -d \| chpasswd$"
+        )
+        if (-not $match.Success) {
+            throw 'Photon chpasswd command does not use the bounded Base64 stdin contract.'
+        }
 
-            $actualBytes = [System.Convert]::FromBase64String($match.Groups[1].Value)
-            $expectedBytes = [System.Text.UTF8Encoding]::new($false).GetBytes("atlaso-build:$password`n")
-            if (-not [System.Linq.Enumerable]::SequenceEqual[byte]($actualBytes, $expectedBytes)) {
-                throw 'Photon chpasswd input did not preserve the original credential bytes.'
-            }
+        $actualBytes = [System.Convert]::FromBase64String($match.Groups[1].Value)
+        $expectedBytes = [System.Text.UTF8Encoding]::new($false).GetBytes("atlaso-build:$password`n")
+        if (-not [System.Linq.Enumerable]::SequenceEqual[byte]($actualBytes, $expectedBytes)) {
+            throw 'Photon chpasswd input did not preserve the original credential bytes.'
+        }
 
+        if (Get-Command bash -ErrorAction SilentlyContinue) {
             ($postInstall -join "`n") | & bash -n - 2>$null
             if ($LASTEXITCODE -ne 0) {
                 throw 'Photon post-install shell failed syntax validation.'
             }
         }
     }
-} finally {
-    Remove-Item -LiteralPath $OutputDirectory -Recurse -Force -ErrorAction SilentlyContinue
 }
 
-Write-Output 'Atlaso Photon image credential transport tests passed.'
+Write-Output 'Atlaso Photon kickstart generator contract tests passed.'
