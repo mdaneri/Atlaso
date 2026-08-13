@@ -15331,21 +15331,32 @@ def test_vcf_offline_depot_manual_profile_download_starts_job(client, tmp_path, 
     assert all(task["type"] == "vcf-depot-download" for task in shared_task_payload.json()["tasks"])
 
 
-def test_vcf_offline_depot_contextual_schedule_is_server_bound_and_stays_in_page(client):
+def test_vcf_offline_depot_contextual_schedule_is_server_bound_and_stays_in_page(client, tmp_path):
     """Verify the depot schedule endpoint binds task and profile server-side.
 
     Args:
         client: HTTP test client used to exercise the depot schedule endpoint.
+        tmp_path: Temporary directory used for a staged VCFDT package fixture.
     """
     import json
 
     from sqlalchemy import select
 
     from atlaso.app.database import SessionLocal
-    from atlaso.app.models import AuditEvent, Schedule, VcfDepotDownloadProfile
+    from atlaso.app.models import (
+        AuditEvent,
+        Schedule,
+        VcfDepotDownloadProfile,
+        VcfOfflineDepotSettings,
+    )
 
     login(client)
+    archive_path = tmp_path / "vcf-download-tool-9.1.0.contextual.tar.gz"
+    make_vcfdt_archive(archive_path)
     with SessionLocal() as db:
+        settings = db.execute(select(VcfOfflineDepotSettings)).scalar_one()
+        settings.tool_archive_path = str(archive_path)
+        settings.tool_version = "9.1.0"
         profile = VcfDepotDownloadProfile(
             name="contextual-schedule-profile",
             profile_type="metadata",

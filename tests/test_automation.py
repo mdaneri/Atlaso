@@ -1472,8 +1472,9 @@ def test_vcf_runtime_index_uses_the_current_rebound_engine(monkeypatch):
         connection.execute(
             text(
                 "CREATE TABLE jobs ("
-                "id TEXT PRIMARY KEY, status TEXT NOT NULL, "
-                "vcf_depot_operation BOOLEAN NOT NULL DEFAULT FALSE)"
+                "id TEXT PRIMARY KEY, type TEXT NOT NULL, status TEXT NOT NULL, "
+                "vcf_depot_operation BOOLEAN NOT NULL DEFAULT FALSE, "
+                "vcf_depot_profile_id INTEGER)"
             )
         )
     monkeypatch.setattr(database, "engine", rebound_engine)
@@ -1574,7 +1575,12 @@ def test_due_vcf_schedule_records_disappearing_profile_as_skipped(client, monkey
         db.commit()
 
     def reject_disappearing_profile(*_args, **_kwargs):
-        """Model deletion after the scheduler's initial profile lookup."""
+        """Model deletion after the scheduler's initial profile lookup.
+
+        Args:
+            *_args: Positional admission arguments ignored by this failure model.
+            **_kwargs: Keyword admission arguments ignored by this failure model.
+        """
         raise VcfDepotProfileUnavailableError(profile_id)
 
     monkeypatch.setattr(automation, "enqueue_vcf_depot_download", reject_disappearing_profile)
