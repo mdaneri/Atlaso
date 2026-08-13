@@ -111,6 +111,8 @@ that transitional start and subsequent systemd starts. If the legacy updater lat
 leaves this validated boundary in place and restarts the previous control plane only when the same disk preflight passes.
 The minimal `bootstrap-<version>` release created while building a fresh image is explicitly marked and bypasses only
 this previous-updater compatibility step; image provisioning installs and validates the same safety boundary directly.
+The bridge records root-owned one-time completion under `/etc/atlaso`; later control-plane starts use the permanent
+data-disk systemd dependency without repeating asset backup, identity reload, migration, or direct preparation.
 
 Atlaso writes operational events to `/var/log/atlaso/atlaso.log`. Audit events, desired-state edits, and appliance apply
 submissions are mirrored there with sensitive values redacted. The Settings page controls local file verbosity and can

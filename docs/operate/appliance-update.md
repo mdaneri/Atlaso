@@ -225,6 +225,8 @@ state. After that bootstrap succeeds, its permanent systemd dependency remains f
 check rolls the application back; the previous control plane can restart only after the same disk preflight succeeds.
 Fresh images mark their minimal `bootstrap-<version>` release explicitly and skip this candidate-only compatibility
 step because image provisioning has already installed and validated the safety assets directly from the staged source.
+Both paths write a root-owned completion marker, so ordinary control-plane restarts bypass the compatibility transaction;
+the permanent `atlaso-data-disks.service` requirement continues to enforce disk readiness on every start.
 When upgrading an older release, the transaction first derives exact root-owned claims for already applied, boot-safe
 ESX Storage volumes from the database and live block inventory and migrates persisted stable-device aliases for both operator-mounted
 and Atlaso-formatted volumes to the selected live identity. The database identity and boot claim

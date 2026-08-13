@@ -837,12 +837,18 @@ def test_image_bootstrap_release_skips_previous_updater_compatibility_gate(monke
     current.symlink_to(release_root, target_is_directory=True)
     monkeypatch.setattr(helper, "ATLASO_RELEASES_DIR", releases)
     monkeypatch.setattr(helper, "ATLASO_CURRENT_LINK", current)
+    marker = tmp_path / "etc/atlaso/data-disk-safety-bootstrap.json"
+    monkeypatch.setattr(helper, "ATLASO_DATA_DISK_BOOTSTRAP_MARKER_PATH", marker)
     monkeypatch.setattr(
         helper,
         "_release_data_disk_platform",
         lambda: (_ for _ in ()).throw(AssertionError("fresh image must not enter candidate compatibility bootstrap")),
     )
 
+    assert helper._bootstrap_release_data_disk_safety(release_root) == []
+    assert json.loads(marker.read_text(encoding="utf-8")) == {"schema_version": 1, "status": "complete"}
+    if os.name == "posix":
+        assert marker.stat().st_mode & 0o777 == 0o600
     assert helper._bootstrap_release_data_disk_safety(release_root) == []
 
 
@@ -886,6 +892,8 @@ def test_previous_updater_service_bootstraps_every_new_data_disk_safety_asset(mo
     monkeypatch.setattr(helper, "ATLASO_RELEASES_DIR", release_root.parent)
     monkeypatch.setattr(helper, "ATLASO_CURRENT_LINK", current)
     monkeypatch.setattr(helper, "ATLASO_UPDATE_BACKUP_DIR", tmp_path / "backups")
+    marker = tmp_path / "host/etc/atlaso/data-disk-safety-bootstrap.json"
+    monkeypatch.setattr(helper, "ATLASO_DATA_DISK_BOOTSTRAP_MARKER_PATH", marker)
     for name, destination in destinations.items():
         monkeypatch.setattr(helper, name, destination)
     monkeypatch.setattr(helper, "_release_data_disk_platform", lambda: "vmware")
@@ -924,6 +932,13 @@ def test_previous_updater_service_bootstraps_every_new_data_disk_safety_asset(mo
     assert ["/usr/bin/systemctl", "daemon-reload"] in commands
     assert events == ["migration", "preflight"]
     assert not any((tmp_path / "backups").iterdir())
+    assert json.loads(marker.read_text(encoding="utf-8")) == {"schema_version": 1, "status": "complete"}
+    monkeypatch.setattr(
+        helper,
+        "_release_data_disk_platform",
+        lambda: (_ for _ in ()).throw(AssertionError("completed compatibility bootstrap must not run again")),
+    )
+    assert helper._bootstrap_release_data_disk_safety(release_root) == []
     for unit_path in [
         ROOT / "image/hyperv/systemd/atlaso.service",
         ROOT / "image/vmware-workstation/systemd/atlaso.service",
@@ -973,6 +988,8 @@ def test_previous_updater_bootstrap_restores_assets_claims_and_database(monkeypa
     monkeypatch.setattr(helper, "ATLASO_RELEASES_DIR", release_root.parent)
     monkeypatch.setattr(helper, "ATLASO_CURRENT_LINK", current)
     monkeypatch.setattr(helper, "ATLASO_UPDATE_BACKUP_DIR", tmp_path / "backups")
+    marker = tmp_path / "host/data-disk-safety-bootstrap.json"
+    monkeypatch.setattr(helper, "ATLASO_DATA_DISK_BOOTSTRAP_MARKER_PATH", marker)
     monkeypatch.setattr(helper, "ATLASO_DATABASE_PATH", database)
     monkeypatch.setattr(helper, "_release_data_disk_platform", lambda: "vmware")
     monkeypatch.setattr(
@@ -1041,6 +1058,7 @@ def test_previous_updater_bootstrap_restores_assets_claims_and_database(monkeypa
 
     assert destination.read_bytes() == b"previous-asset"
     assert not new_destination.exists()
+    assert not marker.exists()
     assert not destination.with_suffix(".bootstrap").exists()
     assert not new_destination.with_suffix(".bootstrap").exists()
     assert allowlist.read_text(encoding="utf-8") == "previous-claim\n"

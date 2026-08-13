@@ -173,6 +173,7 @@ ATLASO_UPDATE_FINALIZER_PATH = ATLASO_STATE_DIR / "apply/appliance-update/finali
 ATLASO_UPDATE_MAINTENANCE_PATH = Path("/run/atlaso-update-maintenance")
 ATLASO_POWERSHELL_HOME = ATLASO_STATE_DIR / "powershell"
 ATLASO_DATA_DISK_POLICY_PATH = Path("/etc/atlaso/data-disks.conf")
+ATLASO_DATA_DISK_BOOTSTRAP_MARKER_PATH = Path("/etc/atlaso/data-disk-safety-bootstrap.json")
 ATLASO_MOUNT_DATA_DISKS_PATH = Path("/opt/atlaso/bin/atlaso-mount-data-disks")
 ATLASO_DATA_DISK_UNIT_PATH = Path("/etc/systemd/system/atlaso-data-disks.service")
 ATLASO_SERVICE_DATA_DISK_DROPIN_PATH = Path("/etc/systemd/system/atlaso.service.d/atlaso-data-disks.conf")
@@ -10853,6 +10854,33 @@ def _release_data_disk_owned_files(release_root: Path, platform: str) -> list[tu
     ]
 
 
+def _data_disk_safety_bootstrap_is_complete() -> bool:
+    """Return whether the one-time previous-updater compatibility bridge completed."""
+    if ATLASO_DATA_DISK_BOOTSTRAP_MARKER_PATH.is_symlink():
+        return False
+    try:
+        payload = json.loads(ATLASO_DATA_DISK_BOOTSTRAP_MARKER_PATH.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    return payload == {"schema_version": 1, "status": "complete"}
+
+
+def _record_data_disk_safety_bootstrap_complete() -> None:
+    """Atomically persist completion of the previous-updater compatibility bridge."""
+    marker = ATLASO_DATA_DISK_BOOTSTRAP_MARKER_PATH
+    marker.parent.mkdir(parents=True, exist_ok=True)
+    temporary = marker.with_name(f".{marker.name}.{uuid.uuid4().hex}.tmp")
+    try:
+        temporary.write_text(
+            json.dumps({"schema_version": 1, "status": "complete"}, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        temporary.chmod(0o600)
+        os.replace(temporary, marker)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
 def _bootstrap_release_data_disk_safety(release_root: Path) -> list[dict]:
     """Transactionally migrate, install, and validate safety for a previous updater.
 
@@ -10867,6 +10895,8 @@ def _bootstrap_release_data_disk_safety(release_root: Path) -> list[dict]:
         raise ValueError("data-disk safety bootstrap requires the active Atlaso release")
     if not resolved_release.is_relative_to(ATLASO_RELEASES_DIR.resolve(strict=True)):
         raise ValueError("data-disk safety bootstrap release is outside the signed release directory")
+    if _data_disk_safety_bootstrap_is_complete():
+        return []
     metadata_path = resolved_release / "bundle-metadata.json"
     if metadata_path.is_file():
         try:
@@ -10879,6 +10909,7 @@ def _bootstrap_release_data_disk_safety(release_root: Path) -> list[dict]:
                 raise ValueError("data-disk safety bootstrap image-release identity is invalid")
             # Image provisioning installs and validates these assets directly from the staged repository.
             # The pre-start hook exists only to bridge signed candidates through an older updater.
+            _record_data_disk_safety_bootstrap_complete()
             return []
     assets = _release_data_disk_owned_files(resolved_release, _release_data_disk_platform())
     for source, _destination, _mode in assets:
@@ -10926,6 +10957,7 @@ def _bootstrap_release_data_disk_safety(release_root: Path) -> list[dict]:
         commands.append(_command_payload([systemctl, "daemon-reload"]))
         if not all(command["success"] for command in commands):
             raise ValueError("release data-disk safety bootstrap daemon reload failed")
+        _record_data_disk_safety_bootstrap_complete()
         return commands
     except Exception as exc:
         rollback_errors: list[str] = []
