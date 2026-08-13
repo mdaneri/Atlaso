@@ -95,8 +95,11 @@ or identity/capacity-mismatched devices. It formats only the two verified blank 
 UUIDs in `/etc/fstab`, and mounts them at the fixed paths before `atlaso.service` starts. Existing correctly labeled
 ext4 disks must occupy their assigned identities and are mounted without reformatting. Once both fixed disks are
 initialized, an additional whole disk is accepted only when it is a stable, writable, partition-free managed ESX
-Storage ext4 volume with the expected `lf-<hash>` label, UUID-backed managed fstab entry, and mount beneath
-`/mnt/atlaso-esx-storage/`.
+Storage ext4 volume. Atlaso-formatted disks require their `lf-<hash>` label and UUID-backed managed fstab entry.
+Operator-formatted mounted ext4 whole disks require UUID-backed fstab persistence plus an exact root-owned
+`/etc/atlaso/esx-storage-disks.conf` claim. Nginx, the HTTPS bootstrap, control plane, and worker use hard systemd
+requirements on `atlaso-data-disks.service`, so a failed preflight cannot expose the front door or start Atlaso against
+the empty mount directories.
 
 Atlaso writes operational events to `/var/log/atlaso/atlaso.log`. Audit events, desired-state edits, and appliance apply
 submissions are mirrored there with sensitive values redacted. The Settings page controls local file verbosity and can
@@ -969,7 +972,8 @@ a dedicated Connection Instructions tab keeps mount guidance separate from desir
 
 Blank whole disks require stable `/dev/disk/by-id` identity, complete job-scoped `FORMAT <volume-name>` authorization,
 immediate safety revalidation, whole-device ext4 formatting, and UUID mounts under `/mnt/atlaso-esx-storage`; existing
-mounted ext4 volumes are also supported. Global apply stages
+mounted ext4 whole disks are supported only with stable identity, UUID-backed fstab persistence, an active matching
+mount, and a root-owned Atlaso claim. Global apply stages
 `/var/lib/atlaso/apply/esx-storage/atlaso-esx-storage.json`, manages bind exports under `/srv/atlaso/esx-storage`, and
 enables `rpcbind`/`nfs-server` only while valid shares are active. Removing desired state never deletes stored data.
 Settings backup/restore includes the service, volume identities, and shares but never format authorization. See

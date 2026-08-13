@@ -377,7 +377,9 @@ helper assigns the depot to SCSI controller 0 location 1 and backups to location
 `atlaso-path-*` links, and exact capacities before formatting either disk. Missing, extra, reordered, ambiguous, or
 mismatched disks fail closed before `mkfs`. Correctly labeled ext4 disks remain idempotent, are written to `/etc/fstab`
 by UUID, and mount before the Atlaso control plane starts. After both fixed disks are initialized, additional disks are
-accepted only as positively identified Atlaso-managed ESX Storage volumes.
+accepted only as positively identified Atlaso-managed ESX Storage volumes; claimed existing ext4 disks require stable
+whole-disk identity, UUID-backed fstab persistence, and a root-owned claim. Disk-preflight failure blocks nginx, the
+HTTPS bootstrap, Atlaso control plane, and worker.
 
 ## Appliance Smoke Checks
 

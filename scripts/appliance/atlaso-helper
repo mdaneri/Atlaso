@@ -236,6 +236,7 @@ ESX_STORAGE_NFS_CONFIG_PATH = Path("/etc/nfs.conf.d/atlaso-esx-storage.conf")
 ESX_STORAGE_FSTAB_PATH = Path("/etc/fstab")
 ESX_STORAGE_FSTAB_BEGIN = "# BEGIN ATLASO ESX STORAGE"
 ESX_STORAGE_FSTAB_END = "# END ATLASO ESX STORAGE"
+ESX_STORAGE_DISK_ALLOWLIST_PATH = Path("/etc/atlaso/esx-storage-disks.conf")
 PXE_BOOT_BINARY_DIRS = [
     PXE_BOOTLOADER_STAGING_DIR,
     Path("/usr/share/ipxe"),
@@ -11612,7 +11613,10 @@ def _esx_storage_inventory() -> list[dict[str, object]]:
         mountpoints = [str(value) for value in (item.get("mountpoints") or []) if value]
         primary_mount_path = next(
             (path for path in mountpoints if path.startswith(f"{ESX_STORAGE_MOUNT_ROOT.as_posix().rstrip('/')}/")),
-            mountpoints[0] if mountpoints else "",
+            next(
+                (path for path in mountpoints if not path.startswith(f"{ESX_STORAGE_EXPORT_ROOT.as_posix().rstrip('/')}/")),
+                mountpoints[0] if mountpoints else "",
+            ),
         )
         kname = str(item.get("kname") or item.get("name") or "")
         holders_root = Path("/sys/class/block") / kname / "holders"
@@ -11649,6 +11653,7 @@ def _esx_storage_inventory() -> list[dict[str, object]]:
                 "read_only": bool(item.get("ro")),
                 "removable": bool(item.get("rm")),
                 "os_related": device_path in os_devices or disk_path in os_devices,
+                "persistent_uuid_mount": _esx_storage_uuid_fstab_entry_exists(filesystem_uuid, primary_mount_path),
                 "candidate_type": candidate_type,
             }
         )
@@ -11658,6 +11663,26 @@ def _esx_storage_inventory() -> list[dict[str, object]]:
     for block_device in payload.get("blockdevices", []):
         walk(block_device)
     return inventory
+
+
+def _esx_storage_uuid_fstab_entry_exists(filesystem_uuid: str, mount_path: str) -> bool:
+    """Return whether fstab persistently mounts one ext4 UUID at the expected path.
+
+    Args:
+        filesystem_uuid: Filesystem UUID that must own the mount.
+        mount_path: Exact persistent mount path.
+    """
+    if not filesystem_uuid or not mount_path or not ESX_STORAGE_FSTAB_PATH.exists():
+        return False
+    source = f"UUID={filesystem_uuid}"
+    for raw_line in ESX_STORAGE_FSTAB_PATH.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        fields = line.split()
+        if len(fields) >= 3 and fields[:3] == [source, mount_path, "ext4"]:
+            return True
+    return False
 
 
 def _esx_storage_blank_disk_errors(entry: dict[str, object]) -> list[str]:
@@ -11684,6 +11709,37 @@ def _esx_storage_blank_disk_errors(entry: dict[str, object]) -> list[str]:
     ]:
         if entry.get(key):
             errors.append(label)
+    return errors
+
+
+def _esx_storage_mounted_disk_errors(entry: dict[str, object], *, mount_path: Path) -> list[str]:
+    """Return boot-safety errors for an existing mounted ext4 whole disk.
+
+    Args:
+        entry: Current helper inventory row for the mounted filesystem.
+        mount_path: Exact mount path claimed by ESX Storage.
+    """
+    errors: list[str] = []
+    if str(entry.get("type") or "") != "disk":
+        errors.append("not a whole disk")
+    if not str(entry.get("stable_device_id") or "").startswith("/dev/disk/by-id/"):
+        errors.append("missing stable /dev/disk/by-id identity")
+    if str(entry.get("filesystem_type") or "") != "ext4":
+        errors.append("not ext4")
+    if not str(entry.get("filesystem_uuid") or ""):
+        errors.append("missing filesystem UUID")
+    if str(mount_path) not in [str(path) for path in entry.get("mount_paths", [])]:
+        errors.append("not mounted at the selected path")
+    for key, label in [
+        ("partitions", "has partitions"),
+        ("holders", "has holders"),
+        ("os_related", "is related to the operating-system disk"),
+        ("read_only", "is read-only"),
+    ]:
+        if entry.get(key):
+            errors.append(label)
+    if not entry.get("persistent_uuid_mount"):
+        errors.append("is not persisted by UUID in /etc/fstab")
     return errors
 
 
@@ -11884,6 +11940,7 @@ def _esx_storage_apply(payload: dict[str, object]) -> dict[str, object]:
     inventory = _esx_storage_inventory()
     inventory_by_id = {str(item.get("stable_device_id") or ""): item for item in inventory}
     fstab_lines: list[str] = []
+    disk_allowlist_lines: list[str] = []
     commands: list[list[str]] = []
     volumes_by_id: dict[object, dict[str, object]] = {}
     for volume in payload.get("volumes", []):
@@ -11941,6 +11998,25 @@ def _esx_storage_apply(payload: dict[str, object]) -> dict[str, object]:
             find_result = _run([findmnt, "-nro", "FSTYPE", "--target", str(mount_path)])
             if find_result.returncode != 0 or find_result.stdout.strip() != "ext4":
                 raise ValueError(f"existing volume {volume.get('name')} is not mounted as ext4 at {mount_path}")
+            matches = [
+                entry
+                for entry in inventory
+                if entry.get("candidate_type") == "mounted_ext4"
+                and str(entry.get("mount_path") or "") == str(mount_path)
+                and str(entry.get("stable_device_id") or "") == str(volume.get("stable_device_id") or "")
+            ]
+            if len(matches) != 1:
+                raise ValueError(f"existing volume {volume.get('name')} no longer has one stable inventory identity")
+            entry = matches[0]
+            safety_errors = _esx_storage_mounted_disk_errors(entry, mount_path=mount_path)
+            if safety_errors:
+                raise ValueError(f"existing volume {volume.get('name')} is not boot-safe: {', '.join(safety_errors)}")
+            fs_uuid = str(entry["filesystem_uuid"])
+            stable_id = str(entry["stable_device_id"])
+            if any(character in value for value in (fs_uuid, stable_id, str(mount_path)) for character in "\t\r\n"):
+                raise ValueError(f"existing volume {volume.get('name')} has an unsupported identity or mount path")
+            disk_allowlist_lines.append(f"{fs_uuid}\t{stable_id}\t{mount_path}")
+            volume["filesystem_uuid"] = fs_uuid
     _esx_storage_replace_managed_fstab(fstab_lines)
     mount = _command_path("mount")
     if mount is None:
@@ -12014,6 +12090,11 @@ def _esx_storage_apply(payload: dict[str, object]) -> dict[str, object]:
     else:
         _run([exportfs, "-ua"])
         _run([systemctl, "disable", "--now", "nfs-server.service", "rpcbind.service", "rpcbind.socket"], timeout=120)
+    _write_secret_file(
+        ESX_STORAGE_DISK_ALLOWLIST_PATH,
+        "\n".join(disk_allowlist_lines) + ("\n" if disk_allowlist_lines else ""),
+        0o644,
+    )
     return {"status": "applied", "volumes": payload.get("volumes", []), "shares": len(payload.get("shares", [])), "commands": commands}
 
 

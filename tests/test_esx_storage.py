@@ -245,6 +245,38 @@ def test_mounted_ext4_inventory_rejects_vcf_backup_and_depot_mounts():
             raise AssertionError(f"reserved mount {mount_path} was accepted")
 
 
+def test_mounted_ext4_inventory_requires_boot_safe_whole_disk_contract():
+    """Require stable whole-disk identity and persistent UUID mounting."""
+    eligible = normalize_disk_inventory_entry(
+        {
+            "candidate_type": "mounted_ext4",
+            "stable_device_id": "/dev/disk/by-id/wwn-0x1234",
+            "device_path": "/dev/sdd",
+            "type": "disk",
+            "filesystem_type": "ext4",
+            "filesystem_uuid": "existing-uuid",
+            "mount_path": "/mnt/existing-ext4",
+            "persistent_uuid_mount": True,
+        }
+    )
+    incompatible = normalize_disk_inventory_entry(
+        {
+            "candidate_type": "mounted_ext4",
+            "stable_device_id": "UUID=partition-uuid",
+            "device_path": "/dev/sdd1",
+            "type": "part",
+            "filesystem_type": "ext4",
+            "filesystem_uuid": "partition-uuid",
+            "mount_path": "/mnt/partition-ext4",
+        }
+    )
+
+    assert eligible["eligible"] is True
+    assert incompatible["eligible"] is False
+    assert "not a whole disk" in incompatible["eligibility_reason"]
+    assert "not persisted by UUID" in incompatible["eligibility_reason"]
+
+
 def test_desired_state_rejects_existing_volume_on_vcf_managed_mount():
     """Verify that desired state rejects existing volume on vcf managed mount."""
     settings, volumes, shares, interfaces = state()
@@ -343,11 +375,12 @@ def test_helper_blank_disk_revalidation_rejects_partition_mount_lvm_raid_and_os_
     ]
 
 
-def test_helper_inventory_prefers_uuid_mount_and_keeps_all_mountpoints(monkeypatch):
+def test_helper_inventory_prefers_uuid_mount_and_keeps_all_mountpoints(monkeypatch, tmp_path: Path):
     """Verify that helper inventory prefers uuid mount and keeps all mountpoints.
 
     Args:
         monkeypatch: Pytest fixture used to replace dependencies for the test.
+        tmp_path: Pytest-provided isolated filesystem root.
     """
     helper = load_helper_module()
     lsblk_payload = {
@@ -363,7 +396,7 @@ def test_helper_inventory_prefers_uuid_mount_and_keeps_all_mountpoints(monkeypat
             "label": "lf-ad26e4d9384f",
             "mountpoints": [
                 "/srv/atlaso/esx-storage/vmware-nfs3",
-                "/mnt/atlaso-esx-storage/vmware-esx-data",
+                "/mnt/operator-existing-ext4",
             ],
         }]
     }
@@ -379,13 +412,47 @@ def test_helper_inventory_prefers_uuid_mount_and_keeps_all_mountpoints(monkeypat
         lambda: {"/dev/sdd": "/dev/disk/by-id/atlaso-path-pci-0000_03_00_0-scsi-0_0_3_0"},
     )
     monkeypatch.setattr(helper, "_esx_storage_os_devices", lambda: set())
+    fstab = tmp_path / "fstab"
+    fstab.write_text(
+        "UUID=3f832583-beec-4be7-969c-92519ea77273 /mnt/operator-existing-ext4 ext4 defaults 0 2\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(helper, "ESX_STORAGE_FSTAB_PATH", fstab)
 
     disk = helper._esx_storage_inventory()[0]
 
-    assert disk["mount_path"] == "/mnt/atlaso-esx-storage/vmware-esx-data"
+    assert disk["mount_path"] == "/mnt/operator-existing-ext4"
     assert disk["mount_paths"] == [
         "/srv/atlaso/esx-storage/vmware-nfs3",
-        "/mnt/atlaso-esx-storage/vmware-esx-data",
+        "/mnt/operator-existing-ext4",
+    ]
+    assert disk["persistent_uuid_mount"] is True
+
+
+def test_helper_rejects_mounted_ext4_without_boot_contract():
+    """Reject mounted ext4 inventory that cannot pass the boot-time allowlist."""
+    helper = load_helper_module()
+
+    errors = helper._esx_storage_mounted_disk_errors(
+        {
+            "type": "part",
+            "stable_device_id": "UUID=existing-uuid",
+            "filesystem_type": "ext4",
+            "filesystem_uuid": "existing-uuid",
+            "mount_paths": ["/mnt/existing-ext4"],
+            "partitions": [],
+            "holders": [],
+            "os_related": False,
+            "read_only": False,
+            "persistent_uuid_mount": False,
+        },
+        mount_path=PurePosixPath("/mnt/existing-ext4"),
+    )
+
+    assert errors == [
+        "not a whole disk",
+        "missing stable /dev/disk/by-id identity",
+        "is not persisted by UUID in /etc/fstab",
     ]
 
 

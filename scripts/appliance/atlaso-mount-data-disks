@@ -5,6 +5,7 @@ POLICY_PATH="${ATLASO_DATA_DISK_POLICY_PATH:-/etc/atlaso/data-disks.conf}"
 BY_ID_ROOT="${ATLASO_DATA_DISK_BY_ID_ROOT:-/dev/disk/by-id}"
 SYS_BLOCK_ROOT="${ATLASO_DATA_DISK_SYS_BLOCK_ROOT:-/sys/class/block}"
 FSTAB_PATH="${ATLASO_DATA_DISK_FSTAB_PATH:-/etc/fstab}"
+ESX_STORAGE_ALLOWLIST_PATH="${ATLASO_ESX_STORAGE_ALLOWLIST_PATH:-/etc/atlaso/esx-storage-disks.conf}"
 
 log() {
   printf '%s\n' "$*"
@@ -222,20 +223,94 @@ fixed_disks_are_initialized() {
     [ -n "$(blkid -s UUID -o value "$BACKUP_DISK" 2>/dev/null || true)" ]
 }
 
-managed_esx_fstab_entry_exists() {
+managed_esx_primary_mount() {
+  uuid="$1"
+  [ -f "$FSTAB_PATH" ] || return 1
+  awk -v source="UUID=$uuid" '
+    $0 == "# BEGIN ATLASO ESX STORAGE" { managed = 1; next }
+    $0 == "# END ATLASO ESX STORAGE" { managed = 0; next }
+    managed && $1 == source && $3 == "ext4" {
+      if (mountpoint && mountpoint != $2) { duplicate = 1 }
+      mountpoint = $2
+    }
+    END {
+      if (mountpoint && !duplicate) { print mountpoint; exit 0 }
+      exit 1
+    }
+  ' "$FSTAB_PATH"
+}
+
+fstab_uuid_mount_exists() {
   uuid="$1"
   mountpoint="$2"
   [ -f "$FSTAB_PATH" ] || return 1
   awk -v source="UUID=$uuid" -v mountpoint="$mountpoint" '
-    $0 == "# BEGIN ATLASO ESX STORAGE" { managed = 1; next }
-    $0 == "# END ATLASO ESX STORAGE" { managed = 0; next }
-    managed && $1 == source && $2 == mountpoint && $3 == "ext4" { found = 1 }
+    $1 == source && $2 == mountpoint && $3 == "ext4" { found = 1 }
     END { exit found ? 0 : 1 }
   ' "$FSTAB_PATH"
 }
 
+managed_esx_bind_entry_exists() {
+  mountpoint="$1"
+  [ -f "$FSTAB_PATH" ] || return 1
+  awk -v mountpoint="$mountpoint" '
+    $0 == "# BEGIN ATLASO ESX STORAGE" { managed = 1; next }
+    $0 == "# END ATLASO ESX STORAGE" { managed = 0; next }
+    managed && $2 == mountpoint && $3 == "none" && $4 ~ /(^|,)bind(,|$)/ { found = 1 }
+    END { exit found ? 0 : 1 }
+  ' "$FSTAB_PATH"
+}
+
+allowlisted_esx_mount() {
+  uuid="$1"
+  disk="$2"
+  [ -f "$ESX_STORAGE_ALLOWLIST_PATH" ] || return 1
+  entry="$(awk -F '\t' -v uuid="$uuid" '$1 == uuid { if (found++) exit 2; stable = $2; mountpoint = $3 } END { if (found == 1) print stable "\t" mountpoint; else exit 1 }' "$ESX_STORAGE_ALLOWLIST_PATH")" || return 1
+  stable_id="${entry%%	*}"
+  mountpoint="${entry#*	}"
+  case "$stable_id" in
+    "$BY_ID_ROOT"/*) ;;
+    *) return 1 ;;
+  esac
+  [ -L "$stable_id" ] || return 1
+  [ "$(readlink -f "$stable_id" 2>/dev/null || true)" = "$disk" ] || return 1
+  fstab_uuid_mount_exists "$uuid" "$mountpoint" || return 1
+  printf '%s\n' "$mountpoint"
+}
+
+validate_managed_esx_mounts() {
+  disk="$1"
+  uuid="$2"
+  primary_mount="$3"
+
+  mounted_targets="$(findmnt -rn -S "$disk" -o TARGET 2>/dev/null || true)"
+  [ -n "$mounted_targets" ] || return 1
+  found_primary=false
+  for mountpoint in $mounted_targets; do
+    [ "$(findmnt -rn -M "$mountpoint" -o UUID 2>/dev/null || true)" = "$uuid" ] || return 1
+    if [ "$mountpoint" = "$primary_mount" ]; then
+      found_primary=true
+      continue
+    fi
+    case "$mountpoint" in
+      /srv/atlaso/esx-storage/*) managed_esx_bind_entry_exists "$mountpoint" || return 1 ;;
+      *) return 1 ;;
+    esac
+  done
+  [ "$found_primary" = "true" ]
+}
+
 is_managed_esx_storage_disk() {
   disk="$1"
+  [ "$(blkid -s TYPE -o value "$disk" 2>/dev/null || true)" = "ext4" ] || return 1
+  uuid="$(blkid -s UUID -o value "$disk" 2>/dev/null || true)"
+  [ -n "$uuid" ] || return 1
+  [ -n "$(stable_by_id_for_disk "$disk" || true)" ] || return 1
+  [ "$(lsblk -dn -o RO "$disk" 2>/dev/null | head -n 1 || true)" = "0" ] || return 1
+  if has_partitions "$disk" || has_holders "$disk"; then
+    return 1
+  fi
+
   label="$(blkid -s LABEL -o value "$disk" 2>/dev/null || true)"
   case "$label" in
     lf-????????????)
@@ -243,31 +318,12 @@ is_managed_esx_storage_disk() {
       case "$suffix" in
         *[!0-9a-f]*) return 1 ;;
       esac
+      primary_mount="$(managed_esx_primary_mount "$uuid" || true)"
       ;;
-    *) return 1 ;;
+    *) primary_mount="$(allowlisted_esx_mount "$uuid" "$disk" || true)" ;;
   esac
-  [ "$(blkid -s TYPE -o value "$disk" 2>/dev/null || true)" = "ext4" ] || return 1
-  uuid="$(blkid -s UUID -o value "$disk" 2>/dev/null || true)"
-  [ -n "$uuid" ] || return 1
-  [ -n "$(stable_by_id_for_disk "$disk" || true)" ] || return 1
-  [ "$(lsblk -dn -o RO "$disk" 2>/dev/null | head -n 1 || true)" = "0" ] || return 1
-  if has_partitions "$disk"; then
-    return 1
-  fi
-  if has_holders "$disk"; then
-    return 1
-  fi
-
-  mounted_targets="$(findmnt -rn -S "$disk" -o TARGET 2>/dev/null || true)"
-  [ -n "$mounted_targets" ] || return 1
-  for mountpoint in $mounted_targets; do
-    case "$mountpoint" in
-      /mnt/atlaso-esx-storage/*) ;;
-      *) return 1 ;;
-    esac
-    [ "$(findmnt -rn -M "$mountpoint" -o UUID 2>/dev/null || true)" = "$uuid" ] || return 1
-    managed_esx_fstab_entry_exists "$uuid" "$mountpoint" || return 1
-  done
+  [ -n "$primary_mount" ] || return 1
+  validate_managed_esx_mounts "$disk" "$uuid" "$primary_mount"
 }
 
 validate_exact_disk_set() {

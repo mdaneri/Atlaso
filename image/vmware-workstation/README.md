@@ -198,7 +198,8 @@ and requires the two data disks at SCSI units 2 and 3 to expose topology-derived
 extra, reordered, ambiguous, or mismatched device. Verified blank disks become ext4 volumes labeled
 `ATLASO_DEPOT` and `ATLASO_BKUP`; correctly labeled ext4 disks are never reformatted. The service writes their UUIDs to
 `/etc/fstab` and mounts them at `/mnt/atlaso-vcf-offline-depot` and `/mnt/atlaso-vcf-backups`. The descriptor exposes
-those fixed volumes while allowing only positively identified Atlaso-managed ESX Storage disks after initialization.
+those fixed volumes while allowing only positively identified Atlaso-managed ESX Storage disks after initialization;
+claimed existing ext4 whole disks require UUID-backed fstab persistence and a root-owned Atlaso claim.
 The descriptor exposes two network mappings for
 vSphere/ESXi import: `Atlaso Management Network` for the first adapter, which remains management-only as `eth0`, and
 `Atlaso Services Network` for the second adapter used by DNS, DHCP, CA, depot, PXE, KMS, and other Atlaso-managed
@@ -406,6 +407,7 @@ capacities, and exact platform disk set before formatting the assigned blank VMD
 extra, reordered, ambiguous, or mismatched disks. Correctly labeled ext4 volumes remain untouched; both volumes are
 mounted by UUID at `/mnt/atlaso-vcf-offline-depot` and `/mnt/atlaso-vcf-backups` before the control plane starts. Once
 both are initialized, only positively identified Atlaso-managed ESX Storage disks may join the platform disk set.
+Disk-preflight failure blocks nginx, the HTTPS bootstrap, Atlaso control plane, and worker.
 
 ## Fidelity Notes
 

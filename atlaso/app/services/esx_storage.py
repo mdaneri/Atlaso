@@ -654,6 +654,20 @@ def normalize_disk_inventory_entry(entry: dict[str, Any], *, claimed_ids: set[st
     if candidate_type == "mounted_ext4":
         if entry.get("filesystem_type") != "ext4" or not entry.get("mount_path"):
             reasons.append("not a mounted ext4 filesystem")
+        if str(entry.get("type") or "") != "disk":
+            reasons.append("not a whole disk")
+        if not stable_id.startswith("/dev/disk/by-id/"):
+            reasons.append("no stable /dev/disk/by-id identity")
+        if not filesystem_uuid:
+            reasons.append("no filesystem UUID")
+        if entry.get("partitions"):
+            reasons.append("has partitions")
+        if entry.get("holders"):
+            reasons.append("has device holders")
+        if entry.get("read_only"):
+            reasons.append("is read-only")
+        if not entry.get("persistent_uuid_mount"):
+            reasons.append("is not persisted by UUID in /etc/fstab")
         if entry.get("os_related"):
             reasons.append("is related to the operating-system disk")
         owner = reserved_mount_owner(str(entry.get("mount_path") or ""))
@@ -689,6 +703,7 @@ def normalize_disk_inventory_entry(entry: dict[str, Any], *, claimed_ids: set[st
         "filesystem_uuid": filesystem_uuid,
         "filesystem_label": str(entry.get("filesystem_label") or ""),
         "mount_path": str(entry.get("mount_path") or ""),
+        "persistent_uuid_mount": bool(entry.get("persistent_uuid_mount")),
         "candidate_type": candidate_type,
         "eligible": not reasons,
         "eligibility_reason": "; ".join(reasons),

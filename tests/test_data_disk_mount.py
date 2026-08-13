@@ -57,6 +57,7 @@ def _run_mount_script(
     backup_tuple: str,
     mounts: dict[str, str] | None = None,
     fstab: str = "",
+    esx_allowlist: str = "",
 ) -> tuple[subprocess.CompletedProcess[str], list[list[str]]]:
     """Execute the appliance mount script against fake block-device commands.
 
@@ -67,6 +68,7 @@ def _run_mount_script(
         backup_tuple: Trusted backup SCSI identity from image policy.
         mounts: Initial mapping from mountpoints to fake disk paths.
         fstab: Initial fake fstab content.
+        esx_allowlist: Initial root-owned managed ESX Storage disk claims.
 
     Returns:
         Completed shell process and recorded ``mkfs.ext4`` argument lists.
@@ -105,6 +107,8 @@ def _run_mount_script(
     mkfs_log = tmp_path / "mkfs.jsonl"
     fstab_path = tmp_path / "fstab"
     fstab_path.write_text(fstab, encoding="utf-8")
+    esx_allowlist_path = tmp_path / "esx-storage-disks.conf"
+    esx_allowlist_path.write_text(esx_allowlist, encoding="utf-8")
     fake_command = fake_bin / "atlaso-fake-command"
     fake_command.write_text(
         textwrap.dedent(
@@ -252,6 +256,7 @@ def _run_mount_script(
             "ATLASO_DATA_DISK_BY_ID_ROOT": str(by_id_root),
             "ATLASO_DATA_DISK_SYS_BLOCK_ROOT": str(sys_root),
             "ATLASO_DATA_DISK_FSTAB_PATH": str(fstab_path),
+            "ATLASO_ESX_STORAGE_ALLOWLIST_PATH": str(esx_allowlist_path),
             "ATLASO_TEST_STATE": str(state_path),
             "ATLASO_TEST_ROOT_PARTITION": str(root_partition),
             "ATLASO_TEST_MKFS_LOG": str(mkfs_log),
@@ -475,6 +480,46 @@ def test_initialized_appliance_allows_only_managed_esx_storage_disk(tmp_path: Pa
         backup_tuple="0:3:0",
         mounts=mounts,
         fstab=fstab,
+    )
+
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    assert calls == []
+
+
+def test_initialized_appliance_allows_claimed_mounted_ext4_whole_disk(tmp_path: Path):
+    """Allow one stable UUID-persisted mounted ext4 disk claimed by ESX Storage.
+
+    Args:
+        tmp_path: Pytest-provided isolated filesystem root.
+    """
+    disks = _vmware_disks(tmp_path)
+    disks[2].update(filesystem="ext4", label="ATLASO_DEPOT", uuid="depot-uuid")
+    disks[3].update(filesystem="ext4", label="ATLASO_BKUP", uuid="backup-uuid")
+    esx_disk = _disk(
+        tmp_path / "dev" / "sde",
+        "0:4:0",
+        filesystem="ext4",
+        label="operator-data",
+        uuid="external-uuid",
+    )
+    disks.append(esx_disk)
+    esx_mount = "/mnt/operator-esx-data"
+    stable_id = tmp_path / "dev" / "disk" / "by-id" / "atlaso-path-test-sde"
+    fstab = f"UUID=external-uuid {esx_mount} ext4 defaults 0 2\n"
+    allowlist = f"external-uuid\t{stable_id}\t{esx_mount}\n"
+
+    completed, calls = _run_mount_script(
+        tmp_path,
+        disks,
+        depot_tuple="0:2:0",
+        backup_tuple="0:3:0",
+        mounts={
+            "/mnt/atlaso-vcf-offline-depot": str(disks[2]["path"]),
+            "/mnt/atlaso-vcf-backups": str(disks[3]["path"]),
+            esx_mount: str(esx_disk["path"]),
+        },
+        fstab=fstab,
+        esx_allowlist=allowlist,
     )
 
     assert completed.returncode == 0, completed.stdout + completed.stderr

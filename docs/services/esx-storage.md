@@ -91,9 +91,10 @@ Storage Volumes supports two sources:
 1. An approved blank whole disk. Inventory accepts only a disk with a stable `/dev/disk/by-id` identity and no
    filesystem, partition, mount, swap use, LVM or RAID membership, holders, existing ESX Storage claim, read-only state,
    or relationship to the operating-system disk.
-2. An eligible mounted ext4 filesystem. The mount must already exist, must not be an operating-system filesystem, and is
-   revalidated during apply. Filesystems reserved for VCF Backups or VCF Offline Depot / VCFDT are never eligible ESX
-   Storage volumes, including paths below those managed mount roots.
+2. An eligible mounted ext4 whole disk. It must have a stable `/dev/disk/by-id` identity, UUID-backed `/etc/fstab`
+   persistence, no partitions or holders, and an active UUID-matching mount. Apply revalidates the complete contract and
+   writes its exact UUID, stable identity, and mount to root-owned `/etc/atlaso/esx-storage-disks.conf`. Filesystems
+   reserved for VCF Backups or VCF Offline Depot / VCFDT are never eligible, including paths below those mount roots.
 
 A newly initialized disk becomes a whole-device ext4 filesystem mounted by filesystem UUID at
 `/mnt/atlaso-esx-storage/<volume-slug>`. `/dev/sdX` names are never persisted. The global review displays the complete
@@ -156,9 +157,11 @@ atlaso-helper esx-storage logs
 
 Global appliance apply is the only mutation path. Dry-run records intended validation, format, UUID mount, bind mount,
 export, DNS, firewall, and service commands without changing the host. Real apply writes a managed `/etc/fstab` block,
+root-owned existing-disk claims in `/etc/atlaso/esx-storage-disks.conf`,
 `/etc/exports.d/atlaso-esx-storage.exports`, and `/etc/nfs.conf.d/atlaso-esx-storage.conf`, then refreshes exports and
 services. Reapply recognizes an existing bind target by its mountpoint and filesystem object identity, so a healthy
-share is not mounted again; an unexpected mount at a managed target fails closed instead of being replaced.
+share is not mounted again; an unexpected mount at a managed target fails closed instead of being replaced. At boot,
+nginx, the HTTPS bootstrap, Atlaso control plane, and worker require successful fixed/managed data-disk verification.
 
 Settings backups include the service, volume fingerprints/UUIDs/mounts, and shares but never a format authorization.
 Restore marks volumes for runtime verification before reapply. Factory reset removes Atlaso desired state, exports, and

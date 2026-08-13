@@ -757,6 +757,12 @@ status: current
   authorization and immediate helper revalidation before whole-device ext4 formatting. Mount by UUID under
   `/mnt/atlaso-esx-storage`, bind shares under `/srv/atlaso/esx-storage`, preserve formatted data on later failure, and
   never add wipe/reformat/data-delete behavior.
+- Existing mounted ext4 sources must be writable whole disks with stable `/dev/disk/by-id` identity, no partitions or
+  holders, an active UUID-matching mount, and an exact UUID-backed `/etc/fstab` entry. Real apply records each accepted
+  source in root-owned `/etc/atlaso/esx-storage-disks.conf`; first-boot disk verification admits no unclaimed extra disk.
+- Nginx, the HTTPS bootstrap, Atlaso control plane, and worker require successful `atlaso-data-disks.service` completion.
+  Ordering without a hard systemd dependency is insufficient because precreated mount directories could otherwise
+  accept writes on the Photon root filesystem after a disk-safety failure or expose a misleading front door.
 - Apply only through global `/ui/management/appliance-apply`. Settings backup and restore include volume/share desired
   state but never
   format authorization. iSCSI remains a separate kernel/target-stack feasibility issue.

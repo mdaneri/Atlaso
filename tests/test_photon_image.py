@@ -675,7 +675,8 @@ def test_photon_provisioning_installs_default_nginx_management_proxy():
     assert "ExecStart=/opt/atlaso/.venv/bin/python /opt/atlaso/bin/atlaso-bootstrap-https" in script
     assert "EnvironmentFile=/etc/atlaso/atlaso.env" in script
     assert "After=network-online.target atlaso-data-disks.service atlaso-vmware-ovf-customize.service" in script
-    assert "Wants=network-online.target atlaso-data-disks.service" in script
+    assert "Wants=network-online.target" in script
+    assert "Requires=atlaso-data-disks.service" in script
     assert "ConditionPathExists=!/var/lib/atlaso/first-boot-https.applied" in script
     assert '"$ATLASO_HOME/.venv/bin/python" "$ATLASO_HOME/bin/atlaso-bootstrap-https"' not in script
     assert "sync_host_physical_interfaces(db)" in bootstrap
@@ -747,6 +748,8 @@ def test_photon_provisioning_prepares_attached_data_disks():
     mount_script = Path("scripts/appliance/atlaso-mount-data-disks").read_text(encoding="utf-8")
     hyperv_unit = Path("image/hyperv/systemd/atlaso.service").read_text(encoding="utf-8")
     vmware_unit = Path("image/vmware-workstation/systemd/atlaso.service").read_text(encoding="utf-8")
+    worker_unit = Path("image/common/systemd/atlaso-worker.service").read_text(encoding="utf-8")
+    nginx_dropin = Path("image/common/systemd/nginx-atlaso-data-disks.conf").read_text(encoding="utf-8")
     hyperv_docs = Path("image/hyperv/README.md").read_text(encoding="utf-8")
     vmware_docs = Path("image/vmware-workstation/README.md").read_text(encoding="utf-8")
     root_docs = Path("docs/reference/full-technical-reference.md").read_text(encoding="utf-8")
@@ -772,6 +775,7 @@ def test_photon_provisioning_prepares_attached_data_disks():
     assert "validate_exact_disk_set" in mount_script
     assert "is_managed_esx_storage_disk" in mount_script
     assert "# BEGIN ATLASO ESX STORAGE" in mount_script
+    assert "ESX_STORAGE_ALLOWLIST_PATH" in mount_script
     assert "stable_path_for_disk" in mount_script
     assert "unexpected whole disk" in mount_script
     assert "No blank data disk available" not in mount_script
@@ -792,9 +796,12 @@ def test_photon_provisioning_prepares_attached_data_disks():
     assert "fstrim -av" in provision
 
     assert "After=network-online.target atlaso-data-disks.service atlaso-bootstrap-https.service" in hyperv_unit
-    assert "Wants=network-online.target atlaso-data-disks.service atlaso-bootstrap-https.service" in hyperv_unit
+    assert "Requires=atlaso-data-disks.service atlaso-bootstrap-https.service" in hyperv_unit
     assert "After=network-online.target atlaso-data-disks.service atlaso-bootstrap-https.service" in vmware_unit
-    assert "Wants=network-online.target atlaso-data-disks.service atlaso-bootstrap-https.service" in vmware_unit
+    assert "Requires=atlaso-data-disks.service atlaso-bootstrap-https.service" in vmware_unit
+    assert "Requires=atlaso-data-disks.service atlaso.service" in worker_unit
+    assert "Requires=atlaso-data-disks.service" in nginx_dropin
+    assert "/etc/systemd/system/nginx.service.d/atlaso-data-disks.conf" in provision
 
     assert "atlaso-data-disks.service" in root_docs
     assert "atlaso-data-disks.service" in hyperv_docs

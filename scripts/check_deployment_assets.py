@@ -26,6 +26,7 @@ SYSTEMD_ASSETS = (
     Path("image/common/systemd/atlaso-console-manager.conf"),
     Path("image/common/systemd/atlaso-console.service"),
     Path("image/common/systemd/atlaso-worker.service"),
+    Path("image/common/systemd/nginx-atlaso-data-disks.conf"),
     Path("image/hyperv/systemd/atlaso.service"),
     Path("image/vmware-workstation/systemd/atlaso-vmware-ovf-customize.service"),
     Path("image/vmware-workstation/systemd/atlaso.service"),
@@ -39,6 +40,7 @@ SUDOERS_FRAGMENTS = (
     Path("image/vmware-workstation/sudoers.d/atlaso-helper"),
 )
 SYSTEMD_SUFFIXES = {".conf", ".service"}
+NGINX_DATA_DISK_DROPIN = Path("image/common/systemd/nginx-atlaso-data-disks.conf")
 MANAGER_DIRECTIVES = {
     "CtrlAltDelBurstAction": {
         "exit-force",
@@ -450,9 +452,15 @@ def _prepare_systemd_root(root: Path, platform: str, repository: Path) -> tuple[
         destination.write_text(contents, encoding="utf-8")
 
     for source in sorted((repository / "image/common/systemd").glob("*.conf")):
+        if source == repository / NGINX_DATA_DISK_DROPIN:
+            continue
         shutil.copyfile(source, manager_directory / source.name)
     for source in sorted((repository / f"image/{platform}/systemd").glob("*.conf")):
         shutil.copyfile(source, manager_directory / source.name)
+    nginx_dropin = repository / NGINX_DATA_DISK_DROPIN
+    nginx_dropin_destination = unit_directory / "nginx.service.d" / nginx_dropin.name
+    nginx_dropin_destination.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(nginx_dropin, nginx_dropin_destination)
     return tuple(copied)
 
 
@@ -512,6 +520,7 @@ def validate_systemd(systemd_analyze: str, repository: Path) -> list[Finding]:
             path
             for relative in SYSTEMD_DIRECTORIES
             for path in (repository / relative).glob("*.conf")
+            if path != repository / NGINX_DATA_DISK_DROPIN
         )
     )
     findings = validate_manager_dropins(manager_assets)

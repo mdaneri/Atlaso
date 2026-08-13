@@ -8,6 +8,7 @@ from unittest.mock import Mock, call, patch
 import pytest
 
 from scripts.check_deployment_assets import (
+    NGINX_DATA_DISK_DROPIN,
     PACKER_CHECKSUM,
     PACKER_TEMPLATES,
     SYSTEMD_ASSETS,
@@ -36,11 +37,12 @@ def write_inventory(root: Path) -> None:
     for relative in SYSTEMD_ASSETS:
         systemd = root / relative
         systemd.parent.mkdir(parents=True, exist_ok=True)
-        contents = (
-            "[Manager]\nShowStatus=no\n"
-            if systemd.suffix == ".conf"
-            else "[Service]\nExecStart=/bin/true\n"
-        )
+        if relative == NGINX_DATA_DISK_DROPIN:
+            contents = "[Unit]\nRequires=atlaso-data-disks.service\n"
+        elif systemd.suffix == ".conf":
+            contents = "[Manager]\nShowStatus=no\n"
+        else:
+            contents = "[Service]\nExecStart=/bin/true\n"
         systemd.write_text(contents, encoding="utf-8")
 
     for platform in ("hyperv", "vmware-workstation"):
@@ -412,6 +414,10 @@ def write_systemd_fixture(root: Path, service_text: str) -> None:
     (common / "atlaso-worker.service").write_text(service_text, encoding="utf-8")
     (common / "atlaso-console-manager.conf").write_text(
         "[Manager]\nShowStatus=no\n",
+        encoding="utf-8",
+    )
+    (common / NGINX_DATA_DISK_DROPIN.name).write_text(
+        "[Unit]\nAfter=atlaso-data-disks.service\nRequires=atlaso-data-disks.service\n",
         encoding="utf-8",
     )
     for platform in ("hyperv", "vmware-workstation"):

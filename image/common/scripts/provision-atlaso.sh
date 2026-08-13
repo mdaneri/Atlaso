@@ -482,6 +482,8 @@ chown root:atlaso /etc/atlaso/atlaso.env
 install -o root -g root -m 0644 "$ATLASO_HOME/$ATLASO_IMAGE_ASSET_DIR/systemd/atlaso.service" /etc/systemd/system/atlaso.service
 install -o root -g root -m 0644 "$ATLASO_HOME/image/common/systemd/atlaso-console.service" /etc/systemd/system/atlaso-console.service
 install -o root -g root -m 0644 "$ATLASO_HOME/image/common/systemd/atlaso-worker.service" /etc/systemd/system/atlaso-worker.service
+install -d -o root -g root -m 0755 /etc/systemd/system/nginx.service.d
+install -o root -g root -m 0644 "$ATLASO_HOME/image/common/systemd/nginx-atlaso-data-disks.conf" /etc/systemd/system/nginx.service.d/atlaso-data-disks.conf
 install -d -o root -g root -m 0755 /etc/systemd/system.conf.d
 install -o root -g root -m 0644 "$ATLASO_HOME/image/common/systemd/atlaso-console-manager.conf" /etc/systemd/system.conf.d/atlaso-console.conf
 install -o root -g root -m 0755 "$ATLASO_HOME/scripts/appliance/atlaso-helper" "$ATLASO_HOME/bin/atlaso-helper"
@@ -520,7 +522,7 @@ if [ "$ATLASO_GUEST_PLATFORM" = "vmware" ]; then
   install -o root -g root -m 0644 "$ATLASO_HOME/$ATLASO_IMAGE_ASSET_DIR/systemd/atlaso-vmware-ovf-customize.service" /etc/systemd/system/atlaso-vmware-ovf-customize.service
 fi
 install -o root -g root -m 0440 "$ATLASO_HOME/$ATLASO_IMAGE_ASSET_DIR/sudoers.d/atlaso-helper" /etc/sudoers.d/atlaso-helper
-sed -i 's/\r$//' /etc/systemd/system/atlaso.service /etc/systemd/system/atlaso-worker.service /etc/systemd/system/atlaso-console.service /etc/systemd/system.conf.d/atlaso-console.conf "$ATLASO_HOME/bin/atlaso-helper" "$ATLASO_HOME/bin/atlaso-install-boot-branding" "$ATLASO_HOME/bin/atlaso-mount-data-disks" "$ATLASO_HOME/bin/atlaso-bootstrap-https" /etc/sudoers.d/atlaso-helper
+sed -i 's/\r$//' /etc/systemd/system/atlaso.service /etc/systemd/system/atlaso-worker.service /etc/systemd/system/atlaso-console.service /etc/systemd/system/nginx.service.d/atlaso-data-disks.conf /etc/systemd/system.conf.d/atlaso-console.conf "$ATLASO_HOME/bin/atlaso-helper" "$ATLASO_HOME/bin/atlaso-install-boot-branding" "$ATLASO_HOME/bin/atlaso-mount-data-disks" "$ATLASO_HOME/bin/atlaso-bootstrap-https" /etc/sudoers.d/atlaso-helper
 if [ "$ATLASO_GUEST_PLATFORM" = "vmware" ]; then
   sed -i 's/\r$//' "$ATLASO_HOME/bin/atlaso-vmware-ovf-customize.py" /etc/systemd/system/atlaso-vmware-ovf-customize.service
 fi
@@ -562,7 +564,8 @@ cat >/etc/systemd/system/atlaso-bootstrap-https.service <<'EOF'
 [Unit]
 Description=Bootstrap Atlaso first-boot HTTPS front door
 After=network-online.target atlaso-data-disks.service atlaso-vmware-ovf-customize.service
-Wants=network-online.target atlaso-data-disks.service
+Wants=network-online.target
+Requires=atlaso-data-disks.service
 Before=nginx.service atlaso.service
 ConditionPathExists=!/var/lib/atlaso/first-boot-https.applied
 
