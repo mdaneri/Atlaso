@@ -10867,6 +10867,19 @@ def _bootstrap_release_data_disk_safety(release_root: Path) -> list[dict]:
         raise ValueError("data-disk safety bootstrap requires the active Atlaso release")
     if not resolved_release.is_relative_to(ATLASO_RELEASES_DIR.resolve(strict=True)):
         raise ValueError("data-disk safety bootstrap release is outside the signed release directory")
+    metadata_path = resolved_release / "bundle-metadata.json"
+    if metadata_path.is_file():
+        try:
+            metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as exc:
+            raise ValueError("data-disk safety bootstrap release metadata is invalid") from exc
+        if isinstance(metadata, dict) and metadata.get("bootstrap") is True:
+            version = metadata.get("version")
+            if not isinstance(version, str) or resolved_release.name != f"bootstrap-{version}":
+                raise ValueError("data-disk safety bootstrap image-release identity is invalid")
+            # Image provisioning installs and validates these assets directly from the staged repository.
+            # The pre-start hook exists only to bridge signed candidates through an older updater.
+            return []
     assets = _release_data_disk_owned_files(resolved_release, _release_data_disk_platform())
     for source, _destination, _mode in assets:
         if not source.is_file():

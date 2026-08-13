@@ -223,9 +223,10 @@ the release-owned disk preflight before the control plane can start. The bootstr
 allowlist, and database first; a migration or preflight failure restores all three plus the prior systemd and udev
 state. After that bootstrap succeeds, its permanent systemd dependency remains fail-closed if a later candidate health
 check rolls the application back; the previous control plane can restart only after the same disk preflight succeeds.
-When upgrading
-an older release, the transaction first derives exact root-owned claims for already applied, boot-safe ESX Storage
-volumes from the database and live block inventory and migrates persisted stable-device aliases for both operator-mounted
+Fresh images mark their minimal `bootstrap-<version>` release explicitly and skip this candidate-only compatibility
+step because image provisioning has already installed and validated the safety assets directly from the staged source.
+When upgrading an older release, the transaction first derives exact root-owned claims for already applied, boot-safe
+ESX Storage volumes from the database and live block inventory and migrates persisted stable-device aliases for both operator-mounted
 and Atlaso-formatted volumes to the selected live identity. The database identity and boot claim
 participate in the same rollback boundary; an ambiguous, unsafe, or concurrently changed configured volume fails closed.
 

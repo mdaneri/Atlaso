@@ -809,6 +809,43 @@ def test_release_bundle_carries_transactional_data_disk_safety_assets():
     } <= destinations
 
 
+def test_image_bootstrap_release_skips_previous_updater_compatibility_gate(monkeypatch, tmp_path):
+    """Keep fresh-image startup independent of candidate-only release assets.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    from tests.test_appliance_update import load_helper_module
+
+    helper = load_helper_module()
+    releases = tmp_path / "opt/atlaso/releases"
+    release_root = releases / "bootstrap-0.9.131"
+    release_root.mkdir(parents=True)
+    (release_root / "bundle-metadata.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "version": "0.9.131",
+                "bootstrap": True,
+                "supported_python_abis": ["cp314"],
+            }
+        ),
+        encoding="utf-8",
+    )
+    current = tmp_path / "opt/atlaso/current"
+    current.symlink_to(release_root, target_is_directory=True)
+    monkeypatch.setattr(helper, "ATLASO_RELEASES_DIR", releases)
+    monkeypatch.setattr(helper, "ATLASO_CURRENT_LINK", current)
+    monkeypatch.setattr(
+        helper,
+        "_release_data_disk_platform",
+        lambda: (_ for _ in ()).throw(AssertionError("fresh image must not enter candidate compatibility bootstrap")),
+    )
+
+    assert helper._bootstrap_release_data_disk_safety(release_root) == []
+
+
 def test_previous_updater_service_bootstraps_every_new_data_disk_safety_asset(monkeypatch, tmp_path):
     """Prove the previous installer can enter the new root bootstrap through atlaso.service.
 

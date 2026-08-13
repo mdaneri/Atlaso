@@ -109,6 +109,8 @@ up the database, claim allowlist, and every replaced asset, restoring them and t
 migration or preflight fails. After validation succeeds, the permanent control-plane dependency drop-in protects both
 that transitional start and subsequent systemd starts. If the legacy updater later rolls back the application, it
 leaves this validated boundary in place and restarts the previous control plane only when the same disk preflight passes.
+The minimal `bootstrap-<version>` release created while building a fresh image is explicitly marked and bypasses only
+this previous-updater compatibility step; image provisioning installs and validates the same safety boundary directly.
 
 Atlaso writes operational events to `/var/log/atlaso/atlaso.log`. Audit events, desired-state edits, and appliance apply
 submissions are mirrored there with sensitive values redacted. The Settings page controls local file verbosity and can
