@@ -1133,6 +1133,33 @@ def test_vcf_queue_reconciliation_preserves_identity_tasks_for_type_specific_rec
     assert "uq_jobs_running_vcf_depot_operation" in indexes
 
 
+def test_vcf_runtime_index_uses_the_current_rebound_engine(monkeypatch):
+    """Verify the default runtime guard follows test and process engine rebinding.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+    """
+    from sqlalchemy import create_engine, text
+
+    import atlaso.app.database as database
+
+    rebound_engine = create_engine("sqlite://")
+    with rebound_engine.begin() as connection:
+        connection.execute(
+            text(
+                "CREATE TABLE jobs ("
+                "id TEXT PRIMARY KEY, status TEXT NOT NULL, "
+                "vcf_depot_operation BOOLEAN NOT NULL DEFAULT FALSE)"
+            )
+        )
+    monkeypatch.setattr(database, "engine", rebound_engine)
+
+    assert database.ensure_vcf_depot_running_operation_index() is True
+    with rebound_engine.connect() as connection:
+        indexes = {row[1] for row in connection.execute(text("PRAGMA index_list('jobs')")).all()}
+    assert "uq_jobs_running_vcf_depot_operation" in indexes
+
+
 def test_due_vcf_schedule_records_software_id_collision_as_skipped(client):
     """Verify that due vcf schedule records software id collision as skipped.
 

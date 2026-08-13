@@ -15146,18 +15146,20 @@ def test_vcf_offline_depot_tool_configuration_is_atomic_and_presence_only(client
         assert db.execute(select(Setting).where(Setting.key == VCF_DEPOT_SOFTWARE_DEPOT_ID_KEY)).scalar_one().value == "existing-depot-id"
 
 
-def test_vcf_offline_depot_manual_profile_download_starts_job(client, tmp_path):
+def test_vcf_offline_depot_manual_profile_download_starts_job(client, tmp_path, monkeypatch):
     """Verify that vcf offline depot manual profile download starts job.
 
     Args:
         client: HTTP test client used to exercise the Atlaso application.
         tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
     """
     import html
     import json
 
     from sqlalchemy import select
 
+    from atlaso.app import ui
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import (
         Job,
@@ -15282,10 +15284,15 @@ def test_vcf_offline_depot_manual_profile_download_starts_job(client, tmp_path):
         assert profile and profile.status == "ready"
         assert profile.notes == "Status remains task-owned"
 
+    shared_runtime_log = tmp_path / "active-tool" / "log" / "vdt.log"
+    shared_runtime_log.parent.mkdir(parents=True)
+    shared_runtime_log.write_text("another profile is running\n", encoding="utf-8")
+    monkeypatch.setattr(ui, "VCF_DEPOT_VDT_LOG_PATH", shared_runtime_log)
     task_log_page = client.get(f"/vcf-offline-depot/tasks/{payload['job_id']}/log")
     assert task_log_page.status_code == 200
     assert "VCFDT task log" in task_log_page.text
     assert "No task log is available." in task_log_page.text
+    assert "another profile is running" not in task_log_page.text
     task_log_payload = client.get(
         f"/vcf-offline-depot/tasks/{payload['job_id']}/log",
         headers={"X-Atlaso-Task-Log": "1"},

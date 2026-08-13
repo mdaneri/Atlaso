@@ -24420,7 +24420,7 @@ def vcf_offline_depot_task_log_page(
         profile_name = str(json.loads(job.result or "{}").get("profile_name") or "")
     except json.JSONDecodeError:
         pass
-    if job.status in {JobStatus.PENDING.value, JobStatus.RUNNING.value}:
+    if job.status == JobStatus.RUNNING.value:
         task_log = tail_fixed_log_file(VCF_DEPOT_VDT_LOG_PATH)
     else:
         task_log = tail_fixed_log_file(Path(str(json.loads(job.result or "{}").get("log_path") or vcf_depot_task_log_path(job.id, profile_name))))

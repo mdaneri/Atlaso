@@ -191,16 +191,17 @@ def _create_vcf_depot_running_operation_index(connection: Connection) -> None:
     )
 
 
-def ensure_vcf_depot_running_operation_index(bind: Engine = engine) -> bool:
+def ensure_vcf_depot_running_operation_index(bind: Engine | None = None) -> bool:
     """Create the runtime guard after type-specific startup recovery finishes.
 
     Args:
-        bind: Database engine whose VCFDT operation guard should be ensured.
+        bind: Optional database engine whose VCFDT operation guard should be ensured.
 
     Returns:
         True when the guard exists, or False while multiple recovery tasks remain running.
     """
-    with bind.begin() as connection:
+    target_engine = bind or engine
+    with target_engine.begin() as connection:
         running_count = int(
             connection.execute(
                 text(
