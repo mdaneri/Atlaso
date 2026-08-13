@@ -55,6 +55,7 @@ def _run_mount_script(
     *,
     depot_tuple: str,
     backup_tuple: str,
+    mounts: dict[str, str] | None = None,
 ) -> tuple[subprocess.CompletedProcess[str], list[list[str]]]:
     """Execute the appliance mount script against fake block-device commands.
 
@@ -63,6 +64,7 @@ def _run_mount_script(
         disks: Fake whole-disk records exposed to the mount script.
         depot_tuple: Trusted depot SCSI identity from image policy.
         backup_tuple: Trusted backup SCSI identity from image policy.
+        mounts: Initial mapping from mountpoints to fake disk paths.
 
     Returns:
         Completed shell process and recorded ``mkfs.ext4`` argument lists.
@@ -97,7 +99,7 @@ def _run_mount_script(
             (by_id_root / f"atlaso-path-test-{path.name}").symlink_to(path)
 
     state_path = tmp_path / "state.json"
-    state_path.write_text(json.dumps({"disks": disks}), encoding="utf-8")
+    state_path.write_text(json.dumps({"disks": disks, "mounts": mounts or {}}), encoding="utf-8")
     mkfs_log = tmp_path / "mkfs.jsonl"
     fake_command = fake_bin / "atlaso-fake-command"
     fake_command.write_text(
@@ -114,6 +116,7 @@ def _run_mount_script(
             state_path = Path(os.environ["ATLASO_TEST_STATE"])
             state = json.loads(state_path.read_text(encoding="utf-8"))
             disks = state["disks"]
+            mounts = state["mounts"]
 
             def disk_for(value):
                 resolved = str(Path(value).resolve())
@@ -141,6 +144,19 @@ def _run_mount_script(
                 if args == ["-n", "-o", "SOURCE", "/"]:
                     print(os.environ["ATLASO_TEST_ROOT_PARTITION"])
                     raise SystemExit(0)
+                if len(args) == 5 and args[:2] == ["-rn", "-S"] and args[3:] == ["-o", "TARGET"]:
+                    disk = disk_for(args[2])
+                    for target, source in mounts.items():
+                        if disk and disk_for(source) is disk:
+                            print(target)
+                    raise SystemExit(0)
+                if len(args) == 5 and args[:2] == ["-rn", "-M"] and args[3:] == ["-o", "UUID"]:
+                    source = mounts.get(args[2])
+                    disk = disk_for(source) if source else None
+                    if disk and disk["uuid"]:
+                        print(disk["uuid"])
+                        raise SystemExit(0)
+                    raise SystemExit(1)
                 raise SystemExit(1)
             if command == "lsblk":
                 if args[:3] == ["-dn", "-o", "PATH,TYPE"]:
@@ -193,7 +209,14 @@ def _run_mount_script(
                 with Path(os.environ["ATLASO_TEST_MKFS_LOG"]).open("a", encoding="utf-8") as stream:
                     stream.write(json.dumps(args) + "\\n")
                 raise SystemExit(0)
-            if command in {"install", "mount", "chown", "chmod", "logger"}:
+            if command == "mount":
+                target = args[0]
+                label = "ATLASO_DEPOT" if target.endswith("offline-depot") else "ATLASO_BKUP"
+                disk = next(disk for disk in disks if disk["label"] == label)
+                mounts[target] = disk["path"]
+                state_path.write_text(json.dumps(state), encoding="utf-8")
+                raise SystemExit(0)
+            if command in {"install", "chown", "chmod", "logger"}:
                 raise SystemExit(0)
             raise SystemExit(2)
             """
@@ -314,6 +337,8 @@ def test_hyperv_first_boot_uses_fixed_controller_locations(tmp_path: Path):
         "partition_label",
         "read_only",
         "in_use",
+        "mounted_elsewhere",
+        "destination_occupied",
     ],
 )
 def test_first_boot_fails_before_mkfs_for_unsafe_topology(tmp_path: Path, scenario: str):
@@ -356,14 +381,25 @@ def test_first_boot_fails_before_mkfs_for_unsafe_topology(tmp_path: Path, scenar
         )
     elif scenario == "read_only":
         disks[2]["read_only"] = True
-    else:
+    elif scenario == "in_use":
         disks[2]["holders"] = True
+    elif scenario == "mounted_elsewhere":
+        disks[2].update(filesystem="ext4", label="ATLASO_DEPOT", uuid="mounted-depot")
+    else:
+        disks[1]["uuid"] = "system-uuid"
+
+    mounts = None
+    if scenario == "mounted_elsewhere":
+        mounts = {"/mnt/unexpected": str(disks[2]["path"])}
+    elif scenario == "destination_occupied":
+        mounts = {"/mnt/atlaso-vcf-offline-depot": str(disks[1]["path"])}
 
     completed, calls = _run_mount_script(
         tmp_path,
         disks,
         depot_tuple="0:2:0",
         backup_tuple="0:3:0",
+        mounts=mounts,
     )
 
     assert completed.returncode != 0
@@ -386,6 +422,10 @@ def test_labeled_identity_disks_are_idempotent(tmp_path: Path):
         disks,
         depot_tuple="0:2:0",
         backup_tuple="0:3:0",
+        mounts={
+            "/mnt/atlaso-vcf-offline-depot": str(disks[2]["path"]),
+            "/mnt/atlaso-vcf-backups": str(disks[3]["path"]),
+        },
     )
 
     assert completed.returncode == 0, completed.stdout + completed.stderr

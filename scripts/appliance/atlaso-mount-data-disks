@@ -174,6 +174,29 @@ validate_label_or_blank() {
   fi
 }
 
+validate_mount_state() {
+  label="$1"
+  disk="$2"
+  mountpoint="$3"
+  expected_uuid="$(blkid -s UUID -o value "$disk" 2>/dev/null || true)"
+
+  mounted_targets="$(findmnt -rn -S "$disk" -o TARGET 2>/dev/null || true)"
+  if [ -n "$mounted_targets" ]; then
+    [ -n "$expected_uuid" ] || fail "$label blank target is already mounted"
+    for mounted_target in $mounted_targets; do
+      [ "$mounted_target" = "$mountpoint" ] ||
+        fail "$label is mounted at unexpected destination $mounted_target"
+    done
+  fi
+
+  mounted_uuid="$(findmnt -rn -M "$mountpoint" -o UUID 2>/dev/null || true)"
+  if [ -n "$mounted_uuid" ]; then
+    [ -n "$expected_uuid" ] || fail "$mountpoint is occupied before $label has a filesystem UUID"
+    [ "$mounted_uuid" = "$expected_uuid" ] ||
+      fail "$mountpoint is occupied by a filesystem outside the trusted $label identity"
+  fi
+}
+
 validate_exact_disk_set() {
   os_disk="$1"
   depot_disk="$2"
@@ -209,6 +232,8 @@ preflight() {
   validate_identity ATLASO_BKUP "$ATLASO_BACKUP_SCSI_TUPLE" "$BACKUP_DISK" "$os_disk"
   validate_label_or_blank ATLASO_DEPOT "$DEPOT_DISK"
   validate_label_or_blank ATLASO_BKUP "$BACKUP_DISK"
+  validate_mount_state ATLASO_DEPOT "$DEPOT_DISK" /mnt/atlaso-vcf-offline-depot
+  validate_mount_state ATLASO_BKUP "$BACKUP_DISK" /mnt/atlaso-vcf-backups
   validate_exact_disk_set "$os_disk" "$DEPOT_DISK" "$BACKUP_DISK"
 }
 
@@ -245,9 +270,12 @@ ensure_mount() {
   [ -n "$uuid" ] || fail "$label does not expose a filesystem UUID"
   install -d -o "$owner" -g "$group" -m "$mode" "$mountpoint"
   ensure_fstab_entry "$uuid" "$mountpoint"
-  if ! findmnt -rn "$mountpoint" >/dev/null 2>&1; then
+  mounted_uuid="$(findmnt -rn -M "$mountpoint" -o UUID 2>/dev/null || true)"
+  if [ -z "$mounted_uuid" ]; then
     mount "$mountpoint"
+    mounted_uuid="$(findmnt -rn -M "$mountpoint" -o UUID 2>/dev/null || true)"
   fi
+  [ "$mounted_uuid" = "$uuid" ] || fail "$mountpoint does not resolve to the trusted $label UUID"
   chown "$owner:$group" "$mountpoint"
   chmod "$mode" "$mountpoint"
   log "Mounted $label on $mountpoint from $(stable_path_for_disk "$disk")"
