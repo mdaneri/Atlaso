@@ -258,6 +258,20 @@ def test_mounted_ext4_inventory_requires_boot_safe_whole_disk_contract():
             "filesystem_type": "ext4",
             "filesystem_uuid": "existing-uuid",
             "mount_path": "/mnt/existing-ext4",
+            "writable_mount_paths": ["/mnt/existing-ext4"],
+            "persistent_uuid_mount": True,
+        }
+    )
+    read_only_mount = normalize_disk_inventory_entry(
+        {
+            "candidate_type": "mounted_ext4",
+            "stable_device_id": "/dev/disk/by-id/wwn-0x1234",
+            "device_path": "/dev/sdd",
+            "type": "disk",
+            "filesystem_type": "ext4",
+            "filesystem_uuid": "existing-uuid",
+            "mount_path": "/mnt/existing-ext4",
+            "writable_mount_paths": [],
             "persistent_uuid_mount": True,
         }
     )
@@ -274,6 +288,8 @@ def test_mounted_ext4_inventory_requires_boot_safe_whole_disk_contract():
     )
 
     assert eligible["eligible"] is True
+    assert read_only_mount["eligible"] is False
+    assert "selected mount is read-only" in read_only_mount["eligibility_reason"]
     assert incompatible["eligible"] is False
     assert "not a whole disk" in incompatible["eligibility_reason"]
     assert "not persisted by UUID" in incompatible["eligibility_reason"]

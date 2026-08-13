@@ -649,10 +649,16 @@ def normalize_disk_inventory_entry(entry: dict[str, Any], *, claimed_ids: set[st
     """
     filesystem_uuid = str(entry.get("filesystem_uuid") or "")
     stable_id = str(entry.get("stable_device_id") or entry.get("by_id") or (f"UUID={filesystem_uuid}" if filesystem_uuid else ""))
+    mount_path = str(entry.get("mount_path") or "")
+    writable_mount_paths = {
+        str(candidate_mount)
+        for candidate_mount in (entry.get("writable_mount_paths") or [])
+        if str(candidate_mount)
+    }
     reasons: list[str] = []
     candidate_type = str(entry.get("candidate_type") or "blank_disk")
     if candidate_type == "mounted_ext4":
-        if entry.get("filesystem_type") != "ext4" or not entry.get("mount_path"):
+        if entry.get("filesystem_type") != "ext4" or not mount_path:
             reasons.append("not a mounted ext4 filesystem")
         if str(entry.get("type") or "") != "disk":
             reasons.append("not a whole disk")
@@ -666,11 +672,13 @@ def normalize_disk_inventory_entry(entry: dict[str, Any], *, claimed_ids: set[st
             reasons.append("has device holders")
         if entry.get("read_only"):
             reasons.append("is read-only")
+        if mount_path and mount_path not in writable_mount_paths:
+            reasons.append("selected mount is read-only")
         if not entry.get("persistent_uuid_mount"):
             reasons.append("is not persisted by UUID in /etc/fstab")
         if entry.get("os_related"):
             reasons.append("is related to the operating-system disk")
-        owner = reserved_mount_owner(str(entry.get("mount_path") or ""))
+        owner = reserved_mount_owner(mount_path)
         if owner:
             reasons.append(f"is reserved for {owner}")
     else:
@@ -702,7 +710,7 @@ def normalize_disk_inventory_entry(entry: dict[str, Any], *, claimed_ids: set[st
         "filesystem_type": str(entry.get("filesystem_type") or ""),
         "filesystem_uuid": filesystem_uuid,
         "filesystem_label": str(entry.get("filesystem_label") or ""),
-        "mount_path": str(entry.get("mount_path") or ""),
+        "mount_path": mount_path,
         "persistent_uuid_mount": bool(entry.get("persistent_uuid_mount")),
         "candidate_type": candidate_type,
         "eligible": not reasons,
