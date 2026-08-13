@@ -1,0 +1,308 @@
+#!/usr/bin/env python3
+"""Verify one published Atlaso release channel through the appliance trust contract."""
+
+from __future__ import annotations
+
+import argparse
+import re
+import subprocess
+import sys
+import time
+from pathlib import Path
+from typing import Any, Sequence
+from urllib.parse import urlparse
+from urllib.request import urlopen
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from atlaso.app.services.release_updates import (  # noqa: E402 - add the checkout root before importing Atlaso.
+    signature_document,
+    verify_signed_json,
+)
+
+MAX_DOCUMENT_BYTES = 1024 * 1024
+PAGES_PUBLICATION_WINDOW_SECONDS = 600.0
+DEFAULT_RETRY_DELAY_SECONDS = 10.0
+FETCH_WORKER_FLAG = "--fetch-document-worker"
+
+
+def _validate_document_url(url: str) -> None:
+    """Require a public HTTPS document URL without embedded credentials.
+
+    Args:
+        url: Candidate release-document URL.
+
+    Raises:
+        ValueError: If the URL is not safe for public release-document retrieval.
+    """
+    parsed = urlparse(url)
+    if parsed.scheme != "https" or not parsed.netloc or parsed.username or parsed.password:
+        raise ValueError("Published release documents require HTTPS URLs without embedded credentials.")
+
+
+def _fetch_document_worker(url: str, *, timeout_seconds: float) -> int:
+    """Fetch one document inside the parent-cancellable worker process.
+
+    Args:
+        url: Public HTTPS document URL.
+        timeout_seconds: Network-operation timeout inside the worker.
+
+    Returns:
+        Zero after writing the bounded document to standard output; one on failure.
+    """
+    try:
+        _validate_document_url(url)
+        with urlopen(url, timeout=timeout_seconds) as response:
+            document = response.read(MAX_DOCUMENT_BYTES + 1)
+        if len(document) > MAX_DOCUMENT_BYTES:
+            raise ValueError(f"Published release document exceeds {MAX_DOCUMENT_BYTES} bytes.")
+    except Exception as exc:  # noqa: BLE001 - worker returns a bounded error to its parent.
+        print(f"{type(exc).__name__}: {exc}", file=sys.stderr)
+        return 1
+    sys.stdout.buffer.write(document)
+    return 0
+
+
+def fetch_document(
+    url: str,
+    *,
+    timeout_seconds: float,
+    deadline: float,
+) -> bytes:
+    """Download one bounded HTTPS release document.
+
+    Args:
+        url: Public HTTPS document URL.
+        timeout_seconds: Per-request network timeout.
+        deadline: Absolute monotonic deadline for the complete verification attempt.
+
+    Returns:
+        The downloaded document bytes.
+
+    Raises:
+        TimeoutError: If the publication window elapsed before the request.
+        ValueError: If the URL is unsafe or the document exceeds the size limit.
+    """
+    _validate_document_url(url)
+    remaining_seconds = deadline - time.monotonic()
+    if remaining_seconds <= 0:
+        raise TimeoutError("Published release verification exceeded its publication window.")
+    request_timeout_seconds = min(timeout_seconds, remaining_seconds)
+    command = [
+        sys.executable,
+        str(Path(__file__).resolve()),
+        FETCH_WORKER_FLAG,
+        url,
+        str(request_timeout_seconds),
+    ]
+    try:
+        result = subprocess.run(
+            command,
+            capture_output=True,
+            check=False,
+            timeout=request_timeout_seconds,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise TimeoutError(
+            "Published release verification exceeded its publication window."
+        ) from exc
+    if result.returncode != 0:
+        detail = result.stderr.decode("utf-8", errors="replace").strip()
+        raise RuntimeError(f"Published release document request failed: {detail}")
+    if len(result.stdout) > MAX_DOCUMENT_BYTES:
+        raise ValueError(f"Published release document exceeds {MAX_DOCUMENT_BYTES} bytes: {url}")
+    return result.stdout
+
+
+def verify_channel(
+    channel_url: str,
+    *,
+    expected_channel: str,
+    expected_version: str,
+    expected_commit: str,
+    expected_python_abi: str,
+    trusted_key: Path,
+    timeout_seconds: float,
+    deadline: float,
+) -> dict[str, Any]:
+    """Verify a published channel, immutable release, and ABI compatibility.
+
+    Args:
+        channel_url: Published channel-manifest URL.
+        expected_channel: Channel name required in the signed pointer.
+        expected_version: Release version the publication must expose.
+        expected_commit: Full release commit the publication must expose.
+        expected_python_abi: Appliance Python ABI required by the release.
+        trusted_key: Exact checked-in public key selected for verification.
+        timeout_seconds: Per-request network timeout.
+        deadline: Absolute monotonic deadline for the complete verification attempt.
+
+    Returns:
+        The verified channel and release metadata.
+
+    Raises:
+        ValueError: If publication identity or compatibility does not match.
+    """
+    expected_suffix = f"/channels/{expected_channel}/manifest.json"
+    if not urlparse(channel_url).path.endswith(expected_suffix):
+        raise ValueError(f"Published {expected_channel} URL must end with {expected_suffix}.")
+    if not trusted_key.is_file():
+        raise ValueError(f"Trusted release key is missing: {trusted_key}")
+
+    raw_channel = fetch_document(
+        channel_url,
+        timeout_seconds=timeout_seconds,
+        deadline=deadline,
+    )
+    raw_channel_signature = fetch_document(
+        f"{channel_url}.sig",
+        timeout_seconds=timeout_seconds,
+        deadline=deadline,
+    )
+    if signature_document(raw_channel_signature)["key_id"] != trusted_key.stem:
+        raise ValueError("Published channel does not use the selected named trust key.")
+    channel = verify_signed_json(
+        raw_channel,
+        raw_channel_signature,
+        trust_dir=trusted_key.parent,
+        document_kind="channel",
+    )
+    if channel["channel"] != expected_channel:
+        raise ValueError(
+            f"Published channel is {channel['channel']}, expected {expected_channel}."
+        )
+    if channel["version"] != expected_version or channel["git_commit"] != expected_commit:
+        raise ValueError(
+            f"Published {expected_channel} channel identifies v{channel['version']} at "
+            f"{channel['git_commit']}, expected v{expected_version} at {expected_commit}."
+        )
+
+    release_url = str(channel["release_manifest_url"])
+    raw_release = fetch_document(
+        release_url,
+        timeout_seconds=timeout_seconds,
+        deadline=deadline,
+    )
+    raw_release_signature = fetch_document(
+        f"{release_url}.sig",
+        timeout_seconds=timeout_seconds,
+        deadline=deadline,
+    )
+    if signature_document(raw_release_signature)["key_id"] != trusted_key.stem:
+        raise ValueError("Published release does not use the selected named trust key.")
+    release = verify_signed_json(
+        raw_release,
+        raw_release_signature,
+        trust_dir=trusted_key.parent,
+        document_kind="release",
+    )
+    if release["version"] != channel["version"] or release["git_commit"] != channel["git_commit"]:
+        raise ValueError("Published channel does not match its immutable release manifest.")
+    if expected_python_abi not in release["supported_python_abis"]:
+        raise ValueError(
+            f"Published release {release['version']} does not support {expected_python_abi}."
+        )
+    return {"channel": channel, "release": release}
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    """Run the published-channel verification command.
+
+    Args:
+        argv: Optional command-line arguments.
+
+    Returns:
+        Zero after successful verification.
+
+    Raises:
+        SystemExit: If the published channel cannot be verified after all attempts.
+    """
+    parser = argparse.ArgumentParser(
+        description="Verify a published Atlaso channel through signature and compatibility validation."
+    )
+    parser.add_argument("--channel-url", required=True)
+    parser.add_argument(
+        "--expected-channel",
+        required=True,
+        choices=("stable", "preview", "development"),
+    )
+    parser.add_argument("--expected-version", required=True)
+    parser.add_argument("--expected-commit", required=True)
+    parser.add_argument("--expected-python-abi", default="cp314")
+    parser.add_argument("--trusted-key", type=Path, required=True)
+    parser.add_argument("--attempts", type=int)
+    parser.add_argument(
+        "--publication-window-seconds",
+        type=float,
+        default=PAGES_PUBLICATION_WINDOW_SECONDS,
+    )
+    parser.add_argument(
+        "--retry-delay-seconds",
+        type=float,
+        default=DEFAULT_RETRY_DELAY_SECONDS,
+    )
+    parser.add_argument("--timeout-seconds", type=float, default=30.0)
+    args = parser.parse_args(argv)
+    if args.attempts is not None and args.attempts < 1:
+        parser.error("--attempts must be at least 1")
+    if re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", args.expected_version) is None:
+        parser.error("--expected-version must use X.Y.Z semantic versioning")
+    if re.fullmatch(r"[0-9a-f]{40}", args.expected_commit) is None:
+        parser.error("--expected-commit must be a full lowercase hexadecimal commit")
+    if (
+        args.publication_window_seconds <= 0
+        or args.retry_delay_seconds < 0
+        or args.timeout_seconds <= 0
+    ):
+        parser.error(
+            "publication window and timeout must be positive and retry delay cannot be negative"
+        )
+
+    last_error: Exception | None = None
+    attempts = 0
+    deadline = time.monotonic() + args.publication_window_seconds
+    while args.attempts is None or attempts < args.attempts:
+        remaining_seconds = deadline - time.monotonic()
+        if remaining_seconds <= 0:
+            break
+        attempts += 1
+        try:
+            result = verify_channel(
+                args.channel_url,
+                expected_channel=args.expected_channel,
+                expected_version=args.expected_version,
+                expected_commit=args.expected_commit,
+                expected_python_abi=args.expected_python_abi,
+                trusted_key=args.trusted_key,
+                timeout_seconds=args.timeout_seconds,
+                deadline=deadline,
+            )
+        except Exception as exc:  # noqa: BLE001 - retries cover Pages propagation and validation failures.
+            last_error = exc
+            if args.attempts is not None and attempts >= args.attempts:
+                break
+            remaining_seconds = deadline - time.monotonic()
+            if remaining_seconds <= 0:
+                break
+            time.sleep(min(args.retry_delay_seconds, remaining_seconds))
+            continue
+        channel = result["channel"]
+        print(
+            "verified published "
+            f"{channel['channel']} channel v{channel['version']} at {channel['git_commit']}"
+        )
+        return 0
+    raise SystemExit(
+        f"Published {args.expected_channel} channel failed verification after "
+        f"{attempts} attempt(s): {last_error}"
+    )
+
+
+if __name__ == "__main__":
+    if len(sys.argv) == 4 and sys.argv[1] == FETCH_WORKER_FLAG:
+        raise SystemExit(
+            _fetch_document_worker(sys.argv[2], timeout_seconds=float(sys.argv[3]))
+        )
+    raise SystemExit(main())

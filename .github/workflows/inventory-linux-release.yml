@@ -154,6 +154,8 @@ jobs:
             --assets dist/inventory-linux-release \
             --site-root "$SITE_ROOT" \
             --trusted-key "image/common/update-trust/${RELEASE_KEY_ID}.pem"
+          test -s "$SITE_ROOT/updates/channels/stable/manifest.json"
+          test -s "$SITE_ROOT/updates/channels/stable/manifest.json.sig"
           git -C "$SITE_ROOT" add --all
           if git -C "$SITE_ROOT" diff --cached --quiet; then
             exit 0
