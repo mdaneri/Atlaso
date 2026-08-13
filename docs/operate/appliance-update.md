@@ -67,7 +67,8 @@ GitHub is the default distribution origin:
   signature is absent. Release and promotion workflows also re-fetch the live channel pointer and immutable release
   manifest, verify both signatures with the named appliance trust key, require matching version and commit identity,
   and confirm CPython 3.14 compatibility before reporting success. The live verification retries through a bounded
-  ten-minute Pages deployment and CDN propagation window.
+  ten-minute Pages deployment and CDN propagation window. A monotonic deadline caps both request timeouts and retry
+  delays to that wall-clock budget so a stalled endpoint cannot retain the shared Pages publication lock indefinitely.
 
 The default source is:
 

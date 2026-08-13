@@ -24,9 +24,6 @@ from atlaso.app.services.release_updates import (  # noqa: E402 - add the checko
 MAX_DOCUMENT_BYTES = 1024 * 1024
 PAGES_PUBLICATION_WINDOW_SECONDS = 600.0
 DEFAULT_RETRY_DELAY_SECONDS = 10.0
-DEFAULT_ATTEMPTS = int(
-    PAGES_PUBLICATION_WINDOW_SECONDS / DEFAULT_RETRY_DELAY_SECONDS
-) + 1
 
 
 def fetch_document(url: str, *, timeout_seconds: float) -> bytes:
@@ -153,7 +150,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--expected-commit", required=True)
     parser.add_argument("--expected-python-abi", default="cp314")
     parser.add_argument("--trusted-key", type=Path, required=True)
-    parser.add_argument("--attempts", type=int, default=DEFAULT_ATTEMPTS)
+    parser.add_argument("--attempts", type=int)
+    parser.add_argument(
+        "--publication-window-seconds",
+        type=float,
+        default=PAGES_PUBLICATION_WINDOW_SECONDS,
+    )
     parser.add_argument(
         "--retry-delay-seconds",
         type=float,
@@ -161,17 +163,29 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     parser.add_argument("--timeout-seconds", type=float, default=30.0)
     args = parser.parse_args(argv)
-    if args.attempts < 1:
+    if args.attempts is not None and args.attempts < 1:
         parser.error("--attempts must be at least 1")
     if re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", args.expected_version) is None:
         parser.error("--expected-version must use X.Y.Z semantic versioning")
     if re.fullmatch(r"[0-9a-f]{40}", args.expected_commit) is None:
         parser.error("--expected-commit must be a full lowercase hexadecimal commit")
-    if args.retry_delay_seconds < 0 or args.timeout_seconds <= 0:
-        parser.error("retry delay cannot be negative and timeout must be positive")
+    if (
+        args.publication_window_seconds <= 0
+        or args.retry_delay_seconds < 0
+        or args.timeout_seconds <= 0
+    ):
+        parser.error(
+            "publication window and timeout must be positive and retry delay cannot be negative"
+        )
 
     last_error: Exception | None = None
-    for attempt in range(1, args.attempts + 1):
+    attempts = 0
+    deadline = time.monotonic() + args.publication_window_seconds
+    while args.attempts is None or attempts < args.attempts:
+        remaining_seconds = deadline - time.monotonic()
+        if remaining_seconds <= 0:
+            break
+        attempts += 1
         try:
             result = verify_channel(
                 args.channel_url,
@@ -180,14 +194,17 @@ def main(argv: Sequence[str] | None = None) -> int:
                 expected_commit=args.expected_commit,
                 expected_python_abi=args.expected_python_abi,
                 trusted_key=args.trusted_key,
-                timeout_seconds=args.timeout_seconds,
+                timeout_seconds=min(args.timeout_seconds, remaining_seconds),
             )
         except Exception as exc:  # noqa: BLE001 - retries cover Pages propagation and validation failures.
             last_error = exc
-            if attempt < args.attempts:
-                time.sleep(args.retry_delay_seconds)
-                continue
-            break
+            if args.attempts is not None and attempts >= args.attempts:
+                break
+            remaining_seconds = deadline - time.monotonic()
+            if remaining_seconds <= 0:
+                break
+            time.sleep(min(args.retry_delay_seconds, remaining_seconds))
+            continue
         channel = result["channel"]
         print(
             "verified published "
@@ -196,7 +213,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0
     raise SystemExit(
         f"Published {args.expected_channel} channel failed verification after "
-        f"{args.attempts} attempt(s): {last_error}"
+        f"{attempts} attempt(s): {last_error}"
     )
 
 

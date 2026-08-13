@@ -485,13 +485,61 @@ def test_published_channel_check_imports_atlaso_from_a_clean_checkout(tmp_path: 
     assert "Verify a published Atlaso channel" in result.stdout
 
 
-def test_published_channel_check_covers_pages_publication_window():
-    """Verify default retries cover the bounded GitHub Pages publication window."""
-    retry_window = (
-        published_channel_check.DEFAULT_ATTEMPTS - 1
-    ) * published_channel_check.DEFAULT_RETRY_DELAY_SECONDS
+def test_published_channel_check_caps_requests_and_sleeps_to_publication_window(
+    trust,
+    monkeypatch,
+):
+    """Verify slow requests cannot exceed the bounded publication window.
 
-    assert retry_window >= published_channel_check.PAGES_PUBLICATION_WINDOW_SECONDS
+    Args:
+        trust: Trust supplied to the test scenario.
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+    """
+    _private_key, trust_dir = trust
+    clock = 0.0
+    request_timeouts: list[float] = []
+
+    def monotonic() -> float:
+        return clock
+
+    def verify_channel(*_args, timeout_seconds: float, **_kwargs):
+        nonlocal clock
+        request_timeouts.append(timeout_seconds)
+        clock += timeout_seconds
+        raise TimeoutError("publication request timed out")
+
+    def sleep(seconds: float) -> None:
+        nonlocal clock
+        clock += seconds
+
+    monkeypatch.setattr(published_channel_check.time, "monotonic", monotonic)
+    monkeypatch.setattr(published_channel_check.time, "sleep", sleep)
+    monkeypatch.setattr(published_channel_check, "verify_channel", verify_channel)
+
+    with pytest.raises(SystemExit, match="failed verification after 2 attempt"):
+        published_channel_check.main(
+            [
+                "--channel-url",
+                "https://updates.example.test/channels/stable/manifest.json",
+                "--expected-channel",
+                "stable",
+                "--expected-version",
+                "0.9.0",
+                "--expected-commit",
+                "a" * 40,
+                "--trusted-key",
+                str(trust_dir / f"{KEY_ID}.pem"),
+                "--publication-window-seconds",
+                "65",
+                "--retry-delay-seconds",
+                "10",
+                "--timeout-seconds",
+                "30",
+            ]
+        )
+
+    assert request_timeouts == [30.0, 25.0]
+    assert clock == 65.0
 
 
 def test_published_channel_check_fails_when_default_pointer_is_absent(
