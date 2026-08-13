@@ -1351,6 +1351,12 @@ def test_create_atlaso_vmware_test_vm_wrapper_uses_common_helpers():
     assert "[regex]::Matches($descriptor" in vm_script
     assert "$capacityBytes -ne 500GB" in vm_script
     assert "does not expose a readable VMDK capacity descriptor" in vm_script
+    assert vm_script.index("foreach ($reusedDataDisk") < vm_script.index(
+        "Invoke-Vmrun -Arguments @('-T', 'ws', 'clone'"
+    )
+    assert vm_script.index("Assert-ExistingDataVmdk -Path $reusedDataDisk.Path") < vm_script.index(
+        "Invoke-Vmrun -Arguments @('-T', 'ws', 'clone'"
+    )
     assert "Set-VmxScsiDisk" in vm_script
     assert "disk.EnableUUID" in vm_script
     assert "scsi0:$Unit" in vm_script

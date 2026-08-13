@@ -335,7 +335,7 @@ pwsh -ExecutionPolicy Bypass `
 The wrapper requires the cloned Photon OS and Atlaso system-content VMDKs at SCSI units 0 and 1, then creates fresh
 Depot and Backups data VMDKs at units 2 and 3 when needed. `-ResetDataDisks` removes those data VMDKs before recreating
 them. Both creation-size arguments accept only `500GB`; an explicitly reused data VMDK must also expose an exact
-500 GiB virtual capacity in its descriptor or deployment stops before attaching it. Pass `-IncludeLabNetworkAdapters`
+500 GiB virtual capacity in its descriptor or deployment stops before cloning the target VM. Pass `-IncludeLabNetworkAdapters`
 only after `VMnet2`, `VMnet3`, and `VMnet4` exist for the
 SiteA, WAN/SiteB, and trunk-like lifecycle networks. `-TrustRootCa` downloads the freshly deployed appliance root CA,
 removes stale Atlaso root CAs from the current-user Trusted Root store, and trusts the new root so Edge and the Codex

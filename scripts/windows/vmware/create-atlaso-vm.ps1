@@ -153,6 +153,33 @@ function Assert-ClonedPayloadDisks {
     }
 }
 
+function Assert-ExistingDataVmdk {
+    param(
+        [string]$Path,
+        [string]$Label
+    )
+
+    $stream = [System.IO.File]::OpenRead($Path)
+    try {
+        $buffer = [byte[]]::new([Math]::Min([int64]1MB, $stream.Length))
+        $bytesRead = $stream.Read($buffer, 0, $buffer.Length)
+    } finally {
+        $stream.Dispose()
+    }
+    $descriptor = [System.Text.Encoding]::ASCII.GetString($buffer, 0, $bytesRead)
+    $extents = [regex]::Matches($descriptor, '(?im)(?:^|[\r\n\x00])\s*RW\s+(?<sectors>\d+)\s+')
+    if ($extents.Count -eq 0) {
+        throw "$Label data disk does not expose a readable VMDK capacity descriptor: $Path"
+    }
+    [int64]$capacityBytes = 0
+    foreach ($extent in $extents) {
+        $capacityBytes += [int64]$extent.Groups['sectors'].Value * 512
+    }
+    if ($capacityBytes -ne 500GB) {
+        throw "$Label data disk must expose exactly 536870912000 bytes, but '$Path' exposes $capacityBytes bytes."
+    }
+}
+
 function New-DataVmdk {
     param(
         [string]$Path,
@@ -161,25 +188,7 @@ function New-DataVmdk {
     )
 
     if (Test-Path -LiteralPath $Path) {
-        $stream = [System.IO.File]::OpenRead($Path)
-        try {
-            $buffer = [byte[]]::new([Math]::Min([int64]1MB, $stream.Length))
-            $bytesRead = $stream.Read($buffer, 0, $buffer.Length)
-        } finally {
-            $stream.Dispose()
-        }
-        $descriptor = [System.Text.Encoding]::ASCII.GetString($buffer, 0, $bytesRead)
-        $extents = [regex]::Matches($descriptor, '(?im)(?:^|[\r\n\x00])\s*RW\s+(?<sectors>\d+)\s+')
-        if ($extents.Count -eq 0) {
-            throw "$Label data disk does not expose a readable VMDK capacity descriptor: $Path"
-        }
-        [int64]$capacityBytes = 0
-        foreach ($extent in $extents) {
-            $capacityBytes += [int64]$extent.Groups['sectors'].Value * 512
-        }
-        if ($capacityBytes -ne 500GB) {
-            throw "$Label data disk must expose exactly 536870912000 bytes, but '$Path' exposes $capacityBytes bytes."
-        }
+        Assert-ExistingDataVmdk -Path $Path -Label $Label
         Write-Host "$Label data disk already exists: $Path"
         return
     }
@@ -244,6 +253,15 @@ $resolvedBackupVmdkPath = if ($BackupVmdkPath) {
 
 if (Test-Path -LiteralPath $targetVmx) {
     throw "VM already exists: $targetVmx. Remove it first or pass a different -Name/-OutputDirectory."
+}
+
+foreach ($reusedDataDisk in @(
+        @{ Path = $resolvedDepotVmdkPath; Label = 'VCF Offline Depot' },
+        @{ Path = $resolvedBackupVmdkPath; Label = 'VCF Backups' }
+    )) {
+    if (Test-Path -LiteralPath $reusedDataDisk.Path) {
+        Assert-ExistingDataVmdk -Path $reusedDataDisk.Path -Label $reusedDataDisk.Label
+    }
 }
 
 New-Item -ItemType Directory -Force -Path (Split-Path -Parent $resolvedOutputDirectory) | Out-Null
