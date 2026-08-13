@@ -3706,7 +3706,7 @@ read-only or unavailable surface has a mutation workflow.</p>
 <td><code>/ui/management/ntp</code> — settings, upstreams, source health</td>
 <td>Wizard-backed Tabulator and non-grid settings; ESX Storage/DNS references</td>
 <td>Upstream fallback, settings, validation, and config preview</td>
-<td>Role-gated desired-state writes; NTS remains disabled; global <code>ntpd</code> apply only</td>
+<td>Role-gated desired-state writes; <a href="../../services/ntp/#configure-time-service">capability-gated NTS client/server controls</a>; unsupported disables controls, while unknown preserves desired state and blocks unsafe apply; NTS server apply keeps CA-before-NTP ordering and Firewall-owned TCP/4460 access; global <code>ntpd</code> apply only</td>
 <td>Pass D/N/K/F/Z/V</td>
 <td>E1–E8</td>
 </tr>
