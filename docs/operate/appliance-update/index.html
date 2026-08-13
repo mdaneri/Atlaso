@@ -3631,6 +3631,12 @@ selected stream failed. The parent succeeds only when every selected child succe
   rebuilding and signing its deterministic release inputs.</li>
 <li>The manual promotion workflow advances <code>preview</code> or <code>stable</code> to an existing verified release. Promotion never rebuilds
   the artifact.</li>
+<li>The shipped default is <code>stable</code>. Every Pages writer refuses to publish a tree where its manifest or detached
+  signature is absent. Release and promotion workflows also re-fetch the live channel pointer and immutable release
+  manifest, verify both signatures with the named appliance trust key, require matching version and commit identity,
+  and confirm CPython 3.14 compatibility before reporting success. The live verification retries through a bounded
+  ten-minute Pages deployment and CDN propagation window. A monotonic deadline caps both request timeouts and retry
+  delays to that wall-clock budget so a stalled endpoint cannot retain the shared Pages publication lock indefinitely.</li>
 </ul>
 <p>The default source is:</p>
 <div class="language-text highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>https://mdaneri.github.io/Atlaso/updates
@@ -3818,8 +3824,10 @@ signatures, and <code>development</code> pointer. The dispatch refuses commits w
 preserves the normal tag/release mismatch checks. If the tag and release already published but channel advancement
 failed, dispatch the same successful SHA again: publication verifies the existing asset names and bytes before retrying
 the signed pointer update.</p>
-<p>To promote, run <strong>Promote appliance release</strong>, choose <code>preview</code> or <code>stable</code>, and provide an existing version without the
-<code>v</code> prefix.</p>
+<p>To initialize or advance the default channel, run <strong>Promote appliance release</strong>, choose <code>stable</code>, and provide an
+existing verified version without the <code>v</code> prefix. The workflow does not rebuild that release. It completes only after
+the hosted stable pointer and signature resolve and the referenced immutable release passes signature, identity, and
+CPython 3.14 compatibility validation. Use the same workflow with <code>preview</code> for pre-stable promotion.</p>
 <p>Schedules for checks or installs live under <strong>Operations → Automation</strong>. See <a href="../automation/"><code>automation.md</code></a>.</p>
 <!-- BEGIN GENERATED ADDITIONAL SCREENSHOTS -->
 <h2 id="additional-verified-states">Additional verified states<a class="headerlink" href="#additional-verified-states" title="Permanent link">&para;</a></h2>
