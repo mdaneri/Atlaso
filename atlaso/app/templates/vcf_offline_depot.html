@@ -340,7 +340,7 @@
           <div class="form-grid automation-schedule-form">
             <label><span class="field-label"><span>Schedule kind</span><button class="help-icon" type="button" data-help="Cron repeats using five fields. One-time schedules disable themselves after their due run is queued.">i</button></span><select name="schedule_kind" data-automation-schedule-kind><option value="cron" {{ "selected" if vcf_depot_contextual_schedule_form.get('schedule_kind', 'cron') == 'cron' else "" }}>Cron</option><option value="once" {{ "selected" if vcf_depot_contextual_schedule_form.get('schedule_kind') == 'once' else "" }}>One time</option></select></label>
             <label><span class="field-label"><span>Timezone</span><button class="help-icon" type="button" data-help="IANA timezone used to interpret cron and one-time values. Stored execution timestamps remain UTC.">i</button></span><input name="timezone_name" value="{{ vcf_depot_contextual_schedule_form.get('timezone_name', 'UTC') }}" placeholder="America/Los_Angeles" required autocomplete="off"></label>
-            <label class="full automation-cron-native-expression hidden" data-automation-schedule-timing="cron" data-automation-cron-native-expression><span class="field-label"><span>Cron expression</span><button class="help-icon" type="button" data-help="Standard five-field minute, hour, day, month, weekday expression.">i</button></span><input name="cron_expression" value="{{ vcf_depot_contextual_schedule_form.get('cron_expression', '0 2 * * *') }}" required autocomplete="off" data-automation-cron-expression {{ "disabled" if vcf_depot_contextual_schedule_read_only else "" }}></label>
+            <label class="full automation-cron-native-expression hidden" data-automation-schedule-timing="cron" data-automation-cron-native-expression><span class="field-label"><span>Cron expression</span><button class="help-icon" type="button" data-help="Standard five-field minute, hour, day, month, weekday expression.">i</button></span><input name="cron_expression" value="{{ vcf_depot_contextual_schedule_form.get('cron_expression', '0 2 * * *') }}" autocomplete="off" data-automation-cron-expression {{ "disabled" if vcf_depot_contextual_schedule_read_only else "" }}></label>
             <div class="full automation-cron-builder" data-automation-schedule-timing="cron">
               <div class="form-grid">
                 <label><span class="field-label"><span>Repeat</span><button class="help-icon" type="button" data-help="Builds a standard five-field cron schedule without requiring cron syntax. Choose Custom only for advanced expressions.">i</button></span><select data-automation-cron-frequency><option value="hourly">Hourly</option><option value="daily" selected>Daily</option><option value="weekly">Weekly</option><option value="monthly">Monthly</option><option value="custom">Custom</option></select></label>
@@ -352,7 +352,7 @@
               </div>
               <div class="automation-cron-summary"><span>Generated schedule</span><strong data-automation-cron-summary>Every day at 02:00 UTC</strong><code data-automation-cron-preview>0 2 * * *</code></div>
             </div>
-            <label class="full hidden" data-automation-schedule-timing="once"><span class="field-label"><span>One-time run</span><button class="help-icon" type="button" data-help="Local date and time interpreted in the selected timezone. The schedule disables itself after the due run is queued.">i</button></span><input type="datetime-local" name="run_once_at" value="{{ vcf_depot_contextual_schedule_form.get('run_once_at', '') }}" data-automation-timing-required></label>
+            <label class="full automation-once-native hidden" data-automation-schedule-timing="once"><span class="field-label"><span>One-time run</span><button class="help-icon" type="button" data-help="Local date and time interpreted in the selected timezone. The schedule disables itself after the due run is queued.">i</button></span><input type="datetime-local" name="run_once_at" value="{{ vcf_depot_contextual_schedule_form.get('run_once_at', '') }}" data-automation-timing-required></label>
           </div>
         </section>
         <section class="vcf-sddc-step-page hidden" data-automation-wizard-step="state" data-atlaso-wizard-step="state">
@@ -391,7 +391,8 @@
   #vcf-depot-schedule-modal [data-atlaso-wizard-cancel] { display: none !important; }
   #vcf-depot-schedule-modal [data-atlaso-wizard-submit] { display: {{ "none" if vcf_depot_contextual_schedule_read_only else "inline-flex" }} !important; }
   #vcf-depot-schedule-modal .automation-cron-builder { display: none !important; }
-  #vcf-depot-schedule-modal .automation-cron-native-expression { display: grid !important; }
+  #vcf-depot-schedule-modal .automation-cron-native-expression,
+  #vcf-depot-schedule-modal .automation-once-native { display: grid !important; }
 </style></noscript>
 {% endif %}
 {% set vcf_depot_profile_steps = [

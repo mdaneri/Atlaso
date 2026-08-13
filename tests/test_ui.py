@@ -1009,7 +1009,7 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert service_worker.headers["cache-control"] == "no-cache"
     assert service_worker.headers["service-worker-allowed"] == "/ui/management/"
     assert "ATLASO_CACHE" in service_worker.text
-    assert "atlaso-management-pwa-v254" in service_worker.text
+    assert "atlaso-management-pwa-v255" in service_worker.text
     assert 'fetch(asset, { cache: "reload" })' in service_worker.text
     assert ".catch(() => undefined)" in service_worker.text
     assert 'request.mode === "navigate"' in service_worker.text
@@ -15419,7 +15419,9 @@ def test_vcf_offline_depot_contextual_schedule_is_server_bound_and_stays_in_page
     assert fallback_schedule.count('name="cron_expression"') == 1
     assert "data-automation-cron-native-expression" in fallback_schedule
     assert ".automation-cron-builder { display: none !important; }" in fallback_page.text
-    assert ".automation-cron-native-expression { display: grid !important; }" in fallback_page.text
+    assert ".automation-once-native { display: grid !important; }" in fallback_page.text
+    cron_native = fallback_schedule.split("data-automation-cron-native-expression", 1)[1].split("</label>", 1)[0]
+    assert " required" not in cron_native
     assert f'data-context-profile-id="{profile_id}"' in fallback_schedule
     assert 'data-context-profile-name="contextual-schedule-profile"' in fallback_schedule
     assert f'data-vcf-depot-fallback-schedule="{profile_id}"' in fallback_page.text
@@ -15461,6 +15463,27 @@ def test_vcf_offline_depot_contextual_schedule_is_server_bound_and_stays_in_page
             select(Schedule).where(Schedule.name == "contextual-profile-fallback")
         ).scalar_one()
         assert json.loads(fallback_schedule_row.task_config_json) == {"profile_id": profile_id}
+
+    fallback_once = client.post(
+        f"/vcf-offline-depot/profiles/{profile_id}/schedules",
+        data={
+            "csrf": csrf,
+            "name": "contextual-profile-fallback-once",
+            "schedule_kind": "once",
+            "cron_expression": "",
+            "run_once_at": "2037-08-13T04:30",
+            "timezone_name": "UTC",
+        },
+        headers={"Accept": "text/html"},
+        follow_redirects=False,
+    )
+    assert fallback_once.status_code == 303
+    with SessionLocal() as db:
+        once_schedule = db.execute(
+            select(Schedule).where(Schedule.name == "contextual-profile-fallback-once")
+        ).scalar_one()
+        assert once_schedule.schedule_kind == "once"
+        assert once_schedule.run_once_at is not None
 
     fallback_invalid = client.post(
         f"/vcf-offline-depot/profiles/{profile_id}/schedules",
