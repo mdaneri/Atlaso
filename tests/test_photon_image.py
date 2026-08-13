@@ -1454,6 +1454,37 @@ def test_vmware_deploy_wheel_supports_password_backed_noninteractive_deploy():
     assert "`scp`/`ssh` key or agent workflow" in readme
 
 
+def test_vmware_deploy_wheel_remote_path_contract():
+    """Verify both SSH modes reject unsafe remote staging paths before deployment."""
+    pwsh = shutil.which("pwsh")
+    if pwsh is None:
+        pytest.skip("PowerShell 7 is not available")
+
+    result = subprocess.run(
+        [
+            pwsh,
+            "-NoLogo",
+            "-NoProfile",
+            "-NonInteractive",
+            "-File",
+            "tests/powershell/Test-DeployWheelRemotePaths.ps1",
+            "-RepositoryRoot",
+            str(Path.cwd()),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "Deploy wheel remote path contract tests passed." in result.stdout
+
+    docs = Path("docs/reference/full-technical-reference.md").read_text(encoding="utf-8")
+    assert "`-RemoteDirectory` defaults to `/tmp`" in docs
+    assert "password-backed and key/agent-backed SSH" in docs
+    assert "apostrophes, dollar signs, backticks, semicolons" in docs
+
+
 def test_vmware_password_deploy_omits_absent_optional_native_arguments():
     """Verify skipped deployment assets do not rely on native empty-argument preservation."""
     script = Path("scripts/windows/vmware/deploy-wheel.ps1").read_text(encoding="utf-8")

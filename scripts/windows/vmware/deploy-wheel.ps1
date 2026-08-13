@@ -182,6 +182,53 @@ function Get-SshConnectionArguments {
     )
 }
 
+function Resolve-RemoteDirectoryPath {
+    param([Parameter(Mandatory = $true)][string]$Path)
+
+    $contractError = 'RemoteDirectory must be an absolute POSIX path using only ASCII letters, digits, /, ., _, and -, without . or .. path components.'
+    if (
+        [string]::IsNullOrWhiteSpace($Path) -or
+        -not $Path.StartsWith('/', [System.StringComparison]::Ordinal) -or
+        $Path -match '[\x00-\x1F\x7F]' -or
+        $Path -notmatch '^/[A-Za-z0-9._/-]*\z' -or
+        $Path.Contains('//', [System.StringComparison]::Ordinal)
+    ) {
+        throw $contractError
+    }
+
+    $components = @($Path.Trim('/').Split('/', [System.StringSplitOptions]::RemoveEmptyEntries))
+    if ($components -contains '.' -or $components -contains '..') {
+        throw $contractError
+    }
+
+    $normalized = $Path.TrimEnd('/')
+    if (-not $normalized) {
+        return '/'
+    }
+    return $normalized
+}
+
+function Join-RemotePath {
+    param(
+        [Parameter(Mandatory = $true)][string]$Directory,
+        [Parameter(Mandatory = $true)][string]$Leaf
+    )
+
+    if ($Directory -eq '/') {
+        return "/$Leaf"
+    }
+    return "$Directory/$Leaf"
+}
+
+function ConvertTo-PosixShellArgument {
+    param([Parameter(Mandatory = $true)][AllowEmptyString()][string]$Value)
+
+    $apostrophe = [char]0x27
+    $doubleQuote = [char]0x22
+    $escapedApostrophe = "$apostrophe$doubleQuote$apostrophe$doubleQuote$apostrophe"
+    return "$apostrophe$($Value.Replace("$apostrophe", $escapedApostrophe))$apostrophe"
+}
+
 function Initialize-PasswordDeployPythonPath {
     param(
         [Parameter(Mandatory = $true)][string]$PythonCommand,
@@ -512,6 +559,7 @@ finally:
 }
 
 $resolvedRepoRoot = Resolve-RepoRoot -Path $RepoRoot
+$RemoteDirectory = Resolve-RemoteDirectoryPath -Path $RemoteDirectory
 
 if (-not $SkipBuild) {
     New-Item -ItemType Directory -Force -Path (Join-Path $resolvedRepoRoot 'dist') | Out-Null
@@ -588,29 +636,29 @@ if (-not (Test-Path -LiteralPath $workerServicePath -PathType Leaf)) {
 if ($trustKeyPaths.Count -eq 0) {
     throw "No Atlaso release trust keys found under: $trustKeyDirectory"
 }
-$remoteWheelPath = "$($RemoteDirectory.TrimEnd('/'))/$wheelName"
+$remoteWheelPath = Join-RemotePath -Directory $RemoteDirectory -Leaf $wheelName
 $remoteRuntimeDependencyPaths = @(
     $runtimeDependencyNames | ForEach-Object {
-        "$($RemoteDirectory.TrimEnd('/'))/$_"
+        Join-RemotePath -Directory $RemoteDirectory -Leaf $_
     }
 )
-$remoteHelperPath = "$($RemoteDirectory.TrimEnd('/'))/atlaso-helper"
-$remoteConsoleManagerPath = "$($RemoteDirectory.TrimEnd('/'))/atlaso-console-manager.conf"
-$remoteBootInstallerPath = "$($RemoteDirectory.TrimEnd('/'))/atlaso-install-boot-branding"
-$remoteBootThemePath = "$($RemoteDirectory.TrimEnd('/'))/atlaso-grub-theme.txt"
-$remoteBootBackgroundPath = "$($RemoteDirectory.TrimEnd('/'))/atlaso-grub.png"
+$remoteHelperPath = Join-RemotePath -Directory $RemoteDirectory -Leaf 'atlaso-helper'
+$remoteConsoleManagerPath = Join-RemotePath -Directory $RemoteDirectory -Leaf 'atlaso-console-manager.conf'
+$remoteBootInstallerPath = Join-RemotePath -Directory $RemoteDirectory -Leaf 'atlaso-install-boot-branding'
+$remoteBootThemePath = Join-RemotePath -Directory $RemoteDirectory -Leaf 'atlaso-grub-theme.txt'
+$remoteBootBackgroundPath = Join-RemotePath -Directory $RemoteDirectory -Leaf 'atlaso-grub.png'
 $remoteTrustKeyPaths = @(
     $trustKeyPaths | ForEach-Object {
-        "$($RemoteDirectory.TrimEnd('/'))/$(Split-Path -Leaf $_)"
+        Join-RemotePath -Directory $RemoteDirectory -Leaf (Split-Path -Leaf $_)
     }
 )
-$remoteWorkerServicePath = "$($RemoteDirectory.TrimEnd('/'))/atlaso-worker.service"
+$remoteWorkerServicePath = Join-RemotePath -Directory $RemoteDirectory -Leaf 'atlaso-worker.service'
 $remoteInventoryLinuxPackagePath = if ($inventoryLinuxPackagePath) {
-    "$($RemoteDirectory.TrimEnd('/'))/$(Split-Path -Leaf $inventoryLinuxPackagePath)"
+    Join-RemotePath -Directory $RemoteDirectory -Leaf (Split-Path -Leaf $inventoryLinuxPackagePath)
 } else {
     ''
 }
-$remoteScriptPath = "$($RemoteDirectory.TrimEnd('/'))/atlaso-deploy-wheel.sh"
+$remoteScriptPath = Join-RemotePath -Directory $RemoteDirectory -Leaf 'atlaso-deploy-wheel.sh'
 
 if (-not $IpAddress) {
     $resolvedVmrun = Resolve-VmrunPath -Path $VmrunPath
@@ -1011,7 +1059,29 @@ try {
         Write-Host "Installing wheel and restarting atlaso.service..."
         $remoteRuntimeDependenciesArgument = $remoteRuntimeDependencyPaths -join ':'
         $resetVaultEntriesArgument = if ($ResetVaultEntries) { 'true' } else { 'false' }
-        Invoke-CheckedCommand -FilePath 'ssh' -Arguments @($sshConnectionArguments + '-t', "${SshUser}@${IpAddress}", "sudo sh '$remoteScriptPath' '$remoteWheelPath' '$ReadinessTimeoutSeconds' '$ReadinessPollSeconds' '$remoteHelperArgument' '$remoteConsoleManagerArgument' '$remoteBootInstallerArgument' '$remoteBootThemeArgument' '$remoteBootBackgroundArgument' '$remoteWorkerServicePath' '$remoteRuntimeDependenciesArgument' '$remoteTrustKeysArgument' '$resetVaultEntriesArgument' '$remoteInventoryLinuxPackagePath'")
+        $remoteCommandArguments = @(
+            'sudo', 'sh',
+            $remoteScriptPath,
+            $remoteWheelPath,
+            "$ReadinessTimeoutSeconds",
+            "$ReadinessPollSeconds",
+            $remoteHelperArgument,
+            $remoteConsoleManagerArgument,
+            $remoteBootInstallerArgument,
+            $remoteBootThemeArgument,
+            $remoteBootBackgroundArgument,
+            $remoteWorkerServicePath,
+            $remoteRuntimeDependenciesArgument,
+            $remoteTrustKeysArgument,
+            $resetVaultEntriesArgument,
+            $remoteInventoryLinuxPackagePath
+        )
+        $remoteCommand = (
+            $remoteCommandArguments | ForEach-Object { ConvertTo-PosixShellArgument -Value $_ }
+        ) -join ' '
+        Invoke-CheckedCommand -FilePath 'ssh' -Arguments @(
+            $sshConnectionArguments + '-t', "${SshUser}@${IpAddress}", $remoteCommand
+        )
     }
 
     if (-not $SkipHostCheck) {

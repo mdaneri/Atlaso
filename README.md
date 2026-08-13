@@ -88,6 +88,9 @@ brings infrastructure, storage, identity, networking, and lifecycle workflows in
 
 Photon OS 5.0 is the appliance operating system. VMware Workstation is the default live-test target; Hyper-V remains the
 authoritative lifecycle interoperability environment for exact access and trunk VLAN behavior.
+The VMware wheel-deployment helper accepts only absolute POSIX remote staging directories composed of ASCII letters,
+digits, `/`, `.`, `_`, and `-`, with no `.` or `..` components. It rejects whitespace, shell metacharacters, and control
+characters before building or uploading through either SSH authentication mode.
 
 The VMware release appliance uses separate compacted Photon OS and Atlaso/tools payload VMDKs, followed by empty
 500 GiB VCF Offline Depot and VCF Backups disks. The OVF package is the canonical GitHub-distributable form; its assets
