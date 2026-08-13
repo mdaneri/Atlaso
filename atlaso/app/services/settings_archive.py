@@ -2833,6 +2833,18 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
             "trusted vCenter",
         )
         certificate_id = str(row["id"])
+        try:
+            canonical_certificate_id = str(UUID(certificate_id))
+        except ValueError as exc:
+            raise ValueError(
+                f"The settings archive row {row_index} in 'vsphere_trusted_vcenter_certificates' has an invalid public certificate ID."
+            ) from exc
+        if certificate_id != canonical_certificate_id:
+            raise ValueError(
+                f"The settings archive row {row_index} in 'vsphere_trusted_vcenter_certificates' has an invalid public certificate ID: ID must be a canonical UUID."
+            )
+        row["id"] = canonical_certificate_id
+        certificate_id = canonical_certificate_id
         fingerprint = str(row["fingerprint_sha256"]).replace(":", "").casefold()
         if certificate_id in certificate_ids or fingerprint in certificate_fingerprints:
             raise ValueError(

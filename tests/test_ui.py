@@ -6179,6 +6179,10 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
             "certificate_pem": "not-a-certificate",
         }
     )
+    invalid_vcenter_certificate_id = deepcopy(disabled_kms_with_invalid_public_certificate)
+    invalid_vcenter_certificate_id["data"]["vsphere_trusted_vcenter_certificates"][0][
+        "id"
+    ] = "invalid/certificate-id"
     enabled_oidc_without_dependencies = deepcopy(archive)
     enabled_oidc_without_dependencies["data"]["oidc_provider_settings"] = [
         {
@@ -6601,6 +6605,7 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
         (duplicate_provider_name, "duplicates a provider name"),
         (duplicate_vcenter_name, "duplicates a trusted vCenter name within its provider"),
         (invalid_vcenter_enabled_type, "has an invalid enabled value"),
+        (invalid_vcenter_certificate_id, "invalid public certificate ID"),
         (disabled_kms_with_invalid_public_certificate, "PEM-encoded vCenter public client certificate"),
         (enabled_oidc_without_dependencies, "enables OIDC without an active signing key"),
         (enabled_oidc_with_mismatched_address, "has listener addresses not derived from its interfaces"),

@@ -63,8 +63,8 @@ remain unique case-insensitively within every context before current desired sta
 external group names must be supplied as JSON strings rather than values that require scalar coercion. Atlaso trims
 those names before checking effective case-insensitive uniqueness, matching the persisted mapping form.
 
-Restored vSphere Key Provider and trusted-vCenter identities must use canonical UUIDs so every retained record remains
-addressable through the management UI and API after restore.
+Restored vSphere Key Provider, trusted-vCenter, and public-certificate identities must use canonical UUIDs so every
+retained record remains addressable through the management UI and API after restore.
 
 Certificate and signing-key lifecycle state is restored with the desired state. Atlaso reconstructs CA certificate
 validity, serial numbers, and SHA-256 fingerprints from the archived public PEM, preserves CA issue, expiry, and
