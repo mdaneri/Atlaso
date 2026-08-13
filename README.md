@@ -23,7 +23,7 @@ brings infrastructure, storage, identity, networking, and lifecycle workflows in
 - [Local appliance console](docs/operate/appliance-console.md) — correct management networking from `tty1` and have
   Atlaso reconcile Firewall, retry unfinished first-boot HTTPS, and verify the complete management front door.
 - [Network configuration](docs/operate/networking.md) — inspect physical interfaces and manage each tagged VLAN as one
-  reviewed wizard record, including its trunk parent, addresses, role, and Admin Up desired state, before global apply.
+  reviewed wizard record using the shared management, access, route, or unused role contract before global apply.
 - [Use the Atlaso API](docs/operate/api.md) — create least-privilege tokens, call the versioned REST contract safely,
   and interpret responses, request IDs, locks, and apply boundaries. Typed physical-interface PATCH requests reconcile
   dependent service, ESX Storage, Web Terminal, DHCP, and Network Boot bindings in the same

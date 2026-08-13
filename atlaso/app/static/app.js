@@ -7084,7 +7084,7 @@ function initializeRoutesWanWizards() {
     const config = configurations[kind];
     const dialog = form.closest("dialog");
     if (!config || !(dialog instanceof HTMLDialogElement)) return;
-    const modalTitle = form.querySelector("[data-routes-wan-wizard-modal-title]");
+    const modalTitle = form.querySelector(`#${CSS.escape(dialog.id)}-title`);
     const submit = form.querySelector("[data-atlaso-wizard-submit]");
     const natSourceMode = form.querySelector("[data-routes-wan-nat-source-mode]");
     const natGroup = form.querySelector("[data-routes-wan-nat-group]");
@@ -7813,7 +7813,7 @@ function initializePhysicalInterfacesTable() {
         {
           title: "IPv6",
           field: "ipv6_enabled",
-          formatter: "tickCross",
+          formatter: atlasoBooleanFormatter,
           editor: "tickCross",
           headerTooltip: "Enables IPv6 desired state. Enabled with a blank CIDR uses router advertisements and SLAAC; disabled blocks RA and IPv6 link-local addressing.",
           editable: (cell) => cell.getRow().getData().mode !== "trunk",
@@ -9046,7 +9046,7 @@ function initializeVlanInterfacesTable() {
           parent_interface: context?.parent_interface || defaultParent,
           vlan_id: context?.vlan_id || "",
           mtu: context?.mtu ?? defaultMtu,
-          role: context?.role || roleOptionRows[0] || "access",
+          role: context?.role || "access",
           access_management_ui_enabled: context ? Boolean(context.access_management_ui_enabled) : false,
           enabled: context ? Boolean(context.enabled) : true,
         });

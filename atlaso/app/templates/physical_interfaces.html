@@ -31,7 +31,7 @@
       id="physical-interfaces-table"
       class="tabulator-shell physical-interfaces-table"
       data-interfaces='{{ physical_interface_rows | tojson }}'
-      data-role-options='{{ interface_roles | tojson }}'
+      data-role-options='{{ network_roles | tojson }}'
       data-mode-options='{{ interface_modes | tojson }}'
       data-ipv4-method-options='{{ ipv4_methods | tojson }}'
       data-csrf="{{ csrf_token }}"

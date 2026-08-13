@@ -34,10 +34,10 @@ from atlaso.app.models import (
 
 LOGGER = logging.getLogger("atlaso.networking")
 NETWORK_INVENTORY_CLEANUP_WARNING_KEY = "network.inventory_cleanup.warning"
-INTERFACE_ROLES = ["management", "access", "route", "unused"]
+NETWORK_ROLES = ["management", "access", "route", "unused"]
+LEGACY_NETWORK_ROLE_REPLACEMENTS = {"services": "access", "storage": "access"}
 INTERFACE_MODES = ["access", "trunk", "unused"]
 IPV4_METHODS = ["static", "dhcp"]
-VLAN_ROLES = ["access", "management", "services", "storage", "route"]
 
 
 @dataclass(frozen=True)
@@ -95,9 +95,20 @@ def normalize_interface_role(role: str | None) -> str:
         The normalize interface role result.
     """
     value = (role or "unused").strip().lower()
-    if value in {"management", "access", "route", "services", "storage", "unused"}:
+    if value in LEGACY_NETWORK_ROLE_REPLACEMENTS:
+        return LEGACY_NETWORK_ROLE_REPLACEMENTS[value]
+    if value in NETWORK_ROLES:
         return value
     return "unused"
+
+
+def is_canonical_network_role(role: str | None) -> bool:
+    """Return whether a submitted role belongs to the canonical network-role contract.
+
+    Args:
+        role: Candidate role supplied by a new desired-state request.
+    """
+    return isinstance(role, str) and role.strip().lower() in NETWORK_ROLES
 
 
 def normalize_ipv4_method(value: str | None) -> str:
@@ -1037,8 +1048,11 @@ def validate_network_state(
             errors.append(
                 f"Interface {interface.name} can expose the management UI only when it has a usable non-link-local address."
             )
-        if role not in INTERFACE_ROLES:
-            errors.append(f"Interface {interface.name} role {interface.role} is not supported.")
+        if not is_canonical_network_role(interface.role):
+            errors.append(
+                f"Interface {interface.name} role {interface.role} is not supported; "
+                f"expected one of {', '.join(NETWORK_ROLES)}."
+            )
         if ipv4_method not in IPV4_METHODS:
             errors.append(f"Interface {interface.name} IPv4 method {interface.ipv4_method} is not supported.")
         if ipv4_method == "dhcp" and role != "management":
@@ -1122,8 +1136,11 @@ def validate_network_state(
         if vlan.mtu < 576 or vlan.mtu > 9000:
             errors.append(f"VLAN {vlan.name} MTU must be between 576 and 9000.")
         role = normalize_interface_role(vlan.role)
-        if role not in VLAN_ROLES:
-            errors.append(f"VLAN {vlan.name} role {vlan.role} is not supported.")
+        if not is_canonical_network_role(vlan.role):
+            errors.append(
+                f"VLAN {vlan.name} role {vlan.role} is not supported; "
+                f"expected one of {', '.join(NETWORK_ROLES)}."
+            )
         if vlan.access_management_ui_enabled and role != "access":
             errors.append(f"VLAN {vlan.name} can expose the management UI only when its role is access.")
         vlan_management_address = _has_usable_non_link_local_address(vlan.ip_cidr, vlan.ipv6_cidr)

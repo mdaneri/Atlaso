@@ -651,15 +651,17 @@ routing permissions, IPv4 masquerade NAT rules, and interface/VLAN-level `tc/net
 interface role: WAN Simulation is an explicit traffic-behavior workflow, not an interface classification, and NAT
 eligibility is never inferred from role. Physical Interfaces owns optional static management IPv4 and IPv6 gateways and
 installs each configured default in both the main table and policy-routing table `100`; IPv6 accepts an on-link or
-link-local gateway. Routes & WAN owns non-management route gateways in table `200`, so management and lab traffic can
+link-local gateway. Physical and VLAN interfaces accept only `management`, `access`, `route`, or `unused`; startup and
+settings-archive compatibility map the retired `services` and `storage` values to `access` without altering other
+interface state. Routes & WAN owns non-management route gateways in table `200`, so management and lab traffic can
 use different default gateways without forwarding through management. Routes can target non-management access physical
 interfaces and enabled VLANs with IPv4, IPv6, or dual-stack CIDRs. Route-role networks forward to other route-role
 networks by default; access networks require explicit routing rules. NAT v1 is explicit IPv4 outbound masquerade only;
 there is no destination NAT or port forwarding, and the outbound interface must have an IPv4 CIDR. Route-specific WAN
 impairment is roadmap work tracked in `docs/routing-wan-roadmap.md`; v1 exposes only interface/VLAN-level impairment.
 The browser labels path records **Static Routes** and forwarding rules **Routing Permissions**. All four resource grids
-use reviewed add/edit wizards, while persisted Enabled state remains directly editable and generated route-role
-permissions remain read-only. Every edit remains desired state until the global `wan` apply unit is submitted.
+use the shared reviewed add/edit wizard structure, while persisted Enabled state remains directly editable and generated
+route-role permissions remain read-only. Every edit remains desired state until the global `wan` apply unit is submitted.
 
 DNS and DHCP share one `DNS/DHCP (dnsmasq)` apply unit because they render and reload the same dnsmasq config. The
 Services page shows DNS and DHCP as separate desired-state rows, but their runtime status comes from the shared

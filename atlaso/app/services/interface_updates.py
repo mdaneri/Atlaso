@@ -63,6 +63,8 @@ from atlaso.app.services.esxi_pxe import (
     save_esxi_pxe_boot_settings,
 )
 from atlaso.app.services.networking import (
+    NETWORK_ROLES,
+    is_canonical_network_role,
     normalize_interface_mode,
     normalize_interface_role,
     normalize_ipv4_method,
@@ -1137,6 +1139,11 @@ def update_physical_interface_desired_state(
         raise PhysicalInterfaceUpdateError(
             f"Unsupported physical interface field{'s' if len(unknown_fields) != 1 else ''}: "
             f"{', '.join(unknown_fields)}."
+        )
+
+    if "role" in changes and not is_canonical_network_role(changes["role"]):
+        raise PhysicalInterfaceUpdateError(
+            f"Interface role must be one of: {', '.join(NETWORK_ROLES)}."
         )
 
     try:

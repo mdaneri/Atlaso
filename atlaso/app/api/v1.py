@@ -3824,7 +3824,7 @@ def esx_storage_interfaces(db: Session) -> dict[str, StorageInterface]:
     """
     interfaces: dict[str, StorageInterface] = {}
     for row in db.execute(select(PhysicalInterface).order_by(PhysicalInterface.name)).scalars().all():
-        if row.oper_state == "missing" or row.mode == "trunk" or row.role not in {"access", "services", "storage", "route"}:
+        if row.oper_state == "missing" or row.mode == "trunk" or normalize_interface_role(row.role) not in {"access", "route"}:
             continue
         interfaces[row.name] = StorageInterface(
             row.name,
@@ -3832,7 +3832,7 @@ def esx_storage_interfaces(db: Session) -> dict[str, StorageInterface]:
             tuple(value for value in [row.ipv6_cidr] if value and row.ipv6_enabled),
         )
     for row in db.execute(select(VlanInterface).order_by(VlanInterface.name)).scalars().all():
-        if not row.enabled or row.role not in {"access", "services", "storage", "route"}:
+        if not row.enabled or normalize_interface_role(row.role) not in {"access", "route"}:
             continue
         interfaces[row.name] = StorageInterface(
             row.name,
