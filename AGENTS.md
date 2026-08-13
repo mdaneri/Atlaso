@@ -44,6 +44,11 @@ the bot-only publication gate, visible run links, diagnostic names for bot-trigg
 ruleset contexts. Keep trusted dispatch and diagnostic pull-request runs in separate concurrency groups so diagnostic
 work cannot cancel the trusted publisher. Never dispatch a candidate workflow revision with status-write permission.
 
+Every workflow job that mutates `gh-pages` must use the shared `atlaso-github-pages` concurrency group with `queue: max`
+and `cancel-in-progress: false`. Keep long prerequisite builds outside that job-level lock; acquire it before reading the
+current Pages branch and retain it through the guarded publication push. Do not weaken existing signature, immutable
+tag/release, monotonic-channel, or byte-idempotency checks when narrowing the lock scope.
+
 Use `python scripts/version.py bump` or `.\scripts\version.ps1` to increment and synchronize the current patch version.
 When an explicit target is required, pass the current version or exact next patch through `--version X.Y.Z` to Python or
 `-Version X.Y.Z` to PowerShell. Explicit targets cannot skip a patch or change the major or minor version. Never update

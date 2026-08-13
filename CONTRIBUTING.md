@@ -63,6 +63,10 @@ canonical contexts required by the `main` ruleset; a manual CI dispatch cannot p
 diagnostic pull-request runs use separate concurrency groups, so a delayed diagnostic run cannot cancel trusted status
 publication.
 
+GitHub Pages writers serialize only their final mutation jobs through the shared `atlaso-github-pages` group. The group
+uses `queue: max` with `cancel-in-progress: false`, preserving multiple pending documentation, appliance release,
+Inventory Linux release, and promotion writers while keeping long prerequisite builds outside the Pages lock.
+
 ### Dependabot version updates
 
 GitHub-managed version-update pull requests generated from

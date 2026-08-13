@@ -60,6 +60,8 @@ def test_documentation_workflow_only_queues_pages_writer_for_changes() -> None:
 
     assert "    if: needs.verify.outputs.site_changed == 'true'\n" in publish_job
     assert "      group: atlaso-github-pages\n" in publish_job
+    assert "      queue: max\n" in publish_job
+    assert "      cancel-in-progress: false\n" in publish_job
     assert "  group: atlaso-github-pages\n" not in workflow.split("jobs:\n", 1)[0]
 
 

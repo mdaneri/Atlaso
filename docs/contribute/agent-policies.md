@@ -499,6 +499,10 @@ status: current
   preserving documentation and appliance-update content. Existing tags, assets, or Pages metadata must be
   byte-identical on a rerun; fail closed on collisions. Do not attach Inventory Linux packages to ordinary appliance
   releases and do not add development, preview, or staging channels for Inventory Linux.
+- Serialize every `gh-pages` mutation job through `atlaso-github-pages` with `queue: max` and
+  `cancel-in-progress: false` so overlapping writers wait instead of replacing pending work. Build Inventory Linux and
+  other long-lived prerequisites before acquiring that job-level lock; retain the lock from the fresh Pages checkout
+  through the guarded push without weakening signature, immutable-release, monotonic-pointer, or byte-idempotency gates.
 - Inventory report schema v2 uses sysfs as the authoritative source for bounded
   CPU/DIMM, NIC, disk/controller, PCI/USB, and system identity data. Continue to
   accept v1 and normalize it into retained v2 JSON without a database migration,
