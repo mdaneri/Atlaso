@@ -182,6 +182,27 @@ def _reconcile_vcf_depot_job_queue(connection: Connection) -> None:
         _create_vcf_depot_running_operation_index(connection)
 
 
+def _reconcile_vcf_depot_job_queue_schema(bind: Engine) -> None:
+    """Run VCFDT queue reconciliation with a serialized SQLite schema lock.
+
+    Args:
+        bind: Database engine whose VCFDT queue schema should be reconciled.
+    """
+    if bind.dialect.name != "sqlite":
+        with bind.begin() as connection:
+            _reconcile_vcf_depot_job_queue(connection)
+        return
+
+    with bind.connect() as connection:
+        connection.exec_driver_sql("BEGIN IMMEDIATE")
+        try:
+            _reconcile_vcf_depot_job_queue(connection)
+        except Exception:
+            connection.rollback()
+            raise
+        connection.commit()
+
+
 def _create_vcf_depot_running_operation_index(connection: Connection) -> None:
     """Create the single-running-VCFDT-operation database guard.
 
@@ -441,8 +462,7 @@ def init_db() -> None:
                     "AND status IN ('pending', 'running')"
                 )
             )
-    with engine.begin() as connection:
-        _reconcile_vcf_depot_job_queue(connection)
+    _reconcile_vcf_depot_job_queue_schema(engine)
 
 
 def get_db() -> Generator[Session, None, None]:

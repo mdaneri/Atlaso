@@ -2,8 +2,10 @@
 
 import hashlib
 import json
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from threading import Barrier
 
 import pytest
 from sqlalchemy import select
@@ -1206,6 +1208,46 @@ def test_vcf_queue_schema_reconciliation_is_portable_to_postgresql(monkeypatch):
     assert "CREATE UNIQUE INDEX IF NOT EXISTS uq_jobs_running_vcf_depot_operation" in sql
     assert "json_extract" not in sql
     assert "instr(" not in sql
+
+
+def test_vcf_queue_sqlite_column_upgrade_serializes_concurrent_startup(tmp_path):
+    """Verify concurrent SQLite startup cannot duplicate queue-column upgrades.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    from sqlalchemy import create_engine, inspect, text
+
+    import atlaso.app.database as database
+
+    test_engine = create_engine(
+        f"sqlite:///{tmp_path / 'queue-upgrade.db'}",
+        connect_args={"check_same_thread": False, "timeout": 10},
+    )
+    with test_engine.begin() as connection:
+        connection.execute(
+            text(
+                "CREATE TABLE jobs ("
+                "id TEXT PRIMARY KEY, type TEXT NOT NULL, status TEXT NOT NULL, "
+                "task_config_json TEXT, result TEXT, created_at TEXT, started_at TEXT, "
+                "progress_percent INTEGER, finished_at TEXT, error TEXT)"
+            )
+        )
+
+    ready = Barrier(2)
+
+    def reconcile() -> None:
+        """Start one simulated web or worker schema reconciliation."""
+        ready.wait()
+        database._reconcile_vcf_depot_job_queue_schema(test_engine)
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        futures = [executor.submit(reconcile) for _ in range(2)]
+        for future in futures:
+            future.result()
+
+    columns = {column["name"] for column in inspect(test_engine).get_columns("jobs")}
+    assert {"vcf_depot_operation", "vcf_depot_profile_id"} <= columns
 
 
 def test_vcf_queue_reconciliation_preserves_identity_tasks_for_type_specific_recovery():
