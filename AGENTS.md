@@ -176,6 +176,9 @@ The following cross-cutting boundaries always apply:
   Linux release workflow for an exact successful `main` CI SHA. Every workflow build is a final immutable
   `inventory-linux-v<version>` release and signed Pages pointer; never attach it to an appliance release or introduce
   development, preview, or staging channels.
+- VMware wheel deployment validates `RemoteDirectory` before build or upload as an absolute POSIX path containing only
+  ASCII letters, digits, `/`, `.`, `_`, and `-`, with no `.` or `..` components. Keep key/agent and password-backed
+  authentication on this shared path contract, and serialize every key-backed remote shell argument explicitly.
 - Inventory Linux reports use bounded schema v2 while accepting and normalizing legacy v1. Keep sysfs authoritative for
   device enumeration, use metadata tools only for structured enrichment/readable names, retain JSON in the existing
   report column, enforce the 256 KiB boundary, and never submit raw command output. Its five-minute local console
