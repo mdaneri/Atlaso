@@ -1131,12 +1131,13 @@ if ($CleanupCreatedLab) {
     $createdVmxPathArray = @($createdVmxPaths.ToArray())
     if ($createdVmxPathArray.Count -gt 0) {
         try {
-            Remove-AtlasoWorkstationVmArtifacts `
-                -VmrunPath $resolvedVmrun `
-                -VmxPaths $createdVmxPathArray `
-                -RemovalRoot $vmRoot `
-                -WhatIf:$WhatIfPreference `
-                -Confirm:$false
+            if ($PSCmdlet.ShouldProcess($vmRoot, 'Stop, unregister, and remove created VMware Workstation lifecycle artifacts')) {
+                Remove-AtlasoWorkstationVmArtifacts `
+                    -VmrunPath $resolvedVmrun `
+                    -VmxPaths $createdVmxPathArray `
+                    -RemovalRoot $vmRoot `
+                    -Confirm:$false
+            }
         } catch {
             $cleanupFailure = $_
         }

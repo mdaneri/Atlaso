@@ -63,12 +63,11 @@ if ($ExpectedName) {
 
 $resolvedVmrun = Resolve-VmrunPath -Path $VmrunPath
 
-Remove-AtlasoWorkstationVmArtifacts `
-    -VmrunPath $resolvedVmrun `
-    -VmxPaths @($resolvedVmxPath) `
-    -RemovalRoot $vmDirectory `
-    -WhatIf:$WhatIfPreference `
-    -Confirm:$false
-if (-not $WhatIfPreference) {
+if ($PSCmdlet.ShouldProcess($vmDirectory, 'Stop, unregister, and remove VMware Workstation VM artifacts')) {
+    Remove-AtlasoWorkstationVmArtifacts `
+        -VmrunPath $resolvedVmrun `
+        -VmxPaths @($resolvedVmxPath) `
+        -RemovalRoot $vmDirectory `
+        -Confirm:$false
     Write-Host "Removed VMware Workstation VM directory: $vmDirectory"
 }

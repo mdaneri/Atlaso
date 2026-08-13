@@ -91,13 +91,12 @@ foreach ($candidateGroup in $candidates | Group-Object -Property Directory) {
         }
     }
 
-    Remove-AtlasoWorkstationVmArtifacts `
-        -VmrunPath $resolvedVmrun `
-        -VmxPaths @($groupCandidates.Path) `
-        -RemovalRoot $candidateGroup.Name `
-        -WhatIf:$WhatIfPreference `
-        -Confirm:$false
-    if (-not $WhatIfPreference) {
+    if ($PSCmdlet.ShouldProcess($candidateGroup.Name, 'Stop, unregister, and remove VMware Workstation lifecycle artifacts')) {
+        Remove-AtlasoWorkstationVmArtifacts `
+            -VmrunPath $resolvedVmrun `
+            -VmxPaths @($groupCandidates.Path) `
+            -RemovalRoot $candidateGroup.Name `
+            -Confirm:$false
         Write-Host "Removed Workstation lifecycle VM directory: $($candidateGroup.Name)"
     }
 }

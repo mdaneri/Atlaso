@@ -435,6 +435,65 @@ def test_general_removal_accepts_an_empty_registration_tombstone(
     assert not vm_directory.exists()
 
 
+def test_general_removal_honors_explicit_confirmation(tmp_path: Path) -> None:
+    """Explicit confirmation cannot be suppressed by the nested cleanup helper."""
+    vm_directory = tmp_path / "Atlaso-Confirm"
+    vmx_path = vm_directory / "Atlaso-Confirm.vmx"
+    _write_vmx(vmx_path, "Atlaso-Confirm")
+    vmrun_path, environment, _ = _write_fake_vmrun(
+        tmp_path / "fake",
+        [vmx_path],
+        running=False,
+        registered=False,
+    )
+
+    result = _run_script(
+        VMWARE_SCRIPT_ROOT / "remove-atlaso-vm.ps1",
+        "-VmxPath",
+        str(vmx_path),
+        "-VmrunPath",
+        str(vmrun_path),
+        "-ExpectedName",
+        "Atlaso-Confirm",
+        "-Confirm",
+        environment=environment,
+    )
+
+    assert result.returncode != 0
+    assert "PowerShell is in NonInteractive mode" in result.stderr
+    assert vmx_path.exists()
+
+
+def test_general_removal_allows_explicit_confirmation_suppression(
+    tmp_path: Path,
+) -> None:
+    """Automation may still opt out of confirmation through the common parameter."""
+    vm_directory = tmp_path / "Atlaso-No-Confirm"
+    vmx_path = vm_directory / "Atlaso-No-Confirm.vmx"
+    _write_vmx(vmx_path, "Atlaso-No-Confirm")
+    vmrun_path, environment, _ = _write_fake_vmrun(
+        tmp_path / "fake",
+        [vmx_path],
+        running=False,
+        registered=False,
+    )
+
+    result = _run_script(
+        VMWARE_SCRIPT_ROOT / "remove-atlaso-vm.ps1",
+        "-VmxPath",
+        str(vmx_path),
+        "-VmrunPath",
+        str(vmrun_path),
+        "-ExpectedName",
+        "Atlaso-No-Confirm",
+        "-Confirm:$false",
+        environment=environment,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert not vm_directory.exists()
+
+
 def test_redeploy_missing_target_and_sibling_disk_fail_closed(tmp_path: Path) -> None:
     """Redeploy and data-disk reset must preserve unproven or sibling-prefix paths."""
     source_vmx = tmp_path / "source" / "source.vmx"
