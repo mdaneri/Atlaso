@@ -70,6 +70,33 @@ def test_agent_policy_gate_rejects_missing_marker(tmp_path: Path) -> None:
     )
 
 
+def test_agent_policy_gate_rejects_missing_task_title_traceability(
+    tmp_path: Path,
+) -> None:
+    """Verify that the agent policy gate requires task title traceability.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    write_policy_files(tmp_path)
+    agents_path = tmp_path / "AGENTS.md"
+    agents_path.write_text(
+        agents_path.read_text(encoding="utf-8").replace(
+            "## Codex Task Title Traceability", ""
+        ),
+        encoding="utf-8",
+    )
+
+    findings = check_agent_policy_gate(tmp_path)
+
+    assert len(findings) == 1
+    assert findings[0].path == agents_path
+    assert findings[0].message == (
+        "required agent policy marker is missing: "
+        "## Codex Task Title Traceability"
+    )
+
+
 def test_agent_policy_gate_rejects_missing_entry_point(tmp_path: Path) -> None:
     """Verify that agent policy gate rejects missing entry point.
 

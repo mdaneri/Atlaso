@@ -93,6 +93,7 @@ FORBIDDEN_PAGE_WIZARD_CONTROLLER_MARKERS = (
 REQUIRED_POLICY_MARKERS = {
     Path("AGENTS.md"): (
         "## Mandatory Agent Startup Gate",
+        "## Codex Task Title Traceability",
         "## Mandatory UI Design Guide Gate",
         "CONTRIBUTING.md",
         "CODE_OF_CONDUCT.md",
