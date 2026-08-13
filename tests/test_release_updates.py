@@ -10,6 +10,7 @@ import json
 import os
 import tarfile
 from pathlib import Path
+from urllib.error import HTTPError
 
 import pytest
 from cryptography.hazmat.primitives import serialization
@@ -25,6 +26,30 @@ from atlaso.app.services.release_updates import (
 
 ROOT = Path(__file__).resolve().parents[1]
 KEY_ID = "test-release-key"
+
+
+def load_script(module_name: str, filename: str):
+    """Load one repository script as a test module.
+
+    Args:
+        module_name: Unique module name for the import.
+        filename: Script filename under the repository scripts directory.
+
+    Returns:
+        The loaded script module.
+    """
+    spec = importlib.util.spec_from_file_location(module_name, ROOT / "scripts" / filename)
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+published_channel_check = load_script(
+    "check_published_release_channel_script",
+    "check_published_release_channel.py",
+)
 
 
 def canonical(payload: dict) -> bytes:
@@ -291,6 +316,9 @@ def test_release_workflows_use_successful_main_sha_and_promote_without_rebuildin
     assert "Everything your virtualization lab needs." in publication
     assert "Infrastructure • Storage • Identity • Networking • Lifecycle" in publication
     assert "The HTML page is informational." in publication
+    assert "Stable channel (default)" in publication
+    assert "python scripts/check_published_release_channel.py" in publication
+    assert "--expected-channel stable" in publication
     assert "<script" not in publication
     assert publication.count("ref: ${{ needs.prepare.outputs.release_sha }}") == 2
     assert "actions/upload-artifact@v7" in publication
@@ -309,6 +337,8 @@ def test_release_workflows_use_successful_main_sha_and_promote_without_rebuildin
     assert "gh release download" in promotion
     assert "build_release_bundle.py" not in promotion
     assert "--expected-version \"$RELEASE_VERSION\"" in promotion
+    assert "python scripts/check_published_release_channel.py" in promotion
+    assert '--expected-channel "$RELEASE_CHANNEL"' in promotion
     assert "workflow_dispatch:" in inventory
     assert "workflow_run:" not in inventory
     assert "schedule:" not in inventory
@@ -328,6 +358,115 @@ def test_release_workflows_use_successful_main_sha_and_promote_without_rebuildin
     assert "staging" not in inventory
 
 
+def test_published_channel_check_verifies_pointer_release_and_compatibility(
+    trust,
+    monkeypatch,
+):
+    """Verify the live guard reaches signed release and ABI validation.
+
+    Args:
+        trust: Trust supplied to the test scenario.
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+    """
+    private_key, trust_dir = trust
+    channel_url = "https://updates.example.test/channels/stable/manifest.json"
+    release_url = "https://github.com/example/releases/download/v0.9.0/release-manifest.json"
+    release = release_payload()
+    channel = {
+        "schema_version": 2,
+        "kind": "atlaso-channel",
+        "channel": "stable",
+        "version": release["version"],
+        "git_commit": release["git_commit"],
+        "release_manifest_url": release_url,
+        "issued_at": "2026-08-13T12:00:00Z",
+        "signing_key_id": KEY_ID,
+    }
+    raw_channel, channel_signature = signed(channel, private_key)
+    raw_release, release_signature = signed(release, private_key)
+    documents = {
+        channel_url: raw_channel,
+        f"{channel_url}.sig": channel_signature,
+        release_url: raw_release,
+        f"{release_url}.sig": release_signature,
+    }
+
+    class Response:
+        """Provide a bounded in-memory urlopen response."""
+
+        def __init__(self, body: bytes):
+            self.body = body
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self, _limit: int) -> bytes:
+            return self.body
+
+    monkeypatch.setattr(
+        published_channel_check,
+        "urlopen",
+        lambda url, timeout: Response(documents[url]),
+    )
+
+    result = published_channel_check.verify_channel(
+        channel_url,
+        expected_channel="stable",
+        expected_python_abi="cp314",
+        trusted_key=trust_dir / f"{KEY_ID}.pem",
+        timeout_seconds=1,
+    )
+
+    assert result["channel"]["version"] == "0.9.0"
+    assert result["release"]["git_commit"] == "a" * 40
+
+    with pytest.raises(ValueError, match="does not support cp313"):
+        published_channel_check.verify_channel(
+            channel_url,
+            expected_channel="stable",
+            expected_python_abi="cp313",
+            trusted_key=trust_dir / f"{KEY_ID}.pem",
+            timeout_seconds=1,
+        )
+
+
+def test_published_channel_check_fails_when_default_pointer_is_absent(
+    trust,
+    monkeypatch,
+):
+    """Verify the live guard reports a missing default channel.
+
+    Args:
+        trust: Trust supplied to the test scenario.
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+    """
+    _private_key, trust_dir = trust
+    monkeypatch.setattr(
+        published_channel_check,
+        "urlopen",
+        lambda url, timeout: (_ for _ in ()).throw(
+            HTTPError(url, 404, "Not Found", {}, None)
+        ),
+    )
+
+    with pytest.raises(SystemExit, match="failed verification.*404"):
+        published_channel_check.main(
+            [
+                "--channel-url",
+                "https://updates.example.test/channels/stable/manifest.json",
+                "--expected-channel",
+                "stable",
+                "--trusted-key",
+                str(trust_dir / f"{KEY_ID}.pem"),
+                "--attempts",
+                "1",
+            ]
+        )
+
+
 def test_pages_writers_share_multi_entry_publication_queue():
     """Verify every Pages writer preserves multiple pending publications."""
     workflow_root = ROOT / ".github" / "workflows"
@@ -338,6 +477,8 @@ def test_pages_writers_share_multi_entry_publication_queue():
         text = path.read_text(encoding="utf-8")
         if "HEAD:gh-pages" in text:
             writers.add(path)
+            assert 'test -s "$SITE_ROOT/updates/channels/stable/manifest.json"' in text, path
+            assert 'test -s "$SITE_ROOT/updates/channels/stable/manifest.json.sig"' in text, path
         if "group: atlaso-github-pages" not in text:
             continue
         queue_users.add(path)

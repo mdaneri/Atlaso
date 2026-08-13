@@ -63,6 +63,10 @@ GitHub is the default distribution origin:
   rebuilding and signing its deterministic release inputs.
 - The manual promotion workflow advances `preview` or `stable` to an existing verified release. Promotion never rebuilds
   the artifact.
+- The shipped default is `stable`. Every Pages writer refuses to publish a tree where its manifest or detached
+  signature is absent. Release and promotion workflows also re-fetch the live channel pointer and immutable release
+  manifest, verify both signatures with the named appliance trust key, require matching version and commit identity,
+  and confirm CPython 3.14 compatibility before reporting success.
 
 The default source is:
 
@@ -308,8 +312,10 @@ preserves the normal tag/release mismatch checks. If the tag and release already
 failed, dispatch the same successful SHA again: publication verifies the existing asset names and bytes before retrying
 the signed pointer update.
 
-To promote, run **Promote appliance release**, choose `preview` or `stable`, and provide an existing version without the
-`v` prefix.
+To initialize or advance the default channel, run **Promote appliance release**, choose `stable`, and provide an
+existing verified version without the `v` prefix. The workflow does not rebuild that release. It completes only after
+the hosted stable pointer and signature resolve and the referenced immutable release passes signature, identity, and
+CPython 3.14 compatibility validation. Use the same workflow with `preview` for pre-stable promotion.
 
 Schedules for checks or installs live under **Operations → Automation**. See [`automation.md`](automation.md).
 

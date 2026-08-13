@@ -248,6 +248,7 @@ jobs:
                 <code class="source">https://mdaneri.github.io/Atlaso/updates</code>
                 <nav aria-label="Release repository links">
                   <a href="./docs/">Documentation</a>
+                  <a href="./updates/channels/stable/manifest.json">Stable channel (default)</a>
                   <a href="./updates/channels/development/manifest.json">Development channel</a>
                   <a href="https://github.com/mdaneri/Atlaso/releases">GitHub Releases</a>
                   <a href="https://github.com/mdaneri/Atlaso">Source repository</a>
@@ -259,6 +260,8 @@ jobs:
           </html>
           EOF
           touch "$SITE_ROOT/.nojekyll"
+          test -s "$SITE_ROOT/updates/channels/stable/manifest.json"
+          test -s "$SITE_ROOT/updates/channels/stable/manifest.json.sig"
           git -C "$SITE_ROOT" add --all
           if git -C "$SITE_ROOT" diff --cached --quiet; then
             exit 0
@@ -273,3 +276,11 @@ jobs:
               "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git"
             git -C "$SITE_ROOT" push origin HEAD:gh-pages
           fi
+      - name: Verify the published default channel
+        env:
+          RELEASE_KEY_ID: atlaso-release-2026-01
+        run: |
+          python scripts/check_published_release_channel.py \
+            --channel-url "https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/updates/channels/stable/manifest.json" \
+            --expected-channel stable \
+            --trusted-key "image/common/update-trust/${RELEASE_KEY_ID}.pem"

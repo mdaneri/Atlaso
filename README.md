@@ -30,7 +30,9 @@ brings infrastructure, storage, identity, networking, and lifecycle workflows in
   desired-state transaction.
 - [Appliance Update](docs/operate/appliance-update.md) — inspect configured Photon, PowerShell, and signed Atlaso
   sources in read-only repository tabs, then create or edit desired source state through the shared reviewed wizard
-  before explicitly synchronizing package clients.
+  before explicitly synchronizing package clients. The built-in Atlaso source follows the signed `stable` channel;
+  Pages publication guards verify that its pointer, immutable release manifest, trust key, and CPython 3.14
+  compatibility remain usable.
 - [Services](docs/services/index.md) — configure DNS, identity, storage, network boot, and VCF integrations.
 - [Network configuration](docs/operate/networking.md) — distinguish static paths from forwarding permissions and manage
   Static Routes, Routing Permissions, IPv4 masquerade NAT rules, and interface-level WAN Simulation through reviewed
