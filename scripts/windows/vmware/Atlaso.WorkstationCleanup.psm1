@@ -361,7 +361,7 @@ function Get-AtlasoWorkstationRegisteredVmPaths {
         } else {
             $line
         }
-        if ($registrationKey -notmatch '^\s*vmlist.*\.\s*config\b') {
+        if ($registrationKey -notmatch '^\s*vmlist.*config\b') {
             continue
         }
         if ($line -notmatch '^\s*vmlist\d+\.config\s*=\s*"(.*)"\s*$') {

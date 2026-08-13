@@ -464,6 +464,8 @@ def test_general_removal_accepts_balanced_running_inventory_quotes(tmp_path: Pat
         'vmlistA.config = "C:\\VMs\\Atlaso.vmx"\n',
         'vmlist 0.config = "C:\\VMs\\Atlaso.vmx"\n',
         'vmlist0 .config = "C:\\VMs\\Atlaso.vmx"\n',
+        'vmlist0config = "C:\\VMs\\Atlaso.vmx"\n',
+        'vmlist0 config = "C:\\VMs\\Atlaso.vmx"\n',
         'vmlist0.config = "relative-registered.vmx"\n',
     ],
 )
