@@ -62,6 +62,7 @@ OIDC_SIGNING_ALGORITHM = "RS256"
 OIDC_TOKEN_ENDPOINT_AUTH_METHOD = "client_secret_basic"
 OIDC_AUTHORIZATION_FLOW_AVAILABLE = True
 OIDC_TOKEN_LIFETIME_SECONDS = 300
+OIDC_AUTHORIZATION_CODE_LIFETIME_SECONDS = 60
 OIDC_DEFAULT_HOSTNAME = "oidc.atlaso.internal"
 OIDC_DEFAULT_PORT = 443
 OIDC_DNS_RECORD_DESCRIPTION = "Created from OpenID Connect provider endpoint."
@@ -917,6 +918,60 @@ def validate_redirect_uri_list(
     return normalized
 
 
+def validate_client_lifetimes(
+    *,
+    access_token_lifetime_seconds: int,
+    id_token_lifetime_seconds: int,
+    authorization_code_lifetime_seconds: int,
+) -> None:
+    """Validate fixed OIDC client token and authorization-code lifetimes.
+
+    Args:
+        access_token_lifetime_seconds: Access-token lifetime candidate.
+        id_token_lifetime_seconds: ID-token lifetime candidate.
+        authorization_code_lifetime_seconds: Authorization-code lifetime candidate.
+
+    Raises:
+        OidcConfigurationError: If a client lifetime differs from the bounded protocol policy.
+    """
+    if (
+        access_token_lifetime_seconds != OIDC_TOKEN_LIFETIME_SECONDS
+        or id_token_lifetime_seconds != OIDC_TOKEN_LIFETIME_SECONDS
+    ):
+        raise OidcConfigurationError("OIDC clients must use the fixed five-minute token lifetime.")
+    if authorization_code_lifetime_seconds != OIDC_AUTHORIZATION_CODE_LIFETIME_SECONDS:
+        raise OidcConfigurationError(
+            "OIDC clients must use the fixed 60-second authorization-code lifetime."
+        )
+
+
+def validate_persisted_client_policy(client: OidcClient) -> None:
+    """Validate immutable and bounded policy fields on a persisted OIDC client.
+
+    Args:
+        client: Persisted client candidate to validate.
+
+    Raises:
+        OidcConfigurationError: If persisted client policy differs from creation policy.
+    """
+    if client.token_endpoint_auth_method != OIDC_TOKEN_ENDPOINT_AUTH_METHOD:
+        raise OidcConfigurationError(
+            "OIDC clients must use client_secret_basic token authentication."
+        )
+    normalized_scopes = normalize_allowed_scopes(client.allowed_scopes.split())
+    if client.allowed_scopes != " ".join(normalized_scopes):
+        raise OidcConfigurationError("OIDC client scopes must use canonical ordering.")
+    validate_client_lifetimes(
+        access_token_lifetime_seconds=client.access_token_lifetime_seconds,
+        id_token_lifetime_seconds=client.id_token_lifetime_seconds,
+        authorization_code_lifetime_seconds=client.authorization_code_lifetime_seconds,
+    )
+    try:
+        OIDC_CLIENT_SECRET_HASHER.check_needs_rehash(client.client_secret_hash)
+    except InvalidHashError as exc:
+        raise OidcConfigurationError("OIDC client secret hash is not valid.") from exc
+
+
 def get_client(db: Session, client_id: int) -> OidcClient:
     """Return client.
 
@@ -991,6 +1046,11 @@ def create_client(
         post_logout_redirect_uris,
         allow_loopback=allow_loopback_redirects,
         required=False,
+    )
+    validate_client_lifetimes(
+        access_token_lifetime_seconds=access_token_lifetime_seconds,
+        id_token_lifetime_seconds=id_token_lifetime_seconds,
+        authorization_code_lifetime_seconds=authorization_code_lifetime_seconds,
     )
     scopes = normalize_allowed_scopes(allowed_scopes)
     raw_secret = generate_client_secret()
@@ -1076,6 +1136,11 @@ def update_client(
         post_logout_redirect_uris,
         allow_loopback=allow_loopback_redirects,
         required=False,
+    )
+    validate_client_lifetimes(
+        access_token_lifetime_seconds=access_token_lifetime_seconds,
+        id_token_lifetime_seconds=id_token_lifetime_seconds,
+        authorization_code_lifetime_seconds=authorization_code_lifetime_seconds,
     )
     scopes = normalize_allowed_scopes(allowed_scopes)
 

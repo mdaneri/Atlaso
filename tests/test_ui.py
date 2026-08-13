@@ -4852,6 +4852,7 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
     import pytest
 
     from atlaso.app.database import SessionLocal
+    from atlaso.app.services.oidc import hash_client_secret
     from atlaso.app.services.settings_archive import archive_summary, export_settings_archive
 
     with SessionLocal() as db:
@@ -5048,14 +5049,31 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
         {"client_id": "missing-client", "kind": "redirect", "uri": "https://example.invalid/callback"}
     )
     oidc_client_without_redirect = deepcopy(archive)
+    valid_client_hash = hash_client_secret("archive-validation-secret")
     oidc_client_without_redirect["data"]["oidc_clients"].append(
         {
             "name": "Missing redirect client",
             "client_id": "missing-redirect-client",
-            "client_secret_hash": "hashed-secret",
+            "client_secret_hash": valid_client_hash,
             "enabled": True,
         }
     )
+    oidc_client_with_invalid_lifetime = deepcopy(oidc_client_without_redirect)
+    oidc_client_with_invalid_lifetime["data"]["oidc_clients"][-1][
+        "authorization_code_lifetime_seconds"
+    ] = -1
+    oidc_client_with_invalid_lifetime["data"]["oidc_client_redirect_uris"].append(
+        {
+            "client_id": "missing-redirect-client",
+            "kind": "redirect",
+            "uri": "https://example.invalid/callback",
+        }
+    )
+    oidc_client_with_invalid_hash = deepcopy(oidc_client_with_invalid_lifetime)
+    oidc_client_with_invalid_hash["data"]["oidc_clients"][-1][
+        "authorization_code_lifetime_seconds"
+    ] = 60
+    oidc_client_with_invalid_hash["data"]["oidc_clients"][-1]["client_secret_hash"] = "not-a-hash"
     unresolved_esx_volume = deepcopy(archive)
     unresolved_esx_volume["data"]["esx_nfs_shares"].append(
         {"datastore_name": "orphaned-datastore", "volume_name": "missing-volume"}
@@ -5146,6 +5164,10 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
     enabled_kms_without_provider["data"]["vsphere_key_providers"] = []
     enabled_kms_without_provider["data"]["vsphere_trusted_vcenters"] = []
     enabled_kms_without_provider["data"]["vsphere_trusted_vcenter_certificates"] = []
+    invalid_provider_id = deepcopy(archive)
+    invalid_provider_id["data"]["vsphere_key_providers"].append(
+        {"id": "not-a-uuid", "name": "Invalid provider ID", "enabled": False}
+    )
     enabled_oidc_without_dependencies = deepcopy(archive)
     enabled_oidc_without_dependencies["data"]["oidc_provider_settings"] = [
         {
@@ -5183,6 +5205,8 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
     enabled_oidc_with_invalid_port["data"]["oidc_provider_settings"][0]["port"] = 0
     enabled_oidc_with_invalid_crypto = deepcopy(enabled_oidc_with_mismatched_address)
     enabled_oidc_with_invalid_crypto["data"]["oidc_provider_settings"][0]["listen_address"] = "192.168.50.1"
+    invalid_ca_private_key = deepcopy(archive)
+    invalid_ca_private_key["data"]["ca_settings"][0]["root_private_key_encrypted"] = "not-encrypted"
     invalid_storage_state = deepcopy(archive)
     invalid_storage_state["data"]["esx_storage_settings"] = [
         {"enabled": False, "hostname": "nfs.atlaso.internal"}
@@ -5341,6 +5365,8 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
         (enabled_ldap_with_invalid_port, "LDAP state is invalid: LDAPS port must be between 1 and 65535"),
         (unresolved_oidc_client, "references an unknown OIDC client"),
         (oidc_client_without_redirect, "At least one exact redirect URI is required"),
+        (oidc_client_with_invalid_lifetime, "fixed 60-second authorization-code lifetime"),
+        (oidc_client_with_invalid_hash, "OIDC client secret hash is not valid"),
         (unresolved_esx_volume, "references an unknown ESX storage volume"),
         (enabled_missing_esx_share_target, "has an ineligible interface or address family"),
         (cyclic_ldap_groups, "contains cyclic LDAP group membership"),
@@ -5348,10 +5374,12 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
         (weak_ca_profile, "Certificate Authority state is invalid: .*RSA key size must be at least 2048"),
         (enabled_kms_without_ca, "enables KMS without an enabled CA"),
         (enabled_kms_without_provider, "KMS trust state is invalid: At least one enabled provider"),
+        (invalid_provider_id, "invalid provider ID"),
         (enabled_oidc_without_dependencies, "enables OIDC without an active signing key"),
         (enabled_oidc_with_mismatched_address, "has listener addresses not derived from its interfaces"),
         (enabled_oidc_with_invalid_port, "has an invalid HTTPS port"),
         (enabled_oidc_with_invalid_crypto, "OIDC cryptographic state is invalid"),
+        (invalid_ca_private_key, "Certificate Authority key state is invalid"),
         (invalid_storage_state, "ESX Storage state is invalid: Datastore invalid-share must use NFS 3 or NFS 4.1"),
         (invalid_esxi_host_mac, "esxi_pxe_hosts' has an invalid MAC address"),
         (invalid_esxi_kickstart, "multiple install/upgrade directives"),

@@ -854,6 +854,42 @@ def render_ca_apply_payload(settings: CaSettings, certificates: list[CaCertifica
     return json.dumps(payload, indent=2, sort_keys=True) + "\n"
 
 
+def validate_ca_private_key_material(
+    settings: CaSettings,
+    certificates: list[CaCertificate],
+) -> list[str]:
+    """Validate encrypted private keys consumed by the CA apply payload.
+
+    Args:
+        settings: Saved CA settings containing optional encrypted root material.
+        certificates: Certificate records that may contain deployable encrypted keys.
+
+    Returns:
+        Public-safe validation errors for encrypted keys that cannot be decrypted and imported.
+    """
+    candidates: list[tuple[str, str]] = []
+    if settings.root_private_key_encrypted:
+        candidates.append(("CA root", settings.root_private_key_encrypted))
+    candidates.extend(
+        (f"Certificate {certificate.common_name}", certificate.private_key_encrypted)
+        for certificate in certificates
+        if certificate.enabled
+        and certificate.status != "revoked"
+        and certificate.private_key_encrypted
+    )
+    errors: list[str] = []
+    for label, encrypted_key in candidates:
+        try:
+            private_key_pem = decrypt_secret(encrypted_key)
+            serialization.load_pem_private_key(
+                private_key_pem.encode("utf-8"),
+                password=None,
+            )
+        except Exception:
+            errors.append(f"{label} encrypted private key is not usable on this appliance.")
+    return errors
+
+
 def validate_ca_state(
     *,
     settings: CaSettings,

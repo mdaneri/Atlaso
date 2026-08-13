@@ -39,6 +39,7 @@ def _set_applied_management_https(db, fqdn: str = "atlaso.example.test") -> None
     from cryptography.x509.oid import NameOID
 
     from atlaso.app.models import ApplianceSettings, CaCertificate, Setting
+    from atlaso.app.secrets import encrypt_secret
 
     appliance = db.execute(select(ApplianceSettings)).scalar_one()
     appliance.fqdn = fqdn
@@ -86,9 +87,15 @@ def _set_applied_management_https(db, fqdn: str = "atlaso.example.test") -> None
         certificate = CaCertificate(
             common_name=fqdn,
             managed_owner="appliance:https",
-            private_key_encrypted="test-only-encrypted-key",
         )
         db.add(certificate)
+    certificate.private_key_encrypted = encrypt_secret(
+        key.private_bytes(
+            serialization.Encoding.PEM,
+            serialization.PrivateFormat.PKCS8,
+            serialization.NoEncryption(),
+        ).decode("ascii")
+    )
     certificate.status = "issued"
     certificate.enabled = True
     certificate.certificate_pem = certificate_pem
@@ -130,6 +137,7 @@ def _set_oidc_service_ready(
     from cryptography.x509.oid import NameOID
 
     from atlaso.app.models import CaCertificate, DnsRecord
+    from atlaso.app.secrets import encrypt_secret
     from atlaso.app.services import oidc
 
     provider = oidc.ensure_provider_settings(db)
@@ -172,9 +180,15 @@ def _set_oidc_service_ready(
         certificate = CaCertificate(
             common_name=certificate_name,
             managed_owner="oidc:https",
-            private_key_encrypted="test-only-encrypted-key",
         )
         db.add(certificate)
+    certificate.private_key_encrypted = encrypt_secret(
+        key.private_bytes(
+            serialization.Encoding.PEM,
+            serialization.PrivateFormat.PKCS8,
+            serialization.NoEncryption(),
+        ).decode("ascii")
+    )
     certificate.common_name = certificate_name
     certificate.subject_alt_names = certificate_name
     certificate.ip_addresses = "192.168.50.1"

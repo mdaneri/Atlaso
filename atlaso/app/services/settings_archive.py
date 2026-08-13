@@ -90,7 +90,7 @@ from atlaso.app.services.automation import (
     validate_schedule_values,
     validate_script_revision_values,
 )
-from atlaso.app.services.ca import validate_ca_state
+from atlaso.app.services.ca import validate_ca_private_key_material, validate_ca_state
 from atlaso.app.services.dnsmasq import (
     DNS_CONDITIONAL_FORWARDERS_SETTING_KEY,
     split_addresses,
@@ -135,6 +135,7 @@ from atlaso.app.services.oidc import (
     expected_issuer_url,
     normalize_issuer_url,
     provider_cryptographic_validation_errors,
+    validate_persisted_client_policy,
     validate_redirect_uri_list,
 )
 from atlaso.app.services.routes_wan import validate_nat_source, validate_wan_state
@@ -143,6 +144,7 @@ from atlaso.app.services.vcf_backups import VCF_BACKUP_DEFAULT_USERNAME, validat
 from atlaso.app.services.vcf_offline_depot import validate_vcf_depot_state
 from atlaso.app.services.vcf_private_registry import validate_vcf_registry_state
 from atlaso.app.services.vsphere_key_providers import (
+    normalize_provider_id,
     normalize_service_hostname,
     parse_public_certificate,
     validate_provider_state,
@@ -1777,28 +1779,31 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
         str(row["name"]): row_index
         for row_index, row in enumerate(data.get("ca_profiles", []), start=1)
     }
+    archived_ca_settings = CaSettings(
+        **_model_kwargs_with_scalar_defaults(CaSettings, ca_row)
+    )
+    archived_ca_profiles = [
+        CaProfile(
+            id=ca_profile_ids[str(row["name"])],
+            **_model_kwargs_with_scalar_defaults(CaProfile, row),
+        )
+        for row in data.get("ca_profiles", [])
+    ]
+    archived_ca_certificates = [
+        CaCertificate(
+            **_model_kwargs_with_scalar_defaults(
+                CaCertificate,
+                row,
+                exclude={"profile_id"},
+            ),
+            profile_id=ca_profile_ids.get(str(row.get("profile_name") or "")),
+        )
+        for row in data.get("ca_certificates", [])
+    ]
     ca_errors = validate_ca_state(
-        settings=CaSettings(
-            **_model_kwargs_with_scalar_defaults(CaSettings, ca_row)
-        ),
-        profiles=[
-            CaProfile(
-                id=ca_profile_ids[str(row["name"])],
-                **_model_kwargs_with_scalar_defaults(CaProfile, row),
-            )
-            for row in data.get("ca_profiles", [])
-        ],
-        certificates=[
-            CaCertificate(
-                **_model_kwargs_with_scalar_defaults(
-                    CaCertificate,
-                    row,
-                    exclude={"profile_id"},
-                ),
-                profile_id=ca_profile_ids.get(str(row.get("profile_name") or "")),
-            )
-            for row in data.get("ca_certificates", [])
-        ],
+        settings=archived_ca_settings,
+        profiles=archived_ca_profiles,
+        certificates=archived_ca_certificates,
     )
     if ca_errors:
         raise ValueError(
@@ -1974,6 +1979,13 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
                 f"The settings archive OIDC cryptographic state is invalid: {cryptographic_errors[0]}"
             )
 
+    for row_index, row in enumerate(data.get("vsphere_key_providers", []), start=1):
+        try:
+            normalize_provider_id(str(row["id"]))
+        except ValueError as exc:
+            raise ValueError(
+                f"The settings archive row {row_index} in 'vsphere_key_providers' has an invalid provider ID: {exc}"
+            ) from exc
     provider_ids = {str(row["id"]) for row in data.get("vsphere_key_providers", [])}
     for row_index, row in enumerate(data.get("vsphere_trusted_vcenters", []), start=1):
         require_reference(
@@ -2186,6 +2198,15 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
         client_id = str(row["client_id"])
         redirect_rows = redirect_rows_by_client.get(client_id, [])
         try:
+            validate_persisted_client_policy(
+                OidcClient(
+                    **_model_kwargs_with_scalar_defaults(
+                        OidcClient,
+                        row,
+                        exclude={"organization_id"},
+                    )
+                )
+            )
             validate_redirect_uri_list(
                 [str(item.get("uri") or "") for item in redirect_rows if item.get("kind") == "redirect"],
                 allow_loopback=bool(row.get("allow_loopback_redirects", False)),
@@ -2198,7 +2219,7 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
             )
         except OidcConfigurationError as exc:
             raise ValueError(
-                f"The settings archive OIDC client {client_id} redirect configuration is invalid: {exc}"
+                f"The settings archive OIDC client {client_id} configuration is invalid: {exc}"
             ) from exc
     for row_index, row in enumerate(data.get("oidc_subjects", []), start=1):
         source = str(row["source"] or "")
@@ -2235,6 +2256,15 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
             oidc_client_ids,
             "OIDC client",
             optional=True,
+        )
+
+    ca_key_errors = validate_ca_private_key_material(
+        archived_ca_settings,
+        archived_ca_certificates,
+    )
+    if ca_key_errors:
+        raise ValueError(
+            f"The settings archive Certificate Authority key state is invalid: {ca_key_errors[0]}"
         )
 
     kickstart_ids = {
