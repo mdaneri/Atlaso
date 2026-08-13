@@ -160,7 +160,11 @@ from atlaso.app.services.vcf_backups import (
     validate_vcf_backup_state,
 )
 from atlaso.app.services.vcf_offline_depot import validate_vcf_depot_state
-from atlaso.app.services.vcf_private_registry import validate_vcf_registry_state
+from atlaso.app.services.vcf_private_registry import (
+    VCF_REGISTRY_UPLOADED_CA_BUNDLE_PATH,
+    VCF_REGISTRY_UPLOADED_CA_BUNDLE_PEM_KEY,
+    validate_vcf_registry_state,
+)
 from atlaso.app.services.vsphere_key_providers import (
     normalize_provider_id,
     normalize_service_hostname,
@@ -443,6 +447,25 @@ def export_settings_archive(db: Session, *, actor: str) -> dict[str, Any]:
     for key, model in SCALAR_TABLES.items():
         rows = db.execute(select(model)).scalars().all()
         data[key] = [_row_to_dict(row) for row in rows]
+
+    uploaded_registry_ca_pem = db.scalar(
+        select(Setting.value).where(
+            Setting.key == VCF_REGISTRY_UPLOADED_CA_BUNDLE_PEM_KEY
+        )
+    )
+    ca_enabled = any(bool(row.get("enabled")) for row in data["ca_settings"])
+    for registry_settings in data["vcf_private_registry_settings"]:
+        if (
+            registry_settings.get("enabled") is True
+            and not ca_enabled
+            and str(registry_settings.get("ca_bundle_path") or "")
+            == VCF_REGISTRY_UPLOADED_CA_BUNDLE_PATH
+            and bool((uploaded_registry_ca_pem or "").strip())
+        ):
+            registry_settings["enabled"] = False
+            payload["notes"].append(
+                "VCF Private Registry was exported disabled because uploaded CA bundle bytes are not included; upload the bundle again before re-enabling it."
+            )
 
     data["routes"] = _routes_to_archive(db)
     data["dhcp_options"] = _dhcp_options_to_archive(db)
@@ -2799,7 +2822,14 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
                 f"The settings archive update source state is invalid: {source_errors[0]}"
             )
     update_sources = set(archived_update_sources)
+    managed_package_identities: set[tuple[str, str]] = set()
     for row_index, row in enumerate(data.get("managed_packages", []), start=1):
+        package_identity = (str(row["ecosystem"]), str(row["name"]))
+        if package_identity in managed_package_identities:
+            raise ValueError(
+                f"The settings archive row {row_index} in 'managed_packages' duplicates a managed package identity."
+            )
+        managed_package_identities.add(package_identity)
         source = (str(row.get("source_kind") or ""), str(row.get("source_name") or ""))
         require_reference(
             "managed_packages",

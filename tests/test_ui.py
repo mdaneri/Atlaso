@@ -4707,6 +4707,51 @@ def test_settings_archive_round_trips_ca_revocation_timestamp(client):
         assert restored_revoked_at == revoked_at
 
 
+def test_settings_archive_disables_registry_when_uploaded_ca_is_omitted(client):
+    """Verify uploaded registry CA bytes become a safe disabled restore handoff."""
+    from sqlalchemy import select
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import CaSettings, Setting, VcfPrivateRegistrySettings
+    from atlaso.app.services.settings_archive import (
+        archive_summary,
+        export_settings_archive,
+    )
+    from atlaso.app.services.vcf_private_registry import (
+        VCF_REGISTRY_UPLOADED_CA_BUNDLE_PATH,
+        VCF_REGISTRY_UPLOADED_CA_BUNDLE_PEM_KEY,
+    )
+
+    with SessionLocal() as db:
+        ca_settings = db.scalar(select(CaSettings))
+        registry_settings = db.scalar(select(VcfPrivateRegistrySettings))
+        assert ca_settings is not None
+        assert registry_settings is not None
+        ca_settings.enabled = False
+        registry_settings.enabled = True
+        registry_settings.ca_bundle_path = VCF_REGISTRY_UPLOADED_CA_BUNDLE_PATH
+        db.add(
+            Setting(
+                key=VCF_REGISTRY_UPLOADED_CA_BUNDLE_PEM_KEY,
+                value="-----BEGIN CERTIFICATE-----\nomitted\n-----END CERTIFICATE-----\n",
+            )
+        )
+        db.commit()
+
+        archive = export_settings_archive(db, actor="test")
+        archived_registry = archive["data"]["vcf_private_registry_settings"][0]
+        assert archived_registry["enabled"] is False
+        assert all(
+            row["key"] != VCF_REGISTRY_UPLOADED_CA_BUNDLE_PEM_KEY
+            for row in archive["data"]["settings"]
+        )
+        assert any(
+            "upload the bundle again before re-enabling" in note
+            for note in archive["notes"]
+        )
+        archive_summary(archive)
+
+
 def test_settings_restore_rejects_disabled_users_for_enabled_vcf_services(client):
     """Verify enabled restored VCF services require enabled retained local users.
 
@@ -5690,6 +5735,10 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
             "source_name": photon_source["name"],
         }
     )
+    duplicate_managed_package = deepcopy(archive)
+    duplicate_managed_package["data"]["managed_packages"].append(
+        deepcopy(duplicate_managed_package["data"]["managed_packages"][0])
+    )
     unsupported_setting = deepcopy(archive)
     unsupported_setting["data"]["settings"].append(
         {"key": "unsupported.setting", "value": "must-not-be-silently-dropped"}
@@ -5821,6 +5870,7 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
         (unsupported_schedule, "Choose a supported scheduled task type"),
         (invalid_update_schedule, "retired or unsupported stream"),
         (invalid_managed_package_source, "managed package state is invalid: Choose a PowerShell repository"),
+        (duplicate_managed_package, "duplicates a managed package identity"),
         (unsupported_setting, "has an unsupported setting key"),
         (duplicate_setting, "duplicates a setting key"),
         (malformed_password_policy, "local user password policy is invalid"),

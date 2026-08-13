@@ -34,7 +34,9 @@ Backups can contain operational configuration and encrypted sensitive material. 
 VCF/ESX password vault entries are not included in settings archives. Restore clears vaults and the unused legacy
 Kickstart-binding compatibility table; recreate or reimport vault entries before re-enabling dependent scripts or PXE
 workflows. Non-secret ESXi PXE custom-variable catalog definitions and defaults are included so restored Kickstarts
-retain their `{{custom.*}}` prerequisites.
+retain their `{{custom.*}}` prerequisites. Uploaded VCF Private Registry CA bundle bytes are also excluded. When an
+enabled registry depends on an uploaded bundle instead of the internal CA, the export records the registry as disabled;
+upload the CA bundle again and review the registry settings before re-enabling it.
 
 ## Restore safely
 
