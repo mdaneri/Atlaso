@@ -5321,6 +5321,30 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
     duplicate_oidc_client["data"]["oidc_clients"].append(
         deepcopy(duplicate_oidc_client["data"]["oidc_clients"][-1])
     )
+    duplicate_oidc_subject_uuid = deepcopy(archive)
+    duplicate_oidc_subject_uuid["data"]["oidc_subjects"].extend(
+        [
+            {
+                "subject_uuid": "11111111-1111-4111-8111-111111111111",
+                "source": "local",
+                "username": "subject-source-a",
+                "organization_slug": "",
+            },
+            {
+                "subject_uuid": "11111111-1111-4111-8111-111111111111",
+                "source": "local",
+                "username": "subject-source-b",
+                "organization_slug": "",
+            },
+        ]
+    )
+    duplicate_oidc_subject_source = deepcopy(duplicate_oidc_subject_uuid)
+    duplicate_oidc_subject_source["data"]["oidc_subjects"][1][
+        "subject_uuid"
+    ] = "22222222-2222-4222-8222-222222222222"
+    duplicate_oidc_subject_source["data"]["oidc_subjects"][1][
+        "username"
+    ] = "subject-source-a"
     duplicate_oidc_mapping = deepcopy(archive)
     duplicate_oidc_mapping["data"]["oidc_group_mappings"] = [
         {
@@ -5533,6 +5557,45 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
             "name": "Invalid enabled type",
             "enabled": "false",
         }
+    )
+    duplicate_provider_name = deepcopy(archive)
+    duplicate_provider_name["data"]["vsphere_key_providers"].extend(
+        [
+            {
+                "id": "11111111-1111-4111-8111-111111111121",
+                "name": "Duplicate provider name",
+                "enabled": False,
+            },
+            {
+                "id": "11111111-1111-4111-8111-111111111122",
+                "name": "Duplicate provider name",
+                "enabled": False,
+            },
+        ]
+    )
+    duplicate_vcenter_name = deepcopy(archive)
+    duplicate_vcenter_name["data"]["vsphere_key_providers"].append(
+        {
+            "id": "11111111-1111-4111-8111-111111111123",
+            "name": "Duplicate vCenter provider",
+            "enabled": False,
+        }
+    )
+    duplicate_vcenter_name["data"]["vsphere_trusted_vcenters"].extend(
+        [
+            {
+                "id": "22222222-2222-4222-8222-222222222231",
+                "provider_id": "11111111-1111-4111-8111-111111111123",
+                "name": "Duplicate vCenter name",
+                "enabled": False,
+            },
+            {
+                "id": "22222222-2222-4222-8222-222222222232",
+                "provider_id": "11111111-1111-4111-8111-111111111123",
+                "name": "Duplicate vCenter name",
+                "enabled": False,
+            },
+        ]
     )
     invalid_vcenter_enabled_type = deepcopy(archive)
     invalid_vcenter_enabled_type["data"]["vsphere_key_providers"].append(
@@ -5868,6 +5931,8 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
         (oidc_client_with_invalid_lifetime, "fixed 60-second authorization-code lifetime"),
         (oidc_client_with_invalid_hash, "OIDC client secret hash is not valid"),
         (duplicate_oidc_client, "duplicates the unique client_id identity"),
+        (duplicate_oidc_subject_uuid, "duplicates a subject UUID"),
+        (duplicate_oidc_subject_source, "duplicates an identity source"),
         (duplicate_oidc_mapping, "duplicates an OIDC group mapping identity"),
         (cross_organization_oidc_mapping, "outside its OIDC client's organization"),
         (bound_client_local_role_mapping, "assigns a local role to an organization-bound OIDC client"),
@@ -5884,6 +5949,8 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
         (enabled_kms_without_provider, "KMS trust state is invalid: At least one enabled provider"),
         (invalid_provider_id, "invalid provider ID"),
         (invalid_provider_enabled_type, "has an invalid enabled value"),
+        (duplicate_provider_name, "duplicates a provider name"),
+        (duplicate_vcenter_name, "duplicates a trusted vCenter name within its provider"),
         (invalid_vcenter_enabled_type, "has an invalid enabled value"),
         (disabled_kms_with_invalid_public_certificate, "PEM-encoded vCenter public client certificate"),
         (enabled_oidc_without_dependencies, "enables OIDC without an active signing key"),
@@ -5943,11 +6010,18 @@ def test_settings_restore_migrates_incomplete_schema_v1_archive(client):
     from sqlalchemy import select
 
     from atlaso.app.database import SessionLocal
-    from atlaso.app.models import LdapUser, NetworkBootEnvironment
+    from atlaso.app.models import (
+        LdapUser,
+        NetworkBootEnvironment,
+        VcfPrivateRegistrySettings,
+    )
     from atlaso.app.services.settings_archive import (
         archive_summary,
         export_settings_archive,
         restore_settings_archive,
+    )
+    from atlaso.app.services.vcf_private_registry import (
+        VCF_REGISTRY_UPLOADED_CA_BUNDLE_PATH,
     )
 
     with SessionLocal() as db:
@@ -5968,6 +6042,13 @@ def test_settings_restore_migrates_incomplete_schema_v1_archive(client):
                 "password_status": "not_staged",
             }
         )
+        archive["data"]["ca_settings"][0]["enabled"] = False
+        archive["data"]["vcf_private_registry_settings"][0].update(
+            {
+                "enabled": True,
+                "ca_bundle_path": VCF_REGISTRY_UPLOADED_CA_BUNDLE_PATH,
+            }
+        )
         assert archive_summary(archive)["table_counts"]["ldap_users"] == len(
             archive["data"]["ldap_users"]
         )
@@ -5983,6 +6064,9 @@ def test_settings_restore_migrates_incomplete_schema_v1_archive(client):
         ).scalar_one()
         assert restored_user.enabled is False
         assert restored_user.password_status == "not_staged"
+        restored_registry = db.scalar(select(VcfPrivateRegistrySettings))
+        assert restored_registry is not None
+        assert restored_registry.enabled is False
 
 
 def test_settings_restore_rolls_back_late_failure_without_clearing_staged_ldap_recovery(client, monkeypatch):

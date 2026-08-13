@@ -162,7 +162,6 @@ from atlaso.app.services.vcf_backups import (
 from atlaso.app.services.vcf_offline_depot import validate_vcf_depot_state
 from atlaso.app.services.vcf_private_registry import (
     VCF_REGISTRY_UPLOADED_CA_BUNDLE_PATH,
-    VCF_REGISTRY_UPLOADED_CA_BUNDLE_PEM_KEY,
     validate_vcf_registry_state,
 )
 from atlaso.app.services.vsphere_key_providers import (
@@ -417,6 +416,33 @@ def _settings_rows(db: Session) -> list[dict[str, str]]:
     return [_row_to_dict(row) for row in rows]
 
 
+def _normalize_registry_uploaded_ca_handoff(
+    data: dict[str, list[dict[str, Any]]],
+    notes: list[str] | None = None,
+) -> None:
+    """Disable registries whose excluded uploaded CA bytes cannot be restored.
+
+    Args:
+        data: Current or migrated archive data collections.
+        notes: Optional operator-facing archive notes to extend.
+    """
+    ca_enabled = any(bool(row.get("enabled")) for row in data.get("ca_settings", []))
+    normalized = False
+    for registry_settings in data.get("vcf_private_registry_settings", []):
+        if (
+            registry_settings.get("enabled") is True
+            and not ca_enabled
+            and str(registry_settings.get("ca_bundle_path") or "")
+            == VCF_REGISTRY_UPLOADED_CA_BUNDLE_PATH
+        ):
+            registry_settings["enabled"] = False
+            normalized = True
+    if normalized and notes is not None:
+        notes.append(
+            "VCF Private Registry was exported disabled because uploaded CA bundle bytes are not included; upload the bundle again before re-enabling it."
+        )
+
+
 def export_settings_archive(db: Session, *, actor: str) -> dict[str, Any]:
     """Serialize settings archive.
 
@@ -448,24 +474,7 @@ def export_settings_archive(db: Session, *, actor: str) -> dict[str, Any]:
         rows = db.execute(select(model)).scalars().all()
         data[key] = [_row_to_dict(row) for row in rows]
 
-    uploaded_registry_ca_pem = db.scalar(
-        select(Setting.value).where(
-            Setting.key == VCF_REGISTRY_UPLOADED_CA_BUNDLE_PEM_KEY
-        )
-    )
-    ca_enabled = any(bool(row.get("enabled")) for row in data["ca_settings"])
-    for registry_settings in data["vcf_private_registry_settings"]:
-        if (
-            registry_settings.get("enabled") is True
-            and not ca_enabled
-            and str(registry_settings.get("ca_bundle_path") or "")
-            == VCF_REGISTRY_UPLOADED_CA_BUNDLE_PATH
-            and bool((uploaded_registry_ca_pem or "").strip())
-        ):
-            registry_settings["enabled"] = False
-            payload["notes"].append(
-                "VCF Private Registry was exported disabled because uploaded CA bundle bytes are not included; upload the bundle again before re-enabling it."
-            )
+    _normalize_registry_uploaded_ca_handoff(data, payload["notes"])
 
     data["routes"] = _routes_to_archive(db)
     data["dhcp_options"] = _dhcp_options_to_archive(db)
@@ -1227,6 +1236,10 @@ def _prepare_archive_for_restore(db: Session, archive: dict[str, Any]) -> dict[s
             if isinstance(row, dict):
                 row["enabled"] = False
                 row["password_status"] = "not_staged"
+    _normalize_registry_uploaded_ca_handoff(
+        prepared["data"],
+        prepared.get("notes") if isinstance(prepared.get("notes"), list) else None,
+    )
     prepared["schema_version"] = ARCHIVE_SCHEMA_VERSION
     return prepared
 
@@ -2256,6 +2269,7 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
                 f"The settings archive row {row_index} in 'vsphere_key_providers' has an invalid provider ID: {exc}"
             ) from exc
     provider_ids: set[str] = set()
+    provider_names: set[str] = set()
     archived_providers: dict[str, VsphereKeyProvider] = {}
     for row_index, row in enumerate(data.get("vsphere_key_providers", []), start=1):
         provider_id = str(row["id"])
@@ -2263,14 +2277,21 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
             raise ValueError(
                 f"The settings archive row {row_index} in 'vsphere_key_providers' duplicates a provider ID."
             )
+        provider_name = str(row["name"])
+        if provider_name in provider_names:
+            raise ValueError(
+                f"The settings archive row {row_index} in 'vsphere_key_providers' duplicates a provider name."
+            )
         provider_ids.add(provider_id)
+        provider_names.add(provider_name)
         archived_providers[provider_id] = VsphereKeyProvider(
             id=provider_id,
-            name=str(row["name"]),
+            name=provider_name,
             description=str(row.get("description") or ""),
             enabled=bool(row.get("enabled", False)),
         )
     trusted_vcenter_ids: set[str] = set()
+    trusted_vcenter_names: set[tuple[str, str]] = set()
     archived_vcenters: dict[str, VsphereTrustedVcenter] = {}
     for row_index, row in enumerate(data.get("vsphere_trusted_vcenters", []), start=1):
         if "enabled" in row and not isinstance(row["enabled"], bool):
@@ -2289,12 +2310,18 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
             raise ValueError(
                 f"The settings archive row {row_index} in 'vsphere_trusted_vcenters' duplicates a trusted vCenter ID."
             )
+        trusted_vcenter_name = (str(row["provider_id"]), str(row["name"]))
+        if trusted_vcenter_name in trusted_vcenter_names:
+            raise ValueError(
+                f"The settings archive row {row_index} in 'vsphere_trusted_vcenters' duplicates a trusted vCenter name within its provider."
+            )
         trusted_vcenter_ids.add(trusted_vcenter_id)
+        trusted_vcenter_names.add(trusted_vcenter_name)
         provider = archived_providers[str(row["provider_id"])]
         trusted_vcenter = VsphereTrustedVcenter(
             id=trusted_vcenter_id,
             provider_id=provider.id,
-            name=str(row["name"]),
+            name=trusted_vcenter_name[1],
             hostname=str(row.get("hostname") or ""),
             description=str(row.get("description") or ""),
             enabled=bool(row.get("enabled", False)),
@@ -2582,8 +2609,24 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
             raise ValueError(
                 f"The settings archive OIDC client {client_id} configuration is invalid: {exc}"
             ) from exc
+    oidc_subject_uuids: set[str] = set()
+    oidc_subject_sources: set[tuple[str, str, str]] = set()
     for row_index, row in enumerate(data.get("oidc_subjects", []), start=1):
         source = str(row["source"] or "")
+        subject_uuid = str(row["subject_uuid"])
+        if subject_uuid in oidc_subject_uuids:
+            raise ValueError(
+                f"The settings archive row {row_index} in 'oidc_subjects' duplicates a subject UUID."
+            )
+        source_identity = (
+            source,
+            str(row.get("organization_slug") or "") if source == "managed_ldap" else "",
+            str(row["username"]),
+        )
+        if source_identity in oidc_subject_sources:
+            raise ValueError(
+                f"The settings archive row {row_index} in 'oidc_subjects' duplicates an identity source."
+            )
         if source == "managed_ldap":
             require_reference(
                 "oidc_subjects",
@@ -2596,6 +2639,8 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
             raise ValueError(
                 f"The settings archive row {row_index} in 'oidc_subjects' has an unsupported identity source."
             )
+        oidc_subject_uuids.add(subject_uuid)
+        oidc_subject_sources.add(source_identity)
     oidc_mapping_identities: set[tuple[str, ...]] = set()
     for row_index, row in enumerate(data.get("oidc_group_mappings", []), start=1):
         source_type = str(row["source_type"] or "")

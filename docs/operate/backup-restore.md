@@ -58,7 +58,8 @@ recovery material.
 Current exports use settings-archive schema v2, which requires the complete section inventory. Atlaso continues to
 accept schema-v1 archives: sections that did not exist when an older archive was created are retained from the target
 appliance during migration to v2, then the complete migrated archive receives the same preflight validation before any
-desired state is removed.
+desired state is removed. Migration also disables a legacy VCF Private Registry configuration that depended on omitted
+uploaded CA bundle bytes, preserving the same explicit re-upload and review handoff as a current export.
 
 Verify identity, DNS, service configuration, and recent tasks after recovery. Restore changes Atlaso state; host
 services are enforced only through their documented workflows.
