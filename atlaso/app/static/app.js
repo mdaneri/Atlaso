@@ -12497,7 +12497,7 @@ function initializeVcfDepotProfilesTable() {
           const data = row.getData();
           return data.is_new || !data.enabled;
         },
-        action: (event, row) => scheduleVcfDepotProfileDownload(row, event?.target),
+        action: (_event, row) => scheduleVcfDepotProfileDownload(row, row.getElement()),
       },
     ],
     deleteConfirmation: (data) => ({
@@ -12808,7 +12808,10 @@ function applyTasksStatusPayload(payload, { reopen = false } = {}) {
     : atlasoTasks;
   updateApplianceUpdateActions(actionTasks);
   window.clearTimeout(atlasoTasksRefreshTimer);
-  if (atlasoTasks.some((task) => taskStatusActive(task.status))) {
+  if (
+    atlasoTasks.some((task) => taskStatusActive(task.status))
+    || taskStatusActive(payload.active_exclusive_operation?.status)
+  ) {
     atlasoTasksRefreshTimer = window.setTimeout(() => refreshTasksPage().catch(() => {}), 2000);
   }
   document.dispatchEvent(new CustomEvent("atlaso:tasks-refreshed", {

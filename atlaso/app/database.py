@@ -134,11 +134,22 @@ def _reconcile_vcf_depot_job_queue(connection: Connection) -> None:
 
     running_operations = connection.execute(
         text(
-            "SELECT id FROM jobs WHERE vcf_depot_operation = TRUE "
+            "SELECT id, type FROM jobs WHERE vcf_depot_operation = TRUE "
             "AND status = 'running' ORDER BY started_at, created_at, id"
         )
-    ).scalars().all()
-    for interrupted_job_id in running_operations[1:]:
+    ).all()
+    running_identity_count = sum(
+        1 for _job_id, job_type in running_operations if job_type == "vcf-depot-software-id"
+    )
+    retained_non_identity = False
+    remaining_running_operations = running_identity_count
+    for interrupted_job_id, job_type in running_operations:
+        if job_type == "vcf-depot-software-id":
+            continue
+        if not running_identity_count and not retained_non_identity:
+            retained_non_identity = True
+            remaining_running_operations += 1
+            continue
         connection.execute(
             text(
                 "UPDATE jobs SET status = 'failed', progress_percent = 100, "
@@ -151,6 +162,7 @@ def _reconcile_vcf_depot_job_queue(connection: Connection) -> None:
 
     connection.execute(text("DROP INDEX IF EXISTS uq_jobs_active_vcf_depot_download"))
     connection.execute(text("DROP INDEX IF EXISTS uq_jobs_active_vcf_depot_operation"))
+    connection.execute(text("DROP INDEX IF EXISTS uq_jobs_running_vcf_depot_operation"))
     connection.execute(
         text(
             "CREATE UNIQUE INDEX IF NOT EXISTS uq_jobs_active_vcf_depot_profile "
@@ -160,6 +172,16 @@ def _reconcile_vcf_depot_job_queue(connection: Connection) -> None:
             "AND status IN ('pending', 'running')"
         )
     )
+    if remaining_running_operations <= 1:
+        _create_vcf_depot_running_operation_index(connection)
+
+
+def _create_vcf_depot_running_operation_index(connection: Connection) -> None:
+    """Create the single-running-VCFDT-operation database guard.
+
+    Args:
+        connection: Transactional database connection used to create the index.
+    """
     connection.execute(
         text(
             "CREATE UNIQUE INDEX IF NOT EXISTS uq_jobs_running_vcf_depot_operation "
@@ -167,6 +189,31 @@ def _reconcile_vcf_depot_job_queue(connection: Connection) -> None:
             "WHERE vcf_depot_operation = TRUE AND status = 'running'"
         )
     )
+
+
+def ensure_vcf_depot_running_operation_index(bind: Engine = engine) -> bool:
+    """Create the runtime guard after type-specific startup recovery finishes.
+
+    Args:
+        bind: Database engine whose VCFDT operation guard should be ensured.
+
+    Returns:
+        True when the guard exists, or False while multiple recovery tasks remain running.
+    """
+    with bind.begin() as connection:
+        running_count = int(
+            connection.execute(
+                text(
+                    "SELECT COUNT(*) FROM jobs WHERE vcf_depot_operation = TRUE "
+                    "AND status = 'running'"
+                )
+            ).scalar_one()
+            or 0
+        )
+        if running_count > 1:
+            return False
+        _create_vcf_depot_running_operation_index(connection)
+    return True
 
 
 @event.listens_for(Session, "before_flush")

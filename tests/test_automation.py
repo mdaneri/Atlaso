@@ -1082,6 +1082,57 @@ def test_vcf_queue_schema_reconciliation_is_portable_to_postgresql(monkeypatch):
     assert "instr(" not in sql
 
 
+def test_vcf_queue_reconciliation_preserves_identity_tasks_for_type_specific_recovery():
+    """Verify database startup leaves running identity tasks for canonical readback."""
+    from sqlalchemy import create_engine, text
+
+    import atlaso.app.database as database
+
+    test_engine = create_engine("sqlite://")
+    with test_engine.begin() as connection:
+        connection.execute(
+            text(
+                "CREATE TABLE jobs ("
+                "id TEXT PRIMARY KEY, type TEXT NOT NULL, status TEXT NOT NULL, "
+                "vcf_depot_operation BOOLEAN NOT NULL DEFAULT FALSE, "
+                "vcf_depot_profile_id INTEGER, task_config_json TEXT, result TEXT, "
+                "created_at TEXT, started_at TEXT, progress_percent INTEGER, "
+                "finished_at TEXT, error TEXT)"
+            )
+        )
+        for job_id, job_type in (
+            ("job_identity_first", "vcf-depot-software-id"),
+            ("job_download", "vcf-depot-download"),
+            ("job_identity_second", "vcf-depot-software-id"),
+        ):
+            connection.execute(
+                text(
+                    "INSERT INTO jobs "
+                    "(id, type, status, vcf_depot_operation, created_at, started_at) "
+                    "VALUES (:job_id, :job_type, 'running', TRUE, :job_id, :job_id)"
+                ),
+                {"job_id": job_id, "job_type": job_type},
+            )
+
+        database._reconcile_vcf_depot_job_queue(connection)
+        statuses = dict(connection.execute(text("SELECT id, status FROM jobs")).all())
+        indexes = {row[1] for row in connection.execute(text("PRAGMA index_list('jobs')")).all()}
+
+    assert statuses["job_identity_first"] == "running"
+    assert statuses["job_identity_second"] == "running"
+    assert statuses["job_download"] == "failed"
+    assert "uq_jobs_running_vcf_depot_operation" not in indexes
+
+    with test_engine.begin() as connection:
+        connection.execute(
+            text("UPDATE jobs SET status = 'failed' WHERE type = 'vcf-depot-software-id'")
+        )
+    assert database.ensure_vcf_depot_running_operation_index(test_engine) is True
+    with test_engine.connect() as connection:
+        indexes = {row[1] for row in connection.execute(text("PRAGMA index_list('jobs')")).all()}
+    assert "uq_jobs_running_vcf_depot_operation" in indexes
+
+
 def test_due_vcf_schedule_records_software_id_collision_as_skipped(client):
     """Verify that due vcf schedule records software id collision as skipped.
 

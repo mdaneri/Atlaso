@@ -16,7 +16,11 @@ from sqlalchemy.orm import Session
 
 from atlaso.app.adapters.system import SystemAdapter
 from atlaso.app.config import get_settings
-from atlaso.app.database import SessionLocal, init_db
+from atlaso.app.database import (
+    SessionLocal,
+    ensure_vcf_depot_running_operation_index,
+    init_db,
+)
 from atlaso.app.models import (
     AuditEvent,
     AutomationScriptRevision,
@@ -818,6 +822,8 @@ def main() -> int:
         recovered = recover_interrupted_worker_jobs(db)
         if recovered:
             LOGGER.warning("Marked %s interrupted worker jobs failed", recovered)
+    if not ensure_vcf_depot_running_operation_index():
+        LOGGER.warning("Deferred the VCFDT runtime guard until identity-task startup recovery completes")
     LOGGER.info("Atlaso worker started")
     while not _stop_requested:
         handled = run_worker_once()

@@ -217,6 +217,13 @@ test("VCFDT schedule action opens the selected profile in the in-page wizard", (
   assert.equal(errors.at(-1), "Enable the VCFDT download profile before scheduling it.");
 });
 
+test("VCFDT schedule context action uses the persistent profile row as launcher", () => {
+  assert.match(
+    appSource,
+    /action: \(_event, row\) => scheduleVcfDepotProfileDownload\(row, row\.getElement\(\)\)/,
+  );
+});
+
 test("VCFDT task refresh preserves an exclusive-operation blocker", () => {
   const updates = [];
   const row = {
