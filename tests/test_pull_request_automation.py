@@ -68,6 +68,7 @@ def test_packer_ci_authenticates_plugins_without_exposing_fork_tokens() -> None:
 
     assert "permissions:\n      contents: read" in packer_job
     assert "persist-credentials: false" in packer_job
+    assert workflow.count("PACKER_GITHUB_API_TOKEN") == 1
     assert "PACKER_GITHUB_API_TOKEN" not in job_preamble
     assert (
         "if: github.event_name != 'pull_request' || "
