@@ -59,7 +59,8 @@ factory reset intentionally clears that staged LDAP recovery material.
 
 OIDC group mappings are preflighted in their effective global, client, and managed-LDAP organization contexts. A
 client-specific mapping may replace the global mapping for the same source, but effective external group names must
-remain unique case-insensitively within every context before current desired state is removed.
+remain unique case-insensitively within every context before current desired state is removed. Mapping source fields and
+external group names must be supplied as JSON strings rather than values that require scalar coercion.
 
 Restored vSphere Key Provider and trusted-vCenter identities must use canonical UUIDs so every retained record remains
 addressable through the management UI and API after restore.

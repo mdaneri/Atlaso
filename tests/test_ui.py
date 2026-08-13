@@ -5842,6 +5842,17 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
             "external_group_name": "Atlaso admins",
         },
     ]
+    invalid_oidc_mapping_scalar = deepcopy(archive)
+    invalid_oidc_mapping_scalar["data"]["oidc_group_mappings"].append(
+        {
+            "source_type": "local_role",
+            "local_role": "admin",
+            "ldap_group_name": "",
+            "organization_slug": "",
+            "client_id": "",
+            "external_group_name": True,
+        }
+    )
     effective_oidc_mapping_collision = deepcopy(archive)
     effective_oidc_mapping_collision["data"]["oidc_clients"].append(
         {
@@ -6566,6 +6577,7 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
         (invalid_oidc_subject_scalar, "subject_uuid field that must be a string"),
         (invalid_oidc_subject_uuid, "has an invalid subject UUID"),
         (duplicate_oidc_mapping, "duplicates an OIDC group mapping identity"),
+        (invalid_oidc_mapping_scalar, "external_group_name field that must be a string"),
         (
             effective_oidc_mapping_collision,
             "Effective external group names must be unique case-insensitively",

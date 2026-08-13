@@ -3143,6 +3143,18 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
         oidc_subject_sources.add(source_identity)
     oidc_mapping_identities: set[tuple[str, ...]] = set()
     for row_index, row in enumerate(data.get("oidc_group_mappings", []), start=1):
+        for field_name in (
+            "source_type",
+            "local_role",
+            "ldap_group_name",
+            "organization_slug",
+            "client_id",
+            "external_group_name",
+        ):
+            if field_name in row and not isinstance(row[field_name], str):
+                raise ValueError(
+                    f"The settings archive row {row_index} in 'oidc_group_mappings' has a {field_name} field that must be a string."
+                )
         source_type = str(row["source_type"] or "")
         client_id = str(row.get("client_id") or "")
         client_organization = oidc_client_organizations.get(client_id, "")
