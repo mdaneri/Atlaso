@@ -23,8 +23,10 @@ SYSTEMD_DIRECTORIES = (
     Path("image/vmware-workstation/systemd"),
 )
 SYSTEMD_ASSETS = (
+    Path("image/common/systemd/atlaso-bootstrap-https.service"),
     Path("image/common/systemd/atlaso-console-manager.conf"),
     Path("image/common/systemd/atlaso-console.service"),
+    Path("image/common/systemd/atlaso-data-disks.service"),
     Path("image/common/systemd/atlaso-worker.service"),
     Path("image/common/systemd/nginx-atlaso-data-disks.conf"),
     Path("image/hyperv/systemd/atlaso.service"),

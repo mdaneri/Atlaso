@@ -207,15 +207,19 @@ web/worker/console modules, and validates the installed entry points. `/opt/atla
 release, while `/opt/atlaso/.venv` points through `current` to its virtual environment.
 
 Before switching, the helper enables the nginx maintenance response, pauses the web and console services, closes the
-worker's database session, and creates a consistent SQLite backup. It atomically changes `current`, installs the
-matching privileged helper and systemd definitions, starts the application, and probes internal `/openapi.json`.
+worker's database session, and creates a consistent SQLite backup. It installs the matching privileged helper, systemd
+definitions, nginx data-disk dependency, stable disk-identity rule, and platform-specific data-disk policy. The
+transaction reloads the identity rule and runs the release-owned data-disk preflight before it atomically changes
+`current`, starts the application, and probes internal `/openapi.json`. Unknown or contradictory platform evidence,
+an unsafe disk, or a missing release-owned safety asset fails the update and restores the prior files.
 
-Any failure restores the previous release link, helper/systemd files, and database snapshot before maintenance mode is
-removed. A root-owned finalizer at `/var/lib/atlaso/apply/appliance-update/finalizer-status.json` records the definitive
-transaction result so the worker can persist the durable task outcome. Without a matching definitive finalizer, worker
-startup marks an interrupted running parent failed even when every child step committed before the restart; child
-results remain available as recovery evidence. Only the current and previous known-good releases are retained; the UI
-does not expose arbitrary historical downgrades.
+Any failure restores the previous release link, helper, service, disk-safety files, and database snapshot before
+maintenance mode is removed. A root-owned finalizer at
+`/var/lib/atlaso/apply/appliance-update/finalizer-status.json` records the definitive transaction result so the worker
+can persist the durable task outcome. Without a matching definitive finalizer, worker startup marks an interrupted
+running parent failed even when every child step committed before the restart; child results remain available as
+recovery evidence. Only the current and previous known-good releases are retained; the UI does not expose arbitrary
+historical downgrades.
 
 ## Photon OS boundary
 

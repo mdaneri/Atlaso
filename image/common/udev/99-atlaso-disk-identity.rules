@@ -1,0 +1,4 @@
+# Preserve a stable controller-path identity under /dev/disk/by-id for every
+# virtual disk so first boot can bind destructive initialization to an exact
+# hypervisor slot instead of a transient /dev/sdX name.
+SUBSYSTEM=="block", ENV{DEVTYPE}=="disk", IMPORT{builtin}="path_id", ENV{ID_PATH_TAG}=="?*", SYMLINK+="disk/by-id/atlaso-path-$env{ID_PATH_TAG}"

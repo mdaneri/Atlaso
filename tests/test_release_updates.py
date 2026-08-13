@@ -789,6 +789,130 @@ def test_deterministic_release_archive_normalizes_metadata(tmp_path):
     assert hashlib.sha256(first.read_bytes()).digest() == hashlib.sha256(second.read_bytes()).digest()
 
 
+def test_release_bundle_carries_transactional_data_disk_safety_assets():
+    """Verify that signed release bundles carry every runtime disk-safety asset."""
+    spec = importlib.util.spec_from_file_location("build_release_bundle", ROOT / "scripts/build_release_bundle.py")
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    destinations = {destination.as_posix() for _source, destination in module.RELEASE_OWNED_ASSETS}
+    assert {
+        "bin/atlaso-mount-data-disks",
+        "data-disks/hyperv.conf",
+        "data-disks/vmware.conf",
+        "systemd/atlaso-bootstrap-https.service",
+        "systemd/atlaso-data-disks.service",
+        "systemd/nginx.service.d/atlaso-data-disks.conf",
+        "udev/99-atlaso-disk-identity.rules",
+    } <= destinations
+
+
+@pytest.mark.parametrize(
+    ("vendor", "product", "expected"),
+    [
+        ("Microsoft Corporation", "Virtual Machine", "hyperv"),
+        ("VMware, Inc.", "VMware Virtual Platform", "vmware"),
+    ],
+)
+def test_release_data_disk_platform_uses_exact_virtualization_evidence(
+    monkeypatch,
+    tmp_path,
+    vendor,
+    product,
+    expected,
+):
+    """Verify that upgrades select only the matching signed disk policy.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+        vendor: DMI system vendor supplied to the test scenario.
+        product: DMI product name supplied to the test scenario.
+        expected: Expected platform policy name.
+    """
+    from tests.test_appliance_update import load_helper_module
+
+    helper = load_helper_module()
+    vendor_path = tmp_path / "sys_vendor"
+    product_path = tmp_path / "product_name"
+    vendor_path.write_text(vendor, encoding="utf-8")
+    product_path.write_text(product, encoding="utf-8")
+    monkeypatch.setattr(helper, "ATLASO_DMI_SYS_VENDOR_PATH", vendor_path)
+    monkeypatch.setattr(helper, "ATLASO_DMI_PRODUCT_NAME_PATH", product_path)
+    monkeypatch.setattr(helper, "ATLASO_DATA_DISK_POLICY_PATH", tmp_path / "missing-policy")
+    monkeypatch.setattr(helper, "ATLASO_VMWARE_OVF_UNIT_PATH", tmp_path / "missing-vmware-unit")
+    monkeypatch.setattr(helper, "ATLASO_HYPERV_GENERATOR_PATH", tmp_path / "missing-generator")
+
+    assert helper._release_data_disk_platform() == expected
+
+
+def test_release_data_disk_platform_rejects_conflicting_evidence(monkeypatch, tmp_path):
+    """Verify that upgrades fail closed when platform evidence conflicts.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    from tests.test_appliance_update import load_helper_module
+
+    helper = load_helper_module()
+    vendor_path = tmp_path / "sys_vendor"
+    product_path = tmp_path / "product_name"
+    vmware_unit = tmp_path / "atlaso-vmware-ovf-customize.service"
+    vendor_path.write_text("Microsoft Corporation", encoding="utf-8")
+    product_path.write_text("Virtual Machine", encoding="utf-8")
+    vmware_unit.write_text("[Unit]\n", encoding="utf-8")
+    monkeypatch.setattr(helper, "ATLASO_DMI_SYS_VENDOR_PATH", vendor_path)
+    monkeypatch.setattr(helper, "ATLASO_DMI_PRODUCT_NAME_PATH", product_path)
+    monkeypatch.setattr(helper, "ATLASO_DATA_DISK_POLICY_PATH", tmp_path / "missing-policy")
+    monkeypatch.setattr(helper, "ATLASO_VMWARE_OVF_UNIT_PATH", vmware_unit)
+    monkeypatch.setattr(helper, "ATLASO_HYPERV_GENERATOR_PATH", tmp_path / "missing-generator")
+
+    with pytest.raises(ValueError, match="hyperv, vmware"):
+        helper._release_data_disk_platform()
+
+
+def test_release_data_disk_refresh_settles_before_preflight(monkeypatch):
+    """Verify that upgrade-created stable identities settle before validation.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+    """
+    from tests.test_appliance_update import load_helper_module
+
+    helper = load_helper_module()
+    captured: list[list[str]] = []
+
+    def command_payload(command):
+        """Return a successful command result while retaining order.
+
+        Args:
+            command: Command and arguments supplied by the helper.
+        """
+        captured.append(command)
+        return {
+            "command": command,
+            "returncode": 0,
+            "success": True,
+            "stdout": "",
+            "stderr": "",
+        }
+
+    monkeypatch.setattr(helper, "_command_path", lambda name: f"/usr/bin/{name}")
+    monkeypatch.setattr(helper, "_command_payload", command_payload)
+
+    results = helper._refresh_release_data_disk_identity(validate=True)
+
+    assert all(result["success"] for result in results)
+    assert captured == [
+        ["/usr/bin/udevadm", "control", "--reload-rules"],
+        ["/usr/bin/udevadm", "trigger", "--subsystem-match=block", "--action=add"],
+        ["/usr/bin/udevadm", "settle"],
+        ["/opt/atlaso/bin/atlaso-mount-data-disks"],
+    ]
+
+
 def test_abi_wheelhouse_lock_covers_exact_checked_in_versions(monkeypatch, tmp_path):
     """Verify that abi wheelhouse lock covers exact checked in versions.
 
@@ -1279,6 +1403,19 @@ def test_failed_candidate_restores_previous_release_and_database(monkeypatch, tm
 
     monkeypatch.setattr(helper, "_install_release_venv", install_venv)
     monkeypatch.setattr(helper, "_install_release_owned_files", lambda *_args: [])
+    monkeypatch.setattr(
+        helper,
+        "_refresh_release_data_disk_identity",
+        lambda **_kwargs: [
+            {
+                "command": ["data-disk-preflight"],
+                "returncode": 0,
+                "success": True,
+                "stdout": "",
+                "stderr": "",
+            }
+        ],
+    )
     migration_injected = False
 
     def service_command(action, *units):

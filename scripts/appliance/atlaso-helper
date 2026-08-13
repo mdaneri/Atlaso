@@ -172,6 +172,11 @@ SYSTEMD_NETWORK_LEASE_DIR = Path("/run/systemd/netif/leases")
 ATLASO_UPDATE_FINALIZER_PATH = ATLASO_STATE_DIR / "apply/appliance-update/finalizer-status.json"
 ATLASO_UPDATE_MAINTENANCE_PATH = Path("/run/atlaso-update-maintenance")
 ATLASO_POWERSHELL_HOME = ATLASO_STATE_DIR / "powershell"
+ATLASO_DATA_DISK_POLICY_PATH = Path("/etc/atlaso/data-disks.conf")
+ATLASO_VMWARE_OVF_UNIT_PATH = Path("/etc/systemd/system/atlaso-vmware-ovf-customize.service")
+ATLASO_HYPERV_GENERATOR_PATH = Path("/etc/systemd/system-generators/systemd-ssh-generator")
+ATLASO_DMI_SYS_VENDOR_PATH = Path("/sys/class/dmi/id/sys_vendor")
+ATLASO_DMI_PRODUCT_NAME_PATH = Path("/sys/class/dmi/id/product_name")
 SUPPORTED_RELEASE_PYTHON_ABIS = {"cp314"}
 CONSOLE_STATE_DIR = ATLASO_STATE_DIR / "console"
 CONSOLE_SERVICE_STATE_PATH = CONSOLE_STATE_DIR / "services.json"
@@ -10720,6 +10725,50 @@ def _wait_for_atlaso_health(timeout_seconds: int = 60) -> dict:
     }
 
 
+def _release_data_disk_platform() -> str:
+    """Return the existing appliance platform for its signed data-disk policy.
+
+    Raises:
+        ValueError: If the appliance platform is unknown or contradictory.
+    """
+    evidence: set[str] = set()
+    if ATLASO_VMWARE_OVF_UNIT_PATH.is_file():
+        evidence.add("vmware")
+    if ATLASO_HYPERV_GENERATOR_PATH.is_symlink():
+        try:
+            if os.readlink(ATLASO_HYPERV_GENERATOR_PATH) == "/dev/null":
+                evidence.add("hyperv")
+        except OSError:
+            pass
+
+    if ATLASO_DATA_DISK_POLICY_PATH.is_file():
+        policy = ATLASO_DATA_DISK_POLICY_PATH.read_text(encoding="utf-8")
+        if "ATLASO_DEPOT_SCSI_TUPLE=0:2:0" in policy and "ATLASO_BACKUP_SCSI_TUPLE=0:3:0" in policy:
+            evidence.add("vmware")
+        if "ATLASO_DEPOT_SCSI_TUPLE=0:0:1" in policy and "ATLASO_BACKUP_SCSI_TUPLE=0:0:2" in policy:
+            evidence.add("hyperv")
+
+    vendor = (
+        ATLASO_DMI_SYS_VENDOR_PATH.read_text(encoding="utf-8").strip().casefold()
+        if ATLASO_DMI_SYS_VENDOR_PATH.is_file()
+        else ""
+    )
+    product = (
+        ATLASO_DMI_PRODUCT_NAME_PATH.read_text(encoding="utf-8").strip().casefold()
+        if ATLASO_DMI_PRODUCT_NAME_PATH.is_file()
+        else ""
+    )
+    if "vmware" in vendor or "vmware" in product:
+        evidence.add("vmware")
+    if "microsoft" in vendor and product == "virtual machine":
+        evidence.add("hyperv")
+
+    if len(evidence) != 1:
+        detail = ", ".join(sorted(evidence)) or "none"
+        raise ValueError(f"Atlaso release cannot select a platform data-disk policy from evidence: {detail}")
+    return evidence.pop()
+
+
 def _install_release_owned_files(release_root: Path, backup_root: Path) -> list[tuple[Path | None, Path]]:
     """Perform install release owned files.
 
@@ -10727,12 +10776,43 @@ def _install_release_owned_files(release_root: Path, backup_root: Path) -> list[
         release_root: Filesystem path associated with release root.
         backup_root: Filesystem path associated with backup root.
     """
+    data_disk_platform = _release_data_disk_platform()
     owned = [
         (release_root / "bin/atlaso-helper", Path("/opt/atlaso/bin/atlaso-helper"), 0o755),
+        (
+            release_root / "bin/atlaso-mount-data-disks",
+            Path("/opt/atlaso/bin/atlaso-mount-data-disks"),
+            0o755,
+        ),
         (release_root / "THIRD_PARTY_NOTICES.md", ATLASO_NOTICE_PATH, 0o644),
         (release_root / "systemd/atlaso.service", Path("/etc/systemd/system/atlaso.service"), 0o644),
         (release_root / "systemd/atlaso-worker.service", Path("/etc/systemd/system/atlaso-worker.service"), 0o644),
         (release_root / "systemd/atlaso-console.service", Path("/etc/systemd/system/atlaso-console.service"), 0o644),
+        (
+            release_root / "systemd/atlaso-data-disks.service",
+            Path("/etc/systemd/system/atlaso-data-disks.service"),
+            0o644,
+        ),
+        (
+            release_root / "systemd/atlaso-bootstrap-https.service",
+            Path("/etc/systemd/system/atlaso-bootstrap-https.service"),
+            0o644,
+        ),
+        (
+            release_root / "systemd/nginx.service.d/atlaso-data-disks.conf",
+            Path("/etc/systemd/system/nginx.service.d/atlaso-data-disks.conf"),
+            0o644,
+        ),
+        (
+            release_root / "udev/99-atlaso-disk-identity.rules",
+            Path("/etc/udev/rules.d/99-atlaso-disk-identity.rules"),
+            0o644,
+        ),
+        (
+            release_root / f"data-disks/{data_disk_platform}.conf",
+            ATLASO_DATA_DISK_POLICY_PATH,
+            0o644,
+        ),
     ]
     trust = release_root / "trust"
     if trust.is_dir():
@@ -10781,6 +10861,24 @@ def _restore_release_owned_files(backups: list[tuple[Path | None, Path]]) -> Non
             destination.unlink(missing_ok=True)
         else:
             shutil.copy2(backup, destination)
+
+
+def _refresh_release_data_disk_identity(*, validate: bool) -> list[dict]:
+    """Reload disk identity rules and optionally validate the installed policy.
+
+    Args:
+        validate: Whether to run the release-owned data-disk preflight.
+    """
+    udevadm = _command_path("udevadm") or "udevadm"
+    commands = [
+        _command_payload([udevadm, "control", "--reload-rules"]),
+        _command_payload([udevadm, "trigger", "--subsystem-match=block", "--action=add"]),
+    ]
+    if all(command["success"] for command in commands):
+        commands.append(_command_payload([udevadm, "settle"]))
+    if validate and all(command["success"] for command in commands):
+        commands.append(_command_payload(["/opt/atlaso/bin/atlaso-mount-data-disks"]))
+    return commands
 
 
 def _set_release_maintenance(enabled: bool) -> dict:
@@ -10967,6 +11065,10 @@ def _apply_atlaso_release(
         _sqlite_backup(database_backup)
         database_backed_up = True
         file_backups = _install_release_owned_files(release_root, backup_root)
+        disk_identity_commands = _refresh_release_data_disk_identity(validate=True)
+        commands.extend(disk_identity_commands)
+        if not all(command["success"] for command in disk_identity_commands):
+            raise ValueError("Candidate Atlaso release failed data-disk policy validation")
         _atomic_symlink(release_root, ATLASO_CURRENT_LINK)
         commands.append(_service_command("daemon-reload"))
         commands.append(_service_command("start", "atlaso.service"))
@@ -10992,6 +11094,7 @@ def _apply_atlaso_release(
         if database_backed_up:
             _restore_sqlite_backup(database_backup)
         _restore_release_owned_files(file_backups)
+        _refresh_release_data_disk_identity(validate=False)
         _service_command("daemon-reload")
         _service_command("start", "atlaso.service", "atlaso-console.service")
         rollback_health = _wait_for_atlaso_health()

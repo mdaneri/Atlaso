@@ -1,0 +1,16 @@
+[Unit]
+Description=Bootstrap Atlaso first-boot HTTPS front door
+After=network-online.target atlaso-data-disks.service atlaso-vmware-ovf-customize.service
+Wants=network-online.target
+Requires=atlaso-data-disks.service
+Before=nginx.service atlaso.service
+ConditionPathExists=!/var/lib/atlaso/first-boot-https.applied
+
+[Service]
+Type=oneshot
+EnvironmentFile=/etc/atlaso/atlaso.env
+ExecStart=/opt/atlaso/.venv/bin/python /opt/atlaso/bin/atlaso-bootstrap-https
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

@@ -50,6 +50,10 @@ function Ensure-DataDisk {
     }
 
     if (Test-Path -LiteralPath $Path) {
+        $existingDisk = Get-VHD -Path $Path
+        if ([int64]$existingDisk.Size -ne $SizeBytes) {
+            throw "$Label data disk must expose exactly $SizeBytes bytes, but '$Path' exposes $($existingDisk.Size) bytes."
+        }
         Write-Host "$Label data disk already exists: $Path"
         return
     }
