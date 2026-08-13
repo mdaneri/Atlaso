@@ -6036,6 +6036,12 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
             "publish_until": "2026-08-13T06:10:00+00:00",
         }
     )
+    disabled_oidc_with_non_ascii_key = deepcopy(
+        disabled_oidc_with_invalid_retired_key
+    )
+    disabled_oidc_with_non_ascii_key["data"]["oidc_signing_keys"][0][
+        "private_key_encrypted"
+    ] = "fernet:v1:\u00e9"
     enabled_oidc_with_extra_active_key = deepcopy(enabled_oidc_with_invalid_crypto)
     enabled_oidc_with_extra_active_key["data"]["oidc_signing_keys"].append(
         {
@@ -6335,6 +6341,7 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
         (enabled_oidc_with_invalid_port, "has an invalid HTTPS port"),
         (enabled_oidc_with_invalid_crypto, "OIDC cryptographic state is invalid"),
         (disabled_oidc_with_invalid_retired_key, "OIDC cryptographic state is invalid"),
+        (disabled_oidc_with_non_ascii_key, "OIDC cryptographic state is invalid"),
         (enabled_oidc_with_extra_active_key, "has a noncanonical active slot"),
         (invalid_ca_private_key, "Certificate Authority key state is invalid"),
         (invalid_ca_storage_path, "CA storage path must stay under /etc/atlaso"),

@@ -46,6 +46,9 @@ runs the same protected inventory on its Windows Packer runner.
 Use the wrapper instead of raw `packer build`; it creates the remastered Photon ISO with `photon-ks.json` and the Atlaso
 GRUB auto-install entry. The original Photon source ISO is shared with the Hyper-V image path under
 `image/common/source`; only the target-specific remastered kickstart ISO is written under this image directory.
+`New-AtlasoPhotonKickstart` in `scripts/windows/common/Atlaso.PhotonImage.psm1` is the only kickstart source for both
+providers. The focused image tests invoke that generator, parse the VMware and Hyper-V JSON outputs, and validate their
+shared installer contract plus provider-specific packages and guest-service commands.
 Workstation builds show the VMware console by default so boot/install progress is visible; pass `-Headless` for
 unattended runs. The shared provisioner stages `pyproject.toml` with `scripts/version.py`, parses `[project].version` as
 TOML, and requires the repository's strict `X.Y.Z` release format before it creates
