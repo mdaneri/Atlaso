@@ -897,14 +897,31 @@ def validate_ca_private_key_material(
     root_certificate: x509.Certificate | None = None
     if settings.root_certificate_pem:
         try:
-            root_certificate = x509.load_pem_x509_certificate(
-                settings.root_certificate_pem.encode("utf-8")
-            )
+            root_pem = settings.root_certificate_pem.strip()
             if (
-                root_certificate.issuer != root_certificate.subject
-                or not certificate_signature_is_valid(root_certificate, root_certificate)
+                root_pem.count("-----BEGIN CERTIFICATE-----") != 1
+                or "PRIVATE KEY" in root_pem
             ):
                 raise ValueError
+            root_certificate = x509.load_pem_x509_certificate(
+                root_pem.encode("utf-8")
+            )
+            constraints = root_certificate.extensions.get_extension_for_class(
+                x509.BasicConstraints
+            ).value
+            canonical_pem = root_certificate.public_bytes(
+                serialization.Encoding.PEM
+            ).decode("utf-8").strip()
+            if (
+                not constraints.ca
+                or root_certificate.issuer != root_certificate.subject
+                or not certificate_signature_is_valid(root_certificate, root_certificate)
+                or root_pem != canonical_pem
+            ):
+                raise ValueError
+            if root_certificate.not_valid_after_utc <= datetime.now(timezone.utc):
+                errors.append("CA root certificate has expired.")
+                root_certificate = None
         except Exception:
             errors.append("CA root certificate is not a valid self-signed certificate.")
             root_certificate = None

@@ -1371,7 +1371,30 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
         ),
         "",
     )
-    firewall_source_groups = firewall_source_group_state(firewall_source_groups_json, {})["groups"]
+    try:
+        firewall_source_groups_payload = (
+            json.loads(firewall_source_groups_json)
+            if firewall_source_groups_json.strip()
+            else {}
+        )
+        if (
+            not isinstance(firewall_source_groups_payload, dict)
+            or not isinstance(firewall_source_groups_payload.get("groups", []), list)
+            or not isinstance(firewall_source_groups_payload.get("assignments", {}), dict)
+            or any(
+                not isinstance(group, dict)
+                for group in firewall_source_groups_payload.get("groups", [])
+            )
+        ):
+            raise ValueError
+        firewall_source_groups = firewall_source_group_state(
+            firewall_source_groups_json,
+            {},
+        )["groups"]
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            "The settings archive firewall source groups state is invalid."
+        ) from exc
     firewall_source_group_ids = {str(group.get("id") or "") for group in firewall_source_groups}
     for name, row in vlan_interfaces.items():
         parent = physical_interfaces.get(str(row.get("parent_interface") or ""))

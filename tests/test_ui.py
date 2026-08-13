@@ -5506,6 +5506,13 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
     unsupported_setting["data"]["settings"].append(
         {"key": "unsupported.setting", "value": "must-not-be-silently-dropped"}
     )
+    invalid_firewall_source_groups = deepcopy(archive)
+    invalid_firewall_source_groups["data"]["settings"].append(
+        {
+            "key": "firewall.managed_source_groups",
+            "value": '{"groups":null}',
+        }
+    )
 
     for candidate, message in [
         (invalid_collection, "must be a list"),
@@ -5591,6 +5598,7 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
         (invalid_update_schedule, "retired or unsupported stream"),
         (invalid_managed_package_source, "managed package state is invalid: Choose a PowerShell repository"),
         (unsupported_setting, "has an unsupported setting key"),
+        (invalid_firewall_source_groups, "firewall source groups state is invalid"),
     ]:
         with pytest.raises(ValueError, match=message):
             archive_summary(candidate)

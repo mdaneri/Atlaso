@@ -167,6 +167,53 @@ def test_ca_private_key_validation_rejects_leaf_from_another_root():
     assert "Certificate service.example.test chain does not match the restored CA root." in errors
 
 
+@pytest.mark.parametrize(
+    ("is_ca", "expired", "expected_error"),
+    [
+        (False, False, "CA root certificate is not a valid self-signed certificate."),
+        (True, True, "CA root certificate has expired."),
+    ],
+)
+def test_ca_private_key_validation_requires_current_ca_root(is_ca, expired, expected_error):
+    """Verify restored root material is a current certificate-authority certificate."""
+    from datetime import datetime, timedelta, timezone
+
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import rsa
+    from cryptography.x509.oid import NameOID
+
+    private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    subject = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "Archive root")])
+    now = datetime.now(timezone.utc)
+    not_valid_before = now - timedelta(days=30)
+    not_valid_after = now - timedelta(days=1) if expired else now + timedelta(days=30)
+    certificate = (
+        x509.CertificateBuilder()
+        .subject_name(subject)
+        .issuer_name(subject)
+        .public_key(private_key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(not_valid_before)
+        .not_valid_after(not_valid_after)
+        .add_extension(x509.BasicConstraints(ca=is_ca, path_length=None), critical=True)
+        .sign(private_key, hashes.SHA256())
+    )
+    settings = CaSettings(
+        enabled=True,
+        root_certificate_pem=certificate.public_bytes(serialization.Encoding.PEM).decode("ascii"),
+        root_private_key_encrypted=encrypt_secret(
+            private_key.private_bytes(
+                serialization.Encoding.PEM,
+                serialization.PrivateFormat.PKCS8,
+                serialization.NoEncryption(),
+            ).decode("ascii")
+        ),
+    )
+
+    assert expected_error in validate_ca_private_key_material(settings, [])
+
+
 def test_ca_certificate_row_capabilities_follow_lifecycle_and_ownership():
     """Verify that ca certificate row capabilities follow lifecycle and ownership."""
     planned = ca_certificate_to_dict(CaCertificate(common_name="planned.example.test", status="planned"))
