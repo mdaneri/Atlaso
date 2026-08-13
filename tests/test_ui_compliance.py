@@ -83,6 +83,24 @@ def test_ui_compliance_matrix_covers_every_stable_dialog():
         assert f"`{dialog_id}`" in matrix, dialog_id
 
 
+def test_ntp_ui_compliance_matrix_matches_capability_gated_nts_contract():
+    """Verify that the NTP matrix row preserves the conditional NTS safety contract."""
+    matrix = MATRIX.read_text(encoding="utf-8")
+    ntp_row = next(
+        line
+        for line in matrix.splitlines()
+        if line.startswith("| `/ui/management/ntp` ")
+    )
+
+    assert "NTS remains disabled" not in ntp_row
+    assert "capability-gated NTS client/server controls" in ntp_row
+    assert re.search(r"unsupported .*disables controls", ntp_row)
+    assert re.search(r"unknown .*preserves desired state .*blocks unsafe apply", ntp_row)
+    assert "CA-before-NTP" in ntp_row
+    assert "Firewall-owned TCP/4460" in ntp_row
+    assert "global `ntpd` apply only" in ntp_row
+
+
 def test_every_shared_wizard_dialog_has_an_accessible_description():
     """Verify that every shared wizard dialog has an accessible description."""
     for template in TEMPLATES.rglob("*.html"):
