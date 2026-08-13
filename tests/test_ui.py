@@ -5595,6 +5595,11 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
     disabled_missing_dhcp_target = deepcopy(enabled_missing_dhcp_target)
     disabled_missing_dhcp_target["data"]["dhcp_scopes"][0]["enabled"] = False
     disabled_missing_dhcp_target["data"]["dhcp_settings"][0]["enabled"] = False
+    enabled_management_dhcp_target = deepcopy(archive)
+    enabled_management_dhcp_target["data"]["dhcp_settings"][0]["enabled"] = True
+    enabled_management_dhcp_target["data"]["dhcp_scopes"][0][
+        "interface_name"
+    ] = "eth0"
     enabled_without_enabled_dhcp_scope = deepcopy(archive)
     enabled_without_enabled_dhcp_scope["data"]["dhcp_settings"][0]["enabled"] = True
     for scope in enabled_without_enabled_dhcp_scope["data"]["dhcp_scopes"]:
@@ -6526,6 +6531,24 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
             ),
         }
     )
+    reserved_firewall_source_group = deepcopy(archive)
+    reserved_firewall_source_group["data"]["settings"].append(
+        {
+            "key": "firewall.managed_source_groups",
+            "value": json.dumps(
+                {
+                    "groups": [
+                        {
+                            "id": "any",
+                            "name": "Restricted Any",
+                            "entries": ["192.0.2.0/24"],
+                        }
+                    ],
+                    "assignments": {"management-ui": "any"},
+                }
+            ),
+        }
+    )
     unresolved_firewall_source_group_assignment = deepcopy(archive)
     unresolved_firewall_source_group_assignment["data"]["settings"].append(
         {
@@ -6564,6 +6587,10 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
             ),
         }
     )
+    missing_canonical_service_state = deepcopy(archive)
+    missing_canonical_service_state["data"]["service_states"] = (
+        missing_canonical_service_state["data"]["service_states"][1:]
+    )
 
     for candidate, message in [
         (invalid_collection, "must be a list"),
@@ -6586,6 +6613,7 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
         (enabled_identical_routing_targets, "has identical source and destination interfaces"),
         (enabled_missing_dhcp_target, "has an ineligible bind interface"),
         (enabled_wrong_family_dhcp_target, "has an ineligible bind interface"),
+        (enabled_management_dhcp_target, "has an ineligible bind interface"),
         (enabled_without_enabled_dhcp_scope, "enables DHCP without an enabled DHCP scope"),
         (enabled_with_invalid_disabled_dhcp_scope, "DHCP settings are invalid"),
         (disabled_with_invalid_disabled_dhcp_scope, "DHCP settings are invalid"),
@@ -6693,12 +6721,14 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
         (invalid_firewall_source_groups, "firewall source groups state is invalid"),
         (duplicate_firewall_source_group, "firewall source groups state is invalid"),
         (malformed_firewall_source_group, "firewall source groups state is invalid"),
+        (reserved_firewall_source_group, "firewall source groups state is invalid"),
         (
             unresolved_firewall_source_group_assignment,
             "firewall source groups state is invalid",
         ),
         (malformed_conditional_forwarder, "DNS conditional forwarders state is invalid"),
         (oversized_esxi_custom_variables, "limited to 64 entries"),
+        (missing_canonical_service_state, "complete canonical service status set"),
     ]:
         with pytest.raises(ValueError, match=message):
             archive_summary(candidate)

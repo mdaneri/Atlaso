@@ -164,6 +164,7 @@ from atlaso.app.services.oidc import (
     validate_redirect_uri_list,
 )
 from atlaso.app.services.routes_wan import validate_nat_source, validate_wan_state
+from atlaso.app.services.service_registry import SERVICE_STATE_IDS
 from atlaso.app.services.update_sources import (
     UPDATE_SOURCE_KINDS,
     validate_managed_package,
@@ -1704,6 +1705,13 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
         ValueError: If a relationship target is empty or absent.
     """
     _validate_archive_unique_identities(data)
+    archived_service_ids = {
+        str(row.get("service") or "") for row in data.get("service_states", [])
+    }
+    if archived_service_ids != SERVICE_STATE_IDS:
+        raise ValueError(
+            "The settings archive must contain the complete canonical service status set."
+        )
     for row in data.get("vcf_offline_depot_settings", []):
         if str(row.get("depot_store_path") or "") != VCF_DEPOT_DEFAULT_STORE_PATH:
             raise ValueError(
@@ -1817,6 +1825,7 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
         for name, row in physical_interfaces.items()
         if str(row.get("oper_state") or "") != "missing"
         and normalize_interface_mode(row.get("mode")) != "trunk"
+        and normalize_interface_role(row.get("role")) == "access"
         and address_families(row)
     }
     dhcp_target_families.update(
@@ -1891,6 +1900,7 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
         if (
             any(
                 not isinstance(group_id, str) or not group_id.strip()
+                or group_id == FIREWALL_ANY_SOURCE_GROUP_ID
                 for group_id in raw_firewall_source_group_ids
             )
             or len(raw_firewall_source_group_ids)
