@@ -143,7 +143,9 @@ The following cross-cutting boundaries always apply:
 - VMware release images use separate compacted Photon OS and required Atlaso system-content payload VMDKs, followed by
   empty 500 GiB depot and backup disks. Preserve `/opt/atlaso` and appliance-wide PowerShell modules on the UUID-mounted
   system-content disk, size-gate individual OVF release assets below 2 GiB, and publish the aggregate OVA only when it
-  independently fits that limit.
+  independently fits that limit. OVF export may recursively replace only a strict, non-reparse-point descendant of the
+  repository OVF output root. `-Release` provides implicit replacement only for the canonical derived destination; an
+  explicitly supplied existing destination still requires `-Force`, which never widens the approved deletion boundary.
 - Inventory Linux is an independently versioned Atlaso release package; full images leave it uninstalled so an
   administrator downloads a signed release on demand. Supported VMware wheel deployment synchronizes it unless
   explicitly skipped. Publish it only through the protected manual Inventory

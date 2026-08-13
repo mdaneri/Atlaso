@@ -210,7 +210,12 @@ pwsh -ExecutionPolicy Bypass `
 
 Release mode derives `v<version>` from the synchronized repository metadata, requires that tag to identify the clean
 checked-out commit, resolves the destination GitHub repository from the current checkout, and replaces the generated
-local OVF output before publishing.
+local OVF output before publishing. That implicit replacement applies only when `-OutputDirectory` is omitted and the
+target is the canonical `image/vmware-workstation/ovf/<Name>` destination. An explicitly supplied existing destination,
+including that same canonical path, requires `-Force`. Recursive replacement is always limited to a strict descendant
+of `image/vmware-workstation/ovf`; filesystem, repository, image, VMware image, OVF-root, external, and reparse-point
+targets are refused even with `-Force`. A new external destination may receive an export because no existing tree is
+removed, but rerunning against it requires choosing a repository-owned output destination instead.
 
 Every OVF asset is checked against GitHub's less-than-2-GiB per-asset boundary before upload. The descriptor, manifest,
 and both payload VMDKs are uploaded as one set. A retry verifies every existing asset byte-for-byte and refuses partial
