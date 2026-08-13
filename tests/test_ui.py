@@ -1027,7 +1027,7 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-8" in service_worker.text
     assert "/static/appliance-apply-polling.js?v=issue-294-2" in service_worker.text
     assert "/static/ui-routes.js?v=issue-287-1" in service_worker.text
-    assert "/static/app.js?v=vcf-depot-queue-schedule-351-353-3" in service_worker.text
+    assert "/static/app.js?v=vcf-depot-queue-schedule-351-353-4" in service_worker.text
     assert "/static/terminal.js?v=issue-287-2" in service_worker.text
     assert "/static/pwa.js?v=issue-287-2" in service_worker.text
     assert "vcfdt-configuration-248-20260807-14" not in service_worker.text
@@ -1059,8 +1059,8 @@ def test_shared_ui_pattern_shell_and_wizard_contracts(client):
     base = (templates / "base.html").read_text(encoding="utf-8")
     public_base = (templates / "public_portal_base.html").read_text(encoding="utf-8")
     for shell, app_asset in (
-        (base, "/static/app.js?v=vcf-depot-queue-schedule-351-353-3"),
-        (public_base, "/static/app.js?v=vcf-depot-queue-schedule-351-353-3"),
+        (base, "/static/app.js?v=vcf-depot-queue-schedule-351-353-4"),
+        (public_base, "/static/app.js?v=vcf-depot-queue-schedule-351-353-4"),
         (base, "/static/appliance-apply-polling.js?v=issue-294-2"),
     ):
         assert shell.index("/static/vendor/tabulator/tabulator.min.js") < shell.index(
@@ -1689,7 +1689,7 @@ def test_monitor_page_renders_and_data_endpoint(client):
     assert "swagger-link-icon" in page.text
     assert "/static/app.css?v=vlan-interface-wizard-304-2" in page.text
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-8" in page.text
-    assert "/static/app.js?v=vcf-depot-queue-schedule-351-353-3" in page.text
+    assert "/static/app.js?v=vcf-depot-queue-schedule-351-353-4" in page.text
     app_css = client.get("/static/app.css")
     assert app_css.status_code == 200
     assert ".split-workspace > .wide-panel" in app_css.text
@@ -18975,6 +18975,49 @@ def test_running_vcf_depot_software_id_task_rejects_cancellation(client, monkeyp
     assert "cannot be cancelled" in cancel_response.json()["detail"]
     with SessionLocal() as db:
         assert db.get(Job, queued["id"]).status == JobStatus.RUNNING.value
+
+
+def test_running_vcf_depot_download_rejects_cancellation(client):
+    """Verify that a running VCFDT profile process remains guarded until it exits.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
+    import json
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job, JobStatus, VcfDepotDownloadProfile
+
+    login(client)
+    page = client.get("/vcf-offline-depot")
+    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    with SessionLocal() as db:
+        profile = VcfDepotDownloadProfile(name="running-cancel-guard", profile_type="metadata", enabled=True)
+        db.add(profile)
+        db.flush()
+        job_id = "job_running_vcfdt_download_cancel_guard"
+        job = Job(
+            id=job_id,
+            type="vcf-depot-download",
+            status=JobStatus.RUNNING.value,
+            created_by="admin",
+            vcf_depot_operation=True,
+            vcf_depot_profile_id=profile.id,
+            task_config_json=json.dumps({"profile_id": profile.id}),
+            result=json.dumps({"profile_id": profile.id, "profile_name": profile.name}),
+        )
+        db.add(job)
+        db.commit()
+
+    status_response = client.get(f"/tasks/{job_id}/status")
+    cancel_response = client.post(f"/tasks/{job_id}/cancel", data={"csrf": csrf})
+
+    assert status_response.status_code == 200
+    assert status_response.json()["task"]["can_cancel"] is False
+    assert cancel_response.status_code == 409
+    assert "cannot be cancelled" in cancel_response.json()["detail"]
+    with SessionLocal() as db:
+        assert db.get(Job, job_id).status == JobStatus.RUNNING.value
 
 
 def test_vcf_depot_software_id_runner_persists_raw_metadata_before_task_redaction(client, monkeypatch):

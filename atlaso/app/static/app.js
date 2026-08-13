@@ -12809,6 +12809,10 @@ function applyTasksStatusPayload(payload, { reopen = false } = {}) {
   window.clearTimeout(atlasoTasksRefreshTimer);
   if (
     atlasoTasks.some((task) => taskStatusActive(task.status))
+    || (
+      Array.isArray(payload.active_downloads)
+      && payload.active_downloads.some((task) => taskStatusActive(task.status))
+    )
     || taskStatusActive(payload.active_exclusive_operation?.status)
   ) {
     atlasoTasksRefreshTimer = window.setTimeout(() => refreshTasksPage().catch(() => {}), 2000);

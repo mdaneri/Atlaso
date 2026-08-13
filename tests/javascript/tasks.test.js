@@ -43,6 +43,10 @@ test("restoreExpandedTaskRows reopens surviving parents after refresh", () => {
   assert.deepEqual(expanded, ["job-expanded"]);
 });
 
-test("task refresh continues while a VCFDT exclusive operation is active", () => {
+test("task refresh continues while any VCFDT operation is active", () => {
+  assert.match(
+    appSource,
+    /payload\.active_downloads\.some\(\(task\) => taskStatusActive\(task\.status\)\)/,
+  );
   assert.match(appSource, /taskStatusActive\(payload\.active_exclusive_operation\?\.status\)/);
 });
