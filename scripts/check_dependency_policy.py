@@ -46,6 +46,11 @@ LOCK_POLICIES = (
     ),
     LockPolicy("requirements-docs.lock", ("requirements-docs.in",), False),
     LockPolicy(
+        "requirements-static-analysis.lock",
+        ("requirements-static-analysis.in",),
+        False,
+    ),
+    LockPolicy(
         "requirements-release-tools.lock",
         ("requirements-release-tools.in",),
         True,

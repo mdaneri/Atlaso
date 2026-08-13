@@ -2040,6 +2040,29 @@ def test_userinfo_rejects_algorithm_and_kid_confusion(client):
         assert response.status_code == 401
 
 
+def test_userinfo_rejects_forged_signature(client):
+    """Return an authentication error instead of leaking a JOSE decode failure."""
+    client_id, secret = _configure_protocol_client()
+    verifier = "u" * 64
+    transaction, csrf, _cookie = _start_login(
+        client, _authorization_parameters(client_id, verifier)
+    )
+    login = _finish_local_login(client, transaction, csrf)
+    code = parse_qs(urlsplit(login.headers["location"]).query)["code"][0]
+    token = _exchange_code(
+        client, client_id=client_id, secret=secret, code=code, verifier=verifier
+    ).json()["access_token"]
+    segments = token.split(".")
+    segments[2] = ("A" if segments[2][0] != "A" else "B") + segments[2][1:]
+
+    response = client.get(
+        "https://testserver/identity/userinfo",
+        headers={"Authorization": f"Bearer {'.'.join(segments)}"},
+    )
+
+    assert response.status_code == 401
+
+
 def test_logout_requires_valid_hint_and_exact_registered_redirect(client):
     """Verify that logout requires valid hint and exact registered redirect.
 

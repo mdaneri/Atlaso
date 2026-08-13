@@ -58,6 +58,12 @@ LOCK_TARGETS = (
     ),
     LockTarget("requirements-docs.lock", ("requirements-docs.in",), False, True),
     LockTarget(
+        "requirements-static-analysis.lock",
+        ("requirements-static-analysis.in",),
+        False,
+        True,
+    ),
+    LockTarget(
         "requirements-release-tools.lock",
         ("requirements-release-tools.in",),
         True,

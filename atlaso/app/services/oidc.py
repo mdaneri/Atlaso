@@ -18,6 +18,7 @@ from cryptography import x509
 from cryptography.hazmat.primitives import hashes
 from cryptography.x509.oid import NameOID
 from joserfc import jwt
+from joserfc.errors import JoseError
 from joserfc.jwk import RSAKey
 from sqlalchemy import delete, select, update
 from sqlalchemy.orm import Session, selectinload
@@ -2244,7 +2245,7 @@ def validate_bearer_token(
         provider = protocol_provider(db)
         exp = int(claims.get("exp", 0))
         iat = int(claims.get("iat", 0))
-    except (TypeError, ValueError):
+    except (JoseError, TypeError, ValueError):
         raise OidcConfigurationError("Invalid token.") from None
     now_epoch = int(now.timestamp())
     if (

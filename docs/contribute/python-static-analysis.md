@@ -15,14 +15,16 @@ violation blocks a pull request instead of creating a separate advisory result.
 
 ## Set up the analyzers
 
-Use Python 3.14 and install the development dependencies from the repository root:
+Use Python 3.14 and install the development dependencies and hash-locked analyzers from the repository root:
 
 ```powershell
 python -m pip install -e ".[dev]"
+python -m pip install --require-hashes -r requirements-static-analysis.lock
 ```
 
-The development group pins Ruff and mypy exactly. Dependency changes must still follow the seven-day package-age and
-generated-lock process in [Dependency management](dependency-management.md).
+`requirements-static-analysis.in` pins Ruff and mypy exactly. Its generated lock constrains their transitive
+dependencies and enforces the same seven-day package-age policy as every other Python lock. Analyzer dependency changes
+must use the wrapper described in [Dependency management](dependency-management.md).
 
 ## Run the baseline
 

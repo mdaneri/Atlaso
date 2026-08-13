@@ -49,11 +49,14 @@ def test_suppressions_accept_rule_codes_with_rationales(tmp_path: Path) -> None:
 def test_static_analysis_configuration_is_pinned_and_scoped() -> None:
     """Keep analyzer versions exact and the typed ratchet explicit."""
     project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
-    dev_dependencies = set(project["project"]["optional-dependencies"]["dev"])
+    analyzer_requirements = set(
+        (ROOT / "requirements-static-analysis.in")
+        .read_text(encoding="utf-8")
+        .splitlines()
+    )
     mypy_files = project["tool"]["mypy"]["files"]
 
-    assert "ruff==0.16.1" in dev_dependencies
-    assert "mypy==2.3.0" in dev_dependencies
+    assert analyzer_requirements == {"ruff==0.16.1", "mypy==2.3.0"}
     assert mypy_files == [
         "atlaso/app/services/identity_credentials.py",
         "atlaso/app/services/interface_updates.py",
@@ -69,4 +72,8 @@ def test_static_analysis_uses_existing_repository_status_path() -> None:
 
     assert command in workflow
     assert "repository-checks:" in workflow
+    assert (
+        "python -m pip install --require-hashes -r requirements-static-analysis.lock"
+        in workflow
+    )
     assert command in pre_commit
