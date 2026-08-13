@@ -85,11 +85,31 @@ def _reconcile_vcf_depot_job_queue(connection: Connection) -> None:
     connection.execute(
         text(
             "UPDATE jobs SET vcf_depot_operation = TRUE "
-            "WHERE type IN ('vcf-depot-download', 'vcf-depot-software-id') "
-            "OR (type = 'appliance-apply' "
-            "AND COALESCE(result, '') LIKE '%\"vcf_offline_depot\"%')"
+            "WHERE type IN ('vcf-depot-download', 'vcf-depot-software-id')"
         )
     )
+    legacy_appliance_applies = connection.execute(
+        text("SELECT id, result FROM jobs WHERE type = 'appliance-apply'")
+    ).all()
+    for job_id, raw_result in legacy_appliance_applies:
+        try:
+            result = json.loads(raw_result or "{}")
+        except (TypeError, json.JSONDecodeError):
+            result = {}
+        selected_units = result.get("selected_units") if isinstance(result, dict) else None
+        is_vcf_depot_operation = (
+            isinstance(selected_units, list) and "vcf_offline_depot" in selected_units
+        )
+        connection.execute(
+            text(
+                "UPDATE jobs SET vcf_depot_operation = :is_vcf_depot_operation "
+                "WHERE id = :job_id"
+            ),
+            {
+                "job_id": job_id,
+                "is_vcf_depot_operation": is_vcf_depot_operation,
+            },
+        )
     legacy_downloads = connection.execute(
         text(
             "SELECT id, task_config_json FROM jobs "

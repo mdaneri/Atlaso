@@ -1133,6 +1133,73 @@ def test_vcf_queue_reconciliation_preserves_identity_tasks_for_type_specific_rec
     assert "uq_jobs_running_vcf_depot_operation" in indexes
 
 
+def test_vcf_queue_reconciliation_uses_only_selected_apply_units():
+    """Verify skipped apply metadata does not create a false VCFDT blocker."""
+    import json
+
+    from sqlalchemy import create_engine, text
+
+    import atlaso.app.database as database
+
+    test_engine = create_engine("sqlite://")
+    with test_engine.begin() as connection:
+        connection.execute(
+            text(
+                "CREATE TABLE jobs ("
+                "id TEXT PRIMARY KEY, type TEXT NOT NULL, status TEXT NOT NULL, "
+                "vcf_depot_operation BOOLEAN NOT NULL DEFAULT FALSE, "
+                "vcf_depot_profile_id INTEGER, task_config_json TEXT, result TEXT, "
+                "created_at TEXT, started_at TEXT, progress_percent INTEGER, "
+                "finished_at TEXT, error TEXT)"
+            )
+        )
+        connection.execute(
+            text(
+                "INSERT INTO jobs "
+                "(id, type, status, vcf_depot_operation, result, created_at, started_at) "
+                "VALUES (:job_id, 'appliance-apply', 'running', TRUE, :result, :job_id, :job_id)"
+            ),
+            {
+                "job_id": "job_unrelated_apply",
+                "result": json.dumps(
+                    {
+                        "selected_units": ["dns"],
+                        "skipped_changed_units": ["vcf_offline_depot"],
+                    }
+                ),
+            },
+        )
+        connection.execute(
+            text(
+                "INSERT INTO jobs "
+                "(id, type, status, vcf_depot_operation, result, created_at, started_at) "
+                "VALUES (:job_id, 'appliance-apply', 'pending', FALSE, :result, :job_id, NULL)"
+            ),
+            {
+                "job_id": "job_vcf_apply",
+                "result": json.dumps(
+                    {
+                        "selected_units": ["vcf_offline_depot"],
+                        "skipped_changed_units": [],
+                    }
+                ),
+            },
+        )
+
+        database._reconcile_vcf_depot_job_queue(connection)
+        operations = dict(
+            connection.execute(
+                text("SELECT id, vcf_depot_operation FROM jobs ORDER BY id")
+            ).all()
+        )
+        unrelated_status = connection.execute(
+            text("SELECT status FROM jobs WHERE id = 'job_unrelated_apply'")
+        ).scalar_one()
+
+    assert operations == {"job_unrelated_apply": 0, "job_vcf_apply": 1}
+    assert unrelated_status == "running"
+
+
 def test_vcf_runtime_index_uses_the_current_rebound_engine(monkeypatch):
     """Verify the default runtime guard follows test and process engine rebinding.
 
