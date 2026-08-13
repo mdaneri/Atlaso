@@ -12,7 +12,11 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_suppressions_require_rule_codes_and_rationales(tmp_path: Path) -> None:
-    """Reject analyzer suppressions that cannot be reviewed from source."""
+    """Reject analyzer suppressions that cannot be reviewed from source.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
     source = tmp_path / "sample.py"
     source.write_text(
         "\n".join(
@@ -32,7 +36,11 @@ def test_suppressions_require_rule_codes_and_rationales(tmp_path: Path) -> None:
 
 
 def test_suppressions_accept_rule_codes_with_rationales(tmp_path: Path) -> None:
-    """Accept analyzer suppressions that identify a rule and local reason."""
+    """Accept analyzer suppressions that identify a rule and local reason.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
     source = tmp_path / "sample.py"
     source.write_text(
         "\n".join(
@@ -48,7 +56,11 @@ def test_suppressions_accept_rule_codes_with_rationales(tmp_path: Path) -> None:
 
 
 def test_suppressions_reject_file_wide_ruff_directives(tmp_path: Path) -> None:
-    """Reject directives that disable Ruff for an entire source file."""
+    """Reject directives that disable Ruff for an entire source file.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
     for directive in ("# ruff: noqa", "# flake8: noqa"):
         source = tmp_path / "sample.py"
         source.write_text(f"{directive}\nvalue = object()\n", encoding="utf-8")
@@ -59,7 +71,11 @@ def test_suppressions_reject_file_wide_ruff_directives(tmp_path: Path) -> None:
 
 
 def test_suppressions_validate_case_insensitive_ruff_directives(tmp_path: Path) -> None:
-    """Apply the same rationale policy to Ruff's case-insensitive syntax."""
+    """Apply the same rationale policy to Ruff's case-insensitive syntax.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
     source = tmp_path / "sample.py"
     source.write_text("value = object()  # NOQA: F841\n", encoding="utf-8")
 
@@ -76,7 +92,11 @@ def test_suppressions_validate_case_insensitive_ruff_directives(tmp_path: Path) 
 
 
 def test_suppressions_reject_file_wide_mypy_directives(tmp_path: Path) -> None:
-    """Prevent per-file mypy configuration from weakening the strict ratchet."""
+    """Prevent per-file mypy configuration from weakening the strict ratchet.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
     for directive in (
         "# mypy: ignore-errors",
         "# mypy: disable-error-code=attr-defined",

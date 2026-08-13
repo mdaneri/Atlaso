@@ -2041,7 +2041,11 @@ def test_userinfo_rejects_algorithm_and_kid_confusion(client):
 
 
 def test_userinfo_rejects_forged_signature(client):
-    """Return an authentication error instead of leaking a JOSE decode failure."""
+    """Return an authentication error instead of leaking a JOSE decode failure.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
     client_id, secret = _configure_protocol_client()
     verifier = "u" * 64
     transaction, csrf, _cookie = _start_login(

@@ -109,7 +109,7 @@ def run_analyzer(module: str, *arguments: str) -> int:
 
     Args:
         module: Python module providing the analyzer entry point.
-        arguments: Command-line arguments passed to the analyzer.
+        *arguments: Command-line arguments passed to the analyzer.
     """
     return subprocess.run(
         [sys.executable, "-m", module, *arguments],

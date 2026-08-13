@@ -2672,6 +2672,10 @@ def _ldap_config_errors(payload: dict) -> list[str]:
 
             Args:
                 group_id: Stable identifier of the associated group resource.
+                visiting_groups: Group identifiers in the active traversal path.
+                visited_groups: Group identifiers whose descendants were already checked.
+                group_edges: Nested group membership edges keyed by group identifier.
+                organization_label: Stable label used in validation errors.
             """
             if group_id in visiting_groups:
                 errors.append(
