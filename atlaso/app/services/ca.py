@@ -23,6 +23,7 @@ from atlaso.app.secrets import decrypt_secret, encrypt_secret, secret_key_status
 
 CA_STAGED_CONFIG_PATH = "/var/lib/atlaso/apply/ca/atlaso-ca.json"
 CA_DEFAULT_PORTAL_HOSTNAME = "ca.atlaso.internal"
+CA_MANAGED_PATH_BASE = PurePosixPath("/etc/atlaso")
 CA_SERVER_PROFILE_NAME = "VCF service TLS"
 CA_CLIENT_PROFILE_NAME = "VCF KMIP client"
 CA_STATUS_VALUES = {"planned", "csr-staged", "issued", "revoked"}
@@ -1026,6 +1027,28 @@ def validate_ca_state(
         The validate ca state result.
     """
     errors: list[str] = []
+
+    def managed_path_error(value: str, label: str, *, required: bool = False) -> str:
+        """Return a bounded error when a CA apply path escapes its managed directory."""
+        raw_value = value.strip()
+        if not raw_value:
+            return f"{label} is required." if required else ""
+        path = PurePosixPath(raw_value)
+        if (
+            not path.is_absolute()
+            or ".." in path.parts
+            or not path.is_relative_to(CA_MANAGED_PATH_BASE)
+        ):
+            return f"{label} must stay under {CA_MANAGED_PATH_BASE}."
+        return ""
+
+    storage_path_error = managed_path_error(
+        settings.storage_path,
+        "CA storage path",
+        required=True,
+    )
+    if storage_path_error:
+        errors.append(storage_path_error)
     if settings.enabled and not secret_key_status(get_settings()).dedicated and get_settings().environment not in {"development", "test"}:
         errors.append("ATLASO_SECRETS_KEY is required before enabling the CA outside development.")
     if not settings.portal_hostname.strip() or "." not in settings.portal_hostname.strip():
@@ -1059,6 +1082,14 @@ def validate_ca_state(
     for certificate in certificates:
         if not certificate.enabled:
             continue
+        for value, label in (
+            (certificate.cert_path, f"Certificate {certificate.common_name or certificate.id} certificate path"),
+            (certificate.key_path, f"Certificate {certificate.common_name or certificate.id} private-key path"),
+            (certificate.chain_path, f"Certificate {certificate.common_name or certificate.id} chain path"),
+        ):
+            path_error = managed_path_error(value, label)
+            if path_error:
+                errors.append(path_error)
         if certificate.status not in CA_STATUS_VALUES:
             errors.append(f"Certificate {certificate.common_name or certificate.id} has unsupported status {certificate.status}.")
         if not certificate.common_name.strip():

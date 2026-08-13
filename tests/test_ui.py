@@ -5396,6 +5396,11 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
     )
     invalid_ca_private_key = deepcopy(archive)
     invalid_ca_private_key["data"]["ca_settings"][0]["root_private_key_encrypted"] = "not-encrypted"
+    invalid_ca_storage_path = deepcopy(archive)
+    invalid_ca_storage_path["data"]["ca_settings"][0]["storage_path"] = "/tmp/archive-ca"
+    invalid_ca_certificate_path = deepcopy(archive)
+    invalid_ca_certificate_path["data"]["ca_certificates"][0]["enabled"] = True
+    invalid_ca_certificate_path["data"]["ca_certificates"][0]["cert_path"] = "/tmp/archive.crt"
     invalid_storage_state = deepcopy(archive)
     invalid_storage_state["data"]["esx_storage_settings"] = [
         {"enabled": False, "hostname": "nfs.atlaso.internal"}
@@ -5588,6 +5593,8 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
         (enabled_oidc_with_invalid_crypto, "OIDC cryptographic state is invalid"),
         (enabled_oidc_with_extra_active_key, "has a noncanonical active slot"),
         (invalid_ca_private_key, "Certificate Authority key state is invalid"),
+        (invalid_ca_storage_path, "CA storage path must stay under /etc/atlaso"),
+        (invalid_ca_certificate_path, "certificate path must stay under /etc/atlaso"),
         (invalid_storage_state, "ESX Storage state is invalid: Datastore invalid-share must use NFS 3 or NFS 4.1"),
         (invalid_esxi_host_mac, "esxi_pxe_hosts' has an invalid MAC address"),
         (invalid_esxi_kickstart, "multiple install/upgrade directives"),
