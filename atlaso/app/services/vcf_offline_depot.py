@@ -604,6 +604,8 @@ def vcf_depot_profile_to_dict(
         "enabled": profile.enabled,
         "status": profile.status,
         "notes": profile.notes or "",
+        "prerequisite_can_start": not start_blocker,
+        "prerequisite_start_blocker": start_blocker,
         "can_start": not start_blocker,
         "start_blocker": start_blocker,
         "created_at": profile.created_at.isoformat() if profile.created_at else "",

@@ -1027,7 +1027,7 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-8" in service_worker.text
     assert "/static/appliance-apply-polling.js?v=issue-294-2" in service_worker.text
     assert "/static/ui-routes.js?v=issue-287-1" in service_worker.text
-    assert "/static/app.js?v=vcf-depot-queue-schedule-351-353-4" in service_worker.text
+    assert "/static/app.js?v=vcf-depot-queue-schedule-351-353-5" in service_worker.text
     assert "/static/terminal.js?v=issue-287-2" in service_worker.text
     assert "/static/pwa.js?v=issue-287-2" in service_worker.text
     assert "vcfdt-configuration-248-20260807-14" not in service_worker.text
@@ -1059,8 +1059,8 @@ def test_shared_ui_pattern_shell_and_wizard_contracts(client):
     base = (templates / "base.html").read_text(encoding="utf-8")
     public_base = (templates / "public_portal_base.html").read_text(encoding="utf-8")
     for shell, app_asset in (
-        (base, "/static/app.js?v=vcf-depot-queue-schedule-351-353-4"),
-        (public_base, "/static/app.js?v=vcf-depot-queue-schedule-351-353-4"),
+        (base, "/static/app.js?v=vcf-depot-queue-schedule-351-353-5"),
+        (public_base, "/static/app.js?v=vcf-depot-queue-schedule-351-353-5"),
         (base, "/static/appliance-apply-polling.js?v=issue-294-2"),
     ):
         assert shell.index("/static/vendor/tabulator/tabulator.min.js") < shell.index(
@@ -1689,7 +1689,7 @@ def test_monitor_page_renders_and_data_endpoint(client):
     assert "swagger-link-icon" in page.text
     assert "/static/app.css?v=vlan-interface-wizard-304-2" in page.text
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-8" in page.text
-    assert "/static/app.js?v=vcf-depot-queue-schedule-351-353-4" in page.text
+    assert "/static/app.js?v=vcf-depot-queue-schedule-351-353-5" in page.text
     app_css = client.get("/static/app.css")
     assert app_css.status_code == 200
     assert ".split-workspace > .wide-panel" in app_css.text
@@ -15464,6 +15464,7 @@ def test_vcf_offline_depot_marks_only_each_profiles_own_queued_download(client):
     """
     import html
     import json
+    import re
 
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import Job, JobStatus, VcfDepotDownloadProfile
@@ -15493,8 +15494,17 @@ def test_vcf_offline_depot_marks_only_each_profiles_own_queued_download(client):
     rows = {row["id"]: row for row in json.loads(html.unescape(rows_payload))}
     assert rows[queued_id]["download_active"] is True
     assert rows[queued_id]["active_job_id"] == "job_queued_profile_row"
+    assert rows[queued_id]["can_start"] is False
+    assert rows[queued_id]["start_blocker"] == rows[queued_id]["active_task_blocker"]
     assert rows[available_id]["download_active"] is False
     assert rows[available_id]["active_job_id"] == ""
+    fallback = page.text.split('id="vcf-depot-profiles-fallback"', 1)[1].split("</table>", 1)[0]
+    queued_markup = re.search(r"<tr>\s*<td>queued-row</td>.*?</tr>", fallback, re.DOTALL)
+    assert queued_markup is not None
+    queued_start = re.search(
+        r'<button class="button tiny secondary"[^>]*>Start</button>', queued_markup.group()
+    )
+    assert queued_start is not None and " disabled" in queued_start.group()
 
 
 def test_vcf_offline_depot_prevents_deleting_any_queued_profile(client):
@@ -15551,6 +15561,7 @@ def test_vcf_download_task_refresh_includes_exclusive_operation(client):
     """
     import html
     import json
+    import re
 
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import Job, JobStatus, VcfDepotDownloadProfile
@@ -15600,6 +15611,17 @@ def test_vcf_download_task_refresh_includes_exclusive_operation(client):
     assert row["active_job_id"] == ""
     assert row["active_task_status"] == ""
     assert "job_refresh_exclusive" in row["active_task_blocker"]
+    assert row["can_start"] is False
+    assert row["start_blocker"] == row["active_task_blocker"]
+    fallback = page.text.split('id="vcf-depot-profiles-fallback"', 1)[1].split("</table>", 1)[0]
+    profile_markup = re.search(
+        r"<tr>\s*<td>exclusive-blocked-profile</td>.*?</tr>", fallback, re.DOTALL
+    )
+    assert profile_markup is not None
+    start_button = re.search(
+        r'<button class="button tiny secondary"[^>]*>Start</button>', profile_markup.group()
+    )
+    assert start_button is not None and " disabled" in start_button.group()
 
 
 def test_vcf_offline_depot_startup_recovers_interrupted_download(client):

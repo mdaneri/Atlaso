@@ -12331,6 +12331,8 @@ async function startVcfDepotProfileDownload(row, csrf) {
       active_job_id: payload.job_id,
       active_task_status: payload.job_status || "pending",
       active_task_blocker: blocker,
+      can_start: false,
+      start_blocker: blocker,
     });
     atlasoNewTaskId = payload.job_id || "";
     atlasoSelectedTaskId = atlasoNewTaskId;
@@ -12404,13 +12406,19 @@ function setVcfDepotDownloadStates(activeTasks = [], activeExclusiveOperation = 
       const status = String(task?.status || "");
       const state = status === "running" ? "running" : "queued";
       const jobId = task?.id || task?.job_id || "";
+      const downloadActive = Boolean(task || activeExclusiveOperation);
+      const activeTaskBlocker = task
+        ? `VCFDT task ${jobId} is ${state} for this profile. Wait for it to finish before starting the same profile again.`
+        : String(activeExclusiveOperation?.detail || "");
       row.update({
-        download_active: Boolean(task || activeExclusiveOperation),
+        download_active: downloadActive,
         active_job_id: jobId,
         active_task_status: status,
-        active_task_blocker: task
-          ? `VCFDT task ${jobId} is ${state} for this profile. Wait for it to finish before starting the same profile again.`
-          : String(activeExclusiveOperation?.detail || ""),
+        active_task_blocker: activeTaskBlocker,
+        can_start: downloadActive ? false : Boolean(data.prerequisite_can_start),
+        start_blocker: downloadActive
+          ? activeTaskBlocker
+          : String(data.prerequisite_start_blocker || ""),
       });
     }
   });

@@ -227,7 +227,12 @@ test("VCFDT schedule context action uses the persistent profile row as launcher"
 test("VCFDT task refresh preserves an exclusive-operation blocker", () => {
   const updates = [];
   const row = {
-    getData: () => ({ id: 9, is_new: false }),
+    getData: () => ({
+      id: 9,
+      is_new: false,
+      prerequisite_can_start: true,
+      prerequisite_start_blocker: "",
+    }),
     update: (value) => updates.push(value),
   };
   const context = vm.createContext({
@@ -254,6 +259,11 @@ test("VCFDT task refresh preserves an exclusive-operation blocker", () => {
   assert.equal(updates.at(-1).download_active, true);
   assert.equal(updates.at(-1).active_job_id, "");
   assert.equal(updates.at(-1).active_task_status, "");
+  assert.equal(updates.at(-1).can_start, false);
+  assert.equal(
+    updates.at(-1).start_blocker,
+    "Wait for Software Depot ID replacement to finish.",
+  );
   assert.equal(
     updates.at(-1).active_task_blocker,
     "Wait for Software Depot ID replacement to finish.",
@@ -262,4 +272,6 @@ test("VCFDT task refresh preserves an exclusive-operation blocker", () => {
   context.setVcfDepotDownloadStates([], null);
   assert.equal(updates.at(-1).download_active, false);
   assert.equal(updates.at(-1).active_task_blocker, "");
+  assert.equal(updates.at(-1).can_start, true);
+  assert.equal(updates.at(-1).start_blocker, "");
 });
