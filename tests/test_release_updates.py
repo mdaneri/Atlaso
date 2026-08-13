@@ -412,6 +412,17 @@ def test_published_channel_check_verifies_pointer_release_and_compatibility(
 
         def __init__(self, body: bytes):
             self.body = body
+            self.fp = type(
+                "File",
+                (),
+                {
+                    "raw": type(
+                        "Raw",
+                        (),
+                        {"_sock": type("Socket", (), {"settimeout": lambda *_args: None})()},
+                    )()
+                },
+            )()
 
         def __enter__(self):
             return self
@@ -419,8 +430,12 @@ def test_published_channel_check_verifies_pointer_release_and_compatibility(
         def __exit__(self, *_args):
             return False
 
-        def read(self, _limit: int) -> bytes:
-            return self.body
+        def read1(self, _limit: int) -> bytes:
+            body, self.body = self.body, b""
+            return body
+
+        def isclosed(self) -> bool:
+            return not self.body
 
     def monotonic() -> float:
         return clock
@@ -428,7 +443,7 @@ def test_published_channel_check_verifies_pointer_release_and_compatibility(
     def urlopen(url: str, timeout: float) -> Response:
         nonlocal clock
         request_timeouts.append(timeout)
-        clock += min(20.0, timeout)
+        clock += min(15.0, timeout)
         return Response(documents[url])
 
     monkeypatch.setattr(published_channel_check.time, "monotonic", monotonic)
@@ -447,7 +462,7 @@ def test_published_channel_check_verifies_pointer_release_and_compatibility(
 
     assert result["channel"]["version"] == "0.9.0"
     assert result["release"]["git_commit"] == "a" * 40
-    assert request_timeouts[:4] == [30.0, 30.0, 25.0, 5.0]
+    assert request_timeouts[:4] == [30.0, 30.0, 30.0, 20.0]
 
     with pytest.raises(ValueError, match="does not support cp313"):
         published_channel_check.verify_channel(
@@ -472,6 +487,70 @@ def test_published_channel_check_verifies_pointer_release_and_compatibility(
             timeout_seconds=30,
             deadline=clock + 65.0,
         )
+
+
+def test_published_channel_check_enforces_deadline_during_body_reads(monkeypatch):
+    """Verify trickled response bytes cannot extend the publication deadline.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+    """
+    clock = 0.0
+    read_timeouts: list[float] = []
+
+    class Socket:
+        """Record the timeout assigned before each response-body read."""
+
+        timeout = 0.0
+
+        def settimeout(self, seconds: float) -> None:
+            self.timeout = seconds
+            read_timeouts.append(seconds)
+
+    socket = Socket()
+
+    class Response:
+        """Simulate a proxy that trickles one byte every four seconds."""
+
+        fp = type(
+            "File",
+            (),
+            {"raw": type("Raw", (), {"_sock": socket})()},
+        )()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read1(self, _limit: int) -> bytes:
+            nonlocal clock
+            if self.fp.raw._sock.timeout < 4.0:
+                clock += self.fp.raw._sock.timeout
+                raise TimeoutError("response body exceeded the remaining deadline")
+            clock += 4.0
+            return b"x"
+
+        def isclosed(self) -> bool:
+            return False
+
+    monkeypatch.setattr(published_channel_check.time, "monotonic", lambda: clock)
+    monkeypatch.setattr(
+        published_channel_check,
+        "urlopen",
+        lambda _url, timeout: Response(),
+    )
+
+    with pytest.raises(TimeoutError, match="remaining deadline"):
+        published_channel_check.fetch_document(
+            "https://updates.example.test/manifest.json",
+            timeout_seconds=30.0,
+            deadline=10.0,
+        )
+
+    assert read_timeouts == [10.0, 6.0, 2.0]
+    assert clock == 10.0
 
 
 def test_published_channel_check_imports_atlaso_from_a_clean_checkout(tmp_path: Path):
