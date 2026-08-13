@@ -10947,7 +10947,13 @@ def _migrate_release_esx_storage_claims(
     else:
         backups.append((None, destination))
         existing = []
-    merged = list(dict.fromkeys([line for line in existing if line.strip()] + claims))
+    migrated_uuids = {claim.split("\t", 1)[0] for claim in claims}
+    retained_claims = [
+        line
+        for line in existing
+        if line.strip() and line.split("\t", 1)[0] not in migrated_uuids
+    ]
+    merged = list(dict.fromkeys(retained_claims + claims))
     with sqlite3.connect(ATLASO_DATABASE_PATH) as connection:
         for source_type, migrated_identity, stable_id, configured_uuid, configured_mount in identity_migrations:
             if migrated_identity == stable_id:
@@ -10960,7 +10966,82 @@ def _migrate_release_esx_storage_claims(
             )
             if updated.rowcount != 1:
                 raise ValueError(f"configured mounted ESX Storage disk changed during identity migration: {stable_id}")
+        _migrate_release_esx_storage_baseline(connection, identity_migrations)
         _write_secret_file(destination, "\n".join(merged) + "\n", 0o644)
+
+
+def _migrate_release_esx_storage_baseline(
+    connection: sqlite3.Connection,
+    identity_migrations: list[tuple[str, str, str, str, str]],
+) -> None:
+    """Move applied ESX aliases inside a verified baseline without hiding other drift."""
+    migrations = {
+        (source_type, stable_id, configured_uuid, configured_mount): migrated_identity
+        for source_type, migrated_identity, stable_id, configured_uuid, configured_mount in identity_migrations
+        if migrated_identity != stable_id
+    }
+    if not migrations:
+        return
+    settings_table = connection.execute(
+        "select 1 from sqlite_master where type = 'table' and name = 'settings'"
+    ).fetchone()
+    if settings_table is None:
+        return
+    row = connection.execute(
+        "select value from settings where key = ?",
+        ("appliance_apply.baselines.v1",),
+    ).fetchone()
+    if row is None:
+        return
+    try:
+        baselines = json.loads(str(row[0]))
+        baseline = baselines["esx_storage"]
+        preview = json.loads(str(baseline["config_preview"]))
+    except (json.JSONDecodeError, KeyError, TypeError):
+        return
+    if not isinstance(baselines, dict) or not isinstance(baseline, dict) or not isinstance(preview, dict):
+        return
+    old_preview = str(baseline.get("config_preview") or "")
+    old_snapshot = {
+        "unit_id": "esx_storage",
+        "summary": baseline.get("summary", []),
+        "config_path": baseline.get("config_path", ""),
+        "config_preview": old_preview,
+        "snapshot_marker": None,
+    }
+    old_hash = hashlib.sha256(
+        json.dumps(old_snapshot, sort_keys=True, default=str, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    if str(baseline.get("snapshot_hash") or "") != old_hash:
+        return
+    changed = False
+    for volume in preview.get("volumes", []):
+        if not isinstance(volume, dict):
+            continue
+        key = (
+            str(volume.get("source_type") or ""),
+            str(volume.get("stable_device_id") or ""),
+            str(volume.get("filesystem_uuid") or ""),
+            str(volume.get("mount_path") or ""),
+        )
+        migrated_identity = migrations.get(key)
+        if migrated_identity is not None:
+            volume["stable_device_id"] = migrated_identity
+            changed = True
+    if not changed:
+        return
+    baseline["config_preview"] = json.dumps(preview, indent=2, sort_keys=True)
+    new_snapshot = {
+        **old_snapshot,
+        "config_preview": baseline["config_preview"],
+    }
+    baseline["snapshot_hash"] = hashlib.sha256(
+        json.dumps(new_snapshot, sort_keys=True, default=str, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    connection.execute(
+        "update settings set value = ? where key = ?",
+        (json.dumps(baselines, indent=2, sort_keys=True), "appliance_apply.baselines.v1"),
+    )
 
 
 def _esx_storage_resolved_by_id_device(value: str) -> Path:

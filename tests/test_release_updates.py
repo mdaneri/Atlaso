@@ -926,6 +926,52 @@ def test_release_migrates_boot_safe_configured_mounted_disk_claim(monkeypatch, t
 
     helper = load_helper_module()
     database = tmp_path / "atlaso.db"
+    baseline_summary = [
+        "service disabled",
+        "2 storage volumes",
+        "0 enabled NFS datastores",
+        "IPv4 and IPv6 are equivalent listener families",
+    ]
+    baseline_preview = json.dumps(
+        {
+            "enabled": False,
+            "volumes": [
+                {
+                    "source_type": "mounted_ext4",
+                    "stable_device_id": "/dev/disk/by-id/scsi-older-alias",
+                    "filesystem_uuid": "3f832583-beec-4be7-969c-92519ea77273",
+                    "mount_path": "/mnt/operator-existing-ext4",
+                },
+                {
+                    "source_type": "blank_disk",
+                    "stable_device_id": "/dev/disk/by-id/scsi-formatted-older-alias",
+                    "filesystem_uuid": "aa0a2164-220e-4dbb-acb8-f4215f3e1b1f",
+                    "mount_path": "/mnt/atlaso-esx-storage/formatted",
+                },
+            ],
+        },
+        indent=2,
+        sort_keys=True,
+    )
+    baseline_snapshot = {
+        "unit_id": "esx_storage",
+        "summary": baseline_summary,
+        "config_path": "/var/lib/atlaso/apply/esx-storage/atlaso-esx-storage.json",
+        "config_preview": baseline_preview,
+        "snapshot_marker": None,
+    }
+    baseline_hash = hashlib.sha256(
+        json.dumps(baseline_snapshot, sort_keys=True, default=str, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    baselines = {
+        "esx_storage": {
+            "snapshot_hash": baseline_hash,
+            "config_path": baseline_snapshot["config_path"],
+            "config_preview": baseline_preview,
+            "summary": baseline_summary,
+            "applied_at": "2026-08-13T00:00:00+00:00",
+        }
+    }
     with sqlite3.connect(database) as connection:
         connection.execute(
             "create table esx_storage_volumes (source_type text, stable_device_id text, "
@@ -949,7 +995,20 @@ def test_release_migrates_boot_safe_configured_mounted_disk_claim(monkeypatch, t
                 "/mnt/atlaso-esx-storage/formatted",
             ),
         )
+        connection.execute(
+            "create table settings (id integer primary key, key text unique, value text, updated_at text)"
+        )
+        connection.execute(
+            "insert into settings (key, value, updated_at) values (?, ?, ?)",
+            ("appliance_apply.baselines.v1", json.dumps(baselines), "2026-08-13T00:00:00+00:00"),
+        )
     allowlist = tmp_path / "etc/atlaso/esx-storage-disks.conf"
+    allowlist.parent.mkdir(parents=True)
+    allowlist.write_text(
+        "3f832583-beec-4be7-969c-92519ea77273\t/dev/disk/by-id/scsi-older-alias\t"
+        "/mnt/operator-existing-ext4\n",
+        encoding="utf-8",
+    )
     monkeypatch.setattr(helper, "ATLASO_DATABASE_PATH", database)
     monkeypatch.setattr(helper, "ESX_STORAGE_DISK_ALLOWLIST_PATH", allowlist)
     monkeypatch.setattr(
@@ -1024,7 +1083,30 @@ def test_release_migrates_boot_safe_configured_mounted_disk_claim(monkeypatch, t
             ("blank_disk", "/dev/disk/by-id/atlaso-path-pci-0000_03_00_0-scsi-0_0_4_0"),
             ("mounted_ext4", "/dev/disk/by-id/atlaso-path-pci-0000_03_00_0-scsi-0_0_3_0"),
         ]
-    assert backups == [(None, allowlist)]
+        stored_baselines = json.loads(
+            connection.execute(
+                "select value from settings where key = ?", ("appliance_apply.baselines.v1",)
+            ).fetchone()[0]
+        )
+    migrated_baseline = stored_baselines["esx_storage"]
+    migrated_preview = json.loads(migrated_baseline["config_preview"])
+    assert migrated_preview["enabled"] is False
+    assert [volume["stable_device_id"] for volume in migrated_preview["volumes"]] == [
+        "/dev/disk/by-id/atlaso-path-pci-0000_03_00_0-scsi-0_0_3_0",
+        "/dev/disk/by-id/atlaso-path-pci-0000_03_00_0-scsi-0_0_4_0",
+    ]
+    migrated_snapshot = {
+        **baseline_snapshot,
+        "config_preview": migrated_baseline["config_preview"],
+    }
+    assert migrated_baseline["snapshot_hash"] == hashlib.sha256(
+        json.dumps(migrated_snapshot, sort_keys=True, default=str, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    assert len(backups) == 1
+    backup_path, backup_destination = backups[0]
+    assert backup_path is not None
+    assert backup_destination == allowlist
+    assert backup_path.read_text(encoding="utf-8").startswith("3f832583-beec-4be7-969c-92519ea77273\t")
 
 
 def test_abi_wheelhouse_lock_covers_exact_checked_in_versions(monkeypatch, tmp_path):
