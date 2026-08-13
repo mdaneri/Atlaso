@@ -120,7 +120,11 @@ def test_ca_private_key_validation_rejects_mismatched_certificate():
 
 @pytest.mark.parametrize("missing_field", ["certificate", "private_key"])
 def test_ca_private_key_validation_rejects_incomplete_root_pair(missing_field):
-    """Verify restored CA root material is always a complete key pair."""
+    """Verify restored CA root material is always a complete key pair.
+
+    Args:
+        missing_field: Root key-pair field removed for the validation case.
+    """
     settings = CaSettings(
         enabled=True,
         root_common_name="Atlaso Test Root",
@@ -201,7 +205,14 @@ def test_ca_private_key_validation_rejects_leaf_from_another_root():
     ],
 )
 def test_ca_private_key_validation_requires_current_ca_root(is_ca, expired, not_yet_valid, expected_error):
-    """Verify restored root material is a current certificate-authority certificate."""
+    """Verify restored root material is a current certificate-authority certificate.
+
+    Args:
+        is_ca: Whether the generated certificate has CA basic constraints.
+        expired: Whether the generated certificate is already expired.
+        not_yet_valid: Whether the generated certificate validity starts in the future.
+        expected_error: Public-safe validation error expected for the case.
+    """
     from datetime import datetime, timedelta, timezone
 
     from cryptography import x509

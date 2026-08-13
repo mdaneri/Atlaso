@@ -4656,7 +4656,11 @@ def test_settings_archive_round_trips_authoritative_dns_policy(client):
 
 
 def test_settings_archive_round_trips_ca_revocation_timestamp(client):
-    """Verify CA revocation timestamps survive settings export and restore."""
+    """Verify CA revocation timestamps survive settings export and restore.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
     from datetime import datetime, timezone
 
     from sqlalchemy import select
@@ -4708,7 +4712,11 @@ def test_settings_archive_round_trips_ca_revocation_timestamp(client):
 
 
 def test_settings_archive_disables_registry_when_uploaded_ca_is_omitted(client):
-    """Verify uploaded registry CA bytes become a safe disabled restore handoff."""
+    """Verify uploaded registry CA bytes become a safe disabled restore handoff.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
     from sqlalchemy import select
 
     from atlaso.app.database import SessionLocal

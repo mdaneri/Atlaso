@@ -743,7 +743,11 @@ def test_oidc_rsa_key_is_encrypted_and_rotation_keeps_public_overlap(client, mon
 
 
 def test_oidc_cryptographic_validation_rejects_mismatched_public_jwk(client):
-    """Verify persisted OIDC public JWK values are public-only and match the private key."""
+    """Verify persisted OIDC public JWK values are public-only and match the private key.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
     from joserfc.jwk import RSAKey
 
     from atlaso.app.database import SessionLocal

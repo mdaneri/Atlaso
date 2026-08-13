@@ -1552,7 +1552,12 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
         *,
         use_observed_dhcp_addresses: bool = False,
     ) -> dict[str, list[str]]:
-        """Return the canonical archived listener addresses for eligible interfaces."""
+        """Return canonical archived listener addresses for eligible interfaces.
+
+        Args:
+            target_names: Archived interface names eligible for the listener.
+            use_observed_dhcp_addresses: Prefer observed addresses for DHCP interfaces.
+        """
         target_addresses: dict[str, list[str]] = {}
         for name in target_names:
             row = physical_interfaces.get(name) or vlan_interfaces.get(name, {})

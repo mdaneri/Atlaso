@@ -872,7 +872,12 @@ def validate_ca_private_key_material(
         certificate: x509.Certificate,
         issuer: x509.Certificate,
     ) -> bool:
-        """Return whether one supported certificate signature verifies."""
+        """Return whether one supported certificate signature verifies.
+
+        Args:
+            certificate: Certificate whose signature is verified.
+            issuer: Certificate containing the expected issuer public key.
+        """
         public_key = issuer.public_key()
         try:
             if isinstance(public_key, rsa.RSAPublicKey):
@@ -1050,7 +1055,13 @@ def validate_ca_state(
     errors: list[str] = []
 
     def managed_path_error(value: str, label: str, *, required: bool = False) -> str:
-        """Return a bounded error when a CA apply path escapes its managed directory."""
+        """Return a bounded error when a CA apply path escapes its managed directory.
+
+        Args:
+            value: Candidate managed filesystem path.
+            label: Public-safe field label used in validation feedback.
+            required: Require a nonempty path when true.
+        """
         raw_value = value.strip()
         if not raw_value:
             return f"{label} is required." if required else ""

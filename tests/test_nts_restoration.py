@@ -32,7 +32,13 @@ def _issued_certificate_material(
     issuer_certificate_pem: str = "",
     issuer_private_key_encrypted: str = "",
 ) -> tuple[str, str]:
-    """Return issued certificate material, self-signing when no issuer is supplied."""
+    """Return issued certificate material, self-signing when no issuer is supplied.
+
+    Args:
+        common_name: Subject common name for the generated certificate.
+        issuer_certificate_pem: Optional issuer certificate for a leaf certificate.
+        issuer_private_key_encrypted: Optional matching encrypted issuer private key.
+    """
     key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
     subject = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, common_name)])
     issuer_name = subject
@@ -54,6 +60,10 @@ def _issued_certificate_material(
         .serial_number(x509.random_serial_number())
         .not_valid_before(now - timedelta(minutes=1))
         .not_valid_after(now + timedelta(days=30))
+        .add_extension(
+            x509.BasicConstraints(ca=not issuer_certificate_pem, path_length=None),
+            critical=True,
+        )
         .sign(signing_key, hashes.SHA256())
         .public_bytes(serialization.Encoding.PEM)
         .decode("ascii")
