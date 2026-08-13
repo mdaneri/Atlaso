@@ -291,6 +291,16 @@ def provider_cryptographic_validation_errors(
                 for field in ("kty", "n", "e")
             ):
                 raise ValueError
+            canonical_public_jwk = dict(private_public_values)
+            canonical_public_jwk.update(
+                {
+                    "alg": OIDC_SIGNING_ALGORITHM,
+                    "kid": signing_key.kid,
+                    "use": "sig",
+                }
+            )
+            if public_jwk != canonical_public_jwk:
+                raise ValueError
         except Exception:
             errors.append("The active OIDC signing key is not protocol-ready.")
     return errors

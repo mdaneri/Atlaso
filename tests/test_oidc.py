@@ -744,11 +744,12 @@ def test_oidc_rsa_key_is_encrypted_and_rotation_keeps_public_overlap(client, mon
 
 
 def test_oidc_cryptographic_validation_rejects_mismatched_public_jwk(client):
-    """Verify persisted OIDC public JWK values match the signing private key."""
+    """Verify persisted OIDC public JWK values are public-only and match the private key."""
     from joserfc.jwk import RSAKey
 
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import CaCertificate
+    from atlaso.app.secrets import decrypt_secret
     from atlaso.app.services import oidc
 
     with SessionLocal() as db:
@@ -768,6 +769,24 @@ def test_oidc_cryptographic_validation_rejects_mismatched_public_jwk(client):
         certificate = db.execute(
             select(CaCertificate).where(CaCertificate.managed_owner == "oidc:https")
         ).scalar_one()
+
+        assert oidc.provider_cryptographic_validation_errors(
+            provider,
+            certificate,
+            signing_key,
+        ) == ["The active OIDC signing key is not protocol-ready."]
+
+        private_jwk = RSAKey.import_key(
+            decrypt_secret(signing_key.private_key_encrypted)
+        ).as_dict(private=True)
+        private_jwk.update(
+            {
+                "alg": oidc.OIDC_SIGNING_ALGORITHM,
+                "kid": signing_key.kid,
+                "use": "sig",
+            }
+        )
+        signing_key.public_jwk_json = json.dumps(private_jwk)
 
         assert oidc.provider_cryptographic_validation_errors(
             provider,

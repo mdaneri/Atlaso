@@ -1731,6 +1731,51 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
                 raise ValueError(
                     "The settings archive enables DHCP without an enabled DHCP scope."
                 )
+            archived_scope_ids = {
+                str(row["name"]): row_index
+                for row_index, row in enumerate(scopes, start=1)
+            }
+            archived_dhcp_scopes = [
+                DhcpScope(
+                    id=archived_scope_ids[str(row["name"])],
+                    **_model_kwargs_with_scalar_defaults(DhcpScope, row),
+                )
+                for row in scopes
+            ]
+            archived_dhcp_reservations = [
+                DhcpReservation(
+                    **_model_kwargs_with_scalar_defaults(DhcpReservation, row)
+                )
+                for row in data.get("dhcp_reservations", [])
+            ]
+            archived_dhcp_options = [
+                DhcpOption(
+                    **_model_kwargs_with_scalar_defaults(
+                        DhcpOption,
+                        row,
+                        exclude={"scope_id"},
+                    ),
+                    scope_id=archived_scope_ids.get(
+                        str(row.get("scope_name") or "")
+                    ),
+                )
+                for row in data.get("dhcp_options", [])
+            ]
+            dhcp_errors = validate_dhcp_settings(
+                DhcpSettings(
+                    **_model_kwargs_with_scalar_defaults(
+                        DhcpSettings,
+                        data["dhcp_settings"][0],
+                    )
+                ),
+                archived_dhcp_reservations,
+                scopes=archived_dhcp_scopes,
+                options=archived_dhcp_options,
+            )
+            if dhcp_errors:
+                raise ValueError(
+                    f"The settings archive DHCP settings are invalid: {dhcp_errors[0]}"
+                )
         else:
             for row_index, row in enumerate(data.get("dhcp_settings", []), start=1):
                 if row.get("enabled", False) and "ipv4" not in dhcp_target_families.get(

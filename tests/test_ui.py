@@ -4966,6 +4966,23 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
     enabled_without_enabled_dhcp_scope["data"]["dhcp_settings"][0]["enabled"] = True
     for scope in enabled_without_enabled_dhcp_scope["data"]["dhcp_scopes"]:
         scope["enabled"] = False
+    enabled_with_invalid_disabled_dhcp_scope = deepcopy(archive)
+    enabled_with_invalid_disabled_dhcp_scope["data"]["dhcp_settings"][0]["enabled"] = True
+    enabled_with_invalid_disabled_dhcp_scope["data"]["dhcp_scopes"].append(
+        {
+            "name": "invalid-disabled-scope",
+            "address_family": "ipv4",
+            "interface_name": "eth2",
+            "site_address": "not-an-address",
+            "prefix_length": 24,
+            "range_expression": "192.168.50.100-192.168.50.200",
+            "lease_time": "12h",
+            "domain_name": "atlaso.internal",
+            "dns_server": "192.168.50.1",
+            "ntp_server": "",
+            "enabled": False,
+        }
+    )
     enabled_outside_dhcp_reservation = deepcopy(archive)
     enabled_outside_dhcp_reservation["data"]["dhcp_settings"][0]["enabled"] = True
     enabled_outside_dhcp_reservation["data"]["dhcp_reservations"][0]["enabled"] = True
@@ -5398,7 +5415,8 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
         (enabled_missing_dhcp_target, "has an ineligible bind interface"),
         (enabled_wrong_family_dhcp_target, "has an ineligible bind interface"),
         (enabled_without_enabled_dhcp_scope, "enables DHCP without an enabled DHCP scope"),
-        (enabled_outside_dhcp_reservation, "is outside every enabled DHCP scope"),
+        (enabled_with_invalid_disabled_dhcp_scope, "DHCP settings are invalid"),
+        (enabled_outside_dhcp_reservation, "must be inside an enabled DHCP IP zone"),
         *(
             (candidate, "has an ineligible listen interface")
             for candidate in enabled_missing_service_targets
