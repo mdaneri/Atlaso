@@ -760,6 +760,8 @@ def test_photon_provisioning_prepares_attached_data_disks():
     hyperv_docs = Path("image/hyperv/README.md").read_text(encoding="utf-8")
     vmware_docs = Path("image/vmware-workstation/README.md").read_text(encoding="utf-8")
     root_docs = Path("docs/reference/full-technical-reference.md").read_text(encoding="utf-8")
+    hyperv_packer = Path("image/hyperv/atlaso-photon.pkr.hcl").read_text(encoding="utf-8")
+    vmware_packer = Path("image/vmware-workstation/atlaso-photon.pkr.hcl").read_text(encoding="utf-8")
 
     assert 'run_tdnf "Photon appliance package installation"' in provision
     assert "e2fsprogs" in provision
@@ -778,6 +780,14 @@ def test_photon_provisioning_prepares_attached_data_disks():
     assert 'image/common/udev/99-atlaso-disk-identity.rules" /etc/udev/rules.d/99-atlaso-disk-identity.rules' in provision
     assert '"$ATLASO_HOME/$ATLASO_IMAGE_ASSET_DIR/data-disks.conf" /etc/atlaso/data-disks.conf' in provision
     assert 'SYMLINK+="disk/by-id/atlaso-path-$env{ID_PATH_TAG}"' in disk_identity_rule
+    assert 'source      = "../common/udev"' in hyperv_packer
+    assert 'destination = "/tmp/atlaso-src/image/common/udev"' in hyperv_packer
+    assert 'source      = "data-disks.conf"' in hyperv_packer
+    assert 'destination = "/tmp/atlaso-src/image/hyperv/data-disks.conf"' in hyperv_packer
+    assert 'source      = "../common/udev"' in vmware_packer
+    assert 'destination = "/tmp/atlaso-src/image/common/udev"' in vmware_packer
+    assert 'source      = "data-disks.conf"' in vmware_packer
+    assert 'destination = "/tmp/atlaso-src/image/vmware-workstation/data-disks.conf"' in vmware_packer
     assert "ATLASO_DATA_DISK_SIZE_BYTES=536870912000" in hyperv_policy
     assert "ATLASO_DEPOT_SCSI_TUPLE=0:0:1" in hyperv_policy
     assert "ATLASO_BACKUP_SCSI_TUPLE=0:0:2" in hyperv_policy
