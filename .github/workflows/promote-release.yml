@@ -78,6 +78,8 @@ jobs:
             --site-root "$SITE_ROOT/updates" \
             --signing-key "$RUNNER_TEMP/release-signing-key.pem" \
             --signing-key-id "$RELEASE_KEY_ID"
+          test -s "$SITE_ROOT/updates/channels/stable/manifest.json"
+          test -s "$SITE_ROOT/updates/channels/stable/manifest.json.sig"
           git -C "$SITE_ROOT" add --all
           if git -C "$SITE_ROOT" diff --cached --quiet; then
             exit 0
@@ -86,3 +88,16 @@ jobs:
           git -C "$SITE_ROOT" config user.email 41898282+github-actions[bot]@users.noreply.github.com
           git -C "$SITE_ROOT" commit -m "Promote v${RELEASE_VERSION} to ${RELEASE_CHANNEL}"
           git -C "$SITE_ROOT" push origin HEAD:gh-pages
+      - name: Verify the published signed channel
+        env:
+          RELEASE_CHANNEL: ${{ inputs.channel }}
+          RELEASE_KEY_ID: atlaso-release-2026-01
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: |
+          RELEASE_COMMIT="$(python -c 'import json; print(json.load(open("release/release-manifest.json", encoding="utf-8"))["git_commit"])')"
+          python scripts/check_published_release_channel.py \
+            --channel-url "https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/updates/channels/${RELEASE_CHANNEL}/manifest.json" \
+            --expected-channel "$RELEASE_CHANNEL" \
+            --expected-version "$RELEASE_VERSION" \
+            --expected-commit "$RELEASE_COMMIT" \
+            --trusted-key "image/common/update-trust/${RELEASE_KEY_ID}.pem"

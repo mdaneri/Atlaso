@@ -73,16 +73,18 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          site_root="$(mktemp -d)"
+          SITE_ROOT="$(mktemp -d)"
           git clone --branch gh-pages --single-branch \
-            "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "$site_root"
-          python scripts/overlay_docs_site.py --built-docs site/docs --pages-root "$site_root"
-          git -C "$site_root" config user.name "github-actions[bot]"
-          git -C "$site_root" config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git -C "$site_root" add docs
-          if git -C "$site_root" diff --cached --quiet; then
+            "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "$SITE_ROOT"
+          python scripts/overlay_docs_site.py --built-docs site/docs --pages-root "$SITE_ROOT"
+          test -s "$SITE_ROOT/updates/channels/stable/manifest.json"
+          test -s "$SITE_ROOT/updates/channels/stable/manifest.json.sig"
+          git -C "$SITE_ROOT" config user.name "github-actions[bot]"
+          git -C "$SITE_ROOT" config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git -C "$SITE_ROOT" add docs
+          if git -C "$SITE_ROOT" diff --cached --quiet; then
             echo "Documentation output is already current."
             exit 0
           fi
-          git -C "$site_root" commit -m "Publish Atlaso documentation ${GITHUB_SHA}"
-          git -C "$site_root" push origin HEAD:gh-pages
+          git -C "$SITE_ROOT" commit -m "Publish Atlaso documentation ${GITHUB_SHA}"
+          git -C "$SITE_ROOT" push origin HEAD:gh-pages

@@ -69,6 +69,9 @@ Every workflow job that mutates `gh-pages` must use the shared `atlaso-github-pa
 and `cancel-in-progress: false`. Keep long prerequisite builds outside that job-level lock; acquire it before reading the
 current Pages branch and retain it through the guarded publication push. Do not weaken existing signature, immutable
 tag/release, monotonic-channel, or byte-idempotency checks when narrowing the lock scope.
+Every Pages writer must also fail closed unless the shipped default `stable` manifest and signature exist in its final
+tree. Appliance release and promotion workflows must re-fetch the published signed pointer and immutable release
+manifest, verify the named trust key, and confirm CPython 3.14 compatibility after publication.
 
 Use `python scripts/version.py bump` or `.\scripts\version.ps1` to increment and synchronize the current patch version.
 When an explicit target is required, pass the current version or exact next patch through `--version X.Y.Z` to Python or

@@ -8,8 +8,11 @@ import importlib.util
 import io
 import json
 import os
+import subprocess
+import sys
 import tarfile
 from pathlib import Path
+from urllib.error import HTTPError
 
 import pytest
 from cryptography.hazmat.primitives import serialization
@@ -25,6 +28,30 @@ from atlaso.app.services.release_updates import (
 
 ROOT = Path(__file__).resolve().parents[1]
 KEY_ID = "test-release-key"
+
+
+def load_script(module_name: str, filename: str):
+    """Load one repository script as a test module.
+
+    Args:
+        module_name: Unique module name for the import.
+        filename: Script filename under the repository scripts directory.
+
+    Returns:
+        The loaded script module.
+    """
+    spec = importlib.util.spec_from_file_location(module_name, ROOT / "scripts" / filename)
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+published_channel_check = load_script(
+    "check_published_release_channel_script",
+    "check_published_release_channel.py",
+)
 
 
 def canonical(payload: dict) -> bytes:
@@ -291,6 +318,15 @@ def test_release_workflows_use_successful_main_sha_and_promote_without_rebuildin
     assert "Everything your virtualization lab needs." in publication
     assert "Infrastructure • Storage • Identity • Networking • Lifecycle" in publication
     assert "The HTML page is informational." in publication
+    assert "python scripts/check_published_release_channel.py" in publication
+    assert "--expected-channel development" in publication
+    publication_check = publication.split(
+        "- name: Verify the published development channel",
+        1,
+    )[1]
+    assert "/updates/channels/development/manifest.json" in publication_check
+    assert '--expected-version "$VERSION"' in publication_check
+    assert '--expected-commit "$RELEASE_SHA"' in publication_check
     assert "<script" not in publication
     assert publication.count("ref: ${{ needs.prepare.outputs.release_sha }}") == 2
     assert "actions/upload-artifact@v7" in publication
@@ -309,6 +345,14 @@ def test_release_workflows_use_successful_main_sha_and_promote_without_rebuildin
     assert "gh release download" in promotion
     assert "build_release_bundle.py" not in promotion
     assert "--expected-version \"$RELEASE_VERSION\"" in promotion
+    assert "python scripts/check_published_release_channel.py" in promotion
+    assert '--expected-channel "$RELEASE_CHANNEL"' in promotion
+    promotion_check = promotion.split(
+        "- name: Verify the published signed channel",
+        1,
+    )[1]
+    assert '--expected-version "$RELEASE_VERSION"' in promotion_check
+    assert '--expected-commit "$RELEASE_COMMIT"' in promotion_check
     assert "workflow_dispatch:" in inventory
     assert "workflow_run:" not in inventory
     assert "schedule:" not in inventory
@@ -328,6 +372,264 @@ def test_release_workflows_use_successful_main_sha_and_promote_without_rebuildin
     assert "staging" not in inventory
 
 
+def test_published_channel_check_verifies_pointer_release_and_compatibility(
+    trust,
+    monkeypatch,
+):
+    """Verify the live guard reaches signed release and ABI validation.
+
+    Args:
+        trust: Trust supplied to the test scenario.
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+    """
+    private_key, trust_dir = trust
+    channel_url = "https://updates.example.test/channels/stable/manifest.json"
+    release_url = "https://github.com/example/releases/download/v0.9.0/release-manifest.json"
+    release = release_payload()
+    channel = {
+        "schema_version": 2,
+        "kind": "atlaso-channel",
+        "channel": "stable",
+        "version": release["version"],
+        "git_commit": release["git_commit"],
+        "release_manifest_url": release_url,
+        "issued_at": "2026-08-13T12:00:00Z",
+        "signing_key_id": KEY_ID,
+    }
+    raw_channel, channel_signature = signed(channel, private_key)
+    raw_release, release_signature = signed(release, private_key)
+    documents = {
+        channel_url: raw_channel,
+        f"{channel_url}.sig": channel_signature,
+        release_url: raw_release,
+        f"{release_url}.sig": release_signature,
+    }
+    monkeypatch.setattr(
+        published_channel_check,
+        "fetch_document",
+        lambda url, **_kwargs: documents[url],
+    )
+
+    result = published_channel_check.verify_channel(
+        channel_url,
+        expected_channel="stable",
+        expected_version="0.9.0",
+        expected_commit="a" * 40,
+        expected_python_abi="cp314",
+        trusted_key=trust_dir / f"{KEY_ID}.pem",
+        timeout_seconds=30,
+        deadline=published_channel_check.time.monotonic() + 65.0,
+    )
+
+    assert result["channel"]["version"] == "0.9.0"
+    assert result["release"]["git_commit"] == "a" * 40
+
+    with pytest.raises(ValueError, match="does not support cp313"):
+        published_channel_check.verify_channel(
+            channel_url,
+            expected_channel="stable",
+            expected_version="0.9.0",
+            expected_commit="a" * 40,
+            expected_python_abi="cp313",
+            trusted_key=trust_dir / f"{KEY_ID}.pem",
+            timeout_seconds=30,
+            deadline=published_channel_check.time.monotonic() + 65.0,
+        )
+
+    with pytest.raises(ValueError, match="expected v0.9.1"):
+        published_channel_check.verify_channel(
+            channel_url,
+            expected_channel="stable",
+            expected_version="0.9.1",
+            expected_commit="b" * 40,
+            expected_python_abi="cp314",
+            trusted_key=trust_dir / f"{KEY_ID}.pem",
+            timeout_seconds=30,
+            deadline=published_channel_check.time.monotonic() + 65.0,
+        )
+
+
+@pytest.mark.parametrize(
+    ("deadline", "expected_timeout"),
+    [(10.0, 10.0), (60.0, 30.0)],
+)
+def test_published_channel_check_cancels_fetch_worker_at_deadline(
+    monkeypatch,
+    deadline: float,
+    expected_timeout: float,
+):
+    """Verify fetches cannot extend the request or publication deadline.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+        deadline: Absolute publication deadline supplied to the fetch.
+        expected_timeout: Tighter request or publication timeout expected in the parent.
+    """
+    command: list[str] = []
+    worker_timeout = 0.0
+
+    def run(args, *, capture_output, check, timeout):
+        """Simulate a fetch worker that reaches its parent-enforced timeout.
+
+        Args:
+            args: Worker command arguments supplied to the subprocess runner.
+            capture_output: Whether the subprocess runner captures standard streams.
+            check: Whether the subprocess runner raises for a nonzero exit code.
+            timeout: Parent-enforced timeout for the worker process.
+        """
+        nonlocal command, worker_timeout
+        command = args
+        worker_timeout = timeout
+        raise subprocess.TimeoutExpired(args, timeout)
+
+    monkeypatch.setattr(published_channel_check.time, "monotonic", lambda: 0.0)
+    monkeypatch.setattr(published_channel_check.subprocess, "run", run)
+
+    with pytest.raises(TimeoutError, match="publication window"):
+        published_channel_check.fetch_document(
+            "https://updates.example.test/manifest.json",
+            timeout_seconds=30.0,
+            deadline=deadline,
+        )
+
+    assert command[2] == published_channel_check.FETCH_WORKER_FLAG
+    assert command[3] == "https://updates.example.test/manifest.json"
+    assert command[4] == str(expected_timeout)
+    assert worker_timeout == expected_timeout
+
+
+def test_published_channel_check_imports_atlaso_from_a_clean_checkout(tmp_path: Path):
+    """Verify direct workflow execution imports Atlaso without an installation.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-I",
+            str(ROOT / "scripts" / "check_published_release_channel.py"),
+            "--help",
+        ],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "Verify a published Atlaso channel" in result.stdout
+
+
+def test_published_channel_check_caps_requests_and_sleeps_to_publication_window(
+    trust,
+    monkeypatch,
+):
+    """Verify slow requests cannot exceed the bounded publication window.
+
+    Args:
+        trust: Trust supplied to the test scenario.
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+    """
+    _private_key, trust_dir = trust
+    clock = 0.0
+    request_timeouts: list[float] = []
+
+    def monotonic() -> float:
+        return clock
+
+    def verify_channel(*_args, timeout_seconds: float, deadline: float, **_kwargs):
+        """Simulate one verification attempt consuming its request budget.
+
+        Args:
+            *_args: Positional verifier arguments unused by the simulation.
+            timeout_seconds: Configured per-request timeout.
+            deadline: Absolute publication deadline for the verification attempt.
+            **_kwargs: Keyword verifier arguments unused by the simulation.
+        """
+        nonlocal clock
+        effective_timeout = min(timeout_seconds, deadline - clock)
+        request_timeouts.append(effective_timeout)
+        clock += effective_timeout
+        raise TimeoutError("publication request timed out")
+
+    def sleep(seconds: float) -> None:
+        """Advance the simulated clock instead of sleeping.
+
+        Args:
+            seconds: Simulated sleep interval in seconds.
+        """
+        nonlocal clock
+        clock += seconds
+
+    monkeypatch.setattr(published_channel_check.time, "monotonic", monotonic)
+    monkeypatch.setattr(published_channel_check.time, "sleep", sleep)
+    monkeypatch.setattr(published_channel_check, "verify_channel", verify_channel)
+
+    with pytest.raises(SystemExit, match="failed verification after 2 attempt"):
+        published_channel_check.main(
+            [
+                "--channel-url",
+                "https://updates.example.test/channels/stable/manifest.json",
+                "--expected-channel",
+                "stable",
+                "--expected-version",
+                "0.9.0",
+                "--expected-commit",
+                "a" * 40,
+                "--trusted-key",
+                str(trust_dir / f"{KEY_ID}.pem"),
+                "--publication-window-seconds",
+                "65",
+                "--retry-delay-seconds",
+                "10",
+                "--timeout-seconds",
+                "30",
+            ]
+        )
+
+    assert request_timeouts == [30.0, 25.0]
+    assert clock == 65.0
+
+
+def test_published_channel_check_fails_when_default_pointer_is_absent(
+    trust,
+    monkeypatch,
+):
+    """Verify the live guard reports a missing default channel.
+
+    Args:
+        trust: Trust supplied to the test scenario.
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+    """
+    _private_key, trust_dir = trust
+    monkeypatch.setattr(
+        published_channel_check,
+        "fetch_document",
+        lambda url, **_kwargs: (_ for _ in ()).throw(
+            HTTPError(url, 404, "Not Found", {}, None)
+        ),
+    )
+
+    with pytest.raises(SystemExit, match="failed verification.*404"):
+        published_channel_check.main(
+            [
+                "--channel-url",
+                "https://updates.example.test/channels/stable/manifest.json",
+                "--expected-channel",
+                "stable",
+                "--expected-version",
+                "0.9.0",
+                "--expected-commit",
+                "a" * 40,
+                "--trusted-key",
+                str(trust_dir / f"{KEY_ID}.pem"),
+                "--attempts",
+                "1",
+            ]
+        )
+
+
 def test_pages_writers_share_multi_entry_publication_queue():
     """Verify every Pages writer preserves multiple pending publications."""
     workflow_root = ROOT / ".github" / "workflows"
@@ -338,6 +640,8 @@ def test_pages_writers_share_multi_entry_publication_queue():
         text = path.read_text(encoding="utf-8")
         if "HEAD:gh-pages" in text:
             writers.add(path)
+            assert 'test -s "$SITE_ROOT/updates/channels/stable/manifest.json"' in text, path
+            assert 'test -s "$SITE_ROOT/updates/channels/stable/manifest.json.sig"' in text, path
         if "group: atlaso-github-pages" not in text:
             continue
         queue_users.add(path)
