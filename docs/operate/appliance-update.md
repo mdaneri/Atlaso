@@ -17,6 +17,10 @@ status, progress, timestamps, compatibility evidence, error, and bounded redacte
 shared source snapshot and aggregates the selected channel and release, verified key ID, checksums, service checks,
 rollback result, and final outcome.
 
+The worker requires successful data-disk preparation but only orders after and wants the Atlaso web service. A release
+transaction can therefore stop and restart the web service without systemd propagating that stop to the worker that owns
+the update task.
+
 <!-- BEGIN GENERATED INTERFACE OVERVIEW -->
 ## Interface overview
 

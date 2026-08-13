@@ -1,8 +1,8 @@
 [Unit]
 Description=Atlaso durable task worker and scheduler
 After=network-online.target atlaso-data-disks.service atlaso.service
-Wants=network-online.target
-Requires=atlaso-data-disks.service atlaso.service
+Wants=network-online.target atlaso.service
+Requires=atlaso-data-disks.service
 
 [Service]
 Type=simple

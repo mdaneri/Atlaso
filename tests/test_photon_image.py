@@ -823,7 +823,9 @@ def test_photon_provisioning_prepares_attached_data_disks():
     assert "Requires=atlaso-data-disks.service atlaso-bootstrap-https.service" in hyperv_unit
     assert "After=network-online.target atlaso-data-disks.service atlaso-bootstrap-https.service" in vmware_unit
     assert "Requires=atlaso-data-disks.service atlaso-bootstrap-https.service" in vmware_unit
-    assert "Requires=atlaso-data-disks.service atlaso.service" in worker_unit
+    assert "Wants=network-online.target atlaso.service" in worker_unit
+    assert "Requires=atlaso-data-disks.service\n" in worker_unit
+    assert "Requires=atlaso-data-disks.service atlaso.service" not in worker_unit
     assert "ExecStart=/opt/atlaso/bin/atlaso-mount-data-disks" in data_disks_unit
     assert "Requires=atlaso-data-disks.service" in bootstrap_unit
     assert "Requires=atlaso-data-disks.service" in nginx_dropin
