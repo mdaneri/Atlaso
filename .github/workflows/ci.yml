@@ -140,6 +140,8 @@ jobs:
   deployment-packer:
     name: ${{ github.event_name == 'workflow_dispatch' && 'Trusted Packer deployment validation' || github.event_name == 'pull_request' && github.actor == 'github-actions[bot]' && 'Approval-gated Packer deployment validation' || 'Packer deployment validation' }}
     runs-on: windows-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v7
         with:
@@ -148,7 +150,13 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: '3.14'
-      - name: Validate both Photon Packer targets
+      - name: Validate both Photon Packer targets with authenticated plugin downloads
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        env:
+          PACKER_GITHUB_API_TOKEN: ${{ github.token }}
+        run: python scripts/check_deployment_assets.py --mode packer
+      - name: Validate fork Packer targets without repository credentials
+        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository
         run: python scripts/check_deployment_assets.py --mode packer
 
   python-tests:
