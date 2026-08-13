@@ -10885,7 +10885,7 @@ def _migrate_release_esx_storage_claims(
     backup_root: Path,
     backups: list[tuple[Path | None, Path]],
 ) -> None:
-    """Claim boot-safe mounted ESX disks configured by an older release.
+    """Migrate and claim boot-safe mounted ESX disks configured by an older release.
 
     Args:
         backup_root: Transaction backup root used for rollback.
@@ -10911,6 +10911,7 @@ def _migrate_release_esx_storage_claims(
 
     inventory = _esx_storage_inventory()
     claims: list[str] = []
+    identity_migrations: list[tuple[str, str, str, str]] = []
     for stable_id, configured_uuid, configured_mount in configured:
         mount_path = PurePosixPath(str(configured_mount or ""))
         stored_device = _esx_storage_resolved_by_id_device(str(stable_id or ""))
@@ -10932,6 +10933,9 @@ def _migrate_release_esx_storage_claims(
         if any(character in value for value in values for character in "\t\r\n"):
             raise ValueError("configured mounted ESX Storage disk has an unsupported identity or mount path")
         claims.append("\t".join(values))
+        identity_migrations.append(
+            (migrated_identity, str(stable_id), str(configured_uuid), str(configured_mount))
+        )
 
     destination = ESX_STORAGE_DISK_ALLOWLIST_PATH
     backup = backup_root / Path(*destination.parts[1:])
@@ -10944,7 +10948,19 @@ def _migrate_release_esx_storage_claims(
         backups.append((None, destination))
         existing = []
     merged = list(dict.fromkeys([line for line in existing if line.strip()] + claims))
-    _write_secret_file(destination, "\n".join(merged) + "\n", 0o644)
+    with sqlite3.connect(ATLASO_DATABASE_PATH) as connection:
+        for migrated_identity, stable_id, configured_uuid, configured_mount in identity_migrations:
+            if migrated_identity == stable_id:
+                continue
+            updated = connection.execute(
+                "update esx_storage_volumes set stable_device_id = ? "
+                "where source_type = 'mounted_ext4' and applied = 1 and stable_device_id = ? "
+                "and filesystem_uuid = ? and mount_path = ?",
+                (migrated_identity, stable_id, configured_uuid, configured_mount),
+            )
+            if updated.rowcount != 1:
+                raise ValueError(f"configured mounted ESX Storage disk changed during identity migration: {stable_id}")
+        _write_secret_file(destination, "\n".join(merged) + "\n", 0o644)
 
 
 def _esx_storage_resolved_by_id_device(value: str) -> Path:

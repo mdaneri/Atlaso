@@ -981,6 +981,10 @@ def test_release_migrates_boot_safe_configured_mounted_disk_claim(monkeypatch, t
         "/dev/disk/by-id/atlaso-path-pci-0000_03_00_0-scsi-0_0_3_0\t"
         "/mnt/operator-existing-ext4\n"
     )
+    with sqlite3.connect(database) as connection:
+        assert connection.execute("select stable_device_id from esx_storage_volumes").fetchone() == (
+            "/dev/disk/by-id/atlaso-path-pci-0000_03_00_0-scsi-0_0_3_0",
+        )
     assert backups == [(None, allowlist)]
 
 
