@@ -2750,6 +2750,7 @@ class Job(Base):
         task_config_json: Serialized JSON representation of task config.
         network_boot_environment_key: Persisted network boot environment key for the job resource.
         network_boot_source: Persisted network boot source for the job resource.
+        vcf_depot_profile_id: Identifier of the queued VCF Offline Depot profile.
         vcf_depot_operation: Persisted vcf depot operation for the job resource.
         steps: Persisted steps for the job resource.
     """
@@ -2788,9 +2789,11 @@ class Job(Base):
     task_config_json: Mapped[str] = mapped_column(Text, default="{}")
     network_boot_environment_key: Mapped[str | None] = mapped_column(String(80), nullable=True)
     network_boot_source: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    vcf_depot_profile_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     vcf_depot_operation: Mapped[bool] = mapped_column(
         Boolean,
         default=_job_vcf_depot_operation_default,
+        nullable=False,
     )
 
     steps: Mapped[list["JobStep"]] = relationship(
@@ -2798,6 +2801,20 @@ class Job(Base):
         cascade="all, delete-orphan",
         order_by="JobStep.position",
     )
+
+
+class VcfDepotAdmissionGate(Base):
+    """Serialize VCFDT queue and exclusive-operation admission decisions.
+
+    Attributes:
+        id: Singleton database identifier for the admission gate.
+        generation: Monotonic write value used to acquire the database lock.
+    """
+
+    __tablename__ = "vcf_depot_admission_gate"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    generation: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
 
 
 class JobStep(Base):

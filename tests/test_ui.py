@@ -1009,7 +1009,7 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert service_worker.headers["cache-control"] == "no-cache"
     assert service_worker.headers["service-worker-allowed"] == "/ui/management/"
     assert "ATLASO_CACHE" in service_worker.text
-    assert "atlaso-management-pwa-v251" in service_worker.text
+    assert "atlaso-management-pwa-v255" in service_worker.text
     assert 'fetch(asset, { cache: "reload" })' in service_worker.text
     assert ".catch(() => undefined)" in service_worker.text
     assert 'request.mode === "navigate"' in service_worker.text
@@ -1027,7 +1027,7 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-8" in service_worker.text
     assert "/static/appliance-apply-polling.js?v=issue-294-2" in service_worker.text
     assert "/static/ui-routes.js?v=issue-287-1" in service_worker.text
-    assert "/static/app.js?v=network-ui-fixes-318-333-334-2" in service_worker.text
+    assert "/static/app.js?v=vcf-depot-queue-schedule-351-353-10" in service_worker.text
     assert "/static/terminal.js?v=issue-287-2" in service_worker.text
     assert "/static/pwa.js?v=issue-287-2" in service_worker.text
     assert "vcfdt-configuration-248-20260807-14" not in service_worker.text
@@ -1059,8 +1059,8 @@ def test_shared_ui_pattern_shell_and_wizard_contracts(client):
     base = (templates / "base.html").read_text(encoding="utf-8")
     public_base = (templates / "public_portal_base.html").read_text(encoding="utf-8")
     for shell, app_asset in (
-        (base, "/static/app.js?v=network-ui-fixes-318-333-334-2"),
-        (public_base, "/static/app.js?v=network-ui-fixes-318-333-334-2"),
+        (base, "/static/app.js?v=vcf-depot-queue-schedule-351-353-10"),
+        (public_base, "/static/app.js?v=vcf-depot-queue-schedule-351-353-10"),
         (base, "/static/appliance-apply-polling.js?v=issue-294-2"),
     ):
         assert shell.index("/static/vendor/tabulator/tabulator.min.js") < shell.index(
@@ -1075,6 +1075,7 @@ def test_shared_ui_pattern_shell_and_wizard_contracts(client):
         templates / "esx_storage.html",
         templates / "routes_wan.html",
         templates / "vlan_interfaces.html",
+        templates / "vcf_offline_depot.html",
         templates / "partials" / "vcf_trust_modal.html",
         templates / "partials" / "vcf_sddc_deploy_modal.html",
         templates / "partials" / "vcf_target_depot_modal.html",
@@ -1082,7 +1083,7 @@ def test_shared_ui_pattern_shell_and_wizard_contracts(client):
     wizard_markup = "\n".join(
         path.read_text(encoding="utf-8") for path in wizard_templates
     )
-    assert len(re.findall(r"<form\b[^>]*\bdata-atlaso-wizard(?:\s|>)", wizard_markup)) == 6
+    assert len(re.findall(r"<form\b[^>]*\bdata-atlaso-wizard(?:\s|>)", wizard_markup)) == 7
     for marker in (
         "data-atlaso-wizard-step=",
         "data-atlaso-wizard-nav=",
@@ -1688,7 +1689,7 @@ def test_monitor_page_renders_and_data_endpoint(client):
     assert "swagger-link-icon" in page.text
     assert "/static/app.css?v=vlan-interface-wizard-304-2" in page.text
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-8" in page.text
-    assert "/static/app.js?v=network-ui-fixes-318-333-334-2" in page.text
+    assert "/static/app.js?v=vcf-depot-queue-schedule-351-353-10" in page.text
     app_css = client.get("/static/app.css")
     assert app_css.status_code == 200
     assert ".split-workspace > .wide-panel" in app_css.text
@@ -13808,10 +13809,25 @@ def test_vcf_offline_depot_page_redirect_and_uploads_are_sanitized(client, tmp_p
     assert "Start" in page.text
     assert "Start, schedule, and preview actions" in page.text
     assert "Schedule" in page.text
-    assert "new=vcf_depot_download" in Path("atlaso/app/templates/vcf_offline_depot.html").read_text(encoding="utf-8")
+    template_text = Path("atlaso/app/templates/vcf_offline_depot.html").read_text(encoding="utf-8")
+    assert "new=vcf_depot_download" not in template_text
+    assert "?schedule_profile_id={{ profile.id }}#vcf-depot-schedule-modal" in template_text
+    contextual_schedule = page.text.split('id="vcf-depot-schedule-modal"', 1)[1].split("</dialog>", 1)[0]
+    assert contextual_schedule.count("data-atlaso-wizard-nav=") == 4
+    assert all(f">{label}<" in contextual_schedule for label in ("Schedule", "Timing", "State", "Review"))
+    assert 'name="task_type"' not in contextual_schedule
+    assert 'name="vcf_profile_id"' not in contextual_schedule
+    assert "The task type and profile are bound by the server" in contextual_schedule
     app_js = client.get("/static/app.js").text
     assert '"Schedule download (enable profile first)"' in app_js
-    assert "function scheduleVcfDepotProfileDownload(row)" in app_js
+    assert "function scheduleVcfDepotProfileDownload(row, launcher = null)" in app_js
+    schedule_action_source = app_js.split("function scheduleVcfDepotProfileDownload", 1)[1].split("let vcfDepotProfilesTable", 1)[0]
+    assert "atlasoOpenScheduleWizard" in schedule_action_source
+    assert "window.location.assign" not in schedule_action_source
+    start_action_source = app_js.split("async function startVcfDepotProfileDownload", 1)[1].split("async function previewVcfDepotProfileScript", 1)[0]
+    assert "showTransientGridStatus" in start_action_source
+    assert "showTransientGridError" in start_action_source
+    assert "showVcfDepotMessage" not in start_action_source
     assert page.text.index("<th>Name</th>") < page.text.index("<th>Start</th>") < page.text.index("<th>Type</th>")
     assert 'href="/ui/management/logs"' in page.text
     assert "Generate the Software Depot ID" in page.text
@@ -13992,7 +14008,8 @@ def test_vcf_offline_depot_page_redirect_and_uploads_are_sanitized(client, tmp_p
     assert "startVcfDepotProfileDownload" in app_js.text
     start_download_js = app_js.text.split("async function startVcfDepotProfileDownload", 1)[1].split("async function ", 1)[0]
     assert "window.location.reload()" not in start_download_js
-    assert "setVcfDepotDownloadActive(true, payload.job_id)" in start_download_js
+    assert "await row.update({" in start_download_js
+    assert "active_job_id: payload.job_id" in start_download_js
     assert "await atlasoTasksTable.setPage(1)" in start_download_js
     assert "await refreshTasksPage()" in start_download_js
     assert 'title: "Download mode"' in app_js.text
@@ -14009,7 +14026,13 @@ def test_vcf_offline_depot_page_redirect_and_uploads_are_sanitized(client, tmp_p
     assert "rowHeight: 34" in profiles_table_js.split("columns:", 1)[0]
     assert "!data.can_start" in profiles_table_js
     assert "data.download_active" in profiles_table_js
-    assert "setVcfDepotDownloadActive" in app_js.text
+    assert (
+        "function setVcfDepotDownloadStates(activeTasks = [], activeExclusiveOperation = null, "
+        "profileStartStates = [])"
+    ) in app_js.text
+    assert "const byProfile = new Map" in app_js.text
+    assert "const prerequisitesByProfile = new Map" in app_js.text
+    assert "profileStartStates: Array.isArray(payload.profile_start_states)" in app_js.text
     assert "data.start_blocker" in profiles_table_js
 
     app_css = client.get("/static/app.css")
@@ -15130,18 +15153,20 @@ def test_vcf_offline_depot_tool_configuration_is_atomic_and_presence_only(client
         assert db.execute(select(Setting).where(Setting.key == VCF_DEPOT_SOFTWARE_DEPOT_ID_KEY)).scalar_one().value == "existing-depot-id"
 
 
-def test_vcf_offline_depot_manual_profile_download_starts_job(client, tmp_path):
+def test_vcf_offline_depot_manual_profile_download_starts_job(client, tmp_path, monkeypatch):
     """Verify that vcf offline depot manual profile download starts job.
 
     Args:
         client: HTTP test client used to exercise the Atlaso application.
         tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
     """
     import html
     import json
 
     from sqlalchemy import select
 
+    from atlaso.app import ui
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import (
         Job,
@@ -15223,7 +15248,7 @@ def test_vcf_offline_depot_manual_profile_download_starts_job(client, tmp_path):
     )
     assert concurrent_response.status_code == 409
     assert payload["job_id"] in concurrent_response.json()["detail"]
-    assert "Wait for it to finish" in concurrent_response.json()["detail"]
+    assert "Wait for that profile task to finish" in concurrent_response.json()["detail"]
 
     active_page = client.get("/vcf-offline-depot")
     active_rows_payload = active_page.text.split("data-profiles='", 1)[1].split("'", 1)[0]
@@ -15266,10 +15291,15 @@ def test_vcf_offline_depot_manual_profile_download_starts_job(client, tmp_path):
         assert profile and profile.status == "ready"
         assert profile.notes == "Status remains task-owned"
 
+    shared_runtime_log = tmp_path / "active-tool" / "log" / "vdt.log"
+    shared_runtime_log.parent.mkdir(parents=True)
+    shared_runtime_log.write_text("another profile is running\n", encoding="utf-8")
+    monkeypatch.setattr(ui, "VCF_DEPOT_VDT_LOG_PATH", shared_runtime_log)
     task_log_page = client.get(f"/vcf-offline-depot/tasks/{payload['job_id']}/log")
     assert task_log_page.status_code == 200
     assert "VCFDT task log" in task_log_page.text
     assert "No task log is available." in task_log_page.text
+    assert "another profile is running" not in task_log_page.text
     task_log_payload = client.get(
         f"/vcf-offline-depot/tasks/{payload['job_id']}/log",
         headers={"X-Atlaso-Task-Log": "1"},
@@ -15282,6 +15312,9 @@ def test_vcf_offline_depot_manual_profile_download_starts_job(client, tmp_path):
     assert task_status_payload.json()["last_row"] >= 1
     assert task_status_payload.json()["download_active"] is True
     assert task_status_payload.json()["active_job_id"] == payload["job_id"]
+    assert task_status_payload.json()["active_downloads"] == [
+        {"job_id": payload["job_id"], "profile_id": profile_id, "status": "pending"}
+    ]
     task_row = next(task for task in task_status_payload.json()["tasks"] if task["id"] == payload["job_id"])
     assert task_row["status"] == "pending"
     assert task_row["progress_percent"] == "0"
@@ -15292,7 +15325,511 @@ def test_vcf_offline_depot_manual_profile_download_starts_job(client, tmp_path):
     assert shared_task_payload.status_code == 200
     assert shared_task_payload.json()["selected_task"]["id"] == payload["job_id"]
     assert shared_task_payload.json()["selected_task"]["log_url"] == f"/vcf-offline-depot/tasks/{payload['job_id']}/log"
+    assert shared_task_payload.json()["active_downloads"] == [
+        {"job_id": payload["job_id"], "profile_id": profile_id, "status": "pending"}
+    ]
     assert all(task["type"] == "vcf-depot-download" for task in shared_task_payload.json()["tasks"])
+
+
+def test_vcf_offline_depot_contextual_schedule_is_server_bound_and_stays_in_page(client, tmp_path):
+    """Verify the depot schedule endpoint binds task and profile server-side.
+
+    Args:
+        client: HTTP test client used to exercise the depot schedule endpoint.
+        tmp_path: Temporary directory used for a staged VCFDT package fixture.
+    """
+    import json
+
+    from sqlalchemy import select
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import (
+        AuditEvent,
+        Schedule,
+        VcfDepotDownloadProfile,
+        VcfOfflineDepotSettings,
+    )
+
+    login(client)
+    archive_path = tmp_path / "vcf-download-tool-9.1.0.contextual.tar.gz"
+    make_vcfdt_archive(archive_path)
+    with SessionLocal() as db:
+        settings = db.execute(select(VcfOfflineDepotSettings)).scalar_one()
+        settings.tool_archive_path = str(archive_path)
+        settings.tool_version = "9.1.0"
+        profile = VcfDepotDownloadProfile(
+            name="contextual-schedule-profile",
+            profile_type="metadata",
+            enabled=True,
+        )
+        other = VcfDepotDownloadProfile(
+            name="other-contextual-profile",
+            profile_type="metadata",
+            enabled=True,
+        )
+        db.add_all([profile, other])
+        db.commit()
+        profile_id, other_id = profile.id, other.id
+
+    page = client.get("/automation")
+    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    response = client.post(
+        f"/vcf-offline-depot/profiles/{profile_id}/schedules",
+        data={
+            "csrf": csrf,
+            "name": "contextual-profile-nightly",
+            "schedule_kind": "cron",
+            "cron_expression": "15 3 * * *",
+            "timezone_name": "UTC",
+            "enabled": "on",
+        },
+        headers={"Accept": "application/json"},
+    )
+
+    assert response.status_code == 201
+    assert response.json()["profile_id"] == profile_id
+    assert response.json()["automation_url"] == "/ui/management/automation#schedules"
+    with SessionLocal() as db:
+        schedule = db.execute(select(Schedule).where(Schedule.name == "contextual-profile-nightly")).scalar_one()
+        assert schedule.task_type == "vcf_depot_download"
+        assert json.loads(schedule.task_config_json) == {"profile_id": profile_id}
+        audit = db.execute(
+            select(AuditEvent).where(
+                AuditEvent.action == "create_automation_schedule",
+                AuditEvent.resource_id == str(schedule.id),
+            )
+        ).scalar_one()
+        assert f"profile_id={profile_id}" in audit.detail
+
+    fallback_page = client.get(
+        "/vcf-offline-depot",
+        params={"schedule_profile_id": profile_id},
+    )
+    assert fallback_page.status_code == 200
+    fallback_schedule = fallback_page.text.split(
+        'id="vcf-depot-schedule-modal"', 1
+    )[1].split("</dialog>", 1)[0]
+    assert " open" in fallback_schedule.split(">", 1)[0]
+    assert (
+        f'action="/ui/management/vcf-offline-depot/profiles/{profile_id}/schedules"'
+        in fallback_schedule
+    )
+    assert "contextual-schedule-profile" in fallback_schedule
+    assert "<noscript><style>" in fallback_page.text
+    assert fallback_schedule.count('name="cron_expression"') == 1
+    assert "data-automation-cron-native-expression" in fallback_schedule
+    assert ".automation-cron-builder { display: none !important; }" in fallback_page.text
+    assert ".automation-once-native { display: grid !important; }" in fallback_page.text
+    cron_native = fallback_schedule.split("data-automation-cron-native-expression", 1)[1].split("</label>", 1)[0]
+    assert " required" not in cron_native
+    assert f'data-context-profile-id="{profile_id}"' in fallback_schedule
+    assert 'data-context-profile-name="contextual-schedule-profile"' in fallback_schedule
+    assert f'data-vcf-depot-fallback-schedule="{profile_id}"' in fallback_page.text
+    app_js = client.get("/static/app.js").text
+    assert "if (isContextualVcfSchedule && scheduleForm.dataset.contextProfileId)" in app_js
+    assert "if (scheduleModal.open) scheduleModal.close();" in app_js
+    assert "openScheduleWizard(serverProfile, launcher instanceof HTMLElement ? launcher : null)" in app_js
+    assert 'if (scheduleForm.dataset.contextReadOnly === "true")' in app_js
+    assert "if (contextualError) scheduleWizard.setError(contextualError);" in app_js
+    assert '!element.hasAttribute("data-automation-cron-native-expression")' in app_js
+    automation_initializer = app_js.split("function initializeAutomationTables()", 1)[1]
+    assert automation_initializer.index("initializeContextualVcfScheduleWizard();") < automation_initializer.index(
+        'if (typeof Tabulator === "undefined") return;'
+    )
+    contextual_initializer = app_js.split(
+        "function initializeContextualVcfScheduleWizard()", 1
+    )[1].split("function initializeAutomationTables()", 1)[0]
+    assert "window.AtlasoUiPatterns.createWizard({" in contextual_initializer
+    assert "Tabulator" not in contextual_initializer
+
+    fallback_submit = client.post(
+        f"/vcf-offline-depot/profiles/{profile_id}/schedules",
+        data={
+            "csrf": csrf,
+            "name": "contextual-profile-fallback",
+            "schedule_kind": "cron",
+            "cron_expression": "30 4 * * *",
+            "timezone_name": "UTC",
+        },
+        headers={"Accept": "text/html"},
+        follow_redirects=False,
+    )
+    assert fallback_submit.status_code == 303
+    assert fallback_submit.headers["location"] == (
+        "/ui/management/vcf-offline-depot#vcf-depot-profiles-panel"
+    )
+    with SessionLocal() as db:
+        fallback_schedule_row = db.execute(
+            select(Schedule).where(Schedule.name == "contextual-profile-fallback")
+        ).scalar_one()
+        assert json.loads(fallback_schedule_row.task_config_json) == {"profile_id": profile_id}
+
+    fallback_once = client.post(
+        f"/vcf-offline-depot/profiles/{profile_id}/schedules",
+        data={
+            "csrf": csrf,
+            "name": "contextual-profile-fallback-once",
+            "schedule_kind": "once",
+            "cron_expression": "",
+            "run_once_at": "2037-08-13T04:30",
+            "timezone_name": "UTC",
+        },
+        headers={"Accept": "text/html"},
+        follow_redirects=False,
+    )
+    assert fallback_once.status_code == 303
+    with SessionLocal() as db:
+        once_schedule = db.execute(
+            select(Schedule).where(Schedule.name == "contextual-profile-fallback-once")
+        ).scalar_one()
+        assert once_schedule.schedule_kind == "once"
+        assert once_schedule.run_once_at is not None
+
+    fallback_invalid = client.post(
+        f"/vcf-offline-depot/profiles/{profile_id}/schedules",
+        data={
+            "csrf": csrf,
+            "name": "contextual-profile-fallback-invalid",
+            "schedule_kind": "cron",
+            "cron_expression": "invalid",
+            "timezone_name": "America/Los_Angeles",
+            "enabled": "on",
+        },
+        headers={"Accept": "text/html"},
+        follow_redirects=False,
+    )
+    assert fallback_invalid.status_code == 422
+    assert "location" not in fallback_invalid.headers
+    assert (
+        "Cron expression must contain five fields: minute hour day month weekday."
+        in fallback_invalid.text
+    )
+    assert 'value="contextual-profile-fallback-invalid"' in fallback_invalid.text
+    assert 'value="America/Los_Angeles"' in fallback_invalid.text
+    assert 'name="cron_expression" value="invalid"' in fallback_invalid.text
+    assert 'name="enabled" checked' in fallback_invalid.text
+    assert (
+        f'action="/ui/management/vcf-offline-depot/profiles/{profile_id}/schedules"'
+        in fallback_invalid.text
+    )
+
+    task_tamper = client.post(
+        f"/vcf-offline-depot/profiles/{profile_id}/schedules",
+        data={
+            "csrf": csrf,
+            "name": "tampered-task",
+            "task_type": "managed_script",
+            "schedule_kind": "cron",
+            "cron_expression": "0 4 * * *",
+            "timezone_name": "UTC",
+        },
+    )
+    assert task_tamper.status_code == 422
+    profile_tamper = client.post(
+        f"/vcf-offline-depot/profiles/{profile_id}/schedules",
+        data={
+            "csrf": csrf,
+            "name": "tampered-profile",
+            "vcf_profile_id": str(other_id),
+            "schedule_kind": "cron",
+            "cron_expression": "0 4 * * *",
+            "timezone_name": "UTC",
+        },
+    )
+    assert profile_tamper.status_code == 422
+
+    invalid_schedule = client.post(
+        f"/vcf-offline-depot/profiles/{profile_id}/schedules",
+        data={
+            "csrf": csrf,
+            "name": "invalid-contextual-schedule",
+            "schedule_kind": "cron",
+            "cron_expression": "invalid",
+            "timezone_name": "UTC",
+        },
+        headers={"Accept": "application/json"},
+    )
+    assert invalid_schedule.status_code == 422
+    assert invalid_schedule.json()["detail"] == (
+        "Cron expression must contain five fields: minute hour day month weekday."
+    )
+
+    with SessionLocal() as db:
+        disabled = VcfDepotDownloadProfile(
+            name="disabled-contextual-profile",
+            profile_type="metadata",
+            enabled=False,
+        )
+        deleted = VcfDepotDownloadProfile(
+            name="deleted-contextual-profile",
+            profile_type="metadata",
+            enabled=True,
+        )
+        db.add_all([disabled, deleted])
+        db.commit()
+        disabled_id, deleted_id = disabled.id, deleted.id
+        db.delete(deleted)
+        db.commit()
+
+    disabled_fallback = client.post(
+        f"/vcf-offline-depot/profiles/{disabled_id}/schedules",
+        data={
+            "csrf": csrf,
+            "name": "disabled-race-fallback",
+            "schedule_kind": "cron",
+            "cron_expression": "0 4 * * *",
+            "timezone_name": "America/Los_Angeles",
+            "enabled": "on",
+        },
+        headers={"Accept": "text/html"},
+    )
+    assert disabled_fallback.status_code == 422
+    disabled_dialog = disabled_fallback.text.split(
+        'id="vcf-depot-schedule-modal"', 1
+    )[1].split("</dialog>", 1)[0]
+    assert " open" in disabled_dialog.split(">", 1)[0]
+    assert 'data-context-read-only="true"' in disabled_dialog
+    assert 'data-automation-wizard-next data-atlaso-wizard-next disabled' not in disabled_dialog
+    assert 'form.querySelectorAll("input, select, textarea, [data-atlaso-wizard-submit]")' in app_js
+    assert "[data-atlaso-wizard-nav], [data-atlaso-wizard-next]" not in app_js.split(
+        'if (form.dataset.contextReadOnly === "true")', 1
+    )[1].split("const contextualError", 1)[0]
+    assert "disabled-contextual-profile" in disabled_dialog
+    assert "Choose an enabled VCF Offline Depot download profile." in disabled_dialog
+    assert 'value="disabled-race-fallback"' in disabled_dialog
+    assert 'value="America/Los_Angeles"' in disabled_dialog
+    assert "data-atlaso-wizard-submit disabled" in disabled_dialog
+    assert "display: none !important" in disabled_fallback.text
+
+    deleted_fallback = client.post(
+        f"/vcf-offline-depot/profiles/{deleted_id}/schedules",
+        data={
+            "csrf": csrf,
+            "name": "deleted-race-fallback",
+            "schedule_kind": "cron",
+            "cron_expression": "0 4 * * *",
+            "timezone_name": "UTC",
+        },
+        headers={"Accept": "text/html"},
+    )
+    assert deleted_fallback.status_code == 422
+    profile_error = deleted_fallback.text.split(
+        'id="vcf-depot-profile-error"', 1
+    )[1].split("</div>", 1)[0]
+    assert " hidden" not in profile_error.split(">", 1)[0]
+    assert "Choose an enabled VCF Offline Depot download profile." in profile_error
+
+    for invalid_profile_id in (disabled_id, deleted_id, 999_999):
+        invalid = client.post(
+            f"/vcf-offline-depot/profiles/{invalid_profile_id}/schedules",
+            data={
+                "csrf": csrf,
+                "name": f"invalid-contextual-{invalid_profile_id}",
+                "schedule_kind": "cron",
+                "cron_expression": "0 4 * * *",
+                "timezone_name": "UTC",
+            },
+        )
+        assert invalid.status_code == 422
+        assert invalid.json()["detail"] == "Choose an enabled VCF Offline Depot download profile."
+
+
+def test_vcf_offline_depot_marks_only_each_profiles_own_queued_download(client):
+    """Verify per-row task state does not globally disable distinct profiles.
+
+    Args:
+        client: HTTP test client used to render the depot profile grid.
+    """
+    import html
+    import json
+    import re
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job, JobStatus, VcfDepotDownloadProfile
+
+    login(client)
+    with SessionLocal() as db:
+        queued = VcfDepotDownloadProfile(name="queued-row", profile_type="metadata", enabled=True)
+        available = VcfDepotDownloadProfile(name="available-row", profile_type="binaries", enabled=True)
+        db.add_all([queued, available])
+        db.flush()
+        db.add(
+            Job(
+                id="job_queued_profile_row",
+                type="vcf-depot-download",
+                status=JobStatus.PENDING.value,
+                created_by="admin",
+                vcf_depot_profile_id=queued.id,
+                task_config_json=json.dumps({"profile_id": queued.id}),
+                result=json.dumps({"profile_id": queued.id, "profile_name": queued.name}),
+            )
+        )
+        db.commit()
+        queued_id, available_id = queued.id, available.id
+
+    page = client.get("/vcf-offline-depot")
+    rows_payload = page.text.split("data-profiles='", 1)[1].split("'", 1)[0]
+    rows = {row["id"]: row for row in json.loads(html.unescape(rows_payload))}
+    assert rows[queued_id]["download_active"] is True
+    assert rows[queued_id]["active_job_id"] == "job_queued_profile_row"
+    assert rows[queued_id]["can_start"] is False
+    assert rows[queued_id]["start_blocker"] == rows[queued_id]["active_task_blocker"]
+    assert rows[available_id]["download_active"] is False
+    assert rows[available_id]["active_job_id"] == ""
+    fallback = page.text.split('id="vcf-depot-profiles-fallback"', 1)[1].split("</table>", 1)[0]
+    queued_markup = re.search(r"<tr>\s*<td>queued-row</td>.*?</tr>", fallback, re.DOTALL)
+    assert queued_markup is not None
+    queued_start = re.search(
+        r'<button class="button tiny secondary"[^>]*>Start</button>', queued_markup.group()
+    )
+    assert queued_start is not None and " disabled" in queued_start.group()
+    assert re.search(r"<td>\s*Queued\s*</td>", queued_markup.group())
+
+
+def test_vcf_offline_depot_prevents_deleting_any_queued_profile(client):
+    """Verify deletion checks the target against the complete profile queue.
+
+    Args:
+        client: HTTP test client used to submit the profile deletion.
+    """
+    import json
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job, JobStatus, VcfDepotDownloadProfile
+
+    login(client)
+    page = client.get("/vcf-offline-depot")
+    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    with SessionLocal() as db:
+        first = VcfDepotDownloadProfile(name="first-queued-delete", profile_type="metadata", enabled=True)
+        second = VcfDepotDownloadProfile(name="second-queued-delete", profile_type="binaries", enabled=True)
+        db.add_all([first, second])
+        db.flush()
+        for job_id, profile in (("job_delete_first", first), ("job_delete_second", second)):
+            db.add(
+                Job(
+                    id=job_id,
+                    type="vcf-depot-download",
+                    status=JobStatus.PENDING.value,
+                    created_by="admin",
+                    vcf_depot_operation=True,
+                    vcf_depot_profile_id=profile.id,
+                    task_config_json=json.dumps({"profile_id": profile.id}),
+                )
+            )
+        db.commit()
+        second_id = second.id
+
+    response = client.post(
+        f"/vcf-offline-depot/profiles/{second_id}/delete",
+        data={"csrf": csrf},
+        headers={"X-Atlaso-Grid": "1"},
+    )
+
+    assert response.status_code == 409
+    assert "job_delete_second" in response.json()["detail"]
+    with SessionLocal() as db:
+        assert db.get(VcfDepotDownloadProfile, second_id) is not None
+
+
+def test_vcf_download_task_refresh_includes_exclusive_operation(client):
+    """Verify scoped task refresh preserves the queue-wide exclusive blocker.
+
+    Args:
+        client: HTTP test client used to request the scoped task payload.
+    """
+    import html
+    import json
+    import re
+
+    from sqlalchemy import select
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job, JobStatus, Setting, VcfDepotDownloadProfile
+    from atlaso.app.services.vcf_offline_depot import VCF_DEPOT_TOKEN_VALUE_KEY
+
+    login(client)
+    with SessionLocal() as db:
+        profile = VcfDepotDownloadProfile(
+            name="exclusive-blocked-profile",
+            profile_type="metadata",
+            enabled=True,
+            status="synced",
+        )
+        db.add_all(
+            [
+                profile,
+                Setting(key=VCF_DEPOT_TOKEN_VALUE_KEY, value="non-secret-refresh-fixture"),
+                Job(
+                    id="job_refresh_exclusive",
+                    type="vcf-depot-software-id",
+                    status=JobStatus.PENDING.value,
+                    created_by="admin",
+                    vcf_depot_operation=True,
+                ),
+            ]
+        )
+        db.commit()
+        profile_id = profile.id
+
+    response = client.get("/tasks/status", params={"task_type": "vcf-depot-download"})
+
+    assert response.status_code == 200
+    initial_start_state = next(
+        state for state in response.json()["profile_start_states"] if state["profile_id"] == profile_id
+    )
+    assert initial_start_state == {
+        "profile_id": profile_id,
+        "status": "synced",
+        "can_start": True,
+        "start_blocker": "",
+    }
+    assert response.json()["active_downloads"] == []
+    assert response.json()["active_exclusive_operation"] == {
+        "job_id": "job_refresh_exclusive",
+        "status": "pending",
+        "type": "vcf-depot-software-id",
+        "detail": (
+            "VCFDT Software Depot ID task job_refresh_exclusive is already pending. "
+            "Wait for it to finish before starting another VCFDT operation."
+        ),
+    }
+    with SessionLocal() as db:
+        token = db.scalar(select(Setting).where(Setting.key == VCF_DEPOT_TOKEN_VALUE_KEY))
+        assert token is not None
+        db.delete(token)
+        db.commit()
+    refreshed = client.get("/tasks/status", params={"task_type": "vcf-depot-download"})
+    assert refreshed.status_code == 200
+    refreshed_start_state = next(
+        state for state in refreshed.json()["profile_start_states"] if state["profile_id"] == profile_id
+    )
+    assert refreshed_start_state == {
+        "profile_id": profile_id,
+        "status": "synced",
+        "can_start": False,
+        "start_blocker": "Upload a Broadcom download token or activation code before starting this profile.",
+    }
+    page = client.get("/vcf-offline-depot")
+    rows_payload = page.text.split("data-profiles='", 1)[1].split("'", 1)[0]
+    row = next(
+        item for item in json.loads(html.unescape(rows_payload)) if item["id"] == profile_id
+    )
+    assert row["download_active"] is True
+    assert row["active_job_id"] == ""
+    assert row["active_task_status"] == ""
+    assert "job_refresh_exclusive" in row["active_task_blocker"]
+    assert row["can_start"] is False
+    assert row["start_blocker"] == row["active_task_blocker"]
+    fallback = page.text.split('id="vcf-depot-profiles-fallback"', 1)[1].split("</table>", 1)[0]
+    profile_markup = re.search(
+        r"<tr>\s*<td>exclusive-blocked-profile</td>.*?</tr>", fallback, re.DOTALL
+    )
+    assert profile_markup is not None
+    start_button = re.search(
+        r'<button class="button tiny secondary"[^>]*>Start</button>', profile_markup.group()
+    )
+    assert start_button is not None and " disabled" in start_button.group()
 
 
 def test_vcf_offline_depot_startup_recovers_interrupted_download(client):
@@ -15309,18 +15846,29 @@ def test_vcf_offline_depot_startup_recovers_interrupted_download(client):
 
     with SessionLocal() as db:
         profile = VcfDepotDownloadProfile(name="interrupted", profile_type="binaries", enabled=True, status="ready")
-        db.add(profile)
+        queued_profile = VcfDepotDownloadProfile(name="queued-after-restart", profile_type="metadata", enabled=True, status="ready")
+        db.add_all([profile, queued_profile])
         db.flush()
-        db.add(
+        db.add_all([
             Job(
                 id="job_interrupted_vcfdt",
                 type="vcf-depot-download",
                 status=JobStatus.RUNNING.value,
                 created_by="admin",
                 progress_percent=35,
+                vcf_depot_profile_id=profile.id,
                 result=json.dumps({"profile_id": profile.id, "profile_name": profile.name}),
-            )
-        )
+            ),
+            Job(
+                id="job_queued_vcfdt",
+                type="vcf-depot-download",
+                status=JobStatus.PENDING.value,
+                created_by="admin",
+                progress_percent=0,
+                vcf_depot_profile_id=queued_profile.id,
+                result=json.dumps({"profile_id": queued_profile.id, "profile_name": queued_profile.name}),
+            ),
+        ])
         db.commit()
 
         assert recover_interrupted_vcf_depot_download_jobs(db) == 1
@@ -15332,6 +15880,7 @@ def test_vcf_offline_depot_startup_recovers_interrupted_download(client):
         assert job.finished_at is not None
         assert "restart" in (job.error or "")
         assert profile.status == "blocked"
+        assert db.get(Job, "job_queued_vcfdt").status == JobStatus.PENDING.value
         assert recover_interrupted_vcf_depot_download_jobs(db) == 0
 
 
@@ -18591,8 +19140,8 @@ def test_vcf_depot_appliance_apply_submission_rejects_active_software_id_task(cl
     assert "VCFDT Software Depot ID" in response.json()["detail"]
 
 
-def test_queued_vcf_depot_software_id_task_can_be_cancelled_before_start(client, monkeypatch):
-    """Verify that queued vcf depot software id task can be cancelled before start.
+def test_queued_vcf_depot_software_id_task_rejects_cancellation(client, monkeypatch):
+    """Verify queued identity replacement remains guarded against a claim race.
 
     Args:
         client: HTTP test client used to exercise the Atlaso application.
@@ -18600,6 +19149,7 @@ def test_queued_vcf_depot_software_id_task_can_be_cancelled_before_start(client,
     """
     from atlaso.app import ui
     from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job, JobStatus
     from atlaso.app.ui import get_vcf_offline_depot_settings_row
 
     login(client)
@@ -18617,12 +19167,17 @@ def test_queued_vcf_depot_software_id_task_can_be_cancelled_before_start(client,
 
     response = client.post(f"/tasks/{queued['id']}/cancel", data={"csrf": csrf})
 
-    assert response.status_code == 200
-    cancelled = response.json()["task"]
-    assert cancelled["status"] == "cancelled"
-    assert cancelled["state"] == "cancelled"
-    assert cancelled["can_start"] is False
-    assert len(cancelled["_children"]) == 4
+    assert response.status_code == 409
+    assert "cannot be cancelled" in response.json()["detail"]
+    service_guide = Path("docs/services/vcf-offline-depot.md").read_text(encoding="utf-8")
+    agent_policy = Path("docs/contribute/agent-policies.md").read_text(encoding="utf-8")
+    assert "Software Depot ID tasks are non-cancellable" in service_guide
+    assert "Software Depot ID identity tasks are non-cancellable" in agent_policy
+    assert "queued identity task can be cancelled" not in service_guide
+    assert "Pending identity tasks may be" not in agent_policy
+    with SessionLocal() as db:
+        job = db.get(Job, queued["id"])
+        assert job.status == JobStatus.PENDING.value
 
 
 def test_running_vcf_depot_software_id_task_rejects_cancellation(client, monkeypatch):
@@ -18663,6 +19218,104 @@ def test_running_vcf_depot_software_id_task_rejects_cancellation(client, monkeyp
     assert "cannot be cancelled" in cancel_response.json()["detail"]
     with SessionLocal() as db:
         assert db.get(Job, queued["id"]).status == JobStatus.RUNNING.value
+
+
+def test_running_vcf_depot_download_rejects_cancellation(client):
+    """Verify that a running VCFDT profile process remains guarded until it exits.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
+    import json
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job, JobStatus, VcfDepotDownloadProfile
+
+    login(client)
+    page = client.get("/vcf-offline-depot")
+    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    with SessionLocal() as db:
+        profile = VcfDepotDownloadProfile(name="running-cancel-guard", profile_type="metadata", enabled=True)
+        db.add(profile)
+        db.flush()
+        job_id = "job_running_vcfdt_download_cancel_guard"
+        job = Job(
+            id=job_id,
+            type="vcf-depot-download",
+            status=JobStatus.RUNNING.value,
+            created_by="admin",
+            vcf_depot_operation=True,
+            vcf_depot_profile_id=profile.id,
+            task_config_json=json.dumps({"profile_id": profile.id}),
+            result=json.dumps({"profile_id": profile.id, "profile_name": profile.name}),
+        )
+        db.add(job)
+        db.commit()
+
+    status_response = client.get(f"/tasks/{job_id}/status")
+    cancel_response = client.post(f"/tasks/{job_id}/cancel", data={"csrf": csrf})
+
+    assert status_response.status_code == 200
+    assert status_response.json()["task"]["can_cancel"] is False
+    assert cancel_response.status_code == 409
+    assert "cannot be cancelled" in cancel_response.json()["detail"]
+    with SessionLocal() as db:
+        assert db.get(Job, job_id).status == JobStatus.RUNNING.value
+
+
+def test_queued_vcf_depot_download_can_be_cancelled_before_claim(client):
+    """Verify the atomic pending-only cancellation remains available.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job, JobStatus, VcfDepotDownloadProfile
+    from atlaso.app.services.vcf_depot_downloads import enqueue_vcf_depot_download
+
+    login(client)
+    page = client.get("/vcf-offline-depot")
+    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    with SessionLocal() as db:
+        profile = VcfDepotDownloadProfile(
+            name="pending-cancel-guard",
+            profile_type="metadata",
+            enabled=True,
+            status="synced",
+        )
+        db.add(profile)
+        db.flush()
+        queued = enqueue_vcf_depot_download(
+            db,
+            profile=profile,
+            actor="admin",
+            trigger="manual",
+            job_id="job_pending_vcfdt_download_cancel_guard",
+        )
+        job_id = queued.id
+        profile_id = profile.id
+        db.commit()
+
+    cancel_response = client.post(f"/tasks/{job_id}/cancel", data={"csrf": csrf})
+
+    assert cancel_response.status_code == 200
+    assert cancel_response.json()["task"]["status"] == JobStatus.CANCELLED.value
+    with SessionLocal() as db:
+        assert db.get(Job, job_id).status == JobStatus.CANCELLED.value
+        assert db.get(VcfDepotDownloadProfile, profile_id).status == "synced"
+    refresh = client.get("/tasks/status", params={"task_type": "vcf-depot-download"})
+    refreshed_state = next(
+        state for state in refresh.json()["profile_start_states"] if state["profile_id"] == profile_id
+    )
+    assert refreshed_state["status"] == "synced"
+    fallback = client.get("/vcf-offline-depot").text.split(
+        'id="vcf-depot-profiles-fallback"', 1
+    )[1].split("</table>", 1)[0]
+    profile_markup = re.search(
+        r"<tr>\s*<td>pending-cancel-guard</td>.*?</tr>", fallback, re.DOTALL
+    )
+    assert profile_markup is not None
+    assert re.search(r"<td>\s*Succeeded\s*</td>", profile_markup.group())
 
 
 def test_vcf_depot_software_id_runner_persists_raw_metadata_before_task_redaction(client, monkeypatch):

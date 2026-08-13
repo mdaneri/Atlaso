@@ -17,7 +17,11 @@ from atlaso.app.api.network_boot import public_router as network_boot_public_rou
 from atlaso.app.api.network_boot import router as network_boot_api_router
 from atlaso.app.api.v1 import router as api_v1_router
 from atlaso.app.config import get_settings
-from atlaso.app.database import SessionLocal, init_db
+from atlaso.app.database import (
+    SessionLocal,
+    ensure_vcf_depot_running_operation_index,
+    init_db,
+)
 from atlaso.app.oidc import admin_router as oidc_admin_router
 from atlaso.app.oidc import public_router as oidc_public_router
 from atlaso.app.openapi import API_VALIDATION_RESPONSES, OPENAPI_TAGS
@@ -124,6 +128,10 @@ async def lifespan(app: FastAPI):
         db.commit()
         recover_interrupted_appliance_apply_jobs(db)
         recover_interrupted_vcf_depot_software_id_jobs(db)
+        if not ensure_vcf_depot_running_operation_index():
+            REQUEST_LOGGER.warning(
+                "VCFDT runtime index remains deferred while independently owned operations are running."
+            )
         recover_interrupted_vcf_helper_jobs(db)
         refresh_startup_host_inventory(db, environment=settings.environment)
         if appliance_mode:

@@ -1020,6 +1020,7 @@ def _submit_console_apply(required_ids: set[str]) -> str:
     Raises:
         ConsoleOperationError: If the operation encounters an invalid state.
     """
+    from atlaso.app.services.vcf_depot_downloads import acquire_vcf_depot_admission_gate
     from atlaso.app.ui import (
         active_appliance_apply_job,
         active_vcf_depot_execution_job,
@@ -1028,11 +1029,19 @@ def _submit_console_apply(required_ids: set[str]) -> str:
     )
 
     with SessionLocal() as db:
+        selected_ids = set(required_ids)
+        if "vcf_offline_depot" in selected_ids:
+            acquire_vcf_depot_admission_gate(db)
         active = active_appliance_apply_job(db)
         if active is not None:
             raise ConsoleOperationError(f"Appliance apply task {active.id} is already {active.status}.")
+        if "vcf_offline_depot" in selected_ids:
+            active_vcf_job = active_vcf_depot_execution_job(db)
+            if active_vcf_job is not None:
+                raise ConsoleOperationError(
+                    f"VCFDT task {active_vcf_job.id} is already {active_vcf_job.status}."
+                )
         units = appliance_apply_units(db)
-        selected_ids = set(required_ids)
         selected, payload = _captured_apply_payload(units, selected_ids)
         job_id = f"job_{uuid4().hex[:12]}"
         job = Job(

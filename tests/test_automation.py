@@ -2,8 +2,10 @@
 
 import hashlib
 import json
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from threading import Barrier
 
 import pytest
 from sqlalchemy import select
@@ -333,6 +335,8 @@ def test_managed_script_revision_is_immutable_enabled_and_run_by_worker(client):
     assert 'data-automation-wizard-step="state"' in page.text
     assert 'data-automation-wizard-step="review"' in page.text
     assert 'data-automation-wizard-nav' in page.text
+    schedule_modal = page.text.split('id="automation-schedule-modal"', 1)[1].split("</dialog>", 1)[0]
+    assert schedule_modal.count("data-atlaso-wizard-nav=") == 5
     assert 'automation-fill-grid' in page.text
     assert 'id="automation-schedule-edit-' not in page.text
     assert 'id="automation-script-modal"' in page.text
@@ -742,19 +746,14 @@ def test_worker_rejects_queued_vcf_download_when_profile_was_disabled(client, mo
         assert audit.success is False
 
 
-def test_due_vcf_schedules_share_global_download_lock_and_record_skipped_run(client):
-    """Verify that due vcf schedules share global download lock and record skipped run.
+def test_due_vcf_schedules_queue_distinct_profiles_in_fifo_order(client):
+    """Verify that due VCF schedules queue distinct profiles in FIFO order.
 
     Args:
         client: HTTP test client used to exercise the Atlaso application.
     """
     from atlaso.app.database import SessionLocal
-    from atlaso.app.models import (
-        AuditEvent,
-        JobStatus,
-        Schedule,
-        VcfDepotDownloadProfile,
-    )
+    from atlaso.app.models import JobStatus, Schedule, VcfDepotDownloadProfile
     from atlaso.app.services.automation import enqueue_due_schedules
 
     client.get("/login")
@@ -794,29 +793,26 @@ def test_due_vcf_schedules_share_global_download_lock_and_record_skipped_run(cli
 
     with SessionLocal() as db:
         jobs = enqueue_due_schedules(db, now=now)
-        assert [job.status for job in jobs] == [JobStatus.PENDING.value, JobStatus.SKIPPED.value]
-        skipped = jobs[1]
-        result = json.loads(skipped.result)
-        assert result["profile_name"] == "scheduled-esx"
-        assert result["schedule_name"] == "scheduled-esx-nightly"
-        assert result["planned_for"]
-        assert result["active_job_id"] == jobs[0].id
-        assert db.execute(
-            select(AuditEvent).where(
-                AuditEvent.resource_id == skipped.id,
-                AuditEvent.action == "skip_scheduled_vcf_depot_download",
-            )
-        ).scalar_one().success is False
+        assert [job.status for job in jobs] == [JobStatus.PENDING.value, JobStatus.PENDING.value]
+        assert [json.loads(job.result)["profile_name"] for job in jobs] == [
+            "scheduled-metadata",
+            "scheduled-esx",
+        ]
+        assert [job.vcf_depot_profile_id for job in jobs] == [
+            json.loads(jobs[0].task_config_json)["profile_id"],
+            json.loads(jobs[1].task_config_json)["profile_id"],
+        ]
+        assert jobs[0].created_at <= jobs[1].created_at
 
 
-def test_vcf_download_database_guard_rejects_second_active_job(client):
-    """Verify that vcf download database guard rejects second active job.
+def test_vcf_download_database_guard_deduplicates_only_the_same_profile(client):
+    """Verify that the database guard deduplicates only the same profile.
 
     Args:
         client: HTTP test client used to exercise the Atlaso application.
     """
     from atlaso.app.database import SessionLocal
-    from atlaso.app.models import VcfDepotDownloadProfile
+    from atlaso.app.models import JobStatus, VcfDepotDownloadProfile
     from atlaso.app.services.vcf_depot_downloads import (
         ActiveVcfDepotDownloadError,
         enqueue_vcf_depot_download,
@@ -826,14 +822,19 @@ def test_vcf_download_database_guard_rejects_second_active_job(client):
     client.get("/login")
     with SessionLocal() as db:
         profile = VcfDepotDownloadProfile(name="atomic-profile", profile_type="metadata", enabled=True)
-        db.add(profile)
+        distinct = VcfDepotDownloadProfile(name="distinct-profile", profile_type="esx", enabled=True)
+        db.add_all([profile, distinct])
         db.flush()
         first = enqueue_vcf_depot_download(db, profile=profile, actor="admin", trigger="manual")
+        second = enqueue_vcf_depot_download(db, profile=distinct, actor="scheduler:distinct", trigger="scheduled")
         expected_log = f"/var/lib/atlaso/vcfDownloadTool/task-logs/{first.id}.log"
         assert vcf_depot_task_log_reference(first.id, "before-rename") == expected_log
         assert vcf_depot_task_log_reference(first.id, "after-rename") == expected_log
         with pytest.raises(ActiveVcfDepotDownloadError, match=first.id):
             enqueue_vcf_depot_download(db, profile=profile, actor="admin", trigger="manual")
+        assert first.status == JobStatus.PENDING.value
+        assert second.status == JobStatus.PENDING.value
+        assert second.vcf_depot_profile_id == distinct.id
         db.commit()
 
 
@@ -846,7 +847,7 @@ def test_vcf_download_database_guard_covers_software_id_and_appliance_apply(clie
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import Job, JobStatus, VcfDepotDownloadProfile
     from atlaso.app.services.vcf_depot_downloads import (
-        ActiveVcfDepotDownloadError,
+        VcfDepotExclusiveOperationError,
         enqueue_vcf_depot_download,
     )
 
@@ -865,7 +866,7 @@ def test_vcf_download_database_guard_covers_software_id_and_appliance_apply(clie
         db.commit()
         assert software_id_job.vcf_depot_operation is True
 
-        with pytest.raises(ActiveVcfDepotDownloadError, match=software_id_job.id):
+        with pytest.raises(VcfDepotExclusiveOperationError, match=software_id_job.id):
             enqueue_vcf_depot_download(db, profile=profile, actor="admin", trigger="manual")
 
         software_id_job.status = JobStatus.SUCCEEDED.value
@@ -882,9 +883,733 @@ def test_vcf_download_database_guard_covers_software_id_and_appliance_apply(clie
         db.add(apply_job)
         db.commit()
 
-        with pytest.raises(ActiveVcfDepotDownloadError, match=apply_job.id):
+        with pytest.raises(VcfDepotExclusiveOperationError, match=apply_job.id):
             enqueue_vcf_depot_download(db, profile=profile, actor="admin", trigger="manual")
         db.commit()
+
+
+def test_worker_claims_distinct_vcf_profiles_one_at_a_time_in_fifo_order(client):
+    """Verify that one VCFDT process runs while distinct profiles remain queued.
+
+    Args:
+        client: HTTP test client used to initialize the application database.
+    """
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import JobStatus, VcfDepotDownloadProfile
+    from atlaso.app.services.vcf_depot_downloads import enqueue_vcf_depot_download
+    from atlaso.app.worker import claim_next_job
+
+    client.get("/login")
+    with SessionLocal() as db:
+        first_profile = VcfDepotDownloadProfile(name="claim-first", profile_type="metadata", enabled=True)
+        second_profile = VcfDepotDownloadProfile(name="claim-second", profile_type="binaries", enabled=True)
+        db.add_all([first_profile, second_profile])
+        db.flush()
+        first = enqueue_vcf_depot_download(db, profile=first_profile, actor="admin", trigger="manual")
+        second = enqueue_vcf_depot_download(db, profile=second_profile, actor="admin", trigger="manual")
+        first_id, second_id = first.id, second.id
+        db.commit()
+
+    with SessionLocal() as db:
+        claimed = claim_next_job(db)
+        assert claimed is not None
+        assert claimed.id == first_id
+        assert claimed.status == JobStatus.RUNNING.value
+        assert db.get(type(claimed), second_id).status == JobStatus.PENDING.value
+        assert claim_next_job(db) is None
+        claimed.status = JobStatus.SUCCEEDED.value
+        claimed.progress_percent = 100
+        db.commit()
+        next_claimed = claim_next_job(db)
+        assert next_claimed is not None
+        assert next_claimed.id == second_id
+        assert next_claimed.status == JobStatus.RUNNING.value
+
+
+def test_stale_pending_vcf_cancellation_cannot_overwrite_worker_claim(client):
+    """Verify a stale cancellation loses after pending-to-running claim.
+
+    Args:
+        client: HTTP test client used to initialize the application database.
+    """
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job, JobStatus, VcfDepotDownloadProfile, utcnow
+    from atlaso.app.services.vcf_depot_downloads import (
+        cancel_pending_vcf_depot_download,
+        enqueue_vcf_depot_download,
+    )
+    from atlaso.app.worker import claim_next_job
+
+    client.get("/login")
+    with SessionLocal() as db:
+        profile = VcfDepotDownloadProfile(name="claim-cancel-race", profile_type="metadata", enabled=True)
+        db.add(profile)
+        db.flush()
+        queued = enqueue_vcf_depot_download(db, profile=profile, actor="admin", trigger="manual")
+        queued_id = queued.id
+        db.commit()
+
+    with SessionLocal() as cancellation_db:
+        stale_job = cancellation_db.get(Job, queued_id)
+        assert stale_job is not None and stale_job.status == JobStatus.PENDING.value
+        with SessionLocal() as worker_db:
+            claimed = claim_next_job(worker_db)
+            assert claimed is not None and claimed.id == queued_id
+        cancelled = cancel_pending_vcf_depot_download(
+            cancellation_db,
+            queued_id,
+            profile_id=stale_job.vcf_depot_profile_id,
+            profile_status_before_enqueue="planned",
+            finished_at=utcnow(),
+            error="Task cancelled by operator.",
+            result=json.dumps({"state": "cancelled"}),
+        )
+        cancellation_db.commit()
+        cancellation_db.refresh(stale_job)
+        assert cancelled is False
+        assert stale_job.status == JobStatus.RUNNING.value
+
+
+def test_same_profile_manual_and_scheduled_admission_deduplicates_atomically(client):
+    """Verify that manual and scheduled callers share the per-profile guard.
+
+    Args:
+        client: HTTP test client used to initialize the application database.
+    """
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Schedule, VcfDepotDownloadProfile
+    from atlaso.app.services.automation import enqueue_schedule_now
+    from atlaso.app.services.vcf_depot_downloads import (
+        ActiveVcfDepotDownloadError,
+        enqueue_vcf_depot_download,
+    )
+
+    client.get("/login")
+    with SessionLocal() as db:
+        profile = VcfDepotDownloadProfile(name="shared-admission", profile_type="metadata", enabled=True)
+        db.add(profile)
+        db.flush()
+        schedule = Schedule(
+            name="shared-admission-schedule",
+            task_type="vcf_depot_download",
+            task_config_json=json.dumps({"profile_id": profile.id}),
+            schedule_kind="cron",
+            cron_expression="0 2 * * *",
+            timezone_name="UTC",
+            enabled=True,
+            created_by="admin",
+        )
+        db.add(schedule)
+        db.flush()
+        manual = enqueue_vcf_depot_download(db, profile=profile, actor="admin", trigger="manual")
+        db.commit()
+        with pytest.raises(ActiveVcfDepotDownloadError, match=manual.id):
+            enqueue_schedule_now(db, schedule=schedule, actor="admin")
+
+
+def test_concurrent_same_profile_admission_creates_exactly_one_active_job(client):
+    """Verify concurrent manual and scheduled admissions serialize atomically.
+
+    Args:
+        client: HTTP test client used to initialize the application database.
+    """
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job, JobStatus, VcfDepotDownloadProfile
+    from atlaso.app.services.vcf_depot_downloads import (
+        ActiveVcfDepotDownloadError,
+        enqueue_vcf_depot_download,
+    )
+
+    client.get("/login")
+    with SessionLocal() as db:
+        profile = VcfDepotDownloadProfile(name="concurrent-admission", profile_type="metadata", enabled=True)
+        db.add(profile)
+        db.commit()
+        profile_id = profile.id
+
+    barrier = Barrier(2)
+
+    def admit(trigger: str) -> tuple[str, str]:
+        """Attempt one admission after both concurrent callers reach the gate.
+
+        Args:
+            trigger: Admission source recorded on the queued job.
+        """
+        with SessionLocal() as db:
+            profile = db.get(VcfDepotDownloadProfile, profile_id)
+            barrier.wait()
+            try:
+                job = enqueue_vcf_depot_download(
+                    db,
+                    profile=profile,
+                    actor=f"test:{trigger}",
+                    trigger=trigger,
+                )
+                db.commit()
+                return "queued", job.id
+            except ActiveVcfDepotDownloadError as exc:
+                db.rollback()
+                return "duplicate", exc.active_job_id
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        results = list(executor.map(admit, ("manual", "scheduled")))
+
+    assert sorted(result[0] for result in results) == ["duplicate", "queued"]
+    queued_id = next(result[1] for result in results if result[0] == "queued")
+    assert next(result[1] for result in results if result[0] == "duplicate") == queued_id
+    with SessionLocal() as db:
+        active = db.execute(
+            select(Job).where(
+                Job.vcf_depot_profile_id == profile_id,
+                Job.status.in_([JobStatus.PENDING.value, JobStatus.RUNNING.value]),
+            )
+        ).scalars().all()
+        assert [job.id for job in active] == [queued_id]
+
+
+def test_profile_deletion_and_enqueue_are_one_atomic_admission_decision(client):
+    """Verify a deletion race either queues safely or deletes without an orphan.
+
+    Args:
+        client: HTTP test client used to initialize the application database.
+    """
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job, JobStatus, VcfDepotDownloadProfile
+    from atlaso.app.services.vcf_depot_downloads import (
+        ActiveVcfDepotDownloadError,
+        VcfDepotProfileUnavailableError,
+        enqueue_vcf_depot_download,
+        lock_vcf_depot_profile_for_deletion,
+    )
+
+    client.get("/login")
+    with SessionLocal() as db:
+        profile = VcfDepotDownloadProfile(
+            name="concurrent-delete-admission",
+            profile_type="metadata",
+            enabled=True,
+        )
+        db.add(profile)
+        db.commit()
+        profile_id = profile.id
+
+    barrier = Barrier(2)
+
+    def admit() -> str:
+        """Attempt to enqueue using a profile loaded before the race."""
+        with SessionLocal() as db:
+            profile = db.get(VcfDepotDownloadProfile, profile_id)
+            barrier.wait()
+            try:
+                enqueue_vcf_depot_download(
+                    db,
+                    profile=profile,
+                    actor="test:delete-race",
+                    trigger="manual",
+                )
+                db.commit()
+                return "queued"
+            except VcfDepotProfileUnavailableError:
+                db.rollback()
+                return "profile-unavailable"
+
+    def delete() -> str:
+        """Attempt to delete under the shared queue admission gate."""
+        with SessionLocal() as db:
+            barrier.wait()
+            try:
+                profile = lock_vcf_depot_profile_for_deletion(db, profile_id)
+                db.delete(profile)
+                db.commit()
+                return "deleted"
+            except ActiveVcfDepotDownloadError:
+                db.rollback()
+                return "active-task"
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        admission_result = executor.submit(admit)
+        deletion_result = executor.submit(delete)
+        results = {admission_result.result(), deletion_result.result()}
+
+    assert results in (
+        {"queued", "active-task"},
+        {"profile-unavailable", "deleted"},
+    )
+    with SessionLocal() as db:
+        profile_exists = db.get(VcfDepotDownloadProfile, profile_id) is not None
+        active_jobs = db.scalars(
+            select(Job).where(
+                Job.vcf_depot_profile_id == profile_id,
+                Job.status.in_([JobStatus.PENDING.value, JobStatus.RUNNING.value]),
+            )
+        ).all()
+    assert (profile_exists, len(active_jobs)) in ((True, 1), (False, 0))
+
+
+def test_vcf_queue_schema_reconciliation_is_portable_to_postgresql(monkeypatch):
+    """Verify existing PostgreSQL jobs receive columns and partial queue indexes.
+
+    Args:
+        monkeypatch: Pytest helper used to replace SQLAlchemy inspection.
+    """
+    from types import SimpleNamespace
+
+    import atlaso.app.database as database
+
+    class FakeResult:
+        """Return empty rows for startup reconciliation reads."""
+
+        def all(self):
+            """Return no existing jobs."""
+            return []
+
+        def scalars(self):
+            """Return this result for scalar chaining."""
+            return self
+
+    class FakeConnection:
+        """Capture portable SQL issued for a PostgreSQL connection."""
+
+        dialect = SimpleNamespace(name="postgresql")
+
+        def __init__(self):
+            """Initialize the SQL capture."""
+            self.statements: list[str] = []
+
+        def execute(self, statement, _parameters=None):
+            """Capture one SQL statement and return an empty result.
+
+            Args:
+                statement: SQLAlchemy statement issued by reconciliation.
+                _parameters: Optional bound values supplied with the statement.
+            """
+            self.statements.append(str(statement))
+            return FakeResult()
+
+    monkeypatch.setattr(
+        database,
+        "inspect",
+        lambda _connection: SimpleNamespace(get_columns=lambda _table: [{"name": "id"}]),
+    )
+    connection = FakeConnection()
+
+    database._reconcile_vcf_depot_job_queue(connection)
+
+    sql = "\n".join(connection.statements)
+    assert "ADD COLUMN IF NOT EXISTS vcf_depot_operation BOOLEAN NOT NULL DEFAULT FALSE" in sql
+    assert "ADD COLUMN IF NOT EXISTS vcf_depot_profile_id INTEGER" in sql
+    assert "CREATE UNIQUE INDEX IF NOT EXISTS uq_jobs_active_vcf_depot_profile" in sql
+    assert "CREATE UNIQUE INDEX IF NOT EXISTS uq_jobs_running_vcf_depot_operation" in sql
+    assert "json_extract" not in sql
+    assert "instr(" not in sql
+
+
+def test_vcf_queue_sqlite_column_upgrade_serializes_concurrent_startup(tmp_path):
+    """Verify concurrent SQLite startup cannot duplicate queue-column upgrades.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    from sqlalchemy import create_engine, inspect, text
+
+    import atlaso.app.database as database
+
+    test_engine = create_engine(
+        f"sqlite:///{tmp_path / 'queue-upgrade.db'}",
+        connect_args={"check_same_thread": False, "timeout": 10},
+    )
+    with test_engine.begin() as connection:
+        connection.execute(
+            text(
+                "CREATE TABLE jobs ("
+                "id TEXT PRIMARY KEY, type TEXT NOT NULL, status TEXT NOT NULL, "
+                "task_config_json TEXT, result TEXT, created_at TEXT, started_at TEXT, "
+                "progress_percent INTEGER, finished_at TEXT, error TEXT)"
+            )
+        )
+
+    ready = Barrier(2)
+
+    def reconcile() -> None:
+        """Start one simulated web or worker schema reconciliation."""
+        ready.wait()
+        database._reconcile_vcf_depot_job_queue_schema(test_engine)
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        futures = [executor.submit(reconcile) for _ in range(2)]
+        for future in futures:
+            future.result()
+
+    columns = {column["name"] for column in inspect(test_engine).get_columns("jobs")}
+    assert {"vcf_depot_operation", "vcf_depot_profile_id"} <= columns
+
+
+def test_sqlite_schema_creation_serializes_concurrent_service_startup(tmp_path):
+    """Verify first-time web and worker startup cannot race table creation.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    from sqlalchemy import create_engine, inspect
+
+    from atlaso.app import database, models  # noqa: F401 - register mapped tables.
+
+    test_engine = create_engine(
+        f"sqlite:///{tmp_path / 'concurrent-schema.db'}",
+        connect_args={"check_same_thread": False, "timeout": 10},
+    )
+    ready = Barrier(2)
+
+    def create_schema() -> None:
+        """Start one simulated service schema initialization."""
+        ready.wait()
+        database._create_database_schema(test_engine)
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        futures = [executor.submit(create_schema) for _ in range(2)]
+        for future in futures:
+            future.result()
+
+    assert "vcf_depot_admission_gate" in inspect(test_engine).get_table_names()
+
+
+def test_vcf_queue_reconciliation_preserves_identity_tasks_for_type_specific_recovery():
+    """Verify database startup leaves running identity tasks for canonical readback."""
+    from sqlalchemy import create_engine, text
+
+    import atlaso.app.database as database
+
+    test_engine = create_engine("sqlite://")
+    with test_engine.begin() as connection:
+        connection.execute(
+            text(
+                "CREATE TABLE jobs ("
+                "id TEXT PRIMARY KEY, type TEXT NOT NULL, status TEXT NOT NULL, "
+                "vcf_depot_operation BOOLEAN NOT NULL DEFAULT FALSE, "
+                "vcf_depot_profile_id INTEGER, task_config_json TEXT, result TEXT, "
+                "created_at TEXT, started_at TEXT, progress_percent INTEGER, "
+                "finished_at TEXT, error TEXT)"
+            )
+        )
+        for job_id, job_type in (
+            ("job_identity_first", "vcf-depot-software-id"),
+            ("job_download", "vcf-depot-download"),
+            ("job_identity_second", "vcf-depot-software-id"),
+        ):
+            connection.execute(
+                text(
+                    "INSERT INTO jobs "
+                    "(id, type, status, vcf_depot_operation, created_at, started_at) "
+                    "VALUES (:job_id, :job_type, 'running', TRUE, :job_id, :job_id)"
+                ),
+                {"job_id": job_id, "job_type": job_type},
+            )
+
+        database._reconcile_vcf_depot_job_queue(connection)
+        statuses = dict(connection.execute(text("SELECT id, status FROM jobs")).all())
+        indexes = {row[1] for row in connection.execute(text("PRAGMA index_list('jobs')")).all()}
+
+    assert statuses["job_identity_first"] == "running"
+    assert statuses["job_identity_second"] == "running"
+    assert statuses["job_download"] == "running"
+    assert "uq_jobs_running_vcf_depot_operation" not in indexes
+
+    with test_engine.begin() as connection:
+        connection.execute(
+            text("UPDATE jobs SET status = 'failed' WHERE type = 'vcf-depot-software-id'")
+        )
+    assert database.ensure_vcf_depot_running_operation_index(test_engine) is True
+    with test_engine.connect() as connection:
+        indexes = {row[1] for row in connection.execute(text("PRAGMA index_list('jobs')")).all()}
+    assert "uq_jobs_running_vcf_depot_operation" in indexes
+
+
+def test_vcf_queue_reconciliation_preserves_distinct_running_operation_owners():
+    """Verify web startup cannot terminalize live worker-owned VCFDT operations."""
+    from sqlalchemy import create_engine, text
+
+    import atlaso.app.database as database
+
+    test_engine = create_engine("sqlite://")
+    with test_engine.begin() as connection:
+        connection.execute(
+            text(
+                "CREATE TABLE jobs ("
+                "id TEXT PRIMARY KEY, type TEXT NOT NULL, status TEXT NOT NULL, "
+                "vcf_depot_operation BOOLEAN NOT NULL DEFAULT FALSE, "
+                "vcf_depot_profile_id INTEGER, task_config_json TEXT, result TEXT, "
+                "created_at TEXT, started_at TEXT, progress_percent INTEGER, "
+                "finished_at TEXT, error TEXT)"
+            )
+        )
+        for job_id, profile_id in (("job_live_first", 51), ("job_live_second", 52)):
+            connection.execute(
+                text(
+                    "INSERT INTO jobs "
+                    "(id, type, status, vcf_depot_operation, vcf_depot_profile_id, created_at, started_at) "
+                    "VALUES (:job_id, 'vcf-depot-download', 'running', TRUE, :profile_id, "
+                    ":job_id, :job_id)"
+                ),
+                {"job_id": job_id, "profile_id": profile_id},
+            )
+
+        database._reconcile_vcf_depot_job_queue(connection)
+        statuses = dict(connection.execute(text("SELECT id, status FROM jobs")).all())
+        indexes = {row[1] for row in connection.execute(text("PRAGMA index_list('jobs')")).all()}
+
+    assert statuses == {"job_live_first": "running", "job_live_second": "running"}
+    assert "uq_jobs_active_vcf_depot_profile" in indexes
+    assert "uq_jobs_running_vcf_depot_operation" not in indexes
+    assert database.ensure_vcf_depot_running_operation_index(test_engine) is False
+
+
+def test_vcf_queue_indexes_restore_after_duplicate_running_profile_recovery():
+    """Verify both deferred VCFDT guards return after owner recovery."""
+    from sqlalchemy import create_engine, text
+
+    import atlaso.app.database as database
+
+    test_engine = create_engine("sqlite://")
+    with test_engine.begin() as connection:
+        connection.execute(
+            text(
+                "CREATE TABLE jobs ("
+                "id TEXT PRIMARY KEY, type TEXT NOT NULL, status TEXT NOT NULL, "
+                "vcf_depot_operation BOOLEAN NOT NULL DEFAULT FALSE, "
+                "vcf_depot_profile_id INTEGER, task_config_json TEXT, result TEXT, "
+                "created_at TEXT, started_at TEXT, progress_percent INTEGER, "
+                "finished_at TEXT, error TEXT)"
+            )
+        )
+        for job_id in ("job_duplicate_running_first", "job_duplicate_running_second"):
+            connection.execute(
+                text(
+                    "INSERT INTO jobs "
+                    "(id, type, status, vcf_depot_operation, vcf_depot_profile_id, created_at, started_at) "
+                    "VALUES (:job_id, 'vcf-depot-download', 'running', TRUE, 61, :job_id, :job_id)"
+                ),
+                {"job_id": job_id},
+            )
+
+        database._reconcile_vcf_depot_job_queue(connection)
+        statuses = dict(connection.execute(text("SELECT id, status FROM jobs")).all())
+        indexes = {row[1] for row in connection.execute(text("PRAGMA index_list('jobs')")).all()}
+
+    assert set(statuses.values()) == {"running"}
+    assert "uq_jobs_active_vcf_depot_profile" not in indexes
+    assert "uq_jobs_running_vcf_depot_operation" not in indexes
+    assert database.ensure_vcf_depot_running_operation_index(test_engine) is False
+
+    with test_engine.begin() as connection:
+        connection.execute(text("UPDATE jobs SET status = 'failed'"))
+    assert database.ensure_vcf_depot_running_operation_index(test_engine) is True
+    with test_engine.connect() as connection:
+        indexes = {row[1] for row in connection.execute(text("PRAGMA index_list('jobs')")).all()}
+    assert "uq_jobs_active_vcf_depot_profile" in indexes
+    assert "uq_jobs_running_vcf_depot_operation" in indexes
+
+
+def test_worker_claim_restores_deferred_vcf_runtime_guard_before_next_profile():
+    """Verify a later worker claim restores the guard after legacy operations drain."""
+    from sqlalchemy import create_engine, text
+    from sqlalchemy.orm import sessionmaker
+
+    import atlaso.app.database as database
+    from atlaso.app.models import Job, JobStatus
+    from atlaso.app.worker import claim_next_job
+
+    test_engine = create_engine("sqlite://")
+    database.Base.metadata.create_all(test_engine)
+    with test_engine.begin() as connection:
+        connection.execute(text("DROP INDEX IF EXISTS uq_jobs_running_vcf_depot_operation"))
+    TestSession = sessionmaker(bind=test_engine, expire_on_commit=False)
+    with TestSession() as db:
+        db.add_all(
+            [
+                Job(
+                    id=f"job_deferred_{profile_id}",
+                    type="vcf-depot-download",
+                    status=JobStatus.RUNNING.value,
+                    created_by="admin",
+                    vcf_depot_operation=True,
+                    vcf_depot_profile_id=profile_id,
+                )
+                for profile_id in (71, 72)
+            ]
+        )
+        db.commit()
+    assert database.ensure_vcf_depot_running_operation_index(test_engine) is False
+
+    with TestSession() as db:
+        for job in db.query(Job).filter(Job.status == JobStatus.RUNNING.value):
+            job.status = JobStatus.FAILED.value
+        db.add(
+            Job(
+                id="job_after_deferred_guard",
+                type="vcf-depot-download",
+                status=JobStatus.PENDING.value,
+                created_by="admin",
+                vcf_depot_operation=True,
+                vcf_depot_profile_id=73,
+            )
+        )
+        db.commit()
+
+    with TestSession() as db:
+        claimed = claim_next_job(db)
+        assert claimed is not None
+        assert claimed.id == "job_after_deferred_guard"
+        assert claimed.status == JobStatus.RUNNING.value
+    with test_engine.connect() as connection:
+        indexes = {row[1] for row in connection.execute(text("PRAGMA index_list('jobs')")).all()}
+    assert "uq_jobs_running_vcf_depot_operation" in indexes
+
+
+def test_vcf_queue_reconciliation_preserves_running_same_profile_job():
+    """Verify an older pending duplicate cannot displace a running process guard."""
+    from sqlalchemy import create_engine, text
+
+    import atlaso.app.database as database
+
+    test_engine = create_engine("sqlite://")
+    with test_engine.begin() as connection:
+        connection.execute(
+            text(
+                "CREATE TABLE jobs ("
+                "id TEXT PRIMARY KEY, type TEXT NOT NULL, status TEXT NOT NULL, "
+                "vcf_depot_operation BOOLEAN NOT NULL DEFAULT FALSE, "
+                "vcf_depot_profile_id INTEGER, task_config_json TEXT, result TEXT, "
+                "created_at TEXT, started_at TEXT, progress_percent INTEGER, "
+                "finished_at TEXT, error TEXT)"
+            )
+        )
+        connection.execute(
+            text(
+                "INSERT INTO jobs "
+                "(id, type, status, vcf_depot_operation, vcf_depot_profile_id, created_at) "
+                "VALUES ('job_pending_older', 'vcf-depot-download', 'pending', TRUE, 41, '2026-01-01')"
+            )
+        )
+        connection.execute(
+            text(
+                "INSERT INTO jobs "
+                "(id, type, status, vcf_depot_operation, vcf_depot_profile_id, created_at, started_at) "
+                "VALUES ('job_running_newer', 'vcf-depot-download', 'running', TRUE, 41, "
+                "'2026-01-02', '2026-01-02')"
+            )
+        )
+
+        database._reconcile_vcf_depot_job_queue(connection)
+        statuses = dict(connection.execute(text("SELECT id, status FROM jobs")).all())
+        indexes = {row[1] for row in connection.execute(text("PRAGMA index_list('jobs')")).all()}
+
+    assert statuses == {
+        "job_pending_older": "skipped",
+        "job_running_newer": "running",
+    }
+    assert "uq_jobs_active_vcf_depot_profile" in indexes
+    assert "uq_jobs_running_vcf_depot_operation" in indexes
+
+
+def test_vcf_queue_reconciliation_uses_only_selected_apply_units():
+    """Verify skipped apply metadata does not create a false VCFDT blocker."""
+    import json
+
+    from sqlalchemy import create_engine, text
+
+    import atlaso.app.database as database
+
+    test_engine = create_engine("sqlite://")
+    with test_engine.begin() as connection:
+        connection.execute(
+            text(
+                "CREATE TABLE jobs ("
+                "id TEXT PRIMARY KEY, type TEXT NOT NULL, status TEXT NOT NULL, "
+                "vcf_depot_operation BOOLEAN NOT NULL DEFAULT FALSE, "
+                "vcf_depot_profile_id INTEGER, task_config_json TEXT, result TEXT, "
+                "created_at TEXT, started_at TEXT, progress_percent INTEGER, "
+                "finished_at TEXT, error TEXT)"
+            )
+        )
+        connection.execute(
+            text(
+                "INSERT INTO jobs "
+                "(id, type, status, vcf_depot_operation, result, created_at, started_at) "
+                "VALUES (:job_id, 'appliance-apply', 'running', TRUE, :result, :job_id, :job_id)"
+            ),
+            {
+                "job_id": "job_unrelated_apply",
+                "result": json.dumps(
+                    {
+                        "selected_units": ["dns"],
+                        "skipped_changed_units": ["vcf_offline_depot"],
+                    }
+                ),
+            },
+        )
+        connection.execute(
+            text(
+                "INSERT INTO jobs "
+                "(id, type, status, vcf_depot_operation, result, created_at, started_at) "
+                "VALUES (:job_id, 'appliance-apply', 'pending', FALSE, :result, :job_id, NULL)"
+            ),
+            {
+                "job_id": "job_vcf_apply",
+                "result": json.dumps(
+                    {
+                        "selected_units": ["vcf_offline_depot"],
+                        "skipped_changed_units": [],
+                    }
+                ),
+            },
+        )
+
+        database._reconcile_vcf_depot_job_queue(connection)
+        operations = dict(
+            connection.execute(
+                text("SELECT id, vcf_depot_operation FROM jobs ORDER BY id")
+            ).all()
+        )
+        unrelated_status = connection.execute(
+            text("SELECT status FROM jobs WHERE id = 'job_unrelated_apply'")
+        ).scalar_one()
+
+    assert operations == {"job_unrelated_apply": 0, "job_vcf_apply": 1}
+    assert unrelated_status == "running"
+
+
+def test_vcf_runtime_index_uses_the_current_rebound_engine(monkeypatch):
+    """Verify the default runtime guard follows test and process engine rebinding.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+    """
+    from sqlalchemy import create_engine, text
+
+    import atlaso.app.database as database
+
+    rebound_engine = create_engine("sqlite://")
+    with rebound_engine.begin() as connection:
+        connection.execute(
+            text(
+                "CREATE TABLE jobs ("
+                "id TEXT PRIMARY KEY, type TEXT NOT NULL, status TEXT NOT NULL, "
+                "vcf_depot_operation BOOLEAN NOT NULL DEFAULT FALSE, "
+                "vcf_depot_profile_id INTEGER)"
+            )
+        )
+    monkeypatch.setattr(database, "engine", rebound_engine)
+
+    assert database.ensure_vcf_depot_running_operation_index() is True
+    with rebound_engine.connect() as connection:
+        indexes = {row[1] for row in connection.execute(text("PRAGMA index_list('jobs')")).all()}
+    assert "uq_jobs_running_vcf_depot_operation" in indexes
 
 
 def test_due_vcf_schedule_records_software_id_collision_as_skipped(client):
@@ -941,6 +1666,59 @@ def test_due_vcf_schedule_records_software_id_collision_as_skipped(client):
                 AuditEvent.action == "skip_scheduled_vcf_depot_download",
             )
         ).scalar_one().success is False
+
+
+def test_due_vcf_schedule_records_disappearing_profile_as_skipped(client, monkeypatch):
+    """Verify a profile deleted during admission cannot terminate scheduling.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+        monkeypatch: Pytest fixture used to replace queue admission.
+    """
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import JobStatus, Schedule, VcfDepotDownloadProfile
+    from atlaso.app.services import automation
+    from atlaso.app.services.vcf_depot_downloads import VcfDepotProfileUnavailableError
+
+    client.get("/login")
+    now = datetime.now(timezone.utc)
+    with SessionLocal() as db:
+        profile = VcfDepotDownloadProfile(name="disappearing-profile", profile_type="metadata", enabled=True)
+        db.add(profile)
+        db.flush()
+        profile_id = profile.id
+        schedule = Schedule(
+            name="disappearing-profile-nightly",
+            task_type="vcf_depot_download",
+            task_config_json=json.dumps({"profile_id": profile_id}),
+            schedule_kind="cron",
+            cron_expression="0 2 * * *",
+            timezone_name="UTC",
+            enabled=True,
+            next_run_at=now - timedelta(minutes=1),
+            created_by="admin",
+        )
+        db.add(schedule)
+        db.commit()
+
+    def reject_disappearing_profile(*_args, **_kwargs):
+        """Model deletion after the scheduler's initial profile lookup.
+
+        Args:
+            *_args: Positional admission arguments ignored by this failure model.
+            **_kwargs: Keyword admission arguments ignored by this failure model.
+        """
+        raise VcfDepotProfileUnavailableError(profile_id)
+
+    monkeypatch.setattr(automation, "enqueue_vcf_depot_download", reject_disappearing_profile)
+    with SessionLocal() as db:
+        jobs = automation.enqueue_due_schedules(db, now=now)
+        assert len(jobs) == 1
+        skipped = jobs[0]
+        result = json.loads(skipped.result)
+        assert skipped.status == JobStatus.SKIPPED.value
+        assert result["error"] == f"VCFDT download profile {profile_id} is no longer available."
+        assert "active_job_id" not in result
 
 
 def test_disabling_vcf_profile_disables_schedules_and_delete_requires_detach(client):

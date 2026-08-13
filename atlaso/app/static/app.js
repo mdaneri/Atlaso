@@ -12300,15 +12300,15 @@ async function startVcfDepotProfileDownload(row, csrf) {
     return;
   }
   if (!data.enabled) {
-    showVcfDepotMessage("Enable the VCFDT download profile before starting a download.");
+    showTransientGridError("Enable the VCFDT download profile before starting a download.");
     return;
   }
   if (data.download_active) {
-    showVcfDepotMessage(data.active_task_blocker || "Wait for the active VCFDT task to finish before starting another download.");
+    showTransientGridError(data.active_task_blocker || "Wait for this profile's VCFDT task to finish before starting it again.");
     return;
   }
   if (!data.can_start) {
-    showVcfDepotMessage(data.start_blocker || "Stage Broadcom credentials before starting this VCFDT download profile.");
+    showTransientGridError(data.start_blocker || "Stage Broadcom credentials before starting this VCFDT download profile.");
     return;
   }
   try {
@@ -12324,13 +12324,16 @@ async function startVcfDepotProfileDownload(row, csrf) {
     if (!response.ok) {
       throw new Error(payload.detail || "The VCFDT download job could not be started.");
     }
-    const blocker = `Wait for VCFDT task ${payload.job_id} to finish before starting another download.`;
+    const blocker = `VCFDT task ${payload.job_id} is queued for this profile. Wait for it to finish before starting the same profile again.`;
     await row.update({
       status: payload.profile_status || data.status,
       download_active: true,
+      active_job_id: payload.job_id,
+      active_task_status: payload.job_status || "pending",
       active_task_blocker: blocker,
+      can_start: false,
+      start_blocker: blocker,
     });
-    setVcfDepotDownloadActive(true, payload.job_id);
     atlasoNewTaskId = payload.job_id || "";
     atlasoSelectedTaskId = atlasoNewTaskId;
     const tasksPage = document.querySelector("[data-tasks-page]");
@@ -12341,9 +12344,9 @@ async function startVcfDepotProfileDownload(row, csrf) {
       await atlasoTasksTable.setPage(1);
     }
     await refreshTasksPage();
-    showVcfDepotMessage(`VCFDT task ${payload.job_id} started for ${payload.profile_name}.`, "success");
+    showTransientGridStatus(`Queued VCFDT task ${payload.job_id} for ${payload.profile_name}.`);
   } catch (error) {
-    showVcfDepotMessage(error instanceof Error ? error.message : "The VCFDT download job could not be started.");
+    showTransientGridError(error instanceof Error ? error.message : "The VCFDT download job could not be started.");
   }
 }
 
@@ -12371,32 +12374,67 @@ async function previewVcfDepotProfileScript(row) {
   }
 }
 
-function scheduleVcfDepotProfileDownload(row) {
+function scheduleVcfDepotProfileDownload(row, launcher = null) {
   const data = row.getData();
   if (data.is_new || !data.enabled) {
-    showVcfDepotMessage("Enable the VCFDT download profile before scheduling it.");
+    showTransientGridError("Enable the VCFDT download profile before scheduling it.");
     return;
   }
-  const query = new URLSearchParams({
-    new: "vcf_depot_download",
-    vcf_profile_id: String(data.id),
-  });
-  window.location.assign(managementUiPath(`/automation?${query.toString()}#schedules`));
+  const scheduleForm = document.querySelector("[data-automation-contextual-vcf-schedule]");
+  if (!(scheduleForm instanceof HTMLFormElement) || typeof scheduleForm.atlasoOpenScheduleWizard !== "function") {
+    showTransientGridError("The contextual schedule wizard is unavailable. Refresh the page and try again.");
+    return;
+  }
+  scheduleForm.atlasoOpenScheduleWizard(data, launcher || row.getElement());
 }
 
 let vcfDepotProfilesTable = null;
 
-function setVcfDepotDownloadActive(active, activeJobId = "") {
+function setVcfDepotDownloadStates(activeTasks = [], activeExclusiveOperation = null, profileStartStates = []) {
   if (!vcfDepotProfilesTable) {
     return;
   }
-  const blocker = active
-    ? `Wait for VCFDT task ${activeJobId || "in progress"} to finish before starting another download.`
-    : "";
+  const byProfile = new Map(
+    activeTasks
+      .map((task) => [Number(task?.result?.profile_id || task?.profile_id || 0), task])
+      .filter(([profileId]) => profileId > 0),
+  );
+  const prerequisitesByProfile = new Map(
+    profileStartStates
+      .map((state) => [Number(state?.profile_id || 0), state])
+      .filter(([profileId]) => profileId > 0),
+  );
   vcfDepotProfilesTable.getRows().forEach((row) => {
     const data = row.getData();
     if (!data.is_new) {
-      row.update({ download_active: active, active_task_blocker: blocker });
+      const task = byProfile.get(Number(data.id));
+      const status = String(task?.status || "");
+      const state = status === "running" ? "running" : "queued";
+      const jobId = task?.id || task?.job_id || "";
+      const downloadActive = Boolean(task || activeExclusiveOperation);
+      const activeTaskBlocker = task
+        ? `VCFDT task ${jobId} is ${state} for this profile. Wait for it to finish before starting the same profile again.`
+        : String(activeExclusiveOperation?.detail || "");
+      const currentPrerequisite = prerequisitesByProfile.get(Number(data.id));
+      const prerequisiteCanStart = currentPrerequisite
+        ? Boolean(currentPrerequisite.can_start)
+        : Boolean(data.prerequisite_can_start);
+      const prerequisiteStartBlocker = currentPrerequisite
+        ? String(currentPrerequisite.start_blocker || "")
+        : String(data.prerequisite_start_blocker || "");
+      row.update({
+        status: currentPrerequisite?.status || data.status,
+        download_active: downloadActive,
+        active_job_id: jobId,
+        active_task_status: status,
+        active_task_blocker: activeTaskBlocker,
+        prerequisite_can_start: prerequisiteCanStart,
+        prerequisite_start_blocker: prerequisiteStartBlocker,
+        can_start: downloadActive ? false : prerequisiteCanStart,
+        start_blocker: downloadActive
+          ? activeTaskBlocker
+          : prerequisiteStartBlocker,
+      });
     }
   });
 }
@@ -12481,7 +12519,7 @@ function initializeVcfDepotProfilesTable() {
           const data = row.getData();
           return data.is_new || !data.enabled;
         },
-        action: (_event, row) => scheduleVcfDepotProfileDownload(row),
+        action: (_event, row) => scheduleVcfDepotProfileDownload(row, row.getElement()),
       },
     ],
     deleteConfirmation: (data) => ({
@@ -12529,12 +12567,17 @@ function initializeVcfDepotProfilesTable() {
         {
           title: "Last run",
           field: "status",
-          formatter: (cell) => ({
-            planned: "Never run",
-            ready: "Running",
-            synced: "Succeeded",
-            blocked: "Failed",
-          })[cell.getValue()] || "Unknown",
+          formatter: (cell) => {
+            const activeStatus = cell.getRow().getData().active_task_status;
+            if (activeStatus === "pending") return "Queued";
+            if (activeStatus === "running") return "Running";
+            return ({
+              planned: "Never run",
+              ready: "Running",
+              synced: "Succeeded",
+              blocked: "Failed",
+            })[cell.getValue()] || "Unknown";
+          },
           width: 110,
           headerSort: false,
         },
@@ -12549,9 +12592,14 @@ function initializeVcfDepotProfilesTable() {
       return;
     }
     const tasks = Array.isArray(event.detail?.tasks) ? event.detail.tasks : [];
-    const activeTask = tasks.find((task) => !task.is_step && taskStatusActive(task.status));
-    const active = Number(event.detail?.activeCount || 0) > 0;
-    setVcfDepotDownloadActive(active, activeTask?.id || "");
+    const activeTasks = Array.isArray(event.detail?.activeDownloads)
+      ? event.detail.activeDownloads
+      : tasks.filter((task) => !task.is_step && taskStatusActive(task.status));
+    setVcfDepotDownloadStates(
+      activeTasks,
+      event.detail?.activeExclusiveOperation || null,
+      Array.isArray(event.detail?.profileStartStates) ? event.detail.profileStartStates : [],
+    );
   });
 }
 
@@ -12786,11 +12834,24 @@ function applyTasksStatusPayload(payload, { reopen = false } = {}) {
     : atlasoTasks;
   updateApplianceUpdateActions(actionTasks);
   window.clearTimeout(atlasoTasksRefreshTimer);
-  if (atlasoTasks.some((task) => taskStatusActive(task.status))) {
+  if (
+    atlasoTasks.some((task) => taskStatusActive(task.status))
+    || (
+      Array.isArray(payload.active_downloads)
+      && payload.active_downloads.some((task) => taskStatusActive(task.status))
+    )
+    || taskStatusActive(payload.active_exclusive_operation?.status)
+  ) {
     atlasoTasksRefreshTimer = window.setTimeout(() => refreshTasksPage().catch(() => {}), 2000);
   }
   document.dispatchEvent(new CustomEvent("atlaso:tasks-refreshed", {
-    detail: { tasks: atlasoTasks, activeCount: Number(payload.active_count || 0) },
+    detail: {
+      tasks: atlasoTasks,
+      activeDownloads: Array.isArray(payload.active_downloads) ? payload.active_downloads : null,
+      activeExclusiveOperation: payload.active_exclusive_operation || null,
+      profileStartStates: Array.isArray(payload.profile_start_states) ? payload.profile_start_states : [],
+      activeCount: Number(payload.active_count || 0),
+    },
   }));
   return atlasoTasks;
 }
@@ -17697,7 +17758,174 @@ function initializeLdapBindSecretModal() {
   }
 }
 
+function initializeContextualVcfScheduleWizard() {
+  const form = document.querySelector("[data-automation-contextual-vcf-schedule]");
+  if (!(form instanceof HTMLFormElement) || typeof form.atlasoOpenScheduleWizard === "function") return;
+  const dialog = form.closest("dialog");
+  if (!(dialog instanceof HTMLDialogElement)) return;
+
+  const scheduleKind = form.querySelector("[data-automation-schedule-kind]");
+  const cronExpression = form.querySelector("[data-automation-cron-expression]");
+  const cronFrequency = form.querySelector("[data-automation-cron-frequency]");
+  const cronMinute = form.querySelector("[data-automation-cron-minute]");
+  const cronTime = form.querySelector("[data-automation-cron-time]");
+  const cronWeekday = form.querySelector("[data-automation-cron-weekday]");
+  const cronMonthday = form.querySelector("[data-automation-cron-monthday]");
+  const cronCustom = form.querySelector("[data-automation-cron-custom]");
+  const cronSummary = form.querySelector("[data-automation-cron-summary]");
+  const cronPreview = form.querySelector("[data-automation-cron-preview]");
+  const modalTitle = form.querySelector("[data-automation-wizard-modal-title]");
+  const profileName = form.querySelector("[data-automation-context-profile-name]");
+  const submit = form.querySelector("[data-automation-wizard-submit]");
+  let selectedProfile = null;
+
+  const reviewValue = (selector, value) => {
+    const target = form.querySelector(selector);
+    if (target instanceof HTMLElement) target.textContent = value || "not configured";
+  };
+  const cronPartsFromTime = () => {
+    const [hour = "2", minute = "0"] = String(cronTime?.value || "02:00").split(":");
+    return { hour: String(Number(hour)), minute: String(Number(minute)), label: `${hour.padStart(2, "0")}:${minute.padStart(2, "0")}` };
+  };
+  const updateCronBuilder = () => {
+    if (!(cronExpression instanceof HTMLInputElement) || !(cronFrequency instanceof HTMLSelectElement)) return;
+    const frequency = cronFrequency.value;
+    form.querySelectorAll("[data-automation-cron-control]").forEach((element) => {
+      const control = element.getAttribute("data-automation-cron-control");
+      const visible = control === frequency || (control === "time" && ["daily", "weekly", "monthly"].includes(frequency));
+      element.classList.toggle("hidden", !visible);
+      element.querySelectorAll("input, select").forEach((input) => { input.required = visible; });
+    });
+    const timezone = String(form.elements.timezone_name.value || "UTC");
+    const time = cronPartsFromTime();
+    let expression = "0 2 * * *";
+    let summary = `Every day at ${time.label} ${timezone}`;
+    if (frequency === "hourly") {
+      const minute = String(Number(cronMinute?.value || 0));
+      expression = `${minute} * * * *`;
+      summary = `Every hour at minute ${minute} · ${timezone}`;
+    } else if (frequency === "daily") {
+      expression = `${time.minute} ${time.hour} * * *`;
+    } else if (frequency === "weekly") {
+      const weekday = String(cronWeekday?.value || "1");
+      const names = { "0": "Sunday", "1": "Monday", "2": "Tuesday", "3": "Wednesday", "4": "Thursday", "5": "Friday", "6": "Saturday" };
+      expression = `${time.minute} ${time.hour} * * ${weekday}`;
+      summary = `Every ${names[weekday]} at ${time.label} ${timezone}`;
+    } else if (frequency === "monthly") {
+      const monthday = String(Number(cronMonthday?.value || 1));
+      expression = `${time.minute} ${time.hour} ${monthday} * *`;
+      summary = `Every month on day ${monthday} at ${time.label} ${timezone}`;
+    } else {
+      expression = String(cronCustom?.value || "").trim();
+      summary = `Custom schedule in ${timezone}`;
+    }
+    cronExpression.value = expression;
+    if (cronSummary instanceof HTMLElement) cronSummary.textContent = summary;
+    if (cronPreview instanceof HTMLElement) cronPreview.textContent = expression;
+  };
+  const loadCronBuilder = (rawExpression = "0 2 * * *") => {
+    if (!(cronFrequency instanceof HTMLSelectElement)) return;
+    const expression = String(rawExpression || "0 2 * * *").trim();
+    const fields = expression.split(/\s+/);
+    const numeric = (value, minimum, maximum) => /^\d+$/.test(value) && Number(value) >= minimum && Number(value) <= maximum;
+    let frequency = "custom";
+    if (fields.length === 5 && numeric(fields[0], 0, 59) && fields.slice(1).every((value) => value === "*")) {
+      frequency = "hourly";
+      if (cronMinute instanceof HTMLInputElement) cronMinute.value = fields[0];
+    } else if (fields.length === 5 && numeric(fields[0], 0, 59) && numeric(fields[1], 0, 23) && fields[2] === "*" && fields[3] === "*" && fields[4] === "*") {
+      frequency = "daily";
+    } else if (fields.length === 5 && numeric(fields[0], 0, 59) && numeric(fields[1], 0, 23) && fields[2] === "*" && fields[3] === "*" && numeric(fields[4], 0, 6)) {
+      frequency = "weekly";
+      if (cronWeekday instanceof HTMLSelectElement) cronWeekday.value = fields[4];
+    } else if (fields.length === 5 && numeric(fields[0], 0, 59) && numeric(fields[1], 0, 23) && numeric(fields[2], 1, 31) && fields[3] === "*" && fields[4] === "*") {
+      frequency = "monthly";
+      if (cronMonthday instanceof HTMLInputElement) cronMonthday.value = fields[2];
+    }
+    if (["daily", "weekly", "monthly"].includes(frequency) && cronTime instanceof HTMLInputElement) {
+      cronTime.value = `${fields[1].padStart(2, "0")}:${fields[0].padStart(2, "0")}`;
+    }
+    if (cronCustom instanceof HTMLInputElement) cronCustom.value = expression;
+    cronFrequency.value = frequency;
+    updateCronBuilder();
+  };
+  const updateTimingVisibility = () => {
+    const value = scheduleKind instanceof HTMLSelectElement ? scheduleKind.value : "cron";
+    form.querySelectorAll("[data-automation-schedule-timing]").forEach((element) => {
+      const visible = element.getAttribute("data-automation-schedule-timing") === value
+        && !element.hasAttribute("data-automation-cron-native-expression");
+      element.classList.toggle("hidden", !visible);
+      element.querySelectorAll("[data-automation-timing-required]").forEach((input) => { input.required = visible; });
+    });
+    if (value === "cron") updateCronBuilder();
+  };
+  const prepareReview = () => {
+    const kind = scheduleKind instanceof HTMLSelectElement ? scheduleKind.value : "cron";
+    const timing = kind === "once"
+      ? `One time · ${form.elements.run_once_at.value || "not set"}`
+      : `Cron · ${form.elements.cron_expression.value || "not set"}`;
+    reviewValue("[data-automation-review-name]", String(form.elements.name.value || ""));
+    reviewValue("[data-automation-review-task]", "vcf depot download");
+    reviewValue("[data-automation-review-timing]", timing);
+    reviewValue("[data-automation-review-timezone]", String(form.elements.timezone_name.value || "UTC"));
+    reviewValue("[data-automation-review-state]", form.elements.enabled.checked ? "Enabled" : "Disabled");
+    reviewValue("[data-automation-review-config]", String(selectedProfile?.name || "not selected"));
+  };
+
+  const wizard = window.AtlasoUiPatterns.createWizard({
+    form,
+    dialog,
+    steps: [
+      { id: "identity", title: "Name the schedule", description: "Name this schedule for the selected VCF Offline Depot profile." },
+      { id: "timing", title: "Choose when it runs", description: "Configure recurring or one-time execution in an explicit timezone." },
+      { id: "state", title: "Choose the initial state", description: "Enable the schedule now or save it disabled for review before the worker can queue it." },
+      { id: "review", title: "Review the schedule", description: "Confirm the bound profile, timing, and initial state." },
+    ],
+    prepareReview,
+    onOpen: ({ context }) => {
+      selectedProfile = context;
+      form.action = managementUiPath(`/vcf-offline-depot/profiles/${context?.id || 0}/schedules`);
+      if (modalTitle instanceof HTMLElement) modalTitle.textContent = `Schedule ${context?.name || "profile"}`;
+      if (submit instanceof HTMLButtonElement) submit.textContent = "Create schedule";
+      if (profileName instanceof HTMLElement) profileName.textContent = context?.name || "Selected profile";
+      loadCronBuilder(String(form.elements.cron_expression?.value || "0 2 * * *"));
+      updateTimingVisibility();
+    },
+    onSubmit: async () => {
+      const payload = await atlasoGridWizardRequest(form.action, new FormData(form));
+      showTransientGridStatus(`Created schedule ${payload.schedule_name} for ${selectedProfile?.name || "the selected profile"}. Manage it in Automation Schedules.`);
+      return true;
+    },
+  });
+  const open = (profile = null, launcher = null) => wizard.open({ context: profile, launcher });
+  form.atlasoOpenScheduleWizard = open;
+  scheduleKind?.addEventListener("change", updateTimingVisibility);
+  [cronFrequency, cronMinute, cronTime, cronWeekday, cronMonthday, cronCustom].forEach((control) => {
+    control?.addEventListener("input", updateCronBuilder);
+    control?.addEventListener("change", updateCronBuilder);
+  });
+  form.elements.timezone_name?.addEventListener("input", updateCronBuilder);
+
+  if (form.dataset.contextProfileId) {
+    const serverProfile = {
+      id: Number(form.dataset.contextProfileId),
+      name: form.dataset.contextProfileName || "Selected profile",
+    };
+    const launcher = document.querySelector(`[data-vcf-depot-fallback-schedule="${serverProfile.id}"]`);
+    if (dialog.open) dialog.close();
+    void open(serverProfile, launcher instanceof HTMLElement ? launcher : null).then(() => {
+      if (form.dataset.contextReadOnly === "true") {
+        form.querySelectorAll("input, select, textarea, [data-atlaso-wizard-submit]").forEach((control) => {
+          control.disabled = true;
+        });
+      }
+      const contextualError = String(form.dataset.contextError || "");
+      if (contextualError) wizard.setError(contextualError);
+    });
+  }
+}
+
 function initializeAutomationTables() {
+  initializeContextualVcfScheduleWizard();
   if (typeof Tabulator === "undefined") return;
 
   const parseTableData = (elementId) => {
@@ -17714,8 +17942,8 @@ function initializeAutomationTables() {
     const form = document.getElementById(`${prefix}-${id}`);
     if (form instanceof HTMLFormElement) form.requestSubmit();
   };
-  const scheduleModal = document.getElementById("automation-schedule-modal");
   const scheduleForm = document.querySelector("[data-automation-schedule-form]");
+  const scheduleModal = scheduleForm?.closest("dialog");
   const scriptCreateDialog = document.getElementById("automation-script-create-dialog");
   const scriptCreateForm = document.querySelector("[data-automation-script-create-form]");
   const scriptModal = document.getElementById("automation-script-modal");
@@ -18259,16 +18487,26 @@ function initializeAutomationTables() {
   scriptDiffModal?.querySelector("[data-automation-script-diff-close]")?.addEventListener("click", () => scriptDiffModal.close());
 
   const schedulesElement = document.getElementById("automation-schedules-table");
-  if (schedulesElement instanceof HTMLElement && scheduleModal instanceof HTMLDialogElement && scheduleForm instanceof HTMLFormElement) {
-    const scheduleRows = parseTableData("automation-schedules-data");
-    scheduleRows.push({ is_new: true, name: "" });
-    const wizardSteps = [
-      { id: "identity", title: "Name the schedule", description: "Set the schedule identity and choose its allowlisted task type." },
-      { id: "config", title: "Choose update streams", description: "Select the repository-backed update streams this task should check." },
-      { id: "timing", title: "Choose when it runs", description: "Configure recurring or one-time execution in an explicit timezone." },
-      { id: "state", title: "Choose the initial state", description: "Enable the schedule now or save it disabled for review before the worker can queue it." },
-      { id: "review", title: "Review the schedule", description: "Confirm the workflow, timing, inputs, and initial state." },
-    ];
+  if (
+    scheduleModal instanceof HTMLDialogElement
+    && scheduleForm instanceof HTMLFormElement
+    && !(scheduleForm.hasAttribute("data-automation-contextual-vcf-schedule") && typeof scheduleForm.atlasoOpenScheduleWizard === "function")
+  ) {
+    const isContextualVcfSchedule = scheduleForm.hasAttribute("data-automation-contextual-vcf-schedule");
+    const wizardSteps = isContextualVcfSchedule
+      ? [
+        { id: "identity", title: "Name the schedule", description: "Name this schedule for the selected VCF Offline Depot profile." },
+        { id: "timing", title: "Choose when it runs", description: "Configure recurring or one-time execution in an explicit timezone." },
+        { id: "state", title: "Choose the initial state", description: "Enable the schedule now or save it disabled for review before the worker can queue it." },
+        { id: "review", title: "Review the schedule", description: "Confirm the bound profile, timing, and initial state." },
+      ]
+      : [
+        { id: "identity", title: "Name the schedule", description: "Set the schedule identity and choose its allowlisted task type." },
+        { id: "config", title: "Choose update streams", description: "Select the repository-backed update streams this task should check." },
+        { id: "timing", title: "Choose when it runs", description: "Configure recurring or one-time execution in an explicit timezone." },
+        { id: "state", title: "Choose the initial state", description: "Enable the schedule now or save it disabled for review before the worker can queue it." },
+        { id: "review", title: "Review the schedule", description: "Confirm the workflow, timing, inputs, and initial state." },
+      ];
     const wizardSubmit = scheduleForm.querySelector("[data-automation-wizard-submit]");
     const wizardModalTitle = scheduleForm.querySelector("[data-automation-wizard-modal-title]");
     const configStepLabel = scheduleForm.querySelector("[data-automation-config-step-label]");
@@ -18287,7 +18525,12 @@ function initializeAutomationTables() {
     const cronCustom = scheduleForm.querySelector("[data-automation-cron-custom]");
     const cronSummary = scheduleForm.querySelector("[data-automation-cron-summary]");
     const cronPreview = scheduleForm.querySelector("[data-automation-cron-preview]");
+    const contextualProfileName = scheduleForm.querySelector("[data-automation-context-profile-name]");
     let scheduleWizard;
+    let selectedContextualProfile = null;
+    const scheduleTaskValue = () => isContextualVcfSchedule
+      ? "vcf_depot_download"
+      : taskType instanceof HTMLSelectElement ? taskType.value : "";
     const selectedScriptInterpreter = () => scriptRevision instanceof HTMLSelectElement
       ? String(scriptRevision.selectedOptions[0]?.dataset.interpreter || "bash")
       : "bash";
@@ -18315,7 +18558,8 @@ function initializeAutomationTables() {
       }
     };
     const updateConfigVisibility = () => {
-      const value = taskType instanceof HTMLSelectElement ? taskType.value : "";
+      if (isContextualVcfSchedule) return;
+      const value = scheduleTaskValue();
       const step = scheduleWizard?.steps.find((item) => item.id === "config")
         || wizardSteps.find((item) => item.id === "config");
       const configCopy = value === "managed_script"
@@ -18417,7 +18661,7 @@ function initializeAutomationTables() {
       if (value === "cron") updateCronBuilder();
     };
     const validateScheduleStep = ({ step }) => {
-      const taskValue = taskType instanceof HTMLSelectElement ? taskType.value : "";
+      const taskValue = scheduleTaskValue();
       if (step.id === "config") {
         if (taskValue.startsWith("appliance_update_") && !scheduleForm.querySelector('input[name="selected_streams"]:checked')) {
           return { valid: false, message: "Select at least one update stream." };
@@ -18440,7 +18684,7 @@ function initializeAutomationTables() {
       if (target instanceof HTMLElement) target.textContent = value || "not configured";
     };
     const populateScheduleReview = () => {
-      const taskValue = taskType instanceof HTMLSelectElement ? taskType.value : "";
+      const taskValue = scheduleTaskValue();
       const kindValue = scheduleKind instanceof HTMLSelectElement ? scheduleKind.value : "cron";
       const timezoneValue = String(scheduleForm.elements.timezone_name.value || "UTC");
       const timingValue = kindValue === "once"
@@ -18454,7 +18698,9 @@ function initializeAutomationTables() {
         const hasArguments = Boolean(String(scheduleForm.elements.script_arguments.value || "").trim());
         configValue = `${scriptLabel} · ${hasArguments ? "parameters configured" : "no parameters"}`;
       } else if (taskValue === "vcf_depot_download") {
-        configValue = scheduleForm.elements.vcf_profile_id.selectedOptions[0]?.textContent?.trim() || "not selected";
+        configValue = isContextualVcfSchedule
+          ? String(selectedContextualProfile?.name || "not selected")
+          : scheduleForm.elements.vcf_profile_id.selectedOptions[0]?.textContent?.trim() || "not selected";
       }
       reviewValue("[data-automation-review-name]", String(scheduleForm.elements.name.value || ""));
       reviewValue("[data-automation-review-task]", taskValue.replaceAll("_", " "));
@@ -18470,33 +18716,68 @@ function initializeAutomationTables() {
       validateStep: validateScheduleStep,
       prepareReview: populateScheduleReview,
       onOpen: ({ context: rowData }) => {
-      scheduleForm.action = rowData ? managementUiPath(`/automation/schedules/${rowData.id}/edit`) : managementUiPath("/automation/schedules");
-      if (wizardModalTitle instanceof HTMLElement) wizardModalTitle.textContent = rowData ? `Edit ${rowData.name}` : "Add schedule";
-      if (wizardSubmit instanceof HTMLButtonElement) wizardSubmit.textContent = rowData ? "Update schedule" : "Create schedule";
-      if (rowData) {
-        scheduleForm.elements.name.value = rowData.name || "";
-        scheduleForm.elements.task_type.value = rowData.task_type || "appliance_update_check";
-        scheduleForm.elements.schedule_kind.value = rowData.schedule_kind || "cron";
-        scheduleForm.elements.timezone_name.value = rowData.timezone || "UTC";
-        scheduleForm.elements.cron_expression.value = rowData.cron_expression || "0 2 * * *";
-        scheduleForm.elements.run_once_at.value = rowData.run_once_local || "";
-        scheduleForm.elements.enabled.checked = Boolean(rowData.enabled);
-        const selectedStreams = new Set(rowData.task_config?.selected_streams || []);
-        scheduleForm.querySelectorAll('input[name="selected_streams"]').forEach((input) => { input.checked = selectedStreams.has(input.value); });
-        scheduleForm.elements.vcf_profile_id.value = String(rowData.task_config?.profile_id || "");
-        scheduleForm.elements.revision_id.value = String(rowData.task_config?.revision_id || "");
-        scheduleForm.elements.vault_id.value = String(rowData.task_config?.vault_id || "");
-        scheduleForm.elements.script_arguments.value = formatScriptArguments(rowData.task_config?.arguments, selectedScriptInterpreter());
-      }
-      updateScriptArgumentsGuidance();
-      loadCronBuilder(rowData?.cron_expression || "0 2 * * *");
-      updateConfigVisibility();
-      updateTimingVisibility();
+        if (isContextualVcfSchedule) {
+          selectedContextualProfile = rowData;
+          scheduleForm.action = managementUiPath(`/vcf-offline-depot/profiles/${rowData?.id || 0}/schedules`);
+          if (wizardModalTitle instanceof HTMLElement) wizardModalTitle.textContent = `Schedule ${rowData?.name || "profile"}`;
+          if (wizardSubmit instanceof HTMLButtonElement) wizardSubmit.textContent = "Create schedule";
+          if (contextualProfileName instanceof HTMLElement) contextualProfileName.textContent = rowData?.name || "Selected profile";
+          loadCronBuilder(String(scheduleForm.elements.cron_expression?.value || "0 2 * * *"));
+          updateTimingVisibility();
+          return;
+        }
+        scheduleForm.action = rowData ? managementUiPath(`/automation/schedules/${rowData.id}/edit`) : managementUiPath("/automation/schedules");
+        if (wizardModalTitle instanceof HTMLElement) wizardModalTitle.textContent = rowData ? `Edit ${rowData.name}` : "Add schedule";
+        if (wizardSubmit instanceof HTMLButtonElement) wizardSubmit.textContent = rowData ? "Update schedule" : "Create schedule";
+        if (rowData) {
+          scheduleForm.elements.name.value = rowData.name || "";
+          scheduleForm.elements.task_type.value = rowData.task_type || "appliance_update_check";
+          scheduleForm.elements.schedule_kind.value = rowData.schedule_kind || "cron";
+          scheduleForm.elements.timezone_name.value = rowData.timezone || "UTC";
+          scheduleForm.elements.cron_expression.value = rowData.cron_expression || "0 2 * * *";
+          scheduleForm.elements.run_once_at.value = rowData.run_once_local || "";
+          scheduleForm.elements.enabled.checked = Boolean(rowData.enabled);
+          const selectedStreams = new Set(rowData.task_config?.selected_streams || []);
+          scheduleForm.querySelectorAll('input[name="selected_streams"]').forEach((input) => { input.checked = selectedStreams.has(input.value); });
+          scheduleForm.elements.vcf_profile_id.value = String(rowData.task_config?.profile_id || "");
+          scheduleForm.elements.revision_id.value = String(rowData.task_config?.revision_id || "");
+          scheduleForm.elements.vault_id.value = String(rowData.task_config?.vault_id || "");
+          scheduleForm.elements.script_arguments.value = formatScriptArguments(rowData.task_config?.arguments, selectedScriptInterpreter());
+        }
+        updateScriptArgumentsGuidance();
+        loadCronBuilder(rowData?.cron_expression || "0 2 * * *");
+        updateConfigVisibility();
+        updateTimingVisibility();
       },
+      onSubmit: isContextualVcfSchedule ? async () => {
+        const payload = await atlasoGridWizardRequest(scheduleForm.action, new FormData(scheduleForm));
+        showTransientGridStatus(`Created schedule ${payload.schedule_name} for ${selectedContextualProfile?.name || "the selected profile"}. Manage it in Automation Schedules.`);
+        return true;
+      } : undefined,
     });
     const openScheduleWizard = (rowData = null, launcher = null) => {
-      scheduleWizard.open({ context: rowData, launcher });
+      return scheduleWizard.open({ context: rowData, launcher });
     };
+    scheduleForm.atlasoOpenScheduleWizard = openScheduleWizard;
+    if (isContextualVcfSchedule && scheduleForm.dataset.contextProfileId) {
+      const serverProfile = {
+        id: Number(scheduleForm.dataset.contextProfileId),
+        name: scheduleForm.dataset.contextProfileName || "Selected profile",
+      };
+      const launcher = document.querySelector(
+        `[data-vcf-depot-fallback-schedule="${serverProfile.id}"]`,
+      );
+      if (scheduleModal.open) scheduleModal.close();
+      void openScheduleWizard(serverProfile, launcher instanceof HTMLElement ? launcher : null).then(() => {
+        const contextualError = String(scheduleForm.dataset.contextError || "");
+        if (scheduleForm.dataset.contextReadOnly === "true") {
+          scheduleForm.querySelectorAll("input, select, textarea, [data-atlaso-wizard-nav], [data-atlaso-wizard-next], [data-atlaso-wizard-back], [data-atlaso-wizard-submit]").forEach((control) => {
+            control.disabled = true;
+          });
+        }
+        if (contextualError) scheduleWizard.setError(contextualError);
+      });
+    }
     taskType?.addEventListener("change", updateConfigVisibility);
     scriptRevision?.addEventListener("change", updateScriptArgumentsGuidance);
     scheduleKind?.addEventListener("change", updateTimingVisibility);
@@ -18505,65 +18786,69 @@ function initializeAutomationTables() {
       control?.addEventListener("change", updateCronBuilder);
     });
     scheduleForm.elements.timezone_name?.addEventListener("input", updateCronBuilder);
-    const atlasoGridOptions31 = {
-      data: scheduleRows,
-      layout: "fitColumns",
-      placeholder: "No automation schedules have been created.",
-      rowFormatter: (row) => markNewRecordRow(row, "name"),
-      rowContextMenu: [
-        {
-          label: "Run now",
-          disabled: (component) => component.getData().is_new,
-          action: (_event, row) => submitForm("automation-schedule-run", row.getData().id),
-        },
-        {
-          label: "Edit schedule",
-          disabled: (component) => component.getData().is_new,
-          action: (_event, row) => openScheduleWizard(row.getData(), row.getElement()),
-        },
-        {
-          label: "Delete schedule",
-          disabled: (component) => component.getData().is_new,
-          action: (_event, row) => submitForm("automation-schedule-delete", row.getData().id),
-        },
-      ],
-      columns: [
-        {
-          title: "Name",
-          field: "name",
-          minWidth: 150,
-          formatter: (cell) => cell.getRow().getData().is_new ? '<button class="add-row-button" type="button">+ Add schedule here</button>' : escapeHtml(cell.getValue()),
-          cellClick: (event, cell) => {
-            if (cell.getRow().getData().is_new) openScheduleWizard(null, event?.target);
+    if (schedulesElement instanceof HTMLElement) {
+      const scheduleRows = parseTableData("automation-schedules-data");
+      scheduleRows.push({ is_new: true, name: "" });
+      const atlasoGridOptions31 = {
+        data: scheduleRows,
+        layout: "fitColumns",
+        placeholder: "No automation schedules have been created.",
+        rowFormatter: (row) => markNewRecordRow(row, "name"),
+        rowContextMenu: [
+          {
+            label: "Run now",
+            disabled: (component) => component.getData().is_new,
+            action: (_event, row) => submitForm("automation-schedule-run", row.getData().id),
           },
+          {
+            label: "Edit schedule",
+            disabled: (component) => component.getData().is_new,
+            action: (_event, row) => openScheduleWizard(row.getData(), row.getElement()),
+          },
+          {
+            label: "Delete schedule",
+            disabled: (component) => component.getData().is_new,
+            action: (_event, row) => submitForm("automation-schedule-delete", row.getData().id),
+          },
+        ],
+        columns: [
+          {
+            title: "Name",
+            field: "name",
+            minWidth: 150,
+            formatter: (cell) => cell.getRow().getData().is_new ? '<button class="add-row-button" type="button">+ Add schedule here</button>' : escapeHtml(cell.getValue()),
+            cellClick: (event, cell) => {
+              if (cell.getRow().getData().is_new) openScheduleWizard(null, event?.target);
+            },
+          },
+          { title: "Task", field: "task_type", minWidth: 150, formatter: (cell) => cell.getRow().getData().is_new ? "" : String(cell.getValue() || "").replaceAll("_", " ") },
+          { title: "Schedule", field: "schedule", minWidth: 150 },
+          { title: "Timezone", field: "timezone", minWidth: 130 },
+          { title: "Next run", field: "next_run_at", minWidth: 170 },
+          { title: "Last task", field: "last_job_status", width: 110 },
+          { title: "State", field: "enabled", width: 85, formatter: atlasoBooleanFormatter, editor: "tickCross", editable: (cell) => !cell.getRow().getData().is_new, hozAlign: "center", headerSort: false, cellEdited: (cell) => submitForm("automation-schedule-toggle", cell.getRow().getData().id) },
+        ],
+      };
+      schedulesElement.atlasoTabulator = window.AtlasoUiPatterns.createGrid({
+        element: schedulesElement,
+        pattern: "wizard-backed",
+        onReady: () => {
+          schedulesElement.atlasoTabulatorReady = true;
         },
-        { title: "Task", field: "task_type", minWidth: 150, formatter: (cell) => cell.getRow().getData().is_new ? "" : String(cell.getValue() || "").replaceAll("_", " ") },
-        { title: "Schedule", field: "schedule", minWidth: 150 },
-        { title: "Timezone", field: "timezone", minWidth: 130 },
-        { title: "Next run", field: "next_run_at", minWidth: 170 },
-        { title: "Last task", field: "last_job_status", width: 110 },
-        { title: "State", field: "enabled", width: 85, formatter: atlasoBooleanFormatter, editor: "tickCross", editable: (cell) => !cell.getRow().getData().is_new, hozAlign: "center", headerSort: false, cellEdited: (cell) => submitForm("automation-schedule-toggle", cell.getRow().getData().id) },
-      ],
-    };
-    schedulesElement.atlasoTabulator = window.AtlasoUiPatterns.createGrid({
-      element: schedulesElement,
-      pattern: "wizard-backed",
-      onReady: () => {
-        schedulesElement.atlasoTabulatorReady = true;
-      },
-      options: atlasoGridOptions31,
-    }).table;
-    const scheduleQuery = new URLSearchParams(window.location.search);
-    if (scheduleQuery.get("new") === "vcf_depot_download") {
-      const requestedProfileId = scheduleQuery.get("vcf_profile_id") || "";
-      const profileOption = [...scheduleForm.elements.vcf_profile_id.options]
-        .find((option) => option.value === requestedProfileId && !option.disabled);
-      openScheduleWizard(null, schedulesElement);
-      scheduleForm.elements.task_type.value = "vcf_depot_download";
-      scheduleForm.elements.vcf_profile_id.value = profileOption ? requestedProfileId : "";
-      updateConfigVisibility();
-      const cleanUrl = `${window.location.pathname}${window.location.hash || "#schedules"}`;
-      window.history.replaceState({}, "", cleanUrl);
+        options: atlasoGridOptions31,
+      }).table;
+      const scheduleQuery = new URLSearchParams(window.location.search);
+      if (scheduleQuery.get("new") === "vcf_depot_download") {
+        const requestedProfileId = scheduleQuery.get("vcf_profile_id") || "";
+        const profileOption = [...scheduleForm.elements.vcf_profile_id.options]
+          .find((option) => option.value === requestedProfileId && !option.disabled);
+        openScheduleWizard(null, schedulesElement);
+        scheduleForm.elements.task_type.value = "vcf_depot_download";
+        scheduleForm.elements.vcf_profile_id.value = profileOption ? requestedProfileId : "";
+        updateConfigVisibility();
+        const cleanUrl = `${window.location.pathname}${window.location.hash || "#schedules"}`;
+        window.history.replaceState({}, "", cleanUrl);
+      }
     }
   }
 

@@ -671,11 +671,14 @@ runs VCFDT as the Atlaso service user, and keeps credential bodies out of task o
 scheduled under Operations → Automation. The application properties editor saves desired-state text and syncs the
 Monaco Editor value before submit; global apply writes the runtime `application-prodv2.properties` used by the active tool.
 Manual profile starts and Automation starts use the same atomic `vcf-depot-download` admission function. A partial
-unique jobs index permits only one pending or running VCFDT download across all profiles and schedules. Scheduled
+unique jobs index permits only one pending or running task for each profile; distinct profiles queue in creation-time/job
+ID FIFO order. A second partial index permits exactly one running VCFDT operation. The Software Depot ID and
+`vcf_offline_depot` Appliance Apply paths acquire the same admission gate and reject admission until all queued/running
+downloads drain; their pending/running state rejects new downloads. Scheduled same-profile and exclusive-operation
 collisions become terminal skipped jobs with the active job ID; one-time schedules disable and recurring schedules
-advance without replay. The worker performs execution-time validation before runtime preparation and records terminal
-success or failure audits. Schedule JSON remains the compatibility shape `{"profile_id": <integer>}` and never stores
-credentials or generated commands.
+advance without replay. The worker performs claim-time validation before runtime preparation, preserves unclaimed
+pending jobs across restart, and records terminal success or failure audits. Schedule JSON remains the compatibility
+shape `{"profile_id": <integer>}` and never stores credentials or generated commands.
 Through
 `atlaso-helper vcf-offline-depot validate|stage-tool|apply-properties|generate-software-depot-id|sync-intent|apply-https`,
 the helper validates the staged site, rejects broad depot-root exposure and duplicate hostname/listener combinations,

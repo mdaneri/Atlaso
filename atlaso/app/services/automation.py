@@ -28,7 +28,8 @@ from atlaso.app.services.appliance_update import ensure_appliance_update_job_ste
 from atlaso.app.services.vaults import vault_scope_identity
 from atlaso.app.services.vcf_depot_downloads import (
     ActiveVcfDepotDownloadError,
-    active_vcf_depot_operation_job,
+    VcfDepotExclusiveOperationError,
+    VcfDepotProfileUnavailableError,
     enqueue_vcf_depot_download,
     vcf_depot_initial_job_result,
     vcf_depot_task_log_reference,
@@ -493,7 +494,7 @@ def enqueue_schedule_now(db: Session, *, schedule: Schedule, actor: str, now: da
     """
     current = _aware_utc(now or utcnow())
     active = (
-        active_vcf_depot_operation_job(db)
+        None
         if schedule.task_type == "vcf_depot_download"
         else db.execute(
             select(Job).where(
@@ -580,7 +581,7 @@ def enqueue_due_schedules(db: Session, *, now: datetime | None = None) -> list[J
     jobs: list[Job] = []
     for schedule in due:
         active = (
-            active_vcf_depot_operation_job(db)
+            None
             if schedule.task_type == "vcf_depot_download"
             else db.execute(
                 select(Job).where(
@@ -654,38 +655,6 @@ def enqueue_due_schedules(db: Session, *, now: datetime | None = None) -> list[J
                 )
                 db.add(job)
                 db.flush()
-            elif active is not None:
-                job = Job(
-                    id=job_id,
-                    type="vcf-depot-download",
-                    status=JobStatus.SKIPPED.value,
-                    created_by=f"scheduler:{schedule.name}",
-                    progress_percent=100,
-                    schedule_id=schedule.id,
-                    trigger="scheduled",
-                    planned_for=planned_for,
-                    task_config_json=vcf_task_config,
-                    result=json.dumps(
-                        {
-                            **vcf_depot_initial_job_result(
-                                job_id=job_id,
-                                profile=profile,
-                                trigger="scheduled",
-                                schedule=schedule,
-                                planned_for=planned_for,
-                            ),
-                            "active_job_id": active.id,
-                            "status": JobStatus.SKIPPED.value,
-                            "success": False,
-                        },
-                        indent=2,
-                        sort_keys=True,
-                    ),
-                    error=f"Skipped because VCFDT task {active.id} was already active.",
-                    finished_at=current,
-                )
-                db.add(job)
-                db.flush()
             else:
                 try:
                     job = enqueue_vcf_depot_download(
@@ -697,7 +666,25 @@ def enqueue_due_schedules(db: Session, *, now: datetime | None = None) -> list[J
                         planned_for=planned_for,
                         job_id=job_id,
                     )
-                except ActiveVcfDepotDownloadError as exc:
+                except (
+                    ActiveVcfDepotDownloadError,
+                    VcfDepotExclusiveOperationError,
+                    VcfDepotProfileUnavailableError,
+                ) as exc:
+                    skipped_result = {
+                        **vcf_depot_initial_job_result(
+                            job_id=job_id,
+                            profile=profile,
+                            trigger="scheduled",
+                            schedule=schedule,
+                            planned_for=planned_for,
+                        ),
+                        "status": JobStatus.SKIPPED.value,
+                        "success": False,
+                        "error": str(exc),
+                    }
+                    if not isinstance(exc, VcfDepotProfileUnavailableError):
+                        skipped_result["active_job_id"] = exc.active_job_id
                     job = Job(
                         id=job_id,
                         type="vcf-depot-download",
@@ -708,23 +695,8 @@ def enqueue_due_schedules(db: Session, *, now: datetime | None = None) -> list[J
                         trigger="scheduled",
                         planned_for=planned_for,
                         task_config_json=vcf_task_config,
-                        result=json.dumps(
-                            {
-                                **vcf_depot_initial_job_result(
-                                    job_id=job_id,
-                                    profile=profile,
-                                    trigger="scheduled",
-                                    schedule=schedule,
-                                    planned_for=planned_for,
-                                ),
-                                "active_job_id": exc.active_job_id,
-                                "status": JobStatus.SKIPPED.value,
-                                "success": False,
-                            },
-                            indent=2,
-                            sort_keys=True,
-                        ),
-                        error=f"Skipped because VCFDT task {exc.active_job_id} was already active.",
+                        result=json.dumps(skipped_result, indent=2, sort_keys=True),
+                        error=str(exc),
                         finished_at=current,
                     )
                     db.add(job)
