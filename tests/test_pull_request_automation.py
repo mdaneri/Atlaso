@@ -11,7 +11,7 @@ def test_ci_separates_diagnostic_checks_from_required_contexts() -> None:
         encoding="utf-8"
     )
 
-    assert workflow.count("github.event_name == 'pull_request'") == 4
+    assert workflow.count("github.event_name == 'pull_request'") == 5
     assert workflow.count("github.actor == 'github-actions[bot]'") == 6
     for context in ("Version policy", "Repository checks", "Python tests"):
         assert f"'Approval-gated {context}'" in workflow
@@ -47,6 +47,43 @@ def test_trusted_ci_publishes_revalidated_required_statuses() -> None:
     assert 'post_status "Repository checks" "$repository_result"' in workflow
     finish_job = workflow.split("  trusted-contexts-finish:", maxsplit=1)[1]
     assert "actions/checkout" not in finish_job
+
+
+def test_packer_ci_authenticates_plugins_without_exposing_fork_tokens() -> None:
+    """Verify scoped Packer authentication and the tokenless fork fallback."""
+    workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(
+        encoding="utf-8"
+    )
+    packer_job = workflow.split("  deployment-packer:", maxsplit=1)[1].split(
+        "  python-tests:", maxsplit=1
+    )[0]
+    job_preamble, authenticated_step = packer_job.split(
+        "      - name: Validate both Photon Packer targets with authenticated plugin downloads",
+        maxsplit=1,
+    )
+    authenticated_step, fork_step = authenticated_step.split(
+        "      - name: Validate fork Packer targets without repository credentials",
+        maxsplit=1,
+    )
+
+    assert "permissions:\n      contents: read" in packer_job
+    assert "persist-credentials: false" in packer_job
+    assert workflow.count("PACKER_GITHUB_API_TOKEN") == 1
+    assert "PACKER_GITHUB_API_TOKEN" not in job_preamble
+    assert (
+        "if: github.event_name != 'pull_request' || "
+        "github.event.pull_request.head.repo.full_name == github.repository"
+        in authenticated_step
+    )
+    assert "PACKER_GITHUB_API_TOKEN: ${{ github.token }}" in authenticated_step
+    assert "python scripts/check_deployment_assets.py --mode packer" in authenticated_step
+    assert (
+        "if: github.event_name == 'pull_request' && "
+        "github.event.pull_request.head.repo.full_name != github.repository"
+        in fork_step
+    )
+    assert "PACKER_GITHUB_API_TOKEN" not in fork_step
+    assert "python scripts/check_deployment_assets.py --mode packer" in fork_step
 
 
 def test_auto_merge_branch_updates_are_explicit_and_race_safe() -> None:
