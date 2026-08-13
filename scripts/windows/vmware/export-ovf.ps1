@@ -14,6 +14,9 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
+$outputSafetyModule = Join-Path $PSScriptRoot 'Atlaso.OvfExport.psm1'
+Import-Module $outputSafetyModule -Force
+
 $ovfNamespace = 'http://schemas.dmtf.org/ovf/envelope/1'
 $rasdNamespace = 'http://schemas.dmtf.org/wbem/wscim/1/cim-schema/2/CIM_ResourceAllocationSettingData'
 $vmwNamespace = 'http://www.vmware.com/schema/ovf'
@@ -956,19 +959,17 @@ if ($Release) {
     $releaseTag = Resolve-AtlasoReleaseTag -RepoRoot $repoRoot
     $releaseProvenance = Assert-AtlasoReleaseProvenance -RepoRoot $repoRoot -Tag $releaseTag -SourceVmxPath $resolvedSourceVmx
 }
-if (-not $OutputDirectory) {
-    $OutputDirectory = Join-Path $repoRoot "image\vmware-workstation\ovf\$Name"
-}
-$resolvedOutputDirectory = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($OutputDirectory)
+$callerSpecifiedOutputDirectory = $PSBoundParameters.ContainsKey('OutputDirectory')
+$outputPlan = Resolve-AtlasoOvfOutputPlan `
+    -RepoRoot $repoRoot `
+    -OutputDirectory $OutputDirectory `
+    -Name $Name `
+    -CallerSpecifiedOutputDirectory:$callerSpecifiedOutputDirectory
+$resolvedOutputDirectory = $outputPlan.OutputDirectory
 $resolvedOvfTool = Resolve-OvfToolPath -Path $OvfToolPath
 $resolvedTar = if ($NoOva) { '' } else { Resolve-TarPath -Path $TarPath }
 
-if (Test-Path -LiteralPath $resolvedOutputDirectory) {
-    if (-not $Force -and -not $Release) {
-        throw "OVF output directory already exists: $resolvedOutputDirectory. Pass -Force to replace it."
-    }
-    Remove-Item -LiteralPath $resolvedOutputDirectory -Recurse -Force
-}
+Clear-AtlasoOvfOutputDirectory -OutputPlan $outputPlan -Release:$Release -Force:$Force
 New-Item -ItemType Directory -Force -Path $resolvedOutputDirectory | Out-Null
 
 & $resolvedOvfTool --acceptAllEulas $resolvedSourceVmx $resolvedOutputDirectory

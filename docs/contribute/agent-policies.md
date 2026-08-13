@@ -223,7 +223,10 @@ status: current
 - Keep VMware release images on two compacted payload VMDKs: the Photon OS disk and a required UUID-mounted
   `ATLASO_SYSTEM` disk containing `/opt/atlaso` and appliance-wide PowerShell modules. OVF export must preserve both
   payload files, add only the empty depot and backup definitions, preflight every GitHub asset below 2 GiB, and omit an
-  oversized aggregate OVA rather than publishing an unusable release asset.
+  oversized aggregate OVA rather than publishing an unusable release asset. Recursive OVF output replacement is limited
+  to strict, non-reparse-point descendants of `image/vmware-workstation/ovf`; repository, image, output, filesystem, and
+  external roots are never removal targets. Release mode implicitly replaces only its canonical derived destination.
+  Every explicitly supplied existing destination requires `-Force`, and `-Force` does not expand the deletion boundary.
 - Remove only proven build-only packages after runtime and Photon compatibility checks. Preserve all appliance
   capabilities, clean package/download caches and staged build sources, zero-fill both payload filesystems with a
   bounded free-space reserve, remove the fill files, request TRIM, and emit bounded before/after footprint evidence
