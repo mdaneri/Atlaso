@@ -15440,13 +15440,13 @@ def test_vcf_offline_depot_contextual_schedule_is_server_bound_and_stays_in_page
         headers={"Accept": "text/html"},
         follow_redirects=False,
     )
-    assert fallback_invalid.status_code == 303
-    assert fallback_invalid.headers["location"] == (
-        f"/ui/management/vcf-offline-depot?schedule_profile_id={profile_id}"
-        "&schedule_invalid=true#vcf-depot-schedule-modal"
+    assert fallback_invalid.status_code == 422
+    assert "location" not in fallback_invalid.headers
+    assert "Review the schedule fields and provide a valid timing definition." in fallback_invalid.text
+    assert (
+        f'action="/ui/management/vcf-offline-depot/profiles/{profile_id}/schedules"'
+        in fallback_invalid.text
     )
-    invalid_page = client.get(fallback_invalid.headers["location"])
-    assert "Review the schedule fields and provide a valid timing definition." in invalid_page.text
 
     task_tamper = client.post(
         f"/vcf-offline-depot/profiles/{profile_id}/schedules",

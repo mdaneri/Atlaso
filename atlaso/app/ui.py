@@ -14767,13 +14767,15 @@ def create_contextual_vcf_depot_schedule(
         )
     except AutomationScheduleInputError as exc:
         if wants_html:
-            return RedirectResponse(
-                management_ui_path(
-                    f"/vcf-offline-depot?schedule_profile_id={profile_id}"
-                    "&schedule_invalid=true#vcf-depot-schedule-modal"
-                ),
-                status_code=303,
+            response = vcf_offline_depot_page(
+                request,
+                schedule_profile_id=profile_id,
+                schedule_invalid=True,
+                identity=identity,
+                db=db,
             )
+            response.status_code = exc.status_code
+            return response
         return JSONResponse({"detail": exc.public_detail}, status_code=exc.status_code)
     record_audit(
         db,
