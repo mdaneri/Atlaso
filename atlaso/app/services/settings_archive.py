@@ -2121,7 +2121,23 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
             raise ValueError(
                 f"The settings archive row {row_index} in 'vsphere_key_providers' has an invalid provider ID: {exc}"
             ) from exc
-    provider_ids = {str(row["id"]) for row in data.get("vsphere_key_providers", [])}
+    provider_ids: set[str] = set()
+    archived_providers: dict[str, VsphereKeyProvider] = {}
+    for row_index, row in enumerate(data.get("vsphere_key_providers", []), start=1):
+        provider_id = str(row["id"])
+        if provider_id in provider_ids:
+            raise ValueError(
+                f"The settings archive row {row_index} in 'vsphere_key_providers' duplicates a provider ID."
+            )
+        provider_ids.add(provider_id)
+        archived_providers[provider_id] = VsphereKeyProvider(
+            id=provider_id,
+            name=str(row["name"]),
+            description=str(row.get("description") or ""),
+            enabled=bool(row.get("enabled", False)),
+        )
+    trusted_vcenter_ids: set[str] = set()
+    archived_vcenters: dict[str, VsphereTrustedVcenter] = {}
     for row_index, row in enumerate(data.get("vsphere_trusted_vcenters", []), start=1):
         if "enabled" in row and not isinstance(row["enabled"], bool):
             raise ValueError(
@@ -2134,7 +2150,25 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
             provider_ids,
             "vSphere Key Provider",
         )
-    trusted_vcenter_ids = {str(row["id"]) for row in data.get("vsphere_trusted_vcenters", [])}
+        trusted_vcenter_id = str(row["id"])
+        if trusted_vcenter_id in trusted_vcenter_ids:
+            raise ValueError(
+                f"The settings archive row {row_index} in 'vsphere_trusted_vcenters' duplicates a trusted vCenter ID."
+            )
+        trusted_vcenter_ids.add(trusted_vcenter_id)
+        provider = archived_providers[str(row["provider_id"])]
+        trusted_vcenter = VsphereTrustedVcenter(
+            id=trusted_vcenter_id,
+            provider_id=provider.id,
+            name=str(row["name"]),
+            hostname=str(row.get("hostname") or ""),
+            description=str(row.get("description") or ""),
+            enabled=bool(row.get("enabled", False)),
+        )
+        provider.trusted_vcenters.append(trusted_vcenter)
+        archived_vcenters[trusted_vcenter_id] = trusted_vcenter
+    certificate_ids: set[str] = set()
+    certificate_fingerprints: set[str] = set()
     for row_index, row in enumerate(data.get("vsphere_trusted_vcenter_certificates", []), start=1):
         require_reference(
             "vsphere_trusted_vcenter_certificates",
@@ -2143,53 +2177,37 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
             trusted_vcenter_ids,
             "trusted vCenter",
         )
+        certificate_id = str(row["id"])
+        fingerprint = str(row["fingerprint_sha256"]).replace(":", "").casefold()
+        if certificate_id in certificate_ids or fingerprint in certificate_fingerprints:
+            raise ValueError(
+                f"The settings archive row {row_index} in 'vsphere_trusted_vcenter_certificates' duplicates a public certificate identity."
+            )
+        certificate_ids.add(certificate_id)
+        certificate_fingerprints.add(fingerprint)
+        parsed = parse_public_certificate(
+            str(row.get("certificate_pem") or ""),
+            require_current=False,
+        )
+        if parsed["fingerprint_sha256"] != fingerprint:
+            raise ValueError(
+                "The settings archive KMS trust state is invalid: public certificate fingerprint does not match its PEM body."
+            )
+        archived_vcenters[str(row["trusted_vcenter_id"])].certificates.append(
+            VsphereTrustedVcenterCertificate(
+                id=certificate_id,
+                trusted_vcenter_id=str(row["trusted_vcenter_id"]),
+                fingerprint_sha256=fingerprint,
+                certificate_pem=str(parsed["certificate_pem"]),
+                subject=str(parsed["subject"]),
+                issuer=str(parsed["issuer"]),
+                serial_number=str(parsed["serial_number"]),
+                not_valid_before=parsed["not_valid_before"],
+                not_valid_after=parsed["not_valid_after"],
+                source="uploaded_public",
+            )
+        )
     if kms_settings.enabled:
-        archived_providers = {
-            str(row["id"]): VsphereKeyProvider(
-                id=str(row["id"]),
-                name=str(row["name"]),
-                description=str(row.get("description") or ""),
-                enabled=bool(row.get("enabled", False)),
-            )
-            for row in data.get("vsphere_key_providers", [])
-        }
-        archived_vcenters: dict[str, VsphereTrustedVcenter] = {}
-        for row in data.get("vsphere_trusted_vcenters", []):
-            provider = archived_providers[str(row["provider_id"])]
-            trusted_vcenter = VsphereTrustedVcenter(
-                id=str(row["id"]),
-                provider_id=provider.id,
-                name=str(row["name"]),
-                hostname=str(row.get("hostname") or ""),
-                description=str(row.get("description") or ""),
-                enabled=bool(row.get("enabled", False)),
-            )
-            provider.trusted_vcenters.append(trusted_vcenter)
-            archived_vcenters[trusted_vcenter.id] = trusted_vcenter
-        for row in data.get("vsphere_trusted_vcenter_certificates", []):
-            fingerprint = str(row["fingerprint_sha256"]).replace(":", "").casefold()
-            parsed = parse_public_certificate(
-                str(row.get("certificate_pem") or ""),
-                require_current=False,
-            )
-            if parsed["fingerprint_sha256"] != fingerprint:
-                raise ValueError(
-                    "The settings archive KMS trust state is invalid: public certificate fingerprint does not match its PEM body."
-                )
-            archived_vcenters[str(row["trusted_vcenter_id"])].certificates.append(
-                VsphereTrustedVcenterCertificate(
-                    id=str(row["id"]),
-                    trusted_vcenter_id=str(row["trusted_vcenter_id"]),
-                    fingerprint_sha256=fingerprint,
-                    certificate_pem=str(parsed["certificate_pem"]),
-                    subject=str(parsed["subject"]),
-                    issuer=str(parsed["issuer"]),
-                    serial_number=str(parsed["serial_number"]),
-                    not_valid_before=parsed["not_valid_before"],
-                    not_valid_after=parsed["not_valid_after"],
-                    source="uploaded_public",
-                )
-            )
         provider_errors = validate_provider_state(list(archived_providers.values()))
         if provider_errors:
             raise ValueError(
@@ -2698,27 +2716,29 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
                 f"The settings archive ESX Storage state is invalid: {storage_errors[0]}"
             )
 
-    archived_update_sources = {
-        (str(row["kind"]), str(row["name"])): UpdateSource(
-            id=row_index,
-            **_model_kwargs_with_scalar_defaults(UpdateSource, row),
-        )
-        for row_index, row in enumerate(data.get("update_sources", []), start=1)
-        if str(row["kind"]) in UPDATE_SOURCE_KINDS
-    }
-    update_sources = set(archived_update_sources)
+    archived_update_sources: dict[tuple[str, str], UpdateSource] = {}
     for row_index, row in enumerate(data.get("update_sources", []), start=1):
         if str(row["kind"] or "") not in UPDATE_SOURCE_KINDS:
             raise ValueError(
                 f"The settings archive row {row_index} in 'update_sources' has an unsupported source kind."
             )
+        source_identity = (str(row["kind"]), str(row["name"]))
+        if source_identity in archived_update_sources:
+            raise ValueError(
+                f"The settings archive row {row_index} in 'update_sources' duplicates an update source identity."
+            )
+        archived_update_sources[source_identity] = UpdateSource(
+            id=row_index,
+            **_model_kwargs_with_scalar_defaults(UpdateSource, row),
+        )
         source_errors = validate_update_source(
-            archived_update_sources[(str(row["kind"]), str(row["name"]))]
+            archived_update_sources[source_identity]
         )
         if source_errors:
             raise ValueError(
                 f"The settings archive update source state is invalid: {source_errors[0]}"
             )
+    update_sources = set(archived_update_sources)
     for row_index, row in enumerate(data.get("managed_packages", []), start=1):
         source = (str(row.get("source_kind") or ""), str(row.get("source_name") or ""))
         require_reference(

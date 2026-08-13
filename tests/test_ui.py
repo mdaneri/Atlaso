@@ -5379,6 +5379,32 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
             "enabled": "false",
         }
     )
+    disabled_kms_with_invalid_public_certificate = deepcopy(archive)
+    disabled_kms_with_invalid_public_certificate["data"]["vsphere_key_providers"].append(
+        {
+            "id": "11111111-1111-4111-8111-111111111114",
+            "name": "Disabled certificate test provider",
+            "enabled": False,
+        }
+    )
+    disabled_kms_with_invalid_public_certificate["data"]["vsphere_trusted_vcenters"].append(
+        {
+            "id": "22222222-2222-4222-8222-222222222223",
+            "provider_id": "11111111-1111-4111-8111-111111111114",
+            "name": "Disabled certificate test vCenter",
+            "enabled": False,
+        }
+    )
+    disabled_kms_with_invalid_public_certificate["data"][
+        "vsphere_trusted_vcenter_certificates"
+    ].append(
+        {
+            "id": "33333333-3333-4333-8333-333333333333",
+            "trusted_vcenter_id": "22222222-2222-4222-8222-222222222223",
+            "fingerprint_sha256": "0" * 64,
+            "certificate_pem": "not-a-certificate",
+        }
+    )
     enabled_oidc_without_dependencies = deepcopy(archive)
     enabled_oidc_without_dependencies["data"]["oidc_provider_settings"] = [
         {
@@ -5494,6 +5520,10 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
     )
     powershell_source["enabled"] = True
     powershell_source["url"] = "not-a-url"
+    duplicate_update_source = deepcopy(archive)
+    duplicate_update_source["data"]["update_sources"].append(
+        deepcopy(duplicate_update_source["data"]["update_sources"][0])
+    )
     invalid_script_interpreter = deepcopy(archive)
     script_content = "Write-Output 'archive validation'\n"
     script_digest = hashlib.sha256(script_content.encode("utf-8")).hexdigest()
@@ -5640,6 +5670,7 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
         (invalid_provider_id, "invalid provider ID"),
         (invalid_provider_enabled_type, "has an invalid enabled value"),
         (invalid_vcenter_enabled_type, "has an invalid enabled value"),
+        (disabled_kms_with_invalid_public_certificate, "PEM-encoded vCenter public client certificate"),
         (enabled_oidc_without_dependencies, "enables OIDC without an active signing key"),
         (enabled_oidc_with_mismatched_address, "has listener addresses not derived from its interfaces"),
         (enabled_oidc_with_invalid_port, "has an invalid HTTPS port"),
@@ -5654,6 +5685,7 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
         (invalid_esxi_host_mac, "esxi_pxe_hosts' has an invalid MAC address"),
         (invalid_esxi_kickstart, "multiple install/upgrade directives"),
         (invalid_update_source, r"update source state is invalid: .*URL must be an HTTP\(S\) URL"),
+        (duplicate_update_source, "duplicates an update source identity"),
         (invalid_script_interpreter, "Interpreter must be bash, python, or powershell"),
         (invalid_script_digest, "Script content digest does not match"),
         (unsupported_schedule, "Choose a supported scheduled task type"),
