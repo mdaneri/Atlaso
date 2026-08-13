@@ -234,7 +234,7 @@ function Get-AtlasoVmxDisplayName {
     )
 
     $displayNameLines = @(
-        Get-Content -LiteralPath $Path |
+        Get-Content -LiteralPath $Path -ErrorAction Stop |
             Where-Object { $_ -match '^\s*displayName\b' }
     )
     if ($displayNameLines.Count -ne 1) {

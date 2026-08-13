@@ -135,7 +135,8 @@ idempotent cleanup cases. A nonzero command, malformed (including asymmetrically
 keys) or unresolvable inventory,
 target still listed after an apparently successful transition, or missing VMX preserves the artifact directory and
 makes the command fail. Registration inventory reads are terminating, so access denial or an incomplete I/O read cannot
-be interpreted as an empty or partial registered-VM set. When lifecycle
+be interpreted as an empty or partial registered-VM set. VMX identity reads use the same terminating contract, preventing
+a partial file from validating one displayed name while unread content remains unresolved. When lifecycle
 execution and cleanup both fail, the final error reports the original scenario failure together with the cleanup failure
 and preserved path.
 
