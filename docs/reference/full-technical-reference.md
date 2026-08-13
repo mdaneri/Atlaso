@@ -99,10 +99,10 @@ fixed path must report the expected UUID and resolve its block-device source to 
 duplicate-UUID filesystem therefore fails closed. Once both fixed disks are
 initialized, an additional whole disk is accepted only when it is a stable, writable, partition-free managed ESX
 Storage ext4 volume. Atlaso-formatted disks require their `lf-<hash>` label and UUID-backed managed fstab entry.
-Operator-formatted mounted ext4 whole disks require UUID-backed fstab persistence plus an exact root-owned
-`/etc/atlaso/esx-storage-disks.conf` claim. Nginx, the HTTPS bootstrap, control plane, and worker use hard systemd
-requirements on `atlaso-data-disks.service`, so a failed preflight cannot expose the front door or start Atlaso against
-the empty mount directories.
+Every managed ESX disk requires UUID-backed fstab persistence plus an exact root-owned
+`/etc/atlaso/esx-storage-disks.conf` stable-identity claim. Nginx, the HTTPS bootstrap, control plane, and worker use
+hard systemd requirements on `atlaso-data-disks.service`, so a failed preflight cannot expose the front door or start
+Atlaso against the empty mount directories.
 
 Atlaso writes operational events to `/var/log/atlaso/atlaso.log`. Audit events, desired-state edits, and appliance apply
 submissions are mirrored there with sensitive values redacted. The Settings page controls local file verbosity and can

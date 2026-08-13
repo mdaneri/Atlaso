@@ -158,7 +158,7 @@ atlaso-helper esx-storage logs
 
 Global appliance apply is the only mutation path. Dry-run records intended validation, format, UUID mount, bind mount,
 export, DNS, firewall, and service commands without changing the host. Real apply writes a managed `/etc/fstab` block,
-root-owned existing-disk claims in `/etc/atlaso/esx-storage-disks.conf`,
+root-owned stable-identity claims for both formatted and existing disks in `/etc/atlaso/esx-storage-disks.conf`,
 `/etc/exports.d/atlaso-esx-storage.exports`, and `/etc/nfs.conf.d/atlaso-esx-storage.conf`, then refreshes exports and
 services. Reapply recognizes an existing bind target by its mountpoint and filesystem object identity, so a healthy
 share is not mounted again; an unexpected mount at a managed target fails closed instead of being replaced. At boot,

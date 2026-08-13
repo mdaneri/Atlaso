@@ -353,6 +353,8 @@ is_managed_esx_storage_disk() {
         *[!0-9a-f]*) return 1 ;;
       esac
       primary_mount="$(managed_esx_primary_mount "$uuid" || true)"
+      claimed_mount="$(allowlisted_esx_mount "$uuid" "$disk" || true)"
+      [ -n "$claimed_mount" ] && [ "$claimed_mount" = "$primary_mount" ] || return 1
       ;;
     *) primary_mount="$(allowlisted_esx_mount "$uuid" "$disk" || true)" ;;
   esac

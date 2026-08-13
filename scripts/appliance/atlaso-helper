@@ -10932,8 +10932,7 @@ def _migrate_release_esx_storage_claims(
         values = (str(configured_uuid), migrated_identity, str(mount_path))
         if any(character in value for value in values for character in "\t\r\n"):
             raise ValueError("configured mounted ESX Storage disk has an unsupported identity or mount path")
-        if source_type == "mounted_ext4":
-            claims.append("\t".join(values))
+        claims.append("\t".join(values))
         identity_migrations.append(
             (str(source_type), migrated_identity, str(stable_id), str(configured_uuid), str(configured_mount))
         )
@@ -12245,6 +12244,10 @@ def _esx_storage_apply(payload: dict[str, object]) -> dict[str, object]:
             _esx_storage_replace_managed_fstab(
                 list(dict.fromkeys([*rollback_safe_fstab_lines, *fstab_lines]))
             )
+            if any(character in value for value in (fs_uuid, stable_id, str(mount_path)) for character in "\t\r\n"):
+                raise ValueError(f"disk {stable_id} has an unsupported identity or mount path")
+            disk_allowlist_lines.append(f"{fs_uuid}\t{stable_id}\t{mount_path}")
+            _esx_storage_write_disk_allowlist(disk_allowlist_lines, preserve_existing=True)
             volume["filesystem_uuid"] = fs_uuid
         else:
             findmnt = _command_path("findmnt")

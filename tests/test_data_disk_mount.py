@@ -521,6 +521,8 @@ def test_initialized_appliance_allows_only_managed_esx_storage_disk(tmp_path: Pa
             "",
         ]
     )
+    stable_id = tmp_path / "dev" / "disk" / "by-id" / "atlaso-path-test-sde"
+    allowlist = f"esx-uuid\t{stable_id}\t{esx_mount}\n"
 
     completed, calls = _run_mount_script(
         tmp_path,
@@ -529,6 +531,7 @@ def test_initialized_appliance_allows_only_managed_esx_storage_disk(tmp_path: Pa
         backup_tuple="0:3:0",
         mounts=mounts,
         fstab=fstab,
+        esx_allowlist=allowlist,
     )
 
     assert completed.returncode == 0, completed.stdout + completed.stderr
@@ -561,6 +564,8 @@ def test_initialized_appliance_mounts_managed_esx_storage_before_preflight(tmp_p
             "",
         ]
     )
+    stable_id = tmp_path / "dev" / "disk" / "by-id" / "atlaso-path-test-sde"
+    allowlist = f"esx-uuid\t{stable_id}\t{esx_mount}\n"
 
     completed, calls = _run_mount_script(
         tmp_path,
@@ -573,9 +578,57 @@ def test_initialized_appliance_mounts_managed_esx_storage_before_preflight(tmp_p
         },
         mount_sources={esx_mount: str(esx_disk["path"])},
         fstab=fstab,
+        esx_allowlist=allowlist,
     )
 
     assert completed.returncode == 0, completed.stdout + completed.stderr
+    assert calls == []
+
+
+def test_initialized_appliance_rejects_formatted_esx_disk_with_wrong_claim(tmp_path: Path):
+    """Reject an lf-labeled disk whose stable identity differs from its applied claim.
+
+    Args:
+        tmp_path: Pytest-provided isolated filesystem root.
+    """
+    disks = _vmware_disks(tmp_path)
+    disks[2].update(filesystem="ext4", label="ATLASO_DEPOT", uuid="depot-uuid")
+    disks[3].update(filesystem="ext4", label="ATLASO_BKUP", uuid="backup-uuid")
+    esx_disk = _disk(
+        tmp_path / "dev" / "sde",
+        "0:4:0",
+        filesystem="ext4",
+        label="lf-0123456789ab",
+        uuid="esx-uuid",
+    )
+    disks.append(esx_disk)
+    esx_mount = "/mnt/atlaso-esx-storage/datastore"
+    fstab = "\n".join(
+        [
+            "# BEGIN ATLASO ESX STORAGE",
+            f"UUID=esx-uuid {esx_mount} ext4 defaults,nofail,x-systemd.device-timeout=30 0 2",
+            "# END ATLASO ESX STORAGE",
+            "",
+        ]
+    )
+    wrong_id = tmp_path / "dev" / "disk" / "by-id" / "atlaso-path-test-sdb"
+
+    completed, calls = _run_mount_script(
+        tmp_path,
+        disks,
+        depot_tuple="0:2:0",
+        backup_tuple="0:3:0",
+        mounts={
+            "/mnt/atlaso-vcf-offline-depot": str(disks[2]["path"]),
+            "/mnt/atlaso-vcf-backups": str(disks[3]["path"]),
+            esx_mount: str(esx_disk["path"]),
+        },
+        fstab=fstab,
+        esx_allowlist=f"esx-uuid\t{wrong_id}\t{esx_mount}\n",
+    )
+
+    assert completed.returncode != 0
+    assert "unexpected whole disk" in completed.stdout + completed.stderr
     assert calls == []
 
 

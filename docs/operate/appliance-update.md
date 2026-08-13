@@ -216,9 +216,9 @@ definitions, nginx data-disk dependency, stable disk-identity rule, and platform
 transaction reloads the identity rule and runs the release-owned data-disk preflight before it atomically changes
 `current`, starts the application, and probes internal `/openapi.json`. Unknown or contradictory platform evidence,
 an unsafe disk, or a missing release-owned safety asset fails the update and restores the prior files. When upgrading
-an older release, the transaction first derives exact root-owned claims for already applied, boot-safe `mounted_ext4`
-ESX Storage volumes from the database and live block inventory and migrates persisted stable-device aliases for both
-operator-mounted and Atlaso-formatted volumes to the selected live identity. The database identity and boot claim
+an older release, the transaction first derives exact root-owned claims for already applied, boot-safe ESX Storage
+volumes from the database and live block inventory and migrates persisted stable-device aliases for both operator-mounted
+and Atlaso-formatted volumes to the selected live identity. The database identity and boot claim
 participate in the same rollback boundary; an ambiguous, unsafe, or concurrently changed configured volume fails closed.
 
 Any failure restores the previous release link, helper, service, disk-safety files, and database snapshot before
