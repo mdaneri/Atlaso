@@ -1007,6 +1007,59 @@ def test_concurrent_same_profile_admission_creates_exactly_one_active_job(client
         assert [job.id for job in active] == [queued_id]
 
 
+def test_vcf_queue_schema_reconciliation_is_portable_to_postgresql(monkeypatch):
+    """Verify existing PostgreSQL jobs receive columns and partial queue indexes.
+
+    Args:
+        monkeypatch: Pytest helper used to replace SQLAlchemy inspection.
+    """
+    from types import SimpleNamespace
+
+    import atlaso.app.database as database
+
+    class FakeResult:
+        """Return empty rows for startup reconciliation reads."""
+
+        def all(self):
+            """Return no existing jobs."""
+            return []
+
+        def scalars(self):
+            """Return this result for scalar chaining."""
+            return self
+
+    class FakeConnection:
+        """Capture portable SQL issued for a PostgreSQL connection."""
+
+        dialect = SimpleNamespace(name="postgresql")
+
+        def __init__(self):
+            """Initialize the SQL capture."""
+            self.statements: list[str] = []
+
+        def execute(self, statement, _parameters=None):
+            """Capture one SQL statement and return an empty result."""
+            self.statements.append(str(statement))
+            return FakeResult()
+
+    monkeypatch.setattr(
+        database,
+        "inspect",
+        lambda _connection: SimpleNamespace(get_columns=lambda _table: [{"name": "id"}]),
+    )
+    connection = FakeConnection()
+
+    database._reconcile_vcf_depot_job_queue(connection)
+
+    sql = "\n".join(connection.statements)
+    assert "ADD COLUMN vcf_depot_operation BOOLEAN NOT NULL DEFAULT FALSE" in sql
+    assert "ADD COLUMN vcf_depot_profile_id INTEGER" in sql
+    assert "CREATE UNIQUE INDEX IF NOT EXISTS uq_jobs_active_vcf_depot_profile" in sql
+    assert "CREATE UNIQUE INDEX IF NOT EXISTS uq_jobs_running_vcf_depot_operation" in sql
+    assert "json_extract" not in sql
+    assert "instr(" not in sql
+
+
 def test_due_vcf_schedule_records_software_id_collision_as_skipped(client):
     """Verify that due vcf schedule records software id collision as skipped.
 

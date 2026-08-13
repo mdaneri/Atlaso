@@ -1,11 +1,12 @@
 """Configure database sessions and perform bounded startup reconciliation."""
 
+import json
 from collections.abc import Generator
 from datetime import datetime, timezone
 from pathlib import Path
 
 from sqlalchemy import create_engine, event, inspect, select, text
-from sqlalchemy.engine import Engine
+from sqlalchemy.engine import Connection, Engine
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 from atlaso.app.config import get_settings
@@ -62,6 +63,110 @@ DNS_AUTHORITY_SERIAL_FIELDS = {
     "listen_interface",
     "listen_address",
 }
+
+
+def _reconcile_vcf_depot_job_queue(connection: Connection) -> None:
+    """Create and upgrade the cross-database VCFDT queue constraints.
+
+    Args:
+        connection: Transactional database connection used during startup.
+    """
+    job_columns = {column["name"] for column in inspect(connection).get_columns("jobs")}
+    if "vcf_depot_operation" not in job_columns:
+        connection.execute(
+            text(
+                "ALTER TABLE jobs "
+                "ADD COLUMN vcf_depot_operation BOOLEAN NOT NULL DEFAULT FALSE"
+            )
+        )
+    if "vcf_depot_profile_id" not in job_columns:
+        connection.execute(text("ALTER TABLE jobs ADD COLUMN vcf_depot_profile_id INTEGER"))
+
+    connection.execute(
+        text(
+            "UPDATE jobs SET vcf_depot_operation = TRUE "
+            "WHERE type IN ('vcf-depot-download', 'vcf-depot-software-id') "
+            "OR (type = 'appliance-apply' "
+            "AND COALESCE(result, '') LIKE '%\"vcf_offline_depot\"%')"
+        )
+    )
+    legacy_downloads = connection.execute(
+        text(
+            "SELECT id, task_config_json FROM jobs "
+            "WHERE type = 'vcf-depot-download' AND vcf_depot_profile_id IS NULL"
+        )
+    ).all()
+    for job_id, raw_config in legacy_downloads:
+        try:
+            profile_id = int(json.loads(raw_config or "{}").get("profile_id") or 0)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            continue
+        if profile_id:
+            connection.execute(
+                text("UPDATE jobs SET vcf_depot_profile_id = :profile_id WHERE id = :job_id"),
+                {"job_id": job_id, "profile_id": profile_id},
+            )
+
+    active_downloads = connection.execute(
+        text(
+            "SELECT id, vcf_depot_profile_id FROM jobs "
+            "WHERE type = 'vcf-depot-download' "
+            "AND status IN ('pending', 'running') "
+            "ORDER BY created_at, id"
+        )
+    ).all()
+    active_profile_ids: set[int] = set()
+    for duplicate_job_id, raw_profile_id in active_downloads:
+        profile_id = int(raw_profile_id or 0)
+        if not profile_id or profile_id not in active_profile_ids:
+            if profile_id:
+                active_profile_ids.add(profile_id)
+            continue
+        connection.execute(
+            text(
+                "UPDATE jobs SET status = 'skipped', progress_percent = 100, "
+                "finished_at = CURRENT_TIMESTAMP, "
+                "error = 'Skipped during database upgrade because this VCFDT profile already had an active task.' "
+                "WHERE id = :job_id"
+            ),
+            {"job_id": duplicate_job_id},
+        )
+
+    running_operations = connection.execute(
+        text(
+            "SELECT id FROM jobs WHERE vcf_depot_operation = TRUE "
+            "AND status = 'running' ORDER BY started_at, created_at, id"
+        )
+    ).scalars().all()
+    for interrupted_job_id in running_operations[1:]:
+        connection.execute(
+            text(
+                "UPDATE jobs SET status = 'failed', progress_percent = 100, "
+                "finished_at = CURRENT_TIMESTAMP, "
+                "error = 'The Atlaso worker restarted while this VCFDT operation was running.' "
+                "WHERE id = :job_id"
+            ),
+            {"job_id": interrupted_job_id},
+        )
+
+    connection.execute(text("DROP INDEX IF EXISTS uq_jobs_active_vcf_depot_download"))
+    connection.execute(text("DROP INDEX IF EXISTS uq_jobs_active_vcf_depot_operation"))
+    connection.execute(
+        text(
+            "CREATE UNIQUE INDEX IF NOT EXISTS uq_jobs_active_vcf_depot_profile "
+            "ON jobs (vcf_depot_profile_id) "
+            "WHERE type = 'vcf-depot-download' "
+            "AND vcf_depot_profile_id IS NOT NULL "
+            "AND status IN ('pending', 'running')"
+        )
+    )
+    connection.execute(
+        text(
+            "CREATE UNIQUE INDEX IF NOT EXISTS uq_jobs_running_vcf_depot_operation "
+            "ON jobs (vcf_depot_operation) "
+            "WHERE vcf_depot_operation = TRUE AND status = 'running'"
+        )
+    )
 
 
 @event.listens_for(Session, "before_flush")
@@ -240,20 +345,6 @@ def init_db() -> None:
                         "ADD COLUMN network_boot_source VARCHAR(20)"
                     )
                 )
-            if "vcf_depot_operation" not in job_columns:
-                connection.execute(
-                    text(
-                        "ALTER TABLE jobs "
-                        "ADD COLUMN vcf_depot_operation BOOLEAN NOT NULL DEFAULT 0"
-                    )
-                )
-            if "vcf_depot_profile_id" not in job_columns:
-                connection.execute(
-                    text(
-                        "ALTER TABLE jobs "
-                        "ADD COLUMN vcf_depot_profile_id INTEGER"
-                    )
-                )
             connection.execute(
                 text(
                     "CREATE UNIQUE INDEX IF NOT EXISTS "
@@ -264,67 +355,8 @@ def init_db() -> None:
                     "AND status IN ('pending', 'running')"
                 )
             )
-            connection.execute(
-                text(
-                    "UPDATE jobs SET vcf_depot_operation = 1 "
-                    "WHERE type IN ('vcf-depot-download', 'vcf-depot-software-id') "
-                    "OR (type = 'appliance-apply' AND instr(COALESCE(result, ''), '\"vcf_offline_depot\"') > 0)"
-                )
-            )
-            connection.execute(
-                text(
-                    "UPDATE jobs SET vcf_depot_profile_id = "
-                    "CAST(json_extract(task_config_json, '$.profile_id') AS INTEGER) "
-                    "WHERE type = 'vcf-depot-download' "
-                    "AND vcf_depot_profile_id IS NULL "
-                    "AND json_valid(COALESCE(task_config_json, '{}'))"
-                )
-            )
-            active_vcf_downloads = connection.execute(
-                text(
-                    "SELECT id, vcf_depot_profile_id FROM jobs "
-                    "WHERE type = 'vcf-depot-download' "
-                    "AND status IN ('pending', 'running') "
-                    "ORDER BY created_at, id"
-                )
-            ).all()
-            active_profile_ids: set[int] = set()
-            for duplicate_job_id, raw_profile_id in active_vcf_downloads:
-                profile_id = int(raw_profile_id or 0)
-                if not profile_id or profile_id not in active_profile_ids:
-                    if profile_id:
-                        active_profile_ids.add(profile_id)
-                    continue
-                connection.execute(
-                    text(
-                        "UPDATE jobs SET status = 'skipped', progress_percent = 100, "
-                        "finished_at = CURRENT_TIMESTAMP, "
-                        "error = 'Skipped during database upgrade because this VCFDT profile already had an active task.' "
-                        "WHERE id = :job_id"
-                    ),
-                    {"job_id": duplicate_job_id},
-                )
-            connection.execute(text("DROP INDEX IF EXISTS uq_jobs_active_vcf_depot_download"))
-            connection.execute(text("DROP INDEX IF EXISTS uq_jobs_active_vcf_depot_operation"))
-            connection.execute(
-                text(
-                    "CREATE UNIQUE INDEX IF NOT EXISTS "
-                    "uq_jobs_active_vcf_depot_profile "
-                    "ON jobs (vcf_depot_profile_id) "
-                    "WHERE type = 'vcf-depot-download' "
-                    "AND vcf_depot_profile_id IS NOT NULL "
-                    "AND status IN ('pending', 'running')"
-                )
-            )
-            connection.execute(
-                text(
-                    "CREATE UNIQUE INDEX IF NOT EXISTS "
-                    "uq_jobs_running_vcf_depot_operation "
-                    "ON jobs (vcf_depot_operation) "
-                    "WHERE vcf_depot_operation = 1 "
-                    "AND status = 'running'"
-                )
-            )
+    with engine.begin() as connection:
+        _reconcile_vcf_depot_job_queue(connection)
 
 
 def get_db() -> Generator[Session, None, None]:
