@@ -1024,6 +1024,88 @@ def test_concurrent_same_profile_admission_creates_exactly_one_active_job(client
         assert [job.id for job in active] == [queued_id]
 
 
+def test_profile_deletion_and_enqueue_are_one_atomic_admission_decision(client):
+    """Verify a deletion race either queues safely or deletes without an orphan.
+
+    Args:
+        client: HTTP test client used to initialize the application database.
+    """
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job, JobStatus, VcfDepotDownloadProfile
+    from atlaso.app.services.vcf_depot_downloads import (
+        ActiveVcfDepotDownloadError,
+        VcfDepotProfileUnavailableError,
+        enqueue_vcf_depot_download,
+        lock_vcf_depot_profile_for_deletion,
+    )
+
+    client.get("/login")
+    with SessionLocal() as db:
+        profile = VcfDepotDownloadProfile(
+            name="concurrent-delete-admission",
+            profile_type="metadata",
+            enabled=True,
+        )
+        db.add(profile)
+        db.commit()
+        profile_id = profile.id
+
+    barrier = Barrier(2)
+
+    def admit() -> str:
+        """Attempt to enqueue using a profile loaded before the race."""
+        with SessionLocal() as db:
+            profile = db.get(VcfDepotDownloadProfile, profile_id)
+            barrier.wait()
+            try:
+                enqueue_vcf_depot_download(
+                    db,
+                    profile=profile,
+                    actor="test:delete-race",
+                    trigger="manual",
+                )
+                db.commit()
+                return "queued"
+            except VcfDepotProfileUnavailableError:
+                db.rollback()
+                return "profile-unavailable"
+
+    def delete() -> str:
+        """Attempt to delete under the shared queue admission gate."""
+        with SessionLocal() as db:
+            barrier.wait()
+            try:
+                profile = lock_vcf_depot_profile_for_deletion(db, profile_id)
+                db.delete(profile)
+                db.commit()
+                return "deleted"
+            except ActiveVcfDepotDownloadError:
+                db.rollback()
+                return "active-task"
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        admission_result = executor.submit(admit)
+        deletion_result = executor.submit(delete)
+        results = {admission_result.result(), deletion_result.result()}
+
+    assert results in (
+        {"queued", "active-task"},
+        {"profile-unavailable", "deleted"},
+    )
+    with SessionLocal() as db:
+        profile_exists = db.get(VcfDepotDownloadProfile, profile_id) is not None
+        active_jobs = db.scalars(
+            select(Job).where(
+                Job.vcf_depot_profile_id == profile_id,
+                Job.status.in_([JobStatus.PENDING.value, JobStatus.RUNNING.value]),
+            )
+        ).all()
+    assert (profile_exists, len(active_jobs)) in ((True, 1), (False, 0))
+
+
 def test_vcf_queue_schema_reconciliation_is_portable_to_postgresql(monkeypatch):
     """Verify existing PostgreSQL jobs receive columns and partial queue indexes.
 

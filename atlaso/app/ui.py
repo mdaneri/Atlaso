@@ -633,6 +633,7 @@ from atlaso.app.services.vcf_backups import (
 from atlaso.app.services.vcf_depot_downloads import (
     ActiveVcfDepotDownloadError,
     VcfDepotExclusiveOperationError,
+    VcfDepotProfileUnavailableError,
     acquire_vcf_depot_admission_gate,
     active_vcf_depot_download_job,
     active_vcf_depot_download_jobs,
@@ -640,6 +641,7 @@ from atlaso.app.services.vcf_depot_downloads import (
     active_vcf_depot_operation_job,
     disable_vcf_depot_profile_schedules,
     enqueue_vcf_depot_download,
+    lock_vcf_depot_profile_for_deletion,
     vcf_depot_job_profile_id,
     vcf_depot_schedules_for_profile,
     vcf_depot_task_log_reference,
@@ -25628,7 +25630,11 @@ def start_vcf_depot_profile_download_from_ui(
             actor=identity.username,
             trigger="manual",
         )
-    except (ActiveVcfDepotDownloadError, VcfDepotExclusiveOperationError) as exc:
+    except (
+        ActiveVcfDepotDownloadError,
+        VcfDepotExclusiveOperationError,
+        VcfDepotProfileUnavailableError,
+    ) as exc:
         db.rollback()
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     job_result = json.loads(job.result or "{}")
@@ -25693,21 +25699,29 @@ def delete_vcf_depot_profile_from_ui(
         HTTPException: If the request cannot be fulfilled.
     """
     verify_csrf(request, csrf)
-    profile = db.get(VcfDepotDownloadProfile, profile_id)
-    if not profile:
-        raise HTTPException(status_code=404, detail="VCFDT download profile not found.")
+    try:
+        profile = lock_vcf_depot_profile_for_deletion(db, profile_id)
+    except VcfDepotProfileUnavailableError as exc:
+        db.rollback()
+        raise HTTPException(
+            status_code=404,
+            detail="VCFDT download profile not found.",
+        ) from exc
+    except ActiveVcfDepotDownloadError as exc:
+        db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Wait for active VCFDT task {exc.active_job_id} to finish "
+                "before deleting this profile."
+            ),
+        ) from exc
     schedules = vcf_depot_schedules_for_profile(db, profile.id)
     if schedules:
         schedule_names = ", ".join(schedule.name for schedule in schedules)
         raise HTTPException(
             status_code=409,
             detail=f"Delete the attached Automation schedule(s) first: {schedule_names}.",
-        )
-    active_job = active_vcf_depot_download_job(db, profile.id)
-    if active_job is not None:
-        raise HTTPException(
-            status_code=409,
-            detail=f"Wait for active VCFDT task {active_job.id} to finish before deleting this profile.",
         )
     db.delete(profile)
     db.commit()

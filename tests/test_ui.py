@@ -15505,6 +15505,7 @@ def test_vcf_offline_depot_marks_only_each_profiles_own_queued_download(client):
         r'<button class="button tiny secondary"[^>]*>Start</button>', queued_markup.group()
     )
     assert queued_start is not None and " disabled" in queued_start.group()
+    assert re.search(r"<td>\s*Queued\s*</td>", queued_markup.group())
 
 
 def test_vcf_offline_depot_prevents_deleting_any_queued_profile(client):

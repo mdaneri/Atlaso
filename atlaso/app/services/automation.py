@@ -29,6 +29,7 @@ from atlaso.app.services.vaults import vault_scope_identity
 from atlaso.app.services.vcf_depot_downloads import (
     ActiveVcfDepotDownloadError,
     VcfDepotExclusiveOperationError,
+    VcfDepotProfileUnavailableError,
     enqueue_vcf_depot_download,
     vcf_depot_initial_job_result,
     vcf_depot_task_log_reference,
@@ -665,7 +666,11 @@ def enqueue_due_schedules(db: Session, *, now: datetime | None = None) -> list[J
                         planned_for=planned_for,
                         job_id=job_id,
                     )
-                except (ActiveVcfDepotDownloadError, VcfDepotExclusiveOperationError) as exc:
+                except (
+                    ActiveVcfDepotDownloadError,
+                    VcfDepotExclusiveOperationError,
+                    VcfDepotProfileUnavailableError,
+                ) as exc:
                     job = Job(
                         id=job_id,
                         type="vcf-depot-download",

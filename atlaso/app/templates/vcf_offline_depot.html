@@ -96,7 +96,15 @@
                 <td>{{ "yes" if profile.patches_only else "no" }}</td>
                 <td>{{ profile.component or "all components" }}</td>
                 <td>{{ profile.disabled_platforms.replace("\n", ", ") if profile.disabled_platforms else "none" }}</td>
-                <td>{{ {"planned": "Never run", "ready": "Running", "synced": "Succeeded", "blocked": "Failed"}.get(profile.status, "Unknown") }}</td>
+                <td>
+                  {% if start_state and start_state.active_task_status == "pending" %}
+                    Queued
+                  {% elif start_state and start_state.active_task_status == "running" %}
+                    Running
+                  {% else %}
+                    {{ {"planned": "Never run", "ready": "Running", "synced": "Succeeded", "blocked": "Failed"}.get(profile.status, "Unknown") }}
+                  {% endif %}
+                </td>
                 <td>
                   {% if profile.enabled %}
                     <a class="button tiny secondary" href="{{ management_ui_root }}/automation?new=vcf_depot_download&amp;vcf_profile_id={{ profile.id }}#schedules">Schedule</a>

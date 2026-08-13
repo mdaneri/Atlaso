@@ -64,6 +64,19 @@ class VcfDepotExclusiveOperationError(ValueError):
         )
 
 
+class VcfDepotProfileUnavailableError(ValueError):
+    """Report that a profile disappeared before its admission decision."""
+
+    def __init__(self, profile_id: int) -> None:
+        """Initialize the unavailable-profile conflict.
+
+        Args:
+            profile_id: Stable identifier of the unavailable profile.
+        """
+        self.profile_id = profile_id
+        super().__init__(f"VCFDT download profile {profile_id} is no longer available.")
+
+
 def vcf_depot_profile_id(task_config_json: str) -> int:
     """Return vcf depot profile id.
 
@@ -212,6 +225,32 @@ def acquire_vcf_depot_admission_gate(db: Session) -> None:
     db.flush()
 
 
+def lock_vcf_depot_profile_for_deletion(
+    db: Session,
+    profile_id: int,
+) -> VcfDepotDownloadProfile:
+    """Lock queue admission and return a profile only when no task uses it.
+
+    Args:
+        db: Active database session.
+        profile_id: Identifier of the profile being deleted.
+
+    Raises:
+        ActiveVcfDepotDownloadError: If the profile has a queued or running task.
+        VcfDepotProfileUnavailableError: If the profile no longer exists.
+    """
+    acquire_vcf_depot_admission_gate(db)
+    profile = db.scalars(
+        select(VcfDepotDownloadProfile).where(VcfDepotDownloadProfile.id == profile_id)
+    ).first()
+    if profile is None:
+        raise VcfDepotProfileUnavailableError(profile_id)
+    active = active_vcf_depot_download_job(db, profile_id)
+    if active is not None:
+        raise ActiveVcfDepotDownloadError(active.id, profile_id)
+    return profile
+
+
 def vcf_depot_task_log_reference(job_id: str, _profile_name: str = "") -> str:
     """Return vcf depot task log reference.
 
@@ -275,10 +314,16 @@ def enqueue_vcf_depot_download(
     Raises:
         ActiveVcfDepotDownloadError: If this profile already has a queued or running task.
         VcfDepotExclusiveOperationError: If an exclusive VCFDT operation is queued or running.
+        VcfDepotProfileUnavailableError: If the profile was deleted before admission.
     """
     identifier = job_id or f"job_{uuid4().hex[:12]}"
+    profile_id = int(profile.id or 0)
     acquire_vcf_depot_admission_gate(db)
-    db.refresh(profile)
+    profile = db.scalars(
+        select(VcfDepotDownloadProfile).where(VcfDepotDownloadProfile.id == profile_id)
+    ).first()
+    if profile is None:
+        raise VcfDepotProfileUnavailableError(profile_id)
     exclusive = active_vcf_depot_exclusive_job(db)
     if exclusive is not None:
         raise VcfDepotExclusiveOperationError(exclusive.id, exclusive.type)
