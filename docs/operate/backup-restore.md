@@ -73,7 +73,8 @@ tokens retain their verification key. Disabled CA certificate rows receive the s
 supplied-material checks as enabled rows before any current state is removed. Every restored leaf PEM must contain
 exactly one canonical public certificate, and every restored chain must contain only its canonical parsed certificates;
 every restored CSR must likewise contain only its single canonical public request. None may include trailing or
-private-key material. Disabled issued certificate rows are still verified against the restored CA root before mutation.
+private-key material. Disabled issued or revoked certificate rows are still verified against the restored CA root before
+mutation, so an unrelated certificate serial cannot enter Atlaso's restored revocation state.
 
 ESXi Network Boot host MAC addresses are normalized and checked for duplicate identities before restore. Installer ISO
 references are normalized beneath the managed ISO root before they are restored, so a valid relative archive reference

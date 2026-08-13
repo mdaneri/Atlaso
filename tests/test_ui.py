@@ -5030,6 +5030,29 @@ def test_settings_archive_round_trips_ca_certificate_validity(client):
         )
         with pytest.raises(ValueError, match="not issued by the restored CA root"):
             restore_settings_archive(db, foreign_certificate_archive)
+        foreign_revoked_archive = deepcopy(foreign_certificate_archive)
+        foreign_revoked_certificate = next(
+            row
+            for row in foreign_revoked_archive["data"]["ca_certificates"]
+            if row["common_name"] == certificate.common_name
+        )
+        foreign_revoked_certificate.update(
+            {
+                "status": "revoked",
+                "revoked_at": datetime(
+                    2026,
+                    8,
+                    13,
+                    13,
+                    30,
+                    tzinfo=timezone.utc,
+                ).isoformat(),
+                "revoked_by": "admin",
+                "revocation_reason": "superseded",
+            }
+        )
+        with pytest.raises(ValueError, match="not issued by the restored CA root"):
+            restore_settings_archive(db, foreign_revoked_archive)
         archive["data"]["ca_settings"][0]["root_serial_number"] = "1"
         archive["data"]["ca_settings"][0]["root_fingerprint"] = "tampered"
         archived["serial_number"] = "2"

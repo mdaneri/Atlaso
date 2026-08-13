@@ -727,8 +727,8 @@ def _validate_archived_ca_certificate_rows(
                 f"The settings archive CA certificate {label} material is invalid: "
                 f"{material_errors[0]}"
             )
-        if not certificate.enabled and certificate.status == "issued":
-            issued_certificate = CaCertificate(
+        if not certificate.enabled and certificate.status in {"issued", "revoked"}:
+            validation_certificate = CaCertificate(
                 common_name=certificate.common_name,
                 certificate_pem=certificate.certificate_pem,
                 private_key_encrypted=certificate.private_key_encrypted,
@@ -736,14 +736,14 @@ def _validate_archived_ca_certificate_rows(
                 status=certificate.status,
                 enabled=True,
             )
-            issued_errors = validate_ca_private_key_material(
+            validation_errors = validate_ca_private_key_material(
                 settings,
-                [issued_certificate],
+                [validation_certificate],
             )
-            if issued_errors:
+            if validation_errors:
                 raise ValueError(
                     f"The settings archive CA certificate {label} material is invalid: "
-                    f"{issued_errors[0]}"
+                    f"{validation_errors[0]}"
                 )
 
 

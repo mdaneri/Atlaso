@@ -950,7 +950,7 @@ def validate_ca_private_key_material(
     parsed_certificates: dict[int, x509.Certificate] = {}
     now = datetime.now(timezone.utc)
     for certificate in certificates:
-        if not certificate.enabled or certificate.status == "revoked":
+        if not certificate.enabled:
             continue
         label = f"Certificate {certificate.common_name}"
         if not certificate.certificate_pem:
@@ -968,13 +968,17 @@ def validate_ca_private_key_material(
             or parsed_certificate.not_valid_after_utc <= now
         ):
             errors.append(f"{label} is not currently valid.")
-        if certificate.status == "issued" and (
+        if certificate.status in {"issued", "revoked"} and (
             root_certificate is None
             or parsed_certificate.issuer != root_certificate.subject
             or not certificate_signature_is_valid(parsed_certificate, root_certificate)
         ):
             errors.append(f"{label} is not issued by the restored CA root.")
-        if certificate.status == "issued" and certificate.chain_pem and root_certificate is not None:
+        if (
+            certificate.status in {"issued", "revoked"}
+            and certificate.chain_pem
+            and root_certificate is not None
+        ):
             try:
                 chain = x509.load_pem_x509_certificates(
                     certificate.chain_pem.encode("utf-8")

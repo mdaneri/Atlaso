@@ -147,8 +147,13 @@ def test_ca_private_key_validation_rejects_incomplete_root_pair(missing_field):
     )
 
 
-def test_ca_private_key_validation_rejects_leaf_from_another_root():
-    """Verify issued leaf certificates chain to the restored root."""
+@pytest.mark.parametrize("status", ["issued", "revoked"])
+def test_ca_private_key_validation_rejects_leaf_from_another_root(status):
+    """Verify issued and revoked leaf certificates chain to the restored root.
+
+    Args:
+        status: Certificate lifecycle state validated against the root.
+    """
     restored_root = CaSettings(
         enabled=True,
         root_common_name="Restored Atlaso Root",
@@ -189,6 +194,7 @@ def test_ca_private_key_validation_rejects_leaf_from_another_root():
         enabled=True,
     )
     assert issue_certificate(unrelated_root, [profile], certificate) is True
+    certificate.status = status
 
     errors = validate_ca_private_key_material(restored_root, [certificate])
 
