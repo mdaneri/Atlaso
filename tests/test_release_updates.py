@@ -404,50 +404,11 @@ def test_published_channel_check_verifies_pointer_release_and_compatibility(
         release_url: raw_release,
         f"{release_url}.sig": release_signature,
     }
-    clock = 0.0
-    request_timeouts: list[float] = []
-
-    class Response:
-        """Provide a bounded in-memory urlopen response."""
-
-        def __init__(self, body: bytes):
-            self.body = body
-            self.fp = type(
-                "File",
-                (),
-                {
-                    "raw": type(
-                        "Raw",
-                        (),
-                        {"_sock": type("Socket", (), {"settimeout": lambda *_args: None})()},
-                    )()
-                },
-            )()
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *_args):
-            return False
-
-        def read1(self, _limit: int) -> bytes:
-            body, self.body = self.body, b""
-            return body
-
-        def isclosed(self) -> bool:
-            return not self.body
-
-    def monotonic() -> float:
-        return clock
-
-    def urlopen(url: str, timeout: float) -> Response:
-        nonlocal clock
-        request_timeouts.append(timeout)
-        clock += min(15.0, timeout)
-        return Response(documents[url])
-
-    monkeypatch.setattr(published_channel_check.time, "monotonic", monotonic)
-    monkeypatch.setattr(published_channel_check, "urlopen", urlopen)
+    monkeypatch.setattr(
+        published_channel_check,
+        "fetch_document",
+        lambda url, **_kwargs: documents[url],
+    )
 
     result = published_channel_check.verify_channel(
         channel_url,
@@ -457,12 +418,11 @@ def test_published_channel_check_verifies_pointer_release_and_compatibility(
         expected_python_abi="cp314",
         trusted_key=trust_dir / f"{KEY_ID}.pem",
         timeout_seconds=30,
-        deadline=clock + 65.0,
+        deadline=published_channel_check.time.monotonic() + 65.0,
     )
 
     assert result["channel"]["version"] == "0.9.0"
     assert result["release"]["git_commit"] == "a" * 40
-    assert request_timeouts[:4] == [30.0, 30.0, 30.0, 20.0]
 
     with pytest.raises(ValueError, match="does not support cp313"):
         published_channel_check.verify_channel(
@@ -473,7 +433,7 @@ def test_published_channel_check_verifies_pointer_release_and_compatibility(
             expected_python_abi="cp313",
             trusted_key=trust_dir / f"{KEY_ID}.pem",
             timeout_seconds=30,
-            deadline=clock + 65.0,
+            deadline=published_channel_check.time.monotonic() + 65.0,
         )
 
     with pytest.raises(ValueError, match="expected v0.9.1"):
@@ -485,72 +445,39 @@ def test_published_channel_check_verifies_pointer_release_and_compatibility(
             expected_python_abi="cp314",
             trusted_key=trust_dir / f"{KEY_ID}.pem",
             timeout_seconds=30,
-            deadline=clock + 65.0,
+            deadline=published_channel_check.time.monotonic() + 65.0,
         )
 
 
-def test_published_channel_check_enforces_deadline_during_body_reads(monkeypatch):
-    """Verify trickled response bytes cannot extend the publication deadline.
+def test_published_channel_check_cancels_fetch_worker_at_deadline(monkeypatch):
+    """Verify DNS and response transfer cannot extend the publication deadline.
 
     Args:
         monkeypatch: Pytest fixture used to replace dependencies for the test.
     """
-    clock = 0.0
-    read_timeouts: list[float] = []
+    command: list[str] = []
+    worker_timeout = 0.0
 
-    class Socket:
-        """Record the timeout assigned before each response-body read."""
+    def run(args, *, capture_output, check, timeout):
+        nonlocal command, worker_timeout
+        command = args
+        worker_timeout = timeout
+        raise subprocess.TimeoutExpired(args, timeout)
 
-        timeout = 0.0
+    monkeypatch.setattr(published_channel_check.time, "monotonic", lambda: 0.0)
+    monkeypatch.setattr(published_channel_check.subprocess, "run", run)
 
-        def settimeout(self, seconds: float) -> None:
-            self.timeout = seconds
-            read_timeouts.append(seconds)
-
-    socket = Socket()
-
-    class Response:
-        """Simulate a proxy that trickles one byte every four seconds."""
-
-        fp = type(
-            "File",
-            (),
-            {"raw": type("Raw", (), {"_sock": socket})()},
-        )()
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *_args):
-            return False
-
-        def read1(self, _limit: int) -> bytes:
-            nonlocal clock
-            if self.fp.raw._sock.timeout < 4.0:
-                clock += self.fp.raw._sock.timeout
-                raise TimeoutError("response body exceeded the remaining deadline")
-            clock += 4.0
-            return b"x"
-
-        def isclosed(self) -> bool:
-            return False
-
-    monkeypatch.setattr(published_channel_check.time, "monotonic", lambda: clock)
-    monkeypatch.setattr(
-        published_channel_check,
-        "urlopen",
-        lambda _url, timeout: Response(),
-    )
-
-    with pytest.raises(TimeoutError, match="remaining deadline"):
+    with pytest.raises(TimeoutError, match="publication window"):
         published_channel_check.fetch_document(
             "https://updates.example.test/manifest.json",
             timeout_seconds=30.0,
             deadline=10.0,
         )
 
-    assert read_timeouts == [10.0, 6.0, 2.0]
-    assert clock == 10.0
+    assert command[2] == published_channel_check.FETCH_WORKER_FLAG
+    assert command[3] == "https://updates.example.test/manifest.json"
+    assert command[4] == "10.0"
+    assert worker_timeout == 10.0
 
 
 def test_published_channel_check_imports_atlaso_from_a_clean_checkout(tmp_path: Path):
@@ -647,8 +574,8 @@ def test_published_channel_check_fails_when_default_pointer_is_absent(
     _private_key, trust_dir = trust
     monkeypatch.setattr(
         published_channel_check,
-        "urlopen",
-        lambda url, timeout: (_ for _ in ()).throw(
+        "fetch_document",
+        lambda url, **_kwargs: (_ for _ in ()).throw(
             HTTPError(url, 404, "Not Found", {}, None)
         ),
     )

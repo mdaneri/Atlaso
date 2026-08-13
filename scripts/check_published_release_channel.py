@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import re
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -22,59 +23,46 @@ from atlaso.app.services.release_updates import (  # noqa: E402 - add the checko
 )
 
 MAX_DOCUMENT_BYTES = 1024 * 1024
-READ_CHUNK_BYTES = 64 * 1024
 PAGES_PUBLICATION_WINDOW_SECONDS = 600.0
 DEFAULT_RETRY_DELAY_SECONDS = 10.0
+FETCH_WORKER_FLAG = "--fetch-document-worker"
 
 
-def _set_response_timeout(response: Any, timeout_seconds: float) -> None:
-    """Set the HTTPS response socket timeout for the next incremental read.
+def _validate_document_url(url: str) -> None:
+    """Require a public HTTPS document URL without embedded credentials.
 
     Args:
-        response: ``urllib`` HTTPS response backed by ``http.client.HTTPResponse``.
-        timeout_seconds: Maximum blocking time for the next socket operation.
+        url: Candidate release-document URL.
 
     Raises:
-        RuntimeError: If the HTTPS response does not expose its active socket.
+        ValueError: If the URL is not safe for public release-document retrieval.
     """
-    try:
-        response.fp.raw._sock.settimeout(timeout_seconds)  # noqa: SLF001 - stdlib response socket.
-    except AttributeError as exc:
-        raise RuntimeError("Published release response does not expose a bounded HTTPS socket.") from exc
+    parsed = urlparse(url)
+    if parsed.scheme != "https" or not parsed.netloc or parsed.username or parsed.password:
+        raise ValueError("Published release documents require HTTPS URLs without embedded credentials.")
 
 
-def _read_response(response: Any, *, timeout_seconds: float, deadline: float) -> bytes:
-    """Read one response incrementally within the absolute publication deadline.
+def _fetch_document_worker(url: str, *, timeout_seconds: float) -> int:
+    """Fetch one document inside the parent-cancellable worker process.
 
     Args:
-        response: Open ``urllib`` HTTPS response.
-        timeout_seconds: Maximum timeout for each individual socket operation.
-        deadline: Absolute monotonic publication deadline.
+        url: Public HTTPS document URL.
+        timeout_seconds: Network-operation timeout inside the worker.
 
     Returns:
-        The bounded response bytes.
-
-    Raises:
-        TimeoutError: If the publication deadline elapses while reading.
-        ValueError: If the response exceeds the document size limit.
+        Zero after writing the bounded document to standard output; one on failure.
     """
-    chunks: list[bytes] = []
-    document_size = 0
-    while document_size <= MAX_DOCUMENT_BYTES:
-        remaining_seconds = deadline - time.monotonic()
-        if remaining_seconds <= 0:
-            raise TimeoutError("Published release verification exceeded its publication window.")
-        _set_response_timeout(response, min(timeout_seconds, remaining_seconds))
-        chunk = response.read1(
-            min(READ_CHUNK_BYTES, MAX_DOCUMENT_BYTES + 1 - document_size)
-        )
-        if not chunk:
-            return b"".join(chunks)
-        chunks.append(chunk)
-        document_size += len(chunk)
-        if response.isclosed():
-            return b"".join(chunks)
-    raise ValueError(f"Published release document exceeds {MAX_DOCUMENT_BYTES} bytes.")
+    try:
+        _validate_document_url(url)
+        with urlopen(url, timeout=timeout_seconds) as response:
+            document = response.read(MAX_DOCUMENT_BYTES + 1)
+        if len(document) > MAX_DOCUMENT_BYTES:
+            raise ValueError(f"Published release document exceeds {MAX_DOCUMENT_BYTES} bytes.")
+    except Exception as exc:  # noqa: BLE001 - worker returns a bounded error to its parent.
+        print(f"{type(exc).__name__}: {exc}", file=sys.stderr)
+        return 1
+    sys.stdout.buffer.write(document)
+    return 0
 
 
 def fetch_document(
@@ -97,23 +85,34 @@ def fetch_document(
         TimeoutError: If the publication window elapsed before the request.
         ValueError: If the URL is unsafe or the document exceeds the size limit.
     """
-    parsed = urlparse(url)
-    if parsed.scheme != "https" or not parsed.netloc or parsed.username or parsed.password:
-        raise ValueError("Published release documents require HTTPS URLs without embedded credentials.")
+    _validate_document_url(url)
     remaining_seconds = deadline - time.monotonic()
     if remaining_seconds <= 0:
         raise TimeoutError("Published release verification exceeded its publication window.")
-    with urlopen(url, timeout=min(timeout_seconds, remaining_seconds)) as response:
-        try:
-            return _read_response(
-                response,
-                timeout_seconds=timeout_seconds,
-                deadline=deadline,
-            )
-        except ValueError as exc:
-            raise ValueError(
-                f"Published release document exceeds {MAX_DOCUMENT_BYTES} bytes: {url}"
-            ) from exc
+    command = [
+        sys.executable,
+        str(Path(__file__).resolve()),
+        FETCH_WORKER_FLAG,
+        url,
+        str(min(timeout_seconds, remaining_seconds)),
+    ]
+    try:
+        result = subprocess.run(
+            command,
+            capture_output=True,
+            check=False,
+            timeout=remaining_seconds,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise TimeoutError(
+            "Published release verification exceeded its publication window."
+        ) from exc
+    if result.returncode != 0:
+        detail = result.stderr.decode("utf-8", errors="replace").strip()
+        raise RuntimeError(f"Published release document request failed: {detail}")
+    if len(result.stdout) > MAX_DOCUMENT_BYTES:
+        raise ValueError(f"Published release document exceeds {MAX_DOCUMENT_BYTES} bytes: {url}")
+    return result.stdout
 
 
 def verify_channel(
@@ -301,4 +300,8 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
+    if len(sys.argv) == 4 and sys.argv[1] == FETCH_WORKER_FLAG:
+        raise SystemExit(
+            _fetch_document_worker(sys.argv[2], timeout_seconds=float(sys.argv[3]))
+        )
     raise SystemExit(main())
