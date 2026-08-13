@@ -170,15 +170,7 @@ def _reconcile_vcf_depot_job_queue(connection: Connection) -> None:
     connection.execute(text("DROP INDEX IF EXISTS uq_jobs_active_vcf_depot_operation"))
     connection.execute(text("DROP INDEX IF EXISTS uq_jobs_running_vcf_depot_operation"))
     if not duplicate_running_profile:
-        connection.execute(
-            text(
-                "CREATE UNIQUE INDEX IF NOT EXISTS uq_jobs_active_vcf_depot_profile "
-                "ON jobs (vcf_depot_profile_id) "
-                "WHERE type = 'vcf-depot-download' "
-                "AND vcf_depot_profile_id IS NOT NULL "
-                "AND status IN ('pending', 'running')"
-            )
-        )
+        _create_vcf_depot_active_profile_index(connection)
     if remaining_running_operations <= 1:
         _create_vcf_depot_running_operation_index(connection)
 
@@ -198,6 +190,23 @@ def _create_vcf_depot_running_operation_index(connection: Connection) -> None:
     )
 
 
+def _create_vcf_depot_active_profile_index(connection: Connection) -> None:
+    """Create the one-active-download-per-profile database guard.
+
+    Args:
+        connection: Transactional database connection used to create the index.
+    """
+    connection.execute(
+        text(
+            "CREATE UNIQUE INDEX IF NOT EXISTS uq_jobs_active_vcf_depot_profile "
+            "ON jobs (vcf_depot_profile_id) "
+            "WHERE type = 'vcf-depot-download' "
+            "AND vcf_depot_profile_id IS NOT NULL "
+            "AND status IN ('pending', 'running')"
+        )
+    )
+
+
 def ensure_vcf_depot_running_operation_index(bind: Engine | None = None) -> bool:
     """Create the runtime guard after type-specific startup recovery finishes.
 
@@ -209,6 +218,20 @@ def ensure_vcf_depot_running_operation_index(bind: Engine | None = None) -> bool
     """
     target_engine = bind or engine
     with target_engine.begin() as connection:
+        duplicate_profile_count = int(
+            connection.execute(
+                text(
+                    "SELECT COUNT(*) FROM ("
+                    "SELECT vcf_depot_profile_id FROM jobs "
+                    "WHERE type = 'vcf-depot-download' "
+                    "AND vcf_depot_profile_id IS NOT NULL "
+                    "AND status IN ('pending', 'running') "
+                    "GROUP BY vcf_depot_profile_id HAVING COUNT(*) > 1"
+                    ") AS duplicate_profiles"
+                )
+            ).scalar_one()
+            or 0
+        )
         running_count = int(
             connection.execute(
                 text(
@@ -218,8 +241,9 @@ def ensure_vcf_depot_running_operation_index(bind: Engine | None = None) -> bool
             ).scalar_one()
             or 0
         )
-        if running_count > 1:
+        if duplicate_profile_count or running_count > 1:
             return False
+        _create_vcf_depot_active_profile_index(connection)
         _create_vcf_depot_running_operation_index(connection)
     return True
 

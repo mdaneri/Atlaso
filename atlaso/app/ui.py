@@ -14767,6 +14767,15 @@ def create_contextual_vcf_depot_schedule(
         )
     except AutomationScheduleInputError as exc:
         if wants_html:
+            request.state.vcf_schedule_error = exc.public_detail
+            request.state.vcf_schedule_form = {
+                "name": name,
+                "schedule_kind": schedule_kind,
+                "cron_expression": cron_expression,
+                "run_once_at": run_once_at,
+                "timezone_name": timezone_name,
+                "enabled": enabled == "on",
+            }
             response = vcf_offline_depot_page(
                 request,
                 schedule_profile_id=profile_id,
@@ -24436,11 +24445,12 @@ def vcf_offline_depot_page(
         if schedule_profile_id is not None
         else None
     )
-    schedule_error = (
-        "Review the schedule fields and provide a valid timing definition."
-        if schedule_invalid
-        else ""
-    )
+    schedule_error = str(getattr(request.state, "vcf_schedule_error", ""))
+    if not schedule_error and schedule_invalid:
+        schedule_error = "Review the schedule fields and provide a valid timing definition."
+    schedule_form = getattr(request.state, "vcf_schedule_form", {})
+    if not isinstance(schedule_form, dict):
+        schedule_form = {}
     if schedule_profile is not None and not schedule_profile.enabled:
         schedule_profile = None
         schedule_error = "Enable the VCFDT download profile before scheduling it."
@@ -24455,6 +24465,7 @@ def vcf_offline_depot_page(
             "appliance_apply_status": appliance_apply_status(db, "vcf_offline_depot"),
             "vcf_depot_contextual_schedule_profile": schedule_profile,
             "vcf_depot_contextual_schedule_error": schedule_error,
+            "vcf_depot_contextual_schedule_form": schedule_form,
         },
     )
 

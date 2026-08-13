@@ -15435,14 +15435,22 @@ def test_vcf_offline_depot_contextual_schedule_is_server_bound_and_stays_in_page
             "name": "contextual-profile-fallback-invalid",
             "schedule_kind": "cron",
             "cron_expression": "invalid",
-            "timezone_name": "UTC",
+            "timezone_name": "America/Los_Angeles",
+            "enabled": "on",
         },
         headers={"Accept": "text/html"},
         follow_redirects=False,
     )
     assert fallback_invalid.status_code == 422
     assert "location" not in fallback_invalid.headers
-    assert "Review the schedule fields and provide a valid timing definition." in fallback_invalid.text
+    assert (
+        "Cron expression must contain five fields: minute hour day month weekday."
+        in fallback_invalid.text
+    )
+    assert 'value="contextual-profile-fallback-invalid"' in fallback_invalid.text
+    assert 'value="America/Los_Angeles"' in fallback_invalid.text
+    assert 'name="cron_expression" value="invalid"' in fallback_invalid.text
+    assert 'name="enabled" checked' in fallback_invalid.text
     assert (
         f'action="/ui/management/vcf-offline-depot/profiles/{profile_id}/schedules"'
         in fallback_invalid.text

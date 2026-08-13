@@ -1298,6 +1298,52 @@ def test_vcf_queue_reconciliation_preserves_distinct_running_operation_owners():
     assert database.ensure_vcf_depot_running_operation_index(test_engine) is False
 
 
+def test_vcf_queue_indexes_restore_after_duplicate_running_profile_recovery():
+    """Verify both deferred VCFDT guards return after owner recovery."""
+    from sqlalchemy import create_engine, text
+
+    import atlaso.app.database as database
+
+    test_engine = create_engine("sqlite://")
+    with test_engine.begin() as connection:
+        connection.execute(
+            text(
+                "CREATE TABLE jobs ("
+                "id TEXT PRIMARY KEY, type TEXT NOT NULL, status TEXT NOT NULL, "
+                "vcf_depot_operation BOOLEAN NOT NULL DEFAULT FALSE, "
+                "vcf_depot_profile_id INTEGER, task_config_json TEXT, result TEXT, "
+                "created_at TEXT, started_at TEXT, progress_percent INTEGER, "
+                "finished_at TEXT, error TEXT)"
+            )
+        )
+        for job_id in ("job_duplicate_running_first", "job_duplicate_running_second"):
+            connection.execute(
+                text(
+                    "INSERT INTO jobs "
+                    "(id, type, status, vcf_depot_operation, vcf_depot_profile_id, created_at, started_at) "
+                    "VALUES (:job_id, 'vcf-depot-download', 'running', TRUE, 61, :job_id, :job_id)"
+                ),
+                {"job_id": job_id},
+            )
+
+        database._reconcile_vcf_depot_job_queue(connection)
+        statuses = dict(connection.execute(text("SELECT id, status FROM jobs")).all())
+        indexes = {row[1] for row in connection.execute(text("PRAGMA index_list('jobs')")).all()}
+
+    assert set(statuses.values()) == {"running"}
+    assert "uq_jobs_active_vcf_depot_profile" not in indexes
+    assert "uq_jobs_running_vcf_depot_operation" not in indexes
+    assert database.ensure_vcf_depot_running_operation_index(test_engine) is False
+
+    with test_engine.begin() as connection:
+        connection.execute(text("UPDATE jobs SET status = 'failed'"))
+    assert database.ensure_vcf_depot_running_operation_index(test_engine) is True
+    with test_engine.connect() as connection:
+        indexes = {row[1] for row in connection.execute(text("PRAGMA index_list('jobs')")).all()}
+    assert "uq_jobs_active_vcf_depot_profile" in indexes
+    assert "uq_jobs_running_vcf_depot_operation" in indexes
+
+
 def test_vcf_queue_reconciliation_preserves_running_same_profile_job():
     """Verify an older pending duplicate cannot displace a running process guard."""
     from sqlalchemy import create_engine, text

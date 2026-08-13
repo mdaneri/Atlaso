@@ -379,6 +379,9 @@ def enqueue_vcf_depot_download(
     ).first()
     if profile is None:
         raise VcfDepotProfileUnavailableError(profile_id)
+    active = active_vcf_depot_download_job(db, profile_id)
+    if active is not None:
+        raise ActiveVcfDepotDownloadError(active.id, profile_id)
     exclusive = active_vcf_depot_exclusive_job(db)
     if exclusive is not None:
         raise VcfDepotExclusiveOperationError(exclusive.id, exclusive.type)
