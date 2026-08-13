@@ -758,6 +758,26 @@ def _settings_rows(db: Session) -> list[dict[str, str]]:
     return [_row_to_dict(row) for row in rows]
 
 
+def _archive_managed_certificate_ready(
+    certificates: list[dict[str, Any]],
+    managed_owner: str,
+) -> bool:
+    """Return whether an archive contains one deployable managed certificate.
+
+    Args:
+        certificates: Structurally validated archived certificate rows.
+        managed_owner: Exact Atlaso-managed certificate owner required by a service.
+    """
+    return any(
+        row.get("enabled") is True
+        and str(row.get("managed_owner") or "") == managed_owner
+        and str(row.get("status") or "") == "issued"
+        and bool(str(row.get("certificate_pem") or ""))
+        and bool(str(row.get("private_key_encrypted") or ""))
+        for row in certificates
+    )
+
+
 def _normalize_registry_uploaded_ca_handoff(
     data: dict[str, list[dict[str, Any]]],
     notes: list[str] | None = None,
@@ -2013,12 +2033,9 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
                 "The settings archive appliance settings select an ineligible Web Terminal interface."
             )
     ca_row = data["ca_settings"][0]
-    management_certificate_ready = any(
-        str(row.get("managed_owner") or "") == "appliance:https"
-        and str(row.get("status") or "") == "issued"
-        and bool(str(row.get("certificate_pem") or ""))
-        and bool(str(row.get("private_key_encrypted") or ""))
-        for row in data.get("ca_certificates", [])
+    management_certificate_ready = _archive_managed_certificate_ready(
+        data.get("ca_certificates", []),
+        "appliance:https",
     )
     local_dns_enabled = bool(data["dns_settings"][0].get("enabled", False))
     appliance_fqdn = normalize_fqdn(appliance_settings.fqdn)
@@ -2149,12 +2166,9 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
                 f"The settings archive NTP settings are invalid: {ntp_errors[0]}"
             )
         if row.get("nts_server_enabled", False):
-            nts_certificate_ready = any(
-                str(certificate.get("managed_owner") or "") == "ntp:nts"
-                and str(certificate.get("status") or "") == "issued"
-                and bool(str(certificate.get("certificate_pem") or ""))
-                and bool(str(certificate.get("private_key_encrypted") or ""))
-                for certificate in data.get("ca_certificates", [])
+            nts_certificate_ready = _archive_managed_certificate_ready(
+                data.get("ca_certificates", []),
+                "ntp:nts",
             )
             if not data["ca_settings"][0].get("enabled", False) or not nts_certificate_ready:
                 raise ValueError(
@@ -2583,12 +2597,9 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
                 "The settings archive KMS trust state is invalid: At least one enabled provider with a current public client certificate is required."
             )
         ca_row = data["ca_settings"][0]
-        kms_certificate_ready = any(
-            str(row.get("managed_owner") or "") == "kms:server"
-            and str(row.get("status") or "") == "issued"
-            and bool(str(row.get("certificate_pem") or ""))
-            and bool(str(row.get("private_key_encrypted") or ""))
-            for row in data.get("ca_certificates", [])
+        kms_certificate_ready = _archive_managed_certificate_ready(
+            data.get("ca_certificates", []),
+            "kms:server",
         )
         if not ca_row.get("enabled", False) or not kms_certificate_ready:
             raise ValueError(
@@ -2655,12 +2666,9 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
             "The settings archive OIDC signing-key state contains multiple active keys."
         )
     if enabled_oidc_rows:
-        oidc_certificate_ready = any(
-            str(row.get("managed_owner") or "") == "oidc:https"
-            and str(row.get("status") or "") == "issued"
-            and bool(str(row.get("certificate_pem") or ""))
-            and bool(str(row.get("private_key_encrypted") or ""))
-            for row in data.get("ca_certificates", [])
+        oidc_certificate_ready = _archive_managed_certificate_ready(
+            data.get("ca_certificates", []),
+            "oidc:https",
         )
         if len(active_signing_keys) != 1 or not oidc_certificate_ready:
             raise ValueError(

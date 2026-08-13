@@ -5485,6 +5485,35 @@ def test_settings_archive_unique_identity_preflight_covers_all_unguarded_constra
             _validate_archive_unique_identities({section_name: rows})
 
 
+@pytest.mark.parametrize(
+    "managed_owner",
+    ["appliance:https", "ntp:nts", "kms:server", "oidc:https"],
+)
+def test_settings_archive_managed_certificate_readiness_requires_enabled_row(
+    managed_owner,
+):
+    """Verify disabled managed certificates cannot satisfy service readiness.
+
+    Args:
+        managed_owner: Atlaso-managed service certificate owner under test.
+    """
+    from atlaso.app.services.settings_archive import (
+        _archive_managed_certificate_ready,
+    )
+
+    certificate = {
+        "enabled": False,
+        "managed_owner": managed_owner,
+        "status": "issued",
+        "certificate_pem": "public-certificate",
+        "private_key_encrypted": "encrypted-private-key",
+    }
+
+    assert not _archive_managed_certificate_ready([certificate], managed_owner)
+    certificate["enabled"] = True
+    assert _archive_managed_certificate_ready([certificate], managed_owner)
+
+
 def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_field_shapes(client):
     """Verify settings archive preflight rejects malformed structures before restore.
 

@@ -90,6 +90,8 @@ group. These checks prevent a successful restore from creating missing service c
 networks, or widening a restricted firewall assignment.
 All nonempty DHCP reservation addresses are parsed during preflight, including disabled rows; enabled reservations alone
 receive the additional enabled-scope membership check.
+An enabled Management HTTPS, NTS, KMS, or OIDC service must reference an enabled, issued managed certificate containing
+both its public certificate and encrypted private key. Disabled certificate rows never satisfy service readiness.
 
 Settings restore accepts only the current settings-archive schema v2 and requires its complete section inventory.
 Older archive schemas are rejected before current desired state is removed; export a fresh archive from a current
