@@ -3201,7 +3201,7 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
                 f"The settings archive row {row_index} in 'oidc_group_mappings' has an unsupported source type."
             )
         try:
-            validate_group_mapping_values(
+            normalized_local_role, normalized_external_group_name = validate_group_mapping_values(
                 source_type=source_type,
                 local_role=str(row.get("local_role") or ""),
                 ldap_group_id=1 if source_type == "ldap_group" else None,
@@ -3211,6 +3211,8 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
             raise ValueError(
                 f"The settings archive row {row_index} in 'oidc_group_mappings' is invalid: {exc}"
             ) from exc
+        row["local_role"] = normalized_local_role
+        row["external_group_name"] = normalized_external_group_name
         if mapping_identity in oidc_mapping_identities:
             raise ValueError(
                 f"The settings archive row {row_index} in 'oidc_group_mappings' duplicates an OIDC group mapping identity."

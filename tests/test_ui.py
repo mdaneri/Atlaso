@@ -5885,7 +5885,7 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
             "ldap_group_name": "",
             "organization_slug": "",
             "client_id": "effective-mapping-client",
-            "external_group_name": "shared EXTERNAL group",
+            "external_group_name": " shared EXTERNAL group ",
         },
     ]
     cross_organization_oidc_mapping = deepcopy(archive)
