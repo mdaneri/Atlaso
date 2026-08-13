@@ -12,7 +12,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-
 ROOT = Path(__file__).resolve().parents[1]
 RELEASE_CONFIG_PATH = ".github/release.yml"
 SEMVER_TAG_RE = re.compile(r"^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$")

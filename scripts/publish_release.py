@@ -13,7 +13,6 @@ import tempfile
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[1]
 GIT_RELEASE_USER_NAME = "github-actions[bot]"
 GIT_RELEASE_USER_EMAIL = "41898282+github-actions[bot]@users.noreply.github.com"
@@ -190,7 +189,7 @@ def verify_vmware_release_assets(directory: Path, names: set[str]) -> None:
                     stream = archive.extractfile(member)
                     digest = hashlib.sha256()
                     if stream is not None:
-                        for block in iter(lambda: stream.read(1024 * 1024), b""):
+                        while block := stream.read(1024 * 1024):
                             digest.update(block)
                     if stream is None or digest.hexdigest() != sha256(directory / member.name):
                         raise SystemExit(f"VMware OVA contains different bytes for {member.name}")

@@ -17,19 +17,19 @@ from types import SimpleNamespace
 from urllib.error import HTTPError, URLError
 from urllib.request import Request
 
-import pytest
 import pycdlib
+import pytest
 from fastapi import HTTPException
 from sqlalchemy import select
 from starlette.requests import Request as StarletteRequest
 
-import atlaso.app.audit as audit_service
 import atlaso.app.api.network_boot as network_boot_api
+import atlaso.app.audit as audit_service
 import atlaso.app.services.network_boot as network_boot
 from atlaso.app.api.network_boot import (
+    _MEDIA_ENVIRONMENT_ROOTS,
     _allowlisted_media_file,
     _installed_media_directory,
-    _MEDIA_ENVIRONMENT_ROOTS,
 )
 from atlaso.app.models import (
     AuditEvent,
@@ -39,57 +39,57 @@ from atlaso.app.models import (
     NetworkBootDiscoveredHost,
     NetworkBootEnvironment,
     NetworkBootHostBootOverride,
-    NetworkBootMedia,
     NetworkBootInventoryCommand,
     NetworkBootInventoryReport,
     NetworkBootInventorySession,
+    NetworkBootMedia,
     Setting,
     utcnow,
 )
+from atlaso.app.services.esxi_pxe import (
+    esxi_pxe_boot_settings,
+    esxi_pxe_default_host_settings,
+    esxi_pxe_host_artifacts,
+)
 from atlaso.app.services.network_boot import (
-    _extract_shredos_kernel,
-    _extract_zip_allowlist,
-    _BoundedHttpsRedirectHandler,
-    _release_descriptor,
-    available_network_boot_versions,
-    BoundedHttpsDownloader,
-    checksum_for_filename,
-    NetworkBootMediaSyncCancelled,
-    NETWORK_BOOT_MAX_DISKS,
     NETWORK_BOOT_MAX_DIMMS,
+    NETWORK_BOOT_MAX_DISKS,
     NETWORK_BOOT_MAX_INTERFACES,
     NETWORK_BOOT_MAX_PCI_DEVICES,
     NETWORK_BOOT_MAX_STORAGE_CONTROLLERS,
     NETWORK_BOOT_MAX_USB_DEVICES,
     NETWORK_BOOT_REPORT_MAX_BYTES,
     NETWORK_BOOT_REPORTS_PER_HOST,
+    BoundedHttpsDownloader,
+    NetworkBootMediaSyncCancelled,
+    WakeOnLanDeliveryError,
+    _BoundedHttpsRedirectHandler,
+    _extract_shredos_kernel,
+    _extract_zip_allowlist,
+    _release_descriptor,
+    acknowledge_inventory_command,
+    available_network_boot_versions,
+    checksum_for_filename,
+    claim_host_boot_override,
     ensure_environment_rows,
-    issue_inventory_session,
     inventory_session_for_token,
+    issue_inventory_session,
     latest_live_session,
     network_boot_upload_path,
     normalize_inventory_report,
     poll_inventory_command,
     queue_reboot_command,
-    claim_host_boot_override,
     record_verified_media,
     register_bundled_inventory_media,
     render_network_boot_menu,
     request_host_boot_override,
+    send_wake_on_lan,
     store_inventory_report,
     sync_network_boot_media,
     touch_inventory_heartbeat,
-    acknowledge_inventory_command,
-    send_wake_on_lan,
     verify_signed_checksum,
-    WakeOnLanDeliveryError,
     wake_on_lan_broadcast_targets,
     wake_on_lan_packet,
-)
-from atlaso.app.services.esxi_pxe import (
-    esxi_pxe_boot_settings,
-    esxi_pxe_default_host_settings,
-    esxi_pxe_host_artifacts,
 )
 
 
@@ -2122,7 +2122,7 @@ def test_inventory_retains_latest_and_ten_previous_reports(db_session):
         db_session: Active database session used by the operation.
     """
     host_id = None
-    for index in range(NETWORK_BOOT_REPORTS_PER_HOST + 3):
+    for _index in range(NETWORK_BOOT_REPORTS_PER_HOST + 3):
         session, _token = issue_inventory_session(db_session)
         host, _report = store_inventory_report(
             db_session,
@@ -2765,7 +2765,10 @@ def test_settings_restore_rejects_unavailable_network_boot_media(db_session):
     """
     import pytest
 
-    from atlaso.app.services.settings_archive import export_settings_archive, restore_settings_archive
+    from atlaso.app.services.settings_archive import (
+        export_settings_archive,
+        restore_settings_archive,
+    )
 
     archive = export_settings_archive(db_session, actor="test")
     inventory = next(row for row in archive["data"]["network_boot_environments"] if row["key"] == "inventory")

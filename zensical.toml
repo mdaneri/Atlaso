@@ -70,6 +70,7 @@ nav = [
     { "Dependency management" = "contribute/dependency-management.md" },
     { "Documentation authoring" = "contribute/documentation-authoring.md" },
     { "Python documentation" = "contribute/python-documentation.md" },
+    { "Python static analysis" = "contribute/python-static-analysis.md" },
     { "API authoring standard" = "contribute/api-authoring.md" },
     { "Windows image-build WSL environment" = "contribute/windows-image-build-wsl.md" },
     { "UI design guide" = "contribute/ui-design-guide.md" },

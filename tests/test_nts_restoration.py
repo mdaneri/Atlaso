@@ -8,14 +8,22 @@ from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.x509.oid import NameOID
-
 from sqlalchemy import select
 
-from atlaso.app.models import AuditEvent, CaCertificate, CaSettings, NtpSettings, Setting
-from atlaso.app.seed import NTP_NTS_RESTORATION_SETTING_KEY, seed_initial_data
+from atlaso.app.models import (
+    AuditEvent,
+    CaCertificate,
+    CaSettings,
+    NtpSettings,
+    Setting,
+)
 from atlaso.app.secrets import decrypt_secret, encrypt_secret
+from atlaso.app.seed import NTP_NTS_RESTORATION_SETTING_KEY, seed_initial_data
 from atlaso.app.services.ntp import dump_ntp_upstream_sources, ntp_upstream_sources
-from atlaso.app.services.settings_archive import export_settings_archive, restore_settings_archive
+from atlaso.app.services.settings_archive import (
+    export_settings_archive,
+    restore_settings_archive,
+)
 
 
 def _issued_certificate_material(

@@ -5,7 +5,6 @@ from __future__ import annotations
 import configparser
 import hashlib
 import json
-import os
 import platform
 import re
 import subprocess
@@ -20,7 +19,6 @@ from sqlalchemy.orm import Session
 
 from atlaso import __version__
 from atlaso.app.models import Job, JobStatus, JobStep
-
 
 APPLIANCE_UPDATE_SETTINGS_KEY = "appliance_update.settings.v1"
 APPLIANCE_UPDATE_STAGED_CONFIG_PATH = "/var/lib/atlaso/apply/appliance-update/atlaso-update.json"

@@ -23,7 +23,6 @@ from atlaso.app.services.release_updates import (
     verify_signed_json,
 )
 
-
 ROOT = Path(__file__).resolve().parents[1]
 KEY_ID = "test-release-key"
 
@@ -591,6 +590,7 @@ def test_sqlite_backup_restores_database_identity(monkeypatch, tmp_path):
         tmp_path: Temporary directory provided by pytest for isolated filesystem state.
     """
     import sqlite3
+
     from tests.test_appliance_update import load_helper_module
 
     helper = load_helper_module()
@@ -828,6 +828,7 @@ def test_failed_candidate_restores_previous_release_and_database(monkeypatch, tm
         failure_stage: Failure stage supplied to the test scenario.
     """
     import sqlite3
+
     from tests.test_appliance_update import load_helper_module
 
     helper = load_helper_module()

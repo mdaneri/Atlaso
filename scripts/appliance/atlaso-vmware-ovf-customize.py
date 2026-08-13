@@ -4,23 +4,25 @@
 from __future__ import annotations
 
 import argparse
-from collections.abc import Callable
 import json
 import os
-from pathlib import Path
 import re
 import secrets
 import shutil
 import subprocess
 import sys
 import time
+import xml.etree.ElementTree as ET
+from collections.abc import Callable
 from datetime import datetime, timezone
 from ipaddress import ip_interface
+from pathlib import Path
 from uuid import UUID
-import xml.etree.ElementTree as ET
 
-from atlaso.app.management_network import ManagementNetworkValidationError, validate_management_network
-
+from atlaso.app.management_network import (
+    ManagementNetworkValidationError,
+    validate_management_network,
+)
 
 PROPERTY_PREFIX = "atlaso."
 PROPERTY_MANAGEMENT_MODE = f"{PROPERTY_PREFIX}management_mode"

@@ -8,7 +8,6 @@ import os
 import sys
 from pathlib import Path
 
-
 VAULT_CREDENTIAL_NAME = "atlaso-vault"
 
 

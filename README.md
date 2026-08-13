@@ -71,6 +71,8 @@ brings infrastructure, storage, identity, networking, and lifecycle workflows in
   seven-day Python dependency-age requirements.
 - [Dependency management](docs/contribute/dependency-management.md) — regenerate hash locks without selecting newly
   published packages that approved mirrors may not have synchronized.
+- [Python static analysis](docs/contribute/python-static-analysis.md) — run the enforced Ruff baseline and expand the
+  strict mypy service-module ratchet.
 - [UI Design Guide](docs/contribute/ui-design-guide.md) — approved Atlaso patterns and the shared
   `AtlasoUiPatterns.createGrid(...)` / `createWizard(...)` foundation used by every grid and wizard.
 - [API authoring standard](docs/contribute/api-authoring.md) — required operation, parameter, schema, authorization,

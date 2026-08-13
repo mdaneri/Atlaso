@@ -1996,7 +1996,7 @@ def test_dns_listen_interface_menu_has_empty_state_when_no_interfaces_available(
         client: HTTP test client used to exercise the Atlaso application.
     """
     from atlaso.app.database import SessionLocal
-    from atlaso.app.models import DhcpScope, PhysicalInterface, VlanInterface
+    from atlaso.app.models import PhysicalInterface, VlanInterface
 
     login(client)
     with SessionLocal() as db:
@@ -2147,7 +2147,10 @@ def test_forget_missing_first_service_interface_moves_dns_alias_to_next_target(c
 
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import DnsRecord, PhysicalInterface
-    from atlaso.app.ui import ensure_dns_for_vcf_registry, get_vcf_private_registry_settings_row
+    from atlaso.app.ui import (
+        ensure_dns_for_vcf_registry,
+        get_vcf_private_registry_settings_row,
+    )
 
     login(client)
     with SessionLocal() as db:
@@ -2215,7 +2218,10 @@ def test_service_dns_target_naming_converts_owned_records_between_ip_and_interfa
 
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import ApplianceSettings, DnsRecord, PhysicalInterface
-    from atlaso.app.ui import ensure_dns_for_vcf_registry, get_vcf_private_registry_settings_row
+    from atlaso.app.ui import (
+        ensure_dns_for_vcf_registry,
+        get_vcf_private_registry_settings_row,
+    )
 
     login(client)
     with SessionLocal() as db:
@@ -2393,14 +2399,14 @@ def test_secret_staging_is_mode_0600_and_removed_after_adapter_failures(monkeypa
                     The run step result.
                 """
                 path_value = Path(path)
-                calls.append(phase)
-                assert path_value == staged_path
+                calls.append(phase)  # noqa: B023 - the helper runs before this loop iteration advances.
+                assert path_value == staged_path  # noqa: B023 - the helper runs before this loop iteration advances.
                 if os.name != "nt":
                     assert stat.S_IMODE(path_value.stat().st_mode) == 0o600
-                assert secret in path_value.read_text(encoding="utf-8")
-                failed = phase == failure_phase
+                assert secret in path_value.read_text(encoding="utf-8")  # noqa: B023 - the helper runs before this loop iteration advances.
+                failed = phase == failure_phase  # noqa: B023 - the helper runs before this loop iteration advances.
                 return AdapterResult(
-                    command=["atlaso-helper", unit_id, phase, path],
+                    command=["atlaso-helper", unit_id, phase, path],  # noqa: B023 - the helper runs before this loop iteration advances.
                     dry_run=False,
                     stderr="sanitized failure" if failed else "",
                     returncode=1 if failed else 0,
@@ -2414,7 +2420,7 @@ def test_secret_staging_is_mode_0600_and_removed_after_adapter_failures(monkeypa
                 monkeypatch.setattr(
                     ui,
                     "render_ca_apply_payload",
-                    lambda *_args, **_kwargs: json.dumps({"private_key_pem": secret}),
+                    lambda *_args, **_kwargs: json.dumps({"private_key_pem": secret}),  # noqa: B023 - invoked before the loop advances.
                 )
 
             unit = {
@@ -3130,7 +3136,7 @@ def test_settings_autosave_updates_appliance_identity_dns_without_ntp(client):
     from sqlalchemy import select
 
     from atlaso.app.database import SessionLocal
-    from atlaso.app.models import ApplianceSettings, NtpSettings, DnsRecord, DnsSettings
+    from atlaso.app.models import ApplianceSettings, DnsRecord, DnsSettings, NtpSettings
 
     login(client)
     with SessionLocal() as db:
@@ -3192,7 +3198,7 @@ def test_settings_autosave_does_not_update_ntp_servers_when_ntp_is_disabled(clie
     from sqlalchemy import select
 
     from atlaso.app.database import SessionLocal
-    from atlaso.app.models import ApplianceSettings, NtpSettings, DnsSettings
+    from atlaso.app.models import ApplianceSettings, DnsSettings, NtpSettings
     from atlaso.app.ui import appliance_apply_status
 
     login(client)
@@ -3462,7 +3468,7 @@ def test_ntp_disables_and_rejects_nts_when_runtime_does_not_support_it(client, m
     from atlaso.app.adapters.system import AdapterResult
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import AuditEvent, NtpSettings
-    from atlaso.app.services.ntp import ntp_upstream_sources, dump_ntp_upstream_sources
+    from atlaso.app.services.ntp import dump_ntp_upstream_sources, ntp_upstream_sources
 
     unsupported = AdapterResult(
         command=["atlaso-helper", "ntpd", "capabilities"],
@@ -4178,7 +4184,12 @@ def test_settings_management_https_requires_ca_managed_certificate(client):
     from sqlalchemy import select
 
     from atlaso.app.database import SessionLocal
-    from atlaso.app.models import ApplianceSettings, CaCertificate, CaSettings, DnsSettings
+    from atlaso.app.models import (
+        ApplianceSettings,
+        CaCertificate,
+        CaSettings,
+        DnsSettings,
+    )
 
     login(client)
     with SessionLocal() as db:
@@ -4332,10 +4343,10 @@ def test_appliance_apply_failure_renders_command_details(client, monkeypatch):
 
     from sqlalchemy import select
 
+    import atlaso.app.ui as ui_module
     from atlaso.app.adapters.system import AdapterResult
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import Job
-    import atlaso.app.ui as ui_module
 
     base_system_adapter = ui_module.SystemAdapter
     monkeypatch.setattr(ui_module, "stage_appliance_apply_config", lambda path, _config: path)
@@ -4416,10 +4427,10 @@ def test_appliance_apply_stops_unit_after_validation_failure(client, monkeypatch
 
     from sqlalchemy import select
 
+    import atlaso.app.ui as ui_module
     from atlaso.app.adapters.system import AdapterResult
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import Job
-    import atlaso.app.ui as ui_module
 
     base_system_adapter = ui_module.SystemAdapter
     monkeypatch.setattr(ui_module, "stage_appliance_apply_config", lambda path, _config: path)
@@ -4575,7 +4586,10 @@ def test_settings_archive_round_trips_management_ipv6_gateway(client):
 
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import PhysicalInterface
-    from atlaso.app.services.settings_archive import export_settings_archive, restore_settings_archive
+    from atlaso.app.services.settings_archive import (
+        export_settings_archive,
+        restore_settings_archive,
+    )
 
     with SessionLocal() as db:
         management = db.scalar(select(PhysicalInterface).where(PhysicalInterface.role == "management"))
@@ -4607,7 +4621,10 @@ def test_settings_archive_round_trips_authoritative_dns_policy(client):
 
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import DnsSettings
-    from atlaso.app.services.settings_archive import export_settings_archive, restore_settings_archive
+    from atlaso.app.services.settings_archive import (
+        export_settings_archive,
+        restore_settings_archive,
+    )
 
     with SessionLocal() as db:
         settings = db.scalar(select(DnsSettings))
@@ -4651,7 +4668,10 @@ def test_settings_restore_rejects_disabled_users_for_enabled_vcf_services(client
 
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import User
-    from atlaso.app.services.settings_archive import export_settings_archive, restore_settings_archive
+    from atlaso.app.services.settings_archive import (
+        export_settings_archive,
+        restore_settings_archive,
+    )
 
     with SessionLocal() as db:
         disabled_user = db.scalar(select(User).where(User.username == "vcf-backup"))
@@ -4688,7 +4708,10 @@ def test_settings_restore_preflights_complete_vcf_service_state(client):
     import pytest
 
     from atlaso.app.database import SessionLocal
-    from atlaso.app.services.settings_archive import export_settings_archive, restore_settings_archive
+    from atlaso.app.services.settings_archive import (
+        export_settings_archive,
+        restore_settings_archive,
+    )
 
     with SessionLocal() as db:
         archive = export_settings_archive(db, actor="test")
@@ -4751,7 +4774,11 @@ def test_settings_restore_and_factory_reset_clear_staged_ldap_recovery(client):
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import LdapRecoveryArchive
     from atlaso.app.services.ldap import LDAP_PENDING_RECOVERY_PAYLOADS
-    from atlaso.app.services.settings_archive import export_settings_archive, factory_reset_desired_state, restore_settings_archive
+    from atlaso.app.services.settings_archive import (
+        export_settings_archive,
+        factory_reset_desired_state,
+        restore_settings_archive,
+    )
 
     with SessionLocal() as db:
         archive = export_settings_archive(db, actor="test")
@@ -4876,7 +4903,10 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
 
     from atlaso.app.database import SessionLocal
     from atlaso.app.services.oidc import hash_client_secret
-    from atlaso.app.services.settings_archive import archive_summary, export_settings_archive
+    from atlaso.app.services.settings_archive import (
+        archive_summary,
+        export_settings_archive,
+    )
 
     with SessionLocal() as db:
         archive = export_settings_archive(db, actor="test")
@@ -6884,7 +6914,11 @@ def test_esxi_pxe_default_host_edit_marks_appliance_apply_pending(client):
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import EsxiKickstart
     from atlaso.app.services import esxi_pxe
-    from atlaso.app.ui import appliance_apply_status, appliance_apply_units, update_appliance_apply_baselines
+    from atlaso.app.ui import (
+        appliance_apply_status,
+        appliance_apply_units,
+        update_appliance_apply_baselines,
+    )
 
     login(client)
     page = client.get("/esxi-pxe")
@@ -7112,7 +7146,6 @@ def test_esxi_kickstart_legacy_retrieval_is_unavailable(client):
     Args:
         client: HTTP test client used to exercise the Atlaso application.
     """
-    import json
 
     from sqlalchemy import select
 
@@ -7606,7 +7639,10 @@ def test_esxi_kickstarts_round_trip_in_settings_archive(client):
         )
         db.add(kickstart)
         db.flush()
-        from atlaso.app.services.esxi_pxe import assign_kickstart_content, canonical_http_path
+        from atlaso.app.services.esxi_pxe import (
+            assign_kickstart_content,
+            canonical_http_path,
+        )
 
         assign_kickstart_content(kickstart, kickstart.content, max_bytes=262_144)
         kickstart.http_path = canonical_http_path(kickstart.id, kickstart.content_hash)
@@ -7679,7 +7715,6 @@ def test_esxi_pxe_drift_detection_uses_generated_filesystem_copy(client, monkeyp
         monkeypatch: Pytest fixture used to replace dependencies for the test.
         tmp_path: Temporary directory provided by pytest for isolated filesystem state.
     """
-    from sqlalchemy import select
 
     import atlaso.app.services.esxi_pxe as esxi_pxe
     from atlaso.app.database import SessionLocal
@@ -7824,8 +7859,8 @@ def test_backup_restore_factory_reset_resets_desired_state_and_stops_services(cl
         CaCertificate,
         CaProfile,
         DhcpReservation,
-        DhcpSettings,
         DhcpScope,
+        DhcpSettings,
         DnsRecord,
         DnsSettings,
         FirewallRule,
@@ -8701,6 +8736,7 @@ def test_managed_ldap_page_creates_org_user_group_and_shows_secret_once(client):
     assert "pending apply" in page.text
 
     from sqlalchemy import select
+
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import LdapUser
 
@@ -8807,8 +8843,17 @@ def test_managed_ldap_generates_complete_synthetic_directory_once(client):
     from sqlalchemy import select
 
     from atlaso.app.database import SessionLocal
-    from atlaso.app.models import AuditEvent, LdapGroup, LdapOrganization, LdapSettings, LdapUser
-    from atlaso.app.services.ldap import clear_pending_ldap_password, has_pending_ldap_password
+    from atlaso.app.models import (
+        AuditEvent,
+        LdapGroup,
+        LdapOrganization,
+        LdapSettings,
+        LdapUser,
+    )
+    from atlaso.app.services.ldap import (
+        clear_pending_ldap_password,
+        has_pending_ldap_password,
+    )
 
     login(client)
     page = client.get("/ldap")
@@ -9038,8 +9083,6 @@ def test_existing_local_user_can_be_enabled_inline_after_password_apply(client):
     """
     from datetime import UTC, datetime
 
-    from sqlalchemy import select
-
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import User
     from atlaso.app.services.local_users import has_pending_os_password
@@ -9205,7 +9248,10 @@ def test_apply_status_reads_preserve_multiple_staged_service_user_passwords(clie
 
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import User
-    from atlaso.app.services.local_users import clear_pending_os_password, has_pending_os_password
+    from atlaso.app.services.local_users import (
+        clear_pending_os_password,
+        has_pending_os_password,
+    )
     from atlaso.app.ui import appliance_apply_units
 
     login(client)
@@ -9677,7 +9723,10 @@ def test_appliance_apply_logging_redacts_commands_and_helper_output(caplog):
     """
     import logging
 
-    from atlaso.app.ui import log_appliance_apply_failures, log_appliance_apply_submission
+    from atlaso.app.ui import (
+        log_appliance_apply_failures,
+        log_appliance_apply_submission,
+    )
 
     unit_results = [
         {
@@ -10200,7 +10249,7 @@ def test_dhcp_zone_defaults_follow_vlan_dns_and_interface_ntp_bindings(client):
     from sqlalchemy import select
 
     from atlaso.app.database import SessionLocal
-    from atlaso.app.models import NtpSettings, DnsSettings, PhysicalInterface
+    from atlaso.app.models import DnsSettings, NtpSettings, PhysicalInterface
 
     with SessionLocal() as db:
         eth2_interface = db.execute(select(PhysicalInterface).where(PhysicalInterface.name == "eth2")).scalar_one()
@@ -12219,7 +12268,7 @@ def test_kms_apply_task_captures_current_desired_state(client):
     from sqlalchemy import select
 
     from atlaso.app.database import SessionLocal
-    from atlaso.app.models import DnsRecord, Job
+    from atlaso.app.models import Job
 
     login(client)
     page = client.get("/vsphere-key-providers")
@@ -13219,7 +13268,11 @@ def test_vcf_offline_depot_tool_upload_marks_apply_pending_without_profiles(clie
         monkeypatch: Pytest fixture used to replace dependencies for the test.
     """
     from atlaso.app.database import SessionLocal
-    from atlaso.app.ui import appliance_apply_status, appliance_apply_units, update_appliance_apply_baselines
+    from atlaso.app.ui import (
+        appliance_apply_status,
+        appliance_apply_units,
+        update_appliance_apply_baselines,
+    )
 
     monkeypatch.setattr("atlaso.app.ui.find_local_vcf_download_tool_archive", lambda: None)
 
@@ -13273,7 +13326,11 @@ def test_vcf_offline_depot_generation_timestamp_does_not_reopen_apply_unit(clien
         VCF_DEPOT_SOFTWARE_DEPOT_ID_GENERATED_AT_KEY,
         VCF_DEPOT_SOFTWARE_DEPOT_ID_KEY,
     )
-    from atlaso.app.ui import appliance_apply_units, set_setting_value, update_appliance_apply_baselines
+    from atlaso.app.ui import (
+        appliance_apply_units,
+        set_setting_value,
+        update_appliance_apply_baselines,
+    )
 
     with SessionLocal() as db:
         set_setting_value(db, VCF_DEPOT_SOFTWARE_DEPOT_ID_KEY, "generated-depot-id")
@@ -13489,17 +13546,17 @@ def test_vcf_offline_depot_tool_package_wizard_endpoint_and_reset_clear_configur
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import Job, Setting, VcfOfflineDepotSettings
     from atlaso.app.services.vcf_offline_depot import (
+        VCF_DEPOT_ACTIVATION_NAME_KEY,
+        VCF_DEPOT_ACTIVATION_VALUE_KEY,
         VCF_DEPOT_APPLICATION_PROPERTIES_CONTENT_KEY,
         VCF_DEPOT_APPLICATION_PROPERTIES_SOURCE_KEY,
         VCF_DEPOT_APPLICATION_PROPERTIES_UPDATED_AT_KEY,
-        VCF_DEPOT_ACTIVATION_NAME_KEY,
-        VCF_DEPOT_ACTIVATION_VALUE_KEY,
         VCF_DEPOT_SOFTWARE_DEPOT_ID_ERROR_KEY,
         VCF_DEPOT_SOFTWARE_DEPOT_ID_GENERATED_AT_KEY,
         VCF_DEPOT_SOFTWARE_DEPOT_ID_KEY,
-        VCF_DEPOT_TOOL_VERSION_SOURCE_KEY,
         VCF_DEPOT_TOKEN_NAME_KEY,
         VCF_DEPOT_TOKEN_VALUE_KEY,
+        VCF_DEPOT_TOOL_VERSION_SOURCE_KEY,
     )
 
     monkeypatch.setattr("atlaso.app.ui.find_local_vcf_download_tool_archive", lambda: None)
@@ -13603,7 +13660,10 @@ def test_vcf_offline_depot_without_tool_clears_stale_credential_state(client, mo
 
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import Setting
-    from atlaso.app.services.vcf_offline_depot import VCF_DEPOT_TOKEN_NAME_KEY, VCF_DEPOT_TOKEN_VALUE_KEY
+    from atlaso.app.services.vcf_offline_depot import (
+        VCF_DEPOT_TOKEN_NAME_KEY,
+        VCF_DEPOT_TOKEN_VALUE_KEY,
+    )
 
     monkeypatch.setattr("atlaso.app.ui.find_local_vcf_download_tool_archive", lambda: None)
     with SessionLocal() as db:
@@ -14046,7 +14106,12 @@ def test_vcf_offline_depot_manual_profile_download_starts_job(client, tmp_path):
     from sqlalchemy import select
 
     from atlaso.app.database import SessionLocal
-    from atlaso.app.models import Job, Setting, VcfDepotDownloadProfile, VcfOfflineDepotSettings
+    from atlaso.app.models import (
+        Job,
+        Setting,
+        VcfDepotDownloadProfile,
+        VcfOfflineDepotSettings,
+    )
     from atlaso.app.services.vcf_offline_depot import (
         VCF_DEPOT_TOKEN_NAME_KEY,
         VCF_DEPOT_TOKEN_VALUE_KEY,
@@ -14201,8 +14266,6 @@ def test_vcf_offline_depot_startup_recovers_interrupted_download(client):
     """
     import json
 
-    from sqlalchemy import select
-
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import Job, JobStatus, VcfDepotDownloadProfile
     from atlaso.app.ui import recover_interrupted_vcf_depot_download_jobs
@@ -14242,8 +14305,8 @@ def test_vcf_offline_depot_root_runtime_wrapper_counts_as_installed(monkeypatch,
         monkeypatch: Pytest fixture used to replace dependencies for the test.
         tmp_path: Temporary directory provided by pytest for isolated filesystem state.
     """
-    from types import SimpleNamespace
     from pathlib import Path
+    from types import SimpleNamespace
 
     from atlaso.app import ui
     from atlaso.app.models import VcfOfflineDepotSettings
@@ -14333,7 +14396,12 @@ def test_vcf_offline_depot_manual_profile_download_accepts_activation_code_witho
     from sqlalchemy import select
 
     from atlaso.app.database import SessionLocal
-    from atlaso.app.models import Job, Setting, VcfDepotDownloadProfile, VcfOfflineDepotSettings
+    from atlaso.app.models import (
+        Job,
+        Setting,
+        VcfDepotDownloadProfile,
+        VcfOfflineDepotSettings,
+    )
     from atlaso.app.services.vcf_offline_depot import (
         VCF_DEPOT_ACTIVATION_NAME_KEY,
         VCF_DEPOT_ACTIVATION_VALUE_KEY,
@@ -14406,7 +14474,10 @@ def test_vcf_offline_depot_prepare_runtime_stages_saved_application_properties(c
 
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import Setting, VcfOfflineDepotSettings
-    from atlaso.app.services.vcf_offline_depot import VCF_DEPOT_APPLICATION_PROPERTIES_CONTENT_KEY, VCF_DEPOT_APPLICATION_PROPERTIES_NAME
+    from atlaso.app.services.vcf_offline_depot import (
+        VCF_DEPOT_APPLICATION_PROPERTIES_CONTENT_KEY,
+        VCF_DEPOT_APPLICATION_PROPERTIES_NAME,
+    )
     from atlaso.app.ui import prepare_vcf_depot_runtime
 
     archive_path = tmp_path / "vcf-download-tool-9.1.0.test.tar.gz"
@@ -15008,7 +15079,11 @@ def test_disabled_ldap_apply_keeps_staged_user_password_pending(monkeypatch, tmp
 
     from atlaso.app.adapters.system import AdapterResult
     from atlaso.app.models import LdapSettings, LdapUser
-    from atlaso.app.services.ldap import clear_pending_ldap_password, has_pending_ldap_password, stage_ldap_user_password
+    from atlaso.app.services.ldap import (
+        clear_pending_ldap_password,
+        has_pending_ldap_password,
+        stage_ldap_user_password,
+    )
     from atlaso.app.ui import execute_appliance_apply_unit
 
     settings = LdapSettings(enabled=False)
@@ -15334,11 +15409,11 @@ def test_physical_interface_edit_updates_desired_state(client):
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import (
         CaSettings,
-        NtpSettings,
         DhcpScope,
         DnsRecord,
         DnsSettings,
         KmsSettings,
+        NtpSettings,
         OidcProviderSettings,
         VcfBackupSettings,
         VcfOfflineDepotSettings,
@@ -15520,8 +15595,21 @@ def test_physical_interface_edit_repairs_stale_scope_after_host_inventory_refres
     from sqlalchemy import select
 
     from atlaso.app.database import SessionLocal
-    from atlaso.app.models import NtpSettings, DhcpScope, DnsRecord, DnsSettings, Setting
-    from atlaso.app.services.esxi_pxe import ESXI_PXE_DEFAULT_HOSTNAME, ESXI_PXE_DNS_RECORD_DESCRIPTION, ESXI_PXE_HTTP_PORT, ESXI_PXE_LISTEN_ADDRESS_KEY, ESXI_TFTP_ROOT, save_esxi_pxe_boot_settings
+    from atlaso.app.models import (
+        DhcpScope,
+        DnsRecord,
+        DnsSettings,
+        NtpSettings,
+        Setting,
+    )
+    from atlaso.app.services.esxi_pxe import (
+        ESXI_PXE_DEFAULT_HOSTNAME,
+        ESXI_PXE_DNS_RECORD_DESCRIPTION,
+        ESXI_PXE_HTTP_PORT,
+        ESXI_PXE_LISTEN_ADDRESS_KEY,
+        ESXI_TFTP_ROOT,
+        save_esxi_pxe_boot_settings,
+    )
 
     login(client)
     with SessionLocal() as db:
@@ -17250,12 +17338,13 @@ def test_appliance_apply_carries_explicit_vcf_depot_id_refresh_intent_to_executi
 
     received_refresh_intent: list[bool] = []
 
-    def execute(unit, *, adapter=None):
+    def execute(unit, *, adapter=None, db=None):
         """Run operation.
 
         Args:
             unit: Unit supplied to the test scenario.
             adapter: Adapter supplied to the test scenario.
+            db: Active database session supplied by the runner.
 
 
         Returns:
@@ -17295,7 +17384,6 @@ def test_vcf_depot_software_id_task_queues_for_immediate_execution(client, monke
     """
     from atlaso.app import ui
     from atlaso.app.database import SessionLocal
-    from atlaso.app.models import Job
     from atlaso.app.ui import get_vcf_offline_depot_settings_row
 
     login(client)
@@ -17518,7 +17606,7 @@ def test_vcf_depot_software_id_runner_persists_raw_metadata_before_task_redactio
     }
     persisted_commands: list[list[str]] = []
     monkeypatch.setattr(ui, "appliance_apply_status", lambda _db, _unit_id: {"id": "vcf_offline_depot"})
-    monkeypatch.setattr(ui, "execute_appliance_apply_unit", lambda _unit: raw_result)
+    monkeypatch.setattr(ui, "execute_appliance_apply_unit", lambda _unit, **_kwargs: raw_result)
     def persist_readback(db, results):
         """Persist readback.
 
@@ -17581,7 +17669,7 @@ def test_vcf_depot_software_id_runner_fails_when_id_is_not_persisted(client, mon
         ],
     }
     monkeypatch.setattr(ui, "appliance_apply_status", lambda _db, _unit_id: {"id": "vcf_offline_depot"})
-    monkeypatch.setattr(ui, "execute_appliance_apply_unit", lambda _unit: raw_result)
+    monkeypatch.setattr(ui, "execute_appliance_apply_unit", lambda _unit, **_kwargs: raw_result)
     monkeypatch.setattr(ui, "persist_vcf_depot_metadata_from_apply", lambda _db, _results: None)
     with SessionLocal() as db:
         db.add(
@@ -17624,7 +17712,11 @@ def test_vcf_depot_software_id_startup_reconciles_runtime_identity_before_failin
         VCF_DEPOT_SOFTWARE_DEPOT_ID_KEY,
         VCF_DEPOT_TOKEN_VALUE_KEY,
     )
-    from atlaso.app.ui import SystemAdapter, recover_interrupted_vcf_depot_software_id_jobs, set_setting_value
+    from atlaso.app.ui import (
+        SystemAdapter,
+        recover_interrupted_vcf_depot_software_id_jobs,
+        set_setting_value,
+    )
 
     monkeypatch.setattr(
         SystemAdapter,
@@ -17682,7 +17774,11 @@ def test_vcf_depot_software_id_startup_invalidates_unverifiable_runtime_identity
         VCF_DEPOT_SOFTWARE_DEPOT_ID_KEY,
         VCF_DEPOT_TOKEN_VALUE_KEY,
     )
-    from atlaso.app.ui import SystemAdapter, recover_interrupted_vcf_depot_software_id_jobs, set_setting_value
+    from atlaso.app.ui import (
+        SystemAdapter,
+        recover_interrupted_vcf_depot_software_id_jobs,
+        set_setting_value,
+    )
 
     monkeypatch.setattr(
         SystemAdapter,
@@ -17931,12 +18027,13 @@ def test_appliance_apply_master_steps_fail_fast_and_keep_successful_baselines(cl
 
     executed = []
 
-    def execute(unit, *, adapter=None):
+    def execute(unit, *, adapter=None, db=None):
         """Run operation.
 
         Args:
             unit: Unit supplied to the test scenario.
             adapter: Adapter supplied to the test scenario.
+            db: Active database session supplied by the runner.
 
 
         Returns:
@@ -18061,12 +18158,13 @@ def test_successful_appliance_apply_baseline_uses_post_apply_snapshot(client, mo
         """
         return [after if apply_completed else before]
 
-    def execute(unit, *, adapter=None):
+    def execute(unit, *, adapter=None, db=None):
         """Run operation.
 
         Args:
             unit: Unit supplied to the test scenario.
             adapter: Adapter supplied to the test scenario.
+            db: Active database session supplied by the runner.
 
 
         Returns:
@@ -18311,12 +18409,13 @@ def test_appliance_apply_parent_cancel_finishes_current_step_and_skips_remaining
         )
         db.commit()
 
-    def execute(unit, *, adapter=None):
+    def execute(unit, *, adapter=None, db=None):
         """Run operation.
 
         Args:
             unit: Unit supplied to the test scenario.
             adapter: Adapter supplied to the test scenario.
+            db: Active database session supplied by the runner.
 
 
         Returns:
@@ -18552,7 +18651,11 @@ def test_appliance_apply_runs_firewall_before_wan(client):
 
 def test_network_apply_config_includes_removed_vlan_targets_from_baseline():
     """Verify that network apply config includes removed vlan targets from baseline."""
-    from atlaso.app.ui import network_config_with_removed_vlans, network_vlan_entries_from_config, removed_network_vlan_entries
+    from atlaso.app.ui import (
+        network_config_with_removed_vlans,
+        network_vlan_entries_from_config,
+        removed_network_vlan_entries,
+    )
 
     baseline = {
         "config_preview": "\n".join(
@@ -18600,11 +18703,12 @@ def test_network_apply_removal_targets_include_successful_apply_history(client):
     """
     import json
 
-    from sqlalchemy import select
-
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import Job, JobStatus, utcnow
-    from atlaso.app.ui import removed_network_vlan_entries, successful_network_apply_vlan_entries
+    from atlaso.app.ui import (
+        removed_network_vlan_entries,
+        successful_network_apply_vlan_entries,
+    )
 
     applied_preview = "\n".join(
         [
@@ -18671,7 +18775,10 @@ def test_network_apply_history_retires_successfully_removed_vlans(client):
 
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import Job, JobStatus, utcnow
-    from atlaso.app.ui import removed_network_vlan_entries, successful_network_apply_vlan_entries
+    from atlaso.app.ui import (
+        removed_network_vlan_entries,
+        successful_network_apply_vlan_entries,
+    )
 
     applied_preview = "\n".join(
         [
@@ -18892,7 +18999,13 @@ def test_services_and_service_pages_derive_composite_runtime_status(client, monk
     from atlaso.app.adapters.system import AdapterResult
     from atlaso.app.config import get_settings
     from atlaso.app.database import SessionLocal
-    from atlaso.app.models import CaSettings, DhcpScope, KmsSettings, VcfBackupSettings, VcfOfflineDepotSettings
+    from atlaso.app.models import (
+        CaSettings,
+        DhcpScope,
+        KmsSettings,
+        VcfBackupSettings,
+        VcfOfflineDepotSettings,
+    )
 
     def fake_service_status(self, unit: str):
         """Return fake service status.
@@ -20497,9 +20610,9 @@ def test_vcf_trust_inspects_target_tls_without_persisting_target(client, monkeyp
     """
     from sqlalchemy import select
 
+    import atlaso.app.ui as ui
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import VcfTrustTarget
-    import atlaso.app.ui as ui
 
     login(client)
     csrf = client.get("/vcf-helper").text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
@@ -20567,11 +20680,11 @@ def test_vcf_trust_requires_tls_confirmation_then_queues_without_persisting_cred
     """
     from sqlalchemy import select
 
+    import atlaso.app.ui as ui
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import Job, VcfTrustTarget
     from atlaso.app.services.ca import ensure_root_ca_material
     from atlaso.app.ui import get_ca_settings_row
-    import atlaso.app.ui as ui
 
     login(client)
     with SessionLocal() as db:
@@ -20668,10 +20781,10 @@ def test_vcf_trust_rejects_mismatched_confirmed_tls_fingerprint(client, monkeypa
         client: HTTP test client used to exercise the Atlaso application.
         monkeypatch: Pytest fixture used to replace dependencies for the test.
     """
+    import atlaso.app.ui as ui
     from atlaso.app.database import SessionLocal
     from atlaso.app.services.ca import ensure_root_ca_material
     from atlaso.app.ui import get_ca_settings_row
-    import atlaso.app.ui as ui
 
     login(client)
     with SessionLocal() as db:
@@ -20705,12 +20818,12 @@ def test_vcf_trust_job_preserves_cancelled_state_at_progress_checkpoint(client, 
         client: HTTP test client used to exercise the Atlaso application.
         monkeypatch: Pytest fixture used to replace dependencies for the test.
     """
+    import atlaso.app.ui as ui
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import Job, JobStatus, VcfTrustTarget
     from atlaso.app.services.ca import ensure_root_ca_material
     from atlaso.app.services.vcf_trust import VcfTrustCredentials, root_ca_info
     from atlaso.app.ui import get_ca_settings_row
-    import atlaso.app.ui as ui
 
     login(client)
     with SessionLocal() as db:
@@ -20769,10 +20882,10 @@ def test_vcf_target_depot_job_preserves_cancelled_state_at_progress_checkpoint(c
         client: HTTP test client used to exercise the Atlaso application.
         monkeypatch: Pytest fixture used to replace dependencies for the test.
     """
+    import atlaso.app.ui as ui
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import Job, JobStatus
     from atlaso.app.services.vcf_depot_target import LocalDepotEndpoint
-    import atlaso.app.ui as ui
 
     login(client)
     with SessionLocal() as db:
@@ -21744,6 +21857,7 @@ def test_vcf_sddc_deploy_job_persists_no_passwords(client, monkeypatch):
         monkeypatch: Pytest fixture used to replace dependencies for the test.
     """
     import json
+
     from atlaso.app import ui
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import Job

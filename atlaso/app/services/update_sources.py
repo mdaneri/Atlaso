@@ -12,7 +12,6 @@ from sqlalchemy.orm import Session
 from atlaso.app.models import ManagedPackage, UpdateSource
 from atlaso.app.secrets import decrypt_secret
 
-
 UPDATE_SOURCE_KINDS = {"photon", "powershell", "atlaso"}
 ATLASO_CHANNELS = {"stable", "preview", "development"}
 

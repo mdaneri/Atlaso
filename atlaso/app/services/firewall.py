@@ -1,15 +1,15 @@
 """Implement firewall service behavior."""
 
-from ipaddress import ip_network
 import json
 import re
+from ipaddress import ip_network
 
 from atlaso.app.config import get_settings
 from atlaso.app.models import (
+    CaSettings,
     DhcpScope,
     DhcpSettings,
     DnsSettings,
-    CaSettings,
     FirewallRule,
     FirewallSettings,
     KmsSettings,
@@ -24,8 +24,10 @@ from atlaso.app.models import (
     VlanInterface,
 )
 from atlaso.app.services.dnsmasq import dhcp_scope_address_family, split_interfaces
-from atlaso.app.services.networking import normalize_interface_mode, normalize_interface_role
-
+from atlaso.app.services.networking import (
+    normalize_interface_mode,
+    normalize_interface_role,
+)
 
 FIREWALL_DIRECTIONS = ["input", "forward", "output"]
 FIREWALL_ACTIONS = ["accept", "drop", "reject"]

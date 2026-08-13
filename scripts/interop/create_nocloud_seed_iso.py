@@ -108,7 +108,7 @@ ethernets:
     }
 
 
-def add_file(iso, name: str, content: str, iso_name: str) -> None:  # type: ignore[no-untyped-def]
+def add_file(iso, name: str, content: str, iso_name: str) -> None:  # type: ignore[no-untyped-def]  # Pycdlib has no typed public ISO object protocol.
     """Create file.
 
     Args:

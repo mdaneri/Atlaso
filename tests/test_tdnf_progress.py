@@ -6,7 +6,6 @@ import subprocess
 import sys
 from pathlib import Path
 
-
 SCRIPT = Path("scripts/run_tdnf_with_progress.py").resolve()
 
 

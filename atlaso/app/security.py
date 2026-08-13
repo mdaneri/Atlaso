@@ -17,7 +17,6 @@ from atlaso.app.database import get_db
 from atlaso.app.models import ApiToken, Role, Setting, User, utcnow
 from atlaso.app.ui_routes import MANAGEMENT_UI_ROOT, PUBLIC_UI_ROOT
 
-
 ALL_SCOPES = {
     "read:dashboard",
     "read:monitoring",

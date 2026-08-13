@@ -18,7 +18,6 @@ from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from urllib.parse import urlsplit
 
-
 ROOT = Path(__file__).resolve().parents[1]
 EXPECTED_PYTHON = (3, 14)
 EXPECTED_PIP_TOOLS = "7.6.0"
@@ -58,6 +57,12 @@ LOCK_TARGETS = (
         True,
     ),
     LockTarget("requirements-docs.lock", ("requirements-docs.in",), False, True),
+    LockTarget(
+        "requirements-static-analysis.lock",
+        ("requirements-static-analysis.in",),
+        False,
+        True,
+    ),
     LockTarget(
         "requirements-release-tools.lock",
         ("requirements-release-tools.in",),

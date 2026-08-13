@@ -12,7 +12,17 @@ from pathlib import Path
 from typing import Annotated, Any
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, File, HTTPException, Path as ApiPath, Query, Request, Response, UploadFile, status
+from fastapi import (
+    APIRouter,
+    Depends,
+    File,
+    HTTPException,
+    Request,
+    Response,
+    UploadFile,
+    status,
+)
+from fastapi import Path as ApiPath
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import ValidationError
 from sqlalchemy import delete, desc, func, select
@@ -34,8 +44,12 @@ from atlaso.app.models import (
     utcnow,
 )
 from atlaso.app.openapi import DocumentedAPIRoute
+from atlaso.app.schemas import (
+    EsxiBootAuthorizationRequest,
+    EsxiBootAuthorizationResponse,
+    EsxiPxeHostCreate,
+)
 from atlaso.app.security import Identity, require_api_or_session_scope
-from atlaso.app.schemas import EsxiBootAuthorizationRequest, EsxiBootAuthorizationResponse, EsxiPxeHostCreate
 from atlaso.app.services.esxi_pxe import (
     esxi_pxe_boot_settings,
     host_variables_json,
@@ -44,12 +58,13 @@ from atlaso.app.services.esxi_pxe import (
     sync_esxi_pxe_host_network_records,
 )
 from atlaso.app.services.network_boot import (
+    NETWORK_BOOT_MEDIA_ROOT,
+    NETWORK_BOOT_UPLOAD_MAX_BYTES,
+    WakeOnLanDeliveryError,
     acknowledge_inventory_command,
     active_network_boot_media,
     authorize_esxi_boot_once,
     available_network_boot_versions,
-    NETWORK_BOOT_MEDIA_ROOT,
-    NETWORK_BOOT_UPLOAD_MAX_BYTES,
     catalog_rows,
     claim_host_boot_override,
     esxi_host_assignments_by_mac,
@@ -62,17 +77,15 @@ from atlaso.app.services.network_boot import (
     queue_reboot_command,
     render_esxi_boot_claim,
     render_network_boot_menu,
-    report_identity,
     report_history,
+    report_identity,
     request_host_boot_override,
     send_wake_on_lan,
     set_environment_desired_state,
     store_inventory_report,
     touch_inventory_heartbeat,
-    WakeOnLanDeliveryError,
     wake_on_lan_broadcast_targets,
 )
-
 
 router = APIRouter(
     prefix="/api/v1/network-boot",

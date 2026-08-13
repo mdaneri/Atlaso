@@ -15,7 +15,6 @@ from cryptography.hazmat.primitives import hashes, serialization
 from atlaso.app.models import CaSettings
 from atlaso.app.services.vcf_sddc_deployment import tls_sha256_fingerprint
 
-
 VCF_SUPPORTED_ROLES = {"VcfInstaller", "SddcManager"}
 
 

@@ -10,7 +10,6 @@ from cryptography.fernet import Fernet, InvalidToken
 
 from atlaso.app.config import Settings, get_settings
 
-
 ENCRYPTED_VALUE_PREFIX = "fernet:v1:"
 
 

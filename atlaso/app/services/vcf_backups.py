@@ -5,7 +5,6 @@ from ipaddress import ip_address
 from atlaso.app.models import User, VcfBackupSettings
 from atlaso.app.services.dnsmasq import split_addresses, split_interfaces
 
-
 VCF_BACKUP_DEFAULT_VOLUME_MOUNT = "/mnt/atlaso-vcf-backups"
 VCF_BACKUP_REMOTE_DIRECTORY = "/backups"
 VCF_BACKUP_STAGED_CONFIG_PATH = "/var/lib/atlaso/apply/vcf-backups/atlaso-vcf-backups-sshd.conf"

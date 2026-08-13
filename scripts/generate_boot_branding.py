@@ -8,7 +8,6 @@ from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFont
 
-
 WIDTH = 640
 HEIGHT = 480
 SCALE = 2

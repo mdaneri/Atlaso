@@ -8,7 +8,6 @@ from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFont
 
-
 NAVY = "#071A3A"
 BLUE = "#1769E0"
 TEAL = "#16C7BC"

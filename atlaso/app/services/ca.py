@@ -10,6 +10,7 @@ from ipaddress import ip_address
 from pathlib import PurePosixPath
 
 from cryptography import x509
+from cryptography.exceptions import InvalidSignature, UnsupportedAlgorithm
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec, padding, rsa
 from cryptography.x509.oid import ExtendedKeyUsageOID, NameOID
@@ -19,7 +20,6 @@ from sqlalchemy.orm import Session
 from atlaso.app.config import get_settings
 from atlaso.app.models import CaCertificate, CaProfile, CaSettings, utcnow
 from atlaso.app.secrets import decrypt_secret, encrypt_secret, secret_key_status
-
 
 CA_STAGED_CONFIG_PATH = "/var/lib/atlaso/apply/ca/atlaso-ca.json"
 CA_DEFAULT_PORTAL_HOSTNAME = "ca.atlaso.internal"
@@ -890,7 +890,7 @@ def validate_ca_private_key_material(
                 )
             else:
                 return False
-        except Exception:
+        except (InvalidSignature, TypeError, UnsupportedAlgorithm, ValueError):
             return False
         return True
 
@@ -927,7 +927,12 @@ def validate_ca_private_key_material(
             elif root_certificate.not_valid_after_utc <= now:
                 errors.append("CA root certificate has expired.")
                 root_certificate = None
-        except Exception:
+        except (
+            TypeError,
+            UnsupportedAlgorithm,
+            ValueError,
+            x509.ExtensionNotFound,
+        ):
             errors.append("CA root certificate is not a valid self-signed certificate.")
             root_certificate = None
 
@@ -944,7 +949,7 @@ def validate_ca_private_key_material(
                 certificate.certificate_pem.encode("utf-8")
             )
             parsed_certificates[id(certificate)] = parsed_certificate
-        except Exception:
+        except (TypeError, ValueError):
             errors.append(f"{label} certificate is not usable on this appliance.")
             continue
         if certificate.status == "issued" and (
@@ -970,7 +975,7 @@ def validate_ca_private_key_material(
                     for actual, expected in zip(chain, expected_chain, strict=True)
                 ):
                     raise ValueError
-            except Exception:
+            except (TypeError, ValueError):
                 errors.append(f"{label} chain does not match the restored CA root.")
 
     candidates: list[tuple[str, str, x509.Certificate | None]] = []
@@ -1000,7 +1005,7 @@ def validate_ca_private_key_material(
                 private_key_pem.encode("utf-8"),
                 password=None,
             )
-        except Exception:
+        except (TypeError, UnsupportedAlgorithm, ValueError):
             errors.append(f"{label} encrypted private key is not usable on this appliance.")
             continue
         if certificate is None:

@@ -3,10 +3,10 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 import shlex
 import shutil
 import subprocess
+from pathlib import Path
 
 from sqlalchemy import select
 
@@ -16,7 +16,6 @@ from atlaso.app.seed import seed_initial_data
 from atlaso.app.services.ca import CA_STAGED_CONFIG_PATH, render_ca_apply_payload
 from atlaso.app.services.networking import sync_host_physical_interfaces
 from atlaso.app.ui import ca_managed_certificate_paths, ensure_ca_state
-
 
 ENV_PATH = Path("/var/lib/atlaso/apply/ca/first-boot-management.env")
 MARKER_PATH = Path("/var/lib/atlaso/first-boot-https.applied")

@@ -4,7 +4,6 @@ import pytest
 
 from atlaso.app.services import vcf_depot_target as service
 
-
 LOCAL = service.LocalDepotEndpoint("depot.atlaso.internal", 443, "https://depot.atlaso.internal", "vcf-depot")
 
 

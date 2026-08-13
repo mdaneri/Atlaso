@@ -5,8 +5,8 @@ from __future__ import annotations
 import asyncio
 import base64
 import hashlib
-import ipaddress
 import io
+import ipaddress
 import json
 import logging
 import re
@@ -22,7 +22,15 @@ from urllib.parse import urlparse
 import paramiko
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
-from fastapi import APIRouter, Depends, Form, HTTPException, Request, WebSocket, WebSocketDisconnect
+from fastapi import (
+    APIRouter,
+    Depends,
+    Form,
+    HTTPException,
+    Request,
+    WebSocket,
+    WebSocketDisconnect,
+)
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -31,7 +39,13 @@ from atlaso.app.adapters.system import SystemAdapter
 from atlaso.app.audit import record_audit
 from atlaso.app.config import get_settings
 from atlaso.app.database import SessionLocal, get_db
-from atlaso.app.models import ApplianceSettings, PhysicalInterface, User, VaultEntry, VlanInterface
+from atlaso.app.models import (
+    ApplianceSettings,
+    PhysicalInterface,
+    User,
+    VaultEntry,
+    VlanInterface,
+)
 from atlaso.app.secrets import decrypt_secret
 from atlaso.app.security import (
     SESSION_APPLIANCE_INSTANCE_SESSION_KEY,
@@ -47,8 +61,12 @@ from atlaso.app.services.appliance_settings import (
     web_terminal_listener_interfaces,
 )
 from atlaso.app.services.vaults import vault_entry_uris
-from atlaso.app.ui_routes import MANAGEMENT_UI_ROOT, PUBLIC_UI_ROOT, management_ui_path, public_ui_path
-
+from atlaso.app.ui_routes import (
+    MANAGEMENT_UI_ROOT,
+    PUBLIC_UI_ROOT,
+    management_ui_path,
+    public_ui_path,
+)
 
 management_router = APIRouter(prefix=MANAGEMENT_UI_ROOT)
 public_router = APIRouter(prefix=PUBLIC_UI_ROOT)
@@ -304,7 +322,7 @@ def _request_uses_selected_listener(headers: object, server_host: str, allowed_a
             return False
     except ValueError:
         return False
-    listener = _normalized_listener(headers.get("x-atlaso-listener-address", ""))  # type: ignore[attr-defined]
+    listener = _normalized_listener(headers.get("x-atlaso-listener-address", ""))  # type: ignore[attr-defined]  # Paramiko exposes headers through a runtime mapping protocol.
     return listener in allowed_addresses
 
 
@@ -317,7 +335,7 @@ def _request_is_https(headers: object, scheme: str) -> bool:
     """
     if get_settings().environment != "appliance":
         return True
-    return str(headers.get("x-forwarded-proto", scheme)).lower() == "https"  # type: ignore[attr-defined]
+    return str(headers.get("x-forwarded-proto", scheme)).lower() == "https"  # type: ignore[attr-defined]  # Paramiko exposes headers through a runtime mapping protocol.
 
 
 def _active_session_for_user(user_id: int) -> ActiveTerminalSession | None:
@@ -352,11 +370,11 @@ def revoke_user_terminal_sessions(user_id: int, reason: str = "Web SSH access re
         session.close_reason = reason
         try:
             session.channel.close()
-        except Exception:
+        except Exception:  # noqa: BLE001 - terminal channel cleanup is best effort.
             pass
         try:
             session.transport.close()
-        except Exception:
+        except Exception:  # noqa: BLE001 - terminal transport cleanup is best effort.
             pass
 
 
@@ -435,7 +453,6 @@ def _terminal_page_context(
         _request_uses_selected_listener(request.headers, server_host, addresses)
         and not _request_uses_selected_listener(request.headers, server_host, management_addresses)
     )
-    from atlaso.app.ui import appliance_apply_status, public_portal_links_context, render
 
     available = bool(
         get_settings().environment == "appliance"
@@ -489,7 +506,11 @@ def terminal_page(
         next_path = public_ui_path("/terminal") if requested_public_plane else management_ui_path("/terminal")
         return RedirectResponse(f"{login_path}?next={next_path}", status_code=303)
     context, public_listener = _terminal_page_context(request, identity, db)
-    from atlaso.app.ui import appliance_apply_status, public_portal_links_context, render
+    from atlaso.app.ui import (
+        appliance_apply_status,
+        public_portal_links_context,
+        render,
+    )
 
     if requested_public_plane != public_listener:
         raise HTTPException(status_code=404, detail="Not found")
@@ -923,11 +944,11 @@ async def _terminal_session_reader(session: ActiveTerminalSession) -> None:
                 if websocket is not None:
                     try:
                         await websocket.send_bytes(data)
-                    except Exception:
+                    except Exception:  # noqa: BLE001 - any websocket send failure detaches the client.
                         if session.websocket is websocket:
                             session.websocket = None
                             session.detached_at = monotonic()
-    except Exception:
+    except Exception:  # noqa: BLE001 - collapse transport and SSH failures into a safe close reason.
         session.close_reason = "terminal error"
     finally:
         websocket = session.websocket
@@ -941,11 +962,11 @@ async def _terminal_session_reader(session: ActiveTerminalSession) -> None:
         if websocket is not None:
             try:
                 await websocket.send_json({"type": "closed", "reason": session.close_reason})
-            except Exception:
+            except Exception:  # noqa: BLE001 - close notification is best effort.
                 pass
             try:
                 await websocket.close(code=1000)
-            except Exception:
+            except Exception:  # noqa: BLE001 - websocket close is best effort.
                 pass
         with SessionLocal() as db:
             record_audit(
@@ -1003,7 +1024,7 @@ async def _attach_terminal_session(session: ActiveTerminalSession, websocket: We
     if previous is not None and previous is not websocket:
         try:
             await previous.close(code=4410, reason="Terminal session reattached elsewhere")
-        except Exception:
+        except Exception:  # noqa: BLE001 - replacing a stale websocket is best effort.
             pass
 
 
@@ -1162,12 +1183,12 @@ async def terminal_websocket(websocket: WebSocket) -> None:
         )
         try:
             await websocket.send_json({"type": "error", "message": "The appliance terminal session could not be started or reattached."})
-        except Exception:
+        except Exception:  # noqa: BLE001 - terminal startup may already have closed the websocket.
             pass
     finally:
         if session is not None:
             await _detach_websocket(session, websocket)
         try:
             await websocket.close(code=1000)
-        except Exception:
+        except Exception:  # noqa: BLE001 - websocket close is best effort.
             pass
