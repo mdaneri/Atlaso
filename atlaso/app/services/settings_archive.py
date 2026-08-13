@@ -2843,11 +2843,18 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
                 "automation script revision",
             )
 
+    setting_keys: set[str] = set()
     for row_index, row in enumerate(data.get("settings", []), start=1):
-        if str(row["key"] or "") not in SAFE_SETTING_KEYS:
+        setting_key = str(row["key"] or "")
+        if setting_key not in SAFE_SETTING_KEYS:
             raise ValueError(
                 f"The settings archive row {row_index} in 'settings' has an unsupported setting key."
             )
+        if setting_key in setting_keys:
+            raise ValueError(
+                f"The settings archive row {row_index} in 'settings' duplicates a setting key."
+            )
+        setting_keys.add(setting_key)
 
 
 def _validate_archive_database_relationships(db: Session, data: dict[str, list[dict[str, Any]]]) -> None:

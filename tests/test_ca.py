@@ -168,13 +168,14 @@ def test_ca_private_key_validation_rejects_leaf_from_another_root():
 
 
 @pytest.mark.parametrize(
-    ("is_ca", "expired", "expected_error"),
+    ("is_ca", "expired", "not_yet_valid", "expected_error"),
     [
-        (False, False, "CA root certificate is not a valid self-signed certificate."),
-        (True, True, "CA root certificate has expired."),
+        (False, False, False, "CA root certificate is not a valid self-signed certificate."),
+        (True, True, False, "CA root certificate has expired."),
+        (True, False, True, "CA root certificate is not yet valid."),
     ],
 )
-def test_ca_private_key_validation_requires_current_ca_root(is_ca, expired, expected_error):
+def test_ca_private_key_validation_requires_current_ca_root(is_ca, expired, not_yet_valid, expected_error):
     """Verify restored root material is a current certificate-authority certificate."""
     from datetime import datetime, timedelta, timezone
 
@@ -186,7 +187,7 @@ def test_ca_private_key_validation_requires_current_ca_root(is_ca, expired, expe
     private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
     subject = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "Archive root")])
     now = datetime.now(timezone.utc)
-    not_valid_before = now - timedelta(days=30)
+    not_valid_before = now + timedelta(days=1) if not_yet_valid else now - timedelta(days=30)
     not_valid_after = now - timedelta(days=1) if expired else now + timedelta(days=30)
     certificate = (
         x509.CertificateBuilder()

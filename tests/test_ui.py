@@ -5590,6 +5590,11 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
     unsupported_setting["data"]["settings"].append(
         {"key": "unsupported.setting", "value": "must-not-be-silently-dropped"}
     )
+    duplicate_setting = deepcopy(archive)
+    duplicate_setting["data"]["settings"] = [
+        {"key": "dns.conditional_forwarders", "value": "[]"},
+        {"key": "dns.conditional_forwarders", "value": "[]"},
+    ]
     invalid_firewall_source_groups = deepcopy(archive)
     invalid_firewall_source_groups["data"]["settings"].append(
         {
@@ -5692,6 +5697,7 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
         (invalid_update_schedule, "retired or unsupported stream"),
         (invalid_managed_package_source, "managed package state is invalid: Choose a PowerShell repository"),
         (unsupported_setting, "has an unsupported setting key"),
+        (duplicate_setting, "duplicates a setting key"),
         (invalid_firewall_source_groups, "firewall source groups state is invalid"),
     ]:
         with pytest.raises(ValueError, match=message):

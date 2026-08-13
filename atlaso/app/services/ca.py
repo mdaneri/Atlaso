@@ -920,7 +920,11 @@ def validate_ca_private_key_material(
                 or root_pem != canonical_pem
             ):
                 raise ValueError
-            if root_certificate.not_valid_after_utc <= datetime.now(timezone.utc):
+            now = datetime.now(timezone.utc)
+            if root_certificate.not_valid_before_utc > now:
+                errors.append("CA root certificate is not yet valid.")
+                root_certificate = None
+            elif root_certificate.not_valid_after_utc <= now:
                 errors.append("CA root certificate has expired.")
                 root_certificate = None
         except Exception:
