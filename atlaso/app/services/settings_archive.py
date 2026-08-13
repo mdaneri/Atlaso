@@ -170,7 +170,10 @@ from atlaso.app.services.vcf_backups import (
     VCF_BACKUP_DEFAULT_USERNAME,
     validate_vcf_backup_state,
 )
-from atlaso.app.services.vcf_offline_depot import validate_vcf_depot_state
+from atlaso.app.services.vcf_offline_depot import (
+    VCF_DEPOT_DEFAULT_STORE_PATH,
+    validate_vcf_depot_state,
+)
 from atlaso.app.services.vcf_private_registry import (
     VCF_REGISTRY_UPLOADED_CA_BUNDLE_PATH,
     validate_vcf_registry_state,
@@ -1560,6 +1563,12 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
         ValueError: If a relationship target is empty or absent.
     """
     _validate_archive_unique_identities(data)
+    for row in data.get("vcf_offline_depot_settings", []):
+        if str(row.get("depot_store_path") or "") != VCF_DEPOT_DEFAULT_STORE_PATH:
+            raise ValueError(
+                "The settings archive VCF Offline Depot state is invalid: "
+                f"Depot store path must be {VCF_DEPOT_DEFAULT_STORE_PATH}."
+            )
 
     def require_reference(
         section_name: str,
@@ -3034,7 +3043,7 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
                 f"The settings archive row {row_index} in 'esxi_pxe_hosts' has an invalid MAC address."
             )
         try:
-            normalize_installer_iso_path(
+            normalized_installer_iso_path = normalize_installer_iso_path(
                 str(row.get("installer_iso_path") or ""),
                 ensure_root=False,
             )
@@ -3042,6 +3051,7 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
             raise ValueError(
                 f"The settings archive row {row_index} in 'esxi_pxe_hosts' has an invalid installer ISO: {exc}"
             ) from exc
+        row["installer_iso_path"] = normalized_installer_iso_path
         require_reference(
             "esxi_pxe_hosts",
             row_index,

@@ -61,6 +61,11 @@ activation, retirement, and publication-overlap timestamps so still-live tokens 
 CA certificate rows receive the same bounded status, managed-path, and supplied-material checks as enabled rows before
 any current state is removed.
 
+ESXi Network Boot installer ISO references are normalized beneath the managed ISO root before they are restored, so a
+valid relative archive reference cannot become dependent on the appliance helper's working directory. VCF Offline
+Depot archives must retain Atlaso's fixed `/mnt/atlaso-vcf-offline-depot` store path; another absolute path is rejected
+before current desired state is removed.
+
 Current exports use settings-archive schema v2, which requires the complete section inventory. Atlaso continues to
 accept schema-v1 archives: sections that did not exist when an older archive was created are retained from the target
 appliance during migration to v2, then the complete migrated archive receives the same preflight validation before any

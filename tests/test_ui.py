@@ -6107,6 +6107,10 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
             "installer_iso_path": "C:\\outside\\missing.iso",
         }
     )
+    invalid_vcf_depot_store = deepcopy(archive)
+    invalid_vcf_depot_store["data"]["vcf_offline_depot_settings"][0][
+        "depot_store_path"
+    ] = "/tmp/depot"
     invalid_esxi_kickstart = deepcopy(archive)
     invalid_esxi_kickstart["data"]["esxi_kickstarts"].append(
         {
@@ -6340,6 +6344,7 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
         (invalid_storage_state, "ESX Storage state is invalid: Datastore invalid-share must use NFS 3 or NFS 4.1"),
         (invalid_esxi_host_mac, "esxi_pxe_hosts' has an invalid MAC address"),
         (invalid_esxi_installer_iso, "has an invalid installer ISO"),
+        (invalid_vcf_depot_store, "Depot store path must be /mnt/atlaso-vcf-offline-depot"),
         (invalid_esxi_kickstart, "multiple install/upgrade directives"),
         (duplicate_network_boot_environment, "duplicates an environment key"),
         (invalid_update_source, r"update source state is invalid: .*URL must be an HTTP\(S\) URL"),
@@ -8323,10 +8328,12 @@ def test_esxi_kickstarts_round_trip_in_settings_archive(client, monkeypatch, tmp
         db.query(Setting).filter(Setting.key == ESXI_PXE_CUSTOM_VARIABLES_KEY).delete()
         db.commit()
 
+    payload["data"]["esxi_pxe_hosts"][0]["installer_iso_path"] = archive_iso_path.name
+    restore_content = json.dumps(payload).encode("utf-8")
     restored = client.post(
         "/backup-restore/restore",
         data={"csrf": csrf},
-        files={"archive_file": ("atlaso-settings.json", exported.content, "application/json")},
+        files={"archive_file": ("atlaso-settings.json", restore_content, "application/json")},
     )
 
     assert restored.status_code == 200
