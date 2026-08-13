@@ -4353,12 +4353,16 @@ service user. Enabled profiles can also be scheduled under Operations → Automa
 stages nginx config under <code>/var/lib/atlaso/apply/vcf-offline-depot/</code>, serves the fixed depot store as an HTTPS static
 document root, uses the CA-managed <code>vcf_offline_depot:https</code> certificate/key file paths, and protects <code>/PROD/</code> with HTTP
 Basic Auth backed by the selected local <code>vcf-depot</code> user unless unauthenticated access is explicitly enabled.</p>
-<p>The profile grid's <strong>Schedule download</strong> action opens the shared Automation wizard with the profile selected. Manual,
-Run now, and due-schedule admission share an atomic single-active VCFDT job guard. Scheduled overlap is retained as a
-skipped execution, while execution-time tool, enabled-profile, credential, desired-state, and command checks fail the
-task before VCFDT mutation. Disabling or tool-resetting a profile disables its schedules; profile deletion requires all
-attached schedules to be removed first. Schedule archives remain compatible because only the stable integer
-<code>profile_id</code> is stored.</p>
+<p>The profile grid's <strong>Schedule download</strong> action opens the shared four-step contextual Automation wizard on the depot
+page, with task type and profile bound by the server. Automation's generic add/edit wizard remains five steps. Manual,
+Run now, and due-schedule admission share an atomic per-profile guard backed by the persisted profile ID and a partial
+unique index. Distinct pending profiles are ordered by creation time and job ID, while a running-operation partial
+unique index permits exactly one VCFDT process. Software Depot ID replacement and <code>vcf_offline_depot</code> Appliance Apply
+use the same admission gate but remain exclusive across the complete queued/running download set. The worker revalidates
+mutable prerequisites after claim and before VCFDT mutation. Scheduled same-profile or exclusive-operation overlap is
+retained as a terminal skipped task. Disabling or tool-resetting a profile disables its schedules; profile deletion
+requires all attached schedules to be removed first. Schedule archives remain compatible because only the stable
+integer <code>profile_id</code> is stored.</p>
 <h2 id="public-service-front-door">Public Service Front Door<a class="headerlink" href="#public-service-front-door" title="Permanent link">&para;</a></h2>
 <p>VMware CEIP consent is centralized under <strong>Settings → VMware Product Preferences</strong>. The single appliance-wide choice
 defaults to disabled and is used by VCF Download Tool command previews and runtime preparation, VCF PowerCLI at vendor

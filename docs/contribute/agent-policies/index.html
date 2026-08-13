@@ -4175,6 +4175,10 @@
   cron builder with Custom as the advanced five-field escape hatch. Schedule State is directly editable with the
   standard enable/disable control, while Run now, Edit, and Delete belong in the row context menu. Executions must link
   every scheduled job to <code>/ui/management/tasks</code>.</li>
+<li>Keep the generic Automation add/edit wizard at five steps. A selected VCF Offline Depot row instead opens the shared
+  <code>createWizard(...)</code> schedule form in place with exactly Schedule, Timing, State, and Review. The server fixes both
+  <code>vcf_depot_download</code> and the path-selected profile ID; do not render task-type or profile selectors in this contextual
+  flow, navigate away from the depot page, or fork schedule validation and persistence behavior.</li>
 <li>Managed scripts are immutable revisions executed as the unprivileged <code>atlaso-automation</code> account through the
   constrained helper and transient systemd units. Creation uses the shared four-step wizard for identity, runtime,
   initial source, and review, and stores revision 1 disabled. Grid edits to revision-owned fields create a new disabled
@@ -4530,9 +4534,13 @@
   ID is persisted, and refresh additionally requires a different ID. It must not validate, sync,
   or apply nginx, update the VCF Offline Depot apply baseline, or open the global Appliance Apply monitor.
   Identity tasks, profile-download tasks, and Appliance Apply tasks containing <code>vcf_offline_depot</code> must share one
-  admission boundary so only one VCFDT runtime operation can be pending or running. Pending identity tasks may be
-  cancelled, but running identity tasks must reject cancellation because the helper may already have replaced the
-  runtime identity. Startup recovery for an interrupted running identity task must perform a read-only canonical VCFDT
+  admission boundary. Distinct profile downloads may be pending together in FIFO order, with an atomic database-backed
+  unique guard deduplicating the same profile across manual and scheduled callers. Exactly one VCFDT operation may be
+  running. Software Depot ID tasks and Appliance Apply containing <code>vcf_offline_depot</code> remain exclusive across both
+  queued and running downloads, so their admission must wait until the profile-download queue drains and their own
+  pending/running state must block new downloads. Software Depot ID identity tasks are non-cancellable from admission
+  onward because a claim race or already-running helper may have replaced the runtime identity. Startup recovery for an
+  interrupted running identity task must perform a read-only canonical VCFDT
   ID readback before finalizing the task: persist a changed runtime ID and clear obsolete credentials, or invalidate
   the stored ID and credentials when runtime identity cannot be verified.
   Resetting VCFDT staging is one destructive confirmation that always clears the staged package, both Broadcom
@@ -4555,9 +4563,13 @@
   status from the process exit code; missing profile credentials should disable only the profile Start button and must
   not block applying or disabling the depot service. Enabled VCF Offline Depot profiles are selectable in the real
   Automation scheduler and execute as the same durable <code>vcf-depot-download</code> jobs as manual starts. The application
-  must admit both paths through one atomic database-backed single-active guard, revalidate tool/profile/credential
-  prerequisites at execution, record scheduled collisions as skipped Jobs, and preserve terminal task/log/audit
-  evidence. Disabling a profile or resetting the tool disables attached schedules without re-enabling them later;
+  must admit both paths through one atomic database-backed per-profile guard, queue distinct profiles in deterministic
+  FIFO order, claim no more than one VCFDT runtime operation, revalidate tool/profile/credential prerequisites at claim,
+  record same-profile or exclusive-operation scheduled collisions as skipped Jobs, and preserve terminal
+  task/log/audit evidence. Startup recovery fails only interrupted running downloads and retains never-claimed pending
+  downloads. Manual Start success and failure use the standard accessible bottom-right transient grid status/error
+  foundation rather than a depot-specific inline message, while durable task, audit, and log evidence remains intact.
+  Disabling a profile or resetting the tool disables attached schedules without re-enabling them later;
   profile deletion is blocked while any schedule references it. Schedule configuration stores only the stable integer
   <code>profile_id</code> and never credentials, authenticated URLs, generated commands, or secret-bearing output. The application
   properties editor in the shared VCFDT configuration wizard saves desired-state text and syncs Monaco Editor before

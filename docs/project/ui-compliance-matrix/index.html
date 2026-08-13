@@ -3728,9 +3728,9 @@ read-only or unavailable surface has a mutation workflow.</p>
 </tr>
 <tr>
 <td><code>/ui/management/vcf-offline-depot</code> — settings, VCFDT, profiles, tasks</td>
-<td>Wizard-backed Tabulator and non-grid settings; ESX Storage/DNS references</td>
+<td>Wizard-backed Tabulator and non-grid settings; ESX Storage/DNS and Automation schedule references</td>
 <td>Profile fallback, settings summaries, validation, Tasks fallback, and task status</td>
-<td>Admin writes; reset confirmation; credential/identity rules and global-apply/task boundaries preserved</td>
+<td>Admin writes; contextual four-step schedule binds type/profile server-side; transient Start feedback; per-profile queue and exclusive identity/apply boundaries preserved</td>
 <td>Pass D/N/K/F/Z/V</td>
 <td>E1–E8</td>
 </tr>
@@ -3994,7 +3994,8 @@ are explicitly inventoried so route/template changes cannot silently escape the 
   <code>routes-wan-policy-dialog</code>.</li>
 <li>VCF workflows: <code>vcf-fqdn-modal</code>, <code>vcf-ldap-modal</code>, <code>vcf-trust-modal</code>, <code>vcf-sddc-deploy-modal</code>, <code>vcf-target-depot-modal</code>,
   <code>vcf-vault-import-modal</code>, <code>vcf-depot-profile-dialog</code>, <code>vcf-depot-tool-package-dialog</code>,
-  <code>vcf-depot-configuration-dialog</code>, <code>vcf-depot-tool-reset-modal</code>, and <code>vcf-registry-bundle-dialog</code>.</li>
+  <code>vcf-depot-configuration-dialog</code>, <code>vcf-depot-tool-reset-modal</code>, <code>vcf-depot-schedule-modal</code>, and
+  <code>vcf-registry-bundle-dialog</code>.</li>
 <li>Vaults and Monitor: <code>vault-create-modal</code>, <code>vault-entry-modal</code>, and <code>monitor-chart-modal</code>.</li>
 </ul>
 <p>Every wizard identifier above uses <code>createWizard(...)</code>, <code>data-atlaso-wizard-*</code>, an accessible name and description,
