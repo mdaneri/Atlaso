@@ -6,7 +6,6 @@ import json
 from collections import defaultdict
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[1]
 MANIFEST = ROOT / "docs" / "assets" / "screenshots" / "manifest.json"
 GALLERY = ROOT / "docs" / "reference" / "interface-gallery.md"

@@ -17,7 +17,6 @@ from types import ModuleType
 from typing import Iterable
 from urllib.parse import unquote, urlparse
 
-
 ROOT = Path(__file__).resolve().parents[1]
 DOCS = ROOT / "docs"
 CONFIG = ROOT / "zensical.toml"

@@ -8,7 +8,10 @@ from sqlalchemy import select
 from atlaso.app.models import AuditEvent, CaCertificate, NtpSettings, Setting
 from atlaso.app.seed import NTP_NTS_RESTORATION_SETTING_KEY, seed_initial_data
 from atlaso.app.services.ntp import dump_ntp_upstream_sources, ntp_upstream_sources
-from atlaso.app.services.settings_archive import export_settings_archive, restore_settings_archive
+from atlaso.app.services.settings_archive import (
+    export_settings_archive,
+    restore_settings_archive,
+)
 
 
 def test_nts_restoration_reenables_only_canonical_defaults_once(client):

@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 import json
 import logging
+import subprocess
+from dataclasses import dataclass
 from ipaddress import ip_address, ip_interface
 from pathlib import Path
-import subprocess
 
 from sqlalchemy import inspect, select
 from sqlalchemy.orm import Session
@@ -29,9 +29,8 @@ from atlaso.app.models import (
     VcfOfflineDepotSettings,
     VcfPrivateRegistrySettings,
     VlanInterface,
+    utcnow,
 )
-from atlaso.app.models import utcnow
-
 
 LOGGER = logging.getLogger("atlaso.networking")
 NETWORK_INVENTORY_CLEANUP_WARNING_KEY = "network.inventory_cleanup.warning"
@@ -470,7 +469,7 @@ def _disable_service_without_bind(settings: object, label: str, details: list[st
         return
     if _remove_interface_tokens(getattr(settings, "listen_address", ""), set())[0]:
         return
-    setattr(settings, "enabled", False)
+    settings.enabled = False
     details.append(f"disabled {label}: removed NIC was the only listen target")
 
 

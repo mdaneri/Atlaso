@@ -19,7 +19,6 @@ from atlaso.app.services.esx_storage import (
     validate_mounted_volume_path,
 )
 
-
 HELPER_PATH = Path(__file__).resolve().parents[1] / "scripts" / "appliance" / "atlaso-helper"
 
 
@@ -573,7 +572,7 @@ def test_esx_storage_page_and_dual_stack_api_contract(client):
         follow_redirects=False,
     )
     assert updated_share.status_code == 303, updated_share.text
-    edited = client.get(f"/api/v1/esx-storage/shares", headers=headers).json()[0]
+    edited = client.get("/api/v1/esx-storage/shares", headers=headers).json()[0]
     assert edited["ipv4_clients"] == ["0.0.0.0/0"]
     assert edited["ipv6_clients"] == ["::/0"]
     disabled_share = client.post(

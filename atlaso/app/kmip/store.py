@@ -17,7 +17,6 @@ from typing import Iterable
 from cryptography.exceptions import InvalidTag
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
-
 STORE_SCHEMA_VERSION = 2
 KEK_ENVELOPE_FORMAT = "atlaso-kmip-kek-v2"
 KEK_AAD = b"atlaso-kmip-kek-v2"

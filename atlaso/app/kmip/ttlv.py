@@ -7,7 +7,6 @@ from dataclasses import dataclass
 from enum import IntEnum
 from typing import Iterable
 
-
 MAX_MESSAGE_BYTES = 1_048_576
 MAX_NESTING_DEPTH = 16
 MAX_NODE_COUNT = 4096

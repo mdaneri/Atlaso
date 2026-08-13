@@ -2,11 +2,10 @@
 
 from datetime import timedelta
 
-from atlaso.app.models import utcnow
 from sqlalchemy import select
 
 from atlaso.app.config import get_settings
-from atlaso.app.models import MonitorSample
+from atlaso.app.models import MonitorSample, utcnow
 from atlaso.app.services.monitoring import (
     CpuCoreCounters,
     CpuCounters,

@@ -20,7 +20,6 @@ from atlaso.app.config import get_settings
 from atlaso.app.models import CaCertificate, CaProfile, CaSettings, utcnow
 from atlaso.app.secrets import decrypt_secret, encrypt_secret, secret_key_status
 
-
 CA_STAGED_CONFIG_PATH = "/var/lib/atlaso/apply/ca/atlaso-ca.json"
 CA_DEFAULT_PORTAL_HOSTNAME = "ca.atlaso.internal"
 CA_SERVER_PROFILE_NAME = "VCF service TLS"

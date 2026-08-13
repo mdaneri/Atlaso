@@ -1,11 +1,13 @@
 """Implement routes wan service behavior."""
 
-from ipaddress import ip_address, ip_network
 import re
+from ipaddress import ip_address, ip_network
 
 from atlaso.app.models import NatRule, Route, RoutingRule, WanPolicy
-from atlaso.app.services.firewall import FIREWALL_SOURCE_GROUP_REFERENCE_PREFIX, source_group_to_rule_source
-
+from atlaso.app.services.firewall import (
+    FIREWALL_SOURCE_GROUP_REFERENCE_PREFIX,
+    source_group_to_rule_source,
+)
 
 WAN_CONFIG_PATH = "/var/lib/atlaso/apply/wan/atlaso-wan.conf"
 WAN_MODES = ["interface"]

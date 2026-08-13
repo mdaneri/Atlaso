@@ -13,7 +13,6 @@ import tempfile
 import time
 from pathlib import Path
 
-
 ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 
 

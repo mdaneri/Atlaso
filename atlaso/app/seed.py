@@ -21,15 +21,15 @@ from atlaso.app.models import (
     FirewallSettings,
     KmsSettings,
     LdapSettings,
+    ManagedPackage,
     NatRule,
     NtpSettings,
-    ManagedPackage,
     PhysicalInterface,
     Route,
     ServiceState,
     Setting,
-    User,
     UpdateSource,
+    User,
     VcfBackupSettings,
     VcfDepotDownloadProfile,
     VcfOfflineDepotSettings,
@@ -37,11 +37,28 @@ from atlaso.app.models import (
     VlanInterface,
     WanPolicy,
 )
-from atlaso.app.services.appliance_settings import APPLIANCE_DNS_RECORD_DESCRIPTION, normalize_fqdn
-from atlaso.app.services.local_users import DEFAULT_LOCAL_USER_SHELL, POWERSHELL_LOCAL_USER_SHELL, stage_user_os_password
+from atlaso.app.security import ensure_appliance_instance_id
+from atlaso.app.services.appliance_settings import (
+    APPLIANCE_DNS_RECORD_DESCRIPTION,
+    normalize_fqdn,
+)
+from atlaso.app.services.dnsmasq import (
+    ensure_dns_authoritative_defaults,
+    join_domains,
+    split_domains,
+    validate_dns_record,
+)
 from atlaso.app.services.ldap import LDAP_DEFAULT_HOSTNAME, LDAP_STAGED_CONFIG_PATH
-from atlaso.app.services.dnsmasq import ensure_dns_authoritative_defaults, join_domains, split_domains, validate_dns_record
-from atlaso.app.services.networking import normalize_interface_mode, normalize_interface_role, normalize_ipv4_method
+from atlaso.app.services.local_users import (
+    DEFAULT_LOCAL_USER_SHELL,
+    POWERSHELL_LOCAL_USER_SHELL,
+    stage_user_os_password,
+)
+from atlaso.app.services.networking import (
+    normalize_interface_mode,
+    normalize_interface_role,
+    normalize_ipv4_method,
+)
 from atlaso.app.services.ntp import (
     NTP_DEFAULT_HOSTNAME,
     NTP_STAGED_CONFIG_PATH,
@@ -49,11 +66,12 @@ from atlaso.app.services.ntp import (
     dump_ntp_upstream_sources,
     ntp_upstream_sources,
 )
-from atlaso.app.services.service_registry import RETIRED_SERVICE_IDS, SERVICE_STATE_DEFAULTS
+from atlaso.app.services.service_registry import (
+    RETIRED_SERVICE_IDS,
+    SERVICE_STATE_DEFAULTS,
+)
 from atlaso.app.services.vcf_backups import VCF_BACKUP_DEFAULT_USERNAME
 from atlaso.app.services.vcf_offline_depot import VCF_DEPOT_DEFAULT_USERNAME
-from atlaso.app.security import ensure_appliance_instance_id
-
 
 VCF_BACKUP_USERNAME = VCF_BACKUP_DEFAULT_USERNAME
 VCF_DEPOT_USERNAME = VCF_DEPOT_DEFAULT_USERNAME

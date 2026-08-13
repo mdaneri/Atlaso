@@ -1,21 +1,30 @@
 """Test dns dhcp behavior."""
 
-from ipaddress import ip_address
 import re
+from ipaddress import ip_address
 
-from atlaso.app.models import NtpSettings, DhcpOption, DhcpReservation, DhcpScope, DhcpSettings, DnsRecord, DnsSettings, PhysicalInterface, VlanInterface
-from atlaso.app.services.ntp import NTP_DEFAULT_UPSTREAM_SERVERS, dump_ntp_upstream_sources, ntp_upstream_sources, parse_ntp_source, render_ntp_config, validate_ntp_state
+from atlaso.app.models import (
+    DhcpOption,
+    DhcpReservation,
+    DhcpScope,
+    DhcpSettings,
+    DnsRecord,
+    DnsSettings,
+    NtpSettings,
+    PhysicalInterface,
+    VlanInterface,
+)
 from atlaso.app.services.dnsmasq import (
     DHCP_DENY_RESERVATION_DESCRIPTION_PREFIX,
-    DNSMASQ_LEASE_FILE_PATH,
     DNSMASQ_DNSSEC_TRUST_ANCHORS_PATH,
-    dump_dns_record_data,
+    DNSMASQ_LEASE_FILE_PATH,
     compact_dhcp_range_expression,
     dhcp_bind_target_families,
     dhcp_bind_target_names,
     dhcp_dns_upstream_required,
     dns_domain_warnings,
     dns_reverse_records,
+    dump_dns_record_data,
     join_conditional_forwarders,
     parse_dhcp_range_expression,
     parse_dnsmasq_leases,
@@ -25,11 +34,19 @@ from atlaso.app.services.dnsmasq import (
     render_zone_file,
     split_conditional_forwarders,
     validate_authoritative_dns_record,
-    validate_dns_record,
     validate_dhcp_bind_targets,
-    validate_dns_listen_targets,
     validate_dhcp_settings,
+    validate_dns_listen_targets,
+    validate_dns_record,
     validate_dns_settings,
+)
+from atlaso.app.services.ntp import (
+    NTP_DEFAULT_UPSTREAM_SERVERS,
+    dump_ntp_upstream_sources,
+    ntp_upstream_sources,
+    parse_ntp_source,
+    render_ntp_config,
+    validate_ntp_state,
 )
 
 

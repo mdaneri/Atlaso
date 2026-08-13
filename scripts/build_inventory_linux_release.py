@@ -17,7 +17,6 @@ from urllib.parse import quote
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
-
 ROOT = Path(__file__).resolve().parents[1]
 INVENTORY_VERSION_RE = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+\+[0-9]+$")
 

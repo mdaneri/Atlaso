@@ -29,7 +29,8 @@ The wrapper regenerates:
 
 - `requirements-appliance-bootstrap.lock`;
 - `requirements-appliance.lock`;
-- `requirements-docs.lock`; and
+- `requirements-docs.lock`;
+- `requirements-static-analysis.lock`; and
 - `requirements-release-tools.lock`.
 
 Every resolver invocation includes `--uploaded-prior-to=P7D` and `--generate-hashes`. Locks that need pip's unsafe

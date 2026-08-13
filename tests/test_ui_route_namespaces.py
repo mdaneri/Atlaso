@@ -16,7 +16,6 @@ from atlaso.app.ui_routes import (
     safe_public_return_path,
 )
 
-
 PROTOCOL_ROUTE_INVENTORY = {
     "/PROD",
     "/PROD/",

@@ -10,7 +10,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable
 
-
 CONTRACT_PATH = Path(__file__).with_name("contracts") / "vcf_9_1.json"
 TRACE_SCHEMA_VERSION = 1
 REQUIRED_FIELDS = {

@@ -8,7 +8,11 @@ from pathlib import Path
 import pytest
 from sqlalchemy import select
 
-from atlaso.app.services.automation import next_cron_run, parse_cron_expression, parse_script_arguments
+from atlaso.app.services.automation import (
+    next_cron_run,
+    parse_cron_expression,
+    parse_script_arguments,
+)
 
 
 def login(client):
@@ -745,7 +749,12 @@ def test_due_vcf_schedules_share_global_download_lock_and_record_skipped_run(cli
         client: HTTP test client used to exercise the Atlaso application.
     """
     from atlaso.app.database import SessionLocal
-    from atlaso.app.models import AuditEvent, Job, JobStatus, Schedule, VcfDepotDownloadProfile
+    from atlaso.app.models import (
+        AuditEvent,
+        JobStatus,
+        Schedule,
+        VcfDepotDownloadProfile,
+    )
     from atlaso.app.services.automation import enqueue_due_schedules
 
     client.get("/login")
@@ -885,7 +894,13 @@ def test_due_vcf_schedule_records_software_id_collision_as_skipped(client):
         client: HTTP test client used to exercise the Atlaso application.
     """
     from atlaso.app.database import SessionLocal
-    from atlaso.app.models import AuditEvent, Job, JobStatus, Schedule, VcfDepotDownloadProfile
+    from atlaso.app.models import (
+        AuditEvent,
+        Job,
+        JobStatus,
+        Schedule,
+        VcfDepotDownloadProfile,
+    )
     from atlaso.app.services.automation import enqueue_due_schedules
 
     client.get("/login")
@@ -995,7 +1010,12 @@ def test_schedule_edit_run_now_and_script_dependency_guards(client):
         client: HTTP test client used to exercise the Atlaso application.
     """
     from atlaso.app.database import SessionLocal
-    from atlaso.app.models import AutomationScript, AutomationScriptRevision, Job, Schedule
+    from atlaso.app.models import (
+        AutomationScript,
+        AutomationScriptRevision,
+        Job,
+        Schedule,
+    )
     from atlaso.app.worker import run_worker_once
 
     login(client)
@@ -1069,9 +1089,17 @@ def test_settings_archive_restores_sources_and_automation_disabled(client):
         client: HTTP test client used to exercise the Atlaso application.
     """
     from atlaso.app.database import SessionLocal
-    from atlaso.app.models import AutomationScript, AutomationScriptRevision, Schedule, UpdateSource
+    from atlaso.app.models import (
+        AutomationScript,
+        AutomationScriptRevision,
+        Schedule,
+        UpdateSource,
+    )
     from atlaso.app.services.automation import create_script_revision
-    from atlaso.app.services.settings_archive import export_settings_archive, restore_settings_archive
+    from atlaso.app.services.settings_archive import (
+        export_settings_archive,
+        restore_settings_archive,
+    )
 
     client.get("/login")
     with SessionLocal() as db:

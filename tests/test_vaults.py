@@ -319,7 +319,12 @@ def test_dynamic_kickstart_derives_exact_vault_scope_without_caching(client):
         client: HTTP test client used to exercise the Atlaso application.
     """
     from atlaso.app.database import SessionLocal
-    from atlaso.app.models import EsxiKickstart, EsxiKickstartVaultBinding, EsxiPxeHost, Vault
+    from atlaso.app.models import (
+        EsxiKickstart,
+        EsxiKickstartVaultBinding,
+        EsxiPxeHost,
+        Vault,
+    )
     from atlaso.app.services.esxi_pxe import content_hash, kickstart_template_variables
     from atlaso.app.services.vaults import (
         VaultEntryInput,
@@ -1080,7 +1085,10 @@ def test_settings_archive_excludes_and_restore_clears_vaults(client):
     """
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import Vault
-    from atlaso.app.services.settings_archive import export_settings_archive, restore_settings_archive
+    from atlaso.app.services.settings_archive import (
+        export_settings_archive,
+        restore_settings_archive,
+    )
     from atlaso.app.services.vaults import VaultEntryInput, upsert_vault_entry
 
     with SessionLocal() as db:
@@ -1117,7 +1125,11 @@ def test_worker_stages_selected_vault_and_redacts_captured_output(client, monkey
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import AutomationScript, Job, Vault
     from atlaso.app.services.automation import create_script_revision
-    from atlaso.app.services.vaults import VaultEntryInput, upsert_vault_entry, vault_scope_identity
+    from atlaso.app.services.vaults import (
+        VaultEntryInput,
+        upsert_vault_entry,
+        vault_scope_identity,
+    )
     from atlaso.app.worker import _run_managed_script
 
     captured = {}

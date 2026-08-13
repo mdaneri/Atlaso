@@ -7,7 +7,16 @@ from datetime import datetime, timezone
 from ipaddress import IPv4Address, ip_address, ip_interface, ip_network
 from pathlib import PurePosixPath
 
-from atlaso.app.models import DhcpOption, DhcpReservation, DhcpScope, DhcpSettings, DnsRecord, DnsSettings, PhysicalInterface, VlanInterface
+from atlaso.app.models import (
+    DhcpOption,
+    DhcpReservation,
+    DhcpScope,
+    DhcpSettings,
+    DnsRecord,
+    DnsSettings,
+    PhysicalInterface,
+    VlanInterface,
+)
 
 DNS_CONDITIONAL_FORWARDERS_SETTING_KEY = "dns.conditional_forwarders"
 DNSMASQ_LEASE_FILE_PATH = "/var/lib/atlaso/dnsmasq/dhcp.leases"

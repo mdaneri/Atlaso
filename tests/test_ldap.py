@@ -4,19 +4,25 @@ import io
 import json
 import tarfile
 
-from atlaso.app.models import LdapGroup, LdapGroupMembership, LdapOrganization, LdapSettings, LdapUser
+from atlaso.app.models import (
+    LdapGroup,
+    LdapGroupMembership,
+    LdapOrganization,
+    LdapSettings,
+    LdapUser,
+)
 from atlaso.app.services.ldap import (
     clear_pending_ldap_password,
     decrypt_recovery_payload,
     encrypt_recovery_payload,
     ldap_apply_payload,
     manual_vcf_bundle,
+    mark_ldap_apply_complete,
     validate_group_cycles,
-    validate_ldap_state,
     validate_ldap_password,
     validate_ldap_recovery_payload,
+    validate_ldap_state,
     vcf_ldap_settings,
-    mark_ldap_apply_complete,
 )
 
 

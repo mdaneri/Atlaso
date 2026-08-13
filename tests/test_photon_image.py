@@ -1,7 +1,5 @@
 """Test photon image behavior."""
 
-from pathlib import Path
-
 import hashlib
 import importlib.util
 import json
@@ -12,6 +10,7 @@ import struct
 import subprocess
 import sys
 import zipfile
+from pathlib import Path
 
 import pytest
 

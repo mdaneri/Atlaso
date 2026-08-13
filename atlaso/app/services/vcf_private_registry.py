@@ -8,7 +8,6 @@ from ipaddress import ip_address
 from atlaso.app.models import VcfPrivateRegistrySettings, VcfRegistryBundle
 from atlaso.app.services.dnsmasq import split_addresses, split_interfaces
 
-
 VCF_REGISTRY_DEFAULT_STORAGE_PATH = "/mnt/atlaso-vcf-registry"
 VCF_REGISTRY_DEFAULT_CONFIG_PATH = "/etc/atlaso/harbor/harbor.yml"
 VCF_REGISTRY_DEFAULT_PROJECT = "vcf-supervisor-services"
@@ -113,13 +112,13 @@ def render_harbor_config(settings: VcfPrivateRegistrySettings) -> str:
         "# Managed by Atlaso. Local changes may be overwritten.",
         "# Dry-run preview of desired Harbor registry endpoint for VCF Supervisor Services.",
         f"hostname: {settings.hostname}",
-        f"http:",
-        f"  port: 80",
-        f"https:",
+        "http:",
+        "  port: 80",
+        "https:",
         f"  port: {config_port}",
         f"  certificate: /etc/atlaso/harbor/certs/{certificate_name}.crt",
         f"  private_key: /etc/atlaso/harbor/certs/{certificate_name}.key",
-        f"harbor_admin_password: <provisioned-by-atlaso-helper>",
+        "harbor_admin_password: <provisioned-by-atlaso-helper>",
         f"data_volume: {storage_path}",
         f"external_url: https://{vcf_registry_endpoint(settings)}",
         "",

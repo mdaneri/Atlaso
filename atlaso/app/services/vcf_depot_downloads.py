@@ -13,7 +13,6 @@ from sqlalchemy.orm import Session
 
 from atlaso.app.models import Job, JobStatus, Schedule, VcfDepotDownloadProfile, utcnow
 
-
 VCF_DEPOT_JOB_TYPE = "vcf-depot-download"
 ACTIVE_VCF_DEPOT_JOB_STATUSES = (JobStatus.PENDING.value, JobStatus.RUNNING.value)
 VCF_DEPOT_TASK_LOG_DIR = "/var/lib/atlaso/vcfDownloadTool/task-logs"

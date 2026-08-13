@@ -1,5 +1,8 @@
 """Implement token service behavior."""
 
+from uuid import uuid4
+
+from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from atlaso.app.audit import record_audit
@@ -11,14 +14,12 @@ from atlaso.app.security import (
     create_jwt,
     default_expiration,
     hash_token,
+    normalize_roles,
     primary_role,
     roles_allow_scopes,
-    user_roles,
-    normalize_roles,
     scopes_from_string,
+    user_roles,
 )
-from fastapi import HTTPException
-from uuid import uuid4
 
 
 def token_to_response(token: ApiToken) -> ApiTokenResponse:

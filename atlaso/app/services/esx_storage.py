@@ -2,16 +2,15 @@
 
 from __future__ import annotations
 
+import json
+import re
 from dataclasses import dataclass
 from hashlib import sha256
 from ipaddress import ip_address, ip_interface, ip_network
-import json
 from pathlib import PurePosixPath
-import re
 from typing import Any, Iterable
 
 from atlaso.app.models import EsxNfsShare, EsxStorageSettings, EsxStorageVolume
-
 
 ESX_STORAGE_STAGED_CONFIG_PATH = "/var/lib/atlaso/apply/esx-storage/atlaso-esx-storage.json"
 ESX_STORAGE_MOUNT_ROOT = "/mnt/atlaso-esx-storage"

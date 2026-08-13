@@ -8,11 +8,12 @@ time after validation and rollback behavior are reviewed.
 
 from __future__ import annotations
 
-import json
 import base64
 import ctypes
 import ctypes.util
+import hashlib
 import hmac
+import json
 import os
 import re
 import shutil
@@ -23,7 +24,6 @@ import sys
 import tarfile
 import tempfile
 import time
-import hashlib
 import uuid
 from datetime import datetime, timezone
 from ipaddress import ip_address, ip_interface, ip_network
@@ -590,7 +590,7 @@ def _usage() -> int:
 
     """
     groups = ", ".join(sorted(COMMANDS))
-    print(f"usage: atlaso-helper <group> <action> [--real] [path]", file=sys.stderr)
+    print("usage: atlaso-helper <group> <action> [--real] [path]", file=sys.stderr)
     print(f"groups: {groups}", file=sys.stderr)
     return 2
 
@@ -2660,25 +2660,50 @@ def _ldap_config_errors(payload: dict) -> list[str]:
         visiting: set[int] = set()
         visited: set[int] = set()
 
-        def visit(group_id: int) -> None:
+        def visit(
+            group_id: int,
+            *,
+            visiting_groups: set[int],
+            visited_groups: set[int],
+            group_edges: dict[int, set[int]],
+            organization_label: str,
+        ) -> None:
             """Perform visit.
 
             Args:
                 group_id: Stable identifier of the associated group resource.
+                visiting_groups: Group identifiers in the active traversal path.
+                visited_groups: Group identifiers whose descendants were already checked.
+                group_edges: Nested group membership edges keyed by group identifier.
+                organization_label: Stable label used in validation errors.
             """
-            if group_id in visiting:
-                errors.append(f"{label}: nested LDAP groups contain a cycle.")
+            if group_id in visiting_groups:
+                errors.append(
+                    f"{organization_label}: nested LDAP groups contain a cycle."
+                )
                 return
-            if group_id in visited:
+            if group_id in visited_groups:
                 return
-            visiting.add(group_id)
-            for child_id in edges.get(group_id, set()):
-                visit(child_id)
-            visiting.remove(group_id)
-            visited.add(group_id)
+            visiting_groups.add(group_id)
+            for child_id in group_edges.get(group_id, set()):
+                visit(
+                    child_id,
+                    visiting_groups=visiting_groups,
+                    visited_groups=visited_groups,
+                    group_edges=group_edges,
+                    organization_label=organization_label,
+                )
+            visiting_groups.remove(group_id)
+            visited_groups.add(group_id)
 
         for group_id in edges:
-            visit(group_id)
+            visit(
+                group_id,
+                visiting_groups=visiting,
+                visited_groups=visited,
+                group_edges=edges,
+                organization_label=label,
+            )
     if service.get("enabled") and service.get("ldaps_enabled"):
         for path_value, label, private_key in [
             (service.get("certificate_path"), "LDAP certificate", False),
@@ -2732,7 +2757,6 @@ def _render_ldap_slapd_config(
         runtime_root: Filesystem path associated with runtime root.
     """
     service = payload["service"]
-    policy = service["password_policy"]
     lines = [
         "# Managed by Atlaso. Local changes may be overwritten.",
         f"include {_openldap_schema_path('core')}",
@@ -2765,7 +2789,7 @@ def _render_ldap_slapd_config(
             "",
         ]
     )
-    for index, organization in enumerate(payload["organizations"], start=1):
+    for organization in payload["organizations"]:
         if not organization.get("enabled", True):
             continue
         suffix = organization["suffix_dn"]
@@ -4181,7 +4205,9 @@ def _parse_ntpd_server(value: str) -> tuple[str, int | None, bool]:
     except ValueError:
         normalized_host = host.strip().strip(".").lower()
         if not HOSTNAME_PATTERN.fullmatch(normalized_host):
-            raise ValueError("host must be an IPv4 address, IPv6 address, or fully qualified DNS name")
+            raise ValueError(
+                "host must be an IPv4 address, IPv6 address, or fully qualified DNS name"
+            ) from None
         return normalized_host, port, False
     return str(parsed_host), port, True
 
@@ -7833,7 +7859,7 @@ def _apply_wan_target_routes(parsed: dict[str, list[dict[str, str]]]) -> int:
                 result = _run_default_gateway_route_replace(gateway, interface_name, table_id)
                 if result != 0:
                     return result
-            for version, gateway in gateways_by_version.items():
+            for gateway in gateways_by_version.values():
                 result = _run_default_gateway_route_replace(gateway, interface_name)
                 if result != 0:
                     return result
@@ -9656,7 +9682,7 @@ class _UpdateRedirectHandler(HTTPRedirectHandler):
         super().__init__()
         self.authenticated_origin = authenticated_origin
 
-    def redirect_request(self, req, fp, code, msg, headers, newurl):  # type: ignore[no-untyped-def]
+    def redirect_request(self, req, fp, code, msg, headers, newurl):  # type: ignore[no-untyped-def]  # urllib defines this compatibility hook without a typed parameter contract.
         """Perform redirect request.
 
         Args:
@@ -10701,7 +10727,7 @@ def _install_release_owned_files(release_root: Path, backup_root: Path) -> list[
             owned.append((key, ATLASO_UPDATE_TRUST_DIR / key.name, 0o644))
 
     backups: list[tuple[Path | None, Path]] = []
-    for source, destination, mode in owned:
+    for source, destination, _mode in owned:
         if not source.is_file():
             raise ValueError(f"Atlaso release is missing {source.relative_to(release_root)}")
         if (

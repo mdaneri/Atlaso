@@ -11,7 +11,6 @@ import sys
 import tempfile
 from pathlib import Path
 
-
 DEPENDENCY_IMPORTS = [
     "argon2",
     "authlib",

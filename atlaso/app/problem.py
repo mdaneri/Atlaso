@@ -1,13 +1,18 @@
 """Render consistent problem responses and browser-login redirects."""
 
-from uuid import uuid4
 from urllib.parse import quote
+from uuid import uuid4
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, RedirectResponse
 
-from atlaso.app.ui_routes import PUBLIC_UI_ROOT, management_ui_path, public_ui_path, safe_public_return_path
+from atlaso.app.ui_routes import (
+    PUBLIC_UI_ROOT,
+    management_ui_path,
+    public_ui_path,
+    safe_public_return_path,
+)
 
 
 def redacted_request_path(path: str) -> str:

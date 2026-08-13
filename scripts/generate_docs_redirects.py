@@ -9,7 +9,6 @@ from pathlib import Path
 
 from check_docs import DOCS, ROOT, parse_front_matter
 
-
 SITE = ROOT / "site" / "docs"
 
 

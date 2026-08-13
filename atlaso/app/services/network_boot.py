@@ -58,8 +58,8 @@ from atlaso.app.services.esxi_pxe import (
     normalize_pxe_mac,
     render_kickstart_for_host,
 )
-from atlaso.app.services.vaults import kickstart_vault_values_for_markers
 from atlaso.app.services.release_updates import verify_signed_json
+from atlaso.app.services.vaults import kickstart_vault_values_for_markers
 
 try:
     import fcntl

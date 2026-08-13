@@ -16,20 +16,35 @@ from sqlalchemy.orm import Session
 from atlaso.app.adapters.system import SystemAdapter
 from atlaso.app.config import get_settings
 from atlaso.app.database import SessionLocal, init_db
-from atlaso.app.models import AuditEvent, AutomationScriptRevision, Job, JobStatus, JobStep, Vault, utcnow
+from atlaso.app.models import (
+    AuditEvent,
+    AutomationScriptRevision,
+    Job,
+    JobStatus,
+    JobStep,
+    Vault,
+    utcnow,
+)
 from atlaso.app.services.appliance_update import (
     APPLIANCE_UPDATE_EXECUTION_ORDER,
     APPLIANCE_UPDATE_FINALIZER_PATH,
     UPDATE_STREAM_LABELS,
     ensure_appliance_update_job_steps,
 )
-from atlaso.app.services.automation import enqueue_due_schedules, json_object, normalize_script_content
+from atlaso.app.services.automation import (
+    enqueue_due_schedules,
+    json_object,
+    normalize_script_content,
+)
 from atlaso.app.services.network_boot import (
     cleanup_network_boot_upload,
     recover_interrupted_network_boot_media_swaps,
 )
-from atlaso.app.services.vaults import decrypted_vault_values, redact_secret_values, vault_scope_identity
-
+from atlaso.app.services.vaults import (
+    decrypted_vault_values,
+    redact_secret_values,
+    vault_scope_identity,
+)
 
 LOGGER = logging.getLogger("atlaso.worker")
 POLL_SECONDS = 5
@@ -320,6 +335,7 @@ def _run_appliance_update(job_id: str) -> None:
     Args:
         job_id: Stable identifier of the associated job resource.
     """
+    from atlaso.app.services.update_sources import update_source_credentials
     from atlaso.app.ui import (
         aggregate_appliance_update_results,
         appliance_update_exception_result,
@@ -327,7 +343,6 @@ def _run_appliance_update(job_id: str) -> None:
         complete_appliance_update_task,
         execute_appliance_update_job,
     )
-    from atlaso.app.services.update_sources import update_source_credentials
 
     with SessionLocal() as db:
         job = db.get(Job, job_id)

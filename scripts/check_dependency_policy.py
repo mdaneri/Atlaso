@@ -9,7 +9,6 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[1]
 MINIMUM_AGE_DAYS = 7
 UPLOAD_CUTOFF = f"P{MINIMUM_AGE_DAYS}D"
@@ -46,6 +45,11 @@ LOCK_POLICIES = (
         True,
     ),
     LockPolicy("requirements-docs.lock", ("requirements-docs.in",), False),
+    LockPolicy(
+        "requirements-static-analysis.lock",
+        ("requirements-static-analysis.in",),
+        False,
+    ),
     LockPolicy(
         "requirements-release-tools.lock",
         ("requirements-release-tools.in",),

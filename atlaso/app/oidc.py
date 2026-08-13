@@ -11,7 +11,7 @@ from time import monotonic
 from typing import Annotated
 from urllib.parse import urlencode
 
-from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Path, Request, Response, status
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 from sqlalchemy import select
@@ -28,41 +28,51 @@ from atlaso.app.models import (
     utcnow,
 )
 from atlaso.app.openapi import DocumentedAPIRoute
-from atlaso.app.services.identity_credentials import verify_credentials
-from atlaso.app.services.appliance_settings import normalize_fqdn
 from atlaso.app.schemas import (
     OidcClientCreate,
     OidcClientCreated,
     OidcClientEnabledUpdate,
-    OidcClientUpdate,
     OidcClientResponse,
     OidcClientSecretRotated,
+    OidcClientUpdate,
     OidcGroupMappingCreate,
     OidcGroupMappingResponse,
     OidcGroupMappingUpdate,
+    OidcIntegrationExport,
     OidcProviderSettingsResponse,
     OidcProviderSettingsUpdate,
-    OidcIntegrationExport,
     OidcSigningKeyResponse,
     OidcSubjectResponse,
 )
 from atlaso.app.security import Identity, require_scope
+from atlaso.app.services.appliance_settings import normalize_fqdn
+from atlaso.app.services.dnsmasq import (
+    join_interfaces,
+    split_addresses,
+    split_interfaces,
+)
+from atlaso.app.services.identity_credentials import verify_credentials
 from atlaso.app.services.oidc import (
     OIDC_AUTHORIZATION_FLOW_AVAILABLE,
     OidcConfigurationError,
     OidcConflictError,
+    begin_authorization,
+    client_by_public_id,
     create_client,
     create_group_mapping,
-    discovery_document,
     delete_retired_signing_key,
+    discovery_document,
     enabled_login_organizations,
     ensure_provider_settings,
     expected_issuer_url,
     generate_signing_key,
     get_client,
     group_mapping_to_dict,
-    issuer_endpoint_urls,
+    identity_from_source,
     integration_export,
+    issue_authorization_code,
+    issue_tokens,
+    issuer_endpoint_urls,
     jwks_document,
     list_clients,
     list_group_mappings,
@@ -70,25 +80,18 @@ from atlaso.app.services.oidc import (
     normalize_issuer_url,
     oidc_client_to_dict,
     provider_validation_errors,
-    begin_authorization,
-    client_by_public_id,
-    identity_from_source,
-    issue_authorization_code,
-    issue_tokens,
     redeem_authorization_code,
     resolve_login_source,
+    rotate_client_secret,
     scoped_identity_claims,
+    signing_key_to_dict,
+    update_client,
+    update_group_mapping,
+    validate_all_mapping_contexts,
     validate_bearer_token,
     validate_userinfo_claims,
-    validate_all_mapping_contexts,
-    update_group_mapping,
-    update_client,
     verify_client_secret,
-    rotate_client_secret,
-    signing_key_to_dict,
 )
-from atlaso.app.services.dnsmasq import join_interfaces, split_addresses, split_interfaces
-
 
 public_router = APIRouter(prefix="/identity", tags=["OpenID Connect"])
 admin_router = APIRouter(

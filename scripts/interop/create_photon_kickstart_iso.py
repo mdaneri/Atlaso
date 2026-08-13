@@ -48,7 +48,7 @@ def iso_record_exists(iso, *, iso_path: str) -> bool:
     """
     try:
         iso.get_record(iso_path=iso_path)
-    except Exception:
+    except Exception:  # noqa: BLE001 - pycdlib uses several exception classes for a missing record.
         return False
     return True
 
@@ -65,7 +65,7 @@ def remove_file_if_present(iso, *, iso_path: str, rr_name: str) -> None:
     for lookup in ({"iso_path": iso_path}, {"rr_path": rr_path}):
         try:
             iso.get_record(**lookup)
-        except Exception:
+        except Exception:  # noqa: BLE001 - pycdlib uses several exception classes for a missing record.
             continue
         iso.rm_file(**lookup)
         return
@@ -107,7 +107,7 @@ def replace_grub_config(iso) -> str:
     for iso_path, rr_name in GRUB_CONFIG_TARGETS:
         try:
             replace_text_file(iso, iso_path=iso_path, rr_name=rr_name, text=GRUB_BOOT_CONFIG)
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - collect every pycdlib replacement failure for one report.
             failures.append(f"{iso_path}: {exc}")
             continue
         return iso_path
