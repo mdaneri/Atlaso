@@ -12043,6 +12043,21 @@ def _esx_storage_replace_managed_fstab(lines: list[str]) -> None:
     _write_secret_file(ESX_STORAGE_FSTAB_PATH, f"{cleaned}\n\n{block}\n" if cleaned else f"{block}\n", 0o644)
 
 
+def _esx_storage_managed_fstab_lines() -> list[str]:
+    """Return the current root-owned ESX Storage fstab block entries."""
+    if not ESX_STORAGE_FSTAB_PATH.is_file():
+        return []
+    text = ESX_STORAGE_FSTAB_PATH.read_text(encoding="utf-8")
+    pattern = re.compile(
+        rf"(?ms)^\s*{re.escape(ESX_STORAGE_FSTAB_BEGIN)}\s*$\n(?P<body>.*?)"
+        rf"^\s*{re.escape(ESX_STORAGE_FSTAB_END)}\s*$"
+    )
+    match = pattern.search(text)
+    if match is None:
+        return []
+    return [line for line in match.group("body").splitlines() if line.strip()]
+
+
 def _esx_storage_write_disk_allowlist(lines: list[str], *, preserve_existing: bool) -> None:
     """Persist exact mounted-disk claims before boot-sensitive host changes.
 
@@ -12132,6 +12147,7 @@ def _esx_storage_apply(payload: dict[str, object]) -> dict[str, object]:
     inventory = _esx_storage_inventory()
     inventory_by_id = {str(item.get("stable_device_id") or ""): item for item in inventory}
     fstab_lines: list[str] = []
+    rollback_safe_fstab_lines = _esx_storage_managed_fstab_lines()
     disk_allowlist_lines: list[str] = []
     commands: list[list[str]] = []
     volumes_by_id: dict[object, dict[str, object]] = {}
@@ -12182,6 +12198,9 @@ def _esx_storage_apply(payload: dict[str, object]) -> dict[str, object]:
             if uuid_result.returncode != 0 or not fs_uuid or type_result.stdout.strip() != "ext4":
                 raise ValueError(f"disk {stable_id} is not a readable ext4 filesystem after initialization")
             fstab_lines.append(f"UUID={fs_uuid} {mount_path} ext4 defaults,nofail,x-systemd.device-timeout=30 0 2")
+            _esx_storage_replace_managed_fstab(
+                list(dict.fromkeys([*rollback_safe_fstab_lines, *fstab_lines]))
+            )
             volume["filesystem_uuid"] = fs_uuid
         else:
             findmnt = _command_path("findmnt")

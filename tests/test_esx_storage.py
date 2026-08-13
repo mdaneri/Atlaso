@@ -479,6 +479,35 @@ def test_helper_preserves_validated_disk_claims_until_apply_succeeds(monkeypatch
     assert allowlist.read_text(encoding="utf-8") == f"{new_claim}\n"
 
 
+def test_helper_preserves_each_formatted_disk_mount_until_apply_succeeds(monkeypatch, tmp_path: Path):
+    """Verify that a later format failure retains earlier UUID mount contracts.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+        tmp_path: Pytest-provided isolated filesystem root.
+    """
+    helper = load_helper_module()
+    fstab = tmp_path / "fstab"
+    fstab.write_text(
+        "UUID=os-root / ext4 defaults 0 1\n"
+        f"{helper.ESX_STORAGE_FSTAB_BEGIN}\n"
+        "UUID=old /mnt/old ext4 defaults,nofail 0 2\n"
+        f"{helper.ESX_STORAGE_FSTAB_END}\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(helper, "ESX_STORAGE_FSTAB_PATH", fstab)
+    existing = helper._esx_storage_managed_fstab_lines()
+    new_line = "UUID=new /mnt/new ext4 defaults,nofail,x-systemd.device-timeout=30 0 2"
+
+    helper._esx_storage_replace_managed_fstab(list(dict.fromkeys([*existing, new_line])))
+
+    assert helper._esx_storage_managed_fstab_lines() == [
+        "UUID=old /mnt/old ext4 defaults,nofail 0 2",
+        new_line,
+    ]
+    assert "UUID=os-root / ext4 defaults 0 1" in fstab.read_text(encoding="utf-8")
+
+
 def test_helper_initialized_disk_retry_accepts_expected_mount_among_bind_mounts():
     """Verify that helper initialized disk retry accepts expected mount among bind mounts."""
     helper = load_helper_module()

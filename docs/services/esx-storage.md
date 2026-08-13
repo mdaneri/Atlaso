@@ -108,8 +108,9 @@ reviewed and revalidated; `/dev/sdX` is never accepted.
 
 The helper inventories the disk again immediately before `mkfs.ext4`. If any safety property changed, apply stops before
 formatting. Formatting is deliberately not rolled back. If a later mount, export, service, DNS, or firewall step fails,
-the successfully created ext4 filesystem remains intact and an idempotent retry continues from it. V1 has no wipe,
-reformat, or delete-data action.
+the successfully created ext4 filesystem and its UUID-based managed fstab entry remain intact, so boot verification and
+an idempotent retry continue from it. Each formatted disk is persisted before apply advances to another failure-prone
+volume. V1 has no wipe, reformat, or delete-data action.
 
 ## Share paths and exports
 
