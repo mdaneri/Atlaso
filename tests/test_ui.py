@@ -5384,6 +5384,16 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
     enabled_oidc_with_invalid_port["data"]["oidc_provider_settings"][0]["port"] = 0
     enabled_oidc_with_invalid_crypto = deepcopy(enabled_oidc_with_mismatched_address)
     enabled_oidc_with_invalid_crypto["data"]["oidc_provider_settings"][0]["listen_address"] = "192.168.50.1"
+    enabled_oidc_with_extra_active_key = deepcopy(enabled_oidc_with_invalid_crypto)
+    enabled_oidc_with_extra_active_key["data"]["oidc_signing_keys"].append(
+        {
+            "kid": "archive-extra-active-key",
+            "private_key_encrypted": "encrypted-key",
+            "public_jwk_json": '{"d":"private"}',
+            "status": "active",
+            "active_slot": None,
+        }
+    )
     invalid_ca_private_key = deepcopy(archive)
     invalid_ca_private_key["data"]["ca_settings"][0]["root_private_key_encrypted"] = "not-encrypted"
     invalid_storage_state = deepcopy(archive)
@@ -5569,6 +5579,7 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
         (enabled_oidc_with_mismatched_address, "has listener addresses not derived from its interfaces"),
         (enabled_oidc_with_invalid_port, "has an invalid HTTPS port"),
         (enabled_oidc_with_invalid_crypto, "OIDC cryptographic state is invalid"),
+        (enabled_oidc_with_extra_active_key, "has a noncanonical active slot"),
         (invalid_ca_private_key, "Certificate Authority key state is invalid"),
         (invalid_storage_state, "ESX Storage state is invalid: Datastore invalid-share must use NFS 3 or NFS 4.1"),
         (invalid_esxi_host_mac, "esxi_pxe_hosts' has an invalid MAC address"),

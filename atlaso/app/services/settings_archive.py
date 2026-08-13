@@ -1950,14 +1950,38 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
     enabled_oidc_rows = [
         row for row in data.get("oidc_provider_settings", []) if row.get("enabled", False)
     ]
-    if enabled_oidc_rows:
-        active_signing_key_ready = any(
-            str(row.get("status") or "") == "active"
-            and row.get("active_slot") == 1
-            and bool(str(row.get("private_key_encrypted") or ""))
-            and bool(str(row.get("public_jwk_json") or ""))
-            for row in data.get("oidc_signing_keys", [])
+    signing_key_rows = data.get("oidc_signing_keys", [])
+    signing_key_ids: set[str] = set()
+    active_signing_keys = []
+    for row_index, row in enumerate(signing_key_rows, start=1):
+        key_id = str(row.get("kid") or "")
+        if key_id in signing_key_ids:
+            raise ValueError(
+                f"The settings archive row {row_index} in 'oidc_signing_keys' duplicates a signing key ID."
+            )
+        signing_key_ids.add(key_id)
+        status = str(row.get("status") or "")
+        active_slot = row.get("active_slot")
+        if status == "active":
+            active_signing_keys.append(row)
+            if active_slot != 1:
+                raise ValueError(
+                    f"The settings archive row {row_index} in 'oidc_signing_keys' has a noncanonical active slot."
+                )
+        elif status == "retired":
+            if active_slot is not None:
+                raise ValueError(
+                    f"The settings archive row {row_index} in 'oidc_signing_keys' assigns an active slot to a retired key."
+                )
+        else:
+            raise ValueError(
+                f"The settings archive row {row_index} in 'oidc_signing_keys' has an unsupported status."
+            )
+    if len(active_signing_keys) > 1:
+        raise ValueError(
+            "The settings archive OIDC signing-key state contains multiple active keys."
         )
+    if enabled_oidc_rows:
         oidc_certificate_ready = any(
             str(row.get("managed_owner") or "") == "oidc:https"
             and str(row.get("status") or "") == "issued"
@@ -1965,7 +1989,7 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
             and bool(str(row.get("private_key_encrypted") or ""))
             for row in data.get("ca_certificates", [])
         )
-        if not active_signing_key_ready or not oidc_certificate_ready:
+        if len(active_signing_keys) != 1 or not oidc_certificate_ready:
             raise ValueError(
                 "The settings archive enables OIDC without an active signing key and issued HTTPS certificate."
             )
@@ -2012,42 +2036,32 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
             ),
             None,
         )
-        signing_key_row = next(
-            (
-                row
-                for row in data.get("oidc_signing_keys", [])
-                if str(row.get("status") or "") == "active" and row.get("active_slot") == 1
-            ),
-            None,
-        )
-        cryptographic_errors = provider_cryptographic_validation_errors(
-            provider,
-            (
-                CaCertificate(
-                    **_model_kwargs_with_scalar_defaults(
-                        CaCertificate,
-                        certificate_row,
-                        exclude={"profile_id"},
-                    )
+        certificate = (
+            CaCertificate(
+                **_model_kwargs_with_scalar_defaults(
+                    CaCertificate,
+                    certificate_row,
+                    exclude={"profile_id"},
                 )
-                if certificate_row is not None
-                else None
-            ),
-            (
+            )
+            if certificate_row is not None
+            else None
+        )
+        for row_index, signing_key_row in enumerate(signing_key_rows, start=1):
+            cryptographic_errors = provider_cryptographic_validation_errors(
+                provider,
+                certificate,
                 OidcSigningKey(
                     **_model_kwargs_with_scalar_defaults(
                         OidcSigningKey,
                         signing_key_row,
                     )
-                )
-                if signing_key_row is not None
-                else None
-            ),
-        )
-        if cryptographic_errors:
-            raise ValueError(
-                f"The settings archive OIDC cryptographic state is invalid: {cryptographic_errors[0]}"
+                ),
             )
+            if cryptographic_errors:
+                raise ValueError(
+                    f"The settings archive OIDC cryptographic state is invalid for row {row_index} in 'oidc_signing_keys': {cryptographic_errors[0]}"
+                )
 
     for row_index, row in enumerate(data.get("vsphere_key_providers", []), start=1):
         if "enabled" in row and not isinstance(row["enabled"], bool):
