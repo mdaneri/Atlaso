@@ -721,9 +721,9 @@ status: current
   unique guard deduplicating the same profile across manual and scheduled callers. Exactly one VCFDT operation may be
   running. Software Depot ID tasks and Appliance Apply containing `vcf_offline_depot` remain exclusive across both
   queued and running downloads, so their admission must wait until the profile-download queue drains and their own
-  pending/running state must block new downloads. Pending identity tasks may be
-  cancelled, but running identity tasks must reject cancellation because the helper may already have replaced the
-  runtime identity. Startup recovery for an interrupted running identity task must perform a read-only canonical VCFDT
+  pending/running state must block new downloads. Software Depot ID identity tasks are non-cancellable from admission
+  onward because a claim race or already-running helper may have replaced the runtime identity. Startup recovery for an
+  interrupted running identity task must perform a read-only canonical VCFDT
   ID readback before finalizing the task: persist a changed runtime ID and clear obsolete credentials, or invalidate
   the stored ID and credentials when runtime identity cannot be verified.
   Resetting VCFDT staging is one destructive confirmation that always clears the staged package, both Broadcom

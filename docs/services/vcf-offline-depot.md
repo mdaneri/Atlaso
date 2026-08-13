@@ -107,9 +107,8 @@ dispatches a dedicated VCFDT identity task. Atlaso opens the ordinary Tasks view
 required VCFDT runtime inputs, applies the properties and CEIP prerequisites, and generates and reads back the identity
 without invoking nginx or global Appliance Apply. The task exposes those four safe child operations and sanitized logs.
 Atlaso serializes this identity task with profile downloads and any Appliance Apply task that includes VCF Offline
-Depot. It can be admitted only after the complete download queue drains. A queued identity task can be cancelled before
-it starts; once VCFDT execution begins, cancellation is disabled
-because the identity may already have changed.
+Depot. It can be admitted only after the complete download queue drains. Software Depot ID tasks are non-cancellable
+from admission onward because a claim race or already-running VCFDT helper may have changed the identity.
 It succeeds only after Atlaso persists a non-empty Software Depot ID (and a different ID for refresh). Once
 VCFDT changes the identity, Atlaso removes both the staged and runtime download token and activation code. A generation
 failure that leaves the identity unchanged preserves both credentials. Register the new displayed ID, then stage a

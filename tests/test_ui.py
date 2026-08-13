@@ -2301,6 +2301,8 @@ def test_stage_appliance_apply_config_repairs_staging_permission(monkeypatch, tm
     """
     from types import SimpleNamespace
 
+    from pathlib import Path
+
     from atlaso.app import ui
 
     attempts = {"count": 0}
@@ -19164,6 +19166,12 @@ def test_queued_vcf_depot_software_id_task_rejects_cancellation(client, monkeypa
 
     assert response.status_code == 409
     assert "cannot be cancelled" in response.json()["detail"]
+    service_guide = Path("docs/services/vcf-offline-depot.md").read_text(encoding="utf-8")
+    agent_policy = Path("docs/contribute/agent-policies.md").read_text(encoding="utf-8")
+    assert "Software Depot ID tasks are non-cancellable" in service_guide
+    assert "Software Depot ID identity tasks are non-cancellable" in agent_policy
+    assert "queued identity task can be cancelled" not in service_guide
+    assert "Pending identity tasks may be" not in agent_policy
     with SessionLocal() as db:
         job = db.get(Job, queued["id"])
         assert job.status == JobStatus.PENDING.value
