@@ -19078,6 +19078,47 @@ def test_running_vcf_depot_download_rejects_cancellation(client):
         assert db.get(Job, job_id).status == JobStatus.RUNNING.value
 
 
+def test_queued_vcf_depot_download_can_be_cancelled_before_claim(client):
+    """Verify the atomic pending-only cancellation remains available.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
+    import json
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job, JobStatus, VcfDepotDownloadProfile
+
+    login(client)
+    page = client.get("/vcf-offline-depot")
+    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    with SessionLocal() as db:
+        profile = VcfDepotDownloadProfile(name="pending-cancel-guard", profile_type="metadata", enabled=True)
+        db.add(profile)
+        db.flush()
+        job_id = "job_pending_vcfdt_download_cancel_guard"
+        db.add(
+            Job(
+                id=job_id,
+                type="vcf-depot-download",
+                status=JobStatus.PENDING.value,
+                created_by="admin",
+                vcf_depot_operation=True,
+                vcf_depot_profile_id=profile.id,
+                task_config_json=json.dumps({"profile_id": profile.id}),
+                result=json.dumps({"profile_id": profile.id, "profile_name": profile.name}),
+            )
+        )
+        db.commit()
+
+    cancel_response = client.post(f"/tasks/{job_id}/cancel", data={"csrf": csrf})
+
+    assert cancel_response.status_code == 200
+    assert cancel_response.json()["task"]["status"] == JobStatus.CANCELLED.value
+    with SessionLocal() as db:
+        assert db.get(Job, job_id).status == JobStatus.CANCELLED.value
+
+
 def test_vcf_depot_software_id_runner_persists_raw_metadata_before_task_redaction(client, monkeypatch):
     """Verify that vcf depot software id runner persists raw metadata before task redaction.
 

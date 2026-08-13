@@ -639,6 +639,7 @@ from atlaso.app.services.vcf_depot_downloads import (
     active_vcf_depot_download_jobs,
     active_vcf_depot_exclusive_job,
     active_vcf_depot_operation_job,
+    cancel_pending_vcf_depot_download,
     disable_vcf_depot_profile_schedules,
     enqueue_vcf_depot_download,
     lock_vcf_depot_profile_for_deletion,
@@ -28960,6 +28961,45 @@ def cancel_task_from_ui(
                 "A running VCFDT profile download cannot be cancelled because the VCFDT process is still executing."
             ),
         )
+    if job.type == "vcf-depot-download" and job.status == JobStatus.PENDING.value:
+        finished_at = utcnow()
+        payload = _job_payload(job)
+        payload["state"] = "cancelled"
+        payload["cancelled_by"] = identity.username
+        payload["cancelled_at"] = finished_at.isoformat()
+        cancelled = cancel_pending_vcf_depot_download(
+            db,
+            job.id,
+            finished_at=finished_at,
+            error="Task cancelled by operator.",
+            result=json.dumps(_redact_task_value(payload), sort_keys=True),
+        )
+        if not cancelled:
+            db.rollback()
+            db.expire_all()
+            current = db.get(Job, job.id)
+            if current is None:
+                raise HTTPException(status_code=404, detail="Task not found")
+            if current.status == JobStatus.RUNNING.value:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=(
+                        "A running VCFDT profile download cannot be cancelled because the VCFDT process "
+                        "is still executing."
+                    ),
+                )
+            return JSONResponse({"task": _task_row(current, identity), "message": "Task is already finished."})
+        db.commit()
+        record_audit(
+            db,
+            actor=identity.username,
+            action="cancel_task",
+            resource_type="job",
+            resource_id=job.id,
+            detail=f"type={job.type}",
+        )
+        db.refresh(job)
+        return JSONResponse({"task": _task_row(job, identity), "message": "Task cancellation requested."})
     if job.type == "appliance-apply":
         payload = _job_payload(job)
         if not payload.get("cancel_requested"):

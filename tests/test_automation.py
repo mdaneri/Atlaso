@@ -924,6 +924,48 @@ def test_worker_claims_distinct_vcf_profiles_one_at_a_time_in_fifo_order(client)
         assert next_claimed.status == JobStatus.RUNNING.value
 
 
+def test_stale_pending_vcf_cancellation_cannot_overwrite_worker_claim(client):
+    """Verify a stale cancellation loses after pending-to-running claim.
+
+    Args:
+        client: HTTP test client used to initialize the application database.
+    """
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job, JobStatus, VcfDepotDownloadProfile, utcnow
+    from atlaso.app.services.vcf_depot_downloads import (
+        cancel_pending_vcf_depot_download,
+        enqueue_vcf_depot_download,
+    )
+    from atlaso.app.worker import claim_next_job
+
+    client.get("/login")
+    with SessionLocal() as db:
+        profile = VcfDepotDownloadProfile(name="claim-cancel-race", profile_type="metadata", enabled=True)
+        db.add(profile)
+        db.flush()
+        queued = enqueue_vcf_depot_download(db, profile=profile, actor="admin", trigger="manual")
+        queued_id = queued.id
+        db.commit()
+
+    with SessionLocal() as cancellation_db:
+        stale_job = cancellation_db.get(Job, queued_id)
+        assert stale_job is not None and stale_job.status == JobStatus.PENDING.value
+        with SessionLocal() as worker_db:
+            claimed = claim_next_job(worker_db)
+            assert claimed is not None and claimed.id == queued_id
+        cancelled = cancel_pending_vcf_depot_download(
+            cancellation_db,
+            queued_id,
+            finished_at=utcnow(),
+            error="Task cancelled by operator.",
+            result=json.dumps({"state": "cancelled"}),
+        )
+        cancellation_db.commit()
+        cancellation_db.refresh(stale_job)
+        assert cancelled is False
+        assert stale_job.status == JobStatus.RUNNING.value
+
+
 def test_same_profile_manual_and_scheduled_admission_deduplicates_atomically(client):
     """Verify that manual and scheduled callers share the per-profile guard.
 

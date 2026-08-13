@@ -225,6 +225,41 @@ def acquire_vcf_depot_admission_gate(db: Session) -> None:
     db.flush()
 
 
+def cancel_pending_vcf_depot_download(
+    db: Session,
+    job_id: str,
+    *,
+    finished_at: datetime,
+    error: str,
+    result: str,
+) -> bool:
+    """Cancel a profile download only while its claim state is still pending.
+
+    Args:
+        db: Active database session.
+        job_id: Identifier of the queued profile download.
+        finished_at: Cancellation completion time.
+        error: Durable cancellation message.
+        result: Redacted durable task result.
+    """
+    cancelled = db.execute(
+        update(Job)
+        .where(
+            Job.id == job_id,
+            Job.type == VCF_DEPOT_JOB_TYPE,
+            Job.status == JobStatus.PENDING.value,
+        )
+        .values(
+            status=JobStatus.CANCELLED.value,
+            finished_at=finished_at,
+            error=error,
+            result=result,
+            progress_percent=100,
+        )
+    )
+    return cancelled.rowcount == 1
+
+
 def lock_vcf_depot_profile_for_deletion(
     db: Session,
     profile_id: int,
