@@ -65,8 +65,8 @@ brings infrastructure, storage, identity, networking, and lifecycle workflows in
 - [vSphere Key Provider protocol](docs/reference/vsphere-key-provider-protocol.md) — review the appliance-native
   daemon's narrow KMIP contract and live-evidence promotion gate.
 - [Technical reference](docs/reference/index.md) — API, image building, lifecycle testing, and detailed behavior.
-- [Contributing](CONTRIBUTING.md) — issue, version, validation, protected trusted-CI status handoff, pull-request, and
-  seven-day Python dependency-age requirements.
+- [Contributing](CONTRIBUTING.md) — issue, version, validation, protected trusted-CI status handoff, multi-entry GitHub
+  Pages publication serialization, pull-request, and seven-day Python dependency-age requirements.
 - [Dependency management](docs/contribute/dependency-management.md) — regenerate hash locks without selecting newly
   published packages that approved mirrors may not have synchronized.
 - [Python static analysis](docs/contribute/python-static-analysis.md) — run the enforced Ruff baseline and expand the

@@ -85,7 +85,9 @@ workflow validates the checked-in Markdown and media, builds the site in strict 
 subtree on the shared `gh-pages` branch. The release-repository landing page and signed content under `/updates` remain
 unchanged. When the generated documentation matches the published site, the workflow succeeds without creating a new
 `gh-pages` commit or entering the shared Pages publication queue. Only a detected `/docs` change enters the serialized
-`atlaso-github-pages` writer, so routine verification runs cannot replace a pending release or promotion publisher.
+`atlaso-github-pages` writer, so routine verification runs cannot delay publication. Every Pages mutation job uses
+`queue: max` with `cancel-in-progress: false`; overlapping documentation, appliance release, Inventory Linux release,
+and promotion writers wait and execute sequentially instead of replacing an earlier pending writer.
 
 To request a rebuild manually, open **Actions > Documentation** in GitHub, choose **Run workflow**, select `main`, and
 run the workflow. Maintainers can request the same rebuild from an authenticated GitHub CLI session with
