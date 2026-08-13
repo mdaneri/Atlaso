@@ -508,12 +508,16 @@ stages nginx config under `/var/lib/atlaso/apply/vcf-offline-depot/`, serves the
 document root, uses the CA-managed `vcf_offline_depot:https` certificate/key file paths, and protects `/PROD/` with HTTP
 Basic Auth backed by the selected local `vcf-depot` user unless unauthenticated access is explicitly enabled.
 
-The profile grid's **Schedule download** action opens the shared Automation wizard with the profile selected. Manual,
-Run now, and due-schedule admission share an atomic single-active VCFDT job guard. Scheduled overlap is retained as a
-skipped execution, while execution-time tool, enabled-profile, credential, desired-state, and command checks fail the
-task before VCFDT mutation. Disabling or tool-resetting a profile disables its schedules; profile deletion requires all
-attached schedules to be removed first. Schedule archives remain compatible because only the stable integer
-`profile_id` is stored.
+The profile grid's **Schedule download** action opens the shared four-step contextual Automation wizard on the depot
+page, with task type and profile bound by the server. Automation's generic add/edit wizard remains five steps. Manual,
+Run now, and due-schedule admission share an atomic per-profile guard backed by the persisted profile ID and a partial
+unique index. Distinct pending profiles are ordered by creation time and job ID, while a running-operation partial
+unique index permits exactly one VCFDT process. Software Depot ID replacement and `vcf_offline_depot` Appliance Apply
+use the same admission gate but remain exclusive across the complete queued/running download set. The worker revalidates
+mutable prerequisites after claim and before VCFDT mutation. Scheduled same-profile or exclusive-operation overlap is
+retained as a terminal skipped task. Disabling or tool-resetting a profile disables its schedules; profile deletion
+requires all attached schedules to be removed first. Schedule archives remain compatible because only the stable
+integer `profile_id` is stored.
 
 ## Public Service Front Door
 

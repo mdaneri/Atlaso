@@ -50,7 +50,7 @@
             <span class="status-pill muted">{{ vcf_depot_profiles|length }} rows</span>
           </div>
         </div>
-        <div id="vcf-depot-profile-error" class="alert error hidden"></div>
+        <div id="vcf-depot-profile-error" class="alert error {{ 'hidden' if not vcf_depot_contextual_schedule_unavailable_error else '' }}" role="alert" aria-live="assertive">{{ vcf_depot_contextual_schedule_unavailable_error }}</div>
         <div
           id="vcf-depot-profiles-table"
           class="tabulator-shell"
@@ -96,10 +96,18 @@
                 <td>{{ "yes" if profile.patches_only else "no" }}</td>
                 <td>{{ profile.component or "all components" }}</td>
                 <td>{{ profile.disabled_platforms.replace("\n", ", ") if profile.disabled_platforms else "none" }}</td>
-                <td>{{ {"planned": "Never run", "ready": "Running", "synced": "Succeeded", "blocked": "Failed"}.get(profile.status, "Unknown") }}</td>
+                <td>
+                  {% if start_state and start_state.active_task_status == "pending" %}
+                    Queued
+                  {% elif start_state and start_state.active_task_status == "running" %}
+                    Running
+                  {% else %}
+                    {{ {"planned": "Never run", "ready": "Running", "synced": "Succeeded", "blocked": "Failed"}.get(profile.status, "Unknown") }}
+                  {% endif %}
+                </td>
                 <td>
                   {% if profile.enabled %}
-                    <a class="button tiny secondary" href="{{ management_ui_root }}/automation?new=vcf_depot_download&amp;vcf_profile_id={{ profile.id }}#schedules">Schedule</a>
+                    <a class="button tiny secondary" href="{{ management_ui_root }}/vcf-offline-depot?schedule_profile_id={{ profile.id }}#vcf-depot-schedule-modal" data-vcf-depot-fallback-schedule="{{ profile.id }}">Schedule</a>
                   {% else %}
                     <span class="button tiny secondary disabled" title="Enable the VCFDT download profile before scheduling it." aria-disabled="true">Schedule</span>
                   {% endif %}
@@ -297,6 +305,96 @@
     </div>
   </aside>
 </section>
+<dialog id="vcf-depot-schedule-modal" class="confirm-modal wide-modal vcf-sddc-wizard-modal" aria-labelledby="vcf-depot-schedule-modal-title" aria-describedby="vcf-depot-schedule-modal-description" {{ "open" if vcf_depot_contextual_schedule_profile else "" }}>
+  <form id="vcf-depot-schedule-form" class="confirm-modal-panel vcf-sddc-wizard-panel" method="post" action="{{ management_ui_root }}/vcf-offline-depot/profiles/{{ vcf_depot_contextual_schedule_profile.id if vcf_depot_contextual_schedule_profile else 0 }}/schedules" data-automation-schedule-form data-automation-contextual-vcf-schedule data-context-profile-id="{{ vcf_depot_contextual_schedule_profile.id if vcf_depot_contextual_schedule_profile else '' }}" data-context-profile-name="{{ vcf_depot_contextual_schedule_profile.name if vcf_depot_contextual_schedule_profile else '' }}" data-context-error="{{ vcf_depot_contextual_schedule_error }}" data-context-read-only="{{ 'true' if vcf_depot_contextual_schedule_read_only else 'false' }}" data-atlaso-wizard>
+    <input type="hidden" name="csrf" value="{{ csrf_token }}">
+    <aside class="vcf-sddc-wizard-rail" aria-label="Contextual depot schedule steps">
+      <p class="kicker">Depot profile schedule</p>
+      <h2 id="vcf-depot-schedule-modal-title" data-automation-wizard-modal-title>Schedule profile</h2>
+      <ol class="vcf-sddc-step-list">
+        <li><button class="vcf-sddc-step-button active" type="button" data-automation-wizard-nav data-atlaso-wizard-nav="identity"><span>1</span><strong>Schedule</strong><small>Name and profile context</small></button></li>
+        <li><button class="vcf-sddc-step-button" type="button" data-automation-wizard-nav data-atlaso-wizard-nav="timing" disabled><span>2</span><strong>Timing</strong><small>When it runs</small></button></li>
+        <li><button class="vcf-sddc-step-button" type="button" data-automation-wizard-nav data-atlaso-wizard-nav="state" disabled><span>3</span><strong>State</strong><small>Enable or stage</small></button></li>
+        <li><button class="vcf-sddc-step-button" type="button" data-automation-wizard-nav data-atlaso-wizard-nav="review" disabled><span>4</span><strong>Review</strong><small>Confirm schedule</small></button></li>
+      </ol>
+    </aside>
+    <div class="vcf-sddc-wizard-main">
+      <div class="confirm-modal-body vcf-sddc-wizard-body">
+        <div class="vcf-sddc-wizard-heading">
+          <p class="kicker" data-automation-wizard-kicker data-atlaso-wizard-kicker>Step 1 of 4</p>
+          <h3 data-automation-wizard-title data-atlaso-wizard-title>Name the schedule</h3>
+          <p id="vcf-depot-schedule-modal-description" class="muted" data-automation-wizard-description data-atlaso-wizard-description>Name this schedule for the selected VCF Offline Depot profile.</p>
+        </div>
+        <div class="alert error {{ 'hidden' if not vcf_depot_contextual_schedule_error else '' }}" data-automation-wizard-errors data-atlaso-wizard-error>{{ vcf_depot_contextual_schedule_error }}</div>
+        <section class="vcf-sddc-step-page" data-automation-wizard-step="identity" data-atlaso-wizard-step="identity">
+          <div class="form-stack automation-schedule-form">
+            <label><span class="field-label"><span>Schedule name</span><button class="help-icon" type="button" data-help="Names this automation and appears as the scheduler identity in task history.">i</button></span><input name="name" value="{{ vcf_depot_contextual_schedule_form.get('name', '') }}" required autocomplete="off"></label>
+            <div class="settings-list compact-settings-list">
+              <div><span>Workflow</span><strong>VCF Offline Depot download</strong></div>
+              <div><span>Download profile</span><strong data-automation-context-profile-name>{{ vcf_depot_contextual_schedule_profile.name if vcf_depot_contextual_schedule_profile else "Selected profile" }}</strong></div>
+            </div>
+            <p class="muted">The task type and profile are bound by the server to the row that opened this wizard.</p>
+          </div>
+        </section>
+        <section class="vcf-sddc-step-page hidden" data-automation-wizard-step="timing" data-atlaso-wizard-step="timing">
+          <div class="form-grid automation-schedule-form">
+            <label><span class="field-label"><span>Schedule kind</span><button class="help-icon" type="button" data-help="Cron repeats using five fields. One-time schedules disable themselves after their due run is queued.">i</button></span><select name="schedule_kind" data-automation-schedule-kind><option value="cron" {{ "selected" if vcf_depot_contextual_schedule_form.get('schedule_kind', 'cron') == 'cron' else "" }}>Cron</option><option value="once" {{ "selected" if vcf_depot_contextual_schedule_form.get('schedule_kind') == 'once' else "" }}>One time</option></select></label>
+            <label><span class="field-label"><span>Timezone</span><button class="help-icon" type="button" data-help="IANA timezone used to interpret cron and one-time values. Stored execution timestamps remain UTC.">i</button></span><input name="timezone_name" value="{{ vcf_depot_contextual_schedule_form.get('timezone_name', 'UTC') }}" placeholder="America/Los_Angeles" required autocomplete="off"></label>
+            <label class="full automation-cron-native-expression hidden" data-automation-schedule-timing="cron" data-automation-cron-native-expression><span class="field-label"><span>Cron expression</span><button class="help-icon" type="button" data-help="Standard five-field minute, hour, day, month, weekday expression.">i</button></span><input name="cron_expression" value="{{ vcf_depot_contextual_schedule_form.get('cron_expression', '0 2 * * *') }}" autocomplete="off" data-automation-cron-expression {{ "disabled" if vcf_depot_contextual_schedule_read_only else "" }}></label>
+            <div class="full automation-cron-builder" data-automation-schedule-timing="cron">
+              <div class="form-grid">
+                <label><span class="field-label"><span>Repeat</span><button class="help-icon" type="button" data-help="Builds a standard five-field cron schedule without requiring cron syntax. Choose Custom only for advanced expressions.">i</button></span><select data-automation-cron-frequency><option value="hourly">Hourly</option><option value="daily" selected>Daily</option><option value="weekly">Weekly</option><option value="monthly">Monthly</option><option value="custom">Custom</option></select></label>
+                <label data-automation-cron-control="hourly"><span class="field-label"><span>At minute</span><button class="help-icon" type="button" data-help="Minute from 0 through 59 when the task runs every hour.">i</button></span><input type="number" min="0" max="59" value="0" data-automation-cron-minute></label>
+                <label data-automation-cron-control="time"><span class="field-label"><span>At time</span><button class="help-icon" type="button" data-help="Local time in the schedule timezone for daily, weekly, and monthly runs.">i</button></span><input type="time" value="02:00" data-automation-cron-time></label>
+                <label class="hidden" data-automation-cron-control="weekly"><span class="field-label"><span>Day of week</span><button class="help-icon" type="button" data-help="Local weekday in the selected timezone.">i</button></span><select data-automation-cron-weekday><option value="1">Monday</option><option value="2">Tuesday</option><option value="3">Wednesday</option><option value="4">Thursday</option><option value="5">Friday</option><option value="6">Saturday</option><option value="0">Sunday</option></select></label>
+                <label class="hidden" data-automation-cron-control="monthly"><span class="field-label"><span>Day of month</span><button class="help-icon" type="button" data-help="Calendar day from 1 through 31. Months without that day do not run the task.">i</button></span><input type="number" min="1" max="31" value="1" data-automation-cron-monthday></label>
+                <label class="full hidden" data-automation-cron-control="custom"><span class="field-label"><span>Custom cron expression</span><button class="help-icon" type="button" data-help="Advanced five-field minute, hour, day, month, weekday expression. Missed and overlapping runs are skipped.">i</button></span><input value="{{ vcf_depot_contextual_schedule_form.get('cron_expression', '0 2 * * *') }}" autocomplete="off" data-automation-cron-custom></label>
+              </div>
+              <div class="automation-cron-summary"><span>Generated schedule</span><strong data-automation-cron-summary>Every day at 02:00 UTC</strong><code data-automation-cron-preview>0 2 * * *</code></div>
+            </div>
+            <label class="full automation-once-native hidden" data-automation-schedule-timing="once"><span class="field-label"><span>One-time run</span><button class="help-icon" type="button" data-help="Local date and time interpreted in the selected timezone. The schedule disables itself after the due run is queued.">i</button></span><input type="datetime-local" name="run_once_at" value="{{ vcf_depot_contextual_schedule_form.get('run_once_at', '') }}" data-automation-timing-required></label>
+          </div>
+        </section>
+        <section class="vcf-sddc-step-page hidden" data-automation-wizard-step="state" data-atlaso-wizard-step="state">
+          <div class="form-grid automation-schedule-form">
+            <label class="switch-field automation-policy-row full"><span class="field-label"><span>Schedule enabled</span><button class="help-icon" type="button" data-help="Allows the durable worker to queue this schedule when due. Leave it disabled to save the complete definition for review without execution.">i</button></span><input class="switch-input" type="checkbox" name="enabled" {{ "checked" if vcf_depot_contextual_schedule_form.get('enabled') else "" }}><span class="switch-track" aria-hidden="true"></span></label>
+            <div class="alert info full"><strong>Disabled is safe for staging.</strong> Manage the finished schedule and its State from Automation Schedules.</div>
+          </div>
+        </section>
+        <section class="vcf-sddc-step-page hidden" data-automation-wizard-step="review" data-atlaso-wizard-step="review">
+          <div class="settings-list compact-settings-list automation-schedule-review">
+            <div><span>Name</span><strong data-automation-review-name></strong></div>
+            <div><span>Workflow</span><strong data-automation-review-task></strong></div>
+            <div><span>Schedule</span><strong data-automation-review-timing></strong></div>
+            <div><span>Timezone</span><strong data-automation-review-timezone></strong></div>
+            <div><span>State</span><strong data-automation-review-state></strong></div>
+            <div><span>Profile</span><strong data-automation-review-config></strong></div>
+          </div>
+          <p class="muted">The durable worker queues this profile as a normal Atlaso task. Distinct profiles may wait in FIFO order while VCFDT runtime execution remains serialized.</p>
+        </section>
+      </div>
+      <div class="confirm-modal-actions vcf-sddc-wizard-actions">
+        <button class="button ghost" type="button" data-automation-schedule-modal-cancel data-atlaso-wizard-cancel>Cancel</button>
+        <button class="button secondary hidden" type="button" data-automation-wizard-back data-atlaso-wizard-back>Back</button>
+        <button class="button primary" type="button" data-automation-wizard-next data-atlaso-wizard-next>Next</button>
+        <button class="button primary hidden" type="submit" data-automation-wizard-submit data-atlaso-wizard-submit {{ "disabled" if vcf_depot_contextual_schedule_read_only else "" }}>Create schedule</button>
+      </div>
+    </div>
+  </form>
+</dialog>
+{% if vcf_depot_contextual_schedule_profile %}
+<noscript><style>
+  #vcf-depot-schedule-modal [data-atlaso-wizard-step] { display: block !important; }
+  #vcf-depot-schedule-modal [data-atlaso-wizard-nav],
+  #vcf-depot-schedule-modal [data-atlaso-wizard-next],
+  #vcf-depot-schedule-modal [data-atlaso-wizard-back],
+  #vcf-depot-schedule-modal [data-atlaso-wizard-cancel] { display: none !important; }
+  #vcf-depot-schedule-modal [data-atlaso-wizard-submit] { display: {{ "none" if vcf_depot_contextual_schedule_read_only else "inline-flex" }} !important; }
+  #vcf-depot-schedule-modal .automation-cron-builder { display: none !important; }
+  #vcf-depot-schedule-modal .automation-cron-native-expression,
+  #vcf-depot-schedule-modal .automation-once-native { display: grid !important; }
+</style></noscript>
+{% endif %}
 {% set vcf_depot_profile_steps = [
   {"id": "identity", "label": "Profile", "summary": "Name, type, and notes"},
   {"id": "release", "label": "Release", "summary": "SKU, release, and mode"},

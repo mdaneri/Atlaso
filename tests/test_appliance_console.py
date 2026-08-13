@@ -1525,6 +1525,35 @@ def test_forced_real_apply_seam_rejects_non_console_jobs(client):
         run_appliance_apply_job("job_not_console", force_real=True)
 
 
+def test_console_vcf_apply_waits_for_the_complete_download_queue(client):
+    """Verify console apply participates in the queue-wide VCFDT admission gate.
+
+    Args:
+        client: HTTP test client used to initialize an isolated database.
+    """
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job, JobStatus
+
+    with SessionLocal() as db:
+        db.add(
+            Job(
+                id="job_console_queue_guard",
+                type="vcf-depot-download",
+                status=JobStatus.PENDING.value,
+                vcf_depot_operation=True,
+                vcf_depot_profile_id=41,
+                created_by="admin",
+            )
+        )
+        db.commit()
+
+    with pytest.raises(ConsoleOperationError, match="job_console_queue_guard.*pending"):
+        appliance_console._submit_console_apply({"vcf_offline_depot"})
+
+    with SessionLocal() as db:
+        assert db.query(Job).filter(Job.type == "appliance-apply").count() == 0
+
+
 def test_console_desired_state_edit_is_rejected_before_commit_when_apply_is_active(client):
     """Verify that console desired state edit is rejected before commit when apply is active.
 

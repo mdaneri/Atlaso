@@ -145,6 +145,13 @@ The following cross-cutting boundaries always apply:
   wizard; its ordinary transactional save never refreshes an existing ID. Stage VCFDT package add/update through its
   shared two-step package wizard. Resetting VCFDT staging always clears the package, credentials, application properties,
   generated metadata, and profile enablement together.
+- VCF Offline Depot download admission deduplicates the same profile atomically while allowing distinct profiles to
+  queue in FIFO order. Exactly one VCFDT operation may execute at a time. Software Depot ID replacement and Appliance
+  Apply containing VCF Offline Depot remain exclusive across the entire queued/running download set and may start only
+  after it drains. Revalidate mutable prerequisites when each queued download is claimed. Manual Start feedback uses the
+  shared accessible transient grid status/error pattern. The selected profile's Schedule action opens the shared
+  four-step contextual Automation wizard (Schedule, Timing, State, Review) in place with task type and profile bound
+  server-side; preserve Automation's generic five-step wizard.
 - Keep development system adapters in dry-run mode unless a reviewed apply unit explicitly promotes real mutation.
 - VMware Workstation is the default live appliance target; use Hyper-V lifecycle coverage for exact VLAN behavior.
 - VMware Workstation recursive cleanup requires an exact non-reparse-point artifact root containing every expected VMX.

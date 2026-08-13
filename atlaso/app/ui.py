@@ -632,10 +632,18 @@ from atlaso.app.services.vcf_backups import (
 )
 from atlaso.app.services.vcf_depot_downloads import (
     ActiveVcfDepotDownloadError,
+    VcfDepotExclusiveOperationError,
+    VcfDepotProfileUnavailableError,
+    acquire_vcf_depot_admission_gate,
     active_vcf_depot_download_job,
+    active_vcf_depot_download_jobs,
+    active_vcf_depot_exclusive_job,
     active_vcf_depot_operation_job,
+    cancel_pending_vcf_depot_download,
     disable_vcf_depot_profile_schedules,
     enqueue_vcf_depot_download,
+    lock_vcf_depot_profile_for_deletion,
+    vcf_depot_job_profile_id,
     vcf_depot_schedules_for_profile,
     vcf_depot_task_log_reference,
 )
@@ -3066,6 +3074,34 @@ def vcf_depot_secret_context(db: Session) -> dict[str, object]:
     }
 
 
+def vcf_depot_profile_start_states(db: Session) -> list[dict[str, object]]:
+    """Return current non-secret profile prerequisites for task refresh.
+
+    Args:
+        db: Active database session.
+    """
+    secrets = vcf_depot_secret_context(db)
+    profiles = db.execute(
+        select(VcfDepotDownloadProfile).order_by(VcfDepotDownloadProfile.id)
+    ).scalars().all()
+    states: list[dict[str, object]] = []
+    for profile in profiles:
+        row = vcf_depot_profile_to_dict(
+            profile,
+            download_token_present=bool(secrets["download_token_present"]),
+            activation_code_present=bool(secrets["activation_code_present"]),
+        )
+        states.append(
+            {
+                "profile_id": profile.id,
+                "status": profile.status,
+                "can_start": bool(row["prerequisite_can_start"]),
+                "start_blocker": str(row["prerequisite_start_blocker"]),
+            }
+        )
+    return states
+
+
 def vcf_depot_application_properties_context(db: Session, settings: VcfOfflineDepotSettings) -> dict[str, str | bool]:
     """Return vcf depot application properties context.
 
@@ -3169,7 +3205,7 @@ def recover_interrupted_vcf_depot_download_jobs(db: Session) -> int:
     jobs = db.scalars(
         select(Job).where(
             Job.type == "vcf-depot-download",
-            Job.status.in_([JobStatus.PENDING.value, JobStatus.RUNNING.value]),
+            Job.status == JobStatus.RUNNING.value,
         )
     ).all()
     if not jobs:
@@ -3505,12 +3541,38 @@ def vcf_offline_depot_context(db: Session, *, reconcile: bool = True) -> dict:
         )
         for profile in profiles
     ]
-    active_download_job = vcf_depot_active_download_job(db)
-    if active_download_job is not None:
-        blocker = f"Wait for VCFDT task {active_download_job.id} to finish before starting another download."
-        for row in profile_rows:
+    active_downloads = {
+        vcf_depot_job_profile_id(job): job
+        for job in active_vcf_depot_download_jobs(db)
+        if vcf_depot_job_profile_id(job)
+    }
+    exclusive_job = active_vcf_depot_exclusive_job(db)
+    for row in profile_rows:
+        row.update(
+            {
+                "download_active": False,
+                "active_job_id": "",
+                "active_task_status": "",
+                "active_task_blocker": "",
+            }
+        )
+        profile_id = int(row.get("id") or 0)
+        active_download = active_downloads.get(profile_id)
+        if active_download is not None:
+            state = "queued" if active_download.status == JobStatus.PENDING.value else "running"
             row["download_active"] = True
-            row["active_task_blocker"] = blocker
+            row["active_job_id"] = active_download.id
+            row["active_task_status"] = active_download.status
+            row["active_task_blocker"] = (
+                f"VCFDT task {active_download.id} is {state} for this profile. "
+                "Wait for it to finish before starting the same profile again."
+            )
+        elif exclusive_job is not None:
+            row["download_active"] = True
+            row["active_task_blocker"] = vcf_depot_execution_conflict_detail(exclusive_job)
+        if row["download_active"]:
+            row["can_start"] = False
+            row["start_blocker"] = row["active_task_blocker"]
     return {
         "vcf_depot_settings": settings,
         "vcf_depot_settings_json": {
@@ -8078,7 +8140,9 @@ def _can_cancel_task(job: Job, identity: Identity | None = None) -> bool:
             return False
     if job.type == "appliance-apply" and _job_payload(job).get("cancel_requested"):
         return False
-    if job.type == "vcf-depot-software-id" and job.status == JobStatus.RUNNING.value:
+    if job.type == "vcf-depot-software-id":
+        return False
+    if job.type == "vcf-depot-download" and job.status == JobStatus.RUNNING.value:
         return False
     if identity is None:
         return True
@@ -14450,6 +14514,125 @@ def _automation_task_config(
     return {}, ""
 
 
+class AutomationScheduleInputError(ValueError):
+    """Report an operator-actionable schedule definition error."""
+
+    def __init__(self, message: str, *, status_code: int = 422) -> None:
+        """Initialize the schedule definition error.
+
+        Args:
+            message: Operator-facing validation detail.
+            status_code: HTTP status appropriate for the validation failure.
+        """
+        self.public_detail = message
+        self.status_code = status_code
+        super().__init__(message)
+
+
+def create_automation_schedule_record(
+    db: Session,
+    *,
+    name: str,
+    task_type: str,
+    selected_streams: list[str],
+    vcf_profile_id: int | None,
+    revision_id: int | None,
+    vault_id: int | None,
+    script_arguments: str,
+    schedule_kind: str,
+    cron_expression: str,
+    run_once_at: str,
+    timezone_name: str,
+    enabled: bool,
+    actor: str,
+) -> Schedule:
+    """Validate and persist one schedule for generic and contextual callers.
+
+    Args:
+        db: Active database session.
+        name: Operator-visible schedule name.
+        task_type: Allowlisted Automation task type.
+        selected_streams: Appliance Update streams selected by the operator.
+        vcf_profile_id: Server-validated VCF Offline Depot profile identifier.
+        revision_id: Managed script revision identifier.
+        vault_id: Optional scoped vault identifier.
+        script_arguments: Literal managed-script arguments.
+        schedule_kind: Cron or one-time schedule kind.
+        cron_expression: Five-field cron expression.
+        run_once_at: Local one-time value interpreted in the selected timezone.
+        timezone_name: IANA timezone name.
+        enabled: Whether the schedule is immediately eligible to run.
+        actor: Authenticated creator identity.
+
+    Returns:
+        The persisted schedule.
+
+    Raises:
+        AutomationScheduleInputError: If validation or persistence fails.
+    """
+    parsed_once: datetime | None = None
+    try:
+        if run_once_at.strip():
+            parsed_once = datetime.fromisoformat(run_once_at.strip())
+            if parsed_once.tzinfo is None:
+                parsed_once = parsed_once.replace(tzinfo=ZoneInfo(timezone_name))
+            parsed_once = parsed_once.astimezone(timezone.utc)
+    except (ValueError, ZoneInfoNotFoundError) as exc:
+        raise AutomationScheduleInputError("One-time run date or timezone is invalid.") from exc
+    task_config, config_error = _automation_task_config(
+        db,
+        task_type=task_type,
+        selected_streams=selected_streams,
+        vcf_profile_id=vcf_profile_id,
+        revision_id=revision_id,
+        vault_id=vault_id,
+        script_arguments=script_arguments,
+    )
+    if config_error:
+        raise AutomationScheduleInputError(config_error)
+    task_config_json = json.dumps(task_config, sort_keys=True)
+    errors = validate_schedule_values(
+        task_type=task_type,
+        task_config_json=task_config_json,
+        schedule_kind=schedule_kind,
+        cron_expression=cron_expression,
+        run_once_at=parsed_once,
+        timezone_name=timezone_name,
+    )
+    if not name.strip():
+        errors.insert(0, "Schedule name is required.")
+    if errors:
+        raise AutomationScheduleInputError(" ".join(errors))
+    schedule = Schedule(
+        name=name.strip(),
+        task_type=task_type,
+        task_config_json=task_config_json,
+        schedule_kind=schedule_kind,
+        cron_expression=cron_expression.strip() if schedule_kind == "cron" else "",
+        run_once_at=parsed_once if schedule_kind == "once" else None,
+        timezone_name=timezone_name,
+        enabled=enabled,
+        created_by=actor,
+    )
+    if schedule.enabled:
+        try:
+            schedule.next_run_at = next_schedule_run(schedule, after=utcnow())
+        except ValueError as exc:
+            raise AutomationScheduleInputError("The schedule does not have a valid future run time.") from exc
+        if schedule.next_run_at is None:
+            raise AutomationScheduleInputError("The enabled schedule does not have a future run time.")
+    db.add(schedule)
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        raise AutomationScheduleInputError(
+            "A schedule with this name already exists.",
+            status_code=409,
+        ) from exc
+    return schedule
+
+
 @router.post("/automation/schedules", response_model=None)
 def create_automation_schedule(
     request: Request,
@@ -14494,65 +14677,140 @@ def create_automation_schedule(
     """
     verify_csrf(request, csrf)
     require_admin_identity(identity)
-    parsed_once: datetime | None = None
     try:
-        if run_once_at.strip():
-            parsed_once = datetime.fromisoformat(run_once_at.strip())
-            if parsed_once.tzinfo is None:
-                parsed_once = parsed_once.replace(tzinfo=ZoneInfo(timezone_name))
-            parsed_once = parsed_once.astimezone(timezone.utc)
-    except (ValueError, ZoneInfoNotFoundError):
-        return _automation_render_error(request, identity, db, "One-time run date or timezone is invalid.")
-    task_config, config_error = _automation_task_config(
-        db,
-        task_type=task_type,
-        selected_streams=selected_streams,
-        vcf_profile_id=vcf_profile_id,
-        revision_id=revision_id,
-        vault_id=vault_id,
-        script_arguments=script_arguments,
-    )
-    if config_error:
-        return _automation_render_error(request, identity, db, config_error)
-    task_config_json = json.dumps(task_config, sort_keys=True)
-    errors = validate_schedule_values(
-        task_type=task_type,
-        task_config_json=task_config_json,
-        schedule_kind=schedule_kind,
-        cron_expression=cron_expression,
-        run_once_at=parsed_once,
-        timezone_name=timezone_name,
-    )
-    if not name.strip():
-        errors.insert(0, "Schedule name is required.")
-    if errors:
-        return _automation_render_error(request, identity, db, " ".join(errors))
-    schedule = Schedule(
-        name=name.strip(),
-        task_type=task_type,
-        task_config_json=task_config_json,
-        schedule_kind=schedule_kind,
-        cron_expression=cron_expression.strip() if schedule_kind == "cron" else "",
-        run_once_at=parsed_once if schedule_kind == "once" else None,
-        timezone_name=timezone_name,
-        enabled=enabled == "on",
-        created_by=identity.username,
-    )
-    if schedule.enabled:
-        try:
-            schedule.next_run_at = next_schedule_run(schedule, after=utcnow())
-        except ValueError as exc:
-            return _automation_render_error(request, identity, db, str(exc))
-        if schedule.next_run_at is None:
-            return _automation_render_error(request, identity, db, "The enabled schedule does not have a future run time.")
-    db.add(schedule)
-    try:
-        db.commit()
-    except IntegrityError:
-        db.rollback()
-        return _automation_render_error(request, identity, db, "A schedule with this name already exists.", status_code=409)
+        schedule = create_automation_schedule_record(
+            db,
+            name=name,
+            task_type=task_type,
+            selected_streams=selected_streams,
+            vcf_profile_id=vcf_profile_id,
+            revision_id=revision_id,
+            vault_id=vault_id,
+            script_arguments=script_arguments,
+            schedule_kind=schedule_kind,
+            cron_expression=cron_expression,
+            run_once_at=run_once_at,
+            timezone_name=timezone_name,
+            enabled=enabled == "on",
+            actor=identity.username,
+        )
+    except AutomationScheduleInputError as exc:
+        return _automation_render_error(request, identity, db, exc.public_detail, status_code=exc.status_code)
     record_audit(db, actor=identity.username, action="create_automation_schedule", resource_type="schedule", resource_id=str(schedule.id), detail=f"task_type={task_type}")
     return RedirectResponse("/automation#schedules", status_code=303)
+
+
+@router.post("/vcf-offline-depot/profiles/{profile_id}/schedules", response_model=None)
+def create_contextual_vcf_depot_schedule(
+    profile_id: int,
+    request: Request,
+    name: str = Form(...),
+    schedule_kind: str = Form("cron"),
+    cron_expression: str = Form("0 2 * * *"),
+    run_once_at: str = Form(""),
+    timezone_name: str = Form("UTC"),
+    enabled: str | None = Form(None),
+    task_type: str | None = Form(None),
+    vcf_profile_id: int | None = Form(None),
+    csrf: str = Form(...),
+    identity: Identity = Depends(require_session_identity),
+    db: Session = Depends(get_db),
+) -> JSONResponse | RedirectResponse:
+    """Create a server-bound depot download schedule from its selected profile.
+
+    Args:
+        profile_id: Server-owned profile selected by the depot row action.
+        request: Incoming HTTP request.
+        name: Operator-visible schedule name.
+        schedule_kind: Cron or one-time schedule kind.
+        cron_expression: Five-field cron expression.
+        run_once_at: Local one-time date and time.
+        timezone_name: IANA timezone used to interpret the timing fields.
+        enabled: Whether the schedule should be immediately eligible.
+        task_type: Optional tamper-detection value; the server fixes the type.
+        vcf_profile_id: Optional tamper-detection value; the path fixes the profile.
+        csrf: Validated CSRF token authorizing the request.
+        identity: Authenticated identity authorizing the request.
+        db: Active database session.
+
+    Returns:
+        The created schedule metadata for in-page feedback.
+    """
+    verify_csrf(request, csrf)
+    require_admin_identity(identity)
+    wants_html = "text/html" in request.headers.get("accept", "").lower()
+    if task_type is not None and task_type != "vcf_depot_download":
+        return JSONResponse(
+            {"detail": "The contextual depot wizard can create only VCF Offline Depot download schedules."},
+            status_code=422,
+        )
+    if vcf_profile_id is not None and vcf_profile_id != profile_id:
+        return JSONResponse(
+            {"detail": "The submitted profile does not match the depot row that opened this wizard."},
+            status_code=422,
+        )
+    try:
+        schedule = create_automation_schedule_record(
+            db,
+            name=name,
+            task_type="vcf_depot_download",
+            selected_streams=[],
+            vcf_profile_id=profile_id,
+            revision_id=None,
+            vault_id=None,
+            script_arguments="",
+            schedule_kind=schedule_kind,
+            cron_expression=cron_expression,
+            run_once_at=run_once_at,
+            timezone_name=timezone_name,
+            enabled=enabled == "on",
+            actor=identity.username,
+        )
+    except AutomationScheduleInputError as exc:
+        if wants_html:
+            request.state.vcf_schedule_error = exc.public_detail
+            request.state.vcf_schedule_form = {
+                "name": name,
+                "schedule_kind": schedule_kind,
+                "cron_expression": cron_expression,
+                "run_once_at": run_once_at,
+                "timezone_name": timezone_name,
+                "enabled": enabled == "on",
+            }
+            response = vcf_offline_depot_page(
+                request,
+                schedule_profile_id=profile_id,
+                schedule_invalid=True,
+                identity=identity,
+                db=db,
+            )
+            response.status_code = exc.status_code
+            return response
+        return JSONResponse({"detail": exc.public_detail}, status_code=exc.status_code)
+    record_audit(
+        db,
+        actor=identity.username,
+        action="create_automation_schedule",
+        resource_type="schedule",
+        resource_id=str(schedule.id),
+        detail=f"task_type=vcf_depot_download; profile_id={profile_id}; source=vcf_offline_depot",
+    )
+    if wants_html:
+        return RedirectResponse(
+            management_ui_path("/vcf-offline-depot#vcf-depot-profiles-panel"),
+            status_code=303,
+        )
+    return JSONResponse(
+        {
+            "status": "created",
+            "schedule_id": schedule.id,
+            "schedule_name": schedule.name,
+            "profile_id": profile_id,
+            "enabled": schedule.enabled,
+            "automation_url": "/ui/management/automation#schedules",
+        },
+        status_code=201,
+    )
 
 
 @router.post("/automation/schedules/{schedule_id}/edit", response_model=None)
@@ -15305,6 +15563,12 @@ def vcf_depot_execution_conflict_detail(job: Job) -> str:
     Args:
         job: Background job record affected by the operation.
     """
+    if job.type == "vcf-depot-download":
+        return (
+            f"VCF Depot Download task {job.id} is {job.status}. "
+            "Wait for the queued profile downloads to finish before starting an exclusive Software Depot ID or "
+            "VCF Offline Depot Appliance Apply operation."
+        )
     return (
         f"{_task_type_label(job.type)} task {job.id} is already {job.status}. "
         "Wait for it to finish before starting another VCFDT operation."
@@ -15931,6 +16195,8 @@ def submit_appliance_apply(
     vcf_depot_submit_guard = VCF_DEPOT_SUBMIT_LOCK if "vcf_offline_depot" in selected_ids else nullcontext()
     with vcf_depot_submit_guard, APPLIANCE_APPLY_SUBMIT_LOCK:
         db.expire_all()
+        if "vcf_offline_depot" in selected_ids:
+            acquire_vcf_depot_admission_gate(db)
         active_job = active_appliance_apply_job(db)
         if active_job is not None:
             detail = (
@@ -24151,6 +24417,8 @@ def delete_vcf_fqdns_from_ui(
 @router.get("/vcf-offline-depot", response_class=HTMLResponse, response_model=None)
 def vcf_offline_depot_page(
     request: Request,
+    schedule_profile_id: int | None = Query(None),
+    schedule_invalid: bool = Query(False),
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
 ) -> HTMLResponse:
@@ -24158,6 +24426,8 @@ def vcf_offline_depot_page(
 
     Args:
         request: Incoming HTTP request.
+        schedule_profile_id: Optional profile selected by the no-script schedule fallback.
+        schedule_invalid: Whether fixed validation feedback is shown for the no-script fallback.
         identity: Authenticated identity authorizing the request.
         db: Active database session.
 
@@ -24171,6 +24441,25 @@ def vcf_offline_depot_page(
         .order_by(desc(Job.created_at))
         .limit(500)
     ).scalars().all()
+    schedule_profile = (
+        db.get(VcfDepotDownloadProfile, schedule_profile_id)
+        if schedule_profile_id is not None
+        else None
+    )
+    schedule_error = str(getattr(request.state, "vcf_schedule_error", ""))
+    if not schedule_error and schedule_invalid:
+        schedule_error = "Review the schedule fields and provide a valid timing definition."
+    schedule_form = getattr(request.state, "vcf_schedule_form", {})
+    if not isinstance(schedule_form, dict):
+        schedule_form = {}
+    schedule_read_only = False
+    if schedule_profile is not None and not schedule_profile.enabled:
+        if schedule_error and schedule_form:
+            schedule_read_only = True
+        else:
+            schedule_profile = None
+            schedule_error = "Enable the VCFDT download profile before scheduling it."
+    schedule_unavailable_error = schedule_error if schedule_profile is None else ""
     return render(
         request,
         "vcf_offline_depot.html",
@@ -24180,6 +24469,11 @@ def vcf_offline_depot_page(
             "vcf_depot_task_rows": [_task_row(job, identity) for job in jobs],
             "vcf_depot_task_component_options": ["VCF Depot Download"],
             "appliance_apply_status": appliance_apply_status(db, "vcf_offline_depot"),
+            "vcf_depot_contextual_schedule_profile": schedule_profile,
+            "vcf_depot_contextual_schedule_error": schedule_error,
+            "vcf_depot_contextual_schedule_form": schedule_form,
+            "vcf_depot_contextual_schedule_read_only": schedule_read_only,
+            "vcf_depot_contextual_schedule_unavailable_error": schedule_unavailable_error,
         },
     )
 
@@ -24213,7 +24507,7 @@ def vcf_offline_depot_task_log_page(
         profile_name = str(json.loads(job.result or "{}").get("profile_name") or "")
     except json.JSONDecodeError:
         pass
-    if job.status in {JobStatus.PENDING.value, JobStatus.RUNNING.value}:
+    if job.status == JobStatus.RUNNING.value:
         task_log = tail_fixed_log_file(VCF_DEPOT_VDT_LOG_PATH)
     else:
         task_log = tail_fixed_log_file(Path(str(json.loads(job.result or "{}").get("log_path") or vcf_depot_task_log_path(job.id, profile_name))))
@@ -24260,7 +24554,9 @@ def vcf_offline_depot_task_status(
         The endpoint response.
     """
     tasks, total = vcf_depot_download_job_rows(db, page=page, page_size=size)
-    active_job = vcf_depot_active_download_job(db)
+    active_jobs = active_vcf_depot_download_jobs(db)
+    active_job = active_jobs[0] if active_jobs else None
+    exclusive_job = active_vcf_depot_exclusive_job(db)
     last_page = max(1, (total + size - 1) // size)
     return JSONResponse(
         {
@@ -24270,6 +24566,25 @@ def vcf_offline_depot_task_status(
             "last_row": total,
             "download_active": active_job is not None,
             "active_job_id": active_job.id if active_job is not None else "",
+            "active_downloads": [
+                {
+                    "job_id": job.id,
+                    "profile_id": vcf_depot_job_profile_id(job),
+                    "status": job.status,
+                }
+                for job in active_jobs
+            ],
+            "profile_start_states": vcf_depot_profile_start_states(db),
+            "active_exclusive_operation": (
+                {
+                    "job_id": exclusive_job.id,
+                    "status": exclusive_job.status,
+                    "type": exclusive_job.type,
+                    "detail": vcf_depot_execution_conflict_detail(exclusive_job),
+                }
+                if exclusive_job is not None
+                else None
+            ),
         }
     )
 
@@ -25052,6 +25367,7 @@ def generate_vcf_depot_software_depot_id_from_ui(
         raise HTTPException(status_code=400, detail="Upload VCFDT before generating the software depot ID.")
     with VCF_DEPOT_SUBMIT_LOCK:
         db.expire_all()
+        acquire_vcf_depot_admission_gate(db)
         active = active_vcf_depot_execution_job(db)
         if active is not None:
             return JSONResponse(
@@ -25379,12 +25695,6 @@ def start_vcf_depot_profile_download_from_ui(
     profile = db.get(VcfDepotDownloadProfile, profile_id)
     if not profile:
         raise HTTPException(status_code=404, detail="VCFDT download profile not found.")
-    active_job = active_vcf_depot_execution_job(db)
-    if active_job is not None:
-        raise HTTPException(
-            status_code=409,
-            detail=vcf_depot_execution_conflict_detail(active_job),
-        )
     try:
         _settings, raw_commands, validation_warnings = vcf_depot_download_preflight(db, profile)
     except ValueError as exc:
@@ -25403,7 +25713,11 @@ def start_vcf_depot_profile_download_from_ui(
             actor=identity.username,
             trigger="manual",
         )
-    except ActiveVcfDepotDownloadError as exc:
+    except (
+        ActiveVcfDepotDownloadError,
+        VcfDepotExclusiveOperationError,
+        VcfDepotProfileUnavailableError,
+    ) as exc:
         db.rollback()
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     job_result = json.loads(job.result or "{}")
@@ -25468,9 +25782,23 @@ def delete_vcf_depot_profile_from_ui(
         HTTPException: If the request cannot be fulfilled.
     """
     verify_csrf(request, csrf)
-    profile = db.get(VcfDepotDownloadProfile, profile_id)
-    if not profile:
-        raise HTTPException(status_code=404, detail="VCFDT download profile not found.")
+    try:
+        profile = lock_vcf_depot_profile_for_deletion(db, profile_id)
+    except VcfDepotProfileUnavailableError as exc:
+        db.rollback()
+        raise HTTPException(
+            status_code=404,
+            detail="VCFDT download profile not found.",
+        ) from exc
+    except ActiveVcfDepotDownloadError as exc:
+        db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Wait for active VCFDT task {exc.active_job_id} to finish "
+                "before deleting this profile."
+            ),
+        ) from exc
     schedules = vcf_depot_schedules_for_profile(db, profile.id)
     if schedules:
         schedule_names = ", ".join(schedule.name for schedule in schedules)
@@ -25478,17 +25806,6 @@ def delete_vcf_depot_profile_from_ui(
             status_code=409,
             detail=f"Delete the attached Automation schedule(s) first: {schedule_names}.",
         )
-    active_job = active_vcf_depot_download_job(db)
-    if active_job is not None:
-        try:
-            active_profile_id = int(json.loads(active_job.task_config_json or "{}").get("profile_id") or 0)
-        except (json.JSONDecodeError, TypeError, ValueError):
-            active_profile_id = 0
-        if active_profile_id == profile.id:
-            raise HTTPException(
-                status_code=409,
-                detail=f"Wait for active VCFDT task {active_job.id} to finish before deleting this profile.",
-            )
     db.delete(profile)
     db.commit()
     record_audit(db, actor=identity.username, action="delete_vcf_depot_profile", resource_type="vcf_depot_profile", resource_id=str(profile_id))
@@ -28534,6 +28851,23 @@ def tasks_status(
         else None
     )
     selected = _task_row(selected_job, identity) if selected_job is not None else None
+    active_downloads = (
+        [
+            {
+                "job_id": job.id,
+                "profile_id": vcf_depot_job_profile_id(job),
+                "status": job.status,
+            }
+            for job in active_vcf_depot_download_jobs(db)
+        ]
+        if normalized_task_type == "vcf-depot-download"
+        else []
+    )
+    exclusive_job = (
+        active_vcf_depot_exclusive_job(db)
+        if normalized_task_type == "vcf-depot-download"
+        else None
+    )
     return JSONResponse(
         {
             "last_page": last_page,
@@ -28543,6 +28877,22 @@ def tasks_status(
             "active_count": active_count,
             "filtered_count": filtered_count,
             "total_count": total_count,
+            "active_downloads": active_downloads,
+            "profile_start_states": (
+                vcf_depot_profile_start_states(db)
+                if normalized_task_type == "vcf-depot-download"
+                else []
+            ),
+            "active_exclusive_operation": (
+                {
+                    "job_id": exclusive_job.id,
+                    "status": exclusive_job.status,
+                    "type": exclusive_job.type,
+                    "detail": vcf_depot_execution_conflict_detail(exclusive_job),
+                }
+                if exclusive_job is not None
+                else None
+            ),
             "server_time": utcnow().isoformat(),
         }
     )
@@ -28650,14 +29000,62 @@ def cancel_task_from_ui(
                 status_code=status.HTTP_409_CONFLICT,
                 detail="A running Network Boot media deletion cannot be cancelled.",
             )
-    if job.type == "vcf-depot-software-id" and job.status == JobStatus.RUNNING.value:
+    if job.type == "vcf-depot-software-id":
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=(
-                "A running VCFDT Software Depot ID task cannot be cancelled because identity replacement "
-                "may already be in progress."
+                "A queued or running VCFDT Software Depot ID task cannot be cancelled because identity "
+                "replacement may already be in progress."
             ),
         )
+    if job.type == "vcf-depot-download" and job.status == JobStatus.RUNNING.value:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "A running VCFDT profile download cannot be cancelled because the VCFDT process is still executing."
+            ),
+        )
+    if job.type == "vcf-depot-download" and job.status == JobStatus.PENDING.value:
+        finished_at = utcnow()
+        payload = _job_payload(job)
+        payload["state"] = "cancelled"
+        payload["cancelled_by"] = identity.username
+        payload["cancelled_at"] = finished_at.isoformat()
+        cancelled = cancel_pending_vcf_depot_download(
+            db,
+            job.id,
+            profile_id=int(job.vcf_depot_profile_id or payload.get("profile_id") or 0),
+            profile_status_before_enqueue=str(payload.get("profile_status_before_enqueue") or "planned"),
+            finished_at=finished_at,
+            error="Task cancelled by operator.",
+            result=json.dumps(_redact_task_value(payload), sort_keys=True),
+        )
+        if not cancelled:
+            db.rollback()
+            db.expire_all()
+            current = db.get(Job, job.id)
+            if current is None:
+                raise HTTPException(status_code=404, detail="Task not found")
+            if current.status == JobStatus.RUNNING.value:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=(
+                        "A running VCFDT profile download cannot be cancelled because the VCFDT process "
+                        "is still executing."
+                    ),
+                )
+            return JSONResponse({"task": _task_row(current, identity), "message": "Task is already finished."})
+        db.commit()
+        record_audit(
+            db,
+            actor=identity.username,
+            action="cancel_task",
+            resource_type="job",
+            resource_id=job.id,
+            detail=f"type={job.type}",
+        )
+        db.refresh(job)
+        return JSONResponse({"task": _task_row(job, identity), "message": "Task cancellation requested."})
     if job.type == "appliance-apply":
         payload = _job_payload(job)
         if not payload.get("cancel_requested"):

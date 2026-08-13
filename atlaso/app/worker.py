@@ -11,11 +11,16 @@ from secrets import compare_digest
 from typing import Any
 
 from sqlalchemy import select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from atlaso.app.adapters.system import SystemAdapter
 from atlaso.app.config import get_settings
-from atlaso.app.database import SessionLocal, init_db
+from atlaso.app.database import (
+    SessionLocal,
+    ensure_vcf_depot_running_operation_index,
+    init_db,
+)
 from atlaso.app.models import (
     AuditEvent,
     AutomationScriptRevision,
@@ -85,19 +90,52 @@ def claim_next_job(db: Session) -> Job | None:
     Args:
         db: Active database session.
     """
-    job = db.execute(
-        select(Job)
-        .where(Job.status == JobStatus.PENDING.value, Job.type.in_(WORKER_JOB_TYPES))
-        .order_by(Job.created_at, Job.id)
-    ).scalars().first()
-    if job is None:
-        return None
-    job.status = JobStatus.RUNNING.value
-    job.started_at = utcnow()
-    job.progress_percent = max(1, int(job.progress_percent or 0))
-    db.add(job)
-    db.commit()
-    return job
+    ensure_vcf_depot_running_operation_index(db.get_bind())
+    while True:
+        running_vcf_operation = db.execute(
+            select(Job.id)
+            .where(
+                Job.vcf_depot_operation.is_(True),
+                Job.status == JobStatus.RUNNING.value,
+            )
+            .limit(1)
+        ).scalar_one_or_none()
+        pending_filter = [
+            Job.status == JobStatus.PENDING.value,
+            Job.type.in_(WORKER_JOB_TYPES),
+        ]
+        if running_vcf_operation is not None:
+            pending_filter.append(Job.vcf_depot_operation.is_(False))
+        candidate = db.execute(
+            select(Job.id)
+            .where(*pending_filter)
+            .order_by(Job.created_at, Job.id)
+            .limit(1)
+        ).scalar_one_or_none()
+        if candidate is None:
+            return None
+        started_at = utcnow()
+        try:
+            claimed = db.execute(
+                update(Job)
+                .where(Job.id == candidate, Job.status == JobStatus.PENDING.value)
+                .values(
+                    status=JobStatus.RUNNING.value,
+                    started_at=started_at,
+                    progress_percent=1,
+                )
+            )
+        except IntegrityError:
+            # The partial VCFDT runtime index keeps a second worker from
+            # starting another queued profile while one VCFDT operation runs.
+            db.rollback()
+            continue
+        if claimed.rowcount != 1:
+            db.rollback()
+            continue
+        claimed_job = db.get(Job, candidate)
+        db.commit()
+        return claimed_job
 
 
 def _release_finalizer() -> dict[str, Any]:
@@ -786,6 +824,8 @@ def main() -> int:
         recovered = recover_interrupted_worker_jobs(db)
         if recovered:
             LOGGER.warning("Marked %s interrupted worker jobs failed", recovered)
+    if not ensure_vcf_depot_running_operation_index():
+        LOGGER.warning("Deferred the VCFDT runtime guard until identity-task startup recovery completes")
     LOGGER.info("Atlaso worker started")
     while not _stop_requested:
         handled = run_worker_once()

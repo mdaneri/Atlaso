@@ -371,13 +371,13 @@ Figure: OIDC provider settings with status and issuer information stacked at the
 
 Route: `/ui/management/physical-interfaces`
 
-![Atlaso Physical Interfaces page showing inherent management UI on eth0 and enabled management UI on access interface eth1.](../assets/screenshots/physical-interfaces-clean-desktop.webp)
+![Atlaso Physical Interfaces page showing false glyphs in the IPv6 column and canonical interface roles.](../assets/screenshots/physical-interfaces-clean-desktop.webp)
 
-Figure: Physical Interfaces showing dedicated and access management UI exposure in the verified appliance desktop state.
+Figure: Physical Interfaces showing the standard Atlaso false glyph for disabled IPv6 and canonical network roles.
 
-![Responsive Atlaso Physical Interfaces page showing inherent and enabled management UI states.](../assets/screenshots/physical-interfaces-clean-responsive.webp)
+![Responsive Atlaso Physical Interfaces page showing false glyphs for disabled IPv6.](../assets/screenshots/physical-interfaces-clean-responsive.webp)
 
-Figure: Physical Interfaces management UI exposure in the verified appliance responsive state.
+Figure: Physical Interfaces showing the standard Atlaso IPv6 glyphs at the responsive viewport.
 
 ## Prod
 
@@ -414,6 +414,22 @@ Figure: Routes and WAN Simulation in the verified clean-appliance desktop state.
 ![Atlaso Routes and WAN Simulation page in the clean-appliance responsive viewport.](../assets/screenshots/routes-wan-clean-responsive.webp)
 
 Figure: Routes and WAN Simulation in the verified clean-appliance responsive state.
+
+## Routes Wan: Policies
+
+Route: `/ui/management/routes-wan#policies`
+
+![Atlaso WAN policy wizard using the standard responsive rail and five reviewed configuration steps.](../assets/screenshots/routes-wan-policy-wizard-responsive.webp)
+
+Figure: Shared WAN policy wizard in the verified responsive viewport.
+
+## Routes Wan: Routes
+
+Route: `/ui/management/routes-wan#routes`
+
+![Atlaso static route wizard using the standard rail while reviewing the destination, interface path, WAN Simulation selection, and enabled state.](../assets/screenshots/routes-wan-static-route-wizard-desktop.webp)
+
+Figure: Shared static route wizard review with the complete path and appliance-apply boundary.
 
 ## Services
 
@@ -547,9 +563,9 @@ Figure: VCF Offline Depot profile ordering and staging state in the responsive v
 
 Figure: VCFDT Software Depot ID generation ends at Review, which immediately dispatches a dedicated identity task.
 
-![VCF Offline Depot profile row menu showing Schedule download disabled until the profile is enabled.](../assets/screenshots/vcf-offline-depot-schedule-action-desktop.webp)
+![VCF Offline Depot contextual Schedule wizard Review showing Schedule, Timing, State, and Review steps with Binaries fixed as the selected profile.](../assets/screenshots/vcf-offline-depot-schedule-action-desktop.webp)
 
-Figure: VCF Offline Depot profile scheduling action with the disabled-profile reason.
+Figure: VCF Offline Depot review binds the selected profile in the contextual schedule flow.
 
 ## Vcf Private Registry
 
@@ -567,15 +583,15 @@ Figure: VCF Private Registry in the verified clean-appliance responsive state.
 
 Route: `/ui/management/vlan-interfaces`
 
-![Atlaso VLAN Interfaces add wizard Role step with the Management UI switch.](../assets/screenshots/vlan-interfaces-clean-desktop.webp)
+![Atlaso VLAN Interfaces add wizard Role step showing access as the default role with the Management UI switch.](../assets/screenshots/vlan-interfaces-clean-desktop.webp)
 
-Figure: VLAN Interfaces shared Role step showing access management UI desired state in the verified appliance desktop state.
+Figure: VLAN Interfaces shared Role step defaulting a new VLAN to the canonical access role.
 
-![Atlaso VLAN Interfaces page in the clean-appliance responsive viewport.](../assets/screenshots/vlan-interfaces-clean-responsive.webp)
+![Responsive Atlaso VLAN Interfaces page backed by the canonical management, access, route, and unused roles.](../assets/screenshots/vlan-interfaces-clean-responsive.webp)
 
-Figure: VLAN Interfaces in the verified clean-appliance responsive state.
+Figure: VLAN Interfaces with canonical role data in the verified responsive state.
 
-## Vsphere Key Providers
+## vSphere Key Providers
 
 Route: `/ui/management/vsphere-key-providers`
 

@@ -120,8 +120,11 @@ credential replacements and application properties together, then queues an expl
 scoped Appliance Apply unit. A successful identity replacement removes both the staged download token and activation
 code because they no longer match the new Software Depot ID. Package add/update uses a separate reviewed package wizard;
 reset clears the package and its complete saved configuration together.
-Enabled depot profiles can use the shared Automation scheduler. Manual and scheduled downloads share one global
-single-active task guard and execution-time prerequisite validation; schedule definitions contain no Broadcom secrets.
+Enabled depot profiles can use the shared Automation scheduler. Manual and scheduled downloads atomically deduplicate
+the same profile while distinct profiles queue in FIFO order; exactly one VCFDT process executes at a time and mutable
+prerequisites are revalidated when a queued task is claimed. Software Depot ID replacement and depot Appliance Apply
+remain exclusive until the download queue drains. Schedule definitions contain no Broadcom secrets, and the selected
+profile opens a server-bound contextual schedule wizard without leaving the depot page.
 VCF Offline Depot browser login returns only to validated canonical `/PROD` paths; unsupported destinations fall back
 to the depot root.
 
