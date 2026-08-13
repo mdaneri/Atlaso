@@ -320,11 +320,12 @@ def test_release_workflows_use_successful_main_sha_and_promote_without_rebuildin
     assert "The HTML page is informational." in publication
     assert "Stable channel (default)" in publication
     assert "python scripts/check_published_release_channel.py" in publication
-    assert "--expected-channel stable" in publication
+    assert "--expected-channel development" in publication
     publication_check = publication.split(
-        "- name: Verify the published default channel",
+        "- name: Verify the published development channel",
         1,
     )[1]
+    assert "/updates/channels/development/manifest.json" in publication_check
     assert '--expected-version "$VERSION"' in publication_check
     assert '--expected-commit "$RELEASE_SHA"' in publication_check
     assert "<script" not in publication
