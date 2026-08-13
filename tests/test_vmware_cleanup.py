@@ -460,6 +460,8 @@ def test_general_removal_accepts_balanced_running_inventory_quotes(tmp_path: Pat
     "registration_entry",
     [
         "vmlist0.config\n",
+        'vmlist.config = "C:\\VMs\\Atlaso.vmx"\n',
+        'vmlistA.config = "C:\\VMs\\Atlaso.vmx"\n',
         'vmlist0.config = "relative-registered.vmx"\n',
     ],
 )
@@ -467,7 +469,7 @@ def test_general_removal_rejects_malformed_registration_entries(
     tmp_path: Path,
     registration_entry: str,
 ) -> None:
-    """Incomplete or relative Workstation registrations must preserve artifacts.
+    """Malformed-key, incomplete, or relative registrations must preserve artifacts.
 
     Args:
         tmp_path: Isolated test directory.
