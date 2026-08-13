@@ -4690,6 +4690,12 @@ other physical NICs are desired admin down until an operator enables them. Disab
 listen interfaces and addresses so <code>Appliance Apply</code> can submit a clean disabled baseline. Both restore and factory
 reset force service status rows to stopped, disabled, and <code>unconfigured</code>; host services are not mutated until the
 operator reviews and submits selected units through the global <code>Appliance Apply</code> workflow.</p>
+<p>Before replacement begins, restore validates every supplied collection, row object, nested automation revision,
+required field, relationship, and enabled VLAN or static-route target. Any later restore failure rolls back the database
+transaction and preserves separately staged LDAP recovery metadata plus its in-memory payload. That staged material is
+removed only after a successful settings restore or factory reset commit.
+Settings restore accepts only schema-v2 archives with the complete current section inventory. Older schemas are
+rejected before current desired state is removed.</p>
 <h2 id="brand-assets">Brand Assets<a class="headerlink" href="#brand-assets" title="Permanent link">&para;</a></h2>
 <p>Reusable SVG assets live in <code>atlaso/app/static/brand/</code> and are documented in <code>docs/branding.md</code>.</p>
 <h2 id="safety-boundary">Safety Boundary<a class="headerlink" href="#safety-boundary" title="Permanent link">&para;</a></h2>

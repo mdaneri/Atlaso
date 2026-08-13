@@ -3674,7 +3674,8 @@ when NTS server selection adds Certificate Authority to the task.</p>
 <p>Normal settings backup contains LDAP metadata but no bind secrets or password hashes. Use the separate
 passphrase-encrypted LDAP recovery export to preserve <code>slapcat</code> data. Recovery import decrypts and validates the archive
 in memory, then stages it for the next global LDAP apply. A restart before apply requires the archive and passphrase
-again.</p>
+again. A rejected or failed settings-archive restore leaves the staged recovery metadata and in-memory payload intact;
+only a successfully committed settings restore or factory reset clears it.</p>
 <!-- BEGIN GENERATED ADDITIONAL SCREENSHOTS -->
 <h2 id="additional-verified-states">Additional verified states<a class="headerlink" href="#additional-verified-states" title="Permanent link">&para;</a></h2>
 <p>These captures show responsive layouts and useful operational states referenced by this page.</p>
