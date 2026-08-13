@@ -1027,7 +1027,7 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-8" in service_worker.text
     assert "/static/appliance-apply-polling.js?v=issue-294-2" in service_worker.text
     assert "/static/ui-routes.js?v=issue-287-1" in service_worker.text
-    assert "/static/app.js?v=network-ui-fixes-318-333-334-2" in service_worker.text
+    assert "/static/app.js?v=vcf-depot-queue-schedule-351-353-1" in service_worker.text
     assert "/static/terminal.js?v=issue-287-2" in service_worker.text
     assert "/static/pwa.js?v=issue-287-2" in service_worker.text
     assert "vcfdt-configuration-248-20260807-14" not in service_worker.text
@@ -1059,8 +1059,8 @@ def test_shared_ui_pattern_shell_and_wizard_contracts(client):
     base = (templates / "base.html").read_text(encoding="utf-8")
     public_base = (templates / "public_portal_base.html").read_text(encoding="utf-8")
     for shell, app_asset in (
-        (base, "/static/app.js?v=network-ui-fixes-318-333-334-2"),
-        (public_base, "/static/app.js?v=network-ui-fixes-318-333-334-2"),
+        (base, "/static/app.js?v=vcf-depot-queue-schedule-351-353-1"),
+        (public_base, "/static/app.js?v=vcf-depot-queue-schedule-351-353-1"),
         (base, "/static/appliance-apply-polling.js?v=issue-294-2"),
     ):
         assert shell.index("/static/vendor/tabulator/tabulator.min.js") < shell.index(
@@ -1075,6 +1075,7 @@ def test_shared_ui_pattern_shell_and_wizard_contracts(client):
         templates / "esx_storage.html",
         templates / "routes_wan.html",
         templates / "vlan_interfaces.html",
+        templates / "vcf_offline_depot.html",
         templates / "partials" / "vcf_trust_modal.html",
         templates / "partials" / "vcf_sddc_deploy_modal.html",
         templates / "partials" / "vcf_target_depot_modal.html",
@@ -1082,7 +1083,7 @@ def test_shared_ui_pattern_shell_and_wizard_contracts(client):
     wizard_markup = "\n".join(
         path.read_text(encoding="utf-8") for path in wizard_templates
     )
-    assert len(re.findall(r"<form\b[^>]*\bdata-atlaso-wizard(?:\s|>)", wizard_markup)) == 6
+    assert len(re.findall(r"<form\b[^>]*\bdata-atlaso-wizard(?:\s|>)", wizard_markup)) == 7
     for marker in (
         "data-atlaso-wizard-step=",
         "data-atlaso-wizard-nav=",
@@ -1688,7 +1689,7 @@ def test_monitor_page_renders_and_data_endpoint(client):
     assert "swagger-link-icon" in page.text
     assert "/static/app.css?v=vlan-interface-wizard-304-2" in page.text
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-8" in page.text
-    assert "/static/app.js?v=network-ui-fixes-318-333-334-2" in page.text
+    assert "/static/app.js?v=vcf-depot-queue-schedule-351-353-1" in page.text
     app_css = client.get("/static/app.css")
     assert app_css.status_code == 200
     assert ".split-workspace > .wide-panel" in app_css.text
@@ -14023,7 +14024,7 @@ def test_vcf_offline_depot_page_redirect_and_uploads_are_sanitized(client, tmp_p
     assert "rowHeight: 34" in profiles_table_js.split("columns:", 1)[0]
     assert "!data.can_start" in profiles_table_js
     assert "data.download_active" in profiles_table_js
-    assert "function setVcfDepotDownloadStates(activeTasks = [])" in app_js.text
+    assert "function setVcfDepotDownloadStates(activeTasks = [], activeExclusiveOperation = null)" in app_js.text
     assert "const byProfile = new Map" in app_js.text
     assert "data.start_blocker" in profiles_table_js
 
@@ -15317,7 +15318,11 @@ def test_vcf_offline_depot_manual_profile_download_starts_job(client, tmp_path):
 
 
 def test_vcf_offline_depot_contextual_schedule_is_server_bound_and_stays_in_page(client):
-    """Verify the depot schedule endpoint binds task and profile server-side."""
+    """Verify the depot schedule endpoint binds task and profile server-side.
+
+    Args:
+        client: HTTP test client used to exercise the depot schedule endpoint.
+    """
     import json
 
     from sqlalchemy import select
@@ -15445,7 +15450,11 @@ def test_vcf_offline_depot_contextual_schedule_is_server_bound_and_stays_in_page
 
 
 def test_vcf_offline_depot_marks_only_each_profiles_own_queued_download(client):
-    """Verify per-row task state does not globally disable distinct profiles."""
+    """Verify per-row task state does not globally disable distinct profiles.
+
+    Args:
+        client: HTTP test client used to render the depot profile grid.
+    """
     import html
     import json
 
@@ -15482,7 +15491,11 @@ def test_vcf_offline_depot_marks_only_each_profiles_own_queued_download(client):
 
 
 def test_vcf_offline_depot_prevents_deleting_any_queued_profile(client):
-    """Verify deletion checks the target against the complete profile queue."""
+    """Verify deletion checks the target against the complete profile queue.
+
+    Args:
+        client: HTTP test client used to submit the profile deletion.
+    """
     import json
 
     from atlaso.app.database import SessionLocal
@@ -15524,7 +15537,11 @@ def test_vcf_offline_depot_prevents_deleting_any_queued_profile(client):
 
 
 def test_vcf_download_task_refresh_includes_exclusive_operation(client):
-    """Verify scoped task refresh preserves the queue-wide exclusive blocker."""
+    """Verify scoped task refresh preserves the queue-wide exclusive blocker.
+
+    Args:
+        client: HTTP test client used to request the scoped task payload.
+    """
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import Job, JobStatus
 

@@ -185,6 +185,7 @@ def active_vcf_depot_download_job(db: Session, profile_id: int | None = None) ->
 
     Args:
         db: Active database session.
+        profile_id: Optional profile whose queued or running job should be returned.
     """
     jobs = active_vcf_depot_download_jobs(db)
     if profile_id is None:

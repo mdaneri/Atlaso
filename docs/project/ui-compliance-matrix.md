@@ -189,7 +189,8 @@ are explicitly inventoried so route/template changes cannot silently escape the 
   `routes-wan-policy-dialog`.
 - VCF workflows: `vcf-fqdn-modal`, `vcf-ldap-modal`, `vcf-trust-modal`, `vcf-sddc-deploy-modal`, `vcf-target-depot-modal`,
   `vcf-vault-import-modal`, `vcf-depot-profile-dialog`, `vcf-depot-tool-package-dialog`,
-  `vcf-depot-configuration-dialog`, `vcf-depot-tool-reset-modal`, and `vcf-registry-bundle-dialog`.
+  `vcf-depot-configuration-dialog`, `vcf-depot-tool-reset-modal`, `vcf-depot-schedule-modal`, and
+  `vcf-registry-bundle-dialog`.
 - Vaults and Monitor: `vault-create-modal`, `vault-entry-modal`, and `monitor-chart-modal`.
 
 Every wizard identifier above uses `createWizard(...)`, `data-atlaso-wizard-*`, an accessible name and description,

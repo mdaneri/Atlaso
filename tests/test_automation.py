@@ -887,7 +887,11 @@ def test_vcf_download_database_guard_covers_software_id_and_appliance_apply(clie
 
 
 def test_worker_claims_distinct_vcf_profiles_one_at_a_time_in_fifo_order(client):
-    """Verify that one VCFDT process runs while distinct profiles remain queued."""
+    """Verify that one VCFDT process runs while distinct profiles remain queued.
+
+    Args:
+        client: HTTP test client used to initialize the application database.
+    """
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import JobStatus, VcfDepotDownloadProfile
     from atlaso.app.services.vcf_depot_downloads import enqueue_vcf_depot_download
@@ -921,7 +925,11 @@ def test_worker_claims_distinct_vcf_profiles_one_at_a_time_in_fifo_order(client)
 
 
 def test_same_profile_manual_and_scheduled_admission_deduplicates_atomically(client):
-    """Verify that manual and scheduled callers share the per-profile guard."""
+    """Verify that manual and scheduled callers share the per-profile guard.
+
+    Args:
+        client: HTTP test client used to initialize the application database.
+    """
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import Schedule, VcfDepotDownloadProfile
     from atlaso.app.services.automation import enqueue_schedule_now
@@ -954,7 +962,11 @@ def test_same_profile_manual_and_scheduled_admission_deduplicates_atomically(cli
 
 
 def test_concurrent_same_profile_admission_creates_exactly_one_active_job(client):
-    """Verify concurrent manual and scheduled admissions serialize atomically."""
+    """Verify concurrent manual and scheduled admissions serialize atomically.
+
+    Args:
+        client: HTTP test client used to initialize the application database.
+    """
     from concurrent.futures import ThreadPoolExecutor
     from threading import Barrier
 
@@ -975,6 +987,11 @@ def test_concurrent_same_profile_admission_creates_exactly_one_active_job(client
     barrier = Barrier(2)
 
     def admit(trigger: str) -> tuple[str, str]:
+        """Attempt one admission after both concurrent callers reach the gate.
+
+        Args:
+            trigger: Admission source recorded on the queued job.
+        """
         with SessionLocal() as db:
             profile = db.get(VcfDepotDownloadProfile, profile_id)
             barrier.wait()
@@ -1038,7 +1055,12 @@ def test_vcf_queue_schema_reconciliation_is_portable_to_postgresql(monkeypatch):
             self.statements: list[str] = []
 
         def execute(self, statement, _parameters=None):
-            """Capture one SQL statement and return an empty result."""
+            """Capture one SQL statement and return an empty result.
+
+            Args:
+                statement: SQLAlchemy statement issued by reconciliation.
+                _parameters: Optional bound values supplied with the statement.
+            """
             self.statements.append(str(statement))
             return FakeResult()
 
