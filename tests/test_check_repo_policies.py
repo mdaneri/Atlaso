@@ -109,7 +109,7 @@ def test_agent_policy_gate_rejects_missing_task_title_capability_fallback(
     agents_path = tmp_path / "AGENTS.md"
     agents_path.write_text(
         agents_path.read_text(encoding="utf-8").replace(
-            "supported task-title controls are unavailable", ""
+            "### Unsupported title controls", ""
         ),
         encoding="utf-8",
     )
@@ -120,7 +120,7 @@ def test_agent_policy_gate_rejects_missing_task_title_capability_fallback(
     assert findings[0].path == agents_path
     assert findings[0].message == (
         "required agent policy marker is missing: "
-        "supported task-title controls are unavailable"
+        "### Unsupported title controls"
     )
 
 
@@ -136,7 +136,7 @@ def test_agent_policy_gate_rejects_missing_task_title_capability_guard(
     agents_path = tmp_path / "AGENTS.md"
     agents_path.write_text(
         agents_path.read_text(encoding="utf-8").replace(
-            "current Codex runtime exposes supported task-title controls", ""
+            "### Supported title controls", ""
         ),
         encoding="utf-8",
     )
@@ -147,7 +147,34 @@ def test_agent_policy_gate_rejects_missing_task_title_capability_guard(
     assert findings[0].path == agents_path
     assert findings[0].message == (
         "required agent policy marker is missing: "
-        "current Codex runtime exposes supported task-title controls"
+        "### Supported title controls"
+    )
+
+
+def test_agent_policy_gate_rejects_missing_schema_constrained_reporting(
+    tmp_path: Path,
+) -> None:
+    """Verify that constrained outputs retain their schema boundary.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    write_policy_files(tmp_path)
+    agents_path = tmp_path / "AGENTS.md"
+    agents_path.write_text(
+        agents_path.read_text(encoding="utf-8").replace(
+            "### Schema-constrained reporting", ""
+        ),
+        encoding="utf-8",
+    )
+
+    findings = check_agent_policy_gate(tmp_path)
+
+    assert len(findings) == 1
+    assert findings[0].path == agents_path
+    assert findings[0].message == (
+        "required agent policy marker is missing: "
+        "### Schema-constrained reporting"
     )
 
 
@@ -163,7 +190,7 @@ def test_agent_policy_gate_rejects_missing_extended_merge_description(
     agents_path = tmp_path / "AGENTS.md"
     agents_path.write_text(
         agents_path.read_text(encoding="utf-8").replace(
-            "extended squash-commit body", ""
+            "### Extended merge descriptions", ""
         ),
         encoding="utf-8",
     )
@@ -173,7 +200,8 @@ def test_agent_policy_gate_rejects_missing_extended_merge_description(
     assert len(findings) == 1
     assert findings[0].path == agents_path
     assert findings[0].message == (
-        "required agent policy marker is missing: extended squash-commit body"
+        "required agent policy marker is missing: "
+        "### Extended merge descriptions"
     )
 
 
