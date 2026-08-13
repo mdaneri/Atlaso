@@ -1870,6 +1870,37 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
                 f"The settings archive row {row_index} in 'dhcp_settings' has an invalid enabled value."
             )
         dhcp_enabled = dhcp_enabled or enabled
+    for row_index, row in enumerate(data.get("dhcp_scopes", []), start=1):
+        enabled = row.get("enabled", True)
+        if not isinstance(enabled, bool):
+            raise ValueError(
+                f"The settings archive row {row_index} in 'dhcp_scopes' has an invalid enabled value."
+            )
+        scope_errors, _network = validate_dhcp_scope(
+            DhcpScope(**_model_kwargs_with_scalar_defaults(DhcpScope, row))
+        )
+        if scope_errors:
+            raise ValueError(
+                f"The settings archive DHCP settings are invalid: {scope_errors[0]}"
+            )
+    for row_index, row in enumerate(data.get("dhcp_reservations", []), start=1):
+        if not row.get("enabled", True):
+            continue
+        try:
+            ip_address(str(row.get("ip_address") or ""))
+        except ValueError as exc:
+            raise ValueError(
+                f"The settings archive row {row_index} in 'dhcp_reservations' has an invalid IP address."
+            ) from exc
+    for row_index, row in enumerate(data.get("dhcp_options", []), start=1):
+        if not row.get("enabled", True):
+            continue
+        if not str(row.get("option_code") or "").strip() or not str(
+            row.get("value") or ""
+        ).strip():
+            raise ValueError(
+                f"The settings archive row {row_index} in 'dhcp_options' has an invalid code or value."
+            )
     if dhcp_enabled:
         enabled_dhcp_networks = []
         scopes = data.get("dhcp_scopes", [])

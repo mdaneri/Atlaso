@@ -5114,7 +5114,16 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
     enabled_missing_dhcp_target["data"]["dhcp_scopes"][0]["interface_name"] = "missing-dhcp-target"
     enabled_wrong_family_dhcp_target = deepcopy(archive)
     enabled_wrong_family_dhcp_target["data"]["dhcp_settings"][0]["enabled"] = True
-    enabled_wrong_family_dhcp_target["data"]["dhcp_scopes"][0]["address_family"] = "ipv6"
+    enabled_wrong_family_dhcp_target["data"]["dhcp_scopes"][0].update(
+        {
+            "address_family": "ipv6",
+            "site_address": "fd00:1234::1",
+            "prefix_length": 64,
+            "range_expression": "fd00:1234::100-fd00:1234::200",
+            "dns_server": "fd00:1234::1",
+            "ntp_server": "",
+        }
+    )
     disabled_missing_dhcp_target = deepcopy(enabled_missing_dhcp_target)
     disabled_missing_dhcp_target["data"]["dhcp_scopes"][0]["enabled"] = False
     disabled_missing_dhcp_target["data"]["dhcp_settings"][0]["enabled"] = False
@@ -5139,6 +5148,12 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
             "enabled": False,
         }
     )
+    disabled_with_invalid_disabled_dhcp_scope = deepcopy(
+        enabled_with_invalid_disabled_dhcp_scope
+    )
+    disabled_with_invalid_disabled_dhcp_scope["data"]["dhcp_settings"][0][
+        "enabled"
+    ] = False
     enabled_outside_dhcp_reservation = deepcopy(archive)
     enabled_outside_dhcp_reservation["data"]["dhcp_settings"][0]["enabled"] = True
     enabled_outside_dhcp_reservation["data"]["dhcp_reservations"][0]["enabled"] = True
@@ -5896,6 +5911,7 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
         (enabled_wrong_family_dhcp_target, "has an ineligible bind interface"),
         (enabled_without_enabled_dhcp_scope, "enables DHCP without an enabled DHCP scope"),
         (enabled_with_invalid_disabled_dhcp_scope, "DHCP settings are invalid"),
+        (disabled_with_invalid_disabled_dhcp_scope, "DHCP settings are invalid"),
         (enabled_outside_dhcp_reservation, "must be inside an enabled DHCP IP zone"),
         *(
             (candidate, "has an ineligible listen interface")
