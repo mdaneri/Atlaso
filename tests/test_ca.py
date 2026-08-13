@@ -3,11 +3,12 @@
 import pytest
 
 from atlaso.app.config import Settings
-from atlaso.app.models import CaCertificate, CaSettings, utcnow
+from atlaso.app.models import CaCertificate, CaProfile, CaSettings, utcnow
 from atlaso.app.secrets import decrypt_secret, encrypt_secret
 from atlaso.app.services.ca import (
     ca_certificate_to_dict,
     ensure_root_ca_material,
+    issue_certificate,
     render_ca_apply_payload,
     validate_ca_private_key_material,
 )
@@ -115,6 +116,55 @@ def test_ca_private_key_validation_rejects_mismatched_certificate():
     assert validate_ca_private_key_material(first, []) == [
         "CA root encrypted private key does not match its certificate."
     ]
+
+
+def test_ca_private_key_validation_rejects_leaf_from_another_root():
+    """Verify issued leaf certificates chain to the restored root."""
+    restored_root = CaSettings(
+        enabled=True,
+        root_common_name="Restored Atlaso Root",
+        organization="Atlaso",
+        key_algorithm="RSA",
+        key_size=2048,
+        digest_algorithm="sha256",
+        root_valid_days=3650,
+        storage_path="/etc/atlaso/ca",
+    )
+    unrelated_root = CaSettings(
+        enabled=True,
+        root_common_name="Unrelated Atlaso Root",
+        organization="Atlaso",
+        key_algorithm="RSA",
+        key_size=2048,
+        digest_algorithm="sha256",
+        root_valid_days=3650,
+        storage_path="/etc/atlaso/ca",
+    )
+    assert ensure_root_ca_material(restored_root) is True
+    assert ensure_root_ca_material(unrelated_root) is True
+    profile = CaProfile(
+        id=1,
+        name="Service TLS",
+        certificate_type="server",
+        validity_days=30,
+        key_algorithm="RSA",
+        key_size=2048,
+        key_usage="digitalSignature,keyEncipherment",
+        extended_key_usage="serverAuth",
+        enabled=True,
+    )
+    certificate = CaCertificate(
+        common_name="service.example.test",
+        profile_id=profile.id,
+        status="planned",
+        enabled=True,
+    )
+    assert issue_certificate(unrelated_root, [profile], certificate) is True
+
+    errors = validate_ca_private_key_material(restored_root, [certificate])
+
+    assert "Certificate service.example.test is not issued by the restored CA root." in errors
+    assert "Certificate service.example.test chain does not match the restored CA root." in errors
 
 
 def test_ca_certificate_row_capabilities_follow_lifecycle_and_ownership():

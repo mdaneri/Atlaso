@@ -13,25 +13,40 @@ from sqlalchemy import select
 
 from atlaso.app.models import AuditEvent, CaCertificate, CaSettings, NtpSettings, Setting
 from atlaso.app.seed import NTP_NTS_RESTORATION_SETTING_KEY, seed_initial_data
-from atlaso.app.secrets import encrypt_secret
+from atlaso.app.secrets import decrypt_secret, encrypt_secret
 from atlaso.app.services.ntp import dump_ntp_upstream_sources, ntp_upstream_sources
 from atlaso.app.services.settings_archive import export_settings_archive, restore_settings_archive
 
 
-def _issued_certificate_material(common_name: str) -> tuple[str, str]:
-    """Return a self-signed certificate and encrypted PKCS#8 private key for restore tests."""
+def _issued_certificate_material(
+    common_name: str,
+    *,
+    issuer_certificate_pem: str = "",
+    issuer_private_key_encrypted: str = "",
+) -> tuple[str, str]:
+    """Return issued certificate material, self-signing when no issuer is supplied."""
     key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
     subject = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, common_name)])
+    issuer_name = subject
+    signing_key = key
+    if issuer_certificate_pem and issuer_private_key_encrypted:
+        issuer_name = x509.load_pem_x509_certificate(
+            issuer_certificate_pem.encode("ascii")
+        ).subject
+        signing_key = serialization.load_pem_private_key(
+            decrypt_secret(issuer_private_key_encrypted).encode("ascii"),
+            password=None,
+        )
     now = datetime.now(timezone.utc)
     certificate_pem = (
         x509.CertificateBuilder()
         .subject_name(subject)
-        .issuer_name(subject)
+        .issuer_name(issuer_name)
         .public_key(key.public_key())
         .serial_number(x509.random_serial_number())
         .not_valid_before(now - timedelta(minutes=1))
         .not_valid_after(now + timedelta(days=30))
-        .sign(key, hashes.SHA256())
+        .sign(signing_key, hashes.SHA256())
         .public_bytes(serialization.Encoding.PEM)
         .decode("ascii")
     )
@@ -185,7 +200,9 @@ def test_settings_archive_round_trips_enabled_nts_and_drops_disabled_server_cert
             "Atlaso Internal Root CA"
         )
         certificate_pem, private_key_encrypted = _issued_certificate_material(
-            "ntp.atlaso.internal"
+            "ntp.atlaso.internal",
+            issuer_certificate_pem=root_certificate_pem,
+            issuer_private_key_encrypted=root_private_key_encrypted,
         )
         ca_settings = db.execute(select(CaSettings)).scalar_one()
         ca_settings.enabled = True

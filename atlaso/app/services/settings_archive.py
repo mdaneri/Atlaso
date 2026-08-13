@@ -1146,6 +1146,12 @@ def _prepare_archive_for_restore(db: Session, archive: dict[str, Any]) -> dict[s
     retained = export_settings_archive(db, actor="legacy-settings-archive-migration")["data"]
     for section_name in ARCHIVE_SECTION_NAMES.difference(prepared["data"]):
         prepared["data"][section_name] = deepcopy(retained[section_name])
+    legacy_ldap_users = prepared["data"].get("ldap_users")
+    if isinstance(legacy_ldap_users, list):
+        for row in legacy_ldap_users:
+            if isinstance(row, dict):
+                row["enabled"] = False
+                row["password_status"] = "not_staged"
     prepared["schema_version"] = ARCHIVE_SCHEMA_VERSION
     return prepared
 
@@ -2163,6 +2169,8 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
         )
         for row_index, row in enumerate(data.get("ldap_organizations", []), start=1)
     }
+    for organization in archived_organizations.values():
+        ensure_organization_bind_secret(organization)
     for row in data.get("ldap_users", []):
         organization = archived_organizations.get(str(row.get("organization_slug") or ""))
         if organization is not None:

@@ -5480,19 +5480,39 @@ def test_settings_restore_migrates_incomplete_schema_v1_archive(client):
     from sqlalchemy import select
 
     from atlaso.app.database import SessionLocal
-    from atlaso.app.models import NetworkBootEnvironment
+    from atlaso.app.models import LdapUser, NetworkBootEnvironment
     from atlaso.app.services.settings_archive import export_settings_archive, restore_settings_archive
 
     with SessionLocal() as db:
         archive = export_settings_archive(db, actor="test")
         archive["schema_version"] = 1
         del archive["data"]["network_boot_environments"]
+        archive["data"]["ldap_organizations"].append(
+            {
+                "name": "Legacy directory",
+                "slug": "legacy-directory",
+                "suffix_dn": "dc=legacy,dc=test",
+            }
+        )
+        archive["data"]["ldap_users"].append(
+            {
+                "organization_slug": "legacy-directory",
+                "uid": "legacy-user",
+                "enabled": True,
+                "password_status": "not_staged",
+            }
+        )
         expected_keys = set(db.execute(select(NetworkBootEnvironment.key)).scalars().all())
 
         counts = restore_settings_archive(db, archive)
 
         assert counts["network_boot_environments"] == len(expected_keys)
         assert set(db.execute(select(NetworkBootEnvironment.key)).scalars().all()) == expected_keys
+        restored_user = db.execute(
+            select(LdapUser).where(LdapUser.uid == "legacy-user")
+        ).scalar_one()
+        assert restored_user.enabled is False
+        assert restored_user.password_status == "not_staged"
 
 
 def test_settings_restore_rolls_back_late_failure_without_clearing_staged_ldap_recovery(client, monkeypatch):

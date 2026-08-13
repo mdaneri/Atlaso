@@ -136,8 +136,9 @@ def _set_oidc_service_ready(
     from cryptography.hazmat.primitives.asymmetric import rsa
     from cryptography.x509.oid import NameOID
 
-    from atlaso.app.models import CaCertificate, DnsRecord
-    from atlaso.app.secrets import encrypt_secret
+    from atlaso.app.models import CaCertificate, CaSettings, DnsRecord
+    from atlaso.app.secrets import decrypt_secret, encrypt_secret
+    from atlaso.app.services.ca import ensure_root_ca_material
     from atlaso.app.services import oidc
 
     provider = oidc.ensure_provider_settings(db)
@@ -147,6 +148,16 @@ def _set_oidc_service_ready(
     provider.port = 443
     provider.issuer_url = f"https://{hostname}/identity"
     certificate_name = certificate_hostname or hostname
+    ca_settings = db.execute(select(CaSettings)).scalar_one()
+    ca_settings.enabled = True
+    ensure_root_ca_material(ca_settings)
+    root_certificate = x509.load_pem_x509_certificate(
+        ca_settings.root_certificate_pem.encode("ascii")
+    )
+    root_private_key = serialization.load_pem_private_key(
+        decrypt_secret(ca_settings.root_private_key_encrypted).encode("ascii"),
+        password=None,
+    )
     key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
     subject = x509.Name(
         [x509.NameAttribute(NameOID.COMMON_NAME, certificate_name)]
@@ -155,7 +166,7 @@ def _set_oidc_service_ready(
     certificate_pem = (
         x509.CertificateBuilder()
         .subject_name(subject)
-        .issuer_name(subject)
+        .issuer_name(root_certificate.subject)
         .public_key(key.public_key())
         .serial_number(x509.random_serial_number())
         .not_valid_before(now - timedelta(minutes=1))
@@ -169,7 +180,7 @@ def _set_oidc_service_ready(
             ),
             critical=False,
         )
-        .sign(key, hashes.SHA256())
+        .sign(root_private_key, hashes.SHA256())
         .public_bytes(serialization.Encoding.PEM)
         .decode("ascii")
     )

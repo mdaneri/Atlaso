@@ -11,7 +11,7 @@ from pathlib import PurePosixPath
 
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
-from cryptography.hazmat.primitives.asymmetric import ec, rsa
+from cryptography.hazmat.primitives.asymmetric import ec, padding, rsa
 from cryptography.x509.oid import ExtendedKeyUsageOID, NameOID
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -867,28 +867,105 @@ def validate_ca_private_key_material(
     Returns:
         Public-safe validation errors for encrypted keys that cannot be decrypted and imported.
     """
-    candidates: list[tuple[str, str, str]] = []
+    def certificate_signature_is_valid(
+        certificate: x509.Certificate,
+        issuer: x509.Certificate,
+    ) -> bool:
+        """Return whether one supported certificate signature verifies."""
+        public_key = issuer.public_key()
+        try:
+            if isinstance(public_key, rsa.RSAPublicKey):
+                public_key.verify(
+                    certificate.signature,
+                    certificate.tbs_certificate_bytes,
+                    padding.PKCS1v15(),
+                    certificate.signature_hash_algorithm,
+                )
+            elif isinstance(public_key, ec.EllipticCurvePublicKey):
+                public_key.verify(
+                    certificate.signature,
+                    certificate.tbs_certificate_bytes,
+                    ec.ECDSA(certificate.signature_hash_algorithm),
+                )
+            else:
+                return False
+        except Exception:
+            return False
+        return True
+
+    errors: list[str] = []
+    root_certificate: x509.Certificate | None = None
+    if settings.root_certificate_pem:
+        try:
+            root_certificate = x509.load_pem_x509_certificate(
+                settings.root_certificate_pem.encode("utf-8")
+            )
+            if (
+                root_certificate.issuer != root_certificate.subject
+                or not certificate_signature_is_valid(root_certificate, root_certificate)
+            ):
+                raise ValueError
+        except Exception:
+            errors.append("CA root certificate is not a valid self-signed certificate.")
+            root_certificate = None
+
+    parsed_certificates: dict[int, x509.Certificate] = {}
+    for certificate in certificates:
+        if not certificate.enabled or certificate.status == "revoked":
+            continue
+        label = f"Certificate {certificate.common_name}"
+        if not certificate.certificate_pem:
+            continue
+        try:
+            parsed_certificate = x509.load_pem_x509_certificate(
+                certificate.certificate_pem.encode("utf-8")
+            )
+            parsed_certificates[id(certificate)] = parsed_certificate
+        except Exception:
+            errors.append(f"{label} certificate is not usable on this appliance.")
+            continue
+        if certificate.status == "issued" and (
+            root_certificate is None
+            or parsed_certificate.issuer != root_certificate.subject
+            or not certificate_signature_is_valid(parsed_certificate, root_certificate)
+        ):
+            errors.append(f"{label} is not issued by the restored CA root.")
+        if certificate.status == "issued" and certificate.chain_pem and root_certificate is not None:
+            try:
+                chain = x509.load_pem_x509_certificates(
+                    certificate.chain_pem.encode("utf-8")
+                )
+                expected_chain = [parsed_certificate, root_certificate]
+                if len(chain) != len(expected_chain) or any(
+                    actual.fingerprint(hashes.SHA256())
+                    != expected.fingerprint(hashes.SHA256())
+                    for actual, expected in zip(chain, expected_chain, strict=True)
+                ):
+                    raise ValueError
+            except Exception:
+                errors.append(f"{label} chain does not match the restored CA root.")
+
+    candidates: list[tuple[str, str, x509.Certificate | None]] = []
     if settings.root_private_key_encrypted:
         candidates.append(
             (
                 "CA root",
                 settings.root_private_key_encrypted,
-                settings.root_certificate_pem,
+                root_certificate,
             )
         )
     candidates.extend(
         (
             f"Certificate {certificate.common_name}",
             certificate.private_key_encrypted,
-            certificate.certificate_pem,
+            parsed_certificates.get(id(certificate)),
         )
         for certificate in certificates
         if certificate.enabled
         and certificate.status != "revoked"
         and certificate.private_key_encrypted
     )
-    errors: list[str] = []
-    for label, encrypted_key, certificate_pem in candidates:
+    for label, encrypted_key, certificate in candidates:
         try:
             private_key_pem = decrypt_secret(encrypted_key)
             private_key = serialization.load_pem_private_key(
@@ -898,10 +975,7 @@ def validate_ca_private_key_material(
         except Exception:
             errors.append(f"{label} encrypted private key is not usable on this appliance.")
             continue
-        try:
-            certificate = x509.load_pem_x509_certificate(certificate_pem.encode("utf-8"))
-        except Exception:
-            errors.append(f"{label} certificate is not usable on this appliance.")
+        if certificate is None:
             continue
         private_public_key = private_key.public_key().public_bytes(
             serialization.Encoding.DER,
