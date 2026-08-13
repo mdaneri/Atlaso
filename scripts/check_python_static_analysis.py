@@ -12,7 +12,11 @@ from io import StringIO
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-RUFF_PATHS = ("atlaso", "scripts", "tests")
+EXTENSIONLESS_PYTHON_PATHS = (
+    "scripts/appliance/atlaso-bootstrap-https",
+    "scripts/appliance/atlaso-helper",
+)
+RUFF_PATHS = ("atlaso", "scripts", "tests", *EXTENSIONLESS_PYTHON_PATHS)
 RUFF_SUPPRESSION_RE = re.compile(
     r"# noqa:\s*(?P<codes>[A-Z][A-Z0-9]*\d{3}(?:\s*,\s*[A-Z][A-Z0-9]*\d{3})*)"
     r"\s+-\s+(?P<reason>\S.*)$"
@@ -36,7 +40,9 @@ def tracked_python_files(root: Path = ROOT) -> list[Path]:
         text=True,
     )
     if result.returncode == 0:
-        return [root / line for line in result.stdout.splitlines() if line]
+        tracked = [root / line for line in result.stdout.splitlines() if line]
+        tracked.extend(root / path for path in EXTENSIONLESS_PYTHON_PATHS)
+        return tracked
     return sorted(root.rglob("*.py"))
 
 

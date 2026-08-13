@@ -77,3 +77,13 @@ def test_static_analysis_uses_existing_repository_status_path() -> None:
         in workflow
     )
     assert command in pre_commit
+
+
+def test_static_analysis_includes_privileged_extensionless_python() -> None:
+    """Keep privileged Python entry points inside lint and suppression coverage."""
+    checker = (ROOT / "scripts/check_python_static_analysis.py").read_text(
+        encoding="utf-8"
+    )
+
+    assert '"scripts/appliance/atlaso-bootstrap-https"' in checker
+    assert '"scripts/appliance/atlaso-helper"' in checker
