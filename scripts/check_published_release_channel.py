@@ -26,23 +26,33 @@ PAGES_PUBLICATION_WINDOW_SECONDS = 600.0
 DEFAULT_RETRY_DELAY_SECONDS = 10.0
 
 
-def fetch_document(url: str, *, timeout_seconds: float) -> bytes:
+def fetch_document(
+    url: str,
+    *,
+    timeout_seconds: float,
+    deadline: float,
+) -> bytes:
     """Download one bounded HTTPS release document.
 
     Args:
         url: Public HTTPS document URL.
         timeout_seconds: Per-request network timeout.
+        deadline: Absolute monotonic deadline for the complete verification attempt.
 
     Returns:
         The downloaded document bytes.
 
     Raises:
+        TimeoutError: If the publication window elapsed before the request.
         ValueError: If the URL is unsafe or the document exceeds the size limit.
     """
     parsed = urlparse(url)
     if parsed.scheme != "https" or not parsed.netloc or parsed.username or parsed.password:
         raise ValueError("Published release documents require HTTPS URLs without embedded credentials.")
-    with urlopen(url, timeout=timeout_seconds) as response:
+    remaining_seconds = deadline - time.monotonic()
+    if remaining_seconds <= 0:
+        raise TimeoutError("Published release verification exceeded its publication window.")
+    with urlopen(url, timeout=min(timeout_seconds, remaining_seconds)) as response:
         document = response.read(MAX_DOCUMENT_BYTES + 1)
     if len(document) > MAX_DOCUMENT_BYTES:
         raise ValueError(f"Published release document exceeds {MAX_DOCUMENT_BYTES} bytes: {url}")
@@ -58,6 +68,7 @@ def verify_channel(
     expected_python_abi: str,
     trusted_key: Path,
     timeout_seconds: float,
+    deadline: float,
 ) -> dict[str, Any]:
     """Verify a published channel, immutable release, and ABI compatibility.
 
@@ -69,6 +80,7 @@ def verify_channel(
         expected_python_abi: Appliance Python ABI required by the release.
         trusted_key: Exact checked-in public key selected for verification.
         timeout_seconds: Per-request network timeout.
+        deadline: Absolute monotonic deadline for the complete verification attempt.
 
     Returns:
         The verified channel and release metadata.
@@ -82,8 +94,16 @@ def verify_channel(
     if not trusted_key.is_file():
         raise ValueError(f"Trusted release key is missing: {trusted_key}")
 
-    raw_channel = fetch_document(channel_url, timeout_seconds=timeout_seconds)
-    raw_channel_signature = fetch_document(f"{channel_url}.sig", timeout_seconds=timeout_seconds)
+    raw_channel = fetch_document(
+        channel_url,
+        timeout_seconds=timeout_seconds,
+        deadline=deadline,
+    )
+    raw_channel_signature = fetch_document(
+        f"{channel_url}.sig",
+        timeout_seconds=timeout_seconds,
+        deadline=deadline,
+    )
     if signature_document(raw_channel_signature)["key_id"] != trusted_key.stem:
         raise ValueError("Published channel does not use the selected named trust key.")
     channel = verify_signed_json(
@@ -103,10 +123,15 @@ def verify_channel(
         )
 
     release_url = str(channel["release_manifest_url"])
-    raw_release = fetch_document(release_url, timeout_seconds=timeout_seconds)
+    raw_release = fetch_document(
+        release_url,
+        timeout_seconds=timeout_seconds,
+        deadline=deadline,
+    )
     raw_release_signature = fetch_document(
         f"{release_url}.sig",
         timeout_seconds=timeout_seconds,
+        deadline=deadline,
     )
     if signature_document(raw_release_signature)["key_id"] != trusted_key.stem:
         raise ValueError("Published release does not use the selected named trust key.")
@@ -194,7 +219,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                 expected_commit=args.expected_commit,
                 expected_python_abi=args.expected_python_abi,
                 trusted_key=args.trusted_key,
-                timeout_seconds=min(args.timeout_seconds, remaining_seconds),
+                timeout_seconds=args.timeout_seconds,
+                deadline=deadline,
             )
         except Exception as exc:  # noqa: BLE001 - retries cover Pages propagation and validation failures.
             last_error = exc

@@ -404,6 +404,8 @@ def test_published_channel_check_verifies_pointer_release_and_compatibility(
         release_url: raw_release,
         f"{release_url}.sig": release_signature,
     }
+    clock = 0.0
+    request_timeouts: list[float] = []
 
     class Response:
         """Provide a bounded in-memory urlopen response."""
@@ -420,11 +422,17 @@ def test_published_channel_check_verifies_pointer_release_and_compatibility(
         def read(self, _limit: int) -> bytes:
             return self.body
 
-    monkeypatch.setattr(
-        published_channel_check,
-        "urlopen",
-        lambda url, timeout: Response(documents[url]),
-    )
+    def monotonic() -> float:
+        return clock
+
+    def urlopen(url: str, timeout: float) -> Response:
+        nonlocal clock
+        request_timeouts.append(timeout)
+        clock += min(20.0, timeout)
+        return Response(documents[url])
+
+    monkeypatch.setattr(published_channel_check.time, "monotonic", monotonic)
+    monkeypatch.setattr(published_channel_check, "urlopen", urlopen)
 
     result = published_channel_check.verify_channel(
         channel_url,
@@ -433,11 +441,13 @@ def test_published_channel_check_verifies_pointer_release_and_compatibility(
         expected_commit="a" * 40,
         expected_python_abi="cp314",
         trusted_key=trust_dir / f"{KEY_ID}.pem",
-        timeout_seconds=1,
+        timeout_seconds=30,
+        deadline=clock + 65.0,
     )
 
     assert result["channel"]["version"] == "0.9.0"
     assert result["release"]["git_commit"] == "a" * 40
+    assert request_timeouts[:4] == [30.0, 30.0, 25.0, 5.0]
 
     with pytest.raises(ValueError, match="does not support cp313"):
         published_channel_check.verify_channel(
@@ -447,7 +457,8 @@ def test_published_channel_check_verifies_pointer_release_and_compatibility(
             expected_commit="a" * 40,
             expected_python_abi="cp313",
             trusted_key=trust_dir / f"{KEY_ID}.pem",
-            timeout_seconds=1,
+            timeout_seconds=30,
+            deadline=clock + 65.0,
         )
 
     with pytest.raises(ValueError, match="expected v0.9.1"):
@@ -458,7 +469,8 @@ def test_published_channel_check_verifies_pointer_release_and_compatibility(
             expected_commit="b" * 40,
             expected_python_abi="cp314",
             trusted_key=trust_dir / f"{KEY_ID}.pem",
-            timeout_seconds=1,
+            timeout_seconds=30,
+            deadline=clock + 65.0,
         )
 
 
@@ -502,10 +514,11 @@ def test_published_channel_check_caps_requests_and_sleeps_to_publication_window(
     def monotonic() -> float:
         return clock
 
-    def verify_channel(*_args, timeout_seconds: float, **_kwargs):
+    def verify_channel(*_args, timeout_seconds: float, deadline: float, **_kwargs):
         nonlocal clock
-        request_timeouts.append(timeout_seconds)
-        clock += timeout_seconds
+        effective_timeout = min(timeout_seconds, deadline - clock)
+        request_timeouts.append(effective_timeout)
+        clock += effective_timeout
         raise TimeoutError("publication request timed out")
 
     def sleep(seconds: float) -> None:
