@@ -142,6 +142,7 @@ from atlaso.app.schemas import (
     NatRuleCreate,
     NatRuleResponse,
     PhysicalInterfaceResponse,
+    PhysicalInterfaceUpdate,
     RouteCreate,
     RouteResponse,
     ServiceActionResponse,
@@ -171,6 +172,11 @@ from atlaso.app.schemas import (
     VsphereTrustedVcenterResponse,
     VsphereTrustedVcenterUpdate,
 )
+from atlaso.app.services.interface_updates import (
+    PhysicalInterfaceUpdateError,
+    update_physical_interface_desired_state,
+)
+from atlaso.app.ui import refresh_interface_service_dns_aliases
 from atlaso.app.services.kms import KMS_DEFAULT_CONFIG_PATH, join_csv
 from atlaso.app.services.vsphere_key_providers import (
     authenticated_provider_counts,
@@ -1256,147 +1262,59 @@ def get_physical_interface(
 )
 def update_physical_interface(
     name: Annotated[str, ApiPath(description='Stable name identifying the resource addressed by this operation.')],
-    payload: dict,
+    payload: PhysicalInterfaceUpdate,
     identity: Annotated[Identity, Depends(require_scope("write:interfaces"))],
     db: Session = Depends(get_db),
 ) -> PhysicalInterfaceResponse:
-    """Update Physical Interface.
+    """Update Physical Interface Desired State.
 
-    Requires the `write:interfaces` API scope. The operation updates saved Atlaso state and does not
-    bypass the documented global Appliance Apply or service lifecycle boundary.
+    Requires the `write:interfaces` API scope. This operation validates and saves the supplied
+    physical-interface fields, then atomically reconciles dependent DNS, NTP/NTS, Certificate
+    Authority, KMS, LDAP, VCF service, ESX Storage, Web Terminal, DHCP, and Network Boot bindings.
+    If any dependent update fails, Atlaso rolls back the interface and every dependent row. The
+    call changes desired state only; the global Appliance Apply workflow remains the
+    host-enforcement boundary.
 
     Args:
         name: Stable name identifying the resource or operation.
-        payload: Validated request or task payload consumed by the operation.
+        payload: Typed partial physical-interface desired-state update.
         identity: Authenticated identity authorizing the operation.
         db: Active database session used by the operation.
     """
-    interface = db.execute(select(PhysicalInterface).where(PhysicalInterface.name == name)).scalar_one_or_none()
+    interface = db.execute(
+        select(PhysicalInterface).where(PhysicalInterface.name == name)
+    ).scalar_one_or_none()
     if not interface:
         raise HTTPException(status_code=404, detail="Interface not found")
-    next_role = normalize_interface_role(payload.get("role", interface.role))
-    requested_management_ui = payload.get(
-        "access_management_ui_enabled",
-        interface.access_management_ui_enabled,
-    )
-    if not isinstance(requested_management_ui, bool):
-        raise HTTPException(status_code=422, detail="access_management_ui_enabled must be a boolean.")
-    if interface.role == "management" and next_role == "access" and "access_management_ui_enabled" not in payload:
-        requested_management_ui = True
-    if next_role == "management":
-        requested_management_ui = False
-    if requested_management_ui and next_role != "access":
-        raise HTTPException(
-            status_code=422,
-            detail="access_management_ui_enabled is available only for an access-role interface.",
+    try:
+        result = update_physical_interface_desired_state(
+            db,
+            interface,
+            payload.model_dump(exclude_unset=True),
+            dns_refresher=refresh_interface_service_dns_aliases,
         )
-    next_ipv4_method = normalize_ipv4_method(payload.get("ipv4_method", interface.ipv4_method))
-    requested_ipv6_enabled = payload.get("ipv6_enabled", interface.ipv6_enabled)
-    if not isinstance(requested_ipv6_enabled, bool):
-        raise HTTPException(status_code=422, detail="ipv6_enabled must be a boolean.")
-    next_ipv6_enabled = requested_ipv6_enabled
-    if next_ipv4_method == "dhcp" and next_role != "management":
-        raise HTTPException(status_code=422, detail="IPv4 DHCP is available only for the management interface.")
-    disabling_ipv6 = "ipv6_enabled" in payload and not next_ipv6_enabled
-    requested_ipv6_cidr = str(payload.get("ipv6_cidr", "" if disabling_ipv6 else interface.ipv6_cidr) or "").strip()
-    requested_ipv6_gateway = str(payload.get("ipv6_gateway", "" if disabling_ipv6 else interface.ipv6_gateway) or "").strip()
-    if not next_ipv6_enabled and (requested_ipv6_cidr or requested_ipv6_gateway):
-        raise HTTPException(status_code=422, detail="IPv6 CIDR and gateway must be blank while IPv6 is disabled.")
-    for field in ("role", "mtu", "admin_state", "ip_cidr", "gateway", "ipv6_cidr", "ipv6_gateway", "ipv4_method", "ipv6_enabled"):
-        if field in payload:
-            if field == "ipv4_method":
-                interface.ipv4_method = next_ipv4_method
-                if next_ipv4_method == "dhcp":
-                    interface.ip_cidr = None
-                    interface.gateway = None
-                continue
-            if field == "ipv6_enabled":
-                interface.ipv6_enabled = next_ipv6_enabled
-                if not next_ipv6_enabled:
-                    interface.ipv6_cidr = None
-                    interface.ipv6_gateway = None
-                continue
-            if field in {"ip_cidr", "ipv6_cidr"} and payload[field]:
-                try:
-                    parsed = ip_interface(str(payload[field]).strip())
-                except ValueError as exc:
-                    raise HTTPException(status_code=422, detail=f"{field} must be a valid address and prefix.") from exc
-                expected_version = 4 if field == "ip_cidr" else 6
-                if parsed.version != expected_version:
-                    family = "IPv4" if expected_version == 4 else "IPv6"
-                    raise HTTPException(status_code=422, detail=f"{field} must use an {family} address and prefix.")
-            if field == "role":
-                setattr(interface, field, next_role)
-                if next_role != "management":
-                    interface.gateway = None
-                    interface.ipv6_gateway = None
-                continue
-            if field in {"gateway", "ipv6_gateway"}:
-                if field == "ipv6_gateway":
-                    interface.ipv6_gateway = str(payload[field] or "").strip() or None
-                else:
-                    interface.gateway = str(payload[field] or "").strip() or None
-                continue
-            setattr(interface, field, payload[field])
-            if field == "ipv6_cidr" and not str(payload[field] or "").strip():
-                interface.ipv6_gateway = None
-    interface.access_management_ui_enabled = requested_management_ui
-    if "mode" in payload:
-        new_mode = normalize_interface_mode(payload["mode"])
-        vlan_count = db.scalar(select(func.count()).select_from(VlanInterface).where(VlanInterface.parent_interface == interface.name)) or 0
-        if new_mode != "trunk" and vlan_count:
-            raise HTTPException(
-                status_code=409,
-                detail=(
-                    f"{interface.name} is the parent of {vlan_count} VLAN interface{'s' if vlan_count != 1 else ''}. "
-                    "Move or delete those VLANs before changing the link type."
-                ),
-            )
-        interface.mode = new_mode
-        if new_mode == "trunk":
-            interface.gateway = None
-            interface.ipv6_gateway = None
-            interface.access_management_ui_enabled = False
-    if interface.gateway:
-        if normalize_interface_role(interface.role) != "management" or normalize_ipv4_method(interface.ipv4_method) != "static" or not interface.ip_cidr:
-            raise HTTPException(
-                status_code=422,
-                detail="IPv4 gateway is available only for a management interface using static IPv4.",
-            )
-        try:
-            gateway_address = ip_address(interface.gateway)
-            management_address = ip_interface(interface.ip_cidr)
-        except ValueError as exc:
-            raise HTTPException(status_code=422, detail="gateway must be a valid IPv4 address.") from exc
-        if gateway_address.version != 4:
-            raise HTTPException(status_code=422, detail="gateway must be an IPv4 address.")
-        if gateway_address not in management_address.network:
-            raise HTTPException(status_code=422, detail=f"gateway must be on-link for {interface.ip_cidr}.")
-        if gateway_address == management_address.ip:
-            raise HTTPException(status_code=422, detail="gateway cannot equal the management interface address.")
-    if interface.ipv6_gateway:
-        if normalize_interface_role(interface.role) != "management" or not interface.ipv6_enabled or not interface.ipv6_cidr:
-            raise HTTPException(
-                status_code=422,
-                detail="IPv6 gateway is available only for a management interface using static IPv6.",
-            )
-        try:
-            gateway_address = ip_address(interface.ipv6_gateway)
-            management_address = ip_interface(interface.ipv6_cidr)
-        except ValueError as exc:
-            raise HTTPException(status_code=422, detail="ipv6_gateway must be a valid IPv6 address.") from exc
-        if gateway_address.version != 6:
-            raise HTTPException(status_code=422, detail="ipv6_gateway must be an IPv6 address.")
-        if not gateway_address.is_link_local and gateway_address not in management_address.network:
-            raise HTTPException(status_code=422, detail=f"ipv6_gateway must be link-local or on-link for {interface.ipv6_cidr}.")
-        if gateway_address == management_address.ip:
-            raise HTTPException(status_code=422, detail="ipv6_gateway cannot equal the management interface address.")
-    interface.desired_state_source = "user"
-    db.add(interface)
-    db.commit()
-    db.refresh(interface)
-    record_audit(db, actor=identity.username, action="update_interface", resource_type="interface", resource_id=name)
-    return PhysicalInterfaceResponse.model_validate(interface)
+    except PhysicalInterfaceUpdateError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+    detail_parts: list[str] = []
+    if result.dependent_updates:
+        detail_parts.append(
+            "Refreshed dependent desired-state addresses: "
+            f"{', '.join(result.dependent_updates)}."
+        )
+    if result.preserved_dhcp_dns:
+        detail_parts.append(
+            "Preserved DHCP-provided DNS in desired state: "
+            f"{', '.join(result.preserved_dhcp_dns)}."
+        )
+    record_audit(
+        db,
+        actor=identity.username,
+        action="update_interface",
+        resource_type="interface",
+        resource_id=name,
+        detail=" ".join(detail_parts),
+    )
+    return PhysicalInterfaceResponse.model_validate(result.interface)
 
 
 @router.post("/interfaces/physical/{name}/enable", response_model=PhysicalInterfaceResponse, tags=["Interfaces"], operation_id="enablePhysicalInterface")
@@ -1416,7 +1334,7 @@ def enable_physical_interface(
         identity: Authenticated identity authorizing the operation.
         db: Active database session used by the operation.
     """
-    return update_physical_interface(name, {"admin_state": "up"}, identity, db)
+    return update_physical_interface(name, PhysicalInterfaceUpdate(admin_state="up"), identity, db)
 
 
 @router.post("/interfaces/physical/{name}/disable", response_model=PhysicalInterfaceResponse, tags=["Interfaces"], operation_id="disablePhysicalInterface")
@@ -1436,7 +1354,7 @@ def disable_physical_interface(
         identity: Authenticated identity authorizing the operation.
         db: Active database session used by the operation.
     """
-    return update_physical_interface(name, {"admin_state": "down"}, identity, db)
+    return update_physical_interface(name, PhysicalInterfaceUpdate(admin_state="down"), identity, db)
 
 
 @router.post("/interfaces/refresh", response_model=list[PhysicalInterfaceResponse], tags=["Interfaces"], operation_id="refreshPhysicalInterfaces")

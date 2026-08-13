@@ -36,6 +36,23 @@ unreachable after apply.
 4. Review validation and rendered network previews.
 5. Submit the selected network units through [Appliance Apply](appliance-apply.md).
 
+Edits from Physical Interfaces and `PATCH /api/v1/interfaces/physical/{name}` share the same transaction. When an
+IPv4 or IPv6 CIDR changes, Atlaso derives the replacement addresses for selected DNS, NTP/NTS, CA, KMS, LDAP, VCF,
+ESX Storage, Web Terminal, DHCP, and Network Boot/PXE bindings before committing. A reconciliation failure, including
+an existing DHCP range that cannot fit after a prefix shrink, rolls back the interface and every dependent desired-state
+row together. Atlaso also rejects address removal, trunk conversion, or administrative disablement while an enabled
+service, ESX Storage datastore, DHCP scope, or Network Boot/PXE binding would lose its final eligible address. A
+physical parent becoming unavailable also evaluates bindings to its child VLANs. When other selected interfaces remain
+eligible, reconciliation removes only the ineligible service, Web Terminal, or PXE selection. Disable or move a final
+binding before retrying. Saving still does not change Photon until global Appliance Apply is submitted.
+
+The internal Certificate Authority does not require a public listener. If its last selected portal interface becomes
+ineligible, reconciliation clears the CA portal interface/address and alias without disabling internal CA custody.
+Valid operator-selected DHCP gateway, DNS, and NTP values remain unchanged unless they match a replaced interface
+address or otherwise become stale. Enabled DHCP reservations retain their host offsets when exactly one rebased scope
+can receive them, including app-owned reservation DNS records; an ambiguous reservation move rolls back the interface
+edit. Legacy global DHCP binding fields are inactive when real scope rows exist and do not block unrelated changes.
+
 ### Choose where the management UI is available
 
 A physical interface with the **management** role always exposes `/ui/management`; it has no separate management UI

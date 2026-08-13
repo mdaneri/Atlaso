@@ -68,6 +68,33 @@ The switch exposes the authenticated `/ui/management` browser plane without chan
 public-service eligibility. A management-role physical interface ignores the switch because it exposes management
 inherently. Network apply rejects a configuration that would leave no effective management UI listener.
 
+### Update physical-interface desired state
+
+`PATCH /api/v1/interfaces/physical/{name}` accepts the typed `PhysicalInterfaceUpdate` schema. Omit a property to keep
+its saved value; use an empty string or `null` only for the documented CIDR and gateway fields that can be cleared.
+Recognized role, mode, and IPv4-method spellings are case-insensitive; the legacy `services` and `storage` roles and
+`routed` mode spelling remain supported. Atlaso rejects unsupported properties instead of silently ignoring them.
+
+Changing a physical interface's IPv4 or IPv6 CIDR automatically refreshes dependent desired-state addresses for DNS,
+NTP/NTS, Certificate Authority, KMS, LDAP, OIDC, VCF services, ESX Storage, Web Terminal, matching DHCP scopes, and
+Network Boot/PXE. Atlaso commits the interface and dependent rows as one transaction. If any dependent update fails,
+none of those changes are saved. Removing an address family or converting an interface to trunk mode is rejected while
+an enabled service, ESX Storage datastore, DHCP scope, or Network Boot/PXE listener still depends on the address;
+administratively disabling an interface follows the same rule. Disabling a physical parent also evaluates bindings to
+its enabled child VLANs. If other selected interfaces remain eligible, Atlaso removes only the ineligible service,
+Web Terminal, or PXE selection. Disable or move a final binding first. The audit event names the dependent units that
+were refreshed. This remains a desired-state edit: review the resulting network and service previews, then use global
+Appliance Apply for host enforcement.
+
+The internal Certificate Authority is the exception: if its last selected portal interface becomes ineligible, Atlaso
+clears the public CA portal binding and app-owned alias while leaving internal CA custody enabled.
+
+DHCP scope gateway, DNS, and NTP values remain operator-owned when they are valid and do not match a replaced interface
+address. Interface edits update only blank or stale derived values. Enabled reservations that would otherwise leave
+every enabled scope retain their host offset in the uniquely matching rebased scope; Atlaso updates app-owned
+reservation DNS records in the same transaction and rejects ambiguous moves. When real scope rows exist, inactive
+legacy global DHCP binding fields are retained for compatibility but do not constrain interface edits.
+
 ## Scopes and authorization
 
 Each Swagger operation describes its required Atlaso scope or authentication posture. A token can call only operations
