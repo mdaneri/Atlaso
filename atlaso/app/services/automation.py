@@ -69,6 +69,42 @@ def normalize_script_content(content: str, interpreter: str) -> str:
     return normalized
 
 
+def validate_script_revision_values(
+    *,
+    interpreter: str,
+    content: str,
+    timeout_seconds: int,
+    expected_content_sha256: str | None = None,
+) -> str:
+    """Validate and return canonical managed-script revision content.
+
+    Args:
+        interpreter: Interpreter used to execute the revision.
+        content: Managed-script source content.
+        timeout_seconds: Maximum execution time.
+        expected_content_sha256: Optional persisted digest that must match canonical content.
+
+    Returns:
+        Canonical line-ending-normalized script content.
+
+    Raises:
+        ValueError: If the revision cannot be safely stored or executed.
+    """
+    if interpreter not in SCRIPT_INTERPRETERS:
+        raise ValueError("Interpreter must be bash, python, or powershell.")
+    normalized_content = normalize_script_content(content, interpreter)
+    if not normalized_content.strip():
+        raise ValueError("Script content is required.")
+    if len(normalized_content.encode("utf-8")) > MAX_SCRIPT_CONTENT_BYTES:
+        raise ValueError("Script content must be 1 MiB or smaller.")
+    if timeout_seconds < 1 or timeout_seconds > MAX_SCRIPT_TIMEOUT_SECONDS:
+        raise ValueError("Script timeout must be between 1 second and 24 hours.")
+    content_sha256 = hashlib.sha256(normalized_content.encode("utf-8")).hexdigest()
+    if expected_content_sha256 is not None and expected_content_sha256 != content_sha256:
+        raise ValueError("Script content digest does not match its canonical source.")
+    return normalized_content
+
+
 def json_object(raw_value: str, *, label: str = "configuration") -> dict[str, Any]:
     """Return json object.
 
@@ -310,7 +346,7 @@ def validate_schedule_values(
             errors.append("Managed script schedule arguments must be a list of strings.")
     try:
         ZoneInfo(timezone_name)
-    except ZoneInfoNotFoundError:
+    except (ValueError, ZoneInfoNotFoundError):
         errors.append("Choose a valid IANA timezone.")
     if schedule_kind == "cron":
         try:
@@ -420,15 +456,11 @@ def create_script_revision(
     Raises:
         ValueError: If an input value is invalid.
     """
-    if interpreter not in SCRIPT_INTERPRETERS:
-        raise ValueError("Interpreter must be bash, python, or powershell.")
-    normalized_content = normalize_script_content(content, interpreter)
-    if not normalized_content.strip():
-        raise ValueError("Script content is required.")
-    if len(normalized_content.encode("utf-8")) > MAX_SCRIPT_CONTENT_BYTES:
-        raise ValueError("Script content must be 1 MiB or smaller.")
-    if timeout_seconds < 1 or timeout_seconds > MAX_SCRIPT_TIMEOUT_SECONDS:
-        raise ValueError("Script timeout must be between 1 second and 24 hours.")
+    normalized_content = validate_script_revision_values(
+        interpreter=interpreter,
+        content=content,
+        timeout_seconds=timeout_seconds,
+    )
     latest = db.execute(
         select(AutomationScriptRevision)
         .where(AutomationScriptRevision.script_id == script.id)

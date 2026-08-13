@@ -213,6 +213,78 @@ def active_signing_key(db: Session) -> OidcSigningKey | None:
     ).scalar_one_or_none()
 
 
+def provider_cryptographic_validation_errors(
+    provider: OidcProviderSettings,
+    certificate: CaCertificate | None,
+    signing_key: OidcSigningKey | None,
+    *,
+    require_active_key: bool = True,
+) -> list[str]:
+    """Validate the persisted certificate and signing-key protocol material.
+
+    Args:
+        provider: Provider whose protocol identity must match the material.
+        certificate: Applied OIDC service certificate candidate.
+        signing_key: Active signing-key candidate.
+        require_active_key: Whether an active protocol-ready key is required.
+
+    Returns:
+        Public-safe validation errors for the supplied material.
+    """
+    errors: list[str] = []
+    if not (
+        certificate
+        and certificate.status == "issued"
+        and certificate.certificate_pem
+        and certificate.private_key_encrypted
+    ):
+        errors.append(
+            "OIDC requires an applied managed certificate for its service hostname and listener addresses."
+        )
+    else:
+        try:
+            parsed_certificate = x509.load_pem_x509_certificate(
+                certificate.certificate_pem.encode("utf-8")
+            )
+            subject_alt_names = parsed_certificate.extensions.get_extension_for_class(
+                x509.SubjectAlternativeName
+            ).value
+            dns_names = {
+                normalize_fqdn(value)
+                for value in subject_alt_names.get_values_for_type(x509.DNSName)
+            }
+            ip_addresses = {
+                str(value)
+                for value in subject_alt_names.get_values_for_type(x509.IPAddress)
+            }
+            if normalize_fqdn(provider.hostname) not in dns_names:
+                errors.append(
+                    "The applied OIDC service certificate does not cover the exact issuer hostname."
+                )
+            if set(split_addresses(provider.listen_address)) - ip_addresses:
+                errors.append(
+                    "The applied OIDC service certificate does not cover every selected listener address."
+                )
+        except (ValueError, x509.ExtensionNotFound):
+            errors.append("The applied OIDC service certificate is not valid.")
+    if require_active_key and signing_key is None:
+        errors.append("Generate an active OIDC signing key before enabling the provider.")
+    elif require_active_key:
+        try:
+            public_jwk = json.loads(signing_key.public_jwk_json) if signing_key else {}
+            if (
+                signing_key is None
+                or signing_key.algorithm != OIDC_SIGNING_ALGORITHM
+                or public_jwk.get("kid") != signing_key.kid
+                or public_jwk.get("alg") != OIDC_SIGNING_ALGORITHM
+            ):
+                raise ValueError
+            RSAKey.import_key(decrypt_secret(signing_key.private_key_encrypted))
+        except Exception:
+            errors.append("The active OIDC signing key is not protocol-ready.")
+    return errors
+
+
 def provider_validation_errors(
     db: Session,
     provider: OidcProviderSettings | None = None,
@@ -280,55 +352,14 @@ def provider_validation_errors(
     certificate = db.execute(
         select(CaCertificate).where(CaCertificate.managed_owner == "oidc:https")
     ).scalar_one_or_none()
-    if not (
-        certificate
-        and certificate.status == "issued"
-        and certificate.certificate_pem
-        and certificate.private_key_encrypted
-    ):
-        errors.append("OIDC requires an applied managed certificate for its service hostname and listener addresses.")
-    else:
-        try:
-            parsed_certificate = x509.load_pem_x509_certificate(
-                certificate.certificate_pem.encode("utf-8")
-            )
-            subject_alt_names = parsed_certificate.extensions.get_extension_for_class(
-                x509.SubjectAlternativeName
-            ).value
-            dns_names = {
-                normalize_fqdn(value)
-                for value in subject_alt_names.get_values_for_type(x509.DNSName)
-            }
-            ip_addresses = {
-                str(value)
-                for value in subject_alt_names.get_values_for_type(x509.IPAddress)
-            }
-            if normalize_fqdn(provider.hostname) not in dns_names:
-                errors.append(
-                    "The applied OIDC service certificate does not cover the exact issuer hostname."
-                )
-            if set(split_addresses(provider.listen_address)) - ip_addresses:
-                errors.append(
-                    "The applied OIDC service certificate does not cover every selected listener address."
-                )
-        except (ValueError, x509.ExtensionNotFound):
-            errors.append("The applied OIDC service certificate is not valid.")
-    if require_active_key and active_signing_key(db) is None:
-        errors.append("Generate an active OIDC signing key before enabling the provider.")
-    elif require_active_key:
-        signing_key = active_signing_key(db)
-        try:
-            public_jwk = json.loads(signing_key.public_jwk_json) if signing_key else {}
-            if (
-                signing_key is None
-                or signing_key.algorithm != OIDC_SIGNING_ALGORITHM
-                or public_jwk.get("kid") != signing_key.kid
-                or public_jwk.get("alg") != OIDC_SIGNING_ALGORITHM
-            ):
-                raise ValueError
-            RSAKey.import_key(decrypt_secret(signing_key.private_key_encrypted))
-        except Exception:
-            errors.append("The active OIDC signing key is not protocol-ready.")
+    errors.extend(
+        provider_cryptographic_validation_errors(
+            provider,
+            certificate,
+            active_signing_key(db),
+            require_active_key=require_active_key,
+        )
+    )
     if provider.access_token_lifetime_seconds != OIDC_TOKEN_LIFETIME_SECONDS:
         errors.append("OIDC access tokens must use the fixed five-minute lifetime.")
     if provider.id_token_lifetime_seconds != OIDC_TOKEN_LIFETIME_SECONDS:

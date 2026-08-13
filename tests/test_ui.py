@@ -4846,6 +4846,7 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
     Args:
         client: HTTP test client used to exercise the Atlaso application.
     """
+    import hashlib
     from copy import deepcopy
 
     import pytest
@@ -5180,6 +5181,8 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
     enabled_oidc_with_invalid_port = deepcopy(enabled_oidc_with_mismatched_address)
     enabled_oidc_with_invalid_port["data"]["oidc_provider_settings"][0]["listen_address"] = "192.168.50.1"
     enabled_oidc_with_invalid_port["data"]["oidc_provider_settings"][0]["port"] = 0
+    enabled_oidc_with_invalid_crypto = deepcopy(enabled_oidc_with_mismatched_address)
+    enabled_oidc_with_invalid_crypto["data"]["oidc_provider_settings"][0]["listen_address"] = "192.168.50.1"
     invalid_storage_state = deepcopy(archive)
     invalid_storage_state["data"]["esx_storage_settings"] = [
         {"enabled": False, "hostname": "nfs.atlaso.internal"}
@@ -5224,6 +5227,51 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
     )
     powershell_source["enabled"] = True
     powershell_source["url"] = "not-a-url"
+    invalid_script_interpreter = deepcopy(archive)
+    script_content = "Write-Output 'archive validation'\n"
+    script_digest = hashlib.sha256(script_content.encode("utf-8")).hexdigest()
+    invalid_script_interpreter["data"]["automation_scripts"].append(
+        {
+            "name": "Invalid interpreter",
+            "created_by": "test",
+            "revisions": [
+                {
+                    "revision": 1,
+                    "interpreter": "cmd",
+                    "content": script_content,
+                    "content_sha256": script_digest,
+                    "timeout_seconds": 60,
+                    "created_by": "test",
+                }
+            ],
+        }
+    )
+    invalid_script_digest = deepcopy(invalid_script_interpreter)
+    invalid_script_digest["data"]["automation_scripts"][-1]["name"] = "Invalid digest"
+    invalid_script_digest["data"]["automation_scripts"][-1]["revisions"][0]["interpreter"] = "powershell"
+    invalid_script_digest["data"]["automation_scripts"][-1]["revisions"][0]["content_sha256"] = "0" * 64
+    unsupported_schedule = deepcopy(archive)
+    unsupported_schedule["data"]["schedules"].append(
+        {
+            "name": "Unsupported schedule",
+            "task_type": "unsupported",
+            "task_config_json": "{}",
+            "schedule_kind": "cron",
+            "cron_expression": "0 2 * * *",
+            "run_once_at": None,
+            "timezone_name": "UTC",
+            "enabled": False,
+            "created_by": "test",
+        }
+    )
+    invalid_update_schedule = deepcopy(unsupported_schedule)
+    invalid_update_schedule["data"]["schedules"][-1].update(
+        {
+            "name": "Invalid update stream schedule",
+            "task_type": "appliance_update_check",
+            "task_config_json": '{"selected_streams":["retired"]}',
+        }
+    )
     invalid_managed_package_source = deepcopy(archive)
     photon_source = next(
         row
@@ -5303,10 +5351,15 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
         (enabled_oidc_without_dependencies, "enables OIDC without an active signing key"),
         (enabled_oidc_with_mismatched_address, "has listener addresses not derived from its interfaces"),
         (enabled_oidc_with_invalid_port, "has an invalid HTTPS port"),
+        (enabled_oidc_with_invalid_crypto, "OIDC cryptographic state is invalid"),
         (invalid_storage_state, "ESX Storage state is invalid: Datastore invalid-share must use NFS 3 or NFS 4.1"),
         (invalid_esxi_host_mac, "esxi_pxe_hosts' has an invalid MAC address"),
         (invalid_esxi_kickstart, "multiple install/upgrade directives"),
         (invalid_update_source, r"update source state is invalid: .*URL must be an HTTP\(S\) URL"),
+        (invalid_script_interpreter, "Interpreter must be bash, python, or powershell"),
+        (invalid_script_digest, "Script content digest does not match"),
+        (unsupported_schedule, "Choose a supported scheduled task type"),
+        (invalid_update_schedule, "retired or unsupported stream"),
         (invalid_managed_package_source, "managed package state is invalid: Choose a PowerShell repository"),
         (unsupported_setting, "has an unsupported setting key"),
     ]:

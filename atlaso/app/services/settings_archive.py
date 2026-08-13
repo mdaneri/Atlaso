@@ -86,6 +86,10 @@ from atlaso.app.services.appliance_settings import (
     validate_appliance_settings,
     web_terminal_interface_options,
 )
+from atlaso.app.services.automation import (
+    validate_schedule_values,
+    validate_script_revision_values,
+)
 from atlaso.app.services.ca import validate_ca_state
 from atlaso.app.services.dnsmasq import (
     DNS_CONDITIONAL_FORWARDERS_SETTING_KEY,
@@ -130,6 +134,7 @@ from atlaso.app.services.oidc import (
     OidcConfigurationError,
     expected_issuer_url,
     normalize_issuer_url,
+    provider_cryptographic_validation_errors,
     validate_redirect_uri_list,
 )
 from atlaso.app.services.routes_wan import validate_nat_source, validate_wan_state
@@ -1918,6 +1923,56 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
                 raise ValueError(
                     f"The settings archive row {row_index} in 'oidc_provider_settings' has listener addresses not derived from its interfaces."
                 )
+        provider = OidcProviderSettings(
+            **_model_kwargs_with_scalar_defaults(
+                OidcProviderSettings,
+                enabled_oidc_rows[0],
+            )
+        )
+        certificate_row = next(
+            (
+                row
+                for row in data.get("ca_certificates", [])
+                if str(row.get("managed_owner") or "") == "oidc:https"
+            ),
+            None,
+        )
+        signing_key_row = next(
+            (
+                row
+                for row in data.get("oidc_signing_keys", [])
+                if str(row.get("status") or "") == "active" and row.get("active_slot") == 1
+            ),
+            None,
+        )
+        cryptographic_errors = provider_cryptographic_validation_errors(
+            provider,
+            (
+                CaCertificate(
+                    **_model_kwargs_with_scalar_defaults(
+                        CaCertificate,
+                        certificate_row,
+                        exclude={"profile_id"},
+                    )
+                )
+                if certificate_row is not None
+                else None
+            ),
+            (
+                OidcSigningKey(
+                    **_model_kwargs_with_scalar_defaults(
+                        OidcSigningKey,
+                        signing_key_row,
+                    )
+                )
+                if signing_key_row is not None
+                else None
+            ),
+        )
+        if cryptographic_errors:
+            raise ValueError(
+                f"The settings archive OIDC cryptographic state is invalid: {cryptographic_errors[0]}"
+            )
 
     provider_ids = {str(row["id"]) for row in data.get("vsphere_key_providers", [])}
     for row_index, row in enumerate(data.get("vsphere_trusted_vcenters", []), start=1):
@@ -2413,16 +2468,59 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
     script_revisions: set[tuple[str, int]] = set()
     for script_index, script in enumerate(data.get("automation_scripts", []), start=1):
         for revision in script["revisions"]:
-            try:
-                revision_number = int(revision["revision"])
-            except (TypeError, ValueError) as exc:
+            revision_number = revision["revision"]
+            if type(revision_number) is not int or revision_number < 1:
                 raise ValueError(
                     "The settings archive row "
                     f"{script_index} in 'automation_scripts' has an invalid revision number."
+                )
+            revision_identity = (str(script["name"]), revision_number)
+            if revision_identity in script_revisions:
+                raise ValueError(
+                    "The settings archive row "
+                    f"{script_index} in 'automation_scripts' contains a duplicate revision number."
+                )
+            try:
+                validate_script_revision_values(
+                    interpreter=str(revision["interpreter"]),
+                    content=str(revision["content"]),
+                    timeout_seconds=revision["timeout_seconds"],
+                    expected_content_sha256=str(revision["content_sha256"]),
+                )
+            except (TypeError, ValueError) as exc:
+                raise ValueError(
+                    "The settings archive row "
+                    f"{script_index} in 'automation_scripts' has an invalid revision: {exc}"
                 ) from exc
-            script_revisions.add((str(script["name"]), revision_number))
+            script_revisions.add(revision_identity)
     for row_index, row in enumerate(data.get("schedules", []), start=1):
         task_type = str(row["task_type"] or "")
+        raw_once = row.get("run_once_at")
+        if raw_once is None or raw_once == "":
+            run_once_at = None
+        elif isinstance(raw_once, str):
+            try:
+                run_once_at = datetime.fromisoformat(raw_once)
+            except ValueError as exc:
+                raise ValueError(
+                    f"The settings archive row {row_index} in 'schedules' has an invalid one-time run date."
+                ) from exc
+        else:
+            raise ValueError(
+                f"The settings archive row {row_index} in 'schedules' has an invalid one-time run date."
+            )
+        schedule_errors = validate_schedule_values(
+            task_type=task_type,
+            task_config_json=str(row.get("task_config_json") or "{}"),
+            schedule_kind=str(row.get("schedule_kind") or ""),
+            cron_expression=str(row.get("cron_expression") or ""),
+            run_once_at=run_once_at,
+            timezone_name=str(row.get("timezone_name") or ""),
+        )
+        if schedule_errors:
+            raise ValueError(
+                f"The settings archive schedule state is invalid: {schedule_errors[0]}"
+            )
         if task_type == "vcf_depot_download":
             require_reference(
                 "schedules",
@@ -2649,28 +2747,7 @@ def _validate_archive_row(
         raise ValueError(f"The settings archive row {row_index} in '{section_name}' must be an object.")
     model = ARCHIVE_SECTION_MODELS.get(section_name)
     if model is not None:
-        for column in model.__table__.columns:
-            value = row.get(column.name)
-            if value is None or isinstance(column.type, SqlDateTime):
-                continue
-            try:
-                expected_type = column.type.python_type
-            except NotImplementedError:
-                continue
-            valid_type = (
-                type(value) is expected_type
-                if expected_type in {bool, int, str}
-                else isinstance(value, expected_type)
-            )
-            if not valid_type:
-                type_label = {
-                    bool: "a boolean",
-                    int: "an integer",
-                    str: "a string",
-                }.get(expected_type, f"a {expected_type.__name__}")
-                raise ValueError(
-                    f"The settings archive row {row_index} in '{section_name}' field '{column.name}' must be {type_label}."
-                )
+        _validate_archive_model_scalar_types(section_name, row_index, row, model)
     missing_fields = sorted(field for field in required_fields if field not in row or row[field] is None)
     if missing_fields:
         raise ValueError(
@@ -2697,6 +2774,13 @@ def _validate_archive_row(
             exclude={"script_id", "enabled"},
         )
         for revision_index, revision in enumerate(revisions, start=1):
+            if isinstance(revision, dict):
+                _validate_archive_model_scalar_types(
+                    f"automation_scripts[{row_index}].revisions",
+                    revision_index,
+                    revision,
+                    AutomationScriptRevision,
+                )
             _validate_archive_row(
                 f"automation_scripts[{row_index}].revisions",
                 revision_index,
@@ -2707,6 +2791,48 @@ def _validate_archive_row(
         raise ValueError(
             f"The settings archive row {row_index} in 'esxi_pxe_hosts' has a variables value that must be an object."
         )
+
+
+def _validate_archive_model_scalar_types(
+    section_name: str,
+    row_index: int,
+    row: dict[str, Any],
+    model: type,
+) -> None:
+    """Validate supplied archive scalars against their persisted model types.
+
+    Args:
+        section_name: Archive data section being validated.
+        row_index: One-based position used in bounded validation feedback.
+        row: Candidate archive row.
+        model: SQLAlchemy model that defines persisted scalar types.
+
+    Raises:
+        ValueError: If a supplied scalar uses the wrong JSON type.
+    """
+    for column in model.__table__.columns:
+        value = row.get(column.name)
+        if value is None or isinstance(column.type, SqlDateTime):
+            continue
+        try:
+            expected_type = column.type.python_type
+        except NotImplementedError:
+            continue
+        valid_type = (
+            type(value) is expected_type
+            if expected_type in {bool, int, str}
+            else isinstance(value, expected_type)
+        )
+        if not valid_type:
+            type_label = {
+                bool: "a boolean",
+                int: "an integer",
+                str: "a string",
+            }.get(expected_type, f"a {expected_type.__name__}")
+            raise ValueError(
+                f"The settings archive row {row_index} in '{section_name}' "
+                f"field '{column.name}' must be {type_label}."
+            )
 
 
 def _required_model_fields(model: type, *, exclude: set[str] | None = None) -> set[str]:
