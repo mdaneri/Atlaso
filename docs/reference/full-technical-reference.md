@@ -1301,6 +1301,12 @@ reinstalling the wheel, increase the readiness wait with `-ReadinessTimeoutSecon
 The password-backed helper omits skipped optional asset arguments instead of passing empty native-command values, so
 these skip switches behave consistently in Windows PowerShell and PowerShell 7 native-argument modes.
 
+`-RemoteDirectory` defaults to `/tmp` and accepts an absolute POSIX path made only from ASCII letters, digits, `/`,
+`.`, `_`, and `-`; `.` and `..` path components are not allowed. The helper normalizes a trailing slash and applies the
+same validation before build or upload for password-backed and key/agent-backed SSH. Paths containing whitespace,
+apostrophes, dollar signs, backticks, semicolons, other shell metacharacters, or control characters are rejected rather
+than reinterpreted. The key/agent branch also serializes each argument at the remote shell boundary.
+
 Pass `-IncludeLabNetworkAdapters` only after `VMnet2`, `VMnet3`, and `VMnet4` exist for the SiteA, WAN/SiteB, and
 trunk-like validation networks.
 
