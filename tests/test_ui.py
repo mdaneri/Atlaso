@@ -4823,6 +4823,10 @@ def test_settings_archive_round_trips_ca_revocation_timestamp(client):
         assert settings is not None
         settings.enabled = True
         assert ensure_root_ca_material(settings) is True
+        expected_root_issued_at = settings.root_issued_at
+        expected_root_expires_at = settings.root_expires_at
+        assert expected_root_issued_at is not None
+        assert expected_root_expires_at is not None
         db.add(
             CaCertificate(
                 common_name="revoked-archive.atlaso.internal",
@@ -4847,11 +4851,166 @@ def test_settings_archive_round_trips_ca_revocation_timestamp(client):
             )
         )
         assert restored is not None
+        restored_settings = db.scalar(select(CaSettings))
+        assert restored_settings is not None
+        restored_root_issued_at = restored_settings.root_issued_at
+        restored_root_expires_at = restored_settings.root_expires_at
+        assert restored_root_issued_at is not None
+        assert restored_root_expires_at is not None
         restored_revoked_at = restored.revoked_at
         assert restored_revoked_at is not None
         if restored_revoked_at.tzinfo is None:
             restored_revoked_at = restored_revoked_at.replace(tzinfo=timezone.utc)
+        if restored_root_issued_at.tzinfo is None:
+            restored_root_issued_at = restored_root_issued_at.replace(
+                tzinfo=timezone.utc
+            )
+        if restored_root_expires_at.tzinfo is None:
+            restored_root_expires_at = restored_root_expires_at.replace(
+                tzinfo=timezone.utc
+            )
+        if expected_root_issued_at.tzinfo is None:
+            expected_root_issued_at = expected_root_issued_at.replace(
+                tzinfo=timezone.utc
+            )
+        if expected_root_expires_at.tzinfo is None:
+            expected_root_expires_at = expected_root_expires_at.replace(
+                tzinfo=timezone.utc
+            )
         assert restored_revoked_at == revoked_at
+        assert restored_root_issued_at == expected_root_issued_at
+        assert restored_root_expires_at == expected_root_expires_at
+
+
+def test_settings_archive_round_trips_ca_certificate_validity(client):
+    """Verify issued CA certificate validity survives export and restore.
+
+    Args:
+        client: HTTP test client used to initialize isolated desired state.
+    """
+    from datetime import timezone
+
+    from sqlalchemy import select
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import CaCertificate, CaProfile, CaSettings
+    from atlaso.app.services.ca import ensure_root_ca_material, issue_certificate
+    from atlaso.app.services.settings_archive import (
+        export_settings_archive,
+        restore_settings_archive,
+    )
+
+    with SessionLocal() as db:
+        db.query(CaCertificate).delete()
+        settings = db.scalar(select(CaSettings))
+        profile = db.scalar(select(CaProfile).where(CaProfile.enabled.is_(True)))
+        assert settings is not None
+        assert profile is not None
+        settings.enabled = True
+        assert ensure_root_ca_material(settings) is True
+        certificate = CaCertificate(
+            common_name="archive-validity.atlaso.internal",
+            profile_id=profile.id,
+            subject_alt_names="archive-validity.atlaso.internal",
+            enabled=True,
+        )
+        db.add(certificate)
+        db.flush()
+        assert issue_certificate(settings, [profile], certificate) is True
+        expected_issued_at = certificate.issued_at
+        expected_expires_at = certificate.expires_at
+        assert expected_issued_at is not None
+        assert expected_expires_at is not None
+        db.commit()
+
+        archive = export_settings_archive(db, actor="test")
+        archived = next(
+            row
+            for row in archive["data"]["ca_certificates"]
+            if row["common_name"] == certificate.common_name
+        )
+        assert archived["issued_at"]
+        assert archived["expires_at"]
+
+        restore_settings_archive(db, archive)
+        restored = db.scalar(
+            select(CaCertificate).where(
+                CaCertificate.common_name == "archive-validity.atlaso.internal"
+            )
+        )
+        assert restored is not None
+        restored_issued_at = restored.issued_at
+        restored_expires_at = restored.expires_at
+        assert restored_issued_at is not None
+        assert restored_expires_at is not None
+        if restored_issued_at.tzinfo is None:
+            restored_issued_at = restored_issued_at.replace(tzinfo=timezone.utc)
+        if restored_expires_at.tzinfo is None:
+            restored_expires_at = restored_expires_at.replace(tzinfo=timezone.utc)
+        if expected_issued_at.tzinfo is None:
+            expected_issued_at = expected_issued_at.replace(tzinfo=timezone.utc)
+        if expected_expires_at.tzinfo is None:
+            expected_expires_at = expected_expires_at.replace(tzinfo=timezone.utc)
+        assert restored_issued_at == expected_issued_at
+        assert restored_expires_at == expected_expires_at
+
+
+def test_settings_archive_preserves_oidc_retired_key_overlap(client):
+    """Verify OIDC retired-key publication timestamps survive restore.
+
+    Args:
+        client: HTTP test client used to initialize isolated desired state.
+    """
+    from datetime import datetime, timedelta, timezone
+
+    from sqlalchemy import select
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import OidcSigningKey
+    from atlaso.app.services import oidc
+    from atlaso.app.services.settings_archive import (
+        export_settings_archive,
+        restore_settings_archive,
+    )
+
+    created_at = datetime(2026, 8, 13, 7, 0, tzinfo=timezone.utc)
+    rotated_at = created_at + timedelta(minutes=5)
+    with SessionLocal() as db:
+        db.query(OidcSigningKey).delete()
+        first, _ = oidc.generate_signing_key(db, rotate=False, now=created_at)
+        _active, retired = oidc.generate_signing_key(db, rotate=True, now=rotated_at)
+        assert retired is first
+        expected_retired_at = retired.retired_at
+        expected_publish_until = retired.publish_until
+        assert expected_retired_at is not None
+        assert expected_publish_until is not None
+        retired_kid = retired.kid
+        db.commit()
+
+        archive = export_settings_archive(db, actor="test")
+        archived = next(
+            row
+            for row in archive["data"]["oidc_signing_keys"]
+            if row["kid"] == retired_kid
+        )
+        assert archived["retired_at"] == expected_retired_at.isoformat()
+        assert archived["publish_until"] == expected_publish_until.isoformat()
+
+        restore_settings_archive(db, archive)
+        restored = db.scalar(
+            select(OidcSigningKey).where(OidcSigningKey.kid == retired_kid)
+        )
+        assert restored is not None
+        restored_retired_at = restored.retired_at
+        restored_publish_until = restored.publish_until
+        assert restored_retired_at is not None
+        assert restored_publish_until is not None
+        if restored_retired_at.tzinfo is None:
+            restored_retired_at = restored_retired_at.replace(tzinfo=timezone.utc)
+        if restored_publish_until.tzinfo is None:
+            restored_publish_until = restored_publish_until.replace(tzinfo=timezone.utc)
+        assert restored_retired_at == expected_retired_at
+        assert restored_publish_until == expected_publish_until
 
 
 def test_settings_archive_disables_registry_when_uploaded_ca_is_omitted(client):
@@ -5847,6 +6006,10 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
             "public_jwk_json": "{}",
             "status": "active",
             "active_slot": 1,
+            "created_at": "2026-08-13T06:00:00+00:00",
+            "activated_at": "2026-08-13T06:00:00+00:00",
+            "retired_at": None,
+            "publish_until": None,
         }
     ]
     oidc_certificate = deepcopy(enabled_oidc_with_mismatched_address["data"]["ca_certificates"][0])
@@ -5868,6 +6031,10 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
             "public_jwk_json": '{"d":"private"}',
             "status": "retired",
             "active_slot": None,
+            "created_at": "2026-08-13T06:00:00+00:00",
+            "activated_at": "2026-08-13T06:00:00+00:00",
+            "retired_at": "2026-08-13T06:05:00+00:00",
+            "publish_until": "2026-08-13T06:10:00+00:00",
         }
     )
     enabled_oidc_with_extra_active_key = deepcopy(enabled_oidc_with_invalid_crypto)
@@ -5878,6 +6045,10 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
             "public_jwk_json": '{"d":"private"}',
             "status": "active",
             "active_slot": None,
+            "created_at": "2026-08-13T06:00:00+00:00",
+            "activated_at": "2026-08-13T06:00:00+00:00",
+            "retired_at": None,
+            "publish_until": None,
         }
     )
     invalid_ca_private_key = deepcopy(archive)
@@ -5885,8 +6056,15 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
     invalid_ca_storage_path = deepcopy(archive)
     invalid_ca_storage_path["data"]["ca_settings"][0]["storage_path"] = "/tmp/archive-ca"
     invalid_ca_certificate_path = deepcopy(archive)
-    invalid_ca_certificate_path["data"]["ca_certificates"][0]["enabled"] = True
+    invalid_ca_certificate_path["data"]["ca_certificates"][0]["enabled"] = False
     invalid_ca_certificate_path["data"]["ca_certificates"][0]["cert_path"] = "/tmp/archive.crt"
+    invalid_disabled_ca_certificate_material = deepcopy(archive)
+    invalid_disabled_ca_certificate_material["data"]["ca_certificates"][0].update(
+        {
+            "enabled": False,
+            "certificate_pem": "not-a-certificate",
+        }
+    )
     duplicate_managed_certificate_owner = deepcopy(archive)
     duplicate_certificate = deepcopy(duplicate_managed_certificate_owner["data"]["ca_certificates"][0])
     duplicate_certificate["managed_owner"] = "archive:duplicate-owner"
@@ -6157,6 +6335,7 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
         (invalid_ca_private_key, "Certificate Authority key state is invalid"),
         (invalid_ca_storage_path, "CA storage path must stay under /etc/atlaso"),
         (invalid_ca_certificate_path, "certificate path must stay under /etc/atlaso"),
+        (invalid_disabled_ca_certificate_material, "certificate .* material is invalid"),
         (duplicate_managed_certificate_owner, "duplicates a managed certificate owner"),
         (invalid_storage_state, "ESX Storage state is invalid: Datastore invalid-share must use NFS 3 or NFS 4.1"),
         (invalid_esxi_host_mac, "esxi_pxe_hosts' has an invalid MAC address"),

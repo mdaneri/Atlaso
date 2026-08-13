@@ -55,6 +55,12 @@ fails, Atlaso rolls back the database transaction and leaves any separately stag
 in-memory payload available. A successful settings restore or factory reset intentionally clears that staged LDAP
 recovery material.
 
+Certificate and signing-key lifecycle state is restored with the desired state. Atlaso reconstructs CA certificate
+validity from the archived public PEM, preserves CA issue, expiry, and revocation timestamps, and preserves OIDC key
+activation, retirement, and publication-overlap timestamps so still-live tokens retain their verification key. Disabled
+CA certificate rows receive the same bounded status, managed-path, and supplied-material checks as enabled rows before
+any current state is removed.
+
 Current exports use settings-archive schema v2, which requires the complete section inventory. Atlaso continues to
 accept schema-v1 archives: sections that did not exist when an older archive was created are retained from the target
 appliance during migration to v2, then the complete migrated archive receives the same preflight validation before any

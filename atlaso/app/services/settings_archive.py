@@ -6,9 +6,11 @@ import json
 from copy import deepcopy
 from datetime import datetime, timezone
 from ipaddress import ip_address, ip_interface, ip_network
+from pathlib import PurePosixPath
 from typing import Any
 from uuid import UUID
 
+from cryptography import x509
 from sqlalchemy import DateTime as SqlDateTime
 from sqlalchemy import delete, select
 from sqlalchemy.exc import IntegrityError, StatementError
@@ -97,7 +99,12 @@ from atlaso.app.services.automation import (
     validate_schedule_values,
     validate_script_revision_values,
 )
-from atlaso.app.services.ca import validate_ca_private_key_material, validate_ca_state
+from atlaso.app.services.ca import (
+    CA_MANAGED_PATH_BASE,
+    CA_STATUS_VALUES,
+    validate_ca_private_key_material,
+    validate_ca_state,
+)
 from atlaso.app.services.dnsmasq import (
     DNS_CONDITIONAL_FORWARDERS_SETTING_KEY,
     split_addresses,
@@ -410,6 +417,148 @@ def _archive_datetime(value: Any, field_name: str) -> datetime | None:
     return parsed
 
 
+def _archive_datetime_iso(value: datetime | None) -> str | None:
+    """Serialize a persisted timestamp as timezone-aware ISO 8601.
+
+    Args:
+        value: Persisted timestamp to serialize.
+
+    Returns:
+        A UTC-aware ISO 8601 value, or ``None`` when absent.
+    """
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    return value.isoformat()
+
+
+def _certificate_validity_timestamps(
+    row: dict[str, Any],
+) -> tuple[datetime | None, datetime | None]:
+    """Return authoritative leaf-certificate validity timestamps.
+
+    Args:
+        row: Archived certificate row containing optional PEM and timestamps.
+
+    Returns:
+        The issue and expiry timestamps reconstructed from PEM when available.
+    """
+    issued_at = _archive_datetime(row.get("issued_at"), "issued_at")
+    expires_at = _archive_datetime(row.get("expires_at"), "expires_at")
+    certificate_pem = row.get("certificate_pem")
+    if isinstance(certificate_pem, str) and certificate_pem.strip():
+        try:
+            certificate = x509.load_pem_x509_certificate(certificate_pem.encode("utf-8"))
+        except ValueError:
+            return issued_at, expires_at
+        issued_at = certificate.not_valid_before_utc
+        expires_at = certificate.not_valid_after_utc
+    return issued_at, expires_at
+
+
+def _root_ca_validity_timestamps(
+    row: dict[str, Any],
+) -> tuple[datetime | None, datetime | None]:
+    """Return authoritative root-CA validity timestamps.
+
+    Args:
+        row: Archived CA settings row containing optional root PEM and timestamps.
+
+    Returns:
+        The issue and expiry timestamps reconstructed from the root PEM when available.
+    """
+    issued_at = _archive_datetime(row.get("root_issued_at"), "root_issued_at")
+    expires_at = _archive_datetime(row.get("root_expires_at"), "root_expires_at")
+    root_pem = row.get("root_certificate_pem")
+    if isinstance(root_pem, str) and root_pem.strip():
+        try:
+            certificate = x509.load_pem_x509_certificate(root_pem.encode("utf-8"))
+        except ValueError:
+            return issued_at, expires_at
+        issued_at = certificate.not_valid_before_utc
+        expires_at = certificate.not_valid_after_utc
+    return issued_at, expires_at
+
+
+def _validate_archived_ca_certificate_rows(
+    certificates: list[CaCertificate],
+) -> None:
+    """Validate every archived certificate row regardless of enabled state.
+
+    Args:
+        certificates: Reconstructed archive certificate rows to validate.
+
+    Raises:
+        ValueError: If status, deployment paths, or supplied material is invalid.
+    """
+    for row_index, certificate in enumerate(certificates, start=1):
+        label = certificate.common_name or f"row {row_index}"
+        if certificate.status not in CA_STATUS_VALUES:
+            raise ValueError(
+                f"The settings archive CA certificate {label} has an unsupported status."
+            )
+        if not certificate.common_name.strip():
+            raise ValueError(
+                f"The settings archive row {row_index} in 'ca_certificates' has no common name."
+            )
+        for value, path_label in (
+            (certificate.cert_path, "certificate path"),
+            (certificate.key_path, "private-key path"),
+            (certificate.chain_path, "chain path"),
+        ):
+            raw_value = value.strip()
+            if not raw_value:
+                continue
+            path = PurePosixPath(raw_value)
+            if (
+                not path.is_absolute()
+                or ".." in path.parts
+                or not path.is_relative_to(CA_MANAGED_PATH_BASE)
+            ):
+                raise ValueError(
+                    f"The settings archive CA certificate {label} {path_label} "
+                    f"must stay under {CA_MANAGED_PATH_BASE}."
+                )
+        if certificate.chain_pem:
+            try:
+                chain = x509.load_pem_x509_certificates(
+                    certificate.chain_pem.encode("utf-8")
+                )
+            except (TypeError, ValueError) as exc:
+                raise ValueError(
+                    f"The settings archive CA certificate {label} chain is not usable."
+                ) from exc
+            if not chain:
+                raise ValueError(
+                    f"The settings archive CA certificate {label} chain is not usable."
+                )
+        if certificate.csr_text:
+            try:
+                x509.load_pem_x509_csr(certificate.csr_text.encode("utf-8"))
+            except (TypeError, ValueError) as exc:
+                raise ValueError(
+                    f"The settings archive CA certificate {label} request is not usable."
+                ) from exc
+        material_certificate = CaCertificate(
+            common_name=certificate.common_name,
+            certificate_pem=certificate.certificate_pem,
+            private_key_encrypted=certificate.private_key_encrypted,
+            chain_pem="",
+            status="planned",
+            enabled=True,
+        )
+        material_errors = validate_ca_private_key_material(
+            CaSettings(),
+            [material_certificate],
+        )
+        if material_errors:
+            raise ValueError(
+                f"The settings archive CA certificate {label} material is invalid: "
+                f"{material_errors[0]}"
+            )
+
+
 def _settings_rows(db: Session) -> list[dict[str, str]]:
     """Return settings rows.
 
@@ -477,6 +626,14 @@ def export_settings_archive(db: Session, *, actor: str) -> dict[str, Any]:
     for key, model in SCALAR_TABLES.items():
         rows = db.execute(select(model)).scalars().all()
         data[key] = [_row_to_dict(row) for row in rows]
+    ca_settings = db.execute(select(CaSettings)).scalar_one_or_none()
+    if ca_settings is not None and data["ca_settings"]:
+        data["ca_settings"][0]["root_issued_at"] = _archive_datetime_iso(
+            ca_settings.root_issued_at
+        )
+        data["ca_settings"][0]["root_expires_at"] = _archive_datetime_iso(
+            ca_settings.root_expires_at
+        )
     for key in ("physical_interfaces", "vlan_interfaces"):
         data[key] = _canonical_network_role_rows(data[key])
 
@@ -501,10 +658,7 @@ def export_settings_archive(db: Session, *, actor: str) -> dict[str, Any]:
     data["oidc_clients"] = _oidc_clients_to_archive(db)
     data["oidc_client_redirect_uris"] = _oidc_client_redirect_uris_to_archive(db)
     data["oidc_group_mappings"] = _oidc_group_mappings_to_archive(db)
-    data["oidc_signing_keys"] = [
-        _row_to_dict(row)
-        for row in db.execute(select(OidcSigningKey).order_by(OidcSigningKey.created_at)).scalars().all()
-    ]
+    data["oidc_signing_keys"] = _oidc_signing_keys_to_archive(db)
     data["vcf_backup_settings"] = _vcf_backup_settings_to_archive(db)
     data["vcf_offline_depot_settings"] = _vcf_offline_depot_settings_to_archive(db)
     data["esxi_pxe_hosts"] = _esxi_pxe_hosts_to_archive(db)
@@ -567,12 +721,42 @@ def _ca_certificates_to_archive(db: Session) -> list[dict[str, Any]]:
     profiles = {profile.id: profile.name for profile in db.execute(select(CaProfile)).scalars().all()}
     rows = []
     for certificate in db.execute(select(CaCertificate)).scalars().all():
-        payload = _row_to_dict(certificate, exclude={"profile_id", "issued_at", "expires_at"})
-        revoked_at = certificate.revoked_at
-        if revoked_at is not None and revoked_at.tzinfo is None:
-            revoked_at = revoked_at.replace(tzinfo=timezone.utc)
-        payload["revoked_at"] = revoked_at.isoformat() if revoked_at else None
+        payload = _row_to_dict(
+            certificate,
+            exclude={"profile_id", "issued_at", "expires_at", "revoked_at"},
+        )
+        payload["issued_at"] = _archive_datetime_iso(certificate.issued_at)
+        payload["expires_at"] = _archive_datetime_iso(certificate.expires_at)
+        payload["revoked_at"] = _archive_datetime_iso(certificate.revoked_at)
         payload["profile_name"] = profiles.get(certificate.profile_id) if certificate.profile_id else ""
+        rows.append(payload)
+    return rows
+
+
+def _oidc_signing_keys_to_archive(db: Session) -> list[dict[str, Any]]:
+    """Return OIDC signing keys with their lifecycle timestamps.
+
+    Args:
+        db: Active database session.
+
+    Returns:
+        Signing-key rows that preserve activation and retired-key overlap state.
+    """
+    rows: list[dict[str, Any]] = []
+    signing_keys = db.execute(
+        select(OidcSigningKey).order_by(OidcSigningKey.created_at)
+    ).scalars().all()
+    for signing_key in signing_keys:
+        payload = _row_to_dict(signing_key)
+        for field_name in (
+            "created_at",
+            "activated_at",
+            "retired_at",
+            "publish_until",
+        ):
+            payload[field_name] = _archive_datetime_iso(
+                getattr(signing_key, field_name)
+            )
         rows.append(payload)
     return rows
 
@@ -1007,6 +1191,14 @@ def _restore_settings_archive_data(db: Session, data: dict[str, Any]) -> dict[st
     ]:
         counts[key] = _insert_rows(db, SCALAR_TABLES[key], data.get(key, []))
     db.flush()
+    restored_ca_settings = db.execute(select(CaSettings)).scalar_one_or_none()
+    if restored_ca_settings is not None and data.get("ca_settings"):
+        root_issued_at, root_expires_at = _root_ca_validity_timestamps(
+            data["ca_settings"][0]
+        )
+        restored_ca_settings.root_issued_at = root_issued_at
+        restored_ca_settings.root_expires_at = root_expires_at
+        db.add(restored_ca_settings)
 
     counts["ca_certificates"] = _restore_ca_certificates(db, data.get("ca_certificates", []))
     restored_ntp_settings = db.execute(select(NtpSettings)).scalar_one_or_none()
@@ -1045,7 +1237,10 @@ def _restore_settings_archive_data(db: Session, data: dict[str, Any]) -> dict[st
         db,
         data.get("oidc_group_mappings", []),
     )
-    counts["oidc_signing_keys"] = _insert_rows(db, OidcSigningKey, data.get("oidc_signing_keys", []))
+    counts["oidc_signing_keys"] = _restore_oidc_signing_keys(
+        db,
+        data.get("oidc_signing_keys", []),
+    )
     counts["vcf_backup_settings"] = _restore_vcf_backup_settings(db, data.get("vcf_backup_settings", []))
     counts["vcf_offline_depot_settings"] = _restore_vcf_offline_depot_settings(db, data.get("vcf_offline_depot_settings", []))
     for key in [
@@ -2087,8 +2282,11 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
         str(row["name"]): row_index
         for row_index, row in enumerate(data.get("ca_profiles", []), start=1)
     }
+    root_issued_at, root_expires_at = _root_ca_validity_timestamps(ca_row)
     archived_ca_settings = CaSettings(
-        **_model_kwargs_with_scalar_defaults(CaSettings, ca_row)
+        **_model_kwargs_with_scalar_defaults(CaSettings, ca_row),
+        root_issued_at=root_issued_at,
+        root_expires_at=root_expires_at,
     )
     archived_ca_profiles = [
         CaProfile(
@@ -2097,18 +2295,22 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
         )
         for row in data.get("ca_profiles", [])
     ]
-    archived_ca_certificates = [
-        CaCertificate(
-            **_model_kwargs_with_scalar_defaults(
-                CaCertificate,
-                row,
-                exclude={"profile_id"},
-            ),
-            profile_id=ca_profile_ids.get(str(row.get("profile_name") or "")),
-            revoked_at=_archive_datetime(row.get("revoked_at"), "revoked_at"),
+    archived_ca_certificates: list[CaCertificate] = []
+    for row in data.get("ca_certificates", []):
+        issued_at, expires_at = _certificate_validity_timestamps(row)
+        archived_ca_certificates.append(
+            CaCertificate(
+                **_model_kwargs_with_scalar_defaults(
+                    CaCertificate,
+                    row,
+                    exclude={"profile_id"},
+                ),
+                profile_id=ca_profile_ids.get(str(row.get("profile_name") or "")),
+                issued_at=issued_at,
+                expires_at=expires_at,
+                revoked_at=_archive_datetime(row.get("revoked_at"), "revoked_at"),
+            )
         )
-        for row in data.get("ca_certificates", [])
-    ]
     ca_errors = validate_ca_state(
         settings=archived_ca_settings,
         profiles=archived_ca_profiles,
@@ -2206,6 +2408,31 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
         else:
             raise ValueError(
                 f"The settings archive row {row_index} in 'oidc_signing_keys' has an unsupported status."
+            )
+        created_at = _archive_datetime(row.get("created_at"), "created_at")
+        activated_at = _archive_datetime(row.get("activated_at"), "activated_at")
+        retired_at = _archive_datetime(row.get("retired_at"), "retired_at")
+        publish_until = _archive_datetime(row.get("publish_until"), "publish_until")
+        if created_at is None or activated_at is None:
+            raise ValueError(
+                f"The settings archive row {row_index} in 'oidc_signing_keys' is missing signing-key lifecycle timestamps."
+            )
+        if activated_at < created_at:
+            raise ValueError(
+                f"The settings archive row {row_index} in 'oidc_signing_keys' has inconsistent signing-key lifecycle timestamps."
+            )
+        if status == "active" and (retired_at is not None or publish_until is not None):
+            raise ValueError(
+                f"The settings archive row {row_index} in 'oidc_signing_keys' assigns retirement timestamps to an active key."
+            )
+        if status == "retired" and (
+            retired_at is None
+            or publish_until is None
+            or retired_at < activated_at
+            or publish_until <= retired_at
+        ):
+            raise ValueError(
+                f"The settings archive row {row_index} in 'oidc_signing_keys' has invalid retired-key overlap timestamps."
             )
     if len(active_signing_keys) > 1:
         raise ValueError(
@@ -2767,6 +2994,7 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
             optional=True,
         )
 
+    _validate_archived_ca_certificate_rows(archived_ca_certificates)
     ca_key_errors = validate_ca_private_key_material(
         archived_ca_settings,
         archived_ca_certificates,
@@ -3693,6 +3921,7 @@ def _restore_ca_certificates(db: Session, rows: list[dict[str, Any]]) -> int:
     """
     profiles = {profile.name: profile.id for profile in db.execute(select(CaProfile)).scalars().all()}
     for row in rows:
+        issued_at, expires_at = _certificate_validity_timestamps(row)
         payload = _model_kwargs(
             CaCertificate,
             row,
@@ -3700,8 +3929,34 @@ def _restore_ca_certificates(db: Session, rows: list[dict[str, Any]]) -> int:
         )
         profile_name = str(row.get("profile_name") or "")
         payload["profile_id"] = profiles.get(profile_name) if profile_name else None
+        payload["issued_at"] = issued_at
+        payload["expires_at"] = expires_at
         payload["revoked_at"] = _archive_datetime(row.get("revoked_at"), "revoked_at")
         db.add(CaCertificate(**payload))
+    db.flush()
+    return len(rows)
+
+
+def _restore_oidc_signing_keys(db: Session, rows: list[dict[str, Any]]) -> int:
+    """Restore OIDC signing keys with their lifecycle and overlap timestamps.
+
+    Args:
+        db: Active database session.
+        rows: Validated signing-key archive rows.
+
+    Returns:
+        The number of restored signing keys.
+    """
+    for row in rows:
+        payload = _model_kwargs(OidcSigningKey, row)
+        for field_name in (
+            "created_at",
+            "activated_at",
+            "retired_at",
+            "publish_until",
+        ):
+            payload[field_name] = _archive_datetime(row.get(field_name), field_name)
+        db.add(OidcSigningKey(**payload))
     db.flush()
     return len(rows)
 
