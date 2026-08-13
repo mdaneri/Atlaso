@@ -370,10 +370,13 @@ The finished appliance VM gets two additional dynamic VHDX data disks by default
 Use `create-switches.ps1`, `create-atlaso-vm.ps1`, and `start-atlaso-vm.ps1` directly only when you need to control each
 step by hand.
 
-The default data disks are dynamic 500 GB VHDX files stored next to the OS VHDX. Override them with `-DepotVhdxPath`,
-`-BackupVhdxPath`, `-DepotDiskSizeBytes`, or `-BackupDiskSizeBytes` when needed. On first boot,
-`atlaso-data-disks.service` formats blank attached data disks, labels them as `ATLASO_DEPOT` and `ATLASO_BKUP`, writes
-`/etc/fstab`, and mounts them before the Atlaso control plane starts.
+The data disks are fixed-size dynamic 500 GiB VHDX files stored next to the OS VHDX by default. Override their paths
+with `-DepotVhdxPath` or `-BackupVhdxPath`; the size parameters reject any value other than 500 GiB. The deployment
+helper assigns the depot to SCSI controller 0 location 1 and backups to location 2. On first boot,
+`atlaso-data-disks.service` requires those exact guest-visible SCSI identities, their topology-derived
+`atlaso-path-*` links, and exact capacities before formatting either disk. Missing, extra, reordered, ambiguous, or
+mismatched disks fail closed before `mkfs`. Correctly labeled ext4 disks remain idempotent, are written to `/etc/fstab`
+by UUID, and mount before the Atlaso control plane starts.
 
 ## Appliance Smoke Checks
 

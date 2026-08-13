@@ -88,9 +88,12 @@ Finished Hyper-V appliance VMs and VMware OVF/OVA appliances also attach two dur
 VCF Offline Depot at `/mnt/atlaso-vcf-offline-depot` and one for VCF Backups at `/mnt/atlaso-vcf-backups`. VMware images
 precede those disks with file-backed Photon OS and Atlaso system-content VMDKs; the latter holds `/opt/atlaso` and the
 appliance-wide PowerShell modules through required UUID-backed mounts. Keep depot and backup workloads off both payload
-disks. On first boot, `atlaso-data-disks.service` labels blank attached data disks as `ATLASO_DEPOT`
-and `ATLASO_BKUP`, formats them as ext4, persists them in `/etc/fstab`, and mounts them at those fixed paths before
-`atlaso.service` starts.
+disks. The root-owned image policy binds `ATLASO_DEPOT` and `ATLASO_BKUP` to the platform's fixed SCSI locations, a
+topology-derived `atlaso-path-*` identity, and an exact 500 GiB capacity. Before the first `mkfs`,
+`atlaso-data-disks.service` verifies both disks and rejects missing, extra, reordered, ambiguous, read-only, in-use,
+or identity/capacity-mismatched devices. It formats only the two verified blank whole disks as ext4, persists their
+UUIDs in `/etc/fstab`, and mounts them at the fixed paths before `atlaso.service` starts. Existing correctly labeled
+ext4 disks must occupy their assigned identities and are mounted without reformatting.
 
 Atlaso writes operational events to `/var/log/atlaso/atlaso.log`. Audit events, desired-state edits, and appliance apply
 submissions are mirrored there with sensitive values redacted. The Settings page controls local file verbosity and can

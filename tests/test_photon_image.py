@@ -619,8 +619,9 @@ def test_photon_provisioning_installs_default_nginx_management_proxy():
     assert "openldap-servers" in script
     assert "nfs-utils" in script and "rpcbind" in script
     assert "99-atlaso-disk-identity.rules" in script
-    assert 'IMPORT{builtin}="path_id"' in script
+    assert 'SUBSYSTEM=="block", ENV{DEVTYPE}=="disk", IMPORT{builtin}="path_id"' in script
     assert 'SYMLINK+="disk/by-id/atlaso-path-$env{ID_PATH_TAG}"' in script
+    assert 'ENV{ID_SERIAL}==""' not in script
     assert "powershell" in script
     assert "VCF.PowerCLI" in script
     assert "9.1.0.25380678" in script
@@ -761,10 +762,17 @@ def test_photon_provisioning_prepares_attached_data_disks():
     assert "ATLASO_BKUP" in mount_script
     assert "/mnt/atlaso-vcf-offline-depot" in mount_script
     assert "/mnt/atlaso-vcf-backups" in mount_script
-    assert 'mkfs.ext4 -F -L "$label" "$disk"' in mount_script
+    assert 'mkfs.ext4 -F -L "$label" "$stable_path"' in mount_script
     assert "UUID=%s %s ext4 defaults,nofail,x-systemd.device-timeout=30s 0 2" in mount_script
     assert "findmnt -n -o SOURCE /" in mount_script
-    assert "No blank data disk available" in mount_script
+    assert "ATLASO_DATA_DISK_SIZE_BYTES=536870912000" in provision
+    assert "ATLASO_DEPOT_SCSI_TUPLE=$atlaso_depot_scsi_tuple" in provision
+    assert "ATLASO_BACKUP_SCSI_TUPLE=$atlaso_backup_scsi_tuple" in provision
+    assert "ATLASO_SYSTEM_SCSI_TUPLE=$atlaso_system_scsi_tuple" in provision
+    assert "validate_exact_disk_set" in mount_script
+    assert "stable_path_for_disk" in mount_script
+    assert "unexpected whole disk" in mount_script
+    assert "No blank data disk available" not in mount_script
 
     assert 'ATLASO_SYSTEM_CONTENT_DISK="${ATLASO_SYSTEM_CONTENT_DISK:-false}"' in provision
     assert 'mkfs.ext4 -F -L ATLASO_SYSTEM "$system_disk"' in provision
@@ -1149,6 +1157,15 @@ def test_create_atlaso_test_vm_wrapper_is_safe_and_simple():
     assert "Add-VMNetworkAdapter -VMName $VMName -Name 'Trunk' -SwitchName 'Atlaso-Trunk'" in vm_script
     assert "Set-VMNetworkAdapterVlan -VMName $VMName -VMNetworkAdapterName 'Trunk' -Trunk -AllowedVlanIdList \"$TaggedVlanTag\" -NativeVlanId 0" in vm_script
     assert "Add-VMNetworkAdapter -VMName $VMName -Name 'WAN-Test' -SwitchName 'Atlaso-SiteB'" in vm_script
+    assert "[ValidateScript({ $_ -eq 500GB })]" in vm_script
+    assert (
+        "Add-VMHardDiskDrive -VMName $Name -ControllerType SCSI -ControllerNumber 0 "
+        "-ControllerLocation 1 -Path $resolvedDepotVhdxPath"
+    ) in vm_script
+    assert (
+        "Add-VMHardDiskDrive -VMName $Name -ControllerType SCSI -ControllerNumber 0 "
+        "-ControllerLocation 2 -Path $resolvedBackupVhdxPath"
+    ) in vm_script
 
 
 def test_windows_script_names_use_provider_tokens():

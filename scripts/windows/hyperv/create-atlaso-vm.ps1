@@ -7,7 +7,9 @@ param(
     [int]$ProcessorCount = 2,
     [string]$DepotVhdxPath,
     [string]$BackupVhdxPath,
+    [ValidateScript({ $_ -eq 500GB })]
     [int64]$DepotDiskSizeBytes = 500GB,
+    [ValidateScript({ $_ -eq 500GB })]
     [int64]$BackupDiskSizeBytes = 500GB,
     [switch]$SkipLabNetworkAdapters,
     [string]$ServiceSwitchName = 'Atlaso-Services',
@@ -105,8 +107,8 @@ if ($PSCmdlet.ShouldProcess($Name, 'Create Atlaso Hyper-V VM')) {
     New-VM -Name $Name -Generation 2 -MemoryStartupBytes $MemoryStartupBytes -VHDPath $VhdxPath -SwitchName 'Atlaso-Mgmt' | Out-Null
     Set-VMProcessor -VMName $Name -Count $ProcessorCount
     Set-VMFirmware -VMName $Name -EnableSecureBoot Off
-    Add-VMHardDiskDrive -VMName $Name -ControllerType SCSI -Path $resolvedDepotVhdxPath
-    Add-VMHardDiskDrive -VMName $Name -ControllerType SCSI -Path $resolvedBackupVhdxPath
+    Add-VMHardDiskDrive -VMName $Name -ControllerType SCSI -ControllerNumber 0 -ControllerLocation 1 -Path $resolvedDepotVhdxPath
+    Add-VMHardDiskDrive -VMName $Name -ControllerType SCSI -ControllerNumber 0 -ControllerLocation 2 -Path $resolvedBackupVhdxPath
     if (-not $SkipLabNetworkAdapters) {
         Add-ServiceNetworkAdapter -VMName $Name -SwitchName $ServiceSwitchName
         Add-LabNetworkAdapters -VMName $Name -SiteTag $SiteVlanId -TaggedVlanTag $TaggedVlanId
