@@ -1608,7 +1608,11 @@ class VlanCreate(BaseModel):
     @field_validator("role", mode="before")
     @classmethod
     def normalize_canonical_role(cls, value: Any) -> Any:
-        """Normalize case-insensitive canonical VLAN role spellings."""
+        """Normalize case-insensitive canonical VLAN role spellings.
+
+        Args:
+            value: Incoming VLAN role value to normalize when it is a recognized string.
+        """
         if not isinstance(value, str):
             return value
         normalized = value.strip().lower()
