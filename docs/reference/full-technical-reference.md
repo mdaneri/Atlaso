@@ -238,9 +238,10 @@ signed machine-readable documents under `/updates`. `preview` and `stable` promo
 release. The signed `stable` pointer is required because the built-in Appliance Update source selects it. Every Pages
 writer fails closed if the stable manifest or detached signature is missing from the final tree. Release and promotion
 workflows then verify the hosted channel and immutable release signatures, matching version and commit identity, named
-trust key, and CPython 3.14 compatibility before publication succeeds. GitHub Release descriptions preserve the exact
-signed source commit and append generated notes grouped from merged pull-request labels, contributors, and comparison
-metadata. A protected manual publication dispatch can recover
+trust key, and CPython 3.14 compatibility before publication succeeds, retrying through a bounded ten-minute Pages
+deployment and CDN propagation window. GitHub Release descriptions preserve the exact signed source commit and append
+generated notes grouped from merged pull-request labels, contributors, and comparison metadata. A protected manual
+publication dispatch can recover
 an exact commit only when it already has a successful `main` push CI run. Publication refuses any existing tag or
 release whose commit or asset bytes differ. The same dispatch safely retries channel advancement after a release has
 already published because it verifies the existing asset bytes first. The guarded backfill command updates only

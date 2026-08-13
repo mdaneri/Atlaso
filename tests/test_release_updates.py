@@ -485,6 +485,15 @@ def test_published_channel_check_imports_atlaso_from_a_clean_checkout(tmp_path: 
     assert "Verify a published Atlaso channel" in result.stdout
 
 
+def test_published_channel_check_covers_pages_publication_window():
+    """Verify default retries cover the bounded GitHub Pages publication window."""
+    retry_window = (
+        published_channel_check.DEFAULT_ATTEMPTS - 1
+    ) * published_channel_check.DEFAULT_RETRY_DELAY_SECONDS
+
+    assert retry_window >= published_channel_check.PAGES_PUBLICATION_WINDOW_SECONDS
+
+
 def test_published_channel_check_fails_when_default_pointer_is_absent(
     trust,
     monkeypatch,

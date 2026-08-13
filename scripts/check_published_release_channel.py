@@ -22,6 +22,11 @@ from atlaso.app.services.release_updates import (  # noqa: E402 - add the checko
 )
 
 MAX_DOCUMENT_BYTES = 1024 * 1024
+PAGES_PUBLICATION_WINDOW_SECONDS = 600.0
+DEFAULT_RETRY_DELAY_SECONDS = 10.0
+DEFAULT_ATTEMPTS = int(
+    PAGES_PUBLICATION_WINDOW_SECONDS / DEFAULT_RETRY_DELAY_SECONDS
+) + 1
 
 
 def fetch_document(url: str, *, timeout_seconds: float) -> bytes:
@@ -148,8 +153,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--expected-commit", required=True)
     parser.add_argument("--expected-python-abi", default="cp314")
     parser.add_argument("--trusted-key", type=Path, required=True)
-    parser.add_argument("--attempts", type=int, default=12)
-    parser.add_argument("--retry-delay-seconds", type=float, default=10.0)
+    parser.add_argument("--attempts", type=int, default=DEFAULT_ATTEMPTS)
+    parser.add_argument(
+        "--retry-delay-seconds",
+        type=float,
+        default=DEFAULT_RETRY_DELAY_SECONDS,
+    )
     parser.add_argument("--timeout-seconds", type=float, default=30.0)
     args = parser.parse_args(argv)
     if args.attempts < 1:

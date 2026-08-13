@@ -66,7 +66,8 @@ GitHub is the default distribution origin:
 - The shipped default is `stable`. Every Pages writer refuses to publish a tree where its manifest or detached
   signature is absent. Release and promotion workflows also re-fetch the live channel pointer and immutable release
   manifest, verify both signatures with the named appliance trust key, require matching version and commit identity,
-  and confirm CPython 3.14 compatibility before reporting success.
+  and confirm CPython 3.14 compatibility before reporting success. The live verification retries through a bounded
+  ten-minute Pages deployment and CDN propagation window.
 
 The default source is:
 
