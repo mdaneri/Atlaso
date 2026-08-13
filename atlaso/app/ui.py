@@ -24452,9 +24452,14 @@ def vcf_offline_depot_page(
     schedule_form = getattr(request.state, "vcf_schedule_form", {})
     if not isinstance(schedule_form, dict):
         schedule_form = {}
+    schedule_read_only = False
     if schedule_profile is not None and not schedule_profile.enabled:
-        schedule_profile = None
-        schedule_error = "Enable the VCFDT download profile before scheduling it."
+        if schedule_error and schedule_form:
+            schedule_read_only = True
+        else:
+            schedule_profile = None
+            schedule_error = "Enable the VCFDT download profile before scheduling it."
+    schedule_unavailable_error = schedule_error if schedule_profile is None else ""
     return render(
         request,
         "vcf_offline_depot.html",
@@ -24467,6 +24472,8 @@ def vcf_offline_depot_page(
             "vcf_depot_contextual_schedule_profile": schedule_profile,
             "vcf_depot_contextual_schedule_error": schedule_error,
             "vcf_depot_contextual_schedule_form": schedule_form,
+            "vcf_depot_contextual_schedule_read_only": schedule_read_only,
+            "vcf_depot_contextual_schedule_unavailable_error": schedule_unavailable_error,
         },
     )
 

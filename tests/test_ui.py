@@ -1009,7 +1009,7 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert service_worker.headers["cache-control"] == "no-cache"
     assert service_worker.headers["service-worker-allowed"] == "/ui/management/"
     assert "ATLASO_CACHE" in service_worker.text
-    assert "atlaso-management-pwa-v251" in service_worker.text
+    assert "atlaso-management-pwa-v252" in service_worker.text
     assert 'fetch(asset, { cache: "reload" })' in service_worker.text
     assert ".catch(() => undefined)" in service_worker.text
     assert 'request.mode === "navigate"' in service_worker.text
@@ -1027,7 +1027,7 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-8" in service_worker.text
     assert "/static/appliance-apply-polling.js?v=issue-294-2" in service_worker.text
     assert "/static/ui-routes.js?v=issue-287-1" in service_worker.text
-    assert "/static/app.js?v=vcf-depot-queue-schedule-351-353-7" in service_worker.text
+    assert "/static/app.js?v=vcf-depot-queue-schedule-351-353-8" in service_worker.text
     assert "/static/terminal.js?v=issue-287-2" in service_worker.text
     assert "/static/pwa.js?v=issue-287-2" in service_worker.text
     assert "vcfdt-configuration-248-20260807-14" not in service_worker.text
@@ -1059,8 +1059,8 @@ def test_shared_ui_pattern_shell_and_wizard_contracts(client):
     base = (templates / "base.html").read_text(encoding="utf-8")
     public_base = (templates / "public_portal_base.html").read_text(encoding="utf-8")
     for shell, app_asset in (
-        (base, "/static/app.js?v=vcf-depot-queue-schedule-351-353-7"),
-        (public_base, "/static/app.js?v=vcf-depot-queue-schedule-351-353-7"),
+        (base, "/static/app.js?v=vcf-depot-queue-schedule-351-353-8"),
+        (public_base, "/static/app.js?v=vcf-depot-queue-schedule-351-353-8"),
         (base, "/static/appliance-apply-polling.js?v=issue-294-2"),
     ):
         assert shell.index("/static/vendor/tabulator/tabulator.min.js") < shell.index(
@@ -1689,7 +1689,7 @@ def test_monitor_page_renders_and_data_endpoint(client):
     assert "swagger-link-icon" in page.text
     assert "/static/app.css?v=vlan-interface-wizard-304-2" in page.text
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-8" in page.text
-    assert "/static/app.js?v=vcf-depot-queue-schedule-351-353-7" in page.text
+    assert "/static/app.js?v=vcf-depot-queue-schedule-351-353-8" in page.text
     app_css = client.get("/static/app.css")
     assert app_css.status_code == 200
     assert ".split-workspace > .wide-panel" in app_css.text
@@ -15412,6 +15412,8 @@ def test_vcf_offline_depot_contextual_schedule_is_server_bound_and_stays_in_page
     assert "if (isContextualVcfSchedule && scheduleForm.dataset.contextProfileId)" in app_js
     assert "if (scheduleModal.open) scheduleModal.close();" in app_js
     assert "openScheduleWizard(serverProfile, launcher instanceof HTMLElement ? launcher : null)" in app_js
+    assert 'if (scheduleForm.dataset.contextReadOnly === "true")' in app_js
+    assert "if (contextualError) scheduleWizard.setError(contextualError);" in app_js
 
     fallback_submit = client.post(
         f"/vcf-offline-depot/profiles/{profile_id}/schedules",
@@ -15520,6 +15522,49 @@ def test_vcf_offline_depot_contextual_schedule_is_server_bound_and_stays_in_page
         disabled_id, deleted_id = disabled.id, deleted.id
         db.delete(deleted)
         db.commit()
+
+    disabled_fallback = client.post(
+        f"/vcf-offline-depot/profiles/{disabled_id}/schedules",
+        data={
+            "csrf": csrf,
+            "name": "disabled-race-fallback",
+            "schedule_kind": "cron",
+            "cron_expression": "0 4 * * *",
+            "timezone_name": "America/Los_Angeles",
+            "enabled": "on",
+        },
+        headers={"Accept": "text/html"},
+    )
+    assert disabled_fallback.status_code == 422
+    disabled_dialog = disabled_fallback.text.split(
+        'id="vcf-depot-schedule-modal"', 1
+    )[1].split("</dialog>", 1)[0]
+    assert " open" in disabled_dialog.split(">", 1)[0]
+    assert 'data-context-read-only="true"' in disabled_dialog
+    assert "disabled-contextual-profile" in disabled_dialog
+    assert "Choose an enabled VCF Offline Depot download profile." in disabled_dialog
+    assert 'value="disabled-race-fallback"' in disabled_dialog
+    assert 'value="America/Los_Angeles"' in disabled_dialog
+    assert "data-atlaso-wizard-submit disabled" in disabled_dialog
+    assert "display: none !important" in disabled_fallback.text
+
+    deleted_fallback = client.post(
+        f"/vcf-offline-depot/profiles/{deleted_id}/schedules",
+        data={
+            "csrf": csrf,
+            "name": "deleted-race-fallback",
+            "schedule_kind": "cron",
+            "cron_expression": "0 4 * * *",
+            "timezone_name": "UTC",
+        },
+        headers={"Accept": "text/html"},
+    )
+    assert deleted_fallback.status_code == 422
+    profile_error = deleted_fallback.text.split(
+        'id="vcf-depot-profile-error"', 1
+    )[1].split("</div>", 1)[0]
+    assert " hidden" not in profile_error.split(">", 1)[0]
+    assert "Choose an enabled VCF Offline Depot download profile." in profile_error
 
     for invalid_profile_id in (disabled_id, deleted_id, 999_999):
         invalid = client.post(

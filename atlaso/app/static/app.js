@@ -18585,7 +18585,7 @@ function initializeAutomationTables() {
       } : undefined,
     });
     const openScheduleWizard = (rowData = null, launcher = null) => {
-      scheduleWizard.open({ context: rowData, launcher });
+      return scheduleWizard.open({ context: rowData, launcher });
     };
     scheduleForm.atlasoOpenScheduleWizard = openScheduleWizard;
     if (isContextualVcfSchedule && scheduleForm.dataset.contextProfileId) {
@@ -18597,7 +18597,15 @@ function initializeAutomationTables() {
         `[data-vcf-depot-fallback-schedule="${serverProfile.id}"]`,
       );
       if (scheduleModal.open) scheduleModal.close();
-      openScheduleWizard(serverProfile, launcher instanceof HTMLElement ? launcher : null);
+      void openScheduleWizard(serverProfile, launcher instanceof HTMLElement ? launcher : null).then(() => {
+        const contextualError = String(scheduleForm.dataset.contextError || "");
+        if (scheduleForm.dataset.contextReadOnly === "true") {
+          scheduleForm.querySelectorAll("input, select, textarea, [data-atlaso-wizard-nav], [data-atlaso-wizard-next], [data-atlaso-wizard-back], [data-atlaso-wizard-submit]").forEach((control) => {
+            control.disabled = true;
+          });
+        }
+        if (contextualError) scheduleWizard.setError(contextualError);
+      });
     }
     taskType?.addEventListener("change", updateConfigVisibility);
     scriptRevision?.addEventListener("change", updateScriptArgumentsGuidance);

@@ -50,7 +50,7 @@
             <span class="status-pill muted">{{ vcf_depot_profiles|length }} rows</span>
           </div>
         </div>
-        <div id="vcf-depot-profile-error" class="alert error hidden"></div>
+        <div id="vcf-depot-profile-error" class="alert error {{ 'hidden' if not vcf_depot_contextual_schedule_unavailable_error else '' }}" role="alert" aria-live="assertive">{{ vcf_depot_contextual_schedule_unavailable_error }}</div>
         <div
           id="vcf-depot-profiles-table"
           class="tabulator-shell"
@@ -306,7 +306,7 @@
   </aside>
 </section>
 <dialog id="vcf-depot-schedule-modal" class="confirm-modal wide-modal vcf-sddc-wizard-modal" aria-labelledby="vcf-depot-schedule-modal-title" aria-describedby="vcf-depot-schedule-modal-description" {{ "open" if vcf_depot_contextual_schedule_profile else "" }}>
-  <form id="vcf-depot-schedule-form" class="confirm-modal-panel vcf-sddc-wizard-panel" method="post" action="{{ management_ui_root }}/vcf-offline-depot/profiles/{{ vcf_depot_contextual_schedule_profile.id if vcf_depot_contextual_schedule_profile else 0 }}/schedules" data-automation-schedule-form data-automation-contextual-vcf-schedule data-context-profile-id="{{ vcf_depot_contextual_schedule_profile.id if vcf_depot_contextual_schedule_profile else '' }}" data-context-profile-name="{{ vcf_depot_contextual_schedule_profile.name if vcf_depot_contextual_schedule_profile else '' }}" data-atlaso-wizard>
+  <form id="vcf-depot-schedule-form" class="confirm-modal-panel vcf-sddc-wizard-panel" method="post" action="{{ management_ui_root }}/vcf-offline-depot/profiles/{{ vcf_depot_contextual_schedule_profile.id if vcf_depot_contextual_schedule_profile else 0 }}/schedules" data-automation-schedule-form data-automation-contextual-vcf-schedule data-context-profile-id="{{ vcf_depot_contextual_schedule_profile.id if vcf_depot_contextual_schedule_profile else '' }}" data-context-profile-name="{{ vcf_depot_contextual_schedule_profile.name if vcf_depot_contextual_schedule_profile else '' }}" data-context-error="{{ vcf_depot_contextual_schedule_error }}" data-context-read-only="{{ 'true' if vcf_depot_contextual_schedule_read_only else 'false' }}" data-atlaso-wizard>
     <input type="hidden" name="csrf" value="{{ csrf_token }}">
     <aside class="vcf-sddc-wizard-rail" aria-label="Contextual depot schedule steps">
       <p class="kicker">Depot profile schedule</p>
@@ -376,8 +376,8 @@
       <div class="confirm-modal-actions vcf-sddc-wizard-actions">
         <button class="button ghost" type="button" data-automation-schedule-modal-cancel data-atlaso-wizard-cancel>Cancel</button>
         <button class="button secondary hidden" type="button" data-automation-wizard-back data-atlaso-wizard-back>Back</button>
-        <button class="button primary" type="button" data-automation-wizard-next data-atlaso-wizard-next>Next</button>
-        <button class="button primary hidden" type="submit" data-automation-wizard-submit data-atlaso-wizard-submit>Create schedule</button>
+        <button class="button primary" type="button" data-automation-wizard-next data-atlaso-wizard-next {{ "disabled" if vcf_depot_contextual_schedule_read_only else "" }}>Next</button>
+        <button class="button primary hidden" type="submit" data-automation-wizard-submit data-atlaso-wizard-submit {{ "disabled" if vcf_depot_contextual_schedule_read_only else "" }}>Create schedule</button>
       </div>
     </div>
   </form>
@@ -389,7 +389,7 @@
   #vcf-depot-schedule-modal [data-atlaso-wizard-next],
   #vcf-depot-schedule-modal [data-atlaso-wizard-back],
   #vcf-depot-schedule-modal [data-atlaso-wizard-cancel] { display: none !important; }
-  #vcf-depot-schedule-modal [data-atlaso-wizard-submit] { display: inline-flex !important; }
+  #vcf-depot-schedule-modal [data-atlaso-wizard-submit] { display: {{ "none" if vcf_depot_contextual_schedule_read_only else "inline-flex" }} !important; }
 </style></noscript>
 {% endif %}
 {% set vcf_depot_profile_steps = [
