@@ -269,6 +269,26 @@ function Resolve-AtlasoVerifiedVmxInventoryPath {
     return $canonicalPath
 }
 
+function ConvertFrom-AtlasoVmrunInventoryPath {
+    param(
+        [Parameter(Mandatory = $true)]
+        [AllowEmptyString()]
+        [string]$InventoryLine
+    )
+
+    $candidate = $InventoryLine.Trim()
+    if (-not $candidate) {
+        return $null
+    }
+    if ($candidate.Contains('"')) {
+        if ($candidate -notmatch '^"([^\"]+)"$') {
+            throw 'vmrun running-VM inventory contains an unbalanced or embedded quote; refusing filesystem cleanup.'
+        }
+        return $Matches[1]
+    }
+    return $candidate
+}
+
 function Get-AtlasoWorkstationVmPaths {
     param(
         [Parameter(Mandatory = $true)]
@@ -290,7 +310,7 @@ function Get-AtlasoWorkstationVmPaths {
     $reportedPaths = @(
         $output |
             Select-Object -Skip 1 |
-            ForEach-Object { $_.ToString().Trim().Trim('"') } |
+            ForEach-Object { ConvertFrom-AtlasoVmrunInventoryPath -InventoryLine $_.ToString() } |
             Where-Object { $_ }
     )
     if ($reportedPaths.Count -ne $declaredCount) {

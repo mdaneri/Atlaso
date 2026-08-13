@@ -30,6 +30,7 @@ def _write_fake_vmrun(
     registered: bool,
     stop_exit: int = 0,
     unregister_exit: int = 0,
+    running_path_format: str = "{}",
 ) -> tuple[Path, dict[str, str], Path]:
     """Create a stateful fake ``vmrun`` command and Workstation inventory.
 
@@ -40,6 +41,7 @@ def _write_fake_vmrun(
         registered: Whether the supplied VMX paths begin in the registration inventory.
         stop_exit: Exit code returned by a requested stop operation.
         unregister_exit: Exit code returned by a requested unregister operation.
+        running_path_format: Format applied to each path printed by ``vmrun list``.
 
     Returns:
         The fake command path, its environment, and the command-log path.
@@ -101,7 +103,8 @@ def same_file(left: str, right: str) -> bool:
 if command == "list":
     paths = read_paths("running")
     print(f"Total running VMs: {len(paths)}")
-    print("\\n".join(paths))
+    output_format = os.environ.get("ATLASO_FAKE_VMRUN_RUNNING_PATH_FORMAT", "{}")
+    print("\\n".join(output_format.format(path) for path in paths))
     raise SystemExit(0)
 if command == "listRegisteredVM":
     paths = read_paths("registered")
@@ -163,6 +166,7 @@ raise SystemExit(64)
             "ATLASO_FAKE_VMRUN_INVENTORY": str(inventory_path),
             "ATLASO_FAKE_VMRUN_STOP_EXIT": str(stop_exit),
             "ATLASO_FAKE_VMRUN_UNREGISTER_EXIT": str(unregister_exit),
+            "ATLASO_FAKE_VMRUN_RUNNING_PATH_FORMAT": running_path_format,
             "APPDATA": str(appdata_directory),
         }
     )
@@ -380,6 +384,76 @@ def test_general_removal_rejects_a_relative_running_inventory_path(
     assert result.returncode != 0
     assert "non-absolute VMX path" in result.stderr
     assert vmx_path.exists()
+
+
+@pytest.mark.parametrize("inventory_format", ['"{}', '{}"'])
+def test_general_removal_rejects_unbalanced_running_inventory_quotes(
+    tmp_path: Path,
+    inventory_format: str,
+) -> None:
+    """An asymmetrically quoted vmrun path must preserve the target artifacts.
+
+    Args:
+        tmp_path: Isolated test directory.
+        inventory_format: Format that adds only a leading or trailing quote.
+    """
+    vm_directory = tmp_path / "Atlaso-Unbalanced-Running"
+    vmx_path = vm_directory / "Atlaso-Unbalanced-Running.vmx"
+    _write_vmx(vmx_path, "Atlaso-Unbalanced-Running")
+    vmrun_path, environment, _ = _write_fake_vmrun(
+        tmp_path / "fake",
+        [vmx_path],
+        running=True,
+        registered=False,
+        running_path_format=inventory_format,
+    )
+
+    result = _run_script(
+        VMWARE_SCRIPT_ROOT / "remove-atlaso-vm.ps1",
+        "-VmxPath",
+        str(vmx_path),
+        "-VmrunPath",
+        str(vmrun_path),
+        "-ExpectedName",
+        "Atlaso-Unbalanced-Running",
+        environment=environment,
+    )
+
+    assert result.returncode != 0
+    assert "unbalanced or embedded quote" in result.stderr
+    assert vmx_path.exists()
+
+
+def test_general_removal_accepts_balanced_running_inventory_quotes(tmp_path: Path) -> None:
+    """A fully quoted canonical vmrun path remains valid inventory.
+
+    Args:
+        tmp_path: Isolated test directory.
+    """
+    vm_directory = tmp_path / "Atlaso-Balanced-Running"
+    vmx_path = vm_directory / "Atlaso-Balanced-Running.vmx"
+    _write_vmx(vmx_path, "Atlaso-Balanced-Running")
+    vmrun_path, environment, _ = _write_fake_vmrun(
+        tmp_path / "fake",
+        [vmx_path],
+        running=True,
+        registered=False,
+        running_path_format='"{}"',
+    )
+
+    result = _run_script(
+        VMWARE_SCRIPT_ROOT / "remove-atlaso-vm.ps1",
+        "-VmxPath",
+        str(vmx_path),
+        "-VmrunPath",
+        str(vmrun_path),
+        "-ExpectedName",
+        "Atlaso-Balanced-Running",
+        environment=environment,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert not vm_directory.exists()
 
 
 @pytest.mark.parametrize(
