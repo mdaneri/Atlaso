@@ -880,6 +880,13 @@ listen interfaces and addresses so `Appliance Apply` can submit a clean disabled
 reset force service status rows to stopped, disabled, and `unconfigured`; host services are not mutated until the
 operator reviews and submits selected units through the global `Appliance Apply` workflow.
 
+Before replacement begins, restore validates every supplied collection, row object, nested automation revision,
+required field, relationship, and enabled VLAN or static-route target. Any later restore failure rolls back the database
+transaction and preserves separately staged LDAP recovery metadata plus its in-memory payload. That staged material is
+removed only after a successful settings restore or factory reset commit.
+Settings restore accepts only schema-v2 archives with the complete current section inventory. Older schemas are
+rejected before current desired state is removed.
+
 ## Brand Assets
 
 Reusable SVG assets live in `atlaso/app/static/brand/` and are documented in `docs/branding.md`.

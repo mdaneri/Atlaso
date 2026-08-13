@@ -39,6 +39,7 @@ def _set_applied_management_https(db, fqdn: str = "atlaso.example.test") -> None
     from cryptography.x509.oid import NameOID
 
     from atlaso.app.models import ApplianceSettings, CaCertificate, Setting
+    from atlaso.app.secrets import encrypt_secret
 
     appliance = db.execute(select(ApplianceSettings)).scalar_one()
     appliance.fqdn = fqdn
@@ -86,9 +87,15 @@ def _set_applied_management_https(db, fqdn: str = "atlaso.example.test") -> None
         certificate = CaCertificate(
             common_name=fqdn,
             managed_owner="appliance:https",
-            private_key_encrypted="test-only-encrypted-key",
         )
         db.add(certificate)
+    certificate.private_key_encrypted = encrypt_secret(
+        key.private_bytes(
+            serialization.Encoding.PEM,
+            serialization.PrivateFormat.PKCS8,
+            serialization.NoEncryption(),
+        ).decode("ascii")
+    )
     certificate.status = "issued"
     certificate.enabled = True
     certificate.certificate_pem = certificate_pem
@@ -129,8 +136,10 @@ def _set_oidc_service_ready(
     from cryptography.hazmat.primitives.asymmetric import rsa
     from cryptography.x509.oid import NameOID
 
-    from atlaso.app.models import CaCertificate, DnsRecord
+    from atlaso.app.models import CaCertificate, CaSettings, DnsRecord
+    from atlaso.app.secrets import decrypt_secret, encrypt_secret
     from atlaso.app.services import oidc
+    from atlaso.app.services.ca import ensure_root_ca_material
 
     provider = oidc.ensure_provider_settings(db)
     provider.hostname = hostname
@@ -139,6 +148,16 @@ def _set_oidc_service_ready(
     provider.port = 443
     provider.issuer_url = f"https://{hostname}/identity"
     certificate_name = certificate_hostname or hostname
+    ca_settings = db.execute(select(CaSettings)).scalar_one()
+    ca_settings.enabled = True
+    ensure_root_ca_material(ca_settings)
+    root_certificate = x509.load_pem_x509_certificate(
+        ca_settings.root_certificate_pem.encode("ascii")
+    )
+    root_private_key = serialization.load_pem_private_key(
+        decrypt_secret(ca_settings.root_private_key_encrypted).encode("ascii"),
+        password=None,
+    )
     key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
     subject = x509.Name(
         [x509.NameAttribute(NameOID.COMMON_NAME, certificate_name)]
@@ -147,7 +166,7 @@ def _set_oidc_service_ready(
     certificate_pem = (
         x509.CertificateBuilder()
         .subject_name(subject)
-        .issuer_name(subject)
+        .issuer_name(root_certificate.subject)
         .public_key(key.public_key())
         .serial_number(x509.random_serial_number())
         .not_valid_before(now - timedelta(minutes=1))
@@ -161,7 +180,7 @@ def _set_oidc_service_ready(
             ),
             critical=False,
         )
-        .sign(key, hashes.SHA256())
+        .sign(root_private_key, hashes.SHA256())
         .public_bytes(serialization.Encoding.PEM)
         .decode("ascii")
     )
@@ -172,9 +191,15 @@ def _set_oidc_service_ready(
         certificate = CaCertificate(
             common_name=certificate_name,
             managed_owner="oidc:https",
-            private_key_encrypted="test-only-encrypted-key",
         )
         db.add(certificate)
+    certificate.private_key_encrypted = encrypt_secret(
+        key.private_bytes(
+            serialization.Encoding.PEM,
+            serialization.PrivateFormat.PKCS8,
+            serialization.NoEncryption(),
+        ).decode("ascii")
+    )
     certificate.common_name = certificate_name
     certificate.subject_alt_names = certificate_name
     certificate.ip_addresses = "192.168.50.1"
@@ -715,6 +740,70 @@ def test_oidc_rsa_key_is_encrypted_and_rotation_keeps_public_overlap(client, mon
             row.kid for row in db.execute(select(OidcSigningKey)).scalars()
         }
         assert all("d" not in key for key in jwks["keys"])
+
+
+def test_oidc_cryptographic_validation_rejects_mismatched_public_jwk(client):
+    """Verify persisted OIDC public JWK values are public-only and match the private key.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
+    from joserfc.jwk import RSAKey
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import CaCertificate
+    from atlaso.app.secrets import decrypt_secret
+    from atlaso.app.services import oidc
+
+    with SessionLocal() as db:
+        _set_oidc_service_ready(db)
+        provider = oidc.ensure_provider_settings(db)
+        signing_key, _ = oidc.generate_signing_key(db, rotate=False)
+        unrelated = RSAKey.generate_key(
+            key_size=2048,
+            parameters={"alg": oidc.OIDC_SIGNING_ALGORITHM, "use": "sig"},
+            private=True,
+            auto_kid=True,
+        )
+        mismatched_public_jwk = unrelated.as_dict(private=False)
+        mismatched_public_jwk["kid"] = signing_key.kid
+        mismatched_public_jwk["alg"] = oidc.OIDC_SIGNING_ALGORITHM
+        signing_key.public_jwk_json = json.dumps(mismatched_public_jwk)
+        certificate = db.execute(
+            select(CaCertificate).where(CaCertificate.managed_owner == "oidc:https")
+        ).scalar_one()
+
+        assert oidc.provider_cryptographic_validation_errors(
+            provider,
+            certificate,
+            signing_key,
+        ) == ["The active OIDC signing key is not protocol-ready."]
+
+        signing_key.public_jwk_json = "[]"
+
+        assert oidc.provider_cryptographic_validation_errors(
+            provider,
+            certificate,
+            signing_key,
+        ) == ["The active OIDC signing key is not protocol-ready."]
+
+        private_jwk = RSAKey.import_key(
+            decrypt_secret(signing_key.private_key_encrypted)
+        ).as_dict(private=True)
+        private_jwk.update(
+            {
+                "alg": oidc.OIDC_SIGNING_ALGORITHM,
+                "kid": signing_key.kid,
+                "use": "sig",
+            }
+        )
+        signing_key.public_jwk_json = json.dumps(private_jwk)
+
+        assert oidc.provider_cryptographic_validation_errors(
+            provider,
+            certificate,
+            signing_key,
+        ) == ["The active OIDC signing key is not protocol-ready."]
 
 
 def test_oidc_subject_is_stable_across_metadata_changes_and_new_after_recreation(client):

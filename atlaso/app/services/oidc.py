@@ -67,6 +67,7 @@ OIDC_SIGNING_ALGORITHM = "RS256"
 OIDC_TOKEN_ENDPOINT_AUTH_METHOD = "client_secret_basic"
 OIDC_AUTHORIZATION_FLOW_AVAILABLE = True
 OIDC_TOKEN_LIFETIME_SECONDS = 300
+OIDC_AUTHORIZATION_CODE_LIFETIME_SECONDS = 60
 OIDC_DEFAULT_HOSTNAME = "oidc.atlaso.internal"
 OIDC_DEFAULT_PORT = 443
 OIDC_DNS_RECORD_DESCRIPTION = "Created from OpenID Connect provider endpoint."
@@ -218,6 +219,112 @@ def active_signing_key(db: Session) -> OidcSigningKey | None:
     ).scalar_one_or_none()
 
 
+def signing_key_cryptographic_validation_errors(
+    signing_key: OidcSigningKey,
+) -> list[str]:
+    """Validate one persisted OIDC signing key against its public JWK.
+
+    Args:
+        signing_key: Signing-key row whose private and public material must match.
+
+    Returns:
+        Public-safe validation errors for the supplied key.
+    """
+    try:
+        public_jwk = json.loads(signing_key.public_jwk_json)
+        if not isinstance(public_jwk, dict):
+            raise ValueError
+        if (
+            signing_key.algorithm != OIDC_SIGNING_ALGORITHM
+            or public_jwk.get("kid") != signing_key.kid
+            or public_jwk.get("alg") != OIDC_SIGNING_ALGORITHM
+        ):
+            raise ValueError
+        private_key = RSAKey.import_key(decrypt_secret(signing_key.private_key_encrypted))
+        persisted_public_key = RSAKey.import_key(public_jwk)
+        private_public_values = private_key.as_dict(private=False)
+        persisted_public_values = persisted_public_key.as_dict(private=False)
+        if any(
+            private_public_values.get(field) != persisted_public_values.get(field)
+            for field in ("kty", "n", "e")
+        ):
+            raise ValueError
+        canonical_public_jwk = dict(private_public_values)
+        canonical_public_jwk.update(
+            {
+                "alg": OIDC_SIGNING_ALGORITHM,
+                "kid": signing_key.kid,
+                "use": "sig",
+            }
+        )
+        if public_jwk != canonical_public_jwk:
+            raise ValueError
+    except (JoseError, TypeError, ValueError):
+        return ["The active OIDC signing key is not protocol-ready."]
+    return []
+
+
+def provider_cryptographic_validation_errors(
+    provider: OidcProviderSettings,
+    certificate: CaCertificate | None,
+    signing_key: OidcSigningKey | None,
+    *,
+    require_active_key: bool = True,
+) -> list[str]:
+    """Validate the persisted certificate and signing-key protocol material.
+
+    Args:
+        provider: Provider whose protocol identity must match the material.
+        certificate: Applied OIDC service certificate candidate.
+        signing_key: Active signing-key candidate.
+        require_active_key: Whether an active protocol-ready key is required.
+
+    Returns:
+        Public-safe validation errors for the supplied material.
+    """
+    errors: list[str] = []
+    if not (
+        certificate
+        and certificate.status == "issued"
+        and certificate.certificate_pem
+        and certificate.private_key_encrypted
+    ):
+        errors.append(
+            "OIDC requires an applied managed certificate for its service hostname and listener addresses."
+        )
+    else:
+        try:
+            parsed_certificate = x509.load_pem_x509_certificate(
+                certificate.certificate_pem.encode("utf-8")
+            )
+            subject_alt_names = parsed_certificate.extensions.get_extension_for_class(
+                x509.SubjectAlternativeName
+            ).value
+            dns_names = {
+                normalize_fqdn(value)
+                for value in subject_alt_names.get_values_for_type(x509.DNSName)
+            }
+            ip_addresses = {
+                str(value)
+                for value in subject_alt_names.get_values_for_type(x509.IPAddress)
+            }
+            if normalize_fqdn(provider.hostname) not in dns_names:
+                errors.append(
+                    "The applied OIDC service certificate does not cover the exact issuer hostname."
+                )
+            if set(split_addresses(provider.listen_address)) - ip_addresses:
+                errors.append(
+                    "The applied OIDC service certificate does not cover every selected listener address."
+                )
+        except (ValueError, x509.ExtensionNotFound):
+            errors.append("The applied OIDC service certificate is not valid.")
+    if require_active_key and signing_key is None:
+        errors.append("Generate an active OIDC signing key before enabling the provider.")
+    elif require_active_key:
+        errors.extend(signing_key_cryptographic_validation_errors(signing_key))
+    return errors
+
+
 def provider_validation_errors(
     db: Session,
     provider: OidcProviderSettings | None = None,
@@ -285,55 +392,14 @@ def provider_validation_errors(
     certificate = db.execute(
         select(CaCertificate).where(CaCertificate.managed_owner == "oidc:https")
     ).scalar_one_or_none()
-    if not (
-        certificate
-        and certificate.status == "issued"
-        and certificate.certificate_pem
-        and certificate.private_key_encrypted
-    ):
-        errors.append("OIDC requires an applied managed certificate for its service hostname and listener addresses.")
-    else:
-        try:
-            parsed_certificate = x509.load_pem_x509_certificate(
-                certificate.certificate_pem.encode("utf-8")
-            )
-            subject_alt_names = parsed_certificate.extensions.get_extension_for_class(
-                x509.SubjectAlternativeName
-            ).value
-            dns_names = {
-                normalize_fqdn(value)
-                for value in subject_alt_names.get_values_for_type(x509.DNSName)
-            }
-            ip_addresses = {
-                str(value)
-                for value in subject_alt_names.get_values_for_type(x509.IPAddress)
-            }
-            if normalize_fqdn(provider.hostname) not in dns_names:
-                errors.append(
-                    "The applied OIDC service certificate does not cover the exact issuer hostname."
-                )
-            if set(split_addresses(provider.listen_address)) - ip_addresses:
-                errors.append(
-                    "The applied OIDC service certificate does not cover every selected listener address."
-                )
-        except (ValueError, x509.ExtensionNotFound):
-            errors.append("The applied OIDC service certificate is not valid.")
-    if require_active_key and active_signing_key(db) is None:
-        errors.append("Generate an active OIDC signing key before enabling the provider.")
-    elif require_active_key:
-        signing_key = active_signing_key(db)
-        try:
-            public_jwk = json.loads(signing_key.public_jwk_json) if signing_key else {}
-            if (
-                signing_key is None
-                or signing_key.algorithm != OIDC_SIGNING_ALGORITHM
-                or public_jwk.get("kid") != signing_key.kid
-                or public_jwk.get("alg") != OIDC_SIGNING_ALGORITHM
-            ):
-                raise ValueError
-            RSAKey.import_key(decrypt_secret(signing_key.private_key_encrypted))
-        except Exception:  # noqa: BLE001 - cryptographic backends expose several key-import exception types.
-            errors.append("The active OIDC signing key is not protocol-ready.")
+    errors.extend(
+        provider_cryptographic_validation_errors(
+            provider,
+            certificate,
+            active_signing_key(db),
+            require_active_key=require_active_key,
+        )
+    )
     if provider.access_token_lifetime_seconds != OIDC_TOKEN_LIFETIME_SECONDS:
         errors.append("OIDC access tokens must use the fixed five-minute lifetime.")
     if provider.id_token_lifetime_seconds != OIDC_TOKEN_LIFETIME_SECONDS:
@@ -891,6 +957,60 @@ def validate_redirect_uri_list(
     return normalized
 
 
+def validate_client_lifetimes(
+    *,
+    access_token_lifetime_seconds: int,
+    id_token_lifetime_seconds: int,
+    authorization_code_lifetime_seconds: int,
+) -> None:
+    """Validate fixed OIDC client token and authorization-code lifetimes.
+
+    Args:
+        access_token_lifetime_seconds: Access-token lifetime candidate.
+        id_token_lifetime_seconds: ID-token lifetime candidate.
+        authorization_code_lifetime_seconds: Authorization-code lifetime candidate.
+
+    Raises:
+        OidcConfigurationError: If a client lifetime differs from the bounded protocol policy.
+    """
+    if (
+        access_token_lifetime_seconds != OIDC_TOKEN_LIFETIME_SECONDS
+        or id_token_lifetime_seconds != OIDC_TOKEN_LIFETIME_SECONDS
+    ):
+        raise OidcConfigurationError("OIDC clients must use the fixed five-minute token lifetime.")
+    if authorization_code_lifetime_seconds != OIDC_AUTHORIZATION_CODE_LIFETIME_SECONDS:
+        raise OidcConfigurationError(
+            "OIDC clients must use the fixed 60-second authorization-code lifetime."
+        )
+
+
+def validate_persisted_client_policy(client: OidcClient) -> None:
+    """Validate immutable and bounded policy fields on a persisted OIDC client.
+
+    Args:
+        client: Persisted client candidate to validate.
+
+    Raises:
+        OidcConfigurationError: If persisted client policy differs from creation policy.
+    """
+    if client.token_endpoint_auth_method != OIDC_TOKEN_ENDPOINT_AUTH_METHOD:
+        raise OidcConfigurationError(
+            "OIDC clients must use client_secret_basic token authentication."
+        )
+    normalized_scopes = normalize_allowed_scopes(client.allowed_scopes.split())
+    if client.allowed_scopes != " ".join(normalized_scopes):
+        raise OidcConfigurationError("OIDC client scopes must use canonical ordering.")
+    validate_client_lifetimes(
+        access_token_lifetime_seconds=client.access_token_lifetime_seconds,
+        id_token_lifetime_seconds=client.id_token_lifetime_seconds,
+        authorization_code_lifetime_seconds=client.authorization_code_lifetime_seconds,
+    )
+    try:
+        OIDC_CLIENT_SECRET_HASHER.check_needs_rehash(client.client_secret_hash)
+    except InvalidHashError as exc:
+        raise OidcConfigurationError("OIDC client secret hash is not valid.") from exc
+
+
 def get_client(db: Session, client_id: int) -> OidcClient:
     """Return client.
 
@@ -965,6 +1085,11 @@ def create_client(
         post_logout_redirect_uris,
         allow_loopback=allow_loopback_redirects,
         required=False,
+    )
+    validate_client_lifetimes(
+        access_token_lifetime_seconds=access_token_lifetime_seconds,
+        id_token_lifetime_seconds=id_token_lifetime_seconds,
+        authorization_code_lifetime_seconds=authorization_code_lifetime_seconds,
     )
     scopes = normalize_allowed_scopes(allowed_scopes)
     raw_secret = generate_client_secret()
@@ -1050,6 +1175,11 @@ def update_client(
         post_logout_redirect_uris,
         allow_loopback=allow_loopback_redirects,
         required=False,
+    )
+    validate_client_lifetimes(
+        access_token_lifetime_seconds=access_token_lifetime_seconds,
+        id_token_lifetime_seconds=id_token_lifetime_seconds,
+        authorization_code_lifetime_seconds=authorization_code_lifetime_seconds,
     )
     scopes = normalize_allowed_scopes(allowed_scopes)
 
@@ -1320,6 +1450,39 @@ def _normalize_external_group_name(value: str) -> str:
     return normalized
 
 
+def validate_group_mapping_values(
+    *,
+    source_type: str,
+    local_role: str,
+    ldap_group_id: int | None,
+    external_group_name: str,
+) -> tuple[str, str]:
+    """Validate and normalize persisted OIDC group-mapping values.
+
+    Args:
+        source_type: Mapping source type supplied by the caller.
+        local_role: Local Atlaso role supplied by the caller.
+        ldap_group_id: Managed LDAP group identifier supplied by the caller.
+        external_group_name: External group claim supplied by the caller.
+
+    Returns:
+        The normalized local role and external group name.
+
+    Raises:
+        OidcConfigurationError: If the mapping values are not canonical.
+    """
+    normalized_role = local_role.strip().casefold()
+    if source_type == "local_role":
+        if normalized_role not in {role.value for role in Role} or ldap_group_id is not None:
+            raise OidcConfigurationError("Select one supported local Atlaso role.")
+    elif source_type == "ldap_group":
+        if normalized_role or ldap_group_id is None:
+            raise OidcConfigurationError("Select one managed LDAP group.")
+    else:
+        raise OidcConfigurationError("Unsupported OIDC group mapping source.")
+    return normalized_role, _normalize_external_group_name(external_group_name)
+
+
 def list_group_mappings(db: Session) -> list[OidcGroupMapping]:
     """Return group mappings.
 
@@ -1529,19 +1692,20 @@ def create_group_mapping(
         OidcConflictError: If the operation encounters an invalid state.
     """
     client = get_client(db, oidc_client_id) if oidc_client_id is not None else None
-    normalized_role = local_role.strip().casefold()
+    normalized_role, normalized_external_group_name = validate_group_mapping_values(
+        source_type=source_type,
+        local_role=local_role,
+        ldap_group_id=ldap_group_id,
+        external_group_name=external_group_name,
+    )
     organization_id: int | None = None
     group: LdapGroup | None = None
     if source_type == "local_role":
-        if normalized_role not in {role.value for role in Role} or ldap_group_id is not None:
-            raise OidcConfigurationError("Select one supported local Atlaso role.")
         if client is not None and client.organization_id is not None:
             raise OidcConfigurationError(
                 "Local role overrides are valid only for unbound OIDC clients."
             )
-    elif source_type == "ldap_group":
-        if normalized_role or ldap_group_id is None:
-            raise OidcConfigurationError("Select one managed LDAP group.")
+    else:
         group = db.get(LdapGroup, ldap_group_id)
         if group is None:
             raise OidcConfigurationError("Managed LDAP group not found.")
@@ -1554,8 +1718,6 @@ def create_group_mapping(
             raise OidcConfigurationError(
                 "A client override must use a group from its bound organization."
             )
-    else:
-        raise OidcConfigurationError("Unsupported OIDC group mapping source.")
     mapping_key = _mapping_key(
         source_type=source_type,
         local_role=normalized_role,
@@ -1576,7 +1738,7 @@ def create_group_mapping(
         ldap_group_id=group.id if group is not None else None,
         organization_id=organization_id,
         oidc_client_id=client.id if client is not None else None,
-        external_group_name=_normalize_external_group_name(external_group_name),
+        external_group_name=normalized_external_group_name,
         updated_at=utcnow(),
     )
     db.add(row)

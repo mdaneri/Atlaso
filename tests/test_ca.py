@@ -3,12 +3,14 @@
 import pytest
 
 from atlaso.app.config import Settings
-from atlaso.app.models import CaCertificate, CaSettings, utcnow
+from atlaso.app.models import CaCertificate, CaProfile, CaSettings, utcnow
 from atlaso.app.secrets import decrypt_secret, encrypt_secret
 from atlaso.app.services.ca import (
     ca_certificate_to_dict,
     ensure_root_ca_material,
+    issue_certificate,
     render_ca_apply_payload,
+    validate_ca_private_key_material,
 )
 
 
@@ -83,6 +85,226 @@ def test_existing_root_ca_material_is_not_rotated_by_identity_edits():
     assert settings.root_certificate_pem == original_certificate
     assert settings.root_private_key_encrypted == original_private_key
     assert settings.root_fingerprint == original_fingerprint
+
+
+def test_ca_private_key_validation_rejects_mismatched_certificate():
+    """Verify CA private-key validation requires the matching public certificate."""
+    first = CaSettings(
+        enabled=True,
+        root_common_name="First Atlaso Root",
+        organization="Atlaso",
+        key_algorithm="RSA",
+        key_size=2048,
+        digest_algorithm="sha256",
+        root_valid_days=3650,
+        storage_path="/etc/atlaso/ca",
+    )
+    second = CaSettings(
+        enabled=True,
+        root_common_name="Second Atlaso Root",
+        organization="Atlaso",
+        key_algorithm="RSA",
+        key_size=2048,
+        digest_algorithm="sha256",
+        root_valid_days=3650,
+        storage_path="/etc/atlaso/ca",
+    )
+    assert ensure_root_ca_material(first) is True
+    assert ensure_root_ca_material(second) is True
+    first.root_private_key_encrypted = second.root_private_key_encrypted
+
+    assert validate_ca_private_key_material(first, []) == [
+        "CA root encrypted private key does not match its certificate."
+    ]
+
+
+@pytest.mark.parametrize("missing_field", ["certificate", "private_key"])
+def test_ca_private_key_validation_rejects_incomplete_root_pair(missing_field):
+    """Verify restored CA root material is always a complete key pair.
+
+    Args:
+        missing_field: Root key-pair field removed for the validation case.
+    """
+    settings = CaSettings(
+        enabled=True,
+        root_common_name="Atlaso Test Root",
+        organization="Atlaso",
+        key_algorithm="RSA",
+        key_size=2048,
+        digest_algorithm="sha256",
+        root_valid_days=3650,
+        storage_path="/etc/atlaso/ca",
+    )
+    assert ensure_root_ca_material(settings) is True
+    if missing_field == "certificate":
+        settings.root_certificate_pem = ""
+    else:
+        settings.root_private_key_encrypted = ""
+
+    assert (
+        "CA root certificate and encrypted private key must be restored together."
+        in validate_ca_private_key_material(settings, [])
+    )
+
+
+@pytest.mark.parametrize("status", ["issued", "revoked"])
+def test_ca_private_key_validation_rejects_leaf_from_another_root(status):
+    """Verify issued and revoked leaf certificates chain to the restored root.
+
+    Args:
+        status: Certificate lifecycle state validated against the root.
+    """
+    restored_root = CaSettings(
+        enabled=True,
+        root_common_name="Restored Atlaso Root",
+        organization="Atlaso",
+        key_algorithm="RSA",
+        key_size=2048,
+        digest_algorithm="sha256",
+        root_valid_days=3650,
+        storage_path="/etc/atlaso/ca",
+    )
+    unrelated_root = CaSettings(
+        enabled=True,
+        root_common_name="Unrelated Atlaso Root",
+        organization="Atlaso",
+        key_algorithm="RSA",
+        key_size=2048,
+        digest_algorithm="sha256",
+        root_valid_days=3650,
+        storage_path="/etc/atlaso/ca",
+    )
+    assert ensure_root_ca_material(restored_root) is True
+    assert ensure_root_ca_material(unrelated_root) is True
+    profile = CaProfile(
+        id=1,
+        name="Service TLS",
+        certificate_type="server",
+        validity_days=30,
+        key_algorithm="RSA",
+        key_size=2048,
+        key_usage="digitalSignature,keyEncipherment",
+        extended_key_usage="serverAuth",
+        enabled=True,
+    )
+    certificate = CaCertificate(
+        common_name="service.example.test",
+        profile_id=profile.id,
+        status="planned",
+        enabled=True,
+    )
+    assert issue_certificate(unrelated_root, [profile], certificate) is True
+    certificate.status = status
+
+    errors = validate_ca_private_key_material(restored_root, [certificate])
+
+    assert "Certificate service.example.test is not issued by the restored CA root." in errors
+    assert "Certificate service.example.test chain does not match the restored CA root." in errors
+
+
+@pytest.mark.parametrize(
+    ("is_ca", "expired", "not_yet_valid", "expected_error"),
+    [
+        (False, False, False, "CA root certificate is not a valid self-signed certificate."),
+        (True, True, False, "CA root certificate has expired."),
+        (True, False, True, "CA root certificate is not yet valid."),
+    ],
+)
+def test_ca_private_key_validation_requires_current_ca_root(is_ca, expired, not_yet_valid, expected_error):
+    """Verify restored root material is a current certificate-authority certificate.
+
+    Args:
+        is_ca: Whether the generated certificate has CA basic constraints.
+        expired: Whether the generated certificate is already expired.
+        not_yet_valid: Whether the generated certificate validity starts in the future.
+        expected_error: Public-safe validation error expected for the case.
+    """
+    from datetime import datetime, timedelta, timezone
+
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import rsa
+    from cryptography.x509.oid import NameOID
+
+    private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    subject = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "Archive root")])
+    now = datetime.now(timezone.utc)
+    not_valid_before = now + timedelta(days=1) if not_yet_valid else now - timedelta(days=30)
+    not_valid_after = now - timedelta(days=1) if expired else now + timedelta(days=30)
+    certificate = (
+        x509.CertificateBuilder()
+        .subject_name(subject)
+        .issuer_name(subject)
+        .public_key(private_key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(not_valid_before)
+        .not_valid_after(not_valid_after)
+        .add_extension(x509.BasicConstraints(ca=is_ca, path_length=None), critical=True)
+        .sign(private_key, hashes.SHA256())
+    )
+    settings = CaSettings(
+        enabled=True,
+        root_certificate_pem=certificate.public_bytes(serialization.Encoding.PEM).decode("ascii"),
+        root_private_key_encrypted=encrypt_secret(
+            private_key.private_bytes(
+                serialization.Encoding.PEM,
+                serialization.PrivateFormat.PKCS8,
+                serialization.NoEncryption(),
+            ).decode("ascii")
+        ),
+    )
+
+    assert expected_error in validate_ca_private_key_material(settings, [])
+
+
+def test_ca_private_key_validation_rejects_noncurrent_issued_leaf():
+    """Verify deployable restored leaf certificates must be currently valid."""
+    from datetime import datetime, timedelta, timezone
+
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import rsa
+    from cryptography.x509.oid import NameOID
+
+    settings = CaSettings(
+        enabled=True,
+        root_common_name="Atlaso Test Root",
+        organization="Atlaso",
+        key_algorithm="RSA",
+        key_size=2048,
+        digest_algorithm="sha256",
+        root_valid_days=3650,
+        storage_path="/etc/atlaso/ca",
+    )
+    assert ensure_root_ca_material(settings) is True
+    root = x509.load_pem_x509_certificate(settings.root_certificate_pem.encode("ascii"))
+    root_key = serialization.load_pem_private_key(
+        decrypt_secret(settings.root_private_key_encrypted).encode("ascii"),
+        password=None,
+    )
+    leaf_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    now = datetime.now(timezone.utc)
+    leaf = (
+        x509.CertificateBuilder()
+        .subject_name(x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "future.example.test")]))
+        .issuer_name(root.subject)
+        .public_key(leaf_key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(now + timedelta(days=1))
+        .not_valid_after(now + timedelta(days=30))
+        .sign(root_key, hashes.SHA256())
+    )
+    certificate = CaCertificate(
+        common_name="future.example.test",
+        status="issued",
+        enabled=True,
+        certificate_pem=leaf.public_bytes(serialization.Encoding.PEM).decode("ascii"),
+    )
+
+    assert "Certificate future.example.test is not currently valid." in validate_ca_private_key_material(
+        settings,
+        [certificate],
+    )
 
 
 def test_ca_certificate_row_capabilities_follow_lifecycle_and_ownership():

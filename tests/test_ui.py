@@ -4517,7 +4517,25 @@ def test_backup_restore_page_exports_settings_archive(client):
     from sqlalchemy import select
 
     from atlaso.app.database import SessionLocal
-    from atlaso.app.models import AuditEvent
+    from atlaso.app.models import AuditEvent, LdapOrganization, LdapUser
+
+    with SessionLocal() as db:
+        organization = LdapOrganization(
+            name="Archive safety test",
+            slug="archive-safety-test",
+            suffix_dn="dc=archive-safety,dc=test",
+        )
+        db.add(organization)
+        db.flush()
+        db.add(
+            LdapUser(
+                organization_id=organization.id,
+                uid="archive-user",
+                enabled=True,
+                password_status="applied",
+            )
+        )
+        db.commit()
 
     login(client)
     page = client.get("/backup-restore")
@@ -4541,13 +4559,18 @@ def test_backup_restore_page_exports_settings_archive(client):
     assert "atlaso-settings-" in exported.headers["content-disposition"]
     payload = json.loads(exported.content)
     assert payload["kind"] == "atlaso-settings-archive"
-    assert payload["schema_version"] == 1
+    assert payload["schema_version"] == 2
     assert "appliance_settings" in payload["data"]
     assert "dns_records" in payload["data"]
     assert "users" not in payload["data"]
     assert "api_tokens" not in payload["data"]
     assert "audit_events" not in payload["data"]
     assert "jobs" not in payload["data"]
+    archived_ldap_user = next(
+        row for row in payload["data"]["ldap_users"] if row["uid"] == "archive-user"
+    )
+    assert archived_ldap_user["enabled"] is False
+    assert archived_ldap_user["password_status"] == "not_staged"
 
     with SessionLocal() as db:
         event = db.execute(select(AuditEvent).where(AuditEvent.action == "export_settings_backup")).scalar_one()
@@ -4598,7 +4621,7 @@ def test_settings_archive_maps_only_retired_network_roles_to_access(client):
     from sqlalchemy import select
 
     from atlaso.app.database import SessionLocal
-    from atlaso.app.models import PhysicalInterface, VlanInterface
+    from atlaso.app.models import NatRule, PhysicalInterface, Route, VlanInterface
     from atlaso.app.services.settings_archive import (
         export_settings_archive,
         restore_settings_archive,
@@ -4613,6 +4636,14 @@ def test_settings_archive_maps_only_retired_network_roles_to_access(client):
         physical.admin_state = "down"
         vlan.role = "storage"
         vlan.enabled = False
+        dependent_route = db.scalar(select(Route).where(Route.interface_name == vlan.name))
+        if dependent_route is not None:
+            dependent_route.enabled = False
+        dependent_nat_rule = db.scalar(
+            select(NatRule).where(NatRule.outbound_interface == vlan.name)
+        )
+        if dependent_nat_rule is not None:
+            dependent_nat_rule.enabled = False
         physical_name = physical.name
         vlan_name = vlan.name
         db.commit()
@@ -4767,6 +4798,539 @@ def test_settings_archive_round_trips_authoritative_dns_policy(client):
         assert restored.authoritative_expire == 2419200
 
 
+def test_settings_archive_round_trips_ca_revocation_timestamp(client):
+    """Verify CA revocation timestamps survive settings export and restore.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
+    from datetime import datetime, timezone
+
+    from sqlalchemy import select
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import CaCertificate, CaSettings
+    from atlaso.app.services.ca import ensure_root_ca_material
+    from atlaso.app.services.settings_archive import (
+        export_settings_archive,
+        restore_settings_archive,
+    )
+
+    revoked_at = datetime(2026, 8, 12, 12, 30, tzinfo=timezone.utc)
+    with SessionLocal() as db:
+        db.query(CaCertificate).delete()
+        settings = db.scalar(select(CaSettings))
+        assert settings is not None
+        settings.enabled = True
+        assert ensure_root_ca_material(settings) is True
+        expected_root_issued_at = settings.root_issued_at
+        expected_root_expires_at = settings.root_expires_at
+        assert expected_root_issued_at is not None
+        assert expected_root_expires_at is not None
+        db.add(
+            CaCertificate(
+                common_name="revoked-archive.atlaso.internal",
+                status="revoked",
+                serial_number="2a",
+                revoked_at=revoked_at,
+                revoked_by="admin",
+                revocation_reason="rotation",
+                enabled=True,
+            )
+        )
+        db.commit()
+
+        archive = export_settings_archive(db, actor="test")
+        archived = archive["data"]["ca_certificates"][0]
+        assert archived["revoked_at"] == revoked_at.isoformat()
+
+        restore_settings_archive(db, archive)
+        restored = db.scalar(
+            select(CaCertificate).where(
+                CaCertificate.common_name == "revoked-archive.atlaso.internal"
+            )
+        )
+        assert restored is not None
+        restored_settings = db.scalar(select(CaSettings))
+        assert restored_settings is not None
+        restored_root_issued_at = restored_settings.root_issued_at
+        restored_root_expires_at = restored_settings.root_expires_at
+        assert restored_root_issued_at is not None
+        assert restored_root_expires_at is not None
+        restored_revoked_at = restored.revoked_at
+        assert restored_revoked_at is not None
+        if restored_revoked_at.tzinfo is None:
+            restored_revoked_at = restored_revoked_at.replace(tzinfo=timezone.utc)
+        if restored_root_issued_at.tzinfo is None:
+            restored_root_issued_at = restored_root_issued_at.replace(
+                tzinfo=timezone.utc
+            )
+        if restored_root_expires_at.tzinfo is None:
+            restored_root_expires_at = restored_root_expires_at.replace(
+                tzinfo=timezone.utc
+            )
+        if expected_root_issued_at.tzinfo is None:
+            expected_root_issued_at = expected_root_issued_at.replace(
+                tzinfo=timezone.utc
+            )
+        if expected_root_expires_at.tzinfo is None:
+            expected_root_expires_at = expected_root_expires_at.replace(
+                tzinfo=timezone.utc
+            )
+        assert restored_revoked_at == revoked_at
+        assert restored_root_issued_at == expected_root_issued_at
+        assert restored_root_expires_at == expected_root_expires_at
+
+
+def test_settings_archive_round_trips_ca_certificate_validity(client):
+    """Verify issued CA certificate validity survives export and restore.
+
+    Args:
+        client: HTTP test client used to initialize isolated desired state.
+    """
+    from copy import deepcopy
+    from datetime import datetime, timezone
+
+    import pytest
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import rsa
+    from cryptography.x509.oid import NameOID
+    from sqlalchemy import select
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import CaCertificate, CaProfile, CaSettings
+    from atlaso.app.services.ca import ensure_root_ca_material, issue_certificate
+    from atlaso.app.services.settings_archive import (
+        export_settings_archive,
+        restore_settings_archive,
+    )
+
+    with SessionLocal() as db:
+        db.query(CaCertificate).delete()
+        settings = db.scalar(select(CaSettings))
+        profile = db.scalar(select(CaProfile).where(CaProfile.enabled.is_(True)))
+        assert settings is not None
+        assert profile is not None
+        settings.enabled = True
+        assert ensure_root_ca_material(settings) is True
+        certificate = CaCertificate(
+            common_name="archive-validity.atlaso.internal",
+            profile_id=profile.id,
+            subject_alt_names="archive-validity.atlaso.internal",
+            enabled=True,
+        )
+        db.add(certificate)
+        db.flush()
+        assert issue_certificate(settings, [profile], certificate) is True
+        expected_issued_at = certificate.issued_at
+        expected_expires_at = certificate.expires_at
+        expected_serial_number = certificate.serial_number
+        expected_fingerprint = certificate.fingerprint
+        expected_root_serial_number = settings.root_serial_number
+        expected_root_fingerprint = settings.root_fingerprint
+        assert expected_issued_at is not None
+        assert expected_expires_at is not None
+        assert expected_serial_number
+        assert expected_fingerprint
+        assert expected_root_serial_number
+        assert expected_root_fingerprint
+        db.commit()
+
+        archive = export_settings_archive(db, actor="test")
+        archived = next(
+            row
+            for row in archive["data"]["ca_certificates"]
+            if row["common_name"] == certificate.common_name
+        )
+        assert archived["issued_at"]
+        assert archived["expires_at"]
+        extra_csr_archive = deepcopy(archive)
+        extra_csr_certificate = next(
+            row
+            for row in extra_csr_archive["data"]["ca_certificates"]
+            if row["common_name"] == certificate.common_name
+        )
+        csr_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+        extra_csr_certificate["csr_text"] = (
+            x509.CertificateSigningRequestBuilder()
+            .subject_name(
+                x509.Name(
+                    [x509.NameAttribute(NameOID.COMMON_NAME, certificate.common_name)]
+                )
+            )
+            .sign(csr_key, hashes.SHA256())
+            .public_bytes(serialization.Encoding.PEM)
+            .decode("utf-8")
+        ) + (
+            "-----BEGIN PRIVATE KEY-----\nforbidden\n-----END PRIVATE KEY-----\n"
+        )
+        with pytest.raises(ValueError, match="request is not usable"):
+            restore_settings_archive(db, extra_csr_archive)
+        extra_pem_archive = deepcopy(archive)
+        extra_pem_certificate = next(
+            row
+            for row in extra_pem_archive["data"]["ca_certificates"]
+            if row["common_name"] == certificate.common_name
+        )
+        extra_pem_certificate["certificate_pem"] += (
+            "-----BEGIN PRIVATE KEY-----\nforbidden\n-----END PRIVATE KEY-----\n"
+        )
+        with pytest.raises(ValueError, match="public certificate is not usable"):
+            restore_settings_archive(db, extra_pem_archive)
+        extra_chain_archive = deepcopy(archive)
+        extra_chain_certificate = next(
+            row
+            for row in extra_chain_archive["data"]["ca_certificates"]
+            if row["common_name"] == certificate.common_name
+        )
+        extra_chain_certificate["chain_pem"] += (
+            "-----BEGIN PRIVATE KEY-----\nforbidden\n-----END PRIVATE KEY-----\n"
+        )
+        with pytest.raises(ValueError, match="chain is not usable"):
+            restore_settings_archive(db, extra_chain_archive)
+        foreign_settings = CaSettings(
+            enabled=True,
+            root_common_name="Foreign Archive Root CA",
+            organization=settings.organization,
+            organizational_unit=settings.organizational_unit,
+            country=settings.country,
+            state=settings.state,
+            locality=settings.locality,
+            key_algorithm=settings.key_algorithm,
+            key_size=settings.key_size,
+            digest_algorithm=settings.digest_algorithm,
+            root_valid_days=settings.root_valid_days,
+        )
+        assert ensure_root_ca_material(foreign_settings) is True
+        foreign_certificate = CaCertificate(
+            common_name="foreign-archive.atlaso.internal",
+            profile_id=profile.id,
+            enabled=True,
+        )
+        assert issue_certificate(
+            foreign_settings,
+            [profile],
+            foreign_certificate,
+        ) is True
+        foreign_certificate_archive = deepcopy(archive)
+        foreign_archived_certificate = next(
+            row
+            for row in foreign_certificate_archive["data"]["ca_certificates"]
+            if row["common_name"] == certificate.common_name
+        )
+        foreign_archived_certificate.update(
+            {
+                "enabled": False,
+                "status": "issued",
+                "certificate_pem": foreign_certificate.certificate_pem,
+                "private_key_encrypted": foreign_certificate.private_key_encrypted,
+                "chain_pem": foreign_certificate.chain_pem,
+            }
+        )
+        with pytest.raises(ValueError, match="not issued by the restored CA root"):
+            restore_settings_archive(db, foreign_certificate_archive)
+        foreign_revoked_archive = deepcopy(foreign_certificate_archive)
+        foreign_revoked_certificate = next(
+            row
+            for row in foreign_revoked_archive["data"]["ca_certificates"]
+            if row["common_name"] == certificate.common_name
+        )
+        foreign_revoked_certificate.update(
+            {
+                "status": "revoked",
+                "revoked_at": datetime(
+                    2026,
+                    8,
+                    13,
+                    13,
+                    30,
+                    tzinfo=timezone.utc,
+                ).isoformat(),
+                "revoked_by": "admin",
+                "revocation_reason": "superseded",
+            }
+        )
+        with pytest.raises(ValueError, match="not issued by the restored CA root"):
+            restore_settings_archive(db, foreign_revoked_archive)
+        archive["data"]["ca_settings"][0]["root_serial_number"] = "1"
+        archive["data"]["ca_settings"][0]["root_fingerprint"] = "tampered"
+        archived["serial_number"] = "2"
+        archived["fingerprint"] = "tampered"
+        archived["status"] = "revoked"
+        archived["revoked_at"] = datetime(
+            2026,
+            8,
+            13,
+            14,
+            0,
+            tzinfo=timezone.utc,
+        ).isoformat()
+
+        restore_settings_archive(db, archive)
+        restored = db.scalar(
+            select(CaCertificate).where(
+                CaCertificate.common_name == "archive-validity.atlaso.internal"
+            )
+        )
+        assert restored is not None
+        restored_settings = db.scalar(select(CaSettings))
+        assert restored_settings is not None
+        restored_issued_at = restored.issued_at
+        restored_expires_at = restored.expires_at
+        assert restored_issued_at is not None
+        assert restored_expires_at is not None
+        if restored_issued_at.tzinfo is None:
+            restored_issued_at = restored_issued_at.replace(tzinfo=timezone.utc)
+        if restored_expires_at.tzinfo is None:
+            restored_expires_at = restored_expires_at.replace(tzinfo=timezone.utc)
+        if expected_issued_at.tzinfo is None:
+            expected_issued_at = expected_issued_at.replace(tzinfo=timezone.utc)
+        if expected_expires_at.tzinfo is None:
+            expected_expires_at = expected_expires_at.replace(tzinfo=timezone.utc)
+        assert restored_issued_at == expected_issued_at
+        assert restored_expires_at == expected_expires_at
+        assert restored.status == "revoked"
+        assert restored.serial_number == expected_serial_number
+        assert restored.fingerprint == expected_fingerprint
+        assert restored_settings.root_serial_number == expected_root_serial_number
+        assert restored_settings.root_fingerprint == expected_root_fingerprint
+
+
+def test_settings_archive_preserves_oidc_retired_key_overlap(client):
+    """Verify OIDC retired-key publication timestamps survive restore.
+
+    Args:
+        client: HTTP test client used to initialize isolated desired state.
+    """
+    from datetime import datetime, timedelta, timezone
+
+    from sqlalchemy import select
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import OidcSigningKey
+    from atlaso.app.services import oidc
+    from atlaso.app.services.settings_archive import (
+        export_settings_archive,
+        restore_settings_archive,
+    )
+
+    created_at = datetime(2026, 8, 13, 7, 0, tzinfo=timezone.utc)
+    rotated_at = created_at + timedelta(minutes=5)
+    with SessionLocal() as db:
+        db.query(OidcSigningKey).delete()
+        first, _ = oidc.generate_signing_key(db, rotate=False, now=created_at)
+        _active, retired = oidc.generate_signing_key(db, rotate=True, now=rotated_at)
+        assert retired is first
+        expected_retired_at = retired.retired_at
+        expected_publish_until = retired.publish_until
+        assert expected_retired_at is not None
+        assert expected_publish_until is not None
+        retired_kid = retired.kid
+        db.commit()
+
+        archive = export_settings_archive(db, actor="test")
+        archived = next(
+            row
+            for row in archive["data"]["oidc_signing_keys"]
+            if row["kid"] == retired_kid
+        )
+        assert archived["retired_at"] == expected_retired_at.isoformat()
+        assert archived["publish_until"] == expected_publish_until.isoformat()
+
+        restore_settings_archive(db, archive)
+        restored = db.scalar(
+            select(OidcSigningKey).where(OidcSigningKey.kid == retired_kid)
+        )
+        assert restored is not None
+        restored_retired_at = restored.retired_at
+        restored_publish_until = restored.publish_until
+        assert restored_retired_at is not None
+        assert restored_publish_until is not None
+        if restored_retired_at.tzinfo is None:
+            restored_retired_at = restored_retired_at.replace(tzinfo=timezone.utc)
+        if restored_publish_until.tzinfo is None:
+            restored_publish_until = restored_publish_until.replace(tzinfo=timezone.utc)
+        assert restored_retired_at == expected_retired_at
+        assert restored_publish_until == expected_publish_until
+
+
+def test_settings_archive_disables_registry_when_uploaded_ca_is_omitted(client):
+    """Verify uploaded registry CA bytes become a safe disabled restore handoff.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
+    from sqlalchemy import select
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import CaSettings, Setting, VcfPrivateRegistrySettings
+    from atlaso.app.services.settings_archive import (
+        archive_summary,
+        export_settings_archive,
+    )
+    from atlaso.app.services.vcf_private_registry import (
+        VCF_REGISTRY_UPLOADED_CA_BUNDLE_PATH,
+        VCF_REGISTRY_UPLOADED_CA_BUNDLE_PEM_KEY,
+    )
+
+    with SessionLocal() as db:
+        ca_settings = db.scalar(select(CaSettings))
+        registry_settings = db.scalar(select(VcfPrivateRegistrySettings))
+        assert ca_settings is not None
+        assert registry_settings is not None
+        ca_settings.enabled = False
+        registry_settings.enabled = True
+        registry_settings.ca_bundle_path = VCF_REGISTRY_UPLOADED_CA_BUNDLE_PATH
+        db.add(
+            Setting(
+                key=VCF_REGISTRY_UPLOADED_CA_BUNDLE_PEM_KEY,
+                value="-----BEGIN CERTIFICATE-----\nomitted\n-----END CERTIFICATE-----\n",
+            )
+        )
+        db.commit()
+
+        archive = export_settings_archive(db, actor="test")
+        archived_registry = archive["data"]["vcf_private_registry_settings"][0]
+        assert archived_registry["enabled"] is False
+        assert all(
+            row["key"] != VCF_REGISTRY_UPLOADED_CA_BUNDLE_PEM_KEY
+            for row in archive["data"]["settings"]
+        )
+        assert any(
+            "upload the bundle again before re-enabling" in note
+            for note in archive["notes"]
+        )
+        archive_summary(archive)
+
+
+def test_settings_restore_rejects_disabled_users_for_enabled_vcf_services(client):
+    """Verify enabled restored VCF services require enabled retained local users.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
+    from copy import deepcopy
+
+    import pytest
+    from sqlalchemy import select
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import User, VcfBackupSettings
+    from atlaso.app.services.settings_archive import (
+        export_settings_archive,
+        restore_settings_archive,
+    )
+
+    with SessionLocal() as db:
+        disabled_user = db.scalar(select(User).where(User.username == "vcf-backup"))
+        assert disabled_user is not None
+        assert disabled_user.enabled is False
+        archive = export_settings_archive(db, actor="test")
+
+        backup_archive = deepcopy(archive)
+        backup_archive["data"]["vcf_backup_settings"][0]["enabled"] = True
+        backup_archive["data"]["vcf_backup_settings"][0]["sftp_username"] = disabled_user.username
+        with pytest.raises(ValueError, match="requires an enabled local user"):
+            restore_settings_archive(db, backup_archive)
+
+        depot_archive = deepcopy(archive)
+        depot_archive["data"]["vcf_offline_depot_settings"][0]["enabled"] = True
+        depot_archive["data"]["vcf_offline_depot_settings"][0]["allow_unauthenticated_access"] = False
+        depot_archive["data"]["vcf_offline_depot_settings"][0]["http_username"] = disabled_user.username
+        depot_archive["data"]["vcf_offline_depot_settings"][0]["listen_interface"] = "eth2"
+        depot_archive["data"]["vcf_offline_depot_settings"][0]["listen_address"] = "192.168.50.1"
+        with pytest.raises(ValueError, match="requires an enabled local user"):
+            restore_settings_archive(db, depot_archive)
+
+        missing_user_archive = deepcopy(archive)
+        missing_user_archive["data"]["vcf_backup_settings"][0].update(
+            {
+                "enabled": True,
+                "sftp_username": "vcf-backup",
+                "listen_interface": "eth2",
+                "listen_address": "192.168.50.1",
+            }
+        )
+        retained_backup_settings = db.scalar(select(VcfBackupSettings))
+        assert retained_backup_settings is not None
+        retained_backup_settings.sftp_user_id = None
+        db.flush()
+        db.delete(disabled_user)
+        db.commit()
+        with pytest.raises(ValueError, match="requires an enabled local user"):
+            restore_settings_archive(db, missing_user_archive)
+        assert db.get(User, disabled_user.id) is None
+
+
+def test_settings_restore_preflights_complete_vcf_service_state(client):
+    """Verify restored VCF service settings pass their canonical validators.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
+    from copy import deepcopy
+
+    import pytest
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.services.settings_archive import (
+        export_settings_archive,
+        restore_settings_archive,
+    )
+
+    with SessionLocal() as db:
+        archive = export_settings_archive(db, actor="test")
+        candidates = []
+
+        invalid_backup = deepcopy(archive)
+        invalid_backup["data"]["vcf_backup_settings"][0]["port"] = 0
+        candidates.append(
+            (
+                invalid_backup,
+                "VCF Backup state is invalid: SFTP port must be between 1 and 65535",
+            )
+        )
+
+        invalid_registry = deepcopy(archive)
+        invalid_registry["data"]["vcf_private_registry_settings"][0]["harbor_project"] = "BAD"
+        candidates.append(
+            (
+                invalid_registry,
+                "VCF Private Registry state is invalid: Harbor project must use lowercase",
+            )
+        )
+
+        registry_without_ca = deepcopy(archive)
+        registry_without_ca["data"]["ca_settings"][0]["enabled"] = False
+        registry_without_ca["data"]["vcf_private_registry_settings"][0].update(
+            {
+                "enabled": True,
+                "listen_interface": "eth2",
+                "listen_address": "192.168.50.1",
+            }
+        )
+        candidates.append(
+            (
+                registry_without_ca,
+                "VCF Private Registry state is invalid: Upload a CA bundle or enable the local CA",
+            )
+        )
+
+        invalid_depot = deepcopy(archive)
+        invalid_depot["data"]["vcf_offline_depot_settings"][0]["config_path"] = "relative/path"
+        candidates.append(
+            (
+                invalid_depot,
+                "VCF Offline Depot state is invalid: HTTPS config path must be an absolute Linux path",
+            )
+        )
+
+        for candidate, message in candidates:
+            with pytest.raises(ValueError, match=message):
+                restore_settings_archive(db, candidate)
+
+
 def test_settings_restore_and_factory_reset_clear_staged_ldap_recovery(client):
     """Verify that settings restore and factory reset clear staged ldap recovery.
 
@@ -4819,6 +5383,1558 @@ def test_settings_restore_and_factory_reset_clear_staged_ldap_recovery(client):
 
         assert db.get(LdapRecoveryArchive, reset_staged_id) is None
         assert reset_staged_id not in LDAP_PENDING_RECOVERY_PAYLOADS
+
+
+def test_settings_restore_rejects_malformed_archive_without_clearing_staged_ldap_recovery(client):
+    """Verify malformed settings archives preserve staged ldap recovery state.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
+    import json
+    from copy import deepcopy
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import LdapRecoveryArchive
+    from atlaso.app.services.ldap import LDAP_PENDING_RECOVERY_PAYLOADS
+    from atlaso.app.services.settings_archive import export_settings_archive
+
+    login(client)
+    with SessionLocal() as db:
+        archive = export_settings_archive(db, actor="test")
+        staged = LdapRecoveryArchive(
+            filename="staged-invalid-restore.lfldap",
+            path="memory://pending-ldap-recovery",
+            sha256="c" * 64,
+            state="staged",
+            organization_count=1,
+            created_by="test",
+        )
+        db.add(staged)
+        db.commit()
+        staged_id = staged.id
+        LDAP_PENDING_RECOVERY_PAYLOADS[staged_id] = b"pending recovery payload"
+
+    invalid_scalar_archive = deepcopy(archive)
+    invalid_scalar_archive["data"]["ldap_settings"][0]["port"] = "636"
+    archive["data"]["physical_interfaces"] = {"unexpected": "object"}
+    page = client.get("/backup-restore")
+    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    restored = client.post(
+        "/backup-restore/restore",
+        data={"csrf": csrf},
+        files={
+            "archive_file": (
+                "atlaso-settings.json",
+                json.dumps(archive).encode("utf-8"),
+                "application/json",
+            )
+        },
+    )
+    invalid_scalar = client.post(
+        "/backup-restore/restore",
+        data={"csrf": csrf},
+        files={
+            "archive_file": (
+                "atlaso-settings.json",
+                json.dumps(invalid_scalar_archive).encode("utf-8"),
+                "application/json",
+            )
+        },
+    )
+
+    try:
+        assert restored.status_code == 400
+        assert "physical_interfaces" in restored.text
+        assert "must be a list" in restored.text
+        assert invalid_scalar.status_code == 400
+        assert "field &#39;port&#39; must be an integer" in invalid_scalar.text
+        with SessionLocal() as db:
+            assert db.get(LdapRecoveryArchive, staged_id) is not None
+        assert LDAP_PENDING_RECOVERY_PAYLOADS[staged_id] == b"pending recovery payload"
+    finally:
+        LDAP_PENDING_RECOVERY_PAYLOADS.pop(staged_id, None)
+
+
+def test_settings_archive_unique_identity_preflight_covers_all_unguarded_constraints():
+    """Verify every unguarded database identity rejects duplicate archive rows."""
+    import pytest
+
+    from atlaso.app.services.settings_archive import (
+        ARCHIVE_UNGUARDED_UNIQUE_IDENTITIES,
+        _validate_archive_unique_identities,
+    )
+
+    for section_name, duplicate_fields in ARCHIVE_UNGUARDED_UNIQUE_IDENTITIES:
+        section_specs = [
+            fields
+            for candidate_section, fields in ARCHIVE_UNGUARDED_UNIQUE_IDENTITIES
+            if candidate_section == section_name
+        ]
+        section_fields = {field_name for fields in section_specs for field_name in fields}
+        rows = [
+            {field_name: f"{field_name}-{row_index}" for field_name in section_fields}
+            for row_index in (1, 2)
+        ]
+        for field_name in duplicate_fields:
+            rows[1][field_name] = rows[0][field_name]
+        with pytest.raises(
+            ValueError,
+            match=rf"'{section_name}'.*unique {', '.join(duplicate_fields)} identity",
+        ):
+            _validate_archive_unique_identities({section_name: rows})
+
+
+@pytest.mark.parametrize(
+    "managed_owner",
+    ["appliance:https", "ntp:nts", "kms:server", "oidc:https"],
+)
+def test_settings_archive_managed_certificate_readiness_requires_enabled_row(
+    managed_owner,
+):
+    """Verify disabled managed certificates cannot satisfy service readiness.
+
+    Args:
+        managed_owner: Atlaso-managed service certificate owner under test.
+    """
+    from atlaso.app.services.settings_archive import (
+        _archive_managed_certificate_ready,
+    )
+
+    certificate = {
+        "enabled": False,
+        "managed_owner": managed_owner,
+        "status": "issued",
+        "certificate_pem": "public-certificate",
+        "private_key_encrypted": "encrypted-private-key",
+    }
+
+    assert not _archive_managed_certificate_ready([certificate], managed_owner)
+    certificate["enabled"] = True
+    assert _archive_managed_certificate_ready([certificate], managed_owner)
+
+
+def test_settings_archive_nts_paths_match_managed_certificate():
+    """Verify restored NTS settings use the managed certificate deployment paths."""
+    from atlaso.app.services.settings_archive import (
+        _archive_nts_certificate_paths_match,
+    )
+
+    settings = {
+        "nts_server_cert_path": "/etc/atlaso/ntp/certs/ntp-chain.pem",
+        "nts_server_key_path": "/etc/atlaso/ntp/certs/ntp.key",
+    }
+    certificate = {
+        "chain_path": "/etc/atlaso/ntp/certs/ntp-chain.pem",
+        "key_path": "/etc/atlaso/ntp/certs/ntp.key",
+    }
+
+    assert _archive_nts_certificate_paths_match(settings, certificate)
+    settings["nts_server_cert_path"] = "/tmp/missing-chain.pem"
+    assert not _archive_nts_certificate_paths_match(settings, certificate)
+
+
+def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_field_shapes(client):
+    """Verify settings archive preflight rejects malformed structures before restore.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
+    import hashlib
+    from copy import deepcopy
+
+    import pytest
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.services.oidc import hash_client_secret
+    from atlaso.app.services.settings_archive import (
+        archive_summary,
+        export_settings_archive,
+    )
+
+    with SessionLocal() as db:
+        archive = export_settings_archive(db, actor="test")
+    assert archive["data"]["physical_interfaces"]
+
+    invalid_collection = deepcopy(archive)
+    invalid_collection["data"]["physical_interfaces"] = {}
+    invalid_row = deepcopy(archive)
+    invalid_row["data"]["physical_interfaces"] = ["not an object"]
+    missing_required_field = deepcopy(archive)
+    del missing_required_field["data"]["physical_interfaces"][0]["name"]
+    missing_section = deepcopy(archive)
+    del missing_section["data"]["physical_interfaces"]
+    empty_data = deepcopy(archive)
+    empty_data["data"] = {}
+    empty_singleton = deepcopy(archive)
+    empty_singleton["data"]["appliance_settings"] = []
+    duplicate_oidc_singleton = deepcopy(archive)
+    duplicate_oidc_singleton["data"]["oidc_provider_settings"] = [{}, {}]
+    unsupported_schema = deepcopy(archive)
+    unsupported_schema["schema_version"] = 1
+    enabled_missing_parent_vlan = deepcopy(archive)
+    enabled_missing_parent_vlan["data"]["vlan_interfaces"].append(
+        {"name": "missing-parent.123", "parent_interface": "missing-parent", "vlan_id": 123, "enabled": True}
+    )
+    enabled_non_trunk_vlan = deepcopy(archive)
+    enabled_non_trunk_vlan["data"]["physical_interfaces"].append(
+        {"name": "archive-access", "mac_address": "02:00:00:00:00:01", "mode": "access"}
+    )
+    enabled_non_trunk_vlan["data"]["vlan_interfaces"].append(
+        {"name": "archive-access.124", "parent_interface": "archive-access", "vlan_id": 124, "enabled": True}
+    )
+    disabled_missing_parent_vlan = deepcopy(enabled_missing_parent_vlan)
+    disabled_missing_parent_vlan["data"]["vlan_interfaces"][-1]["enabled"] = False
+    enabled_missing_route_target = deepcopy(archive)
+    enabled_missing_route_target["data"]["routes"][0]["interface_name"] = "missing-route-target"
+    enabled_ineligible_route_target = deepcopy(archive)
+    enabled_ineligible_route_target["data"]["routes"][0]["interface_name"] = "eth1"
+    disabled_missing_route_target = deepcopy(enabled_missing_route_target)
+    disabled_missing_route_target["data"]["routes"][0]["enabled"] = False
+    enabled_missing_nat_target = deepcopy(archive)
+    enabled_missing_nat_target["data"]["nat_rules"][0]["outbound_interface"] = "missing-nat-target"
+    enabled_ipv6_only_nat_target = deepcopy(archive)
+    enabled_ipv6_only_nat_target["data"]["physical_interfaces"].append(
+        {
+            "name": "ipv6-only",
+            "mac_address": "02:00:00:00:00:02",
+            "mode": "access",
+            "role": "route",
+            "ipv6_enabled": True,
+            "ipv6_cidr": "fd00:1234::1/64",
+        }
+    )
+    enabled_ipv6_only_nat_target["data"]["nat_rules"][0]["outbound_interface"] = "ipv6-only"
+    disabled_missing_nat_target = deepcopy(enabled_missing_nat_target)
+    disabled_missing_nat_target["data"]["nat_rules"][0]["enabled"] = False
+    enabled_missing_nat_source_group = deepcopy(archive)
+    enabled_missing_nat_source_group["data"]["nat_rules"][0]["source"] = "group:missing"
+    disabled_missing_nat_source_group = deepcopy(enabled_missing_nat_source_group)
+    disabled_missing_nat_source_group["data"]["nat_rules"][0]["enabled"] = False
+    missing_firewall_source_group = deepcopy(archive)
+    missing_firewall_source_group["data"]["firewall_rules"][0]["source"] = "group:missing"
+    enabled_missing_routing_target = deepcopy(archive)
+    enabled_missing_routing_target["data"]["routing_rules"].append(
+        {
+            "name": "missing route permission",
+            "source_interface": "missing-routing-target",
+            "destination_interface": "eth1.20",
+            "enabled": True,
+        }
+    )
+    enabled_identical_routing_targets = deepcopy(enabled_missing_routing_target)
+    enabled_identical_routing_targets["data"]["routing_rules"][-1]["source_interface"] = "eth1.20"
+    disabled_missing_routing_target = deepcopy(enabled_missing_routing_target)
+    disabled_missing_routing_target["data"]["routing_rules"][-1]["enabled"] = False
+    enabled_missing_dhcp_target = deepcopy(archive)
+    enabled_missing_dhcp_target["data"]["dhcp_settings"][0]["enabled"] = True
+    enabled_missing_dhcp_target["data"]["dhcp_scopes"][0]["interface_name"] = "missing-dhcp-target"
+    enabled_wrong_family_dhcp_target = deepcopy(archive)
+    enabled_wrong_family_dhcp_target["data"]["dhcp_settings"][0]["enabled"] = True
+    enabled_wrong_family_dhcp_target["data"]["dhcp_scopes"][0].update(
+        {
+            "address_family": "ipv6",
+            "site_address": "fd00:1234::1",
+            "prefix_length": 64,
+            "range_expression": "fd00:1234::100-fd00:1234::200",
+            "dns_server": "fd00:1234::1",
+            "ntp_server": "",
+        }
+    )
+    disabled_missing_dhcp_target = deepcopy(enabled_missing_dhcp_target)
+    disabled_missing_dhcp_target["data"]["dhcp_scopes"][0]["enabled"] = False
+    disabled_missing_dhcp_target["data"]["dhcp_settings"][0]["enabled"] = False
+    enabled_management_dhcp_target = deepcopy(archive)
+    enabled_management_dhcp_target["data"]["dhcp_settings"][0]["enabled"] = True
+    enabled_management_dhcp_target["data"]["dhcp_scopes"][0][
+        "interface_name"
+    ] = "eth0"
+    enabled_without_enabled_dhcp_scope = deepcopy(archive)
+    enabled_without_enabled_dhcp_scope["data"]["dhcp_settings"][0]["enabled"] = True
+    for scope in enabled_without_enabled_dhcp_scope["data"]["dhcp_scopes"]:
+        scope["enabled"] = False
+    enabled_with_invalid_disabled_dhcp_scope = deepcopy(archive)
+    enabled_with_invalid_disabled_dhcp_scope["data"]["dhcp_settings"][0]["enabled"] = True
+    enabled_with_invalid_disabled_dhcp_scope["data"]["dhcp_scopes"].append(
+        {
+            "name": "invalid-disabled-scope",
+            "address_family": "ipv4",
+            "interface_name": "eth2",
+            "site_address": "not-an-address",
+            "prefix_length": 24,
+            "range_expression": "192.168.50.100-192.168.50.200",
+            "lease_time": "12h",
+            "domain_name": "atlaso.internal",
+            "dns_server": "192.168.50.1",
+            "ntp_server": "",
+            "enabled": False,
+        }
+    )
+    disabled_with_invalid_disabled_dhcp_scope = deepcopy(
+        enabled_with_invalid_disabled_dhcp_scope
+    )
+    disabled_with_invalid_disabled_dhcp_scope["data"]["dhcp_settings"][0][
+        "enabled"
+    ] = False
+    enabled_outside_dhcp_reservation = deepcopy(archive)
+    enabled_outside_dhcp_reservation["data"]["dhcp_settings"][0]["enabled"] = True
+    enabled_outside_dhcp_reservation["data"]["dhcp_reservations"][0]["enabled"] = True
+    enabled_outside_dhcp_reservation["data"]["dhcp_reservations"][0]["ip_address"] = "203.0.113.10"
+    disabled_invalid_dhcp_reservation = deepcopy(archive)
+    disabled_invalid_dhcp_reservation["data"]["dhcp_settings"][0]["enabled"] = False
+    disabled_invalid_dhcp_reservation["data"]["dhcp_reservations"][0].update(
+        {"enabled": False, "ip_address": "not-an-address"}
+    )
+    enabled_missing_service_targets = []
+    for section_name in (
+        "dns_settings",
+        "ntp_settings",
+        "ca_settings",
+        "kms_settings",
+        "ldap_settings",
+        "oidc_provider_settings",
+        "vcf_backup_settings",
+        "vcf_private_registry_settings",
+        "vcf_offline_depot_settings",
+    ):
+        candidate = deepcopy(archive)
+        if not candidate["data"][section_name]:
+            continue
+        candidate["data"][section_name][0]["enabled"] = True
+        candidate["data"][section_name][0]["listen_interface"] = "missing-service-target"
+        enabled_missing_service_targets.append(candidate)
+    disabled_missing_service_target = deepcopy(enabled_missing_service_targets[0])
+    disabled_missing_service_target["data"]["dns_settings"][0]["enabled"] = False
+    enabled_missing_listen_address = deepcopy(archive)
+    enabled_missing_listen_address["data"]["ntp_settings"][0]["enabled"] = True
+    enabled_missing_listen_address["data"]["ntp_settings"][0]["listen_interface"] = "eth2"
+    enabled_missing_listen_address["data"]["ntp_settings"][0]["listen_address"] = ""
+    enabled_invalid_listen_address = deepcopy(archive)
+    enabled_invalid_listen_address["data"]["ntp_settings"][0]["enabled"] = True
+    enabled_invalid_listen_address["data"]["ntp_settings"][0]["listen_interface"] = "eth2"
+    enabled_invalid_listen_address["data"]["ntp_settings"][0]["listen_address"] = "not-an-ip"
+    enabled_mismatched_service_addresses = []
+    for section_name in (
+        "dns_settings",
+        "ntp_settings",
+        "ca_settings",
+        "kms_settings",
+        "ldap_settings",
+        "oidc_provider_settings",
+        "vcf_backup_settings",
+        "vcf_private_registry_settings",
+        "vcf_offline_depot_settings",
+    ):
+        candidate = deepcopy(archive)
+        if not candidate["data"][section_name]:
+            continue
+        candidate["data"][section_name][0]["enabled"] = True
+        candidate["data"][section_name][0]["listen_interface"] = "eth2"
+        candidate["data"][section_name][0]["listen_address"] = "192.0.2.20"
+        enabled_mismatched_service_addresses.append(candidate)
+    enabled_missing_web_terminal_target = deepcopy(archive)
+    enabled_missing_web_terminal_target["data"]["appliance_settings"][0]["web_terminal_enabled"] = True
+    enabled_missing_web_terminal_target["data"]["appliance_settings"][0]["management_https_enabled"] = True
+    enabled_missing_web_terminal_target["data"]["appliance_settings"][0][
+        "web_terminal_interfaces_json"
+    ] = '["missing-terminal-target"]'
+    invalid_network_state = deepcopy(archive)
+    invalid_network_state["data"]["physical_interfaces"][0]["mtu"] = 1
+    invalid_scalar_type = deepcopy(archive)
+    invalid_scalar_type["data"]["ldap_settings"][0]["port"] = "636"
+    invalid_appliance_config_path = deepcopy(archive)
+    invalid_appliance_config_path["data"]["appliance_settings"][0]["config_path"] = "relative/path"
+    enabled_web_terminal_without_https = deepcopy(archive)
+    enabled_web_terminal_without_https["data"]["appliance_settings"][0]["web_terminal_enabled"] = True
+    enabled_web_terminal_without_https["data"]["appliance_settings"][0]["management_https_enabled"] = False
+    appliance_dns_ownership_conflict = deepcopy(archive)
+    appliance_dns_ownership_conflict["data"]["dns_settings"][0]["enabled"] = True
+    appliance_dns_ownership_conflict["data"]["dns_records"].append(
+        {
+            "hostname": appliance_dns_ownership_conflict["data"]["appliance_settings"][0]["fqdn"],
+            "record_type": "A",
+            "address": "192.0.2.10",
+            "description": "Operator-owned record",
+            "enabled": True,
+        }
+    )
+    invalid_ntp_port = deepcopy(archive)
+    invalid_ntp_port["data"]["ntp_settings"][0]["port"] = 124
+    enabled_nts_without_ca = deepcopy(archive)
+    enabled_nts_without_ca["data"]["ntp_settings"][0].update(
+        {
+            "nts_server_enabled": True,
+            "nts_server_cert_path": "/etc/atlaso/ntp/nts-chain.pem",
+            "nts_server_key_path": "/etc/atlaso/ntp/nts-key.pem",
+        }
+    )
+    enabled_nts_without_ca["data"]["ca_settings"][0]["enabled"] = False
+    invalid_dns_domain = deepcopy(archive)
+    invalid_dns_domain["data"]["dns_settings"][0]["domain"] = "bad domain"
+    invalid_route_destination = deepcopy(archive)
+    invalid_route_destination["data"]["routes"][0]["destination_cidr"] = "not-a-cidr"
+    invalid_firewall_policy = deepcopy(archive)
+    invalid_firewall_policy["data"]["firewall_settings"][0]["default_input_policy"] = "reject"
+    invalid_kms_port = deepcopy(archive)
+    invalid_kms_port["data"]["kms_settings"][0]["port"] = 0
+    invalid_legacy_dhcp = deepcopy(archive)
+    invalid_legacy_dhcp["data"]["dhcp_scopes"] = []
+    invalid_legacy_dhcp["data"]["dhcp_settings"][0].update(
+        {
+            "enabled": True,
+            "interface_name": "eth2",
+            "site_address": "not-an-address",
+            "prefix_length": 24,
+        }
+    )
+    empty_required_field = deepcopy(archive)
+    empty_required_field["data"]["physical_interfaces"][0]["name"] = "   "
+    unresolved_ldap_organization = deepcopy(archive)
+    unresolved_ldap_organization["data"]["ldap_users"].append(
+        {"organization_slug": "missing-organization", "uid": "orphaned-user"}
+    )
+    enabled_ldap_without_organization = deepcopy(archive)
+    enabled_ldap_without_organization["data"]["ldap_settings"][0]["enabled"] = True
+    enabled_ldap_without_organization["data"]["ldap_settings"][0]["listen_interface"] = "eth2"
+    enabled_ldap_without_organization["data"]["ldap_settings"][0]["listen_address"] = "192.168.50.1"
+    enabled_ldap_without_organization["data"]["ldap_organizations"] = []
+    enabled_ldaps_without_ca = deepcopy(archive)
+    enabled_ldaps_without_ca["data"]["ldap_settings"][0]["enabled"] = True
+    enabled_ldaps_without_ca["data"]["ldap_settings"][0]["ldaps_enabled"] = True
+    enabled_ldaps_without_ca["data"]["ldap_settings"][0]["listen_interface"] = "eth2"
+    enabled_ldaps_without_ca["data"]["ldap_settings"][0]["listen_address"] = "192.168.50.1"
+    enabled_ldaps_without_ca["data"]["ldap_organizations"].append(
+        {"name": "LDAPS test", "slug": "ldaps-test", "suffix_dn": "dc=ldaps,dc=test"}
+    )
+    enabled_ldaps_without_ca["data"]["ca_settings"][0]["enabled"] = False
+    enabled_ldap_with_invalid_port = deepcopy(enabled_ldaps_without_ca)
+    enabled_ldap_with_invalid_port["data"]["ca_settings"][0]["enabled"] = True
+    enabled_ldap_with_invalid_port["data"]["ca_settings"][0]["root_certificate_pem"] = "certificate"
+    enabled_ldap_with_invalid_port["data"]["ldap_organizations"][0]["bind_password_encrypted"] = "encrypted"
+    enabled_ldap_with_invalid_port["data"]["ldap_settings"][0]["port"] = 0
+    enabled_ldap_user_without_password = deepcopy(archive)
+    enabled_ldap_user_without_password["data"]["ldap_organizations"].append(
+        {
+            "name": "Password recovery test",
+            "slug": "password-recovery-test",
+            "suffix_dn": "dc=password-recovery,dc=test",
+            "bind_password_encrypted": "encrypted",
+        }
+    )
+    enabled_ldap_user_without_password["data"]["ldap_users"].append(
+        {
+            "organization_slug": "password-recovery-test",
+            "uid": "missing-password",
+            "enabled": True,
+            "password_status": "not_staged",
+        }
+    )
+    unresolved_oidc_client = deepcopy(archive)
+    unresolved_oidc_client["data"]["oidc_client_redirect_uris"].append(
+        {"client_id": "missing-client", "kind": "redirect", "uri": "https://example.invalid/callback"}
+    )
+    oidc_client_without_redirect = deepcopy(archive)
+    valid_client_hash = hash_client_secret("archive-validation-secret")
+    oidc_client_without_redirect["data"]["oidc_clients"].append(
+        {
+            "name": "Missing redirect client",
+            "client_id": "missing-redirect-client",
+            "client_secret_hash": valid_client_hash,
+            "enabled": True,
+        }
+    )
+    oidc_client_with_invalid_lifetime = deepcopy(oidc_client_without_redirect)
+    oidc_client_with_invalid_lifetime["data"]["oidc_clients"][-1][
+        "authorization_code_lifetime_seconds"
+    ] = -1
+    oidc_client_with_invalid_lifetime["data"]["oidc_client_redirect_uris"].append(
+        {
+            "client_id": "missing-redirect-client",
+            "kind": "redirect",
+            "uri": "https://example.invalid/callback",
+        }
+    )
+    oidc_client_with_invalid_hash = deepcopy(oidc_client_with_invalid_lifetime)
+    oidc_client_with_invalid_hash["data"]["oidc_clients"][-1][
+        "authorization_code_lifetime_seconds"
+    ] = 60
+    oidc_client_with_invalid_hash["data"]["oidc_clients"][-1]["client_secret_hash"] = "not-a-hash"
+    duplicate_oidc_client = deepcopy(oidc_client_with_invalid_lifetime)
+    duplicate_oidc_client["data"]["oidc_clients"].append(
+        deepcopy(duplicate_oidc_client["data"]["oidc_clients"][-1])
+    )
+    duplicate_oidc_subject_uuid = deepcopy(archive)
+    duplicate_oidc_subject_uuid["data"]["oidc_subjects"].extend(
+        [
+            {
+                "subject_uuid": "11111111-1111-4111-8111-111111111111",
+                "source": "local",
+                "username": "subject-source-a",
+                "organization_slug": "",
+            },
+            {
+                "subject_uuid": "11111111-1111-4111-8111-111111111111",
+                "source": "local",
+                "username": "subject-source-b",
+                "organization_slug": "",
+            },
+        ]
+    )
+    duplicate_oidc_subject_source = deepcopy(duplicate_oidc_subject_uuid)
+    duplicate_oidc_subject_source["data"]["oidc_subjects"][1][
+        "subject_uuid"
+    ] = "22222222-2222-4222-8222-222222222222"
+    duplicate_oidc_subject_source["data"]["oidc_subjects"][1][
+        "username"
+    ] = "subject-source-a"
+    invalid_oidc_subject_scalar = deepcopy(archive)
+    invalid_oidc_subject_scalar["data"]["oidc_subjects"].append(
+        {
+            "subject_uuid": 123,
+            "source": "local",
+            "username": "invalid-scalar-subject",
+            "organization_slug": "",
+        }
+    )
+    invalid_oidc_subject_uuid = deepcopy(archive)
+    invalid_oidc_subject_uuid["data"]["oidc_subjects"].append(
+        {
+            "subject_uuid": "not-a-uuid",
+            "source": "local",
+            "username": "invalid-uuid-subject",
+            "organization_slug": "",
+        }
+    )
+    duplicate_oidc_mapping = deepcopy(archive)
+    duplicate_oidc_mapping["data"]["oidc_group_mappings"] = [
+        {
+            "source_type": "local_role",
+            "local_role": "admin",
+            "ldap_group_name": "",
+            "organization_slug": "",
+            "client_id": "",
+            "external_group_name": "Administrators",
+        },
+        {
+            "source_type": "local_role",
+            "local_role": "ADMIN",
+            "ldap_group_name": "",
+            "organization_slug": "",
+            "client_id": "",
+            "external_group_name": "Atlaso admins",
+        },
+    ]
+    invalid_oidc_mapping_scalar = deepcopy(archive)
+    invalid_oidc_mapping_scalar["data"]["oidc_group_mappings"].append(
+        {
+            "source_type": "local_role",
+            "local_role": "admin",
+            "ldap_group_name": "",
+            "organization_slug": "",
+            "client_id": "",
+            "external_group_name": True,
+        }
+    )
+    effective_oidc_mapping_collision = deepcopy(archive)
+    effective_oidc_mapping_collision["data"]["oidc_clients"].append(
+        {
+            "name": "Effective mapping client",
+            "client_id": "effective-mapping-client",
+            "client_secret_hash": valid_client_hash,
+            "organization_slug": "",
+            "enabled": True,
+        }
+    )
+    effective_oidc_mapping_collision["data"]["oidc_client_redirect_uris"].append(
+        {
+            "client_id": "effective-mapping-client",
+            "kind": "redirect",
+            "uri": "https://effective-mapping.example.test/callback",
+        }
+    )
+    effective_oidc_mapping_collision["data"]["oidc_group_mappings"] = [
+        {
+            "source_type": "local_role",
+            "local_role": "admin",
+            "ldap_group_name": "",
+            "organization_slug": "",
+            "client_id": "",
+            "external_group_name": "Shared external group",
+        },
+        {
+            "source_type": "local_role",
+            "local_role": "viewer",
+            "ldap_group_name": "",
+            "organization_slug": "",
+            "client_id": "effective-mapping-client",
+            "external_group_name": " shared EXTERNAL group ",
+        },
+    ]
+    cross_organization_oidc_mapping = deepcopy(archive)
+    cross_organization_oidc_mapping["data"]["ldap_organizations"].extend(
+        [
+            {
+                "name": "Mapping organization A",
+                "slug": "mapping-organization-a",
+                "suffix_dn": "dc=mapping-a,dc=test",
+            },
+            {
+                "name": "Mapping organization B",
+                "slug": "mapping-organization-b",
+                "suffix_dn": "dc=mapping-b,dc=test",
+            },
+        ]
+    )
+    cross_organization_oidc_mapping["data"]["ldap_groups"].append(
+        {
+            "organization_slug": "mapping-organization-a",
+            "name": "Mapping group A",
+            "enabled": False,
+        }
+    )
+    cross_organization_oidc_mapping["data"]["oidc_clients"].append(
+        {
+            "name": "Mapping client B",
+            "client_id": "mapping-client-b",
+            "client_secret_hash": valid_client_hash,
+            "organization_slug": "mapping-organization-b",
+            "enabled": True,
+        }
+    )
+    cross_organization_oidc_mapping["data"]["oidc_client_redirect_uris"].append(
+        {
+            "client_id": "mapping-client-b",
+            "kind": "redirect",
+            "uri": "https://mapping.example.test/callback",
+        }
+    )
+    cross_organization_oidc_mapping["data"]["oidc_group_mappings"].append(
+        {
+            "source_type": "ldap_group",
+            "local_role": "",
+            "ldap_group_name": "Mapping group A",
+            "organization_slug": "mapping-organization-a",
+            "client_id": "mapping-client-b",
+            "external_group_name": "Mapping group",
+        }
+    )
+    bound_client_local_role_mapping = deepcopy(cross_organization_oidc_mapping)
+    bound_client_local_role_mapping["data"]["oidc_group_mappings"] = [
+        {
+            "source_type": "local_role",
+            "local_role": "admin",
+            "ldap_group_name": "",
+            "organization_slug": "",
+            "client_id": "mapping-client-b",
+            "external_group_name": "Administrators",
+        }
+    ]
+    unbound_client_ldap_mapping = deepcopy(cross_organization_oidc_mapping)
+    unbound_client_ldap_mapping["data"]["oidc_clients"][-1]["organization_slug"] = ""
+    unresolved_esx_volume = deepcopy(archive)
+    unresolved_esx_volume["data"]["esx_nfs_shares"].append(
+        {"datastore_name": "orphaned-datastore", "volume_name": "missing-volume"}
+    )
+    enabled_missing_esx_share_target = deepcopy(archive)
+    enabled_missing_esx_share_target["data"]["esx_storage_volumes"].append(
+        {"name": "archive-volume"}
+    )
+    enabled_missing_esx_share_target["data"]["esx_nfs_shares"].append(
+        {
+            "datastore_name": "archive-share",
+            "volume_name": "archive-volume",
+            "interface_name": "missing-storage-target",
+            "address_families": "ipv4",
+            "enabled": True,
+        }
+    )
+    cyclic_ldap_groups = deepcopy(archive)
+    cyclic_ldap_groups["data"]["ldap_organizations"].append(
+        {"name": "Cycle test", "slug": "cycle-test", "suffix_dn": "dc=cycle,dc=test"}
+    )
+    cyclic_ldap_groups["data"]["ldap_groups"].extend(
+        [
+            {"organization_slug": "cycle-test", "name": "first"},
+            {"organization_slug": "cycle-test", "name": "second"},
+        ]
+    )
+    cyclic_ldap_groups["data"]["ldap_group_memberships"].extend(
+        [
+            {
+                "organization_slug": "cycle-test",
+                "group_name": "first",
+                "member_type": "group",
+                "member_name": "second",
+            },
+            {
+                "organization_slug": "cycle-test",
+                "group_name": "second",
+                "member_type": "group",
+                "member_name": "first",
+            },
+        ]
+    )
+    invalid_ldap_group = deepcopy(archive)
+    invalid_ldap_group["data"]["ldap_organizations"].append(
+        {"name": "Group validation", "slug": "group-validation", "suffix_dn": "dc=group,dc=test"}
+    )
+    invalid_ldap_group["data"]["ldap_groups"].append(
+        {"organization_slug": "group-validation", "name": "invalid/group", "enabled": True}
+    )
+    duplicate_ldap_group = deepcopy(archive)
+    duplicate_ldap_group["data"]["ldap_organizations"].append(
+        {"name": "Duplicate group", "slug": "duplicate-group", "suffix_dn": "dc=duplicate,dc=test"}
+    )
+    duplicate_ldap_group["data"]["ldap_groups"].extend(
+        [
+            {"organization_slug": "duplicate-group", "name": "same", "enabled": False},
+            {"organization_slug": "duplicate-group", "name": "same", "enabled": False},
+        ]
+    )
+    invalid_oidc_mapping_role = deepcopy(archive)
+    invalid_oidc_mapping_role["data"]["oidc_group_mappings"].append(
+        {
+            "source_type": "local_role",
+            "local_role": "superadmin",
+            "ldap_group_name": "",
+            "organization_slug": "",
+            "client_id": "",
+            "external_group_name": "Administrators",
+        }
+    )
+    invalid_oidc_external_group = deepcopy(invalid_oidc_mapping_role)
+    invalid_oidc_external_group["data"]["oidc_group_mappings"][-1]["local_role"] = "admin"
+    invalid_oidc_external_group["data"]["oidc_group_mappings"][-1]["external_group_name"] = "\x00"
+    enabled_certificate_with_disabled_profile = deepcopy(archive)
+    certificate_profile_name = enabled_certificate_with_disabled_profile["data"]["ca_certificates"][0][
+        "profile_name"
+    ]
+    certificate_profile = next(
+        profile
+        for profile in enabled_certificate_with_disabled_profile["data"]["ca_profiles"]
+        if profile["name"] == certificate_profile_name
+    )
+    certificate_profile["enabled"] = False
+    enabled_certificate_with_disabled_profile["data"]["ca_certificates"][0]["enabled"] = True
+    weak_ca_profile = deepcopy(archive)
+    weak_ca_profile["data"]["ca_profiles"][0]["key_algorithm"] = "RSA"
+    weak_ca_profile["data"]["ca_profiles"][0]["key_size"] = 1024
+    enabled_kms_without_ca = deepcopy(archive)
+    enabled_kms_without_ca["data"]["kms_settings"][0]["enabled"] = True
+    enabled_kms_without_ca["data"]["kms_settings"][0]["listen_interface"] = "eth2"
+    enabled_kms_without_ca["data"]["kms_settings"][0]["listen_address"] = "192.168.50.1"
+    enabled_kms_without_ca["data"]["ca_settings"][0]["enabled"] = False
+    enabled_kms_without_ca["data"]["vsphere_key_providers"] = [
+        {
+            "id": "11111111-1111-4111-8111-111111111111",
+            "name": "CA dependency test provider",
+            "enabled": True,
+        }
+    ]
+    enabled_kms_without_provider = deepcopy(archive)
+    enabled_kms_without_provider["data"]["kms_settings"][0].update(
+        {
+            "enabled": True,
+            "listen_interface": "eth2",
+            "listen_address": "192.168.50.1",
+        }
+    )
+    kms_certificate = deepcopy(enabled_kms_without_provider["data"]["ca_certificates"][0])
+    kms_certificate.update(
+        {
+            "managed_owner": "kms:server",
+            "status": "issued",
+            "certificate_pem": "certificate",
+            "private_key_encrypted": "encrypted-key",
+        }
+    )
+    enabled_kms_without_provider["data"]["ca_certificates"].append(kms_certificate)
+    enabled_kms_without_provider["data"]["vsphere_key_providers"] = []
+    enabled_kms_without_provider["data"]["vsphere_trusted_vcenters"] = []
+    enabled_kms_without_provider["data"]["vsphere_trusted_vcenter_certificates"] = []
+    invalid_provider_id = deepcopy(archive)
+    invalid_provider_id["data"]["vsphere_key_providers"].append(
+        {"id": "not-a-uuid", "name": "Invalid provider ID", "enabled": False}
+    )
+    invalid_vcenter_id = deepcopy(archive)
+    invalid_vcenter_id["data"]["vsphere_key_providers"].append(
+        {
+            "id": "11111111-1111-4111-8111-111111111111",
+            "name": "Invalid vCenter ID provider",
+            "enabled": False,
+        }
+    )
+    invalid_vcenter_id["data"]["vsphere_trusted_vcenters"].append(
+        {
+            "id": "not-a-uuid",
+            "provider_id": "11111111-1111-4111-8111-111111111111",
+            "name": "Invalid vCenter ID",
+            "enabled": False,
+        }
+    )
+    invalid_provider_enabled_type = deepcopy(archive)
+    invalid_provider_enabled_type["data"]["vsphere_key_providers"].append(
+        {
+            "id": "11111111-1111-4111-8111-111111111112",
+            "name": "Invalid enabled type",
+            "enabled": "false",
+        }
+    )
+    duplicate_provider_name = deepcopy(archive)
+    duplicate_provider_name["data"]["vsphere_key_providers"].extend(
+        [
+            {
+                "id": "11111111-1111-4111-8111-111111111121",
+                "name": "Duplicate provider name",
+                "enabled": False,
+            },
+            {
+                "id": "11111111-1111-4111-8111-111111111122",
+                "name": "Duplicate provider name",
+                "enabled": False,
+            },
+        ]
+    )
+    duplicate_vcenter_name = deepcopy(archive)
+    duplicate_vcenter_name["data"]["vsphere_key_providers"].append(
+        {
+            "id": "11111111-1111-4111-8111-111111111123",
+            "name": "Duplicate vCenter provider",
+            "enabled": False,
+        }
+    )
+    duplicate_vcenter_name["data"]["vsphere_trusted_vcenters"].extend(
+        [
+            {
+                "id": "22222222-2222-4222-8222-222222222231",
+                "provider_id": "11111111-1111-4111-8111-111111111123",
+                "name": "Duplicate vCenter name",
+                "enabled": False,
+            },
+            {
+                "id": "22222222-2222-4222-8222-222222222232",
+                "provider_id": "11111111-1111-4111-8111-111111111123",
+                "name": "Duplicate vCenter name",
+                "enabled": False,
+            },
+        ]
+    )
+    invalid_vcenter_enabled_type = deepcopy(archive)
+    invalid_vcenter_enabled_type["data"]["vsphere_key_providers"].append(
+        {
+            "id": "11111111-1111-4111-8111-111111111113",
+            "name": "Enabled type test provider",
+            "enabled": False,
+        }
+    )
+    invalid_vcenter_enabled_type["data"]["vsphere_trusted_vcenters"].append(
+        {
+            "id": "22222222-2222-4222-8222-222222222222",
+            "provider_id": "11111111-1111-4111-8111-111111111113",
+            "name": "Invalid enabled type",
+            "enabled": "false",
+        }
+    )
+    disabled_kms_with_invalid_public_certificate = deepcopy(archive)
+    disabled_kms_with_invalid_public_certificate["data"]["vsphere_key_providers"].append(
+        {
+            "id": "11111111-1111-4111-8111-111111111114",
+            "name": "Disabled certificate test provider",
+            "enabled": False,
+        }
+    )
+    disabled_kms_with_invalid_public_certificate["data"]["vsphere_trusted_vcenters"].append(
+        {
+            "id": "22222222-2222-4222-8222-222222222223",
+            "provider_id": "11111111-1111-4111-8111-111111111114",
+            "name": "Disabled certificate test vCenter",
+            "enabled": False,
+        }
+    )
+    disabled_kms_with_invalid_public_certificate["data"][
+        "vsphere_trusted_vcenter_certificates"
+    ].append(
+        {
+            "id": "33333333-3333-4333-8333-333333333333",
+            "trusted_vcenter_id": "22222222-2222-4222-8222-222222222223",
+            "fingerprint_sha256": "0" * 64,
+            "certificate_pem": "not-a-certificate",
+        }
+    )
+    invalid_vcenter_certificate_id = deepcopy(disabled_kms_with_invalid_public_certificate)
+    invalid_vcenter_certificate_id["data"]["vsphere_trusted_vcenter_certificates"][0][
+        "id"
+    ] = "invalid/certificate-id"
+    enabled_oidc_without_dependencies = deepcopy(archive)
+    enabled_oidc_without_dependencies["data"]["oidc_provider_settings"] = [
+        {
+            "enabled": True,
+            "listen_interface": "eth2",
+            "listen_address": "192.168.50.1",
+        }
+    ]
+    enabled_oidc_without_dependencies["data"]["oidc_signing_keys"] = []
+    enabled_oidc_with_mismatched_address = deepcopy(archive)
+    enabled_oidc_with_mismatched_address["data"]["oidc_provider_settings"] = [
+        {
+            "enabled": True,
+            "listen_interface": "eth2",
+            "listen_address": "192.0.2.1",
+        }
+    ]
+    enabled_oidc_with_mismatched_address["data"]["oidc_signing_keys"] = [
+        {
+            "kid": "archive-active-key",
+            "private_key_encrypted": "encrypted-key",
+            "public_jwk_json": "{}",
+            "status": "active",
+            "active_slot": 1,
+            "created_at": "2026-08-13T06:00:00+00:00",
+            "activated_at": "2026-08-13T06:00:00+00:00",
+            "retired_at": None,
+            "publish_until": None,
+        }
+    ]
+    oidc_certificate = deepcopy(enabled_oidc_with_mismatched_address["data"]["ca_certificates"][0])
+    oidc_certificate["managed_owner"] = "oidc:https"
+    oidc_certificate["status"] = "issued"
+    oidc_certificate["certificate_pem"] = "certificate"
+    oidc_certificate["private_key_encrypted"] = "encrypted-key"
+    enabled_oidc_with_mismatched_address["data"]["ca_certificates"].append(oidc_certificate)
+    enabled_oidc_with_invalid_port = deepcopy(enabled_oidc_with_mismatched_address)
+    enabled_oidc_with_invalid_port["data"]["oidc_provider_settings"][0]["listen_address"] = "192.168.50.1"
+    enabled_oidc_with_invalid_port["data"]["oidc_provider_settings"][0]["port"] = 0
+    enabled_oidc_with_invalid_crypto = deepcopy(enabled_oidc_with_mismatched_address)
+    enabled_oidc_with_invalid_crypto["data"]["oidc_provider_settings"][0]["listen_address"] = "192.168.50.1"
+    disabled_oidc_with_invalid_retired_key = deepcopy(archive)
+    disabled_oidc_with_invalid_retired_key["data"]["oidc_signing_keys"].append(
+        {
+            "kid": "archive-invalid-retired-key",
+            "private_key_encrypted": "not-encrypted",
+            "public_jwk_json": '{"d":"private"}',
+            "status": "retired",
+            "active_slot": None,
+            "created_at": "2026-08-13T06:00:00+00:00",
+            "activated_at": "2026-08-13T06:00:00+00:00",
+            "retired_at": "2026-08-13T06:05:00+00:00",
+            "publish_until": "2026-08-13T06:10:00+00:00",
+        }
+    )
+    disabled_oidc_with_non_ascii_key = deepcopy(
+        disabled_oidc_with_invalid_retired_key
+    )
+    disabled_oidc_with_non_ascii_key["data"]["oidc_signing_keys"][0][
+        "private_key_encrypted"
+    ] = "fernet:v1:\u00e9"
+    enabled_oidc_with_extra_active_key = deepcopy(enabled_oidc_with_invalid_crypto)
+    enabled_oidc_with_extra_active_key["data"]["oidc_signing_keys"].append(
+        {
+            "kid": "archive-extra-active-key",
+            "private_key_encrypted": "encrypted-key",
+            "public_jwk_json": '{"d":"private"}',
+            "status": "active",
+            "active_slot": None,
+            "created_at": "2026-08-13T06:00:00+00:00",
+            "activated_at": "2026-08-13T06:00:00+00:00",
+            "retired_at": None,
+            "publish_until": None,
+        }
+    )
+    invalid_ca_private_key = deepcopy(archive)
+    invalid_ca_private_key["data"]["ca_settings"][0]["root_private_key_encrypted"] = "not-encrypted"
+    invalid_ca_storage_path = deepcopy(archive)
+    invalid_ca_storage_path["data"]["ca_settings"][0]["storage_path"] = "/tmp/archive-ca"
+    invalid_ca_certificate_path = deepcopy(archive)
+    invalid_ca_certificate_path["data"]["ca_certificates"][0]["enabled"] = False
+    invalid_ca_certificate_path["data"]["ca_certificates"][0]["cert_path"] = "/tmp/archive.crt"
+    reserved_ca_deployment_path = deepcopy(archive)
+    reserved_ca_deployment_path["data"]["ca_certificates"][0][
+        "cert_path"
+    ] = "/etc/atlaso/ca/root-ca.pem"
+    duplicate_ca_deployment_path = deepcopy(archive)
+    duplicate_ca_deployment_path["data"]["ca_certificates"][0].update(
+        {
+            "cert_path": "/etc/atlaso/ca/archive-shared.pem",
+            "chain_path": "/etc/atlaso/ca/archive-shared.pem",
+        }
+    )
+    invalid_disabled_ca_certificate_material = deepcopy(archive)
+    invalid_disabled_ca_certificate_material["data"]["ca_certificates"][0].update(
+        {
+            "enabled": False,
+            "certificate_pem": "not-a-certificate",
+        }
+    )
+    revoked_without_timestamp = deepcopy(archive)
+    revoked_without_timestamp["data"]["ca_settings"][0]["enabled"] = False
+    revoked_without_timestamp["data"]["ca_certificates"][0].update(
+        {
+            "enabled": False,
+            "status": "revoked",
+            "serial_number": "2a",
+            "revoked_at": None,
+        }
+    )
+    revoked_without_serial = deepcopy(revoked_without_timestamp)
+    revoked_without_serial["data"]["ca_certificates"][0].update(
+        {
+            "serial_number": "",
+            "revoked_at": "2026-08-13T18:38:09+00:00",
+        }
+    )
+    duplicate_managed_certificate_owner = deepcopy(archive)
+    duplicate_certificate = deepcopy(duplicate_managed_certificate_owner["data"]["ca_certificates"][0])
+    duplicate_certificate["managed_owner"] = "archive:duplicate-owner"
+    duplicate_managed_certificate_owner["data"]["ca_certificates"][0][
+        "managed_owner"
+    ] = "archive:duplicate-owner"
+    duplicate_managed_certificate_owner["data"]["ca_certificates"].append(duplicate_certificate)
+    invalid_storage_state = deepcopy(archive)
+    invalid_storage_state["data"]["esx_storage_settings"] = [
+        {"enabled": False, "hostname": "nfs.atlaso.internal"}
+    ]
+    invalid_storage_state["data"]["esx_storage_volumes"].append(
+        {
+            "name": "invalid-volume",
+            "stable_device_id": "/dev/disk/by-id/invalid-volume",
+            "mount_path": "/mnt/atlaso-esx-storage/invalid-volume",
+        }
+    )
+    invalid_storage_state["data"]["esx_nfs_shares"].append(
+        {
+            "datastore_name": "invalid-share",
+            "volume_name": "invalid-volume",
+            "relative_path": "data",
+            "preferred_nfs_version": "2",
+            "interface_name": "eth2",
+            "address_families": "ipv4",
+            "ipv4_clients": "0.0.0.0/0",
+            "enabled": True,
+        }
+    )
+    missing_storage_settings_validation = deepcopy(archive)
+    missing_storage_settings_validation["data"]["esx_storage_settings"] = []
+    missing_storage_settings_validation["data"]["esx_storage_volumes"].append(
+        {
+            "name": "invalid-volume-without-settings",
+            "stable_device_id": "/dev/sda",
+            "mount_path": "/mnt/atlaso-esx-storage/invalid-volume-without-settings",
+        }
+    )
+    invalid_esxi_host_mac = deepcopy(archive)
+    invalid_esxi_host_mac["data"]["esxi_pxe_hosts"].append(
+        {"hostname": "invalid-mac-host", "mac_address": "not-a-mac"}
+    )
+    duplicate_normalized_esxi_host_mac = deepcopy(archive)
+    duplicate_normalized_esxi_host_mac["data"]["esxi_pxe_hosts"].extend(
+        [
+            {"hostname": "duplicate-mac-host-one", "mac_address": "02:11:22:33:44:55"},
+            {"hostname": "duplicate-mac-host-two", "mac_address": "0211.2233.4455"},
+        ]
+    )
+    invalid_esxi_installer_iso = deepcopy(archive)
+    invalid_esxi_installer_iso["data"]["esxi_pxe_hosts"].append(
+        {
+            "hostname": "invalid-installer-iso-host",
+            "mac_address": "00:50:56:aa:bb:dd",
+            "installer_iso_path": "C:\\outside\\missing.iso",
+        }
+    )
+    invalid_vcf_depot_store = deepcopy(archive)
+    invalid_vcf_depot_store["data"]["vcf_offline_depot_settings"][0][
+        "depot_store_path"
+    ] = "/tmp/depot"
+    invalid_esxi_kickstart = deepcopy(archive)
+    invalid_esxi_kickstart["data"]["esxi_kickstarts"].append(
+        {
+            "name": "Duplicate install directives",
+            "content": "install\nupgrade\nnetwork --bootproto=dhcp\nrootpw Example\nreboot\n%firstboot\n%end\n",
+            "content_hash": "0" * 64,
+            "enabled": True,
+        }
+    )
+    duplicate_network_boot_environment = deepcopy(archive)
+    duplicate_network_boot_environment["data"]["network_boot_environments"].append(
+        deepcopy(duplicate_network_boot_environment["data"]["network_boot_environments"][0])
+    )
+    invalid_update_source = deepcopy(archive)
+    powershell_source = next(
+        row
+        for row in invalid_update_source["data"]["update_sources"]
+        if row["kind"] == "powershell"
+    )
+    powershell_source["enabled"] = True
+    powershell_source["url"] = "not-a-url"
+    duplicate_update_source = deepcopy(archive)
+    duplicate_update_source["data"]["update_sources"].append(
+        deepcopy(duplicate_update_source["data"]["update_sources"][0])
+    )
+    invalid_script_interpreter = deepcopy(archive)
+    script_content = "Write-Output 'archive validation'\n"
+    script_digest = hashlib.sha256(script_content.encode("utf-8")).hexdigest()
+    invalid_script_interpreter["data"]["automation_scripts"].append(
+        {
+            "name": "Invalid interpreter",
+            "created_by": "test",
+            "revisions": [
+                {
+                    "revision": 1,
+                    "interpreter": "cmd",
+                    "content": script_content,
+                    "content_sha256": script_digest,
+                    "timeout_seconds": 60,
+                    "created_by": "test",
+                }
+            ],
+        }
+    )
+    invalid_script_digest = deepcopy(invalid_script_interpreter)
+    invalid_script_digest["data"]["automation_scripts"][-1]["name"] = "Invalid digest"
+    invalid_script_digest["data"]["automation_scripts"][-1]["revisions"][0]["interpreter"] = "powershell"
+    invalid_script_digest["data"]["automation_scripts"][-1]["revisions"][0]["content_sha256"] = "0" * 64
+    duplicate_script_name = deepcopy(archive)
+    duplicate_script_name["data"]["automation_scripts"].extend(
+        [
+            {"name": "Duplicate script", "created_by": "test", "revisions": []},
+            {"name": "Duplicate script", "created_by": "test", "revisions": []},
+        ]
+    )
+    unsupported_schedule = deepcopy(archive)
+    unsupported_schedule["data"]["schedules"].append(
+        {
+            "name": "Unsupported schedule",
+            "task_type": "unsupported",
+            "task_config_json": "{}",
+            "schedule_kind": "cron",
+            "cron_expression": "0 2 * * *",
+            "run_once_at": None,
+            "timezone_name": "UTC",
+            "enabled": False,
+            "created_by": "test",
+        }
+    )
+    invalid_update_schedule = deepcopy(unsupported_schedule)
+    invalid_update_schedule["data"]["schedules"][-1].update(
+        {
+            "name": "Invalid update stream schedule",
+            "task_type": "appliance_update_check",
+            "task_config_json": '{"selected_streams":["retired"]}',
+        }
+    )
+    duplicate_schedule = deepcopy(unsupported_schedule)
+    duplicate_schedule["data"]["schedules"].append(
+        deepcopy(duplicate_schedule["data"]["schedules"][-1])
+    )
+    invalid_managed_package_source = deepcopy(archive)
+    photon_source = next(
+        row
+        for row in invalid_managed_package_source["data"]["update_sources"]
+        if row["kind"] == "photon"
+    )
+    invalid_managed_package_source["data"]["managed_packages"].append(
+        {
+            "ecosystem": "powershell",
+            "name": "InvalidRepositoryModule",
+            "policy": "latest",
+            "target_version": "",
+            "enabled": True,
+            "source_kind": photon_source["kind"],
+            "source_name": photon_source["name"],
+        }
+    )
+    duplicate_managed_package = deepcopy(archive)
+    duplicate_managed_package["data"]["managed_packages"].append(
+        deepcopy(duplicate_managed_package["data"]["managed_packages"][0])
+    )
+    unsupported_setting = deepcopy(archive)
+    unsupported_setting["data"]["settings"].append(
+        {"key": "unsupported.setting", "value": "must-not-be-silently-dropped"}
+    )
+    duplicate_setting = deepcopy(archive)
+    duplicate_setting["data"]["settings"] = [
+        {"key": "dns.conditional_forwarders", "value": ""},
+        {"key": "dns.conditional_forwarders", "value": ""},
+    ]
+    malformed_password_policy = deepcopy(archive)
+    malformed_password_policy["data"]["settings"].append(
+        {"key": "local_users.password_policy.v1", "value": "not-json"}
+    )
+    coerced_password_policy = deepcopy(archive)
+    coerced_password_policy["data"]["settings"].append(
+        {
+            "key": "local_users.password_policy.v1",
+            "value": '{"require_uppercase":"false"}',
+        }
+    )
+    invalid_nts_restoration_marker = deepcopy(archive)
+    nts_marker = next(
+        row
+        for row in invalid_nts_restoration_marker["data"]["settings"]
+        if row["key"] == "ntp.nts_restoration_v1"
+    )
+    nts_marker["value"] = "pending"
+    invalid_firewall_source_groups = deepcopy(archive)
+    invalid_firewall_source_groups["data"]["settings"].append(
+        {
+            "key": "firewall.managed_source_groups",
+            "value": '{"groups":null}',
+        }
+    )
+    duplicate_firewall_source_group = deepcopy(archive)
+    duplicate_firewall_source_group["data"]["settings"].append(
+        {
+            "key": "firewall.managed_source_groups",
+            "value": json.dumps(
+                {
+                    "groups": [
+                        {"id": "duplicate", "entries": ["192.0.2.0/24"]},
+                        {"id": "duplicate", "entries": ["198.51.100.0/24"]},
+                    ],
+                    "assignments": {},
+                }
+            ),
+        }
+    )
+    malformed_firewall_source_group = deepcopy(archive)
+    malformed_firewall_source_group["data"]["settings"].append(
+        {
+            "key": "firewall.managed_source_groups",
+            "value": json.dumps(
+                {
+                    "groups": [
+                        {
+                            "id": "custom:restricted",
+                            "name": "Restricted",
+                            "entries": 42,
+                        }
+                    ],
+                    "assignments": {},
+                }
+            ),
+        }
+    )
+    reserved_firewall_source_group = deepcopy(archive)
+    reserved_firewall_source_group["data"]["settings"].append(
+        {
+            "key": "firewall.managed_source_groups",
+            "value": json.dumps(
+                {
+                    "groups": [
+                        {
+                            "id": "any",
+                            "name": "Restricted Any",
+                            "entries": ["192.0.2.0/24"],
+                        }
+                    ],
+                    "assignments": {"management-ui": "any"},
+                }
+            ),
+        }
+    )
+    unresolved_firewall_source_group_assignment = deepcopy(archive)
+    unresolved_firewall_source_group_assignment["data"]["settings"].append(
+        {
+            "key": "firewall.managed_source_groups",
+            "value": json.dumps(
+                {
+                    "groups": [
+                        {
+                            "id": "custom:restricted",
+                            "name": "Restricted",
+                            "entries": ["192.0.2.0/24"],
+                        }
+                    ],
+                    "assignments": {"management-ui": "missing"},
+                }
+            ),
+        }
+    )
+    malformed_conditional_forwarder = deepcopy(archive)
+    malformed_conditional_forwarder["data"]["settings"].append(
+        {"key": "dns.conditional_forwarders", "value": "corp.example"}
+    )
+    oversized_esxi_custom_variables = deepcopy(archive)
+    oversized_esxi_custom_variables["data"]["settings"].append(
+        {
+            "key": "esxi_pxe.custom_variables.v1",
+            "value": json.dumps(
+                [
+                    {
+                        "name": f"archive_variable_{item_index}",
+                        "description": "",
+                        "default_value": "",
+                    }
+                    for item_index in range(65)
+                ]
+            ),
+        }
+    )
+    missing_canonical_service_state = deepcopy(archive)
+    missing_canonical_service_state["data"]["service_states"] = (
+        missing_canonical_service_state["data"]["service_states"][1:]
+    )
+
+    for candidate, message in [
+        (invalid_collection, "must be a list"),
+        (unsupported_schema, "schema is not supported"),
+        (invalid_row, "must be an object"),
+        (missing_required_field, "missing required field 'name'"),
+        (missing_section, "missing a required data section"),
+        (empty_data, "missing a required data section"),
+        (empty_singleton, "must contain exactly one row"),
+        (duplicate_oidc_singleton, "must contain at most one row"),
+        (enabled_missing_parent_vlan, "has an ineligible parent interface"),
+        (enabled_non_trunk_vlan, "has an ineligible parent interface"),
+        (enabled_missing_route_target, "has an ineligible target interface"),
+        (enabled_ineligible_route_target, "has an ineligible target interface"),
+        (enabled_missing_nat_target, "has an ineligible outbound interface"),
+        (enabled_ipv6_only_nat_target, "has an ineligible outbound interface"),
+        (enabled_missing_nat_source_group, "has an invalid source"),
+        (missing_firewall_source_group, "has an invalid source or destination"),
+        (enabled_missing_routing_target, "has an ineligible interface"),
+        (enabled_identical_routing_targets, "has identical source and destination interfaces"),
+        (enabled_missing_dhcp_target, "has an ineligible bind interface"),
+        (enabled_wrong_family_dhcp_target, "has an ineligible bind interface"),
+        (enabled_management_dhcp_target, "has an ineligible bind interface"),
+        (enabled_without_enabled_dhcp_scope, "enables DHCP without an enabled DHCP scope"),
+        (enabled_with_invalid_disabled_dhcp_scope, "DHCP settings are invalid"),
+        (disabled_with_invalid_disabled_dhcp_scope, "DHCP settings are invalid"),
+        (enabled_outside_dhcp_reservation, "must be inside an enabled DHCP IP zone"),
+        (disabled_invalid_dhcp_reservation, "has an invalid IP address"),
+        *(
+            (candidate, "has an ineligible listen interface")
+            for candidate in enabled_missing_service_targets
+        ),
+        (enabled_missing_listen_address, "has no listen address"),
+        (enabled_invalid_listen_address, "has an invalid listen address"),
+        *(
+            (candidate, "has listener addresses not derived from its interfaces")
+            for candidate in enabled_mismatched_service_addresses
+        ),
+        (enabled_missing_web_terminal_target, "select an ineligible Web Terminal interface"),
+        (invalid_network_state, "network state is invalid: .* MTU must be between 576 and 9000"),
+        (invalid_scalar_type, "field 'port' must be an integer"),
+        (invalid_appliance_config_path, "Appliance Settings are invalid: Appliance settings config path must be absolute"),
+        (enabled_web_terminal_without_https, "enables Web Terminal without Management UI HTTPS"),
+        (appliance_dns_ownership_conflict, "user-owned DNS A/AAAA record"),
+        (invalid_ntp_port, "NTP settings are invalid: NTP port must be UDP 123"),
+        (enabled_nts_without_ca, "enables NTPsec NTS server mode without an enabled CA"),
+        (invalid_dns_domain, "DNS settings are invalid: DNS domain bad domain must not contain whitespace"),
+        (invalid_route_destination, "Routes and WAN state is invalid: Route not-a-cidr is not a valid destination CIDR"),
+        (invalid_firewall_policy, "Firewall state is invalid: .*Default input policy"),
+        (invalid_kms_port, "KMS state is invalid: KMS port must be between 1 and 65535"),
+        (invalid_legacy_dhcp, "DHCP settings are invalid"),
+        (empty_required_field, "has empty required field 'name'"),
+        (unresolved_ldap_organization, "references an unknown LDAP organization"),
+        (enabled_ldap_without_organization, "enables LDAP without an LDAP organization"),
+        (enabled_ldaps_without_ca, "enables LDAPS without a ready Certificate Authority"),
+        (enabled_ldap_with_invalid_port, "LDAP state is invalid: LDAPS port must be between 1 and 65535"),
+        (enabled_ldap_user_without_password, "enabled user needs staged passwords"),
+        (unresolved_oidc_client, "references an unknown OIDC client"),
+        (oidc_client_without_redirect, "At least one exact redirect URI is required"),
+        (oidc_client_with_invalid_lifetime, "fixed 60-second authorization-code lifetime"),
+        (oidc_client_with_invalid_hash, "OIDC client secret hash is not valid"),
+        (duplicate_oidc_client, "duplicates the unique client_id identity"),
+        (duplicate_oidc_subject_uuid, "duplicates a subject UUID"),
+        (duplicate_oidc_subject_source, "duplicates an identity source"),
+        (invalid_oidc_subject_scalar, "subject_uuid field that must be a string"),
+        (invalid_oidc_subject_uuid, "has an invalid subject UUID"),
+        (duplicate_oidc_mapping, "duplicates an OIDC group mapping identity"),
+        (invalid_oidc_mapping_scalar, "external_group_name field that must be a string"),
+        (
+            effective_oidc_mapping_collision,
+            "Effective external group names must be unique case-insensitively",
+        ),
+        (cross_organization_oidc_mapping, "outside its OIDC client's organization"),
+        (bound_client_local_role_mapping, "assigns a local role to an organization-bound OIDC client"),
+        (unresolved_esx_volume, "references an unknown ESX storage volume"),
+        (enabled_missing_esx_share_target, "has an ineligible interface or address family"),
+        (cyclic_ldap_groups, "contains cyclic LDAP group membership"),
+        (invalid_ldap_group, "LDAP state is invalid: .*invalid name"),
+        (duplicate_ldap_group, "duplicates an LDAP identity"),
+        (invalid_oidc_mapping_role, "Select one supported local Atlaso role"),
+        (invalid_oidc_external_group, "External group names must contain"),
+        (enabled_certificate_with_disabled_profile, "references a disabled CA profile"),
+        (weak_ca_profile, "Certificate Authority state is invalid: .*RSA key size must be at least 2048"),
+        (enabled_kms_without_ca, "enables KMS without an enabled CA"),
+        (enabled_kms_without_provider, "KMS trust state is invalid: At least one enabled provider"),
+        (invalid_provider_id, "invalid provider ID"),
+        (invalid_vcenter_id, "invalid trusted vCenter ID"),
+        (invalid_provider_enabled_type, "has an invalid enabled value"),
+        (duplicate_provider_name, "duplicates a provider name"),
+        (duplicate_vcenter_name, "duplicates a trusted vCenter name within its provider"),
+        (invalid_vcenter_enabled_type, "has an invalid enabled value"),
+        (invalid_vcenter_certificate_id, "invalid public certificate ID"),
+        (disabled_kms_with_invalid_public_certificate, "PEM-encoded vCenter public client certificate"),
+        (enabled_oidc_without_dependencies, "enables OIDC without an active signing key"),
+        (enabled_oidc_with_mismatched_address, "has listener addresses not derived from its interfaces"),
+        (enabled_oidc_with_invalid_port, "has an invalid HTTPS port"),
+        (enabled_oidc_with_invalid_crypto, "OIDC cryptographic state is invalid"),
+        (disabled_oidc_with_invalid_retired_key, "OIDC cryptographic state is invalid"),
+        (disabled_oidc_with_non_ascii_key, "OIDC cryptographic state is invalid"),
+        (enabled_oidc_with_extra_active_key, "has a noncanonical active slot"),
+        (invalid_ca_private_key, "Certificate Authority key state is invalid"),
+        (invalid_ca_storage_path, "CA storage path must stay under /etc/atlaso"),
+        (invalid_ca_certificate_path, "certificate path must stay under /etc/atlaso"),
+        (reserved_ca_deployment_path, "uses a path reserved for CA root publication"),
+        (duplicate_ca_deployment_path, "duplicates the deployment path"),
+        (invalid_disabled_ca_certificate_material, "public certificate is not usable"),
+        (revoked_without_timestamp, "has no revocation timestamp"),
+        (revoked_without_serial, "has no serial number"),
+        (duplicate_managed_certificate_owner, "duplicates a managed certificate owner"),
+        (invalid_storage_state, "ESX Storage state is invalid: Datastore invalid-share must use NFS 3 or NFS 4.1"),
+        (missing_storage_settings_validation, "must use a stable /dev/disk/by-id identity"),
+        (invalid_esxi_host_mac, "esxi_pxe_hosts' has an invalid MAC address"),
+        (duplicate_normalized_esxi_host_mac, "duplicates a normalized MAC address"),
+        (invalid_esxi_installer_iso, "has an invalid installer ISO"),
+        (invalid_vcf_depot_store, "Depot store path must be /mnt/atlaso-vcf-offline-depot"),
+        (invalid_esxi_kickstart, "multiple install/upgrade directives"),
+        (duplicate_network_boot_environment, "duplicates an environment key"),
+        (invalid_update_source, r"update source state is invalid: .*URL must be an HTTP\(S\) URL"),
+        (duplicate_update_source, "duplicates an update source identity"),
+        (invalid_script_interpreter, "Interpreter must be bash, python, or powershell"),
+        (invalid_script_digest, "Script content digest does not match"),
+        (duplicate_script_name, "duplicates a script name"),
+        (unsupported_schedule, "Choose a supported scheduled task type"),
+        (invalid_update_schedule, "retired or unsupported stream"),
+        (duplicate_schedule, "duplicates the unique name identity"),
+        (invalid_managed_package_source, "managed package state is invalid: Choose a PowerShell repository"),
+        (duplicate_managed_package, "duplicates a managed package identity"),
+        (unsupported_setting, "has an unsupported setting key"),
+        (duplicate_setting, "duplicates a setting key"),
+        (malformed_password_policy, "local user password policy is invalid"),
+        (coerced_password_policy, "field require_uppercase must be a Boolean"),
+        (invalid_nts_restoration_marker, "NTPsec NTS restoration marker is invalid"),
+        (invalid_firewall_source_groups, "firewall source groups state is invalid"),
+        (duplicate_firewall_source_group, "firewall source groups state is invalid"),
+        (malformed_firewall_source_group, "firewall source groups state is invalid"),
+        (reserved_firewall_source_group, "firewall source groups state is invalid"),
+        (
+            unresolved_firewall_source_group_assignment,
+            "firewall source groups state is invalid",
+        ),
+        (malformed_conditional_forwarder, "DNS conditional forwarders state is invalid"),
+        (oversized_esxi_custom_variables, "limited to 64 entries"),
+        (missing_canonical_service_state, "complete canonical service status set"),
+    ]:
+        with pytest.raises(ValueError, match=message):
+            archive_summary(candidate)
+    assert archive_summary(disabled_missing_parent_vlan)["table_counts"]["vlan_interfaces"] == len(
+        disabled_missing_parent_vlan["data"]["vlan_interfaces"]
+    )
+    assert archive_summary(disabled_missing_route_target)["table_counts"]["routes"] == len(
+        disabled_missing_route_target["data"]["routes"]
+    )
+    archive_summary(disabled_missing_nat_target)
+    archive_summary(disabled_missing_nat_source_group)
+    archive_summary(disabled_missing_routing_target)
+    archive_summary(disabled_missing_dhcp_target)
+    archive_summary(disabled_missing_service_target)
+    archive_summary(unbound_client_ldap_mapping)
+
+
+def test_settings_restore_rolls_back_late_failure_without_clearing_staged_ldap_recovery(client, monkeypatch):
+    """Verify late settings restore failures roll back database and process state.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+    """
+    import pytest
+    from sqlalchemy import select
+
+    import atlaso.app.services.settings_archive as settings_archive
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import ApplianceSettings, LdapRecoveryArchive
+    from atlaso.app.services.ldap import LDAP_PENDING_RECOVERY_PAYLOADS
+
+    with SessionLocal() as db:
+        settings = db.execute(select(ApplianceSettings)).scalar_one()
+        original_fqdn = settings.fqdn
+        archive = settings_archive.export_settings_archive(db, actor="test")
+        archive["data"]["appliance_settings"][0]["fqdn"] = "uncommitted-restore.atlaso.internal"
+        staged = LdapRecoveryArchive(
+            filename="staged-late-restore.lfldap",
+            path="memory://pending-ldap-recovery",
+            sha256="d" * 64,
+            state="staged",
+            organization_count=1,
+            created_by="test",
+        )
+        db.add(staged)
+        db.commit()
+        staged_id = staged.id
+        LDAP_PENDING_RECOVERY_PAYLOADS[staged_id] = b"pending recovery payload"
+
+        def fail_after_restore_mutation(*_args, **_kwargs):
+            """Raise after archive mutation to exercise transaction rollback.
+
+            Args:
+                *_args: Additional positional arguments accepted by the callable.
+                **_kwargs: Additional keyword arguments accepted by the callable.
+            """
+            raise RuntimeError("injected late restore failure")
+
+        monkeypatch.setattr(settings_archive, "_restore_schedules", fail_after_restore_mutation)
+        try:
+            with pytest.raises(RuntimeError, match="injected late restore failure"):
+                settings_archive.restore_settings_archive(db, archive)
+            assert db.execute(select(ApplianceSettings)).scalar_one().fqdn == original_fqdn
+            assert db.get(LdapRecoveryArchive, staged_id) is not None
+            assert LDAP_PENDING_RECOVERY_PAYLOADS[staged_id] == b"pending recovery payload"
+        finally:
+            LDAP_PENDING_RECOVERY_PAYLOADS.pop(staged_id, None)
+
+
+def test_factory_reset_rolls_back_late_failure_without_clearing_staged_ldap_recovery(client, monkeypatch):
+    """Verify late factory-reset failures roll back database and process state.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+    """
+    import pytest
+    from sqlalchemy import select
+
+    import atlaso.app.services.settings_archive as settings_archive
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import ApplianceSettings, LdapRecoveryArchive
+    from atlaso.app.services.ldap import LDAP_PENDING_RECOVERY_PAYLOADS
+
+    with SessionLocal() as db:
+        settings = db.execute(select(ApplianceSettings)).scalar_one()
+        original_fqdn = settings.fqdn
+        staged = LdapRecoveryArchive(
+            filename="staged-late-reset.lfldap",
+            path="memory://pending-ldap-recovery",
+            sha256="e" * 64,
+            state="staged",
+            organization_count=1,
+            created_by="test",
+        )
+        db.add(staged)
+        db.commit()
+        staged_id = staged.id
+        LDAP_PENDING_RECOVERY_PAYLOADS[staged_id] = b"pending reset recovery payload"
+
+        def fail_after_reset_seed(*_args, **_kwargs):
+            """Raise after reset seeding to exercise transaction rollback.
+
+            Args:
+                *_args: Additional positional arguments accepted by the callable.
+                **_kwargs: Additional keyword arguments accepted by the callable.
+            """
+            raise RuntimeError("injected late factory reset failure")
+
+        monkeypatch.setattr(settings_archive, "_force_services_stopped_unconfigured", fail_after_reset_seed)
+        try:
+            with pytest.raises(RuntimeError, match="injected late factory reset failure"):
+                settings_archive.factory_reset_desired_state(db)
+            assert db.execute(select(ApplianceSettings)).scalar_one().fqdn == original_fqdn
+            assert db.get(LdapRecoveryArchive, staged_id) is not None
+            assert LDAP_PENDING_RECOVERY_PAYLOADS[staged_id] == b"pending reset recovery payload"
+        finally:
+            LDAP_PENDING_RECOVERY_PAYLOADS.pop(staged_id, None)
 
 
 def test_esxi_kickstart_api_hides_raw_content_from_read_only_tokens(client):
@@ -6505,16 +8621,19 @@ def test_esxi_pxe_boot_settings_migrate_legacy_first_stage_defaults(client):
         assert saved_bios.value == "pxelinux.0"
 
 
-def test_esxi_kickstarts_round_trip_in_settings_archive(client):
+def test_esxi_kickstarts_round_trip_in_settings_archive(client, monkeypatch, tmp_path):
     """Verify that esxi kickstarts round trip in settings archive.
 
     Args:
         client: HTTP test client used to exercise the Atlaso application.
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
     """
     import json
 
     from sqlalchemy import select
 
+    import atlaso.app.services.esxi_pxe as esxi_pxe
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import EsxiKickstart, EsxiPxeHost, Setting
     from atlaso.app.seed import NTP_NTS_RESTORATION_SETTING_KEY
@@ -6523,6 +8642,12 @@ def test_esxi_kickstarts_round_trip_in_settings_archive(client):
         custom_variable_definitions,
         save_custom_variable_definition,
     )
+
+    iso_root = tmp_path / "installer-isos"
+    iso_root.mkdir()
+    archive_iso_path = iso_root / "archive.iso"
+    archive_iso_path.touch()
+    monkeypatch.setattr(esxi_pxe, "ESXI_INSTALLER_ISO_ROOT", iso_root)
 
     login(client)
     with SessionLocal() as db:
@@ -6554,7 +8679,7 @@ def test_esxi_kickstarts_round_trip_in_settings_archive(client):
                 mac_address="00:50:56:aa:bb:cc",
                 ip_address="192.168.50.150",
                 kickstart_id=kickstart.id,
-                installer_iso_path="/mnt/atlaso-vcf-offline-depot/PROD/COMP/ESX_HOST/archive.iso",
+                installer_iso_path=str(archive_iso_path),
                 variables_json='{"rack":"r42"}',
                 enabled=True,
             )
@@ -6569,7 +8694,9 @@ def test_esxi_kickstarts_round_trip_in_settings_archive(client):
     assert payload["data"]["esxi_kickstarts"][0]["name"] == "Archive ESXi"
     assert payload["data"]["esxi_pxe_hosts"][0]["kickstart_name"] == "Archive ESXi"
     assert payload["data"]["esxi_pxe_hosts"][0]["ip_address"] == "192.168.50.150"
-    assert payload["data"]["esxi_pxe_hosts"][0]["installer_iso_path"].endswith("/archive.iso")
+    assert payload["data"]["esxi_pxe_hosts"][0]["installer_iso_path"] == str(
+        archive_iso_path
+    )
     assert payload["data"]["esxi_pxe_hosts"][0]["variables"] == {"rack": "r42"}
     assert payload["data"]["settings"] == [
         {
@@ -6585,10 +8712,12 @@ def test_esxi_kickstarts_round_trip_in_settings_archive(client):
         db.query(Setting).filter(Setting.key == ESXI_PXE_CUSTOM_VARIABLES_KEY).delete()
         db.commit()
 
+    payload["data"]["esxi_pxe_hosts"][0]["installer_iso_path"] = archive_iso_path.name
+    restore_content = json.dumps(payload).encode("utf-8")
     restored = client.post(
         "/backup-restore/restore",
         data={"csrf": csrf},
-        files={"archive_file": ("atlaso-settings.json", exported.content, "application/json")},
+        files={"archive_file": ("atlaso-settings.json", restore_content, "application/json")},
     )
 
     assert restored.status_code == 200
@@ -6597,7 +8726,7 @@ def test_esxi_kickstarts_round_trip_in_settings_archive(client):
         restored_host = db.execute(select(EsxiPxeHost).where(EsxiPxeHost.hostname == "esxi-archive")).scalar_one()
         assert restored_host.kickstart_id == restored_kickstart.id
         assert restored_host.ip_address == "192.168.50.150"
-        assert restored_host.installer_iso_path.endswith("/archive.iso")
+        assert restored_host.installer_iso_path == str(archive_iso_path)
         assert restored_host.variables_json == '{"rack": "r42"}'
         assert custom_variable_definitions(db) == [
             {
@@ -6695,8 +8824,8 @@ def test_backup_restore_restore_replaces_settings_and_stops_services(client):
     assert payload["data"]["service_states"]
 
 
-def test_backup_restore_recreates_default_vcf_backup_user_from_settings_archive(client):
-    """Verify that backup restore recreates default vcf backup user from settings archive.
+def test_backup_restore_rejects_enabled_settings_archive_without_vcf_backup_user(client):
+    """Verify enabled VCF backup restore requires a retained enabled user.
 
     Args:
         client: HTTP test client used to exercise the Atlaso application.
@@ -6737,13 +8866,13 @@ def test_backup_restore_recreates_default_vcf_backup_user_from_settings_archive(
         files={"archive_file": ("atlaso-settings.json", archive_bytes, "application/json")},
     )
 
-    assert restored.status_code == 200
+    assert restored.status_code == 400
+    assert "requires an enabled local user" in restored.text
     with SessionLocal() as db:
-        user = db.execute(select(User).where(User.username == "vcf-backup")).scalar_one()
+        user = db.execute(select(User).where(User.username == "vcf-backup")).scalar_one_or_none()
         settings = db.execute(select(VcfBackupSettings)).scalar_one()
-        assert settings.sftp_user_id == user.id
-        assert user.enabled is False
-        assert user.os_sync_status == "password_not_staged"
+        assert user is None
+        assert settings.sftp_user_id is None
 
 
 def test_backup_restore_factory_reset_resets_desired_state_and_stops_services(client):
