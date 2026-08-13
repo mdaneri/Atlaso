@@ -24,6 +24,19 @@ def _disk(
     label: str = "",
     uuid: str = "",
 ) -> dict[str, object]:
+    """Build one fake whole-disk record.
+
+    Args:
+        path: Fake block-device path.
+        tuple_value: Guest-visible SCSI channel, target, and LUN tuple.
+        size: Reported disk capacity in bytes.
+        filesystem: Whole-disk filesystem type, when present.
+        label: Whole-disk filesystem label, when present.
+        uuid: Whole-disk filesystem UUID, when present.
+
+    Returns:
+        Mutable disk state consumed by the fake command harness.
+    """
     return {
         "path": str(path),
         "tuple": tuple_value,
@@ -43,6 +56,17 @@ def _run_mount_script(
     depot_tuple: str,
     backup_tuple: str,
 ) -> tuple[subprocess.CompletedProcess[str], list[list[str]]]:
+    """Execute the appliance mount script against fake block-device commands.
+
+    Args:
+        tmp_path: Isolated filesystem root for the behavior scenario.
+        disks: Fake whole-disk records exposed to the mount script.
+        depot_tuple: Trusted depot SCSI identity from image policy.
+        backup_tuple: Trusted backup SCSI identity from image policy.
+
+    Returns:
+        Completed shell process and recorded ``mkfs.ext4`` argument lists.
+    """
     if os.name == "nt" or shutil.which("sh") is None:
         pytest.skip("the appliance shell behavior harness requires a native POSIX shell")
 
@@ -218,6 +242,14 @@ def _run_mount_script(
 
 
 def _vmware_disks(tmp_path: Path) -> list[dict[str, object]]:
+    """Build the expected four-disk VMware topology.
+
+    Args:
+        tmp_path: Isolated filesystem root for fake block devices.
+
+    Returns:
+        Photon, system-content, depot, and backup disk records.
+    """
     dev = tmp_path / "dev"
     return [
         _disk(dev / "sda", "0:0:0", size=64 * 1024**3, filesystem="ext4", label="PHOTON_ROOT"),
@@ -228,6 +260,11 @@ def _vmware_disks(tmp_path: Path) -> list[dict[str, object]]:
 
 
 def test_vmware_first_boot_formats_only_fixed_identity_disks(tmp_path: Path):
+    """Format only the fixed VMware depot and backup identities.
+
+    Args:
+        tmp_path: Pytest-provided isolated filesystem root.
+    """
     completed, calls = _run_mount_script(
         tmp_path,
         _vmware_disks(tmp_path),
@@ -241,6 +278,11 @@ def test_vmware_first_boot_formats_only_fixed_identity_disks(tmp_path: Path):
 
 
 def test_hyperv_first_boot_uses_fixed_controller_locations(tmp_path: Path):
+    """Use the fixed Hyper-V controller locations for both data disks.
+
+    Args:
+        tmp_path: Pytest-provided isolated filesystem root.
+    """
     dev = tmp_path / "dev"
     disks = [
         _disk(dev / "sda", "0:0:0", size=64 * 1024**3, filesystem="ext4", label="PHOTON_ROOT"),
@@ -275,6 +317,12 @@ def test_hyperv_first_boot_uses_fixed_controller_locations(tmp_path: Path):
     ],
 )
 def test_first_boot_fails_before_mkfs_for_unsafe_topology(tmp_path: Path, scenario: str):
+    """Reject unsafe disk topology before the first formatting command.
+
+    Args:
+        tmp_path: Pytest-provided isolated filesystem root.
+        scenario: Unsafe topology mutation to apply to the VMware baseline.
+    """
     disks = _vmware_disks(tmp_path)
     if scenario == "extra":
         disks.append(_disk(tmp_path / "dev" / "sde", "0:4:0"))
@@ -324,6 +372,11 @@ def test_first_boot_fails_before_mkfs_for_unsafe_topology(tmp_path: Path, scenar
 
 
 def test_labeled_identity_disks_are_idempotent(tmp_path: Path):
+    """Keep correctly labeled disks mounted without reformatting.
+
+    Args:
+        tmp_path: Pytest-provided isolated filesystem root.
+    """
     disks = _vmware_disks(tmp_path)
     disks[2].update(filesystem="ext4", label="ATLASO_DEPOT", uuid="depot-uuid")
     disks[3].update(filesystem="ext4", label="ATLASO_BKUP", uuid="backup-uuid")
