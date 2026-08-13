@@ -161,3 +161,5 @@ def test_static_analysis_includes_privileged_extensionless_python() -> None:
     assert hook is not None
     assert re.search(hook.group(1), "scripts/appliance/atlaso-bootstrap-https")
     assert re.search(hook.group(1), "scripts/appliance/atlaso-helper")
+    assert re.search(hook.group(1), "requirements-static-analysis.in")
+    assert re.search(hook.group(1), "requirements-static-analysis.lock")
