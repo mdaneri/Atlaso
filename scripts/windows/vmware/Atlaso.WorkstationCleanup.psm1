@@ -123,6 +123,28 @@ function Invoke-AtlasoVmrunChecked {
     return $output
 }
 
+function Resolve-AtlasoVerifiedVmxInventoryPath {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Path,
+        [Parameter(Mandatory = $true)]
+        [string]$InventoryDescription
+    )
+
+    if (-not [System.IO.Path]::IsPathFullyQualified($Path)) {
+        throw "$InventoryDescription contains a non-absolute VMX path; refusing filesystem cleanup: $Path"
+    }
+    if (-not [System.IO.Path]::GetExtension($Path).Equals('.vmx', [System.StringComparison]::OrdinalIgnoreCase)) {
+        throw "$InventoryDescription contains a non-VMX path; refusing filesystem cleanup: $Path"
+    }
+
+    $canonicalPath = Get-AtlasoCanonicalPath -Path $Path
+    if (-not $Path.Equals($canonicalPath, [System.StringComparison]::OrdinalIgnoreCase)) {
+        throw "$InventoryDescription contains a non-canonical VMX path; refusing filesystem cleanup: $Path"
+    }
+    return $canonicalPath
+}
+
 function Get-AtlasoWorkstationVmPaths {
     param(
         [Parameter(Mandatory = $true)]
@@ -141,14 +163,25 @@ function Get-AtlasoWorkstationVmPaths {
     }
 
     $declaredCount = [int]$Matches[1]
-    $paths = @(
+    $reportedPaths = @(
         $output |
             Select-Object -Skip 1 |
             ForEach-Object { $_.ToString().Trim().Trim('"') } |
             Where-Object { $_ }
     )
-    if ($paths.Count -ne $declaredCount) {
-        throw "vmrun list reported $declaredCount VMs but returned $($paths.Count) paths; refusing filesystem cleanup."
+    if ($reportedPaths.Count -ne $declaredCount) {
+        throw "vmrun list reported $declaredCount VMs but returned $($reportedPaths.Count) paths; refusing filesystem cleanup."
+    }
+    $paths = @(
+        $reportedPaths | ForEach-Object {
+            Resolve-AtlasoVerifiedVmxInventoryPath `
+                -Path $_ `
+                -InventoryDescription 'vmrun running-VM inventory'
+        }
+    )
+    $uniquePaths = @($paths | Select-Object -Unique)
+    if ($uniquePaths.Count -ne $paths.Count) {
+        throw 'vmrun running-VM inventory contains duplicate VMX paths; refusing filesystem cleanup.'
     }
     return $paths
 }
@@ -173,16 +206,20 @@ function Get-AtlasoWorkstationRegisteredVmPaths {
 
     $paths = @()
     foreach ($line in Get-Content -LiteralPath $InventoryPath) {
-        if ($line -notmatch '^\s*vmlist\d+\.config\s*=') {
+        if ($line -notmatch '^\s*vmlist\d+\.config\b') {
             continue
         }
         if ($line -notmatch '^\s*vmlist\d+\.config\s*=\s*"(.*)"\s*$') {
             throw "VMware Workstation inventory contains an unrecognized registration entry; refusing filesystem cleanup: $InventoryPath"
         }
         $registeredPath = $Matches[1]
-        if ($registeredPath) {
-            $paths += $registeredPath
-        }
+        $paths += Resolve-AtlasoVerifiedVmxInventoryPath `
+            -Path $registeredPath `
+            -InventoryDescription 'VMware Workstation registration inventory'
+    }
+    $uniquePaths = @($paths | Select-Object -Unique)
+    if ($uniquePaths.Count -ne $paths.Count) {
+        throw "VMware Workstation registration inventory contains duplicate VMX paths; refusing filesystem cleanup: $InventoryPath"
     }
     return $paths
 }

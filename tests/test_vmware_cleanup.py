@@ -290,6 +290,80 @@ def test_general_removal_rejects_an_unvalidated_vmx_in_the_removal_root(
     assert unvalidated_vmx.exists()
 
 
+def test_general_removal_rejects_a_relative_running_inventory_path(
+    tmp_path: Path,
+) -> None:
+    """A malformed vmrun entry must not let cleanup mistake a running VM for inactive."""
+    vm_directory = tmp_path / "Atlaso-Relative-Running"
+    vmx_path = vm_directory / "Atlaso-Relative-Running.vmx"
+    _write_vmx(vmx_path, "Atlaso-Relative-Running")
+    vmrun_path, environment, _ = _write_fake_vmrun(
+        tmp_path / "fake",
+        [vmx_path],
+        running=False,
+        registered=False,
+    )
+    state_directory = Path(environment["ATLASO_FAKE_VMRUN_STATE"])
+    (state_directory / "running.json").write_text(
+        json.dumps(["relative-running.vmx"]), encoding="utf-8"
+    )
+
+    result = _run_script(
+        VMWARE_SCRIPT_ROOT / "remove-atlaso-vm.ps1",
+        "-VmxPath",
+        str(vmx_path),
+        "-VmrunPath",
+        str(vmrun_path),
+        "-ExpectedName",
+        "Atlaso-Relative-Running",
+        environment=environment,
+    )
+
+    assert result.returncode != 0
+    assert "non-absolute VMX path" in result.stderr
+    assert vmx_path.exists()
+
+
+@pytest.mark.parametrize(
+    "registration_entry",
+    [
+        "vmlist0.config\n",
+        'vmlist0.config = "relative-registered.vmx"\n',
+    ],
+)
+def test_general_removal_rejects_malformed_registration_entries(
+    tmp_path: Path,
+    registration_entry: str,
+) -> None:
+    """Incomplete or relative Workstation registrations must preserve artifacts."""
+    vm_directory = tmp_path / "Atlaso-Malformed-Registration"
+    vmx_path = vm_directory / "Atlaso-Malformed-Registration.vmx"
+    _write_vmx(vmx_path, "Atlaso-Malformed-Registration")
+    vmrun_path, environment, _ = _write_fake_vmrun(
+        tmp_path / "fake",
+        [vmx_path],
+        running=False,
+        registered=False,
+    )
+    inventory_path = Path(environment["ATLASO_FAKE_VMRUN_INVENTORY"])
+    inventory_path.write_text(registration_entry, encoding="utf-8")
+
+    result = _run_script(
+        VMWARE_SCRIPT_ROOT / "remove-atlaso-vm.ps1",
+        "-VmxPath",
+        str(vmx_path),
+        "-VmrunPath",
+        str(vmrun_path),
+        "-ExpectedName",
+        "Atlaso-Malformed-Registration",
+        environment=environment,
+    )
+
+    assert result.returncode != 0
+    assert "refusing filesystem cleanup" in result.stderr
+    assert vmx_path.exists()
+
+
 def test_redeploy_missing_target_and_sibling_disk_fail_closed(tmp_path: Path) -> None:
     """Redeploy and data-disk reset must preserve unproven or sibling-prefix paths."""
     source_vmx = tmp_path / "source" / "source.vmx"
