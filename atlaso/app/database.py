@@ -72,15 +72,22 @@ def _reconcile_vcf_depot_job_queue(connection: Connection) -> None:
         connection: Transactional database connection used during startup.
     """
     job_columns = {column["name"] for column in inspect(connection).get_columns("jobs")}
+    idempotent_column_clause = "IF NOT EXISTS " if connection.dialect.name == "postgresql" else ""
     if "vcf_depot_operation" not in job_columns:
         connection.execute(
             text(
                 "ALTER TABLE jobs "
-                "ADD COLUMN vcf_depot_operation BOOLEAN NOT NULL DEFAULT FALSE"
+                f"ADD COLUMN {idempotent_column_clause}"
+                "vcf_depot_operation BOOLEAN NOT NULL DEFAULT FALSE"
             )
         )
     if "vcf_depot_profile_id" not in job_columns:
-        connection.execute(text("ALTER TABLE jobs ADD COLUMN vcf_depot_profile_id INTEGER"))
+        connection.execute(
+            text(
+                "ALTER TABLE jobs "
+                f"ADD COLUMN {idempotent_column_clause}vcf_depot_profile_id INTEGER"
+            )
+        )
 
     connection.execute(
         text(

@@ -1200,8 +1200,8 @@ def test_vcf_queue_schema_reconciliation_is_portable_to_postgresql(monkeypatch):
     database._reconcile_vcf_depot_job_queue(connection)
 
     sql = "\n".join(connection.statements)
-    assert "ADD COLUMN vcf_depot_operation BOOLEAN NOT NULL DEFAULT FALSE" in sql
-    assert "ADD COLUMN vcf_depot_profile_id INTEGER" in sql
+    assert "ADD COLUMN IF NOT EXISTS vcf_depot_operation BOOLEAN NOT NULL DEFAULT FALSE" in sql
+    assert "ADD COLUMN IF NOT EXISTS vcf_depot_profile_id INTEGER" in sql
     assert "CREATE UNIQUE INDEX IF NOT EXISTS uq_jobs_active_vcf_depot_profile" in sql
     assert "CREATE UNIQUE INDEX IF NOT EXISTS uq_jobs_running_vcf_depot_operation" in sql
     assert "json_extract" not in sql
