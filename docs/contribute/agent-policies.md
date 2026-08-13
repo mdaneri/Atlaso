@@ -220,6 +220,13 @@ status: current
 - Before a VMware Workstation image rebuild force-replaces the configured output directory, unregister any existing
   output VMX with `vmrun -T ws unregister` through the same Workstation/vmrun discovery path used by the rest of the
   VMware scripts. Keep this cleanup scoped to the configured image output directory.
+- Workstation test-VM and lifecycle cleanup may recursively remove only an exact, non-reparse-point artifact root that
+  contains every validated target VMX. A named redeploy with no matching VMX fails closed, and data-disk reset paths
+  must be strict path-component descendants of that VM output rather than sibling-prefix matches. Query the checked
+  `vmrun` running inventory and Workstation registration inventory, stop and unregister only when needed, then verify
+  the target is absent from both before removing files. Any nonzero or malformed `vmrun` result or unreadable
+  registration inventory preserves the artifacts and must propagate as a cleanup failure; lifecycle cleanup must retain
+  the original scenario failure alongside that cleanup evidence.
 - Keep VMware release images on two compacted payload VMDKs: the Photon OS disk and a required UUID-mounted
   `ATLASO_SYSTEM` disk containing `/opt/atlaso` and appliance-wide PowerShell modules. OVF export must preserve both
   payload files, add only the empty depot and backup definitions, preflight every GitHub asset below 2 GiB, and omit an
