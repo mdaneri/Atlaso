@@ -1027,7 +1027,7 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-8" in service_worker.text
     assert "/static/appliance-apply-polling.js?v=issue-294-2" in service_worker.text
     assert "/static/ui-routes.js?v=issue-287-1" in service_worker.text
-    assert "/static/app.js?v=vcf-depot-queue-schedule-351-353-2" in service_worker.text
+    assert "/static/app.js?v=vcf-depot-queue-schedule-351-353-3" in service_worker.text
     assert "/static/terminal.js?v=issue-287-2" in service_worker.text
     assert "/static/pwa.js?v=issue-287-2" in service_worker.text
     assert "vcfdt-configuration-248-20260807-14" not in service_worker.text
@@ -1059,8 +1059,8 @@ def test_shared_ui_pattern_shell_and_wizard_contracts(client):
     base = (templates / "base.html").read_text(encoding="utf-8")
     public_base = (templates / "public_portal_base.html").read_text(encoding="utf-8")
     for shell, app_asset in (
-        (base, "/static/app.js?v=vcf-depot-queue-schedule-351-353-2"),
-        (public_base, "/static/app.js?v=vcf-depot-queue-schedule-351-353-2"),
+        (base, "/static/app.js?v=vcf-depot-queue-schedule-351-353-3"),
+        (public_base, "/static/app.js?v=vcf-depot-queue-schedule-351-353-3"),
         (base, "/static/appliance-apply-polling.js?v=issue-294-2"),
     ):
         assert shell.index("/static/vendor/tabulator/tabulator.min.js") < shell.index(
@@ -1689,7 +1689,7 @@ def test_monitor_page_renders_and_data_endpoint(client):
     assert "swagger-link-icon" in page.text
     assert "/static/app.css?v=vlan-interface-wizard-304-2" in page.text
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-8" in page.text
-    assert "/static/app.js?v=vcf-depot-queue-schedule-351-353-2" in page.text
+    assert "/static/app.js?v=vcf-depot-queue-schedule-351-353-3" in page.text
     app_css = client.get("/static/app.css")
     assert app_css.status_code == 200
     assert ".split-workspace > .wide-panel" in app_css.text
@@ -15542,21 +15542,34 @@ def test_vcf_download_task_refresh_includes_exclusive_operation(client):
     Args:
         client: HTTP test client used to request the scoped task payload.
     """
+    import html
+    import json
+
     from atlaso.app.database import SessionLocal
-    from atlaso.app.models import Job, JobStatus
+    from atlaso.app.models import Job, JobStatus, VcfDepotDownloadProfile
 
     login(client)
     with SessionLocal() as db:
-        db.add(
-            Job(
-                id="job_refresh_exclusive",
-                type="vcf-depot-software-id",
-                status=JobStatus.PENDING.value,
-                created_by="admin",
-                vcf_depot_operation=True,
-            )
+        profile = VcfDepotDownloadProfile(
+            name="exclusive-blocked-profile",
+            profile_type="metadata",
+            enabled=True,
+            status="synced",
+        )
+        db.add_all(
+            [
+                profile,
+                Job(
+                    id="job_refresh_exclusive",
+                    type="vcf-depot-software-id",
+                    status=JobStatus.PENDING.value,
+                    created_by="admin",
+                    vcf_depot_operation=True,
+                ),
+            ]
         )
         db.commit()
+        profile_id = profile.id
 
     response = client.get("/tasks/status", params={"task_type": "vcf-depot-download"})
 
@@ -15571,6 +15584,15 @@ def test_vcf_download_task_refresh_includes_exclusive_operation(client):
             "Wait for it to finish before starting another VCFDT operation."
         ),
     }
+    page = client.get("/vcf-offline-depot")
+    rows_payload = page.text.split("data-profiles='", 1)[1].split("'", 1)[0]
+    row = next(
+        item for item in json.loads(html.unescape(rows_payload)) if item["id"] == profile_id
+    )
+    assert row["download_active"] is True
+    assert row["active_job_id"] == ""
+    assert row["active_task_status"] == ""
+    assert "job_refresh_exclusive" in row["active_task_blocker"]
 
 
 def test_vcf_offline_depot_startup_recovers_interrupted_download(client):

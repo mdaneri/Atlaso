@@ -3538,8 +3538,6 @@ def vcf_offline_depot_context(db: Session, *, reconcile: bool = True) -> dict:
             )
         elif exclusive_job is not None:
             row["download_active"] = True
-            row["active_job_id"] = exclusive_job.id
-            row["active_task_status"] = exclusive_job.status
             row["active_task_blocker"] = vcf_depot_execution_conflict_detail(exclusive_job)
     return {
         "vcf_depot_settings": settings,

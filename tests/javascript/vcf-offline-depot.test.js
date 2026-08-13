@@ -252,8 +252,8 @@ test("VCFDT task refresh preserves an exclusive-operation blocker", () => {
   });
 
   assert.equal(updates.at(-1).download_active, true);
-  assert.equal(updates.at(-1).active_job_id, "job_software_id");
-  assert.equal(updates.at(-1).active_task_status, "pending");
+  assert.equal(updates.at(-1).active_job_id, "");
+  assert.equal(updates.at(-1).active_task_status, "");
   assert.equal(
     updates.at(-1).active_task_blocker,
     "Wait for Software Depot ID replacement to finish.",

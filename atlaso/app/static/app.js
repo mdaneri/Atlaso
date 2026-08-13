@@ -12404,11 +12404,10 @@ function setVcfDepotDownloadStates(activeTasks = [], activeExclusiveOperation = 
       const status = String(task?.status || "");
       const state = status === "running" ? "running" : "queued";
       const jobId = task?.id || task?.job_id || "";
-      const exclusiveJobId = activeExclusiveOperation?.id || activeExclusiveOperation?.job_id || "";
       row.update({
         download_active: Boolean(task || activeExclusiveOperation),
-        active_job_id: jobId || exclusiveJobId,
-        active_task_status: status || String(activeExclusiveOperation?.status || ""),
+        active_job_id: jobId,
+        active_task_status: status,
         active_task_blocker: task
           ? `VCFDT task ${jobId} is ${state} for this profile. Wait for it to finish before starting the same profile again.`
           : String(activeExclusiveOperation?.detail || ""),
