@@ -469,6 +469,14 @@ def test_published_channel_check_cancels_fetch_worker_at_deadline(
     worker_timeout = 0.0
 
     def run(args, *, capture_output, check, timeout):
+        """Simulate a fetch worker that reaches its parent-enforced timeout.
+
+        Args:
+            args: Worker command arguments supplied to the subprocess runner.
+            capture_output: Whether the subprocess runner captures standard streams.
+            check: Whether the subprocess runner raises for a nonzero exit code.
+            timeout: Parent-enforced timeout for the worker process.
+        """
         nonlocal command, worker_timeout
         command = args
         worker_timeout = timeout
@@ -531,6 +539,14 @@ def test_published_channel_check_caps_requests_and_sleeps_to_publication_window(
         return clock
 
     def verify_channel(*_args, timeout_seconds: float, deadline: float, **_kwargs):
+        """Simulate one verification attempt consuming its request budget.
+
+        Args:
+            *_args: Positional verifier arguments unused by the simulation.
+            timeout_seconds: Configured per-request timeout.
+            deadline: Absolute publication deadline for the verification attempt.
+            **_kwargs: Keyword verifier arguments unused by the simulation.
+        """
         nonlocal clock
         effective_timeout = min(timeout_seconds, deadline - clock)
         request_timeouts.append(effective_timeout)
@@ -538,6 +554,11 @@ def test_published_channel_check_caps_requests_and_sleeps_to_publication_window(
         raise TimeoutError("publication request timed out")
 
     def sleep(seconds: float) -> None:
+        """Advance the simulated clock instead of sleeping.
+
+        Args:
+            seconds: Simulated sleep interval in seconds.
+        """
         nonlocal clock
         clock += seconds
 
