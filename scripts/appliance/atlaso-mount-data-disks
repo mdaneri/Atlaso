@@ -207,10 +207,14 @@ validate_mount_state() {
   fi
 
   mounted_uuid="$(findmnt -rn -M "$mountpoint" -o UUID 2>/dev/null || true)"
-  if [ -n "$mounted_uuid" ]; then
+  mounted_source="$(findmnt -rn -M "$mountpoint" -o SOURCE 2>/dev/null || true)"
+  if [ -n "$mounted_uuid" ] || [ -n "$mounted_source" ]; then
     [ -n "$expected_uuid" ] || fail "$mountpoint is occupied before $label has a filesystem UUID"
     [ "$mounted_uuid" = "$expected_uuid" ] ||
       fail "$mountpoint is occupied by a filesystem outside the trusted $label identity"
+    [ -n "$mounted_source" ] || fail "$mountpoint does not expose its mounted block-device source"
+    [ "$(readlink -f "$mounted_source" 2>/dev/null || true)" = "$(readlink -f "$disk")" ] ||
+      fail "$mountpoint is mounted from a block device outside the trusted $label identity"
   fi
 }
 
@@ -413,6 +417,10 @@ ensure_mount() {
     mounted_uuid="$(findmnt -rn -M "$mountpoint" -o UUID 2>/dev/null || true)"
   fi
   [ "$mounted_uuid" = "$uuid" ] || fail "$mountpoint does not resolve to the trusted $label UUID"
+  mounted_source="$(findmnt -rn -M "$mountpoint" -o SOURCE 2>/dev/null || true)"
+  [ -n "$mounted_source" ] || fail "$mountpoint does not expose its mounted block-device source"
+  [ "$(readlink -f "$mounted_source" 2>/dev/null || true)" = "$(readlink -f "$disk")" ] ||
+    fail "$mountpoint is mounted from a block device outside the trusted $label identity"
   chown "$owner:$group" "$mountpoint"
   chmod "$mode" "$mountpoint"
   log "Mounted $label on $mountpoint from $(stable_path_for_disk "$disk")"

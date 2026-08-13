@@ -56,6 +56,7 @@ def _run_mount_script(
     depot_tuple: str,
     backup_tuple: str,
     mounts: dict[str, str] | None = None,
+    mount_sources: dict[str, str] | None = None,
     fstab: str = "",
     esx_allowlist: str = "",
 ) -> tuple[subprocess.CompletedProcess[str], list[list[str]]]:
@@ -67,6 +68,7 @@ def _run_mount_script(
         depot_tuple: Trusted depot SCSI identity from image policy.
         backup_tuple: Trusted backup SCSI identity from image policy.
         mounts: Initial mapping from mountpoints to fake disk paths.
+        mount_sources: Fake fstab mount selections keyed by mountpoint.
         fstab: Initial fake fstab content.
         esx_allowlist: Initial root-owned managed ESX Storage disk claims.
 
@@ -103,7 +105,10 @@ def _run_mount_script(
             (by_id_root / f"atlaso-path-test-{path.name}").symlink_to(path)
 
     state_path = tmp_path / "state.json"
-    state_path.write_text(json.dumps({"disks": disks, "mounts": mounts or {}}), encoding="utf-8")
+    state_path.write_text(
+        json.dumps({"disks": disks, "mounts": mounts or {}, "mount_sources": mount_sources or {}}),
+        encoding="utf-8",
+    )
     mkfs_log = tmp_path / "mkfs.jsonl"
     fstab_path = tmp_path / "fstab"
     fstab_path.write_text(fstab, encoding="utf-8")
@@ -125,6 +130,7 @@ def _run_mount_script(
             state = json.loads(state_path.read_text(encoding="utf-8"))
             disks = state["disks"]
             mounts = state["mounts"]
+            mount_sources = state["mount_sources"]
 
             def disk_for(value):
                 resolved = str(Path(value).resolve())
@@ -163,6 +169,12 @@ def _run_mount_script(
                     disk = disk_for(source) if source else None
                     if disk and disk["uuid"]:
                         print(disk["uuid"])
+                        raise SystemExit(0)
+                    raise SystemExit(1)
+                if len(args) == 5 and args[:2] == ["-rn", "-M"] and args[3:] == ["-o", "SOURCE"]:
+                    source = mounts.get(args[2])
+                    if source:
+                        print(source)
                         raise SystemExit(0)
                     raise SystemExit(1)
                 raise SystemExit(1)
@@ -220,8 +232,10 @@ def _run_mount_script(
             if command == "mount":
                 target = args[0]
                 label = "ATLASO_DEPOT" if target.endswith("offline-depot") else "ATLASO_BKUP"
-                disk = next(disk for disk in disks if disk["label"] == label)
-                mounts[target] = disk["path"]
+                selected_source = mount_sources.get(target)
+                if not selected_source:
+                    selected_source = next(disk["path"] for disk in disks if disk["label"] == label)
+                mounts[target] = selected_source
                 state_path.write_text(json.dumps(state), encoding="utf-8")
                 raise SystemExit(0)
             if command in {"install", "chown", "chmod", "logger"}:
@@ -438,6 +452,33 @@ def test_labeled_identity_disks_are_idempotent(tmp_path: Path):
     )
 
     assert completed.returncode == 0, completed.stdout + completed.stderr
+    assert calls == []
+
+
+def test_mount_rejects_duplicate_uuid_source_outside_fixed_identity(tmp_path: Path):
+    """Reject a UUID-selected mount when it resolves to a different fixed-topology disk.
+
+    Args:
+        tmp_path: Pytest-provided isolated filesystem root.
+    """
+    disks = _vmware_disks(tmp_path)
+    disks[1]["uuid"] = "depot-uuid"
+    disks[2].update(filesystem="ext4", label="ATLASO_DEPOT", uuid="depot-uuid")
+    disks[3].update(filesystem="ext4", label="ATLASO_BKUP", uuid="backup-uuid")
+    depot_mount = "/mnt/atlaso-vcf-offline-depot"
+
+    completed, calls = _run_mount_script(
+        tmp_path,
+        disks,
+        depot_tuple="0:2:0",
+        backup_tuple="0:3:0",
+        mount_sources={depot_mount: str(disks[1]["path"])},
+    )
+
+    assert completed.returncode != 0
+    assert "mounted from a block device outside the trusted ATLASO_DEPOT identity" in (
+        completed.stdout + completed.stderr
+    )
     assert calls == []
 
 
