@@ -6334,6 +6334,23 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
             "certificate_pem": "not-a-certificate",
         }
     )
+    revoked_without_timestamp = deepcopy(archive)
+    revoked_without_timestamp["data"]["ca_settings"][0]["enabled"] = False
+    revoked_without_timestamp["data"]["ca_certificates"][0].update(
+        {
+            "enabled": False,
+            "status": "revoked",
+            "serial_number": "2a",
+            "revoked_at": None,
+        }
+    )
+    revoked_without_serial = deepcopy(revoked_without_timestamp)
+    revoked_without_serial["data"]["ca_certificates"][0].update(
+        {
+            "serial_number": "",
+            "revoked_at": "2026-08-13T18:38:09+00:00",
+        }
+    )
     duplicate_managed_certificate_owner = deepcopy(archive)
     duplicate_certificate = deepcopy(duplicate_managed_certificate_owner["data"]["ca_certificates"][0])
     duplicate_certificate["managed_owner"] = "archive:duplicate-owner"
@@ -6729,6 +6746,8 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
         (invalid_ca_storage_path, "CA storage path must stay under /etc/atlaso"),
         (invalid_ca_certificate_path, "certificate path must stay under /etc/atlaso"),
         (invalid_disabled_ca_certificate_material, "public certificate is not usable"),
+        (revoked_without_timestamp, "has no revocation timestamp"),
+        (revoked_without_serial, "has no serial number"),
         (duplicate_managed_certificate_owner, "duplicates a managed certificate owner"),
         (invalid_storage_state, "ESX Storage state is invalid: Datastore invalid-share must use NFS 3 or NFS 4.1"),
         (missing_storage_settings_validation, "must use a stable /dev/disk/by-id identity"),

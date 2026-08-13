@@ -636,6 +636,14 @@ def _validate_archived_ca_certificate_rows(
             raise ValueError(
                 f"The settings archive row {row_index} in 'ca_certificates' has no common name."
             )
+        if certificate.status == "revoked" and not certificate.serial_number:
+            raise ValueError(
+                f"The settings archive revoked CA certificate {label} has no serial number."
+            )
+        if certificate.status == "revoked" and certificate.revoked_at is None:
+            raise ValueError(
+                f"The settings archive revoked CA certificate {label} has no revocation timestamp."
+            )
         if certificate.certificate_pem:
             try:
                 raw_certificate_pem = certificate.certificate_pem.strip()

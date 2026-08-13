@@ -75,6 +75,8 @@ exactly one canonical public certificate, and every restored chain must contain 
 every restored CSR must likewise contain only its single canonical public request. None may include trailing or
 private-key material. Disabled issued or revoked certificate rows are still verified against the restored CA root before
 mutation, so an unrelated certificate serial cannot enter Atlaso's restored revocation state.
+Every revoked row must retain both its certificate serial number and revocation timestamp even while the CA or row is
+disabled, ensuring later CA enablement can publish a complete CRL.
 
 ESXi Network Boot host MAC addresses are normalized and checked for duplicate identities before restore. Installer ISO
 references are normalized beneath the managed ISO root before they are restored, so a valid relative archive reference
