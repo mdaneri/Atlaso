@@ -214,6 +214,49 @@ def active_signing_key(db: Session) -> OidcSigningKey | None:
     ).scalar_one_or_none()
 
 
+def signing_key_cryptographic_validation_errors(
+    signing_key: OidcSigningKey,
+) -> list[str]:
+    """Validate one persisted OIDC signing key against its public JWK.
+
+    Args:
+        signing_key: Signing-key row whose private and public material must match.
+
+    Returns:
+        Public-safe validation errors for the supplied key.
+    """
+    try:
+        public_jwk = json.loads(signing_key.public_jwk_json)
+        if (
+            signing_key.algorithm != OIDC_SIGNING_ALGORITHM
+            or public_jwk.get("kid") != signing_key.kid
+            or public_jwk.get("alg") != OIDC_SIGNING_ALGORITHM
+        ):
+            raise ValueError
+        private_key = RSAKey.import_key(decrypt_secret(signing_key.private_key_encrypted))
+        persisted_public_key = RSAKey.import_key(public_jwk)
+        private_public_values = private_key.as_dict(private=False)
+        persisted_public_values = persisted_public_key.as_dict(private=False)
+        if any(
+            private_public_values.get(field) != persisted_public_values.get(field)
+            for field in ("kty", "n", "e")
+        ):
+            raise ValueError
+        canonical_public_jwk = dict(private_public_values)
+        canonical_public_jwk.update(
+            {
+                "alg": OIDC_SIGNING_ALGORITHM,
+                "kid": signing_key.kid,
+                "use": "sig",
+            }
+        )
+        if public_jwk != canonical_public_jwk:
+            raise ValueError
+    except Exception:
+        return ["The active OIDC signing key is not protocol-ready."]
+    return []
+
+
 def provider_cryptographic_validation_errors(
     provider: OidcProviderSettings,
     certificate: CaCertificate | None,
@@ -271,38 +314,7 @@ def provider_cryptographic_validation_errors(
     if require_active_key and signing_key is None:
         errors.append("Generate an active OIDC signing key before enabling the provider.")
     elif require_active_key:
-        try:
-            public_jwk = json.loads(signing_key.public_jwk_json) if signing_key else {}
-            if (
-                signing_key is None
-                or signing_key.algorithm != OIDC_SIGNING_ALGORITHM
-                or public_jwk.get("kid") != signing_key.kid
-                or public_jwk.get("alg") != OIDC_SIGNING_ALGORITHM
-            ):
-                raise ValueError
-            private_key = RSAKey.import_key(
-                decrypt_secret(signing_key.private_key_encrypted)
-            )
-            persisted_public_key = RSAKey.import_key(public_jwk)
-            private_public_values = private_key.as_dict(private=False)
-            persisted_public_values = persisted_public_key.as_dict(private=False)
-            if any(
-                private_public_values.get(field) != persisted_public_values.get(field)
-                for field in ("kty", "n", "e")
-            ):
-                raise ValueError
-            canonical_public_jwk = dict(private_public_values)
-            canonical_public_jwk.update(
-                {
-                    "alg": OIDC_SIGNING_ALGORITHM,
-                    "kid": signing_key.kid,
-                    "use": "sig",
-                }
-            )
-            if public_jwk != canonical_public_jwk:
-                raise ValueError
-        except Exception:
-            errors.append("The active OIDC signing key is not protocol-ready.")
+        errors.extend(signing_key_cryptographic_validation_errors(signing_key))
     return errors
 
 

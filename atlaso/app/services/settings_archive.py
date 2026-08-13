@@ -135,6 +135,7 @@ from atlaso.app.services.oidc import (
     expected_issuer_url,
     normalize_issuer_url,
     provider_cryptographic_validation_errors,
+    signing_key_cryptographic_validation_errors,
     validate_persisted_client_policy,
     validate_redirect_uri_list,
 )
@@ -1857,6 +1858,16 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
             optional=True,
         )
 
+    managed_certificate_owners: set[str] = set()
+    for row_index, row in enumerate(data.get("ca_certificates", []), start=1):
+        managed_owner = str(row.get("managed_owner") or "")
+        if managed_owner and managed_owner in managed_certificate_owners:
+            raise ValueError(
+                f"The settings archive row {row_index} in 'ca_certificates' duplicates a managed certificate owner."
+            )
+        if managed_owner:
+            managed_certificate_owners.add(managed_owner)
+
     ca_profiles = {
         str(row["name"]): bool(row.get("enabled", True))
         for row in data.get("ca_profiles", [])
@@ -2045,6 +2056,19 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
                 raise ValueError(
                     f"The settings archive row {row_index} in 'oidc_provider_settings' has an unsupported token lifetime."
                 )
+
+    for row_index, row in enumerate(signing_key_rows, start=1):
+        cryptographic_errors = signing_key_cryptographic_validation_errors(
+            OidcSigningKey(
+                **_model_kwargs_with_scalar_defaults(OidcSigningKey, row)
+            )
+        )
+        if cryptographic_errors:
+            raise ValueError(
+                f"The settings archive OIDC cryptographic state is invalid for row {row_index} in 'oidc_signing_keys': {cryptographic_errors[0]}"
+            )
+
+    if enabled_oidc_rows:
         provider = OidcProviderSettings(
             **_model_kwargs_with_scalar_defaults(
                 OidcProviderSettings,
@@ -2070,21 +2094,20 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
             if certificate_row is not None
             else None
         )
-        for row_index, signing_key_row in enumerate(signing_key_rows, start=1):
-            cryptographic_errors = provider_cryptographic_validation_errors(
-                provider,
-                certificate,
-                OidcSigningKey(
-                    **_model_kwargs_with_scalar_defaults(
-                        OidcSigningKey,
-                        signing_key_row,
-                    )
-                ),
-            )
-            if cryptographic_errors:
-                raise ValueError(
-                    f"The settings archive OIDC cryptographic state is invalid for row {row_index} in 'oidc_signing_keys': {cryptographic_errors[0]}"
+        provider_errors = provider_cryptographic_validation_errors(
+            provider,
+            certificate,
+            OidcSigningKey(
+                **_model_kwargs_with_scalar_defaults(
+                    OidcSigningKey,
+                    active_signing_keys[0],
                 )
+            ),
+        )
+        if provider_errors:
+            raise ValueError(
+                f"The settings archive OIDC cryptographic state is invalid: {provider_errors[0]}"
+            )
 
     for row_index, row in enumerate(data.get("vsphere_key_providers", []), start=1):
         if "enabled" in row and not isinstance(row["enabled"], bool):
