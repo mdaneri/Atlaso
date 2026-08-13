@@ -75,6 +75,22 @@ def test_suppressions_validate_case_insensitive_ruff_directives(tmp_path: Path) 
     assert suppression_errors([source], root=tmp_path) == []
 
 
+def test_suppressions_reject_file_wide_mypy_directives(tmp_path: Path) -> None:
+    """Prevent per-file mypy configuration from weakening the strict ratchet."""
+    for directive in (
+        "# mypy: ignore-errors",
+        "# mypy: disable-error-code=attr-defined",
+    ):
+        source = tmp_path / "sample.py"
+        source.write_text(f"{directive}\nvalue = object()\n", encoding="utf-8")
+
+        errors = suppression_errors([source], root=tmp_path)
+
+        assert errors == [
+            "sample.py:1: file-wide mypy configuration directives are forbidden."
+        ]
+
+
 def test_static_analysis_configuration_is_pinned_and_scoped() -> None:
     """Keep analyzer versions exact and the typed ratchet explicit."""
     project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))

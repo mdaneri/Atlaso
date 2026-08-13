@@ -31,6 +31,7 @@ FILE_WIDE_RUFF_SUPPRESSION_RE = re.compile(
     r"#\s*(?:ruff|flake8):\s*noqa\b",
     re.IGNORECASE,
 )
+FILE_WIDE_MYPY_CONFIGURATION_RE = re.compile(r"#\s*mypy\s*:", re.IGNORECASE)
 
 
 def tracked_python_files(root: Path = ROOT) -> list[Path]:
@@ -79,6 +80,12 @@ def suppression_errors(paths: Iterable[Path], *, root: Path = ROOT) -> list[str]
                 errors.append(
                     f"{path.relative_to(root)}:{line_number}: file-wide Ruff "
                     "suppressions are forbidden."
+                )
+                continue
+            if FILE_WIDE_MYPY_CONFIGURATION_RE.search(comment) is not None:
+                errors.append(
+                    f"{path.relative_to(root)}:{line_number}: file-wide mypy "
+                    "configuration directives are forbidden."
                 )
                 continue
             if (
