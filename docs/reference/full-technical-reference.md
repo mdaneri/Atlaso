@@ -93,7 +93,10 @@ topology-derived `atlaso-path-*` identity, and an exact 500 GiB capacity. Before
 `atlaso-data-disks.service` verifies both disks and rejects missing, extra, reordered, ambiguous, read-only, in-use,
 or identity/capacity-mismatched devices. It formats only the two verified blank whole disks as ext4, persists their
 UUIDs in `/etc/fstab`, and mounts them at the fixed paths before `atlaso.service` starts. Existing correctly labeled
-ext4 disks must occupy their assigned identities and are mounted without reformatting.
+ext4 disks must occupy their assigned identities and are mounted without reformatting. Once both fixed disks are
+initialized, an additional whole disk is accepted only when it is a stable, writable, partition-free managed ESX
+Storage ext4 volume with the expected `lf-<hash>` label, UUID-backed managed fstab entry, and mount beneath
+`/mnt/atlaso-esx-storage/`.
 
 Atlaso writes operational events to `/var/log/atlaso/atlaso.log`. Audit events, desired-state edits, and appliance apply
 submissions are mirrored there with sensitive values redacted. The Settings page controls local file verbosity and can

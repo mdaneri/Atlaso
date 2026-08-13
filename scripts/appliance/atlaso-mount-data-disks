@@ -97,6 +97,22 @@ stable_path_for_disk() {
   return 1
 }
 
+stable_by_id_for_disk() {
+  expected="$(readlink -f "$1" 2>/dev/null || true)"
+  [ -n "$expected" ] || return 1
+  for link in "$BY_ID_ROOT"/*; do
+    [ -L "$link" ] || continue
+    case "${link##*/}" in
+      *-part[0-9]*) continue ;;
+    esac
+    if [ "$(readlink -f "$link" 2>/dev/null || true)" = "$expected" ]; then
+      printf '%s\n' "$link"
+      return 0
+    fi
+  done
+  return 1
+}
+
 has_partitions() {
   disk="$1"
   count="$(lsblk -nr -o TYPE "$disk" 2>/dev/null | awk '$1 == "part" { count++ } END { print count + 0 }')"
@@ -197,10 +213,68 @@ validate_mount_state() {
   fi
 }
 
+fixed_disks_are_initialized() {
+  [ "$(blkid -s LABEL -o value "$DEPOT_DISK" 2>/dev/null || true)" = "ATLASO_DEPOT" ] &&
+    [ "$(blkid -s TYPE -o value "$DEPOT_DISK" 2>/dev/null || true)" = "ext4" ] &&
+    [ -n "$(blkid -s UUID -o value "$DEPOT_DISK" 2>/dev/null || true)" ] &&
+    [ "$(blkid -s LABEL -o value "$BACKUP_DISK" 2>/dev/null || true)" = "ATLASO_BKUP" ] &&
+    [ "$(blkid -s TYPE -o value "$BACKUP_DISK" 2>/dev/null || true)" = "ext4" ] &&
+    [ -n "$(blkid -s UUID -o value "$BACKUP_DISK" 2>/dev/null || true)" ]
+}
+
+managed_esx_fstab_entry_exists() {
+  uuid="$1"
+  mountpoint="$2"
+  [ -f "$FSTAB_PATH" ] || return 1
+  awk -v source="UUID=$uuid" -v mountpoint="$mountpoint" '
+    $0 == "# BEGIN ATLASO ESX STORAGE" { managed = 1; next }
+    $0 == "# END ATLASO ESX STORAGE" { managed = 0; next }
+    managed && $1 == source && $2 == mountpoint && $3 == "ext4" { found = 1 }
+    END { exit found ? 0 : 1 }
+  ' "$FSTAB_PATH"
+}
+
+is_managed_esx_storage_disk() {
+  disk="$1"
+  label="$(blkid -s LABEL -o value "$disk" 2>/dev/null || true)"
+  case "$label" in
+    lf-????????????)
+      suffix="${label#lf-}"
+      case "$suffix" in
+        *[!0-9a-f]*) return 1 ;;
+      esac
+      ;;
+    *) return 1 ;;
+  esac
+  [ "$(blkid -s TYPE -o value "$disk" 2>/dev/null || true)" = "ext4" ] || return 1
+  uuid="$(blkid -s UUID -o value "$disk" 2>/dev/null || true)"
+  [ -n "$uuid" ] || return 1
+  [ -n "$(stable_by_id_for_disk "$disk" || true)" ] || return 1
+  [ "$(lsblk -dn -o RO "$disk" 2>/dev/null | head -n 1 || true)" = "0" ] || return 1
+  if has_partitions "$disk"; then
+    return 1
+  fi
+  if has_holders "$disk"; then
+    return 1
+  fi
+
+  mounted_targets="$(findmnt -rn -S "$disk" -o TARGET 2>/dev/null || true)"
+  [ -n "$mounted_targets" ] || return 1
+  for mountpoint in $mounted_targets; do
+    case "$mountpoint" in
+      /mnt/atlaso-esx-storage/*) ;;
+      *) return 1 ;;
+    esac
+    [ "$(findmnt -rn -M "$mountpoint" -o UUID 2>/dev/null || true)" = "$uuid" ] || return 1
+    managed_esx_fstab_entry_exists "$uuid" "$mountpoint" || return 1
+  done
+}
+
 validate_exact_disk_set() {
   os_disk="$1"
   depot_disk="$2"
   backup_disk="$3"
+  allow_managed_esx="$4"
   for disk in $(lsblk -dn -o PATH,TYPE | awk '$2 == "disk" { print $1 }'); do
     resolved="$(readlink -f "$disk" 2>/dev/null || true)"
     if [ "$resolved" = "$os_disk" ] || [ "$resolved" = "$depot_disk" ] || [ "$resolved" = "$backup_disk" ]; then
@@ -210,6 +284,9 @@ validate_exact_disk_set() {
     if [ -n "$ATLASO_SYSTEM_SCSI_TUPLE" ] && [ "$tuple" = "$ATLASO_SYSTEM_SCSI_TUPLE" ]; then
       [ "$(blkid -s LABEL -o value "$resolved" 2>/dev/null || true)" = "ATLASO_SYSTEM" ] ||
         fail "VMware system-content identity $tuple does not contain ATLASO_SYSTEM"
+      continue
+    fi
+    if [ "$allow_managed_esx" = "true" ] && is_managed_esx_storage_disk "$resolved"; then
       continue
     fi
     fail "unexpected whole disk $resolved at SCSI identity $tuple"
@@ -234,7 +311,11 @@ preflight() {
   validate_label_or_blank ATLASO_BKUP "$BACKUP_DISK"
   validate_mount_state ATLASO_DEPOT "$DEPOT_DISK" /mnt/atlaso-vcf-offline-depot
   validate_mount_state ATLASO_BKUP "$BACKUP_DISK" /mnt/atlaso-vcf-backups
-  validate_exact_disk_set "$os_disk" "$DEPOT_DISK" "$BACKUP_DISK"
+  allow_managed_esx=false
+  if fixed_disks_are_initialized; then
+    allow_managed_esx=true
+  fi
+  validate_exact_disk_set "$os_disk" "$DEPOT_DISK" "$BACKUP_DISK" "$allow_managed_esx"
 }
 
 ensure_fstab_entry() {

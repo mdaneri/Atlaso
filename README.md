@@ -94,7 +94,8 @@ export limits recursive replacement to repository-owned OVF output descendants; 
 its canonical destination, and an explicit existing destination also requires `-Force`.
 First boot formats those data disks only after both match the image's fixed SCSI-slot, stable `atlaso-path-*`, and exact
 capacity policy. Missing, extra, reordered, ambiguous, or mismatched disks stop initialization before either disk is
-formatted; correctly labeled disks remain idempotent and mount by UUID.
+formatted; correctly labeled disks remain idempotent and mount by UUID. After both fixed disks are initialized, only
+positively identified, already mounted Atlaso-managed ESX Storage volumes are accepted as additional disks.
 VMware first boot validates management addresses and gateways as one contract before host mutation. Invalid OVF
 networking pauses initialization at the Atlaso `tty1` review screen so an administrator can correct it in place.
 Privileged tty1 actions remain locked until deployment credentials apply, and interrupted review cleanup recovers from

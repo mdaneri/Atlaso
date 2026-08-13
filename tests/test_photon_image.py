@@ -770,6 +770,8 @@ def test_photon_provisioning_prepares_attached_data_disks():
     assert "ATLASO_BACKUP_SCSI_TUPLE=$atlaso_backup_scsi_tuple" in provision
     assert "ATLASO_SYSTEM_SCSI_TUPLE=$atlaso_system_scsi_tuple" in provision
     assert "validate_exact_disk_set" in mount_script
+    assert "is_managed_esx_storage_disk" in mount_script
+    assert "# BEGIN ATLASO ESX STORAGE" in mount_script
     assert "stable_path_for_disk" in mount_script
     assert "unexpected whole disk" in mount_script
     assert "No blank data disk available" not in mount_script

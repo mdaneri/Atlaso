@@ -376,7 +376,8 @@ helper assigns the depot to SCSI controller 0 location 1 and backups to location
 `atlaso-data-disks.service` requires those exact guest-visible SCSI identities, their topology-derived
 `atlaso-path-*` links, and exact capacities before formatting either disk. Missing, extra, reordered, ambiguous, or
 mismatched disks fail closed before `mkfs`. Correctly labeled ext4 disks remain idempotent, are written to `/etc/fstab`
-by UUID, and mount before the Atlaso control plane starts.
+by UUID, and mount before the Atlaso control plane starts. After both fixed disks are initialized, additional disks are
+accepted only as positively identified Atlaso-managed ESX Storage volumes.
 
 ## Appliance Smoke Checks
 
