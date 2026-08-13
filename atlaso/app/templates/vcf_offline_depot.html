@@ -107,7 +107,7 @@
                 </td>
                 <td>
                   {% if profile.enabled %}
-                    <a class="button tiny secondary" href="{{ management_ui_root }}/vcf-offline-depot?schedule_profile_id={{ profile.id }}#vcf-depot-schedule-modal">Schedule</a>
+                    <a class="button tiny secondary" href="{{ management_ui_root }}/vcf-offline-depot?schedule_profile_id={{ profile.id }}#vcf-depot-schedule-modal" data-vcf-depot-fallback-schedule="{{ profile.id }}">Schedule</a>
                   {% else %}
                     <span class="button tiny secondary disabled" title="Enable the VCFDT download profile before scheduling it." aria-disabled="true">Schedule</span>
                   {% endif %}
@@ -306,7 +306,7 @@
   </aside>
 </section>
 <dialog id="vcf-depot-schedule-modal" class="confirm-modal wide-modal vcf-sddc-wizard-modal" aria-labelledby="vcf-depot-schedule-modal-title" aria-describedby="vcf-depot-schedule-modal-description" {{ "open" if vcf_depot_contextual_schedule_profile else "" }}>
-  <form id="vcf-depot-schedule-form" class="confirm-modal-panel vcf-sddc-wizard-panel" method="post" action="{{ management_ui_root }}/vcf-offline-depot/profiles/{{ vcf_depot_contextual_schedule_profile.id if vcf_depot_contextual_schedule_profile else 0 }}/schedules" data-automation-schedule-form data-automation-contextual-vcf-schedule data-atlaso-wizard>
+  <form id="vcf-depot-schedule-form" class="confirm-modal-panel vcf-sddc-wizard-panel" method="post" action="{{ management_ui_root }}/vcf-offline-depot/profiles/{{ vcf_depot_contextual_schedule_profile.id if vcf_depot_contextual_schedule_profile else 0 }}/schedules" data-automation-schedule-form data-automation-contextual-vcf-schedule data-context-profile-id="{{ vcf_depot_contextual_schedule_profile.id if vcf_depot_contextual_schedule_profile else '' }}" data-context-profile-name="{{ vcf_depot_contextual_schedule_profile.name if vcf_depot_contextual_schedule_profile else '' }}" data-atlaso-wizard>
     <input type="hidden" name="csrf" value="{{ csrf_token }}">
     <aside class="vcf-sddc-wizard-rail" aria-label="Contextual depot schedule steps">
       <p class="kicker">Depot profile schedule</p>

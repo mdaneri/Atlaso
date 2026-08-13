@@ -18551,7 +18551,7 @@ function initializeAutomationTables() {
           if (wizardModalTitle instanceof HTMLElement) wizardModalTitle.textContent = `Schedule ${rowData?.name || "profile"}`;
           if (wizardSubmit instanceof HTMLButtonElement) wizardSubmit.textContent = "Create schedule";
           if (contextualProfileName instanceof HTMLElement) contextualProfileName.textContent = rowData?.name || "Selected profile";
-          loadCronBuilder("0 2 * * *");
+          loadCronBuilder(String(scheduleForm.elements.cron_expression?.value || "0 2 * * *"));
           updateTimingVisibility();
           return;
         }
@@ -18588,6 +18588,17 @@ function initializeAutomationTables() {
       scheduleWizard.open({ context: rowData, launcher });
     };
     scheduleForm.atlasoOpenScheduleWizard = openScheduleWizard;
+    if (isContextualVcfSchedule && scheduleForm.dataset.contextProfileId) {
+      const serverProfile = {
+        id: Number(scheduleForm.dataset.contextProfileId),
+        name: scheduleForm.dataset.contextProfileName || "Selected profile",
+      };
+      const launcher = document.querySelector(
+        `[data-vcf-depot-fallback-schedule="${serverProfile.id}"]`,
+      );
+      if (scheduleModal.open) scheduleModal.close();
+      openScheduleWizard(serverProfile, launcher instanceof HTMLElement ? launcher : null);
+    }
     taskType?.addEventListener("change", updateConfigVisibility);
     scriptRevision?.addEventListener("change", updateScriptArgumentsGuidance);
     scheduleKind?.addEventListener("change", updateTimingVisibility);
