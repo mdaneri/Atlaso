@@ -119,15 +119,28 @@ def test_static_analysis_configuration_is_pinned_and_scoped() -> None:
         .read_text(encoding="utf-8")
         .splitlines()
     )
-    mypy_files = project["tool"]["mypy"]["files"]
 
     assert analyzer_requirements == {"ruff==0.16.1", "mypy==2.3.0"}
-    assert project["tool"]["mypy"]["follow_imports"] == "silent"
-    assert mypy_files == [
-        "atlaso/app/services/identity_credentials.py",
-        "atlaso/app/services/interface_updates.py",
-        "atlaso/app/services/service_registry.py",
-    ]
+    assert project["tool"]["ruff"] == {
+        "target-version": "py314",
+        "extend-exclude": ["VCFDT", "third_party", "vcfDownloadTool"],
+        "lint": {
+            "select": ["E4", "E7", "E9", "F", "B", "BLE", "I"],
+            "ignore": ["B008"],
+        },
+    }
+    assert project["tool"]["mypy"] == {
+        "python_version": "3.14",
+        "strict": True,
+        "show_error_codes": True,
+        "warn_unused_configs": True,
+        "follow_imports": "silent",
+        "files": [
+            "atlaso/app/services/identity_credentials.py",
+            "atlaso/app/services/interface_updates.py",
+            "atlaso/app/services/service_registry.py",
+        ],
+    }
 
 
 def test_static_analysis_uses_existing_repository_status_path() -> None:
