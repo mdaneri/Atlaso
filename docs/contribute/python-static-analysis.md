@@ -47,7 +47,8 @@ FastAPI dependency declarations intentionally call factories such as `Depends` a
 
 Mypy runs in strict mode against the explicit `files` list in `pyproject.toml`. That list is the typed-analysis ratchet:
 new shared mutation or service modules should be made strict-clean and added to the list; existing entries must not be
-removed or weakened to accommodate unrelated debt.
+removed or weakened to accommodate unrelated debt. Imported type information remains available, but silent import
+following prevents diagnostics from unlisted transitive modules from expanding the ratchet implicitly.
 
 ## Justify suppressions
 

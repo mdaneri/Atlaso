@@ -102,6 +102,7 @@ def test_static_analysis_configuration_is_pinned_and_scoped() -> None:
     mypy_files = project["tool"]["mypy"]["files"]
 
     assert analyzer_requirements == {"ruff==0.16.1", "mypy==2.3.0"}
+    assert project["tool"]["mypy"]["follow_imports"] == "silent"
     assert mypy_files == [
         "atlaso/app/services/identity_credentials.py",
         "atlaso/app/services/interface_updates.py",

@@ -80,6 +80,7 @@ python_version = "3.14"
 strict = true
 show_error_codes = true
 warn_unused_configs = true
+follow_imports = "silent"
 files = [
   "atlaso/app/services/identity_credentials.py",
   "atlaso/app/services/interface_updates.py",
