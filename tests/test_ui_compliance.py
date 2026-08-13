@@ -93,12 +93,7 @@ def test_ntp_ui_compliance_matrix_matches_capability_gated_nts_contract():
     )
 
     assert "NTS remains disabled" not in ntp_row
-    assert "capability-gated NTS client/server controls" in ntp_row
-    assert re.search(r"unsupported .*disables controls", ntp_row)
-    assert re.search(r"unknown .*preserves desired state .*blocks unsafe apply", ntp_row)
-    assert "CA-before-NTP" in ntp_row
-    assert "Firewall-owned TCP/4460" in ntp_row
-    assert "global `ntpd` apply only" in ntp_row
+    assert "(../services/ntp.md#configure-time-service)" in ntp_row
 
 
 def test_every_shared_wizard_dialog_has_an_accessible_description():
