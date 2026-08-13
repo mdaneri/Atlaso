@@ -356,16 +356,15 @@ def test_wsl_build_module_behavior():
     assert "Atlaso WSL build module behavior tests passed." in result.stdout
 
 
-def test_photon_image_password_transport_is_shell_safe_for_both_wrappers(tmp_path):
-    """Verify shell-safe, byte-exact Photon password transport for both wrappers.
+def test_photon_kickstart_generator_is_canonical_and_provider_specific(tmp_path):
+    """Verify the generated Photon kickstart contract for both providers.
 
     Args:
         tmp_path: Temporary directory provided by pytest for isolated filesystem state.
     """
     pwsh = shutil.which("pwsh")
-    bash = shutil.which("bash")
-    if pwsh is None or bash is None:
-        pytest.skip("PowerShell 7 and Bash are required")
+    if pwsh is None:
+        pytest.skip("PowerShell 7 is required")
 
     result = subprocess.run(
         [
@@ -384,29 +383,89 @@ def test_photon_image_password_transport_is_shell_safe_for_both_wrappers(tmp_pat
         capture_output=True,
         text=True,
     )
-    assert result.returncode == 0, "Photon credential transport behavior test failed"
-    assert "Atlaso Photon image credential transport tests passed." in result.stdout
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "Atlaso Photon kickstart generator contract tests passed." in result.stdout
+
+    output_dir = tmp_path / "photon-kickstart"
+    generated = {
+        provider: json.loads(
+            (output_dir / f"{provider}-kickstart.json").read_text(encoding="utf-8")
+        )
+        for provider in ("hyperv", "vmware-workstation")
+    }
+    for kickstart in generated.values():
+        assert kickstart["disk"] == "/dev/sda"
+        assert kickstart["bootmode"] == "efi"
+        assert kickstart["packagelist_file"] == "packages_minimal.json"
+        assert kickstart["partitions"] == [
+            {"mountpoint": "/", "size": 0, "filesystem": "ext4"},
+            {"mountpoint": "/boot", "size": 256, "filesystem": "ext4"},
+            {"size": 1024, "filesystem": "swap"},
+        ]
+        packages = set(kickstart["additional_packages"])
+        assert {"openssh-server", "shadow", "sudo", "systemd"} <= packages
+        postinstall = kickstart["postinstall"]
+        assert postinstall[0] == "#!/bin/sh"
+        assert "useradd -m -G sudo -s /bin/bash atlaso-build || true" in postinstall
+        assert "systemctl disable sshd.socket" in postinstall
+        assert "systemctl enable sshd.service" in postinstall
+        assert "systemctl enable sshd" not in postinstall
+        assert postinstall.index("systemctl disable sshd.socket") < postinstall.index(
+            "systemctl enable sshd.service"
+        )
+        assert (
+            "echo 'atlaso-build ALL=(ALL) NOPASSWD:ALL' "
+            ">/etc/sudoers.d/90-atlaso-build"
+        ) in postinstall
+        assert "chmod 0440 /etc/sudoers.d/90-atlaso-build" in postinstall
+
+    hyperv = generated["hyperv"]
+    vmware = generated["vmware-workstation"]
+    assert "hyper-v" in hyperv["additional_packages"]
+    assert "open-vm-tools" not in hyperv["additional_packages"]
+    assert "systemctl enable hv_kvp_daemon || true" in hyperv["postinstall"]
+    assert "systemctl enable hv_fcopy_daemon || true" in hyperv["postinstall"]
+    assert "systemctl enable hv_vss_daemon || true" in hyperv["postinstall"]
+    assert "open-vm-tools" in vmware["additional_packages"]
+    assert "hyper-v" not in vmware["additional_packages"]
+    assert "systemctl enable vmtoolsd || true" in vmware["postinstall"]
 
     module = Path("scripts/windows/common/Atlaso.PhotonImage.psm1").read_text(
         encoding="utf-8"
     )
+    assert not Path("image/hyperv/http/photon-ks.json.pkrtpl").exists()
+    assert "New-AtlasoPhotonKickstart" in module
+    assert "-AdditionalPackages $GuestPackages" in module
+    assert "-PostInstallCommands $GuestPostInstallCommands" in module
     assert "ConvertTo-AtlasoUtf8Base64" in module
     assert "| base64 -d | chpasswd" in module
     assert '"printf \'%s:%s\\n\' \'$BuildUsername\' \'$BuildPassword\' | chpasswd"' not in module
 
-    for wrapper_path in (
-        Path("scripts/windows/hyperv/build-photon-image.ps1"),
-        Path("scripts/windows/vmware/build-photon-image.ps1"),
-    ):
-        wrapper = wrapper_path.read_text(encoding="utf-8")
+    wrappers = {
+        provider: Path(path).read_text(encoding="utf-8")
+        for provider, path in {
+            "hyperv": "scripts/windows/hyperv/build-photon-image.ps1",
+            "vmware-workstation": "scripts/windows/vmware/build-photon-image.ps1",
+        }.items()
+    }
+    for wrapper in wrappers.values():
         assert "Invoke-AtlasoPhotonImageBuild" in wrapper
         assert "-SshPassword $SshPassword" in wrapper
+    assert "-GuestPackages @('hyper-v')" in wrappers["hyperv"]
+    assert "systemctl enable hv_kvp_daemon || true" in wrappers["hyperv"]
+    assert "systemctl enable hv_fcopy_daemon || true" in wrappers["hyperv"]
+    assert "systemctl enable hv_vss_daemon || true" in wrappers["hyperv"]
+    assert "-GuestPackages @('open-vm-tools')" in wrappers["vmware-workstation"]
+    assert "-GuestPostInstallCommands @('systemctl enable vmtoolsd || true')" in wrappers[
+        "vmware-workstation"
+    ]
 
     for template_path in (
         Path("image/hyperv/atlaso-photon.pkr.hcl"),
         Path("image/vmware-workstation/atlaso-photon.pkr.hcl"),
     ):
         template = template_path.read_text(encoding="utf-8")
+        assert "templatefile(" not in template
         assert 'ssh_password_stdin_base64    = base64encode("${var.ssh_password}\\n")' in template
         assert template.count("${local.ssh_password_stdin_base64}") == 2
         assert "echo '${var.ssh_password}'" not in template
@@ -770,7 +829,6 @@ def test_packer_templates_stage_shared_appliance_assets():
 def test_vmware_packer_build_uses_two_compacted_payload_disks():
     """Verify that vmware packer build uses two compacted payload disks."""
     template = Path("image/vmware-workstation/atlaso-photon.pkr.hcl").read_text(encoding="utf-8")
-    kickstart = Path("image/hyperv/http/photon-ks.json.pkrtpl").read_text(encoding="utf-8")
     wrapper = Path("scripts/windows/vmware/build-photon-image.ps1").read_text(encoding="utf-8")
 
     assert 'disk_size            = 40960' in template
@@ -778,7 +836,6 @@ def test_vmware_packer_build_uses_two_compacted_payload_disks():
     assert 'disk_type_id         = 0' in template
     assert 'skip_compaction      = false' in template
     assert '"ATLASO_SYSTEM_CONTENT_DISK=true"' in template
-    assert '"disk": "/dev/sda"' in kickstart
     assert "Write-AtlasoVmwareBuildProvenance" in wrapper
     assert "tracked_source_dirty" in wrapper
     assert "Expected exactly two Packer payload VMDKs" in wrapper
