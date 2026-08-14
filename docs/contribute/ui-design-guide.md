@@ -85,6 +85,8 @@ from scratch.
 Every Tabulator collection must:
 
 - retain an accessible server-rendered fallback with truthful headers and values;
+- treat custom formatter return values as HTML sinks, escaping persisted or user-controlled values at the sink or
+  returning DOM nodes populated through `textContent` so accepted text cannot become executable markup;
 - have a stable row identity and an explicit loading, empty, error, and permission-denied state;
 - preserve the current tab, selection, filters, and scroll context when an autosave or refresh can do so safely;
 - use compact Atlaso control sizing, typography, status badges, and validation language;

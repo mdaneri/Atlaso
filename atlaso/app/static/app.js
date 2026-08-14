@@ -626,6 +626,16 @@ function escapeHtml(value) {
     .replace(/'/g, "&#39;");
 }
 
+function esxStoragePathFormatter(cell) {
+  return cell.getRow().getData().is_new ? "" : escapeHtml(cell.getValue());
+}
+
+function esxiHostKickstartFormatter(cell, kickstartValues) {
+  return cell.getRow().getData().is_new
+    ? ""
+    : escapeHtml(kickstartValues[cell.getValue()] || "No Kickstart");
+}
+
 function atlasoBooleanFormatter(cell) {
   const enabled = Boolean(cell.getValue());
   const label = enabled ? "true" : "false";
@@ -9753,7 +9763,7 @@ function initializeEsxiPxeHostsTable() {
           editor: canWrite ? "list" : false,
           editable: (cell) => canWrite && cell.getRow().getData().is_default,
           editorParams: { values: kickstartValues },
-          formatter: (cell) => cell.getRow().getData().is_new ? "" : (kickstartValues[cell.getValue()] || "No Kickstart"),
+          formatter: (cell) => esxiHostKickstartFormatter(cell, kickstartValues),
           minWidth: 180,
           cellEdited: (cell) => autoSaveEsxiHost(cell, csrf),
         },
@@ -19475,7 +19485,7 @@ function initializeEsxStorageTables() {
       columns: [
         { title: "Datastore", field: "datastore_name", formatter: (cell) => cell.getRow().getData().is_new ? '<button class="add-row-button" type="button" data-esx-storage-wizard-open="share">+ Add NFS datastore here</button>' : escapeHtml(cell.getValue()), minWidth: 205, widthGrow: 1.4 },
         { title: "Volume", field: "volume_name", minWidth: 120, formatter: (cell) => shareValue(cell) },
-        { title: "Path", field: "relative_path", formatter: (cell) => shareValue(cell), minWidth: 150 },
+        { title: "Path", field: "relative_path", formatter: esxStoragePathFormatter, minWidth: 150 },
         { title: "NFS", field: "preferred_nfs_version", formatter: (cell) => shareValue(cell) },
         { title: "Interface / VLAN", field: "interface_name", formatter: (cell) => shareValue(cell), minWidth: 130 },
         { title: "Families", field: "address_families", formatter: (cell) => shareValue(cell, (value) => (value || []).map((family) => family === "ipv4" ? "IPv4" : "IPv6").join(" + ")) },
