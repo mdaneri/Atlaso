@@ -10,6 +10,7 @@ from atlaso.app.routers.registry import (
     RouteIdentity,
     RouterContribution,
     RouterRegistryError,
+    allow_compatible_route_shadow,
 )
 
 
@@ -148,8 +149,29 @@ def test_registry_rejects_same_endpoint_shadowing():
         )
 
 
-def test_registry_accepts_semantically_equivalent_default_alias():
-    """Allow a fixed alias only when fallback binding and configuration match."""
+def test_registry_accepts_explicit_compatible_route_shadow():
+    """Allow only an exact declared legacy route shadow."""
+    router = APIRouter()
+
+    def shared(item: str = "") -> dict[str, str]:
+        return {"item": item}
+
+    router.add_api_route("/resources/{item:path}", shared, methods=["GET"])
+    router.add_api_route("/resources/", shared, methods=["GET"])
+    allow_compatible_route_shadow(
+        router,
+        earlier_path="/resources/{item:path}",
+        later_path="/resources/",
+        methods=("GET",),
+    )
+    registry = DomainRouterRegistry("test")
+    registry.register("equivalent_alias", (RouterContribution("management", router),))
+
+    assert registry.domains == ("equivalent_alias",)
+
+
+def test_registry_rejects_undeclared_default_binding_shadow():
+    """Do not infer alias compatibility from a shared callable and default."""
     router = APIRouter()
 
     def shared(item: str = "") -> dict[str, str]:
@@ -158,26 +180,29 @@ def test_registry_accepts_semantically_equivalent_default_alias():
     router.add_api_route("/resources/{item:path}", shared, methods=["GET"])
     router.add_api_route("/resources/", shared, methods=["GET"])
     registry = DomainRouterRegistry("test")
-    registry.register("equivalent_alias", (RouterContribution("management", router),))
 
-    assert registry.domains == ("equivalent_alias",)
+    with pytest.raises(RouterRegistryError, match="must follow route"):
+        registry.register(
+            "binding_drift",
+            (RouterContribution("management", router),),
+        )
 
 
-def test_registry_rejects_same_endpoint_configuration_drift():
-    """Reject aliases whose response configuration changes route semantics."""
+def test_compatible_route_shadow_rejects_missing_target():
+    """Fail when an explicit compatibility declaration becomes stale."""
     router = APIRouter()
 
     def shared(item: str = "") -> dict[str, str]:
         return {"item": item}
 
     router.add_api_route("/resources/{item:path}", shared, methods=["GET"])
-    router.add_api_route("/resources/", shared, methods=["GET"], status_code=202)
-    registry = DomainRouterRegistry("test")
 
-    with pytest.raises(RouterRegistryError, match="must follow route"):
-        registry.register(
-            "configuration_drift",
-            (RouterContribution("management", router),),
+    with pytest.raises(RouterRegistryError, match="resolve exactly one"):
+        allow_compatible_route_shadow(
+            router,
+            earlier_path="/resources/{item:path}",
+            later_path="/resources/",
+            methods=("GET",),
         )
 
 

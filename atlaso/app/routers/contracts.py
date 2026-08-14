@@ -2,16 +2,15 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from copy import deepcopy
 from dataclasses import dataclass
-from inspect import Parameter, signature
 from typing import Any, cast
 
 from fastapi import APIRouter, FastAPI
 from starlette.routing import compile_path
 
-from atlaso.app.routers.registry import RouteIdentity
+from atlaso.app.routers.registry import RouteIdentity, compatible_route_shadows
 
 _WEBSOCKET_METHOD = "WEBSOCKET"
 _OPAQUE_METHOD = "*"
@@ -25,11 +24,10 @@ class RouterContractError(ValueError):
 
 @dataclass(frozen=True)
 class _EffectiveRoute:
-    """Retain stable metadata and runtime semantics for order validation."""
+    """Retain stable metadata and explicit compatibility declarations."""
 
     record: RouteContractRecord
-    endpoint: object | None
-    configuration: tuple[object, ...]
+    allowed_shadows: frozenset[tuple[str, str]]
 
 
 def _routing_plane(path: str) -> str:
@@ -69,49 +67,15 @@ def _effective_route_sources(app: FastAPI) -> tuple[object, ...]:
     return tuple(sources)
 
 
-def _dependency_signature(dependant: object) -> tuple[object, ...]:
-    """Return a recursive dependency signature for route comparison."""
-    children = getattr(dependant, "dependencies", ())
-    return (
-        getattr(dependant, "call", None),
-        getattr(dependant, "name", None),
-        getattr(dependant, "use_cache", None),
-        tuple(getattr(dependant, "oauth_scopes", ()) or ()),
-        tuple(_dependency_signature(child) for child in children),
-    )
-
-
-def _route_configuration(source: object, original: object) -> tuple[object, ...]:
-    """Return dispatch- and response-relevant route configuration."""
-    attributes = (
-        "status_code",
-        "response_class",
-        "response_model",
-        "response_model_include",
-        "response_model_exclude",
-        "response_model_by_alias",
-        "response_model_exclude_unset",
-        "response_model_exclude_defaults",
-        "response_model_exclude_none",
-        "responses",
-        "deprecated",
-        "include_in_schema",
-        "callbacks",
-    )
-    values = tuple(getattr(source, name, getattr(original, name, None)) for name in attributes)
-    dependant = getattr(source, "dependant", None) or getattr(original, "dependant", None)
-    return (*values, _dependency_signature(dependant))
-
-
 def _effective_route(source: object, *, order: int) -> _EffectiveRoute:
-    """Return one stable route record with runtime semantics.
+    """Return one stable route record with compatibility declarations.
 
     Args:
         source: Direct route or effective included-router context.
         order: Zero-based effective application route order.
 
     Returns:
-        Stable metadata and runtime semantics.
+        Stable metadata and exact compatibility declarations.
 
     Raises:
         RouterContractError: If the route lacks a stable absolute path.
@@ -148,8 +112,7 @@ def _effective_route(source: object, *, order: int) -> _EffectiveRoute:
             "path": path,
             "plane": _routing_plane(path),
         },
-        endpoint=getattr(source, "endpoint", None) or getattr(original, "endpoint", None),
-        configuration=_route_configuration(source, original),
+        allowed_shadows=compatible_route_shadows(source),
     )
 
 
@@ -197,19 +160,6 @@ def _validate_unique_routes(records: Sequence[Mapping[str, object]]) -> None:
             identities[identity] = index
 
 
-def _methods_overlap(first: Sequence[object], second: Sequence[object]) -> bool:
-    """Return whether two route method sets can match the same request.
-
-    Args:
-        first: Earlier route methods.
-        second: Later route methods.
-
-    Returns:
-        Whether the methods intersect or either route uses the mount wildcard.
-    """
-    return _OPAQUE_METHOD in first or _OPAQUE_METHOD in second or bool(set(first).intersection(second))
-
-
 def _representative_route_path(path: str) -> str | None:
     """Return one concrete path that exercises each standard path convertor."""
     _, path_format, convertors = compile_path(path)
@@ -252,53 +202,37 @@ def _matches_later_route(path: str, candidate: str, *, is_mount: bool) -> bool:
     return path_regex.fullmatch(concrete_candidate) is not None
 
 
-def _is_equivalent_default_alias(
-    route: _EffectiveRoute,
-    later: _EffectiveRoute,
-    *,
-    path: str,
-    later_path: str,
-    is_mount: bool,
-) -> bool:
-    """Return whether a fixed alias is semantically identical to its fallback."""
-    if (
-        is_mount
-        or "{" in later_path
-        or route.endpoint is None
-        or route.endpoint is not later.endpoint
-        or route.configuration != later.configuration
-    ):
-        return False
-    path_regex, _, convertors = compile_path(path)
-    match = path_regex.fullmatch(later_path)
-    if match is None:
-        return False
-    try:
-        parameters = signature(cast(Callable[..., object], route.endpoint)).parameters
-    except (TypeError, ValueError):
-        return False
-    for name, raw_value in match.groupdict().items():
-        parameter = parameters.get(name)
-        if parameter is None or parameter.default is Parameter.empty:
-            return False
-        try:
-            value = convertors[name].convert(raw_value)
-        except (KeyError, ValueError):
-            return False
-        if value != parameter.default:
-            return False
-    return True
+def _overlapping_methods(first: Sequence[object], second: Sequence[object]) -> frozenset[str]:
+    """Return concrete methods matched by both route records."""
+    first_methods = {method for method in first if isinstance(method, str)}
+    second_methods = {method for method in second if isinstance(method, str)}
+    if _OPAQUE_METHOD in first_methods:
+        return frozenset(second_methods)
+    if _OPAQUE_METHOD in second_methods:
+        return frozenset(first_methods)
+    return frozenset(first_methods.intersection(second_methods))
 
 
 def _validate_catch_all_order(routes: Sequence[_EffectiveRoute]) -> None:
     """Reject catch-all routes that shadow later fixed handlers.
 
     Args:
-        routes: Effective routes in application order with runtime semantics.
+        routes: Effective routes with exact compatibility declarations.
 
     Raises:
         RouterContractError: If a parameterized route shadows a later route with another handler.
     """
+    declared: set[tuple[int, str, str]] = set()
+    for index, route in enumerate(routes):
+        route_methods = route.record.get("methods")
+        if not isinstance(route_methods, list):
+            continue
+        declared.update(
+            (index, later_path, method)
+            for later_path, method in route.allowed_shadows
+            if method in route_methods
+        )
+    used: set[tuple[int, str, str]] = set()
     for index, route in enumerate(routes):
         record = route.record
         path = record.get("path")
@@ -318,20 +252,33 @@ def _validate_catch_all_order(routes: Sequence[_EffectiveRoute]) -> None:
                 later.get("plane") != plane
                 or not isinstance(later_path, str)
                 or not isinstance(later_methods, list)
-                or not _methods_overlap(methods, later_methods)
-                or not _matches_later_route(path, later_path, is_mount=is_mount)
-                or _is_equivalent_default_alias(
-                    route,
-                    later_route,
-                    path=path,
-                    later_path=later_path,
-                    is_mount=is_mount,
-                )
             ):
+                continue
+            overlapping_methods = _overlapping_methods(methods, later_methods or ())
+            allowed_methods = {
+                method
+                for method in overlapping_methods
+                if (later_path, method) in route.allowed_shadows
+            }
+            if (
+                not overlapping_methods
+                or not _matches_later_route(path, later_path, is_mount=is_mount)
+            ):
+                continue
+            if allowed_methods == overlapping_methods:
+                used.update((index, later_path, method) for method in allowed_methods)
                 continue
             raise RouterContractError(
                 f"parameterized route {path!r} at order {index} must follow route {later_path!r}"
             )
+    unused = declared - used
+    if unused:
+        index, later_path, method = sorted(unused)[0]
+        path = routes[index].record.get("path")
+        raise RouterContractError(
+            "unused compatible route shadow declaration "
+            f"{method} {path!r} -> {later_path!r} at order {index}"
+        )
 
 
 def build_route_inventory(app: FastAPI) -> list[RouteContractRecord]:

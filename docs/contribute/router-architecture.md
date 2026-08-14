@@ -42,12 +42,17 @@ The UI and API v1 facades register ordered router contributions through `DomainR
 - an invalid or duplicate domain name;
 - a router object registered more than once;
 - a duplicate `(plane, path, method)` identity; and
-- a parameterized or catch-all handler placed before a fixed peer that it would shadow.
+- a parameterized, mounted, or catch-all handler placed before a peer that it would shadow; and
+- a stale or unused compatibility-shadow declaration.
 
-Several path patterns may intentionally reach the same endpoint, as the fixed depot root and its path fallback do. That
-same-handler alias is not a shadowing conflict, but its exact application order remains characterized by the checked-in
-route inventory. Facades call `validate_domains(...)` with the complete expected domain order so an omitted,
-unexpected, or reordered domain fails during import rather than silently dropping routes.
+Callable identity does not make two route records equivalent because FastAPI may bind the same parameter from different
+request locations or apply different dependencies and response configuration. The existing depot path fallback
+intentionally intercepts its fixed `/PROD/` compatibility alias, so the UI facade declares that exact path-and-method
+relationship through `allow_compatible_route_shadow(...)`. The declaration validates that both records exist exactly
+once and use the same endpoint, and registry plus application-inventory validation fail if it becomes unused. Do not
+infer or add another exception merely because routes share a name or callable. Facades call `validate_domains(...)`
+with the complete expected domain order so an omitted, unexpected, or reordered domain fails during import rather than
+silently dropping routes.
 
 Registry modules are dependency-neutral: they do not import facades or product-domain routers. A facade imports the
 domain modules, registers their contributions in the established order, and remains the only application-facing

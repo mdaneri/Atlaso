@@ -17,6 +17,7 @@ from atlaso.app.routers.contracts import (
     normalized_openapi,
     validate_route_inventory,
 )
+from atlaso.app.routers.registry import allow_compatible_route_shadow
 
 ROOT = Path(__file__).resolve().parents[2]
 ROUTE_BASELINE = ROOT / "tests" / "contracts" / "route_inventory.json"
@@ -116,8 +117,32 @@ def test_route_inventory_rejects_same_endpoint_shadowing():
         build_route_inventory(app)
 
 
-def test_route_inventory_accepts_semantically_equivalent_default_alias():
-    """Allow a fixed alias only when fallback binding and configuration match."""
+def test_route_inventory_accepts_explicit_compatible_route_shadow():
+    """Allow only an exact declared legacy route shadow."""
+    app = FastAPI(openapi_url=None, docs_url=None, redoc_url=None)
+
+    def shared(item: str = "") -> dict[str, str]:
+        return {"item": item}
+
+    app.add_api_route("/resources/{item:path}", shared, methods=["GET"])
+    app.add_api_route("/resources/", shared, methods=["GET"])
+    allow_compatible_route_shadow(
+        app.router,
+        earlier_path="/resources/{item:path}",
+        later_path="/resources/",
+        methods=("GET",),
+    )
+
+    inventory = build_route_inventory(app)
+
+    assert [record["path"] for record in inventory] == [
+        "/resources/{item:path}",
+        "/resources/",
+    ]
+
+
+def test_route_inventory_rejects_undeclared_default_binding_shadow():
+    """Do not infer alias compatibility from a shared callable and default."""
     app = FastAPI(openapi_url=None, docs_url=None, redoc_url=None)
 
     def shared(item: str = "") -> dict[str, str]:
@@ -126,12 +151,8 @@ def test_route_inventory_accepts_semantically_equivalent_default_alias():
     app.add_api_route("/resources/{item:path}", shared, methods=["GET"])
     app.add_api_route("/resources/", shared, methods=["GET"])
 
-    inventory = build_route_inventory(app)
-
-    assert [record["path"] for record in inventory] == [
-        "/resources/{item:path}",
-        "/resources/",
-    ]
+    with pytest.raises(RouterContractError, match="must follow route"):
+        build_route_inventory(app)
 
 
 def test_route_inventory_rejects_broad_parameter_before_narrow_parameter():

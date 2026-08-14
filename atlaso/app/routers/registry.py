@@ -3,9 +3,8 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from inspect import Parameter, signature
 from typing import cast
 
 from fastapi import APIRouter
@@ -14,6 +13,7 @@ from starlette.routing import compile_path
 _REGISTRY_NAME_PATTERN = re.compile(r"^[a-z][a-z0-9_]*$")
 _WEBSOCKET_METHOD = "WEBSOCKET"
 _OPAQUE_METHOD = "*"
+_ALLOWED_SHADOWS_ATTRIBUTE = "_atlaso_allowed_route_shadows"
 
 
 class RouterRegistryError(ValueError):
@@ -66,8 +66,7 @@ class _RouteDescriptor:
     """Retain the fields needed for registry validation."""
 
     identity: RouteIdentity
-    endpoint: object | None
-    configuration: tuple[object, ...]
+    allowed_shadows: frozenset[tuple[str, str]]
     is_mount: bool
 
 
@@ -108,6 +107,84 @@ def _route_sources(router: APIRouter) -> tuple[object, ...]:
     return tuple(sources)
 
 
+def allow_compatible_route_shadow(
+    router: APIRouter,
+    *,
+    earlier_path: str,
+    later_path: str,
+    methods: Sequence[str],
+) -> None:
+    """Declare one exact legacy alias whose external order must be preserved.
+
+    Args:
+        router: Router containing both legacy route records.
+        earlier_path: Earlier catch-all path that intercepts the alias.
+        later_path: Later compatibility alias path.
+        methods: Exact HTTP methods intentionally shadowed.
+
+    Raises:
+        RouterRegistryError: If either route is missing, ambiguous, or handled by another endpoint.
+    """
+    normalized_methods = tuple(sorted({method.upper() for method in methods}))
+    if not normalized_methods:
+        raise RouterRegistryError("compatible route shadow must declare at least one method")
+    sources = _route_sources(router)
+    for method in normalized_methods:
+        earlier = [
+            source
+            for source in sources
+            if (getattr(source, "path", "") or getattr(getattr(source, "original_route", source), "path", ""))
+            == earlier_path
+            and method
+            in {
+                str(candidate).upper()
+                for candidate in (
+                    getattr(source, "methods", None)
+                    or getattr(getattr(source, "original_route", source), "methods", None)
+                    or ()
+                )
+            }
+        ]
+        later = [
+            source
+            for source in sources
+            if (getattr(source, "path", "") or getattr(getattr(source, "original_route", source), "path", ""))
+            == later_path
+            and method
+            in {
+                str(candidate).upper()
+                for candidate in (
+                    getattr(source, "methods", None)
+                    or getattr(getattr(source, "original_route", source), "methods", None)
+                    or ()
+                )
+            }
+        ]
+        if len(earlier) != 1 or len(later) != 1:
+            raise RouterRegistryError(
+                "compatible route shadow declaration must resolve exactly one earlier and later route: "
+                f"{method} {earlier_path!r} -> {later_path!r}"
+            )
+        earlier_original = getattr(earlier[0], "original_route", earlier[0])
+        later_original = getattr(later[0], "original_route", later[0])
+        earlier_endpoint = getattr(earlier[0], "endpoint", None) or getattr(earlier_original, "endpoint", None)
+        later_endpoint = getattr(later[0], "endpoint", None) or getattr(later_original, "endpoint", None)
+        if earlier_endpoint is None or earlier_endpoint is not later_endpoint:
+            raise RouterRegistryError(
+                "compatible route shadow declaration requires the same endpoint: "
+                f"{method} {earlier_path!r} -> {later_path!r}"
+            )
+        declared = set(getattr(earlier_original, _ALLOWED_SHADOWS_ATTRIBUTE, ()))
+        declared.add((later_path, method))
+        setattr(earlier_original, _ALLOWED_SHADOWS_ATTRIBUTE, frozenset(declared))
+
+
+def compatible_route_shadows(source: object) -> frozenset[tuple[str, str]]:
+    """Return exact compatibility shadows declared on a route source."""
+    original = getattr(source, "original_route", source)
+    return frozenset(getattr(original, _ALLOWED_SHADOWS_ATTRIBUTE, ()))
+
+
 def _route_descriptors(contribution: RouterContribution) -> tuple[_RouteDescriptor, ...]:
     """Return externally matchable identities for one contribution.
 
@@ -135,51 +212,16 @@ def _route_descriptors(contribution: RouterContribution) -> tuple[_RouteDescript
             route_methods = (_WEBSOCKET_METHOD,)
         else:
             route_methods = (_OPAQUE_METHOD,)
-        endpoint = getattr(source, "endpoint", None) or getattr(original, "endpoint", None)
+        allowed_shadows = compatible_route_shadows(source)
         descriptors.extend(
             _RouteDescriptor(
                 identity=RouteIdentity(plane=contribution.plane, path=path, method=method),
-                endpoint=endpoint,
-                configuration=_route_configuration(source, original),
+                allowed_shadows=allowed_shadows,
                 is_mount=not methods and not type(original).__name__.endswith("WebSocketRoute"),
             )
             for method in route_methods
         )
     return tuple(descriptors)
-
-
-def _dependency_signature(dependant: object) -> tuple[object, ...]:
-    """Return a recursive dependency signature for route comparison."""
-    children = getattr(dependant, "dependencies", ())
-    return (
-        getattr(dependant, "call", None),
-        getattr(dependant, "name", None),
-        getattr(dependant, "use_cache", None),
-        tuple(getattr(dependant, "oauth_scopes", ()) or ()),
-        tuple(_dependency_signature(child) for child in children),
-    )
-
-
-def _route_configuration(source: object, original: object) -> tuple[object, ...]:
-    """Return dispatch- and response-relevant route configuration."""
-    attributes = (
-        "status_code",
-        "response_class",
-        "response_model",
-        "response_model_include",
-        "response_model_exclude",
-        "response_model_by_alias",
-        "response_model_exclude_unset",
-        "response_model_exclude_defaults",
-        "response_model_exclude_none",
-        "responses",
-        "deprecated",
-        "include_in_schema",
-        "callbacks",
-    )
-    values = tuple(getattr(source, name, getattr(original, name, None)) for name in attributes)
-    dependant = getattr(source, "dependant", None) or getattr(original, "dependant", None)
-    return (*values, _dependency_signature(dependant))
 
 
 def _representative_route_path(path: str) -> str | None:
@@ -224,42 +266,6 @@ def _matches_later_route(path: str, candidate: str, *, is_mount: bool) -> bool:
     return path_regex.fullmatch(concrete_candidate) is not None
 
 
-def _is_equivalent_default_alias(
-    descriptor: _RouteDescriptor,
-    later: _RouteDescriptor,
-) -> bool:
-    """Return whether a fixed alias is semantically identical to its fallback."""
-    path = descriptor.identity.path
-    later_path = later.identity.path
-    if (
-        descriptor.is_mount
-        or "{" in later_path
-        or descriptor.endpoint is None
-        or descriptor.endpoint is not later.endpoint
-        or descriptor.configuration != later.configuration
-    ):
-        return False
-    path_regex, _, convertors = compile_path(path)
-    match = path_regex.fullmatch(later_path)
-    if match is None:
-        return False
-    try:
-        parameters = signature(cast(Callable[..., object], descriptor.endpoint)).parameters
-    except (TypeError, ValueError):
-        return False
-    for name, raw_value in match.groupdict().items():
-        parameter = parameters.get(name)
-        if parameter is None or parameter.default is Parameter.empty:
-            return False
-        try:
-            value = convertors[name].convert(raw_value)
-        except (KeyError, ValueError):
-            return False
-        if value != parameter.default:
-            return False
-    return True
-
-
 def _validate_catch_all_order(descriptors: Sequence[_RouteDescriptor]) -> None:
     """Reject a parameterized route that shadows a later fixed peer.
 
@@ -269,12 +275,20 @@ def _validate_catch_all_order(descriptors: Sequence[_RouteDescriptor]) -> None:
     Raises:
         RouterRegistryError: If an earlier parameterized route matches a later fixed route handled elsewhere.
     """
+    declared = {
+        (descriptor.identity, later_path, method)
+        for descriptor in descriptors
+        for later_path, method in descriptor.allowed_shadows
+        if method == descriptor.identity.method
+    }
+    used: set[tuple[RouteIdentity, str, str]] = set()
     for index, descriptor in enumerate(descriptors):
         identity = descriptor.identity
         if not descriptor.is_mount and "{" not in identity.path:
             continue
         for later in descriptors[index + 1 :]:
             later_identity = later.identity
+            allowed = (later_identity.path, later_identity.method) in descriptor.allowed_shadows
             if (
                 later_identity.plane != identity.plane
                 or (
@@ -287,14 +301,26 @@ def _validate_catch_all_order(descriptors: Sequence[_RouteDescriptor]) -> None:
                     later_identity.path,
                     is_mount=descriptor.is_mount,
                 )
-                or _is_equivalent_default_alias(descriptor, later)
             ):
+                continue
+            if allowed:
+                used.add((identity, later_identity.path, later_identity.method))
                 continue
             raise RouterRegistryError(
                 "parameterized route "
                 f"{identity.method} {identity.path!r} in plane {identity.plane!r} "
                 f"must follow route {later_identity.path!r}"
             )
+    unused = declared - used
+    if unused:
+        identity, later_path, method = sorted(
+            unused,
+            key=lambda item: (item[0].plane, item[0].path, item[0].method, item[1], item[2]),
+        )[0]
+        raise RouterRegistryError(
+            "unused compatible route shadow declaration "
+            f"{method} {identity.path!r} -> {later_path!r} in plane {identity.plane!r}"
+        )
 
 
 class DomainRouterRegistry:
