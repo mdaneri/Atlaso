@@ -145,21 +145,46 @@ def _route_descriptors(contribution: RouterContribution) -> tuple[_RouteDescript
     return tuple(descriptors)
 
 
-def _matches_later_fixed_path(path: str, candidate: str, *, is_mount: bool) -> bool:
-    """Return whether an earlier fallback route matches a later fixed path.
+def _representative_route_path(path: str) -> str | None:
+    """Return one concrete path that exercises each standard path convertor."""
+    _, path_format, convertors = compile_path(path)
+    samples = {
+        "FloatConvertor": "1.5",
+        "IntegerConvertor": "1",
+        "PathConvertor": "value/path",
+        "StringConvertor": "value",
+        "UUIDConvertor": "00000000-0000-0000-0000-000000000000",
+    }
+    values: dict[str, str] = {}
+    for name, convertor in convertors.items():
+        value = samples.get(type(convertor).__name__)
+        if value is None:
+            return None
+        values[name] = value
+    return path_format.format(**values)
+
+
+def _matches_later_route(path: str, candidate: str, *, is_mount: bool) -> bool:
+    """Return whether an earlier fallback route matches a later route.
 
     Args:
         path: Earlier parameterized or mount path.
-        candidate: Later fixed route path.
+        candidate: Later fixed or parameterized route path.
         is_mount: Whether the earlier route owns an entire mounted subtree.
 
     Returns:
         Whether the earlier route would intercept the later fixed path.
     """
     if is_mount:
-        return candidate.startswith(f"{path.rstrip('/')}/")
+        concrete_candidate = _representative_route_path(candidate)
+        if concrete_candidate is None:
+            concrete_candidate = candidate
+        return concrete_candidate.startswith(f"{path.rstrip('/')}/")
+    concrete_candidate = _representative_route_path(candidate)
+    if concrete_candidate is None:
+        return False
     path_regex, _, _ = compile_path(path)
-    return path_regex.fullmatch(candidate) is not None
+    return path_regex.fullmatch(concrete_candidate) is not None
 
 
 def _validate_catch_all_order(descriptors: Sequence[_RouteDescriptor]) -> None:
@@ -184,9 +209,8 @@ def _validate_catch_all_order(descriptors: Sequence[_RouteDescriptor]) -> None:
                     and identity.method != _OPAQUE_METHOD
                     and later_identity.method != _OPAQUE_METHOD
                 )
-                or "{" in later_identity.path
                 or (descriptor.endpoint is not None and descriptor.endpoint is later.endpoint)
-                or not _matches_later_fixed_path(
+                or not _matches_later_route(
                     identity.path,
                     later_identity.path,
                     is_mount=descriptor.is_mount,
@@ -196,7 +220,7 @@ def _validate_catch_all_order(descriptors: Sequence[_RouteDescriptor]) -> None:
             raise RouterRegistryError(
                 "parameterized route "
                 f"{identity.method} {identity.path!r} in plane {identity.plane!r} "
-                f"must follow fixed route {later_identity.path!r}"
+                f"must follow route {later_identity.path!r}"
             )
 
 

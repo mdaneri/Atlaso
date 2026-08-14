@@ -83,7 +83,7 @@ def test_route_inventory_rejects_same_named_shadow_handlers():
         """Return the synthetic fixed response."""
         return {"handler": "fixed"}
 
-    with pytest.raises(RouterContractError, match="must follow fixed route"):
+    with pytest.raises(RouterContractError, match="must follow route"):
         build_route_inventory(app)
 
 
@@ -98,7 +98,25 @@ def test_route_inventory_rejects_mount_before_fixed_subtree_route():
         """Return the synthetic fixed response beneath the mount."""
         return {"status": "ok"}
 
-    with pytest.raises(RouterContractError, match="must follow fixed route"):
+    with pytest.raises(RouterContractError, match="must follow route"):
+        build_route_inventory(app)
+
+
+def test_route_inventory_rejects_broad_parameter_before_narrow_parameter():
+    """Reject a broad path convertor that shadows a narrower peer."""
+    app = FastAPI(openapi_url=None, docs_url=None, redoc_url=None)
+
+    @app.get("/resources/{value:path}")
+    def broad() -> dict[str, str]:
+        """Return the synthetic broad response."""
+        return {"handler": "broad"}
+
+    @app.get("/resources/{resource_id:int}")
+    def narrow() -> dict[str, str]:
+        """Return the synthetic narrow response."""
+        return {"handler": "narrow"}
+
+    with pytest.raises(RouterContractError, match="must follow route"):
         build_route_inventory(app)
 
 

@@ -106,7 +106,7 @@ def test_registry_rejects_catch_all_before_fixed_peer():
     catch_all = _router("/resources/{item:path}", endpoint_name="catch_all")
     fixed = _router("/resources/status", endpoint_name="fixed")
 
-    with pytest.raises(RouterRegistryError, match="must follow fixed route"):
+    with pytest.raises(RouterRegistryError, match="must follow route"):
         registry.register(
             "bad_order",
             (
@@ -128,3 +128,23 @@ def test_registry_accepts_fixed_route_before_catch_all():
     )
 
     assert registry.domains == ("ordered",)
+
+
+def test_registry_rejects_broad_parameter_before_narrow_parameter():
+    """Reject a broad path convertor that shadows a narrower peer."""
+    registry = DomainRouterRegistry("test")
+
+    with pytest.raises(RouterRegistryError, match="must follow route"):
+        registry.register(
+            "bad_parameter_order",
+            (
+                RouterContribution(
+                    "management",
+                    _router("/resources/{value:path}", endpoint_name="broad"),
+                ),
+                RouterContribution(
+                    "management",
+                    _router("/resources/{resource_id:int}", endpoint_name="narrow"),
+                ),
+            ),
+        )

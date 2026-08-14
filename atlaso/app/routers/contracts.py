@@ -173,21 +173,46 @@ def _methods_overlap(first: Sequence[object], second: Sequence[object]) -> bool:
     return _OPAQUE_METHOD in first or _OPAQUE_METHOD in second or bool(set(first).intersection(second))
 
 
-def _matches_later_fixed_path(path: str, candidate: str, *, is_mount: bool) -> bool:
-    """Return whether an earlier fallback route matches a later fixed path.
+def _representative_route_path(path: str) -> str | None:
+    """Return one concrete path that exercises each standard path convertor."""
+    _, path_format, convertors = compile_path(path)
+    samples = {
+        "FloatConvertor": "1.5",
+        "IntegerConvertor": "1",
+        "PathConvertor": "value/path",
+        "StringConvertor": "value",
+        "UUIDConvertor": "00000000-0000-0000-0000-000000000000",
+    }
+    values: dict[str, str] = {}
+    for name, convertor in convertors.items():
+        value = samples.get(type(convertor).__name__)
+        if value is None:
+            return None
+        values[name] = value
+    return path_format.format(**values)
+
+
+def _matches_later_route(path: str, candidate: str, *, is_mount: bool) -> bool:
+    """Return whether an earlier fallback route matches a later route.
 
     Args:
         path: Earlier parameterized or mount path.
-        candidate: Later fixed route path.
+        candidate: Later fixed or parameterized route path.
         is_mount: Whether the earlier route owns an entire mounted subtree.
 
     Returns:
         Whether the earlier route would intercept the later fixed path.
     """
     if is_mount:
-        return candidate.startswith(f"{path.rstrip('/')}/")
+        concrete_candidate = _representative_route_path(candidate)
+        if concrete_candidate is None:
+            concrete_candidate = candidate
+        return concrete_candidate.startswith(f"{path.rstrip('/')}/")
+    concrete_candidate = _representative_route_path(candidate)
+    if concrete_candidate is None:
+        return False
     path_regex, _, _ = compile_path(path)
-    return path_regex.fullmatch(candidate) is not None
+    return path_regex.fullmatch(concrete_candidate) is not None
 
 
 def _validate_catch_all_order(routes: Sequence[_EffectiveRoute]) -> None:
@@ -197,7 +222,7 @@ def _validate_catch_all_order(routes: Sequence[_EffectiveRoute]) -> None:
         routes: Effective routes in application order with runtime endpoint identity.
 
     Raises:
-        RouterContractError: If a parameterized route shadows a later fixed route with another handler.
+        RouterContractError: If a parameterized route shadows a later route with another handler.
     """
     for index, route in enumerate(routes):
         record = route.record
@@ -217,15 +242,14 @@ def _validate_catch_all_order(routes: Sequence[_EffectiveRoute]) -> None:
             if (
                 later.get("plane") != plane
                 or not isinstance(later_path, str)
-                or "{" in later_path
                 or not isinstance(later_methods, list)
                 or not _methods_overlap(methods, later_methods)
-                or not _matches_later_fixed_path(path, later_path, is_mount=is_mount)
+                or not _matches_later_route(path, later_path, is_mount=is_mount)
                 or (route.endpoint is not None and route.endpoint is later_route.endpoint)
             ):
                 continue
             raise RouterContractError(
-                f"parameterized route {path!r} at order {index} must follow fixed route {later_path!r}"
+                f"parameterized route {path!r} at order {index} must follow route {later_path!r}"
             )
 
 
