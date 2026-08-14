@@ -68,12 +68,21 @@
               ("Backup / Restore", management_ui_path("/backup-restore"), "admin:all")
             ])
           ] %}
+          {% set nav_link_aliases = {
+            management_ui_path("/certificate-authority"): [management_ui_path("/ca/requests")]
+          } %}
           {% for group_key, group_label, links in nav_groups %}
             {% set group = namespace(authorized_links=[], active=false) %}
             {% for label, href, scope in links %}
               {% if identity and identity.can(scope) %}
-                {% set group.authorized_links = group.authorized_links + [(label, href)] %}
-                {% if request.url.path == href %}{% set group.active = true %}{% endif %}
+                {% set link = namespace(active=request.url.path == href or request.url.path.startswith(href ~ "/")) %}
+                {% for alias in nav_link_aliases.get(href, []) %}
+                  {% if request.url.path == alias or request.url.path.startswith(alias ~ "/") %}
+                    {% set link.active = true %}
+                  {% endif %}
+                {% endfor %}
+                {% set group.authorized_links = group.authorized_links + [(label, href, link.active)] %}
+                {% if link.active %}{% set group.active = true %}{% endif %}
               {% endif %}
             {% endfor %}
             {% if group.authorized_links %}
@@ -98,8 +107,8 @@
                   aria-labelledby="primary-nav-{{ group_key }}-toggle"
                   data-primary-nav-links
                 >
-                  {% for label, href in group.authorized_links %}
-                    <a class="nav-link {% if request.url.path == href %}active{% endif %}" href="{{ href }}"{% if request.url.path == href %} aria-current="page"{% endif %}>{{ label }}</a>
+                  {% for label, href, active in group.authorized_links %}
+                    <a class="nav-link {% if active %}active{% endif %}" href="{{ href }}"{% if active %} aria-current="page"{% endif %}>{{ label }}</a>
                   {% endfor %}
                 </div>
               </section>

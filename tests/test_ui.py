@@ -1972,6 +1972,27 @@ def test_primary_navigation_omits_empty_permission_filtered_groups(client):
     assert 'primary-nav-core-services' not in nav
 
 
+def test_primary_navigation_maps_secondary_routes_to_their_parent_link(client):
+    """Verify that secondary management routes reveal their owning navigation group.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
+    login(client)
+
+    ca_response = client.get("/ui/management/ca/requests")
+    assert ca_response.status_code == 200
+    ca_nav = ca_response.text.split('<nav class="nav-stack"', 1)[1].split("</nav>", 1)[0]
+    assert '<section class="nav-section active" data-primary-nav-group data-nav-group-key="identity-trust">' in ca_nav
+    assert 'href="/ui/management/certificate-authority" aria-current="page"' in ca_nav
+
+    service_response = client.get("/ui/management/services/routing/logs")
+    assert service_response.status_code == 200
+    service_nav = service_response.text.split('<nav class="nav-stack"', 1)[1].split("</nav>", 1)[0]
+    assert '<section class="nav-section active" data-primary-nav-group data-nav-group-key="operations">' in service_nav
+    assert 'href="/ui/management/services" aria-current="page"' in service_nav
+
+
 def test_dns_settings_derives_listen_addresses_from_selected_interface(client):
     """Verify that dns settings derives listen addresses from selected interface.
 
