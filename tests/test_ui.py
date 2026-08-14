@@ -1993,6 +1993,32 @@ def test_primary_navigation_maps_secondary_routes_to_their_parent_link(client):
     assert 'href="/ui/management/services" aria-current="page"' in service_nav
 
 
+def test_primary_navigation_activates_ca_group_for_certificate_operator(client):
+    """Verify that certificate operators see CA Requests in its active navigation group.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
+    from sqlalchemy import select
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Role, User
+    from atlaso.app.security import roles_to_json
+
+    login(client)
+    with SessionLocal() as db:
+        admin = db.execute(select(User).where(User.username == "admin")).scalar_one()
+        admin.role = Role.CERTIFICATE_OPERATOR.value
+        admin.roles_json = roles_to_json([Role.CERTIFICATE_OPERATOR.value])
+        db.commit()
+
+    response = client.get("/ui/management/ca/requests")
+    assert response.status_code == 200
+    nav = response.text.split('<nav class="nav-stack"', 1)[1].split("</nav>", 1)[0]
+    assert '<section class="nav-section active" data-primary-nav-group data-nav-group-key="identity-trust">' in nav
+    assert 'href="/ui/management/certificate-authority"' not in nav
+
+
 def test_dns_settings_derives_listen_addresses_from_selected_interface(client):
     """Verify that dns settings derives listen addresses from selected interface.
 

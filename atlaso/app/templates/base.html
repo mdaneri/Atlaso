@@ -71,8 +71,16 @@
           {% set nav_link_aliases = {
             management_ui_path("/certificate-authority"): [management_ui_path("/ca/requests")]
           } %}
+          {% set nav_group_aliases = {
+            "identity-trust": [(management_ui_path("/ca/requests"), "write:ca-requests")]
+          } %}
           {% for group_key, group_label, links in nav_groups %}
             {% set group = namespace(authorized_links=[], active=false) %}
+            {% for alias, scope in nav_group_aliases.get(group_key, []) %}
+              {% if identity and identity.can(scope) and (request.url.path == alias or request.url.path.startswith(alias ~ "/")) %}
+                {% set group.active = true %}
+              {% endif %}
+            {% endfor %}
             {% for label, href, scope in links %}
               {% if identity and identity.can(scope) %}
                 {% set link = namespace(active=request.url.path == href or request.url.path.startswith(href ~ "/")) %}
