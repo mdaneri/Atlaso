@@ -35,6 +35,41 @@ def sha256(path: str) -> str:
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
 
+def test_data_disk_policies_remain_lf_in_windows_checkouts(tmp_path: Path) -> None:
+    """Materialize shell-sourced image policies with Windows conversion enabled.
+
+    Args:
+        tmp_path: Pytest-provided isolated checkout destination.
+    """
+    policies = (
+        Path("image/hyperv/data-disks.conf"),
+        Path("image/vmware-workstation/data-disks.conf"),
+    )
+    checkout = tmp_path / "checkout"
+    checkout.mkdir()
+    completed = subprocess.run(
+        [
+            "git",
+            "-c",
+            "core.autocrlf=true",
+            "checkout-index",
+            "--force",
+            f"--prefix={checkout.as_posix()}/",
+            "--",
+            *(path.as_posix() for path in policies),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    for policy in policies:
+        materialized = (checkout / policy).read_bytes()
+        assert materialized.endswith(b"\n")
+        assert b"\r" not in materialized
+
+
 def test_photon_image_installs_fixed_size_atlaso_grub_branding():
     """Verify that photon image installs fixed size atlaso grub branding."""
     background = Path("image/common/boot/grub/atlaso.png").read_bytes()

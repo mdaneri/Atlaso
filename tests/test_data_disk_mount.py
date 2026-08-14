@@ -63,6 +63,7 @@ def _run_mount_script(
     mount_options: dict[str, str] | None = None,
     fstab: str = "",
     esx_allowlist: str = "",
+    policy_source: Path | None = None,
 ) -> tuple[subprocess.CompletedProcess[str], list[list[str]]]:
     """Execute the appliance mount script against fake block-device commands.
 
@@ -76,6 +77,7 @@ def _run_mount_script(
         mount_options: Fake mount options keyed by mountpoint.
         fstab: Initial fake fstab content.
         esx_allowlist: Initial root-owned managed ESX Storage disk claims.
+        policy_source: Optional checked-in platform policy copied verbatim for validation.
 
     Returns:
         Completed shell process and recorded ``mkfs.ext4`` argument lists.
@@ -315,18 +317,21 @@ def _run_mount_script(
         (fake_bin / command).symlink_to(fake_command)
 
     policy_path = tmp_path / "data-disks.conf"
-    policy_path.write_text(
-        "\n".join(
-            [
-                f"ATLASO_DATA_DISK_SIZE_BYTES={EXPECTED_SIZE}",
-                f"ATLASO_DEPOT_SCSI_TUPLE={depot_tuple}",
-                f"ATLASO_BACKUP_SCSI_TUPLE={backup_tuple}",
-                f"ATLASO_SYSTEM_SCSI_TUPLE={'0:1:0' if depot_tuple == '0:2:0' else ''}",
-                "",
-            ]
-        ),
-        encoding="utf-8",
-    )
+    if policy_source is None:
+        policy_path.write_text(
+            "\n".join(
+                [
+                    f"ATLASO_DATA_DISK_SIZE_BYTES={EXPECTED_SIZE}",
+                    f"ATLASO_DEPOT_SCSI_TUPLE={depot_tuple}",
+                    f"ATLASO_BACKUP_SCSI_TUPLE={backup_tuple}",
+                    f"ATLASO_SYSTEM_SCSI_TUPLE={'0:1:0' if depot_tuple == '0:2:0' else ''}",
+                    "",
+                ]
+            ),
+            encoding="utf-8",
+        )
+    else:
+        shutil.copyfile(policy_source, policy_path)
     env = os.environ.copy()
     env.update(
         {
@@ -422,6 +427,48 @@ def test_hyperv_first_boot_uses_fixed_controller_locations(tmp_path: Path):
         disks,
         depot_tuple="0:0:1",
         backup_tuple="0:0:2",
+    )
+
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    assert len(calls) == 2
+
+
+@pytest.mark.parametrize("platform", ("hyperv", "vmware-workstation"))
+def test_checked_in_platform_policy_passes_first_boot_validation(
+    tmp_path: Path, platform: str
+) -> None:
+    """Run each copied platform policy through the real first-boot parser.
+
+    Args:
+        tmp_path: Pytest-provided isolated filesystem root.
+        platform: Supported image platform whose policy is under test.
+    """
+    if platform == "hyperv":
+        dev = tmp_path / "dev"
+        disks = [
+            _disk(
+                dev / "sda",
+                "0:0:0",
+                size=64 * 1024**3,
+                filesystem="ext4",
+                label="PHOTON_ROOT",
+            ),
+            _disk(dev / "sdb", "0:0:1"),
+            _disk(dev / "sdc", "0:0:2"),
+        ]
+        depot_tuple = "0:0:1"
+        backup_tuple = "0:0:2"
+    else:
+        disks = _vmware_disks(tmp_path)
+        depot_tuple = "0:2:0"
+        backup_tuple = "0:3:0"
+
+    completed, calls = _run_mount_script(
+        tmp_path,
+        disks,
+        depot_tuple=depot_tuple,
+        backup_tuple=backup_tuple,
+        policy_source=Path(f"image/{platform}/data-disks.conf").resolve(),
     )
 
     assert completed.returncode == 0, completed.stdout + completed.stderr

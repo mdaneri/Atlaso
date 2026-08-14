@@ -114,6 +114,19 @@ this previous-updater compatibility step; image provisioning installs and valida
 The bridge records root-owned one-time completion under `/etc/atlaso`; later control-plane starts use the permanent
 data-disk systemd dependency without repeating asset backup, identity reload, migration, or direct preparation.
 
+The Hyper-V and VMware `data-disks.conf` policies are shell-sourced build inputs. Atlaso declares both files as LF-only
+in `.gitattributes`, including for supported Windows checkouts with `core.autocrlf=true`, and repository tests
+materialize that checkout mode before passing each copied policy through the first-boot parser. Verify the checkout
+contract from PowerShell with:
+
+```powershell
+git check-attr text eol -- image/hyperv/data-disks.conf image/vmware-workstation/data-disks.conf
+git ls-files --eol -- image/hyperv/data-disks.conf image/vmware-workstation/data-disks.conf
+```
+
+Both paths must report `text: set`, `eol: lf`, and `w/lf`. Do not normalize values inside the runtime parser: its strict
+capacity and SCSI-identity rejection remains the fail-closed boundary for malformed installed policy.
+
 Atlaso writes operational events to `/var/log/atlaso/atlaso.log`. Audit events, desired-state edits, and appliance apply
 submissions are mirrored there with sensitive values redacted. The Settings page controls local file verbosity and can
 also forward the same operational events to an external syslog receiver.
