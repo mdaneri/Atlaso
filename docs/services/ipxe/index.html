@@ -5254,7 +5254,10 @@ if a background request fails, Atlaso keeps the last received host list and
 shows a recoverable refresh message.
 Double-click a row or focus it and press Enter to open its semantic hardware
 report. A compact history selector switches among retained reports without
-reloading the page. The selected report covers all available system, firmware,
+reloading the page. If several hosts are opened while details or history are
+still loading, only the latest selection can update the dialog, report history,
+download link, or error status; slower responses for older selections are
+ignored. The selected report covers all available system, firmware,
 CPU, DIMM, NIC, disk/controller, PCI, and USB fields; legacy v1 fields that were
 never submitted are labeled <strong>Not reported</strong> instead of being inferred. Report
 values are inserted as text, not markup. An explicit empty address list in a v2
