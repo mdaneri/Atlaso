@@ -225,7 +225,12 @@ def _validate_catch_all_order(routes: Sequence[_EffectiveRoute]) -> None:
                 if (later_path, method) in route.allowed_shadows
             }
             try:
-                paths_overlap = route_paths_overlap(path, later_path, is_mount=is_mount)
+                paths_overlap = route_paths_overlap(
+                    path,
+                    later_path,
+                    is_mount=is_mount,
+                    candidate_is_mount=later.get("kind") == "mount",
+                )
             except RouterRegistryError as exc:
                 raise RouterContractError(str(exc)) from exc
             if not overlapping_methods or not paths_overlap:

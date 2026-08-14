@@ -508,19 +508,26 @@ def _path_automata_overlap(first: _PathAutomaton, second: _PathAutomaton) -> boo
     return False
 
 
-def route_paths_overlap(path: str, candidate: str, *, is_mount: bool) -> bool:
+def route_paths_overlap(
+    path: str,
+    candidate: str,
+    *,
+    is_mount: bool,
+    candidate_is_mount: bool = False,
+) -> bool:
     """Return whether an earlier fallback route matches a later route.
 
     Args:
         path: Earlier parameterized or mount path.
         candidate: Later fixed or parameterized route path.
         is_mount: Whether the earlier route owns an entire mounted subtree.
+        candidate_is_mount: Whether the later route owns an entire mounted subtree.
 
     Returns:
         Whether the earlier route would intercept the later fixed path.
     """
     earlier = _path_automaton(path, is_mount=is_mount)
-    later = _path_automaton(candidate)
+    later = _path_automaton(candidate, is_mount=candidate_is_mount)
     return _path_automata_overlap(earlier, later)
 
 
@@ -557,6 +564,7 @@ def _validate_catch_all_order(descriptors: Sequence[_RouteDescriptor]) -> None:
                     identity.path,
                     later_identity.path,
                     is_mount=descriptor.is_mount,
+                    candidate_is_mount=later.is_mount,
                 )
             ):
                 continue

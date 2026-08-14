@@ -173,6 +173,39 @@ def test_route_inventory_normalizes_root_mount_and_rejects_later_fixed_route():
         build_route_inventory(app)
 
 
+def test_route_inventory_models_later_mount_as_subtree_language():
+    """Compare parameterized routes with the later mount's subtree semantics."""
+    nested = FastAPI(openapi_url=None, docs_url=None, redoc_url=None)
+
+    @nested.get("/assets/{name:str}")
+    def asset(name: str) -> dict[str, str]:
+        return {"name": name}
+
+    nested.mount(
+        "/assets/site",
+        FastAPI(openapi_url=None, docs_url=None, redoc_url=None),
+        name="site",
+    )
+    assert [record["path"] for record in build_route_inventory(nested)] == [
+        "/assets/{name:str}",
+        "/assets/site",
+    ]
+
+    root = FastAPI(openapi_url=None, docs_url=None, redoc_url=None)
+
+    @root.get("/{name:str}")
+    def named(name: str) -> dict[str, str]:
+        return {"name": name}
+
+    root.mount(
+        "/",
+        FastAPI(openapi_url=None, docs_url=None, redoc_url=None),
+        name="root",
+    )
+    with pytest.raises(RouterContractError, match="must follow route"):
+        build_route_inventory(root)
+
+
 def test_route_inventory_rejects_same_endpoint_shadowing():
     """Reject shadowing even when route records reference the same callable."""
     app = FastAPI(openapi_url=None, docs_url=None, redoc_url=None)

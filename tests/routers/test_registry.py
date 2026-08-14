@@ -210,6 +210,47 @@ def test_registry_normalizes_root_mount_and_rejects_later_fixed_route():
     )
 
 
+def test_registry_models_later_mount_as_subtree_language():
+    """Compare parameterized routes with the later mount's subtree semantics."""
+    registry = DomainRouterRegistry("test")
+    nested_mount = APIRouter()
+    nested_mount.mount(
+        "/assets/site",
+        FastAPI(openapi_url=None, docs_url=None, redoc_url=None),
+        name="site",
+    )
+
+    registry.register(
+        "nested_mount",
+        (
+            RouterContribution(
+                "protocol",
+                _router("/assets/{name:str}", endpoint_name="asset"),
+            ),
+            RouterContribution("protocol", nested_mount),
+        ),
+    )
+
+    root_registry = DomainRouterRegistry("root_test")
+    root_mount = APIRouter()
+    root_mount.mount(
+        "/",
+        FastAPI(openapi_url=None, docs_url=None, redoc_url=None),
+        name="root",
+    )
+    with pytest.raises(RouterRegistryError, match="must follow route"):
+        root_registry.register(
+            "root_mount",
+            (
+                RouterContribution(
+                    "protocol",
+                    _router("/{name:str}", endpoint_name="named"),
+                ),
+                RouterContribution("protocol", root_mount),
+            ),
+        )
+
+
 def test_registry_accepts_fixed_route_before_catch_all():
     """Accept fixed peers before their parameterized fallback."""
     registry = DomainRouterRegistry("test")
