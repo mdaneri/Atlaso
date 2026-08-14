@@ -31,10 +31,31 @@ These lifecycle labels are applied as needed:
 `duplicate`, `invalid`, `question`, and `wontfix` describe resolution or discussion state and do not replace a type
 label on active work.
 
+### Private vulnerability remediation
+
+The private remediation workflow in [SECURITY.md](SECURITY.md) is the only exception to the public issue and
+`Closes #<issue>` requirements. A validated sensitive vulnerability uses its draft repository security advisory as the
+private tracking record and its temporary private fork for the fix branch and pull request. Keep the advisory reference,
+finding details, and patch discussion on private surfaces. All other delivery, documentation, version, validation, and
+review requirements still apply unless `SECURITY.md` defines a security-specific replacement.
+
+Temporary private forks do not provide the ordinary issue, integration, status-check, or reliable pull-request
+metadata surfaces. Record required validation locally and privately. Never merge a temporary-fork pull request with the
+ordinary pull-request merge controls; an authorized advisory administrator merges it through the corresponding draft
+advisory as described in `SECURITY.md`.
+
+For temporary-private-fork remediation, advisory-side maintainer review and recorded local validation replace the
+ordinary Codex review, `@codex review`, exact-head CI/status, comment, label, and review-thread follow-through below.
+Do not request, wait for, or claim unavailable integrations. Run the complete Python test suite locally when the change
+affects Python or `SECURITY.md` otherwise requires it; this overrides the ordinary local full-suite prohibition, and
+missing full-suite evidence blocks advisory merge.
+
 ## Development workflow
 
-1. Fork the repository or create a branch from current `main`.
-2. Create or identify the labeled issue, then describe the intended approach.
+1. Fork the repository or create a branch from current `main`. For private vulnerability remediation, use only the
+   advisory's temporary private fork and follow `SECURITY.md`.
+2. Create or identify the labeled issue, then describe the intended approach. For private vulnerability remediation,
+   identify the draft advisory only on private surfaces instead.
 3. Make the smallest focused change and update relevant documentation in the same pull request.
 4. Run focused tests, `git diff --check`, and the applicable repository validation checks. GitHub CI owns the complete
    Python test suite. Python changes must also pass the
@@ -43,6 +64,8 @@ label on active work.
    the pull-request version policy. Version sources are discovered independently in the base and target checkouts so an
    intentional package or module rename can still be validated.
 6. Open a ready-for-review pull request using the template, include `Closes #<issue>`, and provide validation evidence.
+   A temporary-fork security pull request instead records its advisory reference and local validation only on private
+   surfaces.
 
 ### Automated pull-request follow-through
 

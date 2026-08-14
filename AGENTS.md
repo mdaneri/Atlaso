@@ -6,7 +6,8 @@ Before planning implementation or changing repository or external state, read th
 [CONTRIBUTING.md](CONTRIBUTING.md), [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md), and [SECURITY.md](SECURITY.md). Treat all
 four documents as mandatory instructions. In the first progress update, confirm that the policy files were read,
 classify the work as `bug`, `enhancement`, `documentation`, or security-sensitive work, and identify the linked GitHub
-issue.
+issue. For private vulnerability remediation, confirm that a private advisory is linked without disclosing its
+identifier or finding details on public surfaces.
 
 Repeat this gate whenever the repository, worktree, or working directory changes, or when a policy file changes. A
 delegating agent must include the gate in every delegated prompt and verify completion before using delegated work. Stop
@@ -21,6 +22,9 @@ GitHub issue to rename the current task to `Short description · Issue #<issue>`
 request, rename it again to `Short description · Issue #<issue> · PR #<pr>`. Keep the short description concise and
 stable, and omit only a segment whose identifier does not exist yet. When one task spans multiple items, list every
 identifier in its segment, for example `Short description · Issues #123, #124 · PRs #456, #457`.
+
+For private vulnerability remediation, use only a sanitized short description in the task title. Do not place advisory
+identifiers, affected features, or patch details in titles.
 
 ### Unsupported title controls
 
@@ -50,6 +54,22 @@ constructors outside the shared foundation are forbidden.
 [CONTRIBUTING.md](CONTRIBUTING.md) is canonical. Every change requires a linked GitHub issue with exactly one type
 label, documentation in the same change, the next patch version, validation, and a pull request containing
 `Closes #<issue>`. Never commit directly to `main`.
+
+The private vulnerability remediation workflow in [SECURITY.md](SECURITY.md) is the only exception to the public issue,
+repository branch, and `Closes #<issue>` requirements. Use the draft advisory as the private tracking record, push the
+fix branch only to its temporary private fork, and keep all advisory references and vulnerability details private. The
+remaining documentation, version, local validation, and review requirements still apply.
+
+Temporary private forks have no integration or status-check coverage and may not support ordinary issue, label, or
+comment workflows. Record all required validation privately and locally. Never use ordinary pull-request merge controls
+or `gh pr merge`; only an explicitly authorized advisory administrator may merge through the corresponding draft
+advisory workflow.
+
+For temporary-private-fork remediation, the advisory-side maintainer review and recorded local validation required by
+`SECURITY.md` replace the Codex review, `@codex review`, exact-head CI/status, comment, label, and review-thread
+follow-through requirements below. Do not request, wait for, or claim unavailable integrations. Run the complete Python
+test suite locally when required by `SECURITY.md`; this overrides the ordinary prohibition below, and missing full-suite
+evidence blocks advisory merge.
 
 GitHub-managed version-update pull requests from `.github/dependabot.yml` are the only exception to the pre-existing
 issue and per-update documentation requirements. They still require the `enhancement` and `dependencies` labels, the
