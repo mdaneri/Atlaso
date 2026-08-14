@@ -138,6 +138,25 @@ def test_route_inventory_accepts_fixed_route_at_mount_prefix():
     ]
 
 
+def test_route_inventory_normalizes_root_mount_and_rejects_later_fixed_route():
+    """Model Starlette's empty internal root-mount path as `/`."""
+    app = FastAPI(openapi_url=None, docs_url=None, redoc_url=None)
+    mounted = FastAPI(openapi_url=None, docs_url=None, redoc_url=None)
+    app.mount("/", mounted, name="root")
+
+    inventory = build_route_inventory(app)
+    assert [(record["path"], record["kind"]) for record in inventory] == [
+        ("/", "mount"),
+    ]
+
+    @app.get("/health")
+    def fixed() -> dict[str, str]:
+        return {"status": "ok"}
+
+    with pytest.raises(RouterContractError, match="must follow route"):
+        build_route_inventory(app)
+
+
 def test_route_inventory_rejects_same_endpoint_shadowing():
     """Reject shadowing even when route records reference the same callable."""
     app = FastAPI(openapi_url=None, docs_url=None, redoc_url=None)

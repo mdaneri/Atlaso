@@ -86,15 +86,18 @@ def _effective_route(source: object, *, order: int) -> _EffectiveRoute:
         RouterContractError: If the route lacks a stable absolute path.
     """
     original = getattr(source, "original_route", source)
+    methods = getattr(source, "methods", None) or getattr(original, "methods", None)
+    is_websocket = type(original).__name__.endswith("WebSocketRoute")
     path = getattr(source, "path", "") or getattr(original, "path", "")
+    if path == "" and not methods and not is_websocket:
+        path = "/"
     if not isinstance(path, str) or not path.startswith("/"):
         raise RouterContractError(f"route at order {order} has no stable absolute path")
 
-    methods = getattr(source, "methods", None) or getattr(original, "methods", None)
     if methods:
         route_methods = sorted(str(method).upper() for method in methods)
         kind = "http"
-    elif type(original).__name__.endswith("WebSocketRoute"):
+    elif is_websocket:
         route_methods = [_WEBSOCKET_METHOD]
         kind = "websocket"
     else:

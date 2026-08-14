@@ -157,6 +157,34 @@ def test_registry_accepts_fixed_route_at_mount_prefix():
     assert registry.domains == ("mount_prefix",)
 
 
+def test_registry_normalizes_root_mount_and_rejects_later_fixed_route():
+    """Model Starlette's empty internal root-mount path as `/`."""
+    registry = DomainRouterRegistry("test")
+    mounted = APIRouter()
+    mounted.mount(
+        "/",
+        FastAPI(openapi_url=None, docs_url=None, redoc_url=None),
+        name="root",
+    )
+
+    with pytest.raises(RouterRegistryError, match="must follow route"):
+        registry.register(
+            "root_mount",
+            (
+                RouterContribution("protocol", mounted),
+                RouterContribution(
+                    "protocol",
+                    _router("/health", endpoint_name="fixed"),
+                ),
+            ),
+        )
+
+    registry.register("root_mount", (RouterContribution("protocol", mounted),))
+    assert registry.route_identities() == (
+        RouteIdentity(plane="protocol", path="/", method="*"),
+    )
+
+
 def test_registry_accepts_fixed_route_before_catch_all():
     """Accept fixed peers before their parameterized fallback."""
     registry = DomainRouterRegistry("test")

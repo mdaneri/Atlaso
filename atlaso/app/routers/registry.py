@@ -313,15 +313,18 @@ def _route_descriptors(contribution: RouterContribution) -> tuple[_RouteDescript
     descriptors: list[_RouteDescriptor] = []
     for source in _route_sources(contribution.router):
         original = getattr(source, "original_route", source)
+        methods = getattr(source, "methods", None) or getattr(original, "methods", None)
+        is_websocket = type(original).__name__.endswith("WebSocketRoute")
         path = getattr(source, "path", "") or getattr(original, "path", "")
+        if path == "" and not methods and not is_websocket:
+            path = "/"
         if not isinstance(path, str) or not path.startswith("/"):
             raise RouterRegistryError(
                 f"router in plane {contribution.plane!r} contains a route without a stable absolute path"
             )
-        methods = getattr(source, "methods", None) or getattr(original, "methods", None)
         if methods:
             route_methods = tuple(sorted(str(method).upper() for method in methods))
-        elif type(original).__name__.endswith("WebSocketRoute"):
+        elif is_websocket:
             route_methods = (_WEBSOCKET_METHOD,)
         else:
             route_methods = (_OPAQUE_METHOD,)
@@ -330,7 +333,7 @@ def _route_descriptors(contribution: RouterContribution) -> tuple[_RouteDescript
             _RouteDescriptor(
                 identity=RouteIdentity(plane=contribution.plane, path=path, method=method),
                 allowed_shadows=allowed_shadows,
-                is_mount=not methods and not type(original).__name__.endswith("WebSocketRoute"),
+                is_mount=not methods and not is_websocket,
             )
             for method in route_methods
         )
