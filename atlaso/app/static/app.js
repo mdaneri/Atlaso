@@ -20652,6 +20652,23 @@ function networkBootRemovableMedia(environment) {
   }) || null;
 }
 
+function createLatestNetworkBootHostLoader(request) {
+  let latestRequestId = 0;
+  return async (row) => {
+    const requestId = ++latestRequestId;
+    try {
+      const host = await request(`/api/v1/network-boot/hosts/${row.id}`);
+      if (requestId !== latestRequestId) return null;
+      const history = await request(`/api/v1/network-boot/hosts/${row.id}/history`);
+      if (requestId !== latestRequestId) return null;
+      return { host, history };
+    } catch (error) {
+      if (requestId !== latestRequestId) return null;
+      throw error;
+    }
+  };
+}
+
 function initializeNetworkBootPage() {
   const hostsElement = document.getElementById("network-boot-discovered-table");
   const environmentsElement = document.getElementById("network-boot-environments-table");
@@ -20682,6 +20699,7 @@ function initializeNetworkBootPage() {
     const history = await networkBootRequest(`/api/v1/network-boot/hosts/${row.id}/history`);
     return { host, history };
   };
+  const loadLatestHost = createLatestNetworkBootHostLoader(networkBootRequest);
   const selectReport = (historyItem) => {
     if (!selectedHost || !historyItem) return;
     selectedReport = historyItem;
@@ -20723,7 +20741,8 @@ function initializeNetworkBootPage() {
   };
   const openHost = async (row) => {
     try {
-      const loaded = await loadHost(row);
+      const loaded = await loadLatestHost(row);
+      if (!loaded) return;
       selectedHost = loaded.host;
       selectedReport = loaded.history[0] || null;
       if (reportTitle instanceof HTMLElement) {

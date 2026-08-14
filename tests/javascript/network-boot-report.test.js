@@ -69,6 +69,27 @@ const reconcileNetworkBootDiscoveredHosts = loadFunction(
   "initializeNetworkBootDiscoveredHostRefresh",
   { Map, Object, String, networkBootChangedRowValues },
 );
+const createLatestNetworkBootHostLoader = loadFunction(
+  "createLatestNetworkBootHostLoader",
+  "initializeNetworkBootPage",
+);
+
+function deferred() {
+  let resolve;
+  let reject;
+  const promise = new Promise((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, reject, resolve };
+}
+
+async function startHostAndHistory(loadLatestHost, hostId, hostRequest, historyRequest) {
+  const result = loadLatestHost({ id: hostId });
+  hostRequest.resolve({ id: hostId, product_name: `Host ${hostId}` });
+  await Promise.resolve();
+  return { historyRequest, result };
+}
 
 test("Network Boot report distinguishes empty v2 addresses from missing legacy data", () => {
   assert.equal(
@@ -255,6 +276,73 @@ test("Network Boot discovered-host refresh preserves the last list after failure
   assert.match(status.textContent, /last received host list/);
 });
 
+test("Network Boot host loader ignores older history that resolves after the latest selection", async () => {
+  const requests = new Map();
+  const request = (url) => requests.get(url).promise;
+  const loadLatestHost = createLatestNetworkBootHostLoader(request);
+  const firstHost = deferred();
+  const firstHistory = deferred();
+  const secondHost = deferred();
+  const secondHistory = deferred();
+  requests.set("/api/v1/network-boot/hosts/1", firstHost);
+  requests.set("/api/v1/network-boot/hosts/1/history", firstHistory);
+  requests.set("/api/v1/network-boot/hosts/2", secondHost);
+  requests.set("/api/v1/network-boot/hosts/2/history", secondHistory);
+
+  const first = await startHostAndHistory(loadLatestHost, 1, firstHost, firstHistory);
+  const second = await startHostAndHistory(loadLatestHost, 2, secondHost, secondHistory);
+  second.historyRequest.resolve([{ id: 22 }]);
+  const selected = await second.result;
+  assert.equal(selected.host.id, 2);
+  assert.equal(selected.host.product_name, "Host 2");
+  assert.equal(selected.history[0].id, 22);
+  first.historyRequest.resolve([{ id: 11 }]);
+  assert.equal(await first.result, null);
+});
+
+test("Network Boot host loader ignores older history that resolves before the latest selection", async () => {
+  const requests = new Map();
+  const loadLatestHost = createLatestNetworkBootHostLoader((url) => requests.get(url).promise);
+  const firstHost = deferred();
+  const firstHistory = deferred();
+  const secondHost = deferred();
+  const secondHistory = deferred();
+  requests.set("/api/v1/network-boot/hosts/1", firstHost);
+  requests.set("/api/v1/network-boot/hosts/1/history", firstHistory);
+  requests.set("/api/v1/network-boot/hosts/2", secondHost);
+  requests.set("/api/v1/network-boot/hosts/2/history", secondHistory);
+
+  const first = await startHostAndHistory(loadLatestHost, 1, firstHost, firstHistory);
+  const second = await startHostAndHistory(loadLatestHost, 2, secondHost, secondHistory);
+  first.historyRequest.resolve([{ id: 11 }]);
+  assert.equal(await first.result, null);
+  second.historyRequest.resolve([{ id: 22 }]);
+  assert.equal((await second.result).host.id, 2);
+});
+
+test("Network Boot host loader ignores stale detail errors and skips stale history", async () => {
+  const requests = new Map();
+  const requestedUrls = [];
+  const loadLatestHost = createLatestNetworkBootHostLoader((url) => {
+    requestedUrls.push(url);
+    return requests.get(url).promise;
+  });
+  const firstHost = deferred();
+  const secondHost = deferred();
+  const secondHistory = deferred();
+  requests.set("/api/v1/network-boot/hosts/1", firstHost);
+  requests.set("/api/v1/network-boot/hosts/2", secondHost);
+  requests.set("/api/v1/network-boot/hosts/2/history", secondHistory);
+
+  const firstResult = loadLatestHost({ id: 1 });
+  const second = await startHostAndHistory(loadLatestHost, 2, secondHost, secondHistory);
+  firstHost.reject(new Error("stale detail failure"));
+  assert.equal(await firstResult, null);
+  assert.equal(requestedUrls.includes("/api/v1/network-boot/hosts/1/history"), false);
+  second.historyRequest.resolve([{ id: 22 }]);
+  assert.equal((await second.result).host.id, 2);
+});
+
 test("Network Boot disables latest download when that version is installed", () => {
   const hasLatestInstalled = loadFunction(
     "networkBootEnvironmentHasLatestInstalled",
@@ -279,7 +367,7 @@ test("Network Boot disables latest download when that version is installed", () 
 test("Network Boot allows disabled desired media removal but protects active media", () => {
   const removableMedia = loadFunction(
     "networkBootRemovableMedia",
-    "initializeNetworkBootPage",
+    "createLatestNetworkBootHostLoader",
     { Array, Boolean, String },
   );
   const installedVersions = [{ version: "8.10" }];
