@@ -3542,8 +3542,10 @@ helper.</p>
 </span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>  <span class="o">-File</span> <span class="n">scripts</span><span class="p">/</span><span class="n">windows</span><span class="p">/</span><span class="n">hyperv</span><span class="p">/</span><span class="n">prepare-tiny-linux-client</span><span class="p">.</span><span class="n">ps1</span>
 </span></code></pre></div>
 <p>The preparation script downloads Alpine's official UEFI cloud-init QCOW2 image, verifies the <code>.sha512</code> checksum, and
-converts it to a dynamic Hyper-V VHDX with <code>qemu-img</code>. The lifecycle script uses <code>pycdlib</code> to build the NoCloud seed
-ISOs; if it is missing, the script installs it with <code>python -m pip install pycdlib</code>.</p>
+converts it to a dynamic Hyper-V VHDX with <code>qemu-img</code>. A failed conversion or image inspection exits nonzero without
+emitting the prepared-image JSON. When the current run created an incomplete or unverified VHDX, the wrapper removes
+that exact output so a later lifecycle run cannot accept it as prepared. The lifecycle script uses <code>pycdlib</code> to build
+the NoCloud seed ISOs; if it is missing, the script installs it with <code>python -m pip install pycdlib</code>.</p>
 <h2 id="single-command-run">Single-Command Run<a class="headerlink" href="#single-command-run" title="Permanent link">&para;</a></h2>
 <p>Run from an elevated PowerShell 7 session:</p>
 <div class="language-powershell highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="n">pwsh</span> <span class="n">-ExecutionPolicy</span> <span class="n">Bypass</span> <span class="p">`</span>
