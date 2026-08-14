@@ -89,6 +89,10 @@ default runs the restored backup/restore pass. Pass `-SkipBackupRestoreTest` onl
 intended. Unless `-ApplianceIPAddress` is passed, the wrapper waits for VMware Tools to report the appliance's DHCP
 management IPv4 address and derives the appliance URL from that discovered address.
 
+Tiny-client preparation exits nonzero and emits no prepared-image JSON when `qemu-img` conversion or inspection fails.
+If the current run created an incomplete or unverified VMDK, the wrapper removes that exact output before returning the
+failure so a later lifecycle run cannot accept it as prepared.
+
 Before it powers on the raw appliance clone, the runner injects the complete Atlaso first-boot OVF environment that a
 normal ESXi or Workstation OVF deployment would provide. The lifecycle lab uses IPv4 DHCP with blank DNS overrides,
 disabled IPv6, a generated lab FQDN, and the existing lifecycle admin-password input for both required

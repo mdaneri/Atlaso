@@ -9,6 +9,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+$PSNativeCommandUseErrorActionPreference = $false
 
 function Get-Sha512FileHash {
     param([string]$Path)
@@ -41,6 +42,7 @@ New-Item -ItemType Directory -Path $OutputDirectory -Force | Out-Null
 $qcowPath = Join-Path $OutputDirectory $ImageName
 $checksumPath = Join-Path $OutputDirectory "$ImageName.sha512"
 $vmdkPath = Join-Path $OutputDirectory $OutputVmdkName
+$convertedThisRun = $false
 
 if (-not (Get-Command qemu-img -ErrorAction SilentlyContinue)) {
     throw "qemu-img is required to convert Alpine QCOW2 to VMware VMDK."
@@ -72,10 +74,33 @@ if ((Test-Path -LiteralPath $vmdkPath) -and -not $Force) {
     }
     if ($PSCmdlet.ShouldProcess($vmdkPath, 'Convert Alpine QCOW2 to growable VMware VMDK')) {
         qemu-img convert -p -f qcow2 -O vmdk -o subformat=monolithicSparse $qcowPath $vmdkPath
+        $convertExitCode = $LASTEXITCODE
+        if ($convertExitCode -ne 0) {
+            if (Test-Path -LiteralPath $vmdkPath) {
+                try {
+                    Remove-Item -LiteralPath $vmdkPath -Force -ErrorAction Stop
+                } catch {
+                    throw "qemu-img convert failed with exit code $convertExitCode, and the partial VMDK could not be removed: $($_.Exception.Message)"
+                }
+            }
+            throw "qemu-img convert failed with exit code $convertExitCode."
+        }
+        $convertedThisRun = $true
     }
 }
 
 $info = qemu-img info $vmdkPath
+$infoExitCode = $LASTEXITCODE
+if ($infoExitCode -ne 0) {
+    if ($convertedThisRun -and (Test-Path -LiteralPath $vmdkPath)) {
+        try {
+            Remove-Item -LiteralPath $vmdkPath -Force -ErrorAction Stop
+        } catch {
+            throw "qemu-img info failed with exit code $infoExitCode, and the unverified VMDK could not be removed: $($_.Exception.Message)"
+        }
+    }
+    throw "qemu-img info failed with exit code $infoExitCode."
+}
 [pscustomobject]@{
     version       = $Version
     qcow2         = (Resolve-Path -LiteralPath $qcowPath).Path
