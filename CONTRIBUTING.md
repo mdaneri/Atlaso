@@ -67,6 +67,15 @@ missing full-suite evidence blocks advisory merge.
    A temporary-fork security pull request instead records its advisory reference and local validation only on private
    surfaces.
 
+### Unrelated issue discoveries
+
+Keep a pull request focused on its linked issue. When the work reveals a reproducible or otherwise evidence-backed
+actionable problem outside that scope, search open and closed issues for an existing tracking record. If none exists,
+open a separate issue with exactly one appropriate type label and enough sanitized evidence for independent follow-up.
+Link that issue from the active pull request or task report when useful, but do not add `Closes` unless the pull request
+actually resolves it. Do not expand the active pull request to fix the unrelated issue without explicit maintainer
+approval. Report suspected sensitive vulnerabilities through [SECURITY.md](SECURITY.md), never as public issues.
+
 ### Automated pull-request follow-through
 
 Automated contributors run locally only tests focused on the changed behavior, together with applicable repository,
@@ -84,6 +93,26 @@ checks and no unanswered actionable comment or unresolved non-outdated review th
 failures that require maintainer action.
 
 `main` accepts squash merges only after required checks pass. Do not commit directly to `main`.
+
+### Default merge authorization
+
+An implementation or pull-request delivery request grants an automated contributor standing authorization to merge the
+ordinary, ready-for-review pull request that its active task authors and owns when the pull request targets `main` from
+a branch in this repository. The default excludes human-authored pull requests, forks, drafts, review-only or diagnostic
+tasks, and private vulnerability remediation. It authorizes a guarded agent-performed merge; it does not enable
+GitHub auto-merge.
+
+An explicit **do not merge**, **leave the pull request open**, **pull request only**, **wait for approval**, or equivalent
+hold overrides the default until explicitly withdrawn. Immediately before merging, re-fetch the pull request and
+`main`; verify the linked issue and type label, documentation, synchronized patch version, all applicable checks for the
+exact head, answered actionable feedback, resolved non-outdated review threads, and a conflict-free merge state. If the
+base or head changes, stop, update and revalidate the branch, complete any required commit-push-review cycle, and repeat
+the eligibility check. Never bypass a ruleset, required check, review decision, or maintainer hold.
+
+Use a squash merge guarded by the expected head SHA and supply the finalized pull-request title plus an extended commit
+body that explains the outcome and rationale, summarizes principal changes, records validation, and names the linked
+issues. Afterward, verify the merged state, confirm that the squash commit is reachable from current `origin/main`,
+check linked issue closure, and monitor applicable post-merge workflows before reporting completion.
 
 Maintainers may explicitly enable auto-merge on an internal, ready-for-review pull request. When `main` advances, Atlaso
 automatically updates only those auto-merge-enabled branches that are in this repository, are not drafts, have no merge
