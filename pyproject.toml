@@ -82,10 +82,14 @@ show_error_codes = true
 warn_unused_configs = true
 follow_imports = "silent"
 files = [
+  "atlaso/app/routers/api_v1/firewall.py",
   "atlaso/app/routers/api_v1/physical_vlans.py",
+  "atlaso/app/routers/api_v1/routes_wan.py",
   "atlaso/app/routers/contracts.py",
   "atlaso/app/routers/registry.py",
+  "atlaso/app/routers/ui/firewall.py",
   "atlaso/app/routers/ui/physical_vlans.py",
+  "atlaso/app/routers/ui/routes_wan.py",
   "atlaso/app/services/identity_credentials.py",
   "atlaso/app/services/interface_updates.py",
   "atlaso/app/services/physical_interfaces.py",

@@ -61,15 +61,19 @@ def _router(path: str, *, method: str = "GET", endpoint_name: str = "route") -> 
     return router
 
 
-def test_facades_register_physical_vlan_domains_in_exact_order():
-    """Keep extracted physical/VLAN routers between their facade segments."""
+def test_facades_register_extracted_domains_in_exact_order():
+    """Keep every extracted router in its established facade sequence."""
     assert ui.UI_ROUTER_REGISTRY.domains == (
-        "facade_before_physical_vlans",
+        "facade_before_routes_wan",
+        "routes_wan",
+        "firewall",
         "physical_vlans",
         "facade_after_physical_vlans",
     )
     assert ui.UI_ROUTER_REGISTRY.routers_for_plane("management") == (
-        ui._management_before_physical_vlans_router,
+        ui._management_before_routes_wan_router,
+        ui.routes_wan_router,
+        ui.firewall_router,
         ui.physical_vlans_router,
         ui._management_after_physical_vlans_router,
     )
@@ -79,16 +83,34 @@ def test_facades_register_physical_vlan_domains_in_exact_order():
     assert v1.API_V1_ROUTER_REGISTRY.domains == (
         "facade_before_physical_vlans",
         "physical_vlans",
-        "facade_after_physical_vlans",
+        "routes_wan",
+        "facade_between_routes_wan_firewall",
+        "firewall",
+        "facade_after_firewall",
     )
     assert v1.API_V1_ROUTER_REGISTRY.routers_for_plane("api_v1") == (
         v1._api_before_physical_vlans_router,
         v1.physical_vlans_router,
-        v1._api_after_physical_vlans_router,
+        v1.routes_wan_router,
+        v1._api_between_routes_wan_firewall_router,
+        v1.firewall_router,
+        v1._api_after_firewall_router,
     )
+    assert {
+        route.endpoint.__module__ for route in ui.routes_wan_router.routes
+    } == {"atlaso.app.routers.ui.routes_wan"}
+    assert {
+        route.endpoint.__module__ for route in ui.firewall_router.routes
+    } == {"atlaso.app.routers.ui.firewall"}
     assert {
         route.endpoint.__module__ for route in ui.physical_vlans_router.routes
     } == {"atlaso.app.routers.ui.physical_vlans"}
+    assert {
+        route.endpoint.__module__ for route in v1.routes_wan_router.routes
+    } == {"atlaso.app.routers.api_v1.routes_wan"}
+    assert {
+        route.endpoint.__module__ for route in v1.firewall_router.routes
+    } == {"atlaso.app.routers.api_v1.firewall"}
     assert {
         route.endpoint.__module__ for route in v1.physical_vlans_router.routes
     } == {"atlaso.app.routers.api_v1.physical_vlans"}

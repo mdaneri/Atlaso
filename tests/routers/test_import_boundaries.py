@@ -15,8 +15,16 @@ DOMAIN_ROUTER_ROOTS = (
 FACADE_MODULES = ("atlaso.app.ui", "atlaso.app.api.v1")
 SERVICE_FORBIDDEN_MODULES = (*FACADE_MODULES, "atlaso.app.main", "atlaso.app.routers")
 EXTRACTED_DOMAIN_MODULES = {
-    ROOT / "atlaso" / "app" / "ui.py": "atlaso.app.routers.ui.physical_vlans",
-    ROOT / "atlaso" / "app" / "api" / "v1.py": "atlaso.app.routers.api_v1.physical_vlans",
+    ROOT / "atlaso" / "app" / "ui.py": (
+        "atlaso.app.routers.ui.firewall",
+        "atlaso.app.routers.ui.physical_vlans",
+        "atlaso.app.routers.ui.routes_wan",
+    ),
+    ROOT / "atlaso" / "app" / "api" / "v1.py": (
+        "atlaso.app.routers.api_v1.firewall",
+        "atlaso.app.routers.api_v1.physical_vlans",
+        "atlaso.app.routers.api_v1.routes_wan",
+    ),
 }
 
 
@@ -93,9 +101,10 @@ def test_domain_routers_do_not_import_monolithic_facades():
 def test_facades_import_extracted_domain_router_modules():
     """Require each stable facade to assemble its extracted domain router."""
     missing: list[str] = []
-    for facade, domain_module in EXTRACTED_DOMAIN_MODULES.items():
+    for facade, domain_modules in EXTRACTED_DOMAIN_MODULES.items():
         imported = _imported_modules(facade)
-        if not any(_matches_forbidden(target, domain_module) for target in imported):
-            missing.append(f"{facade.relative_to(ROOT).as_posix()}: {domain_module}")
+        for domain_module in domain_modules:
+            if not any(_matches_forbidden(target, domain_module) for target in imported):
+                missing.append(f"{facade.relative_to(ROOT).as_posix()}: {domain_module}")
 
     assert missing == []

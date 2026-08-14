@@ -14,7 +14,8 @@ issue #317. The application-facing modules `atlaso/app/ui.py` and `atlaso/app/ap
 aggregation facades throughout that migration. Phase 1 established the registries and contract baselines. Phase 2
 extracted physical-interface and VLAN transport ownership without changing their external contracts. Phase 3 places
 physical-interface desired-state mutation, dependent reconciliation, and audit persistence behind one typed domain
-service shared by both extracted transports.
+service shared by both extracted transports. Phase 4 extracts Routes/WAN and Firewall transport ownership while
+preserving the established UI, API v1, desired-state, and global Appliance Apply contracts.
 
 ## Ownership and responsibilities
 
@@ -88,6 +89,31 @@ This service consolidation does not change templates, browser assets, visible co
 normalized OpenAPI, or the global Appliance Apply boundary. The service writes desired state only; host mutation still
 belongs exclusively to Appliance Apply.
 
+## Extracted Routes/WAN and Firewall ownership
+
+Routes, routing permissions, WAN policies, and NAT transports live in
+`atlaso/app/routers/ui/routes_wan.py` and `atlaso/app/routers/api_v1/routes_wan.py`. Firewall transports live separately
+in `atlaso/app/routers/ui/firewall.py` and `atlaso/app/routers/api_v1/firewall.py`. The stable facades continue to export
+the established endpoint and helper names while supplying facade-owned compatibility helpers to each router builder.
+Neither domain router imports a monolithic facade.
+
+The UI registry preserves the effective sequence `facade_before_routes_wan`, `routes_wan`, `firewall`,
+`physical_vlans`, and `facade_after_physical_vlans`. The API v1 registry preserves
+`facade_before_physical_vlans`, `physical_vlans`, `routes_wan`, `facade_between_routes_wan_firewall`, `firewall`, and
+`facade_after_firewall`. These complete expected-domain tuples make an omitted or reordered contribution fail during
+facade import.
+
+Independently runnable transport coverage lives in:
+
+- `tests/routers/ui/test_routes_wan.py`;
+- `tests/routers/ui/test_firewall.py`;
+- `tests/routers/api_v1/test_routes_wan.py`; and
+- `tests/routers/api_v1/test_firewall.py`.
+
+Service rendering, helper, lifecycle, and global Appliance Apply tests retain their existing ownership. This extraction
+does not change templates, browser assets, visible copy, API operations, normalized OpenAPI, route inventory, audit
+actions, or host-mutation boundaries.
+
 ## Route and OpenAPI compatibility
 
 `tests/contracts/route_inventory.json` records every effective application route in order, including browser,
@@ -144,10 +170,13 @@ Use these focused foundation checks while developing:
 ```powershell
 python -m pytest -q tests/routers
 python -m pytest -q tests/routers/ui/test_physical_vlans.py tests/routers/api_v1/test_physical_vlans.py
+python -m pytest -q tests/routers/ui/test_routes_wan.py tests/routers/api_v1/test_routes_wan.py
+python -m pytest -q tests/routers/ui/test_firewall.py tests/routers/api_v1/test_firewall.py
 python -m pytest -q tests/test_openapi_contract.py tests/test_ui_route_namespaces.py tests/test_ui_compliance.py
 python scripts/generate_router_contract_baselines.py --check
 python scripts/check_python_static_analysis.py
 ```
 
-Then run the repository's required full Python, documentation, version, and diff checks. Later phases remain incomplete
-until their own linked issue, documentation, validation, review, and merge gates are satisfied.
+Then run the repository's required documentation, version, and diff checks; canonical CI owns the complete Python
+suite. Later phases remain incomplete until their own linked issue, documentation, validation, review, and merge gates
+are satisfied.
