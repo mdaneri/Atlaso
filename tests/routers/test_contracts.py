@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 from fastapi import APIRouter, FastAPI
+from starlette.convertors import Convertor, register_url_convertor
 
 from atlaso.app import main, ui
 from atlaso.app.api import v1
@@ -25,6 +26,21 @@ from atlaso.app.routers.registry import (
 ROOT = Path(__file__).resolve().parents[2]
 ROUTE_BASELINE = ROOT / "tests" / "contracts" / "route_inventory.json"
 OPENAPI_BASELINE = ROOT / "tests" / "contracts" / "openapi_v1.json"
+
+
+class _SlugConvertor(Convertor[str]):
+    """Provide one test-only custom route convertor."""
+
+    regex = "[a-z-]+"
+
+    def convert(self, value: str) -> str:
+        return value
+
+    def to_string(self, value: str) -> str:
+        return value
+
+
+register_url_convertor("atlaso_slug", _SlugConvertor())
 
 
 def _load_json(path: Path) -> object:
@@ -251,6 +267,27 @@ def test_route_inventory_rejects_overlap_across_adjacent_route_literals():
     app.add_api_route("/1{peer:str}a", later, methods=["GET"])
 
     with pytest.raises(RouterContractError, match="must follow route"):
+        build_route_inventory(app)
+
+
+def test_route_inventory_fails_closed_for_custom_route_convertor_overlap():
+    """Never treat an unsupported registered convertor as disjoint."""
+    app = FastAPI(openapi_url=None, docs_url=None, redoc_url=None)
+
+    def broad(value: str) -> dict[str, str]:
+        return {"value": value}
+
+    def custom(value: str) -> dict[str, str]:
+        return {"value": value}
+
+    app.add_api_route("/items/{value:path}", broad, methods=["GET"])
+    app.add_api_route(
+        "/items/{value:atlaso_slug}",
+        custom,
+        methods=["GET"],
+    )
+
+    with pytest.raises(RouterContractError, match="unsupported convertor"):
         build_route_inventory(app)
 
 

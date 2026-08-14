@@ -11,6 +11,7 @@ from fastapi import APIRouter, FastAPI
 
 from atlaso.app.routers.registry import (
     RouteIdentity,
+    RouterRegistryError,
     compatible_route_shadows,
     included_facade_routers,
     route_paths_overlap,
@@ -222,10 +223,11 @@ def _validate_catch_all_order(routes: Sequence[_EffectiveRoute]) -> None:
                 for method in overlapping_methods
                 if (later_path, method) in route.allowed_shadows
             }
-            if (
-                not overlapping_methods
-                or not route_paths_overlap(path, later_path, is_mount=is_mount)
-            ):
+            try:
+                paths_overlap = route_paths_overlap(path, later_path, is_mount=is_mount)
+            except RouterRegistryError as exc:
+                raise RouterContractError(str(exc)) from exc
+            if not overlapping_methods or not paths_overlap:
                 continue
             if allowed_methods == overlapping_methods:
                 used.update((index, later_path, method) for method in allowed_methods)

@@ -373,7 +373,7 @@ def _character_classes_overlap(first: _CharacterClass, second: _CharacterClass) 
 
 
 @cache
-def _path_automaton(path: str, *, is_mount: bool = False) -> _PathAutomaton | None:
+def _path_automaton(path: str, *, is_mount: bool = False) -> _PathAutomaton:
     """Build an exact automaton for standard Starlette route convertors."""
     _, _, convertors = compile_path(path)
     transitions: list[list[tuple[_CharacterClass, int]]] = [[]]
@@ -436,7 +436,9 @@ def _path_automaton(path: str, *, is_mount: bool = False) -> _PathAutomaton | No
                     transitions[current].append((_CharacterClass("hex"), following))
                     current = following
         else:
-            return None
+            raise RouterRegistryError(
+                f"route {path!r} uses unsupported convertor {convertor_type!r}"
+            )
         position = parameter.end()
     current = add_literal(current, path[position:])
 
@@ -516,8 +518,6 @@ def route_paths_overlap(path: str, candidate: str, *, is_mount: bool) -> bool:
     """
     earlier = _path_automaton(path, is_mount=is_mount)
     later = _path_automaton(candidate)
-    if earlier is None or later is None:
-        return False
     return _path_automata_overlap(earlier, later)
 
 

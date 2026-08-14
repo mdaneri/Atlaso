@@ -2,6 +2,7 @@
 
 import pytest
 from fastapi import APIRouter, FastAPI
+from starlette.convertors import Convertor, register_url_convertor
 
 from atlaso.app import ui
 from atlaso.app.api import v1
@@ -12,6 +13,21 @@ from atlaso.app.routers.registry import (
     RouterRegistryError,
     allow_compatible_route_shadow,
 )
+
+
+class _SlugConvertor(Convertor[str]):
+    """Provide one test-only custom route convertor."""
+
+    regex = "[a-z-]+"
+
+    def convert(self, value: str) -> str:
+        return value
+
+    def to_string(self, value: str) -> str:
+        return value
+
+
+register_url_convertor("atlaso_slug", _SlugConvertor())
 
 
 def _router(path: str, *, method: str = "GET", endpoint_name: str = "route") -> APIRouter:
@@ -316,6 +332,29 @@ def test_registry_rejects_overlap_across_adjacent_route_literals():
                 RouterContribution(
                     "management",
                     _router("/1{peer:str}a", endpoint_name="later"),
+                ),
+            ),
+        )
+
+
+def test_registry_fails_closed_for_custom_route_convertor_overlap():
+    """Never treat an unsupported registered convertor as disjoint."""
+    registry = DomainRouterRegistry("test")
+
+    with pytest.raises(RouterRegistryError, match="unsupported convertor"):
+        registry.register(
+            "custom_convertor_overlap",
+            (
+                RouterContribution(
+                    "management",
+                    _router("/items/{value:path}", endpoint_name="broad"),
+                ),
+                RouterContribution(
+                    "management",
+                    _router(
+                        "/items/{value:atlaso_slug}",
+                        endpoint_name="custom",
+                    ),
                 ),
             ),
         )
