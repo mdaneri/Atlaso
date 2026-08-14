@@ -65,6 +65,10 @@ comment workflows. Record all required validation privately and locally. Never u
 or `gh pr merge`; only an explicitly authorized advisory administrator may merge through the corresponding draft
 advisory workflow.
 
+For temporary-private-fork remediation, the advisory-side maintainer review and recorded local validation required by
+`SECURITY.md` replace the Codex review, `@codex review`, exact-head CI/status, comment, label, and review-thread
+follow-through requirements below. Do not request, wait for, or claim unavailable integrations.
+
 GitHub-managed version-update pull requests from `.github/dependabot.yml` are the only exception to the pre-existing
 issue and per-update documentation requirements. They still require the `enhancement` and `dependencies` labels, the
 normal version, CI, review, and squash-merge gates, and synchronized generated locks. See

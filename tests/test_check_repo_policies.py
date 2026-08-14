@@ -221,7 +221,7 @@ def test_agent_policy_gate_rejects_missing_pr_follow_through_contract(
             "complete Python test suite belongs to GitHub CI"
         ),
         Path(".github/pull_request_template.md"): (
-            "Each post-opening pushed commit received one `@codex review` request"
+            "each post-opening pushed commit received one `@codex review` request"
         ),
         Path("docs/contribute/agent-policies.md"): (
             "### Focused local validation and pull-request follow-through"
@@ -314,6 +314,40 @@ def test_agent_policy_gate_rejects_missing_detailed_private_remediation_marker(
     assert findings[0].message == (
         "required agent policy marker is missing: temporary private fork"
     )
+
+
+def test_agent_policy_gate_requires_private_follow_through_replacement(
+    tmp_path: Path,
+) -> None:
+    """Verify that private forks replace unavailable integration follow-through.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    required_entry_markers = {
+        Path("AGENTS.md"): "advisory-side maintainer review",
+        Path("CONTRIBUTING.md"): "advisory-side maintainer review",
+        Path(".github/copilot-instructions.md"): "advisory-side maintainer review",
+        Path(".github/pull_request_template.md"): "advisory-side maintainer review",
+        Path("SECURITY.md"): "advisory-side maintainer review",
+        Path("docs/contribute/agent-policies.md"): "Advisory-side maintainer review",
+    }
+
+    for relative_path, marker in required_entry_markers.items():
+        write_policy_files(tmp_path)
+        path = tmp_path / relative_path
+        path.write_text(
+            path.read_text(encoding="utf-8").replace(marker, ""),
+            encoding="utf-8",
+        )
+
+        findings = check_agent_policy_gate(tmp_path)
+
+        assert len(findings) == 1
+        assert findings[0].path == path
+        assert findings[0].message == (
+            f"required agent policy marker is missing: {marker}"
+        )
 
 
 def test_agent_policy_gate_rejects_missing_ui_guide(tmp_path: Path) -> None:

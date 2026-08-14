@@ -32,10 +32,11 @@ New Tabulators must use `window.AtlasoUiPatterns.createGrid(...)`; every new or 
 - never commit directly to `main`.
 
 The private vulnerability remediation workflow in `SECURITY.md` is the only exception to the public issue, repository
-branch, and `Closes #<issue>` requirements. Keep all advisory references and vulnerability details private, and retain
-the remaining local validation and review requirements. Temporary private forks have no CI or status checks; never use
-ordinary pull-request merge controls or `gh pr merge`, and do not change advisory state without explicit maintainer
-authorization.
+branch, and `Closes #<issue>` requirements. Keep all advisory references and vulnerability details private. For a
+temporary private fork, advisory-side maintainer review and recorded local validation replace the ordinary Codex review,
+`@codex review`, exact-head CI/status, comment, label, and review-thread follow-through above. Do not request, wait for,
+or claim unavailable integrations. Never use ordinary pull-request merge controls or `gh pr merge`, and do not change
+advisory state without explicit maintainer authorization.
 
 Subagents and delegated agents must complete the same gate. A delegating agent must include the requirement in its
 prompt and verify compliance before using delegated work.

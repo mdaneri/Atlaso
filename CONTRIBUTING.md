@@ -44,6 +44,10 @@ metadata surfaces. Record required validation locally and privately. Never merge
 ordinary pull-request merge controls; an authorized advisory administrator merges it through the corresponding draft
 advisory as described in `SECURITY.md`.
 
+For temporary-private-fork remediation, advisory-side maintainer review and recorded local validation replace the
+ordinary Codex review, `@codex review`, exact-head CI/status, comment, label, and review-thread follow-through below.
+Do not request, wait for, or claim unavailable integrations.
+
 ## Development workflow
 
 1. Fork the repository or create a branch from current `main`. For private vulnerability remediation, use only the

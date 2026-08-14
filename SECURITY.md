@@ -49,6 +49,12 @@ validation required by the ordinary contribution workflow locally and record the
 otherwise mergeable private pull request may show `UNSTABLE` solely because checks are absent; that state does not
 replace the required local evidence or maintainer review.
 
+For this private workflow, advisory-side maintainer review and the recorded local validation replace every ordinary
+integration-dependent follow-through requirement. Do not request or wait for Codex review, `@codex review` comments,
+exact-head CI or status checks, or unavailable pull-request labels, comments, and review threads. Use the advisory and
+any available private pull-request surfaces for review and discussion, and do not claim that unavailable integrations
+ran.
+
 Temporary-fork pull requests are merged together only through the corresponding advisory workflow; they are not merged
 individually. Do not use the ordinary pull-request merge button or `gh pr merge`. An advisory administrator must open
 the parent repository's **Security > Advisories** page, select the draft advisory, scroll to **This advisory is ready to

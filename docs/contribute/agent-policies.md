@@ -64,6 +64,9 @@ status: current
   access temporary private forks. Treat the temporary private fork as a GitHub workspace repository where ordinary
   Issues cannot be enabled and pull-request labels or comments may be unavailable or forbidden. An otherwise mergeable
   pull request may show `UNSTABLE` solely because checks are absent; never substitute that state for local validation.
+  Advisory-side maintainer review and recorded local validation replace ordinary Codex review, `@codex review`,
+  exact-head CI/status, comment, label, and review-thread follow-through. Do not request, wait for, or claim unavailable
+  integrations.
   Do not use ordinary pull-request merge controls or `gh pr merge`. An explicitly authorized advisory administrator
   must use **Security > Advisories > This advisory is ready to be merged > Merge pull request(s)**. GitHub merges all
   open pull requests in the temporary fork together, permits only one pull request targeting `main`, and applies the
@@ -79,6 +82,9 @@ status: current
   candidate workflow revisions status-write permission.
 
 ### Focused local validation and pull-request follow-through
+
+- This section governs ordinary pull requests. Temporary-private-fork remediation uses the security-specific
+  replacement in the Repository Delivery Workflow above.
 
 - Run locally only tests focused on the changed behavior, plus every applicable repository, documentation,
   static-analysis, deployment, and `git diff --check` validation. Do not run the complete Python test suite locally;
