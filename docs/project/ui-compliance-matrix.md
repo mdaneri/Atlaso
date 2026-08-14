@@ -104,8 +104,8 @@ read-only or unavailable surface has a mutation workflow.
   and About dialogs restore launcher focus, and wizard validation retains data and focuses the invalid control.
 - **E7 — deployed audit:** the #120 pull request records the exact-head VMware version and host-facing `/openapi.json`
   proof, plus page-by-page overflow, keyboard, zoom, JavaScript-disabled, permission, and representative recovery checks.
-- **E8 — repository gates:** JavaScript, full pytest, compileall, repository, Photon, docs, Markdown, strict site,
-  version-policy, and whitespace checks run on the final pull-request head.
+- **E8 — GitHub CI gates:** JavaScript, full pytest, compileall, repository, Photon, docs, Markdown, strict site,
+  version-policy, and whitespace checks run on the final pull-request head; local work uses focused tests.
 
 ## Management and operations routes
 

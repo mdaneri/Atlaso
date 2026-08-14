@@ -63,5 +63,6 @@ pytest -q tests/test_openapi_contract.py
 The check discovers all `/api/v1` operations automatically. It rejects non-versioned documented paths, duplicate or
 missing operation IDs, missing tags or descriptions, undocumented parameters or recursively exposed schema properties,
 generic success responses, incorrect validation responses, and missing tag or bearer-scheme metadata. Also run the
-affected authorization and service tests, repository checks, Markdown lint, strict documentation build, full test suite
-when warranted, and `git diff --check`.
+affected authorization and service tests, repository checks, Markdown lint, strict documentation build, and
+`git diff --check`. Do not run the complete Python test suite locally; GitHub CI's canonical `Python tests` context owns
+that complete suite.

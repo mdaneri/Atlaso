@@ -78,6 +78,24 @@ When an explicit target is required, pass the current version or exact next patc
 `-Version X.Y.Z` to PowerShell. Explicit targets cannot skip a patch or change the major or minor version. Never update
 individual version sources manually.
 
+### Focused local validation and pull-request follow-through
+
+Automated contributors must run locally only the focused tests for the changed behavior, plus every applicable
+repository, documentation, static-analysis, deployment, and `git diff --check` validation. Do not run the complete
+Python test suite locally. GitHub CI's canonical `Python tests` context owns the complete suite.
+
+Open agent-authored pull requests ready for review, never as drafts. Opening a ready pull request triggers the initial
+Codex review, so do not add a duplicate opening `@codex review` comment. After the pull request is open, use one
+commit-push-review cycle for every subsequent branch change: push one commit, verify that commit is the pull request's
+exact head, post one `@codex review` comment, and only then begin another commit.
+
+Keep the originating task active after opening the pull request. Monitor all checks for the current exact head and
+inspect pull-request comments, reviews, and authoritative `reviewThreads`. Address actionable feedback, reply and
+resolve each handled thread, rerun the focused local validation, then commit, push, request `@codex review`, and restart
+monitoring for the new exact head. Do not report completion while current-head checks are pending or failing, an
+actionable comment is unanswered, or a non-outdated review thread remains unresolved. Escalate genuine maintainer
+decisions and external failures instead of guessing or claiming completion.
+
 ### Extended merge descriptions
 
 Before performing any explicitly authorized squash merge, finalize the pull-request title and body, then provide an
