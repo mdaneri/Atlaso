@@ -11,18 +11,20 @@ status: current
 
 Atlaso is moving its monolithic UI and API v1 route implementations into product-domain modules in staged work under
 issue #317. The application-facing modules `atlaso/app/ui.py` and `atlaso/app/api/v1.py` remain stable compatibility and
-aggregation facades throughout that migration. Phase 1 establishes registries and contract baselines only; it does not
-claim that any product-domain route has already moved.
+aggregation facades throughout that migration. Phase 1 established the registries and contract baselines. Phase 2
+extracted physical-interface and VLAN transport ownership without changing their external contracts. Phase 3 places
+physical-interface desired-state mutation, dependent reconciliation, and audit persistence behind one typed domain
+service shared by both extracted transports.
 
 ## Ownership and responsibilities
 
 - `atlaso/app/main.py` owns application construction, middleware, mounts, and the top-level order in which stable facade
   and protocol routers are included. It must include each facade router exactly once.
 - `atlaso/app/ui.py` remains the compatibility facade for existing UI helpers and the management, public, front-door,
-  and protocol routers. During later phases it imports extracted UI domain routers, registers them, and preserves their
-  established effective order.
-- `atlaso/app/api/v1.py` remains the compatibility facade for the versioned management API. During later phases it
-  imports and registers extracted API v1 domain routers without changing their external contract.
+  and protocol routers. It imports extracted UI domain routers, registers them, and preserves their established
+  effective order.
+- `atlaso/app/api/v1.py` remains the compatibility facade for the versioned management API. It imports and registers
+  extracted API v1 domain routers without changing their external contract.
 - `atlaso/app/routers/ui/<domain>.py` owns UI transport concerns for one product domain. These modules may depend on
   services, schemas, models, security dependencies, and shared router infrastructure, but never on `atlaso.app.ui` or
   the API facade.
@@ -58,6 +60,34 @@ Registry modules are dependency-neutral: they do not import facades or product-d
 domain modules, registers their contributions in the established order, and remains the only application-facing
 aggregation boundary. Do not use import-time registration from a domain module to reach back into a facade.
 
+When extraction occurs inside an existing monolithic route sequence, the facade registers a before-domain segment,
+the domain router, and an after-domain segment. It then aggregates those registered routers into the single stable
+facade object imported by `main.py`. This keeps application construction unchanged while making ownership and ordering
+explicit and testable.
+
+## Extracted physical-interface and VLAN ownership
+
+Physical-interface and VLAN management handlers live in
+`atlaso/app/routers/ui/physical_vlans.py`; their API v1 handlers live in
+`atlaso/app/routers/api_v1/physical_vlans.py`. The API domain also owns the existing physical-interface inventory
+refresh operation. Both modules receive the facade-owned compatibility helpers they need during router construction,
+so neither imports a monolithic facade and existing helper exports remain stable.
+
+The independently runnable transport coverage lives in
+`tests/routers/ui/test_physical_vlans.py` and `tests/routers/api_v1/test_physical_vlans.py`. Shared registry tests assert
+the exact before/domain/after order and endpoint module ownership. Import-boundary checks require both facades to
+assemble these domain modules while continuing to reject domain-to-facade imports.
+
+`atlaso/app/services/physical_interfaces.py` owns the typed partial-mutation, audit-input, and committed-result contract
+used by both transports. It stages the interface row, every reconciled dependent row, and the transport-compatible audit
+event before one commit. `atlaso/app/services/interface_updates.py` retains the detailed reconciliation algorithm as a
+documented low-level compatibility seam for VLAN and other callers that already own a wider transaction; it does not
+replace the physical-interface domain-service boundary.
+
+This service consolidation does not change templates, browser assets, visible copy, API operations, route inventory,
+normalized OpenAPI, or the global Appliance Apply boundary. The service writes desired state only; host mutation still
+belongs exclusively to Appliance Apply.
+
 ## Route and OpenAPI compatibility
 
 `tests/contracts/route_inventory.json` records every effective application route in order, including browser,
@@ -90,6 +120,10 @@ Use only the files that match the domain's actual transports. Keep service tests
 transport tests focused on authorization, validation, response, redirect, session, CSRF, media-type, and audit
 behavior. The shared registry, import-boundary, route-inventory, and OpenAPI tests stay under `tests/routers/`.
 
+For physical interfaces, `tests/services/test_physical_interfaces.py` owns rollback, dependent-binding, child-VLAN,
+DHCP/reservation/DNS, inactive-legacy-field, and audit-atomicity behavior. The extracted UI and API test modules retain
+their distinct response and audit-action contracts and representative parity coverage.
+
 Every new or changed `/api/v1` operation must also follow the [API authoring standard](api-authoring.md). Any later
 change to templates, authored CSS, browser JavaScript, controls, layouts, grids, wizards, or visible copy must first
 complete the [UI Design Guide](ui-design-guide.md) gate.
@@ -109,6 +143,7 @@ Use these focused foundation checks while developing:
 
 ```powershell
 python -m pytest -q tests/routers
+python -m pytest -q tests/routers/ui/test_physical_vlans.py tests/routers/api_v1/test_physical_vlans.py
 python -m pytest -q tests/test_openapi_contract.py tests/test_ui_route_namespaces.py tests/test_ui_compliance.py
 python scripts/generate_router_contract_baselines.py --check
 python scripts/check_python_static_analysis.py

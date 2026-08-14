@@ -1112,14 +1112,20 @@ def update_physical_interface_desired_state(
     changes: Mapping[str, Any],
     *,
     dns_refresher: DependentDnsRefresher | None = None,
+    commit: bool = True,
 ) -> PhysicalInterfaceUpdateResult:
     """Validate, reconcile, and atomically commit one physical-interface update.
+
+    This low-level compatibility seam accepts mapping input for VLAN and wider transaction owners.
+    Physical-interface UI and API transports use the typed domain service in ``physical_interfaces``.
 
     Args:
         db: Active database session.
         interface: Persisted physical interface to update.
         changes: Supplied desired-state fields and values.
         dns_refresher: Optional callback for app-owned service aliases.
+        commit: Commit the transaction before returning. Domain services may defer the commit so
+            audit and other transaction-owned rows are persisted atomically.
     """
     supported_fields = {
         "role",
@@ -1338,8 +1344,11 @@ def update_physical_interface_desired_state(
             actor=None,
             dns_refresher=dns_refresher,
         )
-        db.commit()
-        db.refresh(interface)
+        if commit:
+            db.commit()
+            db.refresh(interface)
+        else:
+            db.flush()
         return PhysicalInterfaceUpdateResult(
             interface=interface,
             dependent_updates=tuple(dependent_updates),
