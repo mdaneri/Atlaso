@@ -5,7 +5,7 @@ from copy import deepcopy
 from pathlib import Path
 
 import pytest
-from fastapi import FastAPI
+from fastapi import APIRouter, FastAPI
 
 from atlaso.app import main, ui
 from atlaso.app.api import v1
@@ -17,7 +17,10 @@ from atlaso.app.routers.contracts import (
     normalized_openapi,
     validate_route_inventory,
 )
-from atlaso.app.routers.registry import allow_compatible_route_shadow
+from atlaso.app.routers.registry import (
+    allow_compatible_route_shadow,
+    include_facade_router,
+)
 
 ROOT = Path(__file__).resolve().parents[2]
 ROUTE_BASELINE = ROOT / "tests" / "contracts" / "route_inventory.json"
@@ -227,6 +230,17 @@ def test_facade_routers_are_included_exactly_once():
         ui.router,
     ):
         assert included_router_count(main.app, router) == 1
+
+
+def test_facade_inclusion_count_uses_version_independent_tracking():
+    """Avoid FastAPI-version-specific copied-route provenance attributes."""
+    app = FastAPI(openapi_url=None, docs_url=None, redoc_url=None)
+    router = APIRouter()
+    router.add_api_route("/tracked", lambda: None, methods=["GET"])
+
+    include_facade_router(app, router)
+
+    assert included_router_count(app, router) == 1
 
 
 def test_normalized_openapi_matches_checked_in_contract():

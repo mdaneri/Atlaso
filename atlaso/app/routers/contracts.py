@@ -12,6 +12,7 @@ from fastapi import APIRouter, FastAPI
 from atlaso.app.routers.registry import (
     RouteIdentity,
     compatible_route_shadows,
+    included_facade_routers,
     route_paths_overlap,
 )
 
@@ -332,4 +333,4 @@ def included_router_count(app: FastAPI, router: APIRouter) -> int:
     Returns:
         Number of direct includes for the exact router object.
     """
-    return sum(getattr(route, "original_router", None) is router for route in app.routes)
+    return sum(included is router for included in included_facade_routers(app))

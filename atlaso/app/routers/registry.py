@@ -6,19 +6,45 @@ import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from itertools import product
-from typing import cast
+from typing import Any, cast
 
-from fastapi import APIRouter
+from fastapi import APIRouter, FastAPI
 from starlette.routing import compile_path
 
 _REGISTRY_NAME_PATTERN = re.compile(r"^[a-z][a-z0-9_]*$")
 _WEBSOCKET_METHOD = "WEBSOCKET"
 _OPAQUE_METHOD = "*"
 _ALLOWED_SHADOWS_ATTRIBUTE = "_atlaso_allowed_route_shadows"
+_FACADE_INCLUSIONS_ATTRIBUTE = "_atlaso_facade_router_inclusions"
 
 
 class RouterRegistryError(ValueError):
     """Report a deterministic router registration contract violation."""
+
+
+def include_facade_router(
+    app: FastAPI,
+    router: APIRouter,
+    **options: Any,
+) -> None:
+    """Include and record one application-facing facade router.
+
+    Args:
+        app: FastAPI application receiving the facade.
+        router: Exact facade router object being included.
+        **options: Options forwarded to ``FastAPI.include_router``.
+    """
+    app.include_router(router, **options)
+    included = getattr(app.state, _FACADE_INCLUSIONS_ATTRIBUTE, ())
+    setattr(app.state, _FACADE_INCLUSIONS_ATTRIBUTE, (*included, router))
+
+
+def included_facade_routers(app: FastAPI) -> tuple[APIRouter, ...]:
+    """Return explicitly tracked facade includes in application order."""
+    return cast(
+        tuple[APIRouter, ...],
+        getattr(app.state, _FACADE_INCLUSIONS_ATTRIBUTE, ()),
+    )
 
 
 @dataclass(frozen=True)
