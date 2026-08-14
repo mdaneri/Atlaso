@@ -170,6 +170,7 @@ REQUIRED_POLICY_MARKERS = {
         "coordinated disclosure",
     ),
     Path("docs/contribute/agent-policies.md"): (
+        "# Detailed agent policies",
         "## Mandatory Agent Startup Gate",
         "## Repository Delivery Workflow",
         "private vulnerability remediation",
@@ -177,6 +178,12 @@ REQUIRED_POLICY_MARKERS = {
         "`gh pr merge`",
         "Publishing is a separate explicit action",
         "explicit maintainer authorization",
+        "### Focused local validation and pull-request follow-through",
+        "Python test suite locally",
+        "ready for review",
+        "@codex review",
+        "exact head",
+        "reviewThreads",
     ),
     Path(".github/pull_request_template.md"): (
         "Closes #",
@@ -191,15 +198,6 @@ REQUIRED_POLICY_MARKERS = {
         "AtlasoUiPatterns.createGrid",
         "AtlasoUiPatterns.createWizard",
         "private vulnerability-remediation pull request",
-    ),
-    Path("docs/contribute/agent-policies.md"): (
-        "# Detailed agent policies",
-        "### Focused local validation and pull-request follow-through",
-        "Python test suite locally",
-        "ready for review",
-        "@codex review",
-        "exact head",
-        "reviewThreads",
     ),
     Path("docs/contribute/ui-design-guide.md"): (
         "# Atlaso UI Design Guide",

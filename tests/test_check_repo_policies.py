@@ -290,6 +290,32 @@ def test_agent_policy_gate_rejects_missing_private_remediation_marker(
     )
 
 
+def test_agent_policy_gate_rejects_missing_detailed_private_remediation_marker(
+    tmp_path: Path,
+) -> None:
+    """Verify that detailed agent policy retains private remediation enforcement.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    write_policy_files(tmp_path)
+    policy_path = tmp_path / "docs" / "contribute" / "agent-policies.md"
+    policy_path.write_text(
+        policy_path.read_text(encoding="utf-8").replace(
+            "temporary private fork", ""
+        ),
+        encoding="utf-8",
+    )
+
+    findings = check_agent_policy_gate(tmp_path)
+
+    assert len(findings) == 1
+    assert findings[0].path == policy_path
+    assert findings[0].message == (
+        "required agent policy marker is missing: temporary private fork"
+    )
+
+
 def test_agent_policy_gate_rejects_missing_ui_guide(tmp_path: Path) -> None:
     """Verify that agent policy gate rejects missing ui guide.
 
