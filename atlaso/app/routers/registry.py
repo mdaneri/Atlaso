@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from itertools import product
 from typing import cast
 
 from fastapi import APIRouter
@@ -224,26 +225,45 @@ def _route_descriptors(contribution: RouterContribution) -> tuple[_RouteDescript
     return tuple(descriptors)
 
 
-def _representative_route_path(path: str) -> str | None:
-    """Return one concrete path that exercises each standard path convertor."""
+def _route_path_witnesses(path: str) -> tuple[str, ...] | None:
+    """Return concrete paths covering standard convertor intersections."""
     _, path_format, convertors = compile_path(path)
     samples = {
-        "FloatConvertor": "1.5",
-        "IntegerConvertor": "1",
-        "PathConvertor": "value/path",
-        "StringConvertor": "value",
-        "UUIDConvertor": "00000000-0000-0000-0000-000000000000",
+        "FloatConvertor": ("1", "1.5"),
+        "IntegerConvertor": ("1",),
+        "PathConvertor": (
+            "",
+            "value",
+            "value/path",
+            "1",
+            "1.5",
+            "00000000-0000-0000-0000-000000000000",
+        ),
+        "StringConvertor": (
+            "value",
+            "1",
+            "1.5",
+            "00000000-0000-0000-0000-000000000000",
+        ),
+        "UUIDConvertor": ("00000000-0000-0000-0000-000000000000",),
     }
-    values: dict[str, str] = {}
+    names: list[str] = []
+    choices: list[tuple[str, ...]] = []
     for name, convertor in convertors.items():
-        value = samples.get(type(convertor).__name__)
-        if value is None:
+        convertor_samples = samples.get(type(convertor).__name__)
+        if convertor_samples is None:
             return None
-        values[name] = value
-    return path_format.format(**values)
+        names.append(name)
+        choices.append(convertor_samples)
+    if not names:
+        return (path,)
+    return tuple(
+        path_format.format(**dict(zip(names, values, strict=True)))
+        for values in product(*choices)
+    )
 
 
-def _matches_later_route(path: str, candidate: str, *, is_mount: bool) -> bool:
+def route_paths_overlap(path: str, candidate: str, *, is_mount: bool) -> bool:
     """Return whether an earlier fallback route matches a later route.
 
     Args:
@@ -254,16 +274,14 @@ def _matches_later_route(path: str, candidate: str, *, is_mount: bool) -> bool:
     Returns:
         Whether the earlier route would intercept the later fixed path.
     """
-    if is_mount:
-        concrete_candidate = _representative_route_path(candidate)
-        if concrete_candidate is None:
-            concrete_candidate = candidate
-        return concrete_candidate.startswith(f"{path.rstrip('/')}/")
-    concrete_candidate = _representative_route_path(candidate)
-    if concrete_candidate is None:
+    witnesses = _route_path_witnesses(candidate)
+    if witnesses is None:
         return False
+    if is_mount:
+        prefix = f"{path.rstrip('/')}/"
+        return any(witness.startswith(prefix) for witness in witnesses)
     path_regex, _, _ = compile_path(path)
-    return path_regex.fullmatch(concrete_candidate) is not None
+    return any(path_regex.fullmatch(witness) is not None for witness in witnesses)
 
 
 def _validate_catch_all_order(descriptors: Sequence[_RouteDescriptor]) -> None:
@@ -296,7 +314,7 @@ def _validate_catch_all_order(descriptors: Sequence[_RouteDescriptor]) -> None:
                     and identity.method != _OPAQUE_METHOD
                     and later_identity.method != _OPAQUE_METHOD
                 )
-                or not _matches_later_route(
+                or not route_paths_overlap(
                     identity.path,
                     later_identity.path,
                     is_mount=descriptor.is_mount,

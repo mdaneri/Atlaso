@@ -224,3 +224,33 @@ def test_registry_rejects_broad_parameter_before_narrow_parameter():
                 ),
             ),
         )
+
+
+@pytest.mark.parametrize(
+    ("earlier_path", "later_path"),
+    (
+        ("/values/{value:int}", "/values/{value:float}"),
+        ("/values/{value:uuid}", "/values/{value:path}"),
+    ),
+)
+def test_registry_rejects_partial_convertor_overlap(
+    earlier_path: str,
+    later_path: str,
+):
+    """Reject partially shadowed peers across standard convertor subsets."""
+    registry = DomainRouterRegistry("test")
+
+    with pytest.raises(RouterRegistryError, match="must follow route"):
+        registry.register(
+            "overlapping_convertors",
+            (
+                RouterContribution(
+                    "management",
+                    _router(earlier_path, endpoint_name="earlier"),
+                ),
+                RouterContribution(
+                    "management",
+                    _router(later_path, endpoint_name="later"),
+                ),
+            ),
+        )

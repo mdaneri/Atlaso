@@ -8,9 +8,12 @@ from dataclasses import dataclass
 from typing import Any, cast
 
 from fastapi import APIRouter, FastAPI
-from starlette.routing import compile_path
 
-from atlaso.app.routers.registry import RouteIdentity, compatible_route_shadows
+from atlaso.app.routers.registry import (
+    RouteIdentity,
+    compatible_route_shadows,
+    route_paths_overlap,
+)
 
 _WEBSOCKET_METHOD = "WEBSOCKET"
 _OPAQUE_METHOD = "*"
@@ -160,48 +163,6 @@ def _validate_unique_routes(records: Sequence[Mapping[str, object]]) -> None:
             identities[identity] = index
 
 
-def _representative_route_path(path: str) -> str | None:
-    """Return one concrete path that exercises each standard path convertor."""
-    _, path_format, convertors = compile_path(path)
-    samples = {
-        "FloatConvertor": "1.5",
-        "IntegerConvertor": "1",
-        "PathConvertor": "value/path",
-        "StringConvertor": "value",
-        "UUIDConvertor": "00000000-0000-0000-0000-000000000000",
-    }
-    values: dict[str, str] = {}
-    for name, convertor in convertors.items():
-        value = samples.get(type(convertor).__name__)
-        if value is None:
-            return None
-        values[name] = value
-    return path_format.format(**values)
-
-
-def _matches_later_route(path: str, candidate: str, *, is_mount: bool) -> bool:
-    """Return whether an earlier fallback route matches a later route.
-
-    Args:
-        path: Earlier parameterized or mount path.
-        candidate: Later fixed or parameterized route path.
-        is_mount: Whether the earlier route owns an entire mounted subtree.
-
-    Returns:
-        Whether the earlier route would intercept the later fixed path.
-    """
-    if is_mount:
-        concrete_candidate = _representative_route_path(candidate)
-        if concrete_candidate is None:
-            concrete_candidate = candidate
-        return concrete_candidate.startswith(f"{path.rstrip('/')}/")
-    concrete_candidate = _representative_route_path(candidate)
-    if concrete_candidate is None:
-        return False
-    path_regex, _, _ = compile_path(path)
-    return path_regex.fullmatch(concrete_candidate) is not None
-
-
 def _overlapping_methods(first: Sequence[object], second: Sequence[object]) -> frozenset[str]:
     """Return concrete methods matched by both route records."""
     first_methods = {method for method in first if isinstance(method, str)}
@@ -262,7 +223,7 @@ def _validate_catch_all_order(routes: Sequence[_EffectiveRoute]) -> None:
             }
             if (
                 not overlapping_methods
-                or not _matches_later_route(path, later_path, is_mount=is_mount)
+                or not route_paths_overlap(path, later_path, is_mount=is_mount)
             ):
                 continue
             if allowed_methods == overlapping_methods:
