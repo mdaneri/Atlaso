@@ -225,6 +225,32 @@ def test_agent_policy_gate_rejects_missing_entry_point(tmp_path: Path) -> None:
     )
 
 
+def test_agent_policy_gate_rejects_missing_private_remediation_marker(
+    tmp_path: Path,
+) -> None:
+    """Verify that the canonical private vulnerability workflow remains enforced.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    write_policy_files(tmp_path)
+    security_path = tmp_path / "SECURITY.md"
+    security_path.write_text(
+        security_path.read_text(encoding="utf-8").replace(
+            "temporary private fork", ""
+        ),
+        encoding="utf-8",
+    )
+
+    findings = check_agent_policy_gate(tmp_path)
+
+    assert len(findings) == 1
+    assert findings[0].path == security_path
+    assert findings[0].message == (
+        "required agent policy marker is missing: temporary private fork"
+    )
+
+
 def test_agent_policy_gate_rejects_missing_ui_guide(tmp_path: Path) -> None:
     """Verify that agent policy gate rejects missing ui guide.
 

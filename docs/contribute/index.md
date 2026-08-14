@@ -24,3 +24,7 @@ status: current
 Every repository change starts with a labeled issue and ends with a reviewed pull request that closes it. Run the
 focused tests, documentation validation, repository checks, full test suite when warranted, and `git diff --check`
 before delivery.
+
+Validated sensitive vulnerabilities use the private advisory and temporary-fork workflow in the
+[Security policy](https://github.com/mdaneri/Atlaso/blob/main/SECURITY.md) instead of a public issue or public pull
+request. The ordinary version, local validation, and review requirements remain in force.

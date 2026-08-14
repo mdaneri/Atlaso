@@ -144,7 +144,7 @@ upstream clients remain available independently.
 ## Project
 
 - [Brand guide](docs/assets/brand/BRAND_GUIDE.md)
-- [Security and data classification policy](SECURITY.md)
+- [Security reporting, private remediation, and data classification policy](SECURITY.md)
 - [Code of conduct](CODE_OF_CONDUCT.md)
 - [License](LICENSE)
 
