@@ -66,6 +66,7 @@ class _RouteDescriptor:
 
     identity: RouteIdentity
     endpoint: object | None
+    is_mount: bool
 
 
 def _validated_name(value: str, *, kind: str) -> str:
@@ -137,10 +138,28 @@ def _route_descriptors(contribution: RouterContribution) -> tuple[_RouteDescript
             _RouteDescriptor(
                 identity=RouteIdentity(plane=contribution.plane, path=path, method=method),
                 endpoint=endpoint,
+                is_mount=not methods and not type(original).__name__.endswith("WebSocketRoute"),
             )
             for method in route_methods
         )
     return tuple(descriptors)
+
+
+def _matches_later_fixed_path(path: str, candidate: str, *, is_mount: bool) -> bool:
+    """Return whether an earlier fallback route matches a later fixed path.
+
+    Args:
+        path: Earlier parameterized or mount path.
+        candidate: Later fixed route path.
+        is_mount: Whether the earlier route owns an entire mounted subtree.
+
+    Returns:
+        Whether the earlier route would intercept the later fixed path.
+    """
+    if is_mount:
+        return candidate.startswith(f"{path.rstrip('/')}/")
+    path_regex, _, _ = compile_path(path)
+    return path_regex.fullmatch(candidate) is not None
 
 
 def _validate_catch_all_order(descriptors: Sequence[_RouteDescriptor]) -> None:
@@ -154,17 +173,24 @@ def _validate_catch_all_order(descriptors: Sequence[_RouteDescriptor]) -> None:
     """
     for index, descriptor in enumerate(descriptors):
         identity = descriptor.identity
-        if "{" not in identity.path:
+        if not descriptor.is_mount and "{" not in identity.path:
             continue
-        path_regex, _, _ = compile_path(identity.path)
         for later in descriptors[index + 1 :]:
             later_identity = later.identity
             if (
                 later_identity.plane != identity.plane
-                or later_identity.method != identity.method
+                or (
+                    later_identity.method != identity.method
+                    and identity.method != _OPAQUE_METHOD
+                    and later_identity.method != _OPAQUE_METHOD
+                )
                 or "{" in later_identity.path
-                or descriptor.endpoint is later.endpoint
-                or path_regex.fullmatch(later_identity.path) is None
+                or (descriptor.endpoint is not None and descriptor.endpoint is later.endpoint)
+                or not _matches_later_fixed_path(
+                    identity.path,
+                    later_identity.path,
+                    is_mount=descriptor.is_mount,
+                )
             ):
                 continue
             raise RouterRegistryError(

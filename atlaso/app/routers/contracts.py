@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from copy import deepcopy
+from dataclasses import dataclass
 from typing import Any, cast
 
 from fastapi import APIRouter, FastAPI
@@ -19,6 +20,14 @@ type RouteContractRecord = dict[str, object]
 
 class RouterContractError(ValueError):
     """Report route or OpenAPI characterization drift."""
+
+
+@dataclass(frozen=True)
+class _EffectiveRoute:
+    """Retain stable metadata and runtime handler identity for validation."""
+
+    record: RouteContractRecord
+    endpoint: object | None
 
 
 def _routing_plane(path: str) -> str:
@@ -58,15 +67,15 @@ def _effective_route_sources(app: FastAPI) -> tuple[object, ...]:
     return tuple(sources)
 
 
-def _route_record(source: object, *, order: int) -> RouteContractRecord:
-    """Return one stable route contract record.
+def _effective_route(source: object, *, order: int) -> _EffectiveRoute:
+    """Return one stable route contract record with handler identity.
 
     Args:
         source: Direct route or effective included-router context.
         order: Zero-based effective application route order.
 
     Returns:
-        JSON-serializable stable route metadata.
+        Stable route metadata and its runtime endpoint identity.
 
     Raises:
         RouterContractError: If the route lacks a stable absolute path.
@@ -92,16 +101,19 @@ def _route_record(source: object, *, order: int) -> RouteContractRecord:
     include_in_schema = getattr(source, "include_in_schema", None)
     if include_in_schema is None:
         include_in_schema = getattr(original, "include_in_schema", None)
-    return {
-        "include_in_schema": include_in_schema,
-        "kind": kind,
-        "methods": route_methods,
-        "name": name,
-        "operation_id": operation_id,
-        "order": order,
-        "path": path,
-        "plane": _routing_plane(path),
-    }
+    return _EffectiveRoute(
+        record={
+            "include_in_schema": include_in_schema,
+            "kind": kind,
+            "methods": route_methods,
+            "name": name,
+            "operation_id": operation_id,
+            "order": order,
+            "path": path,
+            "plane": _routing_plane(path),
+        },
+        endpoint=getattr(source, "endpoint", None) or getattr(original, "endpoint", None),
+    )
 
 
 def _record_identities(record: Mapping[str, object]) -> tuple[RouteIdentity, ...]:
@@ -148,34 +160,68 @@ def _validate_unique_routes(records: Sequence[Mapping[str, object]]) -> None:
             identities[identity] = index
 
 
-def _validate_catch_all_order(records: Sequence[Mapping[str, object]]) -> None:
+def _methods_overlap(first: Sequence[object], second: Sequence[object]) -> bool:
+    """Return whether two route method sets can match the same request.
+
+    Args:
+        first: Earlier route methods.
+        second: Later route methods.
+
+    Returns:
+        Whether the methods intersect or either route uses the mount wildcard.
+    """
+    return _OPAQUE_METHOD in first or _OPAQUE_METHOD in second or bool(set(first).intersection(second))
+
+
+def _matches_later_fixed_path(path: str, candidate: str, *, is_mount: bool) -> bool:
+    """Return whether an earlier fallback route matches a later fixed path.
+
+    Args:
+        path: Earlier parameterized or mount path.
+        candidate: Later fixed route path.
+        is_mount: Whether the earlier route owns an entire mounted subtree.
+
+    Returns:
+        Whether the earlier route would intercept the later fixed path.
+    """
+    if is_mount:
+        return candidate.startswith(f"{path.rstrip('/')}/")
+    path_regex, _, _ = compile_path(path)
+    return path_regex.fullmatch(candidate) is not None
+
+
+def _validate_catch_all_order(routes: Sequence[_EffectiveRoute]) -> None:
     """Reject catch-all routes that shadow later fixed handlers.
 
     Args:
-        records: Route contract records in effective application order.
+        routes: Effective routes in application order with runtime endpoint identity.
 
     Raises:
         RouterContractError: If a parameterized route shadows a later fixed route with another handler.
     """
-    for index, record in enumerate(records):
+    for index, route in enumerate(routes):
+        record = route.record
         path = record.get("path")
         plane = record.get("plane")
-        name = record.get("name")
         methods = record.get("methods")
-        if not isinstance(path, str) or "{" not in path or not isinstance(methods, list):
+        kind = record.get("kind")
+        if not isinstance(path, str) or not isinstance(methods, list):
             continue
-        path_regex, _, _ = compile_path(path)
-        for later in records[index + 1 :]:
+        is_mount = kind == "mount"
+        if not is_mount and "{" not in path:
+            continue
+        for later_route in routes[index + 1 :]:
+            later = later_route.record
             later_path = later.get("path")
             later_methods = later.get("methods")
             if (
                 later.get("plane") != plane
-                or later.get("name") == name
                 or not isinstance(later_path, str)
                 or "{" in later_path
                 or not isinstance(later_methods, list)
-                or not set(methods).intersection(later_methods)
-                or path_regex.fullmatch(later_path) is None
+                or not _methods_overlap(methods, later_methods)
+                or not _matches_later_fixed_path(path, later_path, is_mount=is_mount)
+                or (route.endpoint is not None and route.endpoint is later_route.endpoint)
             ):
                 continue
             raise RouterContractError(
@@ -195,12 +241,13 @@ def build_route_inventory(app: FastAPI) -> list[RouteContractRecord]:
     Raises:
         RouterContractError: If duplicate or shadowing registrations exist.
     """
-    inventory = [
-        _route_record(source, order=order)
+    routes = [
+        _effective_route(source, order=order)
         for order, source in enumerate(_effective_route_sources(app))
     ]
+    inventory = [route.record for route in routes]
     _validate_unique_routes(inventory)
-    _validate_catch_all_order(inventory)
+    _validate_catch_all_order(routes)
     return inventory
 
 
@@ -218,7 +265,6 @@ def validate_route_inventory(
         RouterContractError: If a route is duplicated, omitted, added, or reordered.
     """
     _validate_unique_routes(actual)
-    _validate_catch_all_order(actual)
     if len(actual) != len(expected):
         raise RouterContractError(
             f"route inventory length changed: expected {len(expected)}, found {len(actual)}"

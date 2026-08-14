@@ -5,6 +5,7 @@ from copy import deepcopy
 from pathlib import Path
 
 import pytest
+from fastapi import FastAPI
 
 from atlaso.app import main, ui
 from atlaso.app.api import v1
@@ -66,6 +67,39 @@ def test_route_inventory_validator_detects_omission_and_order_drift():
     reordered[0], reordered[1] = reordered[1], reordered[0]
     with pytest.raises(RouterContractError, match="changed at order 0"):
         validate_route_inventory(reordered, inventory)
+
+
+def test_route_inventory_rejects_same_named_shadow_handlers():
+    """Compare endpoint identity when route names are intentionally reused."""
+    app = FastAPI(openapi_url=None, docs_url=None, redoc_url=None)
+
+    @app.get("/resources/{item:path}", name="shared")
+    def catch_all() -> dict[str, str]:
+        """Return the synthetic catch-all response."""
+        return {"handler": "catch-all"}
+
+    @app.get("/resources/status", name="shared")
+    def fixed() -> dict[str, str]:
+        """Return the synthetic fixed response."""
+        return {"handler": "fixed"}
+
+    with pytest.raises(RouterContractError, match="must follow fixed route"):
+        build_route_inventory(app)
+
+
+def test_route_inventory_rejects_mount_before_fixed_subtree_route():
+    """Treat a mounted subtree as a catch-all for later fixed routes."""
+    app = FastAPI(openapi_url=None, docs_url=None, redoc_url=None)
+    mounted = FastAPI(openapi_url=None, docs_url=None, redoc_url=None)
+    app.mount("/assets", mounted, name="assets")
+
+    @app.get("/assets/health")
+    def fixed() -> dict[str, str]:
+        """Return the synthetic fixed response beneath the mount."""
+        return {"status": "ok"}
+
+    with pytest.raises(RouterContractError, match="must follow fixed route"):
+        build_route_inventory(app)
 
 
 def test_facade_routers_are_included_exactly_once():
