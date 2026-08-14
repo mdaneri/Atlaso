@@ -60,7 +60,14 @@ class FirewallApiRouter:
 
 
 def build_router(dependencies: FirewallApiDependencies) -> FirewallApiRouter:
-    """Build the extracted domain router without importing its compatibility facade."""
+    """Build the extracted domain router without importing its compatibility facade.
+
+    Args:
+        dependencies: Facade-owned helpers retained during structural extraction.
+
+    Returns:
+        Configured domain router and its stable endpoint callables.
+    """
     router = APIRouter(prefix="/api/v1", route_class=DocumentedAPIRoute)
     assign_firewall_rule_values = dependencies.assign_firewall_rule_values
     firewall_validation_payload = dependencies.firewall_validation_payload

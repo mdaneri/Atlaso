@@ -40,7 +40,14 @@ class RoutesWanUiRouter:
 
 
 def build_router(dependencies: RoutesWanUiDependencies) -> RoutesWanUiRouter:
-    """Build the extracted domain router without importing its compatibility facade."""
+    """Build the extracted domain router without importing its compatibility facade.
+
+    Args:
+        dependencies: Facade-owned helpers retained during structural extraction.
+
+    Returns:
+        Configured domain router and its stable endpoint callables.
+    """
     router = APIRouter(
         prefix=MANAGEMENT_UI_ROOT,
         dependencies=[Depends(dependencies.require_management_ui_request)],
