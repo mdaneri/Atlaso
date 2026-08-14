@@ -138,6 +138,8 @@ non-`/api/v1` browser and protocol routes out of OpenAPI and documented in their
 Route ownership and staged domain extraction must also follow the
 [router architecture](docs/contribute/router-architecture.md): retain the stable UI/API facades, deterministic
 registries, dependency direction, exact route inventory, and normalized OpenAPI contract.
+Physical-interface and VLAN transport handlers and tests belong to their domain router modules; keep facade imports
+compatible and leave shared mutation/reconciliation service consolidation to its separately scoped phase.
 
 ## Canonical implementation policies
 

@@ -61,15 +61,37 @@ def _router(path: str, *, method: str = "GET", endpoint_name: str = "route") -> 
     return router
 
 
-def test_facades_register_current_router_bundles_once():
-    """Keep the current monolithic facades as the sole initial domains."""
-    assert ui.UI_ROUTER_REGISTRY.domains == ("facade",)
-    assert ui.UI_ROUTER_REGISTRY.routers_for_plane("management") == (ui.router,)
+def test_facades_register_physical_vlan_domains_in_exact_order():
+    """Keep extracted physical/VLAN routers between their facade segments."""
+    assert ui.UI_ROUTER_REGISTRY.domains == (
+        "facade_before_physical_vlans",
+        "physical_vlans",
+        "facade_after_physical_vlans",
+    )
+    assert ui.UI_ROUTER_REGISTRY.routers_for_plane("management") == (
+        ui._management_before_physical_vlans_router,
+        ui.physical_vlans_router,
+        ui._management_after_physical_vlans_router,
+    )
     assert ui.UI_ROUTER_REGISTRY.routers_for_plane("public") == (ui.public_router,)
     assert ui.UI_ROUTER_REGISTRY.routers_for_plane("front_door") == (ui.front_door_router,)
     assert ui.UI_ROUTER_REGISTRY.routers_for_plane("protocol") == (ui.protocol_router,)
-    assert v1.API_V1_ROUTER_REGISTRY.domains == ("facade",)
-    assert v1.API_V1_ROUTER_REGISTRY.routers_for_plane("api_v1") == (v1.router,)
+    assert v1.API_V1_ROUTER_REGISTRY.domains == (
+        "facade_before_physical_vlans",
+        "physical_vlans",
+        "facade_after_physical_vlans",
+    )
+    assert v1.API_V1_ROUTER_REGISTRY.routers_for_plane("api_v1") == (
+        v1._api_before_physical_vlans_router,
+        v1.physical_vlans_router,
+        v1._api_after_physical_vlans_router,
+    )
+    assert {
+        route.endpoint.__module__ for route in ui.physical_vlans_router.routes
+    } == {"atlaso.app.routers.ui.physical_vlans"}
+    assert {
+        route.endpoint.__module__ for route in v1.physical_vlans_router.routes
+    } == {"atlaso.app.routers.api_v1.physical_vlans"}
 
 
 def test_registry_rejects_duplicate_domain_names():
