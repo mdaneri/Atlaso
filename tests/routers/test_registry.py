@@ -1,7 +1,7 @@
 """Test deterministic domain-router registry behavior."""
 
 import pytest
-from fastapi import APIRouter
+from fastapi import APIRouter, FastAPI
 
 from atlaso.app import ui
 from atlaso.app.api import v1
@@ -115,6 +115,30 @@ def test_registry_rejects_catch_all_before_fixed_peer():
                 RouterContribution("management", fixed),
             ),
         )
+
+
+def test_registry_accepts_fixed_route_at_mount_prefix():
+    """Require a subtree separator before a mount shadows a fixed peer."""
+    registry = DomainRouterRegistry("test")
+    mounted = APIRouter()
+    mounted.mount(
+        "/assets",
+        FastAPI(openapi_url=None, docs_url=None, redoc_url=None),
+        name="assets",
+    )
+
+    registry.register(
+        "mount_prefix",
+        (
+            RouterContribution("management", mounted),
+            RouterContribution(
+                "management",
+                _router("/assets", endpoint_name="fixed"),
+            ),
+        ),
+    )
+
+    assert registry.domains == ("mount_prefix",)
 
 
 def test_registry_accepts_fixed_route_before_catch_all():

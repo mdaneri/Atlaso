@@ -106,6 +106,22 @@ def test_route_inventory_rejects_mount_before_fixed_subtree_route():
         build_route_inventory(app)
 
 
+def test_route_inventory_accepts_fixed_route_at_mount_prefix():
+    """Require a subtree separator before a mount shadows a fixed peer."""
+    app = FastAPI(openapi_url=None, docs_url=None, redoc_url=None)
+    mounted = FastAPI(openapi_url=None, docs_url=None, redoc_url=None)
+    app.mount("/assets", mounted, name="assets")
+
+    @app.get("/assets")
+    def fixed() -> dict[str, str]:
+        return {"status": "ok"}
+
+    assert [record["path"] for record in build_route_inventory(app)] == [
+        "/assets",
+        "/assets",
+    ]
+
+
 def test_route_inventory_rejects_same_endpoint_shadowing():
     """Reject shadowing even when route records reference the same callable."""
     app = FastAPI(openapi_url=None, docs_url=None, redoc_url=None)

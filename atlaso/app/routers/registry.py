@@ -427,8 +427,8 @@ def _path_automaton(path: str, *, is_mount: bool = False) -> _PathAutomaton | No
 
     if is_mount:
         accepting_state = new_state()
-        epsilons[current].append(accepting_state)
         if path == "/":
+            epsilons[current].append(accepting_state)
             transitions[current].append((_CharacterClass("any"), current))
         else:
             subtree = new_state()
