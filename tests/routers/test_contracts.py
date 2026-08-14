@@ -102,6 +102,38 @@ def test_route_inventory_rejects_mount_before_fixed_subtree_route():
         build_route_inventory(app)
 
 
+def test_route_inventory_rejects_same_endpoint_shadowing():
+    """Reject shadowing even when route records reference the same callable."""
+    app = FastAPI(openapi_url=None, docs_url=None, redoc_url=None)
+
+    def shared(item: str = "default") -> dict[str, str]:
+        return {"item": item}
+
+    app.add_api_route("/resources/{item:path}", shared, methods=["GET"])
+    app.add_api_route("/resources/status", shared, methods=["GET"])
+
+    with pytest.raises(RouterContractError, match="must follow route"):
+        build_route_inventory(app)
+
+
+def test_route_inventory_accepts_semantically_equivalent_default_alias():
+    """Allow a fixed alias only when fallback binding and configuration match."""
+    app = FastAPI(openapi_url=None, docs_url=None, redoc_url=None)
+
+    def shared(item: str = "") -> dict[str, str]:
+        return {"item": item}
+
+    app.add_api_route("/resources/{item:path}", shared, methods=["GET"])
+    app.add_api_route("/resources/", shared, methods=["GET"])
+
+    inventory = build_route_inventory(app)
+
+    assert [record["path"] for record in inventory] == [
+        "/resources/{item:path}",
+        "/resources/",
+    ]
+
+
 def test_route_inventory_rejects_broad_parameter_before_narrow_parameter():
     """Reject a broad path convertor that shadows a narrower peer."""
     app = FastAPI(openapi_url=None, docs_url=None, redoc_url=None)

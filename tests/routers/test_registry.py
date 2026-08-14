@@ -130,6 +130,57 @@ def test_registry_accepts_fixed_route_before_catch_all():
     assert registry.domains == ("ordered",)
 
 
+def test_registry_rejects_same_endpoint_shadowing():
+    """Reject shadowing even when route records reference the same callable."""
+    router = APIRouter()
+
+    def shared(item: str = "default") -> dict[str, str]:
+        return {"item": item}
+
+    router.add_api_route("/resources/{item:path}", shared, methods=["GET"])
+    router.add_api_route("/resources/status", shared, methods=["GET"])
+    registry = DomainRouterRegistry("test")
+
+    with pytest.raises(RouterRegistryError, match="must follow route"):
+        registry.register(
+            "same_endpoint",
+            (RouterContribution("management", router),),
+        )
+
+
+def test_registry_accepts_semantically_equivalent_default_alias():
+    """Allow a fixed alias only when fallback binding and configuration match."""
+    router = APIRouter()
+
+    def shared(item: str = "") -> dict[str, str]:
+        return {"item": item}
+
+    router.add_api_route("/resources/{item:path}", shared, methods=["GET"])
+    router.add_api_route("/resources/", shared, methods=["GET"])
+    registry = DomainRouterRegistry("test")
+    registry.register("equivalent_alias", (RouterContribution("management", router),))
+
+    assert registry.domains == ("equivalent_alias",)
+
+
+def test_registry_rejects_same_endpoint_configuration_drift():
+    """Reject aliases whose response configuration changes route semantics."""
+    router = APIRouter()
+
+    def shared(item: str = "") -> dict[str, str]:
+        return {"item": item}
+
+    router.add_api_route("/resources/{item:path}", shared, methods=["GET"])
+    router.add_api_route("/resources/", shared, methods=["GET"], status_code=202)
+    registry = DomainRouterRegistry("test")
+
+    with pytest.raises(RouterRegistryError, match="must follow route"):
+        registry.register(
+            "configuration_drift",
+            (RouterContribution("management", router),),
+        )
+
+
 def test_registry_rejects_broad_parameter_before_narrow_parameter():
     """Reject a broad path convertor that shadows a narrower peer."""
     registry = DomainRouterRegistry("test")
