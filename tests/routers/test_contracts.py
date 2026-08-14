@@ -200,6 +200,23 @@ def test_route_inventory_rejects_partial_convertor_overlap(
         build_route_inventory(app)
 
 
+def test_route_inventory_rejects_overlap_requiring_peer_literal_witness():
+    """Use literals from both patterns when checking partial shadowing."""
+    app = FastAPI(openapi_url=None, docs_url=None, redoc_url=None)
+
+    def earlier(first: str) -> dict[str, str]:
+        return {"handler": f"earlier:{first}"}
+
+    def later(second: str) -> dict[str, str]:
+        return {"handler": f"later:{second}"}
+
+    app.add_api_route("/items/{first:str}/edit", earlier, methods=["GET"])
+    app.add_api_route("/items/fixed/{second:str}", later, methods=["GET"])
+
+    with pytest.raises(RouterContractError, match="must follow route"):
+        build_route_inventory(app)
+
+
 def test_facade_routers_are_included_exactly_once():
     """Keep every stable UI and API facade router included exactly once."""
     for router in (

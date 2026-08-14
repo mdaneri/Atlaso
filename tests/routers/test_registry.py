@@ -254,3 +254,23 @@ def test_registry_rejects_partial_convertor_overlap(
                 ),
             ),
         )
+
+
+def test_registry_rejects_overlap_requiring_peer_literal_witness():
+    """Use literals from both patterns when checking partial shadowing."""
+    registry = DomainRouterRegistry("test")
+
+    with pytest.raises(RouterRegistryError, match="must follow route"):
+        registry.register(
+            "literal_witness_overlap",
+            (
+                RouterContribution(
+                    "management",
+                    _router("/items/{first:str}/edit", endpoint_name="earlier"),
+                ),
+                RouterContribution(
+                    "management",
+                    _router("/items/fixed/{second:str}", endpoint_name="later"),
+                ),
+            ),
+        )

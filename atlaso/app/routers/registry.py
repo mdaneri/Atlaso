@@ -225,7 +225,24 @@ def _route_descriptors(contribution: RouterContribution) -> tuple[_RouteDescript
     return tuple(descriptors)
 
 
-def _route_path_witnesses(path: str) -> tuple[str, ...] | None:
+def _route_literal_samples(*paths: str) -> tuple[str, ...]:
+    """Return bounded converter samples derived from route literals."""
+    samples: set[str] = set()
+    for path in paths:
+        for literal_run in re.split(r"\{[^{}]+\}", path):
+            stripped_run = literal_run.strip("/")
+            if not stripped_run:
+                continue
+            samples.add(stripped_run)
+            samples.update(segment for segment in stripped_run.split("/") if segment)
+    return tuple(sorted(samples))
+
+
+def _route_path_witnesses(
+    path: str,
+    *,
+    literal_samples: Sequence[str] = (),
+) -> tuple[str, ...] | None:
     """Return concrete paths covering standard convertor intersections."""
     _, path_format, convertors = compile_path(path)
     samples = {
@@ -253,8 +270,13 @@ def _route_path_witnesses(path: str) -> tuple[str, ...] | None:
         convertor_samples = samples.get(type(convertor).__name__)
         if convertor_samples is None:
             return None
+        matching_literals = tuple(
+            sample
+            for sample in literal_samples
+            if re.fullmatch(convertor.regex, sample) is not None
+        )
         names.append(name)
-        choices.append(convertor_samples)
+        choices.append(tuple(dict.fromkeys((*convertor_samples, *matching_literals))))
     if not names:
         return (path,)
     return tuple(
@@ -274,7 +296,8 @@ def route_paths_overlap(path: str, candidate: str, *, is_mount: bool) -> bool:
     Returns:
         Whether the earlier route would intercept the later fixed path.
     """
-    witnesses = _route_path_witnesses(candidate)
+    literal_samples = _route_literal_samples(path, candidate)
+    witnesses = _route_path_witnesses(candidate, literal_samples=literal_samples)
     if witnesses is None:
         return False
     if is_mount:
