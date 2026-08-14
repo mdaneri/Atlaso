@@ -115,7 +115,12 @@ def _audit_detail(
     changed_dependent_units: tuple[str, ...],
     preserved_dhcp_dns: tuple[str, ...],
 ) -> str:
-    """Render the established value-free physical-interface audit detail."""
+    """Render the established value-free physical-interface audit detail.
+
+    Args:
+        changed_dependent_units: Dependent units refreshed by reconciliation.
+        preserved_dhcp_dns: DHCP-provided DNS values preserved in desired state.
+    """
     detail_parts: list[str] = []
     if changed_dependent_units:
         detail_parts.append(

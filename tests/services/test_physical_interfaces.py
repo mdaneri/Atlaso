@@ -26,14 +26,23 @@ from atlaso.app.services.physical_interfaces import (
 
 
 def _physical_interface(db, name: str = "eth2") -> PhysicalInterface:
-    """Return one seeded physical interface by name."""
+    """Return one seeded physical interface by name.
+
+    Args:
+        db: Database session containing the seeded interface rows.
+        name: Physical-interface name to select.
+    """
     return db.execute(
         select(PhysicalInterface).where(PhysicalInterface.name == name)
     ).scalar_one()
 
 
 def _mutation_audit(action: str = "test_update_interface") -> PhysicalInterfaceMutationAudit:
-    """Return stable audit metadata for direct service tests."""
+    """Return stable audit metadata for direct service tests.
+
+    Args:
+        action: Audit action to associate with the test mutation.
+    """
     return PhysicalInterfaceMutationAudit(actor="service-test", action=action)
 
 
@@ -112,6 +121,12 @@ def test_mutation_rolls_back_interface_dependents_and_audit_on_reconciliation_fa
         db.commit()
 
         def fail_after_dependent_mutation(session, **_kwargs):
+            """Mutate a dependent row, then model a reconciliation failure.
+
+            Args:
+                session: Database session used by the reconciliation helper.
+                **_kwargs: Additional reconciliation inputs ignored by the test double.
+            """
             dependent_dns = session.execute(select(DnsSettings)).scalar_one()
             dependent_dns.listen_address = "192.168.60.1"
             session.add(dependent_dns)
@@ -160,6 +175,11 @@ def test_mutation_rolls_back_reconciled_rows_when_audit_staging_fails(client, mo
         db.commit()
 
         def fail_audit_staging(**_kwargs):
+            """Model audit construction failure after reconciliation.
+
+            Args:
+                **_kwargs: Audit fields ignored by the test double.
+            """
             raise RuntimeError("injected audit staging failure")
 
         monkeypatch.setattr(physical_interfaces, "AuditEvent", fail_audit_staging)
