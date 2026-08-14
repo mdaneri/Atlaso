@@ -142,10 +142,14 @@ are all complete for the current head. If the base or head changes, stop the mer
 repeat any required commit-push-review cycle, and reassess authorization and eligibility. Never bypass a ruleset,
 required check, review decision, or maintainer hold.
 
-Perform the authorized merge as a squash merge guarded by the expected pull-request head SHA, for example with
-`gh pr merge --squash --match-head-commit <head-sha>`, plus the explicit subject and extended body required below. After
-the merge, verify the pull request state, confirm that the squash commit is reachable from current `origin/main`, check
-linked issue closure, and monitor applicable post-merge workflows before reporting completion.
+An expected-head option does not bind the base SHA. Direct agent merging therefore also requires an active branch rule
+with strict up-to-date required checks that blocks the merge if `main` advances after validation. Re-read that rule
+immediately before merging, never use an administrative bypass, and stop for maintainer direction if strict base
+enforcement is unavailable. When both guards are present, perform the authorized merge as a squash merge guarded by the
+expected pull-request head SHA, for example with `gh pr merge --squash --match-head-commit <head-sha>`, plus the explicit
+subject and extended body required below. After the merge, verify the pull request state, confirm that the squash commit
+is reachable from current `origin/main`, check linked issue closure, and monitor applicable post-merge workflows before
+reporting completion.
 
 ### Extended merge descriptions
 

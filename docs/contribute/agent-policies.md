@@ -120,9 +120,13 @@ status: current
   documentation, synchronized patch version, all applicable exact-head checks, answered actionable feedback, resolved
   non-outdated `reviewThreads`, and conflict-free merge state. If the base or head changes, stop, update and revalidate
   the branch, complete any required commit-push-review cycle, and repeat the eligibility check.
-- Perform only a squash merge guarded by the expected head SHA. Supply the finalized pull-request title as the subject
-  and an extended body describing the outcome, rationale, principal changes, validation, and linked issues. Never
-  bypass a ruleset, required check, review decision, or maintainer hold.
+- An expected-head option does not bind the base SHA. Direct agent merging therefore requires an active branch rule with
+  strict up-to-date required checks that blocks the merge if `main` advances after validation. Re-read the rule
+  immediately before merging, never use an administrative bypass, and stop for maintainer direction when strict base
+  enforcement is unavailable.
+- With both base and head guards present, perform only a squash merge guarded by the expected head SHA. Supply the
+  finalized pull-request title as the subject and an extended body describing the outcome, rationale, principal
+  changes, validation, and linked issues. Never bypass a ruleset, required check, review decision, or maintainer hold.
 - After merging, verify the pull request state, confirm that the squash commit is reachable from current `origin/main`,
   check linked issue closure, and monitor applicable post-merge workflows before reporting completion.
 
