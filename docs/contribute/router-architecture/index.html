@@ -3517,8 +3517,9 @@
 <p>Atlaso is moving its monolithic UI and API v1 route implementations into product-domain modules in staged work under
 issue #317. The application-facing modules <code>atlaso/app/ui.py</code> and <code>atlaso/app/api/v1.py</code> remain stable compatibility and
 aggregation facades throughout that migration. Phase 1 established the registries and contract baselines. Phase 2
-extracts physical-interface and VLAN transport ownership without changing their external contracts or consolidating
-their shared desired-state mutation behavior.</p>
+extracted physical-interface and VLAN transport ownership without changing their external contracts. Phase 3 places
+physical-interface desired-state mutation, dependent reconciliation, and audit persistence behind one typed domain
+service shared by both extracted transports.</p>
 <h2 id="ownership-and-responsibilities">Ownership and responsibilities<a class="headerlink" href="#ownership-and-responsibilities" title="Permanent link">&para;</a></h2>
 <ul>
 <li><code>atlaso/app/main.py</code> owns application construction, middleware, mounts, and the top-level order in which stable facade
@@ -3573,9 +3574,14 @@ so neither imports a monolithic facade and existing helper exports remain stable
 <code>tests/routers/ui/test_physical_vlans.py</code> and <code>tests/routers/api_v1/test_physical_vlans.py</code>. Shared registry tests assert
 the exact before/domain/after order and endpoint module ownership. Import-boundary checks require both facades to
 assemble these domain modules while continuing to reject domain-to-facade imports.</p>
-<p>This extraction does not change templates, browser assets, visible copy, API operations, transaction behavior, or the
-global Appliance Apply boundary. Consolidating the shared physical-interface mutation and reconciliation service is a
-separate child phase under issue #317.</p>
+<p><code>atlaso/app/services/physical_interfaces.py</code> owns the typed partial-mutation, audit-input, and committed-result contract
+used by both transports. It stages the interface row, every reconciled dependent row, and the transport-compatible audit
+event before one commit. <code>atlaso/app/services/interface_updates.py</code> retains the detailed reconciliation algorithm as a
+documented low-level compatibility seam for VLAN and other callers that already own a wider transaction; it does not
+replace the physical-interface domain-service boundary.</p>
+<p>This service consolidation does not change templates, browser assets, visible copy, API operations, route inventory,
+normalized OpenAPI, or the global Appliance Apply boundary. The service writes desired state only; host mutation still
+belongs exclusively to Appliance Apply.</p>
 <h2 id="route-and-openapi-compatibility">Route and OpenAPI compatibility<a class="headerlink" href="#route-and-openapi-compatibility" title="Permanent link">&para;</a></h2>
 <p><code>tests/contracts/route_inventory.json</code> records every effective application route in order, including browser,
 protocol, WebSocket, mount, and API routes. Its stable fields are plane, path, methods, route name, explicit operation
@@ -3599,6 +3605,9 @@ unchanged.</p>
 <p>Use only the files that match the domain's actual transports. Keep service tests focused on domain invariants and keep
 transport tests focused on authorization, validation, response, redirect, session, CSRF, media-type, and audit
 behavior. The shared registry, import-boundary, route-inventory, and OpenAPI tests stay under <code>tests/routers/</code>.</p>
+<p>For physical interfaces, <code>tests/services/test_physical_interfaces.py</code> owns rollback, dependent-binding, child-VLAN,
+DHCP/reservation/DNS, inactive-legacy-field, and audit-atomicity behavior. The extracted UI and API test modules retain
+their distinct response and audit-action contracts and representative parity coverage.</p>
 <p>Every new or changed <code>/api/v1</code> operation must also follow the <a href="../api-authoring/">API authoring standard</a>. Any later
 change to templates, authored CSS, browser JavaScript, controls, layouts, grids, wizards, or visible copy must first
 complete the <a href="../ui-design-guide/">UI Design Guide</a> gate.</p>

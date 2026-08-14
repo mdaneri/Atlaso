@@ -3784,7 +3784,10 @@ ineligible, reconciliation clears the CA portal interface/address and alias with
 Valid operator-selected DHCP gateway, DNS, and NTP values remain unchanged unless they match a replaced interface
 address or otherwise become stale. Enabled DHCP reservations retain their host offsets when exactly one rebased scope
 can receive them, including app-owned reservation DNS records; an ambiguous reservation move rolls back the interface
-edit. Legacy global DHCP binding fields are inactive when real scope rows exist and do not block unrelated changes.</p>
+edit. Legacy global DHCP binding fields are inactive when real scope rows exist and do not block unrelated changes.
+The saved interface, all reconciled dependent rows, and the value-free audit event commit together. The audit detail
+names only dependent units whose desired state changed; a reconciliation or audit-staging failure leaves no partial
+interface, dependency, reservation, DNS, or audit update.</p>
 <h3 id="choose-where-the-management-ui-is-available">Choose where the management UI is available<a class="headerlink" href="#choose-where-the-management-ui-is-available" title="Permanent link">&para;</a></h3>
 <p>A physical interface with the <strong>management</strong> role always exposes <code>/ui/management</code>; it has no separate management UI
 switch. An addressed physical interface with the <strong>access</strong> role and <strong>Access (untagged)</strong> link type, or an enabled
