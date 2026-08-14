@@ -30,7 +30,8 @@ surfaces.
   head, and current-head checks, comments, reviews, and authoritative review threads were followed through.
 - [ ] For an agent-authored internal pull request, the Default merge authorization policy was checked before any guarded
   squash merge, including any explicit user or maintainer hold, strict up-to-date required checks that bind the base,
-  and an expected-head guard without administrative bypass; or this pull request is outside that policy.
+  an expected-head guard without administrative bypass, and confirmation that no merge queue is required; or this pull
+  request is outside that policy.
 - [ ] Evidence-backed issues discovered outside this pull request's linked scope were matched to existing issues or
   opened separately with one appropriate type label; suspected sensitive vulnerabilities were kept private.
 - [ ] For a temporary-private-fork pull request, advisory-side maintainer review and recorded local validation replace

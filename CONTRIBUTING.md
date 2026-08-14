@@ -112,11 +112,13 @@ the eligibility check. Never bypass a ruleset, required check, review decision, 
 Because an expected-head option does not bind the base SHA, direct agent merging also requires an active branch rule
 with strict up-to-date required checks that blocks the merge if `main` advances after validation. Re-read that rule
 immediately before merging, never use an administrative bypass, and stop for maintainer direction if strict base
-enforcement is unavailable. With both guards present, use a squash merge protected by the expected head SHA and supply
-the finalized pull-request title plus an extended commit body that explains the outcome and rationale, summarizes
-principal changes, records validation, and names the linked issues. Afterward, verify the merged state, confirm that the
-squash commit is reachable from current `origin/main`, check linked issue closure, and monitor applicable post-merge
-workflows before reporting completion.
+enforcement is unavailable. Also inspect the active rules for a required merge queue. If one is present, do not invoke
+`gh pr merge`, because it may enqueue the pull request or enable auto-merge rather than complete the synchronous guarded
+merge; stop for maintainer direction instead. With both guards present and no required merge queue, use a squash merge
+protected by the expected head SHA and supply the finalized pull-request title plus an extended commit body that
+explains the outcome and rationale, summarizes principal changes, records validation, and names the linked issues.
+Afterward, verify the merged state, confirm that the squash commit is reachable from current `origin/main`, check linked
+issue closure, and monitor applicable post-merge workflows before reporting completion.
 
 Maintainers may explicitly enable auto-merge on an internal, ready-for-review pull request. When `main` advances, Atlaso
 automatically updates only those auto-merge-enabled branches that are in this repository, are not drafts, have no merge

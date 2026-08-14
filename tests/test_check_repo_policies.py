@@ -351,6 +351,37 @@ def test_agent_policy_gate_rejects_missing_merge_base_guard(tmp_path: Path) -> N
         )
 
 
+def test_agent_policy_gate_rejects_missing_merge_queue_guard(tmp_path: Path) -> None:
+    """Verify that direct merges fail closed when a merge queue is required.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    required_entry_markers = {
+        Path("AGENTS.md"): "no merge queue is required",
+        Path("CONTRIBUTING.md"): "no required merge queue",
+        Path(".github/copilot-instructions.md"): "when a merge queue is required",
+        Path(".github/pull_request_template.md"): "no merge queue is required",
+        Path("docs/contribute/agent-policies.md"): "no required merge queue",
+    }
+
+    for relative_path, marker in required_entry_markers.items():
+        write_policy_files(tmp_path)
+        path = tmp_path / relative_path
+        path.write_text(
+            path.read_text(encoding="utf-8").replace(marker, ""),
+            encoding="utf-8",
+        )
+
+        findings = check_agent_policy_gate(tmp_path)
+
+        assert len(findings) == 1
+        assert findings[0].path == path
+        assert findings[0].message == (
+            f"required agent policy marker is missing: {marker}"
+        )
+
+
 def test_agent_policy_gate_rejects_missing_entry_point(tmp_path: Path) -> None:
     """Verify that agent policy gate rejects missing entry point.
 

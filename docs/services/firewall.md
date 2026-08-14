@@ -45,6 +45,12 @@ After a successful task, test the required TCP or UDP service from the intended 
 can verify the effective state with `nft list ruleset`. If a rule removes management access, recover through the
 [local appliance console](../operate/appliance-console.md) and restore the previous desired state.
 
+## Transport ownership
+
+Firewall management and API v1 transports are owned by dedicated `firewall` domain routers and aggregated through the
+stable UI and API facades. This internal extraction does not change paths, methods, permissions, responses, nftables
+desired state, audit actions, or the global Appliance Apply boundary.
+
 <!-- BEGIN GENERATED ADDITIONAL SCREENSHOTS -->
 ## Additional verified states
 

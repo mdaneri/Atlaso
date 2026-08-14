@@ -151,6 +151,13 @@ remains a confirmed row-context action.
 Confirm the management URL, expected routes, and interface state after apply. If access is lost, use the local console
 network recovery action to restore a known-good management configuration, then review desired state before retrying.
 
+## Transport ownership
+
+The management Routes/WAN transports and their API v1 counterparts are owned by the dedicated `routes_wan` domain
+routers. The stable UI and API facade modules continue to aggregate and export those handlers. This internal ownership
+split does not change any path, method, permission, response, desired-state behavior, or the global Appliance Apply
+boundary described above.
+
 <!-- BEGIN GENERATED ADDITIONAL SCREENSHOTS -->
 ## Additional verified states
 

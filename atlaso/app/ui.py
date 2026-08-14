@@ -138,12 +138,16 @@ from atlaso.app.routers.registry import (
     allow_compatible_route_shadow,
 )
 from atlaso.app.routers.ui import UI_ROUTER_REGISTRY
+from atlaso.app.routers.ui.firewall import FirewallUiDependencies
+from atlaso.app.routers.ui.firewall import build_router as build_firewall_ui_router
 from atlaso.app.routers.ui.physical_vlans import (
     PhysicalVlanUiDependencies,
 )
 from atlaso.app.routers.ui.physical_vlans import (
     build_router as build_physical_vlan_ui_router,
 )
+from atlaso.app.routers.ui.routes_wan import RoutesWanUiDependencies
+from atlaso.app.routers.ui.routes_wan import build_router as build_routes_wan_ui_router
 from atlaso.app.schemas import ApiTokenCreate
 from atlaso.app.secrets import decrypt_secret, encrypt_secret, secret_key_status
 from atlaso.app.security import (
@@ -374,23 +378,19 @@ from atlaso.app.services.esxi_pxe import (
 from atlaso.app.services.firewall import (
     ATLASO_DHCP_FIREWALL_RULE_MARKER,
     FIREWALL_ACTIONS,
-    FIREWALL_ANY_SOURCE_GROUP_ID,
     FIREWALL_DIRECTIONS,
     FIREWALL_POLICIES,
     FIREWALL_PROTOCOLS,
-    FIREWALL_SOURCE_GROUP_REFERENCE_PREFIX,
     FIREWALL_SOURCE_GROUPS_SETTING_KEY,
     FIREWALL_STAGED_CONFIG_PATH,
     ca_portal_firewall_interfaces,
     firewall_interface_networks,
     firewall_rule_to_dict,
-    firewall_settings_to_dict,
     firewall_source_group_state,
     is_atlaso_managed_firewall_rule,
     managed_routing_firewall_rules,
     managed_service_firewall_rules,
     render_nftables_config,
-    validate_firewall_rule,
     validate_firewall_source_groups,
     validate_firewall_state,
 )
@@ -582,7 +582,6 @@ from atlaso.app.services.routes_wan import (
     render_wan_config,
     route_to_dict,
     routing_rule_to_dict,
-    validate_nat_source,
     validate_wan_state,
     wan_policy_to_dict,
 )
@@ -16289,1504 +16288,102 @@ def submit_appliance_apply(
     return RedirectResponse(f"/tasks?job_id={quote(job.id)}", status_code=303)
 
 
-@router.get("/routes-wan", response_class=HTMLResponse, response_model=None)
-def routes_wan(
-    request: Request,
-    identity: Identity = Depends(require_session_identity),
-    db: Session = Depends(get_db),
-) -> HTMLResponse:
-    """Handle the routes wan endpoint.
-
-    Args:
-        request: Incoming HTTP request.
-        identity: Authenticated identity authorizing the request.
-        db: Active database session.
-
-    Returns:
-        The endpoint response.
-    """
-    return render(
-        request,
-        "routes_wan.html",
-        {
-            "identity": identity,
-            **routes_wan_context(db),
-            "routes_wan_can_write": identity.can("write:routes"),
-            "appliance_apply_status": appliance_apply_status(db, "wan"),
-        },
+_management_before_routes_wan_router = router
+_firewall_ui = build_firewall_ui_router(
+    FirewallUiDependencies(
+        require_management_ui_request=require_management_ui_request,
+        render=render,
+        firewall_context=firewall_context,
+        appliance_apply_status=appliance_apply_status,
+        verify_csrf=verify_csrf,
+        get_firewall_settings_row=get_firewall_settings_row,
+        setting_value=setting_value,
+        set_setting_value=set_setting_value,
+        grid_request=grid_request,
+        grid_saved_response=grid_saved_response,
     )
+)
+firewall_router = _firewall_ui.router
+firewall = _firewall_ui.endpoints["firewall"]
+update_firewall_settings = _firewall_ui.endpoints["update_firewall_settings"]
+firewall_source_group_state_for_db = _firewall_ui.endpoints[
+    "firewall_source_group_state_for_db"
+]
+persist_firewall_source_group_state = _firewall_ui.endpoints[
+    "persist_firewall_source_group_state"
+]
+_source_group_entries_from_form = _firewall_ui.endpoints[
+    "_source_group_entries_from_form"
+]
+_firewall_source_group_id = _firewall_ui.endpoints["_firewall_source_group_id"]
+_normalized_firewall_source_group = _firewall_ui.endpoints[
+    "_normalized_firewall_source_group"
+]
+_strip_deleted_source_group_references = _firewall_ui.endpoints[
+    "_strip_deleted_source_group_references"
+]
+_firewall_source_group_response = _firewall_ui.endpoints[
+    "_firewall_source_group_response"
+]
+update_firewall_source_groups = _firewall_ui.endpoints[
+    "update_firewall_source_groups"
+]
+update_managed_firewall_rule_source_group = _firewall_ui.endpoints[
+    "update_managed_firewall_rule_source_group"
+]
+_assign_firewall_rule = _firewall_ui.endpoints["_assign_firewall_rule"]
+create_firewall_rule = _firewall_ui.endpoints["create_firewall_rule"]
+update_firewall_rule = _firewall_ui.endpoints["update_firewall_rule"]
+delete_firewall_rule = _firewall_ui.endpoints["delete_firewall_rule"]
 
-
-def parse_int_form_value(value: str, field_label: str, *, default: int = 0, minimum: int | None = None) -> int | Response:
-    """Parse int form value.
-
-    Args:
-        value: Candidate value consumed by parse int form value.
-        field_label: Candidate field label to parse.
-        default: Candidate default to parse.
-        minimum: Candidate minimum to parse.
-
-
-    Returns:
-        The parsed int form value.
-    """
-    if value == "":
-        parsed = default
-    else:
-        try:
-            parsed = int(value)
-        except ValueError:
-            return Response(f"{field_label} must be a number.", status_code=422, media_type="text/plain")
-    if minimum is not None and parsed < minimum:
-        return Response(f"{field_label} must be at least {minimum}.", status_code=422, media_type="text/plain")
-    return parsed
-
-
-def parse_optional_int_form_value(value: str, field_label: str, *, minimum: int | None = None) -> int | None | Response:
-    """Parse optional int form value.
-
-    Args:
-        value: Candidate value consumed by parse optional int form value.
-        field_label: Candidate field label to parse.
-        minimum: Candidate minimum to parse.
-
-
-    Returns:
-        The parsed optional int form value.
-    """
-    if value == "":
-        return None
-    return parse_int_form_value(value, field_label, minimum=minimum or None)
-
-
-def parse_float_form_value(value: str, field_label: str, *, default: float = 0.0, minimum: float | None = None, maximum: float | None = None) -> float | Response:
-    """Parse float form value.
-
-    Args:
-        value: Value to process.
-        field_label: Field label supplied by the caller.
-        default: Default supplied by the caller.
-        minimum: Minimum supplied by the caller.
-        maximum: Maximum supplied by the caller.
-
-    Returns:
-        The parsed float form value.
-    """
-    if value == "":
-        parsed = default
-    else:
-        try:
-            parsed = float(value)
-        except ValueError:
-            return Response(f"{field_label} must be a number.", status_code=422, media_type="text/plain")
-    if minimum is not None and parsed < minimum:
-        return Response(f"{field_label} must be at least {minimum}.", status_code=422, media_type="text/plain")
-    if maximum is not None and parsed > maximum:
-        return Response(f"{field_label} must be at most {maximum}.", status_code=422, media_type="text/plain")
-    return parsed
-
-
-def validate_route_form_values(
-    destination_cidr: str,
-    gateway: str,
-    interface_name: str,
-    metric: str,
-    wan_policy_id: str,
-    wan_mode: str,
-    db: Session,
-) -> tuple[str, str | None, str, int, int | None, str] | Response:
-    """Validate route form values.
-
-    Args:
-        destination_cidr: Destination cidr supplied by the caller.
-        gateway: Gateway supplied by the caller.
-        interface_name: Linux interface name of the network target.
-        metric: Metric supplied by the caller.
-        wan_policy_id: Identifier of the wan policy.
-        wan_mode: Wan mode supplied by the caller.
-        db: Active database session.
-
-    Returns:
-        The validate route form values result.
-    """
-    destination = destination_cidr.strip()
-    if not destination:
-        return Response("Destination CIDR is required.", status_code=422, media_type="text/plain")
-    try:
-        destination_network = ip_network(destination, strict=False)
-    except ValueError:
-        return Response(f"{destination} is not a valid destination CIDR.", status_code=422, media_type="text/plain")
-    gateway_value = gateway.strip() or None
-    if gateway_value:
-        try:
-            gateway_address = ip_address(gateway_value)
-        except ValueError:
-            return Response(f"{gateway_value} is not a valid gateway IP address.", status_code=422, media_type="text/plain")
-        if gateway_address.version != destination_network.version:
-            return Response("Route gateway family must match the destination CIDR family.", status_code=422, media_type="text/plain")
-    target_names = {target["name"] for target in wan_route_targets(db)}
-    interface_value = interface_name.strip()
-    if interface_value not in target_names:
-        return Response("Choose an access physical interface or enabled VLAN interface with an IP CIDR.", status_code=422, media_type="text/plain")
-    metric_value = parse_int_form_value(metric.strip(), "Metric", default=100, minimum=0)
-    if isinstance(metric_value, Response):
-        return metric_value
-    policy_id_value: int | None = None
-    if wan_policy_id.strip():
-        parsed_policy_id = parse_int_form_value(wan_policy_id.strip(), "WAN policy", minimum=1)
-        if isinstance(parsed_policy_id, Response):
-            return parsed_policy_id
-        if db.get(WanPolicy, parsed_policy_id) is None:
-            return Response("WAN policy does not exist.", status_code=422, media_type="text/plain")
-        policy_id_value = parsed_policy_id
-    raw_mode = wan_mode.strip() or "interface"
-    if raw_mode not in WAN_MODES:
-        return Response("WAN route mode is planned but not supported in v1. Use interface mode.", status_code=422, media_type="text/plain")
-    mode_value = "interface"
-    return destination, gateway_value, interface_value, metric_value, policy_id_value, mode_value
-
-
-def validate_wan_policy_form_values(
-    name: str,
-    latency_ms: str,
-    jitter_ms: str,
-    packet_loss_percent: str,
-    bandwidth_mbit: str,
-    corrupt_percent: str,
-    duplicate_percent: str,
-    reorder_percent: str,
-) -> tuple[str, int, int, float, int | None, float, float, float] | Response:
-    """Validate wan policy form values.
-
-    Args:
-        name: Name of the target object.
-        latency_ms: Latency ms supplied by the caller.
-        jitter_ms: Jitter ms supplied by the caller.
-        packet_loss_percent: Packet loss percent supplied by the caller.
-        bandwidth_mbit: Bandwidth mbit supplied by the caller.
-        corrupt_percent: Corrupt percent supplied by the caller.
-        duplicate_percent: Duplicate percent supplied by the caller.
-        reorder_percent: Reorder percent supplied by the caller.
-
-    Returns:
-        The validate wan policy form values result.
-    """
-    name_value = name.strip()
-    if not name_value:
-        return Response("WAN policy name is required.", status_code=422, media_type="text/plain")
-    latency_value = parse_int_form_value(latency_ms.strip(), "Latency", default=0, minimum=0)
-    jitter_value = parse_int_form_value(jitter_ms.strip(), "Jitter", default=0, minimum=0)
-    loss_value = parse_float_form_value(packet_loss_percent.strip(), "Packet loss", default=0.0, minimum=0.0, maximum=100.0)
-    bandwidth_value = parse_optional_int_form_value(bandwidth_mbit.strip(), "Bandwidth", minimum=1)
-    corrupt_value = parse_float_form_value(corrupt_percent.strip(), "Corruption", default=0.0, minimum=0.0, maximum=100.0)
-    duplicate_value = parse_float_form_value(duplicate_percent.strip(), "Duplication", default=0.0, minimum=0.0, maximum=100.0)
-    reorder_value = parse_float_form_value(reorder_percent.strip(), "Reordering", default=0.0, minimum=0.0, maximum=100.0)
-    for value in [latency_value, jitter_value, loss_value, bandwidth_value, corrupt_value, duplicate_value, reorder_value]:
-        if isinstance(value, Response):
-            return value
-    return name_value, latency_value, jitter_value, loss_value, bandwidth_value, corrupt_value, duplicate_value, reorder_value
-
-
-def validate_nat_rule_form_values(
-    name: str,
-    source: str,
-    outbound_interface: str,
-    priority: str,
-    masquerade: str | None,
-    db: Session,
-) -> tuple[str, str, str, bool, int] | Response:
-    """Validate nat rule form values.
-
-    Args:
-        name: Name of the target object.
-        source: Source path, address, or record to process.
-        outbound_interface: Outbound interface supplied by the caller.
-        priority: Ordering priority assigned to the item.
-        masquerade: Masquerade supplied by the caller.
-        db: Active database session.
-
-    Returns:
-        The validate nat rule form values result.
-    """
-    name_value = name.strip()
-    if not name_value:
-        return Response("NAT rule name is required.", status_code=422, media_type="text/plain")
-    source_value = source.strip() or "any"
-    source_groups = firewall_source_group_state_for_db(db)["groups"]
-    source_errors = validate_nat_source(source_value, {str(group.get("id", "")) for group in source_groups}, source_groups)
-    if source_errors:
-        return Response(source_errors[0], status_code=422, media_type="text/plain")
-    target_names = {target["name"] for target in wan_nat_targets_from_route_targets(wan_route_targets(db))}
-    outbound_value = outbound_interface.strip()
-    if outbound_value not in target_names:
-        return Response("Choose an access physical interface or enabled VLAN interface with an IP CIDR.", status_code=422, media_type="text/plain")
-    masquerade_value = masquerade == "on"
-    if not masquerade_value:
-        return Response("NAT v1 supports masquerade only.", status_code=422, media_type="text/plain")
-    priority_value = parse_int_form_value(priority.strip(), "Priority", default=100, minimum=0)
-    if isinstance(priority_value, Response):
-        return priority_value
-    return name_value, source_value, outbound_value, masquerade_value, priority_value
-
-
-def validate_routing_rule_form_values(
-    name: str,
-    source_interface: str,
-    destination_interface: str,
-    priority: str,
-    db: Session,
-) -> tuple[str, str, str, int] | Response:
-    """Validate routing rule form values.
-
-    Args:
-        name: Name of the target object.
-        source_interface: Source interface supplied by the caller.
-        destination_interface: Destination interface supplied by the caller.
-        priority: Ordering priority assigned to the item.
-        db: Active database session.
-
-    Returns:
-        The validate routing rule form values result.
-    """
-    name_value = name.strip()
-    if not name_value:
-        return Response("Routing rule name is required.", status_code=422, media_type="text/plain")
-    target_names = {target["name"] for target in wan_route_targets(db)}
-    source_value = source_interface.strip()
-    destination_value = destination_interface.strip()
-    if source_value not in target_names:
-        return Response("Choose a non-management source interface or VLAN with an IP CIDR.", status_code=422, media_type="text/plain")
-    if destination_value not in target_names:
-        return Response("Choose a non-management destination interface or VLAN with an IP CIDR.", status_code=422, media_type="text/plain")
-    if source_value == destination_value:
-        return Response("Routing source and destination must be different.", status_code=422, media_type="text/plain")
-    priority_value = parse_int_form_value(priority.strip(), "Priority", default=100, minimum=0)
-    if isinstance(priority_value, Response):
-        return priority_value
-    return name_value, source_value, destination_value, priority_value
-
-
-@router.post("/routes-wan/routes", response_model=None)
-def create_route_from_ui(
-    request: Request,
-    destination_cidr: str = Form(""),
-    gateway: str = Form(""),
-    interface_name: str = Form(""),
-    metric: str = Form("100"),
-    wan_policy_id: str = Form(""),
-    wan_mode: str = Form("interface"),
-    enabled: str | None = Form(None),
-    csrf: str = Form(...),
-    identity: Identity = Depends(require_session_identity),
-    db: Session = Depends(get_db),
-) -> RedirectResponse | Response:
-    """Handle the create route from ui endpoint.
-
-    Args:
-        request: Incoming HTTP request.
-        destination_cidr: Destination cidr supplied by the caller.
-        gateway: Gateway supplied by the caller.
-        interface_name: Linux interface name of the network target.
-        metric: Metric supplied by the caller.
-        wan_policy_id: Identifier of the wan policy.
-        wan_mode: Wan mode supplied by the caller.
-        enabled: Whether the requested behavior is enabled.
-        csrf: Validated CSRF token authorizing the request.
-        identity: Authenticated identity authorizing the request.
-        db: Active database session.
-
-    Returns:
-        The endpoint response.
-    """
-    verify_csrf(request, csrf)
-    parsed = validate_route_form_values(destination_cidr, gateway, interface_name, metric, wan_policy_id, wan_mode, db)
-    if isinstance(parsed, Response):
-        return parsed
-    destination, gateway_value, interface_value, metric_value, policy_id_value, mode_value = parsed
-    route = Route(
-        destination_cidr=destination,
-        gateway=gateway_value,
-        interface_name=interface_value,
-        metric=metric_value,
-        wan_policy_id=policy_id_value,
-        wan_mode=mode_value,
-        enabled=enabled == "on",
+_routes_wan_ui = build_routes_wan_ui_router(
+    RoutesWanUiDependencies(
+        require_management_ui_request=require_management_ui_request,
+        render=render,
+        appliance_apply_status=appliance_apply_status,
+        routes_wan_context=routes_wan_context,
+        verify_csrf=verify_csrf,
+        wan_route_targets=wan_route_targets,
+        wan_nat_targets_from_route_targets=wan_nat_targets_from_route_targets,
+        firewall_source_group_state_for_db=firewall_source_group_state_for_db,
     )
-    db.add(route)
-    db.commit()
-    record_audit(db, actor=identity.username, action="create_route", resource_type="route", resource_id=str(route.id))
-    return RedirectResponse("/routes-wan", status_code=303)
+)
+routes_wan_router = _routes_wan_ui.router
+routes_wan = _routes_wan_ui.endpoints["routes_wan"]
+parse_int_form_value = _routes_wan_ui.endpoints["parse_int_form_value"]
+parse_optional_int_form_value = _routes_wan_ui.endpoints[
+    "parse_optional_int_form_value"
+]
+parse_float_form_value = _routes_wan_ui.endpoints["parse_float_form_value"]
+validate_route_form_values = _routes_wan_ui.endpoints["validate_route_form_values"]
+validate_wan_policy_form_values = _routes_wan_ui.endpoints[
+    "validate_wan_policy_form_values"
+]
+validate_nat_rule_form_values = _routes_wan_ui.endpoints[
+    "validate_nat_rule_form_values"
+]
+validate_routing_rule_form_values = _routes_wan_ui.endpoints[
+    "validate_routing_rule_form_values"
+]
+create_route_from_ui = _routes_wan_ui.endpoints["create_route_from_ui"]
+edit_route_from_ui = _routes_wan_ui.endpoints["edit_route_from_ui"]
+delete_route_from_ui = _routes_wan_ui.endpoints["delete_route_from_ui"]
+create_routing_rule_from_ui = _routes_wan_ui.endpoints[
+    "create_routing_rule_from_ui"
+]
+edit_routing_rule_from_ui = _routes_wan_ui.endpoints[
+    "edit_routing_rule_from_ui"
+]
+delete_routing_rule_from_ui = _routes_wan_ui.endpoints[
+    "delete_routing_rule_from_ui"
+]
+create_nat_rule_from_ui = _routes_wan_ui.endpoints["create_nat_rule_from_ui"]
+edit_nat_rule_from_ui = _routes_wan_ui.endpoints["edit_nat_rule_from_ui"]
+delete_nat_rule_from_ui = _routes_wan_ui.endpoints["delete_nat_rule_from_ui"]
+create_policy_from_ui = _routes_wan_ui.endpoints["create_policy_from_ui"]
+edit_policy_from_ui = _routes_wan_ui.endpoints["edit_policy_from_ui"]
+delete_policy_from_ui = _routes_wan_ui.endpoints["delete_policy_from_ui"]
 
-
-@router.post("/routes-wan/routes/{route_id}/edit", response_model=None)
-def edit_route_from_ui(
-    request: Request,
-    route_id: int,
-    destination_cidr: str = Form(""),
-    gateway: str = Form(""),
-    interface_name: str = Form(""),
-    metric: str = Form("100"),
-    wan_policy_id: str = Form(""),
-    wan_mode: str = Form("interface"),
-    enabled: str | None = Form(None),
-    csrf: str = Form(...),
-    identity: Identity = Depends(require_session_identity),
-    db: Session = Depends(get_db),
-) -> RedirectResponse | Response:
-    """Handle the edit route from ui endpoint.
-
-    Args:
-        request: Incoming HTTP request.
-        route_id: Identifier of the route.
-        destination_cidr: Destination cidr supplied by the caller.
-        gateway: Gateway supplied by the caller.
-        interface_name: Linux interface name of the network target.
-        metric: Metric supplied by the caller.
-        wan_policy_id: Identifier of the wan policy.
-        wan_mode: Wan mode supplied by the caller.
-        enabled: Whether the requested behavior is enabled.
-        csrf: Validated CSRF token authorizing the request.
-        identity: Authenticated identity authorizing the request.
-        db: Active database session.
-
-    Returns:
-        The endpoint response.
-
-    Raises:
-        HTTPException: If the request cannot be fulfilled.
-    """
-    verify_csrf(request, csrf)
-    route = db.get(Route, route_id)
-    if not route:
-        raise HTTPException(status_code=404, detail="Route not found")
-    parsed = validate_route_form_values(destination_cidr, gateway, interface_name, metric, wan_policy_id, wan_mode, db)
-    if isinstance(parsed, Response):
-        return parsed
-    destination, gateway_value, interface_value, metric_value, policy_id_value, mode_value = parsed
-    route.destination_cidr = destination
-    route.gateway = gateway_value
-    route.interface_name = interface_value
-    route.metric = metric_value
-    route.wan_policy_id = policy_id_value
-    route.wan_mode = mode_value
-    route.enabled = enabled == "on"
-    db.add(route)
-    db.commit()
-    record_audit(db, actor=identity.username, action="update_route", resource_type="route", resource_id=str(route.id))
-    return RedirectResponse("/routes-wan", status_code=303)
-
-
-@router.post("/routes-wan/routes/{route_id}/delete", response_model=None)
-def delete_route_from_ui(
-    request: Request,
-    route_id: int,
-    csrf: str = Form(...),
-    identity: Identity = Depends(require_session_identity),
-    db: Session = Depends(get_db),
-) -> RedirectResponse | Response:
-    """Handle the delete route from ui endpoint.
-
-    Args:
-        request: Incoming HTTP request.
-        route_id: Identifier of the route.
-        csrf: Validated CSRF token authorizing the request.
-        identity: Authenticated identity authorizing the request.
-        db: Active database session.
-
-    Returns:
-        The endpoint response.
-
-    Raises:
-        HTTPException: If the request cannot be fulfilled.
-    """
-    verify_csrf(request, csrf)
-    route = db.get(Route, route_id)
-    if not route:
-        raise HTTPException(status_code=404, detail="Route not found")
-    db.delete(route)
-    db.commit()
-    record_audit(db, actor=identity.username, action="delete_route", resource_type="route", resource_id=str(route_id))
-    return RedirectResponse("/routes-wan", status_code=303)
-
-
-@router.post("/routes-wan/routing-rules", response_model=None)
-def create_routing_rule_from_ui(
-    request: Request,
-    name: str = Form(""),
-    source_interface: str = Form(""),
-    destination_interface: str = Form(""),
-    priority: str = Form("100"),
-    description: str = Form(""),
-    enabled: str | None = Form(None),
-    csrf: str = Form(...),
-    identity: Identity = Depends(require_session_identity),
-    db: Session = Depends(get_db),
-) -> RedirectResponse | Response:
-    """Handle the create routing rule from ui endpoint.
-
-    Args:
-        request: Incoming HTTP request.
-        name: Name of the target object.
-        source_interface: Source interface supplied by the caller.
-        destination_interface: Destination interface supplied by the caller.
-        priority: Ordering priority assigned to the item.
-        description: Human-readable description of the resource.
-        enabled: Whether the requested behavior is enabled.
-        csrf: Validated CSRF token authorizing the request.
-        identity: Authenticated identity authorizing the request.
-        db: Active database session.
-
-    Returns:
-        The endpoint response.
-    """
-    verify_csrf(request, csrf)
-    parsed = validate_routing_rule_form_values(name, source_interface, destination_interface, priority, db)
-    if isinstance(parsed, Response):
-        return parsed
-    name_value, source_value, destination_value, priority_value = parsed
-    rule = RoutingRule(
-        name=name_value,
-        source_interface=source_value,
-        destination_interface=destination_value,
-        priority=priority_value,
-        description=description.strip() or None,
-        enabled=enabled == "on",
-    )
-    db.add(rule)
-    try:
-        db.commit()
-    except IntegrityError:
-        db.rollback()
-        return Response(f"Routing rule {rule.name} already exists.", status_code=409, media_type="text/plain")
-    record_audit(db, actor=identity.username, action="create_routing_rule", resource_type="routing_rule", resource_id=str(rule.id))
-    return RedirectResponse("/routes-wan", status_code=303)
-
-
-@router.post("/routes-wan/routing-rules/{rule_id}/edit", response_model=None)
-def edit_routing_rule_from_ui(
-    request: Request,
-    rule_id: int,
-    name: str = Form(""),
-    source_interface: str = Form(""),
-    destination_interface: str = Form(""),
-    priority: str = Form("100"),
-    description: str = Form(""),
-    enabled: str | None = Form(None),
-    csrf: str = Form(...),
-    identity: Identity = Depends(require_session_identity),
-    db: Session = Depends(get_db),
-) -> RedirectResponse | Response:
-    """Handle the edit routing rule from ui endpoint.
-
-    Args:
-        request: Incoming HTTP request.
-        rule_id: Identifier of the rule.
-        name: Name of the target object.
-        source_interface: Source interface supplied by the caller.
-        destination_interface: Destination interface supplied by the caller.
-        priority: Ordering priority assigned to the item.
-        description: Human-readable description of the resource.
-        enabled: Whether the requested behavior is enabled.
-        csrf: Validated CSRF token authorizing the request.
-        identity: Authenticated identity authorizing the request.
-        db: Active database session.
-
-    Returns:
-        The endpoint response.
-
-    Raises:
-        HTTPException: If the request cannot be fulfilled.
-    """
-    verify_csrf(request, csrf)
-    rule = db.get(RoutingRule, rule_id)
-    if not rule:
-        raise HTTPException(status_code=404, detail="Routing rule not found")
-    parsed = validate_routing_rule_form_values(name, source_interface, destination_interface, priority, db)
-    if isinstance(parsed, Response):
-        return parsed
-    name_value, source_value, destination_value, priority_value = parsed
-    rule.name = name_value
-    rule.source_interface = source_value
-    rule.destination_interface = destination_value
-    rule.priority = priority_value
-    rule.description = description.strip() or None
-    rule.enabled = enabled == "on"
-    db.add(rule)
-    try:
-        db.commit()
-    except IntegrityError:
-        db.rollback()
-        return Response(f"Routing rule {rule.name} already exists.", status_code=409, media_type="text/plain")
-    record_audit(db, actor=identity.username, action="update_routing_rule", resource_type="routing_rule", resource_id=str(rule.id))
-    return RedirectResponse("/routes-wan", status_code=303)
-
-
-@router.post("/routes-wan/routing-rules/{rule_id}/delete", response_model=None)
-def delete_routing_rule_from_ui(
-    request: Request,
-    rule_id: int,
-    csrf: str = Form(...),
-    identity: Identity = Depends(require_session_identity),
-    db: Session = Depends(get_db),
-) -> RedirectResponse | Response:
-    """Handle the delete routing rule from ui endpoint.
-
-    Args:
-        request: Incoming HTTP request.
-        rule_id: Identifier of the rule.
-        csrf: Validated CSRF token authorizing the request.
-        identity: Authenticated identity authorizing the request.
-        db: Active database session.
-
-    Returns:
-        The endpoint response.
-
-    Raises:
-        HTTPException: If the request cannot be fulfilled.
-    """
-    verify_csrf(request, csrf)
-    rule = db.get(RoutingRule, rule_id)
-    if not rule:
-        raise HTTPException(status_code=404, detail="Routing rule not found")
-    db.delete(rule)
-    db.commit()
-    record_audit(db, actor=identity.username, action="delete_routing_rule", resource_type="routing_rule", resource_id=str(rule_id))
-    return RedirectResponse("/routes-wan", status_code=303)
-
-
-@router.post("/routes-wan/nat-rules", response_model=None)
-def create_nat_rule_from_ui(
-    request: Request,
-    name: str = Form(""),
-    source: str = Form("any"),
-    outbound_interface: str = Form(""),
-    masquerade: str | None = Form(None),
-    priority: str = Form("100"),
-    description: str = Form(""),
-    enabled: str | None = Form(None),
-    csrf: str = Form(...),
-    identity: Identity = Depends(require_session_identity),
-    db: Session = Depends(get_db),
-) -> RedirectResponse | Response:
-    """Handle the create nat rule from ui endpoint.
-
-    Args:
-        request: Incoming HTTP request.
-        name: Name of the target object.
-        source: Source path, address, or record to process.
-        outbound_interface: Outbound interface supplied by the caller.
-        masquerade: Masquerade supplied by the caller.
-        priority: Ordering priority assigned to the item.
-        description: Human-readable description of the resource.
-        enabled: Whether the requested behavior is enabled.
-        csrf: Validated CSRF token authorizing the request.
-        identity: Authenticated identity authorizing the request.
-        db: Active database session.
-
-    Returns:
-        The endpoint response.
-    """
-    verify_csrf(request, csrf)
-    parsed = validate_nat_rule_form_values(name, source, outbound_interface, priority, masquerade, db)
-    if isinstance(parsed, Response):
-        return parsed
-    name_value, source_value, outbound_value, masquerade_value, priority_value = parsed
-    rule = NatRule(
-        name=name_value,
-        source=source_value,
-        outbound_interface=outbound_value,
-        masquerade=masquerade_value,
-        priority=priority_value,
-        description=description.strip() or None,
-        enabled=enabled == "on",
-    )
-    db.add(rule)
-    try:
-        db.commit()
-    except IntegrityError:
-        db.rollback()
-        return Response(f"NAT rule {rule.name} already exists.", status_code=409, media_type="text/plain")
-    record_audit(db, actor=identity.username, action="create_nat_rule", resource_type="nat_rule", resource_id=str(rule.id))
-    return RedirectResponse("/routes-wan", status_code=303)
-
-
-@router.post("/routes-wan/nat-rules/{rule_id}/edit", response_model=None)
-def edit_nat_rule_from_ui(
-    request: Request,
-    rule_id: int,
-    name: str = Form(""),
-    source: str = Form("any"),
-    outbound_interface: str = Form(""),
-    masquerade: str | None = Form(None),
-    priority: str = Form("100"),
-    description: str = Form(""),
-    enabled: str | None = Form(None),
-    csrf: str = Form(...),
-    identity: Identity = Depends(require_session_identity),
-    db: Session = Depends(get_db),
-) -> RedirectResponse | Response:
-    """Handle the edit nat rule from ui endpoint.
-
-    Args:
-        request: Incoming HTTP request.
-        rule_id: Identifier of the rule.
-        name: Name of the target object.
-        source: Source path, address, or record to process.
-        outbound_interface: Outbound interface supplied by the caller.
-        masquerade: Masquerade supplied by the caller.
-        priority: Ordering priority assigned to the item.
-        description: Human-readable description of the resource.
-        enabled: Whether the requested behavior is enabled.
-        csrf: Validated CSRF token authorizing the request.
-        identity: Authenticated identity authorizing the request.
-        db: Active database session.
-
-    Returns:
-        The endpoint response.
-
-    Raises:
-        HTTPException: If the request cannot be fulfilled.
-    """
-    verify_csrf(request, csrf)
-    rule = db.get(NatRule, rule_id)
-    if not rule:
-        raise HTTPException(status_code=404, detail="NAT rule not found")
-    parsed = validate_nat_rule_form_values(name, source, outbound_interface, priority, masquerade, db)
-    if isinstance(parsed, Response):
-        return parsed
-    name_value, source_value, outbound_value, masquerade_value, priority_value = parsed
-    rule.name = name_value
-    rule.source = source_value
-    rule.outbound_interface = outbound_value
-    rule.masquerade = masquerade_value
-    rule.priority = priority_value
-    rule.description = description.strip() or None
-    rule.enabled = enabled == "on"
-    db.add(rule)
-    try:
-        db.commit()
-    except IntegrityError:
-        db.rollback()
-        return Response(f"NAT rule {rule.name} already exists.", status_code=409, media_type="text/plain")
-    record_audit(db, actor=identity.username, action="update_nat_rule", resource_type="nat_rule", resource_id=str(rule.id))
-    return RedirectResponse("/routes-wan", status_code=303)
-
-
-@router.post("/routes-wan/nat-rules/{rule_id}/delete", response_model=None)
-def delete_nat_rule_from_ui(
-    request: Request,
-    rule_id: int,
-    csrf: str = Form(...),
-    identity: Identity = Depends(require_session_identity),
-    db: Session = Depends(get_db),
-) -> RedirectResponse:
-    """Handle the delete nat rule from ui endpoint.
-
-    Args:
-        request: Incoming HTTP request.
-        rule_id: Identifier of the rule.
-        csrf: Validated CSRF token authorizing the request.
-        identity: Authenticated identity authorizing the request.
-        db: Active database session.
-
-    Returns:
-        The endpoint response.
-
-    Raises:
-        HTTPException: If the request cannot be fulfilled.
-    """
-    verify_csrf(request, csrf)
-    rule = db.get(NatRule, rule_id)
-    if not rule:
-        raise HTTPException(status_code=404, detail="NAT rule not found")
-    db.delete(rule)
-    db.commit()
-    record_audit(db, actor=identity.username, action="delete_nat_rule", resource_type="nat_rule", resource_id=str(rule_id))
-    return RedirectResponse("/routes-wan", status_code=303)
-
-
-@router.post("/routes-wan/policies", response_model=None)
-def create_policy_from_ui(
-    request: Request,
-    name: str = Form(...),
-    description: str = Form(""),
-    latency_ms: str = Form("0"),
-    jitter_ms: str = Form("0"),
-    packet_loss_percent: str = Form("0"),
-    bandwidth_mbit: str = Form(""),
-    corrupt_percent: str = Form("0"),
-    duplicate_percent: str = Form("0"),
-    reorder_percent: str = Form("0"),
-    enabled: str | None = Form(None),
-    csrf: str = Form(...),
-    identity: Identity = Depends(require_session_identity),
-    db: Session = Depends(get_db),
-) -> RedirectResponse | Response:
-    """Handle the create policy from ui endpoint.
-
-    Args:
-        request: Incoming HTTP request.
-        name: Name of the target object.
-        description: Human-readable description of the resource.
-        latency_ms: Latency ms supplied by the caller.
-        jitter_ms: Jitter ms supplied by the caller.
-        packet_loss_percent: Packet loss percent supplied by the caller.
-        bandwidth_mbit: Bandwidth mbit supplied by the caller.
-        corrupt_percent: Corrupt percent supplied by the caller.
-        duplicate_percent: Duplicate percent supplied by the caller.
-        reorder_percent: Reorder percent supplied by the caller.
-        enabled: Whether the requested behavior is enabled.
-        csrf: Validated CSRF token authorizing the request.
-        identity: Authenticated identity authorizing the request.
-        db: Active database session.
-
-    Returns:
-        The endpoint response.
-    """
-    verify_csrf(request, csrf)
-    parsed = validate_wan_policy_form_values(
-        name,
-        latency_ms,
-        jitter_ms,
-        packet_loss_percent,
-        bandwidth_mbit,
-        corrupt_percent,
-        duplicate_percent,
-        reorder_percent,
-    )
-    if isinstance(parsed, Response):
-        return parsed
-    name_value, latency_value, jitter_value, loss_value, bandwidth_value, corrupt_value, duplicate_value, reorder_value = parsed
-    policy = WanPolicy(
-        name=name_value,
-        description=description.strip() or None,
-        latency_ms=latency_value,
-        jitter_ms=jitter_value,
-        packet_loss_percent=loss_value,
-        bandwidth_mbit=bandwidth_value,
-        corrupt_percent=corrupt_value,
-        duplicate_percent=duplicate_value,
-        reorder_percent=reorder_value,
-        enabled=enabled == "on",
-    )
-    db.add(policy)
-    try:
-        db.commit()
-    except IntegrityError:
-        db.rollback()
-        return Response(f"WAN policy {policy.name} already exists.", status_code=409, media_type="text/plain")
-    record_audit(db, actor=identity.username, action="create_wan_policy", resource_type="wan_policy", resource_id=str(policy.id))
-    return RedirectResponse("/routes-wan", status_code=303)
-
-
-@router.post("/routes-wan/policies/{policy_id}/edit", response_model=None)
-def edit_policy_from_ui(
-    request: Request,
-    policy_id: int,
-    name: str = Form(""),
-    description: str = Form(""),
-    latency_ms: str = Form("0"),
-    jitter_ms: str = Form("0"),
-    packet_loss_percent: str = Form("0"),
-    bandwidth_mbit: str = Form(""),
-    corrupt_percent: str = Form("0"),
-    duplicate_percent: str = Form("0"),
-    reorder_percent: str = Form("0"),
-    enabled: str | None = Form(None),
-    csrf: str = Form(...),
-    identity: Identity = Depends(require_session_identity),
-    db: Session = Depends(get_db),
-) -> RedirectResponse | Response:
-    """Handle the edit policy from ui endpoint.
-
-    Args:
-        request: Incoming HTTP request.
-        policy_id: Identifier of the policy.
-        name: Name of the target object.
-        description: Human-readable description of the resource.
-        latency_ms: Latency ms supplied by the caller.
-        jitter_ms: Jitter ms supplied by the caller.
-        packet_loss_percent: Packet loss percent supplied by the caller.
-        bandwidth_mbit: Bandwidth mbit supplied by the caller.
-        corrupt_percent: Corrupt percent supplied by the caller.
-        duplicate_percent: Duplicate percent supplied by the caller.
-        reorder_percent: Reorder percent supplied by the caller.
-        enabled: Whether the requested behavior is enabled.
-        csrf: Validated CSRF token authorizing the request.
-        identity: Authenticated identity authorizing the request.
-        db: Active database session.
-
-    Returns:
-        The endpoint response.
-
-    Raises:
-        HTTPException: If the request cannot be fulfilled.
-    """
-    verify_csrf(request, csrf)
-    policy = db.get(WanPolicy, policy_id)
-    if not policy:
-        raise HTTPException(status_code=404, detail="WAN policy not found")
-    parsed = validate_wan_policy_form_values(
-        name,
-        latency_ms,
-        jitter_ms,
-        packet_loss_percent,
-        bandwidth_mbit,
-        corrupt_percent,
-        duplicate_percent,
-        reorder_percent,
-    )
-    if isinstance(parsed, Response):
-        return parsed
-    name_value, latency_value, jitter_value, loss_value, bandwidth_value, corrupt_value, duplicate_value, reorder_value = parsed
-    policy.name = name_value
-    policy.description = description.strip() or None
-    policy.latency_ms = latency_value
-    policy.jitter_ms = jitter_value
-    policy.packet_loss_percent = loss_value
-    policy.bandwidth_mbit = bandwidth_value
-    policy.corrupt_percent = corrupt_value
-    policy.duplicate_percent = duplicate_value
-    policy.reorder_percent = reorder_value
-    policy.enabled = enabled == "on"
-    db.add(policy)
-    try:
-        db.commit()
-    except IntegrityError:
-        db.rollback()
-        return Response(f"WAN policy {policy.name} already exists.", status_code=409, media_type="text/plain")
-    record_audit(db, actor=identity.username, action="update_wan_policy", resource_type="wan_policy", resource_id=str(policy.id))
-    return RedirectResponse("/routes-wan", status_code=303)
-
-
-@router.post("/routes-wan/policies/{policy_id}/delete", response_model=None)
-def delete_policy_from_ui(
-    request: Request,
-    policy_id: int,
-    csrf: str = Form(...),
-    identity: Identity = Depends(require_session_identity),
-    db: Session = Depends(get_db),
-) -> RedirectResponse:
-    """Handle the delete policy from ui endpoint.
-
-    Args:
-        request: Incoming HTTP request.
-        policy_id: Identifier of the policy.
-        csrf: Validated CSRF token authorizing the request.
-        identity: Authenticated identity authorizing the request.
-        db: Active database session.
-
-    Returns:
-        The endpoint response.
-
-    Raises:
-        HTTPException: If the request cannot be fulfilled.
-    """
-    verify_csrf(request, csrf)
-    policy = db.get(WanPolicy, policy_id)
-    if not policy:
-        raise HTTPException(status_code=404, detail="WAN policy not found")
-    for route in db.execute(select(Route).where(Route.wan_policy_id == policy.id)).scalars().all():
-        route.wan_policy_id = None
-        db.add(route)
-    db.delete(policy)
-    db.commit()
-    record_audit(db, actor=identity.username, action="delete_wan_policy", resource_type="wan_policy", resource_id=str(policy_id))
-    return RedirectResponse("/routes-wan", status_code=303)
-
-
-@router.get("/firewall", response_class=HTMLResponse, response_model=None)
-def firewall(
-    request: Request,
-    identity: Identity = Depends(require_session_identity),
-    db: Session = Depends(get_db),
-) -> HTMLResponse:
-    """Handle the firewall endpoint.
-
-    Args:
-        request: Incoming HTTP request.
-        identity: Authenticated identity authorizing the request.
-        db: Active database session.
-
-    Returns:
-        The endpoint response.
-    """
-    return render(request, "firewall.html", {"identity": identity, **firewall_context(db), "appliance_apply_status": appliance_apply_status(db, "firewall")})
-
-
-@router.post("/firewall/settings", response_model=None)
-def update_firewall_settings(
-    request: Request,
-    enabled: str | None = Form(None),
-    default_input_policy: str = Form("drop"),
-    default_forward_policy: str = Form("drop"),
-    default_output_policy: str = Form("accept"),
-    allow_established: str | None = Form(None),
-    allow_loopback: str | None = Form(None),
-    allow_icmp: str | None = Form(None),
-    log_dropped: str | None = Form(None),
-    csrf: str = Form(...),
-    identity: Identity = Depends(require_session_identity),
-    db: Session = Depends(get_db),
-) -> Response:
-    """Handle the update firewall settings endpoint.
-
-    Args:
-        request: Incoming HTTP request.
-        enabled: Whether the requested behavior is enabled.
-        default_input_policy: Default input policy supplied by the caller.
-        default_forward_policy: Default forward policy supplied by the caller.
-        default_output_policy: Default output policy supplied by the caller.
-        allow_established: Allow established supplied by the caller.
-        allow_loopback: Allow loopback supplied by the caller.
-        allow_icmp: Allow icmp supplied by the caller.
-        log_dropped: Log dropped supplied by the caller.
-        csrf: Validated CSRF token authorizing the request.
-        identity: Authenticated identity authorizing the request.
-        db: Active database session.
-
-    Returns:
-        The endpoint response.
-    """
-    verify_csrf(request, csrf)
-    settings = get_firewall_settings_row(db)
-    settings.enabled = enabled == "on"
-    settings.default_input_policy = default_input_policy if default_input_policy in FIREWALL_POLICIES else "drop"
-    settings.default_forward_policy = default_forward_policy if default_forward_policy in FIREWALL_POLICIES else "drop"
-    settings.default_output_policy = default_output_policy if default_output_policy in FIREWALL_POLICIES else "accept"
-    settings.allow_established = allow_established == "on"
-    settings.allow_loopback = allow_loopback == "on"
-    settings.allow_icmp = allow_icmp == "on"
-    settings.log_dropped = log_dropped == "on"
-    settings.updated_at = utcnow()
-    db.add(settings)
-    db.commit()
-    db.refresh(settings)
-    record_audit(db, actor=identity.username, action="update_firewall_settings", resource_type="firewall", resource_id=str(settings.id))
-    if request.headers.get("X-Atlaso-Autosave"):
-        context = firewall_context(db)
-        return JSONResponse(
-            {
-                "updated_at": settings.updated_at.isoformat(),
-                "settings": firewall_settings_to_dict(settings),
-                "enabled": settings.enabled,
-                "valid": not context["firewall_validation_errors"],
-                "validation_errors": context["firewall_validation_errors"],
-                "config_path": settings.config_path,
-                "config_preview": context["firewall_config_preview"],
-            }
-        )
-    return RedirectResponse("/firewall", status_code=303)
-
-
-def firewall_source_group_state_for_db(db: Session) -> dict:
-    """Return firewall source group state for db.
-
-    Args:
-        db: Active database session.
-    """
-    physical_interfaces = db.execute(select(PhysicalInterface).order_by(PhysicalInterface.name)).scalars().all()
-    vlan_interfaces = db.execute(select(VlanInterface).order_by(VlanInterface.parent_interface, VlanInterface.vlan_id)).scalars().all()
-    interface_networks = firewall_interface_networks(physical_interfaces, vlan_interfaces)
-    return firewall_source_group_state(setting_value(db, FIREWALL_SOURCE_GROUPS_SETTING_KEY), interface_networks)
-
-
-def persist_firewall_source_group_state(db: Session, state: dict) -> None:
-    """Persist firewall source group state.
-
-    Args:
-        db: Active database session.
-        state: Lifecycle or job state to persist.
-    """
-    set_setting_value(db, FIREWALL_SOURCE_GROUPS_SETTING_KEY, json.dumps(state, indent=2, sort_keys=True))
-
-
-def _source_group_entries_from_form(form) -> list[str]:
-    """Return source group entries from form.
-
-    Args:
-        form: Form consumed by source group entries from form.
-    """
-    values = [str(item).strip() for item in form.getlist("group_entries") if str(item).strip()]
-    return values or ["any"]
-
-
-def _firewall_source_group_id(name: str, groups: list[dict]) -> str:
-    """Return firewall source group id.
-
-    Args:
-        name: Stable name identifying the resource or operation.
-        groups: Groups consumed by firewall source group identifier.
-    """
-    base = re.sub(r"[^a-z0-9]+", "-", name.strip().lower()).strip("-") or "group"
-    existing = {str(group.get("id", "")) for group in groups}
-    candidate = f"custom:{base}"
-    index = 2
-    while candidate in existing:
-        candidate = f"custom:{base}-{index}"
-        index += 1
-    return candidate
-
-
-def _normalized_firewall_source_group(group: dict) -> dict:
-    """Return normalized firewall source group.
-
-    Args:
-        group: Group consumed by normalized firewall source group.
-    """
-    entries = [str(item).strip() for item in (group.get("entries") or group.get("sources") or []) if str(item).strip()] or ["any"]
-    normalized_entries = []
-    for entry in entries:
-        if entry.lower() == "any":
-            normalized_entries.append("any")
-        elif entry.lower().startswith(FIREWALL_SOURCE_GROUP_REFERENCE_PREFIX):
-            normalized_entries.append(f"{FIREWALL_SOURCE_GROUP_REFERENCE_PREFIX}{entry[len(FIREWALL_SOURCE_GROUP_REFERENCE_PREFIX):]}")
-        else:
-            normalized_entries.append(entry)
-    return {
-        "id": str(group.get("id", "")),
-        "name": str(group.get("name", "")).strip() or str(group.get("id", "")),
-        "entries": normalized_entries,
-        "sources": normalized_entries,
-        "description": str(group.get("description") or "Custom firewall group."),
-        "builtin": bool(group.get("builtin")),
-    }
-
-
-def _strip_deleted_source_group_references(groups: list[dict], deleted_group_id: str, deleted_group_name: str) -> list[dict]:
-    """Return strip deleted source group references.
-
-    Args:
-        groups: Groups consumed by strip deleted source group references.
-        deleted_group_id: Stable identifier of the associated deleted group resource.
-        deleted_group_name: Deleted group name consumed by strip deleted source group references.
-    """
-    stripped: list[dict] = []
-    deleted_ref = f"{FIREWALL_SOURCE_GROUP_REFERENCE_PREFIX}{deleted_group_id}"
-    deleted_name_ref = f"@{deleted_group_name}".strip().lower()
-    for group in groups:
-        entries = []
-        for entry in group.get("entries") or group.get("sources") or []:
-            normalized_entry = str(entry).strip()
-            if normalized_entry == deleted_ref or normalized_entry.lower() == deleted_name_ref:
-                continue
-            entries.append(normalized_entry)
-        stripped.append(_normalized_firewall_source_group({**group, "entries": entries or ["any"]}))
-    return stripped
-
-
-def _firewall_source_group_response(db: Session, updated_at: str) -> JSONResponse:
-    """Return firewall source group response.
-
-    Args:
-        db: Active database session.
-        updated_at: Updated at supplied by the caller.
-    """
-    context = firewall_context(db)
-    return JSONResponse(
-        {
-            "status": "saved",
-            "updated_at": updated_at,
-            "valid": not context["firewall_validation_errors"],
-            "validation_errors": context["firewall_validation_errors"],
-            "config_path": context["firewall_settings"].config_path,
-            "config_preview": context["firewall_config_preview"],
-        }
-    )
-
-
-@router.post("/firewall/source-groups", response_model=None)
-async def update_firewall_source_groups(
-    request: Request,
-    identity: Identity = Depends(require_session_identity),
-    db: Session = Depends(get_db),
-) -> Response:
-    """Handle the update firewall source groups endpoint.
-
-    Args:
-        request: Incoming HTTP request.
-        identity: Authenticated identity authorizing the request.
-        db: Active database session.
-
-    Returns:
-        The endpoint response.
-
-    Raises:
-        HTTPException: If the request cannot be fulfilled.
-    """
-    form = await request.form()
-    verify_csrf(request, str(form.get("csrf", "")))
-    state = firewall_source_group_state_for_db(db)
-    groups = [_normalized_firewall_source_group(group) for group in state["groups"]]
-    assignments = dict(state["assignments"])
-    action = str(form.get("action") or "update")
-    group_id = str(form.get("group_id") or "")
-
-    if action == "create":
-        name = str(form.get("group_name") or "").strip()
-        if not name:
-            raise HTTPException(status_code=422, detail="Firewall group name is required.")
-        groups.append(
-            _normalized_firewall_source_group(
-                {
-                    "id": _firewall_source_group_id(name, groups),
-                    "name": name,
-                    "entries": _source_group_entries_from_form(form),
-                    "description": "Custom firewall group.",
-                }
-            )
-        )
-    elif action == "rename":
-        name = str(form.get("group_name") or "").strip()
-        if not name:
-            raise HTTPException(status_code=422, detail="Firewall group name is required.")
-        updated = False
-        for index, group in enumerate(groups):
-            if group["id"] != group_id:
-                continue
-            if group["id"] == FIREWALL_ANY_SOURCE_GROUP_ID:
-                raise HTTPException(status_code=422, detail="Any cannot be renamed.")
-            groups[index] = _normalized_firewall_source_group({**group, "name": name})
-            updated = True
-            break
-        if not updated:
-            raise HTTPException(status_code=404, detail="Firewall group not found.")
-    elif action == "delete":
-        if group_id == FIREWALL_ANY_SOURCE_GROUP_ID:
-            raise HTTPException(status_code=422, detail="Any cannot be removed.")
-        deleted_group = next((group for group in groups if group["id"] == group_id), None)
-        if not deleted_group:
-            raise HTTPException(status_code=404, detail="Firewall group not found.")
-        groups = [group for group in groups if group["id"] != group_id]
-        assignments = {
-            rule_name: (FIREWALL_ANY_SOURCE_GROUP_ID if assigned_group == group_id else assigned_group)
-            for rule_name, assigned_group in assignments.items()
-        }
-        groups = _strip_deleted_source_group_references(groups, group_id, str(deleted_group.get("name") or group_id))
-    else:
-        updated = False
-        for index, group in enumerate(groups):
-            if group["id"] != group_id:
-                continue
-            if group["id"] == FIREWALL_ANY_SOURCE_GROUP_ID:
-                groups[index] = _normalized_firewall_source_group({**group, "name": "Any", "entries": ["any"], "builtin": True})
-            else:
-                groups[index] = _normalized_firewall_source_group(
-                    {
-                        **group,
-                        "name": str(form.get("group_name") or group["name"]).strip(),
-                        "entries": _source_group_entries_from_form(form),
-                    }
-                )
-            updated = True
-            break
-        if not updated:
-            raise HTTPException(status_code=404, detail="Firewall group not found.")
-    errors = validate_firewall_source_groups(groups)
-    if errors:
-        return JSONResponse({"status": "error", "errors": errors}, status_code=422)
-    updated_state = {"groups": groups, "assignments": assignments}
-    persist_firewall_source_group_state(db, updated_state)
-    db.commit()
-    updated_at = utcnow().isoformat()
-    record_audit(
-        db,
-        actor=identity.username,
-        action=f"{action}_firewall_source_group",
-        resource_type="firewall",
-        resource_id=group_id or "managed-source-groups",
-    )
-    if request.headers.get("X-Atlaso-Autosave"):
-        return _firewall_source_group_response(db, updated_at)
-    return RedirectResponse("/firewall", status_code=303)
-
-
-@router.post("/firewall/managed-rules/source-group", response_model=None)
-def update_managed_firewall_rule_source_group(
-    request: Request,
-    rule_name: str = Form(...),
-    source_group_id: str = Form(...),
-    csrf: str = Form(...),
-    identity: Identity = Depends(require_session_identity),
-    db: Session = Depends(get_db),
-) -> JSONResponse:
-    """Handle the update managed firewall rule source group endpoint.
-
-    Args:
-        request: Incoming HTTP request.
-        rule_name: Rule name supplied by the caller.
-        source_group_id: Identifier of the source group.
-        csrf: Validated CSRF token authorizing the request.
-        identity: Authenticated identity authorizing the request.
-        db: Active database session.
-
-    Returns:
-        The endpoint response.
-
-    Raises:
-        HTTPException: If the request cannot be fulfilled.
-    """
-    verify_csrf(request, csrf)
-    context = firewall_context(db)
-    valid_rule_names = {
-        row["name"]
-        for row in context["firewall_managed_rule_rows"]
-        if row["managed_state"] == "generated" and row["source_group_id"]
-    }
-    valid_group_ids = {group["id"] for group in context["firewall_source_groups"]}
-    if rule_name not in valid_rule_names:
-        raise HTTPException(status_code=404, detail="Managed firewall rule not found.")
-    if source_group_id not in valid_group_ids:
-        raise HTTPException(status_code=422, detail="Firewall group does not exist.")
-    state = firewall_source_group_state_for_db(db)
-    state["assignments"][rule_name] = source_group_id
-    persist_firewall_source_group_state(db, state)
-    db.commit()
-    record_audit(db, actor=identity.username, action="update_managed_firewall_source_group", resource_type="firewall_rule", resource_id=rule_name)
-    return JSONResponse({"status": "saved", "updated_at": utcnow().isoformat()})
-
-
-def _assign_firewall_rule(
-    rule: FirewallRule,
-    *,
-    name: str,
-    direction: str,
-    action: str,
-    protocol: str,
-    source: str,
-    destination: str,
-    destination_port: str,
-    interface_name: str,
-    priority: int,
-    enabled: bool,
-    description: str,
-) -> FirewallRule:
-    """Return assign firewall rule.
-
-    Args:
-        rule: Firewall, routing, or validation rule to process.
-        name: Name of the target object.
-        direction: Direction supplied by the caller.
-        action: Operation to perform on the target resource.
-        protocol: Protocol supplied by the caller.
-        source: Source path, address, or record to process.
-        destination: Destination path, address, or resource.
-        destination_port: Destination port supplied by the caller.
-        interface_name: Linux interface name of the network target.
-        priority: Ordering priority assigned to the item.
-        enabled: Whether the requested behavior is enabled.
-        description: Human-readable description of the resource.
-    """
-    rule.name = name.strip()
-    rule.direction = direction
-    rule.action = action
-    rule.protocol = protocol
-    rule.source = source.strip() or "any"
-    rule.destination = destination.strip() or "any"
-    rule.destination_port = destination_port.strip()
-    rule.interface_name = interface_name.strip()
-    rule.priority = priority
-    rule.enabled = enabled
-    rule.description = description.strip() or None
-    rule.updated_at = utcnow()
-    return rule
-
-
-@router.post("/firewall/rules", response_model=None)
-def create_firewall_rule(
-    request: Request,
-    name: str = Form(...),
-    direction: str = Form("input"),
-    action: str = Form("accept"),
-    protocol: str = Form("tcp"),
-    source: str = Form("any"),
-    destination: str = Form("any"),
-    destination_port: str = Form(""),
-    interface_name: str = Form(""),
-    priority: int = Form(100),
-    enabled: str | None = Form(None),
-    description: str = Form(""),
-    csrf: str = Form(...),
-    identity: Identity = Depends(require_session_identity),
-    db: Session = Depends(get_db),
-) -> RedirectResponse | JSONResponse:
-    """Handle the create firewall rule endpoint.
-
-    Args:
-        request: Incoming HTTP request.
-        name: Name of the target object.
-        direction: Direction supplied by the caller.
-        action: Operation to perform on the target resource.
-        protocol: Protocol supplied by the caller.
-        source: Source path, address, or record to process.
-        destination: Destination path, address, or resource.
-        destination_port: Destination port supplied by the caller.
-        interface_name: Linux interface name of the network target.
-        priority: Ordering priority assigned to the item.
-        enabled: Whether the requested behavior is enabled.
-        description: Human-readable description of the resource.
-        csrf: Validated CSRF token authorizing the request.
-        identity: Authenticated identity authorizing the request.
-        db: Active database session.
-
-    Returns:
-        The endpoint response.
-
-    Raises:
-        HTTPException: If the request cannot be fulfilled.
-    """
-    verify_csrf(request, csrf)
-    rule = _assign_firewall_rule(
-        FirewallRule(),
-        name=name,
-        direction=direction,
-        action=action,
-        protocol=protocol,
-        source=source,
-        destination=destination,
-        destination_port=destination_port,
-        interface_name=interface_name,
-        priority=priority,
-        enabled=enabled == "on",
-        description=description,
-    )
-    state = firewall_source_group_state_for_db(db)
-    errors = validate_firewall_rule(rule, state["groups"], require_group_addresses=True)
-    if errors:
-        raise HTTPException(status_code=422, detail=" ".join(errors))
-    db.add(rule)
-    try:
-        db.commit()
-    except IntegrityError as exc:
-        db.rollback()
-        raise HTTPException(status_code=409, detail=f"Firewall rule {rule.name} already exists.") from exc
-    record_audit(db, actor=identity.username, action="create_firewall_rule", resource_type="firewall_rule", resource_id=str(rule.id))
-    return grid_saved_response(
-        request,
-        redirect_url="/firewall",
-        resource_name="rule",
-        resource=firewall_rule_to_dict(rule),
-    )
-
-
-@router.post("/firewall/rules/{rule_id}/edit", response_model=None)
-def update_firewall_rule(
-    rule_id: int,
-    request: Request,
-    name: str = Form(...),
-    direction: str = Form("input"),
-    action: str = Form("accept"),
-    protocol: str = Form("tcp"),
-    source: str = Form("any"),
-    destination: str = Form("any"),
-    destination_port: str = Form(""),
-    interface_name: str = Form(""),
-    priority: int = Form(100),
-    enabled: str | None = Form(None),
-    description: str = Form(""),
-    csrf: str = Form(...),
-    identity: Identity = Depends(require_session_identity),
-    db: Session = Depends(get_db),
-) -> RedirectResponse | JSONResponse:
-    """Handle the update firewall rule endpoint.
-
-    Args:
-        rule_id: Identifier of the rule.
-        request: Incoming HTTP request.
-        name: Name of the target object.
-        direction: Direction supplied by the caller.
-        action: Operation to perform on the target resource.
-        protocol: Protocol supplied by the caller.
-        source: Source path, address, or record to process.
-        destination: Destination path, address, or resource.
-        destination_port: Destination port supplied by the caller.
-        interface_name: Linux interface name of the network target.
-        priority: Ordering priority assigned to the item.
-        enabled: Whether the requested behavior is enabled.
-        description: Human-readable description of the resource.
-        csrf: Validated CSRF token authorizing the request.
-        identity: Authenticated identity authorizing the request.
-        db: Active database session.
-
-    Returns:
-        The endpoint response.
-
-    Raises:
-        HTTPException: If the request cannot be fulfilled.
-    """
-    verify_csrf(request, csrf)
-    rule = db.get(FirewallRule, rule_id)
-    if not rule:
-        raise HTTPException(status_code=404, detail="Firewall rule not found")
-    _assign_firewall_rule(
-        rule,
-        name=name,
-        direction=direction,
-        action=action,
-        protocol=protocol,
-        source=source,
-        destination=destination,
-        destination_port=destination_port,
-        interface_name=interface_name,
-        priority=priority,
-        enabled=enabled == "on",
-        description=description,
-    )
-    state = firewall_source_group_state_for_db(db)
-    errors = validate_firewall_rule(rule, state["groups"], require_group_addresses=True)
-    if errors:
-        raise HTTPException(status_code=422, detail=" ".join(errors))
-    db.add(rule)
-    try:
-        db.commit()
-    except IntegrityError as exc:
-        db.rollback()
-        raise HTTPException(status_code=409, detail=f"Firewall rule {rule.name} already exists.") from exc
-    record_audit(db, actor=identity.username, action="update_firewall_rule", resource_type="firewall_rule", resource_id=str(rule.id))
-    return grid_saved_response(
-        request,
-        redirect_url="/firewall",
-        resource_name="rule",
-        resource=firewall_rule_to_dict(rule),
-    )
-
-
-@router.post("/firewall/rules/{rule_id}/delete", response_model=None)
-def delete_firewall_rule(
-    rule_id: int,
-    request: Request,
-    csrf: str = Form(...),
-    identity: Identity = Depends(require_session_identity),
-    db: Session = Depends(get_db),
-) -> RedirectResponse | Response:
-    """Handle the delete firewall rule endpoint.
-
-    Args:
-        rule_id: Identifier of the rule.
-        request: Incoming HTTP request.
-        csrf: Validated CSRF token authorizing the request.
-        identity: Authenticated identity authorizing the request.
-        db: Active database session.
-
-    Returns:
-        The endpoint response.
-
-    Raises:
-        HTTPException: If the request cannot be fulfilled.
-    """
-    verify_csrf(request, csrf)
-    rule = db.get(FirewallRule, rule_id)
-    if not rule:
-        raise HTTPException(status_code=404, detail="Firewall rule not found")
-    db.delete(rule)
-    db.commit()
-    record_audit(db, actor=identity.username, action="delete_firewall_rule", resource_type="firewall_rule", resource_id=str(rule_id))
-    if grid_request(request):
-        return Response(status_code=204)
-    return RedirectResponse("/firewall", status_code=303)
-
-
-_management_before_physical_vlans_router = router
 _physical_vlans_ui = build_physical_vlan_ui_router(
     PhysicalVlanUiDependencies(
         require_management_ui_request=require_management_ui_request,
@@ -30323,16 +28920,24 @@ allow_compatible_route_shadow(
 )
 _management_after_physical_vlans_router = router
 UI_ROUTER_REGISTRY.register(
-    "facade_before_physical_vlans",
+    "facade_before_routes_wan",
     (
         RouterContribution(plane="front_door", router=front_door_router),
         RouterContribution(plane="protocol", router=protocol_router),
         RouterContribution(plane="public", router=public_router),
         RouterContribution(
             plane="management",
-            router=_management_before_physical_vlans_router,
+            router=_management_before_routes_wan_router,
         ),
     ),
+)
+UI_ROUTER_REGISTRY.register(
+    "routes_wan",
+    (RouterContribution(plane="management", router=routes_wan_router),),
+)
+UI_ROUTER_REGISTRY.register(
+    "firewall",
+    (RouterContribution(plane="management", router=firewall_router),),
 )
 UI_ROUTER_REGISTRY.register(
     "physical_vlans",
@@ -30349,7 +28954,9 @@ UI_ROUTER_REGISTRY.register(
 )
 UI_ROUTER_REGISTRY.validate_domains(
     (
-        "facade_before_physical_vlans",
+        "facade_before_routes_wan",
+        "routes_wan",
+        "firewall",
         "physical_vlans",
         "facade_after_physical_vlans",
     )
