@@ -34,10 +34,28 @@ from generate_third_party_notices import (  # noqa: E402 - local script path is 
 )
 
 SUPPORTED_ABIS = ("cp314",)
-SYSTEMD_FILES = (
-    ROOT / "image/hyperv/systemd/atlaso.service",
-    ROOT / "image/common/systemd/atlaso-worker.service",
-    ROOT / "image/common/systemd/atlaso-console.service",
+RELEASE_OWNED_ASSETS = (
+    (ROOT / "scripts/appliance/atlaso-helper", Path("bin/atlaso-helper")),
+    (ROOT / "scripts/appliance/atlaso-mount-data-disks", Path("bin/atlaso-mount-data-disks")),
+    (ROOT / "image/hyperv/systemd/atlaso.service", Path("systemd/atlaso.service")),
+    (ROOT / "image/common/systemd/atlaso-worker.service", Path("systemd/atlaso-worker.service")),
+    (ROOT / "image/common/systemd/atlaso-console.service", Path("systemd/atlaso-console.service")),
+    (ROOT / "image/common/systemd/atlaso-data-disks.service", Path("systemd/atlaso-data-disks.service")),
+    (
+        ROOT / "image/common/systemd/atlaso-require-data-disks.conf",
+        Path("systemd/atlaso.service.d/atlaso-data-disks.conf"),
+    ),
+    (ROOT / "image/common/systemd/atlaso-bootstrap-https.service", Path("systemd/atlaso-bootstrap-https.service")),
+    (
+        ROOT / "image/common/systemd/nginx-atlaso-data-disks.conf",
+        Path("systemd/nginx.service.d/atlaso-data-disks.conf"),
+    ),
+    (
+        ROOT / "image/common/udev/99-atlaso-disk-identity.rules",
+        Path("udev/99-atlaso-disk-identity.rules"),
+    ),
+    (ROOT / "image/hyperv/data-disks.conf", Path("data-disks/hyperv.conf")),
+    (ROOT / "image/vmware-workstation/data-disks.conf", Path("data-disks/vmware.conf")),
 )
 
 
@@ -245,7 +263,12 @@ def deterministic_tar_gz(source: Path, output: Path) -> None:
         info.gname = "root"
         info.mtime = 0
         info.pax_headers = {}
-        info.mode = 0o755 if info.isdir() or info.name.endswith(("/atlaso-helper", "/bin/python")) else 0o644
+        info.mode = (
+            0o755
+            if info.isdir()
+            or info.name.endswith(("/atlaso-helper", "/atlaso-mount-data-disks", "/bin/python"))
+            else 0o644
+        )
         return info
 
     with output.open("wb") as raw:
@@ -324,11 +347,10 @@ def main() -> int:
             vendored=vendored_records(ROOT / "scripts/third_party_notices.json"),
             rpms=None,
         )
-        (bundle_root / "bin").mkdir()
-        shutil.copy2(ROOT / "scripts/appliance/atlaso-helper", bundle_root / "bin/atlaso-helper")
-        (bundle_root / "systemd").mkdir()
-        for unit in SYSTEMD_FILES:
-            shutil.copy2(unit, bundle_root / "systemd" / unit.name)
+        for source, relative_destination in RELEASE_OWNED_ASSETS:
+            destination = bundle_root / relative_destination
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source, destination)
         trust_source = ROOT / "image/common/update-trust"
         if trust_source.exists():
             shutil.copytree(trust_source, bundle_root / "trust")

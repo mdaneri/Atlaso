@@ -18,6 +18,7 @@ def test_deployment_assets_are_checkable_text() -> None:
         Path("image/hyperv/atlaso-photon.pkr.hcl"),
         Path("image/common/systemd/atlaso-worker.service"),
         Path("image/common/systemd/atlaso-console-manager.conf"),
+        Path("image/common/systemd/nginx-atlaso-data-disks.conf"),
         Path("image/vmware-workstation/sudoers.d/atlaso-helper"),
     )
 

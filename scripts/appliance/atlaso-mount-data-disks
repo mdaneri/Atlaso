@@ -1,9 +1,52 @@
 #!/bin/sh
 set -eu
 
+POLICY_PATH="${ATLASO_DATA_DISK_POLICY_PATH:-/etc/atlaso/data-disks.conf}"
+BY_ID_ROOT="${ATLASO_DATA_DISK_BY_ID_ROOT:-/dev/disk/by-id}"
+SYS_BLOCK_ROOT="${ATLASO_DATA_DISK_SYS_BLOCK_ROOT:-/sys/class/block}"
+FSTAB_PATH="${ATLASO_DATA_DISK_FSTAB_PATH:-/etc/fstab}"
+ESX_STORAGE_ALLOWLIST_PATH="${ATLASO_ESX_STORAGE_ALLOWLIST_PATH:-/etc/atlaso/esx-storage-disks.conf}"
+SCSI_GENERIC_DEVICE_ROOT="${ATLASO_DATA_DISK_SCSI_GENERIC_DEVICE_ROOT:-/dev}"
+SCSI_GENERIC_SYS_ROOT="${ATLASO_DATA_DISK_SCSI_GENERIC_SYS_ROOT:-/sys/class/scsi_generic}"
+BSG_DEVICE_ROOT="${ATLASO_DATA_DISK_BSG_DEVICE_ROOT:-/dev/bsg}"
+BSG_SYS_ROOT="${ATLASO_DATA_DISK_BSG_SYS_ROOT:-/sys/class/bsg}"
+RAW_DEVICE_ROOT="${ATLASO_DATA_DISK_RAW_DEVICE_ROOT:-/dev/raw}"
+
 log() {
   printf '%s\n' "$*"
   logger -t atlaso-data-disks "$*" 2>/dev/null || true
+}
+
+fail() {
+  log "Atlaso data-disk safety check failed: $*" >&2
+  exit 1
+}
+
+load_policy() {
+  if [ ! -f "$POLICY_PATH" ]; then
+    fail "trusted identity policy is missing: $POLICY_PATH"
+  fi
+  # The image build writes this root-owned file from fixed, non-operator input.
+  # shellcheck disable=SC1090
+  . "$POLICY_PATH"
+  : "${ATLASO_DATA_DISK_SIZE_BYTES:?missing data-disk capacity policy}"
+  : "${ATLASO_DEPOT_SCSI_TUPLE:?missing depot SCSI identity policy}"
+  : "${ATLASO_BACKUP_SCSI_TUPLE:?missing backup SCSI identity policy}"
+  ATLASO_SYSTEM_SCSI_TUPLE="${ATLASO_SYSTEM_SCSI_TUPLE:-}"
+  case "$ATLASO_DATA_DISK_SIZE_BYTES" in
+    *[!0-9]*|'') fail "data-disk capacity policy is invalid" ;;
+  esac
+  for tuple in "$ATLASO_DEPOT_SCSI_TUPLE" "$ATLASO_BACKUP_SCSI_TUPLE"; do
+    case "$tuple" in
+      *[!0-9:]*|*:*:*:*) fail "SCSI identity policy is invalid" ;;
+    esac
+    if [ "$(printf '%s\n' "$tuple" | awk -F: '{ print NF }')" -ne 3 ]; then
+      fail "SCSI identity policy is invalid"
+    fi
+  done
+  if [ "$ATLASO_DEPOT_SCSI_TUPLE" = "$ATLASO_BACKUP_SCSI_TUPLE" ]; then
+    fail "depot and backup SCSI identities must be distinct"
+  fi
 }
 
 root_disk() {
@@ -13,10 +56,79 @@ root_disk() {
   fi
   parent="$(lsblk -no PKNAME "$root_source" 2>/dev/null | head -n 1 || true)"
   if [ -n "$parent" ]; then
-    printf '/dev/%s\n' "$parent"
+    printf '%s/%s\n' "${root_source%/*}" "$parent"
     return 0
   fi
-  printf '%s\n' "$root_source"
+  readlink -f "$root_source" 2>/dev/null || printf '%s\n' "$root_source"
+}
+
+scsi_address() {
+  disk="$(readlink -f "$1" 2>/dev/null || true)"
+  [ -n "$disk" ] || return 1
+  block_name="${disk##*/}"
+  device_path="$(readlink -f "$SYS_BLOCK_ROOT/$block_name/device" 2>/dev/null || true)"
+  scsi_address="${device_path##*/}"
+  case "$scsi_address" in
+    *:*:*:*) printf '%s\n' "$scsi_address" ;;
+    *) return 1 ;;
+  esac
+}
+
+scsi_tuple() {
+  address="$(scsi_address "$1" || true)"
+  [ -n "$address" ] || return 1
+  printf '%s\n' "${address#*:}"
+}
+
+scsi_host() {
+  address="$(scsi_address "$1" || true)"
+  [ -n "$address" ] || return 1
+  printf '%s\n' "${address%%:*}"
+}
+
+disk_for_tuple() {
+  expected_tuple="$1"
+  matches=''
+  for disk in $(lsblk -dn -o PATH,TYPE | awk '$2 == "disk" { print $1 }'); do
+    observed_tuple="$(scsi_tuple "$disk" || true)"
+    if [ "$observed_tuple" = "$expected_tuple" ]; then
+      if [ -n "$matches" ]; then
+        fail "more than one disk reports SCSI identity $expected_tuple"
+      fi
+      matches="$disk"
+    fi
+  done
+  [ -n "$matches" ] || return 1
+  printf '%s\n' "$matches"
+}
+
+stable_path_for_disk() {
+  expected="$(readlink -f "$1" 2>/dev/null || true)"
+  [ -n "$expected" ] || return 1
+  for link in "$BY_ID_ROOT"/atlaso-path-*; do
+    [ -L "$link" ] || continue
+    if [ "$(readlink -f "$link" 2>/dev/null || true)" = "$expected" ]; then
+      printf '%s\n' "$link"
+      return 0
+    fi
+  done
+  return 1
+}
+
+stable_by_id_for_disk() {
+  expected="$(readlink -f "$1" 2>/dev/null || true)"
+  [ -n "$expected" ] || return 1
+  for link in "$BY_ID_ROOT"/*; do
+    [ -L "$link" ] || continue
+    case "${link##*/}" in
+      *-part[0-9]*) continue ;;
+    esac
+    if [ "$(readlink -f "$link" 2>/dev/null || true)" = "$expected" ]; then
+      printf '%s\n' "$link"
+      return 0
+    fi
+  done
+  return 1
 }
 
 has_partitions() {
@@ -30,43 +142,402 @@ has_filesystem() {
   [ -n "$(blkid -s TYPE -o value "$disk" 2>/dev/null || true)" ]
 }
 
-blank_data_disks() {
-  os_disk="$(root_disk)"
-  lsblk -dn -o NAME,TYPE | awk '$2 == "disk" { print "/dev/" $1 }' | sort | while read -r disk; do
-    if [ "$disk" = "$os_disk" ]; then
-      continue
+has_holders() {
+  disk="$(readlink -f "$1")"
+  block_name="${disk##*/}"
+  for holder in "$SYS_BLOCK_ROOT/$block_name/holders"/*; do
+    [ -e "$holder" ] && return 0
+  done
+  return 1
+}
+
+has_open_file_descriptors() {
+  disk="$(readlink -f "$1" 2>/dev/null || true)"
+  [ -n "$disk" ] || return 1
+  for descriptor in /proc/[0-9]*/fd/*; do
+    [ -L "$descriptor" ] || continue
+    descriptor_path="$(readlink -f "$descriptor" 2>/dev/null || true)"
+    if descriptor_targets_disk "$descriptor_path" "$disk"; then
+      return 0
     fi
+  done
+  return 1
+}
+
+descriptor_targets_disk() {
+  descriptor_path="$1"
+  disk="$2"
+  [ -n "$descriptor_path" ] || return 1
+  [ "$descriptor_path" = "$disk" ] && return 0
+  disk_address="$(scsi_address "$disk" || true)"
+  case "$descriptor_path" in
+    "$SCSI_GENERIC_DEVICE_ROOT"/sg[0-9]*)
+      generic_name="${descriptor_path##*/}"
+      generic_device="$(readlink -f "$SCSI_GENERIC_SYS_ROOT/$generic_name/device" 2>/dev/null || true)"
+      generic_address="${generic_device##*/}"
+      [ -n "$disk_address" ] && [ "$generic_address" = "$disk_address" ] && return 0
+      [ -n "$generic_device" ] || return 0
+      ;;
+    "$BSG_DEVICE_ROOT"/*)
+      bsg_name="${descriptor_path##*/}"
+      bsg_device="$(readlink -f "$BSG_SYS_ROOT/$bsg_name/device" 2>/dev/null || true)"
+      bsg_address="${bsg_device##*/}"
+      [ -n "$disk_address" ] && [ "$bsg_address" = "$disk_address" ] && return 0
+      [ -n "$bsg_device" ] || return 0
+      ;;
+    "$RAW_DEVICE_ROOT"/raw[0-9]*)
+      raw_command="$(command -v raw 2>/dev/null || true)"
+      [ -n "$raw_command" ] || return 0
+      raw_binding="$($raw_command -q "$descriptor_path" 2>/dev/null || true)"
+      raw_major="$(printf '%s\n' "$raw_binding" | sed -n 's/.*major[[:space:]]\+\([0-9][0-9]*\),[[:space:]]*minor[[:space:]]\+\([0-9][0-9]*\).*/\1/p')"
+      raw_minor="$(printf '%s\n' "$raw_binding" | sed -n 's/.*major[[:space:]]\+\([0-9][0-9]*\),[[:space:]]*minor[[:space:]]\+\([0-9][0-9]*\).*/\2/p')"
+      disk_major_hex="$(stat -Lc '%t' "$disk" 2>/dev/null || true)"
+      disk_minor_hex="$(stat -Lc '%T' "$disk" 2>/dev/null || true)"
+      [ -n "$raw_major" ] && [ -n "$raw_minor" ] && [ -n "$disk_major_hex" ] && [ -n "$disk_minor_hex" ] || return 0
+      [ "$raw_major" -eq "$((0x$disk_major_hex))" ] && [ "$raw_minor" -eq "$((0x$disk_minor_hex))" ] && return 0
+      ;;
+  esac
+  return 1
+}
+
+validate_identity() {
+  label="$1"
+  tuple="$2"
+  disk="$3"
+  os_disk="$4"
+
+  resolved="$(readlink -f "$disk" 2>/dev/null || true)"
+  [ -n "$resolved" ] || fail "$label device $disk cannot be resolved"
+  [ "$resolved" != "$os_disk" ] || fail "$label identity resolves to the operating-system disk"
+  [ "$(lsblk -dn -o TYPE "$resolved" 2>/dev/null | head -n 1 || true)" = "disk" ] ||
+    fail "$label identity does not resolve to a whole disk"
+  [ "$(scsi_tuple "$resolved" || true)" = "$tuple" ] ||
+    fail "$label disk no longer matches SCSI identity $tuple"
+  [ "$(scsi_host "$resolved" || true)" = "$(scsi_host "$os_disk" || true)" ] ||
+    fail "$label disk no longer matches the operating-system SCSI controller"
+  stable_path="$(stable_path_for_disk "$resolved" || true)"
+  [ -n "$stable_path" ] ||
+    fail "$label disk at SCSI identity $tuple has no stable atlaso-path identity"
+  size="$(lsblk -bdn -o SIZE "$resolved" 2>/dev/null | head -n 1 || true)"
+  [ "$size" = "$ATLASO_DATA_DISK_SIZE_BYTES" ] ||
+    fail "$label disk at $stable_path has capacity $size; expected $ATLASO_DATA_DISK_SIZE_BYTES bytes"
+  read_only="$(lsblk -dn -o RO "$resolved" 2>/dev/null | head -n 1 || true)"
+  [ "$read_only" = "0" ] || fail "$label disk at $stable_path is read-only"
+  if has_holders "$resolved"; then
+    fail "$label disk at $stable_path has active block holders"
+  fi
+  if has_open_file_descriptors "$resolved"; then
+    fail "$label disk at $stable_path is open by a raw-device process"
+  fi
+}
+
+validate_label_or_blank() {
+  label="$1"
+  disk="$2"
+  stable_path="$(stable_path_for_disk "$disk")"
+  labeled_device=''
+  label_matches=0
+  for candidate in $(lsblk -nr -o PATH,TYPE | awk '$2 == "disk" || $2 == "part" { print $1 }'); do
+    if [ "$(blkid -s LABEL -o value "$candidate" 2>/dev/null || true)" = "$label" ]; then
+      label_matches=$((label_matches + 1))
+      labeled_device="$candidate"
+    fi
+  done
+  [ "$label_matches" -le 1 ] || fail "$label exists on more than one whole disk"
+  if [ -n "$labeled_device" ]; then
+    [ "$(readlink -f "$labeled_device")" = "$(readlink -f "$disk")" ] ||
+      fail "$label exists on a block device outside its trusted SCSI identity"
+    [ "$(blkid -s TYPE -o value "$disk" 2>/dev/null || true)" = "ext4" ] ||
+      fail "$label at $stable_path is not ext4"
     if has_partitions "$disk"; then
+      fail "$label at $stable_path unexpectedly contains partitions"
+    fi
+    return 0
+  fi
+  if has_partitions "$disk"; then
+    fail "$label target $stable_path contains partitions"
+  fi
+  if has_filesystem "$disk"; then
+    fail "$label target $stable_path already contains a filesystem"
+  fi
+}
+
+validate_mount_state() {
+  label="$1"
+  disk="$2"
+  mountpoint="$3"
+  expected_uuid="$(blkid -s UUID -o value "$disk" 2>/dev/null || true)"
+
+  mounted_targets="$(findmnt -rn -S "$disk" -o TARGET 2>/dev/null || true)"
+  if [ -n "$mounted_targets" ]; then
+    [ -n "$expected_uuid" ] || fail "$label blank target is already mounted"
+    for mounted_target in $mounted_targets; do
+      [ "$mounted_target" = "$mountpoint" ] ||
+        fail "$label is mounted at unexpected destination $mounted_target"
+    done
+  fi
+
+  mounted_uuid="$(findmnt -rn -M "$mountpoint" -o UUID 2>/dev/null || true)"
+  mounted_source="$(findmnt -rn -M "$mountpoint" -o SOURCE 2>/dev/null || true)"
+  if [ -n "$mounted_uuid" ] || [ -n "$mounted_source" ]; then
+    [ -n "$expected_uuid" ] || fail "$mountpoint is occupied before $label has a filesystem UUID"
+    [ "$mounted_uuid" = "$expected_uuid" ] ||
+      fail "$mountpoint is occupied by a filesystem outside the trusted $label identity"
+    [ -n "$mounted_source" ] || fail "$mountpoint does not expose its mounted block-device source"
+    [ "$(readlink -f "$mounted_source" 2>/dev/null || true)" = "$(readlink -f "$disk")" ] ||
+      fail "$mountpoint is mounted from a block device outside the trusted $label identity"
+  fi
+}
+
+fixed_disks_are_initialized() {
+  [ "$(blkid -s LABEL -o value "$DEPOT_DISK" 2>/dev/null || true)" = "ATLASO_DEPOT" ] &&
+    [ "$(blkid -s TYPE -o value "$DEPOT_DISK" 2>/dev/null || true)" = "ext4" ] &&
+    [ -n "$(blkid -s UUID -o value "$DEPOT_DISK" 2>/dev/null || true)" ] &&
+    [ "$(blkid -s LABEL -o value "$BACKUP_DISK" 2>/dev/null || true)" = "ATLASO_BKUP" ] &&
+    [ "$(blkid -s TYPE -o value "$BACKUP_DISK" 2>/dev/null || true)" = "ext4" ] &&
+    [ -n "$(blkid -s UUID -o value "$BACKUP_DISK" 2>/dev/null || true)" ]
+}
+
+managed_esx_primary_mount() {
+  uuid="$1"
+  [ -f "$FSTAB_PATH" ] || return 1
+  awk -v source="UUID=$uuid" '
+    function decode_fstab(value) {
+      gsub(/\\040/, sprintf("%c", 32), value)
+      gsub(/\\011/, sprintf("%c", 9), value)
+      gsub(/\\012/, sprintf("%c", 10), value)
+      gsub(/\\134/, sprintf("%c", 92), value)
+      return value
+    }
+    $0 == "# BEGIN ATLASO ESX STORAGE" { managed = 1; next }
+    $0 == "# END ATLASO ESX STORAGE" { managed = 0; next }
+    managed && $1 == source && $3 == "ext4" {
+      decoded_mountpoint = decode_fstab($2)
+      if (mountpoint && mountpoint != decoded_mountpoint) { duplicate = 1 }
+      mountpoint = decoded_mountpoint
+    }
+    END {
+      if (mountpoint && !duplicate) { print mountpoint; exit 0 }
+      exit 1
+    }
+  ' "$FSTAB_PATH"
+}
+
+fstab_uuid_mount_exists() {
+  uuid="$1"
+  mountpoint="$2"
+  [ -f "$FSTAB_PATH" ] || return 1
+  awk -v source="UUID=$uuid" -v mountpoint="$mountpoint" '
+    function decode_fstab(value) {
+      gsub(/\\040/, sprintf("%c", 32), value)
+      gsub(/\\011/, sprintf("%c", 9), value)
+      gsub(/\\012/, sprintf("%c", 10), value)
+      gsub(/\\134/, sprintf("%c", 92), value)
+      return value
+    }
+    decode_fstab($1) == source && decode_fstab($2) == mountpoint && $3 == "ext4" {
+      found++
+      writable = 1
+      count = split($4, options, ",")
+      for (option_index = 1; option_index <= count; option_index++) {
+        if (options[option_index] == "ro") writable = 0
+        else if (options[option_index] == "rw") writable = 1
+      }
+    }
+    END { exit found == 1 && writable ? 0 : 1 }
+  ' "$FSTAB_PATH"
+}
+
+managed_esx_bind_entry_exists() {
+  mountpoint="$1"
+  [ -f "$FSTAB_PATH" ] || return 1
+  awk -v mountpoint="$mountpoint" '
+    function decode_fstab(value) {
+      gsub(/\\040/, sprintf("%c", 32), value)
+      gsub(/\\011/, sprintf("%c", 9), value)
+      gsub(/\\012/, sprintf("%c", 10), value)
+      gsub(/\\134/, sprintf("%c", 92), value)
+      return value
+    }
+    $0 == "# BEGIN ATLASO ESX STORAGE" { managed = 1; next }
+    $0 == "# END ATLASO ESX STORAGE" { managed = 0; next }
+    managed && decode_fstab($2) == mountpoint && $3 == "none" && $4 ~ /(^|,)bind(,|$)/ { found = 1 }
+    END { exit found ? 0 : 1 }
+  ' "$FSTAB_PATH"
+}
+
+allowlisted_esx_mount() {
+  uuid="$1"
+  disk="$2"
+  [ -f "$ESX_STORAGE_ALLOWLIST_PATH" ] || return 1
+  entry="$(awk -F '\t' -v uuid="$uuid" '$1 == uuid { if (found++) exit 2; stable = $2; mountpoint = $3; source_type = $4 } END { if (found == 1) print stable "\t" mountpoint "\t" (source_type ? source_type : "legacy"); else exit 1 }' "$ESX_STORAGE_ALLOWLIST_PATH")" || return 1
+  stable_id="${entry%%	*}"
+  remainder="${entry#*	}"
+  mountpoint="${remainder%%	*}"
+  source_type="${remainder#*	}"
+  case "$stable_id" in
+    "$BY_ID_ROOT"/*) ;;
+    *) return 1 ;;
+  esac
+  [ -L "$stable_id" ] || return 1
+  [ "$(readlink -f "$stable_id" 2>/dev/null || true)" = "$disk" ] || return 1
+  fstab_uuid_mount_exists "$uuid" "$mountpoint" || return 1
+  case "$source_type" in
+    blank_disk|mounted_ext4|legacy) ;;
+    *) return 1 ;;
+  esac
+  printf '%s\t%s\n' "$source_type" "$mountpoint"
+}
+
+validate_managed_esx_mounts() {
+  disk="$1"
+  uuid="$2"
+  primary_mount="$3"
+
+  mounted_targets="$(
+    findmnt -rn --raw -S "$disk" -o TARGET 2>/dev/null |
+      awk '{ gsub(/\\x20/, sprintf("%c", 32)); gsub(/\\x5[cC]/, sprintf("%c", 92)); print }' || true
+  )"
+  [ -n "$mounted_targets" ] || return 1
+  found_primary=false
+  while IFS= read -r mountpoint; do
+    [ "$(findmnt -rn -M "$mountpoint" -o UUID 2>/dev/null || true)" = "$uuid" ] || return 1
+    if [ "$mountpoint" = "$primary_mount" ]; then
+      found_primary=true
       continue
     fi
-    if has_filesystem "$disk"; then
+    case "$mountpoint" in
+      /srv/atlaso/esx-storage/*) managed_esx_bind_entry_exists "$mountpoint" || return 1 ;;
+      *) return 1 ;;
+    esac
+  done <<EOF
+$mounted_targets
+EOF
+  [ "$found_primary" = "true" ]
+}
+
+ensure_managed_esx_primary_mount() {
+  disk="$1"
+  uuid="$2"
+  primary_mount="$3"
+
+  mounted_source="$(findmnt -rn -M "$primary_mount" -o SOURCE 2>/dev/null || true)"
+  if [ -z "$mounted_source" ]; then
+    mount "$primary_mount" >/dev/null 2>&1 || return 1
+    mounted_source="$(findmnt -rn -M "$primary_mount" -o SOURCE 2>/dev/null || true)"
+  fi
+  [ -n "$mounted_source" ] || return 1
+  [ "$(readlink -f "$mounted_source" 2>/dev/null || true)" = "$disk" ] || return 1
+  [ "$(findmnt -rn -M "$primary_mount" -o UUID 2>/dev/null || true)" = "$uuid" ] || return 1
+  mount_options="$(findmnt -rn -M "$primary_mount" -o OPTIONS 2>/dev/null || true)"
+  case ",$mount_options," in
+    *,rw,*) ;;
+    *) return 1 ;;
+  esac
+}
+
+valid_atlaso_esx_label() {
+  label="$1"
+  case "$label" in
+    lf-????????????)
+      suffix="${label#lf-}"
+      case "$suffix" in
+        *[!0-9a-f]*) return 1 ;;
+        *) return 0 ;;
+      esac
+      ;;
+    *) return 1 ;;
+  esac
+}
+
+is_managed_esx_storage_disk() {
+  disk="$1"
+  [ "$(blkid -s TYPE -o value "$disk" 2>/dev/null || true)" = "ext4" ] || return 1
+  uuid="$(blkid -s UUID -o value "$disk" 2>/dev/null || true)"
+  [ -n "$uuid" ] || return 1
+  [ -n "$(stable_by_id_for_disk "$disk" || true)" ] || return 1
+  [ "$(lsblk -dn -o RO "$disk" 2>/dev/null | head -n 1 || true)" = "0" ] || return 1
+  if has_partitions "$disk" || has_holders "$disk"; then
+    return 1
+  fi
+
+  claim="$(allowlisted_esx_mount "$uuid" "$disk" || true)"
+  [ -n "$claim" ] || return 1
+  source_type="${claim%%	*}"
+  primary_mount="${claim#*	}"
+  if [ "$source_type" = "blank_disk" ]; then
+    valid_atlaso_esx_label "$(blkid -s LABEL -o value "$disk" 2>/dev/null || true)" || return 1
+    [ "$primary_mount" = "$(managed_esx_primary_mount "$uuid" || true)" ] || return 1
+  elif [ "$source_type" = "legacy" ]; then
+    label="$(blkid -s LABEL -o value "$disk" 2>/dev/null || true)"
+    if valid_atlaso_esx_label "$label"; then
+      [ "$primary_mount" = "$(managed_esx_primary_mount "$uuid" || true)" ] || return 1
+    fi
+  fi
+  [ -n "$primary_mount" ] || return 1
+  ensure_managed_esx_primary_mount "$disk" "$uuid" "$primary_mount" || return 1
+  validate_managed_esx_mounts "$disk" "$uuid" "$primary_mount"
+}
+
+validate_exact_disk_set() {
+  os_disk="$1"
+  depot_disk="$2"
+  backup_disk="$3"
+  allow_managed_esx="$4"
+  for disk in $(lsblk -dn -o PATH,TYPE | awk '$2 == "disk" { print $1 }'); do
+    resolved="$(readlink -f "$disk" 2>/dev/null || true)"
+    if [ "$resolved" = "$os_disk" ] || [ "$resolved" = "$depot_disk" ] || [ "$resolved" = "$backup_disk" ]; then
       continue
     fi
-    printf '%s\n' "$disk"
+    tuple="$(scsi_tuple "$resolved" || printf 'unknown')"
+    if [ -n "$ATLASO_SYSTEM_SCSI_TUPLE" ] && [ "$tuple" = "$ATLASO_SYSTEM_SCSI_TUPLE" ]; then
+      [ "$(scsi_host "$resolved" || true)" = "$(scsi_host "$os_disk" || true)" ] ||
+        fail "VMware system-content identity $tuple is attached to an unexpected SCSI controller"
+      [ "$(blkid -s LABEL -o value "$resolved" 2>/dev/null || true)" = "ATLASO_SYSTEM" ] ||
+        fail "VMware system-content identity $tuple does not contain ATLASO_SYSTEM"
+      continue
+    fi
+    if [ "$allow_managed_esx" = "true" ] && is_managed_esx_storage_disk "$resolved"; then
+      continue
+    fi
+    fail "unexpected whole disk $resolved at SCSI identity $tuple"
   done
 }
 
-next_blank_disk() {
-  used_file="$1"
-  for disk in $(blank_data_disks); do
-    if grep -qxF "$disk" "$used_file" 2>/dev/null; then
-      continue
-    fi
-    printf '%s\n' "$disk"
-    return 0
-  done
-  return 1
+preflight() {
+  os_disk="$(root_disk)"
+  [ -n "$os_disk" ] || fail "operating-system disk could not be identified"
+  os_disk="$(readlink -f "$os_disk" 2>/dev/null || printf '%s\n' "$os_disk")"
+  DEPOT_DISK="$(disk_for_tuple "$ATLASO_DEPOT_SCSI_TUPLE" || true)"
+  BACKUP_DISK="$(disk_for_tuple "$ATLASO_BACKUP_SCSI_TUPLE" || true)"
+  [ -n "$DEPOT_DISK" ] || fail "depot disk is missing at SCSI identity $ATLASO_DEPOT_SCSI_TUPLE"
+  [ -n "$BACKUP_DISK" ] || fail "backup disk is missing at SCSI identity $ATLASO_BACKUP_SCSI_TUPLE"
+  DEPOT_DISK="$(readlink -f "$DEPOT_DISK")"
+  BACKUP_DISK="$(readlink -f "$BACKUP_DISK")"
+  [ "$DEPOT_DISK" != "$BACKUP_DISK" ] || fail "depot and backup identities resolve to the same disk"
+
+  validate_identity ATLASO_DEPOT "$ATLASO_DEPOT_SCSI_TUPLE" "$DEPOT_DISK" "$os_disk"
+  validate_identity ATLASO_BKUP "$ATLASO_BACKUP_SCSI_TUPLE" "$BACKUP_DISK" "$os_disk"
+  validate_label_or_blank ATLASO_DEPOT "$DEPOT_DISK"
+  validate_label_or_blank ATLASO_BKUP "$BACKUP_DISK"
+  validate_mount_state ATLASO_DEPOT "$DEPOT_DISK" /mnt/atlaso-vcf-offline-depot
+  validate_mount_state ATLASO_BKUP "$BACKUP_DISK" /mnt/atlaso-vcf-backups
+  allow_managed_esx=false
+  if fixed_disks_are_initialized; then
+    allow_managed_esx=true
+  fi
+  validate_exact_disk_set "$os_disk" "$DEPOT_DISK" "$BACKUP_DISK" "$allow_managed_esx"
 }
 
 ensure_fstab_entry() {
   uuid="$1"
   mountpoint="$2"
   tmp="$(mktemp)"
-  if [ -f /etc/fstab ]; then
-    awk -v mountpoint="$mountpoint" '$2 != mountpoint { print }' /etc/fstab >"$tmp"
+  if [ -f "$FSTAB_PATH" ]; then
+    awk -v mountpoint="$mountpoint" '$2 != mountpoint { print }' "$FSTAB_PATH" >"$tmp"
   fi
   printf 'UUID=%s %s ext4 defaults,nofail,x-systemd.device-timeout=30s 0 2\n' "$uuid" "$mountpoint" >>"$tmp"
-  cat "$tmp" >/etc/fstab
+  cat "$tmp" >"$FSTAB_PATH"
   rm -f "$tmp"
 }
 
@@ -76,46 +547,97 @@ ensure_mount() {
   owner="$3"
   group="$4"
   mode="$5"
-  used_file="$6"
+  disk="$6"
 
-  device="$(blkid -L "$label" 2>/dev/null || true)"
-  if [ -z "$device" ]; then
-    disk="$(next_blank_disk "$used_file" || true)"
-    if [ -z "$disk" ]; then
-      log "No blank data disk available for $label at $mountpoint; leaving directory mountpoint unmounted."
-      install -d -o "$owner" -g "$group" -m "$mode" "$mountpoint"
-      return 0
-    fi
-    log "Formatting $disk as $label for $mountpoint"
-    mkfs.ext4 -F -L "$label" "$disk" >/dev/null
-    printf '%s\n' "$disk" >>"$used_file"
-    device="$(blkid -L "$label")"
+  observed_label="$(blkid -s LABEL -o value "$disk" 2>/dev/null || true)"
+  if [ "$observed_label" != "$label" ]; then
+    stable_path="$(stable_path_for_disk "$disk")"
+    case "$label" in
+      ATLASO_DEPOT) format_tuple="$ATLASO_DEPOT_SCSI_TUPLE" ;;
+      ATLASO_BKUP) format_tuple="$ATLASO_BACKUP_SCSI_TUPLE" ;;
+      *) fail "unsupported fixed-disk format label $label" ;;
+    esac
+    log "Formatting trusted $stable_path as $label for $mountpoint"
+    format_disk="$(revalidate_blank_format_target "$label" "$format_tuple" "$disk" "$os_disk" "$stable_path")"
+    mkfs.ext4 -F -L "$label" "$format_disk" >/dev/null
+    observed_label="$(blkid -s LABEL -o value "$disk" 2>/dev/null || true)"
+    [ "$observed_label" = "$label" ] || fail "$label was not readable from its trusted disk after formatting"
   fi
 
-  uuid="$(blkid -s UUID -o value "$device")"
+  uuid="$(blkid -s UUID -o value "$disk" 2>/dev/null || true)"
+  [ -n "$uuid" ] || fail "$label does not expose a filesystem UUID"
   install -d -o "$owner" -g "$group" -m "$mode" "$mountpoint"
   ensure_fstab_entry "$uuid" "$mountpoint"
-  if ! findmnt -rn "$mountpoint" >/dev/null 2>&1; then
+  mounted_uuid="$(findmnt -rn -M "$mountpoint" -o UUID 2>/dev/null || true)"
+  if [ -z "$mounted_uuid" ]; then
     mount "$mountpoint"
+    mounted_uuid="$(findmnt -rn -M "$mountpoint" -o UUID 2>/dev/null || true)"
   fi
+  [ "$mounted_uuid" = "$uuid" ] || fail "$mountpoint does not resolve to the trusted $label UUID"
+  mounted_source="$(findmnt -rn -M "$mountpoint" -o SOURCE 2>/dev/null || true)"
+  [ -n "$mounted_source" ] || fail "$mountpoint does not expose its mounted block-device source"
+  [ "$(readlink -f "$mounted_source" 2>/dev/null || true)" = "$(readlink -f "$disk")" ] ||
+    fail "$mountpoint is mounted from a block device outside the trusted $label identity"
   chown "$owner:$group" "$mountpoint"
   chmod "$mode" "$mountpoint"
-  log "Mounted $label on $mountpoint from $device"
+  log "Mounted $label on $mountpoint from $(stable_path_for_disk "$disk")"
+}
+
+revalidate_blank_format_target() {
+  format_label="$1"
+  format_tuple="$2"
+  format_expected_disk="$(readlink -f "$3" 2>/dev/null || true)"
+  format_os_disk="$(readlink -f "$4" 2>/dev/null || true)"
+  format_stable_path="$5"
+
+  [ -n "$format_expected_disk" ] || fail "$format_label format target cannot be resolved"
+  [ -L "$format_stable_path" ] || fail "$format_label stable identity disappeared before formatting"
+  format_resolved_link="$(readlink -f "$format_stable_path" 2>/dev/null || true)"
+  [ "$format_resolved_link" = "$format_expected_disk" ] ||
+    fail "$format_label stable identity changed before formatting"
+  [ "$format_expected_disk" != "$format_os_disk" ] || fail "$format_label format target became the operating-system disk"
+  [ "$(lsblk -dn -o TYPE "$format_expected_disk" 2>/dev/null | head -n 1 || true)" = "disk" ] ||
+    fail "$format_label format target is no longer a whole disk"
+  [ "$(scsi_tuple "$format_expected_disk" || true)" = "$format_tuple" ] ||
+    fail "$format_label format target changed SCSI identity"
+  [ "$(scsi_host "$format_expected_disk" || true)" = "$(scsi_host "$format_os_disk" || true)" ] ||
+    fail "$format_label format target changed SCSI controller"
+  format_size="$(lsblk -bdn -o SIZE "$format_expected_disk" 2>/dev/null | head -n 1 || true)"
+  [ "$format_size" = "$ATLASO_DATA_DISK_SIZE_BYTES" ] ||
+    fail "$format_label format target changed capacity"
+  [ "$(lsblk -dn -o RO "$format_expected_disk" 2>/dev/null | head -n 1 || true)" = "0" ] ||
+    fail "$format_label format target became read-only"
+  has_partitions "$format_expected_disk" && fail "$format_label format target gained partitions"
+  has_filesystem "$format_expected_disk" && fail "$format_label format target gained a filesystem"
+  has_holders "$format_expected_disk" && fail "$format_label format target gained active block holders"
+  has_open_file_descriptors "$format_expected_disk" && fail "$format_label format target is open by a raw-device process"
+  [ -z "$(findmnt -rn -S "$format_expected_disk" -o TARGET 2>/dev/null || true)" ] ||
+    fail "$format_label format target became mounted"
+
+  format_label_matches=0
+  for format_candidate in $(lsblk -nr -o PATH,TYPE | awk '$2 == "disk" || $2 == "part" { print $1 }'); do
+    if [ "$(blkid -s LABEL -o value "$format_candidate" 2>/dev/null || true)" = "$format_label" ]; then
+      format_label_matches=$((format_label_matches + 1))
+    fi
+  done
+  [ "$format_label_matches" -eq 0 ] || fail "$format_label appeared on another block device before formatting"
+  printf '%s\n' "$format_expected_disk"
 }
 
 main() {
-  for command in findmnt lsblk blkid mkfs.ext4 mount awk sort; do
+  for command in findmnt lsblk blkid readlink mkfs.ext4 mount awk head sed stat; do
     if ! command -v "$command" >/dev/null 2>&1; then
-      log "$command is required to prepare Atlaso data disks."
-      exit 1
+      fail "$command is required to prepare Atlaso data disks"
     fi
   done
+  load_policy
 
-  used_file="$(mktemp)"
-  trap 'rm -f "$used_file"' EXIT
-
-  ensure_mount ATLASO_DEPOT /mnt/atlaso-vcf-offline-depot atlaso atlaso 0755 "$used_file"
-  ensure_mount ATLASO_BKUP /mnt/atlaso-vcf-backups root root 0755 "$used_file"
+  # Complete an all-disk preflight before the first destructive command, then
+  # repeat it before formatting the second disk to close reordering races.
+  preflight
+  ensure_mount ATLASO_DEPOT /mnt/atlaso-vcf-offline-depot atlaso atlaso 0755 "$DEPOT_DISK"
+  preflight
+  ensure_mount ATLASO_BKUP /mnt/atlaso-vcf-backups root root 0755 "$BACKUP_DISK"
 }
 
 main "$@"

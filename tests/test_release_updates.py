@@ -789,6 +789,589 @@ def test_deterministic_release_archive_normalizes_metadata(tmp_path):
     assert hashlib.sha256(first.read_bytes()).digest() == hashlib.sha256(second.read_bytes()).digest()
 
 
+def test_release_bundle_carries_transactional_data_disk_safety_assets():
+    """Verify that signed release bundles carry every runtime disk-safety asset."""
+    spec = importlib.util.spec_from_file_location("build_release_bundle", ROOT / "scripts/build_release_bundle.py")
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    destinations = {destination.as_posix() for _source, destination in module.RELEASE_OWNED_ASSETS}
+    assert {
+        "bin/atlaso-mount-data-disks",
+        "data-disks/hyperv.conf",
+        "data-disks/vmware.conf",
+        "systemd/atlaso-bootstrap-https.service",
+        "systemd/atlaso-data-disks.service",
+        "systemd/atlaso.service.d/atlaso-data-disks.conf",
+        "systemd/nginx.service.d/atlaso-data-disks.conf",
+        "udev/99-atlaso-disk-identity.rules",
+    } <= destinations
+
+
+def test_image_bootstrap_release_skips_previous_updater_compatibility_gate(monkeypatch, tmp_path):
+    """Keep fresh-image startup independent of candidate-only release assets.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    from tests.test_appliance_update import load_helper_module
+
+    helper = load_helper_module()
+    releases = tmp_path / "opt/atlaso/releases"
+    release_root = releases / "bootstrap-0.9.131"
+    release_root.mkdir(parents=True)
+    (release_root / "bundle-metadata.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "version": "0.9.131",
+                "bootstrap": True,
+                "supported_python_abis": ["cp314"],
+            }
+        ),
+        encoding="utf-8",
+    )
+    current = tmp_path / "opt/atlaso/current"
+    current.symlink_to(release_root, target_is_directory=True)
+    monkeypatch.setattr(helper, "ATLASO_RELEASES_DIR", releases)
+    monkeypatch.setattr(helper, "ATLASO_CURRENT_LINK", current)
+    marker = tmp_path / "etc/atlaso/data-disk-safety-bootstrap.json"
+    monkeypatch.setattr(helper, "ATLASO_DATA_DISK_BOOTSTRAP_MARKER_PATH", marker)
+    monkeypatch.setattr(
+        helper,
+        "_release_data_disk_platform",
+        lambda: (_ for _ in ()).throw(AssertionError("fresh image must not enter candidate compatibility bootstrap")),
+    )
+
+    assert helper._bootstrap_release_data_disk_safety(release_root) == []
+    assert json.loads(marker.read_text(encoding="utf-8")) == {"schema_version": 1, "status": "complete"}
+    if os.name == "posix":
+        assert marker.stat().st_mode & 0o777 == 0o600
+    assert helper._bootstrap_release_data_disk_safety(release_root) == []
+
+
+def test_previous_updater_service_bootstraps_every_new_data_disk_safety_asset(monkeypatch, tmp_path):
+    """Prove the previous installer can enter the new root bootstrap through atlaso.service.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    from tests.test_appliance_update import load_helper_module
+
+    helper = load_helper_module()
+    release_root = tmp_path / "opt/atlaso/releases/candidate"
+    release_root.mkdir(parents=True)
+    current = tmp_path / "opt/atlaso/current"
+    current.parent.mkdir(parents=True, exist_ok=True)
+    current.symlink_to(release_root, target_is_directory=True)
+    sources = {
+        "bin/atlaso-mount-data-disks": b"mount-script",
+        "systemd/atlaso-data-disks.service": b"disk-unit",
+        "systemd/atlaso.service.d/atlaso-data-disks.conf": b"atlaso-dropin",
+        "systemd/atlaso-bootstrap-https.service": b"bootstrap-unit",
+        "systemd/nginx.service.d/atlaso-data-disks.conf": b"nginx-dropin",
+        "udev/99-atlaso-disk-identity.rules": b"udev-rule",
+        "data-disks/vmware.conf": b"disk-policy",
+    }
+    destinations = {
+        "ATLASO_MOUNT_DATA_DISKS_PATH": tmp_path / "host/bin/atlaso-mount-data-disks",
+        "ATLASO_DATA_DISK_UNIT_PATH": tmp_path / "host/systemd/atlaso-data-disks.service",
+        "ATLASO_SERVICE_DATA_DISK_DROPIN_PATH": tmp_path / "host/systemd/atlaso.service.d/atlaso-data-disks.conf",
+        "ATLASO_BOOTSTRAP_HTTPS_UNIT_PATH": tmp_path / "host/systemd/atlaso-bootstrap-https.service",
+        "ATLASO_NGINX_DATA_DISK_DROPIN_PATH": tmp_path / "host/systemd/nginx.service.d/atlaso-data-disks.conf",
+        "ATLASO_DISK_IDENTITY_UDEV_PATH": tmp_path / "host/udev/99-atlaso-disk-identity.rules",
+        "ATLASO_DATA_DISK_POLICY_PATH": tmp_path / "host/etc/atlaso/data-disks.conf",
+    }
+    for relative_path, content in sources.items():
+        source = release_root / relative_path
+        source.parent.mkdir(parents=True, exist_ok=True)
+        source.write_bytes(content)
+    monkeypatch.setattr(helper, "ATLASO_RELEASES_DIR", release_root.parent)
+    monkeypatch.setattr(helper, "ATLASO_CURRENT_LINK", current)
+    monkeypatch.setattr(helper, "ATLASO_UPDATE_BACKUP_DIR", tmp_path / "backups")
+    marker = tmp_path / "host/etc/atlaso/data-disk-safety-bootstrap.json"
+    monkeypatch.setattr(helper, "ATLASO_DATA_DISK_BOOTSTRAP_MARKER_PATH", marker)
+    for name, destination in destinations.items():
+        monkeypatch.setattr(helper, name, destination)
+    monkeypatch.setattr(helper, "_release_data_disk_platform", lambda: "vmware")
+    commands: list[list[str]] = []
+    events: list[str] = []
+
+    def command_payload(command, **_kwargs):
+        """Return a successful bootstrap command result.
+
+        Args:
+            command: Command and arguments issued by the bootstrap.
+            **_kwargs: Optional command execution arguments.
+        """
+        commands.append(command)
+        if command == [destinations["ATLASO_MOUNT_DATA_DISKS_PATH"].as_posix()]:
+            events.append("preflight")
+        return {"command": command, "returncode": 0, "success": True, "stdout": "", "stderr": ""}
+
+    monkeypatch.setattr(helper, "_command_payload", command_payload)
+    monkeypatch.setattr(helper, "_command_path", lambda name: f"/usr/bin/{name}")
+    monkeypatch.setattr(
+        helper,
+        "_migrate_release_esx_storage_claims",
+        lambda _backup_root, _backups: events.append("migration"),
+    )
+
+    helper._bootstrap_release_data_disk_safety(release_root)
+
+    for (relative_path, content), destination in zip(sources.items(), destinations.values(), strict=True):
+        assert destination.read_bytes() == content, relative_path
+        expected_mode = 0o755 if relative_path == "bin/atlaso-mount-data-disks" else 0o644
+        if os.name == "posix":
+            assert destination.stat().st_mode & 0o777 == expected_mode, relative_path
+    assert ["/usr/bin/udevadm", "control", "--reload-rules"] in commands
+    assert [destinations["ATLASO_MOUNT_DATA_DISKS_PATH"].as_posix()] in commands
+    assert ["/usr/bin/systemctl", "daemon-reload"] in commands
+    assert events == ["migration", "preflight"]
+    assert not any((tmp_path / "backups").iterdir())
+    assert json.loads(marker.read_text(encoding="utf-8")) == {"schema_version": 1, "status": "complete"}
+    monkeypatch.setattr(
+        helper,
+        "_release_data_disk_platform",
+        lambda: (_ for _ in ()).throw(AssertionError("completed compatibility bootstrap must not run again")),
+    )
+    assert helper._bootstrap_release_data_disk_safety(release_root) == []
+    for unit_path in [
+        ROOT / "image/hyperv/systemd/atlaso.service",
+        ROOT / "image/vmware-workstation/systemd/atlaso.service",
+    ]:
+        assert (
+            "ExecStartPre=+/opt/atlaso/bin/atlaso-helper appliance-update "
+            "bootstrap-data-disk-safety --real /opt/atlaso/current"
+        ) in unit_path.read_text(encoding="utf-8")
+
+
+def test_previous_updater_bootstrap_restores_assets_claims_and_database(monkeypatch, tmp_path):
+    """Restore every compatibility mutation when the first candidate preflight fails.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    import sqlite3
+
+    from tests.test_appliance_update import load_helper_module
+
+    helper = load_helper_module()
+    release_root = tmp_path / "opt/atlaso/releases/candidate"
+    release_root.mkdir(parents=True)
+    current = tmp_path / "opt/atlaso/current"
+    current.parent.mkdir(parents=True, exist_ok=True)
+    current.symlink_to(release_root, target_is_directory=True)
+    source = release_root / "safety-asset"
+    source.write_bytes(b"candidate-asset")
+    destination = tmp_path / "host/safety-asset"
+    destination.parent.mkdir(parents=True)
+    destination.write_bytes(b"previous-asset")
+    new_source = release_root / "new-safety-asset"
+    new_source.write_bytes(b"candidate-new-asset")
+    new_destination = tmp_path / "host/new-safety-asset"
+    allowlist = tmp_path / "host/esx-storage-disks.conf"
+    allowlist.write_text("previous-claim\n", encoding="utf-8")
+    database = tmp_path / "host/atlaso.db"
+    connection = sqlite3.connect(database)
+    try:
+        connection.execute("create table bootstrap_state (value text)")
+        connection.execute("insert into bootstrap_state values ('previous')")
+        connection.commit()
+    finally:
+        connection.close()
+
+    monkeypatch.setattr(helper, "ATLASO_RELEASES_DIR", release_root.parent)
+    monkeypatch.setattr(helper, "ATLASO_CURRENT_LINK", current)
+    monkeypatch.setattr(helper, "ATLASO_UPDATE_BACKUP_DIR", tmp_path / "backups")
+    marker = tmp_path / "host/data-disk-safety-bootstrap.json"
+    monkeypatch.setattr(helper, "ATLASO_DATA_DISK_BOOTSTRAP_MARKER_PATH", marker)
+    monkeypatch.setattr(helper, "ATLASO_DATABASE_PATH", database)
+    monkeypatch.setattr(helper, "_release_data_disk_platform", lambda: "vmware")
+    monkeypatch.setattr(
+        helper,
+        "_release_data_disk_owned_files",
+        lambda _release_root, _platform: [
+            (source, destination, 0o644),
+            (new_source, new_destination, 0o644),
+        ],
+    )
+    events: list[str] = []
+
+    def migrate_claims(backup_root, backups):
+        """Simulate the real claim and database migration inside the transaction.
+
+        Args:
+            backup_root: Bootstrap transaction backup directory.
+            backups: Asset backups extended with the allowlist backup.
+        """
+        events.append("migration")
+        backup = backup_root / "esx-storage-disks.conf"
+        backup.write_bytes(allowlist.read_bytes())
+        backups.append((backup, allowlist))
+        allowlist.write_text("candidate-claim\n", encoding="utf-8")
+        connection = sqlite3.connect(database)
+        try:
+            connection.execute("update bootstrap_state set value = 'candidate'")
+            connection.commit()
+        finally:
+            connection.close()
+
+    def refresh_identity(*, validate):
+        """Fail candidate validation and accept the restored identity refresh.
+
+        Args:
+            validate: Whether this invocation is the candidate preflight.
+        """
+        events.append("preflight" if validate else "rollback-refresh")
+        return [
+            {
+                "command": ["disk-preflight" if validate else "udev-refresh"],
+                "returncode": 1 if validate else 0,
+                "success": not validate,
+                "stdout": "",
+                "stderr": "unsafe disk" if validate else "",
+            }
+        ]
+
+    monkeypatch.setattr(helper, "_migrate_release_esx_storage_claims", migrate_claims)
+    monkeypatch.setattr(helper, "_refresh_release_data_disk_identity", refresh_identity)
+    monkeypatch.setattr(helper, "_command_path", lambda name: f"/usr/bin/{name}")
+    monkeypatch.setattr(
+        helper,
+        "_command_payload",
+        lambda command, **_kwargs: {
+            "command": command,
+            "returncode": 0,
+            "success": True,
+            "stdout": "",
+            "stderr": "",
+        },
+    )
+
+    with pytest.raises(ValueError, match="prior safety state restored"):
+        helper._bootstrap_release_data_disk_safety(release_root)
+
+    assert destination.read_bytes() == b"previous-asset"
+    assert not new_destination.exists()
+    assert not marker.exists()
+    assert not destination.with_suffix(".bootstrap").exists()
+    assert not new_destination.with_suffix(".bootstrap").exists()
+    assert allowlist.read_text(encoding="utf-8") == "previous-claim\n"
+    connection = sqlite3.connect(database)
+    try:
+        assert connection.execute("select value from bootstrap_state").fetchone()[0] == "previous"
+    finally:
+        connection.close()
+    assert events == ["migration", "preflight", "rollback-refresh"]
+    assert not any((tmp_path / "backups").iterdir())
+
+
+@pytest.mark.parametrize(
+    ("vendor", "product", "expected"),
+    [
+        ("Microsoft Corporation", "Virtual Machine", "hyperv"),
+        ("VMware, Inc.", "VMware Virtual Platform", "vmware"),
+    ],
+)
+def test_release_data_disk_platform_uses_exact_virtualization_evidence(
+    monkeypatch,
+    tmp_path,
+    vendor,
+    product,
+    expected,
+):
+    """Verify that upgrades select only the matching signed disk policy.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+        vendor: DMI system vendor supplied to the test scenario.
+        product: DMI product name supplied to the test scenario.
+        expected: Expected platform policy name.
+    """
+    from tests.test_appliance_update import load_helper_module
+
+    helper = load_helper_module()
+    vendor_path = tmp_path / "sys_vendor"
+    product_path = tmp_path / "product_name"
+    vendor_path.write_text(vendor, encoding="utf-8")
+    product_path.write_text(product, encoding="utf-8")
+    monkeypatch.setattr(helper, "ATLASO_DMI_SYS_VENDOR_PATH", vendor_path)
+    monkeypatch.setattr(helper, "ATLASO_DMI_PRODUCT_NAME_PATH", product_path)
+    monkeypatch.setattr(helper, "ATLASO_DATA_DISK_POLICY_PATH", tmp_path / "missing-policy")
+    monkeypatch.setattr(helper, "ATLASO_VMWARE_OVF_UNIT_PATH", tmp_path / "missing-vmware-unit")
+    monkeypatch.setattr(helper, "ATLASO_HYPERV_GENERATOR_PATH", tmp_path / "missing-generator")
+
+    assert helper._release_data_disk_platform() == expected
+
+
+def test_release_data_disk_platform_rejects_conflicting_evidence(monkeypatch, tmp_path):
+    """Verify that upgrades fail closed when platform evidence conflicts.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    from tests.test_appliance_update import load_helper_module
+
+    helper = load_helper_module()
+    vendor_path = tmp_path / "sys_vendor"
+    product_path = tmp_path / "product_name"
+    vmware_unit = tmp_path / "atlaso-vmware-ovf-customize.service"
+    vendor_path.write_text("Microsoft Corporation", encoding="utf-8")
+    product_path.write_text("Virtual Machine", encoding="utf-8")
+    vmware_unit.write_text("[Unit]\n", encoding="utf-8")
+    monkeypatch.setattr(helper, "ATLASO_DMI_SYS_VENDOR_PATH", vendor_path)
+    monkeypatch.setattr(helper, "ATLASO_DMI_PRODUCT_NAME_PATH", product_path)
+    monkeypatch.setattr(helper, "ATLASO_DATA_DISK_POLICY_PATH", tmp_path / "missing-policy")
+    monkeypatch.setattr(helper, "ATLASO_VMWARE_OVF_UNIT_PATH", vmware_unit)
+    monkeypatch.setattr(helper, "ATLASO_HYPERV_GENERATOR_PATH", tmp_path / "missing-generator")
+
+    with pytest.raises(ValueError, match="hyperv, vmware"):
+        helper._release_data_disk_platform()
+
+
+def test_release_data_disk_refresh_settles_before_preflight(monkeypatch):
+    """Verify that upgrade-created stable identities settle before validation.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+    """
+    from tests.test_appliance_update import load_helper_module
+
+    helper = load_helper_module()
+    captured: list[list[str]] = []
+
+    def command_payload(command):
+        """Return a successful command result while retaining order.
+
+        Args:
+            command: Command and arguments supplied by the helper.
+        """
+        captured.append(command)
+        return {
+            "command": command,
+            "returncode": 0,
+            "success": True,
+            "stdout": "",
+            "stderr": "",
+        }
+
+    monkeypatch.setattr(helper, "_command_path", lambda name: f"/usr/bin/{name}")
+    monkeypatch.setattr(helper, "_command_payload", command_payload)
+
+    results = helper._refresh_release_data_disk_identity(validate=True)
+
+    assert all(result["success"] for result in results)
+    assert captured == [
+        ["/usr/bin/udevadm", "control", "--reload-rules"],
+        ["/usr/bin/udevadm", "trigger", "--subsystem-match=block", "--action=add"],
+        ["/usr/bin/udevadm", "settle"],
+        ["/opt/atlaso/bin/atlaso-mount-data-disks"],
+    ]
+
+
+def test_release_migrates_boot_safe_configured_mounted_disk_claim(monkeypatch, tmp_path):
+    """Verify that an older applied mounted-ext4 volume is claimed before preflight.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    import sqlite3
+
+    from tests.test_appliance_update import load_helper_module
+
+    helper = load_helper_module()
+    database = tmp_path / "atlaso.db"
+    baseline_summary = [
+        "service disabled",
+        "2 storage volumes",
+        "0 enabled NFS datastores",
+        "IPv4 and IPv6 are equivalent listener families",
+    ]
+    baseline_preview = json.dumps(
+        {
+            "enabled": False,
+            "volumes": [
+                {
+                    "source_type": "mounted_ext4",
+                    "stable_device_id": "/dev/disk/by-id/scsi-older-alias",
+                    "filesystem_uuid": "3f832583-beec-4be7-969c-92519ea77273",
+                    "mount_path": "/mnt/operator-existing-ext4",
+                },
+                {
+                    "source_type": "blank_disk",
+                    "stable_device_id": "/dev/disk/by-id/scsi-formatted-older-alias",
+                    "filesystem_uuid": "aa0a2164-220e-4dbb-acb8-f4215f3e1b1f",
+                    "mount_path": "/mnt/atlaso-esx-storage/formatted",
+                },
+            ],
+        },
+        indent=2,
+        sort_keys=True,
+    )
+    baseline_snapshot = {
+        "unit_id": "esx_storage",
+        "summary": baseline_summary,
+        "config_path": "/var/lib/atlaso/apply/esx-storage/atlaso-esx-storage.json",
+        "config_preview": baseline_preview,
+        "snapshot_marker": None,
+    }
+    baseline_hash = hashlib.sha256(
+        json.dumps(baseline_snapshot, sort_keys=True, default=str, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    baselines = {
+        "esx_storage": {
+            "snapshot_hash": baseline_hash,
+            "config_path": baseline_snapshot["config_path"],
+            "config_preview": baseline_preview,
+            "summary": baseline_summary,
+            "applied_at": "2026-08-13T00:00:00+00:00",
+        }
+    }
+    with sqlite3.connect(database) as connection:
+        connection.execute(
+            "create table esx_storage_volumes (source_type text, stable_device_id text, "
+            "filesystem_uuid text, mount_path text, applied integer)"
+        )
+        connection.execute(
+            "insert into esx_storage_volumes values (?, ?, ?, ?, 1)",
+            (
+                "mounted_ext4",
+                "/dev/disk/by-id/scsi-older-alias",
+                "3f832583-beec-4be7-969c-92519ea77273",
+                "/mnt/operator-existing-ext4",
+            ),
+        )
+        connection.execute(
+            "insert into esx_storage_volumes values (?, ?, ?, ?, 1)",
+            (
+                "blank_disk",
+                "/dev/disk/by-id/scsi-formatted-older-alias",
+                "aa0a2164-220e-4dbb-acb8-f4215f3e1b1f",
+                "/mnt/atlaso-esx-storage/formatted",
+            ),
+        )
+        connection.execute(
+            "create table settings (id integer primary key, key text unique, value text, updated_at text)"
+        )
+        connection.execute(
+            "insert into settings (key, value, updated_at) values (?, ?, ?)",
+            ("appliance_apply.baselines.v1", json.dumps(baselines), "2026-08-13T00:00:00+00:00"),
+        )
+    allowlist = tmp_path / "etc/atlaso/esx-storage-disks.conf"
+    allowlist.parent.mkdir(parents=True)
+    allowlist.write_text(
+        "3f832583-beec-4be7-969c-92519ea77273\t/dev/disk/by-id/scsi-older-alias\t"
+        "/mnt/operator-existing-ext4\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(helper, "ATLASO_DATABASE_PATH", database)
+    monkeypatch.setattr(helper, "ESX_STORAGE_DISK_ALLOWLIST_PATH", allowlist)
+    monkeypatch.setattr(
+        helper,
+        "_esx_storage_inventory",
+        lambda: [
+            {
+                "candidate_type": "mounted_ext4",
+                "type": "disk",
+                "stable_device_id": "/dev/disk/by-id/atlaso-path-pci-0000_03_00_0-scsi-0_0_3_0",
+                "filesystem_type": "ext4",
+                "filesystem_uuid": "3f832583-beec-4be7-969c-92519ea77273",
+                "mount_paths": ["/mnt/operator-existing-ext4"],
+                "writable_mount_paths": ["/mnt/operator-existing-ext4"],
+                "partitions": [],
+                "holders": [],
+                "os_related": False,
+                "read_only": False,
+                "persistent_uuid_mount": True,
+            },
+            {
+                "candidate_type": "mounted_ext4",
+                "type": "disk",
+                "stable_device_id": "/dev/disk/by-id/atlaso-path-pci-0000_03_00_0-scsi-0_0_4_0",
+                "filesystem_type": "ext4",
+                "filesystem_uuid": "aa0a2164-220e-4dbb-acb8-f4215f3e1b1f",
+                "mount_paths": ["/mnt/atlaso-esx-storage/formatted"],
+                "writable_mount_paths": ["/mnt/atlaso-esx-storage/formatted"],
+                "partitions": [],
+                "holders": [],
+                "os_related": False,
+                "read_only": False,
+                "persistent_uuid_mount": True,
+            },
+        ],
+    )
+    monkeypatch.setattr(
+        helper,
+        "_esx_storage_resolved_by_id_device",
+        lambda value: (
+            Path("/dev/sdd")
+            if value
+            in {
+                "/dev/disk/by-id/scsi-older-alias",
+                "/dev/disk/by-id/atlaso-path-pci-0000_03_00_0-scsi-0_0_3_0",
+            }
+            else Path("/dev/sde")
+            if value
+            in {
+                "/dev/disk/by-id/scsi-formatted-older-alias",
+                "/dev/disk/by-id/atlaso-path-pci-0000_03_00_0-scsi-0_0_4_0",
+            }
+            else (_ for _ in ()).throw(ValueError(value))
+        ),
+    )
+    backups: list[tuple[Path | None, Path]] = []
+
+    helper._migrate_release_esx_storage_claims(tmp_path / "backups", backups)
+
+    assert allowlist.read_text(encoding="utf-8") == (
+        "3f832583-beec-4be7-969c-92519ea77273\t"
+        "/dev/disk/by-id/atlaso-path-pci-0000_03_00_0-scsi-0_0_3_0\t"
+        "/mnt/operator-existing-ext4\tmounted_ext4\n"
+        "aa0a2164-220e-4dbb-acb8-f4215f3e1b1f\t"
+        "/dev/disk/by-id/atlaso-path-pci-0000_03_00_0-scsi-0_0_4_0\t"
+        "/mnt/atlaso-esx-storage/formatted\tblank_disk\n"
+    )
+    with sqlite3.connect(database) as connection:
+        assert connection.execute(
+            "select source_type, stable_device_id from esx_storage_volumes order by source_type"
+        ).fetchall() == [
+            ("blank_disk", "/dev/disk/by-id/atlaso-path-pci-0000_03_00_0-scsi-0_0_4_0"),
+            ("mounted_ext4", "/dev/disk/by-id/atlaso-path-pci-0000_03_00_0-scsi-0_0_3_0"),
+        ]
+        stored_baselines = json.loads(
+            connection.execute(
+                "select value from settings where key = ?", ("appliance_apply.baselines.v1",)
+            ).fetchone()[0]
+        )
+    migrated_baseline = stored_baselines["esx_storage"]
+    migrated_preview = json.loads(migrated_baseline["config_preview"])
+    assert migrated_preview["enabled"] is False
+    assert [volume["stable_device_id"] for volume in migrated_preview["volumes"]] == [
+        "/dev/disk/by-id/atlaso-path-pci-0000_03_00_0-scsi-0_0_3_0",
+        "/dev/disk/by-id/atlaso-path-pci-0000_03_00_0-scsi-0_0_4_0",
+    ]
+    migrated_snapshot = {
+        **baseline_snapshot,
+        "config_preview": migrated_baseline["config_preview"],
+    }
+    assert migrated_baseline["snapshot_hash"] == hashlib.sha256(
+        json.dumps(migrated_snapshot, sort_keys=True, default=str, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    assert len(backups) == 1
+    backup_path, backup_destination = backups[0]
+    assert backup_path is not None
+    assert backup_destination == allowlist
+    assert backup_path.read_text(encoding="utf-8").startswith("3f832583-beec-4be7-969c-92519ea77273\t")
+
+
 def test_abi_wheelhouse_lock_covers_exact_checked_in_versions(monkeypatch, tmp_path):
     """Verify that abi wheelhouse lock covers exact checked in versions.
 
@@ -1279,6 +1862,40 @@ def test_failed_candidate_restores_previous_release_and_database(monkeypatch, tm
 
     monkeypatch.setattr(helper, "_install_release_venv", install_venv)
     monkeypatch.setattr(helper, "_install_release_owned_files", lambda *_args: [])
+    monkeypatch.setattr(helper, "_migrate_release_esx_storage_claims", lambda *_args: None)
+    monkeypatch.setattr(
+        helper,
+        "_refresh_release_data_disk_identity",
+        lambda **_kwargs: [
+            {
+                "command": ["data-disk-preflight"],
+                "returncode": 0,
+                "success": True,
+                "stdout": "",
+                "stderr": "",
+            }
+        ],
+    )
+    original_command_payload = helper._command_payload
+
+    def command_payload(command, **kwargs):
+        """Return a successful disk preflight and preserve other command behavior.
+
+        Args:
+            command: Command and arguments supplied by the helper.
+            **kwargs: Optional command execution arguments.
+        """
+        if command == ["/opt/atlaso/bin/atlaso-mount-data-disks"]:
+            return {
+                "command": command,
+                "returncode": 0,
+                "success": True,
+                "stdout": "",
+                "stderr": "",
+            }
+        return original_command_payload(command, **kwargs)
+
+    monkeypatch.setattr(helper, "_command_payload", command_payload)
     migration_injected = False
 
     def service_command(action, *units):

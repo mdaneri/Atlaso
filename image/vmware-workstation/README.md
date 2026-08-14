@@ -193,9 +193,14 @@ disk. ESXi creates the latter two disks during deployment without payload files.
 ordered disks, requires file-backed payloads for the first two, uses VMware Paravirtual SCSI, and removes the build-time
 CD-ROM device. On first boot, the independent Atlaso `tty1` console and OVF management-network validation start before
 data-disk discovery. After networking validates, `atlaso-data-disks.service` ignores the formatted system-content disk
-and formats the two blank disks as
-ext4, labels them `ATLASO_DEPOT` and `ATLASO_BKUP`, writes their UUIDs to `/etc/fstab`, and mounts them at
-`/mnt/atlaso-vcf-offline-depot` and `/mnt/atlaso-vcf-backups`. The descriptor exposes two network mappings for
+and requires the two data disks at SCSI units 2 and 3 to expose topology-derived `atlaso-path-*` identities and exact
+500 GiB capacities. It completes an all-disk preflight before formatting either disk and fails closed for any missing,
+extra, reordered, ambiguous, or mismatched device. Verified blank disks become ext4 volumes labeled
+`ATLASO_DEPOT` and `ATLASO_BKUP`; correctly labeled ext4 disks are never reformatted. The service writes their UUIDs to
+`/etc/fstab` and mounts them at `/mnt/atlaso-vcf-offline-depot` and `/mnt/atlaso-vcf-backups`. The descriptor exposes
+those fixed volumes while allowing only positively identified Atlaso-managed ESX Storage disks after initialization;
+claimed existing ext4 whole disks require UUID-backed fstab persistence and a root-owned Atlaso claim.
+The descriptor exposes two network mappings for
 vSphere/ESXi import: `Atlaso Management Network` for the first adapter, which remains management-only as `eth0`, and
 `Atlaso Services Network` for the second adapter used by DNS, DHCP, CA, depot, PXE, KMS, and other Atlaso-managed
 services.
@@ -330,6 +335,8 @@ pwsh -ExecutionPolicy Bypass `
 The wrapper requires the cloned Photon OS and Atlaso system-content VMDKs at SCSI units 0 and 1, then creates fresh
 Depot and Backups data VMDKs at units 2 and 3 when needed. `-ResetDataDisks` removes those data VMDKs before recreating
 them only when their canonical paths are strict, non-reparse-point descendants of the selected VM output directory.
+Both creation-size arguments accept only `500GB`; an explicitly reused data VMDK must also expose an exact 500 GiB
+virtual capacity in its descriptor or deployment stops before cloning the target VM.
 `-Redeploy` requires the exact named VMX and exactly one well-formed, matching `displayName`; a missing, malformed,
 duplicate, or mismatched target preserves the
 directory and returns an actionable failure. Cleanup checks the running and registered Workstation inventories by
@@ -403,9 +410,12 @@ Resolve-DnsName depot.atlaso.internal
 Open Edge with the FQDN, for example `http://depot.atlaso.internal/`. If Edge still reports
 `DNS_PROBE_FINISHED_NXDOMAIN`, open `edge://net-internals/#dns` and click `Clear host cache`.
 
-On first boot, `atlaso-data-disks.service` formats blank attached data VMDKs, labels them as `ATLASO_DEPOT` and
-`ATLASO_BKUP`, writes `/etc/fstab`, and mounts them at `/mnt/atlaso-vcf-offline-depot` and `/mnt/atlaso-vcf-backups`
-before the Atlaso control plane starts.
+On first boot, `atlaso-data-disks.service` verifies the fixed SCSI units, stable topology identities, exact 500 GiB
+capacities, and exact platform disk set before formatting the assigned blank VMDKs. It fails before `mkfs` on missing,
+extra, reordered, ambiguous, or mismatched disks. Correctly labeled ext4 volumes remain untouched; both volumes are
+mounted by UUID at `/mnt/atlaso-vcf-offline-depot` and `/mnt/atlaso-vcf-backups` before the control plane starts. Once
+both are initialized, only positively identified Atlaso-managed ESX Storage disks may join the platform disk set.
+Disk-preflight failure blocks nginx, the HTTPS bootstrap, Atlaso control plane, and worker.
 
 ## Fidelity Notes
 

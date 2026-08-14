@@ -6,6 +6,8 @@ import json
 import subprocess
 from pathlib import Path, PurePosixPath
 
+import pytest
+
 from atlaso.app.models import EsxNfsShare, EsxStorageSettings, EsxStorageVolume
 from atlaso.app.services.esx_storage import (
     StorageInterface,
@@ -245,6 +247,72 @@ def test_mounted_ext4_inventory_rejects_vcf_backup_and_depot_mounts():
             raise AssertionError(f"reserved mount {mount_path} was accepted")
 
 
+def test_mounted_ext4_inventory_requires_boot_safe_whole_disk_contract():
+    """Require stable whole-disk identity and persistent UUID mounting."""
+    eligible = normalize_disk_inventory_entry(
+        {
+            "candidate_type": "mounted_ext4",
+            "stable_device_id": "/dev/disk/by-id/wwn-0x1234",
+            "device_path": "/dev/sdd",
+            "type": "disk",
+            "filesystem_type": "ext4",
+            "filesystem_uuid": "existing-uuid",
+            "mount_path": "/mnt/existing-ext4",
+            "mount_paths": ["/mnt/existing-ext4"],
+            "writable_mount_paths": ["/mnt/existing-ext4"],
+            "persistent_uuid_mount": True,
+        }
+    )
+    read_only_mount = normalize_disk_inventory_entry(
+        {
+            "candidate_type": "mounted_ext4",
+            "stable_device_id": "/dev/disk/by-id/wwn-0x1234",
+            "device_path": "/dev/sdd",
+            "type": "disk",
+            "filesystem_type": "ext4",
+            "filesystem_uuid": "existing-uuid",
+            "mount_path": "/mnt/existing-ext4",
+            "mount_paths": ["/mnt/existing-ext4"],
+            "writable_mount_paths": [],
+            "persistent_uuid_mount": True,
+        }
+    )
+    additionally_mounted = normalize_disk_inventory_entry(
+        {
+            "candidate_type": "mounted_ext4",
+            "stable_device_id": "/dev/disk/by-id/wwn-0x1234",
+            "device_path": "/dev/sdd",
+            "type": "disk",
+            "filesystem_type": "ext4",
+            "filesystem_uuid": "existing-uuid",
+            "mount_path": "/mnt/existing-ext4",
+            "mount_paths": ["/mnt/existing-ext4", "/mnt/unrelated"],
+            "writable_mount_paths": ["/mnt/existing-ext4", "/mnt/unrelated"],
+            "persistent_uuid_mount": True,
+        }
+    )
+    incompatible = normalize_disk_inventory_entry(
+        {
+            "candidate_type": "mounted_ext4",
+            "stable_device_id": "UUID=partition-uuid",
+            "device_path": "/dev/sdd1",
+            "type": "part",
+            "filesystem_type": "ext4",
+            "filesystem_uuid": "partition-uuid",
+            "mount_path": "/mnt/partition-ext4",
+        }
+    )
+
+    assert eligible["eligible"] is True
+    assert read_only_mount["eligible"] is False
+    assert "selected mount is read-only" in read_only_mount["eligibility_reason"]
+    assert additionally_mounted["eligible"] is False
+    assert "unexpected additional mounts" in additionally_mounted["eligibility_reason"]
+    assert incompatible["eligible"] is False
+    assert "not a whole disk" in incompatible["eligibility_reason"]
+    assert "not persisted by UUID" in incompatible["eligibility_reason"]
+
+
 def test_desired_state_rejects_existing_volume_on_vcf_managed_mount():
     """Verify that desired state rejects existing volume on vcf managed mount."""
     settings, volumes, shares, interfaces = state()
@@ -343,11 +411,12 @@ def test_helper_blank_disk_revalidation_rejects_partition_mount_lvm_raid_and_os_
     ]
 
 
-def test_helper_inventory_prefers_uuid_mount_and_keeps_all_mountpoints(monkeypatch):
+def test_helper_inventory_prefers_uuid_mount_and_keeps_all_mountpoints(monkeypatch, tmp_path: Path):
     """Verify that helper inventory prefers uuid mount and keeps all mountpoints.
 
     Args:
         monkeypatch: Pytest fixture used to replace dependencies for the test.
+        tmp_path: Pytest-provided isolated filesystem root.
     """
     helper = load_helper_module()
     lsblk_payload = {
@@ -363,30 +432,266 @@ def test_helper_inventory_prefers_uuid_mount_and_keeps_all_mountpoints(monkeypat
             "label": "lf-ad26e4d9384f",
             "mountpoints": [
                 "/srv/atlaso/esx-storage/vmware-nfs3",
-                "/mnt/atlaso-esx-storage/vmware-esx-data",
+                "/mnt/operator existing-ext4",
             ],
         }]
     }
     monkeypatch.setattr(helper, "_command_path", lambda command: f"/usr/bin/{command}")
-    monkeypatch.setattr(
-        helper,
-        "_run",
-        lambda command: subprocess.CompletedProcess(command, 0, stdout=json.dumps(lsblk_payload), stderr=""),
-    )
+    def run(command):
+        """Return deterministic lsblk or findmnt output for inventory.
+
+        Args:
+            command: Helper subprocess argument list.
+        """
+        if "--mountpoint" in command:
+            return subprocess.CompletedProcess(command, 0, stdout="rw,relatime\n", stderr="")
+        return subprocess.CompletedProcess(command, 0, stdout=json.dumps(lsblk_payload), stderr="")
+
+    monkeypatch.setattr(helper, "_run", run)
     monkeypatch.setattr(
         helper,
         "_esx_storage_by_id_map",
         lambda: {"/dev/sdd": "/dev/disk/by-id/atlaso-path-pci-0000_03_00_0-scsi-0_0_3_0"},
     )
     monkeypatch.setattr(helper, "_esx_storage_os_devices", lambda: set())
+    fstab = tmp_path / "fstab"
+    fstab.write_text(
+        "UUID=3f832583-beec-4be7-969c-92519ea77273 /mnt/operator\\040existing-ext4 ext4 defaults 0 2\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(helper, "ESX_STORAGE_FSTAB_PATH", fstab)
 
     disk = helper._esx_storage_inventory()[0]
 
-    assert disk["mount_path"] == "/mnt/atlaso-esx-storage/vmware-esx-data"
+    assert disk["mount_path"] == "/mnt/operator existing-ext4"
     assert disk["mount_paths"] == [
         "/srv/atlaso/esx-storage/vmware-nfs3",
-        "/mnt/atlaso-esx-storage/vmware-esx-data",
+        "/mnt/operator existing-ext4",
     ]
+    assert disk["persistent_uuid_mount"] is True
+    assert disk["writable_mount_paths"] == disk["mount_paths"]
+
+
+def test_helper_fstab_field_encoding_round_trips_spaces_and_backslashes():
+    """Keep generated fstab fields parseable without changing their paths."""
+    helper = load_helper_module()
+    value = "/mnt/operator data\\archive"
+
+    encoded = helper._esx_storage_fstab_escape_field(value)
+
+    assert encoded == "/mnt/operator\\040data\\134archive"
+    assert helper._esx_storage_fstab_decode_field(encoded) == value
+
+
+@pytest.mark.parametrize(
+    ("options", "expected"),
+    [("defaults", True), ("defaults,ro", False), ("ro,rw", True), ("rw,ro", False)],
+)
+def test_helper_requires_one_writable_persistent_uuid_mount(
+    monkeypatch, tmp_path: Path, options: str, expected: bool
+):
+    """Require one unambiguous writable fstab entry for an existing disk.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+        tmp_path: Pytest-provided isolated filesystem root.
+        options: Candidate fstab mount options.
+        expected: Whether the persistent mount contract should pass.
+    """
+    helper = load_helper_module()
+    fstab = tmp_path / "fstab"
+    fstab.write_text(f"UUID=existing /mnt/existing ext4 {options} 0 2\n", encoding="utf-8")
+    monkeypatch.setattr(helper, "ESX_STORAGE_FSTAB_PATH", fstab)
+
+    assert helper._esx_storage_uuid_fstab_entry_exists("existing", "/mnt/existing") is expected
+    if expected:
+        fstab.write_text(fstab.read_text(encoding="utf-8") * 2, encoding="utf-8")
+        assert helper._esx_storage_uuid_fstab_entry_exists("existing", "/mnt/existing") is False
+
+
+def test_helper_requires_additional_esx_bind_mount_to_be_managed(monkeypatch, tmp_path: Path):
+    """Exempt an additional ESX bind target only inside the managed fstab block.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+        tmp_path: Pytest-provided isolated filesystem root.
+    """
+    helper = load_helper_module()
+    fstab = tmp_path / "fstab"
+    bind_mount = "/srv/atlaso/esx-storage/existing"
+    managed_entry = f"/mnt/existing/share {bind_mount} none bind,nofail 0 0"
+    entry = {
+        "type": "disk",
+        "stable_device_id": "/dev/disk/by-id/wwn-existing",
+        "filesystem_type": "ext4",
+        "filesystem_uuid": "existing-uuid",
+        "mount_paths": ["/mnt/existing", bind_mount],
+        "writable_mount_paths": ["/mnt/existing", bind_mount],
+        "partitions": [],
+        "holders": [],
+        "os_related": False,
+        "read_only": False,
+        "persistent_uuid_mount": True,
+    }
+    monkeypatch.setattr(helper, "ESX_STORAGE_FSTAB_PATH", fstab)
+    fstab.write_text(
+        f"{helper.ESX_STORAGE_FSTAB_BEGIN}\n{managed_entry}\n{helper.ESX_STORAGE_FSTAB_END}\n",
+        encoding="utf-8",
+    )
+
+    assert helper._esx_storage_mounted_disk_errors(entry, mount_path=PurePosixPath("/mnt/existing")) == []
+
+    fstab.write_text(f"{managed_entry}\n", encoding="utf-8")
+    assert helper._esx_storage_mounted_disk_errors(
+        entry, mount_path=PurePosixPath("/mnt/existing")
+    ) == ["has unexpected additional mounts"]
+
+
+def test_helper_rejects_mounted_ext4_without_boot_contract():
+    """Reject mounted ext4 inventory that cannot pass the boot-time allowlist."""
+    helper = load_helper_module()
+
+    errors = helper._esx_storage_mounted_disk_errors(
+        {
+            "type": "part",
+            "stable_device_id": "UUID=existing-uuid",
+            "filesystem_type": "ext4",
+            "filesystem_uuid": "existing-uuid",
+            "mount_paths": ["/mnt/existing-ext4"],
+            "writable_mount_paths": ["/mnt/existing-ext4"],
+            "partitions": [],
+            "holders": [],
+            "os_related": False,
+            "read_only": False,
+            "persistent_uuid_mount": False,
+        },
+        mount_path=PurePosixPath("/mnt/existing-ext4"),
+    )
+
+    assert errors == [
+        "not a whole disk",
+        "missing stable /dev/disk/by-id identity",
+        "is not persisted by UUID in /etc/fstab",
+    ]
+
+
+@pytest.mark.parametrize(
+    ("mount_paths", "writable_mount_paths", "expected"),
+    [
+        (
+            ["/mnt/existing-ext4", "/mnt/unrelated"],
+            ["/mnt/existing-ext4", "/mnt/unrelated"],
+            "has unexpected additional mounts",
+        ),
+        (["/mnt/existing-ext4"], [], "selected mount is read-only"),
+    ],
+)
+def test_helper_rejects_mounted_ext4_state_that_cannot_pass_boot(
+    mount_paths: list[str], writable_mount_paths: list[str], expected: str
+):
+    """Keep apply-time mounted-disk admission consistent with boot checks.
+
+    Args:
+        mount_paths: Active mount targets reported for the disk.
+        writable_mount_paths: Active mount targets with the read-write option.
+        expected: Exact admission error expected for the unsafe state.
+    """
+    helper = load_helper_module()
+    entry = {
+        "type": "disk",
+        "stable_device_id": "/dev/disk/by-id/wwn-existing",
+        "filesystem_type": "ext4",
+        "filesystem_uuid": "existing-uuid",
+        "mount_paths": mount_paths,
+        "writable_mount_paths": writable_mount_paths,
+        "partitions": [],
+        "holders": [],
+        "os_related": False,
+        "read_only": False,
+        "persistent_uuid_mount": True,
+    }
+
+    assert helper._esx_storage_mounted_disk_errors(
+        entry, mount_path=PurePosixPath("/mnt/existing-ext4")
+    ) == [expected]
+
+
+def test_helper_preserves_validated_disk_claims_after_apply_succeeds(monkeypatch, tmp_path: Path):
+    """Verify that removed attached disks retain boot claims after apply succeeds.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+        tmp_path: Pytest-provided isolated filesystem root.
+    """
+    helper = load_helper_module()
+    allowlist = tmp_path / "esx-storage-disks.conf"
+    allowlist.write_text("old-uuid\t/dev/disk/by-id/old\t/mnt/old\n", encoding="utf-8")
+    monkeypatch.setattr(helper, "ESX_STORAGE_DISK_ALLOWLIST_PATH", allowlist)
+    new_claim = "new-uuid\t/dev/disk/by-id/new\t/mnt/new"
+
+    helper._esx_storage_write_disk_allowlist([new_claim], preserve_existing=True)
+
+    assert allowlist.read_text(encoding="utf-8").splitlines() == [
+        "old-uuid\t/dev/disk/by-id/old\t/mnt/old",
+        new_claim,
+    ]
+    helper._esx_storage_write_disk_allowlist([new_claim], preserve_existing=True)
+    assert allowlist.read_text(encoding="utf-8").splitlines() == [
+        "old-uuid\t/dev/disk/by-id/old\t/mnt/old",
+        new_claim,
+    ]
+
+
+def test_helper_preserves_each_formatted_disk_mount_until_apply_succeeds(monkeypatch, tmp_path: Path):
+    """Verify that a later format failure retains earlier UUID mount contracts.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+        tmp_path: Pytest-provided isolated filesystem root.
+    """
+    helper = load_helper_module()
+    fstab = tmp_path / "fstab"
+    fstab.write_text(
+        "UUID=os-root / ext4 defaults 0 1\n"
+        f"{helper.ESX_STORAGE_FSTAB_BEGIN}\n"
+        "UUID=old /mnt/old ext4 defaults,nofail 0 2\n"
+        "/mnt/old/share /srv/atlaso/esx-storage/old none bind,nofail 0 0\n"
+        f"{helper.ESX_STORAGE_FSTAB_END}\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(helper, "ESX_STORAGE_FSTAB_PATH", fstab)
+    existing = helper._esx_storage_managed_disk_fstab_lines()
+    new_line = "UUID=new /mnt/new ext4 defaults,nofail,x-systemd.device-timeout=30 0 2"
+
+    helper._esx_storage_replace_managed_fstab(list(dict.fromkeys([*existing, new_line])))
+
+    assert helper._esx_storage_managed_fstab_lines() == [
+        "UUID=old /mnt/old ext4 defaults,nofail 0 2",
+        new_line,
+    ]
+    assert "UUID=os-root / ext4 defaults 0 1" in fstab.read_text(encoding="utf-8")
+
+
+def test_helper_rejects_retained_mount_path_owned_by_another_uuid():
+    """Prevent a removed disk from satisfying a replacement volume's mount."""
+    helper = load_helper_module()
+    retained = [
+        "UUID=old-uuid /mnt/atlaso-esx-storage/reused\\040name ext4 defaults,nofail 0 2"
+    ]
+    mount_path = Path("/mnt/atlaso-esx-storage/reused name")
+
+    with pytest.raises(ValueError, match="retained for a different filesystem"):
+        helper._esx_storage_reject_retained_mount_collision(
+            retained,
+            filesystem_uuid="new-uuid",
+            mount_path=mount_path,
+        )
+
+    helper._esx_storage_reject_retained_mount_collision(
+        retained,
+        filesystem_uuid="old-uuid",
+        mount_path=mount_path,
+    )
 
 
 def test_helper_initialized_disk_retry_accepts_expected_mount_among_bind_mounts():

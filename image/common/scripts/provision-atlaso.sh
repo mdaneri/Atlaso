@@ -241,14 +241,12 @@ systemctl disable --now rpcbind.service rpcbind.socket 2>/dev/null || true
 
 log_step "installing stable virtual-disk identity policy"
 install -d -o root -g root -m 0755 /etc/udev/rules.d
-cat > /etc/udev/rules.d/99-atlaso-disk-identity.rules <<'EOF'
-# Some virtual SCSI controllers do not expose a serial/WWN. Preserve a stable
-# controller-path identity under /dev/disk/by-id so Atlaso never claims a
-# transient /dev/sdX name. Native serial/WWN identities remain preferred.
-SUBSYSTEM=="block", ENV{DEVTYPE}=="disk", ENV{ID_SERIAL}=="", IMPORT{builtin}="path_id", ENV{ID_PATH_TAG}=="?*", SYMLINK+="disk/by-id/atlaso-path-$env{ID_PATH_TAG}"
-EOF
+install -o root -g root -m 0644 "$ATLASO_HOME/image/common/udev/99-atlaso-disk-identity.rules" /etc/udev/rules.d/99-atlaso-disk-identity.rules
 udevadm control --reload-rules
 udevadm trigger --subsystem-match=block --action=add
+
+install -d -o root -g root -m 0755 /etc/atlaso
+install -o root -g root -m 0644 "$ATLASO_HOME/$ATLASO_IMAGE_ASSET_DIR/data-disks.conf" /etc/atlaso/data-disks.conf
 
 log_step "disabling systemd SSH-over-vsock auto generator"
 if [ "$ATLASO_GUEST_PLATFORM" = "hyperv" ]; then
@@ -452,8 +450,12 @@ chmod 0640 /etc/atlaso/atlaso.env
 chown root:atlaso /etc/atlaso/atlaso.env
 
 install -o root -g root -m 0644 "$ATLASO_HOME/$ATLASO_IMAGE_ASSET_DIR/systemd/atlaso.service" /etc/systemd/system/atlaso.service
+install -d -o root -g root -m 0755 /etc/systemd/system/atlaso.service.d
+install -o root -g root -m 0644 "$ATLASO_HOME/image/common/systemd/atlaso-require-data-disks.conf" /etc/systemd/system/atlaso.service.d/atlaso-data-disks.conf
 install -o root -g root -m 0644 "$ATLASO_HOME/image/common/systemd/atlaso-console.service" /etc/systemd/system/atlaso-console.service
 install -o root -g root -m 0644 "$ATLASO_HOME/image/common/systemd/atlaso-worker.service" /etc/systemd/system/atlaso-worker.service
+install -o root -g root -m 0644 "$ATLASO_HOME/image/common/systemd/atlaso-data-disks.service" /etc/systemd/system/atlaso-data-disks.service
+install -o root -g root -m 0644 "$ATLASO_HOME/image/common/systemd/atlaso-bootstrap-https.service" /etc/systemd/system/atlaso-bootstrap-https.service
 install -d -o root -g root -m 0755 /etc/systemd/system.conf.d
 install -o root -g root -m 0644 "$ATLASO_HOME/image/common/systemd/atlaso-console-manager.conf" /etc/systemd/system.conf.d/atlaso-console.conf
 install -o root -g root -m 0755 "$ATLASO_HOME/scripts/appliance/atlaso-helper" "$ATLASO_HOME/bin/atlaso-helper"
@@ -514,40 +516,6 @@ cat >/etc/ssh/sshd_config.d/atlaso-root-login.conf <<'EOF'
 PermitRootLogin no
 EOF
 chmod 0644 /etc/ssh/sshd_config.d/atlaso-root-login.conf
-cat >/etc/systemd/system/atlaso-data-disks.service <<'EOF'
-[Unit]
-Description=Prepare Atlaso data disks
-After=systemd-udev-settle.service
-Wants=systemd-udev-settle.service
-Before=atlaso-bootstrap-https.service atlaso.service
-
-[Service]
-Type=oneshot
-ExecStart=/opt/atlaso/bin/atlaso-mount-data-disks
-RemainAfterExit=yes
-
-[Install]
-WantedBy=multi-user.target
-EOF
-chmod 0644 /etc/systemd/system/atlaso-data-disks.service
-cat >/etc/systemd/system/atlaso-bootstrap-https.service <<'EOF'
-[Unit]
-Description=Bootstrap Atlaso first-boot HTTPS front door
-After=network-online.target atlaso-data-disks.service atlaso-vmware-ovf-customize.service
-Wants=network-online.target atlaso-data-disks.service
-Before=nginx.service atlaso.service
-ConditionPathExists=!/var/lib/atlaso/first-boot-https.applied
-
-[Service]
-Type=oneshot
-EnvironmentFile=/etc/atlaso/atlaso.env
-ExecStart=/opt/atlaso/.venv/bin/python /opt/atlaso/bin/atlaso-bootstrap-https
-RemainAfterExit=yes
-
-[Install]
-WantedBy=multi-user.target
-EOF
-chmod 0644 /etc/systemd/system/atlaso-bootstrap-https.service
 chown -R atlaso:atlaso "$ATLASO_STATE" "$ATLASO_LOG"
 chmod 0711 "$ATLASO_STATE"
 if id "$BOOTSTRAP_USERNAME" >/dev/null 2>&1 && [ -d "$ATLASO_STATE/users/$BOOTSTRAP_USERNAME" ]; then
@@ -644,6 +612,10 @@ systemctl mask getty@tty1.service
 systemctl mask --force ctrl-alt-del.target
 systemctl enable atlaso-console.service
 systemctl enable --now nginx
+install -d -o root -g root -m 0755 /etc/systemd/system/nginx.service.d
+install -o root -g root -m 0644 "$ATLASO_HOME/image/common/systemd/nginx-atlaso-data-disks.conf" /etc/systemd/system/nginx.service.d/atlaso-data-disks.conf
+sed -i 's/\r$//' /etc/systemd/system/nginx.service.d/atlaso-data-disks.conf
+systemctl daemon-reload
 
 log_step "configuring Atlaso nftables firewall"
 if [ -z "$ATLASO_MGMT_SOURCE_CIDR" ]; then

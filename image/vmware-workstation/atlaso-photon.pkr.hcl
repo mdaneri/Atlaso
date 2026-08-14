@@ -274,6 +274,16 @@ build {
   }
 
   provisioner "file" {
+    source      = "../common/udev"
+    destination = "/tmp/atlaso-src/image/common/udev"
+  }
+
+  provisioner "file" {
+    source      = "data-disks.conf"
+    destination = "/tmp/atlaso-src/image/vmware-workstation/data-disks.conf"
+  }
+
+  provisioner "file" {
     source      = "../common/boot"
     destination = "/tmp/atlaso-src/image/common/boot"
   }

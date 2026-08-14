@@ -603,6 +603,8 @@ def test_photon_provisioning_installs_default_nginx_management_proxy():
     bootstrap = Path("scripts/appliance/atlaso-bootstrap-https").read_text(encoding="utf-8")
     systemd_unit = Path("image/hyperv/systemd/atlaso.service").read_text(encoding="utf-8")
     worker_unit = Path("image/common/systemd/atlaso-worker.service").read_text(encoding="utf-8")
+    bootstrap_unit = Path("image/common/systemd/atlaso-bootstrap-https.service").read_text(encoding="utf-8")
+    disk_identity_rule = Path("image/common/udev/99-atlaso-disk-identity.rules").read_text(encoding="utf-8")
     sudoers = Path("image/hyperv/sudoers.d/atlaso-helper").read_text(encoding="utf-8")
     docs = Path("image/hyperv/README.md").read_text(encoding="utf-8")
     root_docs = Path("docs/reference/full-technical-reference.md").read_text(encoding="utf-8")
@@ -619,8 +621,9 @@ def test_photon_provisioning_installs_default_nginx_management_proxy():
     assert "openldap-servers" in script
     assert "nfs-utils" in script and "rpcbind" in script
     assert "99-atlaso-disk-identity.rules" in script
-    assert 'IMPORT{builtin}="path_id"' in script
-    assert 'SYMLINK+="disk/by-id/atlaso-path-$env{ID_PATH_TAG}"' in script
+    assert 'SUBSYSTEM=="block", ENV{DEVTYPE}=="disk", IMPORT{builtin}="path_id"' in disk_identity_rule
+    assert 'SYMLINK+="disk/by-id/atlaso-path-$env{ID_PATH_TAG}"' in disk_identity_rule
+    assert 'ENV{ID_SERIAL}==""' not in script
     assert "powershell" in script
     assert "VCF.PowerCLI" in script
     assert "9.1.0.25380678" in script
@@ -671,11 +674,12 @@ def test_photon_provisioning_installs_default_nginx_management_proxy():
     assert "rm -f /etc/nginx/conf.d/default.conf /etc/nginx/conf.d/default_server.conf" in script
     assert "atlaso-bootstrap-https" in script
     assert "atlaso-bootstrap-https.service" in script
-    assert "ExecStart=/opt/atlaso/.venv/bin/python /opt/atlaso/bin/atlaso-bootstrap-https" in script
-    assert "EnvironmentFile=/etc/atlaso/atlaso.env" in script
-    assert "After=network-online.target atlaso-data-disks.service atlaso-vmware-ovf-customize.service" in script
-    assert "Wants=network-online.target atlaso-data-disks.service" in script
-    assert "ConditionPathExists=!/var/lib/atlaso/first-boot-https.applied" in script
+    assert "ExecStart=/opt/atlaso/.venv/bin/python /opt/atlaso/bin/atlaso-bootstrap-https" in bootstrap_unit
+    assert "EnvironmentFile=/etc/atlaso/atlaso.env" in bootstrap_unit
+    assert "After=network-online.target atlaso-data-disks.service atlaso-vmware-ovf-customize.service" in bootstrap_unit
+    assert "Wants=network-online.target" in bootstrap_unit
+    assert "Requires=atlaso-data-disks.service" in bootstrap_unit
+    assert "ConditionPathExists=!/var/lib/atlaso/first-boot-https.applied" in bootstrap_unit
     assert '"$ATLASO_HOME/.venv/bin/python" "$ATLASO_HOME/bin/atlaso-bootstrap-https"' not in script
     assert "sync_host_physical_interfaces(db)" in bootstrap
     assert bootstrap.index("sync_host_physical_interfaces(db)") < bootstrap.index("ensure_ca_state(db)")
@@ -746,25 +750,61 @@ def test_photon_provisioning_prepares_attached_data_disks():
     mount_script = Path("scripts/appliance/atlaso-mount-data-disks").read_text(encoding="utf-8")
     hyperv_unit = Path("image/hyperv/systemd/atlaso.service").read_text(encoding="utf-8")
     vmware_unit = Path("image/vmware-workstation/systemd/atlaso.service").read_text(encoding="utf-8")
+    worker_unit = Path("image/common/systemd/atlaso-worker.service").read_text(encoding="utf-8")
+    data_disks_unit = Path("image/common/systemd/atlaso-data-disks.service").read_text(encoding="utf-8")
+    bootstrap_unit = Path("image/common/systemd/atlaso-bootstrap-https.service").read_text(encoding="utf-8")
+    nginx_dropin = Path("image/common/systemd/nginx-atlaso-data-disks.conf").read_text(encoding="utf-8")
+    atlaso_dropin = Path("image/common/systemd/atlaso-require-data-disks.conf").read_text(encoding="utf-8")
+    disk_identity_rule = Path("image/common/udev/99-atlaso-disk-identity.rules").read_text(encoding="utf-8")
+    hyperv_policy = Path("image/hyperv/data-disks.conf").read_text(encoding="utf-8")
+    vmware_policy = Path("image/vmware-workstation/data-disks.conf").read_text(encoding="utf-8")
     hyperv_docs = Path("image/hyperv/README.md").read_text(encoding="utf-8")
     vmware_docs = Path("image/vmware-workstation/README.md").read_text(encoding="utf-8")
     root_docs = Path("docs/reference/full-technical-reference.md").read_text(encoding="utf-8")
+    hyperv_packer = Path("image/hyperv/atlaso-photon.pkr.hcl").read_text(encoding="utf-8")
+    vmware_packer = Path("image/vmware-workstation/atlaso-photon.pkr.hcl").read_text(encoding="utf-8")
 
     assert 'run_tdnf "Photon appliance package installation"' in provision
     assert "e2fsprogs" in provision
     assert "atlaso-mount-data-disks" in provision
     assert "atlaso-data-disks.service" in provision
     assert "systemctl enable atlaso-data-disks.service" in provision
-    assert "Before=atlaso-bootstrap-https.service atlaso.service" in provision
+    assert "Before=atlaso-bootstrap-https.service atlaso.service" in data_disks_unit
 
     assert "ATLASO_DEPOT" in mount_script
     assert "ATLASO_BKUP" in mount_script
     assert "/mnt/atlaso-vcf-offline-depot" in mount_script
     assert "/mnt/atlaso-vcf-backups" in mount_script
-    assert 'mkfs.ext4 -F -L "$label" "$disk"' in mount_script
+    assert 'format_disk="$(revalidate_blank_format_target' in mount_script
+    assert 'mkfs.ext4 -F -L "$label" "$format_disk"' in mount_script
     assert "UUID=%s %s ext4 defaults,nofail,x-systemd.device-timeout=30s 0 2" in mount_script
     assert "findmnt -n -o SOURCE /" in mount_script
-    assert "No blank data disk available" in mount_script
+    assert 'image/common/udev/99-atlaso-disk-identity.rules" /etc/udev/rules.d/99-atlaso-disk-identity.rules' in provision
+    assert '"$ATLASO_HOME/$ATLASO_IMAGE_ASSET_DIR/data-disks.conf" /etc/atlaso/data-disks.conf' in provision
+    assert 'SYMLINK+="disk/by-id/atlaso-path-$env{ID_PATH_TAG}"' in disk_identity_rule
+    assert 'source      = "../common/udev"' in hyperv_packer
+    assert 'destination = "/tmp/atlaso-src/image/common/udev"' in hyperv_packer
+    assert 'source      = "data-disks.conf"' in hyperv_packer
+    assert 'destination = "/tmp/atlaso-src/image/hyperv/data-disks.conf"' in hyperv_packer
+    assert 'source      = "../common/udev"' in vmware_packer
+    assert 'destination = "/tmp/atlaso-src/image/common/udev"' in vmware_packer
+    assert 'source      = "data-disks.conf"' in vmware_packer
+    assert 'destination = "/tmp/atlaso-src/image/vmware-workstation/data-disks.conf"' in vmware_packer
+    assert "ATLASO_DATA_DISK_SIZE_BYTES=536870912000" in hyperv_policy
+    assert "ATLASO_DEPOT_SCSI_TUPLE=0:0:1" in hyperv_policy
+    assert "ATLASO_BACKUP_SCSI_TUPLE=0:0:2" in hyperv_policy
+    assert "ATLASO_SYSTEM_SCSI_TUPLE=" in hyperv_policy
+    assert "ATLASO_DATA_DISK_SIZE_BYTES=536870912000" in vmware_policy
+    assert "ATLASO_DEPOT_SCSI_TUPLE=0:2:0" in vmware_policy
+    assert "ATLASO_BACKUP_SCSI_TUPLE=0:3:0" in vmware_policy
+    assert "ATLASO_SYSTEM_SCSI_TUPLE=0:1:0" in vmware_policy
+    assert "validate_exact_disk_set" in mount_script
+    assert "is_managed_esx_storage_disk" in mount_script
+    assert "# BEGIN ATLASO ESX STORAGE" in mount_script
+    assert "ESX_STORAGE_ALLOWLIST_PATH" in mount_script
+    assert "stable_path_for_disk" in mount_script
+    assert "unexpected whole disk" in mount_script
+    assert "No blank data disk available" not in mount_script
 
     assert 'ATLASO_SYSTEM_CONTENT_DISK="${ATLASO_SYSTEM_CONTENT_DISK:-false}"' in provision
     assert 'mkfs.ext4 -F -L ATLASO_SYSTEM "$system_disk"' in provision
@@ -782,9 +822,23 @@ def test_photon_provisioning_prepares_attached_data_disks():
     assert "fstrim -av" in provision
 
     assert "After=network-online.target atlaso-data-disks.service atlaso-bootstrap-https.service" in hyperv_unit
-    assert "Wants=network-online.target atlaso-data-disks.service atlaso-bootstrap-https.service" in hyperv_unit
+    assert "Requires=atlaso-bootstrap-https.service" in hyperv_unit
     assert "After=network-online.target atlaso-data-disks.service atlaso-bootstrap-https.service" in vmware_unit
-    assert "Wants=network-online.target atlaso-data-disks.service atlaso-bootstrap-https.service" in vmware_unit
+    assert "Requires=atlaso-bootstrap-https.service" in vmware_unit
+    assert "Requires=atlaso-data-disks.service" in atlaso_dropin
+    assert "bootstrap-data-disk-safety --real /opt/atlaso/current" in hyperv_unit
+    assert "bootstrap-data-disk-safety --real /opt/atlaso/current" in vmware_unit
+    assert "Wants=network-online.target atlaso.service" in worker_unit
+    assert "Requires=atlaso-data-disks.service\n" in worker_unit
+    assert "Requires=atlaso-data-disks.service atlaso.service" not in worker_unit
+    assert "ExecStart=/opt/atlaso/bin/atlaso-mount-data-disks" in data_disks_unit
+    assert "Requires=atlaso-data-disks.service" in bootstrap_unit
+    assert "Requires=atlaso-data-disks.service" in nginx_dropin
+    assert "/etc/systemd/system/nginx.service.d/atlaso-data-disks.conf" in provision
+    assert "/etc/systemd/system/atlaso.service.d/atlaso-data-disks.conf" in provision
+    assert provision.index("systemctl enable --now nginx") < provision.index(
+        '"$ATLASO_HOME/image/common/systemd/nginx-atlaso-data-disks.conf"'
+    )
 
     assert "atlaso-data-disks.service" in root_docs
     assert "atlaso-data-disks.service" in hyperv_docs
@@ -1149,6 +1203,17 @@ def test_create_atlaso_test_vm_wrapper_is_safe_and_simple():
     assert "Add-VMNetworkAdapter -VMName $VMName -Name 'Trunk' -SwitchName 'Atlaso-Trunk'" in vm_script
     assert "Set-VMNetworkAdapterVlan -VMName $VMName -VMNetworkAdapterName 'Trunk' -Trunk -AllowedVlanIdList \"$TaggedVlanTag\" -NativeVlanId 0" in vm_script
     assert "Add-VMNetworkAdapter -VMName $VMName -Name 'WAN-Test' -SwitchName 'Atlaso-SiteB'" in vm_script
+    assert "[ValidateScript({ $_ -eq 500GB })]" in vm_script
+    assert "$existingDisk = Get-VHD -Path $Path" in vm_script
+    assert "[int64]$existingDisk.Size -ne $SizeBytes" in vm_script
+    assert (
+        "Add-VMHardDiskDrive -VMName $Name -ControllerType SCSI -ControllerNumber 0 "
+        "-ControllerLocation 1 -Path $resolvedDepotVhdxPath"
+    ) in vm_script
+    assert (
+        "Add-VMHardDiskDrive -VMName $Name -ControllerType SCSI -ControllerNumber 0 "
+        "-ControllerLocation 2 -Path $resolvedBackupVhdxPath"
+    ) in vm_script
 
 
 def test_windows_script_names_use_provider_tokens():
@@ -1292,6 +1357,16 @@ def test_create_atlaso_vmware_test_vm_wrapper_uses_common_helpers():
     assert "vmware-vdiskmanager.exe was not found" in vm_script
     assert "vmrun $($Arguments -join ' ') failed" in vm_script
     assert "New-DataVmdk" in vm_script
+    assert vm_script.count("[ValidateScript({ $_ -eq '500GB' })]") == 2
+    assert "[regex]::Matches($descriptor" in vm_script
+    assert "$capacityBytes -ne 500GB" in vm_script
+    assert "does not expose a readable VMDK capacity descriptor" in vm_script
+    assert vm_script.index("foreach ($reusedDataDisk") < vm_script.index(
+        "Invoke-Vmrun -Arguments @('-T', 'ws', 'clone'"
+    )
+    assert vm_script.index("Assert-ExistingDataVmdk -Path $reusedDataDisk.Path") < vm_script.index(
+        "Invoke-Vmrun -Arguments @('-T', 'ws', 'clone'"
+    )
     assert "Set-VmxScsiDisk" in vm_script
     assert "disk.EnableUUID" in vm_script
     assert "scsi0:$Unit" in vm_script

@@ -182,6 +182,14 @@ The following cross-cutting boundaries always apply:
   independently fits that limit. OVF export may recursively replace only a strict, non-reparse-point descendant of the
   repository OVF output root. `-Release` provides implicit replacement only for the canonical derived destination; an
   explicitly supplied existing destination still requires `-Force`, which never widens the approved deletion boundary.
+- First-boot depot and backup initialization requires the root-owned image policy, exact platform SCSI identities,
+  topology-derived `atlaso-path-*` links, and exact 500 GiB capacities. Complete an all-disk preflight before `mkfs` and
+  fail closed for missing, extra, reordered, ambiguous, read-only, in-use, or identity/capacity-mismatched disks.
+  Existing correctly labeled ext4 disks remain UUID-mounted and must never be reformatted. After both fixed disks are
+  initialized, admit additional disks only when they satisfy the root-owned managed ESX Storage identity, UUID, mount,
+  and fstab contract. Atlaso-formatted disks retain their `lf-<hash>` label; claimed existing ext4 disks additionally
+  require an exact root-owned allowlist record. Make data-disk success a hard systemd requirement for nginx, the HTTPS
+  bootstrap, control plane, and worker so a failed preflight cannot fall through to root-filesystem-backed mount paths.
 - Inventory Linux is an independently versioned Atlaso release package; full images leave it uninstalled so an
   administrator downloads a signed release on demand. Supported VMware wheel deployment synchronizes it unless
   explicitly skipped. Publish it only through the protected manual Inventory

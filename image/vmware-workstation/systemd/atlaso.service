@@ -1,7 +1,8 @@
 [Unit]
 Description=Atlaso appliance control plane
 After=network-online.target atlaso-data-disks.service atlaso-bootstrap-https.service
-Wants=network-online.target atlaso-data-disks.service atlaso-bootstrap-https.service
+Wants=network-online.target
+Requires=atlaso-bootstrap-https.service
 
 [Service]
 Type=simple
@@ -12,6 +13,7 @@ EnvironmentFile=/etc/atlaso/atlaso.env
 Environment=PYTHONDONTWRITEBYTECODE=1
 Environment=ATLASO_HELPER_USE_SYSTEMD_RUN=1
 UMask=0027
+ExecStartPre=+/opt/atlaso/bin/atlaso-helper appliance-update bootstrap-data-disk-safety --real /opt/atlaso/current
 ExecStart=/opt/atlaso/.venv/bin/python -m uvicorn atlaso.app.main:app --host 127.0.0.1 --port 8000
 Restart=on-failure
 RestartSec=5

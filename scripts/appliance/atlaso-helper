@@ -81,7 +81,7 @@ COMMANDS: dict[str, set[str]] = {
     "esxi-pxe": {"validate", "apply"},
     "esx-storage": {"inventory", "validate", "apply", "status", "logs"},
     "public-services": {"validate", "apply"},
-    "appliance-update": {"check", "apply", "sync-sources", "restart-service"},
+    "appliance-update": {"check", "apply", "sync-sources", "restart-service", "bootstrap-data-disk-safety"},
     "automation": {"run"},
     "appliance-power": {"reboot", "shutdown"},
     "console": {"disable-services", "recover-management-plane", "restore-services", "status"},
@@ -172,6 +172,18 @@ SYSTEMD_NETWORK_LEASE_DIR = Path("/run/systemd/netif/leases")
 ATLASO_UPDATE_FINALIZER_PATH = ATLASO_STATE_DIR / "apply/appliance-update/finalizer-status.json"
 ATLASO_UPDATE_MAINTENANCE_PATH = Path("/run/atlaso-update-maintenance")
 ATLASO_POWERSHELL_HOME = ATLASO_STATE_DIR / "powershell"
+ATLASO_DATA_DISK_POLICY_PATH = Path("/etc/atlaso/data-disks.conf")
+ATLASO_DATA_DISK_BOOTSTRAP_MARKER_PATH = Path("/etc/atlaso/data-disk-safety-bootstrap.json")
+ATLASO_MOUNT_DATA_DISKS_PATH = Path("/opt/atlaso/bin/atlaso-mount-data-disks")
+ATLASO_DATA_DISK_UNIT_PATH = Path("/etc/systemd/system/atlaso-data-disks.service")
+ATLASO_SERVICE_DATA_DISK_DROPIN_PATH = Path("/etc/systemd/system/atlaso.service.d/atlaso-data-disks.conf")
+ATLASO_BOOTSTRAP_HTTPS_UNIT_PATH = Path("/etc/systemd/system/atlaso-bootstrap-https.service")
+ATLASO_NGINX_DATA_DISK_DROPIN_PATH = Path("/etc/systemd/system/nginx.service.d/atlaso-data-disks.conf")
+ATLASO_DISK_IDENTITY_UDEV_PATH = Path("/etc/udev/rules.d/99-atlaso-disk-identity.rules")
+ATLASO_VMWARE_OVF_UNIT_PATH = Path("/etc/systemd/system/atlaso-vmware-ovf-customize.service")
+ATLASO_HYPERV_GENERATOR_PATH = Path("/etc/systemd/system-generators/systemd-ssh-generator")
+ATLASO_DMI_SYS_VENDOR_PATH = Path("/sys/class/dmi/id/sys_vendor")
+ATLASO_DMI_PRODUCT_NAME_PATH = Path("/sys/class/dmi/id/product_name")
 SUPPORTED_RELEASE_PYTHON_ABIS = {"cp314"}
 CONSOLE_STATE_DIR = ATLASO_STATE_DIR / "console"
 CONSOLE_SERVICE_STATE_PATH = CONSOLE_STATE_DIR / "services.json"
@@ -236,6 +248,7 @@ ESX_STORAGE_NFS_CONFIG_PATH = Path("/etc/nfs.conf.d/atlaso-esx-storage.conf")
 ESX_STORAGE_FSTAB_PATH = Path("/etc/fstab")
 ESX_STORAGE_FSTAB_BEGIN = "# BEGIN ATLASO ESX STORAGE"
 ESX_STORAGE_FSTAB_END = "# END ATLASO ESX STORAGE"
+ESX_STORAGE_DISK_ALLOWLIST_PATH = Path("/etc/atlaso/esx-storage-disks.conf")
 PXE_BOOT_BINARY_DIRS = [
     PXE_BOOTLOADER_STAGING_DIR,
     Path("/usr/share/ipxe"),
@@ -10719,6 +10732,50 @@ def _wait_for_atlaso_health(timeout_seconds: int = 60) -> dict:
     }
 
 
+def _release_data_disk_platform() -> str:
+    """Return the existing appliance platform for its signed data-disk policy.
+
+    Raises:
+        ValueError: If the appliance platform is unknown or contradictory.
+    """
+    evidence: set[str] = set()
+    if ATLASO_VMWARE_OVF_UNIT_PATH.is_file():
+        evidence.add("vmware")
+    if ATLASO_HYPERV_GENERATOR_PATH.is_symlink():
+        try:
+            if os.readlink(ATLASO_HYPERV_GENERATOR_PATH) == "/dev/null":
+                evidence.add("hyperv")
+        except OSError:
+            pass
+
+    if ATLASO_DATA_DISK_POLICY_PATH.is_file():
+        policy = ATLASO_DATA_DISK_POLICY_PATH.read_text(encoding="utf-8")
+        if "ATLASO_DEPOT_SCSI_TUPLE=0:2:0" in policy and "ATLASO_BACKUP_SCSI_TUPLE=0:3:0" in policy:
+            evidence.add("vmware")
+        if "ATLASO_DEPOT_SCSI_TUPLE=0:0:1" in policy and "ATLASO_BACKUP_SCSI_TUPLE=0:0:2" in policy:
+            evidence.add("hyperv")
+
+    vendor = (
+        ATLASO_DMI_SYS_VENDOR_PATH.read_text(encoding="utf-8").strip().casefold()
+        if ATLASO_DMI_SYS_VENDOR_PATH.is_file()
+        else ""
+    )
+    product = (
+        ATLASO_DMI_PRODUCT_NAME_PATH.read_text(encoding="utf-8").strip().casefold()
+        if ATLASO_DMI_PRODUCT_NAME_PATH.is_file()
+        else ""
+    )
+    if "vmware" in vendor or "vmware" in product:
+        evidence.add("vmware")
+    if "microsoft" in vendor and product == "virtual machine":
+        evidence.add("hyperv")
+
+    if len(evidence) != 1:
+        detail = ", ".join(sorted(evidence)) or "none"
+        raise ValueError(f"Atlaso release cannot select a platform data-disk policy from evidence: {detail}")
+    return evidence.pop()
+
+
 def _install_release_owned_files(release_root: Path, backup_root: Path) -> list[tuple[Path | None, Path]]:
     """Perform install release owned files.
 
@@ -10726,12 +10783,14 @@ def _install_release_owned_files(release_root: Path, backup_root: Path) -> list[
         release_root: Filesystem path associated with release root.
         backup_root: Filesystem path associated with backup root.
     """
+    data_disk_platform = _release_data_disk_platform()
     owned = [
         (release_root / "bin/atlaso-helper", Path("/opt/atlaso/bin/atlaso-helper"), 0o755),
         (release_root / "THIRD_PARTY_NOTICES.md", ATLASO_NOTICE_PATH, 0o644),
         (release_root / "systemd/atlaso.service", Path("/etc/systemd/system/atlaso.service"), 0o644),
         (release_root / "systemd/atlaso-worker.service", Path("/etc/systemd/system/atlaso-worker.service"), 0o644),
         (release_root / "systemd/atlaso-console.service", Path("/etc/systemd/system/atlaso-console.service"), 0o644),
+        *_release_data_disk_owned_files(release_root, data_disk_platform),
     ]
     trust = release_root / "trust"
     if trust.is_dir():
@@ -10748,7 +10807,7 @@ def _install_release_owned_files(release_root: Path, backup_root: Path) -> list[
             and destination.read_bytes() != source.read_bytes()
         ):
             raise ValueError(f"Atlaso release cannot replace trusted key {destination.stem}")
-        backup = backup_root / destination.relative_to("/")
+        backup = backup_root / Path(*destination.parts[1:])
         if destination.exists():
             backup.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(destination, backup)
@@ -10769,6 +10828,171 @@ def _install_release_owned_files(release_root: Path, backup_root: Path) -> list[
     return backups
 
 
+def _release_data_disk_owned_files(release_root: Path, platform: str) -> list[tuple[Path, Path, int]]:
+    """Return every release asset required by the data-disk safety boundary.
+
+    Args:
+        release_root: Verified extracted release root.
+        platform: Exact signed data-disk policy platform name.
+    """
+    return [
+        (release_root / "bin/atlaso-mount-data-disks", ATLASO_MOUNT_DATA_DISKS_PATH, 0o755),
+        (release_root / "systemd/atlaso-data-disks.service", ATLASO_DATA_DISK_UNIT_PATH, 0o644),
+        (
+            release_root / "systemd/atlaso.service.d/atlaso-data-disks.conf",
+            ATLASO_SERVICE_DATA_DISK_DROPIN_PATH,
+            0o644,
+        ),
+        (release_root / "systemd/atlaso-bootstrap-https.service", ATLASO_BOOTSTRAP_HTTPS_UNIT_PATH, 0o644),
+        (
+            release_root / "systemd/nginx.service.d/atlaso-data-disks.conf",
+            ATLASO_NGINX_DATA_DISK_DROPIN_PATH,
+            0o644,
+        ),
+        (release_root / "udev/99-atlaso-disk-identity.rules", ATLASO_DISK_IDENTITY_UDEV_PATH, 0o644),
+        (release_root / f"data-disks/{platform}.conf", ATLASO_DATA_DISK_POLICY_PATH, 0o644),
+    ]
+
+
+def _data_disk_safety_bootstrap_is_complete() -> bool:
+    """Return whether the one-time previous-updater compatibility bridge completed."""
+    if ATLASO_DATA_DISK_BOOTSTRAP_MARKER_PATH.is_symlink():
+        return False
+    try:
+        payload = json.loads(ATLASO_DATA_DISK_BOOTSTRAP_MARKER_PATH.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    return payload == {"schema_version": 1, "status": "complete"}
+
+
+def _record_data_disk_safety_bootstrap_complete() -> None:
+    """Atomically persist completion of the previous-updater compatibility bridge."""
+    marker = ATLASO_DATA_DISK_BOOTSTRAP_MARKER_PATH
+    marker.parent.mkdir(parents=True, exist_ok=True)
+    temporary = marker.with_name(f".{marker.name}.{uuid.uuid4().hex}.tmp")
+    try:
+        temporary.write_text(
+            json.dumps({"schema_version": 1, "status": "complete"}, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        temporary.chmod(0o600)
+        os.replace(temporary, marker)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def _bootstrap_release_data_disk_safety(release_root: Path) -> list[dict]:
+    """Transactionally migrate, install, and validate safety for a previous updater.
+
+    Args:
+        release_root: Active verified release root selected by the previous updater.
+
+    Raises:
+        ValueError: If the root is not active or the transaction cannot validate or roll back.
+    """
+    resolved_release = release_root.resolve(strict=True)
+    if not ATLASO_CURRENT_LINK.is_symlink() or ATLASO_CURRENT_LINK.resolve(strict=True) != resolved_release:
+        raise ValueError("data-disk safety bootstrap requires the active Atlaso release")
+    if not resolved_release.is_relative_to(ATLASO_RELEASES_DIR.resolve(strict=True)):
+        raise ValueError("data-disk safety bootstrap release is outside the signed release directory")
+    if _data_disk_safety_bootstrap_is_complete():
+        return []
+    metadata_path = resolved_release / "bundle-metadata.json"
+    if metadata_path.is_file():
+        try:
+            metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as exc:
+            raise ValueError("data-disk safety bootstrap release metadata is invalid") from exc
+        if isinstance(metadata, dict) and metadata.get("bootstrap") is True:
+            version = metadata.get("version")
+            if not isinstance(version, str) or resolved_release.name != f"bootstrap-{version}":
+                raise ValueError("data-disk safety bootstrap image-release identity is invalid")
+            # Image provisioning installs and validates these assets directly from the staged repository.
+            # The pre-start hook exists only to bridge signed candidates through an older updater.
+            _record_data_disk_safety_bootstrap_complete()
+            return []
+    assets = _release_data_disk_owned_files(resolved_release, _release_data_disk_platform())
+    for source, _destination, _mode in assets:
+        if not source.is_file():
+            raise ValueError(f"Atlaso release is missing {source.relative_to(resolved_release)}")
+
+    backup_root = ATLASO_UPDATE_BACKUP_DIR / f"data-disk-bootstrap-{uuid.uuid4().hex}"
+    backup_root.mkdir(parents=True)
+    backup_root.chmod(0o700)
+    database_backup = backup_root / "atlaso.db"
+    database_backed_up = False
+    backups: list[tuple[Path | None, Path]] = []
+    temporary_paths: list[Path] = []
+    commands: list[dict] = []
+    systemctl = _command_path("systemctl") or "systemctl"
+    try:
+        database_backed_up = ATLASO_DATABASE_PATH.is_file()
+        if database_backed_up:
+            _sqlite_backup(database_backup)
+        for _source, destination, _mode in assets:
+            backup = backup_root.joinpath(*destination.parts[1:])
+            if destination.exists():
+                backup.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(destination, backup)
+                backups.append((backup, destination))
+            else:
+                backups.append((None, destination))
+        for source, destination, mode in assets:
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            if (
+                destination.is_file()
+                and destination.read_bytes() == source.read_bytes()
+                and destination.stat().st_mode & 0o777 == mode
+            ):
+                continue
+            temporary = destination.with_suffix(destination.suffix + ".bootstrap")
+            temporary_paths.append(temporary)
+            shutil.copy2(source, temporary)
+            temporary.chmod(mode)
+            os.replace(temporary, destination)
+        _migrate_release_esx_storage_claims(backup_root, backups)
+        commands = _refresh_release_data_disk_identity(validate=True)
+        if not all(command["success"] for command in commands):
+            raise ValueError("release data-disk safety bootstrap validation failed")
+        commands.append(_command_payload([systemctl, "daemon-reload"]))
+        if not all(command["success"] for command in commands):
+            raise ValueError("release data-disk safety bootstrap daemon reload failed")
+        _record_data_disk_safety_bootstrap_complete()
+        return commands
+    except Exception as exc:
+        rollback_errors: list[str] = []
+        try:
+            if database_backed_up:
+                _restore_sqlite_backup(database_backup)
+        except OSError as rollback_exc:
+            rollback_errors.append(f"database restore failed: {rollback_exc}")
+        for backup, destination in reversed(backups):
+            try:
+                if backup is None:
+                    destination.unlink(missing_ok=True)
+                else:
+                    shutil.copy2(backup, destination)
+            except OSError as rollback_exc:
+                rollback_errors.append(f"asset restore failed for {destination}: {rollback_exc}")
+        rollback_commands = _refresh_release_data_disk_identity(validate=False)
+        rollback_commands.append(_command_payload([systemctl, "daemon-reload"]))
+        rollback_errors.extend(
+            str(command.get("stderr") or "data-disk safety rollback command failed")
+            for command in rollback_commands
+            if not command["success"]
+        )
+        if rollback_errors:
+            raise ValueError(
+                "release data-disk safety bootstrap failed and rollback was incomplete: "
+                + "; ".join(rollback_errors)
+            ) from exc
+        raise ValueError("release data-disk safety bootstrap failed; prior safety state restored") from exc
+    finally:
+        for temporary in temporary_paths:
+            temporary.unlink(missing_ok=True)
+        shutil.rmtree(backup_root, ignore_errors=True)
+
+
 def _restore_release_owned_files(backups: list[tuple[Path | None, Path]]) -> None:
     """Perform restore release owned files.
 
@@ -10780,6 +11004,207 @@ def _restore_release_owned_files(backups: list[tuple[Path | None, Path]]) -> Non
             destination.unlink(missing_ok=True)
         else:
             shutil.copy2(backup, destination)
+
+
+def _refresh_release_data_disk_identity(*, validate: bool) -> list[dict]:
+    """Reload disk identity rules and optionally validate the installed policy.
+
+    Args:
+        validate: Whether to run the release-owned data-disk preflight.
+    """
+    udevadm = _command_path("udevadm") or "udevadm"
+    commands = [
+        _command_payload([udevadm, "control", "--reload-rules"]),
+        _command_payload([udevadm, "trigger", "--subsystem-match=block", "--action=add"]),
+    ]
+    if all(command["success"] for command in commands):
+        commands.append(_command_payload([udevadm, "settle"]))
+    if validate and all(command["success"] for command in commands):
+        commands.append(_command_payload([ATLASO_MOUNT_DATA_DISKS_PATH.as_posix()]))
+    return commands
+
+
+def _migrate_release_esx_storage_claims(
+    backup_root: Path,
+    backups: list[tuple[Path | None, Path]],
+) -> None:
+    """Migrate and claim boot-safe mounted ESX disks configured by an older release.
+
+    Args:
+        backup_root: Transaction backup root used for rollback.
+        backups: Release-owned file backups extended before any claim mutation.
+    """
+    if not ATLASO_DATABASE_PATH.is_file():
+        return
+    connection = sqlite3.connect(f"file:{ATLASO_DATABASE_PATH}?mode=ro", uri=True)
+    try:
+        table = connection.execute(
+            "select 1 from sqlite_master where type = 'table' and name = 'esx_storage_volumes'"
+        ).fetchone()
+        if table is None:
+            return
+        configured = connection.execute(
+            "select source_type, stable_device_id, filesystem_uuid, mount_path "
+            "from esx_storage_volumes where source_type in ('mounted_ext4', 'blank_disk') and applied = 1"
+        ).fetchall()
+    finally:
+        connection.close()
+    if not configured:
+        return
+
+    inventory = _esx_storage_inventory()
+    claims: list[str] = []
+    identity_migrations: list[tuple[str, str, str, str, str]] = []
+    for source_type, stable_id, configured_uuid, configured_mount in configured:
+        mount_path = PurePosixPath(str(configured_mount or ""))
+        stored_device = _esx_storage_resolved_by_id_device(str(stable_id or ""))
+        matches = [
+            entry
+            for entry in inventory
+            if entry.get("candidate_type") == "mounted_ext4"
+            and _esx_storage_resolved_by_id_device(str(entry.get("stable_device_id") or "")) == stored_device
+            and str(entry.get("filesystem_uuid") or "") == str(configured_uuid or "")
+            and str(mount_path) in [str(path) for path in entry.get("mount_paths", [])]
+        ]
+        if len(matches) != 1:
+            raise ValueError(f"configured mounted ESX Storage disk no longer has one exact identity: {stable_id}")
+        safety_errors = _esx_storage_mounted_disk_errors(matches[0], mount_path=mount_path)
+        if safety_errors:
+            raise ValueError(f"configured mounted ESX Storage disk is not boot-safe: {', '.join(safety_errors)}")
+        migrated_identity = str(matches[0]["stable_device_id"])
+        values = (str(configured_uuid), migrated_identity, str(mount_path), str(source_type))
+        if any(character in value for value in values for character in "\t\r\n"):
+            raise ValueError("configured mounted ESX Storage disk has an unsupported identity or mount path")
+        claims.append("\t".join(values))
+        identity_migrations.append(
+            (str(source_type), migrated_identity, str(stable_id), str(configured_uuid), str(configured_mount))
+        )
+
+    destination = ESX_STORAGE_DISK_ALLOWLIST_PATH
+    backup = backup_root / Path(*destination.parts[1:])
+    if destination.exists():
+        backup.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(destination, backup)
+        backups.append((backup, destination))
+        existing = destination.read_text(encoding="utf-8").splitlines()
+    else:
+        backups.append((None, destination))
+        existing = []
+    migrated_uuids = {claim.split("\t", 1)[0] for claim in claims}
+    retained_claims = [
+        line
+        for line in existing
+        if line.strip() and line.split("\t", 1)[0] not in migrated_uuids
+    ]
+    merged = list(dict.fromkeys(retained_claims + claims))
+    with sqlite3.connect(ATLASO_DATABASE_PATH) as connection:
+        for source_type, migrated_identity, stable_id, configured_uuid, configured_mount in identity_migrations:
+            if migrated_identity == stable_id:
+                continue
+            updated = connection.execute(
+                "update esx_storage_volumes set stable_device_id = ? "
+                "where source_type = ? and applied = 1 and stable_device_id = ? "
+                "and filesystem_uuid = ? and mount_path = ?",
+                (migrated_identity, source_type, stable_id, configured_uuid, configured_mount),
+            )
+            if updated.rowcount != 1:
+                raise ValueError(f"configured mounted ESX Storage disk changed during identity migration: {stable_id}")
+        _migrate_release_esx_storage_baseline(connection, identity_migrations)
+        _write_secret_file(destination, "\n".join(merged) + "\n", 0o644)
+
+
+def _migrate_release_esx_storage_baseline(
+    connection: sqlite3.Connection,
+    identity_migrations: list[tuple[str, str, str, str, str]],
+) -> None:
+    """Move applied ESX aliases inside a verified baseline without hiding other drift.
+
+    Args:
+        connection: Open appliance database connection participating in the migration transaction.
+        identity_migrations: Verified source type, new alias, old alias, UUID, and mount tuples.
+    """
+    migrations = {
+        (source_type, stable_id, configured_uuid, configured_mount): migrated_identity
+        for source_type, migrated_identity, stable_id, configured_uuid, configured_mount in identity_migrations
+        if migrated_identity != stable_id
+    }
+    if not migrations:
+        return
+    settings_table = connection.execute(
+        "select 1 from sqlite_master where type = 'table' and name = 'settings'"
+    ).fetchone()
+    if settings_table is None:
+        return
+    row = connection.execute(
+        "select value from settings where key = ?",
+        ("appliance_apply.baselines.v1",),
+    ).fetchone()
+    if row is None:
+        return
+    try:
+        baselines = json.loads(str(row[0]))
+        baseline = baselines["esx_storage"]
+        preview = json.loads(str(baseline["config_preview"]))
+    except (json.JSONDecodeError, KeyError, TypeError):
+        return
+    if not isinstance(baselines, dict) or not isinstance(baseline, dict) or not isinstance(preview, dict):
+        return
+    old_preview = str(baseline.get("config_preview") or "")
+    old_snapshot = {
+        "unit_id": "esx_storage",
+        "summary": baseline.get("summary", []),
+        "config_path": baseline.get("config_path", ""),
+        "config_preview": old_preview,
+        "snapshot_marker": None,
+    }
+    old_hash = hashlib.sha256(
+        json.dumps(old_snapshot, sort_keys=True, default=str, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    if str(baseline.get("snapshot_hash") or "") != old_hash:
+        return
+    changed = False
+    for volume in preview.get("volumes", []):
+        if not isinstance(volume, dict):
+            continue
+        key = (
+            str(volume.get("source_type") or ""),
+            str(volume.get("stable_device_id") or ""),
+            str(volume.get("filesystem_uuid") or ""),
+            str(volume.get("mount_path") or ""),
+        )
+        migrated_identity = migrations.get(key)
+        if migrated_identity is not None:
+            volume["stable_device_id"] = migrated_identity
+            changed = True
+    if not changed:
+        return
+    baseline["config_preview"] = json.dumps(preview, indent=2, sort_keys=True)
+    new_snapshot = {
+        **old_snapshot,
+        "config_preview": baseline["config_preview"],
+    }
+    baseline["snapshot_hash"] = hashlib.sha256(
+        json.dumps(new_snapshot, sort_keys=True, default=str, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    connection.execute(
+        "update settings set value = ? where key = ?",
+        (json.dumps(baselines, indent=2, sort_keys=True), "appliance_apply.baselines.v1"),
+    )
+
+
+def _esx_storage_resolved_by_id_device(value: str) -> Path:
+    """Resolve a stable by-id alias to its exact block-device path.
+
+    Args:
+        value: Candidate stable device alias.
+
+    Raises:
+        ValueError: If the alias is not an available `/dev/disk/by-id` link.
+    """
+    identity = Path(value)
+    if not value.startswith("/dev/disk/by-id/") or not identity.exists():
+        raise ValueError(f"configured mounted ESX Storage identity is unavailable: {value}")
+    return identity.resolve(strict=True)
 
 
 def _set_release_maintenance(enabled: bool) -> dict:
@@ -10966,6 +11391,15 @@ def _apply_atlaso_release(
         _sqlite_backup(database_backup)
         database_backed_up = True
         file_backups = _install_release_owned_files(release_root, backup_root)
+        disk_identity_commands = _refresh_release_data_disk_identity(validate=False)
+        commands.extend(disk_identity_commands)
+        if not all(command["success"] for command in disk_identity_commands):
+            raise ValueError("Candidate Atlaso release failed data-disk identity refresh")
+        _migrate_release_esx_storage_claims(backup_root, file_backups)
+        disk_preflight = _command_payload(["/opt/atlaso/bin/atlaso-mount-data-disks"])
+        commands.append(disk_preflight)
+        if not disk_preflight["success"]:
+            raise ValueError("Candidate Atlaso release failed data-disk policy validation")
         _atomic_symlink(release_root, ATLASO_CURRENT_LINK)
         commands.append(_service_command("daemon-reload"))
         commands.append(_service_command("start", "atlaso.service"))
@@ -10991,6 +11425,7 @@ def _apply_atlaso_release(
         if database_backed_up:
             _restore_sqlite_backup(database_backup)
         _restore_release_owned_files(file_backups)
+        _refresh_release_data_disk_identity(validate=False)
         _service_command("daemon-reload")
         _service_command("start", "atlaso.service", "atlaso-console.service")
         rollback_health = _wait_for_atlaso_health()
@@ -11612,8 +12047,12 @@ def _esx_storage_inventory() -> list[dict[str, object]]:
         mountpoints = [str(value) for value in (item.get("mountpoints") or []) if value]
         primary_mount_path = next(
             (path for path in mountpoints if path.startswith(f"{ESX_STORAGE_MOUNT_ROOT.as_posix().rstrip('/')}/")),
-            mountpoints[0] if mountpoints else "",
+            next(
+                (path for path in mountpoints if not path.startswith(f"{ESX_STORAGE_EXPORT_ROOT.as_posix().rstrip('/')}/")),
+                mountpoints[0] if mountpoints else "",
+            ),
         )
+        writable_mount_paths = [path for path in mountpoints if _esx_storage_mount_is_writable(path)]
         kname = str(item.get("kname") or item.get("name") or "")
         holders_root = Path("/sys/class/block") / kname / "holders"
         holders = sorted(path.name for path in holders_root.iterdir()) if holders_root.is_dir() else []
@@ -11641,6 +12080,7 @@ def _esx_storage_inventory() -> list[dict[str, object]]:
                 "filesystem_label": str(item.get("label") or ""),
                 "mount_path": primary_mount_path,
                 "mount_paths": mountpoints,
+                "writable_mount_paths": writable_mount_paths,
                 "partitions": [str(child.get("path") or child.get("name") or "") for child in children],
                 "swap": device_path in swap_devices or filesystem_type == "swap",
                 "lvm": filesystem_type == "LVM2_member" or any("dm-" in holder for holder in holders),
@@ -11649,6 +12089,7 @@ def _esx_storage_inventory() -> list[dict[str, object]]:
                 "read_only": bool(item.get("ro")),
                 "removable": bool(item.get("rm")),
                 "os_related": device_path in os_devices or disk_path in os_devices,
+                "persistent_uuid_mount": _esx_storage_uuid_fstab_entry_exists(filesystem_uuid, primary_mount_path),
                 "candidate_type": candidate_type,
             }
         )
@@ -11658,6 +12099,88 @@ def _esx_storage_inventory() -> list[dict[str, object]]:
     for block_device in payload.get("blockdevices", []):
         walk(block_device)
     return inventory
+
+
+def _esx_storage_mount_is_writable(mount_path: str) -> bool:
+    """Return whether one exact active mount has the read-write option.
+
+    Args:
+        mount_path: Exact active mount path to inspect.
+    """
+    findmnt = _command_path("findmnt")
+    if findmnt is None or not mount_path:
+        return False
+    result = _run([findmnt, "-nro", "OPTIONS", "--mountpoint", mount_path])
+    lines = [line.strip() for line in result.stdout.splitlines() if line.strip()]
+    return result.returncode == 0 and len(lines) == 1 and "rw" in lines[0].split(",")
+
+
+def _esx_storage_fstab_escape_field(value: object) -> str:
+    """Escape one fstab field without changing its filesystem meaning.
+
+    Args:
+        value: Field value to encode for fstab storage.
+    """
+    return str(value).replace("\\", "\\134").replace(" ", "\\040").replace("\t", "\\011")
+
+
+def _esx_storage_fstab_decode_field(value: str) -> str:
+    """Decode the standard octal escapes accepted in one fstab field.
+
+    Args:
+        value: Encoded fstab field to decode.
+    """
+    escapes = {"040": " ", "011": "\t", "012": "\n", "134": "\\"}
+    return re.sub(r"\\(040|011|012|134)", lambda match: escapes[match.group(1)], value)
+
+
+def _esx_storage_uuid_fstab_entry_exists(filesystem_uuid: str, mount_path: str) -> bool:
+    """Return whether fstab persistently mounts one ext4 UUID at the expected path.
+
+    Args:
+        filesystem_uuid: Filesystem UUID that must own the mount.
+        mount_path: Exact persistent mount path.
+    """
+    if not filesystem_uuid or not mount_path or not ESX_STORAGE_FSTAB_PATH.exists():
+        return False
+    source = f"UUID={filesystem_uuid}"
+    matches: list[bool] = []
+    for raw_line in ESX_STORAGE_FSTAB_PATH.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        fields = line.split()
+        decoded_fields = [_esx_storage_fstab_decode_field(field) for field in fields[:4]]
+        if len(fields) < 4 or decoded_fields[:3] != [source, mount_path, "ext4"]:
+            continue
+        writable = True
+        for option in decoded_fields[3].split(","):
+            if option == "ro":
+                writable = False
+            elif option == "rw":
+                writable = True
+        matches.append(writable)
+    return matches == [True]
+
+
+def _esx_storage_managed_bind_fstab_entry_exists(mount_path: str) -> bool:
+    """Return whether the root-owned ESX Storage block defines one bind target.
+
+    Args:
+        mount_path: Exact additional bind mount target to verify.
+    """
+    matches = 0
+    for line in _esx_storage_managed_fstab_lines():
+        fields = line.split()
+        decoded_fields = [_esx_storage_fstab_decode_field(field) for field in fields[:4]]
+        if (
+            len(fields) >= 4
+            and decoded_fields[1] == mount_path
+            and decoded_fields[2] == "none"
+            and "bind" in decoded_fields[3].split(",")
+        ):
+            matches += 1
+    return matches == 1
 
 
 def _esx_storage_blank_disk_errors(entry: dict[str, object]) -> list[str]:
@@ -11684,6 +12207,49 @@ def _esx_storage_blank_disk_errors(entry: dict[str, object]) -> list[str]:
     ]:
         if entry.get(key):
             errors.append(label)
+    return errors
+
+
+def _esx_storage_mounted_disk_errors(entry: dict[str, object], *, mount_path: Path) -> list[str]:
+    """Return boot-safety errors for an existing mounted ext4 whole disk.
+
+    Args:
+        entry: Current helper inventory row for the mounted filesystem.
+        mount_path: Exact mount path claimed by ESX Storage.
+    """
+    errors: list[str] = []
+    if str(entry.get("type") or "") != "disk":
+        errors.append("not a whole disk")
+    if not str(entry.get("stable_device_id") or "").startswith("/dev/disk/by-id/"):
+        errors.append("missing stable /dev/disk/by-id identity")
+    if str(entry.get("filesystem_type") or "") != "ext4":
+        errors.append("not ext4")
+    if not str(entry.get("filesystem_uuid") or ""):
+        errors.append("missing filesystem UUID")
+    selected_mount = str(mount_path)
+    mount_paths = [str(path) for path in entry.get("mount_paths", [])]
+    if selected_mount not in mount_paths:
+        errors.append("not mounted at the selected path")
+    unexpected_mounts = [
+        path
+        for path in mount_paths
+        if path != selected_mount and not _esx_storage_managed_bind_fstab_entry_exists(path)
+    ]
+    if unexpected_mounts:
+        errors.append("has unexpected additional mounts")
+    writable_mount_paths = [str(path) for path in entry.get("writable_mount_paths", [])]
+    if selected_mount not in writable_mount_paths:
+        errors.append("selected mount is read-only")
+    for key, label in [
+        ("partitions", "has partitions"),
+        ("holders", "has holders"),
+        ("os_related", "is related to the operating-system disk"),
+        ("read_only", "is read-only"),
+    ]:
+        if entry.get(key):
+            errors.append(label)
+    if not entry.get("persistent_uuid_mount"):
+        errors.append("is not persisted by UUID in /etc/fstab")
     return errors
 
 
@@ -11815,6 +12381,88 @@ def _esx_storage_replace_managed_fstab(lines: list[str]) -> None:
     _write_secret_file(ESX_STORAGE_FSTAB_PATH, f"{cleaned}\n\n{block}\n" if cleaned else f"{block}\n", 0o644)
 
 
+def _esx_storage_managed_fstab_lines() -> list[str]:
+    """Return the current root-owned ESX Storage fstab block entries."""
+    if not ESX_STORAGE_FSTAB_PATH.is_file():
+        return []
+    text = ESX_STORAGE_FSTAB_PATH.read_text(encoding="utf-8")
+    pattern = re.compile(
+        rf"(?ms)^\s*{re.escape(ESX_STORAGE_FSTAB_BEGIN)}\s*$\n(?P<body>.*?)"
+        rf"^\s*{re.escape(ESX_STORAGE_FSTAB_END)}\s*$"
+    )
+    match = pattern.search(text)
+    if match is None:
+        return []
+    return [line for line in match.group("body").splitlines() if line.strip()]
+
+
+def _esx_storage_managed_disk_fstab_lines() -> list[str]:
+    """Return retained UUID/ext4 disk mounts without stale bind entries."""
+    retained: list[str] = []
+    for line in _esx_storage_managed_fstab_lines():
+        fields = line.split()
+        if len(fields) >= 3 and fields[0].startswith("UUID=") and fields[2] == "ext4":
+            retained.append(line)
+    return retained
+
+
+def _esx_storage_reject_retained_mount_collision(
+    lines: list[str],
+    *,
+    filesystem_uuid: str,
+    mount_path: Path,
+) -> None:
+    """Reject a retained UUID mount owned by another filesystem.
+
+    Args:
+        lines: Retained root-owned UUID/ext4 fstab entries.
+        filesystem_uuid: Filesystem UUID requested by the current volume.
+        mount_path: Exact primary mount path requested by the current volume.
+
+    Raises:
+        ValueError: If another retained filesystem already owns the mount path.
+    """
+    requested_source = f"UUID={filesystem_uuid}"
+    requested_target = mount_path.as_posix()
+    for line in lines:
+        fields = line.split()
+        if len(fields) < 3:
+            continue
+        source, target, filesystem_type = (
+            _esx_storage_fstab_decode_field(field) for field in fields[:3]
+        )
+        if filesystem_type == "ext4" and target == requested_target and source != requested_source:
+            raise ValueError(
+                f"ESX Storage mount path {mount_path} is retained for a different filesystem"
+            )
+
+
+def _esx_storage_write_disk_allowlist(lines: list[str], *, preserve_existing: bool) -> None:
+    """Persist exact mounted-disk claims before boot-sensitive host changes.
+
+    Args:
+        lines: Validated tab-separated UUID, stable identity, and mount claims.
+        preserve_existing: Whether to retain prior claims until apply succeeds.
+    """
+    existing = (
+        ESX_STORAGE_DISK_ALLOWLIST_PATH.read_text(encoding="utf-8").splitlines()
+        if preserve_existing and ESX_STORAGE_DISK_ALLOWLIST_PATH.is_file()
+        else []
+    )
+    incoming_uuids = {line.split("\t", 1)[0] for line in lines if line.strip()}
+    retained = [
+        line
+        for line in existing
+        if line.strip() and line.split("\t", 1)[0] not in incoming_uuids
+    ]
+    claims = list(dict.fromkeys(retained + lines))
+    _write_secret_file(
+        ESX_STORAGE_DISK_ALLOWLIST_PATH,
+        "\n".join(claims) + ("\n" if claims else ""),
+        0o644,
+    )
+
+
 def _esx_storage_write_runtime_config(payload: dict[str, object]) -> None:
     """Perform ESX storage write runtime config.
 
@@ -11884,6 +12532,8 @@ def _esx_storage_apply(payload: dict[str, object]) -> dict[str, object]:
     inventory = _esx_storage_inventory()
     inventory_by_id = {str(item.get("stable_device_id") or ""): item for item in inventory}
     fstab_lines: list[str] = []
+    rollback_safe_fstab_lines = _esx_storage_managed_disk_fstab_lines()
+    disk_allowlist_lines: list[str] = []
     commands: list[list[str]] = []
     volumes_by_id: dict[object, dict[str, object]] = {}
     for volume in payload.get("volumes", []):
@@ -11932,7 +12582,23 @@ def _esx_storage_apply(payload: dict[str, object]) -> dict[str, object]:
             type_result = _run([blkid, "-s", "TYPE", "-o", "value", stable_id])
             if uuid_result.returncode != 0 or not fs_uuid or type_result.stdout.strip() != "ext4":
                 raise ValueError(f"disk {stable_id} is not a readable ext4 filesystem after initialization")
-            fstab_lines.append(f"UUID={fs_uuid} {mount_path} ext4 defaults,nofail,x-systemd.device-timeout=30 0 2")
+            _esx_storage_reject_retained_mount_collision(
+                rollback_safe_fstab_lines,
+                filesystem_uuid=fs_uuid,
+                mount_path=mount_path,
+            )
+            fstab_lines.append(
+                f"{_esx_storage_fstab_escape_field(f'UUID={fs_uuid}')} "
+                f"{_esx_storage_fstab_escape_field(mount_path)} "
+                "ext4 defaults,nofail,x-systemd.device-timeout=30 0 2"
+            )
+            _esx_storage_replace_managed_fstab(
+                list(dict.fromkeys([*rollback_safe_fstab_lines, *fstab_lines]))
+            )
+            if any(character in value for value in (fs_uuid, stable_id, str(mount_path)) for character in "\t\r\n"):
+                raise ValueError(f"disk {stable_id} has an unsupported identity or mount path")
+            disk_allowlist_lines.append(f"{fs_uuid}\t{stable_id}\t{mount_path}\tblank_disk")
+            _esx_storage_write_disk_allowlist(disk_allowlist_lines, preserve_existing=True)
             volume["filesystem_uuid"] = fs_uuid
         else:
             findmnt = _command_path("findmnt")
@@ -11941,7 +12607,29 @@ def _esx_storage_apply(payload: dict[str, object]) -> dict[str, object]:
             find_result = _run([findmnt, "-nro", "FSTYPE", "--target", str(mount_path)])
             if find_result.returncode != 0 or find_result.stdout.strip() != "ext4":
                 raise ValueError(f"existing volume {volume.get('name')} is not mounted as ext4 at {mount_path}")
-    _esx_storage_replace_managed_fstab(fstab_lines)
+            matches = [
+                entry
+                for entry in inventory
+                if entry.get("candidate_type") == "mounted_ext4"
+                and str(entry.get("mount_path") or "") == str(mount_path)
+                and str(entry.get("stable_device_id") or "") == str(volume.get("stable_device_id") or "")
+            ]
+            if len(matches) != 1:
+                raise ValueError(f"existing volume {volume.get('name')} no longer has one stable inventory identity")
+            entry = matches[0]
+            safety_errors = _esx_storage_mounted_disk_errors(entry, mount_path=mount_path)
+            if safety_errors:
+                raise ValueError(f"existing volume {volume.get('name')} is not boot-safe: {', '.join(safety_errors)}")
+            fs_uuid = str(entry["filesystem_uuid"])
+            stable_id = str(entry["stable_device_id"])
+            if any(character in value for value in (fs_uuid, stable_id, str(mount_path)) for character in "\t\r\n"):
+                raise ValueError(f"existing volume {volume.get('name')} has an unsupported identity or mount path")
+            disk_allowlist_lines.append(f"{fs_uuid}\t{stable_id}\t{mount_path}\tmounted_ext4")
+            _esx_storage_write_disk_allowlist(disk_allowlist_lines, preserve_existing=True)
+            volume["filesystem_uuid"] = fs_uuid
+    _esx_storage_replace_managed_fstab(
+        list(dict.fromkeys([*rollback_safe_fstab_lines, *fstab_lines]))
+    )
     mount = _command_path("mount")
     if mount is None:
         raise ValueError("mount is required for ESX Storage")
@@ -11992,8 +12680,14 @@ def _esx_storage_apply(payload: dict[str, object]) -> dict[str, object]:
             commands.append([mount, "--bind", str(resolved_source), str(bind_path)])
             if bind_result.returncode != 0:
                 raise ValueError(bind_result.stderr.strip() or f"unable to bind {resolved_source} to {bind_path}")
-        fstab_lines.append(f"{resolved_source} {bind_path} none bind,nofail,x-systemd.requires-mounts-for={volume_root} 0 0")
-    _esx_storage_replace_managed_fstab(fstab_lines)
+        fstab_lines.append(
+            f"{_esx_storage_fstab_escape_field(resolved_source)} "
+            f"{_esx_storage_fstab_escape_field(bind_path)} none "
+            f"{_esx_storage_fstab_escape_field(f'bind,nofail,x-systemd.requires-mounts-for={volume_root}')} 0 0"
+        )
+    _esx_storage_replace_managed_fstab(
+        list(dict.fromkeys([*rollback_safe_fstab_lines, *fstab_lines]))
+    )
     _esx_storage_write_runtime_config(payload)
     systemctl = _command_path("systemctl")
     exportfs = _command_path("exportfs")
@@ -12014,6 +12708,7 @@ def _esx_storage_apply(payload: dict[str, object]) -> dict[str, object]:
     else:
         _run([exportfs, "-ua"])
         _run([systemctl, "disable", "--now", "nfs-server.service", "rpcbind.service", "rpcbind.socket"], timeout=120)
+    _esx_storage_write_disk_allowlist(disk_allowlist_lines, preserve_existing=True)
     return {"status": "applied", "volumes": payload.get("volumes", []), "shares": len(payload.get("shares", [])), "commands": commands}
 
 
@@ -12265,6 +12960,18 @@ def _handle_appliance_update(action: str, args: list[str]) -> int:
         action: Action consumed by handle appliance update.
         args: Parsed command-line options consumed by the operation.
     """
+    if action == "bootstrap-data-disk-safety":
+        if len(args) != 1:
+            print("bootstrap-data-disk-safety requires exactly one active release path", file=sys.stderr)
+            return 2
+        try:
+            commands = _bootstrap_release_data_disk_safety(Path(args[0]))
+        except (OSError, ValueError) as exc:
+            print(str(exc), file=sys.stderr)
+            return 1
+        print(json.dumps({"status": "succeeded", "commands": commands}, indent=2, sort_keys=True))
+        return 0
+
     try:
         config_path = _validate_appliance_update_config_path(args[0])
         payload = _load_appliance_update_config(config_path)

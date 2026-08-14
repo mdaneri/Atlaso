@@ -23,9 +23,13 @@ SYSTEMD_DIRECTORIES = (
     Path("image/vmware-workstation/systemd"),
 )
 SYSTEMD_ASSETS = (
+    Path("image/common/systemd/atlaso-bootstrap-https.service"),
     Path("image/common/systemd/atlaso-console-manager.conf"),
     Path("image/common/systemd/atlaso-console.service"),
+    Path("image/common/systemd/atlaso-data-disks.service"),
+    Path("image/common/systemd/atlaso-require-data-disks.conf"),
     Path("image/common/systemd/atlaso-worker.service"),
+    Path("image/common/systemd/nginx-atlaso-data-disks.conf"),
     Path("image/hyperv/systemd/atlaso.service"),
     Path("image/vmware-workstation/systemd/atlaso-vmware-ovf-customize.service"),
     Path("image/vmware-workstation/systemd/atlaso.service"),
@@ -39,6 +43,12 @@ SUDOERS_FRAGMENTS = (
     Path("image/vmware-workstation/sudoers.d/atlaso-helper"),
 )
 SYSTEMD_SUFFIXES = {".conf", ".service"}
+NGINX_DATA_DISK_DROPIN = Path("image/common/systemd/nginx-atlaso-data-disks.conf")
+ATLASO_DATA_DISK_DROPIN = Path("image/common/systemd/atlaso-require-data-disks.conf")
+UNIT_DROPINS = {
+    ATLASO_DATA_DISK_DROPIN: Path("atlaso.service.d/atlaso-data-disks.conf"),
+    NGINX_DATA_DISK_DROPIN: Path("nginx.service.d/atlaso-data-disks.conf"),
+}
 MANAGER_DIRECTIVES = {
     "CtrlAltDelBurstAction": {
         "exit-force",
@@ -449,10 +459,20 @@ def _prepare_systemd_root(root: Path, platform: str, repository: Path) -> tuple[
             contents += "\n[Service]\nType=oneshot\nExecStart=/bin/true\nRemainAfterExit=yes\n"
         destination.write_text(contents, encoding="utf-8")
 
+    unit_dropin_sources = {repository / relative for relative in UNIT_DROPINS}
     for source in sorted((repository / "image/common/systemd").glob("*.conf")):
+        if source in unit_dropin_sources:
+            continue
         shutil.copyfile(source, manager_directory / source.name)
     for source in sorted((repository / f"image/{platform}/systemd").glob("*.conf")):
         shutil.copyfile(source, manager_directory / source.name)
+    for source_relative, destination_relative in UNIT_DROPINS.items():
+        source = repository / source_relative
+        if not source.is_file():
+            continue
+        destination = unit_directory / destination_relative
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(source, destination)
     return tuple(copied)
 
 
@@ -512,6 +532,7 @@ def validate_systemd(systemd_analyze: str, repository: Path) -> list[Finding]:
             path
             for relative in SYSTEMD_DIRECTORIES
             for path in (repository / relative).glob("*.conf")
+            if path not in {repository / relative for relative in UNIT_DROPINS}
         )
     )
     findings = validate_manager_dropins(manager_assets)
