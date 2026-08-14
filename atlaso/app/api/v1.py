@@ -80,6 +80,8 @@ from atlaso.app.models import (
     utcnow,
 )
 from atlaso.app.openapi import DocumentedAPIRoute
+from atlaso.app.routers.api_v1 import API_V1_ROUTER_REGISTRY
+from atlaso.app.routers.registry import RouterContribution
 from atlaso.app.schemas import (
     ApiTokenCreate,
     ApiTokenCreated,
@@ -7083,3 +7085,9 @@ def add_placeholder_resource_routes() -> None:
 
 
 add_placeholder_resource_routes()
+
+API_V1_ROUTER_REGISTRY.register(
+    "facade",
+    (RouterContribution(plane="api_v1", router=router),),
+)
+API_V1_ROUTER_REGISTRY.validate_domains(("facade",))

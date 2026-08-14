@@ -221,7 +221,7 @@ def test_agent_policy_gate_rejects_missing_pr_follow_through_contract(
             "complete Python test suite belongs to GitHub CI"
         ),
         Path(".github/pull_request_template.md"): (
-            "Each post-opening pushed commit received one `@codex review` request"
+            "each post-opening pushed commit received one `@codex review` request"
         ),
         Path("docs/contribute/agent-policies.md"): (
             "### Focused local validation and pull-request follow-through"
@@ -261,6 +261,155 @@ def test_agent_policy_gate_rejects_missing_entry_point(tmp_path: Path) -> None:
     assert findings[0].path == missing_path
     assert findings[0].message == (
         "required agent policy entry point is missing or unreadable"
+    )
+
+
+def test_agent_policy_gate_rejects_missing_private_remediation_marker(
+    tmp_path: Path,
+) -> None:
+    """Verify that the canonical private vulnerability workflow remains enforced.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    write_policy_files(tmp_path)
+    security_path = tmp_path / "SECURITY.md"
+    security_path.write_text(
+        security_path.read_text(encoding="utf-8").replace(
+            "temporary private fork", ""
+        ),
+        encoding="utf-8",
+    )
+
+    findings = check_agent_policy_gate(tmp_path)
+
+    assert len(findings) == 1
+    assert findings[0].path == security_path
+    assert findings[0].message == (
+        "required agent policy marker is missing: temporary private fork"
+    )
+
+
+def test_agent_policy_gate_rejects_missing_detailed_private_remediation_marker(
+    tmp_path: Path,
+) -> None:
+    """Verify that detailed agent policy retains private remediation enforcement.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    write_policy_files(tmp_path)
+    policy_path = tmp_path / "docs" / "contribute" / "agent-policies.md"
+    policy_path.write_text(
+        policy_path.read_text(encoding="utf-8").replace(
+            "temporary private fork", ""
+        ),
+        encoding="utf-8",
+    )
+
+    findings = check_agent_policy_gate(tmp_path)
+
+    assert len(findings) == 1
+    assert findings[0].path == policy_path
+    assert findings[0].message == (
+        "required agent policy marker is missing: temporary private fork"
+    )
+
+
+def test_agent_policy_gate_requires_private_follow_through_replacement(
+    tmp_path: Path,
+) -> None:
+    """Verify that private forks replace unavailable integration follow-through.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    required_entry_markers = {
+        Path("AGENTS.md"): "advisory-side maintainer review",
+        Path("CONTRIBUTING.md"): "advisory-side maintainer review",
+        Path(".github/copilot-instructions.md"): "advisory-side maintainer review",
+        Path(".github/pull_request_template.md"): "advisory-side maintainer review",
+        Path("SECURITY.md"): "advisory-side maintainer review",
+        Path("docs/contribute/agent-policies.md"): "Advisory-side maintainer review",
+    }
+
+    for relative_path, marker in required_entry_markers.items():
+        write_policy_files(tmp_path)
+        path = tmp_path / relative_path
+        path.write_text(
+            path.read_text(encoding="utf-8").replace(marker, ""),
+            encoding="utf-8",
+        )
+
+        findings = check_agent_policy_gate(tmp_path)
+
+        assert len(findings) == 1
+        assert findings[0].path == path
+        assert findings[0].message == (
+            f"required agent policy marker is missing: {marker}"
+        )
+
+
+def test_agent_policy_gate_requires_private_complete_python_validation(
+    tmp_path: Path,
+) -> None:
+    """Verify that private Python changes assign the complete suite locally.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    required_entry_markers = {
+        Path("AGENTS.md"): "test suite locally when required",
+        Path("CONTRIBUTING.md"): "complete Python test suite locally",
+        Path(".github/copilot-instructions.md"): "complete Python test suite locally",
+        Path(".github/pull_request_template.md"): (
+            "complete Python test suite ran locally"
+        ),
+        Path("SECURITY.md"): "complete Python test suite locally",
+        Path("docs/contribute/agent-policies.md"): (
+            "complete Python test suite locally"
+        ),
+    }
+
+    for relative_path, marker in required_entry_markers.items():
+        write_policy_files(tmp_path)
+        path = tmp_path / relative_path
+        path.write_text(
+            path.read_text(encoding="utf-8").replace(marker, ""),
+            encoding="utf-8",
+        )
+
+        findings = check_agent_policy_gate(tmp_path)
+
+        assert len(findings) == 1
+        assert findings[0].path == path
+        assert findings[0].message == (
+            f"required agent policy marker is missing: {marker}"
+        )
+
+
+def test_pr_template_scopes_ci_owned_python_suite_to_ordinary_prs(
+    tmp_path: Path,
+) -> None:
+    """Verify that the CI-owned suite checkbox excludes private-fork PRs.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    write_policy_files(tmp_path)
+    template_path = tmp_path / ".github/pull_request_template.md"
+    marker = "For an ordinary pull request, focused local tests/checks passed"
+    template_path.write_text(
+        template_path.read_text(encoding="utf-8").replace(marker, ""),
+        encoding="utf-8",
+    )
+
+    findings = check_agent_policy_gate(tmp_path)
+
+    assert len(findings) == 1
+    assert findings[0].path == template_path
+    assert findings[0].message == (
+        f"required agent policy marker is missing: {marker}"
     )
 
 

@@ -5,7 +5,8 @@ Before planning implementation or changing repository or external state, read th
 
 Complete the **Mandatory Agent Startup Gate** defined in `AGENTS.md`: confirm the policy files were read in the first
 progress update, classify the work, and identify the linked GitHub issue. Repeat the gate after changing repositories,
-worktrees, or working directories.
+worktrees, or working directories. For private vulnerability remediation, confirm a private advisory is linked without
+putting its identifier or finding details on public surfaces.
 
 For changes affecting templates, authored CSS, browser JavaScript, controls, layouts, data grids, dialogs, wizards, or
 visible copy, also complete the **Mandatory UI Design Guide Gate** in `AGENTS.md` and read
@@ -29,6 +30,15 @@ New Tabulators must use `window.AtlasoUiPatterns.createGrid(...)`; every new or 
 - use `Closes #<issue>` in the pull request;
 - follow the security and conduct policies; and
 - never commit directly to `main`.
+
+The private vulnerability remediation workflow in `SECURITY.md` is the only exception to the public issue, repository
+branch, and `Closes #<issue>` requirements. Keep all advisory references and vulnerability details private. For a
+temporary private fork, advisory-side maintainer review and recorded local validation replace the ordinary Codex review,
+`@codex review`, exact-head CI/status, comment, label, and review-thread follow-through above. Do not request, wait for,
+or claim unavailable integrations. Run the complete Python test suite locally when required by `SECURITY.md`; this
+overrides the ordinary local full-suite prohibition, and missing full-suite evidence blocks advisory merge. Never use
+ordinary pull-request merge controls or `gh pr merge`, and do not change advisory state without explicit maintainer
+authorization.
 
 Subagents and delegated agents must complete the same gate. A delegating agent must include the requirement in its
 prompt and verify compliance before using delegated work.

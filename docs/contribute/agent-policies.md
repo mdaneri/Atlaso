@@ -18,8 +18,10 @@ status: current
   [SECURITY.md](https://github.com/mdaneri/Atlaso/blob/main/SECURITY.md). Treat all four documents as mandatory
   instructions, not optional reference material.
 - In the first progress update, confirm that the policy files were read, classify the work as `bug`, `enhancement`,
-  `documentation`, or security-sensitive work, and identify the linked GitHub issue. Read-only inspection needed to
-  identify the repository, applicable instructions, or issue is allowed before that confirmation.
+  `documentation`, or security-sensitive work, and identify the linked GitHub issue. For private vulnerability
+  remediation, confirm that a private advisory is linked without disclosing its identifier or finding details on public
+  surfaces. Read-only inspection needed to identify the repository, applicable instructions, issue, or private tracking
+  record is allowed before that confirmation.
 - Repeat this startup gate whenever the repository, worktree, or working directory changes, or when any of the policy
   files changes during the task.
 - A delegating agent must include this startup gate in every delegated prompt and verify that the delegated agent
@@ -53,6 +55,26 @@ status: current
   issue created or linked before implementation begins, exactly one applicable type label, relevant documentation
   updated in the same change, and a pull request linked with `Closes #<issue>`. Do not commit changes directly to
   `main`.
+- The private vulnerability remediation workflow in
+  [SECURITY.md](https://github.com/mdaneri/Atlaso/blob/main/SECURITY.md) is the only exception to the public issue,
+  repository branch, and `Closes #<issue>` requirements. Use the draft advisory as the private tracking record, create
+  the fix branch from the current default branch, push only to the advisory's temporary private fork, and open the
+  private pull request there. Keep advisory identifiers, cross-references, finding details, and patch discussion on
+  private surfaces. Complete and record every required validation locally because integrations and status checks cannot
+  access temporary private forks. Treat the temporary private fork as a GitHub workspace repository where ordinary
+  Issues cannot be enabled and pull-request labels or comments may be unavailable or forbidden. An otherwise mergeable
+  pull request may show `UNSTABLE` solely because checks are absent; never substitute that state for local validation.
+  Advisory-side maintainer review and recorded local validation replace ordinary Codex review, `@codex review`,
+  exact-head CI/status, comment, label, and review-thread follow-through. Do not request, wait for, or claim unavailable
+  integrations. Run the complete Python test suite locally when the change affects Python or `SECURITY.md` otherwise
+  requires it. This overrides the ordinary automated-contributor prohibition, and missing full-suite evidence blocks
+  advisory merge.
+  Do not use ordinary pull-request merge controls or `gh pr merge`. An explicitly authorized advisory administrator
+  must use **Security > Advisories > This advisory is ready to be merged > Merge pull request(s)**. GitHub merges all
+  open pull requests in the temporary fork together, permits only one pull request targeting `main`, and applies the
+  patch to the public `main` branch while the advisory may remain draft. Publishing is a separate explicit action.
+  Merge only for an authorized coordinated release and disclosure, and do not otherwise change advisory state without
+  explicit maintainer authorization. `SECURITY.md` is canonical for the complete security-specific workflow.
 - Trusted version refresh must dispatch the CI definition from protected `main` with the exact pull-request number, base
   SHA, and head SHA. Keep candidate validation jobs read-only. Publish the canonical `Version policy`, `Repository
   checks`, and `Python tests` commit statuses only from bot-gated jobs that never check out candidate code and that
@@ -62,6 +84,9 @@ status: current
   candidate workflow revisions status-write permission.
 
 ### Focused local validation and pull-request follow-through
+
+- This section governs ordinary pull requests. Temporary-private-fork remediation uses the security-specific
+  replacement in the Repository Delivery Workflow above.
 
 - Run locally only tests focused on the changed behavior, plus every applicable repository, documentation,
   static-analysis, deployment, and `git diff --check` validation. Do not run the complete Python test suite locally;
@@ -87,6 +112,8 @@ status: current
   `include_in_schema=False` and document them in their canonical guides.
 - Update the operator API guide and affected topic documentation, preserve compatible operation IDs and shapes, and run
   `tests/test_openapi_contract.py` so new routes automatically enter the enforcement surface.
+- Follow the [router architecture](router-architecture.md) for route ownership, facade aggregation, deterministic
+  registration, dependency direction, domain test placement, route inventory, and normalized OpenAPI compatibility.
 - GitHub-managed version-update pull requests generated from `.github/dependabot.yml` are the only exception to the
   pre-existing issue and per-update documentation requirements. They must carry the `enhancement` type label plus
   `dependencies`, remain subject to the normal version, CI, review, and squash-merge gates, and must not weaken

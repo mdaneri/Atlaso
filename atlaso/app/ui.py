@@ -133,6 +133,11 @@ from atlaso.app.operational_logging import (
     logging_preferences_to_dict,
     save_logging_preferences,
 )
+from atlaso.app.routers.registry import (
+    RouterContribution,
+    allow_compatible_route_shadow,
+)
+from atlaso.app.routers.ui import UI_ROUTER_REGISTRY
 from atlaso.app.schemas import ApiTokenCreate
 from atlaso.app.secrets import decrypt_secret, encrypt_secret, secret_key_status
 from atlaso.app.security import (
@@ -30734,3 +30739,21 @@ def placeholder_page(page: str, request: Request, identity: Identity = Depends(r
     if page not in known:
         raise HTTPException(status_code=404, detail="Page not found")
     return render(request, "placeholder.html", {"identity": identity, "title": known[page]})
+
+
+allow_compatible_route_shadow(
+    protocol_router,
+    earlier_path="/PROD/{depot_path:path}",
+    later_path="/PROD/",
+    methods=("GET", "HEAD"),
+)
+UI_ROUTER_REGISTRY.register(
+    "facade",
+    (
+        RouterContribution(plane="front_door", router=front_door_router),
+        RouterContribution(plane="protocol", router=protocol_router),
+        RouterContribution(plane="public", router=public_router),
+        RouterContribution(plane="management", router=router),
+    ),
+)
+UI_ROUTER_REGISTRY.validate_domains(("facade",))
