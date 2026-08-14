@@ -112,6 +112,8 @@ status: current
   `include_in_schema=False` and document them in their canonical guides.
 - Update the operator API guide and affected topic documentation, preserve compatible operation IDs and shapes, and run
   `tests/test_openapi_contract.py` so new routes automatically enter the enforcement surface.
+- Follow the [router architecture](router-architecture.md) for route ownership, facade aggregation, deterministic
+  registration, dependency direction, domain test placement, route inventory, and normalized OpenAPI compatibility.
 - GitHub-managed version-update pull requests generated from `.github/dependabot.yml` are the only exception to the
   pre-existing issue and per-update documentation requirements. They must carry the `enhancement` type label plus
   `dependencies`, remain subject to the normal version, CI, review, and squash-merge gates, and must not weaken

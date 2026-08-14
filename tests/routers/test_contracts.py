@@ -1,0 +1,99 @@
+"""Test checked-in application route and normalized OpenAPI contracts."""
+
+import json
+from copy import deepcopy
+from pathlib import Path
+
+import pytest
+
+from atlaso.app import main, ui
+from atlaso.app.api import v1
+from atlaso.app.routers.contracts import (
+    RouterContractError,
+    build_route_inventory,
+    included_router_count,
+    normalize_openapi_schema,
+    normalized_openapi,
+    validate_route_inventory,
+)
+
+ROOT = Path(__file__).resolve().parents[2]
+ROUTE_BASELINE = ROOT / "tests" / "contracts" / "route_inventory.json"
+OPENAPI_BASELINE = ROOT / "tests" / "contracts" / "openapi_v1.json"
+
+
+def _load_json(path: Path) -> object:
+    """Return one checked-in JSON contract document.
+
+    Args:
+        path: Contract baseline path.
+
+    Returns:
+        Parsed JSON value.
+    """
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def test_application_route_inventory_matches_checked_in_contract():
+    """Fail on any omitted, added, duplicated, or reordered application route."""
+    expected = _load_json(ROUTE_BASELINE)
+    assert isinstance(expected, list)
+
+    validate_route_inventory(build_route_inventory(main.app), expected)
+
+
+def test_route_inventory_covers_every_external_plane():
+    """Characterize API v1, management UI, public UI, and protocol routes."""
+    inventory = build_route_inventory(main.app)
+
+    assert {record["plane"] for record in inventory} == {
+        "api_v1",
+        "protocol",
+        "ui_management",
+        "ui_public",
+    }
+    assert len(inventory) >= 500
+
+
+def test_route_inventory_validator_detects_omission_and_order_drift():
+    """Report both missing routes and stable-order changes deterministically."""
+    inventory = build_route_inventory(main.app)
+
+    with pytest.raises(RouterContractError, match="length changed"):
+        validate_route_inventory(inventory[:-1], inventory)
+
+    reordered = deepcopy(inventory)
+    reordered[0], reordered[1] = reordered[1], reordered[0]
+    with pytest.raises(RouterContractError, match="changed at order 0"):
+        validate_route_inventory(reordered, inventory)
+
+
+def test_facade_routers_are_included_exactly_once():
+    """Keep every stable UI and API facade router included exactly once."""
+    for router in (
+        v1.router,
+        ui.front_door_router,
+        ui.protocol_router,
+        ui.public_router,
+        ui.router,
+    ):
+        assert included_router_count(main.app, router) == 1
+
+
+def test_normalized_openapi_matches_checked_in_contract():
+    """Fail on any normalized OpenAPI contract change."""
+    expected = _load_json(OPENAPI_BASELINE)
+
+    assert normalized_openapi(main.app) == expected
+
+
+def test_openapi_normalization_ignores_only_application_version():
+    """Ignore generated version metadata while retaining every other field."""
+    schema = main.app.openapi()
+    changed_version = deepcopy(schema)
+    changed_version["info"]["version"] = "999.999.999"
+    assert normalize_openapi_schema(changed_version) == normalize_openapi_schema(schema)
+
+    changed_title = deepcopy(schema)
+    changed_title["info"]["title"] = "Changed API title"
+    assert normalize_openapi_schema(changed_title) != normalize_openapi_schema(schema)
