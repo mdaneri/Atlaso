@@ -138,6 +138,12 @@ from atlaso.app.routers.registry import (
     allow_compatible_route_shadow,
 )
 from atlaso.app.routers.ui import UI_ROUTER_REGISTRY
+from atlaso.app.routers.ui.physical_vlans import (
+    PhysicalVlanUiDependencies,
+)
+from atlaso.app.routers.ui.physical_vlans import (
+    build_router as build_physical_vlan_ui_router,
+)
 from atlaso.app.schemas import ApiTokenCreate
 from atlaso.app.secrets import decrypt_secret, encrypt_secret, secret_key_status
 from atlaso.app.security import (
@@ -388,11 +394,6 @@ from atlaso.app.services.firewall import (
     validate_firewall_source_groups,
     validate_firewall_state,
 )
-from atlaso.app.services.interface_updates import (
-    PhysicalInterfaceUpdateError,
-    refresh_interface_dependent_addresses,
-    update_physical_interface_desired_state,
-)
 from atlaso.app.services.kms import (
     KMS_DEFAULT_CONFIG_PATH,
     KMS_DEFAULT_DATABASE_PATH,
@@ -481,7 +482,6 @@ from atlaso.app.services.networking import (
     normalize_ipv4_method,
     physical_interface_to_dict,
     render_network_config,
-    sync_host_physical_interfaces,
     trunk_parent_option,
     validate_network_state,
     vlan_interface_to_dict,
@@ -17786,474 +17786,48 @@ def delete_firewall_rule(
     return RedirectResponse("/firewall", status_code=303)
 
 
-@router.get("/physical-interfaces", response_class=HTMLResponse, response_model=None)
-def physical_interfaces_page(
-    request: Request,
-    identity: Identity = Depends(require_session_identity),
-    db: Session = Depends(get_db),
-) -> HTMLResponse:
-    """Handle the physical interfaces page endpoint.
-
-    Args:
-        request: Incoming HTTP request.
-        identity: Authenticated identity authorizing the request.
-        db: Active database session.
-
-    Returns:
-        The endpoint response.
-    """
-    return render(request, "physical_interfaces.html", {"identity": identity, **network_context(db), "appliance_apply_status": appliance_apply_status(db, "network")})
-
-
-@router.post("/physical-interfaces/refresh", response_model=None)
-def refresh_physical_interfaces_from_ui(
-    request: Request,
-    csrf: str = Form(...),
-    identity: Identity = Depends(require_session_identity),
-    db: Session = Depends(get_db),
-) -> RedirectResponse:
-    """Handle the refresh physical interfaces from ui endpoint.
-
-    Args:
-        request: Incoming HTTP request.
-        csrf: Validated CSRF token authorizing the request.
-        identity: Authenticated identity authorizing the request.
-        db: Active database session.
-
-    Returns:
-        The endpoint response.
-    """
-    verify_csrf(request, csrf)
-    _interfaces, discovered_count = sync_host_physical_interfaces(db)
-    record_audit(
-        db,
-        actor=identity.username,
-        action="refresh_physical_interface_inventory",
-        resource_type="interface",
-        detail=f"{discovered_count} host interface{'s' if discovered_count != 1 else ''} discovered",
+_management_before_physical_vlans_router = router
+_physical_vlans_ui = build_physical_vlan_ui_router(
+    PhysicalVlanUiDependencies(
+        require_management_ui_request=require_management_ui_request,
+        render=render,
+        verify_csrf=verify_csrf,
+        grid_saved_response=grid_saved_response,
+        grid_error_response=grid_error_response,
+        network_context=network_context,
+        refresh_interface_service_dns_aliases=refresh_interface_service_dns_aliases,
+        validate_vlan_form_values=validate_vlan_form_values,
+        vlan_form_validation_response=vlan_form_validation_response,
+        appliance_apply_status=appliance_apply_status,
+        vlan_interface_to_dict=vlan_interface_to_dict,
     )
-    return RedirectResponse("/physical-interfaces", status_code=303)
+)
+physical_vlans_router = _physical_vlans_ui.router
+physical_interfaces_page = _physical_vlans_ui.endpoints["physical_interfaces_page"]
+refresh_physical_interfaces_from_ui = _physical_vlans_ui.endpoints[
+    "refresh_physical_interfaces_from_ui"
+]
+edit_physical_interface_from_ui = _physical_vlans_ui.endpoints[
+    "edit_physical_interface_from_ui"
+]
+forget_missing_physical_interface_from_ui = _physical_vlans_ui.endpoints[
+    "forget_missing_physical_interface_from_ui"
+]
+vlan_interfaces_page = _physical_vlans_ui.endpoints["vlan_interfaces_page"]
+create_vlan_interface_from_ui = _physical_vlans_ui.endpoints[
+    "create_vlan_interface_from_ui"
+]
+edit_vlan_interface_from_ui = _physical_vlans_ui.endpoints[
+    "edit_vlan_interface_from_ui"
+]
+delete_vlan_interface_from_ui = _physical_vlans_ui.endpoints[
+    "delete_vlan_interface_from_ui"
+]
 
-
-@router.post("/physical-interfaces/{interface_id}/edit", response_model=None)
-def edit_physical_interface_from_ui(
-    request: Request,
-    interface_id: int,
-    role: str = Form("unused"),
-    mode: str = Form("unused"),
-    ipv4_method: str = Form("static"),
-    ip_cidr: str = Form(""),
-    gateway: str | None = Form(None),
-    ipv6_enabled: bool = Form(False),
-    ipv6_cidr: str = Form(""),
-    ipv6_gateway: str = Form(""),
-    mtu: int = Form(1500),
-    admin_state: str = Form("up"),
-    access_management_ui_enabled: str | None = Form(None),
-    csrf: str = Form(...),
-    identity: Identity = Depends(require_session_identity),
-    db: Session = Depends(get_db),
-) -> RedirectResponse | Response:
-    """Handle the edit physical interface from ui endpoint.
-
-    Args:
-        request: Incoming HTTP request.
-        interface_id: Identifier of the interface.
-        role: Atlaso role used for authorization.
-        mode: Operating mode selected for the workflow.
-        ipv4_method: Ipv4 method supplied by the caller.
-        ip_cidr: Ip cidr supplied by the caller.
-        gateway: Gateway supplied by the caller.
-        ipv6_enabled: Ipv6 enabled supplied by the caller.
-        ipv6_cidr: IPv6 network or address in CIDR notation.
-        ipv6_gateway: Ipv6 gateway supplied by the caller.
-        mtu: Mtu supplied by the caller.
-        admin_state: Admin state supplied by the caller.
-        access_management_ui_enabled: Whether this access interface also exposes the management UI.
-        csrf: Validated CSRF token authorizing the request.
-        identity: Authenticated identity authorizing the request.
-        db: Active database session.
-
-    Returns:
-        The endpoint response.
-
-    Raises:
-        HTTPException: If the request cannot be fulfilled.
-    """
-    verify_csrf(request, csrf)
-    interface = db.get(PhysicalInterface, interface_id)
-    if not interface:
-        raise HTTPException(status_code=404, detail="Physical interface not found")
-    changes = {
-        "role": role,
-        "mode": mode,
-        "ipv4_method": ipv4_method,
-        "ip_cidr": ip_cidr,
-        "gateway": interface.gateway if gateway is None else gateway,
-        "ipv6_enabled": bool(ipv6_enabled),
-        "ipv6_cidr": ipv6_cidr,
-        "ipv6_gateway": ipv6_gateway,
-        "mtu": mtu,
-        "admin_state": admin_state,
-    }
-    if access_management_ui_enabled is not None:
-        changes["access_management_ui_enabled"] = access_management_ui_enabled == "on"
-    try:
-        result = update_physical_interface_desired_state(
-            db,
-            interface,
-            changes,
-            dns_refresher=refresh_interface_service_dns_aliases,
-        )
-    except PhysicalInterfaceUpdateError as exc:
-        return Response(exc.detail, status_code=exc.status_code, media_type="text/plain")
-    detail_parts = []
-    if result.dependent_updates:
-        detail_parts.append(
-            "Refreshed dependent desired-state addresses: "
-            f"{', '.join(result.dependent_updates)}."
-        )
-    if result.preserved_dhcp_dns:
-        detail_parts.append(
-            "Preserved DHCP-provided DNS in desired state: "
-            f"{', '.join(result.preserved_dhcp_dns)}."
-        )
-    detail = " ".join(detail_parts)
-    record_audit(
-        db,
-        actor=identity.username,
-        action="update_physical_interface",
-        resource_type="interface",
-        resource_id=result.interface.name,
-        detail=detail,
-    )
-    return RedirectResponse("/physical-interfaces", status_code=303)
-
-
-@router.post("/physical-interfaces/{interface_id}/forget", response_model=None)
-def forget_missing_physical_interface_from_ui(
-    request: Request,
-    interface_id: int,
-    csrf: str = Form(...),
-    identity: Identity = Depends(require_session_identity),
-    db: Session = Depends(get_db),
-) -> RedirectResponse | Response:
-    """Handle the forget missing physical interface from ui endpoint.
-
-    Args:
-        request: Incoming HTTP request.
-        interface_id: Identifier of the interface.
-        csrf: Validated CSRF token authorizing the request.
-        identity: Authenticated identity authorizing the request.
-        db: Active database session.
-
-    Returns:
-        The endpoint response.
-
-    Raises:
-        HTTPException: If the request cannot be fulfilled.
-    """
-    verify_csrf(request, csrf)
-    interface = db.get(PhysicalInterface, interface_id)
-    if not interface:
-        raise HTTPException(status_code=404, detail="Physical interface not found")
-    if interface.oper_state != "missing":
-        return Response("Only interfaces already marked missing from host inventory can be forgotten.", status_code=409, media_type="text/plain")
-    active_vlans = db.execute(
-        select(VlanInterface).where(VlanInterface.parent_interface == interface.name, VlanInterface.enabled.is_(True))
-    ).scalars().all()
-    if active_vlans:
-        return Response("Disable or move dependent VLAN interfaces before forgetting this missing interface.", status_code=409, media_type="text/plain")
-    disabled_vlans = db.execute(select(VlanInterface).where(VlanInterface.parent_interface == interface.name)).scalars().all()
-    old_name = interface.name
-    try:
-        dependent_updates = refresh_interface_dependent_addresses(
-            db,
-            old_name=old_name,
-            new_name="",
-            old_ip_cidr=interface.ip_cidr,
-            old_ipv6_cidr=interface.ipv6_cidr,
-            actor=None,
-            dns_refresher=refresh_interface_service_dns_aliases,
-        )
-        for vlan in disabled_vlans:
-            db.delete(vlan)
-        db.delete(interface)
-        db.commit()
-    except PhysicalInterfaceUpdateError as exc:
-        db.rollback()
-        return Response(exc.detail, status_code=exc.status_code, media_type="text/plain")
-    details = [f"Forgot missing interface {old_name}; removed {len(disabled_vlans)} disabled dependent VLAN row{'s' if len(disabled_vlans) != 1 else ''}."]
-    if dependent_updates:
-        details.append(f"Refreshed dependent desired-state addresses: {', '.join(dependent_updates)}.")
-    detail = " ".join(details)
-    record_audit(db, actor=identity.username, action="forget_missing_physical_interface", resource_type="interface", resource_id=old_name, detail=detail)
-    return RedirectResponse("/physical-interfaces", status_code=303)
-
-
-@router.get("/vlan-interfaces", response_class=HTMLResponse, response_model=None)
-def vlan_interfaces_page(
-    request: Request,
-    identity: Identity = Depends(require_session_identity),
-    db: Session = Depends(get_db),
-) -> HTMLResponse:
-    """Handle the vlan interfaces page endpoint.
-
-    Args:
-        request: Incoming HTTP request.
-        identity: Authenticated identity authorizing the request.
-        db: Active database session.
-
-    Returns:
-        The endpoint response.
-    """
-    return render(request, "vlan_interfaces.html", {"identity": identity, **network_context(db), "appliance_apply_status": appliance_apply_status(db, "network")})
-
-
-@router.post("/vlan-interfaces", response_model=None)
-def create_vlan_interface_from_ui(
-    request: Request,
-    parent_interface: str = Form(...),
-    vlan_id: str = Form(""),
-    ip_cidr: str = Form(""),
-    ipv6_cidr: str = Form(""),
-    mtu: int = Form(1500),
-    role: str = Form("access"),
-    enabled: str | None = Form(None),
-    access_management_ui_enabled: str | None = Form(None),
-    csrf: str = Form(...),
-    identity: Identity = Depends(require_session_identity),
-    db: Session = Depends(get_db),
-) -> RedirectResponse | HTMLResponse | JSONResponse:
-    """Handle the create vlan interface from ui endpoint.
-
-    Args:
-        request: Incoming HTTP request.
-        parent_interface: Parent interface supplied by the caller.
-        vlan_id: Identifier of the vlan.
-        ip_cidr: Ip cidr supplied by the caller.
-        ipv6_cidr: IPv6 network or address in CIDR notation.
-        mtu: Mtu supplied by the caller.
-        role: Atlaso role used for authorization.
-        enabled: Whether the requested behavior is enabled.
-        access_management_ui_enabled: Whether this access VLAN also exposes the management UI.
-        csrf: Validated CSRF token authorizing the request.
-        identity: Authenticated identity authorizing the request.
-        db: Active database session.
-
-    Returns:
-        The endpoint response.
-    """
-    verify_csrf(request, csrf)
-    requested_enabled = enabled == "on"
-    parsed = validate_vlan_form_values(parent_interface, vlan_id, ip_cidr, ipv6_cidr, mtu, role, requested_enabled, db)
-    if isinstance(parsed, Response):
-        return vlan_form_validation_response(request, parsed)
-    parent_name, parsed_vlan_id, ip_value, ipv6_value, mtu_value, role_value, parent_missing = parsed
-    management_ui_value = access_management_ui_enabled == "on"
-    if management_ui_value and role_value != "access":
-        return vlan_form_validation_response(
-            request,
-            Response(
-                "Management UI exposure is available only for an access-role VLAN.",
-                status_code=422,
-                media_type="text/plain",
-            ),
-        )
-    vlan = VlanInterface(
-        name=f"{parent_name}.{parsed_vlan_id}",
-        parent_interface=parent_name,
-        vlan_id=parsed_vlan_id,
-        ip_cidr=ip_value,
-        ipv6_cidr=ipv6_value,
-        mtu=mtu_value,
-        role=role_value,
-        enabled=requested_enabled and not parent_missing,
-        access_management_ui_enabled=management_ui_value,
-    )
-    db.add(vlan)
-    try:
-        db.commit()
-    except IntegrityError:
-        db.rollback()
-        return grid_error_response(
-            request,
-            detail=f"VLAN {vlan.name} already exists.",
-            status_code=409,
-            template_name="vlan_interfaces.html",
-            context={"identity": identity, **network_context(db), "form_error": f"VLAN {vlan.name} already exists."},
-        )
-    record_audit(db, actor=identity.username, action="create_vlan_interface", resource_type="vlan", resource_id=str(vlan.id))
-    return grid_saved_response(
-        request,
-        redirect_url="/vlan-interfaces",
-        resource_name="vlan",
-        resource=vlan_interface_to_dict(vlan, parent_missing=parent_missing),
-    )
-
-
-@router.post("/vlan-interfaces/{vlan_id}/edit", response_model=None)
-def edit_vlan_interface_from_ui(
-    request: Request,
-    vlan_id: int,
-    parent_interface: str = Form(...),
-    vlan_id_value: str = Form("", alias="vlan_id"),
-    ip_cidr: str = Form(""),
-    ipv6_cidr: str = Form(""),
-    mtu: int = Form(1500),
-    role: str = Form("access"),
-    enabled: str | None = Form(None),
-    access_management_ui_enabled: str | None = Form(None),
-    csrf: str = Form(...),
-    identity: Identity = Depends(require_session_identity),
-    db: Session = Depends(get_db),
-) -> RedirectResponse | HTMLResponse | JSONResponse:
-    """Handle the edit vlan interface from ui endpoint.
-
-    Args:
-        request: Incoming HTTP request.
-        vlan_id: Identifier of the vlan.
-        parent_interface: Parent interface supplied by the caller.
-        vlan_id_value: Vlan id value supplied by the caller.
-        ip_cidr: Ip cidr supplied by the caller.
-        ipv6_cidr: IPv6 network or address in CIDR notation.
-        mtu: Mtu supplied by the caller.
-        role: Atlaso role used for authorization.
-        enabled: Whether the requested behavior is enabled.
-        access_management_ui_enabled: Whether this access VLAN also exposes the management UI.
-        csrf: Validated CSRF token authorizing the request.
-        identity: Authenticated identity authorizing the request.
-        db: Active database session.
-
-    Returns:
-        The endpoint response.
-
-    Raises:
-        HTTPException: If the request cannot be fulfilled.
-    """
-    verify_csrf(request, csrf)
-    vlan = db.get(VlanInterface, vlan_id)
-    if not vlan:
-        raise HTTPException(status_code=404, detail="VLAN interface not found")
-    requested_enabled = enabled == "on"
-    parsed = validate_vlan_form_values(parent_interface, vlan_id_value, ip_cidr, ipv6_cidr, mtu, role, requested_enabled, db)
-    if isinstance(parsed, Response):
-        return vlan_form_validation_response(request, parsed)
-    parent_name, parsed_vlan_id, ip_value, ipv6_value, mtu_value, role_value, parent_missing = parsed
-    management_ui_value = access_management_ui_enabled == "on"
-    if management_ui_value and role_value != "access":
-        return vlan_form_validation_response(
-            request,
-            Response(
-                "Management UI exposure is available only for an access-role VLAN.",
-                status_code=422,
-                media_type="text/plain",
-            ),
-        )
-    old_name = vlan.name
-    old_ip_cidr = vlan.ip_cidr
-    old_ipv6_cidr = vlan.ipv6_cidr
-    vlan.parent_interface = parent_name
-    vlan.vlan_id = parsed_vlan_id
-    vlan.name = f"{vlan.parent_interface}.{vlan.vlan_id}"
-    vlan.ip_cidr = ip_value
-    vlan.ipv6_cidr = ipv6_value
-    vlan.mtu = mtu_value
-    vlan.role = role_value
-    vlan.enabled = requested_enabled and not parent_missing
-    vlan.access_management_ui_enabled = management_ui_value
-    try:
-        dependent_updates = refresh_interface_dependent_addresses(
-            db,
-            old_name=old_name,
-            new_name=vlan.name,
-            old_ip_cidr=old_ip_cidr,
-            old_ipv6_cidr=old_ipv6_cidr,
-            actor=None,
-            dns_refresher=refresh_interface_service_dns_aliases,
-        )
-        db.commit()
-    except PhysicalInterfaceUpdateError as exc:
-        db.rollback()
-        return vlan_form_validation_response(
-            request,
-            Response(exc.detail, status_code=exc.status_code, media_type="text/plain"),
-        )
-    except IntegrityError:
-        db.rollback()
-        return grid_error_response(
-            request,
-            detail=f"VLAN {vlan.name} already exists.",
-            status_code=409,
-            template_name="vlan_interfaces.html",
-            context={"identity": identity, **network_context(db), "form_error": f"VLAN {vlan.name} already exists."},
-        )
-    detail = f"Refreshed dependent desired-state addresses: {', '.join(dependent_updates)}." if dependent_updates else ""
-    record_audit(db, actor=identity.username, action="update_vlan_interface", resource_type="vlan", resource_id=str(vlan.id), detail=detail)
-    return grid_saved_response(
-        request,
-        redirect_url="/vlan-interfaces",
-        resource_name="vlan",
-        resource=vlan_interface_to_dict(vlan, parent_missing=parent_missing),
-    )
-
-
-@router.post("/vlan-interfaces/{vlan_id}/delete", response_model=None)
-def delete_vlan_interface_from_ui(
-    request: Request,
-    vlan_id: int,
-    csrf: str = Form(...),
-    identity: Identity = Depends(require_session_identity),
-    db: Session = Depends(get_db),
-) -> RedirectResponse | Response | JSONResponse:
-    """Handle the delete vlan interface from ui endpoint.
-
-    Args:
-        request: Incoming HTTP request.
-        vlan_id: Identifier of the vlan.
-        csrf: Validated CSRF token authorizing the request.
-        identity: Authenticated identity authorizing the request.
-        db: Active database session.
-
-    Returns:
-        The endpoint response.
-
-    Raises:
-        HTTPException: If the request cannot be fulfilled.
-    """
-    verify_csrf(request, csrf)
-    vlan = db.get(VlanInterface, vlan_id)
-    if not vlan:
-        raise HTTPException(status_code=404, detail="VLAN interface not found")
-    old_name = vlan.name
-    old_ip_cidr = vlan.ip_cidr
-    old_ipv6_cidr = vlan.ipv6_cidr
-    try:
-        db.delete(vlan)
-        db.flush()
-        dependent_updates = refresh_interface_dependent_addresses(
-            db,
-            old_name=old_name,
-            new_name="",
-            old_ip_cidr=old_ip_cidr,
-            old_ipv6_cidr=old_ipv6_cidr,
-            actor=None,
-            dns_refresher=refresh_interface_service_dns_aliases,
-        )
-        db.commit()
-    except PhysicalInterfaceUpdateError as exc:
-        db.rollback()
-        return vlan_form_validation_response(
-            request,
-            Response(exc.detail, status_code=exc.status_code, media_type="text/plain"),
-        )
-    details: list[str] = []
-    if dependent_updates:
-        details.append(f"Refreshed dependent desired-state addresses: {', '.join(dependent_updates)}.")
-    record_audit(db, actor=identity.username, action="delete_vlan_interface", resource_type="vlan", resource_id=str(vlan_id), detail=" ".join(details))
-    return RedirectResponse("/vlan-interfaces", status_code=303)
-
-
+router = APIRouter(
+    prefix=MANAGEMENT_UI_ROOT,
+    dependencies=[Depends(require_management_ui_request)],
+)
 @router.get("/dns", response_class=HTMLResponse, response_model=None)
 def dns_page(
     request: Request,
@@ -30747,13 +30321,40 @@ allow_compatible_route_shadow(
     later_path="/PROD/",
     methods=("GET", "HEAD"),
 )
+_management_after_physical_vlans_router = router
 UI_ROUTER_REGISTRY.register(
-    "facade",
+    "facade_before_physical_vlans",
     (
         RouterContribution(plane="front_door", router=front_door_router),
         RouterContribution(plane="protocol", router=protocol_router),
         RouterContribution(plane="public", router=public_router),
-        RouterContribution(plane="management", router=router),
+        RouterContribution(
+            plane="management",
+            router=_management_before_physical_vlans_router,
+        ),
     ),
 )
-UI_ROUTER_REGISTRY.validate_domains(("facade",))
+UI_ROUTER_REGISTRY.register(
+    "physical_vlans",
+    (RouterContribution(plane="management", router=physical_vlans_router),),
+)
+UI_ROUTER_REGISTRY.register(
+    "facade_after_physical_vlans",
+    (
+        RouterContribution(
+            plane="management",
+            router=_management_after_physical_vlans_router,
+        ),
+    ),
+)
+UI_ROUTER_REGISTRY.validate_domains(
+    (
+        "facade_before_physical_vlans",
+        "physical_vlans",
+        "facade_after_physical_vlans",
+    )
+)
+
+router = APIRouter()
+for registered_router in UI_ROUTER_REGISTRY.routers_for_plane("management"):
+    router.routes.extend(registered_router.routes)

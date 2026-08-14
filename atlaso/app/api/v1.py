@@ -81,6 +81,10 @@ from atlaso.app.models import (
 )
 from atlaso.app.openapi import DocumentedAPIRoute
 from atlaso.app.routers.api_v1 import API_V1_ROUTER_REGISTRY
+from atlaso.app.routers.api_v1.physical_vlans import PhysicalVlanApiDependencies
+from atlaso.app.routers.api_v1.physical_vlans import (
+    build_router as build_physical_vlan_api_router,
+)
 from atlaso.app.routers.registry import RouterContribution
 from atlaso.app.schemas import (
     ApiTokenCreate,
@@ -156,7 +160,6 @@ from atlaso.app.schemas import (
     NatRuleCreate,
     NatRuleResponse,
     PhysicalInterfaceResponse,
-    PhysicalInterfaceUpdate,
     RouteCreate,
     RouteResponse,
     ServiceActionResponse,
@@ -167,7 +170,6 @@ from atlaso.app.schemas import (
     VcfOfflineDepotStatusResponse,
     VcfPrivateRegistryStatusResponse,
     VlanCreate,
-    VlanResponse,
     VsphereKeyProviderCreate,
     VsphereKeyProviderResponse,
     VsphereKeyProviderSettingsResponse,
@@ -295,10 +297,6 @@ from atlaso.app.services.firewall import (
     validate_firewall_source_groups,
     validate_firewall_state,
 )
-from atlaso.app.services.interface_updates import (
-    PhysicalInterfaceUpdateError,
-    update_physical_interface_desired_state,
-)
 from atlaso.app.services.kms import KMS_DEFAULT_CONFIG_PATH, join_csv
 from atlaso.app.services.ldap import (
     LDAP_GROUP_PATTERN,
@@ -336,7 +334,6 @@ from atlaso.app.services.network_boot import cleanup_network_boot_upload
 from atlaso.app.services.networking import (
     normalize_interface_mode,
     normalize_interface_role,
-    sync_host_physical_interfaces,
 )
 from atlaso.app.services.ntp import default_ntp_upstream_fields
 from atlaso.app.services.routes_wan import validate_nat_source
@@ -1230,374 +1227,30 @@ def get_monitor(
     return MonitorResponse(**monitor_payload(db, hours=hours))
 
 
-@router.get(
-    "/interfaces/physical",
-    response_model=list[PhysicalInterfaceResponse],
-    tags=["Interfaces"],
-    operation_id="listPhysicalInterfaces",
-)
-def list_physical_interfaces(
-    identity: Annotated[Identity, Depends(require_scope("read:interfaces"))],
-    db: Session = Depends(get_db),
-) -> list[PhysicalInterfaceResponse]:
-    """List Physical Interfaces.
-
-    Requires the `read:interfaces` API scope. This read-only operation does not change saved desired
-    state or appliance runtime state.
-
-    Args:
-        identity: Authenticated identity authorizing the operation.
-        db: Active database session used by the operation.
-    """
-    return [PhysicalInterfaceResponse.model_validate(row) for row in db.execute(select(PhysicalInterface)).scalars().all()]
-
-
-@router.get(
-    "/interfaces/physical/{name}",
-    response_model=PhysicalInterfaceResponse,
-    tags=["Interfaces"],
-    operation_id="getPhysicalInterface",
-)
-def get_physical_interface(
-    name: Annotated[str, ApiPath(description='Stable name identifying the resource addressed by this operation.')],
-    identity: Annotated[Identity, Depends(require_scope("read:interfaces"))],
-    db: Session = Depends(get_db),
-) -> PhysicalInterfaceResponse:
-    """Get Physical Interface.
-
-    Requires the `read:interfaces` API scope. This read-only operation does not change saved desired
-    state or appliance runtime state.
-
-    Args:
-        name: Stable name identifying the resource or operation.
-        identity: Authenticated identity authorizing the operation.
-        db: Active database session used by the operation.
-    """
-    interface = db.execute(select(PhysicalInterface).where(PhysicalInterface.name == name)).scalar_one_or_none()
-    if not interface:
-        raise HTTPException(status_code=404, detail="Interface not found")
-    return PhysicalInterfaceResponse.model_validate(interface)
-
-
-@router.patch(
-    "/interfaces/physical/{name}",
-    response_model=PhysicalInterfaceResponse,
-    tags=["Interfaces"],
-    operation_id="updatePhysicalInterface",
-)
-def update_physical_interface(
-    name: Annotated[str, ApiPath(description='Stable name identifying the resource addressed by this operation.')],
-    payload: PhysicalInterfaceUpdate,
-    identity: Annotated[Identity, Depends(require_scope("write:interfaces"))],
-    db: Session = Depends(get_db),
-) -> PhysicalInterfaceResponse:
-    """Update Physical Interface Desired State.
-
-    Requires the `write:interfaces` API scope. This operation validates and saves the supplied
-    physical-interface fields, then atomically reconciles dependent DNS, NTP/NTS, Certificate
-    Authority, KMS, LDAP, VCF service, ESX Storage, Web Terminal, DHCP, and Network Boot bindings.
-    If any dependent update fails, Atlaso rolls back the interface and every dependent row. The
-    call changes desired state only; the global Appliance Apply workflow remains the
-    host-enforcement boundary.
-
-    Args:
-        name: Stable name identifying the resource or operation.
-        payload: Typed partial physical-interface desired-state update.
-        identity: Authenticated identity authorizing the operation.
-        db: Active database session used by the operation.
-    """
-    interface = db.execute(
-        select(PhysicalInterface).where(PhysicalInterface.name == name)
-    ).scalar_one_or_none()
-    if not interface:
-        raise HTTPException(status_code=404, detail="Interface not found")
-    try:
-        result = update_physical_interface_desired_state(
-            db,
-            interface,
-            payload.model_dump(exclude_unset=True),
-            dns_refresher=refresh_interface_service_dns_aliases,
-        )
-    except PhysicalInterfaceUpdateError as exc:
-        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
-    detail_parts: list[str] = []
-    if result.dependent_updates:
-        detail_parts.append(
-            "Refreshed dependent desired-state addresses: "
-            f"{', '.join(result.dependent_updates)}."
-        )
-    if result.preserved_dhcp_dns:
-        detail_parts.append(
-            "Preserved DHCP-provided DNS in desired state: "
-            f"{', '.join(result.preserved_dhcp_dns)}."
-        )
-    record_audit(
-        db,
-        actor=identity.username,
-        action="update_interface",
-        resource_type="interface",
-        resource_id=name,
-        detail=" ".join(detail_parts),
+_api_before_physical_vlans_router = router
+_physical_vlans_api = build_physical_vlan_api_router(
+    PhysicalVlanApiDependencies(
+        refresh_interface_service_dns_aliases=refresh_interface_service_dns_aliases,
+        validate_vlan_api_payload=validate_vlan_api_payload,
     )
-    return PhysicalInterfaceResponse.model_validate(result.interface)
+)
+physical_vlans_router = _physical_vlans_api.router
+list_physical_interfaces = _physical_vlans_api.endpoints["list_physical_interfaces"]
+get_physical_interface = _physical_vlans_api.endpoints["get_physical_interface"]
+update_physical_interface = _physical_vlans_api.endpoints["update_physical_interface"]
+enable_physical_interface = _physical_vlans_api.endpoints["enable_physical_interface"]
+disable_physical_interface = _physical_vlans_api.endpoints["disable_physical_interface"]
+refresh_physical_interfaces = _physical_vlans_api.endpoints["refresh_physical_interfaces"]
+list_vlans = _physical_vlans_api.endpoints["list_vlans"]
+create_vlan = _physical_vlans_api.endpoints["create_vlan"]
+get_vlan = _physical_vlans_api.endpoints["get_vlan"]
+update_vlan = _physical_vlans_api.endpoints["update_vlan"]
+delete_vlan = _physical_vlans_api.endpoints["delete_vlan"]
+enable_vlan = _physical_vlans_api.endpoints["enable_vlan"]
+disable_vlan = _physical_vlans_api.endpoints["disable_vlan"]
+apply_vlan = _physical_vlans_api.endpoints["apply_vlan"]
 
-
-@router.post("/interfaces/physical/{name}/enable", response_model=PhysicalInterfaceResponse, tags=["Interfaces"], operation_id="enablePhysicalInterface")
-def enable_physical_interface(
-    name: Annotated[str, ApiPath(description='Stable name identifying the resource addressed by this operation.')],
-    identity: Annotated[Identity, Depends(require_scope("write:interfaces"))],
-    db: Session = Depends(get_db),
-) -> PhysicalInterfaceResponse:
-    """Enable Physical Interface.
-
-    Requires the `write:interfaces` API scope. The operation changes saved Atlaso application state;
-    any appliance host enforcement remains subject to the documented apply or task boundary for the
-    resource.
-
-    Args:
-        name: Stable name identifying the resource or operation.
-        identity: Authenticated identity authorizing the operation.
-        db: Active database session used by the operation.
-    """
-    return update_physical_interface(name, PhysicalInterfaceUpdate(admin_state="up"), identity, db)
-
-
-@router.post("/interfaces/physical/{name}/disable", response_model=PhysicalInterfaceResponse, tags=["Interfaces"], operation_id="disablePhysicalInterface")
-def disable_physical_interface(
-    name: Annotated[str, ApiPath(description='Stable name identifying the resource addressed by this operation.')],
-    identity: Annotated[Identity, Depends(require_scope("write:interfaces"))],
-    db: Session = Depends(get_db),
-) -> PhysicalInterfaceResponse:
-    """Disable Physical Interface.
-
-    Requires the `write:interfaces` API scope. The operation changes saved Atlaso application state;
-    any appliance host enforcement remains subject to the documented apply or task boundary for the
-    resource.
-
-    Args:
-        name: Stable name identifying the resource or operation.
-        identity: Authenticated identity authorizing the operation.
-        db: Active database session used by the operation.
-    """
-    return update_physical_interface(name, PhysicalInterfaceUpdate(admin_state="down"), identity, db)
-
-
-@router.post("/interfaces/refresh", response_model=list[PhysicalInterfaceResponse], tags=["Interfaces"], operation_id="refreshPhysicalInterfaces")
-def refresh_physical_interfaces(
-    identity: Annotated[Identity, Depends(require_scope("write:interfaces"))],
-    db: Session = Depends(get_db),
-) -> list[PhysicalInterfaceResponse]:
-    """Refresh Physical Interfaces.
-
-    Requires the `write:interfaces` API scope. The operation changes saved Atlaso application state;
-    any appliance host enforcement remains subject to the documented apply or task boundary for the
-    resource.
-
-    Args:
-        identity: Authenticated identity authorizing the operation.
-        db: Active database session used by the operation.
-    """
-    interfaces, discovered_count = sync_host_physical_interfaces(db)
-    record_audit(
-        db,
-        actor=identity.username,
-        action="refresh_physical_interface_inventory",
-        resource_type="interface",
-        detail=f"{discovered_count} host interface{'s' if discovered_count != 1 else ''} discovered",
-    )
-    return [PhysicalInterfaceResponse.model_validate(row) for row in interfaces]
-
-
-@router.get("/vlans", response_model=list[VlanResponse], tags=["VLANs"], operation_id="listVlans")
-def list_vlans(
-    identity: Annotated[Identity, Depends(require_scope("read:vlans"))],
-    db: Session = Depends(get_db),
-) -> list[VlanResponse]:
-    """List Vlans.
-
-    Requires the `read:vlans` API scope. This read-only operation does not change saved desired
-    state or appliance runtime state.
-
-    Args:
-        identity: Authenticated identity authorizing the operation.
-        db: Active database session used by the operation.
-    """
-    return [VlanResponse.model_validate(row) for row in db.execute(select(VlanInterface)).scalars().all()]
-
-
-@router.post("/vlans", response_model=VlanResponse, status_code=201, tags=["VLANs"], operation_id="createVlan")
-def create_vlan(
-    payload: VlanCreate,
-    identity: Annotated[Identity, Depends(require_scope("write:vlans"))],
-    db: Session = Depends(get_db),
-) -> VlanResponse:
-    """Create Vlan.
-
-    Requires the `write:vlans` API scope. The operation changes saved Atlaso application state; any
-    appliance host enforcement remains subject to the documented apply or task boundary for the
-    resource.
-
-    Args:
-        payload: Validated request or task payload consumed by the operation.
-        identity: Authenticated identity authorizing the operation.
-        db: Active database session used by the operation.
-    """
-    values = validate_vlan_api_payload(payload, db)
-    vlan = VlanInterface(name=f"{values['parent_interface']}.{values['vlan_id']}", **values)
-    db.add(vlan)
-    db.commit()
-    db.refresh(vlan)
-    record_audit(db, actor=identity.username, action="create_vlan", resource_type="vlan", resource_id=str(vlan.id))
-    return VlanResponse.model_validate(vlan)
-
-
-@router.get("/vlans/{vlan_id}", response_model=VlanResponse, tags=["VLANs"], operation_id="getVlan")
-def get_vlan(
-    vlan_id: Annotated[int, ApiPath(description='Unique identifier of the vlan record addressed by this operation.')],
-    identity: Annotated[Identity, Depends(require_scope("read:vlans"))],
-    db: Session = Depends(get_db),
-) -> VlanResponse:
-    """Get Vlan.
-
-    Requires the `read:vlans` API scope. This read-only operation does not change saved desired
-    state or appliance runtime state.
-
-    Args:
-        vlan_id: Stable identifier of the associated VLAN resource.
-        identity: Authenticated identity authorizing the operation.
-        db: Active database session used by the operation.
-    """
-    vlan = db.get(VlanInterface, vlan_id)
-    if not vlan:
-        raise HTTPException(status_code=404, detail="VLAN not found")
-    return VlanResponse.model_validate(vlan)
-
-
-@router.patch("/vlans/{vlan_id}", response_model=VlanResponse, tags=["VLANs"], operation_id="updateVlan")
-def update_vlan(
-    vlan_id: Annotated[int, ApiPath(description='Unique identifier of the vlan record addressed by this operation.')],
-    payload: VlanCreate,
-    identity: Annotated[Identity, Depends(require_scope("write:vlans"))],
-    db: Session = Depends(get_db),
-) -> VlanResponse:
-    """Update Vlan.
-
-    Requires the `write:vlans` API scope. The operation updates saved Atlaso state and does not
-    bypass the documented global Appliance Apply or service lifecycle boundary.
-
-    Args:
-        vlan_id: Stable identifier of the associated VLAN resource.
-        payload: Validated request or task payload consumed by the operation.
-        identity: Authenticated identity authorizing the operation.
-        db: Active database session used by the operation.
-    """
-    vlan = db.get(VlanInterface, vlan_id)
-    if not vlan:
-        raise HTTPException(status_code=404, detail="VLAN not found")
-    values = validate_vlan_api_payload(payload, db)
-    for key, value in values.items():
-        setattr(vlan, key, value)
-    vlan.name = f"{vlan.parent_interface}.{vlan.vlan_id}"
-    db.commit()
-    db.refresh(vlan)
-    record_audit(db, actor=identity.username, action="update_vlan", resource_type="vlan", resource_id=str(vlan.id))
-    return VlanResponse.model_validate(vlan)
-
-
-@router.delete("/vlans/{vlan_id}", status_code=204, tags=["VLANs"], operation_id="deleteVlan")
-def delete_vlan(
-    vlan_id: Annotated[int, ApiPath(description='Unique identifier of the vlan record addressed by this operation.')],
-    identity: Annotated[Identity, Depends(require_scope("write:vlans"))],
-    db: Session = Depends(get_db),
-) -> Response:
-    """Delete Vlan.
-
-    Requires the `write:vlans` API scope. Removal or revocation takes effect in Atlaso application
-    state; appliance host changes remain subject to the documented apply boundary for the resource.
-
-    Args:
-        vlan_id: Stable identifier of the associated VLAN resource.
-        identity: Authenticated identity authorizing the operation.
-        db: Active database session used by the operation.
-    """
-    vlan = db.get(VlanInterface, vlan_id)
-    if not vlan:
-        raise HTTPException(status_code=404, detail="VLAN not found")
-    db.delete(vlan)
-    db.commit()
-    record_audit(db, actor=identity.username, action="delete_vlan", resource_type="vlan", resource_id=str(vlan_id))
-    return Response(status_code=204)
-
-
-@router.post("/vlans/{vlan_id}/enable", response_model=VlanResponse, tags=["VLANs"], operation_id="enableVlan")
-def enable_vlan(vlan_id: Annotated[int, ApiPath(description='Unique identifier of the vlan record addressed by this operation.')], identity: Annotated[Identity, Depends(require_scope("write:vlans"))], db: Session = Depends(get_db)) -> VlanResponse:
-    """Enable Vlan.
-
-    Requires the `write:vlans` API scope. The operation changes saved Atlaso application state; any
-    appliance host enforcement remains subject to the documented apply or task boundary for the
-    resource.
-
-    Args:
-        vlan_id: Stable identifier of the associated VLAN resource.
-        identity: Authenticated identity authorizing the operation.
-        db: Active database session used by the operation.
-    """
-    vlan = db.get(VlanInterface, vlan_id)
-    if not vlan:
-        raise HTTPException(status_code=404, detail="VLAN not found")
-    parent = db.execute(select(PhysicalInterface).where(PhysicalInterface.name == vlan.parent_interface)).scalar_one_or_none()
-    if parent and parent.oper_state == "missing":
-        raise HTTPException(
-            status_code=409,
-            detail=f"{vlan.parent_interface} is missing from host inventory. Move the VLAN to an available trunk parent before enabling it.",
-        )
-    vlan.enabled = True
-    db.commit()
-    db.refresh(vlan)
-    record_audit(db, actor=identity.username, action="enable_vlan", resource_type="vlan", resource_id=str(vlan.id))
-    return VlanResponse.model_validate(vlan)
-
-
-@router.post("/vlans/{vlan_id}/disable", response_model=VlanResponse, tags=["VLANs"], operation_id="disableVlan")
-def disable_vlan(vlan_id: Annotated[int, ApiPath(description='Unique identifier of the vlan record addressed by this operation.')], identity: Annotated[Identity, Depends(require_scope("write:vlans"))], db: Session = Depends(get_db)) -> VlanResponse:
-    """Disable Vlan.
-
-    Requires the `write:vlans` API scope. The operation changes saved Atlaso application state; any
-    appliance host enforcement remains subject to the documented apply or task boundary for the
-    resource.
-
-    Args:
-        vlan_id: Stable identifier of the associated VLAN resource.
-        identity: Authenticated identity authorizing the operation.
-        db: Active database session used by the operation.
-    """
-    vlan = db.get(VlanInterface, vlan_id)
-    if not vlan:
-        raise HTTPException(status_code=404, detail="VLAN not found")
-    vlan.enabled = False
-    db.commit()
-    db.refresh(vlan)
-    record_audit(db, actor=identity.username, action="disable_vlan", resource_type="vlan", resource_id=str(vlan.id))
-    return VlanResponse.model_validate(vlan)
-
-
-@router.post("/vlans/{vlan_id}/apply", response_model=VlanResponse, tags=["VLANs"], operation_id="applyVlan")
-def apply_vlan(vlan_id: Annotated[int, ApiPath(description='Unique identifier of the vlan record addressed by this operation.')], identity: Annotated[Identity, Depends(require_scope("write:vlans"))], db: Session = Depends(get_db)) -> VlanResponse:
-    """Apply Vlan.
-
-    Requires the `write:vlans` API scope. The action runs through the endpoint's existing audited
-    adapter or task boundary; inspect the returned state before treating the operation as complete.
-
-    Args:
-        vlan_id: Stable identifier of the associated VLAN resource.
-        identity: Authenticated identity authorizing the operation.
-        db: Active database session used by the operation.
-    """
-    vlan = get_vlan(vlan_id, identity, db)
-    record_audit(db, actor=identity.username, action="apply_vlan_dry_run", resource_type="vlan", resource_id=str(vlan_id))
-    return vlan
-
-
+router = APIRouter(prefix="/api/v1", route_class=DocumentedAPIRoute)
 @router.get("/routes", response_model=list[RouteResponse], tags=["Routes"], operation_id="listRoutes")
 def list_routes(identity: Annotated[Identity, Depends(require_scope("read:routes"))], db: Session = Depends(get_db)) -> list[RouteResponse]:
     """List Routes.
@@ -7086,8 +6739,27 @@ def add_placeholder_resource_routes() -> None:
 
 add_placeholder_resource_routes()
 
+_api_after_physical_vlans_router = router
 API_V1_ROUTER_REGISTRY.register(
-    "facade",
-    (RouterContribution(plane="api_v1", router=router),),
+    "facade_before_physical_vlans",
+    (RouterContribution(plane="api_v1", router=_api_before_physical_vlans_router),),
 )
-API_V1_ROUTER_REGISTRY.validate_domains(("facade",))
+API_V1_ROUTER_REGISTRY.register(
+    "physical_vlans",
+    (RouterContribution(plane="api_v1", router=physical_vlans_router),),
+)
+API_V1_ROUTER_REGISTRY.register(
+    "facade_after_physical_vlans",
+    (RouterContribution(plane="api_v1", router=_api_after_physical_vlans_router),),
+)
+API_V1_ROUTER_REGISTRY.validate_domains(
+    (
+        "facade_before_physical_vlans",
+        "physical_vlans",
+        "facade_after_physical_vlans",
+    )
+)
+
+router = APIRouter()
+for registered_router in API_V1_ROUTER_REGISTRY.routers_for_plane("api_v1"):
+    router.routes.extend(registered_router.routes)

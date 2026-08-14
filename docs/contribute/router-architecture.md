@@ -11,18 +11,19 @@ status: current
 
 Atlaso is moving its monolithic UI and API v1 route implementations into product-domain modules in staged work under
 issue #317. The application-facing modules `atlaso/app/ui.py` and `atlaso/app/api/v1.py` remain stable compatibility and
-aggregation facades throughout that migration. Phase 1 establishes registries and contract baselines only; it does not
-claim that any product-domain route has already moved.
+aggregation facades throughout that migration. Phase 1 established the registries and contract baselines. Phase 2
+extracts physical-interface and VLAN transport ownership without changing their external contracts or consolidating
+their shared desired-state mutation behavior.
 
 ## Ownership and responsibilities
 
 - `atlaso/app/main.py` owns application construction, middleware, mounts, and the top-level order in which stable facade
   and protocol routers are included. It must include each facade router exactly once.
 - `atlaso/app/ui.py` remains the compatibility facade for existing UI helpers and the management, public, front-door,
-  and protocol routers. During later phases it imports extracted UI domain routers, registers them, and preserves their
-  established effective order.
-- `atlaso/app/api/v1.py` remains the compatibility facade for the versioned management API. During later phases it
-  imports and registers extracted API v1 domain routers without changing their external contract.
+  and protocol routers. It imports extracted UI domain routers, registers them, and preserves their established
+  effective order.
+- `atlaso/app/api/v1.py` remains the compatibility facade for the versioned management API. It imports and registers
+  extracted API v1 domain routers without changing their external contract.
 - `atlaso/app/routers/ui/<domain>.py` owns UI transport concerns for one product domain. These modules may depend on
   services, schemas, models, security dependencies, and shared router infrastructure, but never on `atlaso.app.ui` or
   the API facade.
@@ -57,6 +58,28 @@ silently dropping routes.
 Registry modules are dependency-neutral: they do not import facades or product-domain routers. A facade imports the
 domain modules, registers their contributions in the established order, and remains the only application-facing
 aggregation boundary. Do not use import-time registration from a domain module to reach back into a facade.
+
+When extraction occurs inside an existing monolithic route sequence, the facade registers a before-domain segment,
+the domain router, and an after-domain segment. It then aggregates those registered routers into the single stable
+facade object imported by `main.py`. This keeps application construction unchanged while making ownership and ordering
+explicit and testable.
+
+## Extracted physical-interface and VLAN ownership
+
+Physical-interface and VLAN management handlers live in
+`atlaso/app/routers/ui/physical_vlans.py`; their API v1 handlers live in
+`atlaso/app/routers/api_v1/physical_vlans.py`. The API domain also owns the existing physical-interface inventory
+refresh operation. Both modules receive the facade-owned compatibility helpers they need during router construction,
+so neither imports a monolithic facade and existing helper exports remain stable.
+
+The independently runnable transport coverage lives in
+`tests/routers/ui/test_physical_vlans.py` and `tests/routers/api_v1/test_physical_vlans.py`. Shared registry tests assert
+the exact before/domain/after order and endpoint module ownership. Import-boundary checks require both facades to
+assemble these domain modules while continuing to reject domain-to-facade imports.
+
+This extraction does not change templates, browser assets, visible copy, API operations, transaction behavior, or the
+global Appliance Apply boundary. Consolidating the shared physical-interface mutation and reconciliation service is a
+separate child phase under issue #317.
 
 ## Route and OpenAPI compatibility
 
@@ -109,6 +132,7 @@ Use these focused foundation checks while developing:
 
 ```powershell
 python -m pytest -q tests/routers
+python -m pytest -q tests/routers/ui/test_physical_vlans.py tests/routers/api_v1/test_physical_vlans.py
 python -m pytest -q tests/test_openapi_contract.py tests/test_ui_route_namespaces.py tests/test_ui_compliance.py
 python scripts/generate_router_contract_baselines.py --check
 python scripts/check_python_static_analysis.py
