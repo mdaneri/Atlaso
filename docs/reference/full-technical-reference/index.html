@@ -4127,6 +4127,10 @@ their exact credential bytes without becoming shell syntax. Caller-side PowerShe
 Hyper-V management network before building:</p>
 <div class="language-powershell highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="n">pwsh</span> <span class="n">-ExecutionPolicy</span> <span class="n">Bypass</span> <span class="o">-File</span> <span class="n">scripts</span><span class="p">/</span><span class="n">windows</span><span class="p">/</span><span class="n">hyperv</span><span class="p">/</span><span class="n">create-switches</span><span class="p">.</span><span class="n">ps1</span>
 </span></code></pre></div>
+<p>Custom management networks use <code>-MgmtHostIPAddress</code> with <code>-MgmtPrefixLength</code>. The switch script accepts only a
+canonical dotted-decimal IPv4 address and a prefix length from 0 through 32, and validates both before it queries or
+changes Hyper-V or host-network state. It applies the complete 32-bit prefix mask when deriving the NAT network, so
+<code>10.20.30.129/25</code> creates <code>10.20.30.128/25</code> rather than <code>10.20.30.0/25</code>.</p>
 <p>The Packer build VM uses the <code>Atlaso-Mgmt</code> switch by default with temporary static address <code>192.168.49.30/24</code> and
 gateway <code>192.168.49.254</code>. This avoids fragile <code>Default Switch</code> host-IP detection while still giving the builder NAT
 internet access for <code>tdnf update</code>. Unless <code>-BuilderStaticDns</code> is supplied, the wrapper discovers the host's active IPv4
