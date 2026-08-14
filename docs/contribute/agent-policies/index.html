@@ -434,6 +434,8 @@
       
         
       
+        
+      
     
     
     
@@ -2397,6 +2399,8 @@
       
         
       
+        
+      
     
     
     
@@ -2576,6 +2580,40 @@
     
   
   Python static analysis
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../router-architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Router architecture
 
     
   </span>
@@ -3817,6 +3855,8 @@
       
         
       
+        
+      
     
     
     
@@ -3966,6 +4006,8 @@
   <code>include_in_schema=False</code> and document them in their canonical guides.</li>
 <li>Update the operator API guide and affected topic documentation, preserve compatible operation IDs and shapes, and run
   <code>tests/test_openapi_contract.py</code> so new routes automatically enter the enforcement surface.</li>
+<li>Follow the <a href="../router-architecture/">router architecture</a> for route ownership, facade aggregation, deterministic
+  registration, dependency direction, domain test placement, route inventory, and normalized OpenAPI compatibility.</li>
 <li>GitHub-managed version-update pull requests generated from <code>.github/dependabot.yml</code> are the only exception to the
   pre-existing issue and per-update documentation requirements. They must carry the <code>enhancement</code> type label plus
   <code>dependencies</code>, remain subject to the normal version, CI, review, and squash-merge gates, and must not weaken
