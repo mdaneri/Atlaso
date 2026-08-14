@@ -110,6 +110,7 @@ REQUIRED_POLICY_MARKERS = {
         "explicit maintainer approval",
         "private vulnerability remediation",
         "advisory-side maintainer review",
+        "test suite locally when required",
         "### Focused local validation and pull-request follow-through",
         "Python test suite locally",
         "ready for review",
@@ -138,6 +139,7 @@ REQUIRED_POLICY_MARKERS = {
         "AtlasoUiPatterns.createWizard",
         "private vulnerability remediation",
         "advisory-side maintainer review",
+        "complete Python test suite locally",
     ),
     Path(".github/copilot-instructions.md"): (
         "Mandatory Agent Startup Gate",
@@ -157,6 +159,7 @@ REQUIRED_POLICY_MARKERS = {
         "AtlasoUiPatterns.createWizard",
         "private vulnerability remediation",
         "advisory-side maintainer review",
+        "complete Python test suite locally",
     ),
     Path("SECURITY.md"): (
         "## Privately fixing a validated vulnerability",
@@ -172,6 +175,7 @@ REQUIRED_POLICY_MARKERS = {
         "Explicit maintainer authorization",
         "coordinated disclosure",
         "advisory-side maintainer review",
+        "complete Python test suite locally",
     ),
     Path("docs/contribute/agent-policies.md"): (
         "# Detailed agent policies",
@@ -183,6 +187,7 @@ REQUIRED_POLICY_MARKERS = {
         "Publishing is a separate explicit action",
         "explicit maintainer authorization",
         "Advisory-side maintainer review",
+        "complete Python test suite locally",
         "### Focused local validation and pull-request follow-through",
         "Python test suite locally",
         "ready for review",
@@ -204,6 +209,7 @@ REQUIRED_POLICY_MARKERS = {
         "AtlasoUiPatterns.createWizard",
         "private vulnerability-remediation pull request",
         "advisory-side maintainer review",
+        "complete Python test suite ran locally",
     ),
     Path("docs/contribute/ui-design-guide.md"): (
         "# Atlaso UI Design Guide",

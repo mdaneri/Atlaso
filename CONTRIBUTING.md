@@ -46,7 +46,9 @@ advisory as described in `SECURITY.md`.
 
 For temporary-private-fork remediation, advisory-side maintainer review and recorded local validation replace the
 ordinary Codex review, `@codex review`, exact-head CI/status, comment, label, and review-thread follow-through below.
-Do not request, wait for, or claim unavailable integrations.
+Do not request, wait for, or claim unavailable integrations. Run the complete Python test suite locally when the change
+affects Python or `SECURITY.md` otherwise requires it; this overrides the ordinary local full-suite prohibition, and
+missing full-suite evidence blocks advisory merge.
 
 ## Development workflow
 

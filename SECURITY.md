@@ -55,6 +55,11 @@ exact-head CI or status checks, or unavailable pull-request labels, comments, an
 any available private pull-request surfaces for review and discussion, and do not claim that unavailable integrations
 ran.
 
+When the change affects Python or the ordinary workflow otherwise requires it, run the complete Python test suite locally
+and record the result privately. This is the security-specific exception to the ordinary automated-contributor rule that
+reserves the complete suite for GitHub CI. If the complete required suite cannot run locally, the private patch is not
+ready for advisory merge; obtain maintainer direction instead of waiving or claiming the missing evidence.
+
 Temporary-fork pull requests are merged together only through the corresponding advisory workflow; they are not merged
 individually. Do not use the ordinary pull-request merge button or `gh pr merge`. An advisory administrator must open
 the parent repository's **Security > Advisories** page, select the draft advisory, scroll to **This advisory is ready to

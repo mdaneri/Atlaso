@@ -35,8 +35,10 @@ The private vulnerability remediation workflow in `SECURITY.md` is the only exce
 branch, and `Closes #<issue>` requirements. Keep all advisory references and vulnerability details private. For a
 temporary private fork, advisory-side maintainer review and recorded local validation replace the ordinary Codex review,
 `@codex review`, exact-head CI/status, comment, label, and review-thread follow-through above. Do not request, wait for,
-or claim unavailable integrations. Never use ordinary pull-request merge controls or `gh pr merge`, and do not change
-advisory state without explicit maintainer authorization.
+or claim unavailable integrations. Run the complete Python test suite locally when required by `SECURITY.md`; this
+overrides the ordinary local full-suite prohibition, and missing full-suite evidence blocks advisory merge. Never use
+ordinary pull-request merge controls or `gh pr merge`, and do not change advisory state without explicit maintainer
+authorization.
 
 Subagents and delegated agents must complete the same gate. A delegating agent must include the requirement in its
 prompt and verify compliance before using delegated work.

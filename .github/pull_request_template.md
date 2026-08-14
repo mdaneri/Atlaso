@@ -29,7 +29,8 @@ surfaces.
 - [ ] For an ordinary pull request, each post-opening pushed commit received one `@codex review` request as the exact
   head, and current-head checks, comments, reviews, and authoritative review threads were followed through.
 - [ ] For a temporary-private-fork pull request, advisory-side maintainer review and recorded local validation replace
-  unavailable Codex review, comments, labels, review threads, CI, and status checks as required by `SECURITY.md`.
+  unavailable Codex review, comments, labels, review threads, CI, and status checks as required by `SECURITY.md`; the
+  complete Python test suite ran locally when applicable, and missing required evidence blocks advisory merge.
 - [ ] UI changes follow `docs/contribute/ui-design-guide.md`, and the Summary names the interaction classification and reused
   Atlaso reference; approval-only `custom/other` work also cites maintainer approval and the closest related reference;
   or this pull request does not change the UI.

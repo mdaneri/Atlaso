@@ -350,6 +350,44 @@ def test_agent_policy_gate_requires_private_follow_through_replacement(
         )
 
 
+def test_agent_policy_gate_requires_private_complete_python_validation(
+    tmp_path: Path,
+) -> None:
+    """Verify that private Python changes assign the complete suite locally.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    required_entry_markers = {
+        Path("AGENTS.md"): "test suite locally when required",
+        Path("CONTRIBUTING.md"): "complete Python test suite locally",
+        Path(".github/copilot-instructions.md"): "complete Python test suite locally",
+        Path(".github/pull_request_template.md"): (
+            "complete Python test suite ran locally"
+        ),
+        Path("SECURITY.md"): "complete Python test suite locally",
+        Path("docs/contribute/agent-policies.md"): (
+            "complete Python test suite locally"
+        ),
+    }
+
+    for relative_path, marker in required_entry_markers.items():
+        write_policy_files(tmp_path)
+        path = tmp_path / relative_path
+        path.write_text(
+            path.read_text(encoding="utf-8").replace(marker, ""),
+            encoding="utf-8",
+        )
+
+        findings = check_agent_policy_gate(tmp_path)
+
+        assert len(findings) == 1
+        assert findings[0].path == path
+        assert findings[0].message == (
+            f"required agent policy marker is missing: {marker}"
+        )
+
+
 def test_agent_policy_gate_rejects_missing_ui_guide(tmp_path: Path) -> None:
     """Verify that agent policy gate rejects missing ui guide.
 

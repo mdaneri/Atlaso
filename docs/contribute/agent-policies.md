@@ -66,7 +66,9 @@ status: current
   pull request may show `UNSTABLE` solely because checks are absent; never substitute that state for local validation.
   Advisory-side maintainer review and recorded local validation replace ordinary Codex review, `@codex review`,
   exact-head CI/status, comment, label, and review-thread follow-through. Do not request, wait for, or claim unavailable
-  integrations.
+  integrations. Run the complete Python test suite locally when the change affects Python or `SECURITY.md` otherwise
+  requires it. This overrides the ordinary automated-contributor prohibition, and missing full-suite evidence blocks
+  advisory merge.
   Do not use ordinary pull-request merge controls or `gh pr merge`. An explicitly authorized advisory administrator
   must use **Security > Advisories > This advisory is ready to be merged > Merge pull request(s)**. GitHub merges all
   open pull requests in the temporary fork together, permits only one pull request targeting `main`, and applies the
