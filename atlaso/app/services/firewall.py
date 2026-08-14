@@ -598,7 +598,10 @@ def managed_routing_firewall_rules(
     return rules
 
 
-def firewall_source_group_state(raw_json: str, interface_networks: dict[str, str]) -> dict:
+def firewall_source_group_state(
+    raw_json: str,
+    interface_networks: dict[str, list[str]],
+) -> dict:
     """Return firewall source group state.
 
     Args:

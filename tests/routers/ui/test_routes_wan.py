@@ -1,0 +1,336 @@
+"""Test Routes/WAN management UI transport behavior."""
+
+import re
+from pathlib import Path
+
+from tests.routers.ui.helpers import assert_apply_redirect, login
+
+
+def test_routes_wan_policy_form_renders(client):
+    """Verify that routes wan policy form renders.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
+    login(client)
+    response = client.get("/routes-wan")
+    assert response.status_code == 200
+    assert "Routes &amp; WAN Simulation" in response.text
+    assert ">Static Routes</button>" in response.text
+    assert ">Routing Permissions</button>" in response.text
+    assert "Static routes choose a destination path" in response.text
+    assert "Routing permissions control forwarding" in response.text
+    assert "Routing Permissions" in response.text
+    assert "NAT Rules" in response.text
+    assert "WAN Policies" in response.text
+    assert "Routes &amp; WAN Simulation has pending appliance changes" in response.text
+    assert "Validation" in response.text
+    assert "routes-wan-routes-table" in response.text
+    assert "routes-wan-routing-table" in response.text
+    assert "routes-wan-nat-table" in response.text
+    assert "routes-wan-policies-table" in response.text
+    assert "auto route-role" in response.text
+    assert "explicit access" in response.text
+    assert "management isolated" in response.text
+    assert "No automatic route-role paths" in response.text
+    assert "data-mode-options" not in response.text
+    assert "<th>Mode</th>" not in response.text
+    app_js = client.get("/static/app.js").text
+    assert "+ Add static route here" in app_js
+    assert "+ Add routing permission here" in app_js
+    assert "+ Add NAT rule here" in app_js
+    assert "+ Add WAN policy here" in app_js
+    assert "autoSaveWanRoute" not in app_js
+    assert "autoSaveWanRoutingRule" not in app_js
+    assert "autoSaveWanNatRule" not in app_js
+    assert "autoSaveWanPolicy" not in app_js
+    assert app_js.count("window.AtlasoUiPatterns.createWizard({") >= 4
+    for dialog_id in (
+        "routes-wan-route-dialog",
+        "routes-wan-routing-dialog",
+        "routes-wan-nat-dialog",
+        "routes-wan-policy-dialog",
+    ):
+        assert f'id="{dialog_id}"' in response.text
+    assert response.text.count("data-routes-wan-wizard=") == 4
+    assert len(re.findall(r"<form\b[^>]*\bdata-atlaso-wizard(?:\s|>)", response.text)) == 4
+    assert response.text.count('class="vcf-sddc-wizard-rail"') >= 4
+    assert response.text.count('class="vcf-sddc-wizard-main"') >= 4
+    routes_template = Path("atlaso/app/templates/routes_wan.html").read_text(encoding="utf-8")
+    assert routes_template.count("resource_wizard(") == 4
+    assert "vcf-sddc-wizard-layout" not in routes_template
+    assert "confirm-modal-head" not in routes_template
+    assert 'data-routes-wan-nat-source-mode' in response.text
+    assert 'value="IPv4 masquerade" readonly' in response.text
+    assert "Europe WAN" in response.text
+    assert "SiteA outbound WAN" in response.text
+    assert "eth1.20" in response.text
+    assert "tc qdisc replace" in response.text
+    assert "table ip atlaso_nat" in response.text
+    assert "Review appliance changes" in response.text
+
+
+def test_routes_wan_rejects_route_wan_mode(client):
+    """Verify that routes wan rejects route wan mode.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
+    login(client)
+    page = client.get("/routes-wan")
+    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+
+    response = client.post(
+        "/routes-wan/routes",
+        data={
+            "destination_cidr": "10.21.0.0/24",
+            "gateway": "",
+            "interface_name": "eth1.20",
+            "metric": "120",
+            "wan_policy_id": "",
+            "wan_mode": "route",
+            "enabled": "on",
+            "csrf": csrf,
+        },
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 422
+    assert "planned but not supported in v1" in response.text
+
+
+def test_routes_wan_wizards_respect_read_only_permissions(client):
+    """Verify that Routes and WAN wizard mutations are hidden from read-only users.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
+    from sqlalchemy import select
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Role, User
+    from atlaso.app.security import roles_to_json
+
+    with SessionLocal() as db:
+        admin = db.execute(select(User).where(User.username == "admin")).scalar_one()
+        admin.role = Role.VIEWER.value
+        admin.roles_json = roles_to_json([Role.VIEWER.value])
+        db.commit()
+
+    login(client)
+    page = client.get("/routes-wan")
+
+    assert page.status_code == 200
+    assert page.text.count('data-can-write="false"') == 4
+    assert 'data-routes-wan-wizard=' not in page.text
+    assert 'id="routes-wan-route-dialog"' not in page.text
+    assert 'id="routes-wan-routing-dialog"' not in page.text
+    assert 'id="routes-wan-nat-dialog"' not in page.text
+    assert 'id="routes-wan-policy-dialog"' not in page.text
+
+
+def test_routes_wan_allows_ipv6_only_route_targets_but_not_nat_targets(client):
+    """Verify that routes wan allows ipv6 only route targets but not nat targets.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
+    from sqlalchemy import select
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import NatRule, PhysicalInterface, Route
+
+    with SessionLocal() as db:
+        db.add(
+            PhysicalInterface(
+                name="eth6",
+                mac_address="00:50:56:aa:bb:66",
+                mode="access",
+                role="access",
+                ip_cidr="",
+                ipv6_cidr="fd00:66::1/64",
+                admin_state="up",
+                oper_state="up",
+            )
+        )
+        db.commit()
+
+    login(client)
+    page = client.get("/routes-wan")
+    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+
+    route_response = client.post(
+        "/routes-wan/routes",
+        data={
+            "destination_cidr": "2001:db8:66::/64",
+            "gateway": "",
+            "interface_name": "eth6",
+            "metric": "120",
+            "wan_policy_id": "",
+            "wan_mode": "interface",
+            "enabled": "on",
+            "csrf": csrf,
+        },
+        follow_redirects=False,
+    )
+    nat_response = client.post(
+        "/routes-wan/nat-rules",
+        data={
+            "name": "IPv6-only outbound",
+            "source": "192.168.50.0/24",
+            "outbound_interface": "eth6",
+            "masquerade": "on",
+            "priority": "110",
+            "description": "",
+            "enabled": "on",
+            "csrf": csrf,
+        },
+        follow_redirects=False,
+    )
+
+    assert route_response.status_code == 303
+    assert nat_response.status_code == 422
+    assert "Choose an access physical interface" in nat_response.text
+    mgmt_route_response = client.post(
+        "/routes-wan/routes",
+        data={
+            "destination_cidr": "10.49.0.0/24",
+            "gateway": "",
+            "interface_name": "eth0",
+            "metric": "100",
+            "wan_policy_id": "",
+            "wan_mode": "interface",
+            "enabled": "on",
+            "csrf": csrf,
+        },
+        follow_redirects=False,
+    )
+    assert mgmt_route_response.status_code == 422
+    assert "Choose an access physical interface" in mgmt_route_response.text
+    with SessionLocal() as db:
+        route = db.execute(select(Route).where(Route.interface_name == "eth6")).scalar_one()
+        assert route.destination_cidr == "2001:db8:66::/64"
+        assert db.execute(select(NatRule).where(NatRule.outbound_interface == "eth6")).scalar_one_or_none() is None
+
+
+def test_routes_wan_autosave_endpoints_and_apply_task(client):
+    """Verify that routes wan autosave endpoints and apply task.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
+    from sqlalchemy import select
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job, NatRule, RoutingRule, WanPolicy
+
+    login(client)
+    page = client.get("/routes-wan")
+    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    policy_response = client.post(
+        "/routes-wan/policies",
+        data={
+            "name": "Metro WAN",
+            "description": "short metro impairment",
+            "latency_ms": "35",
+            "jitter_ms": "5",
+            "packet_loss_percent": "0.1",
+            "bandwidth_mbit": "250",
+            "corrupt_percent": "0",
+            "duplicate_percent": "0",
+            "reorder_percent": "0",
+            "enabled": "on",
+            "csrf": csrf,
+        },
+        follow_redirects=False,
+    )
+    assert policy_response.status_code == 303
+    with SessionLocal() as db:
+        policy = db.execute(select(WanPolicy).where(WanPolicy.name == "Metro WAN")).scalar_one()
+        policy_id = str(policy.id)
+
+    route_response = client.post(
+        "/routes-wan/routes",
+        data={
+            "destination_cidr": "10.20.0.0/24",
+            "gateway": "",
+            "interface_name": "eth1.20",
+            "metric": "120",
+            "wan_policy_id": policy_id,
+            "wan_mode": "interface",
+            "enabled": "on",
+            "csrf": csrf,
+        },
+        follow_redirects=False,
+    )
+    assert route_response.status_code == 303
+    nat_response = client.post(
+        "/routes-wan/nat-rules",
+        data={
+            "name": "Metro outbound",
+            "source": "192.168.50.0/24",
+            "outbound_interface": "eth2",
+            "masquerade": "on",
+            "priority": "110",
+            "description": "NAT through test WAN",
+            "enabled": "on",
+            "csrf": csrf,
+        },
+        follow_redirects=False,
+    )
+    assert nat_response.status_code == 303
+    routing_response = client.post(
+        "/routes-wan/routing-rules",
+        data={
+            "name": "SiteA to WAN",
+            "source_interface": "eth1.20",
+            "destination_interface": "eth2",
+            "priority": "120",
+            "description": "Allow SiteA toward WAN link",
+            "enabled": "on",
+            "csrf": csrf,
+        },
+        follow_redirects=False,
+    )
+    assert routing_response.status_code == 303
+    management_routing_response = client.post(
+        "/routes-wan/routing-rules",
+        data={
+            "name": "Bad management route",
+            "source_interface": "eth1.20",
+            "destination_interface": "eth0",
+            "priority": "120",
+            "description": "",
+            "enabled": "on",
+            "csrf": csrf,
+        },
+        follow_redirects=False,
+    )
+    assert management_routing_response.status_code == 422
+    assert "non-management destination" in management_routing_response.text
+    refreshed = client.get("/routes-wan")
+    assert "Metro WAN" in refreshed.text
+    assert "Metro outbound" in refreshed.text
+    assert "SiteA to WAN" in refreshed.text
+    assert "10.20.0.0/24" in refreshed.text
+    assert "ip saddr 192.168.50.0/24 oifname &#34;eth2&#34; masquerade" in refreshed.text
+    assert "ip rule add from 192.168.50.0/24 table 200" in refreshed.text
+    assert "tc qdisc replace dev eth1.20" in refreshed.text
+    with SessionLocal() as db:
+        rule = db.execute(select(NatRule).where(NatRule.name == "Metro outbound")).scalar_one()
+        assert rule.outbound_interface == "eth2"
+        routing = db.execute(select(RoutingRule).where(RoutingRule.name == "SiteA to WAN")).scalar_one()
+        assert routing.source_interface == "eth1.20"
+
+    apply_response = client.post("/appliance-apply", data={"csrf": csrf, "selected_units": "wan"})
+    assert_apply_redirect(apply_response)
+    with SessionLocal() as db:
+        job = db.execute(select(Job).where(Job.type == "appliance-apply")).scalar_one()
+        assert job.status == "succeeded"
+        assert "atlaso-helper" in (job.result or "")
+        assert "wan" in (job.result or "")
+        assert "NAT rules" in (job.result or "")
+        assert "explicit routing rules" in (job.result or "")
+        assert "nft -f /etc/atlaso/nftables.d/atlaso-nat.nft" in (job.result or "")
+        assert "ip rule add from 192.168.50.0/24 table 200" in (job.result or "")
+        assert "tc qdisc replace dev eth1.20" in (job.result or "")
