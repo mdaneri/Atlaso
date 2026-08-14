@@ -90,17 +90,19 @@ def test_registry_rejects_duplicate_route_identities():
         registry.register("duplicate", (RouterContribution("api_v1", _router("/api/v1/core")),))
 
 
-def test_registry_keeps_plane_and_method_in_route_identity():
-    """Allow equal paths when the external plane or method differs."""
+def test_registry_keeps_plane_metadata_and_rejects_runtime_duplicates():
+    """Reject equal runtime identities even when plane metadata differs."""
     registry = DomainRouterRegistry("test")
     registry.register("management", (RouterContribution("management", _router("/shared")),))
-    registry.register("public", (RouterContribution("public", _router("/shared")),))
-    registry.register("write", (RouterContribution("management", _router("/shared", method="POST")),))
+
+    with pytest.raises(RouterRegistryError, match="duplicate runtime route registration"):
+        registry.register("public", (RouterContribution("public", _router("/shared")),))
+
+    registry.register("write", (RouterContribution("public", _router("/shared", method="POST")),))
 
     assert registry.route_identities() == (
         RouteIdentity("management", "/shared", "GET"),
-        RouteIdentity("public", "/shared", "GET"),
-        RouteIdentity("management", "/shared", "POST"),
+        RouteIdentity("public", "/shared", "POST"),
     )
 
 

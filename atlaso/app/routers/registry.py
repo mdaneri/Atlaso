@@ -660,6 +660,7 @@ class DomainRouterRegistry:
         routers: dict[int, tuple[str, str]] = {}
         descriptors: list[_RouteDescriptor] = []
         identities: dict[RouteIdentity, str] = {}
+        runtime_identities: dict[tuple[str, str], tuple[str, str]] = {}
         for registration in candidate:
             for contribution in registration.contributions:
                 router_key = id(contribution.router)
@@ -679,7 +680,24 @@ class DomainRouterRegistry:
                             f"({identity.plane!r}, {identity.path!r}, {identity.method!r}) "
                             f"in domains {previous_identity_domain!r} and {registration.domain!r}"
                         )
+                    runtime_identity = (
+                        descriptor.identity.path,
+                        descriptor.identity.method,
+                    )
+                    previous_runtime = runtime_identities.get(runtime_identity)
+                    if previous_runtime is not None:
+                        previous_domain, previous_plane = previous_runtime
+                        raise RouterRegistryError(
+                            "duplicate runtime route registration "
+                            f"({descriptor.identity.path!r}, {descriptor.identity.method!r}) "
+                            f"in {previous_domain!r}/{previous_plane!r} and "
+                            f"{registration.domain!r}/{descriptor.identity.plane!r}"
+                        )
                     identities[descriptor.identity] = registration.domain
+                    runtime_identities[runtime_identity] = (
+                        registration.domain,
+                        descriptor.identity.plane,
+                    )
                     descriptors.append(descriptor)
         _validate_catch_all_order(descriptors)
         self._registrations.append(candidate[-1])
