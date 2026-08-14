@@ -107,6 +107,22 @@ def test_route_inventory_rejects_same_named_shadow_handlers():
         build_route_inventory(app)
 
 
+def test_route_inventory_rejects_cross_plane_catch_all_before_fixed_route():
+    """Treat planes as classifications within one Starlette route list."""
+    app = FastAPI(openapi_url=None, docs_url=None, redoc_url=None)
+
+    @app.get("/ui/{rest:path}")
+    def protocol(rest: str) -> dict[str, str]:
+        return {"rest": rest}
+
+    @app.get("/ui/management/status")
+    def management() -> dict[str, str]:
+        return {"status": "ok"}
+
+    with pytest.raises(RouterContractError, match="must follow route"):
+        build_route_inventory(app)
+
+
 def test_route_inventory_rejects_mount_before_fixed_subtree_route():
     """Treat a mounted subtree as a catch-all for later fixed routes."""
     app = FastAPI(openapi_url=None, docs_url=None, redoc_url=None)

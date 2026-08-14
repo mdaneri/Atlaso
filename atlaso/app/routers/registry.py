@@ -548,8 +548,7 @@ def _validate_catch_all_order(descriptors: Sequence[_RouteDescriptor]) -> None:
             later_identity = later.identity
             allowed = (later_identity.path, later_identity.method) in descriptor.allowed_shadows
             if (
-                later_identity.plane != identity.plane
-                or (
+                (
                     later_identity.method != identity.method
                     and identity.method != _OPAQUE_METHOD
                     and later_identity.method != _OPAQUE_METHOD

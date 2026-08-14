@@ -202,7 +202,6 @@ def _validate_catch_all_order(routes: Sequence[_EffectiveRoute]) -> None:
     for index, route in enumerate(routes):
         record = route.record
         path = record.get("path")
-        plane = record.get("plane")
         methods = record.get("methods")
         kind = record.get("kind")
         if not isinstance(path, str) or not isinstance(methods, list):
@@ -215,8 +214,7 @@ def _validate_catch_all_order(routes: Sequence[_EffectiveRoute]) -> None:
             later_path = later.get("path")
             later_methods = later.get("methods")
             if (
-                later.get("plane") != plane
-                or not isinstance(later_path, str)
+                not isinstance(later_path, str)
                 or not isinstance(later_methods, list)
             ):
                 continue

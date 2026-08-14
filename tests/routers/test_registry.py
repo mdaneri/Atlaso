@@ -133,6 +133,29 @@ def test_registry_rejects_catch_all_before_fixed_peer():
         )
 
 
+def test_registry_rejects_cross_plane_catch_all_before_fixed_route():
+    """Treat planes as classifications within one Starlette route list."""
+    registry = DomainRouterRegistry("test")
+
+    with pytest.raises(RouterRegistryError, match="must follow route"):
+        registry.register(
+            "cross_plane_order",
+            (
+                RouterContribution(
+                    "protocol",
+                    _router("/ui/{rest:path}", endpoint_name="protocol"),
+                ),
+                RouterContribution(
+                    "management",
+                    _router(
+                        "/ui/management/status",
+                        endpoint_name="management",
+                    ),
+                ),
+            ),
+        )
+
+
 def test_registry_accepts_fixed_route_at_mount_prefix():
     """Require a subtree separator before a mount shadows a fixed peer."""
     registry = DomainRouterRegistry("test")
