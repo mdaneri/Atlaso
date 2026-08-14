@@ -14,6 +14,11 @@ image/inventory-linux/external/overlay/usr/share/atlaso/*.ppm binary
 
 image/hyperv/sudoers.d/* text eol=lf
 image/hyperv/systemd/* text eol=lf
+
+# First boot sources these platform policies as shell input.
+image/hyperv/data-disks.conf text eol=lf
+image/vmware-workstation/data-disks.conf text eol=lf
+
 scripts/appliance/atlaso-helper text eol=lf
 docs/assets/screenshots/manifest.json text eol=lf
 docs/reference/interface-gallery.md text eol=lf
