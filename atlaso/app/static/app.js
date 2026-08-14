@@ -560,7 +560,14 @@ function initializePrimaryNavigation(root = document) {
   );
   if (!groups.length) return;
   const storage = primaryNavigationStorage();
-  const storedState = readPrimaryNavigationState(storage);
+  const persistedState = readPrimaryNavigationState(storage);
+  const renderedKeys = new Set(groups.map((group) => group.dataset.navGroupKey || "").filter(Boolean));
+  const storedState = Object.fromEntries(
+    Object.entries(persistedState).filter(([key]) => renderedKeys.has(key)),
+  );
+  if (Object.keys(storedState).length !== Object.keys(persistedState).length) {
+    writePrimaryNavigationState(storage, storedState);
+  }
   groups.forEach((group) => {
     const key = group.dataset.navGroupKey || "";
     const toggle = group.querySelector("[data-primary-nav-toggle]");

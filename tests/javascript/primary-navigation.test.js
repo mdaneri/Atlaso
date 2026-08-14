@@ -149,6 +149,19 @@ test("primary navigation restores inactive choices and forces the active group o
   assert.equal(storage.writes.length, 0, "active-page override must not replace the saved user choice");
 });
 
+test("primary navigation prunes saved groups hidden by current permissions", () => {
+  const overview = new FakeGroup("overview");
+  const storage = new FakeStorage(
+    JSON.stringify({ version: 1, groups: { overview: false, "core-services": false } }),
+  );
+  const context = navigationContext([overview], storage);
+
+  context.initializePrimaryNavigation(context.document);
+
+  assert.equal(overview.links.hidden, true);
+  assert.deepEqual(storage.writes, [{ version: 1, groups: { overview: false } }]);
+});
+
 test("primary navigation ignores obsolete values and survives unavailable storage", () => {
   const group = new FakeGroup("overview");
   const malformedStorage = new FakeStorage(JSON.stringify({ version: 2, groups: { overview: false } }));
