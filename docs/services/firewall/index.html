@@ -1532,6 +1532,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#transport-ownership" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Transport ownership
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#additional-verified-states" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -3368,6 +3379,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#transport-ownership" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Transport ownership
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#additional-verified-states" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -3549,6 +3571,10 @@ and are not group-filtered.</p>
 <p>After a successful task, test the required TCP or UDP service from the intended network. On the appliance, maintainers
 can verify the effective state with <code>nft list ruleset</code>. If a rule removes management access, recover through the
 <a href="../../operate/appliance-console/">local appliance console</a> and restore the previous desired state.</p>
+<h2 id="transport-ownership">Transport ownership<a class="headerlink" href="#transport-ownership" title="Permanent link">&para;</a></h2>
+<p>Firewall management and API v1 transports are owned by dedicated <code>firewall</code> domain routers and aggregated through the
+stable UI and API facades. This internal extraction does not change paths, methods, permissions, responses, nftables
+desired state, audit actions, or the global Appliance Apply boundary.</p>
 <!-- BEGIN GENERATED ADDITIONAL SCREENSHOTS -->
 <h2 id="additional-verified-states">Additional verified states<a class="headerlink" href="#additional-verified-states" title="Permanent link">&para;</a></h2>
 <p>These captures show responsive layouts and useful operational states referenced by this page.</p>
