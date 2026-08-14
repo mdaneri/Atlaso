@@ -1,5 +1,10 @@
 # Atlaso
 
+Authenticated primary navigation is organized into accessible, independently collapsible sections. First use keeps
+every authorized section open; later visits restore browser-local choices while always reopening the section that
+contains the current page. Permission-filtered empty sections are never rendered, and the persistent **Review appliance
+changes** card remains outside the disclosures.
+
 Authenticated pages share a lightweight, visibility-aware Appliance Apply status projection. Apply review and
 validation continue to reconcile live host state, while idle sidebar polling never starts privileged helper work. The
 shared task monitor retries transient status failures, follows a completed master to its terminal task record, and keeps
@@ -20,6 +25,8 @@ brings infrastructure, storage, identity, networking, and lifecycle workflows in
   Atlaso name.
 - [Getting started](docs/getting-started/index.md) — choose an appliance path and complete initial setup.
 - [Operations](docs/operate/index.md) — run the appliance and review desired-state changes.
+- [Primary navigation](docs/operate/navigation.md) — collapse authorized sidebar sections, understand active-page
+  reopening, and use the same disclosure behavior at desktop and narrow viewports.
 - [Backup and restore](docs/operate/backup-restore.md) — export desired state and restore it atomically; malformed or
   failed restores leave existing settings and separately staged LDAP recovery material unchanged.
 - [Local appliance console](docs/operate/appliance-console.md) — correct management networking from `tty1` and have

@@ -931,6 +931,48 @@
       "sensitive_data_reviewed": true
     },
     {
+      "path": "assets/screenshots/primary-navigation-collapsed-desktop.webp",
+      "route": "/dashboard",
+      "state": "navigation-partially-collapsed",
+      "viewport": "1600x1000",
+      "source_commit": "d3734de0+working-tree",
+      "atlaso_version": "0.9.142",
+      "caption": "Authenticated primary navigation with independent sections partially collapsed.",
+      "alt": "Atlaso Dashboard with Appliance Setup, Identity and Trust, and VCF Workflows navigation sections collapsed.",
+      "capture_method": "codex-in-app-browser",
+      "documentation_page": "operate/navigation.md",
+      "brand_variant": "light",
+      "sensitive_data_reviewed": true
+    },
+    {
+      "path": "assets/screenshots/primary-navigation-collapsed-responsive.webp",
+      "route": "/dashboard",
+      "state": "navigation-partially-collapsed",
+      "viewport": "900x1200",
+      "source_commit": "d3734de0+working-tree",
+      "atlaso_version": "0.9.142",
+      "caption": "Authenticated primary navigation with complete disclosure rows at the responsive viewport.",
+      "alt": "Atlaso Dashboard responsive layout with independent expanded and collapsed navigation sections.",
+      "capture_method": "codex-in-app-browser",
+      "documentation_page": "operate/navigation.md",
+      "brand_variant": "light",
+      "sensitive_data_reviewed": true
+    },
+    {
+      "path": "assets/screenshots/primary-navigation-expanded-desktop.webp",
+      "route": "/dashboard",
+      "state": "navigation-expanded",
+      "viewport": "1600x1000",
+      "source_commit": "d3734de0+working-tree",
+      "atlaso_version": "0.9.142",
+      "caption": "Authenticated primary navigation with every authorized section expanded.",
+      "alt": "Atlaso Dashboard with all authorized primary navigation sections expanded.",
+      "capture_method": "codex-in-app-browser",
+      "documentation_page": "operate/navigation.md",
+      "brand_variant": "light",
+      "sensitive_data_reviewed": true
+    },
+    {
       "path": "assets/screenshots/routes-wan-clean-desktop.webp",
       "route": "/routes-wan",
       "state": "clean",

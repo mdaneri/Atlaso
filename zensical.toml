@@ -18,6 +18,7 @@ nav = [
   { "Operate" = [
     { "Overview" = "operate/index.md" },
     { "Dashboard" = "operate/dashboard.md" },
+    { "Primary navigation" = "operate/navigation.md" },
     { "Monitor" = "operate/monitor.md" },
     { "Operational logs" = "operate/logs.md" },
     { "Audit log" = "operate/audit-log.md" },

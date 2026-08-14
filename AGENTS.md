@@ -193,6 +193,12 @@ The following cross-cutting boundaries always apply:
   Safe legacy `GET`/`HEAD` bookmarks may redirect only after destination eligibility is proven; bridge legacy mutations
   internally and never replay them through `307`/`308`. Route-inventory coverage must fail for an undeclared human UI
   route. Scope management browser caching to `/ui/management/` and keep public UI caching disabled.
+- Authenticated primary navigation renders only non-empty groups after server-side permission filtering. Each group is
+  an accessible disclosure with a native button, accurate `aria-expanded` and `aria-controls`, and a visible chevron.
+  First use starts every authorized group expanded; browser-local state restores inactive-group choices, while the
+  current page's group always opens without overwriting its saved choice. Keep the global **Review appliance changes**
+  card outside the disclosures and preserve coherent groups at desktop, two-column narrow, and single-column mobile
+  widths.
 - `/ui/management/appliance-apply` is the only desired-state host-mutation workflow.
 - Physical-interface desired-state updates from the API and UI use one atomic domain service. Capture the previous
   IPv4 and IPv6 CIDRs before mutation, refresh dependent service, ESX Storage, Web Terminal, DHCP, and Network Boot

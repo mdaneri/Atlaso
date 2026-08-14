@@ -12,6 +12,21 @@ SOURCE_COMMIT = "0247c34bc85e+working-tree"
 ATLASO_VERSION = "0.9.21"
 
 CAPTURE_OVERRIDES = {
+    "primary-navigation-expanded-desktop": {
+        "source_commit": "d3734de0+working-tree",
+        "atlaso_version": "0.9.142",
+        "capture_method": "codex-in-app-browser",
+    },
+    "primary-navigation-collapsed-desktop": {
+        "source_commit": "d3734de0+working-tree",
+        "atlaso_version": "0.9.142",
+        "capture_method": "codex-in-app-browser",
+    },
+    "primary-navigation-collapsed-responsive": {
+        "source_commit": "d3734de0+working-tree",
+        "atlaso_version": "0.9.142",
+        "capture_method": "codex-in-app-browser",
+    },
     "dhcp-ip-zone-wizard-services-desktop": {
         "source_commit": "1c7f6f653ffd+working-tree",
         "atlaso_version": "0.9.70",
@@ -116,6 +131,7 @@ CAPTURE_OVERRIDES = {
 DOCUMENTATION_PAGES = {
     "getting-started/index.md": ("login-", "services-"),
     "operate/dashboard.md": ("about-", "dashboard-"),
+    "operate/navigation.md": ("primary-navigation-",),
     "operate/audit-log.md": ("audit-log-",),
     "operate/logs.md": ("logs-",),
     "operate/monitor.md": ("monitor-",),
@@ -304,6 +320,24 @@ SPECIAL = {
         "applied",
         "Runtime monitoring after a successful appliance apply.",
         "Atlaso Monitor page showing live appliance runtime metrics after apply.",
+    ),
+    "primary-navigation-collapsed-desktop": (
+        "/dashboard",
+        "navigation-partially-collapsed",
+        "Authenticated primary navigation with independent sections partially collapsed.",
+        "Atlaso Dashboard with Appliance Setup, Identity and Trust, and VCF Workflows navigation sections collapsed.",
+    ),
+    "primary-navigation-collapsed-responsive": (
+        "/dashboard",
+        "navigation-partially-collapsed",
+        "Authenticated primary navigation with complete disclosure rows at the responsive viewport.",
+        "Atlaso Dashboard responsive layout with independent expanded and collapsed navigation sections.",
+    ),
+    "primary-navigation-expanded-desktop": (
+        "/dashboard",
+        "navigation-expanded",
+        "Authenticated primary navigation with every authorized section expanded.",
+        "Atlaso Dashboard with all authorized primary navigation sections expanded.",
     ),
     "managed-ldap-group-members-desktop": (
         "/ldap#groups",
