@@ -1,12 +1,69 @@
 [CmdletBinding(SupportsShouldProcess = $true)]
 param(
     [string]$MgmtHostIPAddress = '192.168.49.254',
+    [ValidateRange(0, 32)]
     [int]$MgmtPrefixLength = 24,
     [bool]$ConfigureMgmtNat = $true,
     [string]$MgmtNatName = 'Atlaso-Mgmt-NAT'
 )
 
 $ErrorActionPreference = 'Stop'
+
+function ConvertTo-Ipv4Integer {
+    param([Parameter(Mandatory = $true)][string]$Address)
+
+    try {
+        $parsedAddress = [System.Net.IPAddress]::Parse($Address)
+    } catch {
+        throw "Expected a canonical IPv4 address, got: $Address"
+    }
+
+    if (
+        $parsedAddress.AddressFamily -ne [System.Net.Sockets.AddressFamily]::InterNetwork -or
+        $parsedAddress.ToString() -cne $Address
+    ) {
+        throw "Expected a canonical IPv4 address, got: $Address"
+    }
+
+    $bytes = $parsedAddress.GetAddressBytes()
+    return (
+        ([uint32]$bytes[0] -shl 24) -bor
+        ([uint32]$bytes[1] -shl 16) -bor
+        ([uint32]$bytes[2] -shl 8) -bor
+        [uint32]$bytes[3]
+    )
+}
+
+function ConvertFrom-Ipv4Integer {
+    param([Parameter(Mandatory = $true)][uint32]$Address)
+
+    $bytes = [byte[]]@(
+        (($Address -shr 24) -band 0xff),
+        (($Address -shr 16) -band 0xff),
+        (($Address -shr 8) -band 0xff),
+        ($Address -band 0xff)
+    )
+    return ([System.Net.IPAddress]::new($bytes)).ToString()
+}
+
+function Get-Ipv4NetworkAddress {
+    param(
+        [Parameter(Mandatory = $true)][string]$Address,
+        [Parameter(Mandatory = $true)][int]$PrefixLength
+    )
+
+    $ip = ConvertTo-Ipv4Integer -Address $Address
+    $mask = if ($PrefixLength -eq 0) {
+        [uint32]0
+    } else {
+        ([uint32]::MaxValue -shl (32 - $PrefixLength))
+    }
+    return ConvertFrom-Ipv4Integer -Address ($ip -band $mask)
+}
+
+# Complete input validation before querying or changing any Hyper-V or host-network state.
+$mgmtNetworkAddress = Get-Ipv4NetworkAddress -Address $MgmtHostIPAddress -PrefixLength $MgmtPrefixLength
+$natPrefix = "$mgmtNetworkAddress/$MgmtPrefixLength"
 
 $switches = @(
     @{ Name = 'Atlaso-Mgmt'; Type = 'Internal' },
@@ -69,8 +126,6 @@ if (-not $existingAddress) {
 }
 
 if ($ConfigureMgmtNat) {
-    $prefixOctets = $MgmtHostIPAddress.Split('.')
-    $natPrefix = "$($prefixOctets[0]).$($prefixOctets[1]).$($prefixOctets[2]).0/$MgmtPrefixLength"
     $existingNat = Get-NetNat -Name $MgmtNatName -ErrorAction SilentlyContinue
     if ($existingNat -and $existingNat.InternalIPInterfaceAddressPrefix -ne $natPrefix) {
         if ($PSCmdlet.ShouldProcess($MgmtNatName, "Replace NAT prefix $($existingNat.InternalIPInterfaceAddressPrefix) with $natPrefix")) {

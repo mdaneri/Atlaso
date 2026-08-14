@@ -508,6 +508,32 @@ def test_photon_kickstart_generator_is_canonical_and_provider_specific(tmp_path)
         assert "| base64 -d | sudo -S -E sh -c" in template
 
 
+def test_hyperv_management_nat_prefix_is_validated_and_canonical():
+    """Verify Hyper-V NAT CIDRs are masked and invalid input fails before mutation."""
+    pwsh = shutil.which("pwsh")
+    if pwsh is None:
+        pytest.skip("PowerShell 7 is not available")
+
+    result = subprocess.run(
+        [
+            pwsh,
+            "-NoLogo",
+            "-NoProfile",
+            "-NonInteractive",
+            "-File",
+            "tests/powershell/Test-CreateHypervSwitches.ps1",
+            "-RepositoryRoot",
+            str(Path.cwd()),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "Hyper-V management NAT prefix tests passed." in result.stdout
+
+
 def test_wsl_build_contract_and_setup_are_pinned_idempotent_and_non_destructive():
     """Verify that wsl build contract and setup are pinned idempotent and non destructive."""
     contract = json.loads(
