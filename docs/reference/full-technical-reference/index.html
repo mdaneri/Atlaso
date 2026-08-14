@@ -4025,9 +4025,31 @@ KMS changes by default.</p>
 VCF Offline Depot at <code>/mnt/atlaso-vcf-offline-depot</code> and one for VCF Backups at <code>/mnt/atlaso-vcf-backups</code>. VMware images
 precede those disks with file-backed Photon OS and Atlaso system-content VMDKs; the latter holds <code>/opt/atlaso</code> and the
 appliance-wide PowerShell modules through required UUID-backed mounts. Keep depot and backup workloads off both payload
-disks. On first boot, <code>atlaso-data-disks.service</code> labels blank attached data disks as <code>ATLASO_DEPOT</code>
-and <code>ATLASO_BKUP</code>, formats them as ext4, persists them in <code>/etc/fstab</code>, and mounts them at those fixed paths before
-<code>atlaso.service</code> starts.</p>
+disks. The root-owned image policy binds <code>ATLASO_DEPOT</code> and <code>ATLASO_BKUP</code> to the platform's fixed SCSI locations, a
+topology-derived <code>atlaso-path-*</code> identity, and an exact 500 GiB capacity. Before the first <code>mkfs</code>,
+<code>atlaso-data-disks.service</code> verifies both disks and rejects missing, extra, reordered, ambiguous, read-only, in-use,
+raw-device-open, or identity/capacity-mismatched devices. It formats only the two verified blank whole disks as ext4,
+persists their
+UUIDs in <code>/etc/fstab</code>, and mounts them at the fixed paths before <code>atlaso.service</code> starts. Existing correctly labeled
+ext4 disks must occupy their assigned identities and are mounted without reformatting. Each occupied or newly mounted
+fixed path must report the expected UUID and resolve its block-device source to the trusted disk identity; a cloned
+duplicate-UUID filesystem therefore fails closed. Once both fixed disks are
+initialized, an additional whole disk is accepted only when it is a stable, writable, partition-free managed ESX
+Storage ext4 volume. Atlaso-formatted disks require their <code>lf-&lt;hash&gt;</code> label and UUID-backed managed fstab entry.
+Every managed ESX disk requires UUID-backed fstab persistence plus an exact root-owned
+<code>/etc/atlaso/esx-storage-disks.conf</code> stable-identity claim. Nginx, the HTTPS bootstrap, control plane, and worker use
+hard systemd requirements on <code>atlaso-data-disks.service</code>, so a failed preflight cannot expose the front door or start
+Atlaso against the empty mount directories. On the first update from a release whose updater does not yet recognize
+these safety assets, the candidate <code>atlaso.service</code> uses its root pre-start gate to install the complete signed asset
+set, migrate exact root-owned claims for applied ESX Storage disks, and run the disk preflight directly. It first backs
+up the database, claim allowlist, and every replaced asset, restoring them and the prior systemd/udev state when the
+migration or preflight fails. After validation succeeds, the permanent control-plane dependency drop-in protects both
+that transitional start and subsequent systemd starts. If the legacy updater later rolls back the application, it
+leaves this validated boundary in place and restarts the previous control plane only when the same disk preflight passes.
+The minimal <code>bootstrap-&lt;version&gt;</code> release created while building a fresh image is explicitly marked and bypasses only
+this previous-updater compatibility step; image provisioning installs and validates the same safety boundary directly.
+The bridge records root-owned one-time completion under <code>/etc/atlaso</code>; later control-plane starts use the permanent
+data-disk systemd dependency without repeating asset backup, identity reload, migration, or direct preparation.</p>
 <p>Atlaso writes operational events to <code>/var/log/atlaso/atlaso.log</code>. Audit events, desired-state edits, and appliance apply
 submissions are mirrored there with sensitive values redacted. The Settings page controls local file verbosity and can
 also forward the same operational events to an external syslog receiver.</p>
@@ -4781,9 +4803,11 @@ family-specific nftables rules. Datastore state is editable through the standard
 a dedicated Connection Instructions tab keeps mount guidance separate from desired-state editing.</p>
 <p>Blank whole disks require stable <code>/dev/disk/by-id</code> identity, complete job-scoped <code>FORMAT &lt;volume-name&gt;</code> authorization,
 immediate safety revalidation, whole-device ext4 formatting, and UUID mounts under <code>/mnt/atlaso-esx-storage</code>; existing
-mounted ext4 volumes are also supported. Global apply stages
+mounted ext4 whole disks are supported only with stable identity, UUID-backed fstab persistence, an active matching
+mount, and a root-owned Atlaso claim. Global apply stages
 <code>/var/lib/atlaso/apply/esx-storage/atlaso-esx-storage.json</code>, manages bind exports under <code>/srv/atlaso/esx-storage</code>, and
-enables <code>rpcbind</code>/<code>nfs-server</code> only while valid shares are active. Removing desired state never deletes stored data.
+enables <code>rpcbind</code>/<code>nfs-server</code> only while valid shares are active. Removing desired state never deletes stored data, and
+a retained UUID mount prevents a different filesystem from reusing the same managed mount path.
 Settings backup/restore includes the service, volume identities, and shares but never format authorization. See
 <a href="../../services/esx-storage/">ESX Storage over NFS</a> for network, DNS, mount, safety, lifecycle, and iSCSI-boundary
 details.</p>

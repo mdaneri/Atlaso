@@ -3681,9 +3681,10 @@ applied.</p>
 <li>An approved blank whole disk. Inventory accepts only a disk with a stable <code>/dev/disk/by-id</code> identity and no
    filesystem, partition, mount, swap use, LVM or RAID membership, holders, existing ESX Storage claim, read-only state,
    or relationship to the operating-system disk.</li>
-<li>An eligible mounted ext4 filesystem. The mount must already exist, must not be an operating-system filesystem, and is
-   revalidated during apply. Filesystems reserved for VCF Backups or VCF Offline Depot / VCFDT are never eligible ESX
-   Storage volumes, including paths below those managed mount roots.</li>
+<li>An eligible mounted ext4 whole disk. It must have a stable <code>/dev/disk/by-id</code> identity, UUID-backed <code>/etc/fstab</code>
+   persistence, no partitions or holders, and an active UUID-matching mount. Apply revalidates the complete contract and
+   writes its exact UUID, stable identity, and mount to root-owned <code>/etc/atlaso/esx-storage-disks.conf</code>. Filesystems
+   reserved for VCF Backups or VCF Offline Depot / VCFDT are never eligible, including paths below those mount roots.</li>
 </ol>
 <p>A newly initialized disk becomes a whole-device ext4 filesystem mounted by filesystem UUID at
 <code>/mnt/atlaso-esx-storage/&lt;volume-slug&gt;</code>. <code>/dev/sdX</code> names are never persisted. The global review displays the complete
@@ -3695,8 +3696,11 @@ topology-derived <code>atlaso-path-*</code> link under <code>/dev/disk/by-id</co
 reviewed and revalidated; <code>/dev/sdX</code> is never accepted.</p>
 <p>The helper inventories the disk again immediately before <code>mkfs.ext4</code>. If any safety property changed, apply stops before
 formatting. Formatting is deliberately not rolled back. If a later mount, export, service, DNS, or firewall step fails,
-the successfully created ext4 filesystem remains intact and an idempotent retry continues from it. V1 has no wipe,
-reformat, or delete-data action.</p>
+the successfully created ext4 filesystem and its UUID-based managed fstab entry remain intact, so boot verification and
+an idempotent retry continue from it. Each formatted disk is persisted before apply advances to another failure-prone
+volume. A retained filesystem keeps ownership of its managed mount path: a later blank volume cannot reuse that path
+with a different UUID, even when it uses the same volume name. Resolve or detach the retained disk before assigning
+that name to another filesystem. V1 has no wipe, reformat, or delete-data action.</p>
 <h2 id="share-paths-and-exports">Share paths and exports<a class="headerlink" href="#share-paths-and-exports" title="Permanent link">&para;</a></h2>
 <p>Share paths are relative to a selected volume. Atlaso rejects an empty/root path, <code>..</code> traversal, symlink escape,
 duplicate datastore names, overlapping exports, and root-plus-child exports. Multiple sibling directories on one volume
@@ -3734,13 +3738,29 @@ on every protocol/family combination in the acceptance topology.</p>
 </span></code></pre></div>
 <p>Global appliance apply is the only mutation path. Dry-run records intended validation, format, UUID mount, bind mount,
 export, DNS, firewall, and service commands without changing the host. Real apply writes a managed <code>/etc/fstab</code> block,
+root-owned stable-identity claims for both formatted and existing disks in <code>/etc/atlaso/esx-storage-disks.conf</code>,
 <code>/etc/exports.d/atlaso-esx-storage.exports</code>, and <code>/etc/nfs.conf.d/atlaso-esx-storage.conf</code>, then refreshes exports and
 services. Reapply recognizes an existing bind target by its mountpoint and filesystem object identity, so a healthy
-share is not mounted again; an unexpected mount at a managed target fails closed instead of being replaced.</p>
+share is not mounted again; an unexpected mount at a managed target fails closed instead of being replaced. At boot,
+nginx, the HTTPS bootstrap, Atlaso control plane, and worker require successful fixed/managed data-disk verification.
+The preflight mounts each positively claimed primary ESX Storage path from its UUID-backed fstab entry when it is not
+already active, then verifies the mounted UUID and block-device source before accepting the extra whole disk. Boot
+safety therefore does not depend on <code>nofail</code> mount-unit timing. Atlaso escapes generated fstab fields and decodes
+standard fstab path escapes before comparing mounted and persisted paths, so a claimed path containing whitespace keeps
+the same identity during apply, release migration, and reboot validation.</p>
+<p>An existing ext4 source must be read-write at its selected mount and cannot have another non-Atlaso mount. Apply rejects
+state that the boot verifier would later reject, preventing a successful configuration change from making the next boot
+fail closed. The root-owned disk claim records whether Atlaso formatted the disk or accepted an existing filesystem;
+boot checks use that source type rather than treating a label pattern as ownership, while formatted-disk claims still
+require their Atlaso <code>lf-&lt;12 hex&gt;</code> filesystem label.</p>
+<p>For a blank fixed disk, the boot helper revalidates the topology link, resolved device, controller, capacity, contents,
+read-only state, holders, raw-device users, and mounts immediately before formatting. The format command uses that
+validated resolved device rather than dereferencing the topology link again.</p>
 <p>Settings backups include the service, volume fingerprints/UUIDs/mounts, and shares but never a format authorization.
 Restore marks volumes for runtime verification before reapply. Factory reset removes Atlaso desired state, exports, and
-service enablement after apply; it does not erase, reformat, or delete files on storage disks. Reattach preserved ext4
-data as an existing mounted volume.</p>
+service enablement after apply; it does not erase, reformat, unmount, detach, or delete files on storage disks. UUID
+disk mounts and exact boot claims remain while preserved disks are attached so they cannot block the next boot; stale
+share bind mounts are removed. Reattach preserved ext4 data as an existing mounted volume.</p>
 <h2 id="troubleshooting">Troubleshooting<a class="headerlink" href="#troubleshooting" title="Permanent link">&para;</a></h2>
 <p>Check both address families independently:</p>
 <div class="language-text highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>dig @&lt;atlaso-dns-ip&gt; nfs-192-168-87-254.&lt;domain&gt; A
