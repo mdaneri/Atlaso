@@ -211,6 +211,11 @@ Hyper-V management network before building:
 pwsh -ExecutionPolicy Bypass -File scripts/windows/hyperv/create-switches.ps1
 ```
 
+Custom management networks use `-MgmtHostIPAddress` with `-MgmtPrefixLength`. The switch script accepts only a
+canonical dotted-decimal IPv4 address and a prefix length from 0 through 32, and validates both before it queries or
+changes Hyper-V or host-network state. It applies the complete 32-bit prefix mask when deriving the NAT network, so
+`10.20.30.129/25` creates `10.20.30.128/25` rather than `10.20.30.0/25`.
+
 The Packer build VM uses the `Atlaso-Mgmt` switch by default with temporary static address `192.168.49.30/24` and
 gateway `192.168.49.254`. This avoids fragile `Default Switch` host-IP detection while still giving the builder NAT
 internet access for `tdnf update`. Unless `-BuilderStaticDns` is supplied, the wrapper discovers the host's active IPv4
