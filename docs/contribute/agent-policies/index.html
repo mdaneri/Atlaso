@@ -2807,6 +2807,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Repository Delivery Workflow">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#focused-local-validation-and-pull-request-follow-through" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Focused local validation and pull-request follow-through
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -3508,6 +3525,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Repository Delivery Workflow">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#focused-local-validation-and-pull-request-follow-through" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Focused local validation and pull-request follow-through
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -3877,6 +3911,23 @@
   status linked to its trusted run, retain diagnostic names for bot-triggered <code>pull_request</code> jobs, and keep trusted and
   diagnostic events in separate concurrency groups so diagnostic work cannot cancel trusted publication. Never grant
   candidate workflow revisions status-write permission.</li>
+</ul>
+<h3 id="focused-local-validation-and-pull-request-follow-through">Focused local validation and pull-request follow-through<a class="headerlink" href="#focused-local-validation-and-pull-request-follow-through" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Run locally only tests focused on the changed behavior, plus every applicable repository, documentation,
+  static-analysis, deployment, and <code>git diff --check</code> validation. Do not run the complete Python test suite locally;
+  GitHub CI's canonical <code>Python tests</code> context owns that complete suite.</li>
+<li>Open every agent-authored pull request ready for review. The ready event triggers the initial Codex review, so do not
+  post a duplicate opening <code>@codex review</code> comment.</li>
+<li>After the pull request is open, use a separate commit-push-review cycle for every later branch change. Push one
+  commit, verify that it is the pull request's exact head, post one <code>@codex review</code> request, and only then begin another
+  commit.</li>
+<li>Keep the originating task active while GitHub evaluates the pull request. Monitor every check for the current exact
+  head and inspect pull-request comments, reviews, and authoritative <code>reviewThreads</code>.</li>
+<li>Address actionable feedback, reply and resolve each handled thread, rerun focused local validation, then commit,
+  push, request <code>@codex review</code>, and restart monitoring for the new exact head. Completion requires successful
+  current-head checks with no unanswered actionable comment or unresolved non-outdated review thread. Escalate genuine
+  maintainer decisions or external failures rather than guessing or reporting completion.</li>
 </ul>
 <h2 id="api-authoring">API authoring<a class="headerlink" href="#api-authoring" title="Permanent link">&para;</a></h2>
 <ul>
@@ -4929,8 +4980,9 @@
 <li>Before committing branch work, run <code>python scripts/check_repo.py</code> or install the local hook with <code>pre-commit install</code>
   so changed Python, Jinja/HTML, Markdown, CSS, JavaScript, JSON, TOML, YAML, PowerShell, and SVG files get
   syntax/content checks. The hook is a fast pre-commit guard and does not replace focused tests.</li>
-<li>Before finalizing UI/backend changes, run focused tests for the touched area when available, then <code>pytest -q</code> for
-  broader confidence. Also run <code>python -m compileall atlaso</code> after broad Python/template-adjacent changes.</li>
+<li>Before finalizing UI/backend changes, run focused tests for the touched area when available. Do not run the complete
+  Python test suite locally; GitHub CI owns it. Also run <code>python -m compileall atlaso</code> after broad
+  Python/template-adjacent changes.</li>
 <li>Before finalizing appliance deployment changes, also run <code>python scripts/check_photon_compatibility.py</code>. If image
   build files changed and Packer is available, run <code>packer fmt</code> and <code>packer validate</code> from the changed image target
   directories such as <code>image/hyperv/</code> and <code>image/vmware-workstation/</code>.</li>

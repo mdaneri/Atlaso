@@ -3470,8 +3470,9 @@ and explicitly exclude their routers from the schema without changing runtime ro
 <p>The check discovers all <code>/api/v1</code> operations automatically. It rejects non-versioned documented paths, duplicate or
 missing operation IDs, missing tags or descriptions, undocumented parameters or recursively exposed schema properties,
 generic success responses, incorrect validation responses, and missing tag or bearer-scheme metadata. Also run the
-affected authorization and service tests, repository checks, Markdown lint, strict documentation build, full test suite
-when warranted, and <code>git diff --check</code>.</p>
+affected authorization and service tests, repository checks, Markdown lint, strict documentation build, and
+<code>git diff --check</code>. Do not run the complete Python test suite locally; GitHub CI's canonical <code>Python tests</code> context owns
+that complete suite.</p>
 
 
 

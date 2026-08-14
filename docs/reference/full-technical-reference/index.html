@@ -5082,13 +5082,13 @@ trunk-like validation networks.</p>
 <p>The first generated or hand-wrapped cmdlets should map cleanly to the OpenAPI operation IDs. Token authentication should
 be preferred for automation. <code>-SkipCertificateCheck</code> may be added for lab testing only and must not be the default.</p>
 <h2 id="tests">Tests<a class="headerlink" href="#tests" title="Permanent link">&para;</a></h2>
-<p>Run:</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-38-1"><a id="__codelineno-38-1" name="__codelineno-38-1" href="#__codelineno-38-1"></a>pytest
-</span><span id="__span-38-2"><a id="__codelineno-38-2" name="__codelineno-38-2" href="#__codelineno-38-2"></a>python<span class="w"> </span>-m<span class="w"> </span>compileall<span class="w"> </span>atlaso
-</span><span id="__span-38-3"><a id="__codelineno-38-3" name="__codelineno-38-3" href="#__codelineno-38-3"></a>python<span class="w"> </span>scripts/check_photon_compatibility.py
+<p>Run the focused pytest files or node selectors for the changed behavior. Then run the applicable broader non-suite
+checks:</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-38-1"><a id="__codelineno-38-1" name="__codelineno-38-1" href="#__codelineno-38-1"></a>python<span class="w"> </span>-m<span class="w"> </span>compileall<span class="w"> </span>atlaso
+</span><span id="__span-38-2"><a id="__codelineno-38-2" name="__codelineno-38-2" href="#__codelineno-38-2"></a>python<span class="w"> </span>scripts/check_photon_compatibility.py
 </span></code></pre></div>
-<p>The MVP test suite covers auth, token revocation, scope enforcement, audit records, UI smoke rendering, and OpenAPI
-contract checks.</p>
+<p>Do not run the complete Python test suite locally. GitHub CI's canonical <code>Python tests</code> context owns the complete suite,
+which covers auth, token revocation, scope enforcement, audit records, UI smoke rendering, and OpenAPI contract checks.</p>
 <!-- BEGIN GENERATED ADDITIONAL SCREENSHOTS -->
 <h2 id="additional-verified-states">Additional verified states<a class="headerlink" href="#additional-verified-states" title="Permanent link">&para;</a></h2>
 <p>These captures show responsive layouts and useful operational states referenced by this page.</p>
