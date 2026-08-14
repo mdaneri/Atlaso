@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import re
+from collections import deque
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from itertools import product
+from functools import cache
 from typing import Any, cast
 
 from fastapi import APIRouter, FastAPI
@@ -16,6 +17,9 @@ _WEBSOCKET_METHOD = "WEBSOCKET"
 _OPAQUE_METHOD = "*"
 _ALLOWED_SHADOWS_ATTRIBUTE = "_atlaso_allowed_route_shadows"
 _FACADE_INCLUSIONS_ATTRIBUTE = "_atlaso_facade_router_inclusions"
+_ROUTE_PARAMETER_PATTERN = re.compile(
+    r"\{([a-zA-Z_][a-zA-Z0-9_]*)(?::[a-zA-Z_][a-zA-Z0-9_]*)?\}"
+)
 
 
 class RouterRegistryError(ValueError):
@@ -34,7 +38,9 @@ def include_facade_router(
         router: Exact facade router object being included.
         **options: Options forwarded to ``FastAPI.include_router``.
     """
+    route_count = len(app.routes)
     app.include_router(router, **options)
+    _propagate_compatible_route_shadows(router, app.routes[route_count:])
     included = getattr(app.state, _FACADE_INCLUSIONS_ATTRIBUTE, ())
     setattr(app.state, _FACADE_INCLUSIONS_ATTRIBUTE, (*included, router))
 
@@ -95,6 +101,23 @@ class _RouteDescriptor:
     identity: RouteIdentity
     allowed_shadows: frozenset[tuple[str, str]]
     is_mount: bool
+
+
+@dataclass(frozen=True)
+class _CharacterClass:
+    """Represent one transition in a standard route convertor language."""
+
+    kind: str
+    literal: str | None = None
+
+
+@dataclass(frozen=True)
+class _PathAutomaton:
+    """Represent a finite automaton for one standard Starlette route path."""
+
+    transitions: tuple[tuple[tuple[_CharacterClass, int], ...], ...]
+    epsilons: tuple[tuple[int, ...], ...]
+    accepting_state: int
 
 
 def _validated_name(value: str, *, kind: str) -> str:
@@ -209,7 +232,55 @@ def allow_compatible_route_shadow(
 def compatible_route_shadows(source: object) -> frozenset[tuple[str, str]]:
     """Return exact compatibility shadows declared on a route source."""
     original = getattr(source, "original_route", source)
-    return frozenset(getattr(original, _ALLOWED_SHADOWS_ATTRIBUTE, ()))
+    return frozenset(
+        {
+            *getattr(source, _ALLOWED_SHADOWS_ATTRIBUTE, ()),
+            *getattr(original, _ALLOWED_SHADOWS_ATTRIBUTE, ()),
+        }
+    )
+
+
+def _propagate_compatible_route_shadows(
+    router: APIRouter,
+    included_routes: Sequence[object],
+) -> None:
+    """Copy explicit shadow declarations onto FastAPI's included route copies."""
+    targets: list[object] = []
+    for route in included_routes:
+        contexts = getattr(route, "effective_route_contexts", None)
+        if callable(contexts):
+            targets.extend(cast(Sequence[object], contexts()))
+        else:
+            targets.append(route)
+
+    for source in _route_sources(router):
+        allowed_shadows = compatible_route_shadows(source)
+        if not allowed_shadows:
+            continue
+        source_original = getattr(source, "original_route", source)
+        source_path = getattr(source, "path", "") or getattr(source_original, "path", "")
+        source_endpoint = getattr(source, "endpoint", None) or getattr(
+            source_original,
+            "endpoint",
+            None,
+        )
+        matching_targets = []
+        for target in targets:
+            target_original = getattr(target, "original_route", target)
+            target_path = getattr(target, "path", "") or getattr(target_original, "path", "")
+            target_endpoint = getattr(target, "endpoint", None) or getattr(
+                target_original,
+                "endpoint",
+                None,
+            )
+            if target_path == source_path and target_endpoint is source_endpoint:
+                matching_targets.append(target)
+        if not matching_targets:
+            raise RouterRegistryError(
+                f"included facade route {source_path!r} lost its compatibility-shadow declaration"
+            )
+        for target in matching_targets:
+            setattr(target, _ALLOWED_SHADOWS_ATTRIBUTE, allowed_shadows)
 
 
 def _route_descriptors(contribution: RouterContribution) -> tuple[_RouteDescriptor, ...]:
@@ -251,64 +322,170 @@ def _route_descriptors(contribution: RouterContribution) -> tuple[_RouteDescript
     return tuple(descriptors)
 
 
-def _route_literal_samples(*paths: str) -> tuple[str, ...]:
-    """Return bounded converter samples derived from route literals."""
-    samples: set[str] = set()
-    for path in paths:
-        for literal_run in re.split(r"\{[^{}]+\}", path):
-            stripped_run = literal_run.strip("/")
-            if not stripped_run:
-                continue
-            samples.add(stripped_run)
-            samples.update(segment for segment in stripped_run.split("/") if segment)
-    return tuple(sorted(samples))
+def _character_class_accepts(character_class: _CharacterClass, character: str) -> bool:
+    """Return whether one transition accepts a concrete character."""
+    if character_class.literal is not None:
+        return character == character_class.literal
+    if character_class.kind == "any":
+        return True
+    if character_class.kind == "non_slash":
+        return character != "/"
+    if character_class.kind == "digit":
+        return character in "0123456789"
+    if character_class.kind == "hex":
+        return character in "0123456789abcdefABCDEF"
+    return False
 
 
-def _route_path_witnesses(
-    path: str,
-    *,
-    literal_samples: Sequence[str] = (),
-) -> tuple[str, ...] | None:
-    """Return concrete paths covering standard convertor intersections."""
-    _, path_format, convertors = compile_path(path)
-    samples = {
-        "FloatConvertor": ("1", "1.5"),
-        "IntegerConvertor": ("1",),
-        "PathConvertor": (
-            "",
-            "value",
-            "value/path",
-            "1",
-            "1.5",
-            "00000000-0000-0000-0000-000000000000",
-        ),
-        "StringConvertor": (
-            "value",
-            "1",
-            "1.5",
-            "00000000-0000-0000-0000-000000000000",
-        ),
-        "UUIDConvertor": ("00000000-0000-0000-0000-000000000000",),
-    }
-    names: list[str] = []
-    choices: list[tuple[str, ...]] = []
-    for name, convertor in convertors.items():
-        convertor_samples = samples.get(type(convertor).__name__)
-        if convertor_samples is None:
-            return None
-        matching_literals = tuple(
-            sample
-            for sample in literal_samples
-            if re.fullmatch(convertor.regex, sample) is not None
+def _character_classes_overlap(first: _CharacterClass, second: _CharacterClass) -> bool:
+    """Return whether two standard route transition classes intersect."""
+    candidates = tuple(
+        dict.fromkeys(
+            (
+                *(value for value in (first.literal, second.literal) if value is not None),
+                "0",
+                "a",
+                "A",
+                "/",
+            )
         )
-        names.append(name)
-        choices.append(tuple(dict.fromkeys((*convertor_samples, *matching_literals))))
-    if not names:
-        return (path,)
-    return tuple(
-        path_format.format(**dict(zip(names, values, strict=True)))
-        for values in product(*choices)
     )
+    return any(
+        _character_class_accepts(first, candidate)
+        and _character_class_accepts(second, candidate)
+        for candidate in candidates
+    )
+
+
+@cache
+def _path_automaton(path: str, *, is_mount: bool = False) -> _PathAutomaton | None:
+    """Build an exact automaton for standard Starlette route convertors."""
+    _, _, convertors = compile_path(path)
+    transitions: list[list[tuple[_CharacterClass, int]]] = [[]]
+    epsilons: list[list[int]] = [[]]
+
+    def new_state() -> int:
+        transitions.append([])
+        epsilons.append([])
+        return len(transitions) - 1
+
+    def add_literal(start: int, literal: str) -> int:
+        current = start
+        for character in literal:
+            following = new_state()
+            transitions[current].append((_CharacterClass("literal", character), following))
+            current = following
+        return current
+
+    def add_one_or_more(start: int, character_class: _CharacterClass) -> int:
+        end = new_state()
+        transitions[start].append((character_class, end))
+        transitions[end].append((character_class, end))
+        return end
+
+    current = 0
+    position = 0
+    for parameter in _ROUTE_PARAMETER_PATTERN.finditer(path):
+        current = add_literal(current, path[position : parameter.start()])
+        convertor = convertors.get(parameter.group(1))
+        convertor_type = type(convertor).__name__
+        if convertor_type == "StringConvertor":
+            current = add_one_or_more(current, _CharacterClass("non_slash"))
+        elif convertor_type == "PathConvertor":
+            end = new_state()
+            transitions[current].append((_CharacterClass("any"), current))
+            epsilons[current].append(end)
+            current = end
+        elif convertor_type == "IntegerConvertor":
+            current = add_one_or_more(current, _CharacterClass("digit"))
+        elif convertor_type == "FloatConvertor":
+            integer = add_one_or_more(current, _CharacterClass("digit"))
+            end = new_state()
+            epsilons[integer].append(end)
+            decimal = new_state()
+            transitions[integer].append((_CharacterClass("literal", "."), decimal))
+            fraction = add_one_or_more(decimal, _CharacterClass("digit"))
+            epsilons[fraction].append(end)
+            current = end
+        elif convertor_type == "UUIDConvertor":
+            for group_index, group_length in enumerate((8, 4, 4, 4, 12)):
+                if group_index:
+                    after_hyphen = new_state()
+                    transitions[current].append(
+                        (_CharacterClass("literal", "-"), after_hyphen)
+                    )
+                    epsilons[current].append(after_hyphen)
+                    current = after_hyphen
+                for _ in range(group_length):
+                    following = new_state()
+                    transitions[current].append((_CharacterClass("hex"), following))
+                    current = following
+        else:
+            return None
+        position = parameter.end()
+    current = add_literal(current, path[position:])
+
+    if is_mount:
+        accepting_state = new_state()
+        epsilons[current].append(accepting_state)
+        if path == "/":
+            transitions[current].append((_CharacterClass("any"), current))
+        else:
+            subtree = new_state()
+            transitions[current].append((_CharacterClass("literal", "/"), subtree))
+            transitions[subtree].append((_CharacterClass("any"), subtree))
+            epsilons[subtree].append(accepting_state)
+    else:
+        accepting_state = current
+
+    return _PathAutomaton(
+        transitions=tuple(tuple(items) for items in transitions),
+        epsilons=tuple(tuple(items) for items in epsilons),
+        accepting_state=accepting_state,
+    )
+
+
+def _epsilon_closure(automaton: _PathAutomaton, state: int) -> frozenset[int]:
+    """Return every state reachable without consuming a character."""
+    closure = {state}
+    pending = [state]
+    while pending:
+        current = pending.pop()
+        for following in automaton.epsilons[current]:
+            if following not in closure:
+                closure.add(following)
+                pending.append(following)
+    return frozenset(closure)
+
+
+def _path_automata_overlap(first: _PathAutomaton, second: _PathAutomaton) -> bool:
+    """Return whether two route-language automata accept a common path."""
+    first_closures = tuple(_epsilon_closure(first, state) for state in range(len(first.transitions)))
+    second_closures = tuple(_epsilon_closure(second, state) for state in range(len(second.transitions)))
+    pending = deque(
+        (first_state, second_state)
+        for first_state in first_closures[0]
+        for second_state in second_closures[0]
+    )
+    visited = set(pending)
+    while pending:
+        first_state, second_state = pending.popleft()
+        if (
+            first_state == first.accepting_state
+            and second_state == second.accepting_state
+        ):
+            return True
+        for first_class, first_following in first.transitions[first_state]:
+            for second_class, second_following in second.transitions[second_state]:
+                if not _character_classes_overlap(first_class, second_class):
+                    continue
+                for first_reachable in first_closures[first_following]:
+                    for second_reachable in second_closures[second_following]:
+                        pair = (first_reachable, second_reachable)
+                        if pair not in visited:
+                            visited.add(pair)
+                            pending.append(pair)
+    return False
 
 
 def route_paths_overlap(path: str, candidate: str, *, is_mount: bool) -> bool:
@@ -322,15 +499,11 @@ def route_paths_overlap(path: str, candidate: str, *, is_mount: bool) -> bool:
     Returns:
         Whether the earlier route would intercept the later fixed path.
     """
-    literal_samples = _route_literal_samples(path, candidate)
-    witnesses = _route_path_witnesses(candidate, literal_samples=literal_samples)
-    if witnesses is None:
+    earlier = _path_automaton(path, is_mount=is_mount)
+    later = _path_automaton(candidate)
+    if earlier is None or later is None:
         return False
-    if is_mount:
-        prefix = f"{path.rstrip('/')}/"
-        return any(witness.startswith(prefix) for witness in witnesses)
-    path_regex, _, _ = compile_path(path)
-    return any(path_regex.fullmatch(witness) is not None for witness in witnesses)
+    return _path_automata_overlap(earlier, later)
 
 
 def _validate_catch_all_order(descriptors: Sequence[_RouteDescriptor]) -> None:

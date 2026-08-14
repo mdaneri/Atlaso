@@ -180,6 +180,7 @@ def test_route_inventory_rejects_broad_parameter_before_narrow_parameter():
     ("earlier_path", "later_path"),
     (
         ("/values/{value:int}", "/values/{value:float}"),
+        ("/values/{value:int}", "/values/{value:uuid}"),
         ("/values/{value:uuid}", "/values/{value:path}"),
     ),
 )
@@ -220,6 +221,23 @@ def test_route_inventory_rejects_overlap_requiring_peer_literal_witness():
         build_route_inventory(app)
 
 
+def test_route_inventory_rejects_overlap_across_adjacent_route_literals():
+    """Compute exact intersections across converter and literal boundaries."""
+    app = FastAPI(openapi_url=None, docs_url=None, redoc_url=None)
+
+    def earlier(value: int) -> dict[str, int]:
+        return {"value": value}
+
+    def later(peer: str) -> dict[str, str]:
+        return {"peer": peer}
+
+    app.add_api_route("/{value:int}b1a", earlier, methods=["GET"])
+    app.add_api_route("/1{peer:str}a", later, methods=["GET"])
+
+    with pytest.raises(RouterContractError, match="must follow route"):
+        build_route_inventory(app)
+
+
 def test_facade_routers_are_included_exactly_once():
     """Keep every stable UI and API facade router included exactly once."""
     for router in (
@@ -241,6 +259,33 @@ def test_facade_inclusion_count_uses_version_independent_tracking():
     include_facade_router(app, router)
 
     assert included_router_count(app, router) == 1
+
+
+def test_facade_include_propagates_compatible_route_shadow_without_provenance():
+    """Retain declarations when copied routes do not expose original_route."""
+    app = FastAPI(openapi_url=None, docs_url=None, redoc_url=None)
+    router = APIRouter()
+
+    def shared(resource: str = "") -> dict[str, str]:
+        return {"resource": resource}
+
+    router.add_api_route("/resources/{resource:path}", shared, methods=["GET"])
+    router.add_api_route("/resources/", shared, methods=["GET"])
+    allow_compatible_route_shadow(
+        router,
+        earlier_path="/resources/{resource:path}",
+        later_path="/resources/",
+        methods=("GET",),
+    )
+
+    include_facade_router(app, router)
+    for route in app.routes:
+        route.__dict__.pop("original_route", None)
+
+    assert [record["path"] for record in build_route_inventory(app)] == [
+        "/resources/{resource:path}",
+        "/resources/",
+    ]
 
 
 def test_normalized_openapi_matches_checked_in_contract():

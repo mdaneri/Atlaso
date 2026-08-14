@@ -230,6 +230,7 @@ def test_registry_rejects_broad_parameter_before_narrow_parameter():
     ("earlier_path", "later_path"),
     (
         ("/values/{value:int}", "/values/{value:float}"),
+        ("/values/{value:int}", "/values/{value:uuid}"),
         ("/values/{value:uuid}", "/values/{value:path}"),
     ),
 )
@@ -271,6 +272,26 @@ def test_registry_rejects_overlap_requiring_peer_literal_witness():
                 RouterContribution(
                     "management",
                     _router("/items/fixed/{second:str}", endpoint_name="later"),
+                ),
+            ),
+        )
+
+
+def test_registry_rejects_overlap_across_adjacent_route_literals():
+    """Compute exact intersections across converter and literal boundaries."""
+    registry = DomainRouterRegistry("test")
+
+    with pytest.raises(RouterRegistryError, match="must follow route"):
+        registry.register(
+            "adjacent_literal_overlap",
+            (
+                RouterContribution(
+                    "management",
+                    _router("/{value:int}b1a", endpoint_name="earlier"),
+                ),
+                RouterContribution(
+                    "management",
+                    _router("/1{peer:str}a", endpoint_name="later"),
                 ),
             ),
         )
