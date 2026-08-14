@@ -198,6 +198,7 @@ REQUIRED_POLICY_MARKERS = {
     Path(".github/pull_request_template.md"): (
         "Closes #",
         "Mandatory Agent Startup Gate",
+        "For an ordinary pull request, focused local tests/checks passed",
         "complete Python test suite",
         "ready for review",
         "each post-opening pushed commit received one `@codex review` request",

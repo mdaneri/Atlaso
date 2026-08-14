@@ -388,6 +388,31 @@ def test_agent_policy_gate_requires_private_complete_python_validation(
         )
 
 
+def test_pr_template_scopes_ci_owned_python_suite_to_ordinary_prs(
+    tmp_path: Path,
+) -> None:
+    """Verify that the CI-owned suite checkbox excludes private-fork PRs.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    write_policy_files(tmp_path)
+    template_path = tmp_path / ".github/pull_request_template.md"
+    marker = "For an ordinary pull request, focused local tests/checks passed"
+    template_path.write_text(
+        template_path.read_text(encoding="utf-8").replace(marker, ""),
+        encoding="utf-8",
+    )
+
+    findings = check_agent_policy_gate(tmp_path)
+
+    assert len(findings) == 1
+    assert findings[0].path == template_path
+    assert findings[0].message == (
+        f"required agent policy marker is missing: {marker}"
+    )
+
+
 def test_agent_policy_gate_rejects_missing_ui_guide(tmp_path: Path) -> None:
     """Verify that agent policy gate rejects missing ui guide.
 

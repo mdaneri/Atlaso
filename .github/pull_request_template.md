@@ -18,7 +18,7 @@ surfaces.
 
 <!-- List commands run and their results. -->
 
-- [ ] Focused local tests/checks passed; GitHub CI owns the complete Python test suite.
+- [ ] For an ordinary pull request, focused local tests/checks passed; GitHub CI owns the complete Python test suite.
 - [ ] `git diff --check` passed.
 - [ ] Relevant documentation is updated.
 - [ ] The linked public issue has exactly one type label: `bug`, `enhancement`, or `documentation`; or this is a private
