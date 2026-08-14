@@ -78,6 +78,23 @@ status: current
   diagnostic events in separate concurrency groups so diagnostic work cannot cancel trusted publication. Never grant
   candidate workflow revisions status-write permission.
 
+### Focused local validation and pull-request follow-through
+
+- Run locally only tests focused on the changed behavior, plus every applicable repository, documentation,
+  static-analysis, deployment, and `git diff --check` validation. Do not run the complete Python test suite locally;
+  GitHub CI's canonical `Python tests` context owns that complete suite.
+- Open every agent-authored pull request ready for review. The ready event triggers the initial Codex review, so do not
+  post a duplicate opening `@codex review` comment.
+- After the pull request is open, use a separate commit-push-review cycle for every later branch change. Push one
+  commit, verify that it is the pull request's exact head, post one `@codex review` request, and only then begin another
+  commit.
+- Keep the originating task active while GitHub evaluates the pull request. Monitor every check for the current exact
+  head and inspect pull-request comments, reviews, and authoritative `reviewThreads`.
+- Address actionable feedback, reply and resolve each handled thread, rerun focused local validation, then commit,
+  push, request `@codex review`, and restart monitoring for the new exact head. Completion requires successful
+  current-head checks with no unanswered actionable comment or unresolved non-outdated review thread. Escalate genuine
+  maintainer decisions or external failures rather than guessing or reporting completion.
+
 ## API authoring
 
 - Follow the [API authoring standard](api-authoring.md) for every new or changed `/api/v1` operation.
@@ -1129,8 +1146,9 @@ status: current
 - Before committing branch work, run `python scripts/check_repo.py` or install the local hook with `pre-commit install`
   so changed Python, Jinja/HTML, Markdown, CSS, JavaScript, JSON, TOML, YAML, PowerShell, and SVG files get
   syntax/content checks. The hook is a fast pre-commit guard and does not replace focused tests.
-- Before finalizing UI/backend changes, run focused tests for the touched area when available, then `pytest -q` for
-  broader confidence. Also run `python -m compileall atlaso` after broad Python/template-adjacent changes.
+- Before finalizing UI/backend changes, run focused tests for the touched area when available. Do not run the complete
+  Python test suite locally; GitHub CI owns it. Also run `python -m compileall atlaso` after broad
+  Python/template-adjacent changes.
 - Before finalizing appliance deployment changes, also run `python scripts/check_photon_compatibility.py`. If image
   build files changed and Packer is available, run `packer fmt` and `packer validate` from the changed image target
   directories such as `image/hyperv/` and `image/vmware-workstation/`.

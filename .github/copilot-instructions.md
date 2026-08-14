@@ -22,6 +22,11 @@ New Tabulators must use `window.AtlasoUiPatterns.createGrid(...)`; every new or 
 - update relevant documentation and validation in the same change;
 - regenerate Python locks only through `python scripts/compile_requirements.py` so every package satisfies the
   seven-day upload-time cutoff;
+- run locally only focused tests and applicable checks; the complete Python test suite belongs to GitHub CI;
+- open pull requests ready for review without a duplicate opening `@codex review`, then request one `@codex review`
+  after every later commit is pushed as the exact head;
+- keep the task active to monitor exact-head checks, comments, reviews, and authoritative review threads through a
+  successful current head with no unresolved actionable feedback;
 - use `Closes #<issue>` in the pull request;
 - follow the security and conduct policies; and
 - never commit directly to `main`.

@@ -51,13 +51,31 @@ advisory as described in `SECURITY.md`.
 2. Create or identify the labeled issue, then describe the intended approach. For private vulnerability remediation,
    identify the draft advisory only on private surfaces instead.
 3. Make the smallest focused change and update relevant documentation in the same pull request.
-4. Run focused tests, `git diff --check`, and the repository validation checks.
-   Python changes must also pass the [static-analysis baseline](docs/contribute/python-static-analysis.md).
+4. Run focused tests, `git diff --check`, and the applicable repository validation checks. GitHub CI owns the complete
+   Python test suite. Python changes must also pass the
+   [static-analysis baseline](docs/contribute/python-static-analysis.md).
 5. Update the branch version with `python scripts/version.py bump --base-root /path/to/main-checkout` when required by
    the pull-request version policy. Version sources are discovered independently in the base and target checkouts so an
    intentional package or module rename can still be validated.
-6. Open a pull request using the template, include `Closes #<issue>`, and provide validation evidence. A temporary-fork
-   security pull request instead records its advisory reference and local validation only on private surfaces.
+6. Open a ready-for-review pull request using the template, include `Closes #<issue>`, and provide validation evidence.
+   A temporary-fork security pull request instead records its advisory reference and local validation only on private
+   surfaces.
+
+### Automated pull-request follow-through
+
+Automated contributors run locally only tests focused on the changed behavior, together with applicable repository,
+documentation, static-analysis, deployment, and diff checks. They must not run the complete Python test suite locally;
+the canonical GitHub CI `Python tests` context supplies that result.
+
+Open agent-authored pull requests ready for review. The ready event starts the initial Codex review, so do not post a
+duplicate opening `@codex review`. For every later commit, complete a commit-push-review cycle before starting another
+change: push the commit, verify it is the pull request's exact head, and post one `@codex review` request.
+
+The originating task remains responsible for the pull request after opening. Monitor all exact-head checks, comments,
+reviews, and authoritative review threads. Address actionable feedback, reply and resolve handled threads, and repeat
+focused validation plus the commit-push-review cycle after every fix. Completion requires successful current-head
+checks and no unanswered actionable comment or unresolved non-outdated review thread. Escalate decisions or external
+failures that require maintainer action.
 
 `main` accepts squash merges only after required checks pass. Do not commit directly to `main`.
 
@@ -143,7 +161,8 @@ before planning implementation, classify the interaction, and name the existing 
 A delegating agent is responsible for including the startup gate in delegated prompts and verifying compliance before
 accepting the delegated work. Changing repositories, worktrees, or working directories requires the gate to be repeated.
 Automation does not waive the issue, label, documentation, validation, version, review, security, or conduct
-requirements in this guide.
+requirements in this guide. Automated contributors must also follow the focused local validation and pull-request
+follow-through workflow above.
 
 ## Security and conduct
 

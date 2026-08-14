@@ -1363,16 +1363,16 @@ be preferred for automation. `-SkipCertificateCheck` may be added for lab testin
 
 ## Tests
 
-Run:
+Run the focused pytest files or node selectors for the changed behavior. Then run the applicable broader non-suite
+checks:
 
 ```bash
-pytest
 python -m compileall atlaso
 python scripts/check_photon_compatibility.py
 ```
 
-The MVP test suite covers auth, token revocation, scope enforcement, audit records, UI smoke rendering, and OpenAPI
-contract checks.
+Do not run the complete Python test suite locally. GitHub CI's canonical `Python tests` context owns the complete suite,
+which covers auth, token revocation, scope enforcement, audit records, UI smoke rendering, and OpenAPI contract checks.
 
 <!-- BEGIN GENERATED ADDITIONAL SCREENSHOTS -->
 ## Additional verified states

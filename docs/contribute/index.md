@@ -22,9 +22,11 @@ status: current
 - [Code of conduct](https://github.com/mdaneri/Atlaso/blob/main/CODE_OF_CONDUCT.md)
 
 Every repository change starts with a labeled issue and ends with a reviewed pull request that closes it. Run the
-focused tests, documentation validation, repository checks, full test suite when warranted, and `git diff --check`
-before delivery.
+focused local tests, documentation validation, applicable repository checks, and `git diff --check` before delivery.
+GitHub CI owns the complete Python test suite. Automated contributors keep the originating task active to follow
+current-head checks, comments, reviews, and review threads through completion.
 
 Validated sensitive vulnerabilities use the private advisory and temporary-fork workflow in the
 [Security policy](https://github.com/mdaneri/Atlaso/blob/main/SECURITY.md) instead of a public issue or public pull
-request. The ordinary version, local validation, and review requirements remain in force.
+request. The ordinary version, local validation, and review requirements remain in force; required local validation
+replaces unavailable GitHub CI for temporary private forks.
