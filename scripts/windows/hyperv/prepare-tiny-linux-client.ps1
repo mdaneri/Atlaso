@@ -9,6 +9,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+$PSNativeCommandUseErrorActionPreference = $false
 
 $repoRoot = Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..\..')
 if (-not $OutputDirectory) {
@@ -20,6 +21,7 @@ New-Item -ItemType Directory -Path $OutputDirectory -Force | Out-Null
 $qcowPath = Join-Path $OutputDirectory $ImageName
 $checksumPath = Join-Path $OutputDirectory "$ImageName.sha512"
 $vhdxPath = Join-Path $OutputDirectory $OutputVhdxName
+$convertedThisRun = $false
 
 if (-not (Get-Command qemu-img -ErrorAction SilentlyContinue)) {
     throw "qemu-img is required to convert Alpine QCOW2 to Hyper-V VHDX."
@@ -51,10 +53,33 @@ if ((Test-Path -LiteralPath $vhdxPath) -and -not $Force) {
     }
     if ($PSCmdlet.ShouldProcess($vhdxPath, 'Convert Alpine QCOW2 to dynamic VHDX')) {
         qemu-img convert -p -f qcow2 -O vhdx -o subformat=dynamic $qcowPath $vhdxPath
+        $convertExitCode = $LASTEXITCODE
+        if ($convertExitCode -ne 0) {
+            if (Test-Path -LiteralPath $vhdxPath) {
+                try {
+                    Remove-Item -LiteralPath $vhdxPath -Force -ErrorAction Stop
+                } catch {
+                    throw "qemu-img convert failed with exit code $convertExitCode, and the partial VHDX could not be removed: $($_.Exception.Message)"
+                }
+            }
+            throw "qemu-img convert failed with exit code $convertExitCode."
+        }
+        $convertedThisRun = $true
     }
 }
 
 $info = qemu-img info $vhdxPath
+$infoExitCode = $LASTEXITCODE
+if ($infoExitCode -ne 0) {
+    if ($convertedThisRun -and (Test-Path -LiteralPath $vhdxPath)) {
+        try {
+            Remove-Item -LiteralPath $vhdxPath -Force -ErrorAction Stop
+        } catch {
+            throw "qemu-img info failed with exit code $infoExitCode, and the unverified VHDX could not be removed: $($_.Exception.Message)"
+        }
+    }
+    throw "qemu-img info failed with exit code $infoExitCode."
+}
 [pscustomobject]@{
     version = $Version
     qcow2 = (Resolve-Path -LiteralPath $qcowPath).Path
