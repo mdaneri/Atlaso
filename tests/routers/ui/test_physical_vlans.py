@@ -464,6 +464,7 @@ def test_physical_interface_edit_updates_desired_state(client):
 
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import (
+        AuditEvent,
         CaSettings,
         DhcpScope,
         DnsRecord,
@@ -596,6 +597,15 @@ def test_physical_interface_edit_updates_desired_state(client):
         assert pxe_record.address == "esxi-pxe-192-168-70-1.atlaso.internal"
         pxe_interface_record = db.execute(select(DnsRecord).where(DnsRecord.hostname == "esxi-pxe-192-168-70-1.atlaso.internal", DnsRecord.record_type == "A")).scalar_one()
         assert pxe_interface_record.address == "192.168.70.1"
+        audit = db.execute(
+            select(AuditEvent)
+            .where(AuditEvent.action == "update_physical_interface")
+            .order_by(AuditEvent.id.desc())
+        ).scalars().first()
+        assert audit is not None
+        assert audit.resource_id == "eth2"
+        assert "DNS" in (audit.detail or "")
+        assert "DHCP" in (audit.detail or "")
 
 
 def test_interface_dns_alias_refresh_reports_real_changes_and_includes_esx_storage(

@@ -139,7 +139,9 @@ Route ownership and staged domain extraction must also follow the
 [router architecture](docs/contribute/router-architecture.md): retain the stable UI/API facades, deterministic
 registries, dependency direction, exact route inventory, and normalized OpenAPI contract.
 Physical-interface and VLAN transport handlers and tests belong to their domain router modules; keep facade imports
-compatible and leave shared mutation/reconciliation service consolidation to its separately scoped phase.
+compatible. Physical-interface transports must delegate typed desired-state changes to the domain service, which owns
+the interface, dependent-row, and audit transaction; retain the lower-level reconciliation helper only as a documented
+compatibility seam for callers that already own a wider transaction.
 
 ## Canonical implementation policies
 
