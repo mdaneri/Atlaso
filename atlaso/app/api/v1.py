@@ -4,7 +4,7 @@ import json
 import re
 import socket
 from datetime import datetime
-from ipaddress import ip_address, ip_interface, ip_network
+from ipaddress import ip_interface
 from pathlib import Path
 from typing import Annotated, Any
 from uuid import UUID, uuid4
@@ -59,10 +59,8 @@ from atlaso.app.models import (
     LdapRecoveryArchive,
     LdapSettings,
     LdapUser,
-    NatRule,
     NtpSettings,
     PhysicalInterface,
-    Route,
     RoutingRule,
     ServiceState,
     Setting,
@@ -81,9 +79,15 @@ from atlaso.app.models import (
 )
 from atlaso.app.openapi import DocumentedAPIRoute
 from atlaso.app.routers.api_v1 import API_V1_ROUTER_REGISTRY
+from atlaso.app.routers.api_v1.firewall import FirewallApiDependencies
+from atlaso.app.routers.api_v1.firewall import build_router as build_firewall_api_router
 from atlaso.app.routers.api_v1.physical_vlans import PhysicalVlanApiDependencies
 from atlaso.app.routers.api_v1.physical_vlans import (
     build_router as build_physical_vlan_api_router,
+)
+from atlaso.app.routers.api_v1.routes_wan import RoutesWanApiDependencies
+from atlaso.app.routers.api_v1.routes_wan import (
+    build_router as build_routes_wan_api_router,
 )
 from atlaso.app.routers.registry import RouterContribution
 from atlaso.app.schemas import (
@@ -133,11 +137,6 @@ from atlaso.app.schemas import (
     EsxStorageVolumeCreate,
     EsxStorageVolumeResponse,
     EsxStorageVolumeUpdate,
-    FirewallRuleCreate,
-    FirewallRuleResponse,
-    FirewallSettingsResponse,
-    FirewallSettingsUpdate,
-    FirewallStatusResponse,
     IdentityResponse,
     JobResponse,
     LdapBindCredentialResponse,
@@ -157,11 +156,7 @@ from atlaso.app.schemas import (
     LdapVcfInspectionResponse,
     LdapVcfInspectRequest,
     MonitorResponse,
-    NatRuleCreate,
-    NatRuleResponse,
     PhysicalInterfaceResponse,
-    RouteCreate,
-    RouteResponse,
     ServiceActionResponse,
     ServiceStateResponse,
     SettingsResponse,
@@ -184,9 +179,7 @@ from atlaso.app.schemas import (
     VsphereTrustedVcenterCreate,
     VsphereTrustedVcenterResponse,
     VsphereTrustedVcenterUpdate,
-    WanPolicyCreate,
     WanPolicyResponse,
-    WanStatusResponse,
 )
 from atlaso.app.security import (
     Identity,
@@ -284,7 +277,6 @@ from atlaso.app.services.esxi_pxe import (
     validate_kickstart_vault_references,
 )
 from atlaso.app.services.firewall import (
-    FIREWALL_POLICIES,
     FIREWALL_SOURCE_GROUPS_SETTING_KEY,
     FIREWALL_STAGED_CONFIG_PATH,
     ca_portal_firewall_interfaces,
@@ -293,7 +285,6 @@ from atlaso.app.services.firewall import (
     managed_routing_firewall_rules,
     managed_service_firewall_rules,
     render_nftables_config,
-    validate_firewall_rule,
     validate_firewall_source_groups,
     validate_firewall_state,
 )
@@ -336,7 +327,6 @@ from atlaso.app.services.networking import (
     normalize_interface_role,
 )
 from atlaso.app.services.ntp import default_ntp_upstream_fields
-from atlaso.app.services.routes_wan import validate_nat_source
 from atlaso.app.services.service_registry import (
     SERVICE_STATE_IDS,
     SERVICE_SYSTEMD_UNITS,
@@ -1250,544 +1240,38 @@ enable_vlan = _physical_vlans_api.endpoints["enable_vlan"]
 disable_vlan = _physical_vlans_api.endpoints["disable_vlan"]
 apply_vlan = _physical_vlans_api.endpoints["apply_vlan"]
 
+_routes_wan_api = build_routes_wan_api_router(
+    RoutesWanApiDependencies(setting_value=lambda db, key: setting_value(db, key))
+)
+routes_wan_router = _routes_wan_api.router
+list_routes = _routes_wan_api.endpoints["list_routes"]
+route_response = _routes_wan_api.endpoints["route_response"]
+route_target_names = _routes_wan_api.endpoints["route_target_names"]
+validate_route_payload = _routes_wan_api.endpoints["validate_route_payload"]
+create_route = _routes_wan_api.endpoints["create_route"]
+get_route = _routes_wan_api.endpoints["get_route"]
+update_route = _routes_wan_api.endpoints["update_route"]
+delete_route = _routes_wan_api.endpoints["delete_route"]
+enable_route = _routes_wan_api.endpoints["enable_route"]
+disable_route = _routes_wan_api.endpoints["disable_route"]
+assign_route_wan_policy = _routes_wan_api.endpoints["assign_route_wan_policy"]
+clear_route_wan_policy = _routes_wan_api.endpoints["clear_route_wan_policy"]
+list_wan_policies = _routes_wan_api.endpoints["list_wan_policies"]
+create_wan_policy = _routes_wan_api.endpoints["create_wan_policy"]
+get_wan_policy = _routes_wan_api.endpoints["get_wan_policy"]
+update_wan_policy = _routes_wan_api.endpoints["update_wan_policy"]
+delete_wan_policy = _routes_wan_api.endpoints["delete_wan_policy"]
+nat_outbound_target_names = _routes_wan_api.endpoints["nat_outbound_target_names"]
+nat_source_group_ids = _routes_wan_api.endpoints["nat_source_group_ids"]
+validate_nat_rule_payload = _routes_wan_api.endpoints["validate_nat_rule_payload"]
+list_nat_rules = _routes_wan_api.endpoints["list_nat_rules"]
+create_nat_rule = _routes_wan_api.endpoints["create_nat_rule"]
+get_nat_rule = _routes_wan_api.endpoints["get_nat_rule"]
+update_nat_rule = _routes_wan_api.endpoints["update_nat_rule"]
+delete_nat_rule = _routes_wan_api.endpoints["delete_nat_rule"]
+get_wan_status = _routes_wan_api.endpoints["get_wan_status"]
+
 router = APIRouter(prefix="/api/v1", route_class=DocumentedAPIRoute)
-@router.get("/routes", response_model=list[RouteResponse], tags=["Routes"], operation_id="listRoutes")
-def list_routes(identity: Annotated[Identity, Depends(require_scope("read:routes"))], db: Session = Depends(get_db)) -> list[RouteResponse]:
-    """List Routes.
-
-    Requires the `read:routes` API scope. This read-only operation does not change saved desired
-    state or appliance runtime state.
-
-    Args:
-        identity: Authenticated identity authorizing the operation.
-        db: Active database session used by the operation.
-    """
-    rows = db.execute(select(Route).options(selectinload(Route.wan_policy)).order_by(Route.destination_cidr)).scalars().all()
-    return [route_response(row) for row in rows]
-
-
-def route_response(route: Route) -> RouteResponse:
-    """Return route response.
-
-    Args:
-        route: Route consumed by route response.
-    """
-    return RouteResponse(
-        id=route.id,
-        destination_cidr=route.destination_cidr,
-        gateway=route.gateway,
-        interface_name=route.interface_name,
-        metric=route.metric,
-        enabled=route.enabled,
-        wan_policy_id=route.wan_policy_id,
-        wan_mode="interface",
-        wan_policy=WanPolicyResponse.model_validate(route.wan_policy) if route.wan_policy else None,
-    )
-
-
-def route_target_names(db: Session) -> set[str]:
-    """Return route target names.
-
-    Args:
-        db: Active database session.
-    """
-    interfaces = db.execute(select(PhysicalInterface).order_by(PhysicalInterface.name)).scalars().all()
-    vlans = db.execute(select(VlanInterface).order_by(VlanInterface.name)).scalars().all()
-    names = {
-        interface.name
-        for interface in interfaces
-        if interface.oper_state != "missing"
-        and normalize_interface_mode(interface.mode) != "trunk"
-        and (interface.role or "").strip().lower() != "management"
-        and (interface.ip_cidr or interface.ipv6_cidr)
-    }
-    names.update({vlan.name for vlan in vlans if vlan.enabled and (vlan.role or "").strip().lower() != "management" and (vlan.ip_cidr or vlan.ipv6_cidr)})
-    return names
-
-
-def validate_route_payload(payload: RouteCreate, db: Session) -> None:
-    """Validate route payload.
-
-    Args:
-        payload: Validated request or operation payload.
-        db: Active database session.
-
-    Raises:
-        HTTPException: If the request cannot be fulfilled.
-    """
-    try:
-        destination = ip_network(payload.destination_cidr, strict=False)
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail=f"{payload.destination_cidr} is not a valid destination CIDR.") from exc
-    if payload.gateway:
-        try:
-            gateway = ip_address(payload.gateway)
-        except ValueError as exc:
-            raise HTTPException(status_code=422, detail=f"{payload.gateway} is not a valid gateway IP address.") from exc
-        if gateway.version != destination.version:
-            raise HTTPException(status_code=422, detail="Route gateway family must match the destination CIDR family.")
-    if payload.interface_name not in route_target_names(db):
-        raise HTTPException(status_code=422, detail="Choose an access physical interface or enabled VLAN interface with an IP CIDR.")
-    if payload.metric < 0:
-        raise HTTPException(status_code=422, detail="Route metric cannot be negative.")
-
-
-@router.post("/routes", response_model=RouteResponse, status_code=201, tags=["Routes"], operation_id="createRoute")
-def create_route(payload: RouteCreate, identity: Annotated[Identity, Depends(require_scope("write:routes"))], db: Session = Depends(get_db)) -> RouteResponse:
-    """Create Route.
-
-    Requires the `write:routes` API scope. The operation changes saved Atlaso application state; any
-    appliance host enforcement remains subject to the documented apply or task boundary for the
-    resource.
-
-    Args:
-        payload: Validated request or task payload consumed by the operation.
-        identity: Authenticated identity authorizing the operation.
-        db: Active database session used by the operation.
-    """
-    validate_route_payload(payload, db)
-    route = Route(**payload.model_dump())
-    db.add(route)
-    db.commit()
-    db.refresh(route)
-    record_audit(db, actor=identity.username, action="create_route", resource_type="route", resource_id=str(route.id))
-    return route_response(db.get(Route, route.id))
-
-
-@router.get("/routes/{route_id}", response_model=RouteResponse, tags=["Routes"], operation_id="getRoute")
-def get_route(route_id: Annotated[int, ApiPath(description='Unique identifier of the route record addressed by this operation.')], identity: Annotated[Identity, Depends(require_scope("read:routes"))], db: Session = Depends(get_db)) -> RouteResponse:
-    """Get Route.
-
-    Requires the `read:routes` API scope. This read-only operation does not change saved desired
-    state or appliance runtime state.
-
-    Args:
-        route_id: Stable identifier of the associated route resource.
-        identity: Authenticated identity authorizing the operation.
-        db: Active database session used by the operation.
-    """
-    route = db.execute(select(Route).options(selectinload(Route.wan_policy)).where(Route.id == route_id)).scalar_one_or_none()
-    if not route:
-        raise HTTPException(status_code=404, detail="Route not found")
-    return route_response(route)
-
-
-@router.patch("/routes/{route_id}", response_model=RouteResponse, tags=["Routes"], operation_id="updateRoute")
-def update_route(route_id: Annotated[int, ApiPath(description='Unique identifier of the route record addressed by this operation.')], payload: RouteCreate, identity: Annotated[Identity, Depends(require_scope("write:routes"))], db: Session = Depends(get_db)) -> RouteResponse:
-    """Update Route.
-
-    Requires the `write:routes` API scope. The operation updates saved Atlaso state and does not
-    bypass the documented global Appliance Apply or service lifecycle boundary.
-
-    Args:
-        route_id: Stable identifier of the associated route resource.
-        payload: Validated request or task payload consumed by the operation.
-        identity: Authenticated identity authorizing the operation.
-        db: Active database session used by the operation.
-    """
-    route = db.get(Route, route_id)
-    if not route:
-        raise HTTPException(status_code=404, detail="Route not found")
-    validate_route_payload(payload, db)
-    for key, value in payload.model_dump().items():
-        setattr(route, key, value)
-    db.commit()
-    record_audit(db, actor=identity.username, action="update_route", resource_type="route", resource_id=str(route_id))
-    return get_route(route_id, identity, db)
-
-
-@router.delete("/routes/{route_id}", status_code=204, tags=["Routes"], operation_id="deleteRoute")
-def delete_route(route_id: Annotated[int, ApiPath(description='Unique identifier of the route record addressed by this operation.')], identity: Annotated[Identity, Depends(require_scope("write:routes"))], db: Session = Depends(get_db)) -> Response:
-    """Delete Route.
-
-    Requires the `write:routes` API scope. Removal or revocation takes effect in Atlaso application
-    state; appliance host changes remain subject to the documented apply boundary for the resource.
-
-    Args:
-        route_id: Stable identifier of the associated route resource.
-        identity: Authenticated identity authorizing the operation.
-        db: Active database session used by the operation.
-    """
-    route = db.get(Route, route_id)
-    if not route:
-        raise HTTPException(status_code=404, detail="Route not found")
-    db.delete(route)
-    db.commit()
-    record_audit(db, actor=identity.username, action="delete_route", resource_type="route", resource_id=str(route_id))
-    return Response(status_code=204)
-
-
-@router.post("/routes/{route_id}/enable", response_model=RouteResponse, tags=["Routes"], operation_id="enableRoute")
-def enable_route(route_id: Annotated[int, ApiPath(description='Unique identifier of the route record addressed by this operation.')], identity: Annotated[Identity, Depends(require_scope("write:routes"))], db: Session = Depends(get_db)) -> RouteResponse:
-    """Enable Route.
-
-    Requires the `write:routes` API scope. The operation changes saved Atlaso application state; any
-    appliance host enforcement remains subject to the documented apply or task boundary for the
-    resource.
-
-    Args:
-        route_id: Stable identifier of the associated route resource.
-        identity: Authenticated identity authorizing the operation.
-        db: Active database session used by the operation.
-    """
-    route = db.get(Route, route_id)
-    if not route:
-        raise HTTPException(status_code=404, detail="Route not found")
-    route.enabled = True
-    db.commit()
-    record_audit(db, actor=identity.username, action="enable_route", resource_type="route", resource_id=str(route_id))
-    return get_route(route_id, identity, db)
-
-
-@router.post("/routes/{route_id}/disable", response_model=RouteResponse, tags=["Routes"], operation_id="disableRoute")
-def disable_route(route_id: Annotated[int, ApiPath(description='Unique identifier of the route record addressed by this operation.')], identity: Annotated[Identity, Depends(require_scope("write:routes"))], db: Session = Depends(get_db)) -> RouteResponse:
-    """Disable Route.
-
-    Requires the `write:routes` API scope. The operation changes saved Atlaso application state; any
-    appliance host enforcement remains subject to the documented apply or task boundary for the
-    resource.
-
-    Args:
-        route_id: Stable identifier of the associated route resource.
-        identity: Authenticated identity authorizing the operation.
-        db: Active database session used by the operation.
-    """
-    route = db.get(Route, route_id)
-    if not route:
-        raise HTTPException(status_code=404, detail="Route not found")
-    route.enabled = False
-    db.commit()
-    record_audit(db, actor=identity.username, action="disable_route", resource_type="route", resource_id=str(route_id))
-    return get_route(route_id, identity, db)
-
-
-@router.post("/routes/{route_id}/wan-policy", response_model=RouteResponse, tags=["Routes"], operation_id="assignRouteWanPolicy")
-def assign_route_wan_policy(
-    route_id: Annotated[int, ApiPath(description='Unique identifier of the route record addressed by this operation.')],
-    wan_policy_id: Annotated[int, Query(description='Unique identifier of the wan policy record addressed by this operation.')],
-    identity: Annotated[Identity, Depends(require_scope("write:routes"))],
-    db: Session = Depends(get_db),
-) -> RouteResponse:
-    """Assign Route Wan Policy.
-
-    Requires the `write:routes` API scope. The operation changes saved Atlaso application state; any
-    appliance host enforcement remains subject to the documented apply or task boundary for the
-    resource.
-
-    Args:
-        route_id: Stable identifier of the associated route resource.
-        wan_policy_id: Stable identifier of the associated WAN policy resource.
-        identity: Authenticated identity authorizing the operation.
-        db: Active database session used by the operation.
-    """
-    route = db.get(Route, route_id)
-    policy = db.get(WanPolicy, wan_policy_id)
-    if not route or not policy:
-        raise HTTPException(status_code=404, detail="Route or WAN policy not found")
-    route.wan_policy_id = policy.id
-    db.commit()
-    record_audit(db, actor=identity.username, action="assign_wan_policy", resource_type="route", resource_id=str(route_id))
-    return get_route(route_id, identity, db)
-
-
-@router.delete("/routes/{route_id}/wan-policy", response_model=RouteResponse, tags=["Routes"], operation_id="clearRouteWanPolicy")
-def clear_route_wan_policy(route_id: Annotated[int, ApiPath(description='Unique identifier of the route record addressed by this operation.')], identity: Annotated[Identity, Depends(require_scope("write:routes"))], db: Session = Depends(get_db)) -> RouteResponse:
-    """Clear Route Wan Policy.
-
-    Requires the `write:routes` API scope. Removal or revocation takes effect in Atlaso application
-    state; appliance host changes remain subject to the documented apply boundary for the resource.
-
-    Args:
-        route_id: Stable identifier of the associated route resource.
-        identity: Authenticated identity authorizing the operation.
-        db: Active database session used by the operation.
-    """
-    route = db.get(Route, route_id)
-    if not route:
-        raise HTTPException(status_code=404, detail="Route not found")
-    route.wan_policy_id = None
-    db.commit()
-    record_audit(db, actor=identity.username, action="clear_route_wan_policy", resource_type="route", resource_id=str(route_id))
-    return get_route(route_id, identity, db)
-
-
-@router.get("/wan/policies", response_model=list[WanPolicyResponse], tags=["WAN"], operation_id="listWanPolicies")
-def list_wan_policies(identity: Annotated[Identity, Depends(require_scope("read:wan"))], db: Session = Depends(get_db)) -> list[WanPolicyResponse]:
-    """List Wan Policies.
-
-    Requires the `read:wan` API scope. This read-only operation does not change saved desired state
-    or appliance runtime state.
-
-    Args:
-        identity: Authenticated identity authorizing the operation.
-        db: Active database session used by the operation.
-    """
-    return [WanPolicyResponse.model_validate(row) for row in db.execute(select(WanPolicy).order_by(WanPolicy.name)).scalars().all()]
-
-
-@router.post("/wan/policies", response_model=WanPolicyResponse, status_code=201, tags=["WAN"], operation_id="createWanPolicy")
-def create_wan_policy(payload: WanPolicyCreate, identity: Annotated[Identity, Depends(require_scope("write:wan"))], db: Session = Depends(get_db)) -> WanPolicyResponse:
-    """Create Wan Policy.
-
-    Requires the `write:wan` API scope. The operation changes saved Atlaso application state; any
-    appliance host enforcement remains subject to the documented apply or task boundary for the
-    resource.
-
-    Args:
-        payload: Validated request or task payload consumed by the operation.
-        identity: Authenticated identity authorizing the operation.
-        db: Active database session used by the operation.
-    """
-    policy = WanPolicy(**payload.model_dump())
-    db.add(policy)
-    db.commit()
-    db.refresh(policy)
-    record_audit(db, actor=identity.username, action="create_wan_policy", resource_type="wan_policy", resource_id=str(policy.id))
-    return WanPolicyResponse.model_validate(policy)
-
-
-@router.get("/wan/policies/{policy_id}", response_model=WanPolicyResponse, tags=["WAN"], operation_id="getWanPolicy")
-def get_wan_policy(policy_id: Annotated[int, ApiPath(description='Unique identifier of the policy record addressed by this operation.')], identity: Annotated[Identity, Depends(require_scope("read:wan"))], db: Session = Depends(get_db)) -> WanPolicyResponse:
-    """Get Wan Policy.
-
-    Requires the `read:wan` API scope. This read-only operation does not change saved desired state
-    or appliance runtime state.
-
-    Args:
-        policy_id: Stable identifier of the associated policy resource.
-        identity: Authenticated identity authorizing the operation.
-        db: Active database session used by the operation.
-    """
-    policy = db.get(WanPolicy, policy_id)
-    if not policy:
-        raise HTTPException(status_code=404, detail="WAN policy not found")
-    return WanPolicyResponse.model_validate(policy)
-
-
-@router.patch("/wan/policies/{policy_id}", response_model=WanPolicyResponse, tags=["WAN"], operation_id="updateWanPolicy")
-def update_wan_policy(policy_id: Annotated[int, ApiPath(description='Unique identifier of the policy record addressed by this operation.')], payload: WanPolicyCreate, identity: Annotated[Identity, Depends(require_scope("write:wan"))], db: Session = Depends(get_db)) -> WanPolicyResponse:
-    """Update Wan Policy.
-
-    Requires the `write:wan` API scope. The operation updates saved Atlaso state and does not bypass
-    the documented global Appliance Apply or service lifecycle boundary.
-
-    Args:
-        policy_id: Stable identifier of the associated policy resource.
-        payload: Validated request or task payload consumed by the operation.
-        identity: Authenticated identity authorizing the operation.
-        db: Active database session used by the operation.
-    """
-    policy = db.get(WanPolicy, policy_id)
-    if not policy:
-        raise HTTPException(status_code=404, detail="WAN policy not found")
-    for key, value in payload.model_dump().items():
-        setattr(policy, key, value)
-    db.commit()
-    db.refresh(policy)
-    record_audit(db, actor=identity.username, action="update_wan_policy", resource_type="wan_policy", resource_id=str(policy.id))
-    return WanPolicyResponse.model_validate(policy)
-
-
-@router.delete("/wan/policies/{policy_id}", status_code=204, tags=["WAN"], operation_id="deleteWanPolicy")
-def delete_wan_policy(policy_id: Annotated[int, ApiPath(description='Unique identifier of the policy record addressed by this operation.')], identity: Annotated[Identity, Depends(require_scope("write:wan"))], db: Session = Depends(get_db)) -> Response:
-    """Delete Wan Policy.
-
-    Requires the `write:wan` API scope. Removal or revocation takes effect in Atlaso application
-    state; appliance host changes remain subject to the documented apply boundary for the resource.
-
-    Args:
-        policy_id: Stable identifier of the associated policy resource.
-        identity: Authenticated identity authorizing the operation.
-        db: Active database session used by the operation.
-    """
-    policy = db.get(WanPolicy, policy_id)
-    if not policy:
-        raise HTTPException(status_code=404, detail="WAN policy not found")
-    db.delete(policy)
-    db.commit()
-    record_audit(db, actor=identity.username, action="delete_wan_policy", resource_type="wan_policy", resource_id=str(policy_id))
-    return Response(status_code=204)
-
-
-def nat_outbound_target_names(db: Session) -> set[str]:
-    """Return nat outbound target names.
-
-    Args:
-        db: Active database session.
-    """
-    interfaces = db.execute(select(PhysicalInterface).order_by(PhysicalInterface.name)).scalars().all()
-    vlans = db.execute(select(VlanInterface).order_by(VlanInterface.name)).scalars().all()
-    names = {
-        interface.name
-        for interface in interfaces
-        if interface.ip_cidr and interface.oper_state != "missing" and normalize_interface_mode(interface.mode) != "trunk"
-    }
-    names.update({vlan.name for vlan in vlans if vlan.enabled and vlan.ip_cidr})
-    return names
-
-
-def nat_source_group_ids(db: Session) -> set[str]:
-    """Return nat source group ids.
-
-    Args:
-        db: Active database session.
-    """
-    interfaces = db.execute(select(PhysicalInterface).order_by(PhysicalInterface.name)).scalars().all()
-    vlans = db.execute(select(VlanInterface).order_by(VlanInterface.name)).scalars().all()
-    networks = firewall_interface_networks(interfaces, vlans)
-    state = firewall_source_group_state(setting_value(db, FIREWALL_SOURCE_GROUPS_SETTING_KEY), networks)
-    return {str(group.get("id", "")) for group in state["groups"]}
-
-
-def validate_nat_rule_payload(payload: NatRuleCreate, db: Session) -> None:
-    """Validate nat rule payload.
-
-    Args:
-        payload: Validated request or operation payload.
-        db: Active database session.
-
-    Raises:
-        HTTPException: If the request cannot be fulfilled.
-    """
-    source_groups = firewall_source_group_state(setting_value(db, FIREWALL_SOURCE_GROUPS_SETTING_KEY), firewall_interface_networks(db.execute(select(PhysicalInterface)).scalars().all(), db.execute(select(VlanInterface)).scalars().all()))["groups"]
-    source_errors = validate_nat_source(payload.source, nat_source_group_ids(db), source_groups)
-    if source_errors:
-        raise HTTPException(status_code=422, detail=source_errors[0])
-    if payload.outbound_interface not in nat_outbound_target_names(db):
-        raise HTTPException(status_code=422, detail="Choose an access physical interface or enabled VLAN interface with an IP CIDR.")
-    if not payload.masquerade:
-        raise HTTPException(status_code=422, detail="NAT v1 supports masquerade only.")
-
-
-@router.get("/nat/rules", response_model=list[NatRuleResponse], tags=["NAT"], operation_id="listNatRules")
-def list_nat_rules(identity: Annotated[Identity, Depends(require_scope("read:wan"))], db: Session = Depends(get_db)) -> list[NatRuleResponse]:
-    """List Nat Rules.
-
-    Requires the `read:wan` API scope. This read-only operation does not change saved desired state
-    or appliance runtime state.
-
-    Args:
-        identity: Authenticated identity authorizing the operation.
-        db: Active database session used by the operation.
-    """
-    rows = db.execute(select(NatRule).order_by(NatRule.priority, NatRule.name)).scalars().all()
-    return [NatRuleResponse.model_validate(row) for row in rows]
-
-
-@router.post("/nat/rules", response_model=NatRuleResponse, status_code=201, tags=["NAT"], operation_id="createNatRule")
-def create_nat_rule(payload: NatRuleCreate, identity: Annotated[Identity, Depends(require_scope("write:wan"))], db: Session = Depends(get_db)) -> NatRuleResponse:
-    """Create Nat Rule.
-
-    Requires the `write:wan` API scope. The operation changes saved Atlaso application state; any
-    appliance host enforcement remains subject to the documented apply or task boundary for the
-    resource.
-
-    Args:
-        payload: Validated request or task payload consumed by the operation.
-        identity: Authenticated identity authorizing the operation.
-        db: Active database session used by the operation.
-    """
-    validate_nat_rule_payload(payload, db)
-    rule = NatRule(**payload.model_dump())
-    db.add(rule)
-    try:
-        db.commit()
-    except IntegrityError:
-        db.rollback()
-        raise HTTPException(status_code=409, detail=f"NAT rule {rule.name} already exists") from None
-    db.refresh(rule)
-    record_audit(db, actor=identity.username, action="create_nat_rule", resource_type="nat_rule", resource_id=str(rule.id))
-    return NatRuleResponse.model_validate(rule)
-
-
-@router.get("/nat/rules/{rule_id}", response_model=NatRuleResponse, tags=["NAT"], operation_id="getNatRule")
-def get_nat_rule(rule_id: Annotated[int, ApiPath(description='Unique identifier of the rule record addressed by this operation.')], identity: Annotated[Identity, Depends(require_scope("read:wan"))], db: Session = Depends(get_db)) -> NatRuleResponse:
-    """Get Nat Rule.
-
-    Requires the `read:wan` API scope. This read-only operation does not change saved desired state
-    or appliance runtime state.
-
-    Args:
-        rule_id: Stable identifier of the associated rule resource.
-        identity: Authenticated identity authorizing the operation.
-        db: Active database session used by the operation.
-    """
-    rule = db.get(NatRule, rule_id)
-    if not rule:
-        raise HTTPException(status_code=404, detail="NAT rule not found")
-    return NatRuleResponse.model_validate(rule)
-
-
-@router.patch("/nat/rules/{rule_id}", response_model=NatRuleResponse, tags=["NAT"], operation_id="updateNatRule")
-def update_nat_rule(rule_id: Annotated[int, ApiPath(description='Unique identifier of the rule record addressed by this operation.')], payload: NatRuleCreate, identity: Annotated[Identity, Depends(require_scope("write:wan"))], db: Session = Depends(get_db)) -> NatRuleResponse:
-    """Update Nat Rule.
-
-    Requires the `write:wan` API scope. The operation updates saved Atlaso state and does not bypass
-    the documented global Appliance Apply or service lifecycle boundary.
-
-    Args:
-        rule_id: Stable identifier of the associated rule resource.
-        payload: Validated request or task payload consumed by the operation.
-        identity: Authenticated identity authorizing the operation.
-        db: Active database session used by the operation.
-    """
-    rule = db.get(NatRule, rule_id)
-    if not rule:
-        raise HTTPException(status_code=404, detail="NAT rule not found")
-    validate_nat_rule_payload(payload, db)
-    for key, value in payload.model_dump().items():
-        setattr(rule, key, value)
-    try:
-        db.commit()
-    except IntegrityError:
-        db.rollback()
-        raise HTTPException(status_code=409, detail=f"NAT rule {rule.name} already exists") from None
-    db.refresh(rule)
-    record_audit(db, actor=identity.username, action="update_nat_rule", resource_type="nat_rule", resource_id=str(rule.id))
-    return NatRuleResponse.model_validate(rule)
-
-
-@router.delete("/nat/rules/{rule_id}", status_code=204, tags=["NAT"], operation_id="deleteNatRule")
-def delete_nat_rule(rule_id: Annotated[int, ApiPath(description='Unique identifier of the rule record addressed by this operation.')], identity: Annotated[Identity, Depends(require_scope("write:wan"))], db: Session = Depends(get_db)) -> Response:
-    """Delete Nat Rule.
-
-    Requires the `write:wan` API scope. Removal or revocation takes effect in Atlaso application
-    state; appliance host changes remain subject to the documented apply boundary for the resource.
-
-    Args:
-        rule_id: Stable identifier of the associated rule resource.
-        identity: Authenticated identity authorizing the operation.
-        db: Active database session used by the operation.
-    """
-    rule = db.get(NatRule, rule_id)
-    if not rule:
-        raise HTTPException(status_code=404, detail="NAT rule not found")
-    db.delete(rule)
-    db.commit()
-    record_audit(db, actor=identity.username, action="delete_nat_rule", resource_type="nat_rule", resource_id=str(rule_id))
-    return Response(status_code=204)
-
-
-@router.get("/wan/status", response_model=WanStatusResponse, tags=["WAN"], operation_id="getWanStatus")
-def get_wan_status(identity: Annotated[Identity, Depends(require_scope("read:wan"))], db: Session = Depends(get_db)) -> WanStatusResponse:
-    """Get Wan Status.
-
-    Requires the `read:wan` API scope. This read-only operation does not change saved desired state
-    or appliance runtime state.
-
-    Args:
-        identity: Authenticated identity authorizing the operation.
-        db: Active database session used by the operation.
-    """
-    routes = db.execute(select(Route).where(Route.wan_policy_id.is_not(None))).scalars().all()
-    nat_rules = db.execute(select(NatRule).where(NatRule.enabled.is_(True))).scalars().all()
-    return WanStatusResponse(
-        active_policy_count=len(routes),
-        managed_interfaces=sorted({route.interface_name for route in routes} | {rule.outbound_interface for rule in nat_rules}),
-        dry_run=SystemAdapter().dry_run,
-    )
-
-
 def get_dns_settings_row(db: Session) -> DnsSettings:
     """Return dns settings row.
 
@@ -2771,258 +2255,34 @@ def get_dhcp_logs(identity: Annotated[Identity, Depends(require_scope("read:dhcp
     return ["dry-run log source for dnsmasq DHCP leases", "Host lease files are read only on provisioned appliances."]
 
 
-@router.get("/firewall/status", response_model=FirewallStatusResponse, tags=["Firewall"], operation_id="getFirewallStatus")
-def get_firewall_status(identity: Annotated[Identity, Depends(require_scope("read:firewall"))], db: Session = Depends(get_db)) -> FirewallStatusResponse:
-    """Get Firewall Status.
-
-    Requires the `read:firewall` API scope. This read-only operation does not change saved desired
-    state or appliance runtime state.
-
-    Args:
-        identity: Authenticated identity authorizing the operation.
-        db: Active database session used by the operation.
-    """
-    settings = get_firewall_settings(db)
-    service = db.execute(select(ServiceState).where(ServiceState.service == "firewall")).scalar_one_or_none()
-    rule_count = db.scalar(select(func.count()).select_from(FirewallRule)) or 0
-    return FirewallStatusResponse(
-        enabled=settings.enabled,
-        service=ServiceStateResponse.model_validate(service) if service else None,
-        rule_count=rule_count,
-        config_path=settings.config_path,
-        dry_run=get_settings().dry_run_system_adapters,
+_api_between_routes_wan_firewall_router = router
+_firewall_api = build_firewall_api_router(
+    FirewallApiDependencies(
+        assign_firewall_rule_values=assign_firewall_rule_values,
+        firewall_validation_payload=firewall_validation_payload,
+        get_firewall_settings=get_firewall_settings,
+        setting_value=setting_value,
+        stage_api_firewall_config=stage_api_firewall_config,
     )
-
-
-@router.get("/firewall/settings", response_model=FirewallSettingsResponse, tags=["Firewall"], operation_id="getFirewallSettings")
-def get_firewall_settings_api(identity: Annotated[Identity, Depends(require_scope("read:firewall"))], db: Session = Depends(get_db)) -> FirewallSettingsResponse:
-    """Get Firewall Settings.
-
-    Requires the `read:firewall` API scope. This read-only operation does not change saved desired
-    state or appliance runtime state.
-
-    Args:
-        identity: Authenticated identity authorizing the operation.
-        db: Active database session used by the operation.
-    """
-    return FirewallSettingsResponse.model_validate(get_firewall_settings(db))
-
-
-@router.patch("/firewall/settings", response_model=FirewallSettingsResponse, tags=["Firewall"], operation_id="updateFirewallSettings")
-def update_firewall_settings_api(
-    payload: FirewallSettingsUpdate,
-    identity: Annotated[Identity, Depends(require_scope("write:firewall"))],
-    db: Session = Depends(get_db),
-) -> FirewallSettingsResponse:
-    """Update Firewall Settings.
-
-    Requires the `write:firewall` API scope. The operation updates saved Atlaso state and does not
-    bypass the documented global Appliance Apply or service lifecycle boundary.
-
-    Args:
-        payload: Validated request or task payload consumed by the operation.
-        identity: Authenticated identity authorizing the operation.
-        db: Active database session used by the operation.
-    """
-    settings = get_firewall_settings(db)
-    values = payload.model_dump()
-    if values["default_input_policy"] not in FIREWALL_POLICIES or values["default_forward_policy"] not in FIREWALL_POLICIES or values["default_output_policy"] not in FIREWALL_POLICIES:
-        raise HTTPException(status_code=422, detail="Firewall default policies must be accept or drop.")
-    for key, value in values.items():
-        setattr(settings, key, value)
-    settings.updated_at = utcnow()
-    db.add(settings)
-    db.commit()
-    record_audit(db, actor=identity.username, action="update_firewall_settings", resource_type="firewall", resource_id=str(settings.id))
-    db.refresh(settings)
-    return FirewallSettingsResponse.model_validate(settings)
-
-
-@router.get("/firewall/rules", response_model=list[FirewallRuleResponse], tags=["Firewall"], operation_id="listFirewallRules")
-def list_firewall_rules(identity: Annotated[Identity, Depends(require_scope("read:firewall"))], db: Session = Depends(get_db)) -> list[FirewallRuleResponse]:
-    """List Firewall Rules.
-
-    Requires the `read:firewall` API scope. This read-only operation does not change saved desired
-    state or appliance runtime state.
-
-    Args:
-        identity: Authenticated identity authorizing the operation.
-        db: Active database session used by the operation.
-    """
-    return [FirewallRuleResponse.model_validate(row) for row in db.execute(select(FirewallRule).order_by(FirewallRule.priority, FirewallRule.name)).scalars().all()]
-
-
-def firewall_groups_for_api_validation(db: Session) -> list[dict]:
-    """Return firewall groups for api validation.
-
-    Args:
-        db: Active database session.
-    """
-    physical_interfaces = db.execute(select(PhysicalInterface).order_by(PhysicalInterface.name)).scalars().all()
-    vlan_interfaces = db.execute(select(VlanInterface).order_by(VlanInterface.parent_interface, VlanInterface.vlan_id)).scalars().all()
-    interface_networks = firewall_interface_networks(physical_interfaces, vlan_interfaces)
-    return firewall_source_group_state(setting_value(db, FIREWALL_SOURCE_GROUPS_SETTING_KEY), interface_networks)["groups"]
-
-
-@router.post("/firewall/rules", response_model=FirewallRuleResponse, tags=["Firewall"], operation_id="createFirewallRule")
-def create_firewall_rule_api(
-    payload: FirewallRuleCreate,
-    identity: Annotated[Identity, Depends(require_scope("write:firewall"))],
-    db: Session = Depends(get_db),
-) -> FirewallRuleResponse:
-    """Create Firewall Rule.
-
-    Requires the `write:firewall` API scope. The operation changes saved Atlaso application state;
-    any appliance host enforcement remains subject to the documented apply or task boundary for the
-    resource.
-
-    Args:
-        payload: Validated request or task payload consumed by the operation.
-        identity: Authenticated identity authorizing the operation.
-        db: Active database session used by the operation.
-    """
-    rule = assign_firewall_rule_values(FirewallRule(), payload.model_dump())
-    errors = validate_firewall_rule(rule, firewall_groups_for_api_validation(db), require_group_addresses=True)
-    if errors:
-        raise HTTPException(status_code=422, detail=" ".join(errors))
-    db.add(rule)
-    try:
-        db.commit()
-    except IntegrityError as exc:
-        db.rollback()
-        raise HTTPException(status_code=409, detail=f"Firewall rule {rule.name} already exists.") from exc
-    record_audit(db, actor=identity.username, action="create_firewall_rule", resource_type="firewall_rule", resource_id=str(rule.id))
-    db.refresh(rule)
-    return FirewallRuleResponse.model_validate(rule)
-
-
-@router.patch("/firewall/rules/{rule_id}", response_model=FirewallRuleResponse, tags=["Firewall"], operation_id="updateFirewallRule")
-def update_firewall_rule_api(
-    rule_id: Annotated[int, ApiPath(description='Unique identifier of the rule record addressed by this operation.')],
-    payload: FirewallRuleCreate,
-    identity: Annotated[Identity, Depends(require_scope("write:firewall"))],
-    db: Session = Depends(get_db),
-) -> FirewallRuleResponse:
-    """Update Firewall Rule.
-
-    Requires the `write:firewall` API scope. The operation updates saved Atlaso state and does not
-    bypass the documented global Appliance Apply or service lifecycle boundary.
-
-    Args:
-        rule_id: Stable identifier of the associated rule resource.
-        payload: Validated request or task payload consumed by the operation.
-        identity: Authenticated identity authorizing the operation.
-        db: Active database session used by the operation.
-    """
-    rule = db.get(FirewallRule, rule_id)
-    if not rule:
-        raise HTTPException(status_code=404, detail="Firewall rule not found")
-    assign_firewall_rule_values(rule, payload.model_dump())
-    errors = validate_firewall_rule(rule, firewall_groups_for_api_validation(db), require_group_addresses=True)
-    if errors:
-        raise HTTPException(status_code=422, detail=" ".join(errors))
-    db.add(rule)
-    try:
-        db.commit()
-    except IntegrityError as exc:
-        db.rollback()
-        raise HTTPException(status_code=409, detail=f"Firewall rule {rule.name} already exists.") from exc
-    record_audit(db, actor=identity.username, action="update_firewall_rule", resource_type="firewall_rule", resource_id=str(rule.id))
-    db.refresh(rule)
-    return FirewallRuleResponse.model_validate(rule)
-
-
-@router.delete("/firewall/rules/{rule_id}", response_model=dict, tags=["Firewall"], operation_id="deleteFirewallRule")
-def delete_firewall_rule_api(
-    rule_id: Annotated[int, ApiPath(description='Unique identifier of the rule record addressed by this operation.')],
-    identity: Annotated[Identity, Depends(require_scope("write:firewall"))],
-    db: Session = Depends(get_db),
-) -> dict:
-    """Delete Firewall Rule.
-
-    Requires the `write:firewall` API scope. Removal or revocation takes effect in Atlaso
-    application state; appliance host changes remain subject to the documented apply boundary for
-    the resource.
-
-    Args:
-        rule_id: Stable identifier of the associated rule resource.
-        identity: Authenticated identity authorizing the operation.
-        db: Active database session used by the operation.
-    """
-    rule = db.get(FirewallRule, rule_id)
-    if not rule:
-        raise HTTPException(status_code=404, detail="Firewall rule not found")
-    db.delete(rule)
-    db.commit()
-    record_audit(db, actor=identity.username, action="delete_firewall_rule", resource_type="firewall_rule", resource_id=str(rule_id))
-    return {"deleted": True}
-
-
-@router.get("/firewall/validate", response_model=ConfigValidationResponse, tags=["Firewall"], operation_id="validateFirewall")
-def validate_firewall(identity: Annotated[Identity, Depends(require_scope("read:firewall"))], db: Session = Depends(get_db)) -> ConfigValidationResponse:
-    """Validate Firewall.
-
-    Requires the `read:firewall` API scope. This read-only operation does not change saved desired
-    state or appliance runtime state.
-
-    Args:
-        identity: Authenticated identity authorizing the operation.
-        db: Active database session used by the operation.
-    """
-    settings, _rules, config_preview, errors = firewall_validation_payload(db)
-    adapter = SystemAdapter()
-    config_path = settings.config_path
-    if not adapter.dry_run:
-        config_path = stage_api_firewall_config(config_preview)
-    result = adapter.validate_firewall_config(config_path)
-    return ConfigValidationResponse(
-        valid=not errors,
-        dry_run=result.dry_run,
-        command=result.command,
-        config_path=config_path,
-        config_preview=config_preview,
-        errors=errors,
-    )
-
-
-@router.post(
-    "/firewall/apply",
-    response_model=ConfigApplyResponse,
-    tags=["Firewall"],
-    operation_id="applyFirewall",
-    include_in_schema=False,
 )
-def apply_firewall(identity: Annotated[Identity, Depends(require_scope("write:firewall"))], db: Session = Depends(get_db)) -> ConfigApplyResponse:
-    """Apply Firewall.
+firewall_router = _firewall_api.router
+get_firewall_status = _firewall_api.endpoints["get_firewall_status"]
+get_firewall_settings_api = _firewall_api.endpoints["get_firewall_settings_api"]
+update_firewall_settings_api = _firewall_api.endpoints[
+    "update_firewall_settings_api"
+]
+list_firewall_rules = _firewall_api.endpoints["list_firewall_rules"]
+firewall_groups_for_api_validation = _firewall_api.endpoints[
+    "firewall_groups_for_api_validation"
+]
+create_firewall_rule_api = _firewall_api.endpoints["create_firewall_rule_api"]
+update_firewall_rule_api = _firewall_api.endpoints["update_firewall_rule_api"]
+delete_firewall_rule_api = _firewall_api.endpoints["delete_firewall_rule_api"]
+validate_firewall = _firewall_api.endpoints["validate_firewall"]
+apply_firewall = _firewall_api.endpoints["apply_firewall"]
+get_firewall_logs = _firewall_api.endpoints["get_firewall_logs"]
 
-    Requires the `write:firewall` API scope. The action runs through the endpoint's existing audited
-    adapter or task boundary; inspect the returned state before treating the operation as complete.
-
-    Args:
-        identity: Authenticated identity authorizing the operation.
-        db: Active database session used by the operation.
-    """
-    validation = validate_firewall(identity, db)
-    apply_result = SystemAdapter().apply_firewall_config(validation.config_path)
-    record_audit(db, actor=identity.username, action="apply_firewall_dry_run", resource_type="firewall", detail=" ".join(apply_result.command))
-    payload = validation.model_dump()
-    payload["command"] = apply_result.command
-    return ConfigApplyResponse(**payload, reloaded=not apply_result.dry_run)
-
-
-@router.get("/firewall/logs", response_model=list[str], tags=["Firewall"], operation_id="getFirewallLogs")
-def get_firewall_logs(identity: Annotated[Identity, Depends(require_scope("read:firewall"))]) -> list[str]:
-    """Get Firewall Logs.
-
-    Requires the `read:firewall` API scope. This read-only operation does not change saved desired
-    state or appliance runtime state.
-
-    Args:
-        identity: Authenticated identity authorizing the operation.
-    """
-    return ["dry-run log source for nftables", "Host nftables logs are not read in development mode."]
-
-
+router = APIRouter(prefix="/api/v1", route_class=DocumentedAPIRoute)
 @router.get("/services", response_model=list[ServiceStateResponse], tags=["Services"], operation_id="listServices")
 def list_services(identity: Annotated[Identity, Depends(require_scope("read:services"))], db: Session = Depends(get_db)) -> list[ServiceStateResponse]:
     """List Services.
@@ -6739,7 +5999,7 @@ def add_placeholder_resource_routes() -> None:
 
 add_placeholder_resource_routes()
 
-_api_after_physical_vlans_router = router
+_api_after_firewall_router = router
 API_V1_ROUTER_REGISTRY.register(
     "facade_before_physical_vlans",
     (RouterContribution(plane="api_v1", router=_api_before_physical_vlans_router),),
@@ -6749,14 +6009,34 @@ API_V1_ROUTER_REGISTRY.register(
     (RouterContribution(plane="api_v1", router=physical_vlans_router),),
 )
 API_V1_ROUTER_REGISTRY.register(
-    "facade_after_physical_vlans",
-    (RouterContribution(plane="api_v1", router=_api_after_physical_vlans_router),),
+    "routes_wan",
+    (RouterContribution(plane="api_v1", router=routes_wan_router),),
+)
+API_V1_ROUTER_REGISTRY.register(
+    "facade_between_routes_wan_firewall",
+    (
+        RouterContribution(
+            plane="api_v1",
+            router=_api_between_routes_wan_firewall_router,
+        ),
+    ),
+)
+API_V1_ROUTER_REGISTRY.register(
+    "firewall",
+    (RouterContribution(plane="api_v1", router=firewall_router),),
+)
+API_V1_ROUTER_REGISTRY.register(
+    "facade_after_firewall",
+    (RouterContribution(plane="api_v1", router=_api_after_firewall_router),),
 )
 API_V1_ROUTER_REGISTRY.validate_domains(
     (
         "facade_before_physical_vlans",
         "physical_vlans",
-        "facade_after_physical_vlans",
+        "routes_wan",
+        "facade_between_routes_wan_firewall",
+        "firewall",
+        "facade_after_firewall",
     )
 )
 
