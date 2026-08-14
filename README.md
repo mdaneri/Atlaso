@@ -76,6 +76,8 @@ brings infrastructure, storage, identity, networking, and lifecycle workflows in
   published packages that approved mirrors may not have synchronized.
 - [Python static analysis](docs/contribute/python-static-analysis.md) — run the enforced Ruff baseline and expand the
   strict mypy service-module ratchet.
+- [Router architecture](docs/contribute/router-architecture.md) — preserve deterministic UI/API registration,
+  dependency direction, route inventory, and OpenAPI contracts during the staged domain split under issue #317.
 - [UI Design Guide](docs/contribute/ui-design-guide.md) — approved Atlaso patterns and the shared
   `AtlasoUiPatterns.createGrid(...)` / `createWizard(...)` foundation used by every grid and wizard.
 - [API authoring standard](docs/contribute/api-authoring.md) — required operation, parameter, schema, authorization,

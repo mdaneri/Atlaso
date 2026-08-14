@@ -27,6 +27,7 @@ from atlaso.app.oidc import public_router as oidc_public_router
 from atlaso.app.openapi import API_VALIDATION_RESPONSES, OPENAPI_TAGS
 from atlaso.app.operational_logging import configure_operational_logging
 from atlaso.app.problem import install_problem_handlers, redacted_request_path
+from atlaso.app.routers.registry import include_facade_router
 from atlaso.app.seed import seed_initial_data
 from atlaso.app.services.monitoring import start_monitor_sampler
 from atlaso.app.services.network_boot import (
@@ -297,18 +298,18 @@ def create_app() -> FastAPI:
 
     install_problem_handlers(app)
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
-    app.include_router(api_v1_router, responses=API_VALIDATION_RESPONSES)
+    include_facade_router(app, api_v1_router, responses=API_VALIDATION_RESPONSES)
     app.include_router(network_boot_api_router, responses=API_VALIDATION_RESPONSES)
     app.include_router(network_boot_public_router, include_in_schema=False)
     app.include_router(oidc_admin_router, responses=API_VALIDATION_RESPONSES)
     app.include_router(oidc_public_router, include_in_schema=False)
-    app.include_router(front_door_router, include_in_schema=False)
-    app.include_router(protocol_router, include_in_schema=False)
+    include_facade_router(app, front_door_router, include_in_schema=False)
+    include_facade_router(app, protocol_router, include_in_schema=False)
     app.include_router(web_terminal_protocol_router, include_in_schema=False)
-    app.include_router(public_router, include_in_schema=False)
+    include_facade_router(app, public_router, include_in_schema=False)
     app.include_router(web_terminal_public_router, include_in_schema=False)
     app.include_router(web_terminal_management_router, include_in_schema=False)
-    app.include_router(ui_router, include_in_schema=False)
+    include_facade_router(app, ui_router, include_in_schema=False)
 
     return app
 

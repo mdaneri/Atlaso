@@ -135,6 +135,9 @@ Every new or changed `/api/v1` operation must follow the
 [API authoring standard](docs/contribute/api-authoring.md), including operation, authorization, parameter,
 schema-property, response, compatibility, enforcement-test, and topic-documentation requirements. Keep supported
 non-`/api/v1` browser and protocol routes out of OpenAPI and documented in their canonical guides.
+Route ownership and staged domain extraction must also follow the
+[router architecture](docs/contribute/router-architecture.md): retain the stable UI/API facades, deterministic
+registries, dependency direction, exact route inventory, and normalized OpenAPI contract.
 
 ## Canonical implementation policies
 
