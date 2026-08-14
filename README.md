@@ -78,7 +78,8 @@ brings infrastructure, storage, identity, networking, and lifecycle workflows in
   strict mypy service-module ratchet.
 - [Router architecture](docs/contribute/router-architecture.md) — preserve deterministic UI/API registration,
   dependency direction, route inventory, and OpenAPI contracts during the staged domain split under issue #317,
-  including the extracted physical-interface and VLAN transport boundary.
+  including the extracted physical-interface and VLAN transport boundary and the typed atomic physical-interface
+  desired-state service shared by both transports.
 - [UI Design Guide](docs/contribute/ui-design-guide.md) — approved Atlaso patterns and the shared
   `AtlasoUiPatterns.createGrid(...)` / `createWizard(...)` foundation used by every grid and wizard.
 - [API authoring standard](docs/contribute/api-authoring.md) — required operation, parameter, schema, authorization,

@@ -12,8 +12,9 @@ status: current
 Atlaso is moving its monolithic UI and API v1 route implementations into product-domain modules in staged work under
 issue #317. The application-facing modules `atlaso/app/ui.py` and `atlaso/app/api/v1.py` remain stable compatibility and
 aggregation facades throughout that migration. Phase 1 established the registries and contract baselines. Phase 2
-extracts physical-interface and VLAN transport ownership without changing their external contracts or consolidating
-their shared desired-state mutation behavior.
+extracted physical-interface and VLAN transport ownership without changing their external contracts. Phase 3 places
+physical-interface desired-state mutation, dependent reconciliation, and audit persistence behind one typed domain
+service shared by both extracted transports.
 
 ## Ownership and responsibilities
 
@@ -77,9 +78,15 @@ The independently runnable transport coverage lives in
 the exact before/domain/after order and endpoint module ownership. Import-boundary checks require both facades to
 assemble these domain modules while continuing to reject domain-to-facade imports.
 
-This extraction does not change templates, browser assets, visible copy, API operations, transaction behavior, or the
-global Appliance Apply boundary. Consolidating the shared physical-interface mutation and reconciliation service is a
-separate child phase under issue #317.
+`atlaso/app/services/physical_interfaces.py` owns the typed partial-mutation, audit-input, and committed-result contract
+used by both transports. It stages the interface row, every reconciled dependent row, and the transport-compatible audit
+event before one commit. `atlaso/app/services/interface_updates.py` retains the detailed reconciliation algorithm as a
+documented low-level compatibility seam for VLAN and other callers that already own a wider transaction; it does not
+replace the physical-interface domain-service boundary.
+
+This service consolidation does not change templates, browser assets, visible copy, API operations, route inventory,
+normalized OpenAPI, or the global Appliance Apply boundary. The service writes desired state only; host mutation still
+belongs exclusively to Appliance Apply.
 
 ## Route and OpenAPI compatibility
 
@@ -112,6 +119,10 @@ tests/services/test_<domain>.py
 Use only the files that match the domain's actual transports. Keep service tests focused on domain invariants and keep
 transport tests focused on authorization, validation, response, redirect, session, CSRF, media-type, and audit
 behavior. The shared registry, import-boundary, route-inventory, and OpenAPI tests stay under `tests/routers/`.
+
+For physical interfaces, `tests/services/test_physical_interfaces.py` owns rollback, dependent-binding, child-VLAN,
+DHCP/reservation/DNS, inactive-legacy-field, and audit-atomicity behavior. The extracted UI and API test modules retain
+their distinct response and audit-action contracts and representative parity coverage.
 
 Every new or changed `/api/v1` operation must also follow the [API authoring standard](api-authoring.md). Any later
 change to templates, authored CSS, browser JavaScript, controls, layouts, grids, wizards, or visible copy must first

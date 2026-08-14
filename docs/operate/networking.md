@@ -66,6 +66,9 @@ Valid operator-selected DHCP gateway, DNS, and NTP values remain unchanged unles
 address or otherwise become stale. Enabled DHCP reservations retain their host offsets when exactly one rebased scope
 can receive them, including app-owned reservation DNS records; an ambiguous reservation move rolls back the interface
 edit. Legacy global DHCP binding fields are inactive when real scope rows exist and do not block unrelated changes.
+The saved interface, all reconciled dependent rows, and the value-free audit event commit together. The audit detail
+names only dependent units whose desired state changed; a reconciliation or audit-staging failure leaves no partial
+interface, dependency, reservation, DNS, or audit update.
 
 ### Choose where the management UI is available
 

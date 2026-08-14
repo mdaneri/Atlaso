@@ -19,9 +19,13 @@ from atlaso.app.security import Identity, require_session_identity
 from atlaso.app.services.interface_updates import (
     PhysicalInterfaceUpdateError,
     refresh_interface_dependent_addresses,
-    update_physical_interface_desired_state,
 )
 from atlaso.app.services.networking import sync_host_physical_interfaces
+from atlaso.app.services.physical_interfaces import (
+    PhysicalInterfaceMutation,
+    PhysicalInterfaceMutationAudit,
+    mutate_physical_interface_desired_state,
+)
 from atlaso.app.ui_routes import MANAGEMENT_UI_ROOT
 
 Endpoint = Callable[..., Any]
@@ -176,33 +180,18 @@ def build_router(dependencies: PhysicalVlanUiDependencies) -> PhysicalVlanUiRout
         if access_management_ui_enabled is not None:
             changes["access_management_ui_enabled"] = access_management_ui_enabled == "on"
         try:
-            result = update_physical_interface_desired_state(
+            mutate_physical_interface_desired_state(
                 db,
                 interface,
-                changes,
+                PhysicalInterfaceMutation.from_mapping(changes),
+                audit=PhysicalInterfaceMutationAudit(
+                    actor=identity.username,
+                    action="update_physical_interface",
+                ),
                 dns_refresher=dependencies.refresh_interface_service_dns_aliases,
             )
         except PhysicalInterfaceUpdateError as exc:
             return Response(exc.detail, status_code=exc.status_code, media_type="text/plain")
-        detail_parts = []
-        if result.dependent_updates:
-            detail_parts.append(
-                "Refreshed dependent desired-state addresses: "
-                f"{', '.join(result.dependent_updates)}."
-            )
-        if result.preserved_dhcp_dns:
-            detail_parts.append(
-                "Preserved DHCP-provided DNS in desired state: "
-                f"{', '.join(result.preserved_dhcp_dns)}."
-            )
-        record_audit(
-            db,
-            actor=identity.username,
-            action="update_physical_interface",
-            resource_type="interface",
-            resource_id=result.interface.name,
-            detail=" ".join(detail_parts),
-        )
         return RedirectResponse("/physical-interfaces", status_code=303)
 
     @router.post("/physical-interfaces/{interface_id}/forget", response_model=None)

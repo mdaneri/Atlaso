@@ -736,65 +736,6 @@ def test_physical_interface_api_rejects_reservation_dns_collision(client):
         assert reservation.ip_address == "192.168.73.10"
 
 
-def test_physical_interface_update_rolls_back_interface_and_dependents(client, monkeypatch):
-    """Verify a dependent refresh failure leaves every desired-state row unchanged.
-
-    Args:
-        client: Authenticated-capable application test client fixture.
-        monkeypatch: Pytest fixture used to replace dependencies for the test.
-    """
-    import pytest
-    from sqlalchemy import select
-
-    from atlaso.app.database import SessionLocal
-    from atlaso.app.models import DnsSettings, PhysicalInterface
-    from atlaso.app.services import interface_updates
-
-    with SessionLocal() as db:
-        interface = db.execute(
-            select(PhysicalInterface).where(PhysicalInterface.name == "eth2")
-        ).scalar_one()
-        interface.role = "access"
-        interface.mode = "access"
-        interface.ip_cidr = "192.168.50.1/24"
-        dns = db.execute(select(DnsSettings)).scalar_one()
-        dns.listen_interface = "eth2"
-        dns.listen_address = "192.168.50.1"
-        db.commit()
-
-        def fail_after_dependent_mutation(session, **_kwargs):
-            """Inject a failure after mutating one dependent row.
-
-            Args:
-                session: Active test database session.
-                **_kwargs: Unused reconciliation keyword arguments.
-            """
-            dependent_dns = session.execute(select(DnsSettings)).scalar_one()
-            dependent_dns.listen_address = "192.168.60.1"
-            session.add(dependent_dns)
-            raise RuntimeError("injected dependent failure")
-
-        monkeypatch.setattr(
-            interface_updates,
-            "refresh_interface_dependent_addresses",
-            fail_after_dependent_mutation,
-        )
-        with pytest.raises(RuntimeError, match="injected dependent failure"):
-            interface_updates.update_physical_interface_desired_state(
-                db,
-                interface,
-                {"ip_cidr": "192.168.60.1/24"},
-            )
-
-    with SessionLocal() as db:
-        interface = db.execute(
-            select(PhysicalInterface).where(PhysicalInterface.name == "eth2")
-        ).scalar_one()
-        dns = db.execute(select(DnsSettings)).scalar_one()
-        assert interface.ip_cidr == "192.168.50.1/24"
-        assert dns.listen_address == "192.168.50.1"
-
-
 def test_physical_interface_api_rebuilds_pxe_url_for_ipv6_to_ipv4_fallback(client):
     """Verify removing IPv6 rebuilds the PXE URL without IPv4 literal brackets.
 

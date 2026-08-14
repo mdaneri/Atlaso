@@ -24,9 +24,13 @@ from atlaso.app.schemas import (
 from atlaso.app.security import Identity, require_scope
 from atlaso.app.services.interface_updates import (
     PhysicalInterfaceUpdateError,
-    update_physical_interface_desired_state,
 )
 from atlaso.app.services.networking import sync_host_physical_interfaces
+from atlaso.app.services.physical_interfaces import (
+    PhysicalInterfaceMutation,
+    PhysicalInterfaceMutationAudit,
+    mutate_physical_interface_desired_state,
+)
 
 Endpoint = Callable[..., Any]
 
@@ -149,33 +153,21 @@ def build_router(dependencies: PhysicalVlanApiDependencies) -> PhysicalVlanApiRo
         if not interface:
             raise HTTPException(status_code=404, detail="Interface not found")
         try:
-            result = update_physical_interface_desired_state(
+            result = mutate_physical_interface_desired_state(
                 db,
                 interface,
-                payload.model_dump(exclude_unset=True),
+                PhysicalInterfaceMutation.from_mapping(
+                    payload.model_dump(exclude_unset=True)
+                ),
+                audit=PhysicalInterfaceMutationAudit(
+                    actor=identity.username,
+                    action="update_interface",
+                    resource_id=name,
+                ),
                 dns_refresher=dependencies.refresh_interface_service_dns_aliases,
             )
         except PhysicalInterfaceUpdateError as exc:
             raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
-        detail_parts: list[str] = []
-        if result.dependent_updates:
-            detail_parts.append(
-                "Refreshed dependent desired-state addresses: "
-                f"{', '.join(result.dependent_updates)}."
-            )
-        if result.preserved_dhcp_dns:
-            detail_parts.append(
-                "Preserved DHCP-provided DNS in desired state: "
-                f"{', '.join(result.preserved_dhcp_dns)}."
-            )
-        record_audit(
-            db,
-            actor=identity.username,
-            action="update_interface",
-            resource_type="interface",
-            resource_id=name,
-            detail=" ".join(detail_parts),
-        )
         return PhysicalInterfaceResponse.model_validate(result.interface)
 
     @router.post(
