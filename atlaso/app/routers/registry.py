@@ -264,6 +264,7 @@ def _propagate_compatible_route_shadows(
             "endpoint",
             None,
         )
+        shadow_methods = {method for _, method in allowed_shadows}
         matching_targets = []
         for target in targets:
             target_original = getattr(target, "original_route", target)
@@ -273,14 +274,28 @@ def _propagate_compatible_route_shadows(
                 "endpoint",
                 None,
             )
-            if target_path == source_path and target_endpoint is source_endpoint:
+            target_methods = {
+                str(method).upper()
+                for method in (
+                    getattr(target, "methods", None)
+                    or getattr(target_original, "methods", None)
+                    or ()
+                )
+            }
+            if (
+                target_path == source_path
+                and target_endpoint is source_endpoint
+                and shadow_methods.intersection(target_methods)
+            ):
                 matching_targets.append(target)
         if not matching_targets:
             raise RouterRegistryError(
                 f"included facade route {source_path!r} lost its compatibility-shadow declaration"
             )
         for target in matching_targets:
-            setattr(target, _ALLOWED_SHADOWS_ATTRIBUTE, allowed_shadows)
+            declared = set(compatible_route_shadows(target))
+            declared.update(allowed_shadows)
+            setattr(target, _ALLOWED_SHADOWS_ATTRIBUTE, frozenset(declared))
 
 
 def _route_descriptors(contribution: RouterContribution) -> tuple[_RouteDescriptor, ...]:

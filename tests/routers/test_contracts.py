@@ -286,21 +286,28 @@ def test_facade_include_propagates_compatible_route_shadow_without_provenance():
         return {"resource": resource}
 
     router.add_api_route("/resources/{resource:path}", shared, methods=["GET"])
+    router.add_api_route("/resources/{resource:path}", shared, methods=["HEAD"])
     router.add_api_route("/resources/", shared, methods=["GET"])
+    router.add_api_route("/resources/", shared, methods=["HEAD"])
     allow_compatible_route_shadow(
         router,
         earlier_path="/resources/{resource:path}",
         later_path="/resources/",
-        methods=("GET",),
+        methods=("GET", "HEAD"),
     )
 
     include_facade_router(app, router)
     for route in app.routes:
         route.__dict__.pop("original_route", None)
 
-    assert [record["path"] for record in build_route_inventory(app)] == [
-        "/resources/{resource:path}",
-        "/resources/",
+    assert [
+        (record["path"], record["methods"])
+        for record in build_route_inventory(app)
+    ] == [
+        ("/resources/{resource:path}", ["GET"]),
+        ("/resources/{resource:path}", ["HEAD"]),
+        ("/resources/", ["GET"]),
+        ("/resources/", ["HEAD"]),
     ]
 
 
