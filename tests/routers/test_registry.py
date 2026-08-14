@@ -21,9 +21,19 @@ class _SlugConvertor(Convertor[str]):
     regex = "[a-z-]+"
 
     def convert(self, value: str) -> str:
+        """Return the converted route value.
+
+        Args:
+            value: Matched route text.
+        """
         return value
 
     def to_string(self, value: str) -> str:
+        """Return the serialized route value.
+
+        Args:
+            value: Converted route value.
+        """
         return value
 
 
@@ -270,6 +280,11 @@ def test_registry_rejects_same_endpoint_shadowing():
     router = APIRouter()
 
     def shared(item: str = "default") -> dict[str, str]:
+        """Return the synthetic shared response.
+
+        Args:
+            item: Captured or default item value.
+        """
         return {"item": item}
 
     router.add_api_route("/resources/{item:path}", shared, methods=["GET"])
@@ -288,6 +303,11 @@ def test_registry_accepts_explicit_compatible_route_shadow():
     router = APIRouter()
 
     def shared(item: str = "") -> dict[str, str]:
+        """Return the synthetic shared response.
+
+        Args:
+            item: Captured or default item value.
+        """
         return {"item": item}
 
     router.add_api_route("/resources/{item:path}", shared, methods=["GET"])
@@ -309,6 +329,11 @@ def test_registry_rejects_undeclared_default_binding_shadow():
     router = APIRouter()
 
     def shared(item: str = "") -> dict[str, str]:
+        """Return the synthetic shared response.
+
+        Args:
+            item: Captured or default item value.
+        """
         return {"item": item}
 
     router.add_api_route("/resources/{item:path}", shared, methods=["GET"])
@@ -327,6 +352,11 @@ def test_compatible_route_shadow_rejects_missing_target():
     router = APIRouter()
 
     def shared(item: str = "") -> dict[str, str]:
+        """Return the synthetic shared response.
+
+        Args:
+            item: Captured or default item value.
+        """
         return {"item": item}
 
     router.add_api_route("/resources/{item:path}", shared, methods=["GET"])
@@ -372,7 +402,12 @@ def test_registry_rejects_partial_convertor_overlap(
     earlier_path: str,
     later_path: str,
 ):
-    """Reject partially shadowed peers across standard convertor subsets."""
+    """Reject partially shadowed peers across standard convertor subsets.
+
+    Args:
+        earlier_path: Earlier parameterized route path.
+        later_path: Later parameterized route path.
+    """
     registry = DomainRouterRegistry("test")
 
     with pytest.raises(RouterRegistryError, match="must follow route"):

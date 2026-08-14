@@ -169,7 +169,15 @@ def _validate_unique_routes(records: Sequence[Mapping[str, object]]) -> None:
 
 
 def _overlapping_methods(first: Sequence[object], second: Sequence[object]) -> frozenset[str]:
-    """Return concrete methods matched by both route records."""
+    """Return concrete methods matched by both route records.
+
+    Args:
+        first: Methods exposed by the earlier route.
+        second: Methods exposed by the later route.
+
+    Returns:
+        Normalized methods accepted by both routes.
+    """
     first_methods = {method for method in first if isinstance(method, str)}
     second_methods = {method for method in second if isinstance(method, str)}
     if _OPAQUE_METHOD in first_methods:

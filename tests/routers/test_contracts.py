@@ -34,9 +34,19 @@ class _SlugConvertor(Convertor[str]):
     regex = "[a-z-]+"
 
     def convert(self, value: str) -> str:
+        """Return the converted route value.
+
+        Args:
+            value: Matched route text.
+        """
         return value
 
     def to_string(self, value: str) -> str:
+        """Return the serialized route value.
+
+        Args:
+            value: Converted route value.
+        """
         return value
 
 
@@ -113,6 +123,11 @@ def test_route_inventory_rejects_cross_plane_catch_all_before_fixed_route():
 
     @app.get("/ui/{rest:path}")
     def protocol(rest: str) -> dict[str, str]:
+        """Return the synthetic protocol response.
+
+        Args:
+            rest: Captured protocol path.
+        """
         return {"rest": rest}
 
     @app.get("/ui/management/status")
@@ -179,6 +194,11 @@ def test_route_inventory_models_later_mount_as_subtree_language():
 
     @nested.get("/assets/{name:str}")
     def asset(name: str) -> dict[str, str]:
+        """Return the synthetic asset response.
+
+        Args:
+            name: Captured asset name.
+        """
         return {"name": name}
 
     nested.mount(
@@ -195,6 +215,11 @@ def test_route_inventory_models_later_mount_as_subtree_language():
 
     @root.get("/{name:str}")
     def named(name: str) -> dict[str, str]:
+        """Return the synthetic named response.
+
+        Args:
+            name: Captured route name.
+        """
         return {"name": name}
 
     root.mount(
@@ -211,6 +236,11 @@ def test_route_inventory_rejects_same_endpoint_shadowing():
     app = FastAPI(openapi_url=None, docs_url=None, redoc_url=None)
 
     def shared(item: str = "default") -> dict[str, str]:
+        """Return the synthetic shared response.
+
+        Args:
+            item: Captured or default item value.
+        """
         return {"item": item}
 
     app.add_api_route("/resources/{item:path}", shared, methods=["GET"])
@@ -225,6 +255,11 @@ def test_route_inventory_accepts_explicit_compatible_route_shadow():
     app = FastAPI(openapi_url=None, docs_url=None, redoc_url=None)
 
     def shared(item: str = "") -> dict[str, str]:
+        """Return the synthetic shared response.
+
+        Args:
+            item: Captured or default item value.
+        """
         return {"item": item}
 
     app.add_api_route("/resources/{item:path}", shared, methods=["GET"])
@@ -249,6 +284,11 @@ def test_route_inventory_rejects_undeclared_default_binding_shadow():
     app = FastAPI(openapi_url=None, docs_url=None, redoc_url=None)
 
     def shared(item: str = "") -> dict[str, str]:
+        """Return the synthetic shared response.
+
+        Args:
+            item: Captured or default item value.
+        """
         return {"item": item}
 
     app.add_api_route("/resources/{item:path}", shared, methods=["GET"])
@@ -288,13 +328,28 @@ def test_route_inventory_rejects_partial_convertor_overlap(
     earlier_path: str,
     later_path: str,
 ):
-    """Reject partially shadowed peers across standard convertor subsets."""
+    """Reject partially shadowed peers across standard convertor subsets.
+
+    Args:
+        earlier_path: Earlier parameterized route path.
+        later_path: Later parameterized route path.
+    """
     app = FastAPI(openapi_url=None, docs_url=None, redoc_url=None)
 
     def earlier(value: object) -> dict[str, str]:
+        """Return the synthetic earlier response.
+
+        Args:
+            value: Captured earlier route value.
+        """
         return {"handler": f"earlier:{value}"}
 
     def later(value: object) -> dict[str, str]:
+        """Return the synthetic later response.
+
+        Args:
+            value: Captured later route value.
+        """
         return {"handler": f"later:{value}"}
 
     app.add_api_route(earlier_path, earlier, methods=["GET"])
@@ -309,9 +364,19 @@ def test_route_inventory_rejects_overlap_requiring_peer_literal_witness():
     app = FastAPI(openapi_url=None, docs_url=None, redoc_url=None)
 
     def earlier(first: str) -> dict[str, str]:
+        """Return the synthetic earlier response.
+
+        Args:
+            first: Captured earlier route value.
+        """
         return {"handler": f"earlier:{first}"}
 
     def later(second: str) -> dict[str, str]:
+        """Return the synthetic later response.
+
+        Args:
+            second: Captured later route value.
+        """
         return {"handler": f"later:{second}"}
 
     app.add_api_route("/items/{first:str}/edit", earlier, methods=["GET"])
@@ -326,9 +391,19 @@ def test_route_inventory_rejects_overlap_across_adjacent_route_literals():
     app = FastAPI(openapi_url=None, docs_url=None, redoc_url=None)
 
     def earlier(value: int) -> dict[str, int]:
+        """Return the synthetic earlier response.
+
+        Args:
+            value: Captured integer route value.
+        """
         return {"value": value}
 
     def later(peer: str) -> dict[str, str]:
+        """Return the synthetic later response.
+
+        Args:
+            peer: Captured peer route value.
+        """
         return {"peer": peer}
 
     app.add_api_route("/{value:int}b1a", earlier, methods=["GET"])
@@ -343,9 +418,19 @@ def test_route_inventory_fails_closed_for_custom_route_convertor_overlap():
     app = FastAPI(openapi_url=None, docs_url=None, redoc_url=None)
 
     def broad(value: str) -> dict[str, str]:
+        """Return the synthetic broad response.
+
+        Args:
+            value: Captured broad route value.
+        """
         return {"value": value}
 
     def custom(value: str) -> dict[str, str]:
+        """Return the synthetic custom response.
+
+        Args:
+            value: Captured custom route value.
+        """
         return {"value": value}
 
     app.add_api_route("/items/{value:path}", broad, methods=["GET"])
@@ -388,6 +473,11 @@ def test_facade_include_propagates_compatible_route_shadow_without_provenance():
     router = APIRouter()
 
     def shared(resource: str = "") -> dict[str, str]:
+        """Return the synthetic shared response.
+
+        Args:
+            resource: Captured or default resource value.
+        """
         return {"resource": resource}
 
     router.add_api_route("/resources/{resource:path}", shared, methods=["GET"])

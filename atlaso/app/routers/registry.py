@@ -46,7 +46,14 @@ def include_facade_router(
 
 
 def included_facade_routers(app: FastAPI) -> tuple[APIRouter, ...]:
-    """Return explicitly tracked facade includes in application order."""
+    """Return explicitly tracked facade includes in application order.
+
+    Args:
+        app: FastAPI application whose facade inclusions are inspected.
+
+    Returns:
+        Facade router objects in inclusion order.
+    """
     return cast(
         tuple[APIRouter, ...],
         getattr(app.state, _FACADE_INCLUSIONS_ATTRIBUTE, ()),
@@ -230,7 +237,14 @@ def allow_compatible_route_shadow(
 
 
 def compatible_route_shadows(source: object) -> frozenset[tuple[str, str]]:
-    """Return exact compatibility shadows declared on a route source."""
+    """Return exact compatibility shadows declared on a route source.
+
+    Args:
+        source: Effective route source whose declarations are read.
+
+    Returns:
+        Declared later-path and method pairs.
+    """
     original = getattr(source, "original_route", source)
     return frozenset(
         {
@@ -244,7 +258,12 @@ def _propagate_compatible_route_shadows(
     router: APIRouter,
     included_routes: Sequence[object],
 ) -> None:
-    """Copy explicit shadow declarations onto FastAPI's included route copies."""
+    """Copy explicit shadow declarations onto FastAPI's included route copies.
+
+    Args:
+        router: Facade router containing the source declarations.
+        included_routes: FastAPI route copies produced by the facade include.
+    """
     targets: list[object] = []
     for route in included_routes:
         contexts = getattr(route, "effective_route_contexts", None)
@@ -341,7 +360,15 @@ def _route_descriptors(contribution: RouterContribution) -> tuple[_RouteDescript
 
 
 def _character_class_accepts(character_class: _CharacterClass, character: str) -> bool:
-    """Return whether one transition accepts a concrete character."""
+    """Return whether one transition accepts a concrete character.
+
+    Args:
+        character_class: Transition class being tested.
+        character: Concrete character to test.
+
+    Returns:
+        Whether the transition accepts the character.
+    """
     if character_class.literal is not None:
         return character == character_class.literal
     if character_class.kind == "any":
@@ -356,7 +383,15 @@ def _character_class_accepts(character_class: _CharacterClass, character: str) -
 
 
 def _character_classes_overlap(first: _CharacterClass, second: _CharacterClass) -> bool:
-    """Return whether two standard route transition classes intersect."""
+    """Return whether two standard route transition classes intersect.
+
+    Args:
+        first: First transition class.
+        second: Second transition class.
+
+    Returns:
+        Whether both classes accept a common character.
+    """
     candidates = tuple(
         dict.fromkeys(
             (
@@ -377,7 +412,18 @@ def _character_classes_overlap(first: _CharacterClass, second: _CharacterClass) 
 
 @cache
 def _path_automaton(path: str, *, is_mount: bool = False) -> _PathAutomaton:
-    """Build an exact automaton for standard Starlette route convertors."""
+    """Build an exact automaton for standard Starlette route convertors.
+
+    Args:
+        path: Starlette route path to model.
+        is_mount: Whether the path owns a mounted subtree.
+
+    Returns:
+        Exact automaton for the supported route language.
+
+    Raises:
+        RouterRegistryError: If the path uses an unsupported convertor.
+    """
     _, _, convertors = compile_path(path)
     transitions: list[list[tuple[_CharacterClass, int]]] = [[]]
     epsilons: list[list[int]] = [[]]
@@ -388,6 +434,15 @@ def _path_automaton(path: str, *, is_mount: bool = False) -> _PathAutomaton:
         return len(transitions) - 1
 
     def add_literal(start: int, literal: str) -> int:
+        """Append literal transitions.
+
+        Args:
+            start: State from which the literal begins.
+            literal: Exact characters to append.
+
+        Returns:
+            State reached after the literal.
+        """
         current = start
         for character in literal:
             following = new_state()
@@ -396,6 +451,15 @@ def _path_automaton(path: str, *, is_mount: bool = False) -> _PathAutomaton:
         return current
 
     def add_one_or_more(start: int, character_class: _CharacterClass) -> int:
+        """Append a one-or-more transition loop.
+
+        Args:
+            start: State from which the loop begins.
+            character_class: Character class accepted by the loop.
+
+        Returns:
+            Accepting state after at least one character.
+        """
         end = new_state()
         transitions[start].append((character_class, end))
         transitions[end].append((character_class, end))
@@ -466,7 +530,15 @@ def _path_automaton(path: str, *, is_mount: bool = False) -> _PathAutomaton:
 
 
 def _epsilon_closure(automaton: _PathAutomaton, state: int) -> frozenset[int]:
-    """Return every state reachable without consuming a character."""
+    """Return every state reachable without consuming a character.
+
+    Args:
+        automaton: Automaton whose epsilon transitions are traversed.
+        state: Starting state.
+
+    Returns:
+        Starting and epsilon-reachable states.
+    """
     closure = {state}
     pending = [state]
     while pending:
@@ -479,7 +551,15 @@ def _epsilon_closure(automaton: _PathAutomaton, state: int) -> frozenset[int]:
 
 
 def _path_automata_overlap(first: _PathAutomaton, second: _PathAutomaton) -> bool:
-    """Return whether two route-language automata accept a common path."""
+    """Return whether two route-language automata accept a common path.
+
+    Args:
+        first: Earlier route-language automaton.
+        second: Later route-language automaton.
+
+    Returns:
+        Whether the automata accept a common path.
+    """
     first_closures = tuple(_epsilon_closure(first, state) for state in range(len(first.transitions)))
     second_closures = tuple(_epsilon_closure(second, state) for state in range(len(second.transitions)))
     pending = deque(
