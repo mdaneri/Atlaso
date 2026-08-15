@@ -28,7 +28,14 @@ from tests.routers.api_v1.helpers import create_token
 def test_vcf_workflow_status_transports_keep_scope_and_schema(
     client, path, scope, expected_keys
 ):
-    """Verify each extracted status transport retains authorization and schema."""
+    """Verify each extracted status transport retains authorization and schema.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+        path: Stable API status path under test.
+        scope: Authorization scope required by the status transport.
+        expected_keys: Response fields retained by the extracted transport.
+    """
     raw_token, _token = create_token(client, [scope])
 
     response = client.get(path, headers={"Authorization": f"Bearer {raw_token}"})
@@ -46,7 +53,12 @@ def test_vcf_workflow_status_transports_keep_scope_and_schema(
     ],
 )
 def test_vcf_workflow_status_transports_reject_wrong_scope(client, path):
-    """Verify VCF status transports reject a token without their required scope."""
+    """Verify VCF status transports reject a token without their required scope.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+        path: Stable API status path under test.
+    """
     raw_token, _token = create_token(client, ["read:dashboard"])
 
     response = client.get(path, headers={"Authorization": f"Bearer {raw_token}"})

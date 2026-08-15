@@ -4,7 +4,11 @@ from tests.routers.ui.helpers import login
 
 
 def test_vcf_workflow_pages_keep_stable_transports(client):
-    """Verify the extracted workflow pages keep their stable management routes."""
+    """Verify the extracted workflow pages keep their stable management routes.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
     login(client)
 
     helper = client.get("/vcf-helper")
@@ -30,7 +34,11 @@ def test_vcf_workflow_pages_keep_stable_transports(client):
 
 
 def test_legacy_https_repository_redirect_remains_stable(client):
-    """Verify the legacy HTTPS repository bookmark keeps its stable redirect."""
+    """Verify the legacy HTTPS repository bookmark keeps its stable redirect.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
     login(client)
     response = client.get("/https-repository", follow_redirects=False)
     assert response.status_code == 307
@@ -38,7 +46,11 @@ def test_legacy_https_repository_redirect_remains_stable(client):
 
 
 def test_certificate_operator_cannot_render_vcf_helper_dns_inventory(client):
-    """Verify certificate operators cannot render the VCF Helper DNS inventory."""
+    """Verify certificate operators cannot render the VCF Helper DNS inventory.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
     from sqlalchemy import select
 
     from atlaso.app.database import SessionLocal
@@ -58,7 +70,12 @@ def test_certificate_operator_cannot_render_vcf_helper_dns_inventory(client):
 
 
 def test_vcf_backups_settings_badge_reflects_desired_state(client, monkeypatch):
-    """Verify the VCF Backups badge reflects desired state."""
+    """Verify the VCF Backups badge reflects desired state.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+    """
     from atlaso.app.config import get_settings
 
     login(client)
@@ -78,7 +95,12 @@ def test_vcf_backups_settings_badge_reflects_desired_state(client, monkeypatch):
 def test_vcf_offline_depot_upload_rejects_malformed_archive_before_saving(
     client, monkeypatch
 ):
-    """Verify malformed VCFDT archives are rejected before persistence."""
+    """Verify malformed VCFDT archives are rejected before persistence.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+    """
     from sqlalchemy import select
 
     from atlaso.app.database import SessionLocal
@@ -118,7 +140,12 @@ def test_vcf_offline_depot_upload_rejects_malformed_archive_before_saving(
 
 
 def test_vcf_trust_rejects_mismatched_confirmed_tls_fingerprint(client, monkeypatch):
-    """Verify VCF Trust rejects a mismatched confirmed TLS fingerprint."""
+    """Verify VCF Trust rejects a mismatched confirmed TLS fingerprint.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+    """
     from atlaso.app.database import SessionLocal
     from atlaso.app.services.ca import ensure_root_ca_material
     from atlaso.app.ui import get_ca_settings_row

@@ -630,6 +630,7 @@ from atlaso.app.services.vcf_trust import (
     root_ca_info,
     sanitized_result,
 )
+from atlaso.app.services.vcf_vault_import import discover_vcf_passwords
 from atlaso.app.services.vsphere_key_providers import (
     authenticated_provider_counts,
     certificate_to_dict,
@@ -18469,12 +18470,14 @@ _vcf_workflows_ui = build_vcf_workflows_ui_router(
         active_vcf_depot_execution_job=active_vcf_depot_execution_job,
         appliance_apply_client_status=appliance_apply_client_status,
         appliance_apply_status=appliance_apply_status,
+        confirmed_tls_fingerprint=lambda *args, **kwargs: _confirmed_tls_fingerprint(*args, **kwargs),
         create_vcf_generated_dns_records=create_vcf_generated_dns_records,
         delete_vcf_generated_dns_records=delete_vcf_generated_dns_records,
         disable_default_vcf_backup_user_when_service_off=disable_default_vcf_backup_user_when_service_off,
         disable_default_vcf_depot_user_when_service_off=disable_default_vcf_depot_user_when_service_off,
         dnsmasq_apply_status=dnsmasq_apply_status,
         dnsmasq_context=dnsmasq_context,
+        discover_vcf_passwords=lambda *args, **kwargs: discover_vcf_passwords(*args, **kwargs),
         ensure_dns_for_vcf_offline_depot=ensure_dns_for_vcf_offline_depot,
         ensure_dns_for_vcf_registry=ensure_dns_for_vcf_registry,
         ensure_vcf_depot_software_id_task_steps=ensure_vcf_depot_software_id_task_steps,

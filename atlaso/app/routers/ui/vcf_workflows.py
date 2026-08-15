@@ -116,7 +116,6 @@ from atlaso.app.services.vcf_trust import (
     root_ca_info,
     sanitized_result,
 )
-from atlaso.app.services.vcf_vault_import import discover_vcf_passwords
 from atlaso.app.ui_routes import MANAGEMENT_UI_ROOT
 
 Endpoint = Callable[..., Any]
@@ -137,12 +136,14 @@ class VcfWorkflowsUiDependencies:
     active_vcf_depot_execution_job: Endpoint
     appliance_apply_client_status: Endpoint
     appliance_apply_status: Endpoint
+    confirmed_tls_fingerprint: Endpoint
     create_vcf_generated_dns_records: Endpoint
     delete_vcf_generated_dns_records: Endpoint
     disable_default_vcf_backup_user_when_service_off: Endpoint
     disable_default_vcf_depot_user_when_service_off: Endpoint
     dnsmasq_apply_status: Endpoint
     dnsmasq_context: Endpoint
+    discover_vcf_passwords: Endpoint
     ensure_dns_for_vcf_offline_depot: Endpoint
     ensure_dns_for_vcf_registry: Endpoint
     ensure_vcf_depot_software_id_task_steps: Endpoint
@@ -221,6 +222,7 @@ def build_router(dependencies: VcfWorkflowsUiDependencies) -> VcfWorkflowsUiRout
     active_vcf_depot_execution_job = dependencies.active_vcf_depot_execution_job
     appliance_apply_client_status = dependencies.appliance_apply_client_status
     appliance_apply_status = dependencies.appliance_apply_status
+    _confirmed_tls_fingerprint = dependencies.confirmed_tls_fingerprint
     create_vcf_generated_dns_records = dependencies.create_vcf_generated_dns_records
     delete_vcf_generated_dns_records = dependencies.delete_vcf_generated_dns_records
     disable_default_vcf_backup_user_when_service_off = (
@@ -231,6 +233,7 @@ def build_router(dependencies: VcfWorkflowsUiDependencies) -> VcfWorkflowsUiRout
     )
     dnsmasq_apply_status = dependencies.dnsmasq_apply_status
     dnsmasq_context = dependencies.dnsmasq_context
+    discover_vcf_passwords = dependencies.discover_vcf_passwords
     ensure_dns_for_vcf_offline_depot = dependencies.ensure_dns_for_vcf_offline_depot
     ensure_dns_for_vcf_registry = dependencies.ensure_dns_for_vcf_registry
     ensure_vcf_depot_software_id_task_steps = (
@@ -430,7 +433,7 @@ def build_router(dependencies: VcfWorkflowsUiDependencies) -> VcfWorkflowsUiRout
         verify_csrf(request, str(payload.get("csrf") or ""))
         return payload
 
-    def _confirmed_tls_fingerprint(
+    def _confirmed_tls_fingerprint_impl(
         address: str, port: int, confirmed: str
     ) -> tuple[str, JSONResponse | None]:
         """Return confirmed tls fingerprint.
@@ -3767,7 +3770,7 @@ def build_router(dependencies: VcfWorkflowsUiDependencies) -> VcfWorkflowsUiRout
             "vcf_helper_page": vcf_helper_page,
             "vcf_helper_page_context": vcf_helper_page_context,
             "_vcf_helper_json": _vcf_helper_json,
-            "_confirmed_tls_fingerprint": _confirmed_tls_fingerprint,
+            "_confirmed_tls_fingerprint": _confirmed_tls_fingerprint_impl,
             "_split_vcf_endpoint_address_port": _split_vcf_endpoint_address_port,
             "_resolve_vcf_helper_credentials": _resolve_vcf_helper_credentials_impl,
             "inspect_vcf_vault_import": inspect_vcf_vault_import,
