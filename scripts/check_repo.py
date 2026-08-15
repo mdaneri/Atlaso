@@ -1008,7 +1008,7 @@ def strip_markdown_blank_terminated_inert_html_blocks(text: str) -> str:
     Args:
         text: Markdown source whose inert raw HTML blocks must be normalized.
     """
-    block_tags = "code|iframe|noscript|template|xmp"
+    block_tags = "code|head|iframe|noscript|template|title|xmp"
     block_start = re.compile(
         rf" {{0,3}}</?(?:{block_tags})(?=(?:\s|/?>|$))",
         flags=re.IGNORECASE,
@@ -1107,13 +1107,34 @@ def starts_markdown_html_block(line: str) -> bool:
     ) is not None
 
 
+def starts_markdown_block_construct(line: str) -> bool:
+    """Return whether a line starts a non-paragraph Markdown block.
+
+    Args:
+        line: Structural Markdown source line.
+    """
+    return any(
+        pattern.match(line) is not None
+        for pattern in (
+            re.compile(r" {0,3}>"),
+            re.compile(r" {0,3}(?:[*+-]|\d{1,9}[.)])(?:[ \t]+|$)"),
+            re.compile(r" {0,3}(?:#{1,6})(?:[ \t]+|$)"),
+            re.compile(r" {0,3}(?:`{3,}|~{3,})"),
+            re.compile(
+                r" {0,3}(?:(?:\*[ \t]*){3,}|(?:_[ \t]*){3,}|"
+                r"(?:-[ \t]*){3,})$"
+            ),
+        )
+    ) or starts_markdown_html_block(line)
+
+
 def strip_markdown_hidden_html_containers(text: str) -> str:
     """Blank balanced non-rendered HTML containers while preserving lines.
 
     Args:
         text: Markdown source whose hidden raw HTML containers must be normalized.
     """
-    inert_elements = {"iframe", "noscript", "template", "xmp"}
+    inert_elements = {"head", "iframe", "noscript", "template", "title", "xmp"}
     tag_pattern = re.compile(
         r'''<(?P<closing>/)?(?P<tag>[A-Za-z][A-Za-z0-9-]*)\b'''
         r'''(?P<attributes>(?:[^<>"']|"[^"]*"|'[^']*')*?)'''
@@ -1650,22 +1671,7 @@ def extract_markdown_policy_section(
                 return "".join(lines[start:end])
             title_line = lines[end].rstrip("\r\n")
             title_indent = len(title_line) - len(title_line.lstrip(" "))
-            title_starts_block = any(
-                pattern.match(title_line) is not None
-                for pattern in (
-                    re.compile(r" {0,3}>", flags=re.IGNORECASE),
-                    re.compile(
-                        r" {0,3}(?:[*+-]|\d{1,9}[.)])(?:[ \t]+|$)",
-                        flags=re.IGNORECASE,
-                    ),
-                    re.compile(r" {0,3}(?:#{1,6})(?:[ \t]+|$)"),
-                    re.compile(r" {0,3}(?:`{3,}|~{3,})"),
-                    re.compile(
-                        r" {0,3}(?:(?:\*[ \t]*){3,}|(?:_[ \t]*){3,}|"
-                        r"(?:-[ \t]*){3,})$"
-                    ),
-                )
-            ) or starts_markdown_html_block(title_line)
+            title_starts_block = starts_markdown_block_construct(title_line)
             setext_match = (
                 re.fullmatch(r" {0,3}(=+|-+)[ \t]*(?:\r?\n)?", lines[end + 1])
                 if end + 1 < len(lines)
@@ -1677,7 +1683,20 @@ def extract_markdown_policy_section(
             if setext_match is not None:
                 next_level = 1 if setext_match.group(1).startswith("=") else 2
                 if next_level <= heading_level:
-                    return "".join(lines[start:end])
+                    paragraph_start = end
+                    while paragraph_start > start + 1:
+                        previous_line = lines[paragraph_start - 1].rstrip("\r\n")
+                        previous_indent = len(previous_line) - len(
+                            previous_line.lstrip(" ")
+                        )
+                        if (
+                            not previous_line.strip()
+                            or previous_indent > 3
+                            or starts_markdown_block_construct(previous_line)
+                        ):
+                            break
+                        paragraph_start -= 1
+                    return "".join(lines[start:paragraph_start])
     else:
         for end in range(start + 1, len(lines)):
             if lines[end].strip() and not lines[end].startswith(("  ", "\t")):

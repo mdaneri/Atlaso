@@ -779,6 +779,36 @@ def test_agent_policy_gate_preserves_thematic_breaks_after_list_items(
         assert check_agent_policy_gate(tmp_path) == []
 
 
+def test_agent_policy_gate_honors_multiline_setext_heading_boundaries(
+    tmp_path: Path,
+) -> None:
+    """Verify every title line is excluded from the preceding section.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    marker = '`cleanup-ready`'
+    for relative_path in ORDERED_TERMINAL_CLEANUP_MARKERS:
+        anchor = TERMINAL_CLEANUP_SECTION_ANCHORS[relative_path]
+        if not anchor.startswith("#"):
+            continue
+        write_policy_files(tmp_path)
+        path = tmp_path / relative_path
+        text = path.read_text(encoding="utf-8").replace(marker, "", 1)
+        path.write_text(
+            text + f"\n{marker} title line\nFollowing section\n---\n",
+            encoding="utf-8",
+        )
+
+        findings = check_agent_policy_gate(tmp_path)
+
+        assert len(findings) == 1
+        assert findings[0].path == path
+        assert findings[0].message == (
+            f"completed-task cleanup section marker is missing: {marker}"
+        )
+
+
 def test_agent_policy_gate_honors_all_list_item_boundaries(tmp_path: Path) -> None:
     """Verify that every top-level Markdown list item ends cleanup list items.
 
@@ -1409,6 +1439,42 @@ def test_agent_policy_gate_ignores_nested_raw_html_container_markers(
         assert findings[0].message == (
             f"completed-task cleanup section marker is missing: {marker}"
         )
+
+
+def test_agent_policy_gate_ignores_html_metadata_element_markers(
+    tmp_path: Path,
+) -> None:
+    """Verify title and head metadata bodies cannot satisfy policy markers.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    marker = '`cleanup-ready`'
+    sibling = "\n- following policy"
+    for relative_path in ORDERED_TERMINAL_CLEANUP_MARKERS:
+        for tag_name in ("title", "head"):
+            write_policy_files(tmp_path)
+            path = tmp_path / relative_path
+            anchor = TERMINAL_CLEANUP_SECTION_ANCHORS[relative_path]
+            html_prefix = "" if anchor.startswith("#") else "  "
+            text = path.read_text(encoding="utf-8").replace(marker, "", 1)
+            hidden_marker = (
+                f"\n{html_prefix}<{tag_name}>{marker}</{tag_name}>"
+            )
+            path.write_text(
+                text + hidden_marker
+                if anchor.startswith("#")
+                else text.replace(sibling, hidden_marker + sibling, 1),
+                encoding="utf-8",
+            )
+
+            findings = check_agent_policy_gate(tmp_path)
+
+            assert len(findings) == 1
+            assert findings[0].path == path
+            assert findings[0].message == (
+                f"completed-task cleanup section marker is missing: {marker}"
+            )
 
 
 def test_agent_policy_gate_ignores_raw_html_policy_sections(tmp_path: Path) -> None:
