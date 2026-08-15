@@ -16,6 +16,7 @@ FACADE_MODULES = ("atlaso.app.ui", "atlaso.app.api.v1")
 SERVICE_FORBIDDEN_MODULES = (*FACADE_MODULES, "atlaso.app.main", "atlaso.app.routers")
 EXTRACTED_DOMAIN_MODULES = {
     ROOT / "atlaso" / "app" / "ui.py": (
+        "atlaso.app.routers.ui.appliance_apply",
         "atlaso.app.routers.ui.dns_dhcp",
         "atlaso.app.routers.ui.firewall",
         "atlaso.app.routers.ui.physical_vlans",

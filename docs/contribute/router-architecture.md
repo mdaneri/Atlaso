@@ -16,7 +16,9 @@ extracted physical-interface and VLAN transport ownership without changing their
 physical-interface desired-state mutation, dependent reconciliation, and audit persistence behind one typed domain
 service shared by both extracted transports. Phase 4 extracts Routes/WAN and Firewall transport ownership while
 preserving the established UI, API v1, desired-state, and global Appliance Apply contracts. Phase 5 extracts DNS/DHCP
-transport ownership while retaining dnsmasq behavior and every cross-domain integration.
+transport ownership while retaining dnsmasq behavior and every cross-domain integration. Phase 6 extracts the four
+Appliance Apply management transports while keeping submission, execution, recovery, unit construction, status
+projection, logging, and audit behavior in the stable UI facade.
 
 ## Ownership and responsibilities
 
@@ -132,6 +134,21 @@ Rendering and low-level validation remain in `atlaso/app/services/dnsmasq.py` wi
 reconciliation, and other cross-domain lifecycle tests retain their existing owners. This extraction does not change
 templates, browser assets, visible copy, API operations, normalized OpenAPI, route inventory, audits, desired state, or
 the global Appliance Apply boundary.
+
+## Extracted Appliance Apply ownership
+
+The established Appliance Apply management transports live in
+`atlaso/app/routers/ui/appliance_apply.py`: the direct-page redirect, review projection, lightweight status projection,
+and submission endpoint. The stable `atlaso/app/ui.py` facade continues to export the four endpoint names and owns the
+status, context, unit construction, active-job, submission, execution, logging, recovery, audit, identity/CSRF, and
+background-task helpers supplied through the typed router builder. The UI registry places `appliance_apply` immediately
+after `facade_before_routes_wan` and before `routes_wan`, preserving the established effective route order.
+
+Independently runnable transport coverage lives in `tests/routers/ui/test_appliance_apply.py`. Browser polling remains
+covered by `tests/javascript/appliance-apply-polling.test.js`; execution, recovery, subsystem sequencing, helper
+rendering, and cross-domain behavior retain their existing test owners. This extraction changes no route, response,
+listener dependency, permission, CSRF/session behavior, desired-state boundary, route inventory, or normalized OpenAPI
+contract.
 
 ## Route and OpenAPI compatibility
 
