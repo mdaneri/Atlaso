@@ -11904,7 +11904,7 @@ def _apply_atlaso_release(
             "status": "failed",
             "success": False,
             "release": version,
-            "rolled_back": rollback_completed,
+            "rolled_back": rollback_ready,
             "failure_layer": failure_layer,
             "rollback_health": {
                 "openapi": rollback_health,
@@ -11925,7 +11925,7 @@ def _apply_atlaso_release(
                 {
                     **finalizer_evidence,
                     "status": "failed",
-                    "rolled_back": rollback_completed,
+                    "rolled_back": rollback_ready,
                     "failure_layer": failure_layer,
                     "rollback_health": rollback_ready,
                     "rollback_service_checks": rollback_services,
@@ -11939,8 +11939,9 @@ def _apply_atlaso_release(
                 }
             ),
         )
-        shutil.rmtree(release_root, ignore_errors=True)
-        rollback_outcome = "was rolled back" if rollback_completed else "rollback was incomplete"
+        if rollback_link.get("success", False):
+            shutil.rmtree(release_root, ignore_errors=True)
+        rollback_outcome = "was rolled back" if rollback_ready else "rollback was incomplete"
         raise ValueError(
             f"Atlaso release {version} failed and {rollback_outcome}: {transaction_error}"
         ) from exc

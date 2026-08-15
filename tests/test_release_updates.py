@@ -1904,16 +1904,17 @@ def test_worker_restart_keeps_release_finalizer_scoped_to_its_child(client, monk
 
 
 @pytest.mark.parametrize(
-    ("failure_stage", "expected_layer"),
+    ("failure_stage", "expected_layer", "expected_rolled_back"),
     [
-        ("systemd_assets", "data_disk_identity"),
-        ("symlink_switch", "systemd_reload"),
-        ("candidate_startup", "candidate_startup"),
-        ("maintenance_cleanup", "maintenance_cleanup"),
-        ("nginx_configuration", "nginx_configuration"),
-        ("management_front_door", "management_front_door"),
-        ("finalizer_persistence", "finalizer_persistence"),
-        ("rollback_symlink_sync", "candidate_startup"),
+        ("systemd_assets", "data_disk_identity", True),
+        ("symlink_switch", "systemd_reload", True),
+        ("candidate_startup", "candidate_startup", True),
+        ("maintenance_cleanup", "maintenance_cleanup", True),
+        ("nginx_configuration", "nginx_configuration", True),
+        ("management_front_door", "management_front_door", True),
+        ("finalizer_persistence", "finalizer_persistence", True),
+        ("rollback_symlink_sync", "candidate_startup", True),
+        ("rollback_link_restore", "candidate_startup", False),
     ],
 )
 def test_failed_candidate_restores_previous_release_and_database(
@@ -1921,6 +1922,7 @@ def test_failed_candidate_restores_previous_release_and_database(
     tmp_path,
     failure_stage,
     expected_layer,
+    expected_rolled_back,
 ):
     """Verify that failed candidate restores previous release and database.
 
@@ -2019,6 +2021,8 @@ def test_failed_candidate_restores_previous_release_and_database(
         """
         if target.name == "0.9.0":
             set_identity("after")
+        if failure_stage == "rollback_link_restore" and target == previous:
+            raise OSError("injected rollback symlink restore failure")
         link.unlink(missing_ok=True)
         link.symlink_to(target, target_is_directory=True)
         if failure_stage == "rollback_symlink_sync" and target == previous:
@@ -2101,7 +2105,8 @@ def test_failed_candidate_restores_previous_release_and_database(
         if action == "start" and units == ("atlaso.service",):
             candidate_starts += 1
             success = (
-                failure_stage not in {"candidate_startup", "rollback_symlink_sync"}
+                failure_stage
+                not in {"candidate_startup", "rollback_symlink_sync", "rollback_link_restore"}
                 or candidate_starts > 1
             )
         return {
@@ -2190,18 +2195,23 @@ def test_failed_candidate_restores_previous_release_and_database(
 
     monkeypatch.setattr(helper, "_write_release_finalizer", finalizer)
 
-    with pytest.raises(ValueError, match="rolled back"):
+    outcome = "rolled back" if expected_rolled_back else "rollback was incomplete"
+    with pytest.raises(ValueError, match=outcome):
         helper._apply_atlaso_release({}, {})
 
-    assert current.resolve() == previous.resolve()
+    expected_release = previous if expected_rolled_back else releases / "0.9.0"
+    assert current.resolve() == expected_release.resolve()
     assert get_identity() == "before"
-    assert not (releases / "0.9.0").exists()
+    assert (releases / "0.9.0").exists() is not expected_rolled_back
     finalizer = json.loads((tmp_path / "finalizer.json").read_text(encoding="utf-8"))
-    assert finalizer["rolled_back"] is True
-    assert finalizer["rollback_health"] is True
+    assert finalizer["rolled_back"] is expected_rolled_back
+    assert finalizer["rollback_health"] is expected_rolled_back
     assert finalizer["failure_layer"] == expected_layer
     if failure_stage == "rollback_symlink_sync":
         assert "rollback_release_link" in finalizer["rollback_failures"]
+    if failure_stage == "rollback_link_restore":
+        assert "rollback_release_link" in finalizer["rollback_failures"]
+        assert "rollback_active_release_link" in finalizer["rollback_failures"]
 
 
 def test_release_activation_verification_requires_exact_candidate_through_nginx(monkeypatch, tmp_path):
