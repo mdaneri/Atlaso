@@ -2783,6 +2783,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#extracted-identity-management-ownership" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Extracted identity-management ownership
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#route-and-openapi-compatibility" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -3477,6 +3488,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#extracted-identity-management-ownership" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Extracted identity-management ownership
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#route-and-openapi-compatibility" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -3627,7 +3649,9 @@ service shared by both extracted transports. Phase 4 extracts Routes/WAN and Fir
 preserving the established UI, API v1, desired-state, and global Appliance Apply contracts. Phase 5 extracts DNS/DHCP
 transport ownership while retaining dnsmasq behavior and every cross-domain integration. Phase 6 extracts the four
 Appliance Apply management transports while keeping submission, execution, recovery, unit construction, status
-projection, logging, and audit behavior in the stable UI facade.</p>
+projection, logging, and audit behavior in the stable UI facade. Phase 7 extracts bounded identity-management UI and
+API v1 transports while keeping OIDC protocol endpoints, managed LDAP transports, and identity-domain behavior in
+their established owners.</p>
 <h2 id="ownership-and-responsibilities">Ownership and responsibilities<a class="headerlink" href="#ownership-and-responsibilities" title="Permanent link">&para;</a></h2>
 <ul>
 <li><code>atlaso/app/main.py</code> owns application construction, middleware, mounts, and the top-level order in which stable facade
@@ -3737,6 +3761,23 @@ covered by <code>tests/javascript/appliance-apply-polling.test.js</code>; execut
 rendering, and cross-domain behavior retain their existing test owners. This extraction changes no route, response,
 listener dependency, permission, CSRF/session behavior, desired-state boundary, route inventory, or normalized OpenAPI
 contract.</p>
+<h2 id="extracted-identity-management-ownership">Extracted identity-management ownership<a class="headerlink" href="#extracted-identity-management-ownership" title="Permanent link">&para;</a></h2>
+<p>Authentication and OpenID Connect administration, UI API-token administration, Local Users management and status,
+and the legacy LDAP-users redirect live in <code>atlaso/app/routers/ui/identity.py</code>. Current-identity and API-token lifecycle
+operations live in <code>atlaso/app/routers/api_v1/identity.py</code>. The stable facades continue to export the established
+endpoint and compatibility-helper names while supplying the UI module with facade-owned rendering, CSRF, authorization,
+desired-state status, service-binding, DNS/CA reconciliation, and Local Users helpers. Neither domain router imports a
+monolithic facade.</p>
+<p>The UI registry places <code>identity</code> after <code>facade_between_dns_dhcp_identity</code> and before <code>facade_after_identity</code>, preserving
+the established position between ESX Storage and Services. The API v1 registry places <code>identity</code> after
+<code>facade_before_identity</code> and before <code>facade_between_identity_physical_vlans</code>, preserving the established position after
+API login and before Dashboard. <code>/api/v1/auth/login</code> remains in the facade, OIDC protocol endpoints under <code>/identity</code>
+retain their dedicated ownership, and managed LDAP transports remain unextracted.</p>
+<p>Independently runnable transport coverage lives in <code>tests/routers/ui/test_identity.py</code> and
+<code>tests/routers/api_v1/test_identity.py</code>. OIDC protocol and service behavior retain their existing test owners. This
+extraction changes no template, browser asset, visible copy, route, route name, operation ID, authorization scope,
+session or CSRF behavior, secret-once or redaction behavior, redirect, response schema, route inventory, or normalized
+OpenAPI contract.</p>
 <h2 id="route-and-openapi-compatibility">Route and OpenAPI compatibility<a class="headerlink" href="#route-and-openapi-compatibility" title="Permanent link">&para;</a></h2>
 <p><code>tests/contracts/route_inventory.json</code> records every effective application route in order, including browser,
 protocol, WebSocket, mount, and API routes. Its stable fields are plane, path, methods, route name, explicit operation
@@ -3782,9 +3823,10 @@ complete the <a href="../ui-design-guide/">UI Design Guide</a> gate.</p>
 </span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="n">python</span> <span class="n">-m</span> <span class="n">pytest</span> <span class="n">-q</span> <span class="n">tests</span><span class="p">/</span><span class="n">routers</span><span class="p">/</span><span class="n">ui</span><span class="p">/</span><span class="n">test_routes_wan</span><span class="p">.</span><span class="n">py</span> <span class="n">tests</span><span class="p">/</span><span class="n">routers</span><span class="p">/</span><span class="n">api_v1</span><span class="p">/</span><span class="n">test_routes_wan</span><span class="p">.</span><span class="n">py</span>
 </span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="n">python</span> <span class="n">-m</span> <span class="n">pytest</span> <span class="n">-q</span> <span class="n">tests</span><span class="p">/</span><span class="n">routers</span><span class="p">/</span><span class="n">ui</span><span class="p">/</span><span class="n">test_firewall</span><span class="p">.</span><span class="n">py</span> <span class="n">tests</span><span class="p">/</span><span class="n">routers</span><span class="p">/</span><span class="n">api_v1</span><span class="p">/</span><span class="n">test_firewall</span><span class="p">.</span><span class="n">py</span>
 </span><span id="__span-1-5"><a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="n">python</span> <span class="n">-m</span> <span class="n">pytest</span> <span class="n">-q</span> <span class="n">tests</span><span class="p">/</span><span class="n">routers</span><span class="p">/</span><span class="n">ui</span><span class="p">/</span><span class="n">test_dns_dhcp</span><span class="p">.</span><span class="n">py</span> <span class="n">tests</span><span class="p">/</span><span class="n">routers</span><span class="p">/</span><span class="n">api_v1</span><span class="p">/</span><span class="n">test_dns_dhcp</span><span class="p">.</span><span class="n">py</span> <span class="n">tests</span><span class="p">/</span><span class="n">test_dns_dhcp</span><span class="p">.</span><span class="n">py</span>
-</span><span id="__span-1-6"><a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a><span class="n">python</span> <span class="n">-m</span> <span class="n">pytest</span> <span class="n">-q</span> <span class="n">tests</span><span class="p">/</span><span class="n">test_openapi_contract</span><span class="p">.</span><span class="n">py</span> <span class="n">tests</span><span class="p">/</span><span class="n">test_ui_route_namespaces</span><span class="p">.</span><span class="n">py</span> <span class="n">tests</span><span class="p">/</span><span class="n">test_ui_compliance</span><span class="p">.</span><span class="n">py</span>
-</span><span id="__span-1-7"><a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a><span class="n">python</span> <span class="n">scripts</span><span class="p">/</span><span class="n">generate_router_contract_baselines</span><span class="p">.</span><span class="n">py</span> <span class="p">-</span><span class="n">-check</span>
-</span><span id="__span-1-8"><a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a><span class="n">python</span> <span class="n">scripts</span><span class="p">/</span><span class="n">check_python_static_analysis</span><span class="p">.</span><span class="n">py</span>
+</span><span id="__span-1-6"><a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a><span class="n">python</span> <span class="n">-m</span> <span class="n">pytest</span> <span class="n">-q</span> <span class="n">tests</span><span class="p">/</span><span class="n">routers</span><span class="p">/</span><span class="n">ui</span><span class="p">/</span><span class="n">test_identity</span><span class="p">.</span><span class="n">py</span> <span class="n">tests</span><span class="p">/</span><span class="n">routers</span><span class="p">/</span><span class="n">api_v1</span><span class="p">/</span><span class="n">test_identity</span><span class="p">.</span><span class="n">py</span>
+</span><span id="__span-1-7"><a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a><span class="n">python</span> <span class="n">-m</span> <span class="n">pytest</span> <span class="n">-q</span> <span class="n">tests</span><span class="p">/</span><span class="n">test_openapi_contract</span><span class="p">.</span><span class="n">py</span> <span class="n">tests</span><span class="p">/</span><span class="n">test_ui_route_namespaces</span><span class="p">.</span><span class="n">py</span> <span class="n">tests</span><span class="p">/</span><span class="n">test_ui_compliance</span><span class="p">.</span><span class="n">py</span>
+</span><span id="__span-1-8"><a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a><span class="n">python</span> <span class="n">scripts</span><span class="p">/</span><span class="n">generate_router_contract_baselines</span><span class="p">.</span><span class="n">py</span> <span class="p">-</span><span class="n">-check</span>
+</span><span id="__span-1-9"><a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a><span class="n">python</span> <span class="n">scripts</span><span class="p">/</span><span class="n">check_python_static_analysis</span><span class="p">.</span><span class="n">py</span>
 </span></code></pre></div>
 <p>Then run the repository's required documentation, version, and diff checks; canonical CI owns the complete Python
 suite. Later phases remain incomplete until their own linked issue, documentation, validation, review, and merge gates
