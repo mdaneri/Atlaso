@@ -418,7 +418,9 @@ status: current
   completes. Retain maintenance through every rollback-capable stage, then durably record `activation_committed` before
   validating, reloading, and opening nginx. Failures after that commit must preserve the candidate and retry forward;
   never restore the database snapshot after the front door can admit operator writes. Worker pre-start must distinguish
-  a live helper by boot, PID, and process-start identity; stale provisional
+  a live helper by boot, PID, and process-start identity. Stale committed evidence after reboot must recreate its
+  volatile gate, schedule root-owned completion, and admit the gated candidate without requiring the not-yet-started
+  worker; definitive completion then requires that worker's exact published identity. Stale provisional
   evidence after a host restart must restore and verify the previous release before the worker is admitted. Flush the
   database and every installed-asset rollback backup plus its directory entries before publishing the durable recovery
   manifest. Refresh that manifest after adding the ESX allowlist backup and before mutating its claims or database, so

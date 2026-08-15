@@ -90,6 +90,7 @@ COMMANDS: dict[str, set[str]] = {
         "restart-service",
         "bootstrap-data-disk-safety",
         "recover-release",
+        "complete-committed-release",
     },
     "automation": {"run"},
     "appliance-power": {"reboot", "shutdown"},
@@ -152,6 +153,7 @@ NO_PATH_ACTIONS = {
     ("esx-storage", "status"),
     ("esx-storage", "logs"),
     ("appliance-update", "recover-release"),
+    ("appliance-update", "complete-committed-release"),
 }
 NON_PATH_ARGUMENT_ACTIONS = {
     ("local-users", "authenticate"),
@@ -11304,6 +11306,71 @@ def _complete_committed_release_activation(parsed: dict) -> dict:
         return {**committed, "allow_worker": False}
 
 
+def _finish_committed_release_after_worker_start() -> dict:
+    """Wait for the rebooted candidate worker, then finish forward activation."""
+    try:
+        parsed = json.loads(ATLASO_UPDATE_FINALIZER_PATH.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        return {
+            "status": "activation_committed",
+            "success": False,
+            "allow_worker": False,
+            "error": f"Committed activation evidence could not be read: {type(exc).__name__}.",
+        }
+    if not isinstance(parsed, dict) or str(parsed.get("status") or "") != "activation_committed":
+        return {
+            "status": "activation_committed",
+            "success": False,
+            "allow_worker": False,
+            "error": "Committed activation evidence is no longer pending.",
+        }
+    context = _validated_release_recovery_context(parsed)
+    candidate = context["candidate"]
+    assert isinstance(candidate, Path)
+    commands = [command for command in parsed.get("commands", []) if isinstance(command, dict)]
+    worker_activation = _wait_for_worker_activation(
+        expected_version=str(parsed.get("candidate_version") or ""),
+        expected_release=candidate,
+        expected_job_id=str(parsed.get("job_id") or ""),
+        previous_pid=0,
+        timeout_seconds=300,
+    )
+    commands.append(worker_activation)
+    parsed = {**parsed, "commands": commands, "worker_restart": worker_activation}
+    if not worker_activation.get("success"):
+        parsed.update(
+            {
+                "success": False,
+                "rolled_back": False,
+                "failure_layer": "committed_worker_activation",
+                "error": "Committed activation could not prove the rebooted candidate worker.",
+            }
+        )
+        _write_release_finalizer(parsed)
+        _write_update_info(parsed)
+        return {**parsed, "allow_worker": False}
+    return _complete_committed_release_activation(parsed)
+
+
+def _schedule_committed_release_completion() -> dict:
+    """Schedule root-owned forward completion after worker ExecStart begins."""
+    return _command_payload(
+        [
+            "systemd-run",
+            "--unit",
+            f"atlaso-release-forward-{os.getpid()}",
+            "--collect",
+            "--no-block",
+            "--property=Type=oneshot",
+            "--property=TimeoutStartSec=30min",
+            "/opt/atlaso/bin/atlaso-helper",
+            "appliance-update",
+            "complete-committed-release",
+            "--real",
+        ]
+    )
+
+
 def _recover_interrupted_release_transaction() -> dict:
     """Rollback a stale provisional release transaction before the worker starts."""
     try:
@@ -11335,7 +11402,44 @@ def _recover_interrupted_release_transaction() -> dict:
                 "allow_worker": True,
                 "job_id": str(parsed.get("job_id") or ""),
             }
-        return _complete_committed_release_activation(parsed)
+        commands = [command for command in parsed.get("commands", []) if isinstance(command, dict)]
+        job_id = str(parsed.get("job_id") or "")
+        try:
+            _validated_release_recovery_context(parsed)
+            _set_release_restart_gate(True, job_id)
+            maintenance = _set_release_maintenance(True)
+            commands.append(maintenance)
+            if not maintenance.get("success"):
+                raise ValueError("committed activation could not restore maintenance mode")
+            scheduled = _schedule_committed_release_completion()
+            commands.append(scheduled)
+            if not scheduled.get("success"):
+                raise ValueError("committed activation completion could not be scheduled")
+            pending = {**parsed, "commands": commands}
+            _write_release_finalizer(pending)
+            _write_update_info(pending)
+            return {
+                **pending,
+                "status": "activation_committed",
+                "success": True,
+                "allow_worker": True,
+            }
+        except Exception as exc:  # noqa: BLE001 - pre-start recovery must fail closed.
+            failed = {
+                **parsed,
+                "status": "activation_committed",
+                "success": False,
+                "rolled_back": False,
+                "commands": commands,
+                "failure_layer": "committed_activation_handoff",
+                "error": f"Committed activation handoff requires retry: {type(exc).__name__}.",
+            }
+            try:
+                _write_release_finalizer(failed)
+                _write_update_info(failed)
+            except OSError:
+                pass
+            return {**failed, "allow_worker": False}
     provisional = status in {"transaction_pending", "restart_pending", "rollback_pending"}
     if not provisional:
         if ATLASO_UPDATE_RESTART_GATE_PATH.exists():
@@ -14423,6 +14527,18 @@ def _handle_appliance_update(action: str, args: list[str]) -> int:
         action: Action consumed by handle appliance update.
         args: Parsed command-line options consumed by the operation.
     """
+    if action == "complete-committed-release":
+        if args:
+            print("complete-committed-release does not accept arguments", file=sys.stderr)
+            return 2
+        result = _finish_committed_release_after_worker_start()
+        print(json.dumps(result, indent=2, sort_keys=True))
+        if result.get("success") is True:
+            return 0
+        if result.get("error"):
+            print(str(result["error"]), file=sys.stderr)
+        return 75
+
     if action == "recover-release":
         if args:
             print("recover-release does not accept arguments", file=sys.stderr)

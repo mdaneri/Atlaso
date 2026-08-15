@@ -158,7 +158,7 @@ def _write_worker_startup_status() -> None:
     finalizer = _release_finalizer()
     release_job_id = (
         str(finalizer.get("job_id") or "")
-        if str(finalizer.get("status") or "") == "restart_pending"
+        if str(finalizer.get("status") or "") in {"restart_pending", "activation_committed"}
         else ""
     )
     try:
@@ -201,6 +201,7 @@ def _wait_for_release_restart_finalizer(timeout_seconds: int = 90) -> bool:
             "transaction_pending",
             "restart_pending",
             "rollback_pending",
+            "activation_committed",
         }
         gate_exists = APPLIANCE_UPDATE_RESTART_GATE_PATH.exists()
         if not gate_exists and not finalizer_pending:

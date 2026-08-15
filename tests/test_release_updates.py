@@ -250,6 +250,12 @@ def test_worker_publishes_candidate_identity_and_waits_for_release_finalizer(mon
     assert payload["version"] == "0.9.156"
     assert payload["current_release"] == str(release_root.resolve())
     assert payload["release_job_id"] == "job_release_restart"
+    finalizer.write_text(
+        json.dumps({"status": "activation_committed", "job_id": "job_release_committed"}),
+        encoding="utf-8",
+    )
+    worker._write_worker_startup_status()
+    assert json.loads(marker.read_text(encoding="utf-8"))["release_job_id"] == "job_release_committed"
     states = [
         {"status": "restart_pending"},
         {"status": "restart_pending"},
@@ -3860,7 +3866,7 @@ def test_committed_activation_finishes_forward_without_database_rollback(monkeyp
     monkeypatch.setattr(helper, "ATLASO_UPDATE_FINALIZER_PATH", finalizer_path)
     monkeypatch.setattr(helper, "_release_transaction_owner_alive", lambda _owner: False)
 
-    result = helper._recover_interrupted_release_transaction()
+    result = helper._complete_committed_release_activation(parsed)
 
     assert candidate.exists()
     assert events.index("activation_committed") < events.index("maintenance:False")
@@ -3873,6 +3879,108 @@ def test_committed_activation_finishes_forward_without_database_rollback(monkeyp
         assert result["status"] == "succeeded"
         assert finalizers == ["succeeded"]
         assert gate_states == [False]
+
+
+def test_committed_prestart_recreates_gate_and_defers_worker_proof(monkeypatch, tmp_path):
+    """Verify reboot pre-start recreates the volatile gate without requiring its own worker.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace helper dependencies.
+        tmp_path: Temporary directory provided for committed evidence.
+    """
+    from tests.test_appliance_update import load_helper_module
+
+    helper = load_helper_module()
+    finalizer = tmp_path / "finalizer.json"
+    parsed = {
+        "job_id": "job-committed-reboot",
+        "status": "activation_committed",
+        "transaction_recovery": {"owner": {"boot_id": "old"}},
+        "commands": [],
+    }
+    finalizer.write_text(json.dumps(parsed), encoding="utf-8")
+    monkeypatch.setattr(helper, "ATLASO_UPDATE_FINALIZER_PATH", finalizer)
+    monkeypatch.setattr(helper, "_release_transaction_owner_alive", lambda _owner: False)
+    monkeypatch.setattr(helper, "_validated_release_recovery_context", lambda _parsed: {"candidate": tmp_path})
+    gate_calls: list[tuple[bool, str]] = []
+    monkeypatch.setattr(
+        helper,
+        "_set_release_restart_gate",
+        lambda enabled, job_id="": gate_calls.append((enabled, job_id)),
+    )
+    monkeypatch.setattr(
+        helper,
+        "_set_release_maintenance",
+        lambda _enabled: helper._release_check("maintenance_hold", True, "held"),
+    )
+    monkeypatch.setattr(
+        helper,
+        "_schedule_committed_release_completion",
+        lambda: helper._release_check("committed_activation_handoff", True, "scheduled"),
+    )
+    monkeypatch.setattr(helper, "_write_release_finalizer", lambda _payload: None)
+    monkeypatch.setattr(helper, "_write_update_info", lambda _payload: None)
+    monkeypatch.setattr(
+        helper,
+        "_complete_committed_release_activation",
+        lambda _parsed: pytest.fail("ExecStartPre must not require atlaso-worker.service"),
+    )
+
+    result = helper._recover_interrupted_release_transaction()
+
+    assert result["status"] == "activation_committed"
+    assert result["allow_worker"] is True
+    assert gate_calls == [(True, "job-committed-reboot")]
+
+
+def test_committed_handoff_waits_for_new_worker_before_front_door(monkeypatch, tmp_path):
+    """Verify the root handoff proves the post-ExecStart worker before definitive completion.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace helper dependencies.
+        tmp_path: Temporary directory provided for candidate evidence.
+    """
+    from tests.test_appliance_update import load_helper_module
+
+    helper = load_helper_module()
+    candidate = tmp_path / "releases/0.9.160"
+    candidate.mkdir(parents=True)
+    parsed = {
+        "job_id": "job-committed-worker",
+        "status": "activation_committed",
+        "candidate_version": "0.9.160",
+        "transaction_recovery": {"schema_version": 1},
+        "commands": [],
+    }
+    finalizer = tmp_path / "finalizer.json"
+    finalizer.write_text(json.dumps(parsed), encoding="utf-8")
+    monkeypatch.setattr(helper, "ATLASO_UPDATE_FINALIZER_PATH", finalizer)
+    monkeypatch.setattr(helper, "_validated_release_recovery_context", lambda _parsed: {"candidate": candidate})
+    observed: dict[str, object] = {}
+
+    def worker_activation(**kwargs):
+        """Record the post-ExecStart candidate identity proof.
+
+        Args:
+            **kwargs: Worker activation expectations supplied by the helper.
+        """
+        observed.update(kwargs)
+        return helper._release_check("worker_restart", True, "worker ready")
+
+    monkeypatch.setattr(helper, "_wait_for_worker_activation", worker_activation)
+    monkeypatch.setattr(
+        helper,
+        "_complete_committed_release_activation",
+        lambda payload: {**payload, "status": "succeeded", "success": True, "allow_worker": True},
+    )
+
+    result = helper._finish_committed_release_after_worker_start()
+
+    assert result["status"] == "succeeded"
+    assert observed["expected_version"] == "0.9.160"
+    assert observed["expected_release"] == candidate
+    assert observed["expected_job_id"] == "job-committed-worker"
+    assert observed["previous_pid"] == 0
 
 
 def test_release_maintenance_cleanup_validates_and_reloads_nginx(monkeypatch, tmp_path):

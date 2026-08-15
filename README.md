@@ -44,7 +44,8 @@ brings infrastructure, storage, identity, networking, and lifecycle workflows in
   compatibility remain usable. Atlaso Release installation reports success only after the durable active link, signed
   receipt, running version, internal API, nginx management front door, and post-maintenance service state all agree on
   the candidate. Maintenance remains closed through every rollback-capable stage; after a durable activation commit,
-  final front-door failures preserve the candidate and retry forward instead of discarding later operator writes.
+  final front-door failures preserve the candidate and retry forward through a gated post-start worker handoff instead
+  of discarding later operator writes, including after reboot when the volatile gate must be recreated.
   Startup rejects inconsistent success evidence and resumes only untouched update children.
 - [Services](docs/services/index.md) — configure DNS, identity, storage, network boot, and VCF integrations.
 - [Network configuration](docs/operate/networking.md) — distinguish static paths from forwarding permissions and manage
