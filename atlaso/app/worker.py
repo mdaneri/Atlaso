@@ -460,12 +460,22 @@ def recover_interrupted_worker_jobs(
             resume_pending_children = bool(
                 release_handoff_complete
                 and remaining_steps
-                and all(step.status == JobStatus.PENDING.value for step in remaining_steps)
+                and any(step.status == JobStatus.PENDING.value for step in remaining_steps)
+                and all(step.status != JobStatus.RUNNING.value for step in remaining_steps)
             )
             if resume_pending_children:
                 job.status = JobStatus.PENDING.value
                 job.finished_at = None
-                job.progress_percent = int((1 / len(update_steps)) * 90)
+                completed_steps = sum(
+                    step.status
+                    in {
+                        JobStatus.SUCCEEDED.value,
+                        JobStatus.FAILED.value,
+                        JobStatus.SKIPPED.value,
+                    }
+                    for step in update_steps
+                )
+                job.progress_percent = int((completed_steps / len(update_steps)) * 90)
                 job.error = None
                 try:
                     result = json.loads(job.result or "{}")

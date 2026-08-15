@@ -43,7 +43,9 @@ brings infrastructure, storage, identity, networking, and lifecycle workflows in
   Pages publication guards verify that its pointer, immutable release manifest, trust key, and CPython 3.14
   compatibility remain usable. Atlaso Release installation reports success only after the durable active link, signed
   receipt, running version, internal API, nginx management front door, and post-maintenance service state all agree on
-  the candidate; final-readiness failures roll back automatically and startup rejects inconsistent success evidence.
+  the candidate. Maintenance remains closed through every rollback-capable stage; after a durable activation commit,
+  final front-door failures preserve the candidate and retry forward instead of discarding later operator writes.
+  Startup rejects inconsistent success evidence and resumes only untouched update children.
 - [Services](docs/services/index.md) — configure DNS, identity, storage, network boot, and VCF integrations.
 - [Network configuration](docs/operate/networking.md) — distinguish static paths from forwarding permissions and manage
   Static Routes, Routing Permissions, IPv4 masquerade NAT rules, and interface-level WAN Simulation through reviewed

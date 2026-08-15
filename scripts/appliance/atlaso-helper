@@ -11220,6 +11220,90 @@ def _run_candidate_release_recovery(candidate: Path) -> dict:
     }
 
 
+def _complete_committed_release_activation(parsed: dict) -> dict:
+    """Finish a release whose database and active release may no longer be rolled back.
+
+    Args:
+        parsed: Durable activation-commit evidence written while maintenance was held.
+    """
+    commands = [command for command in parsed.get("commands", []) if isinstance(command, dict)]
+    job_id = str(parsed.get("job_id") or "")
+    try:
+        context = _validated_release_recovery_context(parsed)
+        candidate = context["candidate"]
+        assert isinstance(candidate, Path)
+        receipt = json.loads((candidate / ".release-manifest.json").read_text(encoding="utf-8"))
+        if not isinstance(receipt, dict):
+            raise ValueError("candidate release receipt is not an object")
+        gate_job_id = ATLASO_UPDATE_RESTART_GATE_PATH.read_text(encoding="utf-8").strip()
+        if not job_id or gate_job_id != job_id:
+            raise ValueError("release restart gate does not match committed activation")
+        if _active_release_root().resolve(strict=True) != candidate.resolve(strict=True):
+            raise ValueError("committed candidate is no longer the active release")
+        maintenance = _set_release_maintenance(True)
+        commands.append(maintenance)
+        if not maintenance.get("success"):
+            raise ValueError("committed activation could not retain maintenance mode")
+        durable = _sync_release_activation()
+        commands.append(durable)
+        if not durable.get("success"):
+            raise ValueError("committed activation could not be persisted")
+        internal, internal_commands = _release_activation_verification(
+            candidate,
+            receipt,
+            maintenance_expected=True,
+            include_front_door=False,
+        )
+        commands.extend(internal_commands)
+        if not internal.get("success"):
+            raise ValueError(
+                "committed activation failed internal verification at "
+                f"{internal.get('failure_layer') or 'unknown'}"
+            )
+        maintenance_cleanup = _set_release_maintenance(False)
+        commands.append(maintenance_cleanup)
+        if not maintenance_cleanup.get("success"):
+            raise ValueError("committed activation could not open the management front door")
+        activation, activation_commands = _release_activation_verification(candidate, receipt)
+        commands.extend(activation_commands)
+        if not activation.get("success"):
+            raise ValueError(
+                "committed activation failed host-facing verification at "
+                f"{activation.get('failure_layer') or 'unknown'}"
+            )
+        definitive = {
+            **parsed,
+            "status": "succeeded",
+            "rolled_back": False,
+            "service_health": True,
+            "commands": commands,
+            "active_release_verification": activation,
+            "finished_at": datetime.now(timezone.utc).isoformat(),
+        }
+        _write_release_finalizer(definitive)
+        _write_update_info(definitive)
+        _set_release_restart_gate(False)
+        return {**definitive, "success": True, "allow_worker": True}
+    except Exception as exc:  # noqa: BLE001 - committed activation must fail forward.
+        maintenance = _set_release_maintenance(True)
+        commands.append(maintenance)
+        committed = {
+            **parsed,
+            "status": "activation_committed",
+            "success": False,
+            "rolled_back": False,
+            "failure_layer": "committed_activation",
+            "commands": commands,
+            "error": f"Committed Atlaso release activation requires retry: {type(exc).__name__}.",
+        }
+        try:
+            _write_release_finalizer(committed)
+            _write_update_info(committed)
+        except OSError:
+            pass
+        return {**committed, "allow_worker": False}
+
+
 def _recover_interrupted_release_transaction() -> dict:
     """Rollback a stale provisional release transaction before the worker starts."""
     try:
@@ -11241,6 +11325,17 @@ def _recover_interrupted_release_transaction() -> dict:
             "error": "Release recovery finalizer is not a JSON object.",
         }
     status = str(parsed.get("status") or "")
+    if status == "activation_committed":
+        recovery = parsed.get("transaction_recovery")
+        owner = recovery.get("owner") if isinstance(recovery, dict) else None
+        if _release_transaction_owner_alive(owner):
+            return {
+                "status": "transaction_active",
+                "success": True,
+                "allow_worker": True,
+                "job_id": str(parsed.get("job_id") or ""),
+            }
+        return _complete_committed_release_activation(parsed)
     provisional = status in {"transaction_pending", "restart_pending", "rollback_pending"}
     if not provisional:
         if ATLASO_UPDATE_RESTART_GATE_PATH.exists():
@@ -12041,6 +12136,8 @@ def _release_activation_verification(
     *,
     require_receipt: bool = True,
     include_worker: bool = True,
+    maintenance_expected: bool = False,
+    include_front_door: bool = True,
     timeout_seconds: int = 60,
 ) -> tuple[dict, list[dict]]:
     """Verify durable active-release, service, nginx, and exact-version agreement.
@@ -12050,6 +12147,8 @@ def _release_activation_verification(
         release: Signed release manifest used to validate the active receipt.
         require_receipt: Whether signed receipt identity is mandatory for this verification.
         include_worker: Whether the worker must already be active during verification.
+        maintenance_expected: Whether the management front door must remain transactionally closed.
+        include_front_door: Whether to require an exact-version response through nginx.
         timeout_seconds: Maximum readiness wait for each OpenAPI endpoint.
     """
     expected_version = str(release.get("version") or "").split("+", 1)[0]
@@ -12099,13 +12198,18 @@ def _release_activation_verification(
     )
 
     maintenance_removed = not ATLASO_UPDATE_MAINTENANCE_PATH.exists()
+    maintenance_ready = not maintenance_removed if maintenance_expected else maintenance_removed
     checks.append(
         _release_check(
-            "maintenance_cleanup",
-            maintenance_removed,
-            "Nginx maintenance mode is removed."
-            if maintenance_removed
-            else "Nginx maintenance mode remains enabled.",
+            "maintenance_hold" if maintenance_expected else "maintenance_cleanup",
+            maintenance_ready,
+            "Nginx maintenance mode remains enabled."
+            if maintenance_expected and maintenance_ready
+            else (
+                "Nginx maintenance mode is removed."
+                if maintenance_ready
+                else "Nginx maintenance mode is not in the required transaction state."
+            ),
         )
     )
     nginx = _nginx_test_command()
@@ -12135,22 +12239,25 @@ def _release_activation_verification(
             timeout_seconds=timeout_seconds,
         )
     )
-    try:
-        _https_enabled, readiness_checks = _console_management_readiness_checks()
-        _label, front_door_url, insecure, _expected_status = next(
-            check for check in readiness_checks if check[0].startswith("nginx") and check[1].endswith("/openapi.json")
-        )
-        checks.append(
-            _wait_for_openapi_version(
-                layer="management_front_door",
-                url=front_door_url,
-                expected_version=expected_version,
-                insecure=insecure,
-                timeout_seconds=timeout_seconds,
+    if include_front_door:
+        try:
+            _https_enabled, readiness_checks = _console_management_readiness_checks()
+            _label, front_door_url, insecure, _expected_status = next(
+                check
+                for check in readiness_checks
+                if check[0].startswith("nginx") and check[1].endswith("/openapi.json")
             )
-        )
-    except (OSError, StopIteration, ValueError) as exc:
-        checks.append(_release_check("management_front_door", False, str(exc)))
+            checks.append(
+                _wait_for_openapi_version(
+                    layer="management_front_door",
+                    url=front_door_url,
+                    expected_version=expected_version,
+                    insecure=insecure,
+                    timeout_seconds=timeout_seconds,
+                )
+            )
+        except (OSError, StopIteration, ValueError) as exc:
+            checks.append(_release_check("management_front_door", False, str(exc)))
 
     failed = next((check for check in checks if not check.get("success")), None)
     checks_by_layer = {str(check.get("layer") or ""): check for check in checks}
@@ -12345,6 +12452,7 @@ def _apply_atlaso_release(
     if not maintenance["success"]:
         raise ValueError("Could not enter the nginx maintenance response before release transaction")
     database_backed_up = False
+    activation_committed = False
     failure_layer = "service_shutdown"
     try:
         stopped = _service_command("stop", "atlaso.service", "atlaso-console.service")
@@ -12431,17 +12539,17 @@ def _apply_atlaso_release(
         commands.append(active_services)
         if not active_services["success"]:
             raise ValueError("Candidate Atlaso release services are not active")
-        failure_layer = "maintenance_cleanup"
-        maintenance_cleanup = _set_release_maintenance(False)
-        commands.append(maintenance_cleanup)
-        if not maintenance_cleanup["success"]:
-            raise ValueError("Candidate Atlaso release failed final service validation")
         failure_layer = "durable_activation"
         durable = _sync_release_activation()
         commands.append(durable)
         if not durable["success"]:
             raise ValueError("Candidate Atlaso release activation could not be persisted")
-        activation, activation_commands = _release_activation_verification(release_root, release)
+        activation, activation_commands = _release_activation_verification(
+            release_root,
+            release,
+            maintenance_expected=True,
+            include_front_door=False,
+        )
         commands.extend(activation_commands)
         if not activation["success"]:
             failure_layer = str(activation.get("failure_layer") or "activation_verification")
@@ -12480,28 +12588,41 @@ def _apply_atlaso_release(
         commands.append(durable)
         if not durable["success"]:
             raise ValueError("Candidate Atlaso release post-restart activation could not be persisted")
-        activation, activation_commands = _release_activation_verification(release_root, release)
+        activation, activation_commands = _release_activation_verification(
+            release_root,
+            release,
+            maintenance_expected=True,
+            include_front_door=False,
+        )
         commands.extend(activation_commands)
         if not activation["success"]:
             failure_layer = str(activation.get("failure_layer") or "post_restart_activation")
             raise ValueError(f"Candidate Atlaso release failed post-restart verification at {failure_layer}")
         failure_layer = "release_cleanup"
         _prune_old_releases(current=release_root, previous=previous)
-        failure_layer = "finalizer_persistence"
-        _write_release_finalizer(
-            {
-                **finalizer_evidence,
-                "status": "succeeded",
-                "rolled_back": False,
-                "service_health": True,
-                "worker_restart": worker_activation,
-                "commands": commands,
-                "active_release_verification": activation,
-                "finished_at": datetime.now(timezone.utc).isoformat(),
-            }
-        )
-        _set_release_restart_gate(False)
+        failure_layer = "activation_commit"
+        committed = {
+            **finalizer_evidence,
+            "status": "activation_committed",
+            "rolled_back": False,
+            "service_health": True,
+            "worker_restart": worker_activation,
+            "transaction_recovery": transaction_recovery,
+            "commands": commands,
+            "active_release_verification": activation,
+            "started_at": datetime.now(timezone.utc).isoformat(),
+        }
+        _write_release_finalizer(committed)
+        activation_committed = True
+        completion = _complete_committed_release_activation(committed)
+        commands[:] = [item for item in completion.get("commands", commands) if isinstance(item, dict)]
+        if not completion.get("success"):
+            raise ValueError(str(completion.get("error") or "Committed Atlaso release activation requires retry."))
     except Exception as exc:
+        if activation_committed:
+            raise ValueError(
+                f"Atlaso release {version} is committed and requires forward activation recovery: {exc}"
+            ) from exc
         transaction_error = str(exc)
         rollback_failures: list[dict] = []
 

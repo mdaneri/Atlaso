@@ -326,6 +326,9 @@ The following cross-cutting boundaries always apply:
   virtualenv, signed receipt, finalizer, internal OpenAPI version, nginx management-front-door version, maintenance
   cleanup, nginx validation/reload, and required service state must agree. Restart the worker under a provisional
   finalizer and prove its new PID, candidate version, release root, and job identity before writing definitive success;
+  retain maintenance through every rollback-capable stage and durably record `activation_committed` before opening the
+  management front door. Once committed, preserve the candidate and retry cleanup, host-facing proof, and definitive
+  finalization forward; never restore the database snapshot after operator writes can be admitted.
   persist the bounded rollback manifest before switching the active link, persist restart-pending evidence before the
   volatile runtime gate, and keep recovery behind that gate until the definitive write completes. Worker pre-start must
   distinguish the live helper by boot, PID, and process-start identity and roll back stale provisional evidence before
@@ -337,12 +340,13 @@ The following cross-cutting boundaries always apply:
   incomplete rollback must retain maintenance and the gate. Rollback must preserve and verify the already-running worker
   until the definitive rollback write; never start a restored legacy worker inside the transaction. After recovery
   bookkeeping, a candidate worker must exit for systemd to start the restored release. If the rollback gate cannot be
-  established, stop and verify the caller inactive before publishing incomplete rollback. Then resume only untouched pending
-  update children. Gate timeout exits worker startup for systemd retry, and the surviving helper removes staged source
+  established, stop and verify the caller inactive before publishing incomplete rollback. Then resume only untouched
+  pending update children, including a mixed terminal/pending set after a second worker restart, without rerunning terminal
+  children. Gate timeout exits worker startup for systemd retry, and the surviving helper removes staged source
   credentials before restarting the caller. Definitive finalizers retain sanitized helper commands, and recovery uses
-  the ordinary child, parent, terminal task-log, and audit completion path. Any post-switch failure restores the
-  previous release, assets, database,
-  and nginx-ready front door with `rolled_back=true`. Worker startup must reject a success
+  the ordinary child, parent, terminal task-log, and audit completion path. Any post-switch failure before the durable
+  activation commit restores the previous release, assets, database, and nginx-ready front door with
+  `rolled_back=true`; failures after that commit remain fail-closed and recover forward. Worker startup must reject a success
   finalizer that disagrees with the durable active release or running version. Lifecycle coverage proves both successful
   activation and rollback before and after audited appliance reboots; never reboot automatically as part of installation.
 - Boot ShredOS only from the verified stable ISO's allowlisted `/boot/bzImage` kernel through iPXE. Do not restore raw

@@ -411,11 +411,14 @@ status: current
   candidate Python ABIs, reconstruct from the retained wheelhouse after supported ABI changes, and do not claim
   automatic RPM rollback or reboot.
 - Do not write a successful Atlaso Release finalizer until durable activation is proven. Flush the active switch and
-  installed assets, remove maintenance mode only through final nginx validation and reload, restart the worker into the
+  installed assets, restart the worker into the
   candidate release under a provisional finalizer, require its new systemd PID to publish the matching job, version, and
   release root, persist a bounded rollback manifest before switching the active link, and persist restart-pending
   evidence before establishing the volatile runtime gate. Keep recovery blocked until the definitive finalizer write
-  completes. Worker pre-start must distinguish a live helper by boot, PID, and process-start identity; stale provisional
+  completes. Retain maintenance through every rollback-capable stage, then durably record `activation_committed` before
+  validating, reloading, and opening nginx. Failures after that commit must preserve the candidate and retry forward;
+  never restore the database snapshot after the front door can admit operator writes. Worker pre-start must distinguish
+  a live helper by boot, PID, and process-start identity; stale provisional
   evidence after a host restart must restore and verify the previous release before the worker is admitted. Flush the
   database and every installed-asset rollback backup plus its directory entries before publishing the durable recovery
   manifest. Refresh that manifest after adding the ESX allowlist backup and before mutating its claims or database, so
@@ -436,10 +439,12 @@ status: current
   virtualenv, internal OpenAPI version, nginx management-front-door OpenAPI version, and candidate version to agree.
   Definitive finalizers must retain sanitized helper command evidence; startup recovery must pass that evidence through
   the ordinary child completion, parent completion, terminal task-log, and audit bookkeeping. Any
-  failure after the switch must restore the previous release, helper/systemd assets, SQLite snapshot, and working nginx
+  failure after the switch but before `activation_committed` must restore the previous release, helper/systemd assets,
+  SQLite snapshot, and working nginx
   front door, write
   `rolled_back=true` with a sanitized failing layer, and fail both release child and parent. After a verified healthy
-  rollback, preserve the terminal failed release child and requeue untouched children without rerunning it; retain the
+  rollback, preserve the terminal failed release child and requeue untouched children without rerunning it. Requeue a
+  mixed terminal/pending set after another worker restart while preserving every terminal result; retain the
   normal rule that independently runnable PowerShell Modules proceeds while Photon OS skips after an earlier failure.
   Worker startup must reject
   a success finalizer that disagrees with the durable active release or running version. On the first transition from

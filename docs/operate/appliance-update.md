@@ -244,10 +244,13 @@ running parent failed even when every child step committed before the restart; c
 recovery evidence. Only the current and previous known-good releases are retained; the UI does not expose arbitrary
 historical downgrades.
 
-Success is recorded only after Atlaso flushes the active switch and installed release assets, removes maintenance mode,
-validates and reloads nginx, and verifies web, worker, console, and nginx service state. The helper writes a provisional
-finalizer, restarts the worker through the candidate release, and requires the new systemd PID to publish the matching
-job, version, and release-root identity before success becomes definitive. Before switching the active link, the helper
+Success is recorded only after Atlaso flushes the active switch and installed release assets, validates and reloads
+nginx, removes maintenance mode, and verifies web, worker, console, and nginx service state. The helper writes a
+provisional finalizer, restarts the worker through the candidate release, and requires the new systemd PID to publish
+the matching job, version, and release-root identity. Maintenance remains closed through every stage that can still
+restore the database snapshot. The helper then writes a durable `activation_committed` checkpoint before opening the
+management front door. A later cleanup, host-facing probe, or definitive-finalizer failure preserves the candidate,
+restores maintenance, and retries forward instead of discarding operator writes. Before switching the active link, the helper
 flushes the database and every installed-asset rollback backup plus their directory entries, then durably records a
 bounded rollback manifest containing the previous and candidate releases. If ESX Storage aliases migrate, the helper
 flushes its added allowlist backup and refreshes the manifest before rewriting either the claims or database, so
@@ -270,7 +273,8 @@ source-credential file before restarting the calling worker. The definitive fina
 evidence so startup recovery can run the same child completion, parent completion, terminal task-log, and audit
 bookkeeping as an uninterrupted update. After a verified healthy release rollback, recovery preserves the failed
 release child and requeues untouched children: PowerShell Modules still runs independently, while Photon OS is skipped
-under the normal earlier-failure rule. The failed release is never rerun implicitly. The helper then requires
+under the normal earlier-failure rule. A second worker restart requeues any remaining pending children while preserving
+terminal child results. The failed release and completed children are never rerun implicitly. The helper then requires
 `current`, the compatibility virtualenv, the signed release receipt, internal `/openapi.json`, and the applied HTTP or
 HTTPS nginx management front door to report the exact candidate version. The finalizer retains the candidate and
 previous versions, receipt identity, active-release verification, internal and front-door versions, and sanitized
@@ -287,12 +291,13 @@ runtime gate: privileged pre-start recovery clears that orphaned gate, and worke
 An incomplete rollback keeps maintenance and the gate in place, preventing queued work until rollback can be retried or
 an administrator repairs the recorded failing layer.
 
-A failure in systemd asset activation, the atomic switch, candidate startup, maintenance removal, final `nginx -t`,
-worker handoff, or front-door version readiness enters the same rollback boundary. Before rollback can restart a worker,
+A failure in systemd asset activation, the atomic switch, candidate startup, internal readiness, or worker handoff before
+`activation_committed` enters the rollback boundary. Before rollback can restart a worker,
 the helper closes the same runtime gate; rollback then restores the previous release, assets, and database, validates
 and reloads nginx after removing maintenance mode, and proves the previous version through both internal and
 management-front-door OpenAPI before writing `rolled_back=true`. Atlaso Release
-installation never reboots the appliance automatically.
+installation never reboots the appliance automatically. After `activation_committed`, maintenance removal, final
+`nginx -t`, front-door version readiness, and finalizer persistence are forward-only recovery stages.
 
 ## Photon OS boundary
 

@@ -494,7 +494,7 @@ def test_candidate_recovery_one_shot_completes_bookkeeping(monkeypatch):
 
 @pytest.mark.parametrize(
     ("status", "allow_worker"),
-    [("transaction_pending", False), ("restart_pending", True)],
+    [("transaction_pending", False), ("restart_pending", True), ("activation_committed", True)],
 )
 def test_release_prestart_recovery_defers_to_live_transaction_owner(
     monkeypatch,
@@ -507,7 +507,7 @@ def test_release_prestart_recovery_defers_to_live_transaction_owner(
     Args:
         monkeypatch: Pytest fixture used to replace helper dependencies.
         tmp_path: Temporary directory provided for provisional evidence.
-        status: Provisional transaction phase under test.
+        status: Transaction phase under test.
         allow_worker: Whether the phase permits the intentional worker handoff.
     """
     from tests.test_appliance_update import load_helper_module
@@ -2457,6 +2457,28 @@ def test_worker_restart_uses_matching_root_release_finalizer(
         assert result["release_transaction"]["verified_key_id"] == "atlaso-release-2026-01"
         assert bool(result["release_transaction"].get("startup_reconciliation")) is legacy_finalizer
 
+        recovered.status = "running"
+        recovered_steps[1].status = "succeeded"
+        recovered_steps[1].progress_percent = 100
+        recovered_steps[1].result = json.dumps(
+            {
+                "unit_id": "powershell_modules",
+                "status": "succeeded",
+                "success": True,
+                "commands": [],
+            }
+        )
+        db.commit()
+        assert worker.recover_interrupted_worker_jobs(db) == 1
+        recovered = db.get(Job, "job_release_finalizer")
+        assert recovered.status == "pending"
+        assert recovered.progress_percent == 60
+        assert [(step.component_key, step.status) for step in recovered_steps] == [
+            ("atlaso_release", "succeeded"),
+            ("powershell_modules", "succeeded"),
+            ("photon_os", "pending"),
+        ]
+
     import atlaso.app.ui as ui
 
     calls: list[str] = []
@@ -2502,7 +2524,7 @@ def test_worker_restart_uses_matching_root_release_finalizer(
     monkeypatch.setattr(ui, "SystemAdapter", RestartAdapter)
 
     assert worker.run_worker_once() == "job_release_finalizer"
-    assert calls == ["powershell_modules", "photon_os"]
+    assert calls == ["photon_os"]
     with SessionLocal() as db:
         completed = db.get(Job, "job_release_finalizer")
         assert completed.status == "succeeded"
@@ -3156,12 +3178,9 @@ def test_no_change_release_failure_finalizer_retains_readiness_commands(monkeypa
         ("systemd_assets", "data_disk_identity", True),
         ("symlink_switch", "systemd_reload", True),
         ("candidate_startup", "candidate_startup", True),
-        ("maintenance_cleanup", "maintenance_cleanup", True),
         ("nginx_configuration", "nginx_configuration", True),
-        ("management_front_door", "management_front_door", True),
         ("worker_restart", "worker_restart", True),
         ("worker_activation", "worker_restart", True),
-        ("finalizer_persistence", "finalizer_persistence", True),
         ("transaction_backup_sync", "transaction_checkpoint", True),
         ("rollback_symlink_sync", "candidate_startup", True),
         ("rollback_link_restore", "candidate_startup", False),
@@ -3743,6 +3762,117 @@ def test_release_activation_verification_requires_exact_candidate_through_nginx(
         "failure_layer": "",
     }
     assert all(check["success"] for check in checks)
+
+
+@pytest.mark.parametrize("failure_stage", ["", "maintenance_cleanup", "management_front_door", "finalizer_persistence"])
+def test_committed_activation_finishes_forward_without_database_rollback(monkeypatch, tmp_path, failure_stage):
+    """Verify the durable commit precedes exposure and every later failure preserves the candidate.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace helper dependencies.
+        tmp_path: Temporary directory provided for candidate and gate evidence.
+        failure_stage: Forward-completion failure injected after rollback is prohibited.
+    """
+    from tests.test_appliance_update import load_helper_module
+
+    helper = load_helper_module()
+    candidate = tmp_path / "releases/0.9.0"
+    candidate.mkdir(parents=True)
+    receipt = release_payload()
+    (candidate / ".release-manifest.json").write_text(json.dumps(receipt), encoding="utf-8")
+    gate = tmp_path / "restart-gate"
+    gate.write_text("job-forward", encoding="utf-8")
+    monkeypatch.setattr(helper, "ATLASO_UPDATE_RESTART_GATE_PATH", gate)
+    monkeypatch.setattr(helper, "_active_release_root", lambda: candidate)
+    monkeypatch.setattr(helper, "_validated_release_recovery_context", lambda _parsed: {"candidate": candidate})
+    events: list[str] = ["activation_committed"]
+
+    def maintenance(enabled):
+        """Record front-door state and inject cleanup failure.
+
+        Args:
+            enabled: Whether the transaction maintenance response is required.
+        """
+        events.append(f"maintenance:{enabled}")
+        success = enabled or failure_stage != "maintenance_cleanup"
+        return helper._release_check(
+            "maintenance_hold" if enabled else "maintenance_cleanup",
+            success,
+            "maintenance transition",
+        )
+
+    monkeypatch.setattr(helper, "_set_release_maintenance", maintenance)
+    monkeypatch.setattr(
+        helper,
+        "_sync_release_activation",
+        lambda: helper._release_check("durable_activation", True, "durable"),
+    )
+
+    def activation(_root, _release, **kwargs):
+        """Return internal success and optionally fail the exposed front-door proof.
+
+        Args:
+            _root: Candidate release root supplied by the helper.
+            _release: Candidate receipt supplied by the helper.
+            **kwargs: Verification phase controls.
+        """
+        front_door = kwargs.get("include_front_door", True)
+        success = not (front_door and failure_stage == "management_front_door")
+        layer = "management_front_door" if not success else "complete"
+        events.append(f"verify:{'front' if front_door else 'internal'}")
+        return (
+            {"success": success, "failure_layer": "" if success else layer},
+            [helper._release_check(layer, success, layer)],
+        )
+
+    monkeypatch.setattr(helper, "_release_activation_verification", activation)
+    finalizers: list[str] = []
+
+    def finalizer(payload):
+        """Record finalizer state and inject definitive persistence failure.
+
+        Args:
+            payload: Forward activation evidence to persist.
+        """
+        status = str(payload.get("status") or "")
+        events.append(f"finalizer:{status}")
+        finalizers.append(status)
+        if failure_stage == "finalizer_persistence" and status == "succeeded":
+            raise OSError("injected definitive finalizer failure")
+
+    monkeypatch.setattr(helper, "_write_release_finalizer", finalizer)
+    monkeypatch.setattr(helper, "_write_update_info", lambda _payload: None)
+    gate_states: list[bool] = []
+    monkeypatch.setattr(
+        helper,
+        "_set_release_restart_gate",
+        lambda enabled, _job_id="": gate_states.append(enabled),
+    )
+    parsed = {
+        "job_id": "job-forward",
+        "status": "activation_committed",
+        "candidate_version": "0.9.0",
+        "commands": [],
+        "transaction_recovery": {"schema_version": 1},
+    }
+    finalizer_path = tmp_path / "finalizer.json"
+    finalizer_path.write_text(json.dumps(parsed), encoding="utf-8")
+    monkeypatch.setattr(helper, "ATLASO_UPDATE_FINALIZER_PATH", finalizer_path)
+    monkeypatch.setattr(helper, "_release_transaction_owner_alive", lambda _owner: False)
+
+    result = helper._recover_interrupted_release_transaction()
+
+    assert candidate.exists()
+    assert events.index("activation_committed") < events.index("maintenance:False")
+    if failure_stage:
+        assert result["status"] == "activation_committed"
+        assert result["rolled_back"] is False
+        assert finalizers[-1] == "activation_committed"
+        assert not gate_states
+    else:
+        assert result["status"] == "succeeded"
+        assert finalizers == ["succeeded"]
+        assert gate_states == [False]
 
 
 def test_release_maintenance_cleanup_validates_and_reloads_nginx(monkeypatch, tmp_path):
