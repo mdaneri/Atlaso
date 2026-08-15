@@ -386,6 +386,8 @@ def validate_page(path: Path, nav: set[str]) -> tuple[dict[str, object], list[Fi
             findings.append(Finding(path, "redirect page requires redirect_to"))
         elif not (DOCS / target).is_file():
             findings.append(Finding(path, f"redirect target does not exist: {target}"))
+        if LINK_RE.search(body):
+            findings.append(Finding(path, "redirect page body must not duplicate its target as a Markdown link"))
     elif relative not in nav:
         findings.append(Finding(path, "canonical page is missing from Zensical navigation"))
     return meta, findings

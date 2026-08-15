@@ -9,4 +9,4 @@ redirect_to: services/oidc-provider.md
 
 # OpenID Connect provider moved
 
-Continue to [Constrained OpenID Connect provider](services/oidc-provider.md).
+The documentation build replaces this source with the canonical redirect.

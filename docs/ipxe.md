@@ -9,4 +9,4 @@ redirect_to: services/ipxe.md
 
 # Network boot notes moved
 
-Continue to [ESX scripted installation and network boot notes](services/ipxe.md).
+The documentation build replaces this source with the canonical redirect.

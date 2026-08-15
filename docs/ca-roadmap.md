@@ -10,4 +10,4 @@ redirect_to: project/ca-roadmap.md
 
 # Certificate Authority Roadmap moved
 
-Continue to [Certificate Authority Roadmap](project/ca-roadmap.md).
+The documentation build replaces this source with the canonical redirect.

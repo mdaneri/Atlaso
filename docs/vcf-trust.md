@@ -9,4 +9,4 @@ redirect_to: services/vcf-trust.md
 
 # VCF certificate trust moved
 
-Continue to [VCF Certificate Trust](services/vcf-trust.md).
+The documentation build replaces this source with the canonical redirect.

@@ -10,4 +10,4 @@ redirect_to: contribute/ui-design-guide.md
 
 # Atlaso UI Design Guide moved
 
-Continue to the [Atlaso UI Design Guide](contribute/ui-design-guide.md).
+The documentation build replaces this source with the canonical redirect.

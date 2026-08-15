@@ -5,10 +5,17 @@ import re
 import subprocess
 from pathlib import Path
 
-from scripts import generate_embedded_screenshot_sections, generate_screenshot_gallery
+import pytest
+
+from scripts import (
+    build_docs,
+    generate_embedded_screenshot_sections,
+    generate_screenshot_gallery,
+)
 from scripts.check_docs import (
     markdown_sources,
     validate_legacy_browser_routes,
+    validate_page,
     validate_screenshots,
 )
 from scripts.overlay_docs_site import overlay
@@ -50,6 +57,66 @@ def test_documentation_workflow_runs_on_every_main_push() -> None:
     assert "    branches:\n      - main\n" in push_trigger
     assert "paths:" not in push_trigger
     assert "paths-ignore:" not in push_trigger
+
+
+def test_documentation_workflows_use_deterministic_build_wrapper() -> None:
+    """Verify CI and publication cannot bypass the cache-safe strict build."""
+    root = Path(__file__).resolve().parents[1]
+    for relative in (".github/workflows/ci.yml", ".github/workflows/docs.yml"):
+        workflow = (root / relative).read_text(encoding="utf-8")
+        assert "python scripts/build_docs.py" in workflow
+        assert "zensical build --clean --strict" not in workflow
+
+
+def test_documentation_build_resets_only_recognized_zensical_cache(tmp_path: Path) -> None:
+    """Verify the wrapper clears its owned cache and rejects an unknown cache.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    cache = tmp_path / ".cache"
+    cache.mkdir()
+    (cache / ".gitignore").write_text("*\n", encoding="utf-8")
+    (cache / "stale-entry").write_text("stale", encoding="utf-8")
+
+    build_docs.reset_zensical_cache(tmp_path)
+
+    assert not cache.exists()
+    cache.mkdir()
+    (cache / "unrelated-entry").write_text("keep", encoding="utf-8")
+    with pytest.raises(RuntimeError, match="unrecognized Zensical cache"):
+        build_docs.reset_zensical_cache(tmp_path)
+    assert (cache / "unrelated-entry").read_text(encoding="utf-8") == "keep"
+
+
+def test_redirect_stub_rejects_redundant_markdown_link(tmp_path: Path, monkeypatch) -> None:
+    """Verify redirect sources cannot re-enter Zensical's unstable link index.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+    """
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    redirect = docs / "moved.md"
+    redirect.write_text(
+        "---\ntitle: Moved\ndescription: Moved.\naudience:\n  - operator\n"
+        "status: redirect\nredirect_to: current.md\n---\n\n# Moved\n\n"
+        "Continue to [Current](current.md).\n",
+        encoding="utf-8",
+    )
+    (docs / "current.md").write_text(
+        "---\ntitle: Current\ndescription: Current.\naudience:\n  - operator\n"
+        "status: current\n---\n\n# Current\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr("scripts.check_docs.DOCS", docs)
+
+    _, findings = validate_page(redirect, set())
+
+    assert [finding.message for finding in findings] == [
+        "redirect page body must not duplicate its target as a Markdown link",
+    ]
 
 
 def test_documentation_workflow_only_queues_pages_writer_for_changes() -> None:

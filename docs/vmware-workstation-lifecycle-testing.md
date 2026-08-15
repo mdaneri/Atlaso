@@ -10,4 +10,4 @@ redirect_to: reference/vmware-workstation-lifecycle-testing.md
 
 # VMware Workstation Lifecycle Testing moved
 
-Continue to [VMware Workstation Lifecycle Testing](reference/vmware-workstation-lifecycle-testing.md).
+The documentation build replaces this source with the canonical redirect.

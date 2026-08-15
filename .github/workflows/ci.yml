@@ -124,8 +124,7 @@ jobs:
       - run: npm ci
       - run: npm run test:javascript
       - run: npm run lint:markdown
-      - run: zensical build --clean --strict
-      - run: python scripts/generate_docs_redirects.py
+      - run: python scripts/build_docs.py
       - run: python scripts/check_docs.py
       - run: python scripts/generate_embedded_screenshot_sections.py
       - run: git diff --exit-code

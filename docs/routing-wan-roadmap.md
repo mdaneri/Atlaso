@@ -10,4 +10,4 @@ redirect_to: project/routing-wan-roadmap.md
 
 # Routing And WAN Roadmap moved
 
-Continue to [Routing And WAN Roadmap](project/routing-wan-roadmap.md).
+The documentation build replaces this source with the canonical redirect.
