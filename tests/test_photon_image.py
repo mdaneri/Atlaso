@@ -840,8 +840,22 @@ def test_photon_provisioning_prepares_attached_data_disks():
     assert 'mkfs.ext4 -F -L "$label" "$format_disk"' in mount_script
     assert "UUID=%s %s ext4 defaults,nofail,x-systemd.device-timeout=30s 0 2" in mount_script
     assert "findmnt -n -o SOURCE /" in mount_script
-    assert 'image/common/udev/99-atlaso-disk-identity.rules" /etc/udev/rules.d/99-atlaso-disk-identity.rules' in provision
-    assert '"$ATLASO_HOME/$ATLASO_IMAGE_ASSET_DIR/data-disks.conf" /etc/atlaso/data-disks.conf' in provision
+    assert 'DISK_IDENTITY_RULE_SOURCE="$ATLASO_SRC/image/common/udev/99-atlaso-disk-identity.rules"' in provision
+    assert 'DATA_DISK_POLICY_SOURCE="$ATLASO_SRC/$ATLASO_IMAGE_ASSET_DIR/data-disks.conf"' in provision
+    assert '"$DISK_IDENTITY_RULE_SOURCE" /etc/udev/rules.d/99-atlaso-disk-identity.rules' in provision
+    assert '"$DATA_DISK_POLICY_SOURCE" /etc/atlaso/data-disks.conf' in provision
+    assert provision.index('if [ ! -r "$DISK_IDENTITY_RULE_SOURCE" ]') < provision.index(
+        'run_tdnf "Photon appliance package installation"'
+    )
+    assert provision.index('if [ ! -r "$DATA_DISK_POLICY_SOURCE" ]') < provision.index(
+        'run_tdnf "Photon appliance package installation"'
+    )
+    assert provision.index('"$DISK_IDENTITY_RULE_SOURCE" /etc/udev/rules.d/99-atlaso-disk-identity.rules') < provision.index(
+        'log_step "syncing Atlaso application files"'
+    )
+    assert provision.index('"$DATA_DISK_POLICY_SOURCE" /etc/atlaso/data-disks.conf') < provision.index(
+        'log_step "syncing Atlaso application files"'
+    )
     assert 'SYMLINK+="disk/by-id/atlaso-path-$env{ID_PATH_TAG}"' in disk_identity_rule
     assert 'source      = "../common/udev"' in hyperv_packer
     assert 'destination = "/tmp/atlaso-src/image/common/udev"' in hyperv_packer

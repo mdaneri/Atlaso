@@ -127,6 +127,10 @@ git ls-files --eol -- image/hyperv/data-disks.conf image/vmware-workstation/data
 Both paths must report `text: set`, `eol: lf`, and `w/lf`. Do not normalize values inside the runtime parser: its strict
 capacity and SCSI-identity rejection remains the fail-closed boundary for malformed installed policy.
 
+Both Packer templates upload the shared udev rule and their platform `data-disks.conf` into `/tmp/atlaso-src`. The
+shared image provisioner validates and installs those inputs directly from that staged source tree before the later
+application sync populates `/opt/atlaso`; pre-sync disk-policy installation must not read from `/opt/atlaso`.
+
 Atlaso writes operational events to `/var/log/atlaso/atlaso.log`. Audit events, desired-state edits, and appliance apply
 submissions are mirrored there with sensitive values redacted. The Settings page controls local file verbosity and can
 also forward the same operational events to an external syslog receiver.
