@@ -52,6 +52,10 @@ def test_ui_compliance_matrix_covers_every_html_route_and_template():
     """Verify that ui compliance matrix covers every html route and template."""
     matrix = MATRIX.read_text(encoding="utf-8")
     routes = _html_routes(ROOT / "atlaso" / "app" / "ui.py")
+    for domain_router in sorted(
+        (ROOT / "atlaso" / "app" / "routers" / "ui").glob("*.py")
+    ):
+        routes.update(_html_routes(domain_router))
     routes.update(_html_routes(ROOT / "atlaso" / "app" / "web_terminal.py"))
     assert len(routes) >= 45
     for route in sorted(routes):

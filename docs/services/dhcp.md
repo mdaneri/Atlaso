@@ -48,6 +48,13 @@ enablement, and review the desired state. Existing option enablement remains dir
 Confirm the task succeeded, `dnsmasq` is healthy, and a test client on the selected network receives the expected lease
 and options. Roll back by restoring the previous desired state and submitting a new global apply.
 
+## Transport ownership
+
+The management DHCP transports and their API v1 counterparts are owned by the dedicated `dns_dhcp` domain
+routers. The stable UI and API facade modules continue to aggregate and export those handlers. This internal ownership
+split does not change any path, method, permission, response, desired-state behavior, dnsmasq rendering, or the global
+Appliance Apply boundary described above.
+
 <!-- BEGIN GENERATED ADDITIONAL SCREENSHOTS -->
 ## Additional verified states
 
