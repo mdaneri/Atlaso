@@ -832,7 +832,7 @@ def extract_markdown_policy_section(text: str, anchor: str) -> str | None:
                     return "".join(lines[start:end])
     else:
         for end in range(start + 1, len(lines)):
-            if lines[end].startswith("- "):
+            if re.match(r"(?:[-+*]|\d+[.)])\s+", lines[end]) is not None:
                 return "".join(lines[start:end])
     return "".join(lines[start:])
 

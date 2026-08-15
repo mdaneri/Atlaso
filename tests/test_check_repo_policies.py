@@ -56,13 +56,18 @@ def write_policy_files(root: Path) -> None:
                 for marker in section_markers
                 if marker not in ORDERED_TERMINAL_CLEANUP_MARKERS[relative_path]
             )
+            order_lines = (
+                TERMINAL_CLEANUP_ORDER_LINES
+                if section_anchor.startswith("#")
+                else tuple(f"  {line}" for line in TERMINAL_CLEANUP_ORDER_LINES)
+            )
             policy_lines.extend(
                 (
                     section_anchor,
                     *non_ordered_markers,
                     TERMINAL_CLEANUP_ORDER_ANCHOR,
                     "",
-                    *TERMINAL_CLEANUP_ORDER_LINES,
+                    *order_lines,
                     "- following policy",
                 )
             )
@@ -541,6 +546,7 @@ def test_agent_policy_gate_requires_terminal_cleanup_order(tmp_path: Path) -> No
         text = path.read_text(encoding="utf-8")
         earlier_summary = "\n".join(markers)
         anchor = TERMINAL_CLEANUP_SECTION_ANCHORS[relative_path]
+        order_prefix = "" if anchor.startswith("#") else "  "
         summary_position = text.index(anchor) + len(anchor)
         text_with_summary = (
             text[:summary_position]
@@ -549,12 +555,15 @@ def test_agent_policy_gate_requires_terminal_cleanup_order(tmp_path: Path) -> No
             + text[summary_position:]
         )
         reversed_order_lines = tuple(
-            f"{position}. {marker}"
+            f"{order_prefix}{position}. {marker}"
             for position, marker in enumerate(reversed(markers), start=1)
+        )
+        expected_order_lines = tuple(
+            order_prefix + line for line in TERMINAL_CLEANUP_ORDER_LINES
         )
         path.write_text(
             text_with_summary.replace(
-                "\n".join(TERMINAL_CLEANUP_ORDER_LINES),
+                "\n".join(expected_order_lines),
                 "\n".join(reversed_order_lines),
             ),
             encoding="utf-8",
@@ -701,6 +710,35 @@ def test_agent_policy_gate_honors_setext_heading_boundaries(tmp_path: Path) -> N
             )
 
 
+def test_agent_policy_gate_honors_all_list_item_boundaries(tmp_path: Path) -> None:
+    """Verify that every top-level Markdown list item ends cleanup list items.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    marker = '`cleanup-ready`'
+    for relative_path in ORDERED_TERMINAL_CLEANUP_MARKERS:
+        anchor = TERMINAL_CLEANUP_SECTION_ANCHORS[relative_path]
+        if anchor.startswith("#"):
+            continue
+        for delimiter in ("*", "+", "1.", "1)"):
+            write_policy_files(tmp_path)
+            path = tmp_path / relative_path
+            text = path.read_text(encoding="utf-8").replace(marker, "", 1)
+            path.write_text(
+                text + f"\n{delimiter} Outside cleanup\n{marker}\n",
+                encoding="utf-8",
+            )
+
+            findings = check_agent_policy_gate(tmp_path)
+
+            assert len(findings) == 1
+            assert findings[0].path == path
+            assert findings[0].message == (
+                f"completed-task cleanup section marker is missing: {marker}"
+            )
+
+
 def test_agent_policy_gate_rejects_fourth_terminal_transition(tmp_path: Path) -> None:
     """Verify that the terminal lifecycle contains exactly three transitions.
 
@@ -712,11 +750,15 @@ def test_agent_policy_gate_rejects_fourth_terminal_transition(tmp_path: Path) ->
             write_policy_files(tmp_path)
             path = tmp_path / relative_path
             text = path.read_text(encoding="utf-8")
-            expected_order = "\n".join(TERMINAL_CLEANUP_ORDER_LINES)
+            anchor = TERMINAL_CLEANUP_SECTION_ANCHORS[relative_path]
+            order_prefix = "" if anchor.startswith("#") else "  "
+            expected_order = "\n".join(
+                order_prefix + line for line in TERMINAL_CLEANUP_ORDER_LINES
+            )
             path.write_text(
                 text.replace(
                     expected_order,
-                    expected_order + f"\n4{delimiter} archived",
+                    expected_order + f"\n{order_prefix}4{delimiter} archived",
                     1,
                 ),
                 encoding="utf-8",
