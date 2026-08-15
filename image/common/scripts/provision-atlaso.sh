@@ -29,6 +29,8 @@ BOOTSTRAP_PASSWORD="${ATLASO_BOOTSTRAP_ADMIN_PASSWORD:-}"
 BOOTSTRAP_SHELL="${ATLASO_BOOTSTRAP_ADMIN_SHELL:-/usr/bin/pwsh}"
 PIP_CACHE_DIR="${PIP_CACHE_DIR:-/var/cache/atlaso-pip}"
 TDNF_PROGRESS_RUNNER="$ATLASO_SRC/scripts/run_tdnf_with_progress.py"
+DISK_IDENTITY_RULE_SOURCE="$ATLASO_SRC/image/common/udev/99-atlaso-disk-identity.rules"
+DATA_DISK_POLICY_SOURCE="$ATLASO_SRC/$ATLASO_IMAGE_ASSET_DIR/data-disks.conf"
 
 log_step() {
   printf '\n==> Atlaso appliance: %s\n' "$1"
@@ -175,6 +177,14 @@ if [ ! -r "$TDNF_PROGRESS_RUNNER" ]; then
   echo "TDNF progress runner is missing from staged Atlaso sources: $TDNF_PROGRESS_RUNNER" >&2
   exit 2
 fi
+if [ ! -r "$DISK_IDENTITY_RULE_SOURCE" ]; then
+  echo "Virtual-disk identity policy is missing from staged Atlaso sources: $DISK_IDENTITY_RULE_SOURCE" >&2
+  exit 2
+fi
+if [ ! -r "$DATA_DISK_POLICY_SOURCE" ]; then
+  echo "Platform data-disk policy is missing from staged Atlaso sources: $DATA_DISK_POLICY_SOURCE" >&2
+  exit 2
+fi
 
 log_step "system adapter dry-run mode: $ATLASO_DRY_RUN_SYSTEM_ADAPTERS"
 log_step "guest platform: $ATLASO_GUEST_PLATFORM"
@@ -241,12 +251,12 @@ systemctl disable --now rpcbind.service rpcbind.socket 2>/dev/null || true
 
 log_step "installing stable virtual-disk identity policy"
 install -d -o root -g root -m 0755 /etc/udev/rules.d
-install -o root -g root -m 0644 "$ATLASO_HOME/image/common/udev/99-atlaso-disk-identity.rules" /etc/udev/rules.d/99-atlaso-disk-identity.rules
+install -o root -g root -m 0644 "$DISK_IDENTITY_RULE_SOURCE" /etc/udev/rules.d/99-atlaso-disk-identity.rules
 udevadm control --reload-rules
 udevadm trigger --subsystem-match=block --action=add
 
 install -d -o root -g root -m 0755 /etc/atlaso
-install -o root -g root -m 0644 "$ATLASO_HOME/$ATLASO_IMAGE_ASSET_DIR/data-disks.conf" /etc/atlaso/data-disks.conf
+install -o root -g root -m 0644 "$DATA_DISK_POLICY_SOURCE" /etc/atlaso/data-disks.conf
 
 log_step "disabling systemd SSH-over-vsock auto generator"
 if [ "$ATLASO_GUEST_PLATFORM" = "hyperv" ]; then
