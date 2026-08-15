@@ -9,4 +9,4 @@ redirect_to: operate/automation.md
 
 # Automation moved
 
-Continue to [Automation](operate/automation.md).
+The documentation build replaces this source with the canonical redirect.

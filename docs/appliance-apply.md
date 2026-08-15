@@ -9,4 +9,4 @@ redirect_to: operate/appliance-apply.md
 
 # Appliance Apply moved
 
-Continue to [Appliance Apply](operate/appliance-apply.md).
+The documentation build replaces this source with the canonical redirect.

@@ -9,4 +9,4 @@ redirect_to: services/vcf-helper.md
 
 # VCF Helper moved
 
-Continue to [VCF Helper](services/vcf-helper.md).
+The documentation build replaces this source with the canonical redirect.

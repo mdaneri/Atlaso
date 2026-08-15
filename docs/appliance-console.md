@@ -9,4 +9,4 @@ redirect_to: operate/appliance-console.md
 
 # Local appliance console moved
 
-Continue to [Local appliance console](operate/appliance-console.md).
+The documentation build replaces this source with the canonical redirect.

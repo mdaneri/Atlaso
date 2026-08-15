@@ -10,4 +10,4 @@ redirect_to: project/branding.md
 
 # Atlaso Brand Assets moved
 
-Continue to [Atlaso Brand Assets](project/branding.md).
+The documentation build replaces this source with the canonical redirect.

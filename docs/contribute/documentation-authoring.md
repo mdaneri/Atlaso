@@ -19,7 +19,10 @@ artifact; never edit generated HTML directly.
 - Put contribution policies and design standards under **Contribute**.
 - Put brand guidance, roadmaps, and historical records under **Project**.
 - Link to canonical instructions instead of copying them into the README, policy indexes, or component READMEs.
-- Leave a redirect stub when a tracked Markdown page moves.
+- Leave a redirect stub when a tracked Markdown page moves. Keep `redirect_to` as its only destination reference; do
+  not duplicate the target as a Markdown link in the body. `scripts/check_docs.py` validates the source and target with
+  the Markdown extensions configured for Zensical, while `scripts/build_docs.py` owns the deterministic strict build
+  and published redirect link generation.
 
 ## Required metadata
 
@@ -101,11 +104,18 @@ Run these commands before opening a pull request:
 npm ci
 npm run lint:markdown
 .\.venv-docs\Scripts\python.exe -m pip install --require-hashes -r requirements-docs.lock
-.\.venv-docs\Scripts\zensical.exe build --clean --strict
-python scripts/check_docs.py
+.\.venv-docs\Scripts\python.exe scripts/build_docs.py
+.\.venv-docs\Scripts\python.exe scripts/check_docs.py
 python scripts/check_repo.py
 git diff --check
 ```
+
+The build wrapper removes only a repository-local Zensical `.cache` carrying its Atlaso-specific ownership marker, or
+the exact marker-free legacy Zensical file layout during migration, before invoking `build --clean --strict`. It then
+recreates the ownership marker and generates the legacy redirect pages. An ambiguous cache fails closed without being
+removed. Do not replace the wrapper with a direct Zensical invocation: stale cache entries can otherwise make unchanged
+redirect targets fail nondeterministically. The wrapper does not disable link or anchor validation, so genuine missing
+targets still fail the strict build.
 
 Documentation linting applies to every tracked Markdown source. Do not suppress existing files, create a warning-only
 baseline, or couple tests to exact explanatory prose when a stable marker or canonical path can express the contract.

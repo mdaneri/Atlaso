@@ -10,4 +10,4 @@ redirect_to: reference/hyperv-lifecycle-testing.md
 
 # Hyper-V Lifecycle Testing moved
 
-Continue to [Hyper-V Lifecycle Testing](reference/hyperv-lifecycle-testing.md).
+The documentation build replaces this source with the canonical redirect.

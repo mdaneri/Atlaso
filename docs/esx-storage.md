@@ -9,4 +9,4 @@ redirect_to: services/esx-storage.md
 
 # ESX Storage moved
 
-Continue to [ESX Storage over NFS](services/esx-storage.md).
+The documentation build replaces this source with the canonical redirect.
