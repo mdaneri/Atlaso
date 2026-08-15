@@ -264,6 +264,54 @@ def _rollback_requires_worker_restart() -> bool:
     )
 
 
+def _complete_recovered_rollback_job() -> bool:
+    """Complete the exact recovered release job before restoring the old worker.
+
+    Returns:
+        Whether the recovered Appliance Update parent reached a terminal state.
+    """
+    finalizer = _release_finalizer()
+    job_id = str(finalizer.get("job_id") or "")
+    if not job_id or not _rollback_requires_worker_restart():
+        return False
+    with SessionLocal() as db:
+        job = db.get(Job, job_id)
+        if job is None or job.type != "appliance-update":
+            return False
+        status = job.status
+    if status == JobStatus.PENDING.value:
+        _run_appliance_update(job_id)
+    with SessionLocal() as db:
+        completed = db.get(Job, job_id)
+        return bool(
+            completed is not None
+            and completed.type == "appliance-update"
+            and completed.status in {JobStatus.SUCCEEDED.value, JobStatus.FAILED.value}
+        )
+
+
+def recover_release_rollback_handoff() -> int:
+    """Run candidate-version recovery bookkeeping as a bounded one-shot process.
+
+    Returns:
+        Process status for the privileged pre-start recovery handoff.
+    """
+    init_db()
+    with SessionLocal() as db:
+        recovered = recover_interrupted_worker_jobs(db, release_finalizer_ready=True)
+        if recovered:
+            LOGGER.warning("Reconciled %s interrupted worker job(s)", recovered)
+    try:
+        completed = _complete_recovered_rollback_job()
+    except Exception:  # noqa: BLE001 - pre-start recovery must fail closed on any bookkeeping error.
+        LOGGER.exception("Candidate release recovery bookkeeping failed")
+        return 1
+    if not completed:
+        LOGGER.error("Candidate release recovery did not terminalize its Appliance Update task")
+        return 1
+    return 0
+
+
 def _recovered_appliance_update_step_result(
     job: Job,
     step: JobStep,
@@ -1140,6 +1188,14 @@ def main() -> int:
         if recovered:
             LOGGER.warning("Reconciled %s interrupted worker job(s)", recovered)
     if _rollback_requires_worker_restart():
+        LOGGER.warning("Completing rollback bookkeeping before restoring the previous Atlaso worker")
+        while not _stop_requested:
+            try:
+                if _complete_recovered_rollback_job():
+                    break
+            except Exception:  # noqa: BLE001 - retain candidate code until bookkeeping succeeds.
+                LOGGER.exception("Candidate release recovery bookkeeping failed; retrying")
+            time.sleep(POLL_SECONDS)
         LOGGER.warning("Restarting the worker through the restored Atlaso release after rollback recovery")
         return 1
     if not ensure_vcf_depot_running_operation_index():
@@ -1154,4 +1210,6 @@ def main() -> int:
 
 
 if __name__ == "__main__":
+    if os.environ.get("ATLASO_RELEASE_RECOVERY_ONLY") == "1":
+        raise SystemExit(recover_release_rollback_handoff())
     raise SystemExit(main())

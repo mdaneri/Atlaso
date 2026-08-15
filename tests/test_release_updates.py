@@ -451,12 +451,45 @@ def test_candidate_worker_exits_after_reconciling_healthy_rollback(monkeypatch):
     monkeypatch.setattr(worker, "__version__", "0.9.159")
     monkeypatch.setattr(
         worker,
+        "_complete_recovered_rollback_job",
+        lambda: events.append("completion") or True,
+    )
+    monkeypatch.setattr(
+        worker,
         "ensure_vcf_depot_running_operation_index",
         lambda: pytest.fail("candidate worker must exit before entering its ordinary work loop"),
     )
 
     assert worker.main() == 1
-    assert events == ["bookkeeping"]
+    assert events == ["bookkeeping", "completion"]
+
+
+def test_candidate_recovery_one_shot_completes_bookkeeping(monkeypatch):
+    """Verify privileged reboot recovery can invoke candidate bookkeeping once.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace worker recovery dependencies.
+    """
+    from contextlib import nullcontext
+
+    import atlaso.app.worker as worker
+
+    events: list[str] = []
+    monkeypatch.setattr(worker, "init_db", lambda: events.append("database"))
+    monkeypatch.setattr(worker, "SessionLocal", lambda: nullcontext(object()))
+    monkeypatch.setattr(
+        worker,
+        "recover_interrupted_worker_jobs",
+        lambda *_args, **_kwargs: events.append("bookkeeping") or 1,
+    )
+    monkeypatch.setattr(
+        worker,
+        "_complete_recovered_rollback_job",
+        lambda: events.append("completion") or True,
+    )
+
+    assert worker.recover_release_rollback_handoff() == 0
+    assert events == ["database", "bookkeeping", "completion"]
 
 
 @pytest.mark.parametrize(
@@ -563,12 +596,18 @@ def test_release_prestart_recovery_handles_gate_after_definitive_write(
     assert gate.exists() is (not gate_cleared)
 
 
-def test_release_prestart_recovery_rolls_back_stale_transaction(monkeypatch, tmp_path):
+@pytest.mark.parametrize("bookkeeping_success", [True, False])
+def test_release_prestart_recovery_rolls_back_stale_transaction(
+    monkeypatch,
+    tmp_path,
+    bookkeeping_success,
+):
     """Verify a reboot-stale provisional transaction restores the previous release.
 
     Args:
         monkeypatch: Pytest fixture used to replace helper dependencies.
         tmp_path: Temporary directory provided for recovery state.
+        bookkeeping_success: Whether candidate-version task recovery completes.
     """
     from tests.test_appliance_update import load_helper_module
 
@@ -683,19 +722,99 @@ def test_release_prestart_recovery_rolls_back_stale_transaction(monkeypatch, tmp
         ),
     )
     monkeypatch.setattr(helper, "_write_update_info", lambda _payload: None)
+    candidate_recovery: list[Path] = []
+
+    def recover_candidate(release):
+        """Record candidate recovery while its release directory remains present.
+
+        Args:
+            release: Candidate release selected for one-shot recovery.
+        """
+        assert release.is_dir()
+        assert current.resolve() == previous.resolve()
+        candidate_recovery.append(release)
+        return {
+            "command": ["candidate-recovery"],
+            "returncode": 0 if bookkeeping_success else 1,
+            "success": bookkeeping_success,
+            "stdout": "",
+            "stderr": "" if bookkeeping_success else "bookkeeping failed",
+        }
+
+    monkeypatch.setattr(helper, "_run_candidate_release_recovery", recover_candidate)
 
     result = helper._recover_interrupted_release_transaction()
 
     persisted = json.loads(finalizer.read_text(encoding="utf-8"))
-    assert result["success"] is True, result
-    assert result["allow_worker"] is True
-    assert result["rolled_back"] is True
-    assert persisted["status"] == "failed"
-    assert persisted["rolled_back"] is True
+    assert result["success"] is bookkeeping_success, result
+    assert result["allow_worker"] is bookkeeping_success
+    assert result["rolled_back"] is bookkeeping_success
+    assert persisted["status"] == ("failed" if bookkeeping_success else "rollback_pending")
+    assert persisted["rolled_back"] is bookkeeping_success
     assert current.resolve() == previous.resolve()
     assert database.read_text(encoding="utf-8") == "previous database"
-    assert not candidate.exists()
-    assert not gate.exists()
+    assert candidate_recovery == [candidate]
+    assert candidate.exists() is (not bookkeeping_success)
+    assert gate.exists() is (not bookkeeping_success)
+
+
+def test_release_prestart_runs_candidate_bookkeeping_as_atlaso(monkeypatch, tmp_path):
+    """Verify reboot recovery retains candidate code for one bounded worker handoff.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace helper command execution.
+        tmp_path: Temporary directory provided for candidate and environment paths.
+    """
+    from tests.test_appliance_update import load_helper_module
+
+    helper = load_helper_module()
+    candidate = tmp_path / "releases/0.9.159"
+    python = candidate / ".venv/bin/python"
+    python.parent.mkdir(parents=True)
+    python.write_bytes(b"python")
+    environment = tmp_path / "atlaso.env"
+    environment.write_text("ATLASO_DATABASE_URL=sqlite:////var/lib/atlaso/atlaso.db\n", encoding="utf-8")
+    captured: list[tuple[list[str], float | None]] = []
+    monkeypatch.setattr(helper, "ATLASO_ENV_PATH", environment)
+    monkeypatch.setattr(helper, "ATLASO_STATE_DIR", tmp_path / "state")
+    monkeypatch.setattr(
+        helper.shutil,
+        "which",
+        lambda command: "/usr/bin/systemd-run" if command == "systemd-run" else None,
+    )
+
+    def run(command, *, timeout=None, env=None):
+        """Capture the candidate recovery command without exposing environment contents.
+
+        Args:
+            command: Command and arguments selected by reboot recovery.
+            timeout: Maximum command duration.
+            env: Optional process environment, which must remain unused here.
+        """
+        assert env is None
+        captured.append((command, timeout))
+        return subprocess.CompletedProcess(command, 0, "bookkeeping complete", "")
+
+    monkeypatch.setattr(helper, "_run", run)
+
+    result = helper._run_candidate_release_recovery(candidate)
+
+    assert result["success"] is True
+    command, timeout = captured[0]
+    assert timeout == 1800
+    assert command[:6] == [
+        "/usr/bin/systemd-run",
+        "--quiet",
+        "--wait",
+        "--pipe",
+        "--collect",
+        "--service-type=exec",
+    ]
+    assert "--uid=atlaso" in command
+    assert "--gid=atlaso" in command
+    assert f"--property=EnvironmentFile={environment}" in command
+    assert "--setenv=ATLASO_RELEASE_RECOVERY_ONLY=1" in command
+    assert command[-3:] == [str(python), "-m", "atlaso.app.worker"]
 
 
 def test_release_recovery_manifest_accepts_the_migrated_esx_allowlist(monkeypatch, tmp_path):

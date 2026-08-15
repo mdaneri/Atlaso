@@ -8,6 +8,7 @@ Requires=atlaso-data-disks.service
 Type=simple
 User=atlaso
 Group=atlaso
+TimeoutStartSec=30min
 WorkingDirectory=/var/lib/atlaso
 EnvironmentFile=/etc/atlaso/atlaso.env
 Environment=PYTHONDONTWRITEBYTECODE=1

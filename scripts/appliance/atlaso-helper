@@ -11171,6 +11171,55 @@ def _validated_release_recovery_context(finalizer: dict) -> dict[str, object]:
     }
 
 
+def _run_candidate_release_recovery(candidate: Path) -> dict:
+    """Run rollback bookkeeping once through the retained candidate release.
+
+    Args:
+        candidate: Validated candidate release retained until bookkeeping completes.
+
+    Returns:
+        Sanitized command evidence for the one-shot candidate worker.
+    """
+    python = candidate / ".venv/bin/python"
+    systemd_run = shutil.which("systemd-run")
+    if not python.is_file() or systemd_run is None or not ATLASO_ENV_PATH.is_file():
+        return _release_check(
+            "candidate_recovery_bookkeeping",
+            False,
+            "Candidate recovery requires its Python environment, systemd-run, and the Atlaso environment file.",
+        )
+    command = [
+        systemd_run,
+        "--quiet",
+        "--wait",
+        "--pipe",
+        "--collect",
+        "--service-type=exec",
+        f"--unit=atlaso-release-recovery-{os.getpid()}",
+        f"--uid={ATLASO_SERVICE_USER}",
+        f"--gid={ATLASO_SERVICE_USER}",
+        f"--property=WorkingDirectory={ATLASO_STATE_DIR}",
+        f"--property=EnvironmentFile={ATLASO_ENV_PATH}",
+        "--setenv=HOME=/var/lib/atlaso",
+        f"--setenv=LOGNAME={ATLASO_SERVICE_USER}",
+        f"--setenv=USER={ATLASO_SERVICE_USER}",
+        "--setenv=PYTHONDONTWRITEBYTECODE=1",
+        "--setenv=ATLASO_RELEASE_RECOVERY_ONLY=1",
+        str(python),
+        "-m",
+        "atlaso.app.worker",
+    ]
+    result = _run(command, timeout=1800)
+    return {
+        "command": command,
+        "returncode": result.returncode,
+        "success": result.returncode == 0,
+        "stdout": result.stdout[-4000:],
+        "stderr": result.stderr[-4000:],
+        "layer": "candidate_recovery_bookkeeping",
+    }
+
+
 def _recover_interrupted_release_transaction() -> dict:
     """Rollback a stale provisional release transaction before the worker starts."""
     try:
@@ -11404,6 +11453,40 @@ def _recover_interrupted_release_transaction() -> dict:
             "error": f"Reboot rollback evidence could not be persisted: {type(exc).__name__}.",
         }
     if rollback_ready:
+        bookkeeping_ready, _ = recovery_action(
+            "candidate_bookkeeping",
+            lambda: _run_candidate_release_recovery(candidate),
+        )
+        if not bookkeeping_ready:
+            rollback_ready = False
+            recovery_action("maintenance_fail_closed", lambda: _set_release_maintenance(True))
+            definitive.update(
+                {
+                    "status": "rollback_pending",
+                    "rolled_back": False,
+                    "rollback_health": False,
+                    "failure_layer": "reboot_recovery_bookkeeping",
+                    "error": (
+                        "Atlaso release rollback is healthy, but candidate-version recovery bookkeeping "
+                        "did not complete."
+                    ),
+                }
+            )
+    definitive["commands"] = commands
+    definitive["rollback_failures"] = list(dict.fromkeys(rollback_failures))
+    try:
+        _write_release_finalizer(definitive)
+        _write_update_info(definitive)
+    except OSError as exc:
+        return {
+            "status": "recovery_failed",
+            "success": False,
+            "allow_worker": False,
+            "commands": commands,
+            "rollback_failures": list(dict.fromkeys([*rollback_failures, "reboot_rollback_finalizer"])),
+            "error": f"Reboot rollback evidence could not be persisted: {type(exc).__name__}.",
+        }
+    if rollback_ready:
         _set_release_restart_gate(False)
         if ATLASO_CURRENT_LINK.is_symlink() and ATLASO_CURRENT_LINK.resolve(strict=True) == previous:
             shutil.rmtree(candidate, ignore_errors=True)
@@ -11414,7 +11497,7 @@ def _recover_interrupted_release_transaction() -> dict:
         "rolled_back": rollback_ready,
         "commands": commands,
         "rollback_failures": definitive["rollback_failures"],
-        "error": error,
+        "error": str(definitive["error"]),
     }
 
 

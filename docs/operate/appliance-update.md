@@ -256,8 +256,12 @@ restart-pending evidence before establishing the volatile runtime gate, then kee
 both workers from consuming a finalizer until its durable write and the surrounding transaction have finished. Worker
 pre-start distinguishes the live helper by boot, PID, and process-start identity. If a reboot removes the gate and the
 recorded helper no longer owns the transaction, privileged pre-start recovery restores and verifies the previous
-release before admitting the worker. The worker exits for systemd retry instead of accepting work if that recovery or
-gate does not complete. Runtime rollback preserves and verifies the already-running caller or candidate worker until the
+release, then runs the restored task's normal child, parent, log, and audit bookkeeping once through the retained
+candidate environment before deleting it or admitting the previous worker. This bounded handoff runs as the Atlaso
+service account and may finish untouched safe children; a failure retains the candidate, maintenance response, and
+runtime gate for retry. The worker unit allows up to 30 minutes for this recovery. The worker exits for systemd retry
+instead of accepting work if that recovery or gate does not complete. Runtime rollback preserves and verifies the
+already-running caller or candidate worker until the
 definitive rollback write and never starts a restored legacy worker inside the transaction. After completing rollback
 bookkeeping, a candidate worker exits so systemd starts the restored release. If the runtime gate cannot be created, the
 helper stops and verifies the caller inactive before publishing incomplete rollback. The surviving privileged helper
