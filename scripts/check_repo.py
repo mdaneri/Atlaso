@@ -819,6 +819,17 @@ def extract_markdown_policy_section(text: str, anchor: str) -> str | None:
             heading_match = re.match(r" {0,3}(#{1,6})[ \t]+", lines[end])
             if heading_match is not None and len(heading_match.group(1)) <= heading_level:
                 return "".join(lines[start:end])
+            title_line = lines[end].rstrip("\r\n")
+            title_indent = len(title_line) - len(title_line.lstrip(" "))
+            setext_match = (
+                re.fullmatch(r" {0,3}(=+|-+)[ \t]*(?:\r?\n)?", lines[end + 1])
+                if end + 1 < len(lines) and title_line.strip() and title_indent <= 3
+                else None
+            )
+            if setext_match is not None:
+                next_level = 1 if setext_match.group(1).startswith("=") else 2
+                if next_level <= heading_level:
+                    return "".join(lines[start:end])
     else:
         for end in range(start + 1, len(lines)):
             if lines[end].startswith("- "):
