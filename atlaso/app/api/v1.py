@@ -88,6 +88,8 @@ from atlaso.app.routers.api_v1.routes_wan import RoutesWanApiDependencies
 from atlaso.app.routers.api_v1.routes_wan import (
     build_router as build_routes_wan_api_router,
 )
+from atlaso.app.routers.api_v1.settings import SettingsApiDependencies
+from atlaso.app.routers.api_v1.settings import build_router as build_settings_api_router
 from atlaso.app.routers.api_v1.vcf_workflows import VcfWorkflowsApiDependencies
 from atlaso.app.routers.api_v1.vcf_workflows import (
     build_routers as build_vcf_workflows_api_routers,
@@ -111,7 +113,6 @@ from atlaso.app.schemas import (
     PhysicalInterfaceResponse,
     ServiceStateResponse,
     SettingsResponse,
-    SettingsUpdate,
     VcfOfflineDepotStatusResponse,
     VlanCreate,
     VsphereKeyProviderCreate,
@@ -130,24 +131,31 @@ from atlaso.app.schemas import (
     VsphereTrustedVcenterUpdate,
     WanPolicyResponse,
 )
+from atlaso.app.schemas import SettingsUpdate as SettingsUpdate
 from atlaso.app.security import (
     Identity,
     authenticate_user,
     require_scope,
 )
 from atlaso.app.services.appliance_settings import (
-    APPLIANCE_SETTINGS_STAGED_CONFIG_PATH,
+    APPLIANCE_SETTINGS_STAGED_CONFIG_PATH as APPLIANCE_SETTINGS_STAGED_CONFIG_PATH,
+)
+from atlaso.app.services.appliance_settings import (
     appliance_settings_to_dict,
     management_dhcp_dns_context,
     management_interface_context,
     management_ui_context,
-    normalize_fqdn,
-    normalize_multiline_values,
     normalized_web_terminal_interfaces,
     render_appliance_settings_config,
     validate_appliance_settings,
     web_terminal_interface_options,
-    web_terminal_interfaces_to_json,
+)
+from atlaso.app.services.appliance_settings import normalize_fqdn as normalize_fqdn
+from atlaso.app.services.appliance_settings import (
+    normalize_multiline_values as normalize_multiline_values,
+)
+from atlaso.app.services.appliance_settings import (
+    web_terminal_interfaces_to_json as web_terminal_interfaces_to_json,
 )
 from atlaso.app.services.ca import ca_service_state, managed_certificate_for_owner
 from atlaso.app.services.dnsmasq import (
@@ -1227,80 +1235,35 @@ create_job = _operations_api.endpoints["create_job"]
 get_job = _operations_api.endpoints["get_job"]
 cancel_job = _operations_api.endpoints["cancel_job"]
 
-router = APIRouter(prefix="/api/v1", route_class=DocumentedAPIRoute)
-
-
-
-
-@router.get("/settings", response_model=SettingsResponse, tags=["Settings"], operation_id="getSettings")
-def get_app_settings(
-    identity: Annotated[Identity, Depends(require_scope("read:dashboard"))],
-    db: Session = Depends(get_db),
-    settings: Settings = Depends(get_settings),
-) -> SettingsResponse:
-    """Get Settings.
-
-    Requires the `read:dashboard` API scope. This read-only operation does not change saved desired
-    state or appliance runtime state.
+def _ensure_settings_ca_state(db: Session) -> list[str]:
+    """Use the stable UI facade's CA compatibility helper.
 
     Args:
-        identity: Authenticated identity authorizing the operation.
-        db: Active database session used by the operation.
-        settings: Current Atlaso settings used to configure the operation.
+        db: Active database session.
+
+    Returns:
+        Public-safe CA validation errors.
     """
-    return appliance_settings_response(db, settings)
+    from atlaso.app import ui as ui_module
+
+    return ui_module.ensure_ca_state(db)
 
 
-@router.patch("/settings", response_model=SettingsResponse, tags=["Settings"], operation_id="updateSettings")
-def update_app_settings(
-    payload: SettingsUpdate,
-    identity: Annotated[Identity, Depends(require_scope("admin:all"))],
-    db: Session = Depends(get_db),
-    settings: Settings = Depends(get_settings),
-) -> SettingsResponse:
-    """Update Settings.
+_settings_api = build_settings_api_router(
+    SettingsApiDependencies(
+        appliance_settings_response=lambda *args, **kwargs: appliance_settings_response(
+            *args, **kwargs
+        ),
+        get_appliance_settings=lambda *args, **kwargs: get_appliance_settings(
+            *args, **kwargs
+        ),
+        ensure_ca_state=_ensure_settings_ca_state,
+    )
+)
+settings_router = _settings_api.router
+get_app_settings = _settings_api.endpoints["get_app_settings"]
+update_app_settings = _settings_api.endpoints["update_app_settings"]
 
-    Requires the `admin:all` API scope. The operation updates saved Atlaso state and does not bypass
-    the documented global Appliance Apply or service lifecycle boundary.
-
-    Args:
-        payload: Validated request or task payload consumed by the operation.
-        identity: Authenticated identity authorizing the operation.
-        db: Active database session used by the operation.
-        settings: Current Atlaso settings used to configure the operation.
-    """
-    desired = get_appliance_settings(db)
-    desired.fqdn = normalize_fqdn(payload.appliance_fqdn)
-    desired.management_https_enabled = payload.management_https_enabled
-    desired.web_terminal_enabled = payload.web_terminal_enabled
-    interfaces = db.execute(select(PhysicalInterface).order_by(PhysicalInterface.name)).scalars().all()
-    vlans = db.execute(select(VlanInterface).order_by(VlanInterface.parent_interface, VlanInterface.vlan_id)).scalars().all()
-    management = management_ui_context(interfaces, vlans)
-    requested_terminal_interfaces = list(payload.web_terminal_interfaces)
-    if desired.web_terminal_enabled and management.get("name"):
-        requested_terminal_interfaces = [
-            management["name"],
-            *[name for name in requested_terminal_interfaces if name != management["name"]],
-        ]
-    desired.web_terminal_interfaces_json = web_terminal_interfaces_to_json(requested_terminal_interfaces)
-    desired.root_ssh_enabled = payload.root_ssh_enabled
-    desired.external_dns_servers = normalize_multiline_values("\n".join(payload.external_dns_servers))
-    desired.config_path = APPLIANCE_SETTINGS_STAGED_CONFIG_PATH
-    desired.updated_at = utcnow()
-    db.add(desired)
-    db.commit()
-    db.refresh(desired)
-    ca_settings = db.execute(select(CaSettings)).scalar_one_or_none()
-    if desired.management_https_enabled and ca_settings and ca_settings.enabled:
-        from atlaso.app import ui as ui_module
-
-        ui_module.ensure_ca_state(db)
-        db.refresh(desired)
-    record_audit(db, actor=identity.username, action="update_appliance_settings", resource_type="settings", resource_id=str(desired.id))
-    return appliance_settings_response(db, settings)
-
-
-_api_between_operations_vcf_backups_router = router
 _vcf_workflows_api = build_vcf_workflows_api_routers(
     VcfWorkflowsApiDependencies(
         build_vcf_offline_depot_status=lambda *args, **kwargs: build_vcf_offline_depot_status(*args, **kwargs),
@@ -2810,12 +2773,8 @@ API_V1_ROUTER_REGISTRY.register(
     (RouterContribution(plane="api_v1", router=operations_router),),
 )
 API_V1_ROUTER_REGISTRY.register(
-    "facade_between_operations_vcf_backups",
-    (
-        RouterContribution(
-            plane="api_v1", router=_api_between_operations_vcf_backups_router
-        ),
-    ),
+    "settings",
+    (RouterContribution(plane="api_v1", router=settings_router),),
 )
 API_V1_ROUTER_REGISTRY.register(
     "vcf_workflows_backups",
@@ -2877,7 +2836,7 @@ API_V1_ROUTER_REGISTRY.validate_domains(
         "firewall",
         "facade_between_firewall_operations",
         "operations",
-        "facade_between_operations_vcf_backups",
+        "settings",
         "vcf_workflows_backups",
         "facade_between_vcf_backups_offline_depot",
         "vcf_workflows_offline_depot",
