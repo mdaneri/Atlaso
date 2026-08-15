@@ -36,6 +36,12 @@ surfaces.
 - [ ] After any authorized merge and remaining post-merge activity, the originating task will send a `cleanup-ready`
   handoff and remain incomplete until `remote_branch_absent`, `worktree_removed`, and `task_title_done` occur in order;
   only then may supported title controls append the exact suffix " · Done" once.
+
+  Terminal order:
+
+  1. `remote_branch_absent`
+  2. `worktree_removed`
+  3. `task_title_done`
 - [ ] Evidence-backed issues discovered outside this pull request's linked scope were matched to existing issues or
   opened separately with one appropriate type label; suspected sensitive vulnerabilities were kept private.
 - [ ] For a temporary-private-fork pull request, advisory-side maintainer review and recorded local validation replace

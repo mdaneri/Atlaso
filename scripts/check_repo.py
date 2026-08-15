@@ -318,6 +318,14 @@ TERMINAL_CLEANUP_SECTION_MARKERS = {
     for path, ordered_markers in ORDERED_TERMINAL_CLEANUP_MARKERS.items()
 }
 
+TERMINAL_CLEANUP_ORDER_ANCHOR = "Terminal order:"
+TERMINAL_CLEANUP_ORDER_LINES = tuple(
+    f"{position}. {marker}"
+    for position, marker in enumerate(
+        next(iter(ORDERED_TERMINAL_CLEANUP_MARKERS.values())), start=1
+    )
+)
+
 
 @dataclass(frozen=True)
 class Finding:
@@ -725,15 +733,8 @@ def check_agent_policy_gate(root: Path) -> list[Finding]:
                         )
                     )
         if ordered_markers is not None and cleanup_section is not None:
-            missing_ordered_markers = tuple(
-                marker for marker in ordered_markers if marker not in cleanup_section
-            )
-            positions = tuple(
-                cleanup_section.index(marker)
-                for marker in ordered_markers
-                if marker in cleanup_section
-            )
-            if not missing_ordered_markers and positions != tuple(sorted(positions)):
+            order_lines = extract_terminal_cleanup_order(cleanup_section)
+            if order_lines != TERMINAL_CLEANUP_ORDER_LINES:
                 findings.append(
                     Finding(
                         path,
@@ -742,6 +743,28 @@ def check_agent_policy_gate(root: Path) -> list[Finding]:
                     )
                 )
     return findings
+
+
+def extract_terminal_cleanup_order(cleanup_section: str) -> tuple[str, ...] | None:
+    """Return the three numbered transitions following the terminal-order anchor.
+
+    Args:
+        cleanup_section: Canonical cleanup heading section or top-level list item.
+    """
+    lines = cleanup_section.splitlines()
+    anchors = tuple(
+        index
+        for index, line in enumerate(lines)
+        if line.strip() == TERMINAL_CLEANUP_ORDER_ANCHOR
+    )
+    if len(anchors) != 1:
+        return None
+    transitions = tuple(
+        line.strip()
+        for line in lines[anchors[0] + 1 :]
+        if line.strip()
+    )
+    return transitions[: len(TERMINAL_CLEANUP_ORDER_LINES)]
 
 
 def extract_markdown_policy_section(text: str, anchor: str) -> str | None:

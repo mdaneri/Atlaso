@@ -6,6 +6,8 @@ from scripts.check_repo import (
     LEGACY_TABULATOR_MARKER,
     ORDERED_TERMINAL_CLEANUP_MARKERS,
     REQUIRED_POLICY_MARKERS,
+    TERMINAL_CLEANUP_ORDER_ANCHOR,
+    TERMINAL_CLEANUP_ORDER_LINES,
     TERMINAL_CLEANUP_SECTION_ANCHORS,
     TERMINAL_CLEANUP_SECTION_MARKERS,
     check_agent_policy_gate,
@@ -47,7 +49,21 @@ def write_policy_files(root: Path) -> None:
         )
         policy_lines = list(other_markers)
         if section_anchor is not None:
-            policy_lines.extend((section_anchor, *section_markers, "- following policy"))
+            non_ordered_markers = tuple(
+                marker
+                for marker in section_markers
+                if marker not in ORDERED_TERMINAL_CLEANUP_MARKERS[relative_path]
+            )
+            policy_lines.extend(
+                (
+                    section_anchor,
+                    *non_ordered_markers,
+                    TERMINAL_CLEANUP_ORDER_ANCHOR,
+                    "",
+                    *TERMINAL_CLEANUP_ORDER_LINES,
+                    "- following policy",
+                )
+            )
         path.write_text("\n".join(policy_lines), encoding="utf-8")
 
 
@@ -517,10 +533,23 @@ def test_agent_policy_gate_requires_terminal_cleanup_order(tmp_path: Path) -> No
         path = tmp_path / relative_path
         text = path.read_text(encoding="utf-8")
         earlier_summary = "\n".join(markers)
-        path.write_text(
-            earlier_summary
+        anchor = TERMINAL_CLEANUP_SECTION_ANCHORS[relative_path]
+        summary_position = text.index(anchor) + len(anchor)
+        text_with_summary = (
+            text[:summary_position]
             + "\n"
-            + text.replace("\n".join(markers), "\n".join(reversed(markers))),
+            + earlier_summary
+            + text[summary_position:]
+        )
+        reversed_order_lines = tuple(
+            f"{position}. {marker}"
+            for position, marker in enumerate(reversed(markers), start=1)
+        )
+        path.write_text(
+            text_with_summary.replace(
+                "\n".join(TERMINAL_CLEANUP_ORDER_LINES),
+                "\n".join(reversed_order_lines),
+            ),
             encoding="utf-8",
         )
 
@@ -543,10 +572,14 @@ def test_agent_policy_gate_ignores_incidental_marker_order(tmp_path: Path) -> No
     for relative_path, markers in ORDERED_TERMINAL_CLEANUP_MARKERS.items():
         write_policy_files(tmp_path)
         path = tmp_path / relative_path
+        text = path.read_text(encoding="utf-8")
+        anchor = TERMINAL_CLEANUP_SECTION_ANCHORS[relative_path]
+        summary_position = text.index(anchor) + len(anchor)
         path.write_text(
-            "\n".join(reversed(markers))
+            text[:summary_position]
             + "\n"
-            + path.read_text(encoding="utf-8"),
+            + "\n".join(reversed(markers))
+            + text[summary_position:],
             encoding="utf-8",
         )
 

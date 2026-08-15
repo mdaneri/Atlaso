@@ -152,6 +152,13 @@ status: current
   from removable-worktree and Codex-root checks. Only a non-primary target must be a registered, clean, unlocked,
   non-reparse-point worktree beneath the resolved Codex worktree root. Never remove the primary checkout, a permanent
   or user-created worktree, or an ambiguous target.
+
+Terminal order:
+
+1. `remote_branch_absent`
+2. `worktree_removed`
+3. `task_title_done`
+
 - Complete `remote_branch_absent` first. If the same-repository task branch exists, require its ref to equal the recorded
   pull-request head SHA, delete only that ref, and verify it is absent. An already absent ref satisfies the gate. Do not
   enable repository-wide automatic branch deletion.

@@ -181,17 +181,20 @@ checkout, a user-created or permanent worktree, or a worktree whose ownership or
 pull-request head need not be an ancestor of `main` only when the worktree HEAD equals the recorded pull-request head
 SHA and the recorded merge commit is reachable from current `origin/main`.
 
-Complete the terminal transition in this order:
+Terminal order:
 
-1. `remote_branch_absent`: delete only the exact task-owned branch from its same-repository GitHub remote after
-   verifying that the ref is absent or still equals the pull-request head SHA, then verify the remote ref is absent.
-   Do not enable repository-wide automatic branch deletion.
-2. `worktree_removed`: remove the registered worktree through `git worktree remove`, prune only stale worktree
-   metadata for the affected repository, and verify both the path and registration are absent. For a task running in
-   the primary checkout, record this gate as not applicable after verifying that identity and never remove the checkout.
-3. `task_title_done`: use supported task-title controls to append the exact suffix " · Done" once, preserving the
-   description and issue/pull-request traceability. Keep the completed task unarchived unless a maintainer separately
-   requests archival.
+1. `remote_branch_absent`
+2. `worktree_removed`
+3. `task_title_done`
+
+For `remote_branch_absent`, delete only the exact task-owned branch from its same-repository GitHub remote after
+verifying that the ref is absent or still equals the pull-request head SHA, then verify the remote ref is absent. Do not
+enable repository-wide automatic branch deletion. For `worktree_removed`, use `git worktree remove`, prune only stale
+worktree metadata for the affected repository, and verify both the path and registration are absent. For a task running
+in the primary checkout, record this gate as not applicable after verifying that identity and never remove the checkout.
+For `task_title_done`, use supported task-title controls to append the exact suffix " · Done" once, preserving the
+description and issue/pull-request traceability. Keep the completed task unarchived unless a maintainer separately
+requests archival.
 
 Any failed or ambiguous gate blocks `task_title_done`; leave the task actionable and report the exact retry condition.
 The daily Codex cleanup automation is the reconciliation backstop for missed handoffs and partially completed terminal

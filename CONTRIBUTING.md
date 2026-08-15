@@ -133,8 +133,13 @@ idle, unpinned task and independently revalidates the merged pull request, reach
 completed post-merge activity, and branch/checkout ownership. It identifies and verifies a primary checkout first;
 only a non-primary target must be a clean, registered, unlocked Codex worktree beneath the resolved Codex worktree root.
 
-The controller completes the terminal states in order: `remote_branch_absent`, `worktree_removed`, then
-`task_title_done`. It deletes and verifies only the exact task-owned same-repository GitHub branch; repository-wide
+Terminal order:
+
+1. `remote_branch_absent`
+2. `worktree_removed`
+3. `task_title_done`
+
+The controller deletes and verifies only the exact task-owned same-repository GitHub branch; repository-wide
 automatic branch deletion remains disabled. It then uses `git worktree remove`, prunes stale registration metadata,
 and verifies that the worktree path and registration are absent. A primary-checkout task records worktree removal as
 not applicable and never removes that checkout. Finally, supported title controls append the exact suffix " · Done"
