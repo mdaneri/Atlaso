@@ -851,6 +851,38 @@ def test_agent_policy_gate_ignores_link_reference_cleanup_markers(
         )
 
 
+def test_agent_policy_gate_ignores_multiline_link_reference_titles(
+    tmp_path: Path,
+) -> None:
+    """Verify that multiline reference titles cannot satisfy cleanup markers.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    marker = '`cleanup-ready`'
+    for relative_path in ORDERED_TERMINAL_CLEANUP_MARKERS:
+        anchor = TERMINAL_CLEANUP_SECTION_ANCHORS[relative_path]
+        if not anchor.startswith("#"):
+            continue
+        write_policy_files(tmp_path)
+        path = tmp_path / relative_path
+        text = path.read_text(encoding="utf-8").replace(marker, "", 1)
+        path.write_text(
+            text
+            + '\n[cleanup-marker]: https://example.invalid\n'
+            + f'  "{marker}"',
+            encoding="utf-8",
+        )
+
+        findings = check_agent_policy_gate(tmp_path)
+
+        assert len(findings) == 1
+        assert findings[0].path == path
+        assert findings[0].message == (
+            f"completed-task cleanup section marker is missing: {marker}"
+        )
+
+
 def test_agent_policy_gate_ignores_fenced_terminal_order(tmp_path: Path) -> None:
     """Verify that a fenced terminal sequence is not operative policy.
 
@@ -1016,6 +1048,37 @@ def test_agent_policy_gate_ignores_quoted_cleanup_markers(tmp_path: Path) -> Non
             text + insertion
             if anchor.startswith("#")
             else text.replace(sibling, insertion + sibling, 1),
+            encoding="utf-8",
+        )
+
+        findings = check_agent_policy_gate(tmp_path)
+
+        assert len(findings) == 1
+        assert findings[0].path == path
+        assert findings[0].message == (
+            f"completed-task cleanup section marker is missing: {marker}"
+        )
+
+
+def test_agent_policy_gate_preserves_headings_after_block_quotes(tmp_path: Path) -> None:
+    """Verify that an ATX heading ends a block quote without a blank line.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    marker = '`cleanup-ready`'
+    for relative_path in ORDERED_TERMINAL_CLEANUP_MARKERS:
+        anchor = TERMINAL_CLEANUP_SECTION_ANCHORS[relative_path]
+        if not anchor.startswith("#"):
+            continue
+        write_policy_files(tmp_path)
+        path = tmp_path / relative_path
+        text = path.read_text(encoding="utf-8").replace(marker, "", 1)
+        heading_level = len(anchor) - len(anchor.lstrip("#"))
+        path.write_text(
+            text
+            + "\n> quoted example\n"
+            + f"{'#' * heading_level} Following policy\n\n{marker}\n",
             encoding="utf-8",
         )
 

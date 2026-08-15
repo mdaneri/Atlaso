@@ -823,20 +823,43 @@ def strip_markdown_nonoperative_content(text: str) -> str:
             in_block_quote = True
             without_quotes_lines.append("\n" if line.endswith("\n") else "")
         elif in_block_quote and line.strip():
-            without_quotes_lines.append("\n" if line.endswith("\n") else "")
+            if re.match(r" {0,3}#{1,6}(?:[ \t]+|$)", line) is not None:
+                in_block_quote = False
+                without_quotes_lines.append(line)
+            else:
+                without_quotes_lines.append("\n" if line.endswith("\n") else "")
         else:
             if not line.strip():
                 in_block_quote = False
             without_quotes_lines.append(line)
     without_quotes = "".join(without_quotes_lines)
     visible_lines: list[str] = []
+    link_reference_title_pending = False
     for line in without_quotes.splitlines(keepends=True):
-        if (
-            re.match(r"(?: {4}|\t)", line) is not None
-            or re.match(r" {0,3}\[[^\]\r\n]+\]:", line) is not None
-        ):
+        reference_match = re.match(r" {0,3}\[[^\]\r\n]+\]:", line)
+        continued_title_match = (
+            re.fullmatch(
+                r''' {0,3}(?:"[^"\r\n]*"|'[^'\r\n]*'|\([^()\r\n]*\))[ \t]*(?:\r?\n)?''',
+                line,
+            )
+            if link_reference_title_pending
+            else None
+        )
+        if reference_match is not None:
+            inline_title_match = re.search(
+                r'''[ \t]+(?:"[^"\r\n]*"|'[^'\r\n]*'|\([^()\r\n]*\))[ \t]*(?:\r?\n)?$''',
+                line,
+            )
+            link_reference_title_pending = inline_title_match is None
+            visible_lines.append("\n" if line.endswith("\n") else "")
+        elif continued_title_match is not None:
+            link_reference_title_pending = False
+            visible_lines.append("\n" if line.endswith("\n") else "")
+        elif re.match(r"(?: {4}|\t)", line) is not None:
+            link_reference_title_pending = False
             visible_lines.append("\n" if line.endswith("\n") else "")
         else:
+            link_reference_title_pending = False
             visible_lines.append(line)
     without_indented_code = "".join(visible_lines)
     return strip_markdown_fenced_code(without_indented_code)
