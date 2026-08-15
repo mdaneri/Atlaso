@@ -69,7 +69,9 @@ staging under `/var/lib/atlaso/apply` is scrubbed; secret-bearing Local Users, C
 failure. Successful reset also removes retained VCF Backup authorized keys, the Web Terminal CA key pair, and pending
 Web Terminal signing requests so re-enabling either feature cannot reuse credentials from before reset. The bootstrap
 account home is retained, but its SSH authorization files are removed. OIDC browser cookies carry the appliance-instance
-identity and are rejected after reset even when a recreated bootstrap user receives the same database identifier.
+identity and are rejected after reset even when a recreated bootstrap user receives the same database identifier. CA
+private-key paths present before reset but omitted from validated factory state are removed after runtime activation;
+paths retained by factory state are rewritten and preserved.
 
 Existing credentials stop working. Sign in with the bootstrap administrator credentials supplied when the appliance
 image was deployed. Factory state disables Management HTTPS and restores the packaged management network

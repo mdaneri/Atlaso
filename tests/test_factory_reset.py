@@ -14,6 +14,8 @@ from atlaso.app.config import get_settings
 from atlaso.app.database import Base
 from atlaso.app.factory_reset import (
     FactoryResetError,
+    _ca_private_key_paths,
+    _remove_retired_ca_private_keys,
     _scrub_retained_credentials,
     _seed_factory_host_interfaces,
     finalize_factory_reset,
@@ -23,6 +25,7 @@ from atlaso.app.models import (
     ApiToken,
     ApplianceSettings,
     AuditEvent,
+    CaCertificate,
     DnsSettings,
     Job,
     PhysicalInterface,
@@ -144,6 +147,48 @@ def test_factory_reset_scrubs_credentials_outside_apply_staging(tmp_path, monkey
     assert not (bootstrap_ssh / "authorized_keys").exists()
     assert not (bootstrap_ssh / "authorized_keys2").exists()
     assert retained_home_file.read_text(encoding="utf-8") == "retained payload"
+
+
+def test_factory_reset_removes_only_retired_ca_private_keys(tmp_path, monkeypatch):
+    """Reset removes old bounded CA keys while preserving factory-state paths.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+    """
+    import atlaso.app.factory_reset as factory_reset
+
+    managed_root = tmp_path / "etc" / "atlaso"
+    retired_key = managed_root / "https" / "retired.key"
+    retained_key = managed_root / "ca" / "factory.key"
+    for path in (retired_key, retained_key):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("private key material", encoding="utf-8")
+    monkeypatch.setattr(factory_reset, "CA_MANAGED_PATH_BASE", managed_root)
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    test_session = sessionmaker(bind=engine, autoflush=False, autocommit=False)
+    with test_session() as source_db:
+        source_db.add_all(
+            [
+                CaCertificate(common_name="retired", key_path=str(retired_key)),
+                CaCertificate(common_name="factory", key_path=str(retained_key)),
+            ]
+        )
+        source_db.commit()
+        source_paths = _ca_private_key_paths(source_db)
+    with test_session() as candidate_db:
+        candidate_db.execute(
+            CaCertificate.__table__.delete().where(CaCertificate.common_name == "retired")
+        )
+        candidate_db.commit()
+        candidate_paths = _ca_private_key_paths(candidate_db)
+
+    _remove_retired_ca_private_keys(source_paths - candidate_paths)
+
+    assert not retired_key.exists()
+    assert retained_key.read_text(encoding="utf-8") == "private key material"
+    engine.dispose()
 
 
 def test_managed_factory_reset_retains_marker_until_readiness(tmp_path, monkeypatch):

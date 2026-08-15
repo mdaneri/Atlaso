@@ -13171,7 +13171,11 @@ def login_page(
     reset_notice = None
     if factory_reset:
         reset_state = read_factory_reset_state()
-        if factory_reset == "complete" or reset_state["state"] == "succeeded":
+        authenticated_completion = (
+            factory_reset == "complete"
+            and request.session.pop("factory_reset_completed", False) is True
+        )
+        if reset_state["state"] == "succeeded" or authenticated_completion:
             reset_notice = (
                 "Factory reset completed. Sign in with the bootstrap administrator credentials; "
                 "all earlier sessions and credentials are invalid."
@@ -18533,6 +18537,7 @@ def factory_reset_backup_restore(
     )
     invalidate_appliance_apply_status_projection()
     request.session.clear()
+    request.session["factory_reset_completed"] = True
     return RedirectResponse(
         f"{management_ui_path('/login')}?factory_reset=complete",
         status_code=303,

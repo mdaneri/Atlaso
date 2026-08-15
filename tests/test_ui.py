@@ -7844,6 +7844,33 @@ def test_backup_restore_factory_reset_schedules_durable_appliance_transaction(cl
         ).scalar_one().value == "yes"
 
 
+def test_factory_reset_completion_notice_requires_durable_success(client, monkeypatch):
+    """A query parameter cannot hide an active or failed reset marker.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+    """
+    import atlaso.app.ui as ui
+
+    monkeypatch.setattr(
+        ui,
+        "read_factory_reset_state",
+        lambda: {
+            "state": "failed",
+            "updated_at": "2026-08-15T23:00:00+00:00",
+            "message": "Factory reset requires console recovery.",
+        },
+    )
+
+    response = client.get("/login?factory_reset=complete")
+
+    assert response.status_code == 200
+    assert "Factory reset requires console recovery." in response.text
+    assert "Factory reset completed" not in response.text
+    assert "all earlier sessions and credentials are invalid" not in response.text
+
+
 def test_backup_restore_factory_reset_replaces_database_and_baselines_runtime(client):
     """Verify the in-process reset clears all records and leaves zero pending units.
 

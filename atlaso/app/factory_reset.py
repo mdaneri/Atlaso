@@ -24,7 +24,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from atlaso.app.adapters.system import AdapterResult, SystemAdapter
 from atlaso.app.config import get_settings
 from atlaso.app.database import Base
-from atlaso.app.models import PhysicalInterface, Setting
+from atlaso.app.models import CaCertificate, PhysicalInterface, Setting
 from atlaso.app.seed import (
     FACTORY_MANAGEMENT_CIDR,
     SEED_EXAMPLES_SETTING_KEY,
@@ -61,6 +61,7 @@ FACTORY_RESET_REQUIRED_SERVICES = (
     "nginx.service",
 )
 VCF_BACKUPS_AUTHORIZED_KEYS_DIRECTORY = Path("/etc/atlaso/ssh/authorized_keys")
+CA_MANAGED_PATH_BASE = Path("/etc/atlaso")
 LOCAL_USERS_HOME_DIRECTORY = Path("/var/lib/atlaso/users")
 LOCAL_USER_NAME_PATTERN = re.compile(r"^[a-z_][a-z0-9_-]{0,31}$")
 BOOTSTRAP_AUTHORIZED_KEY_NAMES = ("authorized_keys", "authorized_keys2")
@@ -448,6 +449,46 @@ def _scrub_bootstrap_authorized_keys() -> None:
             raise FactoryResetError(f"Factory reset bootstrap SSH authorization entry is unsafe: {name}")
 
 
+def _ca_private_key_paths(db: Session) -> set[Path]:
+    """Return normalized private-key paths from Atlaso's CA certificate inventory."""
+    managed_base = CA_MANAGED_PATH_BASE.resolve()
+    paths: set[Path] = set()
+    for value in db.execute(select(CaCertificate.key_path)).scalars().all():
+        if not value or not value.strip():
+            continue
+        path = Path(value.strip())
+        resolved = path.resolve()
+        if (
+            not path.is_absolute()
+            or resolved == managed_base
+            or not resolved.is_relative_to(managed_base)
+            or resolved != path
+        ):
+            raise FactoryResetError("Factory reset encountered an unsafe CA-managed private-key path.")
+        paths.add(path)
+    return paths
+
+
+def _remove_retired_ca_private_keys(paths: set[Path]) -> None:
+    """Durably remove bounded CA private keys omitted from factory state."""
+    synced_directories: set[Path] = set()
+    for path in sorted(paths):
+        if path.is_symlink():
+            raise FactoryResetError("Factory reset encountered a symlinked retired CA private key.")
+        if path.is_file():
+            path.unlink()
+            synced_directories.add(path.parent)
+        elif path.exists():
+            raise FactoryResetError("Factory reset encountered an unsafe retired CA private-key entry.")
+    if os.name == "posix":
+        for directory in sorted(synced_directories):
+            descriptor = os.open(directory, os.O_RDONLY)
+            try:
+                os.fsync(descriptor)
+            finally:
+                os.close(descriptor)
+
+
 def _scrub_retained_credentials() -> None:
     """Remove fixed credential material that intentionally lives outside Apply staging."""
     for path in WEB_TERMINAL_CREDENTIAL_PATHS:
@@ -643,6 +684,7 @@ def _candidate_database(
     try:
         with source_session() as source_db:
             previous_baselines = load_appliance_apply_baselines(source_db)
+            previous_ca_private_key_paths = _ca_private_key_paths(source_db)
     finally:
         source_engine.dispose()
 
@@ -670,6 +712,7 @@ def _candidate_database(
             db.add(Setting(key=SEED_EXAMPLES_SETTING_KEY, value="false"))
             save_appliance_apply_baselines(db, previous_baselines)
             db.commit()
+            retired_ca_private_key_paths = previous_ca_private_key_paths - _ca_private_key_paths(db)
 
             units = appliance_apply_units(db)
             invalid = [unit["label"] for unit in units if unit["validation_errors"]]
@@ -709,6 +752,8 @@ def _candidate_database(
                 if not result["success"]:
                     raise FactoryResetError(f"Factory reset activation failed for {unit['label']}.")
                 db.flush()
+            if not adapter.dry_run:
+                _remove_retired_ca_private_keys(retired_ca_private_key_paths)
 
             final_units = appliance_apply_units(db, reconcile=False)
             update_appliance_apply_baselines(
