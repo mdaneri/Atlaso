@@ -7,6 +7,7 @@ from scripts.check_repo import (
     ORDERED_TERMINAL_CLEANUP_MARKERS,
     REQUIRED_POLICY_MARKERS,
     TERMINAL_CLEANUP_SECTION_ANCHORS,
+    TERMINAL_CLEANUP_SECTION_MARKERS,
     check_agent_policy_gate,
     check_ui_pattern_foundation,
     collect_files,
@@ -37,16 +38,16 @@ def write_policy_files(root: Path) -> None:
     for relative_path, markers in REQUIRED_POLICY_MARKERS.items():
         path = root / relative_path
         path.parent.mkdir(parents=True, exist_ok=True)
-        ordered_markers = ORDERED_TERMINAL_CLEANUP_MARKERS.get(relative_path, ())
+        section_markers = TERMINAL_CLEANUP_SECTION_MARKERS.get(relative_path, ())
         section_anchor = TERMINAL_CLEANUP_SECTION_ANCHORS.get(relative_path)
         other_markers = tuple(
             marker
             for marker in markers
-            if marker not in ordered_markers and marker != section_anchor
+            if marker not in section_markers and marker != section_anchor
         )
         policy_lines = list(other_markers)
         if section_anchor is not None:
-            policy_lines.extend((section_anchor, *ordered_markers, "- following policy"))
+            policy_lines.extend((section_anchor, *section_markers, "- following policy"))
         path.write_text("\n".join(policy_lines), encoding="utf-8")
 
 
@@ -474,6 +475,35 @@ def test_agent_policy_gate_requires_done_title_suffix(tmp_path: Path) -> None:
         assert findings[0].message == (
             'required agent policy marker is missing: " · Done"'
         )
+
+
+def test_agent_policy_gate_scopes_cleanup_contract_markers(tmp_path: Path) -> None:
+    """Verify that an incidental summary cannot satisfy the operative cleanup contract.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    for relative_path in ORDERED_TERMINAL_CLEANUP_MARKERS:
+        for marker in ('`cleanup-ready`', '" · Done"'):
+            write_policy_files(tmp_path)
+            path = tmp_path / relative_path
+            text = path.read_text(encoding="utf-8")
+            anchor = TERMINAL_CLEANUP_SECTION_ANCHORS[relative_path]
+            section_start = text.index(anchor)
+            before_section = text[:section_start]
+            cleanup_section = text[section_start:].replace(marker, "", 1)
+            path.write_text(
+                marker + "\n" + before_section + cleanup_section,
+                encoding="utf-8",
+            )
+
+            findings = check_agent_policy_gate(tmp_path)
+
+            assert len(findings) == 1
+            assert findings[0].path == path
+            assert findings[0].message == (
+                f"completed-task cleanup section marker is missing: {marker}"
+            )
 
 
 def test_agent_policy_gate_requires_terminal_cleanup_order(tmp_path: Path) -> None:

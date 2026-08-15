@@ -309,6 +309,15 @@ TERMINAL_CLEANUP_SECTION_ANCHORS = {
     Path("docs/contribute/agent-policies.md"): "### Completed task cleanup",
 }
 
+TERMINAL_CLEANUP_SECTION_MARKERS = {
+    path: (
+        "`cleanup-ready`",
+        *ordered_markers,
+        '" · Done"',
+    )
+    for path, ordered_markers in ORDERED_TERMINAL_CLEANUP_MARKERS.items()
+}
+
 
 @dataclass(frozen=True)
 class Finding:
@@ -689,6 +698,7 @@ def check_agent_policy_gate(root: Path) -> list[Finding]:
                     Finding(path, f"required agent policy marker is missing: {marker}")
                 )
         ordered_markers = ORDERED_TERMINAL_CLEANUP_MARKERS.get(relative_path)
+        section_markers = TERMINAL_CLEANUP_SECTION_MARKERS.get(relative_path, ())
         section_anchor = TERMINAL_CLEANUP_SECTION_ANCHORS.get(relative_path)
         cleanup_section = (
             extract_markdown_policy_section(text, section_anchor)
@@ -702,23 +712,28 @@ def check_agent_policy_gate(root: Path) -> list[Finding]:
                     f"completed-task cleanup section is missing: {section_anchor}",
                 )
             )
-        if ordered_markers is not None and cleanup_section is not None:
+        if section_markers and cleanup_section is not None:
             missing_section_markers = tuple(
-                marker for marker in ordered_markers if marker not in cleanup_section
+                marker for marker in section_markers if marker not in cleanup_section
             )
             for marker in missing_section_markers:
-                findings.append(
-                    Finding(
-                        path,
-                        f"completed-task cleanup section marker is missing: {marker}",
+                if marker in text:
+                    findings.append(
+                        Finding(
+                            path,
+                            f"completed-task cleanup section marker is missing: {marker}",
+                        )
                     )
-                )
+        if ordered_markers is not None and cleanup_section is not None:
+            missing_ordered_markers = tuple(
+                marker for marker in ordered_markers if marker not in cleanup_section
+            )
             positions = tuple(
                 cleanup_section.index(marker)
                 for marker in ordered_markers
                 if marker in cleanup_section
             )
-            if not missing_section_markers and positions != tuple(sorted(positions)):
+            if not missing_ordered_markers and positions != tuple(sorted(positions)):
                 findings.append(
                     Finding(
                         path,
