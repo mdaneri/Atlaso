@@ -193,11 +193,16 @@ Terminal order:
 2. `worktree_removed`
 3. `task_title_done`
 
-For `remote_branch_absent`, delete only the exact task-owned branch from its same-repository GitHub remote after
-verifying that the ref is absent or still equals the pull-request head SHA, then verify the remote ref is absent. Do not
-enable repository-wide automatic branch deletion. For `worktree_removed`, use `git worktree remove`, prune only stale
-worktree metadata for the affected repository, and verify both the path and registration are absent. For a task running
-in the primary checkout, record this gate as not applicable after verifying that identity and never remove the checkout.
+For ordinary `remote_branch_absent`, delete only the exact task-owned branch from its same-repository GitHub remote
+after verifying that the ref is absent or still equals the pull-request head SHA, then verify the remote ref is absent.
+For private remediation, satisfy `advisory_remote_branch_absent` only on private surfaces: bind the exact temporary
+private fork, private pull request, branch, task, and recorded head SHA through the advisory; if the ref exists, require
+it to equal that head before deleting only the ref and privately verifying absence. An already absent ref satisfies the
+gate only after the same private identity and merge evidence are verified. Never delete the temporary fork, change
+advisory state, or enable repository-wide automatic branch deletion. For `worktree_removed`, use `git worktree remove`,
+prune only stale worktree metadata for the affected repository, and verify both the path and registration are absent.
+For a task running in the primary checkout, record this gate as not applicable after verifying that identity and never
+remove the checkout.
 For `task_title_done`, use supported task-title controls to append the exact suffix " · Done" once, preserving the
 description and issue/pull-request traceability. Keep the completed task unarchived unless a maintainer separately
 requests archival.

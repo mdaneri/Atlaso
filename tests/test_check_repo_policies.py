@@ -6,6 +6,7 @@ from scripts.check_repo import (
     LEGACY_TABULATOR_MARKER,
     ORDERED_TERMINAL_CLEANUP_MARKERS,
     PRIVATE_REMEDIATION_CLEANUP_MARKER,
+    PRIVATE_REMEDIATION_REMOTE_MARKER,
     REQUIRED_POLICY_MARKERS,
     TERMINAL_CLEANUP_ORDER_ANCHOR,
     TERMINAL_CLEANUP_ORDER_LINES,
@@ -505,6 +506,7 @@ def test_agent_policy_gate_scopes_cleanup_contract_markers(tmp_path: Path) -> No
             '`cleanup-ready`',
             '" · Done"',
             PRIVATE_REMEDIATION_CLEANUP_MARKER,
+            PRIVATE_REMEDIATION_REMOTE_MARKER,
         ):
             write_policy_files(tmp_path)
             path = tmp_path / relative_path

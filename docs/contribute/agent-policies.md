@@ -166,6 +166,10 @@ Terminal order:
 - Complete `remote_branch_absent` first. If the same-repository task branch exists, require its ref to equal the recorded
   pull-request head SHA, delete only that ref, and verify it is absent. An already absent ref satisfies the gate. Do not
   enable repository-wide automatic branch deletion.
+- Private remediation fulfills that first state through `advisory_remote_branch_absent`. On private surfaces, bind the
+  advisory's exact temporary fork, private pull request, branch, task, and recorded head SHA. Delete only that ref when
+  it still equals the head, privately verify absence, and require the same identity and merge proof for an already
+  absent ref. Never delete the temporary fork or change advisory state.
 - Complete `worktree_removed` second through `git worktree remove`, followed by affected-repository stale-registration
   pruning and verification that both the absolute path and registration are absent. A primary-checkout task records the
   gate as not applicable after proving the checkout identity and never removes it.

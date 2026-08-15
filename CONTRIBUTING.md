@@ -145,8 +145,12 @@ Terminal order:
 2. `worktree_removed`
 3. `task_title_done`
 
-The controller deletes and verifies only the exact task-owned same-repository GitHub branch; repository-wide
-automatic branch deletion remains disabled. It then uses `git worktree remove`, prunes stale registration metadata,
+For ordinary work, the controller deletes and verifies only the exact task-owned same-repository GitHub branch. Private
+remediation uses `advisory_remote_branch_absent`: privately bind the advisory's exact temporary fork, private pull
+request, branch, task, and recorded head SHA; delete only that ref when it still equals the head; and privately verify
+absence. An already absent ref still requires that identity and merge proof. Never delete the temporary fork or change
+advisory state, and keep repository-wide automatic branch deletion disabled. The controller then uses
+`git worktree remove`, prunes stale registration metadata,
 and verifies that the worktree path and registration are absent. A primary-checkout task records worktree removal as
 not applicable and never removes that checkout. Finally, supported title controls append the exact suffix " · Done"
 once and leave the task unarchived unless archival is separately requested.

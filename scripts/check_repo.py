@@ -310,12 +310,14 @@ TERMINAL_CLEANUP_SECTION_ANCHORS = {
 }
 
 PRIVATE_REMEDIATION_CLEANUP_MARKER = "`advisory_cleanup_ready`"
+PRIVATE_REMEDIATION_REMOTE_MARKER = "`advisory_remote_branch_absent`"
 TERMINAL_CLEANUP_SECTION_MARKERS = {
     path: (
         "`cleanup-ready`",
         *ordered_markers,
         '" · Done"',
         PRIVATE_REMEDIATION_CLEANUP_MARKER,
+        PRIVATE_REMEDIATION_REMOTE_MARKER,
     )
     for path, ordered_markers in ORDERED_TERMINAL_CLEANUP_MARKERS.items()
 }

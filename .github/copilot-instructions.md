@@ -46,7 +46,9 @@ New Tabulators must use `window.AtlasoUiPatterns.createGrid(...)`; every new or 
 
   Private remediation requires privately verified `advisory_cleanup_ready` in place of a closed public issue; keep the
   advisory identity, title, handoff, evidence, and temporary-fork operations sanitized, and retain the task through
-  coordinated release, disclosure, and authorized advisory-state activity.
+  coordinated release, disclosure, and authorized advisory-state activity. Fulfill the first terminal state through
+  `advisory_remote_branch_absent` by privately binding and deleting only the exact temporary-fork ref at the recorded
+  private-pull-request head; never delete the fork or change advisory state.
 - keep each pull request within its linked scope; search for an existing issue and open a separately typed, sanitized
   issue when an evidence-backed unrelated problem has no tracking record, while routing suspected vulnerabilities
   through `SECURITY.md` instead of a public issue;
