@@ -1677,7 +1677,20 @@ def test_worker_restart_rejects_success_finalizer_for_another_running_version(cl
         assert result["release_transaction"]["startup_consistent"] is False
 
 
-def test_worker_restart_reconciles_completed_success_against_durable_release(client, monkeypatch, tmp_path):
+@pytest.mark.parametrize(
+    ("receipt_failure", "expected_error"),
+    [
+        ("bundle_shape", "receipt bundle"),
+        ("utf8", "receipt is missing or invalid"),
+    ],
+)
+def test_worker_restart_reconciles_completed_success_against_durable_release(
+    client,
+    monkeypatch,
+    tmp_path,
+    receipt_failure,
+    expected_error,
+):
     """Verify startup revises a completed success when the durable release disagrees."""
     from atlaso.app import worker
     from atlaso.app.database import SessionLocal
@@ -1688,7 +1701,11 @@ def test_worker_restart_reconciles_completed_success_against_durable_release(cli
     malformed_release = {**release, "bundle": "corrupted"}
     release_root = tmp_path / "releases/0.9.0"
     (release_root / ".venv").mkdir(parents=True)
-    (release_root / ".release-manifest.json").write_text(json.dumps(malformed_release), encoding="utf-8")
+    receipt_path = release_root / ".release-manifest.json"
+    if receipt_failure == "utf8":
+        receipt_path.write_bytes(b"\xff\xfe\xfd")
+    else:
+        receipt_path.write_text(json.dumps(malformed_release), encoding="utf-8")
     current = tmp_path / "current"
     current.symlink_to(release_root, target_is_directory=True)
     compatibility_venv = tmp_path / ".venv"
@@ -1740,7 +1757,7 @@ def test_worker_restart_reconciles_completed_success_against_durable_release(cli
         assert worker.recover_interrupted_worker_jobs(db) == 1
         recovered = db.get(Job, "job_completed_inconsistent_release")
         assert recovered.status == "failed"
-        assert "receipt bundle" in (recovered.error or "")
+        assert expected_error in (recovered.error or "")
         result = json.loads(recovered.result)
         assert result["status"] == "failed"
         assert result["success"] is False

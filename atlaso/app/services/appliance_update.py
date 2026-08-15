@@ -73,7 +73,7 @@ def reconcile_release_success_finalizer(finalizer: dict[str, Any]) -> tuple[dict
         try:
             parsed = json.loads((current_root / ".release-manifest.json").read_text(encoding="utf-8"))
             receipt = parsed if isinstance(parsed, dict) else {}
-        except (OSError, json.JSONDecodeError):
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
             receipt = {}
     if not receipt:
         errors.append("active signed-release receipt is missing or invalid")
