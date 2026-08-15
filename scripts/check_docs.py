@@ -24,6 +24,7 @@ ALLOWED_AUDIENCES = {"operator", "contributor", "maintainer"}
 ALLOWED_STATUSES = {"current", "roadmap", "historical", "redirect"}
 HEADING_RE = re.compile(r"^(#{1,6})\s+(.+?)\s*$")
 LINK_RE = re.compile(r"!?\[[^\]]+\]\(([^)]+)\)")
+REFERENCE_LINK_DEFINITION_RE = re.compile(r"^\s{0,3}\[[^\]]+\]:\s*\S", re.MULTILINE)
 IMAGE_RE = re.compile(r"!\[[^\]]+\]\(([^)]+)\)")
 ABSOLUTE_URL_RE = re.compile(r'''(?:https?:[\\/]{0,2}|//)[^\s<>()`\[\]"']+''', re.IGNORECASE)
 BROWSER_PATH_RE = re.compile(
@@ -386,7 +387,7 @@ def validate_page(path: Path, nav: set[str]) -> tuple[dict[str, object], list[Fi
             findings.append(Finding(path, "redirect page requires redirect_to"))
         elif not (DOCS / target).is_file():
             findings.append(Finding(path, f"redirect target does not exist: {target}"))
-        if LINK_RE.search(body):
+        if LINK_RE.search(body) or REFERENCE_LINK_DEFINITION_RE.search(body):
             findings.append(Finding(path, "redirect page body must not duplicate its target as a Markdown link"))
     elif relative not in nav:
         findings.append(Finding(path, "canonical page is missing from Zensical navigation"))

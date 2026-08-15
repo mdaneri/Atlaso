@@ -89,12 +89,24 @@ def test_documentation_build_resets_only_recognized_zensical_cache(tmp_path: Pat
     assert (cache / "unrelated-entry").read_text(encoding="utf-8") == "keep"
 
 
-def test_redirect_stub_rejects_redundant_markdown_link(tmp_path: Path, monkeypatch) -> None:
+@pytest.mark.parametrize(
+    "body",
+    (
+        "Continue to [Current](current.md).\n",
+        "Continue to [Current][target].\n\n[target]: current.md\n",
+    ),
+)
+def test_redirect_stub_rejects_redundant_markdown_link(
+    tmp_path: Path,
+    monkeypatch,
+    body: str,
+) -> None:
     """Verify redirect sources cannot re-enter Zensical's unstable link index.
 
     Args:
         tmp_path: Temporary directory provided by pytest for isolated filesystem state.
         monkeypatch: Pytest fixture used to replace dependencies for the test.
+        body: Redirect body syntax to reject.
     """
     docs = tmp_path / "docs"
     docs.mkdir()
@@ -102,7 +114,7 @@ def test_redirect_stub_rejects_redundant_markdown_link(tmp_path: Path, monkeypat
     redirect.write_text(
         "---\ntitle: Moved\ndescription: Moved.\naudience:\n  - operator\n"
         "status: redirect\nredirect_to: current.md\n---\n\n# Moved\n\n"
-        "Continue to [Current](current.md).\n",
+        f"{body}",
         encoding="utf-8",
     )
     (docs / "current.md").write_text(
