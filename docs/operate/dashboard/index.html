@@ -3596,6 +3596,10 @@ configuration, restarts a service, or mutates appliance state.</p>
 <p>The primary action follows the current state. Setup links to the first incomplete readiness item, attention links to the
 highest-priority exception, valid pending changes link to Appliance Apply, active work links to Tasks, and an otherwise
 healthy appliance links to Monitor.</p>
+<p>When the factory comparison baseline already matches desired state but no Appliance Apply has succeeded, <strong>Continue
+setup</strong> opens the shared appliance-review modal with the complete validated initial desired state selected. Review the
+components and choose <strong>Submit appliance changes</strong> to create the first global task. Opening the review remains read-only;
+nothing changes on the host until that explicit submission.</p>
 <h2 id="readiness-and-attention">Readiness and attention<a class="headerlink" href="#readiness-and-attention" title="Permanent link">&para;</a></h2>
 <p>Readiness covers management-interface discovery, management address/link health, Appliance Settings validity, whole
 desired-state validity, and the first successful global appliance apply. Readiness mode ends only after the management
