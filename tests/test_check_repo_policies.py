@@ -643,6 +643,35 @@ def test_agent_policy_gate_rejects_suffixed_cleanup_headings(tmp_path: Path) -> 
         )
 
 
+def test_agent_policy_gate_honors_indented_heading_boundaries(tmp_path: Path) -> None:
+    """Verify that valid indented headings end heading-based cleanup sections.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    marker = '`cleanup-ready`'
+    for relative_path in ORDERED_TERMINAL_CLEANUP_MARKERS:
+        anchor = TERMINAL_CLEANUP_SECTION_ANCHORS[relative_path]
+        if not anchor.startswith("#"):
+            continue
+        write_policy_files(tmp_path)
+        path = tmp_path / relative_path
+        text = path.read_text(encoding="utf-8").replace(marker, "", 1)
+        heading_level = len(anchor) - len(anchor.lstrip("#"))
+        path.write_text(
+            text + f"\n   {'#' * heading_level} Outside cleanup\n{marker}\n",
+            encoding="utf-8",
+        )
+
+        findings = check_agent_policy_gate(tmp_path)
+
+        assert len(findings) == 1
+        assert findings[0].path == path
+        assert findings[0].message == (
+            f"completed-task cleanup section marker is missing: {marker}"
+        )
+
+
 def test_agent_policy_gate_rejects_fourth_terminal_transition(tmp_path: Path) -> None:
     """Verify that the terminal lifecycle contains exactly three transitions.
 

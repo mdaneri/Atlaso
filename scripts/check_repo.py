@@ -816,9 +816,8 @@ def extract_markdown_policy_section(text: str, anchor: str) -> str | None:
     if anchor.startswith("#"):
         heading_level = len(anchor) - len(anchor.lstrip("#"))
         for end in range(start + 1, len(lines)):
-            stripped = lines[end].lstrip("#")
-            next_level = len(lines[end]) - len(stripped)
-            if 0 < next_level <= heading_level and stripped.startswith(" "):
+            heading_match = re.match(r" {0,3}(#{1,6})[ \t]+", lines[end])
+            if heading_match is not None and len(heading_match.group(1)) <= heading_level:
                 return "".join(lines[start:end])
     else:
         for end in range(start + 1, len(lines)):
