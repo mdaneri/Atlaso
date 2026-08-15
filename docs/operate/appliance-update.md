@@ -50,9 +50,11 @@ The appliance never performs a broad runtime `pip --upgrade` and never contacts 
 Application dependencies and bootstrap tools are exact, hash-locked wheels inside the release bundle.
 
 Checks execute every selected child even when another check fails, which keeps diagnostics independent. Installations
-preserve the safety order Atlaso Release, PowerShell Modules, then Photon OS. PowerShell remains independently
-observable after a release failure, while Photon is marked **skipped** with an explicit reason if either earlier
-selected stream failed. The parent succeeds only when every selected child succeeds.
+preserve the safety order Atlaso Release, PowerShell Modules, then Photon OS. After a successful transactional release
+handoff, the restarted candidate worker resumes only the untouched pending module and OS children; it never reruns a
+child that had already started. PowerShell remains independently observable after a release failure, while Photon is
+marked **skipped** with an explicit reason if either earlier selected stream failed. The parent succeeds only when every
+selected child succeeds.
 
 ## Release sources and channels
 
@@ -243,18 +245,22 @@ recovery evidence. Only the current and previous known-good releases are retaine
 historical downgrades.
 
 Success is recorded only after Atlaso flushes the active switch and installed release assets, removes maintenance mode,
-validates and reloads nginx, and verifies web, worker, console, and nginx service state. The helper then requires
+validates and reloads nginx, and verifies web, worker, console, and nginx service state. The helper writes a provisional
+finalizer, restarts the worker through the candidate release, and requires the new systemd PID to publish the matching
+job, version, and release-root identity before success becomes definitive. A runtime gate keeps both candidate and
+rollback workers from consuming a finalizer until its durable write and the surrounding transaction have finished. The
+helper then requires
 `current`, the compatibility virtualenv, the signed release receipt, internal `/openapi.json`, and the applied HTTP or
 HTTPS nginx management front door to report the exact candidate version. The finalizer retains the candidate and
 previous versions, receipt identity, active-release verification, internal and front-door versions, and sanitized
 failing layer. Worker startup rechecks the success finalizer against the durable links, signed receipt, and running
 version; inconsistent success evidence fails recovery instead of being accepted.
 
-A failure in systemd asset activation, the atomic switch, candidate startup, maintenance removal, final `nginx -t`, or
-front-door version readiness enters the same rollback boundary. Rollback restores the previous release, assets, and
-database, validates and reloads nginx after removing maintenance mode, and proves the previous version through both
-internal and management-front-door OpenAPI before writing `rolled_back=true`. Atlaso Release installation never reboots
-the appliance automatically.
+A failure in systemd asset activation, the atomic switch, candidate startup, maintenance removal, final `nginx -t`,
+worker handoff, or front-door version readiness enters the same rollback boundary. Rollback restores the previous
+release, assets, and database, validates and reloads nginx after removing maintenance mode, and proves the previous
+version through both internal and management-front-door OpenAPI before writing `rolled_back=true`. Atlaso Release
+installation never reboots the appliance automatically.
 
 ## Photon OS boundary
 

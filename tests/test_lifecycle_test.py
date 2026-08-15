@@ -262,7 +262,11 @@ def test_appliance_health_checks_version_before_authentication(monkeypatch):
 
 
 def test_reboot_appliance_waits_for_new_boot_and_host_facing_readiness(monkeypatch):
-    """Verify reboot coverage requires a changed boot ID and recovered nginx front door."""
+    """Verify reboot coverage requires a changed boot ID and recovered nginx front door.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace lifecycle dependencies.
+    """
     lifecycle = load_lifecycle_module()
     boot_ids = iter(
         [
@@ -279,6 +283,13 @@ def test_reboot_appliance_waits_for_new_boot_and_host_facing_readiness(monkeypat
         base_url = "https://192.0.2.10"
 
         def request(self, method, path, **_kwargs):  # type: ignore[no-untyped-def]  # Minimal fake accepts the production client's dynamic request shape.
+            """Return one simulated authenticated management response.
+
+            Args:
+                method: HTTP method requested by the lifecycle runner.
+                path: Management route requested by the lifecycle runner.
+                **_kwargs: Additional request options accepted by the production client.
+            """
             if (method, path) == ("GET", "/dashboard"):
                 return 200, '<input type="hidden" name="csrf" value="csrf-367">', {}
             if (method, path) == ("POST", "/appliance/power/reboot"):
@@ -291,9 +302,21 @@ def test_reboot_appliance_waits_for_new_boot_and_host_facing_readiness(monkeypat
         calls = 0
 
         def __init__(self, _base_url):  # type: ignore[no-untyped-def]  # Minimal fake stores only the untyped lifecycle URL.
+            """Initialize the simulated host-facing probe client.
+
+            Args:
+                _base_url: Management base URL accepted for production compatibility.
+            """
             pass
 
         def request(self, method, path, **_kwargs):  # type: ignore[no-untyped-def]  # Minimal fake accepts the production client's dynamic request shape.
+            """Return one simulated host-facing readiness response.
+
+            Args:
+                method: HTTP method requested by the lifecycle runner.
+                path: Management route requested by the lifecycle runner.
+                **_kwargs: Additional request options accepted by the production client.
+            """
             assert (method, path) == ("GET", "/openapi.json")
             type(self).calls += 1
             if self.calls == 1:

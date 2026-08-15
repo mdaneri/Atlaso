@@ -216,6 +216,136 @@ def test_signed_inventory_release_verification_detects_tampering(trust):
         )
 
 
+def test_worker_publishes_candidate_identity_and_waits_for_release_finalizer(monkeypatch, tmp_path):
+    """Verify candidate worker startup is published before interrupted-job recovery.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace worker dependencies.
+        tmp_path: Temporary directory provided for isolated startup evidence.
+    """
+    import atlaso.app.worker as worker
+
+    release_root = tmp_path / "releases" / "0.9.156"
+    release_root.mkdir(parents=True)
+    marker = tmp_path / "worker-startup.json"
+    finalizer = tmp_path / "finalizer.json"
+    finalizer.write_text(
+        json.dumps(
+            {
+                "status": "restart_pending",
+                "job_id": "job_release_restart",
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(worker, "ATLASO_CURRENT_RELEASE_PATH", release_root)
+    monkeypatch.setattr(worker, "WORKER_STARTUP_STATUS_PATH", marker)
+    monkeypatch.setattr(worker, "APPLIANCE_UPDATE_FINALIZER_PATH", str(finalizer))
+    monkeypatch.setattr(worker, "__version__", "0.9.156+gtest")
+
+    worker._write_worker_startup_status()
+
+    payload = json.loads(marker.read_text(encoding="utf-8"))
+    assert payload["pid"] == os.getpid()
+    assert payload["version"] == "0.9.156"
+    assert payload["current_release"] == str(release_root.resolve())
+    assert payload["release_job_id"] == "job_release_restart"
+    states = [
+        {"status": "restart_pending"},
+        {"status": "restart_pending"},
+        {"status": "succeeded"},
+    ]
+    monkeypatch.setattr(worker, "_release_finalizer", lambda: states.pop(0))
+    monkeypatch.setattr(worker.time, "sleep", lambda _seconds: None)
+
+    assert worker._wait_for_release_restart_finalizer(timeout_seconds=1) is True
+
+    assert states == []
+
+
+def test_worker_activation_requires_exact_systemd_and_release_identity(monkeypatch, tmp_path):
+    """Verify helper rejects stale or mismatched worker startup markers.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace helper dependencies.
+        tmp_path: Temporary directory provided for isolated startup evidence.
+    """
+    from tests.test_appliance_update import load_helper_module
+
+    helper = load_helper_module()
+    expected_release = tmp_path / "releases" / "0.9.156"
+    expected_release.mkdir(parents=True)
+    marker = tmp_path / "worker-startup.json"
+    marker.write_text(
+        json.dumps(
+            {
+                "pid": 202,
+                "version": "0.9.156",
+                "current_release": str(expected_release),
+                "release_job_id": "job_release_restart",
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(helper, "ATLASO_WORKER_STARTUP_STATUS_PATH", marker)
+    monkeypatch.setattr(helper, "_service_main_pid", lambda _unit: 202)
+
+    result = helper._wait_for_worker_activation(
+        expected_version="0.9.156",
+        expected_release=expected_release,
+        expected_job_id="job_release_restart",
+        previous_pid=101,
+        timeout_seconds=1,
+    )
+
+    assert result["success"] is True
+    assert result["worker_pid"] == 202
+    marker.write_text(
+        json.dumps(
+            {
+                "pid": 202,
+                "version": "0.9.156",
+                "current_release": str(tmp_path / "missing-release"),
+                "release_job_id": "job_release_restart",
+            }
+        ),
+        encoding="utf-8",
+    )
+    monotonic = iter((0.0, 0.0, 2.0))
+    monkeypatch.setattr(helper.time, "monotonic", lambda: next(monotonic))
+    monkeypatch.setattr(helper.time, "sleep", lambda _seconds: None)
+
+    result = helper._wait_for_worker_activation(
+        expected_version="0.9.156",
+        expected_release=expected_release,
+        expected_job_id="job_release_restart",
+        previous_pid=101,
+        timeout_seconds=1,
+    )
+
+    assert result["success"] is False
+
+
+def test_worker_restart_gate_timeout_fails_closed(monkeypatch, tmp_path):
+    """Verify an uncleared release gate prevents a visible finalizer from being trusted.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace worker dependencies.
+        tmp_path: Temporary directory provided for the runtime gate.
+    """
+    import atlaso.app.worker as worker
+
+    gate = tmp_path / "restart-gate"
+    gate.write_text("job_release_restart\n", encoding="utf-8")
+    monkeypatch.setattr(worker, "APPLIANCE_UPDATE_RESTART_GATE_PATH", gate)
+    monkeypatch.setattr(worker, "_release_finalizer", lambda: {"status": "succeeded"})
+    monotonic = iter((0.0, 0.0, 2.0))
+    monkeypatch.setattr(worker.time, "monotonic", lambda: next(monotonic))
+    monkeypatch.setattr(worker.time, "sleep", lambda _seconds: None)
+
+    assert worker._wait_for_release_restart_finalizer(timeout_seconds=1) is False
+
+
 @pytest.mark.parametrize(
     ("mutation", "message"),
     [
@@ -1548,10 +1678,14 @@ def test_worker_restart_uses_matching_root_release_finalizer(client, monkeypatch
         monkeypatch: Pytest fixture used to replace dependencies for the test.
         tmp_path: Temporary directory provided by pytest for isolated filesystem state.
     """
+    from sqlalchemy import select
+
     from atlaso.app import worker
+    from atlaso.app.adapters.system import AdapterResult
     from atlaso.app.database import SessionLocal
-    from atlaso.app.models import Job
+    from atlaso.app.models import Job, JobStep
     from atlaso.app.services import appliance_update
+    from atlaso.app.services.appliance_update import ensure_appliance_update_job_steps
 
     finalizer = tmp_path / "finalizer-status.json"
     release = release_payload()
@@ -1576,6 +1710,12 @@ def test_worker_restart_uses_matching_root_release_finalizer(client, monkeypatch
                 "bundle_sha256": "b" * 64,
                 "release_manifest_sha256": receipt_sha256,
                 "rolled_back": False,
+                "worker_restart": {
+                    "success": True,
+                    "worker_version": "0.9.0",
+                    "worker_release": str(release_root),
+                    "release_job_id": "job_release_finalizer",
+                },
                 "active_release_verification": {
                     "success": True,
                     "candidate_version": "0.9.0",
@@ -1592,27 +1732,103 @@ def test_worker_restart_uses_matching_root_release_finalizer(client, monkeypatch
     monkeypatch.setattr(appliance_update, "ATLASO_COMPATIBILITY_VENV_PATH", compatibility_venv)
     monkeypatch.setattr(appliance_update, "__version__", "0.9.0")
     with SessionLocal() as db:
-        db.add(
-            Job(
-                id="job_release_finalizer",
-                type="appliance-update",
-                status="running",
-                created_by="admin",
-                result='{"selected_streams":["atlaso_release"]}',
-            )
+        job = Job(
+            id="job_release_finalizer",
+            type="appliance-update",
+            status="running",
+            created_by="admin",
+            task_config_json=json.dumps(
+                {
+                    "selected_streams": ["powershell_modules", "photon_os", "atlaso_release"],
+                    "mode": "run",
+                }
+            ),
+            result='{"selected_streams":["powershell_modules","photon_os","atlaso_release"]}',
         )
+        db.add(job)
+        db.flush()
+        steps = ensure_appliance_update_job_steps(
+            db,
+            job=job,
+            selected_streams=["powershell_modules", "photon_os", "atlaso_release"],
+        )
+        steps[0].status = "running"
         db.commit()
         assert worker.recover_interrupted_worker_jobs(db) == 1
         recovered = db.get(Job, "job_release_finalizer")
-        assert recovered.status == "succeeded"
+        assert recovered.status == "pending"
         assert recovered.error is None
+        recovered_steps = db.execute(
+            select(JobStep).where(JobStep.job_id == job.id).order_by(JobStep.position)
+        ).scalars().all()
+        assert [(step.component_key, step.status) for step in recovered_steps] == [
+            ("atlaso_release", "succeeded"),
+            ("powershell_modules", "pending"),
+            ("photon_os", "pending"),
+        ]
         result = json.loads(recovered.result)
-        assert result["worker_recovery"] == "root_finalizer"
+        assert result["worker_recovery"] == "release_handoff"
         assert result["release_transaction"]["verified_key_id"] == "atlaso-release-2026-01"
+
+    import atlaso.app.ui as ui
+
+    calls: list[str] = []
+
+    def execute_remaining(**kwargs):
+        """Return successful results for untouched post-release streams.
+
+        Args:
+            **kwargs: Appliance Update execution fields supplied by the worker.
+        """
+        stream = str(kwargs["selected_stream_ids"][0])
+        calls.append(stream)
+        return {
+            "unit_id": stream,
+            "label": stream,
+            "mode": "run",
+            "selected_streams": [stream],
+            "selected_labels": [stream],
+            "status": "succeeded",
+            "success": True,
+            "dry_run": False,
+            "restart_after_commit": False,
+            "commands": [],
+            "config_path": "",
+            "config_preview": "",
+        }
+
+    class RestartAdapter:
+        """Record the required post-Photon service restart."""
+
+        def restart_appliance_after_update(self, config_path):
+            """Return a successful restart scheduling result.
+
+            Args:
+                config_path: Staged Appliance Update manifest path.
+            """
+            return AdapterResult(
+                command=["restart-service", str(config_path)],
+                dry_run=False,
+            )
+
+    monkeypatch.setattr(ui, "execute_appliance_update_job", execute_remaining)
+    monkeypatch.setattr(ui, "SystemAdapter", RestartAdapter)
+
+    assert worker.run_worker_once() == "job_release_finalizer"
+    assert calls == ["powershell_modules", "photon_os"]
+    with SessionLocal() as db:
+        completed = db.get(Job, "job_release_finalizer")
+        assert completed.status == "succeeded"
 
 
 def test_worker_restart_rejects_success_finalizer_for_another_running_version(client, monkeypatch, tmp_path):
-    """Verify startup rejects success evidence that disagrees with the running release."""
+    """Verify startup rejects success evidence that disagrees with the running release.
+
+    Args:
+        client: HTTP test client providing isolated application state.
+        monkeypatch: Pytest fixture used to replace worker dependencies.
+        tmp_path: Temporary directory provided for release artifacts.
+    """
     from atlaso.app import worker
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import Job
@@ -1691,7 +1907,15 @@ def test_worker_restart_reconciles_completed_success_against_durable_release(
     receipt_failure,
     expected_error,
 ):
-    """Verify startup revises a completed success when the durable release disagrees."""
+    """Verify startup revises a completed success when the durable release disagrees.
+
+    Args:
+        client: HTTP test client providing isolated application state.
+        monkeypatch: Pytest fixture used to replace worker dependencies.
+        tmp_path: Temporary directory provided for release artifacts.
+        receipt_failure: Signed receipt corruption scenario to exercise.
+        expected_error: Expected sanitized reconciliation error fragment.
+    """
     from atlaso.app import worker
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import Job
@@ -1903,8 +2127,9 @@ def test_worker_restart_keeps_release_finalizer_scoped_to_its_child(client, monk
             job=job,
             selected_streams=["atlaso_release", "photon_os"],
         )
-        release_step = steps[0]
+        release_step = next(step for step in steps if step.component_key == "atlaso_release")
         release_step.status = "running"
+        next(step for step in steps if step.component_key == "photon_os").status = "running"
         db.commit()
 
         assert worker.recover_interrupted_worker_jobs(db) == 1
@@ -1915,7 +2140,7 @@ def test_worker_restart_keeps_release_finalizer_scoped_to_its_child(client, monk
         assert recovered.status == "failed"
         assert [(step.component_key, step.status) for step in steps] == [
             ("atlaso_release", "succeeded"),
-            ("photon_os", "skipped"),
+            ("photon_os", "failed"),
         ]
         assert "worker restarted" in (steps[-1].error or "")
 
@@ -1929,6 +2154,8 @@ def test_worker_restart_keeps_release_finalizer_scoped_to_its_child(client, monk
         ("maintenance_cleanup", "maintenance_cleanup", True),
         ("nginx_configuration", "nginx_configuration", True),
         ("management_front_door", "management_front_door", True),
+        ("worker_restart", "worker_restart", True),
+        ("worker_activation", "worker_restart", True),
         ("finalizer_persistence", "finalizer_persistence", True),
         ("rollback_symlink_sync", "candidate_startup", True),
         ("rollback_link_restore", "candidate_startup", False),
@@ -1948,6 +2175,8 @@ def test_failed_candidate_restores_previous_release_and_database(
         monkeypatch: Pytest fixture used to replace dependencies for the test.
         tmp_path: Temporary directory provided by pytest for isolated filesystem state.
         failure_stage: Failure stage supplied to the test scenario.
+        expected_layer: Sanitized transaction layer expected in final evidence.
+        expected_rolled_back: Whether the scenario must prove a complete rollback.
     """
     import sqlite3
 
@@ -2025,6 +2254,7 @@ def test_failed_candidate_restores_previous_release_and_database(
     monkeypatch.setattr(helper, "ATLASO_DATABASE_PATH", database)
     monkeypatch.setattr(helper, "ATLASO_UPDATE_BACKUP_DIR", tmp_path / "backups")
     monkeypatch.setattr(helper, "ATLASO_UPDATE_FINALIZER_PATH", tmp_path / "finalizer.json")
+    monkeypatch.setattr(helper, "ATLASO_UPDATE_RESTART_GATE_PATH", tmp_path / "restart-gate")
 
     def replace_symlink(target: Path, link: Path) -> None:
         """Handle replace symlink.
@@ -2070,7 +2300,11 @@ def test_failed_candidate_restores_previous_release_and_database(
     identity_refreshes = 0
 
     def refresh_identity(**_kwargs):
-        """Inject one failure after candidate systemd assets are installed."""
+        """Inject one failure after candidate systemd assets are installed.
+
+        Args:
+            **_kwargs: Data-disk refresh options accepted by the helper.
+        """
         nonlocal identity_refreshes
         identity_refreshes += 1
         success = failure_stage != "systemd_assets" or identity_refreshes > 1
@@ -2132,6 +2366,8 @@ def test_failed_candidate_restores_previous_release_and_database(
                 }
                 or candidate_starts > 1
             )
+        if action == "restart" and units == ("atlaso-worker.service",):
+            success = failure_stage != "worker_restart"
         return {
             "command": ["systemctl", action, *units],
             "returncode": 0 if success else 1,
@@ -2141,11 +2377,34 @@ def test_failed_candidate_restores_previous_release_and_database(
         }
 
     monkeypatch.setattr(helper, "_service_command", service_command)
+    monkeypatch.setattr(helper, "_service_main_pid", lambda _unit: 100)
+
+    def worker_activation(**_kwargs):
+        """Inject candidate worker-identity activation failure.
+
+        Args:
+            **_kwargs: Expected candidate worker identity fields.
+        """
+        success = failure_stage != "worker_activation"
+        return {
+            "command": ["release-activation-check", "worker_restart"],
+            "returncode": 0 if success else 1,
+            "success": success,
+            "stdout": "",
+            "stderr": "" if success else "injected worker identity failure",
+            "layer": "worker_restart",
+        }
+
+    monkeypatch.setattr(helper, "_wait_for_worker_activation", worker_activation)
     maintenance_disables = 0
     maintenance_states: list[bool] = []
 
     def maintenance(enabled):
-        """Inject one failure while removing candidate maintenance mode."""
+        """Inject one failure while removing candidate maintenance mode.
+
+        Args:
+            enabled: Whether nginx maintenance mode should remain active.
+        """
         nonlocal maintenance_disables
         maintenance_states.append(enabled)
         success = True
@@ -2187,7 +2446,13 @@ def test_failed_candidate_restores_previous_release_and_database(
     )
 
     def activation(root, release_definition, **_kwargs):
-        """Inject candidate final-readiness failures while keeping rollback healthy."""
+        """Inject candidate final-readiness failures while keeping rollback healthy.
+
+        Args:
+            root: Release root being verified.
+            release_definition: Expected release identity used by verification.
+            **_kwargs: Additional activation-verification options.
+        """
         is_candidate = root.name == "0.9.0"
         layer = (
             failure_stage
@@ -2217,9 +2482,15 @@ def test_failed_candidate_restores_previous_release_and_database(
     monkeypatch.setattr(helper, "_release_activation_verification", activation)
     monkeypatch.setattr(helper, "_write_update_info", lambda _payload: None)
     write_finalizer = helper._write_release_finalizer
+    finalizer_statuses: list[str] = []
 
     def finalizer(payload):
-        """Inject a success-finalizer persistence failure inside the rollback boundary."""
+        """Inject a success-finalizer persistence failure inside the rollback boundary.
+
+        Args:
+            payload: Definitive or provisional transaction evidence to persist.
+        """
+        finalizer_statuses.append(str(payload.get("status") or ""))
         if failure_stage == "finalizer_persistence" and payload.get("status") == "succeeded":
             raise OSError("injected finalizer directory sync failure")
         write_finalizer(payload)
@@ -2239,6 +2510,9 @@ def test_failed_candidate_restores_previous_release_and_database(
     assert finalizer["rolled_back"] is expected_rolled_back
     assert finalizer["rollback_health"] is expected_rolled_back
     assert finalizer["failure_layer"] == expected_layer
+    if failure_stage in {"worker_restart", "worker_activation", "finalizer_persistence"}:
+        assert "restart_pending" in finalizer_statuses
+        assert not (tmp_path / "restart-gate").exists()
     if failure_stage == "rollback_symlink_sync":
         assert "rollback_release_link" in finalizer["rollback_failures"]
     if failure_stage == "rollback_link_restore":
@@ -2253,7 +2527,12 @@ def test_failed_candidate_restores_previous_release_and_database(
 
 
 def test_release_activation_verification_requires_exact_candidate_through_nginx(monkeypatch, tmp_path):
-    """Verify success evidence agrees across links, receipt, services, and both OpenAPI paths."""
+    """Verify success evidence agrees across links, receipt, services, and both OpenAPI paths.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace helper dependencies.
+        tmp_path: Temporary directory provided for release artifacts.
+    """
     from tests.test_appliance_update import load_helper_module
 
     helper = load_helper_module()
@@ -2297,7 +2576,13 @@ def test_release_activation_verification_requires_exact_candidate_through_nginx(
     )
 
     def version_check(*, layer, expected_version, **_kwargs):
-        """Return exact candidate-version readiness for either endpoint."""
+        """Return exact candidate-version readiness for either endpoint.
+
+        Args:
+            layer: Stable readiness layer represented by the probe.
+            expected_version: Candidate version expected from the endpoint.
+            **_kwargs: Additional endpoint probe options.
+        """
         return helper._release_check(
             layer,
             True,
@@ -2330,7 +2615,12 @@ def test_release_activation_verification_requires_exact_candidate_through_nginx(
 
 
 def test_release_maintenance_cleanup_validates_and_reloads_nginx(monkeypatch, tmp_path):
-    """Verify leaving maintenance mode proves the final nginx configuration and reload."""
+    """Verify leaving maintenance mode proves the final nginx configuration and reload.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace helper dependencies.
+        tmp_path: Temporary directory provided for the maintenance marker.
+    """
     from tests.test_appliance_update import load_helper_module
 
     helper = load_helper_module()
@@ -2345,7 +2635,12 @@ def test_release_maintenance_cleanup_validates_and_reloads_nginx(monkeypatch, tm
     calls = []
 
     def service_command(action, *units):
-        """Record the nginx reload performed after maintenance removal."""
+        """Record the nginx reload performed after maintenance removal.
+
+        Args:
+            action: Systemd action requested by maintenance cleanup.
+            *units: Systemd units targeted by the action.
+        """
         assert maintenance.is_file()
         calls.append((action, units))
         return {
@@ -2366,7 +2661,12 @@ def test_release_maintenance_cleanup_validates_and_reloads_nginx(monkeypatch, tm
 
 
 def test_release_maintenance_cleanup_failure_keeps_nginx_in_maintenance(monkeypatch, tmp_path):
-    """Verify final nginx validation failure preserves the fail-closed response."""
+    """Verify final nginx validation failure preserves the fail-closed response.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace helper dependencies.
+        tmp_path: Temporary directory provided for the maintenance marker.
+    """
     from tests.test_appliance_update import load_helper_module
 
     helper = load_helper_module()
@@ -2386,7 +2686,12 @@ def test_release_maintenance_cleanup_failure_keeps_nginx_in_maintenance(monkeypa
 
 
 def test_release_maintenance_reload_failure_keeps_nginx_in_maintenance(monkeypatch, tmp_path):
-    """Verify nginx reload failure cannot expose the unverified candidate front door."""
+    """Verify nginx reload failure cannot expose the unverified candidate front door.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace helper dependencies.
+        tmp_path: Temporary directory provided for the maintenance marker.
+    """
     from tests.test_appliance_update import load_helper_module
 
     helper = load_helper_module()

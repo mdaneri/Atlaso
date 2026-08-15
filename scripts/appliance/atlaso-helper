@@ -173,6 +173,8 @@ SYSTEMD_NETWORK_INTERFACE_DIR = Path("/sys/class/net")
 SYSTEMD_NETWORK_LEASE_DIR = Path("/run/systemd/netif/leases")
 ATLASO_UPDATE_FINALIZER_PATH = ATLASO_STATE_DIR / "apply/appliance-update/finalizer-status.json"
 ATLASO_UPDATE_MAINTENANCE_PATH = Path("/run/atlaso-update-maintenance")
+ATLASO_UPDATE_RESTART_GATE_PATH = Path("/run/atlaso-release-restart-gate")
+ATLASO_WORKER_STARTUP_STATUS_PATH = ATLASO_STATE_DIR / "worker-startup.json"
 ATLASO_POWERSHELL_HOME = ATLASO_STATE_DIR / "powershell"
 ATLASO_DATA_DISK_POLICY_PATH = Path("/etc/atlaso/data-disks.conf")
 ATLASO_DATA_DISK_BOOTSTRAP_MARKER_PATH = Path("/etc/atlaso/data-disk-safety-bootstrap.json")
@@ -10647,7 +10649,11 @@ def _atomic_symlink(target: Path, link: Path) -> None:
 
 
 def _fsync_directory(path: Path) -> None:
-    """Persist directory-entry changes on appliance filesystems."""
+    """Persist directory-entry changes on appliance filesystems.
+
+    Args:
+        path: Directory whose entry changes must reach durable storage.
+    """
     if os.name != "posix":
         return
     descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
@@ -10658,7 +10664,11 @@ def _fsync_directory(path: Path) -> None:
 
 
 def _fsync_file(path: Path) -> None:
-    """Persist one regular file before an atomic rename."""
+    """Persist one regular file before an atomic rename.
+
+    Args:
+        path: Regular file to flush to durable storage.
+    """
     if os.name != "posix":
         return
     with path.open("rb") as handle:
@@ -11287,8 +11297,115 @@ def _write_release_finalizer(payload: dict) -> None:
     _fsync_directory(ATLASO_UPDATE_FINALIZER_PATH.parent)
 
 
+def _service_main_pid(unit: str) -> int:
+    """Return the positive systemd main PID for a service, or zero when unavailable.
+
+    Args:
+        unit: Systemd service unit whose running process is inspected.
+    """
+    result = _run(["systemctl", "show", "--property=MainPID", "--value", unit])
+    try:
+        pid = int(result.stdout.strip()) if result.returncode == 0 else 0
+    except ValueError:
+        return 0
+    return pid if pid > 0 else 0
+
+
+def _set_release_restart_gate(enabled: bool, job_id: str = "") -> None:
+    """Set or clear the runtime gate that serializes worker recovery with release finalization.
+
+    Args:
+        enabled: Whether worker recovery must remain gated.
+        job_id: Appliance Update job associated with the active release transaction.
+    """
+    if enabled:
+        temporary = ATLASO_UPDATE_RESTART_GATE_PATH.with_name(
+            f"{ATLASO_UPDATE_RESTART_GATE_PATH.name}.{os.getpid()}.tmp"
+        )
+        temporary.write_text(f"{job_id}\n", encoding="utf-8")
+        temporary.chmod(0o644)
+        os.replace(temporary, ATLASO_UPDATE_RESTART_GATE_PATH)
+        return
+    ATLASO_UPDATE_RESTART_GATE_PATH.unlink(missing_ok=True)
+
+
+def _wait_for_worker_activation(
+    *,
+    expected_version: str,
+    expected_release: Path,
+    expected_job_id: str,
+    previous_pid: int,
+    timeout_seconds: int = 60,
+) -> dict:
+    """Wait for a restarted candidate worker to publish exact startup identity.
+
+    Args:
+        expected_version: Candidate version the restarted worker must report.
+        expected_release: Candidate release root the restarted worker must resolve.
+        expected_job_id: Release job the restarted worker must bind to its startup marker.
+        previous_pid: Worker PID that existed before the transactional restart.
+        timeout_seconds: Maximum time to wait for matching startup evidence.
+    """
+    deadline = time.monotonic() + timeout_seconds
+    observed_pid = 0
+    observed_version = ""
+    observed_release = ""
+    observed_job_id = ""
+    while time.monotonic() < deadline:
+        observed_pid = _service_main_pid("atlaso-worker.service")
+        try:
+            marker = json.loads(ATLASO_WORKER_STARTUP_STATUS_PATH.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+            marker = {}
+        if isinstance(marker, dict):
+            observed_version = str(marker.get("version") or "").split("+", 1)[0]
+            observed_release = str(marker.get("current_release") or "")
+            observed_job_id = str(marker.get("release_job_id") or "")
+            try:
+                marker_pid = int(marker.get("pid") or 0)
+            except (TypeError, ValueError):
+                marker_pid = 0
+            try:
+                release_matches = (
+                    Path(observed_release).resolve(strict=True) == expected_release.resolve(strict=True)
+                )
+            except (OSError, ValueError):
+                release_matches = False
+            if (
+                observed_pid > 0
+                and observed_pid != previous_pid
+                and marker_pid == observed_pid
+                and observed_version == expected_version
+                and observed_job_id == expected_job_id
+                and release_matches
+            ):
+                return _release_check(
+                    "worker_restart",
+                    True,
+                    "The restarted worker published the candidate release identity.",
+                    worker_pid=observed_pid,
+                    worker_version=observed_version,
+                    worker_release=observed_release,
+                    release_job_id=observed_job_id,
+                )
+        time.sleep(1)
+    return _release_check(
+        "worker_restart",
+        False,
+        "The restarted worker did not publish the candidate release identity before timeout.",
+        worker_pid=observed_pid,
+        worker_version=observed_version,
+        worker_release=observed_release,
+        release_job_id=observed_job_id,
+    )
+
+
 def _release_root_version(release_root: Path) -> str:
-    """Return the version declared by an installed release root."""
+    """Return the version declared by an installed release root.
+
+    Args:
+        release_root: Installed release directory whose version is inspected.
+    """
     for name in (".release-manifest.json", "bundle-metadata.json"):
         try:
             payload = json.loads((release_root / name).read_text(encoding="utf-8"))
@@ -11305,7 +11422,14 @@ def _release_check(
     message: str,
     **evidence: object,
 ) -> dict:
-    """Return one sanitized release-activation check result."""
+    """Return one sanitized release-activation check result.
+
+    Args:
+        layer: Stable activation layer represented by the check.
+        success: Whether the layer satisfied its activation contract.
+        message: Sanitized human-readable result detail.
+        **evidence: Additional non-secret structured activation evidence.
+    """
     return {
         "command": ["release-activation-check", layer],
         "returncode": 0 if success else 1,
@@ -11325,7 +11449,15 @@ def _wait_for_openapi_version(
     insecure: bool = False,
     timeout_seconds: int = 60,
 ) -> dict:
-    """Wait for one OpenAPI endpoint to report the exact candidate version."""
+    """Wait for one OpenAPI endpoint to report the exact candidate version.
+
+    Args:
+        layer: Stable activation layer represented by the endpoint.
+        url: Internal or host-facing OpenAPI endpoint to probe.
+        expected_version: Exact candidate version required from the endpoint.
+        insecure: Whether the local HTTPS probe may bypass CA validation.
+        timeout_seconds: Maximum time to wait for the expected version.
+    """
     deadline = time.monotonic() + timeout_seconds
     observed_version = ""
     last_error = "endpoint unavailable"
@@ -11363,7 +11495,14 @@ def _release_activation_verification(
     require_receipt: bool = True,
     timeout_seconds: int = 60,
 ) -> tuple[dict, list[dict]]:
-    """Verify durable active-release, service, nginx, and exact-version agreement."""
+    """Verify durable active-release, service, nginx, and exact-version agreement.
+
+    Args:
+        release_root: Installed release directory expected to be active.
+        release: Signed release manifest used to validate the active receipt.
+        require_receipt: Whether signed receipt identity is mandatory for this verification.
+        timeout_seconds: Maximum readiness wait for each OpenAPI endpoint.
+    """
     expected_version = str(release.get("version") or "").split("+", 1)[0]
     checks: list[dict] = []
     try:
@@ -11713,6 +11852,43 @@ def _apply_atlaso_release(
         if not activation["success"]:
             failure_layer = str(activation.get("failure_layer") or "activation_verification")
             raise ValueError(f"Candidate Atlaso release failed activation verification at {failure_layer}")
+        failure_layer = "worker_restart_pending"
+        _set_release_restart_gate(True, str(payload.get("job_id") or ""))
+        _write_release_finalizer(
+            {
+                **finalizer_evidence,
+                "status": "restart_pending",
+                "rolled_back": False,
+                "service_health": True,
+                "active_release_verification": activation,
+                "started_at": datetime.now(timezone.utc).isoformat(),
+            }
+        )
+        previous_worker_pid = _service_main_pid("atlaso-worker.service")
+        failure_layer = "worker_restart"
+        worker_restart = _service_command("restart", "atlaso-worker.service")
+        commands.append(worker_restart)
+        if not worker_restart["success"]:
+            raise ValueError("Candidate Atlaso release worker failed to restart")
+        worker_activation = _wait_for_worker_activation(
+            expected_version=version,
+            expected_release=release_root,
+            expected_job_id=str(payload.get("job_id") or ""),
+            previous_pid=previous_worker_pid,
+        )
+        commands.append(worker_activation)
+        if not worker_activation["success"]:
+            raise ValueError("Candidate Atlaso release worker identity could not be proven")
+        failure_layer = "post_restart_activation"
+        durable = _sync_release_activation()
+        commands.append(durable)
+        if not durable["success"]:
+            raise ValueError("Candidate Atlaso release post-restart activation could not be persisted")
+        activation, activation_commands = _release_activation_verification(release_root, release)
+        commands.extend(activation_commands)
+        if not activation["success"]:
+            failure_layer = str(activation.get("failure_layer") or "post_restart_activation")
+            raise ValueError(f"Candidate Atlaso release failed post-restart verification at {failure_layer}")
         failure_layer = "release_cleanup"
         _prune_old_releases(current=release_root, previous=previous)
         failure_layer = "finalizer_persistence"
@@ -11722,16 +11898,23 @@ def _apply_atlaso_release(
                 "status": "succeeded",
                 "rolled_back": False,
                 "service_health": True,
+                "worker_restart": worker_activation,
                 "active_release_verification": activation,
                 "finished_at": datetime.now(timezone.utc).isoformat(),
             }
         )
+        _set_release_restart_gate(False)
     except Exception as exc:
         transaction_error = str(exc)
         rollback_failures: list[dict] = []
 
         def rollback_action(layer: str, action: Callable[[], object]) -> tuple[bool, object | None]:
-            """Run one rollback step without preventing later recovery attempts."""
+            """Run one rollback step without preventing later recovery attempts.
+
+            Args:
+                layer: Stable rollback layer represented by the action.
+                action: Rollback operation to execute and capture.
+            """
             try:
                 result = action()
             except Exception as rollback_exc:  # noqa: BLE001 - rollback must continue after every step.
@@ -11771,7 +11954,12 @@ def _apply_atlaso_release(
 
         rollback_action(
             "service_stop",
-            lambda: _service_command("stop", "atlaso.service", "atlaso-console.service"),
+            lambda: _service_command(
+                "stop",
+                "atlaso.service",
+                "atlaso-worker.service",
+                "atlaso-console.service",
+            ),
         )
         rollback_action("release_link", lambda: _atomic_symlink(previous, ATLASO_CURRENT_LINK))
         database_restored = True
@@ -11794,7 +11982,12 @@ def _apply_atlaso_release(
         )
         services_started, _start_result = rollback_action(
             "service_start",
-            lambda: _service_command("start", "atlaso.service", "atlaso-console.service"),
+            lambda: _service_command(
+                "start",
+                "atlaso.service",
+                "atlaso-worker.service",
+                "atlaso-console.service",
+            ),
         )
         _health_ok, rollback_health_result = rollback_action("internal_health", _wait_for_atlaso_health)
         rollback_health = (
@@ -11950,7 +12143,7 @@ def _apply_atlaso_release(
             "finished_at": datetime.now(timezone.utc).isoformat(),
         }
         rollback_action("status_evidence", lambda: _write_update_info(rollback_payload))
-        rollback_action(
+        finalizer_restored, _finalizer_result = rollback_action(
             "finalizer_persistence",
             lambda: _write_release_finalizer(
                 {
@@ -11970,6 +12163,11 @@ def _apply_atlaso_release(
                 }
             ),
         )
+        if finalizer_restored:
+            rollback_action(
+                "worker_restart_gate",
+                lambda: _set_release_restart_gate(False),
+            )
         if rollback_link.get("success", False):
             shutil.rmtree(release_root, ignore_errors=True)
         rollback_outcome = "was rolled back" if rollback_ready else "rollback was incomplete"

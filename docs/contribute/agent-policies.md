@@ -381,9 +381,10 @@ status: current
 - Represent every manual or scheduled Appliance Update check/install as one parent job with ordered `JobStep` children
   for the selected Atlaso Release, PowerShell Modules, and Photon OS streams. Checks run every selected child for
   complete diagnostics. Installs preserve release, PowerShell, then Photon ordering; Photon is explicitly skipped when
-  an earlier selected stream fails. Keep child output, compatibility evidence, and errors independent, and derive the
-  parent outcome from all selected children. Give privileged PowerShell update work the root-owned persistent home
-  `/var/lib/atlaso/powershell`; do not point it at the service's read-only `/root` view.
+  an earlier selected stream fails. After a definitive release worker handoff, resume only untouched pending children
+  and never rerun a child that had started. Keep child output, compatibility evidence, and errors independent, and
+  derive the parent outcome from all selected children. Give privileged PowerShell update work the root-owned
+  persistent home `/var/lib/atlaso/powershell`; do not point it at the service's read-only `/root` view.
 - Submit manual Appliance Update checks and installations asynchronously from Update Streams. Refresh only the embedded
   shared Tasks grid, highlight the newly created task, and keep both task actions disabled until the active Appliance
   Update task reaches a terminal state; do not restore a separate submission-result card.
@@ -410,10 +411,13 @@ status: current
   candidate Python ABIs, reconstruct from the retained wheelhouse after supported ABI changes, and do not claim
   automatic RPM rollback or reboot.
 - Do not write a successful Atlaso Release finalizer until durable activation is proven. Flush the active switch and
-  installed assets, remove maintenance mode only through final nginx validation and reload, require nginx plus web,
-  worker, and console service state, and require the signed receipt, `current`, compatibility virtualenv, internal
-  OpenAPI version, nginx management-front-door OpenAPI version, and candidate version to agree. Any failure after the
-  switch must restore the previous release, helper/systemd assets, SQLite snapshot, and working nginx front door, write
+  installed assets, remove maintenance mode only through final nginx validation and reload, restart the worker into the
+  candidate release under a provisional finalizer, require its new systemd PID to publish the matching job, version, and
+  release root, and keep restarted worker recovery behind a runtime gate until the definitive finalizer write completes.
+  Require nginx plus web, worker, and console service state, and require the signed receipt, `current`, compatibility
+  virtualenv, internal OpenAPI version, nginx management-front-door OpenAPI version, and candidate version to agree. Any
+  failure after the switch must restore the previous release, helper/systemd assets, SQLite snapshot, and working nginx
+  front door, write
   `rolled_back=true` with a sanitized failing layer, and fail both release child and parent. Worker startup must reject
   a success finalizer that disagrees with the durable active release or running version. Signed-release lifecycle
   coverage must prove the candidate and a healthy rollback both before and after audited appliance reboots; installation

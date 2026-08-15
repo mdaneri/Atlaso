@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import signal
 import time
 from pathlib import Path
@@ -14,6 +15,7 @@ from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from atlaso import __version__
 from atlaso.app.adapters.system import SystemAdapter
 from atlaso.app.config import get_settings
 from atlaso.app.database import (
@@ -33,6 +35,8 @@ from atlaso.app.models import (
 from atlaso.app.services.appliance_update import (
     APPLIANCE_UPDATE_EXECUTION_ORDER,
     APPLIANCE_UPDATE_FINALIZER_PATH,
+    APPLIANCE_UPDATE_RESTART_GATE_PATH,
+    ATLASO_CURRENT_RELEASE_PATH,
     UPDATE_STREAM_LABELS,
     ensure_appliance_update_job_steps,
     reconcile_release_success_finalizer,
@@ -56,6 +60,7 @@ LOGGER = logging.getLogger("atlaso.worker")
 POLL_SECONDS = 5
 AUTOMATION_STAGE_DIR = Path("/var/lib/atlaso/automation/scripts")
 AUTOMATION_VAULT_STAGE_DIR = Path("/run/atlaso-automation-vaults")
+WORKER_STARTUP_STATUS_PATH = Path("/var/lib/atlaso/worker-startup.json")
 WORKER_JOB_TYPES = {
     "appliance-update",
     "vcf-depot-download",
@@ -143,16 +148,70 @@ def _release_finalizer() -> dict[str, Any]:
     """Return release finalizer."""
     try:
         payload = json.loads(Path(APPLIANCE_UPDATE_FINALIZER_PATH).read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
         return {}
     return payload if isinstance(payload, dict) else {}
 
 
-def recover_interrupted_worker_jobs(db: Session) -> int:
+def _write_worker_startup_status() -> None:
+    """Publish the running worker identity for release-activation proof."""
+    finalizer = _release_finalizer()
+    release_job_id = (
+        str(finalizer.get("job_id") or "")
+        if str(finalizer.get("status") or "") == "restart_pending"
+        else ""
+    )
+    try:
+        current_release = str(ATLASO_CURRENT_RELEASE_PATH.resolve(strict=True))
+        WORKER_STARTUP_STATUS_PATH.parent.mkdir(parents=True, exist_ok=True)
+        temporary = WORKER_STARTUP_STATUS_PATH.with_name(f"startup.{os.getpid()}.tmp")
+        temporary.write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "pid": os.getpid(),
+                    "version": __version__.split("+", 1)[0],
+                    "current_release": current_release,
+                    "release_job_id": release_job_id,
+                    "started_at": utcnow().isoformat(),
+                },
+                indent=2,
+                sort_keys=True,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        temporary.chmod(0o644)
+        os.replace(temporary, WORKER_STARTUP_STATUS_PATH)
+    except OSError:
+        LOGGER.exception("Could not publish the Atlaso worker startup identity")
+
+
+def _wait_for_release_restart_finalizer(timeout_seconds: int = 90) -> bool:
+    """Hold startup recovery until the root release transaction opens its gate.
+
+    Args:
+        timeout_seconds: Maximum time to wait for definitive transaction evidence.
+    """
+    deadline = time.monotonic() + timeout_seconds
+    while time.monotonic() < deadline:
+        finalizer_pending = str(_release_finalizer().get("status") or "") == "restart_pending"
+        if not APPLIANCE_UPDATE_RESTART_GATE_PATH.exists() and not finalizer_pending:
+            return True
+        time.sleep(1)
+    return False
+
+
+def recover_interrupted_worker_jobs(
+    db: Session,
+    *,
+    release_finalizer_ready: bool = True,
+) -> int:
     """Return recover interrupted worker jobs.
 
     Args:
         db: Active database session.
+        release_finalizer_ready: Whether the runtime restart gate opened before recovery.
     """
     media_swaps = recover_interrupted_network_boot_media_swaps(db)
     if media_swaps:
@@ -164,7 +223,7 @@ def recover_interrupted_worker_jobs(db: Session) -> int:
         select(Job).where(Job.type.in_(WORKER_JOB_TYPES), Job.status == JobStatus.RUNNING.value)
     ).scalars().all()
     now = utcnow()
-    finalizer = _release_finalizer()
+    finalizer = _release_finalizer() if release_finalizer_ready else {}
     if str(finalizer.get("status") or "") == JobStatus.SUCCEEDED.value:
         finalizer, startup_consistent = reconcile_release_success_finalizer(finalizer)
         if not startup_consistent:
@@ -218,6 +277,36 @@ def recover_interrupted_worker_jobs(db: Session) -> int:
                 )
                 release_step.result = json.dumps(release_result, indent=2, sort_keys=True)
                 db.add(release_step)
+            remaining_steps = [step for step in update_steps if step is not release_step]
+            resume_pending_children = bool(
+                recovered
+                and finalizer_status == JobStatus.SUCCEEDED.value
+                and release_step is not None
+                and release_step.status == JobStatus.SUCCEEDED.value
+                and remaining_steps
+                and all(step.status == JobStatus.PENDING.value for step in remaining_steps)
+            )
+            if resume_pending_children:
+                job.status = JobStatus.PENDING.value
+                job.finished_at = None
+                job.progress_percent = int((1 / len(update_steps)) * 90)
+                job.error = None
+                try:
+                    result = json.loads(job.result or "{}")
+                except json.JSONDecodeError:
+                    result = {}
+                result.update(
+                    {
+                        "status": JobStatus.PENDING.value,
+                        "success": False,
+                        "release_transaction": definitive,
+                        "worker_recovery": "release_handoff",
+                    }
+                )
+                result.pop("error", None)
+                job.result = json.dumps(result, indent=2, sort_keys=True)
+                db.add(job)
+                continue
             for step in update_steps:
                 if step is release_step and recovered:
                     continue
@@ -396,6 +485,7 @@ def _run_appliance_update(job_id: str) -> None:
         execute_appliance_update_job,
     )
 
+    completed_stream_results: dict[str, dict[str, Any]] = {}
     with SessionLocal() as db:
         job = db.get(Job, job_id)
         if job is None:
@@ -407,7 +497,16 @@ def _run_appliance_update(job_id: str) -> None:
         actor = job.created_by
         credentials = update_source_credentials(db)
         if mode != "source_sync":
-            ensure_appliance_update_job_steps(db, job=job, selected_streams=selected)
+            steps = ensure_appliance_update_job_steps(db, job=job, selected_streams=selected)
+            for step in steps:
+                if step.status != JobStatus.SUCCEEDED.value:
+                    continue
+                try:
+                    parsed_result = json.loads(step.result or "{}")
+                except json.JSONDecodeError:
+                    parsed_result = {}
+                if isinstance(parsed_result, dict) and parsed_result.get("success") is True:
+                    completed_stream_results[step.component_key] = parsed_result
             db.commit()
     if mode == "source_sync":
         try:
@@ -433,7 +532,9 @@ def _run_appliance_update(job_id: str) -> None:
         stream_results: list[dict[str, Any]] = []
         earlier_failed = False
         for index, stream in enumerate(execution_streams, start=1):
-            if mode == "run" and stream == "photon_os" and earlier_failed:
+            if stream in completed_stream_results:
+                stream_result = completed_stream_results[stream]
+            elif mode == "run" and stream == "photon_os" and earlier_failed:
                 skip_reason = "Photon OS was not started because an earlier selected update stream failed."
                 stream_result = {
                     "unit_id": stream,
@@ -479,13 +580,14 @@ def _run_appliance_update(job_id: str) -> None:
                     )
             stream_results.append(stream_result)
             earlier_failed = earlier_failed or not bool(stream_result.get("success"))
-            _complete_appliance_update_step(
-                job_id,
-                stream,
-                result=stream_result,
-                completed=index,
-                total=len(execution_streams),
-            )
+            if stream not in completed_stream_results:
+                _complete_appliance_update_step(
+                    job_id,
+                    stream,
+                    result=stream_result,
+                    completed=index,
+                    total=len(execution_streams),
+                )
         update_result = aggregate_appliance_update_results(
             selected_stream_ids=selected,
             settings=settings,
@@ -834,10 +936,15 @@ def main() -> int:
     signal.signal(signal.SIGTERM, _request_stop)
     signal.signal(signal.SIGINT, _request_stop)
     init_db()
+    _write_worker_startup_status()
+    release_finalizer_ready = _wait_for_release_restart_finalizer()
     with SessionLocal() as db:
-        recovered = recover_interrupted_worker_jobs(db)
+        recovered = recover_interrupted_worker_jobs(
+            db,
+            release_finalizer_ready=release_finalizer_ready,
+        )
         if recovered:
-            LOGGER.warning("Marked %s interrupted worker jobs failed", recovered)
+            LOGGER.warning("Reconciled %s interrupted worker job(s)", recovered)
     if not ensure_vcf_depot_running_operation_index():
         LOGGER.warning("Deferred the VCFDT runtime guard until identity-task startup recovery completes")
     LOGGER.info("Atlaso worker started")

@@ -25,6 +25,7 @@ APPLIANCE_UPDATE_STAGED_CONFIG_PATH = "/var/lib/atlaso/apply/appliance-update/at
 APPLIANCE_UPDATE_STAGED_CREDENTIALS_PATH = "/var/lib/atlaso/apply/appliance-update/atlaso-update-credentials.json"
 APPLIANCE_UPDATE_INFO_PATH = "/etc/atlaso/update-info"
 APPLIANCE_UPDATE_FINALIZER_PATH = "/var/lib/atlaso/apply/appliance-update/finalizer-status.json"
+APPLIANCE_UPDATE_RESTART_GATE_PATH = Path("/run/atlaso-release-restart-gate")
 ATLASO_CURRENT_RELEASE_PATH = Path("/opt/atlaso/current")
 ATLASO_COMPATIBILITY_VENV_PATH = Path("/opt/atlaso/.venv")
 PHOTON_REPOSITORY_DIR = Path("/etc/yum.repos.d")
@@ -40,17 +41,29 @@ UPDATE_STREAM_LABELS = {
 
 
 def reconcile_release_success_finalizer(finalizer: dict[str, Any]) -> tuple[dict[str, Any], bool]:
-    """Validate a success finalizer against live release and running-version state."""
+    """Validate a success finalizer against live release and running-version state.
+
+    Args:
+        finalizer: Root-owned release transaction evidence to reconcile.
+    """
     if str(finalizer.get("status") or "") != JobStatus.SUCCEEDED.value:
         return finalizer, True
 
     expected_version = str(finalizer.get("candidate_version") or finalizer.get("release") or "").split("+", 1)[0]
     activation = finalizer.get("active_release_verification")
+    worker_restart = finalizer.get("worker_restart")
     errors: list[str] = []
     if not expected_version:
         errors.append("candidate version is missing")
     if not isinstance(activation, dict) or activation.get("success") is not True:
         errors.append("definitive activation evidence is missing")
+    if not finalizer.get("no_change"):
+        if not isinstance(worker_restart, dict) or worker_restart.get("success") is not True:
+            errors.append("candidate worker restart evidence is missing")
+        elif str(worker_restart.get("worker_version") or "").split("+", 1)[0] != expected_version:
+            errors.append("recorded worker restart version does not match the finalizer")
+        elif str(worker_restart.get("release_job_id") or "") != str(finalizer.get("job_id") or ""):
+            errors.append("recorded worker restart job does not match the finalizer")
     try:
         if not ATLASO_CURRENT_RELEASE_PATH.is_symlink():
             raise ValueError("active release link is missing")
@@ -67,6 +80,17 @@ def reconcile_release_success_finalizer(finalizer: dict[str, Any]) -> tuple[dict
         errors.append(str(exc))
     if current_root is not None and compatibility_venv != (current_root / ".venv").resolve():
         errors.append("compatibility virtualenv does not resolve through the active release")
+    if (
+        current_root is not None
+        and isinstance(worker_restart, dict)
+        and not finalizer.get("no_change")
+    ):
+        try:
+            worker_release = Path(str(worker_restart.get("worker_release") or "")).resolve(strict=True)
+        except (OSError, ValueError):
+            worker_release = None
+        if worker_release != current_root:
+            errors.append("recorded worker restart release does not match the active release")
 
     receipt: dict[str, Any] = {}
     if current_root is not None:

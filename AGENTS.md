@@ -324,8 +324,11 @@ The following cross-cutting boundaries always apply:
   **Synchronize repositories** task.
 - A signed Atlaso Release update succeeds only after durable candidate activation is proven: `current`, the compatibility
   virtualenv, signed receipt, finalizer, internal OpenAPI version, nginx management-front-door version, maintenance
-  cleanup, nginx validation/reload, and required service state must agree. Any post-switch failure restores the previous
-  release, assets, database, and nginx-ready front door with `rolled_back=true`. Worker startup must reject a success
+  cleanup, nginx validation/reload, and required service state must agree. Restart the worker under a provisional
+  finalizer and prove its new PID, candidate version, release root, and job identity before writing definitive success;
+  keep its recovery behind a runtime transaction gate until that write completes, then resume only untouched pending
+  update children. Any post-switch failure restores the previous release, assets, database, and nginx-ready front door
+  with `rolled_back=true`. Worker startup must reject a success
   finalizer that disagrees with the durable active release or running version. Lifecycle coverage proves both successful
   activation and rollback before and after audited appliance reboots; never reboot automatically as part of installation.
 - Boot ShredOS only from the verified stable ISO's allowlisted `/boot/bzImage` kernel through iPXE. Do not restore raw

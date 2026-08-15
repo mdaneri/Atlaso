@@ -2964,7 +2964,11 @@ print(json.dumps({
 
 
 def _appliance_boot_id(args: argparse.Namespace) -> str:
-    """Return the current appliance kernel boot identifier."""
+    """Return the current appliance kernel boot identifier.
+
+    Args:
+        args: Lifecycle arguments containing appliance SSH connection details.
+    """
     result = ssh_command(
         args.appliance_ssh_host,
         args,
@@ -2985,7 +2989,13 @@ def _reboot_appliance_and_wait(
     *,
     timeout_seconds: int = 300,
 ) -> dict[str, Any]:
-    """Schedule an audited appliance reboot and prove a new ready kernel boot."""
+    """Schedule an audited appliance reboot and prove a new ready kernel boot.
+
+    Args:
+        client: Authenticated management client used to schedule the reboot.
+        args: Lifecycle arguments containing appliance SSH connection details.
+        timeout_seconds: Maximum time to prove a new boot and restored front door.
+    """
     before_boot_id = _appliance_boot_id(args)
     status, body, _headers = client.request("GET", "/dashboard")
     if status >= 400:
