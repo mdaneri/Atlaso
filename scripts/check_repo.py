@@ -933,20 +933,13 @@ def strip_markdown_inline_link_metadata(text: str) -> str:
     return "".join(visible_parts)
 
 
-def strip_markdown_blank_terminated_html_blocks(text: str) -> str:
-    """Blank raw HTML blocks whose Markdown boundary is the next blank line.
+def strip_markdown_blank_terminated_inert_html_blocks(text: str) -> str:
+    """Blank inert raw HTML blocks whose boundary is the next blank line.
 
     Args:
-        text: Markdown source whose raw HTML blocks must be normalized.
+        text: Markdown source whose inert raw HTML blocks must be normalized.
     """
-    block_tags = (
-        "address|article|aside|base|basefont|blockquote|body|caption|center|"
-        "col|colgroup|dd|details|dialog|dir|div|dl|dt|fieldset|figcaption|"
-        "figure|footer|form|frame|frameset|h1|h2|h3|h4|h5|h6|head|header|"
-        "hr|html|iframe|legend|li|link|main|menu|menuitem|nav|noframes|ol|"
-        "optgroup|option|p|param|search|section|summary|table|tbody|td|tfoot|"
-        "th|thead|title|tr|track|ul|code|noscript|template|xmp"
-    )
+    block_tags = "code|iframe|noscript|template|xmp"
     block_start = re.compile(
         rf" {{0,3}}</?(?:{block_tags})(?=(?:\s|/?>|$))",
         flags=re.IGNORECASE,
@@ -1095,7 +1088,7 @@ def strip_markdown_nonoperative_content(text: str) -> str:
             without_raw_html_blocks,
             flags=re.DOTALL | re.IGNORECASE,
         )
-    without_raw_html_blocks = strip_markdown_blank_terminated_html_blocks(
+    without_raw_html_blocks = strip_markdown_blank_terminated_inert_html_blocks(
         without_raw_html_blocks
     )
     without_raw_html_blocks = strip_markdown_inert_html_containers(

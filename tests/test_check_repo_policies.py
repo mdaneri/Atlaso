@@ -1245,7 +1245,6 @@ def test_agent_policy_gate_ignores_raw_html_block_markers(tmp_path: Path) -> Non
             "template",
             "noscript",
             "iframe",
-            "div",
         ):
             write_policy_files(tmp_path)
             path = tmp_path / relative_path
@@ -1326,7 +1325,6 @@ def test_agent_policy_gate_ignores_raw_html_policy_sections(tmp_path: Path) -> N
             "template",
             "noscript",
             "iframe",
-            "div",
         ):
             write_policy_files(tmp_path)
             path = tmp_path / relative_path
@@ -1380,6 +1378,32 @@ def test_agent_policy_gate_preserves_visible_inline_html_content(
             assert check_agent_policy_gate(tmp_path) == []
 
 
+def test_agent_policy_gate_preserves_visible_raw_html_block_content(
+    tmp_path: Path,
+) -> None:
+    """Verify ordinary raw HTML blocks retain rendered policy text.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    marker = '`cleanup-ready`'
+    for relative_path in ORDERED_TERMINAL_CLEANUP_MARKERS:
+        for tag_name in ("div", "section"):
+            write_policy_files(tmp_path)
+            path = tmp_path / relative_path
+            anchor = TERMINAL_CLEANUP_SECTION_ANCHORS[relative_path]
+            content_prefix = "" if anchor.startswith("#") else "  "
+            text = path.read_text(encoding="utf-8").replace(
+                marker,
+                f'<{tag_name} data-example="metadata">\n'
+                f'{content_prefix}{marker}\n{content_prefix}</{tag_name}>',
+                1,
+            )
+            path.write_text(text, encoding="utf-8")
+
+            assert check_agent_policy_gate(tmp_path) == []
+
+
 def test_agent_policy_gate_ignores_unterminated_raw_html_blocks(
     tmp_path: Path,
 ) -> None:
@@ -1391,7 +1415,7 @@ def test_agent_policy_gate_ignores_unterminated_raw_html_blocks(
     marker = '`cleanup-ready`'
     sibling = "\n- following policy"
     for relative_path in ORDERED_TERMINAL_CLEANUP_MARKERS:
-        for tag_name in ("iframe", "div", "template"):
+        for tag_name in ("iframe", "template"):
             write_policy_files(tmp_path)
             path = tmp_path / relative_path
             anchor = TERMINAL_CLEANUP_SECTION_ANCHORS[relative_path]
