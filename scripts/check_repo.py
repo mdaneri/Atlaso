@@ -806,6 +806,84 @@ def strip_markdown_fenced_code(text: str) -> str:
     return "".join(visible_lines)
 
 
+def strip_markdown_inline_link_metadata(text: str) -> str:
+    """Preserve rendered labels while removing inline link/image metadata.
+
+    Args:
+        text: Markdown source whose inline links and images must be normalized.
+    """
+    visible_parts: list[str] = []
+    index = 0
+    while index < len(text):
+        is_image = text.startswith("![", index)
+        label_open = index + 1 if is_image else index
+        if label_open >= len(text) or text[label_open] != "[":
+            visible_parts.append(text[index])
+            index += 1
+            continue
+        cursor = label_open + 1
+        label_depth = 1
+        while cursor < len(text) and label_depth:
+            if text[cursor] == "\\" and cursor + 1 < len(text):
+                cursor += 2
+                continue
+            if text[cursor] == "[":
+                label_depth += 1
+            elif text[cursor] == "]":
+                label_depth -= 1
+            cursor += 1
+        if label_depth or cursor >= len(text) or text[cursor] != "(":
+            visible_parts.append(text[index])
+            index += 1
+            continue
+        label_close = cursor - 1
+        target_open = cursor
+        cursor += 1
+        target_depth = 1
+        quote_character: str | None = None
+        in_angle_destination = False
+        while cursor < len(text) and target_depth:
+            character = text[cursor]
+            if character == "\\" and cursor + 1 < len(text):
+                cursor += 2
+                continue
+            if quote_character is not None:
+                if character == quote_character:
+                    quote_character = None
+                cursor += 1
+                continue
+            if in_angle_destination:
+                if character == ">":
+                    in_angle_destination = False
+                cursor += 1
+                continue
+            if character == "<":
+                in_angle_destination = True
+            elif character in {'"', "'"} and (
+                cursor == target_open + 1 or text[cursor - 1].isspace()
+            ):
+                quote_character = character
+            elif character == "(":
+                target_depth += 1
+            elif character == ")":
+                target_depth -= 1
+            cursor += 1
+        if target_depth:
+            visible_parts.append(text[index])
+            index += 1
+            continue
+        visible_parts.append(text[label_open : label_close + 1])
+        visible_parts.append(
+            "".join(
+                character
+                for character in text[label_close + 1 : cursor]
+                if character in "\r\n"
+            )
+        )
+        index = cursor
+    return "".join(visible_parts)
+
+
 def strip_markdown_nonoperative_content(text: str) -> str:
     """Replace non-rendered Markdown content with blank lines.
 
@@ -831,11 +909,7 @@ def strip_markdown_nonoperative_content(text: str) -> str:
         lambda match: re.sub(r"[^\r\n]", "", match.group(0)),
         without_raw_html_blocks,
     )
-    without_link_metadata = re.sub(
-        r"!?(\[[^\]\r\n]*\])\((?:[^()\r\n]|\([^()\r\n]*\))*\)",
-        r"\1",
-        without_html_tags,
-    )
+    without_link_metadata = strip_markdown_inline_link_metadata(without_html_tags)
     without_quotes_lines: list[str] = []
     in_block_quote = False
     interrupting_block_patterns = (
