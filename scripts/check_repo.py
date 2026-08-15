@@ -864,7 +864,9 @@ def strip_markdown_inline_link_metadata(text: str) -> str:
                     continue
                 if text[reference_cursor] == "]":
                     reference_cursor += 1
-                    visible_parts.append(text[label_open:cursor])
+                    visible_parts.append(
+                        strip_markdown_inline_link_metadata(text[label_open:cursor])
+                    )
                     visible_parts.append(
                         "".join(
                             character
@@ -917,7 +919,9 @@ def strip_markdown_inline_link_metadata(text: str) -> str:
             visible_parts.append(text[index])
             index += 1
             continue
-        visible_parts.append(text[label_open : label_close + 1])
+        visible_parts.append(
+            strip_markdown_inline_link_metadata(text[label_open : label_close + 1])
+        )
         visible_parts.append(
             "".join(
                 character
