@@ -2772,6 +2772,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#extracted-appliance-apply-ownership" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Extracted Appliance Apply ownership
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#route-and-openapi-compatibility" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -3455,6 +3466,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#extracted-appliance-apply-ownership" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Extracted Appliance Apply ownership
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#route-and-openapi-compatibility" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -3603,7 +3625,9 @@ extracted physical-interface and VLAN transport ownership without changing their
 physical-interface desired-state mutation, dependent reconciliation, and audit persistence behind one typed domain
 service shared by both extracted transports. Phase 4 extracts Routes/WAN and Firewall transport ownership while
 preserving the established UI, API v1, desired-state, and global Appliance Apply contracts. Phase 5 extracts DNS/DHCP
-transport ownership while retaining dnsmasq behavior and every cross-domain integration.</p>
+transport ownership while retaining dnsmasq behavior and every cross-domain integration. Phase 6 extracts the four
+Appliance Apply management transports while keeping submission, execution, recovery, unit construction, status
+projection, logging, and audit behavior in the stable UI facade.</p>
 <h2 id="ownership-and-responsibilities">Ownership and responsibilities<a class="headerlink" href="#ownership-and-responsibilities" title="Permanent link">&para;</a></h2>
 <ul>
 <li><code>atlaso/app/main.py</code> owns application construction, middleware, mounts, and the top-level order in which stable facade
@@ -3701,6 +3725,18 @@ transport coverage lives in <code>tests/routers/ui/test_dns_dhcp.py</code> and
 reconciliation, and other cross-domain lifecycle tests retain their existing owners. This extraction does not change
 templates, browser assets, visible copy, API operations, normalized OpenAPI, route inventory, audits, desired state, or
 the global Appliance Apply boundary.</p>
+<h2 id="extracted-appliance-apply-ownership">Extracted Appliance Apply ownership<a class="headerlink" href="#extracted-appliance-apply-ownership" title="Permanent link">&para;</a></h2>
+<p>The established Appliance Apply management transports live in
+<code>atlaso/app/routers/ui/appliance_apply.py</code>: the direct-page redirect, review projection, lightweight status projection,
+and submission endpoint. The stable <code>atlaso/app/ui.py</code> facade continues to export the four endpoint names and owns the
+status, context, unit construction, active-job, submission, execution, logging, recovery, audit, identity/CSRF, and
+background-task helpers supplied through the typed router builder. The UI registry places <code>appliance_apply</code> immediately
+after <code>facade_before_routes_wan</code> and before <code>routes_wan</code>, preserving the established effective route order.</p>
+<p>Independently runnable transport coverage lives in <code>tests/routers/ui/test_appliance_apply.py</code>. Browser polling remains
+covered by <code>tests/javascript/appliance-apply-polling.test.js</code>; execution, recovery, subsystem sequencing, helper
+rendering, and cross-domain behavior retain their existing test owners. This extraction changes no route, response,
+listener dependency, permission, CSRF/session behavior, desired-state boundary, route inventory, or normalized OpenAPI
+contract.</p>
 <h2 id="route-and-openapi-compatibility">Route and OpenAPI compatibility<a class="headerlink" href="#route-and-openapi-compatibility" title="Permanent link">&para;</a></h2>
 <p><code>tests/contracts/route_inventory.json</code> records every effective application route in order, including browser,
 protocol, WebSocket, mount, and API routes. Its stable fields are plane, path, methods, route name, explicit operation

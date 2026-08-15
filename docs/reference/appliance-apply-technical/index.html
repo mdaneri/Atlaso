@@ -4451,7 +4451,9 @@ page. The bottom-left review card and page-level review actions open the modal, 
 valid changed units by default, and lets an operator unselect any unit that should remain pending. A direct GET to
 <code>/ui/management/appliance-apply</code> redirects to <code>/ui/management/dashboard#appliance-apply-review</code>, where the same modal
 opens automatically. The <code>/ui/management/appliance-apply</code> POST, <code>/ui/management/appliance-apply/review</code>, and
-<code>/ui/management/appliance-apply/status</code> routes remain the browser-only backend workflow used by the modal.</p>
+<code>/ui/management/appliance-apply/status</code> routes remain the browser-only backend workflow used by the modal. Their
+transport ownership lives in <code>atlaso/app/routers/ui/appliance_apply.py</code>; the stable <code>atlaso/app/ui.py</code> facade retains
+the unit, projection, submission, execution, recovery, logging, and audit helpers injected into that router.</p>
 <p>The status route is deliberately a lightweight desired-state projection: it compares current snapshots with stored
 baselines without running apply-time reconciliation or privileged observation helpers. Full review, validation, and
 submission still reconcile current host observations and therefore retain fail-closed DHCP DNS fallback behavior.
