@@ -956,7 +956,19 @@ def strip_markdown_nonoperative_content(text: str) -> str:
         text,
         flags=re.DOTALL,
     )
-    without_raw_html_blocks = without_comments
+    without_raw_directives = without_comments
+    for directive_pattern in (
+        r"<\?.*?(?:\?>|$)",
+        r"<!\[CDATA\[.*?(?:\]\]>|$)",
+        r"<![A-Z].*?(?:>|$)",
+    ):
+        without_raw_directives = re.sub(
+            directive_pattern,
+            lambda match: re.sub(r"[^\r\n]", "", match.group(0)),
+            without_raw_directives,
+            flags=re.DOTALL,
+        )
+    without_raw_html_blocks = without_raw_directives
     for tag_name in ("script", "style", "pre", "textarea"):
         without_raw_html_blocks = re.sub(
             rf'''<{tag_name}\b(?:[^<>"']|"[^"]*"|'[^']*')*>.*?(?:</{tag_name}[ \t\r\n]*>|$)''',

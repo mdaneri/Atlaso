@@ -1226,6 +1226,48 @@ def test_agent_policy_gate_ignores_unterminated_raw_html_blocks(
             )
 
 
+def test_agent_policy_gate_ignores_raw_html_directive_markers(
+    tmp_path: Path,
+) -> None:
+    """Verify raw processing instructions and declarations cannot satisfy markers.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    marker = '`cleanup-ready`'
+    sibling = "\n- following policy"
+    directives = (
+        f'<?atlaso example="{marker}"?>',
+        f'<?atlaso example="{marker}"',
+        f"<![CDATA[{marker}]]>",
+        f"<![CDATA[{marker}",
+        f"<!ATLASO {marker}>",
+        f"<!ATLASO {marker}",
+    )
+    for relative_path in ORDERED_TERMINAL_CLEANUP_MARKERS:
+        for directive in directives:
+            write_policy_files(tmp_path)
+            path = tmp_path / relative_path
+            anchor = TERMINAL_CLEANUP_SECTION_ANCHORS[relative_path]
+            html_prefix = "" if anchor.startswith("#") else "  "
+            text = path.read_text(encoding="utf-8").replace(marker, "", 1)
+            hidden_marker = f"\n{html_prefix}{directive}"
+            path.write_text(
+                text + hidden_marker
+                if anchor.startswith("#")
+                else text.replace(sibling, hidden_marker + sibling, 1),
+                encoding="utf-8",
+            )
+
+            findings = check_agent_policy_gate(tmp_path)
+
+            assert len(findings) == 1
+            assert findings[0].path == path
+            assert findings[0].message == (
+                f"completed-task cleanup section marker is missing: {marker}"
+            )
+
+
 def test_agent_policy_gate_preserves_policy_after_void_html(tmp_path: Path) -> None:
     """Verify void HTML tags do not consume following operative policy.
 
