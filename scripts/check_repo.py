@@ -790,7 +790,7 @@ def extract_terminal_cleanup_order(cleanup_section: str) -> tuple[str, ...] | No
     order_lines = transitions[:expected_count]
     if (
         len(transitions) > expected_count
-        and re.fullmatch(r"\d+\.\s+.+", transitions[expected_count]) is not None
+        and re.fullmatch(r"\d+[.)]\s+.+", transitions[expected_count]) is not None
     ):
         order_lines += (transitions[expected_count],)
     return order_lines

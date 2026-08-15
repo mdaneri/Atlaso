@@ -650,23 +650,28 @@ def test_agent_policy_gate_rejects_fourth_terminal_transition(tmp_path: Path) ->
         tmp_path: Temporary directory provided by pytest for isolated filesystem state.
     """
     for relative_path, markers in ORDERED_TERMINAL_CLEANUP_MARKERS.items():
-        write_policy_files(tmp_path)
-        path = tmp_path / relative_path
-        text = path.read_text(encoding="utf-8")
-        expected_order = "\n".join(TERMINAL_CLEANUP_ORDER_LINES)
-        path.write_text(
-            text.replace(expected_order, expected_order + "\n4. archived", 1),
-            encoding="utf-8",
-        )
+        for delimiter in (".", ")"):
+            write_policy_files(tmp_path)
+            path = tmp_path / relative_path
+            text = path.read_text(encoding="utf-8")
+            expected_order = "\n".join(TERMINAL_CLEANUP_ORDER_LINES)
+            path.write_text(
+                text.replace(
+                    expected_order,
+                    expected_order + f"\n4{delimiter} archived",
+                    1,
+                ),
+                encoding="utf-8",
+            )
 
-        findings = check_agent_policy_gate(tmp_path)
+            findings = check_agent_policy_gate(tmp_path)
 
-        assert len(findings) == 1
-        assert findings[0].path == path
-        assert findings[0].message == (
-            "completed-task cleanup markers must remain ordered: "
-            + " -> ".join(markers)
-        )
+            assert len(findings) == 1
+            assert findings[0].path == path
+            assert findings[0].message == (
+                "completed-task cleanup markers must remain ordered: "
+                + " -> ".join(markers)
+            )
 
 
 def test_agent_policy_gate_rejects_missing_entry_point(tmp_path: Path) -> None:
