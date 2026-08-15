@@ -40,7 +40,9 @@ class _SlugConvertor(Convertor[str]):
 register_url_convertor("atlaso_slug", _SlugConvertor())
 
 
-def _router(path: str, *, method: str = "GET", endpoint_name: str = "route") -> APIRouter:
+def _router(
+    path: str, *, method: str = "GET", endpoint_name: str = "route"
+) -> APIRouter:
     """Return a router with one uniquely handled route.
 
     Args:
@@ -70,7 +72,9 @@ def test_facades_register_extracted_domains_in_exact_order():
         "firewall",
         "physical_vlans",
         "dns_dhcp",
-        "facade_between_dns_dhcp_identity",
+        "facade_between_dns_dhcp_managed_ldap",
+        "managed_ldap",
+        "facade_between_managed_ldap_identity",
         "identity",
         "facade_after_identity",
     )
@@ -81,12 +85,16 @@ def test_facades_register_extracted_domains_in_exact_order():
         ui.firewall_router,
         ui.physical_vlans_router,
         ui.dns_dhcp_router,
-        ui._management_between_dns_dhcp_identity_router,
+        ui._management_between_dns_dhcp_managed_ldap_router,
+        ui.managed_ldap_router,
+        ui._management_between_managed_ldap_identity_router,
         ui.identity_router,
         ui._management_after_identity_router,
     )
     assert ui.UI_ROUTER_REGISTRY.routers_for_plane("public") == (ui.public_router,)
-    assert ui.UI_ROUTER_REGISTRY.routers_for_plane("front_door") == (ui.front_door_router,)
+    assert ui.UI_ROUTER_REGISTRY.routers_for_plane("front_door") == (
+        ui.front_door_router,
+    )
     assert ui.UI_ROUTER_REGISTRY.routers_for_plane("protocol") == (ui.protocol_router,)
     assert v1.API_V1_ROUTER_REGISTRY.domains == (
         "facade_before_identity",
@@ -97,7 +105,9 @@ def test_facades_register_extracted_domains_in_exact_order():
         "facade_between_routes_wan_dns_dhcp",
         "dns_dhcp",
         "firewall",
-        "facade_after_firewall",
+        "facade_between_firewall_managed_ldap",
+        "managed_ldap",
+        "facade_after_managed_ldap",
     )
     assert v1.API_V1_ROUTER_REGISTRY.routers_for_plane("api_v1") == (
         v1._api_before_identity_router,
@@ -108,40 +118,48 @@ def test_facades_register_extracted_domains_in_exact_order():
         v1._api_between_routes_wan_dns_dhcp_router,
         v1.dns_dhcp_router,
         v1.firewall_router,
-        v1._api_after_firewall_router,
+        v1._api_between_firewall_managed_ldap_router,
+        v1.managed_ldap_router,
+        v1._api_after_managed_ldap_router,
     )
     assert {
         route.endpoint.__module__ for route in ui.appliance_apply_router.routes
     } == {"atlaso.app.routers.ui.appliance_apply"}
-    assert {
-        route.endpoint.__module__ for route in ui.routes_wan_router.routes
-    } == {"atlaso.app.routers.ui.routes_wan"}
-    assert {
-        route.endpoint.__module__ for route in ui.firewall_router.routes
-    } == {"atlaso.app.routers.ui.firewall"}
-    assert {
-        route.endpoint.__module__ for route in ui.physical_vlans_router.routes
-    } == {"atlaso.app.routers.ui.physical_vlans"}
-    assert {
-        route.endpoint.__module__ for route in ui.dns_dhcp_router.routes
-    } == {"atlaso.app.routers.ui.dns_dhcp"}
+    assert {route.endpoint.__module__ for route in ui.routes_wan_router.routes} == {
+        "atlaso.app.routers.ui.routes_wan"
+    }
+    assert {route.endpoint.__module__ for route in ui.firewall_router.routes} == {
+        "atlaso.app.routers.ui.firewall"
+    }
+    assert {route.endpoint.__module__ for route in ui.physical_vlans_router.routes} == {
+        "atlaso.app.routers.ui.physical_vlans"
+    }
+    assert {route.endpoint.__module__ for route in ui.dns_dhcp_router.routes} == {
+        "atlaso.app.routers.ui.dns_dhcp"
+    }
     assert {route.endpoint.__module__ for route in ui.identity_router.routes} == {
         "atlaso.app.routers.ui.identity"
     }
-    assert {
-        route.endpoint.__module__ for route in v1.routes_wan_router.routes
-    } == {"atlaso.app.routers.api_v1.routes_wan"}
-    assert {
-        route.endpoint.__module__ for route in v1.firewall_router.routes
-    } == {"atlaso.app.routers.api_v1.firewall"}
-    assert {
-        route.endpoint.__module__ for route in v1.physical_vlans_router.routes
-    } == {"atlaso.app.routers.api_v1.physical_vlans"}
-    assert {
-        route.endpoint.__module__ for route in v1.dns_dhcp_router.routes
-    } == {"atlaso.app.routers.api_v1.dns_dhcp"}
+    assert {route.endpoint.__module__ for route in ui.managed_ldap_router.routes} == {
+        "atlaso.app.routers.ui.managed_ldap"
+    }
+    assert {route.endpoint.__module__ for route in v1.routes_wan_router.routes} == {
+        "atlaso.app.routers.api_v1.routes_wan"
+    }
+    assert {route.endpoint.__module__ for route in v1.firewall_router.routes} == {
+        "atlaso.app.routers.api_v1.firewall"
+    }
+    assert {route.endpoint.__module__ for route in v1.physical_vlans_router.routes} == {
+        "atlaso.app.routers.api_v1.physical_vlans"
+    }
+    assert {route.endpoint.__module__ for route in v1.dns_dhcp_router.routes} == {
+        "atlaso.app.routers.api_v1.dns_dhcp"
+    }
     assert {route.endpoint.__module__ for route in v1.identity_router.routes} == {
         "atlaso.app.routers.api_v1.identity"
+    }
+    assert {route.endpoint.__module__ for route in v1.managed_ldap_router.routes} == {
+        "atlaso.app.routers.api_v1.managed_ldap"
     }
 
 
@@ -151,7 +169,9 @@ def test_registry_rejects_duplicate_domain_names():
     registry.register("core", (RouterContribution("api_v1", _router("/api/v1/core")),))
 
     with pytest.raises(RouterRegistryError, match="already registered"):
-        registry.register("core", (RouterContribution("api_v1", _router("/api/v1/other")),))
+        registry.register(
+            "core", (RouterContribution("api_v1", _router("/api/v1/other")),)
+        )
 
 
 def test_registry_rejects_duplicate_router_objects():
@@ -170,18 +190,26 @@ def test_registry_rejects_duplicate_route_identities():
     registry.register("core", (RouterContribution("api_v1", _router("/api/v1/core")),))
 
     with pytest.raises(RouterRegistryError, match="duplicate route registration"):
-        registry.register("duplicate", (RouterContribution("api_v1", _router("/api/v1/core")),))
+        registry.register(
+            "duplicate", (RouterContribution("api_v1", _router("/api/v1/core")),)
+        )
 
 
 def test_registry_keeps_plane_metadata_and_rejects_runtime_duplicates():
     """Reject equal runtime identities even when plane metadata differs."""
     registry = DomainRouterRegistry("test")
-    registry.register("management", (RouterContribution("management", _router("/shared")),))
+    registry.register(
+        "management", (RouterContribution("management", _router("/shared")),)
+    )
 
-    with pytest.raises(RouterRegistryError, match="duplicate runtime route registration"):
+    with pytest.raises(
+        RouterRegistryError, match="duplicate runtime route registration"
+    ):
         registry.register("public", (RouterContribution("public", _router("/shared")),))
 
-    registry.register("write", (RouterContribution("public", _router("/shared", method="POST")),))
+    registry.register(
+        "write", (RouterContribution("public", _router("/shared", method="POST")),)
+    )
 
     assert registry.route_identities() == (
         RouteIdentity("management", "/shared", "GET"),
@@ -193,7 +221,9 @@ def test_registry_detects_domain_omission_and_order_changes():
     """Require exact expected domain membership and registration order."""
     registry = DomainRouterRegistry("test")
     registry.register("core", (RouterContribution("api_v1", _router("/api/v1/core")),))
-    registry.register("networking", (RouterContribution("api_v1", _router("/api/v1/networking")),))
+    registry.register(
+        "networking", (RouterContribution("api_v1", _router("/api/v1/networking")),)
+    )
     registry.validate_domains(("core", "networking"))
 
     with pytest.raises(RouterRegistryError, match="domain order mismatch"):
@@ -340,8 +370,13 @@ def test_registry_accepts_fixed_route_before_catch_all():
     registry.register(
         "ordered",
         (
-            RouterContribution("management", _router("/resources/status", endpoint_name="fixed")),
-            RouterContribution("management", _router("/resources/{item:path}", endpoint_name="catch_all")),
+            RouterContribution(
+                "management", _router("/resources/status", endpoint_name="fixed")
+            ),
+            RouterContribution(
+                "management",
+                _router("/resources/{item:path}", endpoint_name="catch_all"),
+            ),
         ),
     )
 

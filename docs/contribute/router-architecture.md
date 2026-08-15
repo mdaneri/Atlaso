@@ -20,7 +20,9 @@ transport ownership while retaining dnsmasq behavior and every cross-domain inte
 Appliance Apply management transports while keeping submission, execution, recovery, unit construction, status
 projection, logging, and audit behavior in the stable UI facade. Phase 7 extracts bounded identity-management UI and
 API v1 transports while keeping OIDC protocol endpoints, managed LDAP transports, and identity-domain behavior in
-their established owners.
+their established owners. Phase 8 extracts Managed LDAP UI and API v1 transports while retaining LDAP services,
+helpers, models, renderers, Appliance Apply execution, settings-archive core behavior, and OIDC protocol ownership in
+their established modules.
 
 ## Ownership and responsibilities
 
@@ -173,6 +175,28 @@ extraction changes no template, browser asset, visible copy, route, route name, 
 session or CSRF behavior, secret-once or redaction behavior, redirect, response schema, route inventory, or normalized
 OpenAPI contract.
 
+## Extracted Managed LDAP ownership
+
+Managed LDAP management transports live in `atlaso/app/routers/ui/managed_ldap.py`; their API v1 transports live in
+`atlaso/app/routers/api_v1/managed_ldap.py`. The stable facades continue to export the established endpoint and helper
+names while supplying facade-owned rendering, CSRF, authorization, service-binding, DNS/CA reconciliation, VCF Helper,
+Appliance Apply status, and runtime-service helpers through typed router builders. Neither domain router imports a
+monolithic facade.
+
+The UI registry places `managed_ldap` between `facade_between_dns_dhcp_managed_ldap` and
+`facade_between_managed_ldap_identity`, preserving its established position after Certificate Authority and before
+vSphere Key Providers. The API v1 registry places `managed_ldap` between
+`facade_between_firewall_managed_ldap` and `facade_after_managed_ldap`, preserving its established position after ESXi
+PXE and before vSphere Key Providers.
+
+Independently runnable transport coverage lives in `tests/routers/ui/test_managed_ldap.py` and
+`tests/routers/api_v1/test_managed_ldap.py`. LDAP protocol, models, credentials, helper actions, renderers, DNS and CA
+reconciliation, OIDC identity-source behavior, VCF integration, staged recovery custody, settings-archive core
+behavior, and global Appliance Apply execution retain their existing owners and tests. This extraction changes no
+template, browser asset, visible copy, route, route name, operation ID, authorization scope, session or CSRF behavior,
+schema, redirect, download, status code, route inventory, normalized OpenAPI output, desired state, or host-mutation
+boundary.
+
 ## Route and OpenAPI compatibility
 
 `tests/contracts/route_inventory.json` records every effective application route in order, including browser,
@@ -233,6 +257,7 @@ python -m pytest -q tests/routers/ui/test_routes_wan.py tests/routers/api_v1/tes
 python -m pytest -q tests/routers/ui/test_firewall.py tests/routers/api_v1/test_firewall.py
 python -m pytest -q tests/routers/ui/test_dns_dhcp.py tests/routers/api_v1/test_dns_dhcp.py tests/test_dns_dhcp.py
 python -m pytest -q tests/routers/ui/test_identity.py tests/routers/api_v1/test_identity.py
+python -m pytest -q tests/routers/ui/test_managed_ldap.py tests/routers/api_v1/test_managed_ldap.py
 python -m pytest -q tests/test_openapi_contract.py tests/test_ui_route_namespaces.py tests/test_ui_compliance.py
 python scripts/generate_router_contract_baselines.py --check
 python scripts/check_python_static_analysis.py
