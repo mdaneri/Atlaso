@@ -413,7 +413,8 @@ status: current
 - Do not write a successful Atlaso Release finalizer until durable activation is proven. Flush the active switch and
   installed assets, remove maintenance mode only through final nginx validation and reload, restart the worker into the
   candidate release under a provisional finalizer, require its new systemd PID to publish the matching job, version, and
-  release root, and keep restarted worker recovery behind a runtime gate until the definitive finalizer write completes.
+  release root, and establish the runtime gate before any candidate or rollback worker restart so recovery stays blocked
+  until the definitive finalizer write completes.
   A gate timeout must exit worker startup for systemd retry, never enter the ordinary work loop. Remove and durably flush
   staged source credentials from the surviving helper before it restarts the calling worker. Require nginx plus web,
   worker, and console service state, and require the signed receipt, `current`, compatibility

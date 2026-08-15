@@ -247,9 +247,10 @@ historical downgrades.
 Success is recorded only after Atlaso flushes the active switch and installed release assets, removes maintenance mode,
 validates and reloads nginx, and verifies web, worker, console, and nginx service state. The helper writes a provisional
 finalizer, restarts the worker through the candidate release, and requires the new systemd PID to publish the matching
-job, version, and release-root identity before success becomes definitive. A runtime gate keeps both candidate and
-rollback workers from consuming a finalizer until its durable write and the surrounding transaction have finished. The
-worker exits for systemd retry instead of accepting work if that gate does not open within the bounded startup wait. The
+job, version, and release-root identity before success becomes definitive. The helper establishes a runtime gate before
+any candidate or rollback worker restart and keeps both workers from consuming a finalizer until its durable write and
+the surrounding transaction have finished. The worker exits for systemd retry instead of accepting work if that gate
+does not open within the bounded startup wait. The
 surviving privileged helper removes and flushes any staged source-credential file before restarting the calling worker.
 The helper then requires
 `current`, the compatibility virtualenv, the signed release receipt, internal `/openapi.json`, and the applied HTTP or
@@ -259,9 +260,10 @@ failing layer. Worker startup rechecks the success finalizer against the durable
 version; inconsistent success evidence fails recovery instead of being accepted.
 
 A failure in systemd asset activation, the atomic switch, candidate startup, maintenance removal, final `nginx -t`,
-worker handoff, or front-door version readiness enters the same rollback boundary. Rollback restores the previous
-release, assets, and database, validates and reloads nginx after removing maintenance mode, and proves the previous
-version through both internal and management-front-door OpenAPI before writing `rolled_back=true`. Atlaso Release
+worker handoff, or front-door version readiness enters the same rollback boundary. Before rollback can restart a worker,
+the helper closes the same runtime gate; rollback then restores the previous release, assets, and database, validates
+and reloads nginx after removing maintenance mode, and proves the previous version through both internal and
+management-front-door OpenAPI before writing `rolled_back=true`. Atlaso Release
 installation never reboots the appliance automatically.
 
 ## Photon OS boundary

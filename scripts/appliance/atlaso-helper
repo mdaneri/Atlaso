@@ -11958,6 +11958,10 @@ def _apply_atlaso_release(
             commands.append(evidence)
             return True, result
 
+        rollback_gate_ready, _rollback_gate_result = rollback_action(
+            "worker_restart_gate_hold",
+            lambda: _set_release_restart_gate(True, str(payload.get("job_id") or "")),
+        )
         rollback_action(
             "service_stop",
             lambda: _service_command(
@@ -11986,14 +11990,12 @@ def _apply_atlaso_release(
             "systemd_reload",
             lambda: _service_command("daemon-reload"),
         )
+        rollback_start_units = ["atlaso.service", "atlaso-console.service"]
+        if rollback_gate_ready:
+            rollback_start_units.insert(1, "atlaso-worker.service")
         services_started, _start_result = rollback_action(
             "service_start",
-            lambda: _service_command(
-                "start",
-                "atlaso.service",
-                "atlaso-worker.service",
-                "atlaso-console.service",
-            ),
+            lambda: _service_command("start", *rollback_start_units),
         )
         _health_ok, rollback_health_result = rollback_action("internal_health", _wait_for_atlaso_health)
         rollback_health = (
@@ -12043,6 +12045,7 @@ def _apply_atlaso_release(
         )
         rollback_pre_cleanup_ready = bool(
             rollback_completed
+            and rollback_gate_ready
             and data_disk_restored
             and systemd_reloaded
             and services_started

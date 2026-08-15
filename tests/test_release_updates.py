@@ -2181,6 +2181,7 @@ def test_worker_restart_keeps_release_finalizer_scoped_to_its_child(client, monk
         ("rollback_symlink_sync", "candidate_startup", True),
         ("rollback_link_restore", "candidate_startup", False),
         ("rollback_activation", "candidate_startup", False),
+        ("rollback_gate", "candidate_startup", False),
     ],
 )
 def test_failed_candidate_restores_previous_release_and_database(
@@ -2276,6 +2277,23 @@ def test_failed_candidate_restores_previous_release_and_database(
     monkeypatch.setattr(helper, "ATLASO_UPDATE_BACKUP_DIR", tmp_path / "backups")
     monkeypatch.setattr(helper, "ATLASO_UPDATE_FINALIZER_PATH", tmp_path / "finalizer.json")
     monkeypatch.setattr(helper, "ATLASO_UPDATE_RESTART_GATE_PATH", tmp_path / "restart-gate")
+    original_restart_gate = helper._set_release_restart_gate
+
+    def restart_gate(enabled: bool, job_id: str = "") -> None:
+        """Inject a rollback gate creation failure.
+
+        Args:
+            enabled: Whether worker recovery must remain gated.
+            job_id: Appliance Update job associated with the gate.
+
+        Raises:
+            OSError: When the rollback gate failure scenario is active.
+        """
+        if failure_stage == "rollback_gate" and enabled:
+            raise OSError("injected rollback gate creation failure")
+        original_restart_gate(enabled, job_id)
+
+    monkeypatch.setattr(helper, "_set_release_restart_gate", restart_gate)
     credential_path = tmp_path / "atlaso-update-credentials.json"
     credential_path.write_text('{"sources": {}}', encoding="utf-8")
 
@@ -2386,11 +2404,14 @@ def test_failed_candidate_restores_previous_release_and_database(
                     "rollback_symlink_sync",
                     "rollback_link_restore",
                     "rollback_activation",
+                    "rollback_gate",
                 }
                 or candidate_starts > 1
             )
         if action == "restart" and units == ("atlaso-worker.service",):
             success = failure_stage != "worker_restart"
+        if action == "start" and "atlaso-worker.service" in units:
+            assert (tmp_path / "restart-gate").read_text(encoding="utf-8") == "\n"
         return {
             "command": ["systemctl", action, *units],
             "returncode": 0 if success else 1,
@@ -2514,6 +2535,8 @@ def test_failed_candidate_restores_previous_release_and_database(
             payload: Definitive or provisional transaction evidence to persist.
         """
         finalizer_statuses.append(str(payload.get("status") or ""))
+        if payload.get("status") == "failed" and failure_stage != "rollback_gate":
+            assert (tmp_path / "restart-gate").exists()
         if failure_stage == "finalizer_persistence" and payload.get("status") == "succeeded":
             raise OSError("injected finalizer directory sync failure")
         write_finalizer(payload)
@@ -2548,6 +2571,9 @@ def test_failed_candidate_restores_previous_release_and_database(
         assert "rollback_activation_verification" in finalizer["rollback_failures"]
         assert False in maintenance_states
         assert maintenance_states[-1] is True
+    if failure_stage == "rollback_gate":
+        assert "rollback_worker_restart_gate_hold" in finalizer["rollback_failures"]
+        assert not (tmp_path / "restart-gate").exists()
 
 
 def test_release_activation_verification_requires_exact_candidate_through_nginx(monkeypatch, tmp_path):
