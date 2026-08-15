@@ -4135,6 +4135,9 @@ contract from PowerShell with:</p>
 </span></code></pre></div>
 <p>Both paths must report <code>text: set</code>, <code>eol: lf</code>, and <code>w/lf</code>. Do not normalize values inside the runtime parser: its strict
 capacity and SCSI-identity rejection remains the fail-closed boundary for malformed installed policy.</p>
+<p>Both Packer templates upload the shared udev rule and their platform <code>data-disks.conf</code> into <code>/tmp/atlaso-src</code>. The
+shared image provisioner validates and installs those inputs directly from that staged source tree before the later
+application sync populates <code>/opt/atlaso</code>; pre-sync disk-policy installation must not read from <code>/opt/atlaso</code>.</p>
 <p>Atlaso writes operational events to <code>/var/log/atlaso/atlaso.log</code>. Audit events, desired-state edits, and appliance apply
 submissions are mirrored there with sensitive values redacted. The Settings page controls local file verbosity and can
 also forward the same operational events to an external syslog receiver.</p>
