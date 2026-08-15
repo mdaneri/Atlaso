@@ -109,7 +109,11 @@ class ManagedLdapUiRouter:
 
 
 def _ldap_organization_location(organization: LdapOrganization) -> str:
-    """Return the directory location for a loaded organization row."""
+    """Return the directory location for a loaded organization row.
+
+    Args:
+        organization: Persisted organization that owns the directory view.
+    """
     return f"/ldap?organization_id={organization.id}"
 
 
