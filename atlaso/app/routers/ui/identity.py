@@ -131,7 +131,11 @@ class IdentityUiRouter:
 
 
 def build_router(dependencies: IdentityUiDependencies) -> IdentityUiRouter:
-    """Build identity-management transports without importing the UI facade."""
+    """Build identity-management transports without importing the UI facade.
+
+    Args:
+        dependencies: Facade-owned helpers required by the extracted transports.
+    """
     router = APIRouter(
         prefix=MANAGEMENT_UI_ROOT,
         dependencies=[Depends(dependencies.require_management_ui_request)],
