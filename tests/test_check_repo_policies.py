@@ -1602,6 +1602,7 @@ def test_agent_policy_gate_ignores_css_hidden_html_policy_sections(
     for relative_path in ORDERED_TERMINAL_CLEANUP_MARKERS:
         for style in (
             "display:none",
+            "display:/**/none",
             "color:red; DISPLAY: none !important;",
             "visibility:hidden",
             "visibility: collapse !important",

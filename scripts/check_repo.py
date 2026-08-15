@@ -1079,6 +1079,7 @@ def has_css_hidden_style(attributes: str) -> bool:
             )
             if value is not None
         )
+        style = re.sub(r"/\*.*?\*/", "", style, flags=re.DOTALL)
         hidden_declarations = (
             r"display\s*:\s*none",
             r"visibility\s*:\s*(?:hidden|collapse)",
