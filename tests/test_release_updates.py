@@ -1685,9 +1685,10 @@ def test_worker_restart_reconciles_completed_success_against_durable_release(cli
     from atlaso.app.services import appliance_update
 
     release = release_payload()
+    malformed_release = {**release, "bundle": "corrupted"}
     release_root = tmp_path / "releases/0.9.0"
     (release_root / ".venv").mkdir(parents=True)
-    (release_root / ".release-manifest.json").write_text(json.dumps(release), encoding="utf-8")
+    (release_root / ".release-manifest.json").write_text(json.dumps(malformed_release), encoding="utf-8")
     current = tmp_path / "current"
     current.symlink_to(release_root, target_is_directory=True)
     compatibility_venv = tmp_path / ".venv"
@@ -1721,7 +1722,7 @@ def test_worker_restart_reconciles_completed_success_against_durable_release(cli
     monkeypatch.setattr(worker, "APPLIANCE_UPDATE_FINALIZER_PATH", str(finalizer))
     monkeypatch.setattr(appliance_update, "ATLASO_CURRENT_RELEASE_PATH", current)
     monkeypatch.setattr(appliance_update, "ATLASO_COMPATIBILITY_VENV_PATH", compatibility_venv)
-    monkeypatch.setattr(appliance_update, "__version__", "0.8.9")
+    monkeypatch.setattr(appliance_update, "__version__", "0.9.0")
 
     with SessionLocal() as db:
         db.add(
@@ -1739,7 +1740,7 @@ def test_worker_restart_reconciles_completed_success_against_durable_release(cli
         assert worker.recover_interrupted_worker_jobs(db) == 1
         recovered = db.get(Job, "job_completed_inconsistent_release")
         assert recovered.status == "failed"
-        assert "running Atlaso version" in (recovered.error or "")
+        assert "receipt bundle" in (recovered.error or "")
         result = json.loads(recovered.result)
         assert result["status"] == "failed"
         assert result["success"] is False
@@ -2289,6 +2290,7 @@ def test_release_maintenance_cleanup_validates_and_reloads_nginx(monkeypatch, tm
 
     def service_command(action, *units):
         """Record the nginx reload performed after maintenance removal."""
+        assert maintenance.is_file()
         calls.append((action, units))
         return {
             "command": ["systemctl", action, *units],
@@ -2319,6 +2321,37 @@ def test_release_maintenance_cleanup_failure_keeps_nginx_in_maintenance(monkeypa
         helper,
         "_nginx_test_command",
         lambda: subprocess.CompletedProcess(["nginx", "-t"], 1, "", "invalid configuration"),
+    )
+
+    result = helper._set_release_maintenance(False)
+
+    assert result["success"] is False
+    assert maintenance.is_file()
+
+
+def test_release_maintenance_reload_failure_keeps_nginx_in_maintenance(monkeypatch, tmp_path):
+    """Verify nginx reload failure cannot expose the unverified candidate front door."""
+    from tests.test_appliance_update import load_helper_module
+
+    helper = load_helper_module()
+    maintenance = tmp_path / "maintenance"
+    maintenance.write_text("", encoding="utf-8")
+    monkeypatch.setattr(helper, "ATLASO_UPDATE_MAINTENANCE_PATH", maintenance)
+    monkeypatch.setattr(
+        helper,
+        "_nginx_test_command",
+        lambda: subprocess.CompletedProcess(["nginx", "-t"], 0, "configuration is valid", ""),
+    )
+    monkeypatch.setattr(
+        helper,
+        "_service_command",
+        lambda action, *units: {
+            "command": ["systemctl", action, *units],
+            "returncode": 1,
+            "success": False,
+            "stdout": "",
+            "stderr": "injected nginx reload failure",
+        },
     )
 
     result = helper._set_release_maintenance(False)

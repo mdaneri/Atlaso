@@ -87,7 +87,11 @@ def reconcile_release_success_finalizer(finalizer: dict[str, Any]) -> tuple[dict
         errors.append("active signed-release receipt identity does not match the finalizer")
     if str(receipt.get("git_commit") or "") != str(finalizer.get("git_commit") or ""):
         errors.append("active signed-release commit does not match the finalizer")
-    if str((receipt.get("bundle") or {}).get("sha256") or "") != str(finalizer.get("bundle_sha256") or ""):
+    receipt_bundle = receipt.get("bundle")
+    if not isinstance(receipt_bundle, dict):
+        errors.append("active signed-release receipt bundle is missing or invalid")
+        receipt_bundle = {}
+    if str(receipt_bundle.get("sha256") or "") != str(finalizer.get("bundle_sha256") or ""):
         errors.append("active signed-release bundle does not match the finalizer")
     running_version = __version__.split("+", 1)[0]
     if running_version != expected_version:

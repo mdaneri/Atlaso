@@ -11252,10 +11252,10 @@ def _set_release_maintenance(enabled: bool) -> dict:
         result = _service_command("reload", "nginx.service")
         result["command"] = ["maintenance", "enable"]
         return result
-    ATLASO_UPDATE_MAINTENANCE_PATH.unlink(missing_ok=True)
+    ATLASO_UPDATE_MAINTENANCE_PATH.parent.mkdir(parents=True, exist_ok=True)
+    ATLASO_UPDATE_MAINTENANCE_PATH.touch(mode=0o644, exist_ok=True)
     validation = _nginx_test_command()
     if validation.returncode != 0:
-        ATLASO_UPDATE_MAINTENANCE_PATH.touch(mode=0o644, exist_ok=True)
         return {
             "command": ["maintenance", "disable", "nginx", "-t"],
             "returncode": validation.returncode,
@@ -11266,9 +11266,8 @@ def _set_release_maintenance(enabled: bool) -> dict:
     result = _service_command("reload", "nginx.service")
     result["command"] = ["maintenance", "disable", "reload", "nginx.service"]
     if result["success"]:
+        ATLASO_UPDATE_MAINTENANCE_PATH.unlink(missing_ok=True)
         result["stdout"] = "Atlaso management maintenance response disabled and nginx reloaded."
-    else:
-        ATLASO_UPDATE_MAINTENANCE_PATH.touch(mode=0o644, exist_ok=True)
     return result
 
 
