@@ -67,7 +67,9 @@ payload under `/mnt/atlaso-vcf-registry`, and managed ESX Storage payloads. Thei
 an administrator must explicitly rediscover, reconfigure, or delete retained payload later. Fixed transient Apply
 staging under `/var/lib/atlaso/apply` is scrubbed; secret-bearing Local Users, CA, and LDAP staging is also removed on
 failure. Successful reset also removes retained VCF Backup authorized keys, the Web Terminal CA key pair, and pending
-Web Terminal signing requests so re-enabling either feature cannot reuse credentials from before reset.
+Web Terminal signing requests so re-enabling either feature cannot reuse credentials from before reset. The bootstrap
+account home is retained, but its SSH authorization files are removed. OIDC browser cookies carry the appliance-instance
+identity and are rejected after reset even when a recreated bootstrap user receives the same database identifier.
 
 Existing credentials stop working. Sign in with the bootstrap administrator credentials supplied when the appliance
 image was deployed. Factory state disables Management HTTPS and restores the packaged management network

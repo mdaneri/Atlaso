@@ -1811,6 +1811,47 @@ def test_prompt_none_max_age_and_login_hint_is_prefill_only(client):
     ]
 
 
+def test_oidc_browser_session_is_invalid_after_appliance_instance_changes(client):
+    """An appliance reset invalidates an otherwise current OIDC browser cookie.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Setting
+    from atlaso.app.security import SESSION_APPLIANCE_INSTANCE_SETTING_KEY
+
+    client_id, _secret = _configure_protocol_client()
+    transaction, csrf, _cookie = _start_login(
+        client,
+        _authorization_parameters(client_id, "r" * 64),
+    )
+    assert _finish_local_login(client, transaction, csrf).status_code == 303
+
+    with SessionLocal() as db:
+        instance = db.execute(
+            select(Setting).where(Setting.key == SESSION_APPLIANCE_INSTANCE_SETTING_KEY)
+        ).scalar_one()
+        instance.value = "replacement-appliance-instance"
+        db.commit()
+
+    response = client.get(
+        "https://testserver/identity/authorize",
+        params=_authorization_parameters(
+            client_id,
+            "s" * 64,
+            prompt="none",
+            state="after-reset",
+        ),
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 303
+    query = parse_qs(urlsplit(response.headers["location"]).query)
+    assert query["state"] == ["after-reset"]
+    assert query["error"] == ["login_required"]
+
+
 def test_userinfo_revalidates_client_subject_and_local_identity_state(client):
     """Verify that userinfo revalidates client subject and local identity state.
 

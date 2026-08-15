@@ -4,6 +4,7 @@ import builtins
 import json
 import subprocess
 import sys
+from types import SimpleNamespace
 
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
@@ -103,15 +104,22 @@ def test_factory_reset_scrubs_credentials_outside_apply_staging(tmp_path, monkey
     terminal_requests = tmp_path / "web-terminal" / "requests"
     terminal_private_key = tmp_path / "web-terminal-ca"
     terminal_public_key = tmp_path / "web-terminal-ca.pub"
+    local_users_home = tmp_path / "users"
+    bootstrap_ssh = local_users_home / "admin" / ".ssh"
     authorized_keys.mkdir()
     terminal_requests.mkdir(parents=True)
+    bootstrap_ssh.mkdir(parents=True)
     for path in (
         authorized_keys / "vcf-backup",
         terminal_requests / "request.json",
         terminal_private_key,
         terminal_public_key,
+        bootstrap_ssh / "authorized_keys",
+        bootstrap_ssh / "authorized_keys2",
     ):
         path.write_text("credential", encoding="utf-8")
+    retained_home_file = local_users_home / "admin" / "profile.ps1"
+    retained_home_file.write_text("retained payload", encoding="utf-8")
 
     monkeypatch.setattr(factory_reset, "VCF_BACKUPS_AUTHORIZED_KEYS_DIRECTORY", authorized_keys)
     monkeypatch.setattr(factory_reset, "WEB_TERMINAL_REQUEST_DIRECTORY", terminal_requests)
@@ -120,6 +128,12 @@ def test_factory_reset_scrubs_credentials_outside_apply_staging(tmp_path, monkey
         "WEB_TERMINAL_CREDENTIAL_PATHS",
         (terminal_private_key, terminal_public_key),
     )
+    monkeypatch.setattr(factory_reset, "LOCAL_USERS_HOME_DIRECTORY", local_users_home)
+    monkeypatch.setattr(
+        factory_reset,
+        "get_settings",
+        lambda: SimpleNamespace(bootstrap_admin_username="admin"),
+    )
 
     _scrub_retained_credentials()
 
@@ -127,6 +141,9 @@ def test_factory_reset_scrubs_credentials_outside_apply_staging(tmp_path, monkey
     assert list(terminal_requests.iterdir()) == []
     assert not terminal_private_key.exists()
     assert not terminal_public_key.exists()
+    assert not (bootstrap_ssh / "authorized_keys").exists()
+    assert not (bootstrap_ssh / "authorized_keys2").exists()
+    assert retained_home_file.read_text(encoding="utf-8") == "retained payload"
 
 
 def test_managed_factory_reset_retains_marker_until_readiness(tmp_path, monkeypatch):

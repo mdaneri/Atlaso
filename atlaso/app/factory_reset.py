@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import sqlite3
 import subprocess
@@ -60,6 +61,9 @@ FACTORY_RESET_REQUIRED_SERVICES = (
     "nginx.service",
 )
 VCF_BACKUPS_AUTHORIZED_KEYS_DIRECTORY = Path("/etc/atlaso/ssh/authorized_keys")
+LOCAL_USERS_HOME_DIRECTORY = Path("/var/lib/atlaso/users")
+LOCAL_USER_NAME_PATTERN = re.compile(r"^[a-z_][a-z0-9_-]{0,31}$")
+BOOTSTRAP_AUTHORIZED_KEY_NAMES = ("authorized_keys", "authorized_keys2")
 WEB_TERMINAL_CREDENTIAL_PATHS = (
     Path("/etc/atlaso/ssh/web-terminal-ca"),
     Path("/etc/atlaso/ssh/web-terminal-ca.pub"),
@@ -421,6 +425,29 @@ def _clear_fixed_directory_contents(path: Path, *, label: str) -> None:
             raise FactoryResetError(f"Factory reset {label} entry is unsafe: {child.name}")
 
 
+def _scrub_bootstrap_authorized_keys() -> None:
+    """Remove only SSH server authorization files from the retained bootstrap home."""
+    username = get_settings().bootstrap_admin_username.strip().lower()
+    if not LOCAL_USER_NAME_PATTERN.fullmatch(username):
+        raise FactoryResetError("Factory reset bootstrap local-user name is unsafe.")
+    home = LOCAL_USERS_HOME_DIRECTORY / username
+    if home.is_symlink() or (home.exists() and not home.is_dir()):
+        raise FactoryResetError("Factory reset bootstrap local-user home is unsafe.")
+    if not home.exists():
+        return
+    ssh_directory = home / ".ssh"
+    if ssh_directory.is_symlink() or (ssh_directory.exists() and not ssh_directory.is_dir()):
+        raise FactoryResetError("Factory reset bootstrap SSH directory is unsafe.")
+    if not ssh_directory.exists():
+        return
+    for name in BOOTSTRAP_AUTHORIZED_KEY_NAMES:
+        path = ssh_directory / name
+        if path.is_symlink() or path.is_file():
+            path.unlink(missing_ok=True)
+        elif path.exists():
+            raise FactoryResetError(f"Factory reset bootstrap SSH authorization entry is unsafe: {name}")
+
+
 def _scrub_retained_credentials() -> None:
     """Remove fixed credential material that intentionally lives outside Apply staging."""
     for path in WEB_TERMINAL_CREDENTIAL_PATHS:
@@ -436,6 +463,7 @@ def _scrub_retained_credentials() -> None:
         VCF_BACKUPS_AUTHORIZED_KEYS_DIRECTORY,
         label="VCF Backup authorized-key",
     )
+    _scrub_bootstrap_authorized_keys()
 
 
 def _management_ready() -> bool:
