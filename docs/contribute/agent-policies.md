@@ -172,7 +172,10 @@ Terminal order:
   absent ref. Never delete the temporary fork or change advisory state.
 - Complete `worktree_removed` second through `git worktree remove`, followed by affected-repository stale-registration
   pruning and verification that both the absolute path and registration are absent. A primary-checkout task records the
-  gate as not applicable after proving the checkout identity and never removes it.
+  gate as not applicable only after a clean checkout still at the recorded task head fetches current `origin/main`,
+  switches to local `main` without force, fast-forwards exactly to `origin/main`, verifies HEAD, deletes only a local
+  task branch that still equals the recorded pull-request head and is checked out nowhere, and records
+  `primary_checkout_restored`. Never remove the primary checkout.
 - Complete `task_title_done` last by using supported title controls to append the exact suffix " · Done" once while
   preserving description and issue/pull-request traceability. Keep the task unarchived unless archival is separately
   requested. If the runtime exposes no supported mutable title control, record `task_title_done` as verified not applicable

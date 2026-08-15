@@ -201,8 +201,10 @@ it to equal that head before deleting only the ref and privately verifying absen
 gate only after the same private identity and merge evidence are verified. Never delete the temporary fork, change
 advisory state, or enable repository-wide automatic branch deletion. For `worktree_removed`, use `git worktree remove`,
 prune only stale worktree metadata for the affected repository, and verify both the path and registration are absent.
-For a task running in the primary checkout, record this gate as not applicable after verifying that identity and never
-remove the checkout.
+For a task running in the primary checkout, require a clean checkout still at the recorded task head, fetch current
+`origin/main`, switch to local `main` without force, fast-forward it exactly to `origin/main`, verify the resulting HEAD,
+and delete the local task branch only if it still equals the recorded pull-request head and is checked out nowhere.
+Record `primary_checkout_restored`, then record worktree removal as not applicable and never remove the checkout.
 For `task_title_done`, use supported task-title controls to append the exact suffix " · Done" once, preserving the
 description and issue/pull-request traceability. Keep the completed task unarchived unless a maintainer separately
 requests archival. Only when the runtime exposes no supported mutable task-title control,

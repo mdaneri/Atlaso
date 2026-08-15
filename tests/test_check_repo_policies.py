@@ -5,6 +5,7 @@ from pathlib import Path
 from scripts.check_repo import (
     LEGACY_TABULATOR_MARKER,
     ORDERED_TERMINAL_CLEANUP_MARKERS,
+    PRIMARY_CHECKOUT_RESTORED_MARKER,
     PRIVATE_REMEDIATION_CLEANUP_MARKER,
     PRIVATE_REMEDIATION_REMOTE_MARKER,
     REQUIRED_POLICY_MARKERS,
@@ -513,6 +514,7 @@ def test_agent_policy_gate_scopes_cleanup_contract_markers(tmp_path: Path) -> No
             '" · Done"',
             PRIVATE_REMEDIATION_CLEANUP_MARKER,
             PRIVATE_REMEDIATION_REMOTE_MARKER,
+            PRIMARY_CHECKOUT_RESTORED_MARKER,
             TITLE_CONTROL_UNAVAILABLE_MARKER,
         ):
             write_policy_files(tmp_path)
@@ -887,6 +889,80 @@ def test_agent_policy_gate_ignores_indented_terminal_order(tmp_path: Path) -> No
             text.replace(
                 order_block,
                 incidental_markers + "\n" + indented_order,
+                1,
+            ),
+            encoding="utf-8",
+        )
+
+        findings = check_agent_policy_gate(tmp_path)
+
+        assert len(findings) == 1
+        assert findings[0].path == path
+        assert findings[0].message == (
+            "completed-task cleanup markers must remain ordered: "
+            + " -> ".join(markers)
+        )
+
+
+def test_agent_policy_gate_ignores_quoted_cleanup_markers(tmp_path: Path) -> None:
+    """Verify that quoted examples and lazy continuations cannot satisfy markers.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    marker = '`cleanup-ready`'
+    sibling = "\n- following policy"
+    for relative_path in ORDERED_TERMINAL_CLEANUP_MARKERS:
+        write_policy_files(tmp_path)
+        path = tmp_path / relative_path
+        anchor = TERMINAL_CLEANUP_SECTION_ANCHORS[relative_path]
+        quote_prefix = "" if anchor.startswith("#") else "  "
+        text = path.read_text(encoding="utf-8").replace(marker, "", 1)
+        insertion = f"\n{quote_prefix}> quoted example\n{quote_prefix}{marker}"
+        path.write_text(
+            text + insertion
+            if anchor.startswith("#")
+            else text.replace(sibling, insertion + sibling, 1),
+            encoding="utf-8",
+        )
+
+        findings = check_agent_policy_gate(tmp_path)
+
+        assert len(findings) == 1
+        assert findings[0].path == path
+        assert findings[0].message == (
+            f"completed-task cleanup section marker is missing: {marker}"
+        )
+
+
+def test_agent_policy_gate_ignores_quoted_terminal_order(tmp_path: Path) -> None:
+    """Verify that a block-quoted terminal sequence is not operative policy.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    for relative_path, markers in ORDERED_TERMINAL_CLEANUP_MARKERS.items():
+        write_policy_files(tmp_path)
+        path = tmp_path / relative_path
+        text = path.read_text(encoding="utf-8")
+        anchor = TERMINAL_CLEANUP_SECTION_ANCHORS[relative_path]
+        order_prefix = "" if anchor.startswith("#") else "  "
+        order_block = "\n".join(
+            (
+                TERMINAL_CLEANUP_ORDER_ANCHOR,
+                "",
+                *(order_prefix + line for line in TERMINAL_CLEANUP_ORDER_LINES),
+            )
+        )
+        quote_prefix = "> " if anchor.startswith("#") else "  > "
+        quoted_order = "\n".join(
+            quote_prefix + line.lstrip() for line in order_block.splitlines()
+        )
+        incidental_markers = "\n".join(markers)
+        path.write_text(
+            text.replace(
+                order_block,
+                incidental_markers + "\n" + quoted_order,
                 1,
             ),
             encoding="utf-8",

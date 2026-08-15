@@ -38,6 +38,9 @@ surfaces.
   only then may supported title controls append the exact suffix " · Done" once. If no supported mutable title control
   exists, `task_title_done` as verified not applicable requires capability evidence and omits the visible suffix.
 
+  A primary-checkout task records `primary_checkout_restored` only after switching a clean exact-head checkout to
+  current `origin/main`, verifying HEAD, and deleting only the exact unreferenced local task branch.
+
   Terminal order:
 
   1. `remote_branch_absent`

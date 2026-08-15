@@ -311,12 +311,14 @@ TERMINAL_CLEANUP_SECTION_ANCHORS = {
 
 PRIVATE_REMEDIATION_CLEANUP_MARKER = "`advisory_cleanup_ready`"
 PRIVATE_REMEDIATION_REMOTE_MARKER = "`advisory_remote_branch_absent`"
+PRIMARY_CHECKOUT_RESTORED_MARKER = "`primary_checkout_restored`"
 TITLE_CONTROL_UNAVAILABLE_MARKER = "`task_title_done` as verified not applicable"
 TERMINAL_CLEANUP_SECTION_MARKERS = {
     path: (
         "`cleanup-ready`",
         *ordered_markers,
         '" · Done"',
+        PRIMARY_CHECKOUT_RESTORED_MARKER,
         TITLE_CONTROL_UNAVAILABLE_MARKER,
         PRIVATE_REMEDIATION_CLEANUP_MARKER,
         PRIVATE_REMEDIATION_REMOTE_MARKER,
@@ -814,8 +816,21 @@ def strip_markdown_nonoperative_content(text: str) -> str:
         text,
         flags=re.DOTALL,
     )
-    visible_lines: list[str] = []
+    without_quotes_lines: list[str] = []
+    in_block_quote = False
     for line in without_comments.splitlines(keepends=True):
+        if re.match(r" {0,3}>", line) is not None:
+            in_block_quote = True
+            without_quotes_lines.append("\n" if line.endswith("\n") else "")
+        elif in_block_quote and line.strip():
+            without_quotes_lines.append("\n" if line.endswith("\n") else "")
+        else:
+            if not line.strip():
+                in_block_quote = False
+            without_quotes_lines.append(line)
+    without_quotes = "".join(without_quotes_lines)
+    visible_lines: list[str] = []
+    for line in without_quotes.splitlines(keepends=True):
         if re.match(r"(?: {4}|\t)", line) is not None:
             visible_lines.append("\n" if line.endswith("\n") else "")
         else:

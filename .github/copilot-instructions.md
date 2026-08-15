@@ -40,6 +40,9 @@ New Tabulators must use `window.AtlasoUiPatterns.createGrid(...)`; every new or 
   record `task_title_done` as verified not applicable with capability evidence, omit the visible suffix, and do not block
   otherwise-complete cleanup;
 
+  A primary-checkout task must restore the clean checkout to current `origin/main`, verify HEAD, delete only the exact
+  unreferenced local task branch, and record `primary_checkout_restored` before worktree removal becomes not applicable.
+
   Terminal order:
 
   1. `remote_branch_absent`

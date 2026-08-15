@@ -152,7 +152,9 @@ absence. An already absent ref still requires that identity and merge proof. Nev
 advisory state, and keep repository-wide automatic branch deletion disabled. The controller then uses
 `git worktree remove`, prunes stale registration metadata,
 and verifies that the worktree path and registration are absent. A primary-checkout task records worktree removal as
-not applicable and never removes that checkout. Finally, supported title controls append the exact suffix " · Done"
+not applicable only after a clean exact-head checkout fetches current `origin/main`, switches to local `main` without
+force, fast-forwards exactly to `origin/main`, verifies HEAD, deletes only an exact matching unreferenced local task
+branch, and records `primary_checkout_restored`. Finally, supported title controls append the exact suffix " · Done"
 once and leave the task unarchived unless archival is separately requested. If the runtime has no supported mutable
 title control, record `task_title_done` as verified not applicable with capability evidence, omit the visible suffix,
 and allow otherwise-complete cleanup to finish.
