@@ -116,17 +116,20 @@ test("the latest LDAP failure retains full-navigation fallback", async () => {
   assert.equal(state.coordinator.isLoading(), false);
 });
 
-test("an active LDAP tab suppresses history only when it matches the current URL", () => {
-  assert.equal(context.shouldSuppressLdapOrganizationHistory("organization-b", true, "organization-b"), true);
-  assert.equal(context.shouldSuppressLdapOrganizationHistory("organization-b", true, "organization-a"), false);
-  assert.equal(context.shouldSuppressLdapOrganizationHistory("organization-b", false, "organization-b"), false);
+test("an LDAP selection suppresses history only when it matches the current URL", () => {
+  assert.equal(context.shouldSuppressLdapOrganizationHistory("organization-b", "organization-b"), true);
+  assert.equal(context.shouldSuppressLdapOrganizationHistory("organization-b", "organization-a"), false);
 });
 
 test("queryless LDAP history resolves to the server-default organization", () => {
   assert.equal(context.ldapOrganizationIdForHistory("", "organization-a"), "organization-a");
   assert.equal(context.ldapOrganizationIdForHistory("organization-b", "organization-a"), "organization-b");
   const querylessDefault = context.ldapOrganizationIdForHistory("", "organization-a");
-  assert.equal(context.shouldSuppressLdapOrganizationHistory("organization-a", true, querylessDefault), true);
+  assert.equal(context.shouldSuppressLdapOrganizationHistory("organization-a", querylessDefault), true);
+});
+
+test("a pending popstate target suppresses duplicate history", () => {
+  assert.equal(context.shouldSuppressLdapOrganizationHistory("organization-c", "organization-c"), true);
 });
 
 test("queryless LDAP history supersedes a pending organization selection", async () => {

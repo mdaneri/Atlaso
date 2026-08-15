@@ -5360,8 +5360,8 @@ function createLdapOrganizationLoadCoordinator({ request, onData, onError, onBus
   };
 }
 
-function shouldSuppressLdapOrganizationHistory(organizationId, isActive, urlOrganizationId) {
-  return isActive && organizationId === urlOrganizationId;
+function shouldSuppressLdapOrganizationHistory(organizationId, urlOrganizationId) {
+  return organizationId === urlOrganizationId;
 }
 
 function ldapOrganizationIdForHistory(urlOrganizationId, querylessOrganizationId) {
@@ -5468,8 +5468,8 @@ function initializeLdapPageState() {
       const alreadyActive = link.classList.contains("active");
       const urlOrganizationId = new URL(window.location.href).searchParams.get("organization_id") || "";
       const historyOrganizationId = ldapOrganizationIdForHistory(urlOrganizationId, querylessOrganizationId);
-      const suppressHistory = shouldSuppressLdapOrganizationHistory(organizationId, alreadyActive, historyOrganizationId);
-      if (suppressHistory && !loadCoordinator.isLoading()) return;
+      const suppressHistory = shouldSuppressLdapOrganizationHistory(organizationId, historyOrganizationId);
+      if (alreadyActive && suppressHistory && !loadCoordinator.isLoading()) return;
       loadOrganization(link, suppressHistory ? { history: false } : {});
     });
   });
