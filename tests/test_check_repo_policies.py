@@ -1835,6 +1835,23 @@ def test_agent_policy_gate_honors_fences_before_html_comments(
         assert check_agent_policy_gate(tmp_path) == []
 
 
+def test_agent_policy_gate_preserves_comment_openers_in_code_spans(
+    tmp_path: Path,
+) -> None:
+    """Verify inline-code comment text cannot consume later visible policy.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    for relative_path in ORDERED_TERMINAL_CLEANUP_MARKERS:
+        write_policy_files(tmp_path)
+        path = tmp_path / relative_path
+        text = path.read_text(encoding="utf-8")
+        path.write_text("`literal <!--`\n" + text, encoding="utf-8")
+
+        assert check_agent_policy_gate(tmp_path) == []
+
+
 def test_agent_policy_gate_rejects_over_indented_fence_closers(
     tmp_path: Path,
 ) -> None:

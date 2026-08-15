@@ -871,6 +871,67 @@ def strip_markdown_fenced_code(text: str) -> str:
     return "".join(visible_lines)
 
 
+MARKDOWN_CODE_SPAN_PROTECTION = str.maketrans(
+    {
+        "!": "\ue000",
+        "<": "\ue001",
+        ">": "\ue002",
+        "[": "\ue003",
+        "]": "\ue004",
+        "(": "\ue005",
+        ")": "\ue006",
+    }
+)
+MARKDOWN_CODE_SPAN_RESTORATION = str.maketrans(
+    {replacement: source for source, replacement in MARKDOWN_CODE_SPAN_PROTECTION.items()}
+)
+
+
+def protect_markdown_code_spans(text: str) -> str:
+    """Protect rendered code-span content from later Markdown tokenizers.
+
+    Args:
+        text: Fence-normalized Markdown source.
+    """
+    protected_parts: list[str] = []
+    index = 0
+    while index < len(text):
+        if text[index] != "`":
+            protected_parts.append(text[index])
+            index += 1
+            continue
+        run_end = index + 1
+        while run_end < len(text) and text[run_end] == "`":
+            run_end += 1
+        delimiter = text[index:run_end]
+        cursor = run_end
+        closing_start: int | None = None
+        while cursor < len(text):
+            candidate = text.find(delimiter, cursor)
+            if candidate < 0:
+                break
+            before_is_backtick = candidate > 0 and text[candidate - 1] == "`"
+            closing_end = candidate + len(delimiter)
+            after_is_backtick = (
+                closing_end < len(text) and text[closing_end] == "`"
+            )
+            if not before_is_backtick and not after_is_backtick:
+                closing_start = candidate
+                break
+            cursor = closing_end
+        if closing_start is None:
+            protected_parts.append(delimiter)
+            index = run_end
+            continue
+        protected_parts.append(delimiter)
+        protected_parts.append(
+            text[run_end:closing_start].translate(MARKDOWN_CODE_SPAN_PROTECTION)
+        )
+        protected_parts.append(delimiter)
+        index = closing_start + len(delimiter)
+    return "".join(protected_parts)
+
+
 def strip_markdown_html_comments(text: str) -> str:
     """Blank HTML comments and raw-text blocks with token-aware precedence.
 
@@ -1505,7 +1566,8 @@ def strip_markdown_nonoperative_content(text: str) -> str:
         text: Markdown source whose operative prose must be inspected.
     """
     without_fenced_code = strip_markdown_fenced_code(text)
-    without_comments = strip_markdown_html_comments(without_fenced_code)
+    with_protected_code_spans = protect_markdown_code_spans(without_fenced_code)
+    without_comments = strip_markdown_html_comments(with_protected_code_spans)
     without_raw_directives = without_comments
     for directive_pattern in (
         r"<\?.*?(?:\?>|$)",
@@ -1832,7 +1894,8 @@ def strip_markdown_nonoperative_content(text: str) -> str:
         without_indented_code,
         frozenset(valid_reference_labels),
     )
-    return strip_markdown_fenced_code(without_link_metadata)
+    normalized = strip_markdown_fenced_code(without_link_metadata)
+    return normalized.translate(MARKDOWN_CODE_SPAN_RESTORATION)
 
 
 def extract_terminal_cleanup_order(cleanup_section: str) -> tuple[str, ...] | None:
