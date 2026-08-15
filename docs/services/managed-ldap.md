@@ -69,6 +69,9 @@ nested groups, and new groups default to Enabled before review. User creation ca
 enabling an account without an
 applied or staged password causes LDAP apply validation to stop before host mutation.
 
+Rapid organization-tab selections and browser back or forward navigation follow the latest selection. A superseded
+partial response cannot replace the selected organization, its URL, or its directory content.
+
 The one-time VCF bind credential opens with its **Bind password** help collapsed and focus on **Done**, leaving the
 credential text unselected until the operator deliberately copies or saves it.
 

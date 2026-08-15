@@ -5330,6 +5330,36 @@ function initializeLdapSettingsStatus(root = document) {
   }
 }
 
+function createLdapOrganizationLoadCoordinator({ request, onData, onError, onBusyChange }) {
+  let latestIntent = 0;
+  let loading = false;
+
+  const load = async (selection) => {
+    const intent = ++latestIntent;
+    loading = true;
+    onBusyChange(true, selection);
+    try {
+      const payload = await request(selection);
+      if (intent !== latestIntent) return false;
+      await onData(payload, selection);
+      return true;
+    } catch (error) {
+      if (intent === latestIntent) onError(error, selection);
+      return false;
+    } finally {
+      if (intent === latestIntent) {
+        loading = false;
+        onBusyChange(false, selection);
+      }
+    }
+  };
+
+  return {
+    load,
+    isLoading: () => loading,
+  };
+}
+
 function initializeLdapPageState() {
   initializeLdapSettingsStatus();
   const tabList = document.querySelector("[data-ldap-organization-tabs]");
@@ -5344,8 +5374,6 @@ function initializeLdapPageState() {
     // Page state persistence is optional when browser storage is unavailable.
   }
   const validStoredLink = links.find((link) => link.dataset.ldapOrganizationId === storedId);
-  let loading = false;
-
   const rememberOrganization = (organizationId) => {
     if (!organizationId) return;
     try {
@@ -5355,19 +5383,8 @@ function initializeLdapPageState() {
     }
   };
 
-  const loadOrganization = async (link, options = {}) => {
-    if (!(link instanceof HTMLAnchorElement) || loading) return;
-    const organizationId = link.dataset.ldapOrganizationId || "";
-    if (!organizationId) return;
-    const directoryPanel = document.getElementById("ldap-directory-panel");
-    const currentPanel = document.getElementById("ldap-organization-current");
-    if (!(directoryPanel instanceof HTMLElement) || !(currentPanel instanceof HTMLElement)) {
-      window.location.assign(link.href);
-      return;
-    }
-    loading = true;
-    directoryPanel.setAttribute("aria-busy", "true");
-    try {
+  const loadCoordinator = createLdapOrganizationLoadCoordinator({
+    request: async ({ link }) => {
       const response = await fetch(link.href, {
         credentials: "same-origin",
         headers: { Accept: "text/html", "X-Requested-With": "Atlaso" },
@@ -5376,6 +5393,14 @@ function initializeLdapPageState() {
       const nextDocument = new DOMParser().parseFromString(await response.text(), "text/html");
       const nextCurrentPanel = nextDocument.getElementById("ldap-organization-current");
       if (!(nextCurrentPanel instanceof HTMLElement)) throw new Error("LDAP organization response is incomplete.");
+      return nextDocument;
+    },
+    onData: (nextDocument, { link, options, organizationId }) => {
+      const currentPanel = document.getElementById("ldap-organization-current");
+      const nextCurrentPanel = nextDocument.getElementById("ldap-organization-current");
+      if (!(currentPanel instanceof HTMLElement) || !(nextCurrentPanel instanceof HTMLElement)) {
+        throw new Error("LDAP organization page state is incomplete.");
+      }
       currentPanel.replaceWith(document.importNode(nextCurrentPanel, true));
 
       ["ldap-user-dialog", "ldap-group-dialog", "ldap-group-members-modal"].forEach((dialogId) => {
@@ -5401,12 +5426,27 @@ function initializeLdapPageState() {
       initializeLdapDirectoryTables();
       initializeLdapPasswordModal();
       initializeConfirmationModals();
-    } catch (_error) {
+    },
+    onError: (_error, { link }) => window.location.assign(link.href),
+    onBusyChange: (busy) => {
+      const directoryPanel = document.getElementById("ldap-directory-panel");
+      if (!(directoryPanel instanceof HTMLElement)) return;
+      if (busy) directoryPanel.setAttribute("aria-busy", "true");
+      else directoryPanel.removeAttribute("aria-busy");
+    },
+  });
+
+  const loadOrganization = (link, options = {}) => {
+    if (!(link instanceof HTMLAnchorElement)) return;
+    const organizationId = link.dataset.ldapOrganizationId || "";
+    if (!organizationId) return;
+    const directoryPanel = document.getElementById("ldap-directory-panel");
+    const currentPanel = document.getElementById("ldap-organization-current");
+    if (!(directoryPanel instanceof HTMLElement) || !(currentPanel instanceof HTMLElement)) {
       window.location.assign(link.href);
-    } finally {
-      loading = false;
-      directoryPanel.removeAttribute("aria-busy");
+      return;
     }
+    return loadCoordinator.load({ link, options, organizationId });
   };
 
   const selectedId = currentId || activeId;
@@ -5415,8 +5455,9 @@ function initializeLdapPageState() {
     link.addEventListener("click", (event) => {
       if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
       event.preventDefault();
-      if (link.classList.contains("active")) return;
-      loadOrganization(link);
+      const alreadyActive = link.classList.contains("active");
+      if (alreadyActive && !loadCoordinator.isLoading()) return;
+      loadOrganization(link, alreadyActive ? { history: false } : {});
     });
   });
   window.addEventListener("popstate", () => {
