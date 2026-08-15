@@ -1744,6 +1744,10 @@ def test_worker_restart_reconciles_completed_success_against_durable_release(cli
         assert result["status"] == "failed"
         assert result["success"] is False
         assert result["release_transaction"]["failure_layer"] == "startup_reconciliation"
+        first_finished_at = recovered.finished_at
+
+        assert worker.recover_interrupted_worker_jobs(db) == 0
+        assert db.get(Job, "job_completed_inconsistent_release").finished_at == first_finished_at
 
 
 def test_worker_restart_fails_update_parent_after_children_commit(client, monkeypatch, tmp_path):
@@ -1907,6 +1911,7 @@ def test_worker_restart_keeps_release_finalizer_scoped_to_its_child(client, monk
         ("maintenance_cleanup", "maintenance_cleanup"),
         ("nginx_configuration", "nginx_configuration"),
         ("management_front_door", "management_front_door"),
+        ("finalizer_persistence", "finalizer_persistence"),
     ],
 )
 def test_failed_candidate_restores_previous_release_and_database(
@@ -2168,6 +2173,15 @@ def test_failed_candidate_restores_previous_release_and_database(
 
     monkeypatch.setattr(helper, "_release_activation_verification", activation)
     monkeypatch.setattr(helper, "_write_update_info", lambda _payload: None)
+    write_finalizer = helper._write_release_finalizer
+
+    def finalizer(payload):
+        """Inject a success-finalizer persistence failure inside the rollback boundary."""
+        if failure_stage == "finalizer_persistence" and payload.get("status") == "succeeded":
+            raise OSError("injected finalizer directory sync failure")
+        write_finalizer(payload)
+
+    monkeypatch.setattr(helper, "_write_release_finalizer", finalizer)
 
     with pytest.raises(ValueError, match="rolled back"):
         helper._apply_atlaso_release({}, {})

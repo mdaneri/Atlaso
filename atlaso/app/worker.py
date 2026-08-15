@@ -172,6 +172,7 @@ def recover_interrupted_worker_jobs(db: Session) -> int:
             if (
                 finalizer_job is not None
                 and finalizer_job.type == "appliance-update"
+                and finalizer_job.status == JobStatus.SUCCEEDED.value
                 and all(job.id != finalizer_job.id for job in jobs)
             ):
                 jobs.append(finalizer_job)

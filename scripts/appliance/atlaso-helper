@@ -11713,6 +11713,19 @@ def _apply_atlaso_release(
         if not activation["success"]:
             failure_layer = str(activation.get("failure_layer") or "activation_verification")
             raise ValueError(f"Candidate Atlaso release failed activation verification at {failure_layer}")
+        failure_layer = "release_cleanup"
+        _prune_old_releases(current=release_root, previous=previous)
+        failure_layer = "finalizer_persistence"
+        _write_release_finalizer(
+            {
+                **finalizer_evidence,
+                "status": "succeeded",
+                "rolled_back": False,
+                "service_health": True,
+                "active_release_verification": activation,
+                "finished_at": datetime.now(timezone.utc).isoformat(),
+            }
+        )
     except Exception as exc:
         _service_command("stop", "atlaso.service", "atlaso-console.service")
         _atomic_symlink(previous, ATLASO_CURRENT_LINK)
@@ -11778,17 +11791,6 @@ def _apply_atlaso_release(
         )
         shutil.rmtree(release_root, ignore_errors=True)
         raise ValueError(f"Atlaso release {version} failed and was rolled back: {exc}") from exc
-    _prune_old_releases(current=release_root, previous=previous)
-    _write_release_finalizer(
-        {
-            **finalizer_evidence,
-            "status": "succeeded",
-            "rolled_back": False,
-            "service_health": True,
-            "active_release_verification": activation,
-            "finished_at": datetime.now(timezone.utc).isoformat(),
-        }
-    )
     return channel, release, commands
 
 
