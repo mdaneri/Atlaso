@@ -98,7 +98,14 @@ class DnsDhcpApiRouter:
 
 
 def build_router(dependencies: DnsDhcpApiDependencies) -> DnsDhcpApiRouter:
-    """Build the DNS/DHCP API v1 router without importing its compatibility facade."""
+    """Build the DNS/DHCP API v1 router without importing its compatibility facade.
+
+    Args:
+        dependencies: Facade-owned helpers retained during structural extraction.
+
+    Returns:
+        Configured domain router and its stable endpoint callables.
+    """
     router = APIRouter(prefix="/api/v1", route_class=DocumentedAPIRoute)
 
     ensure_dns_for_dhcp_reservation = dependencies.ensure_dns_for_dhcp_reservation
