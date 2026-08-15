@@ -23,7 +23,9 @@ API v1 transports while keeping OIDC protocol endpoints, managed LDAP transports
 their established owners. Phase 8 extracts Managed LDAP UI and API v1 transports while retaining LDAP services,
 helpers, models, renderers, Appliance Apply execution, settings-archive core behavior, and OIDC protocol ownership in
 their established modules. Phase 9 extracts Network Boot and ESXi PXE management transports plus the remaining ESXi
-PXE API v1 transports while leaving the dedicated Network Boot API and protocol/media router unchanged.
+PXE API v1 transports while leaving the dedicated Network Boot API and protocol/media router unchanged. Phase 10
+extracts the VCF workflow management transports and their three API v1 status operations while preserving their
+separated effective positions and the Automation-owned contextual schedule transport.
 
 ## Ownership and responsibilities
 
@@ -185,8 +187,8 @@ Appliance Apply status, and runtime-service helpers through typed router builder
 monolithic facade.
 
 The UI registry places `managed_ldap` between `facade_between_dns_dhcp_managed_ldap` and
-`facade_between_managed_ldap_identity`, preserving its established position after Certificate Authority and before
-vSphere Key Providers. The API v1 registry places `managed_ldap` after `network_boot` and before
+`facade_between_managed_ldap_vcf_workflows`, preserving its established position after Certificate Authority and
+before VCF workflows. The API v1 registry places `managed_ldap` after `network_boot` and before
 `facade_after_managed_ldap`, preserving its established position after ESXi PXE and before vSphere Key Providers.
 
 Independently runnable transport coverage lives in `tests/routers/ui/test_managed_ldap.py` and
@@ -207,8 +209,8 @@ through the typed UI router builder. Neither extracted router imports a monolith
 
 The UI registry places `network_boot` between `facade_between_identity_network_boot` and
 `facade_after_network_boot`, preserving its established position after Web Terminal and before Backup Restore. The API
-v1 registry places `network_boot` between `facade_between_firewall_network_boot` and `managed_ldap`, preserving its
-established position after VCF Private Registry and before Managed LDAP.
+v1 registry places `network_boot` between `facade_between_vcf_private_registry_network_boot` and `managed_ldap`,
+preserving its established position after VCF Private Registry and before Managed LDAP.
 
 The separate `atlaso/app/api/network_boot.py` owner of `/api/v1/network-boot` and the protocol/media routes remains
 unchanged. Network Boot and ESXi PXE services, helpers, models, renderers, cross-domain DHCP/DNS integration, task and
@@ -221,6 +223,36 @@ Independently runnable facade-transport coverage lives in `tests/routers/ui/test
 template, browser asset, visible copy, interaction class, route, route name, operation ID, authorization scope, session
 or CSRF behavior, upload or download contract, redirect, status code, schema, audit action, route inventory, normalized
 OpenAPI output, desired state, or host-mutation boundary.
+
+## Extracted VCF workflow ownership
+
+The legacy HTTPS Repository bridge and the VCF Helper, Trust, Offline Depot, Private Registry, and Backups management
+transports live in `atlaso/app/routers/ui/vcf_workflows.py`. Their services, helpers, models, workers, lifecycle and task
+execution, download admission, Appliance Apply units, templates, and browser assets retain their established owners.
+The stable UI facade continues to export every established endpoint and helper name and supplies only the bounded
+compatibility dependencies needed by the extracted router.
+
+The UI registry places `vcf_workflows` between `facade_between_managed_ldap_vcf_workflows` and
+`facade_between_vcf_workflows_identity`. The following facade segment retains ESX Storage and the other transports that
+precede the extracted Identity router. The contextual
+`/ui/management/vcf-offline-depot/profiles/{profile_id}/schedules` transport remains in its earlier Automation-owned
+route block; extraction into the VCF workflow router would change both ownership and effective order.
+
+The three API v1 status transports live together in `atlaso/app/routers/api_v1/vcf_workflows.py`, but the module returns
+three ordered router contributions so their effective positions do not collapse. `vcf_workflows_backups` remains
+immediately after `facade_between_firewall_vcf_backups`; the facade segment through ESX Storage remains before
+`vcf_workflows_offline_depot`; the compatibility `/api/v1/repository/status` alias remains in
+`facade_between_offline_depot_private_registry`; and `vcf_workflows_private_registry` remains before
+`facade_between_vcf_private_registry_network_boot` and Network Boot. The stable API v1 facade continues to export all
+three operation callables and owns the shared Offline Depot status projection used by its repository alias.
+
+Independently runnable facade-transport coverage lives in `tests/routers/ui/test_vcf_workflows.py` and
+`tests/routers/api_v1/test_vcf_workflows.py`. Service, worker, lifecycle, task, download, protocol, and browser-JavaScript
+coverage remains with the established VCF and Automation test owners. This behavior-neutral extraction changes no
+template, CSS, JavaScript, control, layout, visible copy, interaction class, route, route name, operation ID,
+authorization scope, session or CSRF behavior, upload or download contract, redirect, status code, response schema,
+audit action, secret or redaction contract, route inventory, normalized OpenAPI output, desired state, or global
+Appliance Apply boundary.
 
 ## Route and OpenAPI compatibility
 
@@ -284,6 +316,7 @@ python -m pytest -q tests/routers/ui/test_dns_dhcp.py tests/routers/api_v1/test_
 python -m pytest -q tests/routers/ui/test_identity.py tests/routers/api_v1/test_identity.py
 python -m pytest -q tests/routers/ui/test_managed_ldap.py tests/routers/api_v1/test_managed_ldap.py
 python -m pytest -q tests/routers/ui/test_network_boot.py tests/routers/api_v1/test_network_boot.py tests/test_network_boot.py
+python -m pytest -q tests/routers/ui/test_vcf_workflows.py tests/routers/api_v1/test_vcf_workflows.py
 python -m pytest -q tests/test_openapi_contract.py tests/test_ui_route_namespaces.py tests/test_ui_compliance.py
 python scripts/generate_router_contract_baselines.py --check
 python scripts/check_python_static_analysis.py
