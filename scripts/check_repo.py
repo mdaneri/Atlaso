@@ -965,28 +965,13 @@ def strip_markdown_blank_terminated_html_blocks(text: str) -> str:
     return "".join(visible_lines)
 
 
-def strip_markdown_closed_html_containers(text: str) -> str:
-    """Blank balanced non-void HTML containers while preserving line structure.
+def strip_markdown_inert_html_containers(text: str) -> str:
+    """Blank balanced inert HTML containers while preserving line structure.
 
     Args:
-        text: Markdown source whose closed raw HTML containers must be normalized.
+        text: Markdown source whose inert raw HTML containers must be normalized.
     """
-    void_elements = {
-        "area",
-        "base",
-        "br",
-        "col",
-        "embed",
-        "hr",
-        "img",
-        "input",
-        "link",
-        "meta",
-        "param",
-        "source",
-        "track",
-        "wbr",
-    }
+    inert_elements = {"iframe", "noscript", "template", "xmp"}
     tag_pattern = re.compile(
         r'''<(?P<closing>/)?(?P<tag>[A-Za-z][A-Za-z0-9-]*)\b'''
         r'''(?:[^<>"']|"[^"]*"|'[^']*')*(?P<self_closing>/)?[ \t\r\n]*>''',
@@ -1000,7 +985,7 @@ def strip_markdown_closed_html_containers(text: str) -> str:
         if (
             opening_match.group("closing") is not None
             or opening_match.group("self_closing") is not None
-            or tag_name in void_elements
+            or tag_name not in inert_elements
         ):
             search_cursor = opening_match.end()
             continue
@@ -1018,7 +1003,7 @@ def strip_markdown_closed_html_containers(text: str) -> str:
                     break
             elif (
                 candidate.group("self_closing") is None
-                and tag_name not in void_elements
+                and tag_name in inert_elements
             ):
                 depth += 1
         if closing_end is None:
@@ -1069,7 +1054,7 @@ def strip_markdown_nonoperative_content(text: str) -> str:
     without_raw_html_blocks = strip_markdown_blank_terminated_html_blocks(
         without_raw_html_blocks
     )
-    without_raw_html_blocks = strip_markdown_closed_html_containers(
+    without_raw_html_blocks = strip_markdown_inert_html_containers(
         without_raw_html_blocks,
     )
     without_html_tags = re.sub(

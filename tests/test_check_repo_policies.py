@@ -1165,7 +1165,6 @@ def test_agent_policy_gate_ignores_raw_html_block_markers(tmp_path: Path) -> Non
             "noscript",
             "iframe",
             "div",
-            "span",
         ):
             write_policy_files(tmp_path)
             path = tmp_path / relative_path
@@ -1247,7 +1246,6 @@ def test_agent_policy_gate_ignores_raw_html_policy_sections(tmp_path: Path) -> N
             "noscript",
             "iframe",
             "div",
-            "span",
         ):
             write_policy_files(tmp_path)
             path = tmp_path / relative_path
@@ -1271,6 +1269,34 @@ def test_agent_policy_gate_ignores_raw_html_policy_sections(tmp_path: Path) -> N
             assert findings[0].message == (
                 "completed-task cleanup section is missing: " + anchor
             )
+
+
+def test_agent_policy_gate_preserves_visible_inline_html_content(
+    tmp_path: Path,
+) -> None:
+    """Verify ordinary inline HTML retains rendered policy text.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    marker = '`cleanup-ready`'
+    for relative_path in ORDERED_TERMINAL_CLEANUP_MARKERS:
+        for tag_name, visible_prefix in (
+            ("span", ""),
+            ("em", "Required: "),
+            ("code", "Required: "),
+        ):
+            write_policy_files(tmp_path)
+            path = tmp_path / relative_path
+            text = path.read_text(encoding="utf-8").replace(
+                marker,
+                f'{visible_prefix}<{tag_name} data-example="metadata">'
+                f'{marker}</{tag_name}>',
+                1,
+            )
+            path.write_text(text, encoding="utf-8")
+
+            assert check_agent_policy_gate(tmp_path) == []
 
 
 def test_agent_policy_gate_ignores_unterminated_raw_html_blocks(
