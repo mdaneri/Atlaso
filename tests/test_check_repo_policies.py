@@ -1240,6 +1240,50 @@ def test_agent_policy_gate_ignores_inline_link_metadata_markers(tmp_path: Path) 
                 )
 
 
+def test_agent_policy_gate_preserves_invalid_inline_link_suffixes(
+    tmp_path: Path,
+) -> None:
+    """Verify invalid inline-link-shaped policy remains visible.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    marker = '`cleanup-ready`'
+    for relative_path in ORDERED_TERMINAL_CLEANUP_MARKERS:
+        write_policy_files(tmp_path)
+        path = tmp_path / relative_path
+        text = path.read_text(encoding="utf-8").replace(
+            marker,
+            f"[handoff](invalid destination {marker})",
+            1,
+        )
+        path.write_text(text, encoding="utf-8")
+
+        assert check_agent_policy_gate(tmp_path) == []
+
+
+def test_agent_policy_gate_preserves_unresolved_reference_suffixes(
+    tmp_path: Path,
+) -> None:
+    """Verify unresolved full-reference policy remains visible.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    marker = '`cleanup-ready`'
+    for relative_path in ORDERED_TERMINAL_CLEANUP_MARKERS:
+        write_policy_files(tmp_path)
+        path = tmp_path / relative_path
+        text = path.read_text(encoding="utf-8").replace(
+            marker,
+            f"[handoff][{marker}]",
+            1,
+        )
+        path.write_text(text, encoding="utf-8")
+
+        assert check_agent_policy_gate(tmp_path) == []
+
+
 def test_agent_policy_gate_ignores_reference_link_metadata_markers(
     tmp_path: Path,
 ) -> None:
@@ -1513,6 +1557,32 @@ def test_agent_policy_gate_ignores_raw_html_block_markers(tmp_path: Path) -> Non
             assert findings[0].message == (
                 f"completed-task cleanup section marker is missing: {marker}"
             )
+
+
+def test_agent_policy_gate_preserves_policy_after_raw_text_comments(
+    tmp_path: Path,
+) -> None:
+    """Verify comment tokens inside closed raw-text blocks do not escape them.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    marker = '`cleanup-ready`'
+    for relative_path in ORDERED_TERMINAL_CLEANUP_MARKERS:
+        anchor = TERMINAL_CLEANUP_SECTION_ANCHORS[relative_path]
+        content_prefix = "" if anchor.startswith("#") else "  "
+        for tag_name in ("script", "style", "textarea", "pre"):
+            write_policy_files(tmp_path)
+            path = tmp_path / relative_path
+            text = path.read_text(encoding="utf-8").replace(
+                marker,
+                f"<{tag_name}>\n{content_prefix}<!--\n"
+                f"{content_prefix}</{tag_name}>\n{content_prefix}{marker}",
+                1,
+            )
+            path.write_text(text, encoding="utf-8")
+
+            assert check_agent_policy_gate(tmp_path) == []
 
 
 def test_agent_policy_gate_ignores_nested_raw_html_container_markers(

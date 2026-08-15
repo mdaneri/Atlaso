@@ -872,7 +872,7 @@ def strip_markdown_fenced_code(text: str) -> str:
 
 
 def strip_markdown_html_comments(text: str) -> str:
-    """Blank HTML comments without matching openers inside tag attributes.
+    """Blank HTML comments and raw-text blocks with token-aware precedence.
 
     Args:
         text: Fence-normalized Markdown source.
@@ -890,6 +890,10 @@ def strip_markdown_html_comments(text: str) -> str:
             r"/?[A-Za-z]",
             text[index + 1 : index + 3],
         ) is not None:
+            tag_match = re.match(
+                r"<(?P<closing>/)?(?P<tag>[A-Za-z][A-Za-z0-9-]*)",
+                text[index:],
+            )
             cursor = index + 1
             quote: str | None = None
             while cursor < len(text):
@@ -901,8 +905,35 @@ def strip_markdown_html_comments(text: str) -> str:
                     quote = character
                 elif character == ">":
                     cursor += 1
-                    visible_parts.append(text[index:cursor])
-                    index = cursor
+                    tag_text = text[index:cursor]
+                    tag_name = (
+                        tag_match.group("tag").casefold()
+                        if tag_match is not None
+                        else ""
+                    )
+                    if (
+                        tag_match is not None
+                        and tag_match.group("closing") is None
+                        and tag_name in {"pre", "script", "style", "textarea"}
+                        and re.search(r"/[ \t\r\n]*>$", tag_text) is None
+                    ):
+                        closing_match = re.search(
+                            rf"</{re.escape(tag_name)}[ \t\r\n]*>",
+                            text[cursor:],
+                            flags=re.IGNORECASE,
+                        )
+                        raw_end = (
+                            len(text)
+                            if closing_match is None
+                            else cursor + closing_match.end()
+                        )
+                        visible_parts.append(
+                            re.sub(r"[^\r\n]", "", text[index:raw_end])
+                        )
+                        index = raw_end
+                    else:
+                        visible_parts.append(tag_text)
+                        index = cursor
                     break
                 cursor += 1
             else:
@@ -914,11 +945,94 @@ def strip_markdown_html_comments(text: str) -> str:
     return "".join(visible_parts)
 
 
-def strip_markdown_inline_link_metadata(text: str) -> str:
+def normalize_reference_label(label: str) -> str:
+    """Return a case-folded, whitespace-normalized reference label.
+
+    Args:
+        label: Reference label content without the surrounding brackets.
+    """
+    unescaped = re.sub(r"\\([!\"#$%&'()*+,./:;<=>?@\[\\\]^_`{|}~-])", r"\1", label)
+    return re.sub(r"\s+", " ", unescaped).strip().casefold()
+
+
+def inline_link_target_is_valid(target: str) -> bool:
+    """Return whether parenthesized inline-link metadata is valid.
+
+    Args:
+        target: Text inside the link's outer parentheses.
+    """
+    index = 0
+    while index < len(target) and target[index].isspace():
+        index += 1
+    if index == len(target):
+        return True
+    if target[index] == "<":
+        index += 1
+        while index < len(target):
+            if target[index] == "\\" and index + 1 < len(target):
+                index += 2
+                continue
+            if target[index] == ">":
+                index += 1
+                break
+            if target[index] in "<>\r\n":
+                return False
+            index += 1
+        else:
+            return False
+    else:
+        destination_start = index
+        depth = 0
+        while index < len(target):
+            character = target[index]
+            if character == "\\" and index + 1 < len(target):
+                index += 2
+                continue
+            if character.isspace() or ord(character) < 0x20:
+                break
+            if character in "<>" or (character == ")" and depth == 0):
+                return False
+            if character == "(":
+                depth += 1
+            elif character == ")":
+                depth -= 1
+            index += 1
+        if index == destination_start or depth != 0:
+            return False
+    tail = target[index:]
+    if not tail.strip():
+        return True
+    if not tail[0].isspace():
+        return False
+    title = tail.strip()
+    if title[0] in {'"', "'"}:
+        closing = title[0]
+    elif title[0] == "(":
+        closing = ")"
+    else:
+        return False
+    cursor = 1
+    while cursor < len(title):
+        if title[cursor] == "\\" and cursor + 1 < len(title):
+            cursor += 2
+            continue
+        if title[cursor] == closing:
+            return not title[cursor + 1 :].strip()
+        if closing == ")" and title[cursor] == "(":
+            return False
+        cursor += 1
+    return False
+
+
+def strip_markdown_inline_link_metadata(
+    text: str,
+    reference_labels: frozenset[str] = frozenset(),
+) -> str:
     """Preserve rendered labels while removing inline link/image metadata.
 
     Args:
         text: Markdown source whose inline links and images must be normalized.
+        reference_labels: Valid definition labels available to full-reference links.
     """
     visible_parts: list[str] = []
     index = 0
@@ -940,6 +1054,7 @@ def strip_markdown_inline_link_metadata(text: str) -> str:
             elif text[cursor] == "]":
                 label_depth -= 1
             cursor += 1
+        label_close = cursor - 1
         if not label_depth and cursor < len(text) and text[cursor] == "[":
             reference_cursor = cursor + 1
             while reference_cursor < len(text):
@@ -951,8 +1066,18 @@ def strip_markdown_inline_link_metadata(text: str) -> str:
                     continue
                 if text[reference_cursor] == "]":
                     reference_cursor += 1
+                    reference_label = text[cursor + 1 : reference_cursor - 1]
+                    if not reference_label:
+                        reference_label = text[label_open + 1 : label_close]
+                    if normalize_reference_label(reference_label) not in reference_labels:
+                        visible_parts.append(text[index:reference_cursor])
+                        index = reference_cursor
+                        break
                     visible_parts.append(
-                        strip_markdown_inline_link_metadata(text[label_open:cursor])
+                        strip_markdown_inline_link_metadata(
+                            text[label_open:cursor],
+                            reference_labels,
+                        )
                     )
                     visible_parts.append(
                         "".join(
@@ -970,7 +1095,6 @@ def strip_markdown_inline_link_metadata(text: str) -> str:
             visible_parts.append(text[index])
             index += 1
             continue
-        label_close = cursor - 1
         target_open = cursor
         cursor += 1
         target_depth = 1
@@ -1006,8 +1130,15 @@ def strip_markdown_inline_link_metadata(text: str) -> str:
             visible_parts.append(text[index])
             index += 1
             continue
+        if not inline_link_target_is_valid(text[target_open + 1 : cursor - 1]):
+            visible_parts.append(text[index:cursor])
+            index = cursor
+            continue
         visible_parts.append(
-            strip_markdown_inline_link_metadata(text[label_open : label_close + 1])
+            strip_markdown_inline_link_metadata(
+                text[label_open : label_close + 1],
+                reference_labels,
+            )
         )
         visible_parts.append(
             "".join(
@@ -1271,6 +1402,17 @@ def scan_reference_definition_label(text: str) -> tuple[int | None, bool]:
     return None, True
 
 
+def normalized_reference_definition_label(text: str, end: int) -> str:
+    """Return the normalized label from a scanned definition prefix.
+
+    Args:
+        text: Reference-definition source containing the label.
+        end: Index immediately after the label's trailing colon.
+    """
+    label_start = text.find("[", 0, end)
+    return normalize_reference_label(text[label_start + 1 : end - 2])
+
+
 def reference_destination_prefix_end(text: str) -> int | None:
     """Return the end of a balanced reference destination prefix.
 
@@ -1402,7 +1544,6 @@ def strip_markdown_nonoperative_content(text: str) -> str:
         lambda match: re.sub(r"[^\r\n]", "", match.group(0)),
         without_raw_html_blocks,
     )
-    without_link_metadata = strip_markdown_inline_link_metadata(without_html_tags)
     without_quotes_lines: list[str] = []
     in_block_quote = False
     interrupting_block_patterns = (
@@ -1415,7 +1556,7 @@ def strip_markdown_nonoperative_content(text: str) -> str:
         ),
     )
     for line_index, line in enumerate(
-        without_link_metadata.splitlines(keepends=True)
+        without_html_tags.splitlines(keepends=True)
     ):
         if re.match(r" {0,3}>", line) is not None:
             in_block_quote = True
@@ -1444,6 +1585,9 @@ def strip_markdown_nonoperative_content(text: str) -> str:
     open_reference_title_lines: list[tuple[int, str]] = []
     pending_reference_label_text = ""
     pending_reference_label_lines: list[tuple[int, str]] = []
+    pending_reference_normalized_label: str | None = None
+    open_reference_normalized_label: str | None = None
+    valid_reference_labels: set[str] = set()
     top_level_list_content_indent: int | None = None
     paragraph_open = False
     for line in without_quotes.splitlines(keepends=True):
@@ -1464,6 +1608,7 @@ def strip_markdown_nonoperative_content(text: str) -> str:
         if not block_line.strip():
             paragraph_open = False
         reference_label_end: int | None = None
+        reference_normalized_label: str | None = None
         completed_reference_label_lines: list[tuple[int, str]] = []
         if pending_reference_label_lines:
             combined_label = pending_reference_label_text + block_line
@@ -1475,6 +1620,10 @@ def strip_markdown_nonoperative_content(text: str) -> str:
                     pending_reference_label_text
                 )
                 completed_reference_label_lines = pending_reference_label_lines
+                reference_normalized_label = normalized_reference_definition_label(
+                    combined_label,
+                    combined_label_end,
+                )
                 pending_reference_label_text = ""
                 pending_reference_label_lines = []
             elif label_may_continue and line.strip():
@@ -1495,13 +1644,17 @@ def strip_markdown_nonoperative_content(text: str) -> str:
                     block_line,
                     open_reference_title_delimiter,
                 ):
+                    if open_reference_normalized_label is not None:
+                        valid_reference_labels.add(open_reference_normalized_label)
                     open_reference_title_delimiter = None
                     open_reference_title_lines = []
+                    open_reference_normalized_label = None
                 continue
             for line_index, original_line in open_reference_title_lines:
                 visible_lines[line_index] = original_line
             open_reference_title_delimiter = None
             open_reference_title_lines = []
+            open_reference_normalized_label = None
         if reference_label_end is None and not paragraph_open:
             reference_label_end, label_may_continue = scan_reference_definition_label(
                 block_line
@@ -1511,6 +1664,11 @@ def strip_markdown_nonoperative_content(text: str) -> str:
                 pending_reference_label_lines = [(len(visible_lines), line)]
                 visible_lines.append("\n" if line.endswith("\n") else "")
                 continue
+            if reference_label_end is not None:
+                reference_normalized_label = normalized_reference_definition_label(
+                    block_line,
+                    reference_label_end,
+                )
         inline_open_title_delimiter: str | None = None
         if reference_label_end is not None:
             inline_reference_tail = block_line[reference_label_end:]
@@ -1547,6 +1705,7 @@ def strip_markdown_nonoperative_content(text: str) -> str:
                     ) in completed_reference_label_lines:
                         visible_lines[line_index] = original_line
                     reference_label_end = None
+                    reference_normalized_label = None
         continued_destination_prefix_end = (
             reference_destination_prefix_end(block_line)
             if link_reference_destination_pending
@@ -1585,9 +1744,11 @@ def strip_markdown_nonoperative_content(text: str) -> str:
             continued_destination_match is not None
             or continued_open_title_delimiter is not None
         ):
+            completed_reference_label = pending_reference_normalized_label
             link_reference_destination_pending = False
             pending_reference_line_index = None
             pending_reference_line = None
+            pending_reference_normalized_label = None
             inline_title_match = re.search(
                 r'''[ \t]+(?:"[^"\r\n]*"|'[^'\r\n]*'|\([^()\r\n]*\))[ \t]*(?:\r?\n)?$''',
                 block_line,
@@ -1597,7 +1758,10 @@ def strip_markdown_nonoperative_content(text: str) -> str:
                 link_reference_title_pending = False
                 open_reference_title_delimiter = continued_open_title_delimiter
                 open_reference_title_lines = [(len(visible_lines) - 1, line)]
+                open_reference_normalized_label = completed_reference_label
             else:
+                if completed_reference_label is not None:
+                    valid_reference_labels.add(completed_reference_label)
                 link_reference_title_pending = inline_title_match is None
         else:
             if link_reference_destination_pending:
@@ -1607,7 +1771,9 @@ def strip_markdown_nonoperative_content(text: str) -> str:
                 link_reference_destination_pending = False
                 pending_reference_line_index = None
                 pending_reference_line = None
+                pending_reference_normalized_label = None
             if reference_label_end is not None:
+                assert reference_normalized_label is not None
                 reference_tail = block_line[reference_label_end:]
                 destination_is_pending = not reference_tail.strip()
                 link_reference_destination_pending = destination_is_pending
@@ -1615,6 +1781,9 @@ def strip_markdown_nonoperative_content(text: str) -> str:
                     len(visible_lines) if destination_is_pending else None
                 )
                 pending_reference_line = line if destination_is_pending else None
+                pending_reference_normalized_label = (
+                    reference_normalized_label if destination_is_pending else None
+                )
                 inline_title_match = re.search(
                     r'''[ \t]+(?:"[^"\r\n]*"|'[^'\r\n]*'|\([^()\r\n]*\))[ \t]*(?:\r?\n)?$''',
                     block_line,
@@ -1626,6 +1795,9 @@ def strip_markdown_nonoperative_content(text: str) -> str:
                 open_reference_title_delimiter = inline_open_title_delimiter
                 if open_reference_title_delimiter is not None:
                     link_reference_title_pending = False
+                    open_reference_normalized_label = reference_normalized_label
+                elif not destination_is_pending:
+                    valid_reference_labels.add(reference_normalized_label)
                 open_reference_title_lines = (
                     [(len(visible_lines) - 1, line)]
                     if open_reference_title_delimiter is not None
@@ -1656,7 +1828,11 @@ def strip_markdown_nonoperative_content(text: str) -> str:
     for line_index, original_line in pending_reference_label_lines:
         visible_lines[line_index] = original_line
     without_indented_code = "".join(visible_lines)
-    return strip_markdown_fenced_code(without_indented_code)
+    without_link_metadata = strip_markdown_inline_link_metadata(
+        without_indented_code,
+        frozenset(valid_reference_labels),
+    )
+    return strip_markdown_fenced_code(without_link_metadata)
 
 
 def extract_terminal_cleanup_order(cleanup_section: str) -> tuple[str, ...] | None:
