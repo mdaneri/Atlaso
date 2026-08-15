@@ -713,7 +713,12 @@ def check_agent_policy_gate(root: Path) -> list[Finding]:
         section_markers = TERMINAL_CLEANUP_SECTION_MARKERS.get(relative_path, ())
         section_anchor = TERMINAL_CLEANUP_SECTION_ANCHORS.get(relative_path)
         section_anchor_count = (
-            sum(line.startswith(section_anchor) for line in text.splitlines())
+            sum(
+                line == section_anchor
+                if section_anchor.startswith("#")
+                else line.startswith(section_anchor)
+                for line in text.splitlines()
+            )
             if section_anchor is not None
             else 0
         )
@@ -781,7 +786,14 @@ def extract_terminal_cleanup_order(cleanup_section: str) -> tuple[str, ...] | No
         for line in lines[anchors[0] + 1 :]
         if line.strip()
     )
-    return transitions[: len(TERMINAL_CLEANUP_ORDER_LINES)]
+    expected_count = len(TERMINAL_CLEANUP_ORDER_LINES)
+    order_lines = transitions[:expected_count]
+    if (
+        len(transitions) > expected_count
+        and re.fullmatch(r"\d+\.\s+.+", transitions[expected_count]) is not None
+    ):
+        order_lines += (transitions[expected_count],)
+    return order_lines
 
 
 def extract_markdown_policy_section(text: str, anchor: str) -> str | None:
@@ -792,7 +804,11 @@ def extract_markdown_policy_section(text: str, anchor: str) -> str | None:
         anchor: Exact heading or top-level list-item prefix for the cleanup policy.
     """
     lines = text.splitlines(keepends=True)
-    starts = tuple(index for index, line in enumerate(lines) if line.startswith(anchor))
+    starts = tuple(
+        index
+        for index, line in enumerate(lines)
+        if (line.rstrip("\r\n") == anchor if anchor.startswith("#") else line.startswith(anchor))
+    )
     if len(starts) != 1:
         return None
     start = starts[0]

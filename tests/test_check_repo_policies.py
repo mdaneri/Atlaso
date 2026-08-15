@@ -617,6 +617,58 @@ def test_agent_policy_gate_rejects_duplicate_cleanup_sections(tmp_path: Path) ->
         )
 
 
+def test_agent_policy_gate_rejects_suffixed_cleanup_headings(tmp_path: Path) -> None:
+    """Verify that a suffixed heading cannot replace the canonical anchor.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    for relative_path in ORDERED_TERMINAL_CLEANUP_MARKERS:
+        anchor = TERMINAL_CLEANUP_SECTION_ANCHORS[relative_path]
+        if not anchor.startswith("#"):
+            continue
+        write_policy_files(tmp_path)
+        path = tmp_path / relative_path
+        path.write_text(
+            path.read_text(encoding="utf-8").replace(anchor, anchor + " (legacy)", 1),
+            encoding="utf-8",
+        )
+
+        findings = check_agent_policy_gate(tmp_path)
+
+        assert len(findings) == 1
+        assert findings[0].path == path
+        assert findings[0].message == (
+            "completed-task cleanup section is missing: " + anchor
+        )
+
+
+def test_agent_policy_gate_rejects_fourth_terminal_transition(tmp_path: Path) -> None:
+    """Verify that the terminal lifecycle contains exactly three transitions.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    for relative_path, markers in ORDERED_TERMINAL_CLEANUP_MARKERS.items():
+        write_policy_files(tmp_path)
+        path = tmp_path / relative_path
+        text = path.read_text(encoding="utf-8")
+        expected_order = "\n".join(TERMINAL_CLEANUP_ORDER_LINES)
+        path.write_text(
+            text.replace(expected_order, expected_order + "\n4. archived", 1),
+            encoding="utf-8",
+        )
+
+        findings = check_agent_policy_gate(tmp_path)
+
+        assert len(findings) == 1
+        assert findings[0].path == path
+        assert findings[0].message == (
+            "completed-task cleanup markers must remain ordered: "
+            + " -> ".join(markers)
+        )
+
+
 def test_agent_policy_gate_rejects_missing_entry_point(tmp_path: Path) -> None:
     """Verify that agent policy gate rejects missing entry point.
 
