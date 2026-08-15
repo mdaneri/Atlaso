@@ -18,7 +18,9 @@ service shared by both extracted transports. Phase 4 extracts Routes/WAN and Fir
 preserving the established UI, API v1, desired-state, and global Appliance Apply contracts. Phase 5 extracts DNS/DHCP
 transport ownership while retaining dnsmasq behavior and every cross-domain integration. Phase 6 extracts the four
 Appliance Apply management transports while keeping submission, execution, recovery, unit construction, status
-projection, logging, and audit behavior in the stable UI facade.
+projection, logging, and audit behavior in the stable UI facade. Phase 7 extracts bounded identity-management UI and
+API v1 transports while keeping OIDC protocol endpoints, managed LDAP transports, and identity-domain behavior in
+their established owners.
 
 ## Ownership and responsibilities
 
@@ -150,6 +152,27 @@ rendering, and cross-domain behavior retain their existing test owners. This ext
 listener dependency, permission, CSRF/session behavior, desired-state boundary, route inventory, or normalized OpenAPI
 contract.
 
+## Extracted identity-management ownership
+
+Authentication and OpenID Connect administration, UI API-token administration, Local Users management and status,
+and the legacy LDAP-users redirect live in `atlaso/app/routers/ui/identity.py`. Current-identity and API-token lifecycle
+operations live in `atlaso/app/routers/api_v1/identity.py`. The stable facades continue to export the established
+endpoint and compatibility-helper names while supplying the UI module with facade-owned rendering, CSRF, authorization,
+desired-state status, service-binding, DNS/CA reconciliation, and Local Users helpers. Neither domain router imports a
+monolithic facade.
+
+The UI registry places `identity` after `facade_between_dns_dhcp_identity` and before `facade_after_identity`, preserving
+the established position between ESX Storage and Services. The API v1 registry places `identity` after
+`facade_before_identity` and before `facade_between_identity_physical_vlans`, preserving the established position after
+API login and before Dashboard. `/api/v1/auth/login` remains in the facade, OIDC protocol endpoints under `/identity`
+retain their dedicated ownership, and managed LDAP transports remain unextracted.
+
+Independently runnable transport coverage lives in `tests/routers/ui/test_identity.py` and
+`tests/routers/api_v1/test_identity.py`. OIDC protocol and service behavior retain their existing test owners. This
+extraction changes no template, browser asset, visible copy, route, route name, operation ID, authorization scope,
+session or CSRF behavior, secret-once or redaction behavior, redirect, response schema, route inventory, or normalized
+OpenAPI contract.
+
 ## Route and OpenAPI compatibility
 
 `tests/contracts/route_inventory.json` records every effective application route in order, including browser,
@@ -209,6 +232,7 @@ python -m pytest -q tests/routers/ui/test_physical_vlans.py tests/routers/api_v1
 python -m pytest -q tests/routers/ui/test_routes_wan.py tests/routers/api_v1/test_routes_wan.py
 python -m pytest -q tests/routers/ui/test_firewall.py tests/routers/api_v1/test_firewall.py
 python -m pytest -q tests/routers/ui/test_dns_dhcp.py tests/routers/api_v1/test_dns_dhcp.py tests/test_dns_dhcp.py
+python -m pytest -q tests/routers/ui/test_identity.py tests/routers/api_v1/test_identity.py
 python -m pytest -q tests/test_openapi_contract.py tests/test_ui_route_namespaces.py tests/test_ui_compliance.py
 python scripts/generate_router_contract_baselines.py --check
 python scripts/check_python_static_analysis.py

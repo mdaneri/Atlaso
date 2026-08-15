@@ -70,7 +70,9 @@ def test_facades_register_extracted_domains_in_exact_order():
         "firewall",
         "physical_vlans",
         "dns_dhcp",
-        "facade_after_dns_dhcp",
+        "facade_between_dns_dhcp_identity",
+        "identity",
+        "facade_after_identity",
     )
     assert ui.UI_ROUTER_REGISTRY.routers_for_plane("management") == (
         ui._management_before_routes_wan_router,
@@ -79,13 +81,17 @@ def test_facades_register_extracted_domains_in_exact_order():
         ui.firewall_router,
         ui.physical_vlans_router,
         ui.dns_dhcp_router,
-        ui._management_after_dns_dhcp_router,
+        ui._management_between_dns_dhcp_identity_router,
+        ui.identity_router,
+        ui._management_after_identity_router,
     )
     assert ui.UI_ROUTER_REGISTRY.routers_for_plane("public") == (ui.public_router,)
     assert ui.UI_ROUTER_REGISTRY.routers_for_plane("front_door") == (ui.front_door_router,)
     assert ui.UI_ROUTER_REGISTRY.routers_for_plane("protocol") == (ui.protocol_router,)
     assert v1.API_V1_ROUTER_REGISTRY.domains == (
-        "facade_before_physical_vlans",
+        "facade_before_identity",
+        "identity",
+        "facade_between_identity_physical_vlans",
         "physical_vlans",
         "routes_wan",
         "facade_between_routes_wan_dns_dhcp",
@@ -94,7 +100,9 @@ def test_facades_register_extracted_domains_in_exact_order():
         "facade_after_firewall",
     )
     assert v1.API_V1_ROUTER_REGISTRY.routers_for_plane("api_v1") == (
-        v1._api_before_physical_vlans_router,
+        v1._api_before_identity_router,
+        v1.identity_router,
+        v1._api_between_identity_physical_vlans_router,
         v1.physical_vlans_router,
         v1.routes_wan_router,
         v1._api_between_routes_wan_dns_dhcp_router,
@@ -117,6 +125,9 @@ def test_facades_register_extracted_domains_in_exact_order():
     assert {
         route.endpoint.__module__ for route in ui.dns_dhcp_router.routes
     } == {"atlaso.app.routers.ui.dns_dhcp"}
+    assert {route.endpoint.__module__ for route in ui.identity_router.routes} == {
+        "atlaso.app.routers.ui.identity"
+    }
     assert {
         route.endpoint.__module__ for route in v1.routes_wan_router.routes
     } == {"atlaso.app.routers.api_v1.routes_wan"}
@@ -129,6 +140,9 @@ def test_facades_register_extracted_domains_in_exact_order():
     assert {
         route.endpoint.__module__ for route in v1.dns_dhcp_router.routes
     } == {"atlaso.app.routers.api_v1.dns_dhcp"}
+    assert {route.endpoint.__module__ for route in v1.identity_router.routes} == {
+        "atlaso.app.routers.api_v1.identity"
+    }
 
 
 def test_registry_rejects_duplicate_domain_names():

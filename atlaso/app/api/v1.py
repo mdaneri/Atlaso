@@ -32,7 +32,6 @@ from atlaso.app.audit import record_audit
 from atlaso.app.config import Settings, get_settings
 from atlaso.app.database import get_db
 from atlaso.app.models import (
-    ApiToken,
     ApplianceSettings,
     AuditEvent,
     CaCertificate,
@@ -85,6 +84,7 @@ from atlaso.app.routers.api_v1.dns_dhcp import (
 )
 from atlaso.app.routers.api_v1.firewall import FirewallApiDependencies
 from atlaso.app.routers.api_v1.firewall import build_router as build_firewall_api_router
+from atlaso.app.routers.api_v1.identity import build_router as build_identity_api_router
 from atlaso.app.routers.api_v1.physical_vlans import PhysicalVlanApiDependencies
 from atlaso.app.routers.api_v1.physical_vlans import (
     build_router as build_physical_vlan_api_router,
@@ -97,7 +97,6 @@ from atlaso.app.routers.registry import RouterContribution
 from atlaso.app.schemas import (
     ApiTokenCreate,
     ApiTokenCreated,
-    ApiTokenResponse,
     ApplianceVersionResponse,
     AuditEventResponse,
     DashboardResponse,
@@ -122,7 +121,6 @@ from atlaso.app.schemas import (
     EsxStorageVolumeCreate,
     EsxStorageVolumeResponse,
     EsxStorageVolumeUpdate,
-    IdentityResponse,
     JobResponse,
     LdapBindCredentialResponse,
     LdapGroupCreate,
@@ -340,7 +338,7 @@ from atlaso.app.services.vsphere_key_providers import (
     usable_certificates,
     validate_provider_state,
 )
-from atlaso.app.token_service import create_token_for_user, token_to_response
+from atlaso.app.token_service import create_token_for_user
 from atlaso.app.ui import refresh_interface_service_dns_aliases
 
 router = APIRouter(prefix="/api/v1", route_class=DocumentedAPIRoute)
@@ -956,170 +954,18 @@ def login_for_api(
     return create_token_for_user(db, user=user, create=payload, settings=settings, actor=user.username)
 
 
-@router.get("/auth/me", response_model=IdentityResponse, tags=["Auth"], operation_id="getCurrentIdentity")
-def get_me(identity: Annotated[Identity, Depends(require_scope("read:dashboard"))]) -> IdentityResponse:
-    """Get Current Identity.
+_api_before_identity_router = router
+_identity_api = build_identity_api_router()
+identity_router = _identity_api.router
+get_me = _identity_api.endpoints["get_me"]
+list_api_tokens = _identity_api.endpoints["list_api_tokens"]
+create_api_token = _identity_api.endpoints["create_api_token"]
+get_api_token = _identity_api.endpoints["get_api_token"]
+revoke_token = _identity_api.endpoints["revoke_token"]
+delete_api_token = _identity_api.endpoints["delete_api_token"]
+revoke_api_token = _identity_api.endpoints["revoke_api_token"]
 
-    Requires the `read:dashboard` API scope. This read-only operation does not change saved desired
-    state or appliance runtime state.
-
-    Args:
-        identity: Authenticated identity authorizing the operation.
-    """
-    return IdentityResponse(
-        username=identity.username,
-        role=identity.role,
-        roles=identity.roles,
-        scopes=sorted(identity.scopes),
-        auth_type=identity.auth_type,
-    )
-
-
-@router.get("/api-tokens", response_model=list[ApiTokenResponse], tags=["API Tokens"], operation_id="listApiTokens")
-def list_api_tokens(
-    identity: Annotated[Identity, Depends(require_scope("read:dashboard"))],
-    db: Session = Depends(get_db),
-) -> list[ApiTokenResponse]:
-    """List Api Tokens.
-
-    Requires the `read:dashboard` API scope. This read-only operation does not change saved desired
-    state or appliance runtime state.
-
-    Args:
-        identity: Authenticated identity authorizing the operation.
-        db: Active database session used by the operation.
-    """
-    query = select(ApiToken).order_by(desc(ApiToken.created_at))
-    if not identity.has_role("admin"):
-        query = query.where(ApiToken.owner_user_id == identity.user_id)
-    return [token_to_response(token) for token in db.execute(query).scalars().all()]
-
-
-@router.post(
-    "/api-tokens",
-    response_model=ApiTokenCreated,
-    status_code=201,
-    tags=["API Tokens"],
-    operation_id="createApiToken",
-)
-def create_api_token(
-    payload: ApiTokenCreate,
-    identity: Annotated[Identity, Depends(require_scope("read:dashboard"))],
-    db: Session = Depends(get_db),
-    settings: Settings = Depends(get_settings),
-) -> ApiTokenCreated:
-    """Create Api Token.
-
-    Requires the `read:dashboard` API scope. The operation changes saved Atlaso application state;
-    any appliance host enforcement remains subject to the documented apply or task boundary for the
-    resource.
-
-    Args:
-        payload: Validated request or task payload consumed by the operation.
-        identity: Authenticated identity authorizing the operation.
-        db: Active database session used by the operation.
-        settings: Current Atlaso settings used to configure the operation.
-    """
-    user = db.get(User, identity.user_id)
-    if not user:
-        raise HTTPException(status_code=404, detail="Current user not found")
-    return create_token_for_user(db, user=user, create=payload, settings=settings, actor=identity.username)
-
-
-@router.get("/api-tokens/{token_id}", response_model=ApiTokenResponse, tags=["API Tokens"], operation_id="getApiToken")
-def get_api_token(
-    token_id: Annotated[int, ApiPath(description='Unique identifier of the token record addressed by this operation.')],
-    identity: Annotated[Identity, Depends(require_scope("read:dashboard"))],
-    db: Session = Depends(get_db),
-) -> ApiTokenResponse:
-    """Get Api Token.
-
-    Requires the `read:dashboard` API scope. This read-only operation does not change saved desired
-    state or appliance runtime state.
-
-    Args:
-        token_id: Stable identifier of the associated token resource.
-        identity: Authenticated identity authorizing the operation.
-        db: Active database session used by the operation.
-    """
-    token = db.get(ApiToken, token_id)
-    if not token or (not identity.has_role("admin") and token.owner_user_id != identity.user_id):
-        raise HTTPException(status_code=404, detail="API token not found")
-    return token_to_response(token)
-
-
-def revoke_token(db: Session, token: ApiToken, identity: Identity) -> ApiTokenResponse:
-    """Return revoke token.
-
-    Args:
-        db: Active database session.
-        token: Token supplied by the caller.
-        identity: Authenticated identity authorizing the request.
-    """
-    token.enabled = False
-    token.revoked_at = utcnow()
-    token.revoked_by = identity.username
-    db.add(token)
-    db.commit()
-    db.refresh(token)
-    record_audit(
-        db,
-        actor=identity.username,
-        action="revoke_api_token",
-        resource_type="api_token",
-        resource_id=str(token.id),
-        detail=f"Revoked API token {token.name}",
-    )
-    return token_to_response(token)
-
-
-@router.delete("/api-tokens/{token_id}", status_code=204, tags=["API Tokens"], operation_id="deleteApiToken")
-def delete_api_token(
-    token_id: Annotated[int, ApiPath(description='Unique identifier of the token record addressed by this operation.')],
-    identity: Annotated[Identity, Depends(require_scope("read:dashboard"))],
-    db: Session = Depends(get_db),
-) -> Response:
-    """Delete Api Token.
-
-    Requires the `read:dashboard` API scope. Removal or revocation takes effect in Atlaso
-    application state; appliance host changes remain subject to the documented apply boundary for
-    the resource.
-
-    Args:
-        token_id: Stable identifier of the associated token resource.
-        identity: Authenticated identity authorizing the operation.
-        db: Active database session used by the operation.
-    """
-    token = db.get(ApiToken, token_id)
-    if not token or (not identity.has_role("admin") and token.owner_user_id != identity.user_id):
-        raise HTTPException(status_code=404, detail="API token not found")
-    revoke_token(db, token, identity)
-    return Response(status_code=204)
-
-
-@router.post("/api-tokens/{token_id}/revoke", response_model=ApiTokenResponse, tags=["API Tokens"], operation_id="revokeApiToken")
-def revoke_api_token(
-    token_id: Annotated[int, ApiPath(description='Unique identifier of the token record addressed by this operation.')],
-    identity: Annotated[Identity, Depends(require_scope("read:dashboard"))],
-    db: Session = Depends(get_db),
-) -> ApiTokenResponse:
-    """Revoke Api Token.
-
-    Requires the `read:dashboard` API scope. The operation changes saved Atlaso application state;
-    any appliance host enforcement remains subject to the documented apply or task boundary for the
-    resource.
-
-    Args:
-        token_id: Stable identifier of the associated token resource.
-        identity: Authenticated identity authorizing the operation.
-        db: Active database session used by the operation.
-    """
-    token = db.get(ApiToken, token_id)
-    if not token or (not identity.has_role("admin") and token.owner_user_id != identity.user_id):
-        raise HTTPException(status_code=404, detail="API token not found")
-    return revoke_token(db, token, identity)
-
-
+router = APIRouter(prefix="/api/v1", route_class=DocumentedAPIRoute)
 @router.get("/dashboard", response_model=DashboardResponse, tags=["Dashboard"], operation_id="getDashboard")
 def get_dashboard(
     identity: Annotated[Identity, Depends(require_scope("read:dashboard"))],
@@ -1184,7 +1030,7 @@ def get_monitor(
     return MonitorResponse(**monitor_payload(db, hours=hours))
 
 
-_api_before_physical_vlans_router = router
+_api_between_identity_physical_vlans_router = router
 _physical_vlans_api = build_physical_vlan_api_router(
     PhysicalVlanApiDependencies(
         refresh_interface_service_dns_aliases=refresh_interface_service_dns_aliases,
@@ -5167,8 +5013,16 @@ add_placeholder_resource_routes()
 
 _api_after_firewall_router = router
 API_V1_ROUTER_REGISTRY.register(
-    "facade_before_physical_vlans",
-    (RouterContribution(plane="api_v1", router=_api_before_physical_vlans_router),),
+    "facade_before_identity",
+    (RouterContribution(plane="api_v1", router=_api_before_identity_router),),
+)
+API_V1_ROUTER_REGISTRY.register(
+    "identity",
+    (RouterContribution(plane="api_v1", router=identity_router),),
+)
+API_V1_ROUTER_REGISTRY.register(
+    "facade_between_identity_physical_vlans",
+    (RouterContribution(plane="api_v1", router=_api_between_identity_physical_vlans_router),),
 )
 API_V1_ROUTER_REGISTRY.register(
     "physical_vlans",
@@ -5201,7 +5055,9 @@ API_V1_ROUTER_REGISTRY.register(
 )
 API_V1_ROUTER_REGISTRY.validate_domains(
     (
-        "facade_before_physical_vlans",
+        "facade_before_identity",
+        "identity",
+        "facade_between_identity_physical_vlans",
         "physical_vlans",
         "routes_wan",
         "facade_between_routes_wan_dns_dhcp",

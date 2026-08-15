@@ -50,35 +50,6 @@ def test_invalid_jwt_is_rejected(client):
     assert response.status_code == 401
 
 
-def test_api_login_creates_token_and_me_works(client):
-    """Verify that api login creates token and me works.
-
-    Args:
-        client: HTTP test client used to exercise the Atlaso application.
-    """
-    token, metadata = create_token(client)
-    assert metadata["name"] == "test token"
-    assert "raw_token" not in metadata
-
-    response = client.get("/api/v1/auth/me", headers={"Authorization": f"Bearer {token}"})
-    assert response.status_code == 200
-    assert response.json()["username"] == "admin"
-    assert response.json()["auth_type"] == "bearer"
-
-
-def test_api_token_is_shown_only_once_in_list(client):
-    """Verify that api token is shown only once in list.
-
-    Args:
-        client: HTTP test client used to exercise the Atlaso application.
-    """
-    token, _metadata = create_token(client)
-    response = client.get("/api/v1/api-tokens", headers={"Authorization": f"Bearer {token}"})
-    assert response.status_code == 200
-    assert response.json()
-    assert "raw_token" not in response.text
-
-
 def test_settings_api_updates_root_ssh_desired_state(client):
     """Verify that settings api updates root ssh desired state.
 
@@ -140,21 +111,6 @@ def test_monitor_api_requires_monitoring_scope(client):
     assert "virtualization" in payload
     assert "cpu" in payload
     assert "disk_devices" in payload
-
-
-
-def test_revoked_token_is_rejected(client):
-    """Verify that revoked token is rejected.
-
-    Args:
-        client: HTTP test client used to exercise the Atlaso application.
-    """
-    token, metadata = create_token(client, scopes=["read:dashboard"])
-    revoke = client.post(f"/api/v1/api-tokens/{metadata['id']}/revoke", headers={"Authorization": f"Bearer {token}"})
-    assert revoke.status_code == 200
-
-    response = client.get("/api/v1/dashboard", headers={"Authorization": f"Bearer {token}"})
-    assert response.status_code == 401
 
 
 def test_expired_token_request_is_rejected(client):
