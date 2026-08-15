@@ -94,6 +94,48 @@ def test_factory_reset_transaction_lock_rejects_overlapping_posix_runner(
             pytest.fail("contending runner must not enter the transaction")
 
 
+def test_factory_reset_stops_timestamped_transient_automation_units(monkeypatch):
+    """Reset quiesces independent automation services after stopping the worker.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+    """
+    import atlaso.app.factory_reset as factory_reset
+
+    commands: list[list[str]] = []
+    units = [
+        "atlaso-automation-20260815230000123456.service",
+        "atlaso-automation-20260815230100654321.service",
+    ]
+
+    def fake_run(command, **_kwargs):
+        """Return a bounded systemd inventory and stopped-state verification.
+
+        Args:
+            command: Exact system command arguments.
+            **_kwargs: Subprocess options ignored by the test double.
+        """
+        commands.append(command)
+        if command[1] == "list-units":
+            stdout = "\n".join(f"{unit} loaded active running Atlaso automation" for unit in units)
+            return subprocess.CompletedProcess(command, 0, stdout, "")
+        if command[1] == "is-active":
+            return subprocess.CompletedProcess(command, 3, "", "")
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(factory_reset.subprocess, "run", fake_run)
+
+    factory_reset._stop_application_services(boot_resume=False)
+
+    assert commands[0] == ["systemctl", "stop", "atlaso-worker.service", "atlaso.service"]
+    assert commands[1][-1] == "atlaso-automation-*.service"
+    assert commands[2] == ["systemctl", "stop", *units]
+    assert commands[3:] == [
+        ["systemctl", "is-active", "--quiet", units[0]],
+        ["systemctl", "is-active", "--quiet", units[1]],
+    ]
+
+
 def test_factory_reset_scrubs_credentials_outside_apply_staging(tmp_path, monkeypatch):
     """Reset removes retained SSH and Web Terminal credentials without touching payloads.
 

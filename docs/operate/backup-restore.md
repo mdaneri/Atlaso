@@ -51,6 +51,8 @@ The reset:
 - removes all control-plane records, including local and external users, password hashes, API tokens, sessions,
   schedules, queued and completed jobs, automation history, audit events, vault entries, certificates, VLANs, routes,
   service configuration, and settings-archive metadata;
+- stops Atlaso and its worker, then stops and verifies every timestamped `atlaso-automation-*` transient service before
+  runtime activation so a pre-reset script or its loaded vault credential cannot outlive the reset transaction;
 - recreates only factory/bootstrap records, including the bootstrap accounts, management `eth0`, the appliance DNS
   record, and built-in CA profiles; VCF Offline Depot download profiles are not recreated;
 - enables the minimum routing, firewall, authentication, and management-plane defaults while leaving optional services

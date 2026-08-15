@@ -65,6 +65,7 @@ CA_MANAGED_PATH_BASE = Path("/etc/atlaso")
 LOCAL_USERS_HOME_DIRECTORY = Path("/var/lib/atlaso/users")
 LOCAL_USER_NAME_PATTERN = re.compile(r"^[a-z_][a-z0-9_-]{0,31}$")
 BOOTSTRAP_AUTHORIZED_KEY_NAMES = ("authorized_keys", "authorized_keys2")
+AUTOMATION_TRANSIENT_UNIT_PATTERN = re.compile(r"^atlaso-automation-\d{20}\.service$")
 WEB_TERMINAL_CREDENTIAL_PATHS = (
     Path("/etc/atlaso/ssh/web-terminal-ca"),
     Path("/etc/atlaso/ssh/web-terminal-ca.pub"),
@@ -352,6 +353,48 @@ def _run_systemctl(*arguments: str) -> None:
         raise FactoryResetError(detail)
 
 
+def _stop_transient_automation_units() -> None:
+    """Stop every bounded Atlaso automation transient unit after worker quiescence."""
+    completed = subprocess.run(
+        [
+            "systemctl",
+            "list-units",
+            "--all",
+            "--type=service",
+            "--no-legend",
+            "--no-pager",
+            "--plain",
+            "atlaso-automation-*.service",
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if completed.returncode != 0:
+        raise FactoryResetError("Factory reset could not inventory running automation units.")
+    units: list[str] = []
+    for line in completed.stdout.splitlines():
+        matches = [token for token in line.split() if AUTOMATION_TRANSIENT_UNIT_PATTERN.fullmatch(token)]
+        if len(matches) != 1:
+            raise FactoryResetError("Factory reset encountered an unsafe automation unit inventory.")
+        units.append(matches[0])
+    units = sorted(set(units))
+    if not units:
+        return
+    _run_systemctl("stop", *units)
+    for unit in units:
+        active = subprocess.run(
+            ["systemctl", "is-active", "--quiet", unit],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        if active.returncode == 0:
+            raise FactoryResetError("Factory reset could not stop an Atlaso automation unit.")
+        if active.returncode not in {3, 4}:
+            raise FactoryResetError("Factory reset could not verify an Atlaso automation unit stopped.")
+
+
 def _stop_application_services(*, boot_resume: bool) -> None:
     """Quiesce database writers before runtime and database replacement.
 
@@ -360,8 +403,9 @@ def _stop_application_services(*, boot_resume: bool) -> None:
     """
     if boot_resume:
         _run_systemctl("stop", "atlaso-worker.service")
-        return
-    _run_systemctl("stop", "atlaso-worker.service", "atlaso.service")
+    else:
+        _run_systemctl("stop", "atlaso-worker.service", "atlaso.service")
+    _stop_transient_automation_units()
 
 
 def _schedule_readiness_finalizer() -> None:
