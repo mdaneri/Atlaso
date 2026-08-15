@@ -962,16 +962,31 @@ def strip_markdown_blank_terminated_inert_html_blocks(text: str) -> str:
     return "".join(visible_lines)
 
 
-def strip_markdown_inert_html_containers(text: str) -> str:
-    """Blank balanced inert HTML containers while preserving line structure.
+def has_hidden_html_attribute(attributes: str) -> bool:
+    """Return whether an HTML start tag carries the ``hidden`` attribute.
 
     Args:
-        text: Markdown source whose inert raw HTML containers must be normalized.
+        attributes: Raw attribute text from an HTML start tag.
+    """
+    return re.search(
+        r'''(?:^|[ \t\r\n\f])hidden(?:[ \t\r\n\f]*=[ \t\r\n\f]*'''
+        r'''(?:"[^"]*"|'[^']*'|[^\s"'=<>`]+))?(?=[ \t\r\n\f/]|$)''',
+        attributes,
+        flags=re.IGNORECASE,
+    ) is not None
+
+
+def strip_markdown_hidden_html_containers(text: str) -> str:
+    """Blank balanced non-rendered HTML containers while preserving lines.
+
+    Args:
+        text: Markdown source whose hidden raw HTML containers must be normalized.
     """
     inert_elements = {"iframe", "noscript", "template", "xmp"}
     tag_pattern = re.compile(
         r'''<(?P<closing>/)?(?P<tag>[A-Za-z][A-Za-z0-9-]*)\b'''
-        r'''(?:[^<>"']|"[^"]*"|'[^']*')*(?P<self_closing>/)?[ \t\r\n]*>''',
+        r'''(?P<attributes>(?:[^<>"']|"[^"]*"|'[^']*')*?)'''
+        r'''(?P<self_closing>/)?[ \t\r\n]*>''',
         flags=re.IGNORECASE,
     )
     visible_parts: list[str] = []
@@ -982,7 +997,12 @@ def strip_markdown_inert_html_containers(text: str) -> str:
         if (
             opening_match.group("closing") is not None
             or opening_match.group("self_closing") is not None
-            or tag_name not in inert_elements
+            or (
+                tag_name not in inert_elements
+                and not has_hidden_html_attribute(
+                    opening_match.group("attributes")
+                )
+            )
         ):
             search_cursor = opening_match.end()
             continue
@@ -998,10 +1018,7 @@ def strip_markdown_inert_html_containers(text: str) -> str:
                 if depth == 0:
                     closing_end = candidate.end()
                     break
-            elif (
-                candidate.group("self_closing") is None
-                and tag_name in inert_elements
-            ):
+            elif candidate.group("self_closing") is None:
                 depth += 1
         if closing_end is None:
             search_cursor = opening_match.end()
@@ -1014,6 +1031,29 @@ def strip_markdown_inert_html_containers(text: str) -> str:
         search_cursor = closing_end
     visible_parts.append(text[output_cursor:])
     return "".join(visible_parts)
+
+
+def reference_definition_label_end(line: str) -> int | None:
+    """Return the index after an escape-aware reference label and colon.
+
+    Args:
+        line: Candidate Markdown reference-definition line.
+    """
+    index = 0
+    while index < min(3, len(line)) and line[index] == " ":
+        index += 1
+    if index >= len(line) or line[index] != "[":
+        return None
+    index += 1
+    label_start = index
+    while index < len(line) and line[index] not in "\r\n":
+        if line[index] == "\\" and index + 1 < len(line):
+            index += 2
+            continue
+        if line[index] == "]" and index + 1 < len(line) and line[index + 1] == ":":
+            return index + 2 if index > label_start else None
+        index += 1
+    return None
 
 
 def unclosed_reference_title_delimiter(text: str) -> str | None:
@@ -1091,7 +1131,7 @@ def strip_markdown_nonoperative_content(text: str) -> str:
     without_raw_html_blocks = strip_markdown_blank_terminated_inert_html_blocks(
         without_raw_html_blocks
     )
-    without_raw_html_blocks = strip_markdown_inert_html_containers(
+    without_raw_html_blocks = strip_markdown_hidden_html_containers(
         without_raw_html_blocks,
     )
     without_html_tags = re.sub(
@@ -1168,7 +1208,7 @@ def strip_markdown_nonoperative_content(text: str) -> str:
                 visible_lines[line_index] = original_line
             open_reference_title_delimiter = None
             open_reference_title_lines = []
-        reference_match = re.match(r" {0,3}\[[^\]\r\n]+\]:", block_line)
+        reference_label_end = reference_definition_label_end(block_line)
         continued_destination_prefix_match = (
             re.match(
                 r''' {0,3}(?:<(?:(?:\\.)|[^<>\r\n\\])*>|'''
@@ -1232,8 +1272,8 @@ def strip_markdown_nonoperative_content(text: str) -> str:
                 link_reference_destination_pending = False
                 pending_reference_line_index = None
                 pending_reference_line = None
-            if reference_match is not None:
-                reference_tail = block_line[reference_match.end() :]
+            if reference_label_end is not None:
+                reference_tail = block_line[reference_label_end:]
                 destination_is_pending = not reference_tail.strip()
                 link_reference_destination_pending = destination_is_pending
                 pending_reference_line_index = (

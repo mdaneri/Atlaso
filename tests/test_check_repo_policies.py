@@ -1226,6 +1226,41 @@ def test_agent_policy_gate_ignores_multiline_reference_titles(
             )
 
 
+def test_agent_policy_gate_ignores_escaped_reference_label_metadata(
+    tmp_path: Path,
+) -> None:
+    """Verify escaped label brackets do not expose reference metadata.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    marker = '`cleanup-ready`'
+    sibling = "\n- following policy"
+    for relative_path in ORDERED_TERMINAL_CLEANUP_MARKERS:
+        write_policy_files(tmp_path)
+        path = tmp_path / relative_path
+        anchor = TERMINAL_CLEANUP_SECTION_ANCHORS[relative_path]
+        link_prefix = "" if anchor.startswith("#") else "  "
+        text = path.read_text(encoding="utf-8").replace(marker, "", 1)
+        hidden_marker = (
+            f"\n{link_prefix}[policy\\]]: https://example.invalid/{marker}"
+        )
+        path.write_text(
+            text + hidden_marker
+            if anchor.startswith("#")
+            else text.replace(sibling, hidden_marker + sibling, 1),
+            encoding="utf-8",
+        )
+
+        findings = check_agent_policy_gate(tmp_path)
+
+        assert len(findings) == 1
+        assert findings[0].path == path
+        assert findings[0].message == (
+            f"completed-task cleanup section marker is missing: {marker}"
+        )
+
+
 def test_agent_policy_gate_ignores_raw_html_block_markers(tmp_path: Path) -> None:
     """Verify raw HTML container bodies cannot satisfy markers.
 
@@ -1348,6 +1383,40 @@ def test_agent_policy_gate_ignores_raw_html_policy_sections(tmp_path: Path) -> N
             assert findings[0].message == (
                 "completed-task cleanup section is missing: " + anchor
             )
+
+
+def test_agent_policy_gate_ignores_hidden_html_policy_sections(
+    tmp_path: Path,
+) -> None:
+    """Verify an HTML hidden attribute makes the wrapped policy non-operative.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    sibling = "\n- following policy"
+    for relative_path in ORDERED_TERMINAL_CLEANUP_MARKERS:
+        write_policy_files(tmp_path)
+        path = tmp_path / relative_path
+        anchor = TERMINAL_CLEANUP_SECTION_ANCHORS[relative_path]
+        text = path.read_text(encoding="utf-8")
+        section_start = text.index(anchor)
+        section_end = text.index(sibling, section_start)
+        path.write_text(
+            text[:section_start]
+            + '<div class="policy" hidden>\n'
+            + text[section_start:section_end]
+            + "\n</div>"
+            + text[section_end:],
+            encoding="utf-8",
+        )
+
+        findings = check_agent_policy_gate(tmp_path)
+
+        assert len(findings) == 1
+        assert findings[0].path == path
+        assert findings[0].message == (
+            "completed-task cleanup section is missing: " + anchor
+        )
 
 
 def test_agent_policy_gate_preserves_visible_inline_html_content(
