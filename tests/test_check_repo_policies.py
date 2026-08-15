@@ -1781,6 +1781,7 @@ def test_agent_policy_gate_ignores_css_hidden_html_policy_sections(
         for style in (
             "display:none",
             "display:/**/none",
+            r"display:\6e one",
             "color:red; DISPLAY: none !important;",
             "visibility:hidden",
             "visibility: collapse !important",
@@ -2069,7 +2070,7 @@ def test_agent_policy_gate_ignores_indented_cleanup_markers(tmp_path: Path) -> N
         write_policy_files(tmp_path)
         path = tmp_path / relative_path
         anchor = TERMINAL_CLEANUP_SECTION_ANCHORS[relative_path]
-        indentation = "    " if anchor.startswith("#") else "      "
+        indentation = "    " if anchor.startswith("#") else "         "
         text = path.read_text(encoding="utf-8").replace(marker, "", 1)
         insertion = f"\n{indentation}{marker}"
         path.write_text(
@@ -2308,6 +2309,30 @@ def test_agent_policy_gate_keeps_empty_list_markers_in_lazy_block_quotes(
                 == f"completed-task cleanup section marker is missing: {marker}"
                 for finding in findings
             )
+
+
+def test_agent_policy_gate_preserves_deeply_nested_list_policy(
+    tmp_path: Path,
+) -> None:
+    """Verify deep-list content is not mistaken for indented code.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    marker = '`cleanup-ready`'
+    for relative_path in ORDERED_TERMINAL_CLEANUP_MARKERS:
+        anchor = TERMINAL_CLEANUP_SECTION_ANCHORS[relative_path]
+        content_prefix = "" if anchor.startswith("#") else "  "
+        write_policy_files(tmp_path)
+        path = tmp_path / relative_path
+        replacement = (
+            f"- outer\n{content_prefix}  - inner\n"
+            f"{content_prefix}    - deep\n{content_prefix}      {marker}"
+        )
+        text = path.read_text(encoding="utf-8").replace(marker, replacement, 1)
+        path.write_text(text, encoding="utf-8")
+
+        assert check_agent_policy_gate(tmp_path) == []
 
 
 def test_agent_policy_gate_preserves_list_items_after_block_quotes(

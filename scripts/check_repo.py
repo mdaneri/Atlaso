@@ -816,21 +816,16 @@ def strip_markdown_fenced_code(text: str) -> str:
     visible_lines: list[str] = []
     fence_character: str | None = None
     fence_length = 0
-    top_level_list_content_indent: int | None = None
+    list_content_indents: list[int] = []
     for line in text.splitlines(keepends=True):
-        if fence_character is None:
-            list_match = re.match(
-                r" {0,3}(?:[*+-]|\d{1,9}[.)])([ \t]+)",
-                line,
-            )
-            if list_match is not None:
-                top_level_list_content_indent = list_match.end()
-            elif line.strip() and not line.startswith((" ", "\t")):
-                top_level_list_content_indent = None
+        list_content_indent = update_markdown_list_content_indent(
+            line,
+            list_content_indents,
+        )
         block_line = (
-            line[top_level_list_content_indent:]
-            if top_level_list_content_indent is not None
-            and line.startswith(" " * top_level_list_content_indent)
+            line[list_content_indent:]
+            if list_content_indent is not None
+            and line.startswith(" " * list_content_indent)
             else line
         )
         relative_indent = len(block_line) - len(block_line.lstrip(" "))
@@ -869,6 +864,43 @@ def strip_markdown_fenced_code(text: str) -> str:
             continue
         visible_lines.append(line)
     return "".join(visible_lines)
+
+
+def update_markdown_list_content_indent(
+    line: str,
+    content_indents: list[int],
+) -> int | None:
+    """Update nested list indentation and return the active content indent.
+
+    Args:
+        line: Current Markdown source line.
+        content_indents: Mutable stack of active absolute content indents.
+    """
+    leading_spaces = len(line) - len(line.lstrip(" "))
+    list_match = re.match(
+        r"(?P<indent> *)(?:[*+-]|\d{1,9}[.)])(?P<spacing>[ \t]+)",
+        line,
+    )
+    list_can_start = (
+        list_match is not None
+        and (
+            leading_spaces <= 3
+            if not content_indents
+            else leading_spaces <= content_indents[-1] + 3
+        )
+    )
+    if list_can_start:
+        while content_indents and content_indents[-1] > leading_spaces:
+            content_indents.pop()
+        container_indent = content_indents[-1] if content_indents else None
+        content_indent = list_match.end()
+        if not content_indents or content_indents[-1] != content_indent:
+            content_indents.append(content_indent)
+        return container_indent
+    elif line.strip():
+        while content_indents and content_indents[-1] > leading_spaces:
+            content_indents.pop()
+    return content_indents[-1] if content_indents else None
 
 
 MARKDOWN_CODE_SPAN_PROTECTION = str.maketrans(
@@ -1278,6 +1310,7 @@ def has_css_hidden_style(attributes: str) -> bool:
             if value is not None
         )
         style = re.sub(r"/\*.*?\*/", "", style, flags=re.DOTALL)
+        style = decode_css_escapes(style)
         hidden_declarations = (
             r"display\s*:\s*none",
             r"visibility\s*:\s*(?:hidden|collapse)",
@@ -1295,6 +1328,27 @@ def has_css_hidden_style(attributes: str) -> bool:
         ):
             return True
     return False
+
+
+def decode_css_escapes(value: str) -> str:
+    """Decode CSS escapes before declaration matching.
+
+    Args:
+        value: Raw CSS declaration text.
+    """
+    def replace_hex_escape(match: re.Match[str]) -> str:
+        codepoint = int(match.group("hex"), 16)
+        if codepoint == 0 or codepoint > 0x10FFFF or 0xD800 <= codepoint <= 0xDFFF:
+            return "\ufffd"
+        return chr(codepoint)
+
+    decoded = re.sub(
+        r"\\(?P<hex>[0-9A-Fa-f]{1,6})(?:[ \t\r\n\f])?",
+        replace_hex_escape,
+        value,
+    )
+    decoded = re.sub(r"\\(?:\r\n|[\r\n\f])", "", decoded)
+    return re.sub(r"\\([^\r\n\f])", r"\1", decoded)
 
 
 def starts_markdown_html_block(line: str) -> bool:
@@ -1650,21 +1704,17 @@ def strip_markdown_nonoperative_content(text: str) -> str:
     pending_reference_normalized_label: str | None = None
     open_reference_normalized_label: str | None = None
     valid_reference_labels: set[str] = set()
-    top_level_list_content_indent: int | None = None
+    list_content_indents: list[int] = []
     paragraph_open = False
     for line in without_quotes.splitlines(keepends=True):
-        top_level_list_match = re.match(
-            r"(?:[*+-]|\d{1,9}[.)])([ \t]+)",
+        list_content_indent = update_markdown_list_content_indent(
             line,
+            list_content_indents,
         )
-        if top_level_list_match is not None:
-            top_level_list_content_indent = top_level_list_match.end()
-        elif line.strip() and not line.startswith((" ", "\t")):
-            top_level_list_content_indent = None
         block_line = (
-            line[top_level_list_content_indent:]
-            if top_level_list_content_indent is not None
-            and line.startswith(" " * top_level_list_content_indent)
+            line[list_content_indent:]
+            if list_content_indent is not None
+            and line.startswith(" " * list_content_indent)
             else line
         )
         if not block_line.strip():
