@@ -70,6 +70,10 @@ emit compact 30-second heartbeats with elapsed time and cache size instead of st
 through Packer. Successful operations report their duration, while failures retain the TDNF exit status and replay a
 normalized, bounded output tail.
 
+Packer also stages the shared udev disk-identity rule and the VMware data-disk policy. The shared provisioner validates
+and installs both from the staged source tree before the application sync populates `/opt/atlaso`, so this early
+disk-safety setup never depends on files that have not been copied yet.
+
 ```powershell
 pwsh -ExecutionPolicy Bypass `
   -File scripts/windows/vmware/build-photon-image.ps1 `

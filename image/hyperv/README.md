@@ -334,8 +334,10 @@ Use `scripts/windows/hyperv/create-switches.ps1` instead of running those by han
 and prints the resulting summary.
 
 Packer uploads only the files required for appliance installation: the `atlaso` package, packaging metadata, appliance
-helper scripts, the Photon compatibility check, systemd unit, and sudoers template. It intentionally does not upload
-`.git`, test artifacts, caches, or development virtual environments into the builder VM.
+helper scripts, the Photon compatibility check, systemd unit, sudoers template, shared udev disk-identity rule, and
+Hyper-V data-disk policy. The shared provisioner validates and installs both disk-policy inputs from the staged source
+tree before the application sync populates `/opt/atlaso`. It intentionally does not upload `.git`, test artifacts,
+caches, or development virtual environments into the builder VM.
 
 ## Boot The VHDX
 
