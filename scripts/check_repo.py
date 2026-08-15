@@ -297,6 +297,18 @@ ORDERED_TERMINAL_CLEANUP_MARKERS = {
     )
 }
 
+TERMINAL_CLEANUP_SECTION_ANCHORS = {
+    Path("AGENTS.md"): "## Completed Task Cleanup",
+    Path("CONTRIBUTING.md"): "### Completed task cleanup",
+    Path(".github/copilot-instructions.md"): (
+        "- after an authorized merge and all remaining activity,"
+    ),
+    Path(".github/pull_request_template.md"): (
+        "- [ ] After any authorized merge and remaining post-merge activity,"
+    ),
+    Path("docs/contribute/agent-policies.md"): "### Completed task cleanup",
+}
+
 
 @dataclass(frozen=True)
 class Finding:
@@ -677,9 +689,36 @@ def check_agent_policy_gate(root: Path) -> list[Finding]:
                     Finding(path, f"required agent policy marker is missing: {marker}")
                 )
         ordered_markers = ORDERED_TERMINAL_CLEANUP_MARKERS.get(relative_path)
-        if ordered_markers is not None and all(marker in text for marker in ordered_markers):
-            positions = tuple(text.index(marker) for marker in ordered_markers)
-            if positions != tuple(sorted(positions)):
+        section_anchor = TERMINAL_CLEANUP_SECTION_ANCHORS.get(relative_path)
+        cleanup_section = (
+            extract_markdown_policy_section(text, section_anchor)
+            if section_anchor is not None
+            else None
+        )
+        if section_anchor is not None and cleanup_section is None:
+            findings.append(
+                Finding(
+                    path,
+                    f"completed-task cleanup section is missing: {section_anchor}",
+                )
+            )
+        if ordered_markers is not None and cleanup_section is not None:
+            missing_section_markers = tuple(
+                marker for marker in ordered_markers if marker not in cleanup_section
+            )
+            for marker in missing_section_markers:
+                findings.append(
+                    Finding(
+                        path,
+                        f"completed-task cleanup section marker is missing: {marker}",
+                    )
+                )
+            positions = tuple(
+                cleanup_section.index(marker)
+                for marker in ordered_markers
+                if marker in cleanup_section
+            )
+            if not missing_section_markers and positions != tuple(sorted(positions)):
                 findings.append(
                     Finding(
                         path,
@@ -688,6 +727,32 @@ def check_agent_policy_gate(root: Path) -> list[Finding]:
                     )
                 )
     return findings
+
+
+def extract_markdown_policy_section(text: str, anchor: str) -> str | None:
+    """Return the canonical heading section or top-level list item at ``anchor``.
+
+    Args:
+        text: Markdown policy entry point.
+        anchor: Exact heading or top-level list-item prefix for the cleanup policy.
+    """
+    lines = text.splitlines(keepends=True)
+    start = next((index for index, line in enumerate(lines) if line.startswith(anchor)), None)
+    if start is None:
+        return None
+
+    if anchor.startswith("#"):
+        heading_level = len(anchor) - len(anchor.lstrip("#"))
+        for end in range(start + 1, len(lines)):
+            stripped = lines[end].lstrip("#")
+            next_level = len(lines[end]) - len(stripped)
+            if 0 < next_level <= heading_level and stripped.startswith(" "):
+                return "".join(lines[start:end])
+    else:
+        for end in range(start + 1, len(lines)):
+            if lines[end].startswith("- "):
+                return "".join(lines[start:end])
+    return "".join(lines[start:])
 
 
 def check_ui_pattern_foundation(root: Path) -> list[Finding]:

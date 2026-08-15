@@ -6,6 +6,7 @@ from scripts.check_repo import (
     LEGACY_TABULATOR_MARKER,
     ORDERED_TERMINAL_CLEANUP_MARKERS,
     REQUIRED_POLICY_MARKERS,
+    TERMINAL_CLEANUP_SECTION_ANCHORS,
     check_agent_policy_gate,
     check_ui_pattern_foundation,
     collect_files,
@@ -36,7 +37,17 @@ def write_policy_files(root: Path) -> None:
     for relative_path, markers in REQUIRED_POLICY_MARKERS.items():
         path = root / relative_path
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text("\n".join(markers), encoding="utf-8")
+        ordered_markers = ORDERED_TERMINAL_CLEANUP_MARKERS.get(relative_path, ())
+        section_anchor = TERMINAL_CLEANUP_SECTION_ANCHORS.get(relative_path)
+        other_markers = tuple(
+            marker
+            for marker in markers
+            if marker not in ordered_markers and marker != section_anchor
+        )
+        policy_lines = list(other_markers)
+        if section_anchor is not None:
+            policy_lines.extend((section_anchor, *ordered_markers, "- following policy"))
+        path.write_text("\n".join(policy_lines), encoding="utf-8")
 
 
 def test_agent_policy_gate_accepts_all_required_entry_points(tmp_path: Path) -> None:
@@ -475,8 +486,11 @@ def test_agent_policy_gate_requires_terminal_cleanup_order(tmp_path: Path) -> No
         write_policy_files(tmp_path)
         path = tmp_path / relative_path
         text = path.read_text(encoding="utf-8")
+        earlier_summary = "\n".join(markers)
         path.write_text(
-            text.replace("\n".join(markers), "\n".join(reversed(markers))),
+            earlier_summary
+            + "\n"
+            + text.replace("\n".join(markers), "\n".join(reversed(markers))),
             encoding="utf-8",
         )
 
@@ -488,6 +502,25 @@ def test_agent_policy_gate_requires_terminal_cleanup_order(tmp_path: Path) -> No
             "completed-task cleanup markers must remain ordered: "
             + " -> ".join(markers)
         )
+
+
+def test_agent_policy_gate_ignores_incidental_marker_order(tmp_path: Path) -> None:
+    """Verify that only the operative cleanup section controls lifecycle ordering.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    for relative_path, markers in ORDERED_TERMINAL_CLEANUP_MARKERS.items():
+        write_policy_files(tmp_path)
+        path = tmp_path / relative_path
+        path.write_text(
+            "\n".join(reversed(markers))
+            + "\n"
+            + path.read_text(encoding="utf-8"),
+            encoding="utf-8",
+        )
+
+        assert check_agent_policy_gate(tmp_path) == []
 
 
 def test_agent_policy_gate_rejects_missing_entry_point(tmp_path: Path) -> None:
