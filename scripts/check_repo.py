@@ -908,6 +908,42 @@ def strip_markdown_inline_link_metadata(text: str) -> str:
     return "".join(visible_parts)
 
 
+def strip_markdown_blank_terminated_html_blocks(text: str) -> str:
+    """Blank raw HTML blocks whose Markdown boundary is the next blank line.
+
+    Args:
+        text: Markdown source whose raw HTML blocks must be normalized.
+    """
+    block_tags = (
+        "address|article|aside|base|basefont|blockquote|body|caption|center|"
+        "col|colgroup|dd|details|dialog|dir|div|dl|dt|fieldset|figcaption|"
+        "figure|footer|form|frame|frameset|h1|h2|h3|h4|h5|h6|head|header|"
+        "hr|html|iframe|legend|li|link|main|menu|menuitem|nav|noframes|ol|"
+        "optgroup|option|p|param|search|section|summary|table|tbody|td|tfoot|"
+        "th|thead|title|tr|track|ul|code|noscript|template|xmp"
+    )
+    block_start = re.compile(
+        rf" {{0,3}}</?(?:{block_tags})(?=(?:\s|/?>|$))",
+        flags=re.IGNORECASE,
+    )
+    visible_lines: list[str] = []
+    in_raw_block = False
+    for line in text.splitlines(keepends=True):
+        if in_raw_block:
+            if not line.strip():
+                in_raw_block = False
+                visible_lines.append(line)
+            else:
+                visible_lines.append("\n" if line.endswith("\n") else "")
+            continue
+        if block_start.match(line) is not None:
+            in_raw_block = True
+            visible_lines.append("\n" if line.endswith("\n") else "")
+        else:
+            visible_lines.append(line)
+    return "".join(visible_lines)
+
+
 def strip_markdown_nonoperative_content(text: str) -> str:
     """Replace non-rendered Markdown content with blank lines.
 
@@ -921,22 +957,16 @@ def strip_markdown_nonoperative_content(text: str) -> str:
         flags=re.DOTALL,
     )
     without_raw_html_blocks = without_comments
-    for tag_name in (
-        "script",
-        "style",
-        "pre",
-        "code",
-        "textarea",
-        "xmp",
-        "template",
-        "noscript",
-    ):
+    for tag_name in ("script", "style", "pre", "textarea"):
         without_raw_html_blocks = re.sub(
             rf'''<{tag_name}\b(?:[^<>"']|"[^"]*"|'[^']*')*>.*?(?:</{tag_name}[ \t\r\n]*>|$)''',
             lambda match: re.sub(r"[^\r\n]", "", match.group(0)),
             without_raw_html_blocks,
             flags=re.DOTALL | re.IGNORECASE,
         )
+    without_raw_html_blocks = strip_markdown_blank_terminated_html_blocks(
+        without_raw_html_blocks
+    )
     without_raw_html_blocks = re.sub(
         r'''<(?!(?:area|base|br|col|embed|hr|img|input|link|meta|param|source|track|wbr)\b)'''
         r'''(?P<tag>[A-Za-z][A-Za-z0-9-]*)\b(?:[^<>"']|"[^"]*"|'[^']*')*>'''
