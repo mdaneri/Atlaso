@@ -66,7 +66,9 @@ def _router(
 def test_facades_register_extracted_domains_in_exact_order():
     """Keep every extracted router in its established facade sequence."""
     assert ui.UI_ROUTER_REGISTRY.domains == (
-        "facade_before_routes_wan",
+        "facade_before_automation",
+        "automation",
+        "facade_between_automation_routes_wan",
         "appliance_apply",
         "routes_wan",
         "firewall",
@@ -78,11 +80,15 @@ def test_facades_register_extracted_domains_in_exact_order():
         "vcf_workflows",
         "facade_between_vcf_workflows_identity",
         "identity",
+        "facade_between_identity_operations",
+        "operations",
         "facade_between_identity_network_boot",
         "network_boot",
         "facade_after_network_boot",
     )
     assert ui.UI_ROUTER_REGISTRY.routers_for_plane("management") == (
+        ui._management_before_automation_router,
+        ui.automation_router,
         ui._management_before_routes_wan_router,
         ui.appliance_apply_router,
         ui.routes_wan_router,
@@ -95,6 +101,8 @@ def test_facades_register_extracted_domains_in_exact_order():
         ui.vcf_workflows_router,
         ui._management_between_vcf_workflows_identity_router,
         ui.identity_router,
+        ui._management_between_identity_operations_router,
+        ui.operations_router,
         ui._management_between_identity_network_boot_router,
         ui.network_boot_router,
         ui._management_after_network_boot_router,
@@ -113,7 +121,9 @@ def test_facades_register_extracted_domains_in_exact_order():
         "facade_between_routes_wan_dns_dhcp",
         "dns_dhcp",
         "firewall",
-        "facade_between_firewall_vcf_backups",
+        "facade_between_firewall_operations",
+        "operations",
+        "facade_between_operations_vcf_backups",
         "vcf_workflows_backups",
         "facade_between_vcf_backups_offline_depot",
         "vcf_workflows_offline_depot",
@@ -133,7 +143,9 @@ def test_facades_register_extracted_domains_in_exact_order():
         v1._api_between_routes_wan_dns_dhcp_router,
         v1.dns_dhcp_router,
         v1.firewall_router,
-        v1._api_between_firewall_vcf_backups_router,
+        v1._api_between_firewall_operations_router,
+        v1.operations_router,
+        v1._api_between_operations_vcf_backups_router,
         v1.vcf_workflows_backups_router,
         v1._api_between_vcf_backups_offline_depot_router,
         v1.vcf_workflows_offline_depot_router,
@@ -171,6 +183,12 @@ def test_facades_register_extracted_domains_in_exact_order():
     assert {route.endpoint.__module__ for route in ui.vcf_workflows_router.routes} == {
         "atlaso.app.routers.ui.vcf_workflows"
     }
+    assert {route.endpoint.__module__ for route in ui.automation_router.routes} == {
+        "atlaso.app.routers.ui.automation"
+    }
+    assert {route.endpoint.__module__ for route in ui.operations_router.routes} == {
+        "atlaso.app.routers.ui.operations"
+    }
     assert {route.endpoint.__module__ for route in v1.routes_wan_router.routes} == {
         "atlaso.app.routers.api_v1.routes_wan"
     }
@@ -191,6 +209,9 @@ def test_facades_register_extracted_domains_in_exact_order():
     }
     assert {route.endpoint.__module__ for route in v1.network_boot_router.routes} == {
         "atlaso.app.routers.api_v1.network_boot"
+    }
+    assert {route.endpoint.__module__ for route in v1.operations_router.routes} == {
+        "atlaso.app.routers.api_v1.operations"
     }
     assert {
         route.endpoint.__module__

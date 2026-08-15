@@ -139,6 +139,8 @@ from atlaso.app.routers.ui.appliance_apply import ApplianceApplyUiDependencies
 from atlaso.app.routers.ui.appliance_apply import (
     build_router as build_appliance_apply_ui_router,
 )
+from atlaso.app.routers.ui.automation import AutomationUiDependencies
+from atlaso.app.routers.ui.automation import build_router as build_automation_ui_router
 from atlaso.app.routers.ui.dns_dhcp import DnsDhcpUiDependencies
 from atlaso.app.routers.ui.dns_dhcp import build_router as build_dns_dhcp_ui_router
 from atlaso.app.routers.ui.firewall import FirewallUiDependencies
@@ -153,6 +155,8 @@ from atlaso.app.routers.ui.network_boot import NetworkBootUiDependencies
 from atlaso.app.routers.ui.network_boot import (
     build_router as build_network_boot_ui_router,
 )
+from atlaso.app.routers.ui.operations import OperationsUiDependencies
+from atlaso.app.routers.ui.operations import build_router as build_operations_ui_router
 from atlaso.app.routers.ui.physical_vlans import (
     PhysicalVlanUiDependencies,
 )
@@ -221,17 +225,10 @@ from atlaso.app.services.appliance_update import (
     validate_update_settings,
 )
 from atlaso.app.services.automation import (
-    MAX_SCRIPT_CONTENT_BYTES,
-    MAX_SCRIPT_TIMEOUT_SECONDS,
     SCHEDULE_TASK_TYPES,
     SCRIPT_INTERPRETERS,
     create_script_revision,
-    enabled_script_revision,
-    enqueue_schedule_now,
-    next_schedule_run,
     normalize_script_content,
-    parse_script_arguments,
-    validate_schedule_values,
 )
 from atlaso.app.services.ca import (
     CA_DEFAULT_PORTAL_HOSTNAME,
@@ -324,9 +321,6 @@ from atlaso.app.services.esx_storage import (
 )
 from atlaso.app.services.esx_storage import (
     render_manifest as render_esx_storage_manifest,
-)
-from atlaso.app.services.esx_storage import (
-    rpcbind_required as esx_storage_rpcbind_required,
 )
 from atlaso.app.services.esx_storage import (
     select_inventory_candidate as select_esx_storage_inventory_candidate,
@@ -490,7 +484,6 @@ from atlaso.app.services.routes_wan import (
 )
 from atlaso.app.services.service_registry import (
     SERVICE_STATE_IDS,
-    SERVICE_SYSTEMD_UNITS,
 )
 from atlaso.app.services.settings_archive import (
     archive_summary,
@@ -522,7 +515,6 @@ from atlaso.app.services.vaults import (
     upsert_vault_entry,
     vault_entry_metadata,
     vault_marker_name,
-    vault_scope_identity,
 )
 from atlaso.app.services.vcf_backups import (
     VCF_BACKUP_DEFAULT_USERNAME,
@@ -539,7 +531,6 @@ from atlaso.app.services.vcf_depot_downloads import (
     active_vcf_depot_download_jobs,
     active_vcf_depot_exclusive_job,
     active_vcf_depot_operation_job,
-    cancel_pending_vcf_depot_download,
     disable_vcf_depot_profile_schedules,
     vcf_depot_job_profile_id,
     vcf_depot_task_log_reference,
@@ -14324,1004 +14315,70 @@ def run_appliance_update(
     )
 
 
-@router.get("/automation", response_class=HTMLResponse, response_model=None)
-def automation_page(
-    request: Request,
-    identity: Identity = Depends(require_session_identity),
-    db: Session = Depends(get_db),
-) -> HTMLResponse:
-    """Handle the automation page endpoint.
-
-    Args:
-        request: Incoming HTTP request.
-        identity: Authenticated identity authorizing the request.
-        db: Active database session.
-
-    Returns:
-        The endpoint response.
-    """
-    require_admin_identity(identity)
-    return render(request, "automation.html", {"identity": identity, **automation_context(db)})
-
-
-def _automation_render_error(request: Request, identity: Identity, db: Session, message: str, *, status_code: int = 422) -> HTMLResponse:
-    """Return automation render error.
-
-    Args:
-        request: Incoming HTTP request.
-        identity: Authenticated identity authorizing the request.
-        db: Active database session.
-        message: Public-safe status or error message.
-        status_code: HTTP status code for the response.
-    """
-    return render(
-        request,
-        "automation.html",
-        {"identity": identity, **automation_context(db), "automation_error": message},
-        status_code=status_code,
+_management_before_automation_router = router
+_automation_ui = build_automation_ui_router(
+    AutomationUiDependencies(
+        require_management_ui_request=require_management_ui_request,
+        automation_context=automation_context,
+        render=render,
+        require_admin_identity=require_admin_identity,
+        verify_csrf=verify_csrf,
+        vcf_depot_download_preflight=vcf_depot_download_preflight,
+        vcf_offline_depot_page=lambda *args, **kwargs: vcf_offline_depot_page(
+            *args, **kwargs
+        ),
+        create_script_revision=lambda *args, **kwargs: create_script_revision(
+            *args, **kwargs
+        ),
+        normalize_script_content=lambda *args, **kwargs: normalize_script_content(
+            *args, **kwargs
+        ),
     )
+)
+automation_router = _automation_ui.router
+automation_page = _automation_ui.endpoints["automation_page"]
+_automation_render_error = _automation_ui.endpoints["_automation_render_error"]
+_automation_script_validation_message = _automation_ui.endpoints[
+    "_automation_script_validation_message"
+]
+_automation_task_config = _automation_ui.endpoints["_automation_task_config"]
+AutomationScheduleInputError = _automation_ui.endpoints["AutomationScheduleInputError"]
+create_automation_schedule_record = _automation_ui.endpoints[
+    "create_automation_schedule_record"
+]
+create_automation_schedule = _automation_ui.endpoints["create_automation_schedule"]
+create_contextual_vcf_depot_schedule = _automation_ui.endpoints[
+    "create_contextual_vcf_depot_schedule"
+]
+edit_automation_schedule = _automation_ui.endpoints["edit_automation_schedule"]
+run_automation_schedule_now = _automation_ui.endpoints["run_automation_schedule_now"]
+toggle_automation_schedule = _automation_ui.endpoints["toggle_automation_schedule"]
+delete_automation_schedule = _automation_ui.endpoints["delete_automation_schedule"]
+create_automation_script_from_ui = _automation_ui.endpoints[
+    "create_automation_script_from_ui"
+]
+create_automation_script_revision_from_ui = _automation_ui.endpoints[
+    "create_automation_script_revision_from_ui"
+]
+edit_automation_script_from_ui = _automation_ui.endpoints[
+    "edit_automation_script_from_ui"
+]
+delete_automation_script_from_ui = _automation_ui.endpoints[
+    "delete_automation_script_from_ui"
+]
+toggle_automation_script_revision = _automation_ui.endpoints[
+    "toggle_automation_script_revision"
+]
+run_automation_script_revision = _automation_ui.endpoints[
+    "run_automation_script_revision"
+]
+
+router = APIRouter(
+    prefix=MANAGEMENT_UI_ROOT,
+    dependencies=[Depends(require_management_ui_request)],
+)
 
 
-def _automation_script_validation_message(interpreter: str, content: str, timeout_seconds: int) -> str | None:
-    """Return automation script validation message.
-
-    Args:
-        interpreter: Interpreter supplied by the caller.
-        content: Document or file content to process.
-        timeout_seconds: Maximum time to wait, in seconds.
-    """
-    if interpreter not in SCRIPT_INTERPRETERS:
-        return "Interpreter must be bash, python, or powershell."
-    first_line = (
-        content.removeprefix("\ufeff").replace("\r\n", "\n").replace("\r", "\n").split("\n", 1)[0].strip()
-    )
-    try:
-        normalized_content = normalize_script_content(content, interpreter)
-    except ValueError:
-        if interpreter == "bash" and first_line.startswith("!/"):
-            return "A Bash shebang must start with #!; add the missing # or remove the shebang line."
-        return "Managed script source is invalid. Review the interpreter and source, then try again."
-    if not normalized_content.strip():
-        return "Script content is required."
-    if len(normalized_content.encode("utf-8")) > MAX_SCRIPT_CONTENT_BYTES:
-        return "Script content must be 1 MiB or smaller."
-    if timeout_seconds < 1 or timeout_seconds > MAX_SCRIPT_TIMEOUT_SECONDS:
-        return "Script timeout must be between 1 second and 24 hours."
-    return None
-
-
-def _automation_task_config(
-    db: Session,
-    *,
-    task_type: str,
-    selected_streams: list[str],
-    vcf_profile_id: int | None,
-    revision_id: int | None,
-    vault_id: int | None,
-    script_arguments: str,
-) -> tuple[dict[str, Any], str]:
-    """Return automation task config.
-
-    Args:
-        db: Active database session.
-        task_type: Task type supplied by the caller.
-        selected_streams: Update streams selected for the job.
-        vcf_profile_id: Identifier of the vcf profile.
-        revision_id: Identifier of the revision.
-        vault_id: Identifier of the vault.
-        script_arguments: Script arguments supplied by the caller.
-    """
-    if task_type in {"appliance_update_check", "appliance_update_install"}:
-        return {"selected_streams": selected_update_streams(selected_streams)}, ""
-    if task_type == "vcf_depot_download":
-        profile = db.get(VcfDepotDownloadProfile, vcf_profile_id or 0)
-        if profile is None or not profile.enabled:
-            return {}, "Choose an enabled VCF Offline Depot download profile."
-        return {"profile_id": profile.id}, ""
-    if task_type == "managed_script":
-        revision = enabled_script_revision(db, revision_id or 0)
-        if revision is None:
-            return {}, "Choose an enabled managed script revision."
-        try:
-            arguments = parse_script_arguments(script_arguments, revision.interpreter)
-        except ValueError as exc:
-            return {}, str(exc)
-        selected_vault_id = int(vault_id or 0)
-        if selected_vault_id and db.get(Vault, selected_vault_id) is None:
-            return {}, "Choose an available vault or run without vault access."
-        return {
-            "revision_id": revision.id,
-            "arguments": arguments,
-            **({"vault_id": selected_vault_id} if selected_vault_id else {}),
-        }, ""
-    return {}, ""
-
-
-class AutomationScheduleInputError(ValueError):
-    """Report an operator-actionable schedule definition error."""
-
-    def __init__(self, message: str, *, status_code: int = 422) -> None:
-        """Initialize the schedule definition error.
-
-        Args:
-            message: Operator-facing validation detail.
-            status_code: HTTP status appropriate for the validation failure.
-        """
-        self.public_detail = message
-        self.status_code = status_code
-        super().__init__(message)
-
-
-def create_automation_schedule_record(
-    db: Session,
-    *,
-    name: str,
-    task_type: str,
-    selected_streams: list[str],
-    vcf_profile_id: int | None,
-    revision_id: int | None,
-    vault_id: int | None,
-    script_arguments: str,
-    schedule_kind: str,
-    cron_expression: str,
-    run_once_at: str,
-    timezone_name: str,
-    enabled: bool,
-    actor: str,
-) -> Schedule:
-    """Validate and persist one schedule for generic and contextual callers.
-
-    Args:
-        db: Active database session.
-        name: Operator-visible schedule name.
-        task_type: Allowlisted Automation task type.
-        selected_streams: Appliance Update streams selected by the operator.
-        vcf_profile_id: Server-validated VCF Offline Depot profile identifier.
-        revision_id: Managed script revision identifier.
-        vault_id: Optional scoped vault identifier.
-        script_arguments: Literal managed-script arguments.
-        schedule_kind: Cron or one-time schedule kind.
-        cron_expression: Five-field cron expression.
-        run_once_at: Local one-time value interpreted in the selected timezone.
-        timezone_name: IANA timezone name.
-        enabled: Whether the schedule is immediately eligible to run.
-        actor: Authenticated creator identity.
-
-    Returns:
-        The persisted schedule.
-
-    Raises:
-        AutomationScheduleInputError: If validation or persistence fails.
-    """
-    parsed_once: datetime | None = None
-    try:
-        if run_once_at.strip():
-            parsed_once = datetime.fromisoformat(run_once_at.strip())
-            if parsed_once.tzinfo is None:
-                parsed_once = parsed_once.replace(tzinfo=ZoneInfo(timezone_name))
-            parsed_once = parsed_once.astimezone(timezone.utc)
-    except (ValueError, ZoneInfoNotFoundError) as exc:
-        raise AutomationScheduleInputError("One-time run date or timezone is invalid.") from exc
-    task_config, config_error = _automation_task_config(
-        db,
-        task_type=task_type,
-        selected_streams=selected_streams,
-        vcf_profile_id=vcf_profile_id,
-        revision_id=revision_id,
-        vault_id=vault_id,
-        script_arguments=script_arguments,
-    )
-    if config_error:
-        raise AutomationScheduleInputError(config_error)
-    task_config_json = json.dumps(task_config, sort_keys=True)
-    errors = validate_schedule_values(
-        task_type=task_type,
-        task_config_json=task_config_json,
-        schedule_kind=schedule_kind,
-        cron_expression=cron_expression,
-        run_once_at=parsed_once,
-        timezone_name=timezone_name,
-    )
-    if not name.strip():
-        errors.insert(0, "Schedule name is required.")
-    if errors:
-        raise AutomationScheduleInputError(" ".join(errors))
-    schedule = Schedule(
-        name=name.strip(),
-        task_type=task_type,
-        task_config_json=task_config_json,
-        schedule_kind=schedule_kind,
-        cron_expression=cron_expression.strip() if schedule_kind == "cron" else "",
-        run_once_at=parsed_once if schedule_kind == "once" else None,
-        timezone_name=timezone_name,
-        enabled=enabled,
-        created_by=actor,
-    )
-    if schedule.enabled:
-        try:
-            schedule.next_run_at = next_schedule_run(schedule, after=utcnow())
-        except ValueError as exc:
-            raise AutomationScheduleInputError("The schedule does not have a valid future run time.") from exc
-        if schedule.next_run_at is None:
-            raise AutomationScheduleInputError("The enabled schedule does not have a future run time.")
-    db.add(schedule)
-    try:
-        db.commit()
-    except IntegrityError as exc:
-        db.rollback()
-        raise AutomationScheduleInputError(
-            "A schedule with this name already exists.",
-            status_code=409,
-        ) from exc
-    return schedule
-
-
-@router.post("/automation/schedules", response_model=None)
-def create_automation_schedule(
-    request: Request,
-    name: str = Form(...),
-    task_type: str = Form(...),
-    selected_streams: list[str] = Form(default=[]),
-    vcf_profile_id: int | None = Form(None),
-    revision_id: int | None = Form(None),
-    vault_id: int | None = Form(None),
-    script_arguments: str = Form(""),
-    schedule_kind: str = Form("cron"),
-    cron_expression: str = Form("0 2 * * *"),
-    run_once_at: str = Form(""),
-    timezone_name: str = Form("UTC"),
-    enabled: str | None = Form(None),
-    csrf: str = Form(...),
-    identity: Identity = Depends(require_session_identity),
-    db: Session = Depends(get_db),
-) -> Response:
-    """Handle the create automation schedule endpoint.
-
-    Args:
-        request: Incoming HTTP request.
-        name: Name of the target object.
-        task_type: Task type supplied by the caller.
-        selected_streams: Update streams selected for the job.
-        vcf_profile_id: Identifier of the vcf profile.
-        revision_id: Identifier of the revision.
-        vault_id: Identifier of the vault.
-        script_arguments: Script arguments supplied by the caller.
-        schedule_kind: Schedule kind supplied by the caller.
-        cron_expression: Cron expression supplied by the caller.
-        run_once_at: Run once at supplied by the caller.
-        timezone_name: Timezone name supplied by the caller.
-        enabled: Whether the requested behavior is enabled.
-        csrf: Validated CSRF token authorizing the request.
-        identity: Authenticated identity authorizing the request.
-        db: Active database session.
-
-    Returns:
-        The endpoint response.
-    """
-    verify_csrf(request, csrf)
-    require_admin_identity(identity)
-    try:
-        schedule = create_automation_schedule_record(
-            db,
-            name=name,
-            task_type=task_type,
-            selected_streams=selected_streams,
-            vcf_profile_id=vcf_profile_id,
-            revision_id=revision_id,
-            vault_id=vault_id,
-            script_arguments=script_arguments,
-            schedule_kind=schedule_kind,
-            cron_expression=cron_expression,
-            run_once_at=run_once_at,
-            timezone_name=timezone_name,
-            enabled=enabled == "on",
-            actor=identity.username,
-        )
-    except AutomationScheduleInputError as exc:
-        return _automation_render_error(request, identity, db, exc.public_detail, status_code=exc.status_code)
-    record_audit(db, actor=identity.username, action="create_automation_schedule", resource_type="schedule", resource_id=str(schedule.id), detail=f"task_type={task_type}")
-    return RedirectResponse("/automation#schedules", status_code=303)
-
-
-@router.post("/vcf-offline-depot/profiles/{profile_id}/schedules", response_model=None)
-def create_contextual_vcf_depot_schedule(
-    profile_id: int,
-    request: Request,
-    name: str = Form(...),
-    schedule_kind: str = Form("cron"),
-    cron_expression: str = Form("0 2 * * *"),
-    run_once_at: str = Form(""),
-    timezone_name: str = Form("UTC"),
-    enabled: str | None = Form(None),
-    task_type: str | None = Form(None),
-    vcf_profile_id: int | None = Form(None),
-    csrf: str = Form(...),
-    identity: Identity = Depends(require_session_identity),
-    db: Session = Depends(get_db),
-) -> JSONResponse | RedirectResponse:
-    """Create a server-bound depot download schedule from its selected profile.
-
-    Args:
-        profile_id: Server-owned profile selected by the depot row action.
-        request: Incoming HTTP request.
-        name: Operator-visible schedule name.
-        schedule_kind: Cron or one-time schedule kind.
-        cron_expression: Five-field cron expression.
-        run_once_at: Local one-time date and time.
-        timezone_name: IANA timezone used to interpret the timing fields.
-        enabled: Whether the schedule should be immediately eligible.
-        task_type: Optional tamper-detection value; the server fixes the type.
-        vcf_profile_id: Optional tamper-detection value; the path fixes the profile.
-        csrf: Validated CSRF token authorizing the request.
-        identity: Authenticated identity authorizing the request.
-        db: Active database session.
-
-    Returns:
-        The created schedule metadata for in-page feedback.
-    """
-    verify_csrf(request, csrf)
-    require_admin_identity(identity)
-    wants_html = "text/html" in request.headers.get("accept", "").lower()
-    if task_type is not None and task_type != "vcf_depot_download":
-        return JSONResponse(
-            {"detail": "The contextual depot wizard can create only VCF Offline Depot download schedules."},
-            status_code=422,
-        )
-    if vcf_profile_id is not None and vcf_profile_id != profile_id:
-        return JSONResponse(
-            {"detail": "The submitted profile does not match the depot row that opened this wizard."},
-            status_code=422,
-        )
-    try:
-        schedule = create_automation_schedule_record(
-            db,
-            name=name,
-            task_type="vcf_depot_download",
-            selected_streams=[],
-            vcf_profile_id=profile_id,
-            revision_id=None,
-            vault_id=None,
-            script_arguments="",
-            schedule_kind=schedule_kind,
-            cron_expression=cron_expression,
-            run_once_at=run_once_at,
-            timezone_name=timezone_name,
-            enabled=enabled == "on",
-            actor=identity.username,
-        )
-    except AutomationScheduleInputError as exc:
-        if wants_html:
-            request.state.vcf_schedule_error = exc.public_detail
-            request.state.vcf_schedule_form = {
-                "name": name,
-                "schedule_kind": schedule_kind,
-                "cron_expression": cron_expression,
-                "run_once_at": run_once_at,
-                "timezone_name": timezone_name,
-                "enabled": enabled == "on",
-            }
-            response = vcf_offline_depot_page(
-                request,
-                schedule_profile_id=profile_id,
-                schedule_invalid=True,
-                identity=identity,
-                db=db,
-            )
-            response.status_code = exc.status_code
-            return response
-        return JSONResponse({"detail": exc.public_detail}, status_code=exc.status_code)
-    record_audit(
-        db,
-        actor=identity.username,
-        action="create_automation_schedule",
-        resource_type="schedule",
-        resource_id=str(schedule.id),
-        detail=f"task_type=vcf_depot_download; profile_id={profile_id}; source=vcf_offline_depot",
-    )
-    if wants_html:
-        return RedirectResponse(
-            management_ui_path("/vcf-offline-depot#vcf-depot-profiles-panel"),
-            status_code=303,
-        )
-    return JSONResponse(
-        {
-            "status": "created",
-            "schedule_id": schedule.id,
-            "schedule_name": schedule.name,
-            "profile_id": profile_id,
-            "enabled": schedule.enabled,
-            "automation_url": "/ui/management/automation#schedules",
-        },
-        status_code=201,
-    )
-
-
-@router.post("/automation/schedules/{schedule_id}/edit", response_model=None)
-def edit_automation_schedule(
-    schedule_id: int,
-    request: Request,
-    name: str = Form(...),
-    task_type: str = Form(...),
-    selected_streams: list[str] = Form(default=[]),
-    vcf_profile_id: int | None = Form(None),
-    revision_id: int | None = Form(None),
-    vault_id: int | None = Form(None),
-    script_arguments: str = Form(""),
-    schedule_kind: str = Form("cron"),
-    cron_expression: str = Form("0 2 * * *"),
-    run_once_at: str = Form(""),
-    timezone_name: str = Form("UTC"),
-    enabled: str | None = Form(None),
-    csrf: str = Form(...),
-    identity: Identity = Depends(require_session_identity),
-    db: Session = Depends(get_db),
-) -> Response:
-    """Handle the edit automation schedule endpoint.
-
-    Args:
-        schedule_id: Identifier of the schedule.
-        request: Incoming HTTP request.
-        name: Name of the target object.
-        task_type: Task type supplied by the caller.
-        selected_streams: Update streams selected for the job.
-        vcf_profile_id: Identifier of the vcf profile.
-        revision_id: Identifier of the revision.
-        vault_id: Identifier of the vault.
-        script_arguments: Script arguments supplied by the caller.
-        schedule_kind: Schedule kind supplied by the caller.
-        cron_expression: Cron expression supplied by the caller.
-        run_once_at: Run once at supplied by the caller.
-        timezone_name: Timezone name supplied by the caller.
-        enabled: Whether the requested behavior is enabled.
-        csrf: Validated CSRF token authorizing the request.
-        identity: Authenticated identity authorizing the request.
-        db: Active database session.
-
-    Returns:
-        The endpoint response.
-
-    Raises:
-        HTTPException: If the request cannot be fulfilled.
-    """
-    verify_csrf(request, csrf)
-    require_admin_identity(identity)
-    schedule = db.get(Schedule, schedule_id)
-    if schedule is None:
-        raise HTTPException(status_code=404, detail="Schedule not found.")
-    parsed_once: datetime | None = None
-    try:
-        if run_once_at.strip():
-            parsed_once = datetime.fromisoformat(run_once_at.strip())
-            if parsed_once.tzinfo is None:
-                parsed_once = parsed_once.replace(tzinfo=ZoneInfo(timezone_name))
-            parsed_once = parsed_once.astimezone(timezone.utc)
-    except (ValueError, ZoneInfoNotFoundError):
-        return _automation_render_error(request, identity, db, "One-time run date or timezone is invalid.")
-    task_config, config_error = _automation_task_config(
-        db,
-        task_type=task_type,
-        selected_streams=selected_streams,
-        vcf_profile_id=vcf_profile_id,
-        revision_id=revision_id,
-        vault_id=vault_id,
-        script_arguments=script_arguments,
-    )
-    if config_error:
-        return _automation_render_error(request, identity, db, config_error)
-    task_config_json = json.dumps(task_config, sort_keys=True)
-    errors = validate_schedule_values(
-        task_type=task_type,
-        task_config_json=task_config_json,
-        schedule_kind=schedule_kind,
-        cron_expression=cron_expression,
-        run_once_at=parsed_once,
-        timezone_name=timezone_name,
-    )
-    if not name.strip():
-        errors.insert(0, "Schedule name is required.")
-    if errors:
-        return _automation_render_error(request, identity, db, " ".join(errors))
-    schedule.name = name.strip()
-    schedule.task_type = task_type
-    schedule.task_config_json = task_config_json
-    schedule.schedule_kind = schedule_kind
-    schedule.cron_expression = cron_expression.strip() if schedule_kind == "cron" else ""
-    schedule.run_once_at = parsed_once if schedule_kind == "once" else None
-    schedule.timezone_name = timezone_name
-    schedule.enabled = enabled == "on"
-    schedule.updated_at = utcnow()
-    try:
-        schedule.next_run_at = next_schedule_run(schedule, after=utcnow()) if schedule.enabled else None
-    except ValueError as exc:
-        db.rollback()
-        return _automation_render_error(request, identity, db, str(exc))
-    if schedule.enabled and schedule.next_run_at is None:
-        db.rollback()
-        return _automation_render_error(request, identity, db, "The enabled schedule does not have a future run time.")
-    db.add(schedule)
-    try:
-        db.commit()
-    except IntegrityError:
-        db.rollback()
-        return _automation_render_error(request, identity, db, "A schedule with this name already exists.", status_code=409)
-    record_audit(db, actor=identity.username, action="update_automation_schedule", resource_type="schedule", resource_id=str(schedule.id), detail=f"task_type={task_type}")
-    return RedirectResponse("/automation#schedules", status_code=303)
-
-
-@router.post("/automation/schedules/{schedule_id}/run", response_model=None)
-def run_automation_schedule_now(
-    schedule_id: int,
-    request: Request,
-    csrf: str = Form(...),
-    identity: Identity = Depends(require_session_identity),
-    db: Session = Depends(get_db),
-) -> Response:
-    """Handle the run automation schedule now endpoint.
-
-    Args:
-        schedule_id: Identifier of the schedule.
-        request: Incoming HTTP request.
-        csrf: Validated CSRF token authorizing the request.
-        identity: Authenticated identity authorizing the request.
-        db: Active database session.
-
-    Returns:
-        The endpoint response.
-
-    Raises:
-        HTTPException: If the request cannot be fulfilled.
-    """
-    verify_csrf(request, csrf)
-    require_admin_identity(identity)
-    schedule = db.get(Schedule, schedule_id)
-    if schedule is None:
-        raise HTTPException(status_code=404, detail="Schedule not found.")
-    try:
-        config = json.loads(schedule.task_config_json or "{}")
-    except json.JSONDecodeError:
-        return _automation_render_error(request, identity, db, "The schedule task configuration is invalid.")
-    if schedule.task_type == "managed_script" and enabled_script_revision(db, int(config.get("revision_id") or 0)) is None:
-        return _automation_render_error(request, identity, db, "Enable the scheduled script revision before running it.")
-    if schedule.task_type == "vcf_depot_download":
-        profile = db.get(VcfDepotDownloadProfile, int(config.get("profile_id") or 0))
-        if profile is None or not profile.enabled:
-            return _automation_render_error(request, identity, db, "Enable the scheduled VCF Offline Depot profile before running it.")
-        try:
-            vcf_depot_download_preflight(db, profile)
-        except ValueError as exc:
-            return _automation_render_error(request, identity, db, str(exc), status_code=409)
-    try:
-        job = enqueue_schedule_now(db, schedule=schedule, actor=identity.username)
-    except (KeyError, ValueError) as exc:
-        db.rollback()
-        return _automation_render_error(request, identity, db, str(exc), status_code=409)
-    return RedirectResponse(f"/tasks#{job.id}", status_code=303)
-
-
-@router.post("/automation/schedules/{schedule_id}/toggle", response_model=None)
-def toggle_automation_schedule(
-    schedule_id: int,
-    request: Request,
-    csrf: str = Form(...),
-    identity: Identity = Depends(require_session_identity),
-    db: Session = Depends(get_db),
-) -> RedirectResponse:
-    """Handle the toggle automation schedule endpoint.
-
-    Args:
-        schedule_id: Identifier of the schedule.
-        request: Incoming HTTP request.
-        csrf: Validated CSRF token authorizing the request.
-        identity: Authenticated identity authorizing the request.
-        db: Active database session.
-
-    Returns:
-        The endpoint response.
-
-    Raises:
-        HTTPException: If the request cannot be fulfilled.
-    """
-    verify_csrf(request, csrf)
-    require_admin_identity(identity)
-    schedule = db.get(Schedule, schedule_id)
-    if schedule is None:
-        raise HTTPException(status_code=404, detail="Schedule not found.")
-    if not schedule.enabled and schedule.task_type == "vcf_depot_download":
-        try:
-            config = json.loads(schedule.task_config_json or "{}")
-        except json.JSONDecodeError:
-            return _automation_render_error(request, identity, db, "The schedule task configuration is invalid.")
-        profile = db.get(VcfDepotDownloadProfile, int(config.get("profile_id") or 0))
-        if profile is None or not profile.enabled:
-            return _automation_render_error(
-                request,
-                identity,
-                db,
-                "Enable the VCF Offline Depot profile before enabling its schedule.",
-                status_code=409,
-            )
-    schedule.enabled = not schedule.enabled
-    try:
-        schedule.next_run_at = next_schedule_run(schedule, after=utcnow()) if schedule.enabled else None
-    except ValueError as exc:
-        schedule.enabled = False
-        return _automation_render_error(request, identity, db, str(exc))
-    if schedule.enabled and schedule.next_run_at is None:
-        schedule.enabled = False
-        return _automation_render_error(request, identity, db, "The schedule does not have a future run time.")
-    schedule.updated_at = utcnow()
-    db.add(schedule)
-    db.commit()
-    record_audit(db, actor=identity.username, action="enable_automation_schedule" if schedule.enabled else "disable_automation_schedule", resource_type="schedule", resource_id=str(schedule.id))
-    return RedirectResponse("/automation#schedules", status_code=303)
-
-
-@router.post("/automation/schedules/{schedule_id}/delete", response_model=None)
-def delete_automation_schedule(
-    schedule_id: int,
-    request: Request,
-    csrf: str = Form(...),
-    identity: Identity = Depends(require_session_identity),
-    db: Session = Depends(get_db),
-) -> RedirectResponse:
-    """Handle the delete automation schedule endpoint.
-
-    Args:
-        schedule_id: Identifier of the schedule.
-        request: Incoming HTTP request.
-        csrf: Validated CSRF token authorizing the request.
-        identity: Authenticated identity authorizing the request.
-        db: Active database session.
-
-    Returns:
-        The endpoint response.
-
-    Raises:
-        HTTPException: If the request cannot be fulfilled.
-    """
-    verify_csrf(request, csrf)
-    require_admin_identity(identity)
-    schedule = db.get(Schedule, schedule_id)
-    if schedule is None:
-        raise HTTPException(status_code=404, detail="Schedule not found.")
-    name = schedule.name
-    for job in db.execute(select(Job).where(Job.schedule_id == schedule.id)).scalars().all():
-        job.schedule_id = None
-        db.add(job)
-    db.delete(schedule)
-    db.commit()
-    record_audit(db, actor=identity.username, action="delete_automation_schedule", resource_type="schedule", resource_id=str(schedule_id), detail=f"name={name}")
-    return RedirectResponse("/automation#schedules", status_code=303)
-
-
-@router.post("/automation/scripts", response_model=None)
-def create_automation_script_from_ui(
-    request: Request,
-    name: str = Form(...),
-    description: str = Form(""),
-    interpreter: str = Form("powershell"),
-    content: str = Form(...),
-    timeout_seconds: int = Form(3600),
-    csrf: str = Form(...),
-    identity: Identity = Depends(require_session_identity),
-    db: Session = Depends(get_db),
-) -> Response:
-    """Handle the create automation script from ui endpoint.
-
-    Args:
-        request: Incoming HTTP request.
-        name: Name of the target object.
-        description: Human-readable description of the resource.
-        interpreter: Interpreter supplied by the caller.
-        content: Document or file content to process.
-        timeout_seconds: Maximum time to wait, in seconds.
-        csrf: Validated CSRF token authorizing the request.
-        identity: Authenticated identity authorizing the request.
-        db: Active database session.
-
-    Returns:
-        The endpoint response.
-    """
-    verify_csrf(request, csrf)
-    require_admin_identity(identity)
-    wizard_request = request.headers.get("X-Atlaso-Wizard") == "1"
-    if not name.strip():
-        if wizard_request:
-            return JSONResponse({"status": "error", "detail": "Script name is required.", "errors": ["Script name is required."]}, status_code=422)
-        return _automation_render_error(request, identity, db, "Script name is required.")
-    validation_message = _automation_script_validation_message(interpreter, content, timeout_seconds)
-    if validation_message:
-        if wizard_request:
-            return JSONResponse({"status": "error", "detail": validation_message, "errors": [validation_message]}, status_code=422)
-        return _automation_render_error(request, identity, db, validation_message)
-    script = AutomationScript(name=name.strip(), description=description.strip(), created_by=identity.username)
-    db.add(script)
-    try:
-        db.flush()
-        create_script_revision(db, script=script, interpreter=interpreter, content=content, timeout_seconds=timeout_seconds, actor=identity.username)
-        db.commit()
-    except IntegrityError:
-        db.rollback()
-        message = "A script with this name already exists."
-        if wizard_request:
-            return JSONResponse(
-                {"status": "error", "detail": message, "errors": [message]},
-                status_code=409,
-            )
-        return _automation_render_error(request, identity, db, message, status_code=409)
-    except ValueError:
-        db.rollback()
-        message = "Managed script validation failed."
-        if wizard_request:
-            return JSONResponse({"status": "error", "detail": message, "errors": [message]}, status_code=422)
-        return _automation_render_error(request, identity, db, message)
-    record_audit(db, actor=identity.username, action="create_automation_script", resource_type="automation_script", resource_id=str(script.id))
-    if wizard_request:
-        return JSONResponse({"status": "saved", "script_id": script.id})
-    return RedirectResponse("/automation#scripts", status_code=303)
-
-
-@router.post("/automation/scripts/{script_id}/revisions", response_model=None)
-def create_automation_script_revision_from_ui(
-    script_id: int,
-    request: Request,
-    interpreter: str = Form("powershell"),
-    content: str = Form(...),
-    timeout_seconds: int = Form(3600),
-    csrf: str = Form(...),
-    identity: Identity = Depends(require_session_identity),
-    db: Session = Depends(get_db),
-) -> Response:
-    """Handle the create automation script revision from ui endpoint.
-
-    Args:
-        script_id: Identifier of the script.
-        request: Incoming HTTP request.
-        interpreter: Interpreter supplied by the caller.
-        content: Document or file content to process.
-        timeout_seconds: Maximum time to wait, in seconds.
-        csrf: Validated CSRF token authorizing the request.
-        identity: Authenticated identity authorizing the request.
-        db: Active database session.
-
-    Returns:
-        The endpoint response.
-
-    Raises:
-        HTTPException: If the request cannot be fulfilled.
-    """
-    verify_csrf(request, csrf)
-    require_admin_identity(identity)
-    script = db.get(AutomationScript, script_id)
-    if script is None:
-        raise HTTPException(status_code=404, detail="Managed script not found.")
-    validation_message = _automation_script_validation_message(interpreter, content, timeout_seconds)
-    if validation_message:
-        return _automation_render_error(request, identity, db, validation_message)
-    try:
-        revision = create_script_revision(db, script=script, interpreter=interpreter, content=content, timeout_seconds=timeout_seconds, actor=identity.username)
-        script.updated_at = utcnow()
-        db.add(script)
-        db.commit()
-    except ValueError:
-        db.rollback()
-        return _automation_render_error(request, identity, db, "Managed script validation failed.")
-    record_audit(db, actor=identity.username, action="create_automation_script_revision", resource_type="automation_script_revision", resource_id=str(revision.id), detail=f"script={script.name}; revision={revision.revision}")
-    return RedirectResponse("/automation#scripts", status_code=303)
-
-
-@router.post("/automation/scripts/{script_id}/edit", response_model=None)
-def edit_automation_script_from_ui(
-    script_id: int,
-    request: Request,
-    name: str = Form(...),
-    description: str = Form(""),
-    csrf: str = Form(...),
-    identity: Identity = Depends(require_session_identity),
-    db: Session = Depends(get_db),
-) -> Response:
-    """Handle the edit automation script from ui endpoint.
-
-    Args:
-        script_id: Identifier of the script.
-        request: Incoming HTTP request.
-        name: Name of the target object.
-        description: Human-readable description of the resource.
-        csrf: Validated CSRF token authorizing the request.
-        identity: Authenticated identity authorizing the request.
-        db: Active database session.
-
-    Returns:
-        The endpoint response.
-
-    Raises:
-        HTTPException: If the request cannot be fulfilled.
-    """
-    verify_csrf(request, csrf)
-    require_admin_identity(identity)
-    script = db.get(AutomationScript, script_id)
-    if script is None:
-        raise HTTPException(status_code=404, detail="Managed script not found.")
-    normalized_name = name.strip()
-    if not normalized_name:
-        return _automation_render_error(request, identity, db, "Script name is required.")
-    script.name = normalized_name
-    script.description = description.strip()
-    script.updated_at = utcnow()
-    db.add(script)
-    try:
-        db.commit()
-    except IntegrityError:
-        db.rollback()
-        return _automation_render_error(request, identity, db, "A script with this name already exists.", status_code=409)
-    record_audit(db, actor=identity.username, action="edit_automation_script", resource_type="automation_script", resource_id=str(script.id))
-    return RedirectResponse("/automation#scripts", status_code=303)
-
-
-@router.post("/automation/scripts/{script_id}/delete", response_model=None)
-def delete_automation_script_from_ui(
-    script_id: int,
-    request: Request,
-    csrf: str = Form(...),
-    identity: Identity = Depends(require_session_identity),
-    db: Session = Depends(get_db),
-) -> Response:
-    """Handle the delete automation script from ui endpoint.
-
-    Args:
-        script_id: Identifier of the script.
-        request: Incoming HTTP request.
-        csrf: Validated CSRF token authorizing the request.
-        identity: Authenticated identity authorizing the request.
-        db: Active database session.
-
-    Returns:
-        The endpoint response.
-
-    Raises:
-        HTTPException: If the request cannot be fulfilled.
-    """
-    verify_csrf(request, csrf)
-    require_admin_identity(identity)
-    script = db.execute(
-        select(AutomationScript).options(selectinload(AutomationScript.revisions)).where(AutomationScript.id == script_id)
-    ).scalar_one_or_none()
-    if script is None:
-        raise HTTPException(status_code=404, detail="Managed script not found.")
-    revision_ids = {revision.id for revision in script.revisions}
-    dependent_schedules: list[str] = []
-    for schedule in db.execute(select(Schedule).where(Schedule.task_type == "managed_script")).scalars().all():
-        try:
-            revision_id = json.loads(schedule.task_config_json or "{}").get("revision_id")
-        except (AttributeError, json.JSONDecodeError):
-            continue
-        if revision_id in revision_ids:
-            dependent_schedules.append(schedule.name)
-    if dependent_schedules:
-        return _automation_render_error(
-            request,
-            identity,
-            db,
-            f"Delete or reassign schedules using this script first: {', '.join(dependent_schedules)}.",
-            status_code=409,
-        )
-    name = script.name
-    db.delete(script)
-    db.commit()
-    record_audit(db, actor=identity.username, action="delete_automation_script", resource_type="automation_script", resource_id=str(script_id), detail=f"name={name}")
-    return RedirectResponse("/automation#scripts", status_code=303)
-
-
-@router.post("/automation/scripts/revisions/{revision_id}/toggle", response_model=None)
-def toggle_automation_script_revision(
-    revision_id: int,
-    request: Request,
-    csrf: str = Form(...),
-    identity: Identity = Depends(require_session_identity),
-    db: Session = Depends(get_db),
-) -> RedirectResponse:
-    """Handle the toggle automation script revision endpoint.
-
-    Args:
-        revision_id: Identifier of the revision.
-        request: Incoming HTTP request.
-        csrf: Validated CSRF token authorizing the request.
-        identity: Authenticated identity authorizing the request.
-        db: Active database session.
-
-    Returns:
-        The endpoint response.
-
-    Raises:
-        HTTPException: If the request cannot be fulfilled.
-    """
-    verify_csrf(request, csrf)
-    require_admin_identity(identity)
-    revision = db.get(AutomationScriptRevision, revision_id)
-    if revision is None:
-        raise HTTPException(status_code=404, detail="Managed script revision not found.")
-    if revision.enabled:
-        dependent_schedules: list[str] = []
-        for schedule in db.execute(select(Schedule).where(Schedule.task_type == "managed_script", Schedule.enabled.is_(True))).scalars().all():
-            try:
-                configured_revision_id = json.loads(schedule.task_config_json or "{}").get("revision_id")
-            except (AttributeError, json.JSONDecodeError):
-                continue
-            if configured_revision_id == revision.id:
-                dependent_schedules.append(schedule.name)
-        if dependent_schedules:
-            return _automation_render_error(
-                request,
-                identity,
-                db,
-                f"Disable or edit schedules using this revision first: {', '.join(dependent_schedules)}.",
-                status_code=409,
-            )
-    revision.enabled = not revision.enabled
-    db.add(revision)
-    db.commit()
-    record_audit(db, actor=identity.username, action="enable_automation_script_revision" if revision.enabled else "disable_automation_script_revision", resource_type="automation_script_revision", resource_id=str(revision.id), detail=f"sha256={revision.content_sha256}")
-    return RedirectResponse("/automation#scripts", status_code=303)
-
-
-@router.post("/automation/scripts/revisions/{revision_id}/run", response_model=None)
-def run_automation_script_revision(
-    revision_id: int,
-    request: Request,
-    csrf: str = Form(...),
-    script_arguments: str = Form(""),
-    vault_id: int | None = Form(None),
-    identity: Identity = Depends(require_session_identity),
-    db: Session = Depends(get_db),
-) -> RedirectResponse:
-    """Handle the run automation script revision endpoint.
-
-    Args:
-        revision_id: Identifier of the revision.
-        request: Incoming HTTP request.
-        csrf: Validated CSRF token authorizing the request.
-        script_arguments: Script arguments supplied by the caller.
-        vault_id: Identifier of the vault.
-        identity: Authenticated identity authorizing the request.
-        db: Active database session.
-
-    Returns:
-        The endpoint response.
-
-    Raises:
-        HTTPException: If the request cannot be fulfilled.
-    """
-    verify_csrf(request, csrf)
-    require_admin_identity(identity)
-    revision = db.get(AutomationScriptRevision, revision_id)
-    if revision is None or not revision.enabled:
-        raise HTTPException(status_code=400, detail="Enable the managed script revision before running it.")
-    try:
-        arguments = parse_script_arguments(script_arguments, revision.interpreter)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    selected_vault_id = int(vault_id or 0)
-    selected_vault = db.get(Vault, selected_vault_id) if selected_vault_id else None
-    if selected_vault_id and selected_vault is None:
-        raise HTTPException(status_code=400, detail="Choose an available vault or run without vault access.")
-    task_config = {"arguments": arguments, "revision_id": revision.id}
-    if selected_vault is not None:
-        task_config["vault_id"] = selected_vault.id
-        task_config["vault_scope"] = vault_scope_identity(selected_vault)
-    job = Job(
-        id=f"job_{uuid4().hex[:12]}",
-        type="managed-script",
-        status=JobStatus.PENDING.value,
-        created_by=identity.username,
-        progress_percent=0,
-        trigger="manual",
-        task_config_json=json.dumps(task_config, sort_keys=True),
-        result=json.dumps({"status": "pending", "revision_id": revision.id}, indent=2),
-    )
-    db.add(job)
-    db.commit()
-    record_audit(db, actor=identity.username, action="queue_managed_script", resource_type="job", resource_id=job.id, detail=f"revision_id={revision.id}; sha256={revision.content_sha256}; arguments_count={len(arguments)}")
-    return RedirectResponse("/tasks", status_code=303)
 
 
 class ApplianceApplyJobError(RuntimeError):
@@ -18989,201 +18046,6 @@ router = APIRouter(
     dependencies=[Depends(require_management_ui_request)],
 )
 
-def service_state_status_row(service: ServiceState) -> dict[str, object]:
-    """Return service state status row.
-
-    Args:
-        service: Atlaso or host service affected by the operation.
-    """
-    row = {
-        "id": service.id,
-        "service": service.service,
-        "display_name": service.display_name,
-        "running": service.running,
-        "enabled": service.enabled,
-        "health": service.health,
-        "detail": service.detail or "native host service",
-    }
-    unit = SERVICE_SYSTEMD_UNITS.get(service.service)
-    if unit and not get_settings().dry_run_system_adapters:
-        result = SystemAdapter().service_status(unit)
-        if result.stdout:
-            try:
-                status_payload = json.loads(result.stdout)
-            except json.JSONDecodeError:
-                status_payload = {}
-            active_state = str(status_payload.get("active") or "").strip()
-            enabled_state = str(status_payload.get("enabled") or "").strip()
-            if active_state:
-                row["running"] = active_state == "active"
-            if enabled_state:
-                row["enabled"] = enabled_state in {"enabled", "enabled-runtime"}
-            if row["running"] and row["enabled"]:
-                row["health"] = "healthy"
-            elif row["running"] or row["enabled"]:
-                row["health"] = "degraded"
-            else:
-                row["health"] = "disabled"
-    return row
-
-
-def service_state_to_grid_row(service: ServiceState) -> dict[str, object]:
-    """Return service state to grid row.
-
-    Args:
-        service: Atlaso or host service affected by the operation.
-    """
-    row = service_state_status_row(service)
-    row.pop("health", None)
-    return row
-
-
-def dnsmasq_backed_service_grid_row(service: ServiceState, enabled: bool) -> dict[str, object]:
-    """Return dnsmasq backed service grid row.
-
-    Args:
-        service: Atlaso or host service affected by the operation.
-        enabled: Whether the associated resource or behavior is enabled.
-    """
-    row = service_state_to_grid_row(service)
-    if not get_settings().dry_run_system_adapters:
-        active = backing_systemd_unit_active("dnsmasq.service")
-        if active is not None:
-            row["running"] = active
-    row["enabled"] = enabled
-    row.pop("health", None)
-    return row
-
-
-def esxi_pxe_service_grid_row(service: ServiceState, db: Session) -> dict[str, object]:
-    """Return esxi pxe service grid row.
-
-    Args:
-        service: Atlaso service affected by the operation.
-        db: Active database session.
-    """
-    row = service_state_to_grid_row(service)
-    row.update(esxi_pxe_service_state_from_boot(esxi_pxe_boot_settings(db)))
-    row.pop("health", None)
-    row["detail"] = "dnsmasq TFTP/DHCP boot options and PXE HTTP files"
-    return row
-
-
-def ca_service_grid_row(service: ServiceState, db: Session) -> dict[str, object]:
-    """Return ca service grid row.
-
-    Args:
-        service: Atlaso service affected by the operation.
-        db: Active database session.
-    """
-    row = service_state_to_grid_row(service)
-    row.update(ca_service_state(get_ca_settings_row(db)))
-    row.pop("health", None)
-    row["detail"] = service.detail or "Atlaso CA material and issued certificates"
-    return row
-
-
-def vcf_backup_service_grid_row(service: ServiceState, db: Session) -> dict[str, object]:
-    """Return vcf backup service grid row.
-
-    Args:
-        service: Atlaso service affected by the operation.
-        db: Active database session.
-    """
-    row = service_state_to_grid_row(service)
-    settings = get_vcf_backup_settings_row(db)
-    row.update(vcf_backup_service_state(settings, sshd_active=backing_systemd_unit_active("sshd.service")))
-    row.pop("health", None)
-    row["detail"] = service.detail or "/mnt/atlaso-vcf-backups"
-    return row
-
-
-def vcf_depot_service_grid_row(service: ServiceState, db: Session) -> dict[str, object]:
-    """Return vcf depot service grid row.
-
-    Args:
-        service: Atlaso service affected by the operation.
-        db: Active database session.
-    """
-    row = service_state_to_grid_row(service)
-    settings = get_vcf_offline_depot_settings_row(db)
-    row.update(vcf_depot_service_state(settings, nginx_active=backing_systemd_unit_active("nginx.service")))
-    row.pop("health", None)
-    row["detail"] = service.detail or "/mnt/atlaso-vcf-offline-depot"
-    return row
-
-
-def esx_storage_service_grid_row(service: ServiceState, db: Session) -> dict[str, object]:
-    """Return esx storage service grid row.
-
-    Args:
-        service: Atlaso service affected by the operation.
-        db: Active database session.
-    """
-    row = service_state_status_row(service)
-    settings = get_esx_storage_settings_row(db)
-    shares = db.execute(select(EsxNfsShare).where(EsxNfsShare.enabled.is_(True))).scalars().all()
-    requires_rpcbind = esx_storage_rpcbind_required(shares)
-    row["enabled"] = settings.enabled
-    row["detail"] = "NFS 3 / 4.1 over equivalent IPv4 and IPv6 listeners"
-    if not settings.enabled:
-        row["running"] = False
-        row["health"] = "disabled"
-    elif requires_rpcbind and not get_settings().dry_run_system_adapters and backing_systemd_unit_active("rpcbind.service") is not True:
-        row["running"] = False
-        row["health"] = "degraded"
-        row["detail"] += "; rpcbind.service is required by an enabled NFS 3 share but is not active"
-    elif row.get("running"):
-        row["health"] = "healthy"
-    else:
-        row["health"] = "degraded"
-    return row
-
-
-def service_grid_row(service: ServiceState, db: Session, dns_enabled: bool, dhcp_enabled: bool) -> dict[str, object]:
-    """Return service grid row.
-
-    Args:
-        service: Atlaso service affected by the operation.
-        db: Active database session.
-        dns_enabled: Dns enabled supplied by the caller.
-        dhcp_enabled: Dhcp enabled supplied by the caller.
-    """
-    if service.service == "dns":
-        return dnsmasq_backed_service_grid_row(service, dns_enabled)
-    if service.service == "dhcp":
-        return dnsmasq_backed_service_grid_row(service, dhcp_enabled)
-    if service.service == "esxi-pxe":
-        return esxi_pxe_service_grid_row(service, db)
-    if service.service == "ca":
-        return ca_service_grid_row(service, db)
-    if service.service == "vcf-backups":
-        return vcf_backup_service_grid_row(service, db)
-    if service.service == "repository":
-        return vcf_depot_service_grid_row(service, db)
-    if service.service == "esx-storage":
-        return esx_storage_service_grid_row(service, db)
-    return service_state_to_grid_row(service)
-
-
-def services_template_context(db: Session) -> dict[str, object]:
-    """Return services template context.
-
-    Args:
-        db: Active database session.
-    """
-    dns_settings = get_dns_settings_row(db)
-    dhcp_settings = get_dhcp_settings_row(db)
-    rows = db.execute(select(ServiceState).where(ServiceState.service.in_(SERVICE_STATE_IDS)).order_by(ServiceState.display_name)).scalars().all()
-    service_rows = [service_grid_row(row, db, dns_settings.enabled, dhcp_settings.enabled) for row in rows]
-    system_adapter_dry_run = get_settings().dry_run_system_adapters
-    return {
-        "services": service_rows,
-        "service_rows": service_rows,
-        "system_adapter_dry_run": system_adapter_dry_run,
-        "services_boundary_label": "dry-run" if system_adapter_dry_run else "live",
-        "services_boundary_pill": "warn" if system_adapter_dry_run else "good",
-    }
 
 
 def backup_restore_context(db: Session, result: dict[str, Any] | None = None, error: str | None = None) -> dict[str, Any]:
@@ -19328,557 +18190,70 @@ def esxi_kickstart_grid_payload(kickstart: EsxiKickstart, *, include_content: bo
     return payload
 
 
-@router.post("/services/{service}/{action}", response_model=None)
-def service_action_from_ui(
-    service: str,
-    action: str,
-    request: Request,
-    csrf: str = Form(...),
-    identity: Identity = Depends(require_session_identity),
-    db: Session = Depends(get_db),
-) -> HTMLResponse:
-    """Handle the service action from ui endpoint.
-
-    Args:
-        service: Atlaso service affected by the operation.
-        action: Operation to perform on the target resource.
-        request: Incoming HTTP request.
-        csrf: Validated CSRF token authorizing the request.
-        identity: Authenticated identity authorizing the request.
-        db: Active database session.
-
-    Returns:
-        The endpoint response.
-
-    Raises:
-        HTTPException: If the request cannot be fulfilled.
-    """
-    verify_csrf(request, csrf)
-    if service not in SERVICE_STATE_IDS:
-        raise HTTPException(status_code=404, detail="Service is not approved for control")
-    row = db.execute(select(ServiceState).where(ServiceState.service == service)).scalar_one_or_none()
-    if not row:
-        raise HTTPException(status_code=404, detail="Service not found")
-    if action not in {"start", "stop", "restart", "enable", "disable"}:
-        raise HTTPException(status_code=422, detail="Unsupported service action")
-    if action == "enable":
-        row.enabled = True
-        if service == "dns":
-            get_dns_settings_row(db).enabled = True
-        elif service == "dhcp":
-            get_dhcp_settings_row(db).enabled = True
-    elif action == "disable":
-        row.enabled = False
-        if service == "dns":
-            get_dns_settings_row(db).enabled = False
-        elif service == "dhcp":
-            get_dhcp_settings_row(db).enabled = False
-    elif action in {"start", "restart"}:
-        row.running = True
-    elif action == "stop":
-        row.running = False
-    db.add(row)
-    result = SystemAdapter().service_action(service, action)
-    service_action_name = f"{action}_service_dry_run" if get_settings().dry_run_system_adapters else f"{action}_service_intent"
-    record_audit(
-        db,
-        actor=identity.username,
-        action=service_action_name,
-        resource_type="service",
-        resource_id=service,
-        detail=" ".join(result.command),
+_management_between_identity_operations_router = router
+_operations_ui = build_operations_ui_router(
+    OperationsUiDependencies(
+        require_management_ui_request=require_management_ui_request,
+        active_job_statuses=ACTIVE_JOB_STATUSES,
+        service_admin_cancellable_job_types=SERVICE_ADMIN_CANCELLABLE_JOB_TYPES,
+        job_payload=_job_payload,
+        redact_task_value=_redact_task_value,
+        task_component_filter_options=_task_component_filter_options,
+        task_filter_clauses=_task_filter_clauses,
+        task_log_lines=_task_log_lines,
+        task_row=_task_row,
+        audit_event_rows_context=audit_event_rows_context,
+        backing_systemd_unit_active=backing_systemd_unit_active,
+        get_ca_settings_row=get_ca_settings_row,
+        get_dhcp_settings_row=get_dhcp_settings_row,
+        get_dns_settings_row=get_dns_settings_row,
+        get_esx_storage_settings_row=get_esx_storage_settings_row,
+        get_vcf_backup_settings_row=get_vcf_backup_settings_row,
+        get_vcf_offline_depot_settings_row=get_vcf_offline_depot_settings_row,
+        log_sources_context=lambda *args, **kwargs: log_sources_context(
+            *args, **kwargs
+        ),
+        logs_context=lambda *args, **kwargs: logs_context(*args, **kwargs),
+        normalized_log_line_count=lambda *args, **kwargs: normalized_log_line_count(
+            *args, **kwargs
+        ),
+        render=render,
+        vcf_depot_execution_conflict_detail=vcf_depot_execution_conflict_detail,
+        vcf_depot_profile_start_states=vcf_depot_profile_start_states,
+        verify_csrf=verify_csrf,
     )
-    return render(
-        request,
-        "services.html",
-        {
-            "identity": identity,
-            **services_template_context(db),
-            "service_action_result": {
-                "service": row.display_name,
-                "action": action,
-                "command": " ".join(result.command),
-                "dry_run": result.dry_run,
-            },
-        },
-    )
+)
+operations_router = _operations_ui.router
+service_state_status_row = _operations_ui.endpoints["service_state_status_row"]
+service_state_to_grid_row = _operations_ui.endpoints["service_state_to_grid_row"]
+dnsmasq_backed_service_grid_row = _operations_ui.endpoints[
+    "dnsmasq_backed_service_grid_row"
+]
+esxi_pxe_service_grid_row = _operations_ui.endpoints["esxi_pxe_service_grid_row"]
+ca_service_grid_row = _operations_ui.endpoints["ca_service_grid_row"]
+vcf_backup_service_grid_row = _operations_ui.endpoints["vcf_backup_service_grid_row"]
+vcf_depot_service_grid_row = _operations_ui.endpoints["vcf_depot_service_grid_row"]
+esx_storage_service_grid_row = _operations_ui.endpoints["esx_storage_service_grid_row"]
+service_grid_row = _operations_ui.endpoints["service_grid_row"]
+services_template_context = _operations_ui.endpoints["services_template_context"]
+service_action_from_ui = _operations_ui.endpoints["service_action_from_ui"]
+service_logs_from_ui = _operations_ui.endpoints["service_logs_from_ui"]
+services = _operations_ui.endpoints["services"]
+logs_page = _operations_ui.endpoints["logs_page"]
+logs_data = _operations_ui.endpoints["logs_data"]
+tasks_page = _operations_ui.endpoints["tasks_page"]
+tasks_status = _operations_ui.endpoints["tasks_status"]
+task_status = _operations_ui.endpoints["task_status"]
+task_log = _operations_ui.endpoints["task_log"]
+cancel_task_from_ui = _operations_ui.endpoints["cancel_task_from_ui"]
+audit_log = _operations_ui.endpoints["audit_log"]
+
+router = APIRouter(
+    prefix=MANAGEMENT_UI_ROOT,
+    dependencies=[Depends(require_management_ui_request)],
+)
 
 
-@router.get("/services/{service}/logs", response_class=HTMLResponse, response_model=None)
-def service_logs_from_ui(
-    service: str,
-    request: Request,
-    identity: Identity = Depends(require_session_identity),
-    db: Session = Depends(get_db),
-) -> HTMLResponse:
-    """Handle the service logs from ui endpoint.
-
-    Args:
-        service: Atlaso service affected by the operation.
-        request: Incoming HTTP request.
-        identity: Authenticated identity authorizing the request.
-        db: Active database session.
-
-    Returns:
-        The endpoint response.
-
-    Raises:
-        HTTPException: If the request cannot be fulfilled.
-    """
-    if service not in SERVICE_STATE_IDS:
-        raise HTTPException(status_code=404, detail="Log source is not approved")
-    row = db.execute(select(ServiceState).where(ServiceState.service == service)).scalar_one_or_none()
-    if not row:
-        raise HTTPException(status_code=404, detail="Service not found")
-    return render(
-        request,
-        "services.html",
-        {
-            "identity": identity,
-            **services_template_context(db),
-            "service_logs": {
-                "service": row.display_name,
-                "lines": [f"dry-run log source for {service}", "No host journal is read in development mode."],
-            },
-        },
-    )
-
-
-@router.get("/services", response_class=HTMLResponse, response_model=None)
-def services(
-    request: Request,
-    identity: Identity = Depends(require_session_identity),
-    db: Session = Depends(get_db),
-) -> HTMLResponse:
-    """Handle the services endpoint.
-
-    Args:
-        request: Incoming HTTP request.
-        identity: Authenticated identity authorizing the request.
-        db: Active database session.
-
-    Returns:
-        The endpoint response.
-    """
-    return render(request, "services.html", {"identity": identity, **services_template_context(db)})
-
-
-@router.get("/logs", response_class=HTMLResponse, response_model=None)
-def logs_page(
-    request: Request,
-    lines: int = Query(100),
-    identity: Identity = Depends(require_session_identity),
-    db: Session = Depends(get_db),
-) -> HTMLResponse:
-    """Handle the logs page endpoint.
-
-    Args:
-        request: Incoming HTTP request.
-        lines: Lines supplied by the caller.
-        identity: Authenticated identity authorizing the request.
-        db: Active database session.
-
-    Returns:
-        The endpoint response.
-    """
-    return render(
-        request,
-        "logs.html",
-        {
-            "identity": identity,
-            **logs_context(db, max_lines=lines),
-        },
-    )
-
-
-@router.get("/logs/data", response_class=JSONResponse, response_model=None)
-def logs_data(
-    lines: int = Query(100),
-    _identity: Identity = Depends(require_session_identity),
-) -> JSONResponse:
-    """Handle the logs data endpoint.
-
-    Args:
-        lines: Lines supplied by the caller.
-        _identity: Authenticated identity supplied by the dependency layer.
-
-    Returns:
-        The endpoint response.
-    """
-    line_count = normalized_log_line_count(lines)
-    return JSONResponse(
-        {
-            "line_count": line_count,
-            "refreshed_at": utcnow().isoformat(),
-            "sources": log_sources_context(max_lines=line_count),
-        }
-    )
-
-
-@router.get("/tasks", response_class=HTMLResponse, response_model=None)
-def tasks_page(
-    request: Request,
-    job_id: str = Query(""),
-    identity: Identity = Depends(require_session_identity),
-    db: Session = Depends(get_db),
-) -> HTMLResponse:
-    """Handle the tasks page endpoint.
-
-    Args:
-        request: Incoming HTTP request.
-        job_id: Identifier of the job.
-        identity: Authenticated identity authorizing the request.
-        db: Active database session.
-
-    Returns:
-        The endpoint response.
-    """
-    jobs = db.execute(select(Job).options(selectinload(Job.steps)).order_by(desc(Job.created_at)).limit(500)).scalars().all()
-    task_rows = [_task_row(job, identity) for job in jobs]
-    selected_job_id = job_id if any(row["id"] == job_id for row in task_rows) else ""
-    return render(
-        request,
-        "tasks.html",
-        {
-            "identity": identity,
-            "task_rows": task_rows,
-            "task_component_filter_options": _task_component_filter_options(db),
-            "selected_task_id": selected_job_id,
-        },
-    )
-
-
-@router.get("/tasks/status", response_class=JSONResponse, response_model=None)
-def tasks_status(
-    job_id: str = Query(""),
-    task_type: str = Query(""),
-    filters: str = Query("[]"),
-    page: int = Query(1, ge=1),
-    size: int = Query(25, ge=1, le=100),
-    identity: Identity = Depends(require_session_identity),
-    db: Session = Depends(get_db),
-) -> JSONResponse:
-    """Handle the tasks status endpoint.
-
-    Args:
-        job_id: Identifier of the job.
-        task_type: Task type supplied by the caller.
-        filters: Filters supplied by the caller.
-        page: Page supplied by the caller.
-        size: Size supplied by the caller.
-        identity: Authenticated identity authorizing the request.
-        db: Active database session.
-
-    Returns:
-        The endpoint response.
-
-    Raises:
-        HTTPException: If the request cannot be fulfilled.
-    """
-    normalized_task_type = task_type.strip()
-    if len(normalized_task_type) > 100:
-        raise HTTPException(status_code=400, detail="Task type filter is too long.")
-    scope_clauses = [Job.type == normalized_task_type] if normalized_task_type else []
-    clauses = _task_filter_clauses(filters)
-    total_count = int(db.scalar(select(func.count(Job.id)).where(*scope_clauses)) or 0)
-    filtered_count = int(db.scalar(select(func.count(Job.id)).where(*scope_clauses, *clauses)) or 0)
-    active_count = int(
-        db.scalar(select(func.count(Job.id)).where(*scope_clauses, Job.status.in_(ACTIVE_JOB_STATUSES))) or 0
-    )
-    last_page = max(1, (filtered_count + size - 1) // size)
-    effective_page = min(page, last_page)
-    jobs = db.execute(
-        select(Job)
-        .options(selectinload(Job.steps))
-        .where(*scope_clauses, *clauses)
-        .order_by(desc(Job.created_at))
-        .offset((effective_page - 1) * size)
-        .limit(size)
-    ).scalars().all()
-    rows = [_task_row(job, identity) for job in jobs]
-    selected_job = (
-        db.scalar(select(Job).options(selectinload(Job.steps)).where(Job.id == job_id, *scope_clauses))
-        if job_id
-        else None
-    )
-    selected = _task_row(selected_job, identity) if selected_job is not None else None
-    active_downloads = (
-        [
-            {
-                "job_id": job.id,
-                "profile_id": vcf_depot_job_profile_id(job),
-                "status": job.status,
-            }
-            for job in active_vcf_depot_download_jobs(db)
-        ]
-        if normalized_task_type == "vcf-depot-download"
-        else []
-    )
-    exclusive_job = (
-        active_vcf_depot_exclusive_job(db)
-        if normalized_task_type == "vcf-depot-download"
-        else None
-    )
-    return JSONResponse(
-        {
-            "last_page": last_page,
-            "data": rows,
-            "tasks": rows,
-            "selected_task": selected,
-            "active_count": active_count,
-            "filtered_count": filtered_count,
-            "total_count": total_count,
-            "active_downloads": active_downloads,
-            "profile_start_states": (
-                vcf_depot_profile_start_states(db)
-                if normalized_task_type == "vcf-depot-download"
-                else []
-            ),
-            "active_exclusive_operation": (
-                {
-                    "job_id": exclusive_job.id,
-                    "status": exclusive_job.status,
-                    "type": exclusive_job.type,
-                    "detail": vcf_depot_execution_conflict_detail(exclusive_job),
-                }
-                if exclusive_job is not None
-                else None
-            ),
-            "server_time": utcnow().isoformat(),
-        }
-    )
-
-
-@router.get("/tasks/{job_id}/status", response_class=JSONResponse, response_model=None)
-def task_status(
-    job_id: str,
-    identity: Identity = Depends(require_session_identity),
-    db: Session = Depends(get_db),
-) -> JSONResponse:
-    """Handle the task status endpoint.
-
-    Args:
-        job_id: Identifier of the job.
-        identity: Authenticated identity authorizing the request.
-        db: Active database session.
-
-    Returns:
-        The endpoint response.
-
-    Raises:
-        HTTPException: If the request cannot be fulfilled.
-    """
-    job = db.scalar(select(Job).options(selectinload(Job.steps)).where(Job.id == job_id))
-    if job is None:
-        raise HTTPException(status_code=404, detail="Task not found")
-    return JSONResponse({"task": _task_row(job, identity), "server_time": utcnow().isoformat()})
-
-
-@router.get("/tasks/{job_id}/log", response_class=JSONResponse, response_model=None)
-def task_log(
-    job_id: str,
-    identity: Identity = Depends(require_session_identity),
-    db: Session = Depends(get_db),
-) -> JSONResponse:
-    """Handle the task log endpoint.
-
-    Args:
-        job_id: Identifier of the job.
-        identity: Authenticated identity authorizing the request.
-        db: Active database session.
-
-    Returns:
-        The endpoint response.
-
-    Raises:
-        HTTPException: If the request cannot be fulfilled.
-    """
-    job = db.get(Job, job_id)
-    if not job:
-        raise HTTPException(status_code=404, detail="Task not found")
-    row = _task_row(job)
-    return JSONResponse(
-        {
-            "job_id": job.id,
-            "status": job.status,
-            "title": f"{row['type_label']} log",
-            "text": "\n".join(_task_log_lines(job, db)),
-        }
-    )
-
-
-@router.post("/tasks/{job_id}/cancel", response_class=JSONResponse, response_model=None)
-def cancel_task_from_ui(
-    job_id: str,
-    request: Request,
-    csrf: str = Form(...),
-    identity: Identity = Depends(require_session_identity),
-    db: Session = Depends(get_db),
-) -> JSONResponse:
-    """Handle the cancel task from ui endpoint.
-
-    Args:
-        job_id: Identifier of the job.
-        request: Incoming HTTP request.
-        csrf: Validated CSRF token authorizing the request.
-        identity: Authenticated identity authorizing the request.
-        db: Active database session.
-
-    Returns:
-        The endpoint response.
-
-    Raises:
-        HTTPException: If the request cannot be fulfilled.
-    """
-    verify_csrf(request, csrf)
-    job = db.get(Job, job_id)
-    if not job:
-        raise HTTPException(status_code=404, detail="Task not found")
-    if not (
-        identity.has_role(Role.ADMIN.value)
-        or (identity.has_role(Role.SERVICE_ADMIN.value) and job.type in SERVICE_ADMIN_CANCELLABLE_JOB_TYPES)
-    ):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Administrator role required for this task type")
-    if job.status not in ACTIVE_JOB_STATUSES:
-        return JSONResponse({"task": _task_row(job, identity), "message": "Task is already finished."})
-    if job.type == "pxe-media-sync" and job.status == JobStatus.RUNNING.value:
-        try:
-            config = json.loads(job.task_config_json or "{}")
-        except json.JSONDecodeError:
-            config = {}
-        if config.get("source") == "delete":
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail="A running Network Boot media deletion cannot be cancelled.",
-            )
-    if job.type == "vcf-depot-software-id":
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=(
-                "A queued or running VCFDT Software Depot ID task cannot be cancelled because identity "
-                "replacement may already be in progress."
-            ),
-        )
-    if job.type == "vcf-depot-download" and job.status == JobStatus.RUNNING.value:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=(
-                "A running VCFDT profile download cannot be cancelled because the VCFDT process is still executing."
-            ),
-        )
-    if job.type == "vcf-depot-download" and job.status == JobStatus.PENDING.value:
-        finished_at = utcnow()
-        payload = _job_payload(job)
-        payload["state"] = "cancelled"
-        payload["cancelled_by"] = identity.username
-        payload["cancelled_at"] = finished_at.isoformat()
-        cancelled = cancel_pending_vcf_depot_download(
-            db,
-            job.id,
-            profile_id=int(job.vcf_depot_profile_id or payload.get("profile_id") or 0),
-            profile_status_before_enqueue=str(payload.get("profile_status_before_enqueue") or "planned"),
-            finished_at=finished_at,
-            error="Task cancelled by operator.",
-            result=json.dumps(_redact_task_value(payload), sort_keys=True),
-        )
-        if not cancelled:
-            db.rollback()
-            db.expire_all()
-            current = db.get(Job, job.id)
-            if current is None:
-                raise HTTPException(status_code=404, detail="Task not found")
-            if current.status == JobStatus.RUNNING.value:
-                raise HTTPException(
-                    status_code=status.HTTP_409_CONFLICT,
-                    detail=(
-                        "A running VCFDT profile download cannot be cancelled because the VCFDT process "
-                        "is still executing."
-                    ),
-                )
-            return JSONResponse({"task": _task_row(current, identity), "message": "Task is already finished."})
-        db.commit()
-        record_audit(
-            db,
-            actor=identity.username,
-            action="cancel_task",
-            resource_type="job",
-            resource_id=job.id,
-            detail=f"type={job.type}",
-        )
-        db.refresh(job)
-        return JSONResponse({"task": _task_row(job, identity), "message": "Task cancellation requested."})
-    if job.type == "appliance-apply":
-        payload = _job_payload(job)
-        if not payload.get("cancel_requested"):
-            payload["state"] = "cancellation-requested"
-            payload["cancel_requested"] = True
-            payload["cancelled_by"] = identity.username
-            payload["cancel_requested_at"] = utcnow().isoformat()
-            job.result = json.dumps(_redact_task_value(payload), sort_keys=True)
-            db.commit()
-            record_audit(
-                db,
-                actor=identity.username,
-                action="request_cancel_task",
-                resource_type="job",
-                resource_id=job.id,
-                detail=f"type={job.type}",
-            )
-            db.refresh(job)
-        return JSONResponse(
-            {
-                "task": _task_row(job, identity),
-                "message": "Cancellation requested. The running component will finish before remaining components are skipped.",
-            }
-        )
-    if job.type == "pxe-media-sync" and job.status == JobStatus.PENDING.value:
-        try:
-            config = json.loads(job.task_config_json or "{}")
-        except json.JSONDecodeError:
-            config = {}
-        if config.get("source") == "upload":
-            from atlaso.app.services.network_boot import cleanup_network_boot_upload
-
-            cleanup_network_boot_upload(job.id)
-    job.status = JobStatus.CANCELLED.value
-    job.finished_at = utcnow()
-    job.error = "Task cancelled by operator."
-    payload = _job_payload(job)
-    payload["state"] = "cancelled"
-    payload["cancelled_by"] = identity.username
-    payload["cancelled_at"] = job.finished_at.isoformat()
-    job.result = json.dumps(_redact_task_value(payload), sort_keys=True)
-    job.progress_percent = 100
-    db.commit()
-    record_audit(db, actor=identity.username, action="cancel_task", resource_type="job", resource_id=job.id, detail=f"type={job.type}")
-    db.refresh(job)
-    return JSONResponse({"task": _task_row(job, identity), "message": "Task cancellation requested."})
-
-
-@router.get("/audit-log", response_class=HTMLResponse, response_model=None)
-def audit_log(
-    request: Request,
-    identity: Identity = Depends(require_session_identity),
-    db: Session = Depends(get_db),
-) -> HTMLResponse:
-    """Handle the audit log endpoint.
-
-    Args:
-        request: Incoming HTTP request.
-        identity: Authenticated identity authorizing the request.
-        db: Active database session.
-
-    Returns:
-        The endpoint response.
-    """
-    return render(
-        request,
-        "audit.html",
-        {
-            "identity": identity,
-            "audit_event_rows": audit_event_rows_context(db),
-        },
-    )
 
 
 @protocol_router.get(
@@ -20488,14 +18863,26 @@ allow_compatible_route_shadow(
 )
 _management_after_network_boot_router = router
 UI_ROUTER_REGISTRY.register(
-    "facade_before_routes_wan",
+    "facade_before_automation",
     (
         RouterContribution(plane="front_door", router=front_door_router),
         RouterContribution(plane="protocol", router=protocol_router),
         RouterContribution(plane="public", router=public_router),
         RouterContribution(
             plane="management",
-            router=_management_before_routes_wan_router,
+            router=_management_before_automation_router,
+        ),
+    ),
+)
+UI_ROUTER_REGISTRY.register(
+    "automation",
+    (RouterContribution(plane="management", router=automation_router),),
+)
+UI_ROUTER_REGISTRY.register(
+    "facade_between_automation_routes_wan",
+    (
+        RouterContribution(
+            plane="management", router=_management_before_routes_wan_router
         ),
     ),
 )
@@ -20521,7 +18908,11 @@ UI_ROUTER_REGISTRY.register(
 )
 UI_ROUTER_REGISTRY.register(
     "facade_between_dns_dhcp_managed_ldap",
-    (RouterContribution(plane="management", router=_management_between_dns_dhcp_managed_ldap_router),),
+    (
+        RouterContribution(
+            plane="management", router=_management_between_dns_dhcp_managed_ldap_router
+        ),
+    ),
 )
 UI_ROUTER_REGISTRY.register(
     "managed_ldap",
@@ -20529,7 +18920,12 @@ UI_ROUTER_REGISTRY.register(
 )
 UI_ROUTER_REGISTRY.register(
     "facade_between_managed_ldap_vcf_workflows",
-    (RouterContribution(plane="management", router=_management_between_managed_ldap_vcf_workflows_router),),
+    (
+        RouterContribution(
+            plane="management",
+            router=_management_between_managed_ldap_vcf_workflows_router,
+        ),
+    ),
 )
 UI_ROUTER_REGISTRY.register(
     "vcf_workflows",
@@ -20537,11 +18933,27 @@ UI_ROUTER_REGISTRY.register(
 )
 UI_ROUTER_REGISTRY.register(
     "facade_between_vcf_workflows_identity",
-    (RouterContribution(plane="management", router=_management_between_vcf_workflows_identity_router),),
+    (
+        RouterContribution(
+            plane="management", router=_management_between_vcf_workflows_identity_router
+        ),
+    ),
 )
 UI_ROUTER_REGISTRY.register(
     "identity",
     (RouterContribution(plane="management", router=identity_router),),
+)
+UI_ROUTER_REGISTRY.register(
+    "facade_between_identity_operations",
+    (
+        RouterContribution(
+            plane="management", router=_management_between_identity_operations_router
+        ),
+    ),
+)
+UI_ROUTER_REGISTRY.register(
+    "operations",
+    (RouterContribution(plane="management", router=operations_router),),
 )
 UI_ROUTER_REGISTRY.register(
     "facade_between_identity_network_boot",
@@ -20558,11 +18970,17 @@ UI_ROUTER_REGISTRY.register(
 )
 UI_ROUTER_REGISTRY.register(
     "facade_after_network_boot",
-    (RouterContribution(plane="management", router=_management_after_network_boot_router),),
+    (
+        RouterContribution(
+            plane="management", router=_management_after_network_boot_router
+        ),
+    ),
 )
 UI_ROUTER_REGISTRY.validate_domains(
     (
-        "facade_before_routes_wan",
+        "facade_before_automation",
+        "automation",
+        "facade_between_automation_routes_wan",
         "appliance_apply",
         "routes_wan",
         "firewall",
@@ -20574,11 +18992,15 @@ UI_ROUTER_REGISTRY.validate_domains(
         "vcf_workflows",
         "facade_between_vcf_workflows_identity",
         "identity",
+        "facade_between_identity_operations",
+        "operations",
         "facade_between_identity_network_boot",
         "network_boot",
         "facade_after_network_boot",
     )
 )
+
+
 
 router = APIRouter()
 for registered_router in UI_ROUTER_REGISTRY.routers_for_plane("management"):
