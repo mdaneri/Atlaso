@@ -3062,6 +3062,8 @@ def test_failed_candidate_restores_previous_release_and_database(
     daemon_reloads = 0
     candidate_starts = 0
     rollback_worker_starts = 0
+    rollback_worker_fail_closed_stops = 0
+    worker_stopped_fail_closed = False
 
     def service_command(action, *units):
         """Return service command.
@@ -3071,6 +3073,7 @@ def test_failed_candidate_restores_previous_release_and_database(
             *units: Additional positional arguments accepted by the callable.
         """
         nonlocal daemon_reloads, candidate_starts, rollback_worker_starts
+        nonlocal rollback_worker_fail_closed_stops, worker_stopped_fail_closed
         success = True
         if action == "daemon-reload":
             daemon_reloads += 1
@@ -3092,12 +3095,15 @@ def test_failed_candidate_restores_previous_release_and_database(
         if action == "restart" and units == ("atlaso-worker.service",):
             success = failure_stage != "worker_restart"
         if action == "stop" and "atlaso-worker.service" in units:
-            pytest.fail("rollback must not stop the existing worker before its definitive finalizer")
+            if failure_stage != "rollback_gate":
+                pytest.fail("rollback must not stop a worker while its runtime gate is held")
+            rollback_worker_fail_closed_stops += 1
+            worker_stopped_fail_closed = True
         if action == "start" and "atlaso-worker.service" in units:
             rollback_worker_starts += 1
             pytest.fail("rollback must preserve the existing worker instead of starting a restored unit")
         if action == "is-active" and units == ("atlaso-worker.service",):
-            success = failure_stage != "rollback_worker_state"
+            success = not worker_stopped_fail_closed and failure_stage != "rollback_worker_state"
         return {
             "command": ["systemctl", action, *units],
             "returncode": 0 if success else 1,
@@ -3270,6 +3276,7 @@ def test_failed_candidate_restores_previous_release_and_database(
     assert finalizer["commands"]
     assert not credential_path.exists()
     assert rollback_worker_starts == 0
+    assert rollback_worker_fail_closed_stops == (1 if failure_stage == "rollback_gate" else 0)
     if failure_stage == "transaction_backup_sync":
         assert "transaction_pending" not in finalizer_statuses
         assert not checkpoint_backup_counts

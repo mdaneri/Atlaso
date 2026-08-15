@@ -259,8 +259,9 @@ recorded helper no longer owns the transaction, privileged pre-start recovery re
 release before admitting the worker. The worker exits for systemd retry instead of accepting work if that recovery or
 gate does not complete. Runtime rollback preserves and verifies the already-running caller or candidate worker until the
 definitive rollback write and never starts a restored legacy worker inside the transaction. After completing rollback
-bookkeeping, a candidate worker exits so systemd starts the restored release. The surviving privileged helper removes
-and flushes any staged
+bookkeeping, a candidate worker exits so systemd starts the restored release. If the runtime gate cannot be created, the
+helper stops and verifies the caller inactive before publishing incomplete rollback. The surviving privileged helper
+removes and flushes any staged
 source-credential file before restarting the calling worker. The definitive finalizer retains sanitized helper command
 evidence so startup recovery can run the same child completion, parent completion, terminal task-log, and audit
 bookkeeping as an uninterrupted update. The helper then requires

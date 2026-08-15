@@ -12470,6 +12470,22 @@ def _apply_atlaso_release(
             "worker_restart_gate_hold",
             lambda: _set_release_restart_gate(True, str(payload.get("job_id") or "")),
         )
+        if not rollback_gate_ready:
+            def stop_worker_fail_closed() -> list[dict]:
+                """Stop and prove the caller inactive when no runtime gate can be held."""
+                stopped = _service_command("stop", "atlaso-worker.service")
+                active = _service_command("is-active", "atlaso-worker.service")
+                inactive = {
+                    **active,
+                    "command": ["systemctl", "is-inactive", "atlaso-worker.service"],
+                    "returncode": 0 if not active.get("success") else 1,
+                    "success": not active.get("success"),
+                    "stdout": "Atlaso worker is stopped." if not active.get("success") else "",
+                    "stderr": "" if not active.get("success") else "Atlaso worker remained active.",
+                }
+                return [stopped, inactive]
+
+            rollback_action("worker_fail_closed_stop", stop_worker_fail_closed)
         rollback_action(
             "service_stop",
             lambda: _service_command(

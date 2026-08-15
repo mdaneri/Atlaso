@@ -425,7 +425,8 @@ status: current
   must retain both maintenance and that gate so queued mutations cannot resume against inconsistent state. Rollback must
   preserve and verify the already-running worker until the definitive rollback write; it must never start a restored
   legacy worker inside the transaction. After recovery bookkeeping, a candidate worker must exit so systemd starts the
-  restored release.
+  restored release. If the runtime gate cannot be established, stop and verify the caller inactive before publishing
+  incomplete rollback.
   A gate timeout must exit worker startup for systemd retry, never enter the ordinary work loop. Remove and durably flush
   staged source credentials from the surviving helper before it restarts the calling worker. Require nginx plus web,
   worker, and console service state, and require the signed receipt, `current`, compatibility
