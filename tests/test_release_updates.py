@@ -418,6 +418,47 @@ def test_worker_exits_when_release_restart_gate_does_not_open(monkeypatch):
     assert worker.main() == 1
 
 
+def test_candidate_worker_exits_after_reconciling_healthy_rollback(monkeypatch):
+    """Verify systemd replaces candidate code only after rollback bookkeeping completes.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace worker startup dependencies.
+    """
+    from contextlib import nullcontext
+
+    import atlaso.app.worker as worker
+
+    events: list[str] = []
+    monkeypatch.setattr(worker.signal, "signal", lambda *_args: None)
+    monkeypatch.setattr(worker, "init_db", lambda: None)
+    monkeypatch.setattr(worker, "_write_worker_startup_status", lambda: None)
+    monkeypatch.setattr(worker, "_wait_for_release_restart_finalizer", lambda: True)
+    monkeypatch.setattr(worker, "SessionLocal", lambda: nullcontext(object()))
+    monkeypatch.setattr(
+        worker,
+        "recover_interrupted_worker_jobs",
+        lambda *_args, **_kwargs: events.append("bookkeeping") or 1,
+    )
+    monkeypatch.setattr(
+        worker,
+        "_release_finalizer",
+        lambda: {
+            "status": "failed",
+            "rolled_back": True,
+            "previous_version": "0.9.155",
+        },
+    )
+    monkeypatch.setattr(worker, "__version__", "0.9.159")
+    monkeypatch.setattr(
+        worker,
+        "ensure_vcf_depot_running_operation_index",
+        lambda: pytest.fail("candidate worker must exit before entering its ordinary work loop"),
+    )
+
+    assert worker.main() == 1
+    assert events == ["bookkeeping"]
+
+
 @pytest.mark.parametrize(
     ("status", "allow_worker"),
     [("transaction_pending", False), ("restart_pending", True)],
@@ -456,66 +497,6 @@ def test_release_prestart_recovery_defers_to_live_transaction_owner(
         helper,
         "_validated_release_recovery_context",
         lambda _payload: pytest.fail("live transaction owner must not be rolled back"),
-    )
-
-    result = helper._recover_interrupted_release_transaction()
-
-    assert result["status"] == "transaction_active"
-    assert result["allow_worker"] is allow_worker
-    assert result["success"] is allow_worker
-
-
-@pytest.mark.parametrize(
-    ("gate_job_id", "base_ready", "allow_worker"),
-    [
-        ("job-live-rollback", True, True),
-        ("another-job", True, False),
-        ("job-live-rollback", False, False),
-    ],
-)
-def test_release_prestart_recovery_admits_only_exact_ready_rollback_handoff(
-    monkeypatch,
-    tmp_path,
-    gate_job_id,
-    base_ready,
-    allow_worker,
-):
-    """Verify rollback pre-start admission requires live, ready, exact-job evidence.
-
-    Args:
-        monkeypatch: Pytest fixture used to replace helper dependencies.
-        tmp_path: Temporary directory provided for provisional evidence.
-        gate_job_id: Job identity stored in the volatile runtime gate.
-        base_ready: Whether the durable handoff proves base rollback readiness.
-        allow_worker: Whether pre-start recovery should admit the rollback worker.
-    """
-    from tests.test_appliance_update import load_helper_module
-
-    helper = load_helper_module()
-    finalizer = tmp_path / "finalizer.json"
-    finalizer.write_text(
-        json.dumps(
-            {
-                "status": "rollback_pending",
-                "job_id": "job-live-rollback",
-                "rollback_handoff": {
-                    "base_ready": base_ready,
-                    "phase": "worker_start",
-                    "owner": {"pid": 101},
-                },
-            }
-        ),
-        encoding="utf-8",
-    )
-    gate = tmp_path / "restart-gate"
-    gate.write_text(f"{gate_job_id}\n", encoding="utf-8")
-    monkeypatch.setattr(helper, "ATLASO_UPDATE_FINALIZER_PATH", finalizer)
-    monkeypatch.setattr(helper, "ATLASO_UPDATE_RESTART_GATE_PATH", gate)
-    monkeypatch.setattr(helper, "_release_transaction_owner_alive", lambda _owner: True)
-    monkeypatch.setattr(
-        helper,
-        "_validated_release_recovery_context",
-        lambda _payload: pytest.fail("live rollback handoff must not be recovered as stale"),
     )
 
     result = helper._recover_interrupted_release_transaction()
@@ -2843,8 +2824,7 @@ def test_no_change_release_failure_finalizer_retains_readiness_commands(monkeypa
         ("rollback_symlink_sync", "candidate_startup", True),
         ("rollback_link_restore", "candidate_startup", False),
         ("rollback_activation", "candidate_startup", False),
-        ("rollback_handoff_finalizer", "candidate_startup", False),
-        ("rollback_worker_start", "candidate_startup", False),
+        ("rollback_worker_state", "candidate_startup", False),
         ("rollback_gate", "candidate_startup", False),
     ],
 )
@@ -3104,22 +3084,20 @@ def test_failed_candidate_restores_previous_release_and_database(
                         "rollback_symlink_sync",
                         "rollback_link_restore",
                         "rollback_activation",
-                        "rollback_handoff_finalizer",
-                        "rollback_worker_start",
-                    "rollback_gate",
+                        "rollback_worker_state",
+                        "rollback_gate",
                 }
                 or candidate_starts > 1
             )
         if action == "restart" and units == ("atlaso-worker.service",):
             success = failure_stage != "worker_restart"
+        if action == "stop" and "atlaso-worker.service" in units:
+            pytest.fail("rollback must not stop the existing worker before its definitive finalizer")
         if action == "start" and "atlaso-worker.service" in units:
             rollback_worker_starts += 1
-            assert (tmp_path / "restart-gate").read_text(encoding="utf-8") == "\n"
-            handoff = json.loads((tmp_path / "finalizer.json").read_text(encoding="utf-8"))
-            assert handoff["status"] == "rollback_pending"
-            assert handoff["rollback_handoff"]["base_ready"] is True
-            assert handoff["rollback_handoff"]["phase"] == "worker_start"
-            success = failure_stage != "rollback_worker_start"
+            pytest.fail("rollback must preserve the existing worker instead of starting a restored unit")
+        if action == "is-active" and units == ("atlaso-worker.service",):
+            success = failure_stage != "rollback_worker_state"
         return {
             "command": ["systemctl", action, *units],
             "returncode": 0 if success else 1,
@@ -3270,8 +3248,6 @@ def test_failed_candidate_restores_previous_release_and_database(
             handoff_events.append("restart_pending")
         if payload.get("status") == "failed" and failure_stage != "rollback_gate":
             assert (tmp_path / "restart-gate").exists()
-        if failure_stage == "rollback_handoff_finalizer" and payload.get("status") == "rollback_pending":
-            raise OSError("injected rollback handoff finalizer failure")
         if failure_stage == "finalizer_persistence" and payload.get("status") == "succeeded":
             raise OSError("injected finalizer directory sync failure")
         write_finalizer(payload)
@@ -3293,17 +3269,7 @@ def test_failed_candidate_restores_previous_release_and_database(
     assert finalizer["failure_layer"] == expected_layer
     assert finalizer["commands"]
     assert not credential_path.exists()
-    expected_worker_starts = (
-        0
-        if failure_stage in {
-            "rollback_link_restore",
-            "rollback_activation",
-            "rollback_handoff_finalizer",
-            "rollback_gate",
-        }
-        else 1
-    )
-    assert rollback_worker_starts == expected_worker_starts
+    assert rollback_worker_starts == 0
     if failure_stage == "transaction_backup_sync":
         assert "transaction_pending" not in finalizer_statuses
         assert not checkpoint_backup_counts
@@ -3333,15 +3299,10 @@ def test_failed_candidate_restores_previous_release_and_database(
         assert "rollback_activation_verification" in finalizer["rollback_failures"]
         assert False in maintenance_states
         assert maintenance_states[-1] is True
-    if failure_stage in {
-        "rollback_link_restore",
-        "rollback_activation",
-        "rollback_handoff_finalizer",
-        "rollback_worker_start",
-    }:
+    if failure_stage in {"rollback_link_restore", "rollback_activation", "rollback_worker_state"}:
         assert (tmp_path / "restart-gate").exists()
-    if failure_stage == "rollback_handoff_finalizer":
-        assert "rollback_worker_handoff_finalizer" in finalizer["rollback_failures"]
+    if failure_stage == "rollback_worker_state":
+        assert "rollback_worker_state" in finalizer["rollback_failures"]
     if failure_stage == "rollback_gate":
         assert "rollback_worker_restart_gate_hold" in finalizer["rollback_failures"]
         assert not (tmp_path / "restart-gate").exists()

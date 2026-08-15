@@ -334,8 +334,9 @@ The following cross-cutting boundaries always apply:
   before claim migration mutates its allowlist or database, so both restore together. An already-active release completes
   from exact readiness evidence without scheduling an
   unverified service restart. A matching definitive success or healthy rollback may clear or supersede an orphaned gate;
-  incomplete rollback must retain maintenance and the gate. A healthy rollback must durably publish a live-owner,
-  exact-job worker handoff before starting the worker needed to complete rollback. Then resume only untouched pending
+  incomplete rollback must retain maintenance and the gate. Rollback must preserve and verify the already-running worker
+  until the definitive rollback write; never start a restored legacy worker inside the transaction. After recovery
+  bookkeeping, a candidate worker must exit for systemd to start the restored release. Then resume only untouched pending
   update children. Gate timeout exits worker startup for systemd retry, and the surviving helper removes staged source
   credentials before restarting the caller. Definitive finalizers retain sanitized helper commands, and recovery uses
   the ordinary child, parent, terminal task-log, and audit completion path. Any post-switch failure restores the

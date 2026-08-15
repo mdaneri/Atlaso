@@ -11218,24 +11218,9 @@ def _recover_interrupted_release_transaction() -> dict:
             _set_release_restart_gate(False)
         return {"status": "not_required", "success": True, "allow_worker": True}
     recovery = parsed.get("transaction_recovery")
-    rollback_handoff = parsed.get("rollback_handoff")
     owner = recovery.get("owner") if isinstance(recovery, dict) else None
-    if status == "rollback_pending" and isinstance(rollback_handoff, dict):
-        owner = rollback_handoff.get("owner")
     if _release_transaction_owner_alive(owner):
         allow_worker = status == "restart_pending"
-        if status == "rollback_pending" and isinstance(rollback_handoff, dict):
-            try:
-                gate_job_id = ATLASO_UPDATE_RESTART_GATE_PATH.read_text(encoding="utf-8").strip()
-            except OSError:
-                gate_job_id = ""
-            finalizer_job_id = str(parsed.get("job_id") or "")
-            allow_worker = bool(
-                rollback_handoff.get("base_ready") is True
-                and rollback_handoff.get("phase") == "worker_start"
-                and finalizer_job_id
-                and gate_job_id == finalizer_job_id
-            )
         return {
             "status": "transaction_active",
             "success": allow_worker,
@@ -12490,7 +12475,6 @@ def _apply_atlaso_release(
             lambda: _service_command(
                 "stop",
                 "atlaso.service",
-                "atlaso-worker.service",
                 "atlaso-console.service",
             ),
         )
@@ -12537,6 +12521,19 @@ def _apply_atlaso_release(
             if isinstance(rollback_services_result, dict)
             else _release_check("rollback_service_state", False, "Rollback service state was unavailable.")
         )
+        rollback_worker_active, rollback_worker_result = rollback_action(
+            "worker_state",
+            lambda: _service_command("is-active", "atlaso-worker.service"),
+        )
+        rollback_worker = (
+            rollback_worker_result
+            if isinstance(rollback_worker_result, dict)
+            else _release_check(
+                "rollback_worker_state",
+                False,
+                "Rollback worker service state was unavailable.",
+            )
+        )
         _link_ok, rollback_link_result = rollback_action(
             "active_release_link",
             lambda: _release_check(
@@ -12571,6 +12568,7 @@ def _apply_atlaso_release(
             and services_started
             and rollback_health.get("success", False)
             and rollback_services.get("success", False)
+            and rollback_worker_active
         )
         if rollback_pre_cleanup_ready:
             _maintenance_ok, rollback_maintenance_result = rollback_action(
@@ -12644,61 +12642,7 @@ def _apply_atlaso_release(
             and rollback_durable.get("success", False)
             and rollback_activation.get("success", False)
         )
-        rollback_handoff_ready = False
-        if rollback_base_ready:
-            rollback_handoff_ready, _rollback_handoff_result = rollback_action(
-                "worker_handoff_finalizer",
-                lambda: _write_release_finalizer(
-                    {
-                        **finalizer_evidence,
-                        "status": "rollback_pending",
-                        "rolled_back": False,
-                        "failure_layer": failure_layer,
-                        "transaction_recovery": transaction_recovery,
-                        "rollback_handoff": {
-                            "base_ready": True,
-                            "phase": "worker_start",
-                            "owner": _release_transaction_owner(),
-                        },
-                        "commands": commands,
-                        "started_at": datetime.now(timezone.utc).isoformat(),
-                    }
-                ),
-            )
-        if rollback_base_ready and rollback_handoff_ready:
-            rollback_worker_started, _worker_start_result = rollback_action(
-                "worker_start",
-                lambda: _service_command("start", "atlaso-worker.service"),
-            )
-            rollback_worker_active, rollback_worker_result = rollback_action(
-                "worker_state",
-                lambda: _service_command("is-active", "atlaso-worker.service"),
-            )
-            rollback_worker = (
-                rollback_worker_result
-                if isinstance(rollback_worker_result, dict)
-                else _release_check(
-                    "rollback_worker_state",
-                    False,
-                    "Rollback worker service state was unavailable.",
-                )
-            )
-        else:
-            rollback_worker_started = False
-            rollback_worker_active = False
-            rollback_worker = _release_check(
-                "rollback_worker_admission",
-                False,
-                "Rollback worker remains stopped because its base readiness or durable handoff is incomplete.",
-            )
-            commands.append(rollback_worker)
-            rollback_failures.append(rollback_worker)
-        rollback_ready = bool(
-            rollback_base_ready
-            and rollback_handoff_ready
-            and rollback_worker_started
-            and rollback_worker_active
-        )
+        rollback_ready = rollback_base_ready
         if not rollback_ready:
             rollback_action("maintenance_fail_closed", lambda: _set_release_maintenance(True))
             rollback_maintenance = _release_check(

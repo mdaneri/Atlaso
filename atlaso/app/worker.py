@@ -252,6 +252,18 @@ def _release_transaction_owner_alive(owner: object) -> bool:
     )
 
 
+def _rollback_requires_worker_restart() -> bool:
+    """Return whether startup recovered a rollback from a different release."""
+    finalizer = _release_finalizer()
+    previous_version = str(finalizer.get("previous_version") or "")
+    return bool(
+        str(finalizer.get("status") or "") == JobStatus.FAILED.value
+        and finalizer.get("rolled_back") is True
+        and previous_version
+        and previous_version != __version__.split("+", 1)[0]
+    )
+
+
 def _recovered_appliance_update_step_result(
     job: Job,
     step: JobStep,
@@ -1110,6 +1122,9 @@ def main() -> int:
         )
         if recovered:
             LOGGER.warning("Reconciled %s interrupted worker job(s)", recovered)
+    if _rollback_requires_worker_restart():
+        LOGGER.warning("Restarting the worker through the restored Atlaso release after rollback recovery")
+        return 1
     if not ensure_vcf_depot_running_operation_index():
         LOGGER.warning("Deferred the VCFDT runtime guard until identity-task startup recovery completes")
     LOGGER.info("Atlaso worker started")
