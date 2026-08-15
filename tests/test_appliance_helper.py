@@ -4700,6 +4700,41 @@ def test_local_users_helper_creates_deletes_and_sets_password_without_leaking(mo
     assert not config_path.exists()
 
 
+def test_local_users_helper_deletes_managed_inventory_account_missing_from_baseline(monkeypatch, tmp_path):
+    """The root-owned managed-home inventory closes stale or absent baseline gaps."""
+    helper = load_helper_module()
+    apply_dir = tmp_path / "apply" / "local-users"
+    home_base = tmp_path / "users"
+    pwquality_path = tmp_path / "etc" / "security" / "pwquality.conf"
+    pam_path = tmp_path / "etc" / "pam.d" / "system-password"
+    pam_path.parent.mkdir(parents=True)
+    pam_path.write_text("password  required    pam_unix.so\n", encoding="utf-8")
+    apply_dir.mkdir(parents=True)
+    (home_base / "sync-user").mkdir(parents=True)
+    (home_base / "stale-user").mkdir()
+    config_path = apply_dir / "atlaso-users.json"
+    payload = json.loads(local_users_json(password=None))
+    payload["users"][0]["home"] = (home_base / "sync-user").as_posix()
+    payload["removed_users"] = []
+    config_path.write_text(json.dumps(payload), encoding="utf-8")
+    commands: list[list[str]] = []
+
+    def fake_run(command: list[str]) -> subprocess.CompletedProcess[str]:
+        commands.append(command)
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(helper, "LOCAL_USERS_APPLY_DIR", apply_dir)
+    monkeypatch.setattr(helper, "LOCAL_USERS_HOME_BASE", home_base)
+    monkeypatch.setattr(helper, "LOCAL_USERS_PWQUALITY_PATH", pwquality_path)
+    monkeypatch.setattr(helper, "LOCAL_USERS_SYSTEM_PASSWORD_PAM_PATH", pam_path)
+    monkeypatch.setattr(helper, "_command_path", lambda command: command)
+    monkeypatch.setattr(helper, "_run", fake_run)
+
+    assert helper._handle_local_users("apply", [str(config_path)]) == 0
+    assert ["userdel", "-r", "stale-user"] in commands
+    assert ["userdel", "-r", "sync-user"] not in commands
+
+
 def test_local_users_helper_authenticates_shadow_password_without_leaking(monkeypatch, capsys):
     """Verify that local users helper authenticates shadow password without leaking.
 

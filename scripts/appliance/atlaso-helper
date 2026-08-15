@@ -5962,6 +5962,29 @@ def _local_user_home(username: str) -> str:
     return (LOCAL_USERS_HOME_BASE / username).as_posix()
 
 
+def _managed_local_usernames() -> list[str]:
+    """Return usernames represented by the root-owned managed-home inventory."""
+    if not LOCAL_USERS_HOME_BASE.exists():
+        return []
+    if LOCAL_USERS_HOME_BASE.is_symlink() or not LOCAL_USERS_HOME_BASE.is_dir():
+        raise ValueError(f"local users managed home base is unsafe: {LOCAL_USERS_HOME_BASE}")
+    base_stat = LOCAL_USERS_HOME_BASE.stat()
+    if os.name == "posix" and (base_stat.st_uid != 0 or base_stat.st_mode & 0o022):
+        raise ValueError("local users managed home base must be root-owned and not group/world writable.")
+    usernames: list[str] = []
+    for entry in LOCAL_USERS_HOME_BASE.iterdir():
+        username = entry.name.strip().lower()
+        if (
+            entry.is_symlink()
+            or not entry.is_dir()
+            or not LOCAL_USERS_USERNAME_PATTERN.fullmatch(username)
+            or username in LOCAL_USERS_RESERVED_USERNAMES
+        ):
+            raise ValueError(f"local users managed home inventory entry is unsafe: {entry.name}")
+        usernames.append(username)
+    return sorted(set(usernames))
+
+
 def _local_user_password_policy_errors(password: str, username: str, policy: dict) -> list[str]:
     """Perform local user password policy errors.
 
@@ -6451,6 +6474,17 @@ def _handle_local_users_inner(action: str, args: list[str]) -> int:
     if action == "status":
         print(json.dumps({"local_users": "status ok", "users": _local_user_status_rows(users)}, sort_keys=True))
         return 0
+    try:
+        inventory_usernames = _managed_local_usernames()
+    except (OSError, ValueError) as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+    desired_usernames = {str(row.get("username") or "").strip().lower() for row in users}
+    removed_users = list(
+        dict.fromkeys(
+            [*removed_users, *(username for username in inventory_usernames if username not in desired_usernames)]
+        )
+    )
     if action == "validate":
         print(
             json.dumps(
