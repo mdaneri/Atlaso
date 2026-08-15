@@ -1021,7 +1021,7 @@ def test_agent_policy_gate_ignores_inline_html_metadata_markers(tmp_path: Path) 
 
 
 def test_agent_policy_gate_ignores_inline_link_metadata_markers(tmp_path: Path) -> None:
-    """Verify that invisible inline link metadata cannot satisfy markers.
+    """Verify that invisible link and image metadata cannot satisfy markers.
 
     Args:
         tmp_path: Temporary directory provided by pytest for isolated filesystem state.
@@ -1029,28 +1029,30 @@ def test_agent_policy_gate_ignores_inline_link_metadata_markers(tmp_path: Path) 
     marker = '`cleanup-ready`'
     sibling = "\n- following policy"
     for relative_path in ORDERED_TERMINAL_CLEANUP_MARKERS:
-        write_policy_files(tmp_path)
-        path = tmp_path / relative_path
-        anchor = TERMINAL_CLEANUP_SECTION_ANCHORS[relative_path]
-        link_prefix = "" if anchor.startswith("#") else "  "
-        text = path.read_text(encoding="utf-8").replace(marker, "", 1)
-        hidden_marker = (
-            f'\n{link_prefix}[example](https://example.invalid "{marker}")'
-        )
-        path.write_text(
-            text + hidden_marker
-            if anchor.startswith("#")
-            else text.replace(sibling, hidden_marker + sibling, 1),
-            encoding="utf-8",
-        )
+        for image_prefix in ("", "!"):
+            write_policy_files(tmp_path)
+            path = tmp_path / relative_path
+            anchor = TERMINAL_CLEANUP_SECTION_ANCHORS[relative_path]
+            link_prefix = "" if anchor.startswith("#") else "  "
+            text = path.read_text(encoding="utf-8").replace(marker, "", 1)
+            hidden_marker = (
+                f'\n{link_prefix}{image_prefix}[example]'
+                f'(https://example.invalid "{marker}")'
+            )
+            path.write_text(
+                text + hidden_marker
+                if anchor.startswith("#")
+                else text.replace(sibling, hidden_marker + sibling, 1),
+                encoding="utf-8",
+            )
 
-        findings = check_agent_policy_gate(tmp_path)
+            findings = check_agent_policy_gate(tmp_path)
 
-        assert len(findings) == 1
-        assert findings[0].path == path
-        assert findings[0].message == (
-            f"completed-task cleanup section marker is missing: {marker}"
-        )
+            assert len(findings) == 1
+            assert findings[0].path == path
+            assert findings[0].message == (
+                f"completed-task cleanup section marker is missing: {marker}"
+            )
 
 
 def test_agent_policy_gate_ignores_indented_cleanup_markers(tmp_path: Path) -> None:
@@ -1069,7 +1071,7 @@ def test_agent_policy_gate_ignores_indented_cleanup_markers(tmp_path: Path) -> N
         text = path.read_text(encoding="utf-8").replace(marker, "", 1)
         insertion = f"\n{indentation}{marker}"
         path.write_text(
-            text + insertion
+            text.replace(anchor, anchor + "\n" + insertion, 1)
             if anchor.startswith("#")
             else text.replace(sibling, insertion + sibling, 1),
             encoding="utf-8",
@@ -1082,6 +1084,32 @@ def test_agent_policy_gate_ignores_indented_cleanup_markers(tmp_path: Path) -> N
         assert findings[0].message == (
             f"completed-task cleanup section marker is missing: {marker}"
         )
+
+
+def test_agent_policy_gate_accepts_rendered_list_continuation_markers(
+    tmp_path: Path,
+) -> None:
+    """Verify that list-relative prose indentation remains operative.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    marker = '`cleanup-ready`'
+    for relative_path in ORDERED_TERMINAL_CLEANUP_MARKERS:
+        anchor = TERMINAL_CLEANUP_SECTION_ANCHORS[relative_path]
+        if anchor.startswith("#"):
+            continue
+        for indentation in ("    ", "     "):
+            write_policy_files(tmp_path)
+            path = tmp_path / relative_path
+            text = path.read_text(encoding="utf-8").replace(
+                f"  {marker}",
+                f"{indentation}{marker}",
+                1,
+            )
+            path.write_text(text, encoding="utf-8")
+
+            assert check_agent_policy_gate(tmp_path) == []
 
 
 def test_agent_policy_gate_ignores_indented_terminal_order(tmp_path: Path) -> None:

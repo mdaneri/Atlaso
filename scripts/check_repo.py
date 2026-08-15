@@ -824,7 +824,7 @@ def strip_markdown_nonoperative_content(text: str) -> str:
         without_comments,
     )
     without_link_metadata = re.sub(
-        r"(?<!!)(\[[^\]\r\n]*\])\((?:[^()\r\n]|\([^()\r\n]*\))*\)",
+        r"!?(\[[^\]\r\n]*\])\((?:[^()\r\n]|\([^()\r\n]*\))*\)",
         r"\1",
         without_html_tags,
     )
@@ -860,12 +860,27 @@ def strip_markdown_nonoperative_content(text: str) -> str:
     without_quotes = "".join(without_quotes_lines)
     visible_lines: list[str] = []
     link_reference_title_pending = False
+    top_level_list_content_indent: int | None = None
     for line in without_quotes.splitlines(keepends=True):
-        reference_match = re.match(r" {0,3}\[[^\]\r\n]+\]:", line)
+        top_level_list_match = re.match(
+            r"(?:[*+-]|\d{1,9}[.)])([ \t]+)",
+            line,
+        )
+        if top_level_list_match is not None:
+            top_level_list_content_indent = top_level_list_match.end()
+        elif line.strip() and not line.startswith((" ", "\t")):
+            top_level_list_content_indent = None
+        block_line = (
+            line[top_level_list_content_indent:]
+            if top_level_list_content_indent is not None
+            and line.startswith(" " * top_level_list_content_indent)
+            else line
+        )
+        reference_match = re.match(r" {0,3}\[[^\]\r\n]+\]:", block_line)
         continued_title_match = (
             re.fullmatch(
                 r''' {0,3}(?:"[^"\r\n]*"|'[^'\r\n]*'|\([^()\r\n]*\))[ \t]*(?:\r?\n)?''',
-                line,
+                block_line,
             )
             if link_reference_title_pending
             else None
@@ -873,14 +888,14 @@ def strip_markdown_nonoperative_content(text: str) -> str:
         if reference_match is not None:
             inline_title_match = re.search(
                 r'''[ \t]+(?:"[^"\r\n]*"|'[^'\r\n]*'|\([^()\r\n]*\))[ \t]*(?:\r?\n)?$''',
-                line,
+                block_line,
             )
             link_reference_title_pending = inline_title_match is None
             visible_lines.append("\n" if line.endswith("\n") else "")
         elif continued_title_match is not None:
             link_reference_title_pending = False
             visible_lines.append("\n" if line.endswith("\n") else "")
-        elif re.match(r"(?: {4}|\t)", line) is not None:
+        elif re.match(r"(?: {4}|\t)", block_line) is not None:
             link_reference_title_pending = False
             visible_lines.append("\n" if line.endswith("\n") else "")
         else:
