@@ -109,7 +109,11 @@ class ManagedLdapUiRouter:
 
 
 def build_router(dependencies: ManagedLdapUiDependencies) -> ManagedLdapUiRouter:
-    """Build the Managed LDAP management UI router."""
+    """Build the Managed LDAP management UI router.
+
+    Args:
+        dependencies: Stable facade dependencies used by Managed LDAP transports.
+    """
     router = APIRouter(
         prefix=MANAGEMENT_UI_ROOT,
         dependencies=[Depends(dependencies.require_management_ui_request)],

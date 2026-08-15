@@ -108,7 +108,11 @@ class ManagedLdapApiRouter:
 
 
 def build_router(dependencies: ManagedLdapApiDependencies) -> ManagedLdapApiRouter:
-    """Build the Managed LDAP API v1 router."""
+    """Build the Managed LDAP API v1 router.
+
+    Args:
+        dependencies: Stable facade dependencies used by Managed LDAP transports.
+    """
     router = APIRouter(prefix="/api/v1", route_class=DocumentedAPIRoute)
 
     def _ldap_settings_row(db: Session) -> LdapSettings:
