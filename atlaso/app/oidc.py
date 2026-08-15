@@ -258,7 +258,11 @@ def _load_oidc_session(request: Request, db: Session) -> dict[str, object] | Non
 
 
 def _anonymous_oidc_session(db: Session) -> dict[str, object]:
-    """Return anonymous oidc session."""
+    """Return anonymous oidc session.
+
+    Args:
+        db: Active database session used to bind the appliance instance epoch.
+    """
     return {
         "sid": token_urlsafe(32),
         "csrf": token_urlsafe(32),

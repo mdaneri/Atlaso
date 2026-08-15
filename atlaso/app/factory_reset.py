@@ -494,7 +494,11 @@ def _scrub_bootstrap_authorized_keys() -> None:
 
 
 def _ca_private_key_paths(db: Session) -> set[Path]:
-    """Return normalized private-key paths from Atlaso's CA certificate inventory."""
+    """Return normalized private-key paths from Atlaso's CA certificate inventory.
+
+    Args:
+        db: Active database session containing the CA certificate inventory.
+    """
     managed_base = CA_MANAGED_PATH_BASE.resolve()
     paths: set[Path] = set()
     for value in db.execute(select(CaCertificate.key_path)).scalars().all():
@@ -514,7 +518,11 @@ def _ca_private_key_paths(db: Session) -> set[Path]:
 
 
 def _remove_retired_ca_private_keys(paths: set[Path]) -> None:
-    """Durably remove bounded CA private keys omitted from factory state."""
+    """Durably remove bounded CA private keys omitted from factory state.
+
+    Args:
+        paths: Validated CA-managed private-key paths to remove.
+    """
     synced_directories: set[Path] = set()
     for path in sorted(paths):
         if path.is_symlink():

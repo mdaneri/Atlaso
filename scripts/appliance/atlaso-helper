@@ -13520,7 +13520,11 @@ def _factory_reset_wan_route_interfaces() -> list[str]:
 
 
 def _factory_reset_root_netem_interfaces(candidates: list[str]) -> list[str]:
-    """Select only route-bound interfaces with Atlaso's root netem qdisc shape."""
+    """Select only route-bound interfaces with Atlaso's root netem qdisc shape.
+
+    Args:
+        candidates: Validated interface names referenced by Atlaso-owned routes.
+    """
     interfaces: list[str] = []
     for interface_name in candidates:
         command = ["tc", "-j", "qdisc", "show", "dev", interface_name]
