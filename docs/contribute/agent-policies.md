@@ -436,7 +436,10 @@ status: current
   failure after the switch must restore the previous release, helper/systemd assets, SQLite snapshot, and working nginx
   front door, write
   `rolled_back=true` with a sanitized failing layer, and fail both release child and parent. Worker startup must reject
-  a success finalizer that disagrees with the durable active release or running version. Signed-release lifecycle
+  a success finalizer that disagrees with the durable active release or running version. On the first transition from
+  the legacy updater, recognize only its bounded successful service-health or no-change finalizer shape and reconcile
+  it from the exact active links, signed receipt identity, and running candidate version; do not reinterpret missing
+  current-protocol fields alone as a failed update. Signed-release lifecycle
   coverage must prove the candidate and a healthy rollback both before and after audited appliance reboots; installation
   itself must not reboot automatically.
 - Release publication recovery must use the protected **Publish appliance release** manual dispatch with the exact

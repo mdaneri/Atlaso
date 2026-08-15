@@ -269,7 +269,10 @@ bookkeeping as an uninterrupted update. The helper then requires
 HTTPS nginx management front door to report the exact candidate version. The finalizer retains the candidate and
 previous versions, receipt identity, active-release verification, internal and front-door versions, and sanitized
 failing layer. Worker startup rechecks the success finalizer against the durable links, signed receipt, and running
-version; inconsistent success evidence fails recovery instead of being accepted.
+version; inconsistent success evidence fails recovery instead of being accepted. During the first transition from the
+legacy updater, a successful finalizer has only its historical service-health marker. The candidate worker recognizes
+that bounded legacy shape and accepts it only after the active release, compatibility virtualenv, signed receipt
+identity, and running candidate version all agree; startup records that reconciliation with the recovered task result.
 When the signed candidate is already the active release, these same readiness checks are definitive and Atlaso does not
 schedule a second, unobserved delayed service restart. A failed no-change verification retains every sanitized readiness
 command in its finalizer.

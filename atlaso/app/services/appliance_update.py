@@ -52,12 +52,18 @@ def reconcile_release_success_finalizer(finalizer: dict[str, Any]) -> tuple[dict
     expected_version = str(finalizer.get("candidate_version") or finalizer.get("release") or "").split("+", 1)[0]
     activation = finalizer.get("active_release_verification")
     worker_restart = finalizer.get("worker_restart")
+    legacy_success = bool(
+        finalizer.get("rolled_back") is False
+        and "active_release_verification" not in finalizer
+        and "worker_restart" not in finalizer
+        and (finalizer.get("service_health") is True or finalizer.get("no_change") is True)
+    )
     errors: list[str] = []
     if not expected_version:
         errors.append("candidate version is missing")
-    if not isinstance(activation, dict) or activation.get("success") is not True:
+    if not legacy_success and (not isinstance(activation, dict) or activation.get("success") is not True):
         errors.append("definitive activation evidence is missing")
-    if not finalizer.get("no_change"):
+    if not finalizer.get("no_change") and not legacy_success:
         if not isinstance(worker_restart, dict) or worker_restart.get("success") is not True:
             errors.append("candidate worker restart evidence is missing")
         elif str(worker_restart.get("worker_version") or "").split("+", 1)[0] != expected_version:
@@ -125,6 +131,18 @@ def reconcile_release_success_finalizer(finalizer: dict[str, Any]) -> tuple[dict
             if str(activation.get(field) or "").split("+", 1)[0] != expected_version:
                 errors.append(f"recorded {field.replace('_', ' ')} does not match the finalizer")
 
+    if not errors and legacy_success:
+        reconciled = dict(finalizer)
+        reconciled["startup_reconciliation"] = {
+            "success": True,
+            "legacy_finalizer": True,
+            "candidate_version": expected_version,
+            "current_release": str(current_root),
+            "compatibility_venv": str(compatibility_venv),
+            "receipt_version": receipt_version,
+            "running_version": running_version,
+        }
+        return reconciled, True
     if not errors:
         return finalizer, True
     reconciled = dict(finalizer)

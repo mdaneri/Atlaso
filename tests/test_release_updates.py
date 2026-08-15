@@ -2131,13 +2131,116 @@ def test_release_transaction_backup_sync_flushes_files_before_directory_entries(
     assert flushed_directories[-1] == backup_root.resolve().parent
 
 
-def test_worker_restart_uses_matching_root_release_finalizer(client, monkeypatch, tmp_path):
+@pytest.mark.parametrize("legacy_marker", [{"service_health": True}, {"no_change": True}])
+def test_startup_reconciles_legacy_success_finalizer_from_durable_state(
+    monkeypatch,
+    tmp_path,
+    legacy_marker,
+):
+    """Verify legacy success is accepted only from matching durable release state.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace release paths and version state.
+        tmp_path: Temporary directory provided for release artifacts.
+        legacy_marker: Historical success marker emitted by the legacy updater.
+    """
+    from atlaso.app.services import appliance_update
+
+    release = release_payload()
+    release_root = tmp_path / "releases/0.9.0"
+    (release_root / ".venv").mkdir(parents=True)
+    (release_root / ".release-manifest.json").write_text(json.dumps(release), encoding="utf-8")
+    current = tmp_path / "current"
+    current.symlink_to(release_root, target_is_directory=True)
+    compatibility_venv = tmp_path / ".venv"
+    compatibility_venv.symlink_to(Path("current/.venv"), target_is_directory=True)
+    receipt_sha256 = hashlib.sha256(
+        json.dumps(release, separators=(",", ":"), sort_keys=True).encode("utf-8")
+    ).hexdigest()
+    finalizer = {
+        "job_id": "job_legacy_release_finalizer",
+        "status": "succeeded",
+        "release": "0.9.0",
+        "git_commit": release["git_commit"],
+        "bundle_sha256": release["bundle"]["sha256"],
+        "release_manifest_sha256": receipt_sha256,
+        "rolled_back": False,
+        **legacy_marker,
+    }
+    monkeypatch.setattr(appliance_update, "ATLASO_CURRENT_RELEASE_PATH", current)
+    monkeypatch.setattr(appliance_update, "ATLASO_COMPATIBILITY_VENV_PATH", compatibility_venv)
+    monkeypatch.setattr(appliance_update, "__version__", "0.9.0")
+
+    reconciled, consistent = appliance_update.reconcile_release_success_finalizer(finalizer)
+
+    assert consistent is True
+    assert reconciled["status"] == "succeeded"
+    assert reconciled["startup_reconciliation"] == {
+        "success": True,
+        "legacy_finalizer": True,
+        "candidate_version": "0.9.0",
+        "current_release": str(release_root.resolve()),
+        "compatibility_venv": str((release_root / ".venv").resolve()),
+        "receipt_version": "0.9.0",
+        "running_version": "0.9.0",
+    }
+
+
+def test_startup_rejects_unmarked_success_without_current_activation_evidence(monkeypatch, tmp_path):
+    """Verify missing current evidence is not accepted without a legacy marker.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace release paths and version state.
+        tmp_path: Temporary directory provided for release artifacts.
+    """
+    from atlaso.app.services import appliance_update
+
+    release = release_payload()
+    release_root = tmp_path / "releases/0.9.0"
+    (release_root / ".venv").mkdir(parents=True)
+    (release_root / ".release-manifest.json").write_text(json.dumps(release), encoding="utf-8")
+    current = tmp_path / "current"
+    current.symlink_to(release_root, target_is_directory=True)
+    compatibility_venv = tmp_path / ".venv"
+    compatibility_venv.symlink_to(Path("current/.venv"), target_is_directory=True)
+    receipt_sha256 = hashlib.sha256(
+        json.dumps(release, separators=(",", ":"), sort_keys=True).encode("utf-8")
+    ).hexdigest()
+    finalizer = {
+        "job_id": "job_unmarked_release_finalizer",
+        "status": "succeeded",
+        "release": "0.9.0",
+        "git_commit": release["git_commit"],
+        "bundle_sha256": release["bundle"]["sha256"],
+        "release_manifest_sha256": receipt_sha256,
+        "rolled_back": False,
+    }
+    monkeypatch.setattr(appliance_update, "ATLASO_CURRENT_RELEASE_PATH", current)
+    monkeypatch.setattr(appliance_update, "ATLASO_COMPATIBILITY_VENV_PATH", compatibility_venv)
+    monkeypatch.setattr(appliance_update, "__version__", "0.9.0")
+
+    reconciled, consistent = appliance_update.reconcile_release_success_finalizer(finalizer)
+
+    assert consistent is False
+    assert reconciled["status"] == "failed"
+    assert "definitive activation evidence is missing" in reconciled["error"]
+    assert "candidate worker restart evidence is missing" in reconciled["error"]
+
+
+@pytest.mark.parametrize("legacy_finalizer", [False, True])
+def test_worker_restart_uses_matching_root_release_finalizer(
+    client,
+    monkeypatch,
+    tmp_path,
+    legacy_finalizer,
+):
     """Verify that worker restart uses matching root release finalizer.
 
     Args:
         client: HTTP test client used to exercise the Atlaso application.
         monkeypatch: Pytest fixture used to replace dependencies for the test.
         tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+        legacy_finalizer: Whether to exercise the predecessor helper's success format.
     """
     from sqlalchemy import select
 
@@ -2160,17 +2263,21 @@ def test_worker_restart_uses_matching_root_release_finalizer(client, monkeypatch
     receipt_sha256 = hashlib.sha256(
         json.dumps(release, separators=(",", ":"), sort_keys=True).encode("utf-8")
     ).hexdigest()
-    finalizer.write_text(
-        json.dumps(
+    finalizer_payload = {
+        "job_id": "job_release_finalizer",
+        "status": "succeeded",
+        "release": "0.9.0",
+        "git_commit": "a" * 40,
+        "verified_key_id": "atlaso-release-2026-01",
+        "bundle_sha256": "b" * 64,
+        "release_manifest_sha256": receipt_sha256,
+        "rolled_back": False,
+    }
+    if legacy_finalizer:
+        finalizer_payload["service_health"] = True
+    else:
+        finalizer_payload.update(
             {
-                "job_id": "job_release_finalizer",
-                "status": "succeeded",
-                "release": "0.9.0",
-                "git_commit": "a" * 40,
-                "verified_key_id": "atlaso-release-2026-01",
-                "bundle_sha256": "b" * 64,
-                "release_manifest_sha256": receipt_sha256,
-                "rolled_back": False,
                 "worker_restart": {
                     "success": True,
                     "worker_version": "0.9.0",
@@ -2185,9 +2292,8 @@ def test_worker_restart_uses_matching_root_release_finalizer(client, monkeypatch
                     "host_facing_version": "0.9.0",
                 },
             }
-        ),
-        encoding="utf-8",
-    )
+        )
+    finalizer.write_text(json.dumps(finalizer_payload), encoding="utf-8")
     monkeypatch.setattr(worker, "APPLIANCE_UPDATE_FINALIZER_PATH", str(finalizer))
     monkeypatch.setattr(appliance_update, "ATLASO_CURRENT_RELEASE_PATH", current)
     monkeypatch.setattr(appliance_update, "ATLASO_COMPATIBILITY_VENV_PATH", compatibility_venv)
@@ -2230,6 +2336,7 @@ def test_worker_restart_uses_matching_root_release_finalizer(client, monkeypatch
         result = json.loads(recovered.result)
         assert result["worker_recovery"] == "release_handoff"
         assert result["release_transaction"]["verified_key_id"] == "atlaso-release-2026-01"
+        assert bool(result["release_transaction"].get("startup_reconciliation")) is legacy_finalizer
 
     import atlaso.app.ui as ui
 
