@@ -1033,27 +1033,42 @@ def strip_markdown_hidden_html_containers(text: str) -> str:
     return "".join(visible_parts)
 
 
-def reference_definition_label_end(line: str) -> int | None:
-    """Return the index after an escape-aware reference label and colon.
+def scan_reference_definition_label(text: str) -> tuple[int | None, bool]:
+    """Scan an escape-aware, optionally multiline reference label.
 
     Args:
-        line: Candidate Markdown reference-definition line.
+        text: Candidate Markdown reference-definition text.
+
+    Returns:
+        The index after a complete label and colon, plus whether an incomplete
+        candidate may continue on the next line.
     """
     index = 0
-    while index < min(3, len(line)) and line[index] == " ":
+    while index < min(3, len(text)) and text[index] == " ":
         index += 1
-    if index >= len(line) or line[index] != "[":
-        return None
+    if index >= len(text) or text[index] != "[":
+        return None, False
     index += 1
     label_start = index
-    while index < len(line) and line[index] not in "\r\n":
-        if line[index] == "\\" and index + 1 < len(line):
+    line_endings = 0
+    while index < len(text):
+        if text[index] == "\\" and index + 1 < len(text):
             index += 2
             continue
-        if line[index] == "]" and index + 1 < len(line) and line[index + 1] == ":":
-            return index + 2 if index > label_start else None
+        if text[index] in "\r\n":
+            if text[index] == "\r" and index + 1 < len(text) and text[index + 1] == "\n":
+                index += 1
+            line_endings += 1
+            if line_endings > 1:
+                return None, False
+        elif text[index] == "[":
+            return None, False
+        elif text[index] == "]":
+            if index + 1 < len(text) and text[index + 1] == ":":
+                return (index + 2, False) if index > label_start else (None, False)
+            return None, False
         index += 1
-    return None
+    return None, True
 
 
 def unclosed_reference_title_delimiter(text: str) -> str | None:
@@ -1177,6 +1192,8 @@ def strip_markdown_nonoperative_content(text: str) -> str:
     link_reference_title_pending = False
     open_reference_title_delimiter: str | None = None
     open_reference_title_lines: list[tuple[int, str]] = []
+    pending_reference_label_text = ""
+    pending_reference_label_lines: list[tuple[int, str]] = []
     top_level_list_content_indent: int | None = None
     for line in without_quotes.splitlines(keepends=True):
         top_level_list_match = re.match(
@@ -1193,6 +1210,28 @@ def strip_markdown_nonoperative_content(text: str) -> str:
             and line.startswith(" " * top_level_list_content_indent)
             else line
         )
+        reference_label_end: int | None = None
+        if pending_reference_label_lines:
+            combined_label = pending_reference_label_text + block_line
+            combined_label_end, label_may_continue = scan_reference_definition_label(
+                combined_label
+            )
+            if combined_label_end is not None:
+                reference_label_end = combined_label_end - len(
+                    pending_reference_label_text
+                )
+                pending_reference_label_text = ""
+                pending_reference_label_lines = []
+            elif label_may_continue and line.strip():
+                pending_reference_label_text = combined_label
+                pending_reference_label_lines.append((len(visible_lines), line))
+                visible_lines.append("\n" if line.endswith("\n") else "")
+                continue
+            else:
+                for line_index, original_line in pending_reference_label_lines:
+                    visible_lines[line_index] = original_line
+                pending_reference_label_text = ""
+                pending_reference_label_lines = []
         if open_reference_title_delimiter is not None:
             if line.strip():
                 open_reference_title_lines.append((len(visible_lines), line))
@@ -1208,7 +1247,15 @@ def strip_markdown_nonoperative_content(text: str) -> str:
                 visible_lines[line_index] = original_line
             open_reference_title_delimiter = None
             open_reference_title_lines = []
-        reference_label_end = reference_definition_label_end(block_line)
+        if reference_label_end is None:
+            reference_label_end, label_may_continue = scan_reference_definition_label(
+                block_line
+            )
+            if reference_label_end is None and label_may_continue:
+                pending_reference_label_text = block_line
+                pending_reference_label_lines = [(len(visible_lines), line)]
+                visible_lines.append("\n" if line.endswith("\n") else "")
+                continue
         continued_destination_prefix_match = (
             re.match(
                 r''' {0,3}(?:<(?:(?:\\.)|[^<>\r\n\\])*>|'''
@@ -1316,6 +1363,8 @@ def strip_markdown_nonoperative_content(text: str) -> str:
     if open_reference_title_delimiter is not None:
         for line_index, original_line in open_reference_title_lines:
             visible_lines[line_index] = original_line
+    for line_index, original_line in pending_reference_label_lines:
+        visible_lines[line_index] = original_line
     without_indented_code = "".join(visible_lines)
     return strip_markdown_fenced_code(without_indented_code)
 
