@@ -828,6 +828,80 @@ def test_agent_policy_gate_ignores_commented_cleanup_sections(tmp_path: Path) ->
         )
 
 
+def test_agent_policy_gate_ignores_indented_cleanup_markers(tmp_path: Path) -> None:
+    """Verify that indented code cannot satisfy cleanup section markers.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    marker = '`cleanup-ready`'
+    sibling = "\n- following policy"
+    for relative_path in ORDERED_TERMINAL_CLEANUP_MARKERS:
+        write_policy_files(tmp_path)
+        path = tmp_path / relative_path
+        anchor = TERMINAL_CLEANUP_SECTION_ANCHORS[relative_path]
+        indentation = "    " if anchor.startswith("#") else "      "
+        text = path.read_text(encoding="utf-8").replace(marker, "", 1)
+        insertion = f"\n{indentation}{marker}"
+        path.write_text(
+            text + insertion
+            if anchor.startswith("#")
+            else text.replace(sibling, insertion + sibling, 1),
+            encoding="utf-8",
+        )
+
+        findings = check_agent_policy_gate(tmp_path)
+
+        assert len(findings) == 1
+        assert findings[0].path == path
+        assert findings[0].message == (
+            f"completed-task cleanup section marker is missing: {marker}"
+        )
+
+
+def test_agent_policy_gate_ignores_indented_terminal_order(tmp_path: Path) -> None:
+    """Verify that an indented terminal sequence is not operative policy.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    for relative_path, markers in ORDERED_TERMINAL_CLEANUP_MARKERS.items():
+        write_policy_files(tmp_path)
+        path = tmp_path / relative_path
+        text = path.read_text(encoding="utf-8")
+        anchor = TERMINAL_CLEANUP_SECTION_ANCHORS[relative_path]
+        order_prefix = "" if anchor.startswith("#") else "  "
+        code_prefix = "    " if anchor.startswith("#") else "      "
+        order_block = "\n".join(
+            (
+                TERMINAL_CLEANUP_ORDER_ANCHOR,
+                "",
+                *(order_prefix + line for line in TERMINAL_CLEANUP_ORDER_LINES),
+            )
+        )
+        indented_order = "\n".join(
+            code_prefix + line if line else code_prefix for line in order_block.splitlines()
+        )
+        incidental_markers = "\n".join(markers)
+        path.write_text(
+            text.replace(
+                order_block,
+                incidental_markers + "\n" + indented_order,
+                1,
+            ),
+            encoding="utf-8",
+        )
+
+        findings = check_agent_policy_gate(tmp_path)
+
+        assert len(findings) == 1
+        assert findings[0].path == path
+        assert findings[0].message == (
+            "completed-task cleanup markers must remain ordered: "
+            + " -> ".join(markers)
+        )
+
+
 def test_agent_policy_gate_rejects_fourth_terminal_transition(tmp_path: Path) -> None:
     """Verify that the terminal lifecycle contains exactly three transitions.
 

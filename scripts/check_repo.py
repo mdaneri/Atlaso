@@ -814,7 +814,14 @@ def strip_markdown_nonoperative_content(text: str) -> str:
         text,
         flags=re.DOTALL,
     )
-    return strip_markdown_fenced_code(without_comments)
+    visible_lines: list[str] = []
+    for line in without_comments.splitlines(keepends=True):
+        if re.match(r"(?: {4}|\t)", line) is not None:
+            visible_lines.append("\n" if line.endswith("\n") else "")
+        else:
+            visible_lines.append(line)
+    without_indented_code = "".join(visible_lines)
+    return strip_markdown_fenced_code(without_indented_code)
 
 
 def extract_terminal_cleanup_order(cleanup_section: str) -> tuple[str, ...] | None:
