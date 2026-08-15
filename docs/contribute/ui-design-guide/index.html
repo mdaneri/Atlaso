@@ -278,6 +278,8 @@
       
         
       
+        
+      
     
     
     
@@ -696,6 +698,8 @@
       
         
       
+        
+      
     
     
     
@@ -770,6 +774,40 @@
     
   
   Dashboard
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../operate/navigation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Primary navigation
 
     
   </span>
@@ -2861,7 +2899,18 @@
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Grid-launched wizard contract">
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#authenticated-primary-navigation" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Authenticated primary navigation
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Authenticated primary navigation">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
@@ -3565,7 +3614,18 @@
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Grid-launched wizard contract">
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#authenticated-primary-navigation" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Authenticated primary navigation
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Authenticated primary navigation">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
@@ -3984,6 +4044,24 @@ resource. The add launcher opens the shared wizard and must not displace, sort a
 <p>Do not perform host mutation as a side effect of moving between steps. Wizard submission saves desired state unless the
 established workflow is an explicit task action. Appliance configuration enforcement remains owned by the global
 <code>/ui/management/appliance-apply</code> workflow.</p>
+<h2 id="authenticated-primary-navigation">Authenticated primary navigation<a class="headerlink" href="#authenticated-primary-navigation" title="Permanent link">&para;</a></h2>
+<p>The management sidebar is an approved <code>custom/other</code> disclosure interaction. It reuses native disclosure semantics and
+the authenticated sidebar's existing typography, width, link order, active state, and responsive shell.</p>
+<ul>
+<li>Filter links by the signed-in identity before rendering a group. Do not render empty group markup, identifiers, or
+  browser-state keys.</li>
+<li>Use a native button for each group label with accurate <code>aria-expanded</code> and <code>aria-controls</code> values. Associate the link
+  container with that button and show a standard chevron whose direction communicates state without color.</li>
+<li>Start every rendered group expanded when no saved browser-local choice exists. Ignore malformed, obsolete, or
+  unavailable storage and keep navigation usable without persistence.</li>
+<li>Restore saved choices only for inactive groups. Always expand the group containing the current page on load without
+  overwriting its saved choice, so navigating elsewhere can restore the operator's preference.</li>
+<li>Hide collapsed link containers with the native <code>hidden</code> contract so their links leave the tab order and accessibility
+  tree. Native button activation owns Enter and Space behavior; do not add competing key handlers.</li>
+<li>Keep the global <strong>Review appliance changes</strong> card outside every disclosure and visible whenever pending changes exist.</li>
+<li>At the two-column breakpoint, keep each group heading and its links as one grid item. Return to one group per row at
+  the mobile breakpoint without clipping labels or adding horizontal overflow.</li>
+</ul>
 <h3 id="vcf-helper-remote-credential-wizard-contract">VCF Helper remote-credential wizard contract<a class="headerlink" href="#vcf-helper-remote-credential-wizard-contract" title="Permanent link">&para;</a></h3>
 <p>Every VCF Helper wizard that connects to a remote VCF component uses the same first four steps:</p>
 <ol>
