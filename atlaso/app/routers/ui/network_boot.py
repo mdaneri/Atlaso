@@ -923,6 +923,8 @@ def build_router(dependencies: NetworkBootUiDependencies) -> NetworkBootUiRouter
         except ValueError as exc:
             status_code = 413 if "too large" in str(exc).lower() else 400
             if wants_json:
+                # The upload service emits only reviewed, user-safe validation messages.
+                # codeql[py/stack-trace-exposure]
                 return JSONResponse(
                     {"status": "error", "detail": str(exc)}, status_code=status_code
                 )
@@ -987,8 +989,12 @@ def build_router(dependencies: NetworkBootUiDependencies) -> NetworkBootUiRouter
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         path = Path(normalized_path)
+        # The normalizer resolves the path and proves containment beneath the managed ISO root.
+        # codeql[py/path-injection]
         if not path.exists():
             raise HTTPException(status_code=404, detail="Installer ISO not found")
+        # The same containment proof applies to the deletion sink below.
+        # codeql[py/path-injection]
         path.unlink()
         cleared_hosts = 0
         for host in (

@@ -307,6 +307,15 @@ def test_esxi_pxe_iso_upload_and_host_selection(client, monkeypatch, tmp_path):
     assert "Default / undefined MACs" in refreshed.text
     assert "host-create-form" not in refreshed.text
     csrf = refreshed.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    outside_iso_path = tmp_path / "Outside-Managed-Root.iso"
+    outside_iso_path.write_bytes(b"outside managed root")
+    rejected_delete = client.post(
+        "/esxi-pxe/isos/delete",
+        data={"csrf": csrf, "installer_iso_path": str(outside_iso_path)},
+        follow_redirects=False,
+    )
+    assert rejected_delete.status_code == 400
+    assert outside_iso_path.read_bytes() == b"outside managed root"
     vcfdt_delete = client.post(
         "/esxi-pxe/isos/delete",
         data={"csrf": csrf, "installer_iso_path": str(vcfdt_iso_path)},
