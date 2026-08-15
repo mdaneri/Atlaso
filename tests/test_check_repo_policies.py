@@ -245,6 +245,143 @@ def test_agent_policy_gate_rejects_missing_pr_follow_through_contract(
         )
 
 
+def test_agent_policy_gate_rejects_missing_default_merge_authorization(
+    tmp_path: Path,
+) -> None:
+    """Verify that every agent entry point retains default merge authorization.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    required_entry_markers = {
+        Path("AGENTS.md"): "### Default merge authorization",
+        Path("CONTRIBUTING.md"): "### Default merge authorization",
+        Path(".github/copilot-instructions.md"): "Default merge authorization",
+        Path(".github/pull_request_template.md"): "Default merge authorization",
+        Path("docs/contribute/agent-policies.md"): (
+            "### Default merge authorization"
+        ),
+    }
+
+    for relative_path, marker in required_entry_markers.items():
+        write_policy_files(tmp_path)
+        path = tmp_path / relative_path
+        path.write_text(
+            path.read_text(encoding="utf-8").replace(marker, ""),
+            encoding="utf-8",
+        )
+
+        findings = check_agent_policy_gate(tmp_path)
+
+        assert len(findings) == 1
+        assert findings[0].path == path
+        assert findings[0].message == (
+            f"required agent policy marker is missing: {marker}"
+        )
+
+
+def test_agent_policy_gate_rejects_missing_unrelated_issue_tracking(
+    tmp_path: Path,
+) -> None:
+    """Verify that agent entry points retain separate unrelated-issue tracking.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    required_entry_markers = {
+        Path("AGENTS.md"): "### Unrelated issue discoveries",
+        Path("CONTRIBUTING.md"): "### Unrelated issue discoveries",
+        Path(".github/copilot-instructions.md"): (
+            "evidence-backed unrelated problem"
+        ),
+        Path(".github/pull_request_template.md"): (
+            "Evidence-backed issues discovered outside"
+        ),
+        Path("docs/contribute/agent-policies.md"): (
+            "outside that scope is discovered"
+        ),
+    }
+
+    for relative_path, marker in required_entry_markers.items():
+        write_policy_files(tmp_path)
+        path = tmp_path / relative_path
+        path.write_text(
+            path.read_text(encoding="utf-8").replace(marker, ""),
+            encoding="utf-8",
+        )
+
+        findings = check_agent_policy_gate(tmp_path)
+
+        assert len(findings) == 1
+        assert findings[0].path == path
+        assert findings[0].message == (
+            f"required agent policy marker is missing: {marker}"
+        )
+
+
+def test_agent_policy_gate_rejects_missing_merge_base_guard(tmp_path: Path) -> None:
+    """Verify that direct agent merges require server-enforced base freshness.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    required_entry_points = (
+        Path("AGENTS.md"),
+        Path("CONTRIBUTING.md"),
+        Path(".github/copilot-instructions.md"),
+        Path(".github/pull_request_template.md"),
+        Path("docs/contribute/agent-policies.md"),
+    )
+    marker = "strict up-to-date required checks"
+
+    for relative_path in required_entry_points:
+        write_policy_files(tmp_path)
+        path = tmp_path / relative_path
+        path.write_text(
+            path.read_text(encoding="utf-8").replace(marker, ""),
+            encoding="utf-8",
+        )
+
+        findings = check_agent_policy_gate(tmp_path)
+
+        assert len(findings) == 1
+        assert findings[0].path == path
+        assert findings[0].message == (
+            f"required agent policy marker is missing: {marker}"
+        )
+
+
+def test_agent_policy_gate_rejects_missing_merge_queue_guard(tmp_path: Path) -> None:
+    """Verify that direct merges fail closed when a merge queue is required.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    required_entry_markers = {
+        Path("AGENTS.md"): "no merge queue is required",
+        Path("CONTRIBUTING.md"): "no required merge queue",
+        Path(".github/copilot-instructions.md"): "when a merge queue is required",
+        Path(".github/pull_request_template.md"): "no merge queue is required",
+        Path("docs/contribute/agent-policies.md"): "no required merge queue",
+    }
+
+    for relative_path, marker in required_entry_markers.items():
+        write_policy_files(tmp_path)
+        path = tmp_path / relative_path
+        path.write_text(
+            path.read_text(encoding="utf-8").replace(marker, ""),
+            encoding="utf-8",
+        )
+
+        findings = check_agent_policy_gate(tmp_path)
+
+        assert len(findings) == 1
+        assert findings[0].path == path
+        assert findings[0].message == (
+            f"required agent policy marker is missing: {marker}"
+        )
+
+
 def test_agent_policy_gate_rejects_missing_entry_point(tmp_path: Path) -> None:
     """Verify that agent policy gate rejects missing entry point.
 

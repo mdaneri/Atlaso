@@ -27,6 +27,14 @@ New Tabulators must use `window.AtlasoUiPatterns.createGrid(...)`; every new or 
   after every later commit is pushed as the exact head;
 - keep the task active to monitor exact-head checks, comments, reviews, and authoritative review threads through a
   successful current head with no unresolved actionable feedback;
+- apply the **Default merge authorization** policy to ordinary agent-authored internal pull requests: implementation or
+  delivery requests authorize a guarded squash merge after every exact-head gate passes unless the user or maintainer
+  explicitly places a hold; require strict up-to-date required checks to bind the validated base, also guard the head
+  SHA, never use an administrative bypass, fail closed instead of invoking `gh pr merge` when a merge queue is required,
+  and keep GitHub auto-merge as a separate explicit maintainer choice;
+- keep each pull request within its linked scope; search for an existing issue and open a separately typed, sanitized
+  issue when an evidence-backed unrelated problem has no tracking record, while routing suspected vulnerabilities
+  through `SECURITY.md` instead of a public issue;
 - use `Closes #<issue>` in the pull request;
 - follow the security and conduct policies; and
 - never commit directly to `main`.

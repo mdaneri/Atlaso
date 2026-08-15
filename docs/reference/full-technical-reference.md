@@ -390,7 +390,13 @@ Do not edit only one version source. `python scripts/version.py check` verifies 
 `--base-root` are mutually exclusive, and an explicit target cannot skip a patch or change the major or minor version.
 Updating an older pull request from `main` lets the workflow recalculate the next unused patch version.
 
-Repository auto-merge remains an explicit maintainer choice per pull request. A `main` push runs
+For ordinary agent-authored same-repository pull requests, an implementation or delivery request provides default
+authorization for the agent to perform a guarded squash merge after all exact-head checks and review gates pass, unless
+the user or maintainer explicitly places a hold. Human-authored pull requests, forks, drafts, review-only work, and
+private vulnerability remediation are excluded. Direct agent merging requires both an expected-head guard and the
+active ruleset's strict up-to-date required checks to bind the validated base; agents do not use an administrative
+bypass and fail closed without invoking `gh pr merge` when a merge queue is required. Repository auto-merge remains a
+separate explicit maintainer choice per pull request. A `main` push runs
 `update-auto-merge-prs.yml`, which uses GitHub's update-branch API only for open, same-repository, non-draft pull requests
 that have auto-merge enabled and report `BEHIND`. Each request includes the observed head SHA, so a concurrent contributor
 push causes GitHub to reject the stale update instead of merging over it. Forks, conflicted branches, and pull requests
