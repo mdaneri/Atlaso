@@ -1055,6 +1055,41 @@ def test_agent_policy_gate_ignores_inline_link_metadata_markers(tmp_path: Path) 
             )
 
 
+def test_agent_policy_gate_ignores_raw_html_block_markers(tmp_path: Path) -> None:
+    """Verify that non-rendered script and style bodies cannot satisfy markers.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    marker = '`cleanup-ready`'
+    sibling = "\n- following policy"
+    for relative_path in ORDERED_TERMINAL_CLEANUP_MARKERS:
+        for tag_name in ("script", "style"):
+            write_policy_files(tmp_path)
+            path = tmp_path / relative_path
+            anchor = TERMINAL_CLEANUP_SECTION_ANCHORS[relative_path]
+            html_prefix = "" if anchor.startswith("#") else "  "
+            text = path.read_text(encoding="utf-8").replace(marker, "", 1)
+            hidden_marker = (
+                f"\n{html_prefix}<{tag_name}>\n"
+                f"{html_prefix}{marker}\n{html_prefix}</{tag_name}>"
+            )
+            path.write_text(
+                text + hidden_marker
+                if anchor.startswith("#")
+                else text.replace(sibling, hidden_marker + sibling, 1),
+                encoding="utf-8",
+            )
+
+            findings = check_agent_policy_gate(tmp_path)
+
+            assert len(findings) == 1
+            assert findings[0].path == path
+            assert findings[0].message == (
+                f"completed-task cleanup section marker is missing: {marker}"
+            )
+
+
 def test_agent_policy_gate_ignores_indented_cleanup_markers(tmp_path: Path) -> None:
     """Verify that indented code cannot satisfy cleanup section markers.
 
@@ -1328,6 +1363,34 @@ def test_agent_policy_gate_rejects_fourth_terminal_transition(tmp_path: Path) ->
                 "completed-task cleanup markers must remain ordered: "
                 + " -> ".join(markers)
             )
+
+
+def test_agent_policy_gate_accepts_nested_terminal_instructions(tmp_path: Path) -> None:
+    """Verify that nested numbered guidance is not a fourth terminal state.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    for relative_path in ORDERED_TERMINAL_CLEANUP_MARKERS:
+        write_policy_files(tmp_path)
+        path = tmp_path / relative_path
+        text = path.read_text(encoding="utf-8")
+        anchor = TERMINAL_CLEANUP_SECTION_ANCHORS[relative_path]
+        order_prefix = "" if anchor.startswith("#") else "  "
+        expected_order = "\n".join(
+            order_prefix + line for line in TERMINAL_CLEANUP_ORDER_LINES
+        )
+        nested_prefix = order_prefix + "    "
+        path.write_text(
+            text.replace(
+                expected_order,
+                expected_order + f"\n{nested_prefix}1. Preserve traceability",
+                1,
+            ),
+            encoding="utf-8",
+        )
+
+        assert check_agent_policy_gate(tmp_path) == []
 
 
 def test_agent_policy_gate_rejects_missing_entry_point(tmp_path: Path) -> None:

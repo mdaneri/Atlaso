@@ -818,10 +818,18 @@ def strip_markdown_nonoperative_content(text: str) -> str:
         text,
         flags=re.DOTALL,
     )
+    without_raw_html_blocks = without_comments
+    for tag_name in ("script", "style"):
+        without_raw_html_blocks = re.sub(
+            rf'''<{tag_name}\b(?:[^<>"']|"[^"]*"|'[^']*')*>.*?(?:</{tag_name}[ \t\r\n]*>|$)''',
+            lambda match: re.sub(r"[^\r\n]", "", match.group(0)),
+            without_raw_html_blocks,
+            flags=re.DOTALL | re.IGNORECASE,
+        )
     without_html_tags = re.sub(
         r'''</?[A-Za-z][A-Za-z0-9-]*(?:[^<>"']|"[^"]*"|'[^']*')*>''',
         lambda match: re.sub(r"[^\r\n]", "", match.group(0)),
-        without_comments,
+        without_raw_html_blocks,
     )
     without_link_metadata = re.sub(
         r"!?(\[[^\]\r\n]*\])\((?:[^()\r\n]|\([^()\r\n]*\))*\)",
@@ -919,18 +927,28 @@ def extract_terminal_cleanup_order(cleanup_section: str) -> tuple[str, ...] | No
     )
     if len(anchors) != 1:
         return None
-    transitions = tuple(
-        line.strip()
+    transition_lines = tuple(
+        line.rstrip("\r\n")
         for line in lines[anchors[0] + 1 :]
         if line.strip()
     )
     expected_count = len(TERMINAL_CLEANUP_ORDER_LINES)
-    order_lines = transitions[:expected_count]
-    if (
-        len(transitions) > expected_count
-        and re.fullmatch(r"\d+[.)]\s+.+", transitions[expected_count]) is not None
-    ):
-        order_lines += (transitions[expected_count],)
+    order_lines = tuple(line.strip() for line in transition_lines[:expected_count])
+    first_transition_match = (
+        re.fullmatch(r"( *)\d+[.)]\s+.+", transition_lines[0])
+        if transition_lines
+        else None
+    )
+    if first_transition_match is not None:
+        top_level_indent = len(first_transition_match.group(1))
+        for candidate in transition_lines[expected_count:]:
+            candidate_match = re.fullmatch(r"( *)\d+[.)]\s+.+", candidate)
+            if (
+                candidate_match is not None
+                and len(candidate_match.group(1)) == top_level_indent
+            ):
+                order_lines += (candidate.strip(),)
+                break
     return order_lines
 
 
