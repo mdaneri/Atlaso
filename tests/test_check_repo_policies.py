@@ -1056,7 +1056,7 @@ def test_agent_policy_gate_ignores_inline_link_metadata_markers(tmp_path: Path) 
 
 
 def test_agent_policy_gate_ignores_raw_html_block_markers(tmp_path: Path) -> None:
-    """Verify that non-rendered script and style bodies cannot satisfy markers.
+    """Verify raw HTML code-container bodies cannot satisfy markers.
 
     Args:
         tmp_path: Temporary directory provided by pytest for isolated filesystem state.
@@ -1064,7 +1064,7 @@ def test_agent_policy_gate_ignores_raw_html_block_markers(tmp_path: Path) -> Non
     marker = '`cleanup-ready`'
     sibling = "\n- following policy"
     for relative_path in ORDERED_TERMINAL_CLEANUP_MARKERS:
-        for tag_name in ("script", "style"):
+        for tag_name in ("script", "style", "pre", "code", "textarea", "xmp"):
             write_policy_files(tmp_path)
             path = tmp_path / relative_path
             anchor = TERMINAL_CLEANUP_SECTION_ANCHORS[relative_path]
@@ -1087,6 +1087,39 @@ def test_agent_policy_gate_ignores_raw_html_block_markers(tmp_path: Path) -> Non
             assert findings[0].path == path
             assert findings[0].message == (
                 f"completed-task cleanup section marker is missing: {marker}"
+            )
+
+
+def test_agent_policy_gate_ignores_raw_html_policy_sections(tmp_path: Path) -> None:
+    """Verify a raw HTML code container cannot replace operative policy.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    sibling = "\n- following policy"
+    for relative_path in ORDERED_TERMINAL_CLEANUP_MARKERS:
+        for tag_name in ("pre", "code"):
+            write_policy_files(tmp_path)
+            path = tmp_path / relative_path
+            anchor = TERMINAL_CLEANUP_SECTION_ANCHORS[relative_path]
+            text = path.read_text(encoding="utf-8")
+            section_start = text.index(anchor)
+            section_end = text.index(sibling, section_start)
+            path.write_text(
+                text[:section_start]
+                + f"<{tag_name}>\n"
+                + text[section_start:section_end]
+                + f"\n</{tag_name}>"
+                + text[section_end:],
+                encoding="utf-8",
+            )
+
+            findings = check_agent_policy_gate(tmp_path)
+
+            assert len(findings) == 1
+            assert findings[0].path == path
+            assert findings[0].message == (
+                "completed-task cleanup section is missing: " + anchor
             )
 
 

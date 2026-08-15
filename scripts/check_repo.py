@@ -819,7 +819,7 @@ def strip_markdown_nonoperative_content(text: str) -> str:
         flags=re.DOTALL,
     )
     without_raw_html_blocks = without_comments
-    for tag_name in ("script", "style"):
+    for tag_name in ("script", "style", "pre", "code", "textarea", "xmp"):
         without_raw_html_blocks = re.sub(
             rf'''<{tag_name}\b(?:[^<>"']|"[^"]*"|'[^']*')*>.*?(?:</{tag_name}[ \t\r\n]*>|$)''',
             lambda match: re.sub(r"[^\r\n]", "", match.group(0)),
