@@ -10683,6 +10683,45 @@ def _fsync_file(path: Path) -> None:
         os.fsync(handle.fileno())
 
 
+def _sync_release_transaction_backups(
+    backup_root: Path,
+    database_backup: Path,
+    file_backups: list[tuple[Path | None, Path]],
+) -> None:
+    """Flush every rollback backup and directory entry before checkpoint publication.
+
+    Args:
+        backup_root: Bounded transaction backup directory.
+        database_backup: Complete SQLite backup for the transaction.
+        file_backups: Installed-asset backup and destination pairs.
+
+    Raises:
+        ValueError: If a declared backup is missing or outside the transaction root.
+    """
+    resolved_root = backup_root.resolve(strict=True)
+    if backup_root.is_symlink() or not database_backup.is_file() or database_backup.is_symlink():
+        raise ValueError("release transaction database backup is not a regular file")
+    backup_files = [database_backup]
+    backup_files.extend(backup for backup, _destination in file_backups if backup is not None)
+    directories: set[Path] = set()
+    for backup in backup_files:
+        if not backup.is_file() or backup.is_symlink():
+            raise ValueError("release transaction asset backup is not a regular file")
+        resolved_backup = backup.resolve(strict=True)
+        if not resolved_backup.is_relative_to(resolved_root):
+            raise ValueError("release transaction asset backup is outside the backup root")
+        _fsync_file(resolved_backup)
+        parent = resolved_backup.parent
+        while True:
+            directories.add(parent)
+            if parent == resolved_root:
+                break
+            parent = parent.parent
+    for directory in sorted(directories, key=lambda item: len(item.parts), reverse=True):
+        _fsync_directory(directory)
+    _fsync_directory(resolved_root.parent)
+
+
 def _active_release_root() -> Path:
     """Perform active release root.
 
@@ -11155,6 +11194,28 @@ def _recover_interrupted_release_transaction() -> dict:
     status = str(parsed.get("status") or "")
     provisional = status in {"transaction_pending", "restart_pending", "rollback_pending"}
     if not provisional:
+        if ATLASO_UPDATE_RESTART_GATE_PATH.exists():
+            definitive = status == "succeeded" or (
+                status == "failed" and parsed.get("rolled_back") is True
+            )
+            try:
+                gate_job_id = ATLASO_UPDATE_RESTART_GATE_PATH.read_text(encoding="utf-8").strip()
+            except OSError as exc:
+                return {
+                    "status": "recovery_failed",
+                    "success": False,
+                    "allow_worker": False,
+                    "error": f"Release restart gate could not be read: {type(exc).__name__}.",
+                }
+            finalizer_job_id = str(parsed.get("job_id") or "")
+            if not definitive or not finalizer_job_id or gate_job_id != finalizer_job_id:
+                return {
+                    "status": "recovery_failed",
+                    "success": False,
+                    "allow_worker": False,
+                    "error": "Release restart gate has no matching definitive transaction evidence.",
+                }
+            _set_release_restart_gate(False)
         return {"status": "not_required", "success": True, "allow_worker": True}
     recovery = parsed.get("transaction_recovery")
     owner = recovery.get("owner") if isinstance(recovery, dict) else None
@@ -12218,6 +12279,7 @@ def _apply_atlaso_release(
                 backups: Complete installed-asset backup and destination manifest.
             """
             nonlocal transaction_recovery
+            _sync_release_transaction_backups(backup_root, database_backup, backups)
             transaction_recovery = _release_transaction_recovery_evidence(
                 previous=previous,
                 candidate=release_root,
@@ -12436,12 +12498,9 @@ def _apply_atlaso_release(
             "systemd_reload",
             lambda: _service_command("daemon-reload"),
         )
-        rollback_start_units = ["atlaso.service", "atlaso-console.service"]
-        if rollback_gate_ready:
-            rollback_start_units.insert(1, "atlaso-worker.service")
         services_started, _start_result = rollback_action(
             "service_start",
-            lambda: _service_command("start", *rollback_start_units),
+            lambda: _service_command("start", "atlaso.service", "atlaso-console.service"),
         )
         _health_ok, rollback_health_result = rollback_action("internal_health", _wait_for_atlaso_health)
         rollback_health = (
@@ -12454,8 +12513,8 @@ def _apply_atlaso_release(
             lambda: _service_command(
                 "is-active",
                 "atlaso.service",
-                "atlaso-worker.service",
                 "atlaso-console.service",
+                "nginx.service",
             ),
         )
         rollback_services = (
@@ -12540,6 +12599,7 @@ def _apply_atlaso_release(
                 previous,
                 rollback_release,
                 require_receipt=False,
+                include_worker=False,
             )
             commands.extend(rollback_activation_commands)
         except Exception as rollback_exc:  # noqa: BLE001 - retain definitive failed rollback evidence.
@@ -12563,11 +12623,44 @@ def _apply_atlaso_release(
             )
             rollback_failures.append(evidence)
             commands.append(evidence)
-        rollback_ready = bool(
+        rollback_base_ready = bool(
             rollback_pre_cleanup_ready
             and rollback_maintenance.get("success", False)
             and rollback_durable.get("success", False)
             and rollback_activation.get("success", False)
+        )
+        if rollback_base_ready:
+            rollback_worker_started, _worker_start_result = rollback_action(
+                "worker_start",
+                lambda: _service_command("start", "atlaso-worker.service"),
+            )
+            rollback_worker_active, rollback_worker_result = rollback_action(
+                "worker_state",
+                lambda: _service_command("is-active", "atlaso-worker.service"),
+            )
+            rollback_worker = (
+                rollback_worker_result
+                if isinstance(rollback_worker_result, dict)
+                else _release_check(
+                    "rollback_worker_state",
+                    False,
+                    "Rollback worker service state was unavailable.",
+                )
+            )
+        else:
+            rollback_worker_started = False
+            rollback_worker_active = False
+            rollback_worker = _release_check(
+                "rollback_worker_admission",
+                False,
+                "Rollback worker remains stopped because base rollback readiness is incomplete.",
+            )
+            commands.append(rollback_worker)
+            rollback_failures.append(rollback_worker)
+        rollback_ready = bool(
+            rollback_base_ready
+            and rollback_worker_started
+            and rollback_worker_active
         )
         if not rollback_ready:
             rollback_action("maintenance_fail_closed", lambda: _set_release_maintenance(True))
@@ -12587,7 +12680,10 @@ def _apply_atlaso_release(
             "failure_layer": failure_layer,
             "rollback_health": {
                 "openapi": rollback_health,
-                "services": rollback_services,
+                "services": {
+                    "base": rollback_services,
+                    "worker": rollback_worker,
+                },
                 "maintenance": rollback_maintenance,
                 "active_release_verification": rollback_activation,
             },
@@ -12607,7 +12703,10 @@ def _apply_atlaso_release(
                     "rolled_back": rollback_ready,
                     "failure_layer": failure_layer,
                     "rollback_health": rollback_ready,
-                    "rollback_service_checks": rollback_services,
+                    "rollback_service_checks": {
+                        "base": rollback_services,
+                        "worker": rollback_worker,
+                    },
                     "commands": commands,
                     "active_release_verification": rollback_activation,
                     "rollback_failures": [
@@ -12619,7 +12718,7 @@ def _apply_atlaso_release(
                 }
             ),
         )
-        if finalizer_restored:
+        if finalizer_restored and rollback_ready:
             rollback_action(
                 "worker_restart_gate",
                 lambda: _set_release_restart_gate(False),

@@ -205,6 +205,19 @@ def _wait_for_release_restart_finalizer(timeout_seconds: int = 90) -> bool:
         gate_exists = APPLIANCE_UPDATE_RESTART_GATE_PATH.exists()
         if not gate_exists and not finalizer_pending:
             return True
+        definitive = finalizer_status == JobStatus.SUCCEEDED.value or (
+            finalizer_status == JobStatus.FAILED.value and finalizer.get("rolled_back") is True
+        )
+        if gate_exists and definitive:
+            try:
+                gate_job_id = APPLIANCE_UPDATE_RESTART_GATE_PATH.read_text(encoding="utf-8").strip()
+            except OSError:
+                gate_job_id = ""
+            if gate_job_id and gate_job_id == str(finalizer.get("job_id") or ""):
+                LOGGER.warning(
+                    "Atlaso worker startup ignored a stale release gate backed by definitive transaction evidence"
+                )
+                return True
         recovery = finalizer.get("transaction_recovery")
         owner = recovery.get("owner") if isinstance(recovery, dict) else None
         if not gate_exists and finalizer_pending and not _release_transaction_owner_alive(owner):

@@ -248,9 +248,10 @@ Success is recorded only after Atlaso flushes the active switch and installed re
 validates and reloads nginx, and verifies web, worker, console, and nginx service state. The helper writes a provisional
 finalizer, restarts the worker through the candidate release, and requires the new systemd PID to publish the matching
 job, version, and release-root identity before success becomes definitive. Before switching the active link, the helper
-durably records a bounded rollback manifest containing the previous and candidate releases plus the database and
-installed-asset backups. If ESX Storage aliases migrate, the helper refreshes and flushes that manifest after adding the
-allowlist backup and before rewriting either the claims or database, so rollback cannot diverge. It persists
+flushes the database and every installed-asset rollback backup plus their directory entries, then durably records a
+bounded rollback manifest containing the previous and candidate releases. If ESX Storage aliases migrate, the helper
+flushes its added allowlist backup and refreshes the manifest before rewriting either the claims or database, so
+rollback cannot diverge. It persists
 restart-pending evidence before establishing the volatile runtime gate, then keeps
 both workers from consuming a finalizer until its durable write and the surrounding transaction have finished. Worker
 pre-start distinguishes the live helper by boot, PID, and process-start identity. If a reboot removes the gate and the
@@ -268,6 +269,10 @@ version; inconsistent success evidence fails recovery instead of being accepted.
 When the signed candidate is already the active release, these same readiness checks are definitive and Atlaso does not
 schedule a second, unobserved delayed service restart. A failed no-change verification retains every sanitized readiness
 command in its finalizer.
+A matching definitive success or verified healthy rollback is authoritative if the helper exits before removing its
+runtime gate: privileged pre-start recovery clears that orphaned gate, and worker startup can defensively supersede it.
+An incomplete rollback keeps maintenance and the gate in place, preventing queued work until rollback can be retried or
+an administrator repairs the recorded failing layer.
 
 A failure in systemd asset activation, the atomic switch, candidate startup, maintenance removal, final `nginx -t`,
 worker handoff, or front-door version readiness enters the same rollback boundary. Before rollback can restart a worker,

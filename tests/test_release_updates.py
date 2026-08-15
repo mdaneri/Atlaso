@@ -372,6 +372,31 @@ def test_worker_restart_gate_timeout_fails_closed(monkeypatch, tmp_path):
     assert worker._wait_for_release_restart_finalizer(timeout_seconds=1) is False
 
 
+def test_worker_ignores_matching_stale_gate_after_definitive_finalizer(monkeypatch, tmp_path):
+    """Verify a helper crash after the definitive write cannot deadlock worker startup.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace worker dependencies.
+        tmp_path: Temporary directory provided for the orphaned runtime gate.
+    """
+    import atlaso.app.worker as worker
+
+    gate = tmp_path / "restart-gate"
+    gate.write_text("job-definitive\n", encoding="utf-8")
+    monkeypatch.setattr(worker, "APPLIANCE_UPDATE_RESTART_GATE_PATH", gate)
+    monkeypatch.setattr(
+        worker,
+        "_release_finalizer",
+        lambda: {
+            "status": "succeeded",
+            "job_id": "job-definitive",
+            "rolled_back": False,
+        },
+    )
+
+    assert worker._wait_for_release_restart_finalizer(timeout_seconds=90) is True
+
+
 def test_worker_exits_when_release_restart_gate_does_not_open(monkeypatch):
     """Verify systemd retries worker startup instead of running work behind a closed release gate.
 
@@ -438,6 +463,63 @@ def test_release_prestart_recovery_defers_to_live_transaction_owner(
     assert result["status"] == "transaction_active"
     assert result["allow_worker"] is allow_worker
     assert result["success"] is allow_worker
+
+
+@pytest.mark.parametrize(
+    ("finalizer", "allow_worker", "gate_cleared"),
+    [
+        ({"status": "succeeded", "job_id": "job-definitive"}, True, True),
+        (
+            {
+                "status": "failed",
+                "job_id": "job-definitive",
+                "rolled_back": True,
+            },
+            True,
+            True,
+        ),
+        (
+            {
+                "status": "failed",
+                "job_id": "job-definitive",
+                "rolled_back": False,
+            },
+            False,
+            False,
+        ),
+    ],
+)
+def test_release_prestart_recovery_handles_gate_after_definitive_write(
+    monkeypatch,
+    tmp_path,
+    finalizer,
+    allow_worker,
+    gate_cleared,
+):
+    """Verify only a complete matching transaction can clear an orphaned gate.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace helper paths.
+        tmp_path: Temporary directory provided for finalizer and gate evidence.
+        finalizer: Definitive transaction evidence under test.
+        allow_worker: Whether pre-start recovery should admit the worker.
+        gate_cleared: Whether the matching runtime gate should be removed.
+    """
+    from tests.test_appliance_update import load_helper_module
+
+    helper = load_helper_module()
+    finalizer_path = tmp_path / "finalizer.json"
+    finalizer_path.write_text(json.dumps(finalizer), encoding="utf-8")
+    gate = tmp_path / "restart-gate"
+    gate.write_text("job-definitive\n", encoding="utf-8")
+    monkeypatch.setattr(helper, "ATLASO_UPDATE_FINALIZER_PATH", finalizer_path)
+    monkeypatch.setattr(helper, "ATLASO_UPDATE_RESTART_GATE_PATH", gate)
+
+    result = helper._recover_interrupted_release_transaction()
+
+    assert result["allow_worker"] is allow_worker
+    assert result["success"] is allow_worker
+    assert gate.exists() is (not gate_cleared)
 
 
 def test_release_prestart_recovery_rolls_back_stale_transaction(monkeypatch, tmp_path):
@@ -1971,6 +2053,43 @@ def test_sqlite_backup_restores_database_identity(monkeypatch, tmp_path):
         connection.close()
 
 
+def test_release_transaction_backup_sync_flushes_files_before_directory_entries(monkeypatch, tmp_path):
+    """Verify rollback backup bytes and directory entries precede checkpoint publication.
+
+    Args:
+        monkeypatch: Pytest fixture used to capture durability operations.
+        tmp_path: Temporary directory provided for the bounded backup tree.
+    """
+    from tests.test_appliance_update import load_helper_module
+
+    helper = load_helper_module()
+    backup_root = tmp_path / "backups" / "transaction"
+    database_backup = backup_root / "atlaso.db"
+    asset_backup = backup_root / "etc/systemd/system/atlaso.service"
+    asset_backup.parent.mkdir(parents=True)
+    database_backup.write_bytes(b"database backup")
+    asset_backup.write_bytes(b"service backup")
+    events: list[tuple[str, Path]] = []
+    monkeypatch.setattr(helper, "_fsync_file", lambda path: events.append(("file", path)))
+    monkeypatch.setattr(helper, "_fsync_directory", lambda path: events.append(("directory", path)))
+
+    helper._sync_release_transaction_backups(
+        backup_root,
+        database_backup,
+        [(asset_backup, Path("/etc/systemd/system/atlaso.service"))],
+    )
+
+    first_directory = next(index for index, event in enumerate(events) if event[0] == "directory")
+    assert {path for kind, path in events[:first_directory] if kind == "file"} == {
+        database_backup.resolve(),
+        asset_backup.resolve(),
+    }
+    flushed_directories = [path for kind, path in events if kind == "directory"]
+    assert asset_backup.parent.resolve() in flushed_directories
+    assert backup_root.resolve() in flushed_directories
+    assert flushed_directories[-1] == backup_root.resolve().parent
+
+
 def test_worker_restart_uses_matching_root_release_finalizer(client, monkeypatch, tmp_path):
     """Verify that worker restart uses matching root release finalizer.
 
@@ -2660,9 +2779,11 @@ def test_no_change_release_failure_finalizer_retains_readiness_commands(monkeypa
         ("worker_restart", "worker_restart", True),
         ("worker_activation", "worker_restart", True),
         ("finalizer_persistence", "finalizer_persistence", True),
+        ("transaction_backup_sync", "transaction_checkpoint", True),
         ("rollback_symlink_sync", "candidate_startup", True),
         ("rollback_link_restore", "candidate_startup", False),
         ("rollback_activation", "candidate_startup", False),
+        ("rollback_worker_start", "candidate_startup", False),
         ("rollback_gate", "candidate_startup", False),
     ],
 )
@@ -2899,6 +3020,7 @@ def test_failed_candidate_restores_previous_release_and_database(
     monkeypatch.setattr(helper, "_command_payload", command_payload)
     daemon_reloads = 0
     candidate_starts = 0
+    rollback_worker_starts = 0
 
     def service_command(action, *units):
         """Return service command.
@@ -2907,7 +3029,7 @@ def test_failed_candidate_restores_previous_release_and_database(
             action: Action supplied to the test scenario.
             *units: Additional positional arguments accepted by the callable.
         """
-        nonlocal daemon_reloads, candidate_starts
+        nonlocal daemon_reloads, candidate_starts, rollback_worker_starts
         success = True
         if action == "daemon-reload":
             daemon_reloads += 1
@@ -2921,6 +3043,7 @@ def test_failed_candidate_restores_previous_release_and_database(
                     "rollback_symlink_sync",
                     "rollback_link_restore",
                     "rollback_activation",
+                    "rollback_worker_start",
                     "rollback_gate",
                 }
                 or candidate_starts > 1
@@ -2928,7 +3051,9 @@ def test_failed_candidate_restores_previous_release_and_database(
         if action == "restart" and units == ("atlaso-worker.service",):
             success = failure_stage != "worker_restart"
         if action == "start" and "atlaso-worker.service" in units:
+            rollback_worker_starts += 1
             assert (tmp_path / "restart-gate").read_text(encoding="utf-8") == "\n"
+            success = failure_stage != "rollback_worker_start"
         return {
             "command": ["systemctl", action, *units],
             "returncode": 0 if success else 1,
@@ -3043,8 +3168,25 @@ def test_failed_candidate_restores_previous_release_and_database(
     monkeypatch.setattr(helper, "_release_activation_verification", activation)
     monkeypatch.setattr(helper, "_write_update_info", lambda _payload: None)
     write_finalizer = helper._write_release_finalizer
+    sync_backups = helper._sync_release_transaction_backups
     finalizer_statuses: list[str] = []
     checkpoint_backup_counts: list[int] = []
+    backup_sync_counts: list[int] = []
+
+    def sync_transaction_backups(backup_root, database_backup, backups):
+        """Capture each durable backup flush before its checkpoint is published.
+
+        Args:
+            backup_root: Transaction backup root supplied by the helper.
+            database_backup: SQLite rollback snapshot supplied by the helper.
+            backups: Installed-asset backups currently included in recovery.
+        """
+        if failure_stage == "transaction_backup_sync":
+            raise OSError("injected rollback backup sync failure")
+        sync_backups(backup_root, database_backup, backups)
+        backup_sync_counts.append(len(backups))
+
+    monkeypatch.setattr(helper, "_sync_release_transaction_backups", sync_transaction_backups)
 
     def finalizer(payload):
         """Inject a success-finalizer persistence failure inside the rollback boundary.
@@ -3055,7 +3197,9 @@ def test_failed_candidate_restores_previous_release_and_database(
         finalizer_statuses.append(str(payload.get("status") or ""))
         if payload.get("status") == "transaction_pending":
             recovery = payload.get("transaction_recovery") or {}
-            checkpoint_backup_counts.append(len(recovery.get("file_backups") or []))
+            backup_count = len(recovery.get("file_backups") or [])
+            assert backup_sync_counts[-1] == backup_count
+            checkpoint_backup_counts.append(backup_count)
         if payload.get("status") == "restart_pending":
             handoff_events.append("restart_pending")
         if payload.get("status") == "failed" and failure_stage != "rollback_gate":
@@ -3081,12 +3225,26 @@ def test_failed_candidate_restores_previous_release_and_database(
     assert finalizer["failure_layer"] == expected_layer
     assert finalizer["commands"]
     assert not credential_path.exists()
-    assert "transaction_pending" in finalizer_statuses
+    expected_worker_starts = (
+        0
+        if failure_stage in {"rollback_link_restore", "rollback_activation", "rollback_gate"}
+        else 1
+    )
+    assert rollback_worker_starts == expected_worker_starts
+    if failure_stage == "transaction_backup_sync":
+        assert "transaction_pending" not in finalizer_statuses
+        assert not checkpoint_backup_counts
+        assert not backup_sync_counts
+    else:
+        assert "transaction_pending" in finalizer_statuses
     assert esx_allowlist.read_text(encoding="utf-8") == "previous-claim\n"
-    if failure_stage == "systemd_assets":
+    if failure_stage == "transaction_backup_sync":
+        assert not checkpoint_backup_counts
+    elif failure_stage == "systemd_assets":
         assert checkpoint_backup_counts == [0]
     else:
         assert checkpoint_backup_counts[:2] == [0, 1]
+    assert backup_sync_counts[: len(checkpoint_backup_counts)] == checkpoint_backup_counts
     if failure_stage in {"worker_restart", "worker_activation", "finalizer_persistence"}:
         assert "restart_pending" in finalizer_statuses
         assert handoff_events.index("restart_pending") < handoff_events.index("gate")
@@ -3102,6 +3260,8 @@ def test_failed_candidate_restores_previous_release_and_database(
         assert "rollback_activation_verification" in finalizer["rollback_failures"]
         assert False in maintenance_states
         assert maintenance_states[-1] is True
+    if failure_stage in {"rollback_link_restore", "rollback_activation", "rollback_worker_start"}:
+        assert (tmp_path / "restart-gate").exists()
     if failure_stage == "rollback_gate":
         assert "rollback_worker_restart_gate_hold" in finalizer["rollback_failures"]
         assert not (tmp_path / "restart-gate").exists()
