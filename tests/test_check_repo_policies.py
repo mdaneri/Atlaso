@@ -751,6 +751,34 @@ def test_agent_policy_gate_honors_setext_heading_boundaries(tmp_path: Path) -> N
             )
 
 
+def test_agent_policy_gate_preserves_thematic_breaks_after_list_items(
+    tmp_path: Path,
+) -> None:
+    """Verify a thematic break after a list item remains inside the section.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    marker = '`cleanup-ready`'
+    for relative_path in ORDERED_TERMINAL_CLEANUP_MARKERS:
+        anchor = TERMINAL_CLEANUP_SECTION_ANCHORS[relative_path]
+        if not anchor.startswith("#"):
+            continue
+        write_policy_files(tmp_path)
+        path = tmp_path / relative_path
+        text = path.read_text(encoding="utf-8").replace(marker, "", 1)
+        path.write_text(
+            text.replace(
+                "- following policy",
+                f"- contextual item\n---\n{marker}\n- following policy",
+                1,
+            ),
+            encoding="utf-8",
+        )
+
+        assert check_agent_policy_gate(tmp_path) == []
+
+
 def test_agent_policy_gate_honors_all_list_item_boundaries(tmp_path: Path) -> None:
     """Verify that every top-level Markdown list item ends cleanup list items.
 
@@ -1456,6 +1484,41 @@ def test_agent_policy_gate_ignores_hidden_html_policy_sections(
         )
 
 
+def test_agent_policy_gate_ignores_css_hidden_html_policy_sections(
+    tmp_path: Path,
+) -> None:
+    """Verify inline display-none CSS makes wrapped policy non-operative.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    sibling = "\n- following policy"
+    for relative_path in ORDERED_TERMINAL_CLEANUP_MARKERS:
+        for style in ("display:none", "color:red; DISPLAY: none !important;"):
+            write_policy_files(tmp_path)
+            path = tmp_path / relative_path
+            anchor = TERMINAL_CLEANUP_SECTION_ANCHORS[relative_path]
+            text = path.read_text(encoding="utf-8")
+            section_start = text.index(anchor)
+            section_end = text.index(sibling, section_start)
+            path.write_text(
+                text[:section_start]
+                + f'<div class="policy" style="{style}">\n'
+                + text[section_start:section_end]
+                + "\n</div>"
+                + text[section_end:],
+                encoding="utf-8",
+            )
+
+            findings = check_agent_policy_gate(tmp_path)
+
+            assert len(findings) == 1
+            assert findings[0].path == path
+            assert findings[0].message == (
+                "completed-task cleanup section is missing: " + anchor
+            )
+
+
 def test_agent_policy_gate_preserves_visible_inline_html_content(
     tmp_path: Path,
 ) -> None:
@@ -1768,6 +1831,30 @@ def test_agent_policy_gate_preserves_headings_after_block_quotes(tmp_path: Path)
         assert findings[0].message == (
             f"completed-task cleanup section marker is missing: {marker}"
         )
+
+
+def test_agent_policy_gate_preserves_html_blocks_after_block_quotes(
+    tmp_path: Path,
+) -> None:
+    """Verify visible block HTML interrupts a quote without a blank line.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    marker = '`cleanup-ready`'
+    for relative_path in ORDERED_TERMINAL_CLEANUP_MARKERS:
+        write_policy_files(tmp_path)
+        path = tmp_path / relative_path
+        anchor = TERMINAL_CLEANUP_SECTION_ANCHORS[relative_path]
+        content_prefix = "" if anchor.startswith("#") else "  "
+        text = path.read_text(encoding="utf-8").replace(
+            marker,
+            f"> quoted example\n{content_prefix}<div>{marker}</div>",
+            1,
+        )
+        path.write_text(text, encoding="utf-8")
+
+        assert check_agent_policy_gate(tmp_path) == []
 
 
 def test_agent_policy_gate_keeps_noninitial_ordered_items_in_lazy_block_quotes(

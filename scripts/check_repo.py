@@ -976,6 +976,58 @@ def has_hidden_html_attribute(attributes: str) -> bool:
     ) is not None
 
 
+def has_css_hidden_style(attributes: str) -> bool:
+    """Return whether inline CSS removes an element from rendering.
+
+    Args:
+        attributes: Raw attribute text from an HTML start tag.
+    """
+    for style_match in re.finditer(
+        r'''(?:^|[ \t\r\n\f])style[ \t\r\n\f]*=[ \t\r\n\f]*'''
+        r'''(?:"(?P<double>[^"]*)"|'(?P<single>[^']*)'|'''
+        r'''(?P<bare>[^\s"'=<>`]+))''',
+        attributes,
+        flags=re.IGNORECASE,
+    ):
+        style = next(
+            value
+            for value in (
+                style_match.group("double"),
+                style_match.group("single"),
+                style_match.group("bare"),
+            )
+            if value is not None
+        )
+        if re.search(
+            r"(?:^|;)\s*display\s*:\s*none(?:\s*!important)?\s*(?:;|$)",
+            style,
+            flags=re.IGNORECASE,
+        ) is not None:
+            return True
+    return False
+
+
+def starts_markdown_html_block(line: str) -> bool:
+    """Return whether a visible block HTML tag interrupts a Markdown quote.
+
+    Args:
+        line: Structural Markdown source line.
+    """
+    block_elements = (
+        "address|article|aside|base|basefont|blockquote|body|caption|center|"
+        "col|colgroup|dd|details|dialog|dir|div|dl|dt|fieldset|figcaption|"
+        "figure|footer|form|frame|frameset|h[1-6]|head|header|hr|html|iframe|"
+        "legend|li|link|main|menu|menuitem|nav|noframes|ol|optgroup|option|"
+        "p|param|search|section|summary|table|tbody|td|tfoot|th|thead|title|"
+        "tr|track|ul"
+    )
+    return re.match(
+        rf" {{0,3}}</?(?:{block_elements})(?=(?:[ \t\r\n/>]|$))",
+        line,
+        flags=re.IGNORECASE,
+    ) is not None
+
+
 def strip_markdown_hidden_html_containers(text: str) -> str:
     """Blank balanced non-rendered HTML containers while preserving lines.
 
@@ -1000,6 +1052,9 @@ def strip_markdown_hidden_html_containers(text: str) -> str:
             or (
                 tag_name not in inert_elements
                 and not has_hidden_html_attribute(
+                    opening_match.group("attributes")
+                )
+                and not has_css_hidden_style(
                     opening_match.group("attributes")
                 )
             )
@@ -1149,6 +1204,13 @@ def strip_markdown_nonoperative_content(text: str) -> str:
     without_raw_html_blocks = strip_markdown_hidden_html_containers(
         without_raw_html_blocks,
     )
+    html_block_interrupt_lines = {
+        index
+        for index, line in enumerate(
+            without_raw_html_blocks.splitlines(keepends=True)
+        )
+        if starts_markdown_html_block(line)
+    }
     without_html_tags = re.sub(
         r'''</?[A-Za-z][A-Za-z0-9-]*(?:[^<>"']|"[^"]*"|'[^']*')*>''',
         lambda match: re.sub(r"[^\r\n]", "", match.group(0)),
@@ -1166,7 +1228,9 @@ def strip_markdown_nonoperative_content(text: str) -> str:
             r"(?:-[ \t]*){3,})(?:\r?\n)?$"
         ),
     )
-    for line in without_link_metadata.splitlines(keepends=True):
+    for line_index, line in enumerate(
+        without_link_metadata.splitlines(keepends=True)
+    ):
         if re.match(r" {0,3}>", line) is not None:
             in_block_quote = True
             without_quotes_lines.append("\n" if line.endswith("\n") else "")
@@ -1174,7 +1238,7 @@ def strip_markdown_nonoperative_content(text: str) -> str:
             starts_interrupting_block = any(
                 pattern.match(line) is not None
                 for pattern in interrupting_block_patterns
-            )
+            ) or line_index in html_block_interrupt_lines
             if starts_interrupting_block:
                 in_block_quote = False
                 without_quotes_lines.append(line)
@@ -1470,9 +1534,28 @@ def extract_markdown_policy_section(
                 return "".join(lines[start:end])
             title_line = lines[end].rstrip("\r\n")
             title_indent = len(title_line) - len(title_line.lstrip(" "))
+            title_starts_block = any(
+                pattern.match(title_line) is not None
+                for pattern in (
+                    re.compile(r" {0,3}>", flags=re.IGNORECASE),
+                    re.compile(
+                        r" {0,3}(?:[*+-]|\d{1,9}[.)])(?:[ \t]+|$)",
+                        flags=re.IGNORECASE,
+                    ),
+                    re.compile(r" {0,3}(?:#{1,6})(?:[ \t]+|$)"),
+                    re.compile(r" {0,3}(?:`{3,}|~{3,})"),
+                    re.compile(
+                        r" {0,3}(?:(?:\*[ \t]*){3,}|(?:_[ \t]*){3,}|"
+                        r"(?:-[ \t]*){3,})$"
+                    ),
+                )
+            ) or starts_markdown_html_block(title_line)
             setext_match = (
                 re.fullmatch(r" {0,3}(=+|-+)[ \t]*(?:\r?\n)?", lines[end + 1])
-                if end + 1 < len(lines) and title_line.strip() and title_indent <= 3
+                if end + 1 < len(lines)
+                and title_line.strip()
+                and title_indent <= 3
+                and not title_starts_block
                 else None
             )
             if setext_match is not None:
