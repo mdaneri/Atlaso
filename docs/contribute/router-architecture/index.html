@@ -2827,6 +2827,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#extracted-automation-and-operations-ownership" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Extracted Automation and operations ownership
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#route-and-openapi-compatibility" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -3565,6 +3576,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#extracted-automation-and-operations-ownership" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Extracted Automation and operations ownership
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#route-and-openapi-compatibility" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -3722,7 +3744,9 @@ helpers, models, renderers, Appliance Apply execution, settings-archive core beh
 their established modules. Phase 9 extracts Network Boot and ESXi PXE management transports plus the remaining ESXi
 PXE API v1 transports while leaving the dedicated Network Boot API and protocol/media router unchanged. Phase 10
 extracts the VCF workflow management transports and their three API v1 status operations while preserving their
-separated effective positions and the Automation-owned contextual schedule transport.</p>
+separated effective positions and the Automation-owned contextual schedule transport. Phase 11 extracts Automation
+and operational management transports plus the contiguous operational API v1 block without changing route order,
+behavior, or cross-domain service ownership.</p>
 <h2 id="ownership-and-responsibilities">Ownership and responsibilities<a class="headerlink" href="#ownership-and-responsibilities" title="Permanent link">&para;</a></h2>
 <ul>
 <li><code>atlaso/app/main.py</code> owns application construction, middleware, mounts, and the top-level order in which stable facade
@@ -3826,7 +3850,7 @@ the global Appliance Apply boundary.</p>
 and submission endpoint. The stable <code>atlaso/app/ui.py</code> facade continues to export the four endpoint names and owns the
 status, context, unit construction, active-job, submission, execution, logging, recovery, audit, identity/CSRF, and
 background-task helpers supplied through the typed router builder. The UI registry places <code>appliance_apply</code> immediately
-after <code>facade_before_routes_wan</code> and before <code>routes_wan</code>, preserving the established effective route order.</p>
+after <code>facade_between_automation_routes_wan</code> and before <code>routes_wan</code>, preserving the established effective route order.</p>
 <p>Independently runnable transport coverage lives in <code>tests/routers/ui/test_appliance_apply.py</code>. Browser polling remains
 covered by <code>tests/javascript/appliance-apply-polling.test.js</code>; execution, recovery, subsystem sequencing, helper
 rendering, and cross-domain behavior retain their existing test owners. This extraction changes no route, response,
@@ -3899,7 +3923,7 @@ precede the extracted Identity router. The contextual
 route block; extraction into the VCF workflow router would change both ownership and effective order.</p>
 <p>The three API v1 status transports live together in <code>atlaso/app/routers/api_v1/vcf_workflows.py</code>, but the module returns
 three ordered router contributions so their effective positions do not collapse. <code>vcf_workflows_backups</code> remains
-immediately after <code>facade_between_firewall_vcf_backups</code>; the facade segment through ESX Storage remains before
+immediately after <code>facade_between_operations_vcf_backups</code>; the facade segment through ESX Storage remains before
 <code>vcf_workflows_offline_depot</code>; the compatibility <code>/api/v1/repository/status</code> alias remains in
 <code>facade_between_offline_depot_private_registry</code>; and <code>vcf_workflows_private_registry</code> remains before
 <code>facade_between_vcf_private_registry_network_boot</code> and Network Boot. The stable API v1 facade continues to export all
@@ -3911,6 +3935,30 @@ template, CSS, JavaScript, control, layout, visible copy, interaction class, rou
 authorization scope, session or CSRF behavior, upload or download contract, redirect, status code, response schema,
 audit action, secret or redaction contract, route inventory, normalized OpenAPI output, desired state, or global
 Appliance Apply boundary.</p>
+<h2 id="extracted-automation-and-operations-ownership">Extracted Automation and operations ownership<a class="headerlink" href="#extracted-automation-and-operations-ownership" title="Permanent link">&para;</a></h2>
+<p>Automation management transports live in <code>atlaso/app/routers/ui/automation.py</code>. This owner includes the Automation
+page, schedule create/edit/run/toggle/delete transports, managed-script and script-revision
+create/edit/delete/toggle/run transports, and the contextual
+<code>/ui/management/vcf-offline-depot/profiles/{profile_id}/schedules</code> transport. The contextual path remains Automation
+owned because it creates an Automation schedule for one VCF Offline Depot profile; VCF profile configuration,
+download admission, execution, and lifecycle remain in their established VCF owners.</p>
+<p>Operational management transports live in <code>atlaso/app/routers/ui/operations.py</code>: Services list/actions/logs, Logs
+page/data, Tasks page/list/status/log/cancel, and Audit Log. The UI registry preserves Automation's earlier position
+between <code>facade_before_automation</code> and <code>facade_between_automation_routes_wan</code>. Operations remains later between
+<code>facade_between_identity_operations</code> and <code>facade_between_identity_network_boot</code>, after Identity and before Network
+Boot. The stable UI facade continues to export all established endpoints and compatibility helpers.</p>
+<p>The contiguous service, log, audit-event, and job API v1 transports live in
+<code>atlaso/app/routers/api_v1/operations.py</code>. The API registry places <code>operations</code> between
+<code>facade_between_firewall_operations</code> and <code>facade_between_operations_vcf_backups</code>, retaining the original position
+after Dashboard/Monitor and the intervening networking domains, and before Settings and later VCF Backups status.
+Every path, method, name, operation ID, tag, scope, status, response schema, audit, cancellation, and redaction
+contract remains unchanged.</p>
+<p>Independently runnable facade-transport coverage lives in <code>tests/routers/ui/test_automation.py</code>,
+<code>tests/routers/ui/test_operations.py</code>, and <code>tests/routers/api_v1/test_operations.py</code>. Scheduler, service, worker,
+task-execution, lifecycle, protocol, and browser-JavaScript behavior retain their established test owners. This
+behavior-neutral extraction changes no template, CSS, JavaScript, control, layout, visible copy, interaction class,
+route inventory, normalized OpenAPI output, desired state, service-control boundary, or global Appliance Apply
+behavior.</p>
 <h2 id="route-and-openapi-compatibility">Route and OpenAPI compatibility<a class="headerlink" href="#route-and-openapi-compatibility" title="Permanent link">&para;</a></h2>
 <p><code>tests/contracts/route_inventory.json</code> records every effective application route in order, including browser,
 protocol, WebSocket, mount, and API routes. Its stable fields are plane, path, methods, route name, explicit operation
@@ -3960,9 +4008,10 @@ complete the <a href="../ui-design-guide/">UI Design Guide</a> gate.</p>
 </span><span id="__span-1-7"><a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a><span class="n">python</span> <span class="n">-m</span> <span class="n">pytest</span> <span class="n">-q</span> <span class="n">tests</span><span class="p">/</span><span class="n">routers</span><span class="p">/</span><span class="n">ui</span><span class="p">/</span><span class="n">test_managed_ldap</span><span class="p">.</span><span class="n">py</span> <span class="n">tests</span><span class="p">/</span><span class="n">routers</span><span class="p">/</span><span class="n">api_v1</span><span class="p">/</span><span class="n">test_managed_ldap</span><span class="p">.</span><span class="n">py</span>
 </span><span id="__span-1-8"><a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a><span class="n">python</span> <span class="n">-m</span> <span class="n">pytest</span> <span class="n">-q</span> <span class="n">tests</span><span class="p">/</span><span class="n">routers</span><span class="p">/</span><span class="n">ui</span><span class="p">/</span><span class="n">test_network_boot</span><span class="p">.</span><span class="n">py</span> <span class="n">tests</span><span class="p">/</span><span class="n">routers</span><span class="p">/</span><span class="n">api_v1</span><span class="p">/</span><span class="n">test_network_boot</span><span class="p">.</span><span class="n">py</span> <span class="n">tests</span><span class="p">/</span><span class="n">test_network_boot</span><span class="p">.</span><span class="n">py</span>
 </span><span id="__span-1-9"><a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a><span class="n">python</span> <span class="n">-m</span> <span class="n">pytest</span> <span class="n">-q</span> <span class="n">tests</span><span class="p">/</span><span class="n">routers</span><span class="p">/</span><span class="n">ui</span><span class="p">/</span><span class="n">test_vcf_workflows</span><span class="p">.</span><span class="n">py</span> <span class="n">tests</span><span class="p">/</span><span class="n">routers</span><span class="p">/</span><span class="n">api_v1</span><span class="p">/</span><span class="n">test_vcf_workflows</span><span class="p">.</span><span class="n">py</span>
-</span><span id="__span-1-10"><a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a><span class="n">python</span> <span class="n">-m</span> <span class="n">pytest</span> <span class="n">-q</span> <span class="n">tests</span><span class="p">/</span><span class="n">test_openapi_contract</span><span class="p">.</span><span class="n">py</span> <span class="n">tests</span><span class="p">/</span><span class="n">test_ui_route_namespaces</span><span class="p">.</span><span class="n">py</span> <span class="n">tests</span><span class="p">/</span><span class="n">test_ui_compliance</span><span class="p">.</span><span class="n">py</span>
-</span><span id="__span-1-11"><a id="__codelineno-1-11" name="__codelineno-1-11" href="#__codelineno-1-11"></a><span class="n">python</span> <span class="n">scripts</span><span class="p">/</span><span class="n">generate_router_contract_baselines</span><span class="p">.</span><span class="n">py</span> <span class="p">-</span><span class="n">-check</span>
-</span><span id="__span-1-12"><a id="__codelineno-1-12" name="__codelineno-1-12" href="#__codelineno-1-12"></a><span class="n">python</span> <span class="n">scripts</span><span class="p">/</span><span class="n">check_python_static_analysis</span><span class="p">.</span><span class="n">py</span>
+</span><span id="__span-1-10"><a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a><span class="n">python</span> <span class="n">-m</span> <span class="n">pytest</span> <span class="n">-q</span> <span class="n">tests</span><span class="p">/</span><span class="n">routers</span><span class="p">/</span><span class="n">ui</span><span class="p">/</span><span class="n">test_automation</span><span class="p">.</span><span class="n">py</span> <span class="n">tests</span><span class="p">/</span><span class="n">routers</span><span class="p">/</span><span class="n">ui</span><span class="p">/</span><span class="n">test_operations</span><span class="p">.</span><span class="n">py</span> <span class="n">tests</span><span class="p">/</span><span class="n">routers</span><span class="p">/</span><span class="n">api_v1</span><span class="p">/</span><span class="n">test_operations</span><span class="p">.</span><span class="n">py</span>
+</span><span id="__span-1-11"><a id="__codelineno-1-11" name="__codelineno-1-11" href="#__codelineno-1-11"></a><span class="n">python</span> <span class="n">-m</span> <span class="n">pytest</span> <span class="n">-q</span> <span class="n">tests</span><span class="p">/</span><span class="n">test_openapi_contract</span><span class="p">.</span><span class="n">py</span> <span class="n">tests</span><span class="p">/</span><span class="n">test_ui_route_namespaces</span><span class="p">.</span><span class="n">py</span> <span class="n">tests</span><span class="p">/</span><span class="n">test_ui_compliance</span><span class="p">.</span><span class="n">py</span>
+</span><span id="__span-1-12"><a id="__codelineno-1-12" name="__codelineno-1-12" href="#__codelineno-1-12"></a><span class="n">python</span> <span class="n">scripts</span><span class="p">/</span><span class="n">generate_router_contract_baselines</span><span class="p">.</span><span class="n">py</span> <span class="p">-</span><span class="n">-check</span>
+</span><span id="__span-1-13"><a id="__codelineno-1-13" name="__codelineno-1-13" href="#__codelineno-1-13"></a><span class="n">python</span> <span class="n">scripts</span><span class="p">/</span><span class="n">check_python_static_analysis</span><span class="p">.</span><span class="n">py</span>
 </span></code></pre></div>
 <p>Then run the repository's required documentation, version, and diff checks; canonical CI owns the complete Python
 suite. Later phases remain incomplete until their own linked issue, documentation, validation, review, and merge gates
