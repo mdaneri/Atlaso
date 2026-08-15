@@ -335,8 +335,11 @@ The following cross-cutting boundaries always apply:
   Persist the bounded rollback manifest before switching the active link, persist restart-pending evidence before the
   volatile runtime gate, and keep recovery behind that gate until the definitive write completes. Worker pre-start must
   distinguish the live helper by boot, PID, and process-start identity and roll back stale provisional evidence before
-  admitting the worker after a host restart. Flush every database and installed-asset rollback backup plus its directory
-  entries before publishing the durable manifest. Refresh that manifest after the ESX allowlist backup is added and
+  admitting the worker after a host restart. While that exact helper remains live, extend the candidate worker's gate
+  wait so a timeout cannot restart through a restored legacy unit before definitive rollback evidence. Flush every
+  database and installed-asset rollback backup plus its directory entries before publishing the durable manifest.
+  A missing database backup makes rollback incomplete, and restore every installed asset independently so one failure
+  cannot prevent later restores. Refresh the manifest after the ESX allowlist backup is added and
   before claim migration mutates its allowlist or database, so both restore together. An already-active release completes
   from exact readiness evidence without scheduling an
   unverified service restart. A matching definitive success or healthy rollback may clear or supersede an orphaned gate;

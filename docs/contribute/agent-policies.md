@@ -424,9 +424,13 @@ status: current
   PID, and process-start identity. Stale provisional
   evidence after a host restart must restore and verify the previous release before the worker is admitted. Flush the
   database and every installed-asset rollback backup plus its directory entries before publishing the durable recovery
-  manifest. Refresh that manifest after adding the ESX allowlist backup and before mutating its claims or database, so
-  both rollback together. Reboot recovery must retain the candidate environment after restoring the previous runtime,
-  execute the exact release task's child, parent, terminal-log, and audit bookkeeping through that candidate as the
+  manifest. Missing database backup bytes make rollback incomplete. Restore installed assets independently so one
+  failure cannot prevent later destinations from being attempted. While the exact recorded helper remains live, extend
+  the candidate worker's runtime-gate wait so timeout cannot restart it through a restored legacy unit before the
+  definitive rollback write. Refresh the manifest after adding the ESX allowlist backup and before mutating its claims
+  or database, so both rollback together. Reboot recovery must retain the candidate environment after restoring the
+  previous runtime, execute the exact release task's child, parent, terminal-log, and audit bookkeeping through that
+  candidate as the
   Atlaso service account, and only then remove it and admit the restored worker. A failed candidate bookkeeping handoff
   must retain the candidate, maintenance response, and runtime gate for retry.
   An already-active release must complete from exact readiness evidence without an unverified delayed service restart.

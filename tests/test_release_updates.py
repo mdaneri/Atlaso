@@ -454,6 +454,37 @@ def test_worker_restart_gate_timeout_fails_closed(monkeypatch, tmp_path):
     assert worker._wait_for_release_restart_finalizer(timeout_seconds=1) is False
 
 
+def test_worker_restart_gate_wait_extends_while_transaction_owner_is_live(monkeypatch, tmp_path):
+    """Verify a live rollback helper cannot be outrun by the candidate worker timeout.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace worker dependencies.
+        tmp_path: Temporary directory provided for the runtime gate.
+    """
+    import atlaso.app.worker as worker
+
+    gate = tmp_path / "restart-gate"
+    gate.write_text("job-live-rollback\n", encoding="utf-8")
+    finalizers = iter(
+        (
+            {
+                "status": "rollback_pending",
+                "job_id": "job-live-rollback",
+                "transaction_recovery": {"owner": {"pid": 99}},
+            },
+            {"status": "failed", "job_id": "job-live-rollback", "rolled_back": True},
+        )
+    )
+    monotonic = iter((0.0, 2.0, 2.5))
+    monkeypatch.setattr(worker, "APPLIANCE_UPDATE_RESTART_GATE_PATH", gate)
+    monkeypatch.setattr(worker, "_release_finalizer", lambda: next(finalizers))
+    monkeypatch.setattr(worker, "_release_transaction_owner_alive", lambda _owner: True)
+    monkeypatch.setattr(worker.time, "monotonic", lambda: next(monotonic))
+    monkeypatch.setattr(worker.time, "sleep", lambda _seconds: None)
+
+    assert worker._wait_for_release_restart_finalizer(timeout_seconds=1) is True
+
+
 def test_worker_ignores_matching_stale_gate_after_definitive_finalizer(monkeypatch, tmp_path):
     """Verify a helper crash after the definitive write cannot deadlock worker startup.
 
@@ -2295,6 +2326,64 @@ def test_sqlite_backup_restores_database_identity(monkeypatch, tmp_path):
         connection.close()
 
 
+def test_sqlite_restore_rejects_missing_transaction_backup(monkeypatch, tmp_path):
+    """Verify a disappeared transaction backup cannot be counted as restored.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace the database destination.
+        tmp_path: Temporary directory provided for missing backup evidence.
+    """
+    from tests.test_appliance_update import load_helper_module
+
+    helper = load_helper_module()
+    monkeypatch.setattr(helper, "ATLASO_DATABASE_PATH", tmp_path / "atlaso.db")
+
+    with pytest.raises(FileNotFoundError, match="database backup is unavailable"):
+        helper._restore_sqlite_backup(tmp_path / "missing-backup.db")
+
+
+def test_release_asset_restore_attempts_every_backup_after_failure(monkeypatch, tmp_path):
+    """Verify one asset restore failure does not prevent later independent restores.
+
+    Args:
+        monkeypatch: Pytest fixture used to inject one file-specific restore failure.
+        tmp_path: Temporary directory provided for isolated asset backups.
+    """
+    from tests.test_appliance_update import load_helper_module
+
+    helper = load_helper_module()
+    first_backup = tmp_path / "first.backup"
+    second_backup = tmp_path / "second.backup"
+    first_backup.write_text("first-before", encoding="utf-8")
+    second_backup.write_text("second-before", encoding="utf-8")
+    first_destination = tmp_path / "first.asset"
+    second_destination = tmp_path / "second.asset"
+    first_destination.write_text("first-candidate", encoding="utf-8")
+    second_destination.write_text("second-candidate", encoding="utf-8")
+    original_copy = helper.shutil.copy2
+
+    def copy2(source, destination):
+        """Fail only the first asset restore.
+
+        Args:
+            source: Backup source selected for restoration.
+            destination: Installed asset destination selected for restoration.
+        """
+        if Path(destination) == first_destination:
+            raise OSError("injected first asset failure")
+        return original_copy(source, destination)
+
+    monkeypatch.setattr(helper.shutil, "copy2", copy2)
+
+    results = helper._restore_release_owned_files(
+        [(first_backup, first_destination), (second_backup, second_destination)]
+    )
+
+    assert [item["success"] for item in results] == [False, True]
+    assert first_destination.read_text(encoding="utf-8") == "first-candidate"
+    assert second_destination.read_text(encoding="utf-8") == "second-before"
+
+
 def test_release_transaction_backup_sync_flushes_files_before_directory_entries(monkeypatch, tmp_path):
     """Verify rollback backup bytes and directory entries precede checkpoint publication.
 
@@ -3265,6 +3354,7 @@ def test_no_change_release_failure_finalizer_retains_readiness_commands(monkeypa
         ("worker_activation", "worker_restart", True),
         ("transaction_backup_sync", "transaction_checkpoint", True),
         ("rollback_symlink_sync", "candidate_startup", True),
+        ("rollback_database_missing", "candidate_startup", False),
         ("rollback_link_restore", "candidate_startup", False),
         ("rollback_activation", "candidate_startup", False),
         ("rollback_worker_state", "candidate_startup", False),
@@ -3364,6 +3454,19 @@ def test_failed_candidate_restores_previous_release_and_database(
     monkeypatch.setattr(helper, "ATLASO_UPDATE_BACKUP_DIR", tmp_path / "backups")
     monkeypatch.setattr(helper, "ATLASO_UPDATE_FINALIZER_PATH", tmp_path / "finalizer.json")
     monkeypatch.setattr(helper, "ATLASO_UPDATE_RESTART_GATE_PATH", tmp_path / "restart-gate")
+    restore_sqlite_backup = helper._restore_sqlite_backup
+
+    def restore_database_backup(source):
+        """Remove the rollback snapshot only in the missing-backup scenario.
+
+        Args:
+            source: SQLite transaction backup selected for restoration.
+        """
+        if failure_stage == "rollback_database_missing":
+            source.unlink(missing_ok=True)
+        return restore_sqlite_backup(source)
+
+    monkeypatch.setattr(helper, "_restore_sqlite_backup", restore_database_backup)
     original_restart_gate = helper._set_release_restart_gate
     handoff_events: list[str] = []
 
@@ -3528,6 +3631,7 @@ def test_failed_candidate_restores_previous_release_and_database(
                 not in {
                     "candidate_startup",
                         "rollback_symlink_sync",
+                        "rollback_database_missing",
                         "rollback_link_restore",
                         "rollback_activation",
                         "rollback_worker_state",
@@ -3710,7 +3814,7 @@ def test_failed_candidate_restores_previous_release_and_database(
     link_restored = failure_stage != "rollback_link_restore"
     expected_release = previous if link_restored else releases / "0.9.0"
     assert current.resolve() == expected_release.resolve()
-    assert get_identity() == "before"
+    assert get_identity() == ("after" if failure_stage == "rollback_database_missing" else "before")
     assert (releases / "0.9.0").exists() is not link_restored
     finalizer = json.loads((tmp_path / "finalizer.json").read_text(encoding="utf-8"))
     assert finalizer["rolled_back"] is expected_rolled_back
@@ -3740,6 +3844,9 @@ def test_failed_candidate_restores_previous_release_and_database(
         assert not (tmp_path / "restart-gate").exists()
     if failure_stage == "rollback_symlink_sync":
         assert "rollback_release_link" in finalizer["rollback_failures"]
+    if failure_stage == "rollback_database_missing":
+        assert "rollback_database_restore" in finalizer["rollback_failures"]
+        assert maintenance_states[-1] is True
     if failure_stage == "rollback_link_restore":
         assert "rollback_release_link" in finalizer["rollback_failures"]
         assert "rollback_active_release_link" in finalizer["rollback_failures"]

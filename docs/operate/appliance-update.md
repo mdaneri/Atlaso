@@ -295,7 +295,10 @@ A failure in systemd asset activation, the atomic switch, candidate startup, int
 `activation_committed` enters the rollback boundary. Before rollback can restart a worker,
 the helper closes the same runtime gate; rollback then restores the previous release, assets, and database, validates
 and reloads nginx after removing maintenance mode, and proves the previous version through both internal and
-management-front-door OpenAPI before writing `rolled_back=true`. Atlaso Release
+management-front-door OpenAPI before writing `rolled_back=true`. A missing database backup leaves rollback incomplete,
+and each installed asset is restored independently so one failed destination cannot block later attempts. While the
+recorded helper remains live, the candidate worker extends its gate wait instead of timing out and restarting through a
+restored legacy unit before definitive rollback evidence. Atlaso Release
 installation never reboots the appliance automatically. After `activation_committed`, maintenance removal, final
 `nginx -t`, front-door version readiness, and finalizer persistence are forward-only recovery stages. If a reboot removes
 the volatile gate during this state, pre-start recreates it and schedules a root-owned completion service, admits the

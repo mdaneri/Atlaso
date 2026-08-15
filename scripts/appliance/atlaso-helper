@@ -10764,8 +10764,8 @@ def _restore_sqlite_backup(source: Path) -> None:
     Args:
         source: Source object or location from which data is obtained.
     """
-    if not source.exists():
-        return
+    if not source.is_file():
+        raise FileNotFoundError("Atlaso release database backup is unavailable")
     for suffix in ("", "-wal", "-shm"):
         Path(f"{ATLASO_DATABASE_PATH}{suffix}").unlink(missing_ok=True)
     shutil.copy2(source, ATLASO_DATABASE_PATH)
@@ -10911,8 +10911,10 @@ def _install_release_owned_files(
             shutil.copy2(source, temporary)
             temporary.chmod(mode)
             os.replace(temporary, destination)
-    except Exception:
-        _restore_release_owned_files(backups)
+    except Exception as exc:
+        restore_results = _restore_release_owned_files(backups)
+        if not all(item.get("success") for item in restore_results):
+            raise ValueError("Atlaso release asset installation failed and rollback was incomplete") from exc
         raise
     return backups
 
@@ -11082,17 +11084,38 @@ def _bootstrap_release_data_disk_safety(release_root: Path) -> list[dict]:
         shutil.rmtree(backup_root, ignore_errors=True)
 
 
-def _restore_release_owned_files(backups: list[tuple[Path | None, Path]]) -> None:
-    """Perform restore release owned files.
+def _restore_release_owned_files(backups: list[tuple[Path | None, Path]]) -> list[dict]:
+    """Restore every release-owned asset independently and return bounded evidence.
 
     Args:
         backups: Filesystem path associated with backups.
     """
+    results: list[dict] = []
     for backup, destination in backups:
-        if backup is None:
-            destination.unlink(missing_ok=True)
+        try:
+            if backup is None:
+                destination.unlink(missing_ok=True)
+            else:
+                shutil.copy2(backup, destination)
+        except Exception as exc:  # noqa: BLE001 - later rollback assets must still be attempted.
+            results.append(
+                _release_check(
+                    "asset_restore",
+                    False,
+                    f"Release asset restore raised {type(exc).__name__}.",
+                    destination=str(destination),
+                )
+            )
         else:
-            shutil.copy2(backup, destination)
+            results.append(
+                _release_check(
+                    "asset_restore",
+                    True,
+                    "Release asset restore completed.",
+                    destination=str(destination),
+                )
+            )
+    return results
 
 
 def _validated_release_recovery_context(finalizer: dict) -> dict[str, object]:

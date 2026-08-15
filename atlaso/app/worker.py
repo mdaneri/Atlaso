@@ -209,7 +209,8 @@ def _wait_for_release_restart_finalizer(timeout_seconds: int = 90) -> bool:
         timeout_seconds: Maximum time to wait for definitive transaction evidence.
     """
     deadline = time.monotonic() + timeout_seconds
-    while time.monotonic() < deadline:
+    while True:
+        observed_at = time.monotonic()
         finalizer = _release_finalizer()
         finalizer_status = str(finalizer.get("status") or "")
         finalizer_pending = finalizer_status in {
@@ -236,13 +237,17 @@ def _wait_for_release_restart_finalizer(timeout_seconds: int = 90) -> bool:
                 return True
         recovery = finalizer.get("transaction_recovery")
         owner = recovery.get("owner") if isinstance(recovery, dict) else None
-        if not gate_exists and finalizer_pending and not _release_transaction_owner_alive(owner):
+        owner_alive = _release_transaction_owner_alive(owner)
+        if not gate_exists and finalizer_pending and not owner_alive:
             LOGGER.error(
                 "Atlaso worker startup found stale release transaction evidence that pre-start recovery did not resolve"
             )
             return False
+        if gate_exists and finalizer_pending and owner_alive:
+            deadline = observed_at + timeout_seconds
+        elif observed_at >= deadline:
+            return False
         time.sleep(1)
-    return False
 
 
 def _release_transaction_owner_alive(owner: object) -> bool:
