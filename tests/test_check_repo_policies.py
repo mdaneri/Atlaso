@@ -1070,7 +1070,16 @@ def test_agent_policy_gate_ignores_raw_html_block_markers(tmp_path: Path) -> Non
     marker = '`cleanup-ready`'
     sibling = "\n- following policy"
     for relative_path in ORDERED_TERMINAL_CLEANUP_MARKERS:
-        for tag_name in ("script", "style", "pre", "code", "textarea", "xmp"):
+        for tag_name in (
+            "script",
+            "style",
+            "pre",
+            "code",
+            "textarea",
+            "xmp",
+            "template",
+            "noscript",
+        ):
             write_policy_files(tmp_path)
             path = tmp_path / relative_path
             anchor = TERMINAL_CLEANUP_SECTION_ANCHORS[relative_path]
@@ -1104,7 +1113,16 @@ def test_agent_policy_gate_ignores_raw_html_policy_sections(tmp_path: Path) -> N
     """
     sibling = "\n- following policy"
     for relative_path in ORDERED_TERMINAL_CLEANUP_MARKERS:
-        for tag_name in ("pre", "code"):
+        for tag_name in (
+            "script",
+            "style",
+            "pre",
+            "code",
+            "textarea",
+            "xmp",
+            "template",
+            "noscript",
+        ):
             write_policy_files(tmp_path)
             path = tmp_path / relative_path
             anchor = TERMINAL_CLEANUP_SECTION_ANCHORS[relative_path]
