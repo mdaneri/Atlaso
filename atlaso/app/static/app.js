@@ -572,9 +572,10 @@ function initializePrimaryNavigation(root = document) {
     const key = group.dataset.navGroupKey || "";
     const toggle = group.querySelector("[data-primary-nav-toggle]");
     if (!key || !(toggle instanceof HTMLButtonElement)) return;
-    const hasActiveLink = Boolean(group.querySelector('.nav-link[aria-current="page"]'));
+    const isActiveGroup =
+      group.classList.contains("active") || Boolean(group.querySelector('.nav-link[aria-current="page"]'));
     const storedExpanded = Object.prototype.hasOwnProperty.call(storedState, key) ? storedState[key] : true;
-    setPrimaryNavigationGroupExpanded(group, hasActiveLink || storedExpanded);
+    setPrimaryNavigationGroupExpanded(group, isActiveGroup || storedExpanded);
     toggle.addEventListener("click", () => {
       const expanded = toggle.getAttribute("aria-expanded") === "true";
       const nextExpanded = !expanded;

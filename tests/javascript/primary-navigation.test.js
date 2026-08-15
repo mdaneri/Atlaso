@@ -149,6 +149,19 @@ test("primary navigation restores inactive choices and forces the active group o
   assert.equal(storage.writes.length, 0, "active-page override must not replace the saved user choice");
 });
 
+test("primary navigation honors an active group without an authorized active link", () => {
+  const identityTrust = new FakeGroup("identity-trust");
+  identityTrust.classList.toggle("active", true);
+  const storage = new FakeStorage(JSON.stringify({ version: 1, groups: { "identity-trust": false } }));
+  const context = navigationContext([identityTrust], storage);
+
+  context.initializePrimaryNavigation(context.document);
+
+  assert.equal(identityTrust.links.hidden, false);
+  assert.equal(identityTrust.toggle.getAttribute("aria-expanded"), "true");
+  assert.equal(storage.writes.length, 0, "server-active override must not replace the saved user choice");
+});
+
 test("primary navigation prunes saved groups hidden by current permissions", () => {
   const overview = new FakeGroup("overview");
   const storage = new FakeStorage(
