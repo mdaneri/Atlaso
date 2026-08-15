@@ -1,5 +1,5 @@
 {
   "key_id": "atlaso-release-2026-01",
   "schema_version": 1,
-  "signature": "uYAyl/yNbLdBeUV1DKuXEn8Z88UWJT6kKQcQwC4bbytxH5YMjoQb+mNXf/rb/06V+kARqBxShqHuo9hVHX3sCQ=="
+  "signature": "yX9rD3s/DDxxg5wWYt33hzUDuJ8ILpWk6U1jXZJA6IjisKzqRC7CfDgyct7oS6BGbQb0NHMSDieMHtqiz2fQCw=="
 }
