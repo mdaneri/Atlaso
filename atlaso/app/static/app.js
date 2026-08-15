@@ -15647,18 +15647,29 @@ async function openApplianceApplyReview() {
       return;
     }
     const units = Array.isArray(payload.units) ? payload.units : [];
+    const initialApplyRequired = payload.initial_apply_required === true;
+    if (elements.title instanceof HTMLElement) {
+      elements.title.textContent = initialApplyRequired ? "Review initial appliance setup" : "Review appliance changes";
+    }
+    if (elements.subtitle instanceof HTMLElement) {
+      elements.subtitle.textContent = initialApplyRequired
+        ? "Review the validated initial desired state, then submit the first appliance task. Nothing changes on the host until submission."
+        : "Select valid components, inspect their rendered differences, then submit one appliance task.";
+    }
     if (elements.reviewList instanceof HTMLElement) {
       elements.reviewList.replaceChildren(...units.map(applianceApplyReviewRow));
       if (!units.length) {
         const empty = document.createElement("div");
         empty.className = "empty-state";
-        empty.innerHTML = "<h2>No pending appliance changes</h2><p class=\"muted\">All apply units match the last successful baseline.</p>";
+        empty.innerHTML = initialApplyRequired
+          ? "<h2>Initial setup is not ready</h2><p class=\"muted\">Resolve desired-state validation before submitting the first appliance task.</p>"
+          : "<h2>No pending appliance changes</h2><p class=\"muted\">All apply units match the last successful baseline.</p>";
         elements.reviewList.replaceChildren(empty);
       }
     }
     if (elements.status instanceof HTMLElement) {
       elements.status.className = `status-pill ${units.length ? "warn" : "good"}`;
-      elements.status.textContent = `${units.length} changed`;
+      elements.status.textContent = `${units.length} ${initialApplyRequired ? "ready" : "changed"}`;
     }
     if (elements.submit instanceof HTMLButtonElement) {
       elements.submit.classList.toggle("hidden", units.length === 0);
@@ -17639,13 +17650,22 @@ function dashboardSnapshotMarkup(snapshot) {
   const network = snapshot.network || { management: {}, configured: 0, vlans: 0, missing_or_down: 0, exceptions: [] };
   const activity = Array.isArray(snapshot.recent_activity) ? snapshot.recent_activity : [];
   const action = overall.primary_action || { label: "Open monitor", url: managementUiPath("/monitor") };
+  const actionOpensApplianceApply = action.url === "/appliance-apply";
+  const actionUrl = actionOpensApplianceApply
+    ? managementUiPath("/dashboard#appliance-apply-review")
+    : action.url;
+  const actionAttributes = actionOpensApplianceApply ? " data-appliance-apply-open" : "";
   const fqdn = overall.fqdn && overall.fqdn !== overall.hostname ? ` · ${escapeDashboardHtml(overall.fqdn)}` : "";
-  const readinessRows = (readiness.items || []).map((item) => `
-    <a href="${escapeDashboardHtml(item.url)}" class="dashboard-readiness-row ${item.complete ? "complete" : "incomplete"}">
+  const readinessRows = (readiness.items || []).map((item) => {
+    const opensApplianceApply = item.url === "/appliance-apply";
+    const url = opensApplianceApply ? managementUiPath("/dashboard#appliance-apply-review") : item.url;
+    return `
+    <a href="${escapeDashboardHtml(url)}" class="dashboard-readiness-row ${item.complete ? "complete" : "incomplete"}"${opensApplianceApply ? " data-appliance-apply-open" : ""}>
       <span class="dashboard-check" aria-hidden="true">${item.complete ? "✓" : "·"}</span>
       <span><strong>${escapeDashboardHtml(item.label)}</strong><small>${escapeDashboardHtml(item.summary)}</small></span>
       <span class="status-pill ${item.complete ? "good" : "warn"}">${item.complete ? "Ready" : "Next"}</span>
-    </a>`).join("");
+    </a>`;
+  }).join("");
   const attentionRows = attention.map((item) => `
     <a href="${escapeDashboardHtml(item.url)}" class="dashboard-attention-row">
       <span class="status-pill ${escapeDashboardHtml(item.severity)}">${item.severity === "error" ? "Critical" : "Warning"}</span>
@@ -17672,7 +17692,7 @@ function dashboardSnapshotMarkup(snapshot) {
         <span><strong>${overall.dry_run ? "Dry-run" : "Live apply"}</strong><small>${overall.dry_run ? "Adapters record command intent" : "Host changes are enabled"}</small></span>
         <span><strong>Last refreshed</strong><small>${dashboardTimeMarkup(snapshot.generated_at)}</small></span>
       </div>
-      <a class="button primary" href="${escapeDashboardHtml(action.url)}">${escapeDashboardHtml(action.label)}</a>
+      <a class="button primary" href="${escapeDashboardHtml(actionUrl)}"${actionAttributes}>${escapeDashboardHtml(action.label)}</a>
     </section>
     <section class="dashboard-primary-grid">
       <article class="panel dashboard-attention-panel">

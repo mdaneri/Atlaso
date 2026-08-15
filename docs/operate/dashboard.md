@@ -35,6 +35,11 @@ The primary action follows the current state. Setup links to the first incomplet
 highest-priority exception, valid pending changes link to Appliance Apply, active work links to Tasks, and an otherwise
 healthy appliance links to Monitor.
 
+When the factory comparison baseline already matches desired state but no Appliance Apply has succeeded, **Continue
+setup** opens the shared appliance-review modal with the complete validated initial desired state selected. Review the
+components and choose **Submit appliance changes** to create the first global task. Opening the review remains read-only;
+nothing changes on the host until that explicit submission.
+
 ## Readiness and attention
 
 Readiness covers management-interface discovery, management address/link health, Appliance Settings validity, whole
