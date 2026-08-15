@@ -1338,31 +1338,34 @@ def test_agent_policy_gate_rejects_fourth_terminal_transition(tmp_path: Path) ->
     """
     for relative_path, markers in ORDERED_TERMINAL_CLEANUP_MARKERS.items():
         for delimiter in (".", ")"):
-            write_policy_files(tmp_path)
-            path = tmp_path / relative_path
-            text = path.read_text(encoding="utf-8")
-            anchor = TERMINAL_CLEANUP_SECTION_ANCHORS[relative_path]
-            order_prefix = "" if anchor.startswith("#") else "  "
-            expected_order = "\n".join(
-                order_prefix + line for line in TERMINAL_CLEANUP_ORDER_LINES
-            )
-            path.write_text(
-                text.replace(
-                    expected_order,
-                    expected_order + f"\n{order_prefix}4{delimiter} archived",
-                    1,
-                ),
-                encoding="utf-8",
-            )
+            for permitted_indent in range(3):
+                write_policy_files(tmp_path)
+                path = tmp_path / relative_path
+                text = path.read_text(encoding="utf-8")
+                anchor = TERMINAL_CLEANUP_SECTION_ANCHORS[relative_path]
+                order_prefix = "" if anchor.startswith("#") else "  "
+                expected_order = "\n".join(
+                    order_prefix + line for line in TERMINAL_CLEANUP_ORDER_LINES
+                )
+                path.write_text(
+                    text.replace(
+                        expected_order,
+                        expected_order
+                        + f"\n{order_prefix}{' ' * permitted_indent}"
+                        + f"4{delimiter} archived",
+                        1,
+                    ),
+                    encoding="utf-8",
+                )
 
-            findings = check_agent_policy_gate(tmp_path)
+                findings = check_agent_policy_gate(tmp_path)
 
-            assert len(findings) == 1
-            assert findings[0].path == path
-            assert findings[0].message == (
-                "completed-task cleanup markers must remain ordered: "
-                + " -> ".join(markers)
-            )
+                assert len(findings) == 1
+                assert findings[0].path == path
+                assert findings[0].message == (
+                    "completed-task cleanup markers must remain ordered: "
+                    + " -> ".join(markers)
+                )
 
 
 def test_agent_policy_gate_accepts_nested_terminal_instructions(tmp_path: Path) -> None:
@@ -1372,24 +1375,25 @@ def test_agent_policy_gate_accepts_nested_terminal_instructions(tmp_path: Path) 
         tmp_path: Temporary directory provided by pytest for isolated filesystem state.
     """
     for relative_path in ORDERED_TERMINAL_CLEANUP_MARKERS:
-        for terminal_line in TERMINAL_CLEANUP_ORDER_LINES:
-            write_policy_files(tmp_path)
-            path = tmp_path / relative_path
-            text = path.read_text(encoding="utf-8")
-            anchor = TERMINAL_CLEANUP_SECTION_ANCHORS[relative_path]
-            order_prefix = "" if anchor.startswith("#") else "  "
-            rendered_line = order_prefix + terminal_line
-            nested_prefix = order_prefix + "    "
-            path.write_text(
-                text.replace(
-                    rendered_line,
-                    rendered_line + f"\n{nested_prefix}1. Preserve traceability",
-                    1,
-                ),
-                encoding="utf-8",
-            )
+        for nested_indent in (3, 4):
+            for terminal_line in TERMINAL_CLEANUP_ORDER_LINES:
+                write_policy_files(tmp_path)
+                path = tmp_path / relative_path
+                text = path.read_text(encoding="utf-8")
+                anchor = TERMINAL_CLEANUP_SECTION_ANCHORS[relative_path]
+                order_prefix = "" if anchor.startswith("#") else "  "
+                rendered_line = order_prefix + terminal_line
+                nested_prefix = order_prefix + " " * nested_indent
+                path.write_text(
+                    text.replace(
+                        rendered_line,
+                        rendered_line + f"\n{nested_prefix}1. Preserve traceability",
+                        1,
+                    ),
+                    encoding="utf-8",
+                )
 
-            assert check_agent_policy_gate(tmp_path) == []
+                assert check_agent_policy_gate(tmp_path) == []
 
 
 def test_agent_policy_gate_rejects_missing_entry_point(tmp_path: Path) -> None:

@@ -935,22 +935,31 @@ def extract_terminal_cleanup_order(cleanup_section: str) -> tuple[str, ...] | No
     expected_count = len(TERMINAL_CLEANUP_ORDER_LINES)
     order_lines: list[str] = []
     top_level_indent: int | None = None
+    top_level_content_indent: int | None = None
     for candidate in transition_lines:
-        candidate_match = re.fullmatch(r"( *)\d+[.)]\s+.+", candidate)
+        candidate_match = re.fullmatch(r"( *)(\d+[.)])(\s+).+", candidate)
         if top_level_indent is None:
             if candidate_match is None:
                 return (candidate.strip(),)
             top_level_indent = len(candidate_match.group(1))
+            top_level_content_indent = (
+                top_level_indent
+                + len(candidate_match.group(2))
+                + len(candidate_match.group(3))
+            )
             order_lines.append(candidate.strip())
             continue
         if candidate_match is not None:
             candidate_indent = len(candidate_match.group(1))
-            if candidate_indent == top_level_indent:
+            if candidate_indent < top_level_indent:
+                break
+            if (
+                top_level_content_indent is not None
+                and candidate_indent < top_level_content_indent
+            ):
                 order_lines.append(candidate.strip())
                 if len(order_lines) > expected_count:
                     break
-            elif candidate_indent < top_level_indent:
-                break
             continue
         candidate_indent = len(candidate) - len(candidate.lstrip(" "))
         if candidate_indent <= top_level_indent:
