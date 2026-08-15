@@ -11617,12 +11617,16 @@ def _write_release_finalizer(payload: dict) -> None:
 
 def _release_transaction_owner() -> dict[str, object]:
     """Return durable identity for the helper process that owns a release transaction."""
+    if os.name != "posix":
+        return {"boot_id": "non-posix-test", "pid": os.getpid(), "start_ticks": "non-posix-test"}
     try:
         boot_id = Path("/proc/sys/kernel/random/boot_id").read_text(encoding="utf-8").strip()
-        start_ticks = Path(f"/proc/{os.getpid()}/stat").read_text(encoding="utf-8").split()[21]
-    except (OSError, IndexError):
-        boot_id = ""
-        start_ticks = ""
+        process_stat = Path(f"/proc/{os.getpid()}/stat").read_text(encoding="utf-8")
+        start_ticks = process_stat.rsplit(")", 1)[1].split()[19]
+    except (OSError, IndexError) as exc:
+        raise ValueError("release transaction owner identity is unavailable") from exc
+    if not boot_id or not start_ticks:
+        raise ValueError("release transaction owner identity is incomplete")
     return {
         "boot_id": boot_id,
         "pid": os.getpid(),
@@ -11641,7 +11645,8 @@ def _release_transaction_owner_alive(owner: object) -> bool:
     try:
         pid = int(owner.get("pid") or 0)
         boot_id = Path("/proc/sys/kernel/random/boot_id").read_text(encoding="utf-8").strip()
-        start_ticks = Path(f"/proc/{pid}/stat").read_text(encoding="utf-8").split()[21]
+        process_stat = Path(f"/proc/{pid}/stat").read_text(encoding="utf-8")
+        start_ticks = process_stat.rsplit(")", 1)[1].split()[19]
     except (OSError, ValueError, IndexError):
         return False
     return bool(

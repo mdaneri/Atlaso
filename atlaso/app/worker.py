@@ -227,7 +227,8 @@ def _release_transaction_owner_alive(owner: object) -> bool:
     try:
         pid = int(owner.get("pid") or 0)
         boot_id = Path("/proc/sys/kernel/random/boot_id").read_text(encoding="utf-8").strip()
-        start_ticks = Path(f"/proc/{pid}/stat").read_text(encoding="utf-8").split()[21]
+        process_stat = Path(f"/proc/{pid}/stat").read_text(encoding="utf-8")
+        start_ticks = process_stat.rsplit(")", 1)[1].split()[19]
     except (OSError, ValueError, IndexError):
         return False
     return bool(
