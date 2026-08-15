@@ -138,6 +138,10 @@ from atlaso.app.routers.registry import (
     allow_compatible_route_shadow,
 )
 from atlaso.app.routers.ui import UI_ROUTER_REGISTRY
+from atlaso.app.routers.ui.appliance_apply import ApplianceApplyUiDependencies
+from atlaso.app.routers.ui.appliance_apply import (
+    build_router as build_appliance_apply_ui_router,
+)
 from atlaso.app.routers.ui.dns_dhcp import DnsDhcpUiDependencies
 from atlaso.app.routers.ui.dns_dhcp import build_router as build_dns_dhcp_ui_router
 from atlaso.app.routers.ui.firewall import FirewallUiDependencies
@@ -172,6 +176,7 @@ from atlaso.app.services.appliance_settings import (
     SERVICE_DNS_TARGET_NAMING_CHOICES,
     appliance_settings_preview_payload,
     appliance_settings_to_dict,
+    invalidate_observed_management_dhcp_dns,
     is_app_owned_appliance_dns_record,
     management_dhcp_dns_context,
     management_interface_context,
@@ -15402,113 +15407,6 @@ def run_automation_script_revision(
     return RedirectResponse("/tasks", status_code=303)
 
 
-@router.get("/appliance-apply", response_class=RedirectResponse, response_model=None)
-def appliance_apply_page(
-    _identity: Identity = Depends(require_session_identity),
-) -> RedirectResponse:
-    """Handle the appliance apply page endpoint.
-
-    Args:
-        _identity: Authenticated identity supplied by the dependency layer.
-
-    Returns:
-        The endpoint response.
-    """
-    return RedirectResponse("/dashboard#appliance-apply-review", status_code=303)
-
-
-@router.get("/appliance-apply/review", response_class=JSONResponse, response_model=None)
-def appliance_apply_review(
-    identity: Identity = Depends(require_session_identity),
-    db: Session = Depends(get_db),
-) -> JSONResponse:
-    """Handle the appliance apply review endpoint.
-
-    Args:
-        identity: Authenticated identity authorizing the request.
-        db: Active database session.
-
-    Returns:
-        The endpoint response.
-    """
-    from atlaso.app.services.appliance_settings import (
-        invalidate_observed_management_dhcp_dns,
-    )
-
-    invalidate_observed_management_dhcp_dns()
-    context = appliance_apply_context(db)
-    units = [
-        {
-            "id": unit["id"],
-            "label": unit["label"],
-            "page_url": unit["page_url"],
-            "summary": unit["summary"],
-            "valid": unit["valid"],
-            "validation_errors": unit["validation_errors"],
-            "validation_warnings": unit["validation_warnings"],
-            "connection_warnings": unit["connection_warnings"],
-            "config_path": unit["config_path"],
-            "config_preview": unit["config_preview"],
-            "config_diff": unit["config_diff"],
-            "has_baseline": unit["has_baseline"],
-            "selected": unit["valid"],
-            "format_volumes": [
-                {
-                    "id": volume["id"],
-                    "name": volume["name"],
-                    "stable_device_id": volume["stable_device_id"],
-                    "fingerprint": volume["fingerprint"],
-                    "confirmation": f"FORMAT {volume['name']}",
-                }
-                for volume in unit.get("context", {}).get("esx_storage_manifest", {}).get("volumes", [])
-                if volume.get("requires_format")
-            ],
-        }
-        for unit in context["changed_apply_units"]
-    ]
-    active_job = active_appliance_apply_job(db)
-    return JSONResponse(
-        {
-            "units": units,
-            "pending_count": len(units),
-            "active_task": _task_row(active_job, identity) if active_job is not None else None,
-        }
-    )
-
-
-@router.get("/appliance-apply/status", response_class=JSONResponse, response_model=None)
-def appliance_apply_status_api(
-    refresh: bool = Query(False),
-    identity: Identity = Depends(require_session_identity),
-    db: Session = Depends(get_db),
-) -> JSONResponse:
-    """Handle the appliance apply status api endpoint.
-
-    Args:
-        refresh: Whether to replace the cached sidebar projection.
-        identity: Authenticated identity authorizing the request.
-        db: Active database session.
-
-    Returns:
-        The endpoint response.
-    """
-    projection = appliance_apply_status_projection(db, refresh=refresh)
-    pending_count = projection["pending_count"]
-    active_job = active_appliance_apply_job(db)
-    units = [appliance_apply_client_status(unit) for unit in projection["units"]]
-    return JSONResponse(
-        {
-            "units": units,
-            "pending_count": pending_count,
-            "label": "Review appliance changes" if pending_count else "Appliance Apply",
-            "detail": f"{pending_count} pending {'unit' if pending_count == 1 else 'units'}" if pending_count else "Desired state current",
-            "badge": "pending" if pending_count else "current",
-            "locked": active_job is not None,
-            "active_task": _task_row(active_job, identity) if active_job is not None else None,
-        }
-    )
-
-
 class ApplianceApplyJobError(RuntimeError):
     """An operator-safe failure raised before appliance apply execution begins."""
 
@@ -15608,10 +15506,6 @@ def run_appliance_apply_job(job_id: str, *, force_real: bool = False) -> None:
                 for unit in job_result.get("captured_units", [])
                 if isinstance(unit, dict) and unit.get("unit_id")
             }
-            from atlaso.app.services.appliance_settings import (
-                invalidate_observed_management_dhcp_dns,
-            )
-
             invalidate_observed_management_dhcp_dns()
             invalidate_appliance_apply_status_projection()
             current_units = appliance_apply_units(db)
@@ -16046,8 +15940,7 @@ def run_vcf_depot_software_id_job(job_id: str) -> None:
             )
 
 
-@router.post("/appliance-apply", response_class=HTMLResponse, response_model=None)
-def submit_appliance_apply(
+def _submit_appliance_apply(
     request: Request,
     background_tasks: BackgroundTasks,
     selected_units: list[str] = Form(default=[]),
@@ -16074,10 +15967,6 @@ def submit_appliance_apply(
     """
     verify_csrf(request, csrf)
     wants_json = "application/json" in request.headers.get("accept", "")
-    from atlaso.app.services.appliance_settings import (
-        invalidate_observed_management_dhcp_dns,
-    )
-
     invalidate_observed_management_dhcp_dns()
     units = appliance_apply_units(db)
     unit_map = {unit["id"]: unit for unit in units}
@@ -16286,6 +16175,27 @@ def submit_appliance_apply(
 
 
 _management_before_routes_wan_router = router
+_appliance_apply_ui = build_appliance_apply_ui_router(
+    ApplianceApplyUiDependencies(
+        require_management_ui_request=require_management_ui_request,
+        require_session_identity=require_session_identity,
+        invalidate_observed_management_dhcp_dns=invalidate_observed_management_dhcp_dns,
+        appliance_apply_context=appliance_apply_context,
+        appliance_apply_status_projection=appliance_apply_status_projection,
+        appliance_apply_client_status=appliance_apply_client_status,
+        active_appliance_apply_job=active_appliance_apply_job,
+        submit_appliance_apply=_submit_appliance_apply,
+        task_row=_task_row,
+    )
+)
+appliance_apply_router = _appliance_apply_ui.router
+appliance_apply_page = _appliance_apply_ui.endpoints["appliance_apply_page"]
+appliance_apply_review = _appliance_apply_ui.endpoints["appliance_apply_review"]
+appliance_apply_status_api = _appliance_apply_ui.endpoints[
+    "appliance_apply_status_api"
+]
+submit_appliance_apply = _appliance_apply_ui.endpoints["submit_appliance_apply"]
+
 _firewall_ui = build_firewall_ui_router(
     FirewallUiDependencies(
         require_management_ui_request=require_management_ui_request,
@@ -27472,6 +27382,10 @@ UI_ROUTER_REGISTRY.register(
     ),
 )
 UI_ROUTER_REGISTRY.register(
+    "appliance_apply",
+    (RouterContribution(plane="management", router=appliance_apply_router),),
+)
+UI_ROUTER_REGISTRY.register(
     "routes_wan",
     (RouterContribution(plane="management", router=routes_wan_router),),
 )
@@ -27499,6 +27413,7 @@ UI_ROUTER_REGISTRY.register(
 UI_ROUTER_REGISTRY.validate_domains(
     (
         "facade_before_routes_wan",
+        "appliance_apply",
         "routes_wan",
         "firewall",
         "physical_vlans",
