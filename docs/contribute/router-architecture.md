@@ -25,7 +25,9 @@ helpers, models, renderers, Appliance Apply execution, settings-archive core beh
 their established modules. Phase 9 extracts Network Boot and ESXi PXE management transports plus the remaining ESXi
 PXE API v1 transports while leaving the dedicated Network Boot API and protocol/media router unchanged. Phase 10
 extracts the VCF workflow management transports and their three API v1 status operations while preserving their
-separated effective positions and the Automation-owned contextual schedule transport.
+separated effective positions and the Automation-owned contextual schedule transport. Phase 11 extracts Automation
+and operational management transports plus the contiguous operational API v1 block without changing route order,
+behavior, or cross-domain service ownership.
 
 ## Ownership and responsibilities
 
@@ -149,7 +151,7 @@ The established Appliance Apply management transports live in
 and submission endpoint. The stable `atlaso/app/ui.py` facade continues to export the four endpoint names and owns the
 status, context, unit construction, active-job, submission, execution, logging, recovery, audit, identity/CSRF, and
 background-task helpers supplied through the typed router builder. The UI registry places `appliance_apply` immediately
-after `facade_before_routes_wan` and before `routes_wan`, preserving the established effective route order.
+after `facade_between_automation_routes_wan` and before `routes_wan`, preserving the established effective route order.
 
 Independently runnable transport coverage lives in `tests/routers/ui/test_appliance_apply.py`. Browser polling remains
 covered by `tests/javascript/appliance-apply-polling.test.js`; execution, recovery, subsystem sequencing, helper
@@ -240,7 +242,7 @@ route block; extraction into the VCF workflow router would change both ownership
 
 The three API v1 status transports live together in `atlaso/app/routers/api_v1/vcf_workflows.py`, but the module returns
 three ordered router contributions so their effective positions do not collapse. `vcf_workflows_backups` remains
-immediately after `facade_between_firewall_vcf_backups`; the facade segment through ESX Storage remains before
+immediately after `facade_between_operations_vcf_backups`; the facade segment through ESX Storage remains before
 `vcf_workflows_offline_depot`; the compatibility `/api/v1/repository/status` alias remains in
 `facade_between_offline_depot_private_registry`; and `vcf_workflows_private_registry` remains before
 `facade_between_vcf_private_registry_network_boot` and Network Boot. The stable API v1 facade continues to export all
@@ -253,6 +255,35 @@ template, CSS, JavaScript, control, layout, visible copy, interaction class, rou
 authorization scope, session or CSRF behavior, upload or download contract, redirect, status code, response schema,
 audit action, secret or redaction contract, route inventory, normalized OpenAPI output, desired state, or global
 Appliance Apply boundary.
+
+## Extracted Automation and operations ownership
+
+Automation management transports live in `atlaso/app/routers/ui/automation.py`. This owner includes the Automation
+page, schedule create/edit/run/toggle/delete transports, managed-script and script-revision
+create/edit/delete/toggle/run transports, and the contextual
+`/ui/management/vcf-offline-depot/profiles/{profile_id}/schedules` transport. The contextual path remains Automation
+owned because it creates an Automation schedule for one VCF Offline Depot profile; VCF profile configuration,
+download admission, execution, and lifecycle remain in their established VCF owners.
+
+Operational management transports live in `atlaso/app/routers/ui/operations.py`: Services list/actions/logs, Logs
+page/data, Tasks page/list/status/log/cancel, and Audit Log. The UI registry preserves Automation's earlier position
+between `facade_before_automation` and `facade_between_automation_routes_wan`. Operations remains later between
+`facade_between_identity_operations` and `facade_between_identity_network_boot`, after Identity and before Network
+Boot. The stable UI facade continues to export all established endpoints and compatibility helpers.
+
+The contiguous service, log, audit-event, and job API v1 transports live in
+`atlaso/app/routers/api_v1/operations.py`. The API registry places `operations` between
+`facade_between_firewall_operations` and `facade_between_operations_vcf_backups`, retaining the original position
+after Dashboard/Monitor and the intervening networking domains, and before Settings and later VCF Backups status.
+Every path, method, name, operation ID, tag, scope, status, response schema, audit, cancellation, and redaction
+contract remains unchanged.
+
+Independently runnable facade-transport coverage lives in `tests/routers/ui/test_automation.py`,
+`tests/routers/ui/test_operations.py`, and `tests/routers/api_v1/test_operations.py`. Scheduler, service, worker,
+task-execution, lifecycle, protocol, and browser-JavaScript behavior retain their established test owners. This
+behavior-neutral extraction changes no template, CSS, JavaScript, control, layout, visible copy, interaction class,
+route inventory, normalized OpenAPI output, desired state, service-control boundary, or global Appliance Apply
+behavior.
 
 ## Route and OpenAPI compatibility
 
@@ -317,6 +348,7 @@ python -m pytest -q tests/routers/ui/test_identity.py tests/routers/api_v1/test_
 python -m pytest -q tests/routers/ui/test_managed_ldap.py tests/routers/api_v1/test_managed_ldap.py
 python -m pytest -q tests/routers/ui/test_network_boot.py tests/routers/api_v1/test_network_boot.py tests/test_network_boot.py
 python -m pytest -q tests/routers/ui/test_vcf_workflows.py tests/routers/api_v1/test_vcf_workflows.py
+python -m pytest -q tests/routers/ui/test_automation.py tests/routers/ui/test_operations.py tests/routers/api_v1/test_operations.py
 python -m pytest -q tests/test_openapi_contract.py tests/test_ui_route_namespaces.py tests/test_ui_compliance.py
 python scripts/generate_router_contract_baselines.py --check
 python scripts/check_python_static_analysis.py
