@@ -5,7 +5,12 @@ from tests.routers.ui.helpers import login
 
 
 def create_api_token(client, scopes):
-    """Return one raw API token for a mixed UI/API transport assertion."""
+    """Return one raw API token for a mixed UI/API transport assertion.
+
+    Args:
+        client: HTTP test client used to create the token.
+        scopes: Authorization scopes assigned to the token.
+    """
     return create_token(client, scopes)[0]
 
 

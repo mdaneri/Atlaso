@@ -4,7 +4,12 @@ from tests.routers.api_v1.helpers import create_token
 
 
 def create_api_token(client, scopes):
-    """Return one raw API token with the requested ESXi PXE scopes."""
+    """Return one raw API token with the requested ESXi PXE scopes.
+
+    Args:
+        client: HTTP test client used to create the token.
+        scopes: Authorization scopes assigned to the token.
+    """
     return create_token(client, scopes)[0]
 
 
