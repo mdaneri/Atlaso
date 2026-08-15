@@ -788,14 +788,21 @@ def test_agent_policy_gate_honors_top_level_block_boundaries(tmp_path: Path) -> 
         anchor = TERMINAL_CLEANUP_SECTION_ANCHORS[relative_path]
         if anchor.startswith("#"):
             continue
-        for boundary in ("## Following policy", "---"):
+        boundaries = (
+            ("## Following policy", ""),
+            ("---", ""),
+            ("```text\nexample\n```\n", "  "),
+            ("<!-- boundary -->\n", "  "),
+            ("<div>\nexample\n</div>\n", "  "),
+        )
+        for boundary, marker_prefix in boundaries:
             write_policy_files(tmp_path)
             path = tmp_path / relative_path
             text = path.read_text(encoding="utf-8").replace(marker, "", 1)
             path.write_text(
                 text.replace(
                     sibling,
-                    f"\n{boundary}\n{marker}" + sibling,
+                    f"\n{boundary}\n{marker_prefix}{marker}" + sibling,
                     1,
                 ),
                 encoding="utf-8",

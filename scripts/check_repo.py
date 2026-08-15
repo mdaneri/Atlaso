@@ -719,21 +719,38 @@ def check_agent_policy_gate(root: Path) -> list[Finding]:
         section_markers = TERMINAL_CLEANUP_SECTION_MARKERS.get(relative_path, ())
         section_anchor = TERMINAL_CLEANUP_SECTION_ANCHORS.get(relative_path)
         operative_text = strip_markdown_nonoperative_content(text)
-        section_anchor_count = (
-            sum(
-                line == section_anchor
-                if section_anchor.startswith("#")
-                else line.startswith(section_anchor)
-                for line in operative_text.splitlines()
+        section_anchor_lines = (
+            tuple(
+                index
+                for index, line in enumerate(operative_text.splitlines())
+                if (
+                    line == section_anchor
+                    if section_anchor.startswith("#")
+                    else line.startswith(section_anchor)
+                )
             )
             if section_anchor is not None
-            else 0
+            else ()
         )
-        cleanup_section = (
-            extract_markdown_policy_section(operative_text, section_anchor)
-            if section_anchor is not None and section_anchor_count == 1
-            else None
-        )
+        section_anchor_count = len(section_anchor_lines)
+        cleanup_section: str | None = None
+        if section_anchor is not None and section_anchor_count == 1:
+            if section_anchor.startswith("#"):
+                cleanup_section = extract_markdown_policy_section(
+                    operative_text,
+                    section_anchor,
+                )
+            else:
+                structural_section = extract_markdown_policy_section(
+                    text,
+                    section_anchor,
+                    start_line=section_anchor_lines[0],
+                )
+                cleanup_section = (
+                    strip_markdown_nonoperative_content(structural_section)
+                    if structural_section is not None
+                    else None
+                )
         if section_anchor is not None and section_anchor_count == 0:
             findings.append(
                 Finding(
@@ -1124,19 +1141,38 @@ def extract_terminal_cleanup_order(cleanup_section: str) -> tuple[str, ...] | No
     return tuple(order_lines)
 
 
-def extract_markdown_policy_section(text: str, anchor: str) -> str | None:
+def extract_markdown_policy_section(
+    text: str,
+    anchor: str,
+    *,
+    start_line: int | None = None,
+) -> str | None:
     """Return the canonical heading section or top-level list item at ``anchor``.
 
     Args:
         text: Markdown policy entry point.
         anchor: Exact heading or top-level list-item prefix for the cleanup policy.
+        start_line: Prevalidated structural anchor line, when normalization was separate.
     """
     lines = text.splitlines(keepends=True)
-    starts = tuple(
-        index
-        for index, line in enumerate(lines)
-        if (line.rstrip("\r\n") == anchor if anchor.startswith("#") else line.startswith(anchor))
-    )
+    if start_line is None:
+        starts = tuple(
+            index
+            for index, line in enumerate(lines)
+            if (
+                line.rstrip("\r\n") == anchor
+                if anchor.startswith("#")
+                else line.startswith(anchor)
+            )
+        )
+    elif 0 <= start_line < len(lines) and (
+        lines[start_line].rstrip("\r\n") == anchor
+        if anchor.startswith("#")
+        else lines[start_line].startswith(anchor)
+    ):
+        starts = (start_line,)
+    else:
+        starts = ()
     if len(starts) != 1:
         return None
     start = starts[0]
