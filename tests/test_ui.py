@@ -992,7 +992,7 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert service_worker.headers["cache-control"] == "no-cache"
     assert service_worker.headers["service-worker-allowed"] == "/ui/management/"
     assert "ATLASO_CACHE" in service_worker.text
-    assert "atlaso-management-pwa-v256" in service_worker.text
+    assert "atlaso-management-pwa-v257" in service_worker.text
     assert 'fetch(asset, { cache: "reload" })' in service_worker.text
     assert ".catch(() => undefined)" in service_worker.text
     assert 'request.mode === "navigate"' in service_worker.text
@@ -1010,7 +1010,7 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-8" in service_worker.text
     assert "/static/appliance-apply-polling.js?v=issue-294-2" in service_worker.text
     assert "/static/ui-routes.js?v=issue-287-1" in service_worker.text
-    assert "/static/app.js?v=monitor-network-boot-navigation-races-20260814-1" in service_worker.text
+    assert "/static/app.js?v=dashboard-setup-415-ldap-navigation-409-20260815-1" in service_worker.text
     assert "/static/terminal.js?v=issue-287-2" in service_worker.text
     assert "/static/pwa.js?v=issue-287-2" in service_worker.text
     assert "vcfdt-configuration-248-20260807-14" not in service_worker.text
@@ -1042,8 +1042,8 @@ def test_shared_ui_pattern_shell_and_wizard_contracts(client):
     base = (templates / "base.html").read_text(encoding="utf-8")
     public_base = (templates / "public_portal_base.html").read_text(encoding="utf-8")
     for shell, app_asset in (
-        (base, "/static/app.js?v=ldap-organization-navigation-race-20260815-5"),
-        (public_base, "/static/app.js?v=monitor-network-boot-navigation-races-20260814-1"),
+        (base, "/static/app.js?v=dashboard-setup-415-ldap-navigation-409-20260815-1"),
+        (public_base, "/static/app.js?v=dashboard-setup-415-ldap-navigation-409-20260815-1"),
         (base, "/static/appliance-apply-polling.js?v=issue-294-2"),
     ):
         assert shell.index("/static/vendor/tabulator/tabulator.min.js") < shell.index(
@@ -1689,7 +1689,7 @@ def test_monitor_page_renders_and_data_endpoint(client):
     assert "swagger-link-icon" in page.text
     assert "/static/app.css?v=issue-338-1" in page.text
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-8" in page.text
-    assert "/static/app.js?v=ldap-organization-navigation-race-20260815-5" in page.text
+    assert "/static/app.js?v=dashboard-setup-415-ldap-navigation-409-20260815-1" in page.text
     app_css = client.get("/static/app.css")
     assert app_css.status_code == 200
     assert ".split-workspace > .wide-panel" in app_css.text
@@ -15341,7 +15341,7 @@ def test_appliance_startup_initializes_factory_apply_baseline(monkeypatch, tmp_p
 
     import atlaso.app.database as database
     from atlaso.app.config import get_settings
-    from atlaso.app.models import AuditEvent, Setting, User
+    from atlaso.app.models import AuditEvent, Job, JobStatus, Setting, User
 
     db_path = tmp_path / "atlaso-appliance-baseline.db"
     monkeypatch.setenv("ATLASO_DATABASE_URL", f"sqlite:///{db_path}")
@@ -15365,7 +15365,27 @@ def test_appliance_startup_initializes_factory_apply_baseline(monkeypatch, tmp_p
         assert page.headers["location"] == "/ui/management/dashboard#appliance-apply-review"
         review = test_client.get("/appliance-apply/review")
         assert review.status_code == 200
-        assert review.json()["units"] == []
+        assert review.json()["initial_apply_required"] is True
+        assert review.json()["units"]
+        assert all(unit["selected"] is unit["valid"] for unit in review.json()["units"])
+
+        with database.SessionLocal() as db:
+            db.add(
+                Job(
+                    id="job_factory_initial_apply",
+                    type="appliance-apply",
+                    status=JobStatus.SUCCEEDED.value,
+                    created_by="admin",
+                    progress_percent=100,
+                    result='{"selected_units": []}',
+                )
+            )
+            db.commit()
+
+        completed_review = test_client.get("/appliance-apply/review")
+        assert completed_review.status_code == 200
+        assert completed_review.json()["initial_apply_required"] is False
+        assert completed_review.json()["units"] == []
 
     with database.SessionLocal() as db:
         baseline = db.execute(select(Setting).where(Setting.key == "appliance_apply.baselines.v1")).scalar_one()
