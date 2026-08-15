@@ -142,6 +142,8 @@ def test_factory_reset_helper_persists_marker_before_detached_schedule(
     assert helper._handle_factory_reset("schedule", []) == 0
     marker = json.loads((state_directory / "request.json").read_text(encoding="utf-8"))
     assert marker["state"] == "scheduled"
+    if os.name == "posix":
+        assert not (state_directory / ".request.json.tmp").exists()
     scheduled = next(command for command in commands if command and command[0] == "/usr/bin/systemd-run")
     assert "--collect" in scheduled
     assert "--on-active=2" in scheduled
@@ -188,6 +190,35 @@ def test_factory_reset_helper_treats_pending_timer_as_active(monkeypatch, tmp_pa
     assert helper._handle_factory_reset("schedule", []) == 0
     assert json.loads(request_path.read_text(encoding="utf-8"))["state"] == "scheduled"
     assert not any(command and command[0] == "/usr/bin/systemd-run" for command in commands)
+
+
+def test_factory_reset_marker_fsyncs_replaced_directory(monkeypatch, tmp_path):
+    """The accepted marker survives a crash after its atomic rename.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    helper = load_helper_module()
+    state_directory = tmp_path / "factory-reset"
+    request_path = state_directory / "request.json"
+    directory_descriptor = 9876
+    synced: list[int] = []
+    closed: list[int] = []
+
+    monkeypatch.setattr(helper, "ATLASO_FACTORY_RESET_DIR", state_directory)
+    monkeypatch.setattr(helper, "ATLASO_FACTORY_RESET_REQUEST_PATH", request_path)
+    monkeypatch.setattr(helper.shutil, "chown", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(helper.os, "name", "posix")
+    monkeypatch.setattr(helper.os, "open", lambda path, flags: directory_descriptor)
+    monkeypatch.setattr(helper.os, "fsync", lambda descriptor: synced.append(descriptor))
+    monkeypatch.setattr(helper.os, "close", lambda descriptor: closed.append(descriptor))
+
+    helper._write_factory_reset_marker({"schema_version": 1, "state": "scheduled"})
+
+    assert request_path.is_file()
+    assert directory_descriptor in synced
+    assert closed == [directory_descriptor]
 
 
 def test_factory_reset_helper_resume_is_idempotent(monkeypatch, tmp_path):

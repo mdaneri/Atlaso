@@ -13268,6 +13268,12 @@ def _write_factory_reset_marker(payload: dict) -> None:
         if os.name == "posix":
             raise
     os.replace(temporary, ATLASO_FACTORY_RESET_REQUEST_PATH)
+    if os.name == "posix":
+        directory_descriptor = os.open(ATLASO_FACTORY_RESET_DIR, os.O_RDONLY)
+        try:
+            os.fsync(directory_descriptor)
+        finally:
+            os.close(directory_descriptor)
 
 
 def _factory_reset_state_payload() -> dict:
