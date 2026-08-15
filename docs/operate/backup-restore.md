@@ -63,7 +63,8 @@ content under `/mnt/atlaso-vcf-offline-depot`, backup artifacts under `/mnt/atla
 payload under `/mnt/atlaso-vcf-registry`, and managed ESX Storage payloads. Their database references are removed, so
 an administrator must explicitly rediscover, reconfigure, or delete retained payload later. Fixed transient Apply
 staging under `/var/lib/atlaso/apply` is scrubbed; secret-bearing Local Users, CA, and LDAP staging is also removed on
-failure.
+failure. Successful reset also removes retained VCF Backup authorized keys, the Web Terminal CA key pair, and pending
+Web Terminal signing requests so re-enabling either feature cannot reuse credentials from before reset.
 
 Existing credentials stop working. Sign in with the bootstrap administrator credentials supplied when the appliance
 image was deployed. Factory state disables Management HTTPS and restores the packaged management network
@@ -72,11 +73,18 @@ Hyper-V console to find or correct management networking when the login page doe
 
 Reset progress is recorded outside the database in `/var/lib/atlaso/factory-reset/request.json`; the last successful
 result is recorded in `last-result.json`. Atlaso resumes an incomplete marker before the web control plane starts after
-a reboot. If reset reports failure, preserve the VM, inspect `journalctl -u atlaso-factory-reset`, correct the reported
+a reboot. The marker remains `awaiting_readiness` after runtime activation and is removed only after Atlaso, worker,
+nginx, and two consecutive management `/openapi.json` checks are ready. If reset reports failure, preserve the VM,
+inspect `journalctl -u atlaso-factory-reset`, correct the reported
 runtime prerequisite, and reboot or run `sudo /opt/atlaso/bin/atlaso-helper factory-reset resume --real` from the local
 console. Resume is idempotent and retains the old database until a validated candidate is ready for replacement. A
 nonblocking transaction lock rejects overlapping scheduled, boot-resume, or console runners without allowing them to
-modify the active reset transaction.
+modify the active reset transaction; the pending systemd delay timer is part of that active transaction.
+
+Development and non-appliance fallback reset follows the same replacement boundary without host mutation: Atlaso
+builds and validates a private SQLite candidate first, then uses SQLite's backup operation to replace the request
+connection only after that candidate is complete. A candidate-rendering or validation failure leaves the source
+database unchanged.
 
 ## Restore safely
 

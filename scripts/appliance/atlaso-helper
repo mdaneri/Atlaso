@@ -32,6 +32,11 @@ from urllib.parse import unquote, urljoin, urlparse
 from urllib.request import HTTPRedirectHandler, Request, build_opener, urlopen
 
 try:
+    import fcntl
+except ModuleNotFoundError:
+    fcntl = None
+
+try:
     import grp
 except ModuleNotFoundError:
     class _MissingGrp:
@@ -70,7 +75,7 @@ except ModuleNotFoundError:
 COMMANDS: dict[str, set[str]] = {
     "staging": {"prepare"},
     "local-users": {"validate", "apply", "status", "authenticate"},
-    "appliance-settings": {"validate", "apply"},
+    "appliance-settings": {"validate", "preflight", "apply"},
     "web-terminal": {"status", "sign"},
     "network": {"validate", "apply", "dhcp-dns"},
     "firewall": {"validate", "apply"},
@@ -80,12 +85,12 @@ COMMANDS: dict[str, set[str]] = {
     "ldap": {"validate", "apply", "status", "export", "logs", "authenticate"},
     "ntpd": {"validate", "apply", "status", "logs", "capabilities"},
     "nginx": {"logs", "access-logs", "error-logs"},
-    "vcf-backups": {"validate", "apply"},
+    "vcf-backups": {"validate", "preflight", "apply"},
     "vcf-private-registry": {"validate", "apply", "relocate-bundles"},
     "vcf-offline-depot": {"validate", "stage-tool", "reset-tool", "generate-software-depot-id", "read-software-depot-id", "sync", "apply-https", "apply-properties", "apply-ceip"},
     "esxi-pxe": {"validate", "apply"},
     "esx-storage": {"inventory", "validate", "apply", "status", "logs"},
-    "public-services": {"validate", "apply"},
+    "public-services": {"validate", "preflight", "apply"},
     "appliance-update": {"check", "apply", "sync-sources", "restart-service", "bootstrap-data-disk-safety"},
     "automation": {"run"},
     "appliance-power": {"reboot", "shutdown"},
@@ -1401,6 +1406,36 @@ def _systemd_unit_logs(unit: str) -> int:
     return result.returncode
 
 
+def _management_resolver_candidate(text: str, servers: list[str], domains: list[str]) -> str:
+    """Return the management networkd config with prospective resolver values."""
+    lines = text.splitlines()
+    updated: list[str] = []
+    in_network = False
+    inserted = False
+    for line in lines:
+        stripped = line.strip()
+        if stripped == "[Network]":
+            in_network = True
+            updated.append(line)
+            continue
+        if in_network and stripped.startswith("[") and stripped.endswith("]"):
+            if not inserted:
+                updated.extend([f"DNS={server}" for server in servers])
+                updated.extend([f"Domains={domain}" for domain in domains])
+                inserted = True
+            in_network = False
+        if in_network and (stripped.startswith("DNS=") or stripped.startswith("Domains=")):
+            continue
+        updated.append(line)
+    if in_network and not inserted:
+        updated.extend([f"DNS={server}" for server in servers])
+        updated.extend([f"Domains={domain}" for domain in domains])
+        inserted = True
+    if not inserted:
+        raise ValueError("management networkd config is missing a [Network] section")
+    return "\n".join(updated).rstrip() + "\n"
+
+
 def _write_management_resolver(servers: list[str], domains: list[str]) -> None:
     """Write management resolver.
 
@@ -1409,29 +1444,11 @@ def _write_management_resolver(servers: list[str], domains: list[str]) -> None:
         domains: Domains consumed by write management resolver.
     """
     if NETWORKD_MGMT_CONFIG_PATH.is_file():
-        lines = NETWORKD_MGMT_CONFIG_PATH.read_text(encoding="utf-8").splitlines()
-        updated: list[str] = []
-        in_network = False
-        inserted = False
-        for line in lines:
-            stripped = line.strip()
-            if stripped == "[Network]":
-                in_network = True
-                updated.append(line)
-                continue
-            if in_network and stripped.startswith("[") and stripped.endswith("]"):
-                if not inserted:
-                    updated.extend([f"DNS={server}" for server in servers])
-                    updated.extend([f"Domains={domain}" for domain in domains])
-                    inserted = True
-                in_network = False
-            if in_network and (stripped.startswith("DNS=") or stripped.startswith("Domains=")):
-                continue
-            updated.append(line)
-        if in_network and not inserted:
-            updated.extend([f"DNS={server}" for server in servers])
-            updated.extend([f"Domains={domain}" for domain in domains])
-        NETWORKD_MGMT_CONFIG_PATH.write_text("\n".join(updated).rstrip() + "\n", encoding="utf-8")
+        current = NETWORKD_MGMT_CONFIG_PATH.read_text(encoding="utf-8")
+        NETWORKD_MGMT_CONFIG_PATH.write_text(
+            _management_resolver_candidate(current, servers, domains),
+            encoding="utf-8",
+        )
 
 
 def _configure_resolver(interface_name: str, servers: list[str], domains: list[str]) -> subprocess.CompletedProcess[str]:
@@ -5100,6 +5117,55 @@ def _nginx_site_conflict(site_path: Path, text: str) -> str:
     return ""
 
 
+def _validate_nginx_site_candidate(site_path: Path, text: str | None) -> subprocess.CompletedProcess[str]:
+    """Validate one prospective Atlaso nginx site in an isolated config tree."""
+    nginx = _nginx_binary()
+    if nginx is None:
+        return subprocess.CompletedProcess(["nginx", "-t"], 127, "", "nginx command not found\n")
+    if text is not None:
+        conflict = _nginx_site_conflict(site_path, text)
+        if conflict:
+            return subprocess.CompletedProcess([nginx, "-t"], 2, "", conflict + "\n")
+    if not NGINX_MAIN_CONFIG_PATH.is_file():
+        return subprocess.CompletedProcess([nginx, "-t"], 2, "", "nginx main config is missing\n")
+    with tempfile.TemporaryDirectory(prefix="atlaso-nginx-preflight-") as temporary:
+        root = Path(temporary)
+        nginx_root = root / "nginx"
+        sites_root = root / "sites.d"
+        shutil.copytree(NGINX_MAIN_CONFIG_PATH.parent, nginx_root)
+        if NGINX_SITES_DIR.is_dir():
+            shutil.copytree(NGINX_SITES_DIR, sites_root)
+        else:
+            sites_root.mkdir()
+        candidate_path = sites_root / site_path.name
+        if text is None:
+            candidate_path.unlink(missing_ok=True)
+        else:
+            candidate_path.write_text(text, encoding="utf-8")
+        include_path = nginx_root / "conf.d" / NGINX_CONF_INCLUDE_PATH.name
+        include_path.parent.mkdir(parents=True, exist_ok=True)
+        include_path.write_text(
+            "# Atlaso factory-reset generated-config preflight.\n"
+            f"include {sites_root.as_posix()}/*.conf;\n",
+            encoding="utf-8",
+        )
+        main_path = nginx_root / NGINX_MAIN_CONFIG_PATH.name
+        main_text = main_path.read_text(encoding="utf-8")
+        if str(NGINX_CONF_INCLUDE_PATH) not in main_text:
+            end_offset = _http_block_end_offset(main_text)
+            if end_offset < 0:
+                return subprocess.CompletedProcess([nginx, "-t"], 2, "", "nginx http block is invalid\n")
+            main_text = (
+                main_text[:end_offset].rstrip()
+                + f"\n\n    include {include_path.as_posix()};\n"
+                + main_text[end_offset:]
+            )
+        main_text = main_text.replace("/etc/nginx/", f"{nginx_root.as_posix()}/")
+        main_text = main_text.replace(str(NGINX_CONF_INCLUDE_PATH), include_path.as_posix())
+        main_path.write_text(main_text, encoding="utf-8")
+        return _run([nginx, "-t", "-c", str(main_path), "-p", f"{nginx_root}{os.sep}"])
+
+
 def _install_nginx_site(site_path: Path, text: str) -> int:
     """Perform install nginx site.
 
@@ -5336,6 +5402,15 @@ def _handle_public_services(action: str, args: list[str]) -> int:
     if action == "validate":
         print(json.dumps({"public_services": "validation ok", "config_path": str(config_path)}, sort_keys=True))
         return 0
+    if action == "preflight":
+        text = config_path.read_text(encoding="utf-8")
+        result = _validate_nginx_site_candidate(
+            NGINX_PUBLIC_SERVICES_SITE_PATH,
+            text if "server {" in text else None,
+        )
+        print(result.stdout, end="")
+        print(result.stderr, end="", file=sys.stderr)
+        return result.returncode
     if action == "apply":
         text = config_path.read_text(encoding="utf-8")
         if "server {" not in text:
@@ -5525,28 +5600,20 @@ def _root_ssh_config(enabled: bool) -> str:
     return "\n".join(lines)
 
 
-def _ensure_sshd_dropin_include(*, unset_global_options: set[str] | None = None) -> int:
-    """Ensure sshd dropin include.
-
-    Args:
-        unset_global_options: Unset global options consumed by ensure sshd dropin include.
-    """
-    include_line = "Include /etc/ssh/sshd_config.d/*.conf"
+def _sshd_main_config_with_dropin_include(
+    text: str,
+    include_line: str,
+    *,
+    unset_global_options: set[str] | None = None,
+) -> str:
+    """Return an sshd main config with one pre-Match drop-in include."""
     unset_options = {option.lower() for option in (unset_global_options or set())}
-    try:
-        lines = SSHD_MAIN_CONFIG_PATH.read_text(encoding="utf-8").splitlines()
-    except OSError as exc:
-        print(str(exc), file=sys.stderr)
-        return 2
-
     next_lines: list[str] = []
-    include_seen = False
     in_match_block = False
-    for line in lines:
+    for line in text.splitlines():
         stripped = line.strip()
         lower = stripped.lower()
-        if lower == include_line.lower():
-            include_seen = True
+        if lower.startswith("include ") and "sshd_config.d/*.conf" in lower:
             continue
         if lower.startswith("match "):
             in_match_block = True
@@ -5555,12 +5622,69 @@ def _ensure_sshd_dropin_include(*, unset_global_options: set[str] | None = None)
             next_lines.append(f"# Atlaso manages this directive through {SSHD_ROOT_LOGIN_CONFIG_PATH.name}: {line}")
             continue
         next_lines.append(line)
-
-    insert_at = next((index for index, line in enumerate(next_lines) if line.strip().lower().startswith("match ")), len(next_lines))
+    insert_at = next(
+        (index for index, line in enumerate(next_lines) if line.strip().lower().startswith("match ")),
+        len(next_lines),
+    )
     next_lines.insert(insert_at, include_line)
-    next_text = "\n".join(next_lines).rstrip() + "\n"
-    current_text = SSHD_MAIN_CONFIG_PATH.read_text(encoding="utf-8")
-    if include_seen and current_text == next_text:
+    return "\n".join(next_lines).rstrip() + "\n"
+
+
+def _validate_sshd_dropin_candidates(
+    replacements: dict[Path, str | None],
+    *,
+    unset_global_options: set[str] | None = None,
+) -> subprocess.CompletedProcess[str]:
+    """Validate prospective sshd drop-ins in an isolated config tree."""
+    sshd = shutil.which("sshd") or ("/usr/sbin/sshd" if Path("/usr/sbin/sshd").exists() else None)
+    if sshd is None:
+        return subprocess.CompletedProcess(["sshd", "-t"], 127, "", "sshd command not found\n")
+    try:
+        main_text = SSHD_MAIN_CONFIG_PATH.read_text(encoding="utf-8")
+    except OSError as exc:
+        return subprocess.CompletedProcess([sshd, "-t"], 2, "", f"{exc}\n")
+    with tempfile.TemporaryDirectory(prefix="atlaso-sshd-preflight-") as temporary:
+        root = Path(temporary)
+        dropins = root / "sshd_config.d"
+        if SSHD_CONFIG_DIR.is_dir():
+            shutil.copytree(SSHD_CONFIG_DIR, dropins)
+        else:
+            dropins.mkdir()
+        for destination, candidate_text in replacements.items():
+            candidate_path = dropins / destination.name
+            if candidate_text is None:
+                candidate_path.unlink(missing_ok=True)
+            else:
+                candidate_path.write_text(candidate_text, encoding="utf-8")
+        main_path = root / "sshd_config"
+        main_path.write_text(
+            _sshd_main_config_with_dropin_include(
+                main_text,
+                f"Include {dropins.as_posix()}/*.conf",
+                unset_global_options=unset_global_options,
+            ),
+            encoding="utf-8",
+        )
+        return _run([sshd, "-t", "-f", str(main_path)])
+
+
+def _ensure_sshd_dropin_include(*, unset_global_options: set[str] | None = None) -> int:
+    """Ensure sshd dropin include.
+
+    Args:
+        unset_global_options: Unset global options consumed by ensure sshd dropin include.
+    """
+    try:
+        current_text = SSHD_MAIN_CONFIG_PATH.read_text(encoding="utf-8")
+    except OSError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+    next_text = _sshd_main_config_with_dropin_include(
+        current_text,
+        "Include /etc/ssh/sshd_config.d/*.conf",
+        unset_global_options=unset_global_options,
+    )
+    if current_text == next_text:
         return 0
     SSHD_MAIN_CONFIG_PATH.write_text(next_text, encoding="utf-8")
     os.chmod(SSHD_MAIN_CONFIG_PATH, 0o644)
@@ -5835,6 +5959,83 @@ def _apply_vcf_download_tool_ceip(enabled: bool) -> tuple[int, str]:
     return 0, f"applied: obtu.telemetry.config={'ENABLE' if enabled else 'DISABLE'}"
 
 
+def _validate_atlaso_service_dropin(text: str) -> subprocess.CompletedProcess[str]:
+    """Validate a generated Atlaso service drop-in as a complete temporary unit."""
+    systemd_analyze = shutil.which("systemd-analyze")
+    if systemd_analyze is None:
+        return subprocess.CompletedProcess(
+            ["systemd-analyze", "verify"],
+            127,
+            "",
+            "systemd-analyze command not found\n",
+        )
+    with tempfile.TemporaryDirectory(prefix="atlaso-systemd-preflight-") as temporary:
+        unit_path = Path(temporary) / "atlaso-factory-reset-preflight.service"
+        unit_path.write_text(
+            "[Unit]\nDescription=Atlaso factory-reset preflight\n"
+            "[Service]\nType=simple\nExecStart=/bin/true\n"
+            + text,
+            encoding="utf-8",
+        )
+        return _run([systemd_analyze, "verify", str(unit_path)])
+
+
+def _preflight_appliance_settings(payload: dict) -> subprocess.CompletedProcess[str]:
+    """Validate every generated appliance-settings artifact without host mutation."""
+    web_terminal_text = None
+    if bool(payload.get("web_terminal_enabled")):
+        web_terminal_text = (
+            "# Managed by Atlaso. Passwordless browser terminal certificates.\n"
+            f"TrustedUserCAKeys {WEB_TERMINAL_CA_PUBLIC_KEY_PATH}\n"
+        )
+    sshd = _validate_sshd_dropin_candidates(
+        {
+            SSHD_ROOT_LOGIN_CONFIG_PATH: _root_ssh_config(bool(payload.get("root_ssh_enabled"))),
+            SSHD_WEB_TERMINAL_CONFIG_PATH: web_terminal_text,
+        },
+        unset_global_options={"PermitRootLogin", "PasswordAuthentication", "KbdInteractiveAuthentication"},
+    )
+    if sshd.returncode != 0:
+        return sshd
+    resolver_mode = str(payload["resolver_mode"])
+    resolver_servers = [str(server) for server in payload["resolver_servers"]]
+    resolver_domains = ["~."] if resolver_mode == "local_dns" else []
+    if NETWORKD_MGMT_CONFIG_PATH.is_file():
+        try:
+            _management_resolver_candidate(
+                NETWORKD_MGMT_CONFIG_PATH.read_text(encoding="utf-8"),
+                resolver_servers,
+                resolver_domains,
+            )
+        except (OSError, ValueError) as exc:
+            return subprocess.CompletedProcess(
+                ["networkd", "preflight"],
+                2,
+                "",
+                f"{exc}\n",
+            )
+    cert_path: Path | None = None
+    key_path: Path | None = None
+    if bool(payload.get("management_https_enabled")):
+        try:
+            cert_path = _ca_managed_path(str(payload["management_https_cert_path"]), "management_https_cert_path")
+            key_path = _ca_managed_path(str(payload["management_https_key_path"]), "management_https_key_path")
+        except ValueError as exc:
+            return subprocess.CompletedProcess(["nginx", "preflight"], 2, "", f"{exc}\n")
+    nginx = _validate_nginx_site_candidate(
+        NGINX_MANAGEMENT_SITE_PATH,
+        _management_nginx_config(payload, cert_path, key_path),
+    )
+    if nginx.returncode != 0:
+        return nginx
+    return _validate_atlaso_service_dropin(
+        _atlaso_service_loopback_dropin(
+            str(payload.get("management_upstream_host") or "127.0.0.1"),
+            int(payload.get("management_upstream_port") or payload.get("management_http_port") or 8000),
+        )
+    )
+
+
 def _handle_appliance_settings(action: str, args: list[str]) -> int:
     """Handle appliance settings.
 
@@ -5873,6 +6074,15 @@ def _handle_appliance_settings(action: str, args: list[str]) -> int:
             )
         )
         return 0
+    if action == "preflight":
+        if errors:
+            for error in errors:
+                print(error, file=sys.stderr)
+            return 2
+        result = _preflight_appliance_settings(_load_appliance_settings_config(config_path))
+        print(result.stdout, end="")
+        print(result.stderr, end="", file=sys.stderr)
+        return result.returncode
     if errors:
         for error in errors:
             print(error, file=sys.stderr)
@@ -8526,6 +8736,17 @@ def _handle_vcf_backups(action: str, args: list[str]) -> int:
             )
         )
         return 0
+    if action == "preflight":
+        result = _validate_sshd_dropin_candidates(
+            {
+                VCF_BACKUPS_CONFIG_PATH: (
+                    config_path.read_text(encoding="utf-8") if values["enabled"] else None
+                )
+            }
+        )
+        print(result.stdout, end="")
+        print(result.stderr, end="", file=sys.stderr)
+        return result.returncode
 
     VCF_BACKUPS_CONFIG_DIR.mkdir(parents=True, exist_ok=True)
     if not values["enabled"]:
@@ -13050,8 +13271,50 @@ def _factory_reset_runner(*, boot_resume: bool) -> subprocess.CompletedProcess[s
     )
 
 
-def _schedule_factory_reset() -> int:
-    """Persist and dispatch the detached reset transaction."""
+def _factory_reset_activation_pending() -> bool:
+    """Return whether defaults are committed and only readiness remains."""
+    try:
+        payload = json.loads(ATLASO_FACTORY_RESET_REQUEST_PATH.read_text(encoding="utf-8"))
+    except (FileNotFoundError, OSError, json.JSONDecodeError):
+        return False
+    applied_unit_count = payload.get("applied_unit_count")
+    return (
+        payload.get("state") in {"awaiting_readiness", "failed"}
+        and type(applied_unit_count) is int
+        and applied_unit_count > 0
+    )
+
+
+def _schedule_factory_reset_finalizer() -> subprocess.CompletedProcess[str]:
+    """Queue readiness verification without blocking the service preflight."""
+    systemd_run = shutil.which("systemd-run")
+    if systemd_run is None:
+        return subprocess.CompletedProcess(
+            ["systemd-run"],
+            127,
+            "",
+            "systemd-run is required to verify factory-reset readiness.\n",
+        )
+    return _run(
+        [
+            systemd_run,
+            "--quiet",
+            "--collect",
+            "--no-block",
+            f"--unit=atlaso-factory-reset-readiness-resume-{os.getpid()}",
+            "--property=Type=oneshot",
+            f"--property=WorkingDirectory={ATLASO_STATE_DIR}",
+            f"--property=EnvironmentFile={ATLASO_ENV_PATH}",
+            str(ATLASO_FACTORY_RESET_PYTHON),
+            "-m",
+            "atlaso.app.factory_reset",
+            "finalize",
+        ]
+    )
+
+
+def _schedule_factory_reset_locked() -> int:
+    """Persist and dispatch the detached reset transaction while serialized."""
     if not ATLASO_FACTORY_RESET_REQUEST_PATH.is_file():
         now = datetime.now(timezone.utc).isoformat()
         _write_factory_reset_marker(
@@ -13067,15 +13330,24 @@ def _schedule_factory_reset() -> int:
     if systemd_run is None:
         print("systemd-run is required to schedule factory reset", file=sys.stderr)
         return 127
-    active = _run(["systemctl", "is-active", "--quiet", "atlaso-factory-reset.service"])
-    if active.returncode == 0:
-        print(json.dumps(_factory_reset_state_payload(), sort_keys=True))
-        return 0
-    _run(["systemctl", "reset-failed", "atlaso-factory-reset.service"])
+    for unit in ("atlaso-factory-reset.service", "atlaso-factory-reset.timer"):
+        active = _run(["systemctl", "is-active", "--quiet", unit])
+        if active.returncode == 0:
+            print(json.dumps(_factory_reset_state_payload(), sort_keys=True))
+            return 0
+    _run(
+        [
+            "systemctl",
+            "reset-failed",
+            "atlaso-factory-reset.service",
+            "atlaso-factory-reset.timer",
+        ]
+    )
     result = _run(
         [
             systemd_run,
             "--quiet",
+            "--collect",
             "--on-active=2",
             "--unit=atlaso-factory-reset",
             "--property=Type=oneshot",
@@ -13105,6 +13377,26 @@ def _schedule_factory_reset() -> int:
     return 0
 
 
+def _schedule_factory_reset() -> int:
+    """Serialize reset admission before creating its durable marker and timer."""
+    ATLASO_FACTORY_RESET_DIR.mkdir(parents=True, exist_ok=True)
+    os.chmod(ATLASO_FACTORY_RESET_DIR, 0o750)
+    lock_path = ATLASO_FACTORY_RESET_DIR / "transaction.lock"
+    with lock_path.open("a+b") as lock_handle:
+        os.chmod(lock_path, 0o600)
+        if fcntl is not None:
+            try:
+                fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                print(json.dumps(_factory_reset_state_payload(), sort_keys=True))
+                return 0
+        try:
+            return _schedule_factory_reset_locked()
+        finally:
+            if fcntl is not None:
+                fcntl.flock(lock_handle.fileno(), fcntl.LOCK_UN)
+
+
 def _handle_factory_reset(action: str, args: list[str]) -> int:
     """Handle dedicated complete factory-reset lifecycle operations."""
     if args:
@@ -13119,6 +13411,11 @@ def _handle_factory_reset(action: str, args: list[str]) -> int:
         if not ATLASO_FACTORY_RESET_REQUEST_PATH.is_file():
             print(json.dumps(_factory_reset_state_payload(), sort_keys=True))
             return 0
+        if _factory_reset_activation_pending():
+            result = _schedule_factory_reset_finalizer()
+            print(result.stdout, end="")
+            print(result.stderr, end="", file=sys.stderr)
+            return result.returncode
         result = _factory_reset_runner(boot_resume=True)
         print(result.stdout, end="")
         print(result.stderr, end="", file=sys.stderr)

@@ -569,7 +569,14 @@ not expose a management HTTPS listener.
 Complete factory reset is the sole exception to the ordinary Apply submission boundary. It reuses the same render,
 validation, execution ordering, and baseline code for all 16 units inside a root-owned, resumable transaction. It does
 not create an Apply job or modal: success means the replacement database and runtime are already at the same clean
-baseline, while a durable marker causes boot-time resume before `atlaso.service` starts after interruption.
+baseline. The transaction scrubs retained VCF Backup authorized keys, the Web Terminal CA key pair, and pending terminal
+signing requests in addition to Apply staging. Its delay timer and runner share the transaction lock, and the durable
+marker remains `awaiting_readiness` until an independent finalizer observes Atlaso, worker, nginx, and two consecutive
+management OpenAPI successes. A restart/readiness failure retains the marker for boot-time resume before
+`atlaso.service` starts. Preflight renders prospective management and public nginx sites, root and VCF Backup sshd
+drop-ins, the management resolver file, and the Atlaso service loopback drop-in into isolated temporary trees and runs
+the native validators there without changing the active host configuration. The non-appliance fallback likewise
+builds and validates an isolated SQLite candidate before replacing the request connection through SQLite backup.
 
 ### Operational logs and appliance power
 

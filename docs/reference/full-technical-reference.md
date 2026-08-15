@@ -950,6 +950,9 @@ Before database replacement, the root helper persists `/var/lib/atlaso/factory-r
 writers, validates generated nginx, network, firewall, resolver, systemd, and service configuration, and records only
 bounded non-secret progress. `atlaso.service` resumes that marker before uvicorn starts after a reboot. The candidate is
 mode `0600`; fixed secret staging is scrubbed on failure and all `/var/lib/atlaso/apply` staging is removed on success.
+Successful activation also removes retained VCF Backup authorized keys, the Web Terminal CA key pair, and pending Web
+Terminal signing requests. The request remains `awaiting_readiness` until an independent finalizer observes Atlaso,
+worker, nginx, and two consecutive management OpenAPI successes; restart/readiness failure keeps a resumable marker.
 Payload files under the VCF Offline Depot, backup, registry, and managed ESX Storage paths are preserved even though
 their database references are removed. `last-result.json` retains the safe terminal outcome.
 

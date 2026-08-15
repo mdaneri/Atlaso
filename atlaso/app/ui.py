@@ -59,7 +59,10 @@ from atlaso.app.adapters.system import AdapterResult, SystemAdapter
 from atlaso.app.audit import record_audit
 from atlaso.app.config import get_settings
 from atlaso.app.database import SessionLocal, get_db
-from atlaso.app.factory_reset import read_factory_reset_state
+from atlaso.app.factory_reset import (
+    read_factory_reset_state,
+    replace_database_with_factory_candidate,
+)
 from atlaso.app.models import (
     ApiToken,
     ApplianceSettings,
@@ -493,7 +496,6 @@ from atlaso.app.services.settings_archive import (
     archive_summary,
     desired_state_counts,
     export_settings_archive,
-    factory_reset_desired_state,
     restore_settings_archive,
 )
 from atlaso.app.services.update_sources import (
@@ -20149,22 +20151,11 @@ def factory_reset_backup_restore(
             status_code=303,
         )
 
-    previous_baselines = load_appliance_apply_baselines(db)
-    factory_reset_desired_state(db)
-    save_appliance_apply_baselines(db, previous_baselines)
-    units = appliance_apply_units(db)
-    invalid_units = [unit["label"] for unit in units if unit["validation_errors"]]
-    if invalid_units:
-        raise RuntimeError(
-            "Factory defaults failed validation for: " + ", ".join(invalid_units)
-        )
-    for unit in units:
-        result = execute_appliance_apply_unit(unit, adapter=SystemAdapter(dry_run=True), db=db)
-        if not result["success"]:
-            raise RuntimeError(f"Factory reset failed for {unit['label']}.")
-    final_units = appliance_apply_units(db, reconcile=False)
-    update_appliance_apply_baselines(db, final_units, {unit["id"] for unit in final_units})
-    db.commit()
+    replace_database_with_factory_candidate(
+        db,
+        database_url=settings.database_url,
+        adapter=SystemAdapter(dry_run=True),
+    )
     invalidate_appliance_apply_status_projection()
     request.session.clear()
     return RedirectResponse(

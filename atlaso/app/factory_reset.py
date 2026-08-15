@@ -5,10 +5,15 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import sqlite3
 import subprocess
+import sys
+import tempfile
+import time
 from collections.abc import Iterator
-from contextlib import contextmanager
+from contextlib import closing, contextmanager
 from datetime import datetime, timezone
+from http.client import HTTPConnection
 from pathlib import Path
 from typing import Any, Callable, cast
 
@@ -29,6 +34,7 @@ from atlaso.app.services.ldap import (
     LDAP_PENDING_RECOVERY_PAYLOADS,
 )
 from atlaso.app.services.local_users import (
+    clear_all_pending_os_passwords,
     pending_os_password_snapshot,
     restore_pending_os_password_snapshot,
 )
@@ -45,6 +51,20 @@ FACTORY_RESET_RESULT_NAME = "last-result.json"
 FACTORY_RESET_CANDIDATE_NAME = "factory-candidate.db"
 FACTORY_RESET_LOCK_NAME = "transaction.lock"
 ATLASO_SERVICE_USER = "atlaso"
+FACTORY_RESET_MANAGEMENT_HOST = "127.0.0.1"
+FACTORY_RESET_MANAGEMENT_PORT = 80
+FACTORY_RESET_MANAGEMENT_PATH = "/openapi.json"
+FACTORY_RESET_REQUIRED_SERVICES = (
+    "atlaso.service",
+    "atlaso-worker.service",
+    "nginx.service",
+)
+VCF_BACKUPS_AUTHORIZED_KEYS_DIRECTORY = Path("/etc/atlaso/ssh/authorized_keys")
+WEB_TERMINAL_CREDENTIAL_PATHS = (
+    Path("/etc/atlaso/ssh/web-terminal-ca"),
+    Path("/etc/atlaso/ssh/web-terminal-ca.pub"),
+)
+WEB_TERMINAL_REQUEST_DIRECTORY = Path("/var/lib/atlaso/web-terminal/requests")
 
 
 class FactoryResetError(RuntimeError):
@@ -53,6 +73,12 @@ class FactoryResetError(RuntimeError):
 
 class _ValidationOnlyAdapter(SystemAdapter):
     """Run real helper validations while replacing mutations with no-ops."""
+
+    _GENERATED_CONFIG_PREFLIGHTS = {
+        "apply_appliance_settings_config": "preflight_appliance_settings_config",
+        "apply_public_services_config": "preflight_public_services_config",
+        "apply_vcf_backup_config": "preflight_vcf_backup_config",
+    }
 
     _MUTATING_METHODS = frozenset(
         {
@@ -89,6 +115,9 @@ class _ValidationOnlyAdapter(SystemAdapter):
 
     def __getattribute__(self, name: str) -> Any:
         """Replace a bounded mutating adapter method with a successful no-op."""
+        generated_config_preflights = object.__getattribute__(self, "_GENERATED_CONFIG_PREFLIGHTS")
+        if name in generated_config_preflights:
+            return super().__getattribute__(generated_config_preflights[name])
         mutating_methods = object.__getattribute__(self, "_MUTATING_METHODS")
         if name in mutating_methods:
             def validation_noop(*_args: object, **_kwargs: object) -> AdapterResult:
@@ -167,7 +196,7 @@ def factory_reset_result_path() -> Path:
 
 
 @contextmanager
-def _factory_reset_transaction_lock() -> Iterator[None]:
+def _factory_reset_transaction_lock(*, wait_seconds: float = 0) -> Iterator[None]:
     """Admit exactly one reset runner on the POSIX appliance."""
     state_directory = factory_reset_state_directory()
     state_directory.mkdir(parents=True, exist_ok=True)
@@ -181,11 +210,15 @@ def _factory_reset_transaction_lock() -> Iterator[None]:
             shutil.chown(lock_path, user="root", group=ATLASO_SERVICE_USER)
         if os.name == "posix":
             fcntl = cast(Any, __import__("fcntl"))
-
-            try:
-                fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-            except BlockingIOError as exc:
-                raise FactoryResetError("A factory reset transaction is already running.") from exc
+            deadline = time.monotonic() + wait_seconds
+            while True:
+                try:
+                    fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    break
+                except BlockingIOError as exc:
+                    if time.monotonic() >= deadline:
+                        raise FactoryResetError("A factory reset transaction is already running.") from exc
+                    time.sleep(min(0.25, max(0, deadline - time.monotonic())))
         try:
             yield
         finally:
@@ -284,27 +317,33 @@ def _stop_application_services(*, boot_resume: bool) -> None:
     _run_systemctl("stop", "atlaso-worker.service", "atlaso.service")
 
 
-def _schedule_service_restart(*services: str, unit_name: str) -> None:
-    """Restart selected services after the current reset process exits."""
+def _schedule_readiness_finalizer() -> None:
+    """Schedule independent post-restart management readiness verification."""
     systemd_run = shutil.which("systemd-run")
     if systemd_run is None:
-        raise FactoryResetError("systemd-run is required to restore Atlaso services after factory reset.")
+        raise FactoryResetError("systemd-run is required to verify factory-reset readiness.")
+    unit_name = f"atlaso-factory-reset-readiness-{os.getpid()}"
     completed = subprocess.run(
         [
             systemd_run,
             "--quiet",
-            "--on-active=2",
+            "--collect",
+            "--no-block",
             f"--unit={unit_name}",
-            "systemctl",
-            "restart",
-            *services,
+            "--property=Type=oneshot",
+            "--property=WorkingDirectory=/var/lib/atlaso",
+            "--property=EnvironmentFile=/etc/atlaso/atlaso.env",
+            sys.executable,
+            "-m",
+            "atlaso.app.factory_reset",
+            "finalize",
         ],
         check=False,
         capture_output=True,
         text=True,
     )
     if completed.returncode != 0:
-        detail = (completed.stderr or completed.stdout or "unable to schedule Atlaso service restart").strip()
+        detail = (completed.stderr or completed.stdout or "unable to schedule reset readiness verification").strip()
         raise FactoryResetError(detail)
 
 
@@ -320,6 +359,142 @@ def _clear_apply_staging() -> None:
             child.unlink(missing_ok=True)
         elif child.is_dir():
             shutil.rmtree(child)
+
+
+def _clear_fixed_directory_contents(path: Path, *, label: str) -> None:
+    """Remove direct credential entries from one fixed Atlaso-owned directory."""
+    if not path.exists():
+        return
+    if path.is_symlink() or not path.is_dir() or path.resolve() != path:
+        raise FactoryResetError(f"Factory reset {label} directory is unsafe: {path}")
+    for child in path.iterdir():
+        if child.is_symlink() or child.is_file():
+            child.unlink(missing_ok=True)
+        else:
+            raise FactoryResetError(f"Factory reset {label} entry is unsafe: {child.name}")
+
+
+def _scrub_retained_credentials() -> None:
+    """Remove fixed credential material that intentionally lives outside Apply staging."""
+    for path in WEB_TERMINAL_CREDENTIAL_PATHS:
+        if path.is_symlink() or path.is_file():
+            path.unlink(missing_ok=True)
+        elif path.exists():
+            raise FactoryResetError(f"Factory reset web-terminal credential path is unsafe: {path}")
+    _clear_fixed_directory_contents(
+        WEB_TERMINAL_REQUEST_DIRECTORY,
+        label="web-terminal request",
+    )
+    _clear_fixed_directory_contents(
+        VCF_BACKUPS_AUTHORIZED_KEYS_DIRECTORY,
+        label="VCF Backup authorized-key",
+    )
+
+
+def _management_ready() -> bool:
+    """Return whether required services and the management OpenAPI front door are ready."""
+    for service in FACTORY_RESET_REQUIRED_SERVICES:
+        completed = subprocess.run(
+            ["systemctl", "is-active", "--quiet", service],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        if completed.returncode != 0:
+            return False
+    try:
+        connection = HTTPConnection(
+            FACTORY_RESET_MANAGEMENT_HOST,
+            FACTORY_RESET_MANAGEMENT_PORT,
+            timeout=2,
+        )
+        connection.request("GET", FACTORY_RESET_MANAGEMENT_PATH)
+        response = connection.getresponse()
+        payload = json.loads(response.read().decode("utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        return False
+    finally:
+        try:
+            connection.close()
+        except UnboundLocalError:
+            pass
+    return response.status == 200 and isinstance(payload, dict) and isinstance(payload.get("info"), dict)
+
+
+def _start_required_services() -> None:
+    """Queue every required service without deadlocking its reset-resume preflight."""
+    _run_systemctl("--no-block", "start", *FACTORY_RESET_REQUIRED_SERVICES)
+
+
+def _mark_factory_reset_succeeded(request_payload: dict[str, Any], unit_count: int) -> dict[str, Any]:
+    """Persist terminal success before durably removing the recovery marker."""
+    completed = {
+        "schema_version": FACTORY_RESET_SCHEMA_VERSION,
+        "state": "succeeded",
+        "requested_at": str(request_payload.get("requested_at") or _utc_iso()),
+        "updated_at": _utc_iso(),
+        "message": (
+            f"Factory reset completed with {unit_count} applied units and no pending appliance changes. "
+            "Sign in with the bootstrap administrator credentials."
+        ),
+        "applied_unit_count": unit_count,
+    }
+    _write_json_atomic(factory_reset_result_path(), completed)
+    factory_reset_request_path().unlink(missing_ok=True)
+    if os.name == "posix":
+        directory_descriptor = os.open(factory_reset_state_directory(), os.O_RDONLY)
+        try:
+            os.fsync(directory_descriptor)
+        finally:
+            os.close(directory_descriptor)
+    return completed
+
+
+def finalize_factory_reset(
+    *,
+    readiness_timeout_seconds: float = 120,
+    poll_seconds: float = 2,
+) -> dict[str, Any]:
+    """Verify stable post-restart management readiness before terminal success."""
+    with _factory_reset_transaction_lock(wait_seconds=30):
+        request_path = factory_reset_request_path()
+        try:
+            request_payload = json.loads(request_path.read_text(encoding="utf-8"))
+        except (FileNotFoundError, OSError, json.JSONDecodeError):
+            return read_factory_reset_state()
+        applied_unit_count = request_payload.get("applied_unit_count")
+        if (
+            request_payload.get("state") not in {"awaiting_readiness", "failed"}
+            or type(applied_unit_count) is not int
+            or applied_unit_count <= 0
+        ):
+            raise FactoryResetError("Factory reset is not awaiting management readiness verification.")
+        unit_count = applied_unit_count
+        try:
+            _start_required_services()
+        except FactoryResetError as exc:
+            message = (
+                f"Factory reset applied defaults, but required services could not start: {exc} "
+                "Reboot or run the factory-reset resume helper from the console."
+            )
+            _update_request("failed", message, applied_unit_count=unit_count)
+            raise FactoryResetError(message) from exc
+        deadline = time.monotonic() + readiness_timeout_seconds
+        consecutive_ready = 0
+        while time.monotonic() <= deadline:
+            if _management_ready():
+                consecutive_ready += 1
+                if consecutive_ready >= 2:
+                    return _mark_factory_reset_succeeded(request_payload, unit_count)
+            else:
+                consecutive_ready = 0
+            time.sleep(poll_seconds)
+        message = (
+            "Factory reset applied defaults, but required services or management OpenAPI readiness did not stabilize. "
+            "Reboot or run the factory-reset resume helper from the console."
+        )
+        _update_request("failed", message, applied_unit_count=unit_count)
+        raise FactoryResetError(message)
 
 
 def _preserve_database_ownership(source: Path, candidate: Path) -> None:
@@ -350,6 +525,7 @@ def _candidate_database(
     candidate_path: Path,
     *,
     adapter: SystemAdapter,
+    report_progress: bool = True,
 ) -> int:
     """Build, preflight, activate, and baseline one clean candidate database."""
     from atlaso.app.ui import (
@@ -419,7 +595,8 @@ def _candidate_database(
                 LDAP_PENDING_RECOVERY_PAYLOADS.clear()
                 LDAP_PENDING_RECOVERY_PAYLOADS.update(ldap_recovery_payloads)
             units = appliance_apply_units(db)
-            _update_request("applying", "Factory default configuration validated; activating runtime defaults.")
+            if report_progress:
+                _update_request("applying", "Factory default configuration validated; activating runtime defaults.")
 
             for unit in units:
                 result = execute_appliance_apply_unit(unit, adapter=adapter, db=db)
@@ -449,6 +626,59 @@ def _candidate_database(
     finally:
         candidate_engine.dispose()
     return unit_count
+
+
+def replace_database_with_factory_candidate(
+    db: Session,
+    *,
+    database_url: str,
+    adapter: SystemAdapter,
+) -> int:
+    """Validate an isolated candidate before atomically backing it into a local database."""
+    source_path = _sqlite_database_path(database_url)
+    descriptor, candidate_name = tempfile.mkstemp(
+        prefix=".atlaso-factory-reset-candidate-",
+        suffix=".db",
+        dir=source_path.parent,
+    )
+    os.close(descriptor)
+    candidate_path = Path(candidate_name)
+    candidate_path.unlink(missing_ok=True)
+    os_passwords = pending_os_password_snapshot()
+    ldap_passwords = dict(LDAP_PENDING_PASSWORDS)
+    ldap_recovery_payloads = dict(LDAP_PENDING_RECOVERY_PAYLOADS)
+    clear_all_pending_os_passwords()
+    LDAP_PENDING_PASSWORDS.clear()
+    LDAP_PENDING_RECOVERY_PAYLOADS.clear()
+    try:
+        unit_count = _candidate_database(
+            source_path,
+            candidate_path,
+            adapter=adapter,
+            report_progress=False,
+        )
+        db.rollback()
+        destination_connection = cast(
+            sqlite3.Connection,
+            db.connection().connection.driver_connection,
+        )
+        with closing(sqlite3.connect(candidate_path)) as candidate_connection:
+            candidate_connection.backup(destination_connection)
+        destination_connection.commit()
+        db.expire_all()
+        return unit_count
+    except Exception:
+        db.rollback()
+        restore_pending_os_password_snapshot(os_passwords)
+        LDAP_PENDING_PASSWORDS.clear()
+        LDAP_PENDING_PASSWORDS.update(ldap_passwords)
+        LDAP_PENDING_RECOVERY_PAYLOADS.clear()
+        LDAP_PENDING_RECOVERY_PAYLOADS.update(ldap_recovery_payloads)
+        raise
+    finally:
+        candidate_path.unlink(missing_ok=True)
+        for suffix in ("-wal", "-shm", "-journal"):
+            Path(f"{candidate_path}{suffix}").unlink(missing_ok=True)
 
 
 def _run_factory_reset_locked(
@@ -481,32 +711,17 @@ def _run_factory_reset_locked(
         _replace_database(source_path, candidate_path)
         if not (adapter and adapter.dry_run):
             _clear_apply_staging()
-        completed = {
-            "schema_version": FACTORY_RESET_SCHEMA_VERSION,
-            "state": "succeeded",
-            "requested_at": str(request_payload.get("requested_at") or _utc_iso()),
-            "updated_at": _utc_iso(),
-            "message": (
-                f"Factory reset completed with {unit_count} applied units and no pending appliance changes. "
-                "Sign in with the bootstrap administrator credentials."
-            ),
-            "applied_unit_count": unit_count,
-        }
-        _write_json_atomic(factory_reset_result_path(), completed)
-        factory_reset_request_path().unlink(missing_ok=True)
+            _scrub_retained_credentials()
+        if not manage_services:
+            return _mark_factory_reset_succeeded(request_payload, unit_count)
+        awaiting_readiness = _update_request(
+            "awaiting_readiness",
+            "Factory defaults applied; waiting for required services and management OpenAPI readiness.",
+            applied_unit_count=unit_count,
+        )
         if manage_services:
-            if boot_resume:
-                _schedule_service_restart(
-                    "atlaso-worker.service",
-                    unit_name="atlaso-factory-reset-worker-restart",
-                )
-            else:
-                _schedule_service_restart(
-                    "atlaso.service",
-                    "atlaso-worker.service",
-                    unit_name="atlaso-factory-reset-restart",
-                )
-        return completed
+            _schedule_readiness_finalizer()
+        return awaiting_readiness
     except Exception as exc:
         candidate_path.unlink(missing_ok=True)
         for suffix in ("-wal", "-shm", "-journal"):
@@ -518,9 +733,17 @@ def _run_factory_reset_locked(
         except Exception:  # noqa: BLE001 - preserve the primary reset failure and durable marker.
             pass
         safe_message = str(exc) if isinstance(exc, FactoryResetError) else "Factory reset failed unexpectedly."
+        failure_details: dict[str, Any] = {}
+        try:
+            current_request = json.loads(factory_reset_request_path().read_text(encoding="utf-8"))
+        except (FileNotFoundError, json.JSONDecodeError, OSError):
+            current_request = {}
+        if type(current_request.get("applied_unit_count")) is int:
+            failure_details["applied_unit_count"] = current_request["applied_unit_count"]
         _update_request(
             "failed",
             safe_message + " Reboot or run the factory-reset resume helper from the console.",
+            **failure_details,
         )
         raise
 
@@ -540,17 +763,23 @@ def run_factory_reset(
         )
 
 
-def main() -> int:
+def main(arguments: list[str] | None = None) -> int:
     """Run the appliance factory-reset entry point."""
+    parsed_arguments = list(arguments if arguments is not None else sys.argv[1:])
     if os.name == "posix" and not _running_as_posix_root():
         raise SystemExit("atlaso-factory-reset must run as root")
     try:
-        run_factory_reset()
+        if parsed_arguments == ["finalize"]:
+            result = finalize_factory_reset()
+        elif not parsed_arguments:
+            result = run_factory_reset()
+        else:
+            raise FactoryResetError("Unsupported factory-reset operation.")
     except Exception as exc:  # noqa: BLE001 - the durable marker carries the safe failure state.
         message = str(exc) if isinstance(exc, FactoryResetError) else "Factory reset failed unexpectedly."
         print(message, flush=True)
         return 1
-    print(json.dumps(read_factory_reset_state(), sort_keys=True), flush=True)
+    print(json.dumps(result, sort_keys=True), flush=True)
     return 0
 
 

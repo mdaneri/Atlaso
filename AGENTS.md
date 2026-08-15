@@ -354,7 +354,9 @@ The following cross-cutting boundaries always apply:
   all sessions and credentials, activate coherent core defaults while disabling optional services, and preserve depot,
   backup, and managed ESX Storage payload paths. Persist a non-secret recovery marker before database replacement,
   make resume idempotent across interruption or reboot, validate all generated runtime configuration before activation,
-  scrub transient secret staging, and leave all 16 desired/applied baselines equal with no follow-up Apply workflow.
+  scrub transient staging plus retained VCF Backup authorized keys and Web Terminal signing material, and leave all 16
+  desired/applied baselines equal with no follow-up Apply workflow. Keep the recovery marker pending until Atlaso,
+  worker, nginx, and stable management OpenAPI readiness are verified after restart.
 - Keep internal CA custody and managed service-certificate deployment available without a public CA listen interface.
   Interface selection owns portal publication only. Every selected NTS server apply includes the CA unit and executes
   it before NTP/NTS validation so runtime certificate material is present even when the CA baseline is current. Turning

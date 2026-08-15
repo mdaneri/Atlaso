@@ -136,10 +136,40 @@ def test_factory_reset_helper_persists_marker_before_detached_schedule(
     marker = json.loads((state_directory / "request.json").read_text(encoding="utf-8"))
     assert marker["state"] == "scheduled"
     scheduled = next(command for command in commands if command and command[0] == "/usr/bin/systemd-run")
+    assert "--collect" in scheduled
     assert "--on-active=2" in scheduled
     assert f"--property=WorkingDirectory={helper.ATLASO_STATE_DIR}" in scheduled
     assert f"--property=EnvironmentFile={helper.ATLASO_ENV_PATH}" in scheduled
     assert scheduled[-3:] == [str(runner), "-m", "atlaso.app.factory_reset"]
+
+
+def test_factory_reset_helper_treats_pending_timer_as_active(monkeypatch, tmp_path):
+    """A duplicate request cannot replace a valid marker while its delay timer is active."""
+    helper = load_helper_module()
+    state_directory = tmp_path / "factory-reset"
+    state_directory.mkdir()
+    request_path = state_directory / "request.json"
+    request_path.write_text(
+        json.dumps({"schema_version": 1, "state": "scheduled", "message": "scheduled"}),
+        encoding="utf-8",
+    )
+    commands: list[list[str]] = []
+
+    def fake_run(command: list[str], **_kwargs) -> subprocess.CompletedProcess[str]:
+        commands.append(command)
+        if command[-1] == "atlaso-factory-reset.timer":
+            return subprocess.CompletedProcess(command, 0, "", "")
+        return subprocess.CompletedProcess(command, 3, "", "")
+
+    monkeypatch.setattr(helper, "ATLASO_FACTORY_RESET_DIR", state_directory)
+    monkeypatch.setattr(helper, "ATLASO_FACTORY_RESET_REQUEST_PATH", request_path)
+    monkeypatch.setattr(helper, "ATLASO_FACTORY_RESET_RESULT_PATH", state_directory / "last-result.json")
+    monkeypatch.setattr(helper.shutil, "which", lambda command: f"/usr/bin/{command}")
+    monkeypatch.setattr(helper, "_run", fake_run)
+
+    assert helper._handle_factory_reset("schedule", []) == 0
+    assert json.loads(request_path.read_text(encoding="utf-8"))["state"] == "scheduled"
+    assert not any(command and command[0] == "/usr/bin/systemd-run" for command in commands)
 
 
 def test_factory_reset_helper_resume_is_idempotent(monkeypatch, tmp_path):
@@ -161,6 +191,68 @@ def test_factory_reset_helper_resume_is_idempotent(monkeypatch, tmp_path):
     )
 
     assert helper._handle_factory_reset("resume", []) == 0
+
+
+def test_factory_reset_helper_resume_queues_post_commit_finalizer(monkeypatch, tmp_path):
+    """Service preflight must not rerun a reset whose defaults are already committed."""
+    helper = load_helper_module()
+    state_directory = tmp_path / "factory-reset"
+    state_directory.mkdir()
+    request_path = state_directory / "request.json"
+    request_path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "state": "awaiting_readiness",
+                "message": "waiting",
+                "applied_unit_count": 16,
+            }
+        ),
+        encoding="utf-8",
+    )
+    scheduled: list[bool] = []
+    monkeypatch.setattr(helper, "ATLASO_FACTORY_RESET_DIR", state_directory)
+    monkeypatch.setattr(helper, "ATLASO_FACTORY_RESET_REQUEST_PATH", request_path)
+    monkeypatch.setattr(helper, "ATLASO_FACTORY_RESET_RESULT_PATH", state_directory / "last-result.json")
+    monkeypatch.setattr(
+        helper,
+        "_factory_reset_runner",
+        lambda **_kwargs: pytest.fail("post-commit resume must not rebuild factory defaults"),
+    )
+    monkeypatch.setattr(
+        helper,
+        "_schedule_factory_reset_finalizer",
+        lambda: scheduled.append(True) or subprocess.CompletedProcess([], 0, "", ""),
+    )
+
+    assert helper._handle_factory_reset("resume", []) == 0
+    assert scheduled == [True]
+
+
+def test_factory_reset_helper_finalizer_does_not_block_service_preflight(monkeypatch):
+    """Boot resume queues readiness work and lets the Atlaso service continue starting."""
+    helper = load_helper_module()
+    commands: list[list[str]] = []
+
+    def fake_run(command: list[str], **_kwargs) -> subprocess.CompletedProcess[str]:
+        commands.append(command)
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(helper.shutil, "which", lambda _command: "/usr/bin/systemd-run")
+    monkeypatch.setattr(helper, "_run", fake_run)
+
+    result = helper._schedule_factory_reset_finalizer()
+
+    assert result.returncode == 0
+    assert len(commands) == 1
+    assert "--collect" in commands[0]
+    assert "--no-block" in commands[0]
+    assert commands[0][-4:] == [
+        str(helper.ATLASO_FACTORY_RESET_PYTHON),
+        "-m",
+        "atlaso.app.factory_reset",
+        "finalize",
+    ]
 
 
 def ldap_payload(*, enabled: bool = False) -> dict:

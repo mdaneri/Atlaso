@@ -601,6 +601,15 @@ class SystemAdapter:
         """
         return self._helper_result("appliance-settings", "validate", config_path, dry_run_message="dry-run: appliance settings validation command recorded")
 
+    def preflight_appliance_settings_config(self, config_path: str) -> AdapterResult:
+        """Validate generated appliance settings artifacts without installing them."""
+        return self._helper_result(
+            "appliance-settings",
+            "preflight",
+            config_path,
+            dry_run_message="dry-run: appliance settings generated-config preflight recorded",
+        )
+
     def web_terminal_status(self) -> AdapterResult:
         """Return web terminal status."""
         return self._helper_result(
@@ -672,6 +681,15 @@ class SystemAdapter:
             The validate vcf backup config result.
         """
         return self._helper_result("vcf-backups", "validate", config_path, dry_run_message="dry-run: VCF backup SFTP validation command recorded")
+
+    def preflight_vcf_backup_config(self, config_path: str) -> AdapterResult:
+        """Validate the generated VCF Backup sshd configuration without installing it."""
+        return self._helper_result(
+            "vcf-backups",
+            "preflight",
+            config_path,
+            dry_run_message="dry-run: VCF backup generated-config preflight recorded",
+        )
 
     def validate_vcf_private_registry_config(self, config_path: str) -> AdapterResult:
         """Validate vcf private registry config.
@@ -821,6 +839,15 @@ class SystemAdapter:
             The validate public services config result.
         """
         return self._helper_result("public-services", "validate", config_path, dry_run_message="dry-run: public services nginx validation command recorded")
+
+    def preflight_public_services_config(self, config_path: str) -> AdapterResult:
+        """Validate the generated public-services nginx site without installing it."""
+        return self._helper_result(
+            "public-services",
+            "preflight",
+            config_path,
+            dry_run_message="dry-run: public services generated-config preflight recorded",
+        )
 
     def apply_public_services_config(self, config_path: str) -> AdapterResult:
         """Update public services config.

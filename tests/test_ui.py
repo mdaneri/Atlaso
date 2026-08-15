@@ -8022,6 +8022,44 @@ def test_backup_restore_factory_reset_replaces_database_and_baselines_runtime(cl
     assert stale_client.get("/dashboard", follow_redirects=False).status_code in {303, 307}
 
 
+def test_backup_restore_factory_reset_rolls_back_failed_fallback_candidate(client, monkeypatch):
+    """A dry-run unit failure cannot commit the fallback reset's table deletion."""
+    from sqlalchemy import select
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import ApplianceSettings, Setting
+
+    login(client)
+    with SessionLocal() as db:
+        settings = db.execute(select(ApplianceSettings)).scalar_one()
+        settings.fqdn = "preserve-on-failure.atlaso.internal"
+        db.add(Setting(key="factory.reset.fallback-preserved", value="yes"))
+        db.commit()
+
+    page = client.get("/backup-restore")
+    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+
+    monkeypatch.setattr(
+        "atlaso.app.ui.execute_appliance_apply_unit",
+        lambda *_args, **_kwargs: {"success": False},
+    )
+
+    with pytest.raises(RuntimeError, match="Factory reset preflight failed"):
+        client.post(
+            "/backup-restore/factory-reset",
+            data={"csrf": csrf},
+            follow_redirects=False,
+        )
+
+    with SessionLocal() as db:
+        settings = db.execute(select(ApplianceSettings)).scalar_one()
+        preserved = db.execute(
+            select(Setting).where(Setting.key == "factory.reset.fallback-preserved")
+        ).scalar_one()
+        assert settings.fqdn == "preserve-on-failure.atlaso.internal"
+        assert preserved.value == "yes"
+
+
 def test_real_local_users_apply_preserves_pending_password_for_disabled_user():
     """Verify that real local users apply preserves pending password for disabled user."""
     from atlaso.app.models import User

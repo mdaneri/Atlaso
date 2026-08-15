@@ -2,16 +2,20 @@
 
 import builtins
 import json
+import subprocess
+import sys
 
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 
-from atlaso.app.adapters.system import SystemAdapter
+from atlaso.app.adapters.system import AdapterResult, SystemAdapter
 from atlaso.app.config import get_settings
 from atlaso.app.database import Base
 from atlaso.app.factory_reset import (
     FactoryResetError,
+    _scrub_retained_credentials,
     _seed_factory_host_interfaces,
+    finalize_factory_reset,
     run_factory_reset,
 )
 from atlaso.app.models import (
@@ -66,6 +70,229 @@ def test_factory_reset_transaction_lock_rejects_overlapping_posix_runner(
     with pytest.raises(FactoryResetError, match="already running"):
         with factory_reset._factory_reset_transaction_lock():
             pytest.fail("contending runner must not enter the transaction")
+
+
+def test_factory_reset_scrubs_credentials_outside_apply_staging(tmp_path, monkeypatch):
+    """Reset removes retained SSH and Web Terminal credentials without touching payloads."""
+    import atlaso.app.factory_reset as factory_reset
+
+    authorized_keys = tmp_path / "authorized_keys"
+    terminal_requests = tmp_path / "web-terminal" / "requests"
+    terminal_private_key = tmp_path / "web-terminal-ca"
+    terminal_public_key = tmp_path / "web-terminal-ca.pub"
+    authorized_keys.mkdir()
+    terminal_requests.mkdir(parents=True)
+    for path in (
+        authorized_keys / "vcf-backup",
+        terminal_requests / "request.json",
+        terminal_private_key,
+        terminal_public_key,
+    ):
+        path.write_text("credential", encoding="utf-8")
+
+    monkeypatch.setattr(factory_reset, "VCF_BACKUPS_AUTHORIZED_KEYS_DIRECTORY", authorized_keys)
+    monkeypatch.setattr(factory_reset, "WEB_TERMINAL_REQUEST_DIRECTORY", terminal_requests)
+    monkeypatch.setattr(
+        factory_reset,
+        "WEB_TERMINAL_CREDENTIAL_PATHS",
+        (terminal_private_key, terminal_public_key),
+    )
+
+    _scrub_retained_credentials()
+
+    assert list(authorized_keys.iterdir()) == []
+    assert list(terminal_requests.iterdir()) == []
+    assert not terminal_private_key.exists()
+    assert not terminal_public_key.exists()
+
+
+def test_managed_factory_reset_retains_marker_until_readiness(tmp_path, monkeypatch):
+    """A real reset cannot publish success before its post-restart finalizer."""
+    import atlaso.app.factory_reset as factory_reset
+
+    database_path = tmp_path / "atlaso.db"
+    state_directory = tmp_path / "factory-reset"
+    database_path.write_bytes(b"database")
+    scheduled: list[tuple[str, ...]] = []
+    monkeypatch.setenv("ATLASO_FACTORY_RESET_STATE_DIRECTORY", str(state_directory))
+    monkeypatch.setattr(factory_reset, "_stop_application_services", lambda **_kwargs: None)
+    monkeypatch.setattr(factory_reset, "_candidate_database", lambda *_args, **_kwargs: 16)
+    monkeypatch.setattr(factory_reset, "_replace_database", lambda *_args: None)
+    monkeypatch.setattr(factory_reset, "_clear_apply_staging", lambda: None)
+    monkeypatch.setattr(factory_reset, "_scrub_retained_credentials", lambda: None)
+    monkeypatch.setattr(
+        factory_reset,
+        "_schedule_readiness_finalizer",
+        lambda: scheduled.append(("readiness",)),
+    )
+
+    result = factory_reset._run_factory_reset_locked(
+        database_url=f"sqlite:///{database_path}",
+        adapter=SystemAdapter(dry_run=False),
+        manage_services=True,
+    )
+
+    assert result["state"] == "awaiting_readiness"
+    assert result["applied_unit_count"] == 16
+    assert (state_directory / "request.json").is_file()
+    assert not (state_directory / "last-result.json").exists()
+    assert scheduled == [("readiness",)]
+
+
+def test_factory_reset_preflight_uses_generated_config_validators(monkeypatch):
+    """Real preflight validates generated nginx and sshd artifacts without applying them."""
+    import atlaso.app.factory_reset as factory_reset
+
+    calls: list[tuple[str, str, tuple[object, ...]]] = []
+
+    def fake_helper_result(
+        _adapter,
+        group: str,
+        action: str,
+        *args: object,
+        **_kwargs: object,
+    ) -> AdapterResult:
+        calls.append((group, action, args))
+        return AdapterResult(command=[group, action], dry_run=False)
+
+    monkeypatch.setattr(SystemAdapter, "_helper_result", fake_helper_result)
+    adapter = factory_reset._ValidationOnlyAdapter()
+
+    adapter.apply_appliance_settings_config("/tmp/appliance.json")
+    adapter.apply_vcf_backup_config("/tmp/backups.conf")
+    adapter.apply_public_services_config("/tmp/public.conf")
+
+    assert calls == [
+        ("appliance-settings", "preflight", ("/tmp/appliance.json",)),
+        ("vcf-backups", "preflight", ("/tmp/backups.conf",)),
+        ("public-services", "preflight", ("/tmp/public.conf",)),
+    ]
+
+
+def test_factory_reset_readiness_finalizer_is_detached(monkeypatch):
+    """The finalizer must release its caller before trying to acquire the reset lock."""
+    import atlaso.app.factory_reset as factory_reset
+
+    commands: list[list[str]] = []
+
+    def fake_run(command: list[str], **_kwargs) -> subprocess.CompletedProcess[str]:
+        commands.append(command)
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(factory_reset.shutil, "which", lambda _command: "/usr/bin/systemd-run")
+    monkeypatch.setattr(factory_reset.subprocess, "run", fake_run)
+
+    factory_reset._schedule_readiness_finalizer()
+
+    assert len(commands) == 1
+    assert "--collect" in commands[0]
+    assert "--no-block" in commands[0]
+    assert commands[0][-4:] == [sys.executable, "-m", "atlaso.app.factory_reset", "finalize"]
+
+
+def test_factory_reset_finalizer_requires_stable_management_readiness(tmp_path, monkeypatch):
+    """Terminal success follows two consecutive service and OpenAPI readiness samples."""
+    import atlaso.app.factory_reset as factory_reset
+
+    state_directory = tmp_path / "factory-reset"
+    state_directory.mkdir()
+    request_path = state_directory / "request.json"
+    request_path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "state": "awaiting_readiness",
+                "requested_at": "2026-08-15T20:00:00+00:00",
+                "updated_at": "2026-08-15T20:01:00+00:00",
+                "message": "waiting",
+                "applied_unit_count": 16,
+            }
+        ),
+        encoding="utf-8",
+    )
+    samples = iter([False, True, True])
+    monkeypatch.setattr(factory_reset, "factory_reset_state_directory", lambda: state_directory)
+    monkeypatch.setattr(factory_reset, "_running_as_posix_root", lambda: False)
+    monkeypatch.setattr(factory_reset, "_start_required_services", lambda: None)
+    monkeypatch.setattr(factory_reset, "_management_ready", lambda: next(samples))
+
+    result = finalize_factory_reset(readiness_timeout_seconds=1, poll_seconds=0)
+
+    assert result["state"] == "succeeded"
+    assert result["applied_unit_count"] == 16
+    assert not request_path.exists()
+    assert json.loads((state_directory / "last-result.json").read_text(encoding="utf-8"))["state"] == "succeeded"
+
+
+def test_factory_reset_finalizer_retains_failed_marker_when_readiness_never_stabilizes(
+    tmp_path,
+    monkeypatch,
+):
+    """A restart or OpenAPI failure remains resumable and never publishes success."""
+    import pytest
+
+    import atlaso.app.factory_reset as factory_reset
+
+    state_directory = tmp_path / "factory-reset"
+    state_directory.mkdir()
+    request_path = state_directory / "request.json"
+    request_path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "state": "awaiting_readiness",
+                "requested_at": "2026-08-15T20:00:00+00:00",
+                "updated_at": "2026-08-15T20:01:00+00:00",
+                "message": "waiting",
+                "applied_unit_count": 16,
+            }
+        ),
+        encoding="utf-8",
+    )
+    monotonic = iter([0.0, 2.0])
+    monkeypatch.setattr(factory_reset, "factory_reset_state_directory", lambda: state_directory)
+    monkeypatch.setattr(factory_reset, "_running_as_posix_root", lambda: False)
+    monkeypatch.setattr(factory_reset, "_start_required_services", lambda: None)
+    monkeypatch.setattr(factory_reset, "_management_ready", lambda: False)
+    monkeypatch.setattr(factory_reset.time, "monotonic", lambda: next(monotonic))
+
+    with pytest.raises(FactoryResetError, match="did not stabilize"):
+        finalize_factory_reset(readiness_timeout_seconds=1, poll_seconds=0)
+
+    assert json.loads(request_path.read_text(encoding="utf-8"))["state"] == "failed"
+    assert not (state_directory / "last-result.json").exists()
+
+
+def test_factory_reset_finalizer_retries_post_commit_failure(tmp_path, monkeypatch):
+    """A failed readiness attempt resumes activation instead of rebuilding defaults."""
+    import atlaso.app.factory_reset as factory_reset
+
+    state_directory = tmp_path / "factory-reset"
+    state_directory.mkdir()
+    request_path = state_directory / "request.json"
+    request_path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "state": "failed",
+                "requested_at": "2026-08-15T20:00:00+00:00",
+                "updated_at": "2026-08-15T20:01:00+00:00",
+                "message": "readiness failed",
+                "applied_unit_count": 16,
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(factory_reset, "factory_reset_state_directory", lambda: state_directory)
+    monkeypatch.setattr(factory_reset, "_running_as_posix_root", lambda: False)
+    monkeypatch.setattr(factory_reset, "_start_required_services", lambda: None)
+    monkeypatch.setattr(factory_reset, "_management_ready", lambda: True)
+
+    result = finalize_factory_reset(readiness_timeout_seconds=1, poll_seconds=0)
+
+    assert result["state"] == "succeeded"
+    assert result["applied_unit_count"] == 16
+    assert not request_path.exists()
 
 
 def test_factory_host_inventory_is_stable_across_startup_refresh(tmp_path):
