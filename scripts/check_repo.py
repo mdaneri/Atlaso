@@ -712,16 +712,29 @@ def check_agent_policy_gate(root: Path) -> list[Finding]:
         ordered_markers = ORDERED_TERMINAL_CLEANUP_MARKERS.get(relative_path)
         section_markers = TERMINAL_CLEANUP_SECTION_MARKERS.get(relative_path, ())
         section_anchor = TERMINAL_CLEANUP_SECTION_ANCHORS.get(relative_path)
+        section_anchor_count = (
+            sum(line.startswith(section_anchor) for line in text.splitlines())
+            if section_anchor is not None
+            else 0
+        )
         cleanup_section = (
             extract_markdown_policy_section(text, section_anchor)
-            if section_anchor is not None
+            if section_anchor is not None and section_anchor_count == 1
             else None
         )
-        if section_anchor is not None and cleanup_section is None:
+        if section_anchor is not None and section_anchor_count == 0:
             findings.append(
                 Finding(
                     path,
                     f"completed-task cleanup section is missing: {section_anchor}",
+                )
+            )
+        elif section_anchor is not None and section_anchor_count > 1:
+            findings.append(
+                Finding(
+                    path,
+                    "completed-task cleanup section must appear exactly once: "
+                    + section_anchor,
                 )
             )
         if section_markers and cleanup_section is not None:
@@ -779,9 +792,10 @@ def extract_markdown_policy_section(text: str, anchor: str) -> str | None:
         anchor: Exact heading or top-level list-item prefix for the cleanup policy.
     """
     lines = text.splitlines(keepends=True)
-    start = next((index for index, line in enumerate(lines) if line.startswith(anchor)), None)
-    if start is None:
+    starts = tuple(index for index, line in enumerate(lines) if line.startswith(anchor))
+    if len(starts) != 1:
         return None
+    start = starts[0]
 
     if anchor.startswith("#"):
         heading_level = len(anchor) - len(anchor.lstrip("#"))

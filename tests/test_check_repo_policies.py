@@ -593,6 +593,30 @@ def test_agent_policy_gate_ignores_incidental_marker_order(tmp_path: Path) -> No
         assert check_agent_policy_gate(tmp_path) == []
 
 
+def test_agent_policy_gate_rejects_duplicate_cleanup_sections(tmp_path: Path) -> None:
+    """Verify that a stale compliant cleanup section cannot mask another copy.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    for relative_path in ORDERED_TERMINAL_CLEANUP_MARKERS:
+        write_policy_files(tmp_path)
+        path = tmp_path / relative_path
+        anchor = TERMINAL_CLEANUP_SECTION_ANCHORS[relative_path]
+        path.write_text(
+            path.read_text(encoding="utf-8") + "\n" + anchor,
+            encoding="utf-8",
+        )
+
+        findings = check_agent_policy_gate(tmp_path)
+
+        assert len(findings) == 1
+        assert findings[0].path == path
+        assert findings[0].message == (
+            "completed-task cleanup section must appear exactly once: " + anchor
+        )
+
+
 def test_agent_policy_gate_rejects_missing_entry_point(tmp_path: Path) -> None:
     """Verify that agent policy gate rejects missing entry point.
 
