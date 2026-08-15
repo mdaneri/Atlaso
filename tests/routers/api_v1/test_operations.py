@@ -30,7 +30,11 @@ def test_operations_api_router_owns_exact_transport_set():
 
 
 def test_operational_api_transports_keep_scopes_and_schemas(client):
-    """Verify representative operational API reads retain scope and schema."""
+    """Verify representative operational API reads retain scope and schema.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
     raw_token, _token = create_token(
         client, ["read:services", "read:logs", "read:audit", "read:dashboard"]
     )
@@ -50,7 +54,11 @@ def test_operational_api_transports_keep_scopes_and_schemas(client):
 
 
 def test_operational_api_transports_reject_wrong_scope(client):
-    """Verify representative operational reads reject an unrelated scope."""
+    """Verify representative operational reads reject an unrelated scope.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
     raw_token, _token = create_token(client, ["read:wan"])
     headers = {"Authorization": f"Bearer {raw_token}"}
 

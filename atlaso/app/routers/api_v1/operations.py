@@ -45,7 +45,14 @@ class OperationsApiRouter:
 
 
 def build_router(dependencies: OperationsApiDependencies) -> OperationsApiRouter:
-    """Build the extracted operational API router without importing its facade."""
+    """Build the extracted operational API router without importing its facade.
+
+    Args:
+        dependencies: Facade-owned helpers retained during structural extraction.
+
+    Returns:
+        Configured operational API router and its stable endpoint callables.
+    """
     router = APIRouter(prefix="/api/v1", route_class=DocumentedAPIRoute)
     get_dhcp_settings_row = dependencies.get_dhcp_settings_row
     get_dns_settings_row = dependencies.get_dns_settings_row

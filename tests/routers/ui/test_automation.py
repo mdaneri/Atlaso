@@ -6,7 +6,11 @@ from tests.routers.ui.helpers import login
 
 
 def csrf_from_page(text: str) -> str:
-    """Return the CSRF token rendered in a management page."""
+    """Return the CSRF token rendered in a management page.
+
+    Args:
+        text: Rendered management page content containing the CSRF input.
+    """
     return text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
 
 

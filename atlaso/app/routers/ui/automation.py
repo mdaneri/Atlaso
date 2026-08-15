@@ -70,7 +70,14 @@ class AutomationUiRouter:
 
 
 def build_router(dependencies: AutomationUiDependencies) -> AutomationUiRouter:
-    """Build the Automation management UI router."""
+    """Build the Automation management UI router.
+
+    Args:
+        dependencies: Facade-owned helpers retained during structural extraction.
+
+    Returns:
+        Configured Automation UI router and its stable endpoint callables.
+    """
     router = APIRouter(
         prefix=MANAGEMENT_UI_ROOT,
         dependencies=[Depends(dependencies.require_management_ui_request)],

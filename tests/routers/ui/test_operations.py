@@ -34,7 +34,11 @@ def test_operations_router_owns_exact_transport_set():
 
 
 def test_operational_pages_keep_stable_management_transports(client):
-    """Verify the extracted pages retain their stable paths and content."""
+    """Verify the extracted pages retain their stable paths and content.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
     login(client)
 
     assert client.get("/services").status_code == 200
@@ -46,7 +50,11 @@ def test_operational_pages_keep_stable_management_transports(client):
 
 
 def test_task_status_transport_retains_secret_redaction(client):
-    """Verify task JSON remains redacted after transport extraction."""
+    """Verify task JSON remains redacted after transport extraction.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
     login(client)
     with SessionLocal() as db:
         db.add(
