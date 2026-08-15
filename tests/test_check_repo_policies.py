@@ -1494,7 +1494,14 @@ def test_agent_policy_gate_ignores_css_hidden_html_policy_sections(
     """
     sibling = "\n- following policy"
     for relative_path in ORDERED_TERMINAL_CLEANUP_MARKERS:
-        for style in ("display:none", "color:red; DISPLAY: none !important;"):
+        for style in (
+            "display:none",
+            "color:red; DISPLAY: none !important;",
+            "visibility:hidden",
+            "visibility: collapse !important",
+            "content-visibility:hidden",
+            "opacity:0",
+        ):
             write_policy_files(tmp_path)
             path = tmp_path / relative_path
             anchor = TERMINAL_CLEANUP_SECTION_ANCHORS[relative_path]
@@ -1517,6 +1524,30 @@ def test_agent_policy_gate_ignores_css_hidden_html_policy_sections(
             assert findings[0].message == (
                 "completed-task cleanup section is missing: " + anchor
             )
+
+
+def test_agent_policy_gate_honors_fences_before_html_comments(
+    tmp_path: Path,
+) -> None:
+    """Verify comment-like fenced text cannot consume later visible policy.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    marker = '`cleanup-ready`'
+    for relative_path in ORDERED_TERMINAL_CLEANUP_MARKERS:
+        write_policy_files(tmp_path)
+        path = tmp_path / relative_path
+        anchor = TERMINAL_CLEANUP_SECTION_ANCHORS[relative_path]
+        content_prefix = "" if anchor.startswith("#") else "  "
+        replacement = (
+            f"```text\n{content_prefix}<!--\n{content_prefix}```\n"
+            f"{content_prefix}{marker}\n{content_prefix}-->"
+        )
+        text = path.read_text(encoding="utf-8").replace(marker, replacement, 1)
+        path.write_text(text, encoding="utf-8")
+
+        assert check_agent_policy_gate(tmp_path) == []
 
 
 def test_agent_policy_gate_preserves_visible_inline_html_content(

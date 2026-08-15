@@ -998,11 +998,21 @@ def has_css_hidden_style(attributes: str) -> bool:
             )
             if value is not None
         )
-        if re.search(
-            r"(?:^|;)\s*display\s*:\s*none(?:\s*!important)?\s*(?:;|$)",
-            style,
-            flags=re.IGNORECASE,
-        ) is not None:
+        hidden_declarations = (
+            r"display\s*:\s*none",
+            r"visibility\s*:\s*(?:hidden|collapse)",
+            r"content-visibility\s*:\s*hidden",
+            r"opacity\s*:\s*(?:0+(?:\.0*)?|0*\.0+|0%)",
+        )
+        if any(
+            re.search(
+                rf"(?:^|;)\s*{declaration}(?:\s*!important)?\s*(?:;|$)",
+                style,
+                flags=re.IGNORECASE,
+            )
+            is not None
+            for declaration in hidden_declarations
+        ):
             return True
     return False
 
@@ -1172,10 +1182,11 @@ def strip_markdown_nonoperative_content(text: str) -> str:
     Args:
         text: Markdown source whose operative prose must be inspected.
     """
+    without_fenced_code = strip_markdown_fenced_code(text)
     without_comments = re.sub(
         r"<!--.*?(?:-->|$)",
         lambda match: re.sub(r"[^\r\n]", "", match.group(0)),
-        text,
+        without_fenced_code,
         flags=re.DOTALL,
     )
     without_raw_directives = without_comments
