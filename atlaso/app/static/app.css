@@ -103,21 +103,73 @@ textarea {
 
 .nav-stack {
   display: grid;
-  gap: 3px;
+  gap: 5px;
+  align-content: start;
 }
 
-.nav-section-label {
-  margin: 12px 10px 3px;
+.nav-section {
+  min-width: 0;
+  align-self: start;
+}
+
+.nav-section-toggle {
+  display: flex;
+  width: 100%;
+  gap: 8px;
+  align-items: center;
+  justify-content: space-between;
+  margin: 12px 0 3px;
+  border: 0;
+  border-radius: 6px;
+  padding: 5px 10px;
+  background: transparent;
   color: #64748b;
+  cursor: pointer;
   font-size: 10px;
   font-weight: 700;
-  line-height: 1;
+  line-height: 1.2;
   letter-spacing: 0;
+  text-align: left;
   text-transform: uppercase;
 }
 
-.nav-section-label:first-child {
+.nav-section:first-child .nav-section-toggle {
   margin-top: 2px;
+}
+
+.nav-section-toggle:hover {
+  background: #e2e8f0;
+  color: #334155;
+}
+
+.nav-section-toggle:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.nav-section-chevron {
+  width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
+  fill: none;
+  stroke: currentcolor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.8;
+  transition: transform 0.14s ease;
+}
+
+.nav-section-toggle[aria-expanded="false"] .nav-section-chevron {
+  transform: rotate(-90deg);
+}
+
+.nav-section-links {
+  display: grid;
+  gap: 3px;
+}
+
+.nav-section-links[hidden] {
+  display: none;
 }
 
 .nav-link {

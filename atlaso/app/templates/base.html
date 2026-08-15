@@ -12,7 +12,7 @@
     <link rel="icon" href="/favicon.ico" type="image/x-icon">
     <link rel="icon" href="/static/brand/atlaso-icon.svg" type="image/svg+xml">
     <link rel="stylesheet" href="/static/vendor/tabulator/tabulator.min.css">
-    <link rel="stylesheet" href="/static/app.css?v=vlan-interface-wizard-304-2">
+    <link rel="stylesheet" href="/static/app.css?v=issue-338-1">
     {% block extra_head %}{% endblock %}
   </head>
   <body>
@@ -24,23 +24,23 @@
         </a>
         <nav class="nav-stack" aria-label="Primary">
           {% set nav_groups = [
-            ("Overview", [
+            ("overview", "Overview", [
               ("Dashboard", management_ui_path("/dashboard"), "read:dashboard"),
               ("Monitor", management_ui_path("/monitor"), "read:monitoring")
             ]),
-            ("Appliance Setup", [
+            ("appliance-setup", "Appliance Setup", [
               ("Settings", management_ui_path("/settings"), "admin:all"),
               ("Physical Interfaces", management_ui_path("/physical-interfaces"), "read:interfaces"),
               ("VLAN Interfaces", management_ui_path("/vlan-interfaces"), "read:vlans"),
               ("Routes & WAN Simulation", management_ui_path("/routes-wan"), "read:routes"),
               ("Firewall", management_ui_path("/firewall"), "read:firewall")
             ]),
-            ("Core Services", [
+            ("core-services", "Core Services", [
               ("DNS", management_ui_path("/dns"), "read:dns"),
               ("NTP / NTS", management_ui_path("/ntp"), "read:services"),
               ("DHCP", management_ui_path("/dhcp"), "read:dhcp")
             ]),
-            ("Identity & Trust", [
+            ("identity-trust", "Identity & Trust", [
               ("Authentication", management_ui_path("/authentication"), "read:dashboard"),
               ("OpenID Connect", management_ui_path("/openid-connect"), "admin:all"),
               ("Users", management_ui_path("/users"), "admin:all"),
@@ -48,7 +48,7 @@
               ("Certificate Authority", management_ui_path("/certificate-authority"), "admin:all"),
               ("vSphere Key Providers", management_ui_path("/vsphere-key-providers"), "read:kms")
             ]),
-            ("VCF Workflows", [
+            ("vcf-workflows", "VCF Workflows", [
               ("Network Boot", management_ui_path("/network-boot"), "read:pxe"),
               ("ESX Storage", management_ui_path("/esx-storage"), "read:esx-storage"),
               ("Vaults", management_ui_path("/vaults"), "admin:all"),
@@ -57,7 +57,7 @@
               ("VCF Private Registry", management_ui_path("/vcf-private-registry"), "read:vcf-registry"),
               ("VCF Backups", management_ui_path("/vcf-backups"), "read:vcf-backups")
             ]),
-            ("Operations", [
+            ("operations", "Operations", [
               ("Web terminal", management_ui_path("/terminal"), "admin:all"),
               ("Services", management_ui_path("/services"), "read:services"),
               ("Tasks", management_ui_path("/tasks"), "read:dashboard"),
@@ -68,17 +68,59 @@
               ("Backup / Restore", management_ui_path("/backup-restore"), "admin:all")
             ])
           ] %}
-          {% for group_label, links in nav_groups %}
-            {% set group = namespace(rendered=false) %}
-            {% for label, href, scope in links %}
-              {% if identity and identity.can(scope) %}
-                {% if not group.rendered %}
-                  <span class="nav-section-label">{{ group_label }}</span>
-                  {% set group.rendered = true %}
-                {% endif %}
-                <a class="nav-link {% if request.url.path == href %}active{% endif %}" href="{{ href }}">{{ label }}</a>
+          {% set nav_link_aliases = {
+            management_ui_path("/certificate-authority"): [management_ui_path("/ca/requests")]
+          } %}
+          {% set nav_group_aliases = {
+            "identity-trust": [(management_ui_path("/ca/requests"), "write:ca-requests")]
+          } %}
+          {% for group_key, group_label, links in nav_groups %}
+            {% set group = namespace(authorized_links=[], active=false) %}
+            {% for alias, scope in nav_group_aliases.get(group_key, []) %}
+              {% if identity and identity.can(scope) and (request.url.path == alias or request.url.path.startswith(alias ~ "/")) %}
+                {% set group.active = true %}
               {% endif %}
             {% endfor %}
+            {% for label, href, scope in links %}
+              {% if identity and identity.can(scope) %}
+                {% set link = namespace(active=request.url.path == href or request.url.path.startswith(href ~ "/")) %}
+                {% for alias in nav_link_aliases.get(href, []) %}
+                  {% if request.url.path == alias or request.url.path.startswith(alias ~ "/") %}
+                    {% set link.active = true %}
+                  {% endif %}
+                {% endfor %}
+                {% set group.authorized_links = group.authorized_links + [(label, href, link.active)] %}
+                {% if link.active %}{% set group.active = true %}{% endif %}
+              {% endif %}
+            {% endfor %}
+            {% if group.authorized_links %}
+              <section class="nav-section{% if group.active %} active{% endif %}" data-primary-nav-group data-nav-group-key="{{ group_key }}">
+                <button
+                  id="primary-nav-{{ group_key }}-toggle"
+                  class="nav-section-toggle"
+                  type="button"
+                  aria-expanded="true"
+                  aria-controls="primary-nav-{{ group_key }}-links"
+                  data-primary-nav-toggle
+                >
+                  <span>{{ group_label }}</span>
+                  <svg class="nav-section-chevron" viewBox="0 0 20 20" aria-hidden="true" focusable="false">
+                    <path d="m5.5 7.5 4.5 4.5 4.5-4.5"/>
+                  </svg>
+                </button>
+                <div
+                  id="primary-nav-{{ group_key }}-links"
+                  class="nav-section-links"
+                  role="group"
+                  aria-labelledby="primary-nav-{{ group_key }}-toggle"
+                  data-primary-nav-links
+                >
+                  {% for label, href, active in group.authorized_links %}
+                    <a class="nav-link {% if active %}active{% endif %}" href="{{ href }}"{% if active %} aria-current="page"{% endif %}>{{ label }}</a>
+                  {% endfor %}
+                </div>
+              </section>
+            {% endif %}
           {% endfor %}
         </nav>
         {% if identity %}
@@ -317,7 +359,7 @@
     <link rel="stylesheet" href="/static/vendor/monaco/atlaso-monaco.min.css?v=atlaso-monaco-20260806-7">
     <script src="/static/vendor/monaco/atlaso-monaco.min.js?v=atlaso-monaco-20260806-7"></script>
     <script src="/static/ui-routes.js?v=issue-287-1"></script>
-    <script src="/static/app.js?v=monitor-network-boot-races-20260814-1"></script>
+    <script src="/static/app.js?v=monitor-network-boot-navigation-races-20260814-1"></script>
     <script src="/static/pwa.js?v=issue-287-2"></script>
     {% block extra_scripts %}{% endblock %}
   </body>
