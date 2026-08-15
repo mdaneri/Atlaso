@@ -202,6 +202,62 @@ def _wait_for_release_restart_finalizer(timeout_seconds: int = 90) -> bool:
     return False
 
 
+def _recovered_appliance_update_step_result(
+    job: Job,
+    step: JobStep,
+    *,
+    status: str,
+    definitive: dict[str, Any] | None = None,
+    error: str = "",
+) -> dict[str, Any]:
+    """Build the normal per-stream result used by appliance-update completion.
+
+    Args:
+        job: Parent Appliance Update job being recovered.
+        step: Child update stream being terminalized.
+        status: Definitive child status to persist.
+        definitive: Durable release transaction evidence for the release child.
+        error: Sanitized terminal error for a failed or skipped child.
+    """
+    try:
+        result = json.loads(step.result or "{}")
+    except json.JSONDecodeError:
+        result = {}
+    if not isinstance(result, dict):
+        result = {}
+    config = _job_config(job)
+    stream = step.component_key
+    transaction = definitive if isinstance(definitive, dict) else {}
+    commands = transaction.get("commands") if stream == "atlaso_release" else result.get("commands")
+    if not isinstance(commands, list):
+        commands = []
+    success = status == JobStatus.SUCCEEDED.value
+    result.update(
+        {
+            "unit_id": stream,
+            "label": UPDATE_STREAM_LABELS.get(stream, stream),
+            "mode": str(config.get("mode") or "run"),
+            "selected_streams": [stream],
+            "selected_labels": [UPDATE_STREAM_LABELS.get(stream, stream)],
+            "status": status,
+            "success": success,
+            "dry_run": False,
+            "restart_after_commit": False,
+            "commands": [command for command in commands if isinstance(command, dict)],
+            "config_path": "",
+            "config_preview": "",
+            "worker_recovery": "root_finalizer" if transaction else "interrupted",
+        }
+    )
+    if transaction:
+        result["release_transaction"] = transaction
+    if error:
+        result["error"] = error
+    elif success:
+        result.pop("error", None)
+    return result
+
+
 def recover_interrupted_worker_jobs(
     db: Session,
     *,
@@ -254,29 +310,26 @@ def recover_interrupted_worker_jobs(
                 None,
             )
             if recovered and release_step is not None:
-                release_step.status = finalizer_status
-                release_step.started_at = release_step.started_at or job.started_at or now
-                release_step.finished_at = now
-                release_step.progress_percent = 100
-                release_step.error = (
+                release_error = (
                     None
                     if finalizer_status == JobStatus.SUCCEEDED.value
                     else str(definitive.get("error") or "The Atlaso release transaction failed.")
                 )
-                try:
-                    release_result = json.loads(release_step.result or "{}")
-                except json.JSONDecodeError:
-                    release_result = {}
-                release_result.update(
-                    {
-                        "status": finalizer_status,
-                        "success": finalizer_status == JobStatus.SUCCEEDED.value,
-                        "release_transaction": definitive,
-                        "worker_recovery": "root_finalizer",
-                    }
+                release_result = _recovered_appliance_update_step_result(
+                    job,
+                    release_step,
+                    status=finalizer_status,
+                    definitive=definitive,
+                    error=release_error or "",
                 )
-                release_step.result = json.dumps(release_result, indent=2, sort_keys=True)
-                db.add(release_step)
+                _persist_appliance_update_step_completion(
+                    db,
+                    job,
+                    release_step,
+                    result=release_result,
+                    completed=1,
+                    total=len(update_steps),
+                )
             remaining_steps = [step for step in update_steps if step is not release_step]
             resume_pending_children = bool(
                 recovered
@@ -320,20 +373,20 @@ def recover_interrupted_worker_jobs(
                     continue
                 step.finished_at = now
                 step.progress_percent = 100
-                try:
-                    step_result = json.loads(step.result or "{}")
-                except json.JSONDecodeError:
-                    step_result = {}
-                step_result.update(
-                    {
-                        "status": step.status,
-                        "success": False,
-                        "error": step.error,
-                        "worker_recovery": "interrupted",
-                    }
+                step_result = _recovered_appliance_update_step_result(
+                    job,
+                    step,
+                    status=step.status,
+                    error=step.error or "",
                 )
-                step.result = json.dumps(step_result, indent=2, sort_keys=True)
-                db.add(step)
+                _persist_appliance_update_step_completion(
+                    db,
+                    job,
+                    step,
+                    result=step_result,
+                    completed=int(step.position or 0) + 1,
+                    total=len(update_steps),
+                )
             all_steps_succeeded = bool(update_steps) and all(
                 step.status == JobStatus.SUCCEEDED.value for step in update_steps
             )
@@ -342,6 +395,36 @@ def recover_interrupted_worker_jobs(
                 if recovered and all_steps_succeeded
                 else JobStatus.FAILED.value
             )
+            if recovered:
+                from atlaso.app.ui import (
+                    aggregate_appliance_update_results,
+                    complete_appliance_update_task,
+                )
+
+                config = _job_config(job)
+                selected = [str(value) for value in config.get("selected_streams", [])]
+                stream_results = []
+                for step in update_steps:
+                    try:
+                        step_result = json.loads(step.result or "{}")
+                    except json.JSONDecodeError:
+                        step_result = {}
+                    if isinstance(step_result, dict):
+                        stream_results.append(step_result)
+                update_result = aggregate_appliance_update_results(
+                    selected_stream_ids=selected,
+                    settings=config.get("settings") if isinstance(config.get("settings"), dict) else {},
+                    actor=job.created_by,
+                    mode=str(config.get("mode") or "run"),
+                    stream_results=stream_results,
+                    job_id=job.id,
+                )
+                if finalizer_status == JobStatus.FAILED.value:
+                    update_result["error"] = str(
+                        definitive.get("error") or "The Atlaso release transaction failed."
+                    )
+                complete_appliance_update_task(db, job=job, update_result=update_result)
+                continue
         else:
             job.status = finalizer_status if recovered else JobStatus.FAILED.value
         job.finished_at = now
@@ -458,16 +541,45 @@ def _complete_appliance_update_step(
         step = db.get(JobStep, f"{job_id}:{stream}")
         if job is None or step is None:
             return
-        now = utcnow()
-        step.status = str(result.get("status") or JobStatus.FAILED.value)
-        step.started_at = step.started_at or now
-        step.finished_at = now
-        step.progress_percent = 100
-        step.result = json.dumps(result, indent=2, sort_keys=True)
-        step.error = None if result.get("success") else _appliance_update_result_error(result)
-        job.progress_percent = max(int(job.progress_percent or 0), int((completed / max(total, 1)) * 90))
-        db.add_all([job, step])
+        _persist_appliance_update_step_completion(
+            db,
+            job,
+            step,
+            result=result,
+            completed=completed,
+            total=total,
+        )
         db.commit()
+
+
+def _persist_appliance_update_step_completion(
+    db: Session,
+    job: Job,
+    step: JobStep,
+    *,
+    result: dict[str, Any],
+    completed: int,
+    total: int,
+) -> None:
+    """Persist one child result through the shared completion bookkeeping.
+
+    Args:
+        db: Active database session.
+        job: Parent Appliance Update job being updated.
+        step: Child update stream reaching a terminal state.
+        result: Complete stream result to persist.
+        completed: Number of streams completed through this child.
+        total: Total streams in the parent update.
+    """
+    now = utcnow()
+    step.status = str(result.get("status") or JobStatus.FAILED.value)
+    step.started_at = step.started_at or now
+    step.finished_at = now
+    step.progress_percent = 100
+    step.result = json.dumps(result, indent=2, sort_keys=True)
+    step.error = None if result.get("success") else _appliance_update_result_error(result)
+    job.progress_percent = max(int(job.progress_percent or 0), int((completed / max(total, 1)) * 90))
+    db.add_all([job, step])
 
 
 def _run_appliance_update(job_id: str) -> None:

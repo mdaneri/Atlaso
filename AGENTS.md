@@ -329,7 +329,9 @@ The following cross-cutting boundaries always apply:
   establish the runtime transaction gate before any candidate or rollback worker restart and keep recovery behind it
   until the definitive write completes, then resume only untouched pending
   update children. Gate timeout exits worker startup for systemd retry, and the surviving helper removes staged source
-  credentials before restarting the caller. Any post-switch failure restores the previous release, assets, database,
+  credentials before restarting the caller. Definitive finalizers retain sanitized helper commands, and recovery uses
+  the ordinary child, parent, terminal task-log, and audit completion path. Any post-switch failure restores the
+  previous release, assets, database,
   and nginx-ready front door with `rolled_back=true`. Worker startup must reject a success
   finalizer that disagrees with the durable active release or running version. Lifecycle coverage proves both successful
   activation and rollback before and after audited appliance reboots; never reboot automatically as part of installation.

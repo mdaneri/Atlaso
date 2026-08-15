@@ -418,7 +418,9 @@ status: current
   A gate timeout must exit worker startup for systemd retry, never enter the ordinary work loop. Remove and durably flush
   staged source credentials from the surviving helper before it restarts the calling worker. Require nginx plus web,
   worker, and console service state, and require the signed receipt, `current`, compatibility
-  virtualenv, internal OpenAPI version, nginx management-front-door OpenAPI version, and candidate version to agree. Any
+  virtualenv, internal OpenAPI version, nginx management-front-door OpenAPI version, and candidate version to agree.
+  Definitive finalizers must retain sanitized helper command evidence; startup recovery must pass that evidence through
+  the ordinary child completion, parent completion, terminal task-log, and audit bookkeeping. Any
   failure after the switch must restore the previous release, helper/systemd assets, SQLite snapshot, and working nginx
   front door, write
   `rolled_back=true` with a sanitized failing layer, and fail both release child and parent. Worker startup must reject

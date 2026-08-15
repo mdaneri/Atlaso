@@ -11779,6 +11779,7 @@ def _apply_atlaso_release(
                 "status": "succeeded",
                 "rolled_back": False,
                 "no_change": True,
+                "commands": commands,
                 "active_release_verification": activation,
                 "finished_at": datetime.now(timezone.utc).isoformat(),
             }
@@ -11905,6 +11906,7 @@ def _apply_atlaso_release(
                 "rolled_back": False,
                 "service_health": True,
                 "worker_restart": worker_activation,
+                "commands": commands,
                 "active_release_verification": activation,
                 "finished_at": datetime.now(timezone.utc).isoformat(),
             }
@@ -12162,6 +12164,7 @@ def _apply_atlaso_release(
                     "failure_layer": failure_layer,
                     "rollback_health": rollback_ready,
                     "rollback_service_checks": rollback_services,
+                    "commands": commands,
                     "active_release_verification": rollback_activation,
                     "rollback_failures": [
                         str(item.get("layer") or "rollback_unknown")

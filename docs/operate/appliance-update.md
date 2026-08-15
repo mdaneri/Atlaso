@@ -250,9 +250,10 @@ finalizer, restarts the worker through the candidate release, and requires the n
 job, version, and release-root identity before success becomes definitive. The helper establishes a runtime gate before
 any candidate or rollback worker restart and keeps both workers from consuming a finalizer until its durable write and
 the surrounding transaction have finished. The worker exits for systemd retry instead of accepting work if that gate
-does not open within the bounded startup wait. The
-surviving privileged helper removes and flushes any staged source-credential file before restarting the calling worker.
-The helper then requires
+does not open within the bounded startup wait. The surviving privileged helper removes and flushes any staged
+source-credential file before restarting the calling worker. The definitive finalizer retains sanitized helper command
+evidence so startup recovery can run the same child completion, parent completion, terminal task-log, and audit
+bookkeeping as an uninterrupted update. The helper then requires
 `current`, the compatibility virtualenv, the signed release receipt, internal `/openapi.json`, and the applied HTTP or
 HTTPS nginx management front door to report the exact candidate version. The finalizer retains the candidate and
 previous versions, receipt identity, active-release verification, internal and front-door versions, and sanitized

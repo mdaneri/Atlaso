@@ -1842,6 +1842,106 @@ def test_worker_restart_uses_matching_root_release_finalizer(client, monkeypatch
         assert completed.status == "succeeded"
 
 
+@pytest.mark.parametrize("finalizer_status", ["succeeded", "failed"])
+def test_worker_restart_runs_normal_release_completion_bookkeeping(
+    client,
+    monkeypatch,
+    tmp_path,
+    finalizer_status,
+):
+    """Verify recovered terminal releases retain helper output, logs, and audit.
+
+    Args:
+        client: HTTP test client providing isolated application state.
+        monkeypatch: Pytest fixture used to replace completion side effects.
+        tmp_path: Temporary directory provided for finalizer evidence.
+        finalizer_status: Definitive success or rollback result to recover.
+    """
+    from atlaso.app import ui, worker
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job
+    from atlaso.app.services.appliance_update import ensure_appliance_update_job_steps
+
+    job_id = f"job_release_bookkeeping_{finalizer_status}"
+    command = {
+        "command": ["release-activation-check", "complete"],
+        "returncode": 0 if finalizer_status == "succeeded" else 1,
+        "success": finalizer_status == "succeeded",
+        "stdout": "candidate ready" if finalizer_status == "succeeded" else "",
+        "stderr": "" if finalizer_status == "succeeded" else "candidate rolled back",
+    }
+    finalizer = tmp_path / f"{finalizer_status}-finalizer.json"
+    finalizer.write_text(
+        json.dumps(
+            {
+                "job_id": job_id,
+                "status": finalizer_status,
+                "release": "0.9.0",
+                "rolled_back": finalizer_status == "failed",
+                "commands": [command],
+                "error": "candidate rolled back" if finalizer_status == "failed" else "",
+                "worker_restart": {"success": True} if finalizer_status == "succeeded" else {},
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(worker, "APPLIANCE_UPDATE_FINALIZER_PATH", str(finalizer))
+    monkeypatch.setattr(worker, "reconcile_release_success_finalizer", lambda payload: (payload, True))
+    submissions: list[tuple[str, dict]] = []
+    failures: list[tuple[str, dict]] = []
+    audits: list[dict] = []
+    monkeypatch.setattr(
+        ui,
+        "log_appliance_update_submission",
+        lambda recovered_job_id, result: submissions.append((recovered_job_id, result)),
+    )
+    monkeypatch.setattr(
+        ui,
+        "log_appliance_update_failures",
+        lambda recovered_job_id, result: failures.append((recovered_job_id, result)),
+    )
+    monkeypatch.setattr(ui, "record_audit", lambda _db, **kwargs: audits.append(kwargs))
+
+    with SessionLocal() as db:
+        job = Job(
+            id=job_id,
+            type="appliance-update",
+            status="running",
+            created_by="admin",
+            task_config_json=json.dumps(
+                {
+                    "selected_streams": ["atlaso_release"],
+                    "settings": {},
+                    "mode": "run",
+                }
+            ),
+            result='{"status":"running","success":false}',
+        )
+        db.add(job)
+        db.flush()
+        step = ensure_appliance_update_job_steps(
+            db,
+            job=job,
+            selected_streams=["atlaso_release"],
+        )[0]
+        step.status = "running"
+        db.commit()
+
+        assert worker.recover_interrupted_worker_jobs(db) == 1
+        recovered = db.get(Job, job_id)
+        recovered_step = recovered.steps[0]
+        assert recovered.status == finalizer_status
+        assert json.loads(recovered_step.result)["commands"] == [command]
+        assert json.loads(recovered.result)["commands"] == [command]
+
+    assert len(submissions) == 1
+    assert len(failures) == (1 if finalizer_status == "failed" else 0)
+    assert len(audits) == 1
+    assert audits[0]["action"] == "run_appliance_update"
+    assert audits[0]["detail"] == "release-activation-check complete"
+    assert audits[0]["success"] is (finalizer_status == "succeeded")
+
+
 def test_worker_restart_rejects_success_finalizer_for_another_running_version(client, monkeypatch, tmp_path):
     """Verify startup rejects success evidence that disagrees with the running release.
 
@@ -2556,6 +2656,7 @@ def test_failed_candidate_restores_previous_release_and_database(
     assert finalizer["rolled_back"] is expected_rolled_back
     assert finalizer["rollback_health"] is expected_rolled_back
     assert finalizer["failure_layer"] == expected_layer
+    assert finalizer["commands"]
     assert not credential_path.exists()
     if failure_stage in {"worker_restart", "worker_activation", "finalizer_persistence"}:
         assert "restart_pending" in finalizer_statuses
