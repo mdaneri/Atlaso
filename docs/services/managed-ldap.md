@@ -66,8 +66,8 @@ wizard-backed Tabulator grids with bottom add rows. Opening a saved row returns 
 Enabled column remains a direct edit for quick desired-state changes. Row menus retain password reset, unlock,
 membership, and deletion actions. Group membership presents the selected organization's current users and eligible
 nested groups, and new groups default to Enabled before review. User creation can stage a password or postpone it;
-enabling an account without an
-applied or staged password causes LDAP apply validation to stop before host mutation.
+non-grid user and group creation returns to the selected organization using its saved identity. Enabling an account
+without an applied or staged password causes LDAP apply validation to stop before host mutation.
 
 The one-time VCF bind credential opens with its **Bind password** help collapsed and focus on **Done**, leaving the
 credential text unselected until the operator deliberately copies or saves it.
