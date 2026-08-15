@@ -249,7 +249,9 @@ validates and reloads nginx, and verifies web, worker, console, and nginx servic
 finalizer, restarts the worker through the candidate release, and requires the new systemd PID to publish the matching
 job, version, and release-root identity before success becomes definitive. Before switching the active link, the helper
 durably records a bounded rollback manifest containing the previous and candidate releases plus the database and
-installed-asset backups. It persists restart-pending evidence before establishing the volatile runtime gate, then keeps
+installed-asset backups. If ESX Storage aliases migrate, the helper refreshes and flushes that manifest after adding the
+allowlist backup and before rewriting either the claims or database, so rollback cannot diverge. It persists
+restart-pending evidence before establishing the volatile runtime gate, then keeps
 both workers from consuming a finalizer until its durable write and the surrounding transaction have finished. Worker
 pre-start distinguishes the live helper by boot, PID, and process-start identity. If a reboot removes the gate and the
 recorded helper no longer owns the transaction, privileged pre-start recovery restores and verifies the previous
@@ -263,6 +265,9 @@ HTTPS nginx management front door to report the exact candidate version. The fin
 previous versions, receipt identity, active-release verification, internal and front-door versions, and sanitized
 failing layer. Worker startup rechecks the success finalizer against the durable links, signed receipt, and running
 version; inconsistent success evidence fails recovery instead of being accepted.
+When the signed candidate is already the active release, these same readiness checks are definitive and Atlaso does not
+schedule a second, unobserved delayed service restart. A failed no-change verification retains every sanitized readiness
+command in its finalizer.
 
 A failure in systemd asset activation, the atomic switch, candidate startup, maintenance removal, final `nginx -t`,
 worker handoff, or front-door version readiness enters the same rollback boundary. Before rollback can restart a worker,

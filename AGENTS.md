@@ -329,7 +329,10 @@ The following cross-cutting boundaries always apply:
   persist the bounded rollback manifest before switching the active link, persist restart-pending evidence before the
   volatile runtime gate, and keep recovery behind that gate until the definitive write completes. Worker pre-start must
   distinguish the live helper by boot, PID, and process-start identity and roll back stale provisional evidence before
-  admitting the worker after a host restart. Then resume only untouched pending
+  admitting the worker after a host restart. Refresh the durable manifest after the ESX allowlist backup is added and
+  before claim migration mutates its allowlist or database, so both restore together. An already-active release completes
+  from exact readiness evidence without scheduling an
+  unverified service restart. Then resume only untouched pending
   update children. Gate timeout exits worker startup for systemd retry, and the surviving helper removes staged source
   credentials before restarting the caller. Definitive finalizers retain sanitized helper commands, and recovery uses
   the ordinary child, parent, terminal task-log, and audit completion path. Any post-switch failure restores the

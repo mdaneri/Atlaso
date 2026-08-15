@@ -11097,6 +11097,7 @@ def _validated_release_recovery_context(finalizer: dict) -> dict[str, object]:
         ATLASO_NGINX_DATA_DISK_DROPIN_PATH,
         ATLASO_DISK_IDENTITY_UDEV_PATH,
         ATLASO_DATA_DISK_POLICY_PATH,
+        ESX_STORAGE_DISK_ALLOWLIST_PATH,
     }
     raw_file_backups = recovery.get("file_backups")
     if not isinstance(raw_file_backups, list) or not raw_file_backups:
@@ -11377,12 +11378,15 @@ def _refresh_release_data_disk_identity(*, validate: bool) -> list[dict]:
 def _migrate_release_esx_storage_claims(
     backup_root: Path,
     backups: list[tuple[Path | None, Path]],
+    *,
+    before_mutation: Callable[[list[tuple[Path | None, Path]]], None] | None = None,
 ) -> None:
     """Migrate and claim boot-safe mounted ESX disks configured by an older release.
 
     Args:
         backup_root: Transaction backup root used for rollback.
         backups: Release-owned file backups extended before any claim mutation.
+        before_mutation: Durable checkpoint callback invoked after backup and before mutation.
     """
     if not ATLASO_DATABASE_PATH.is_file():
         return
@@ -11440,6 +11444,8 @@ def _migrate_release_esx_storage_claims(
     else:
         backups.append((None, destination))
         existing = []
+    if before_mutation is not None:
+        before_mutation(backups)
     migrated_uuids = {claim.split("\t", 1)[0] for claim in claims}
     retained_claims = [
         line
@@ -12165,6 +12171,7 @@ def _apply_atlaso_release(
                     "rolled_back": False,
                     "no_change": True,
                     "failure_layer": failure_layer,
+                    "commands": commands,
                     "active_release_verification": activation,
                     "error": error,
                     "finished_at": datetime.now(timezone.utc).isoformat(),
@@ -12241,7 +12248,11 @@ def _apply_atlaso_release(
         commands.extend(disk_identity_commands)
         if not all(command["success"] for command in disk_identity_commands):
             raise ValueError("Candidate Atlaso release failed data-disk identity refresh")
-        _migrate_release_esx_storage_claims(backup_root, file_backups)
+        _migrate_release_esx_storage_claims(
+            backup_root,
+            file_backups,
+            before_mutation=persist_transaction_checkpoint,
+        )
         disk_preflight = _command_payload(["/opt/atlaso/bin/atlaso-mount-data-disks"])
         commands.append(disk_preflight)
         if not disk_preflight["success"]:

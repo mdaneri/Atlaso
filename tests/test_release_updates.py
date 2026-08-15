@@ -575,6 +575,58 @@ def test_release_prestart_recovery_rolls_back_stale_transaction(monkeypatch, tmp
     assert not gate.exists()
 
 
+def test_release_recovery_manifest_accepts_the_migrated_esx_allowlist(monkeypatch, tmp_path):
+    """Verify reboot recovery validates the ESX claim backup added after migration.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace helper paths.
+        tmp_path: Temporary directory provided for bounded recovery state.
+    """
+    from tests.test_appliance_update import load_helper_module
+
+    helper = load_helper_module()
+    releases = tmp_path / "releases"
+    previous = releases / "0.9.158"
+    candidate = releases / "0.9.159"
+    previous.mkdir(parents=True)
+    candidate.mkdir()
+    backups = tmp_path / "backups"
+    backup_root = backups / "transaction"
+    backup_root.mkdir(parents=True)
+    database_backup = backup_root / "atlaso.db"
+    database_backup.write_bytes(b"database")
+    allowlist = tmp_path / "host/etc/atlaso/esx-storage-disks.conf"
+    allowlist.parent.mkdir(parents=True)
+    allowlist.write_text("claim\n", encoding="utf-8")
+    allowlist_backup = backup_root.joinpath(*allowlist.parts[1:])
+    allowlist_backup.parent.mkdir(parents=True)
+    allowlist_backup.write_bytes(allowlist.read_bytes())
+    monkeypatch.setattr(helper, "ATLASO_RELEASES_DIR", releases)
+    monkeypatch.setattr(helper, "ATLASO_UPDATE_BACKUP_DIR", backups)
+    monkeypatch.setattr(helper, "ESX_STORAGE_DISK_ALLOWLIST_PATH", allowlist)
+
+    context = helper._validated_release_recovery_context(
+        {
+            "transaction_recovery": {
+                "schema_version": 1,
+                "previous_release": str(previous),
+                "candidate_release": str(candidate),
+                "backup_root": str(backup_root),
+                "database_backup": str(database_backup),
+                "database_backed_up": True,
+                "file_backups": [
+                    {
+                        "backup": str(allowlist_backup),
+                        "destination": str(allowlist),
+                    }
+                ],
+            }
+        }
+    )
+
+    assert context["file_backups"] == [(allowlist_backup.resolve(), allowlist)]
+
+
 @pytest.mark.parametrize(
     ("mutation", "message"),
     [
@@ -1687,8 +1739,27 @@ def test_release_migrates_boot_safe_configured_mounted_disk_claim(monkeypatch, t
         ),
     )
     backups: list[tuple[Path | None, Path]] = []
+    checkpointed_backups: list[list[tuple[Path | None, Path]]] = []
 
-    helper._migrate_release_esx_storage_claims(tmp_path / "backups", backups)
+    def checkpoint_before_claim_mutation(current_backups):
+        """Verify the allowlist backup is durable before either claim store changes.
+
+        Args:
+            current_backups: Recovery manifest extended with the allowlist backup.
+        """
+        checkpointed_backups.append(list(current_backups))
+        assert "scsi-older-alias" in allowlist.read_text(encoding="utf-8")
+        with sqlite3.connect(database) as connection:
+            identities = connection.execute(
+                "select stable_device_id from esx_storage_volumes order by stable_device_id"
+            ).fetchall()
+        assert ("/dev/disk/by-id/scsi-older-alias",) in identities
+
+    helper._migrate_release_esx_storage_claims(
+        tmp_path / "backups",
+        backups,
+        before_mutation=checkpoint_before_claim_mutation,
+    )
 
     assert allowlist.read_text(encoding="utf-8") == (
         "3f832583-beec-4be7-969c-92519ea77273\t"
@@ -1729,6 +1800,7 @@ def test_release_migrates_boot_safe_configured_mounted_disk_claim(monkeypatch, t
     assert backup_path is not None
     assert backup_destination == allowlist
     assert backup_path.read_text(encoding="utf-8").startswith("3f832583-beec-4be7-969c-92519ea77273\t")
+    assert checkpointed_backups == [backups]
 
 
 def test_abi_wheelhouse_lock_covers_exact_checked_in_versions(monkeypatch, tmp_path):
@@ -2474,6 +2546,108 @@ def test_worker_restart_keeps_release_finalizer_scoped_to_its_child(client, monk
         assert "worker restarted" in (steps[-1].error or "")
 
 
+def test_no_change_release_failure_finalizer_retains_readiness_commands(monkeypatch, tmp_path):
+    """Verify already-active release failures preserve their diagnostic checks.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace helper dependencies.
+        tmp_path: Temporary directory provided for release state.
+    """
+    from tests.test_appliance_update import load_helper_module
+
+    helper = load_helper_module()
+    release = release_payload()
+    bundle_bytes = b"signed release bundle"
+    release["bundle"] = {
+        "url": "https://example.test/atlaso-release.tar.gz",
+        "size": len(bundle_bytes),
+        "sha256": hashlib.sha256(bundle_bytes).hexdigest(),
+    }
+    channel = {
+        "channel": "stable",
+        "release_manifest_url": "https://example.test/release.json",
+    }
+    releases = tmp_path / "releases"
+    release_root = releases / str(release["version"])
+    release_root.mkdir(parents=True)
+    (release_root / ".venv").mkdir()
+    (release_root / ".release-manifest.json").write_text(
+        json.dumps(release),
+        encoding="utf-8",
+    )
+    current = tmp_path / "current"
+    current.symlink_to(release_root, target_is_directory=True)
+    compatibility_venv = tmp_path / ".venv"
+    compatibility_venv.symlink_to(Path("current/.venv"), target_is_directory=True)
+    finalizer = tmp_path / "finalizer.json"
+    monkeypatch.setattr(helper, "ATLASO_RELEASES_DIR", releases)
+    monkeypatch.setattr(helper, "ATLASO_CURRENT_LINK", current)
+    monkeypatch.setattr(helper, "ATLASO_VENV_LINK", compatibility_venv)
+    monkeypatch.setattr(helper, "ATLASO_UPDATE_FINALIZER_PATH", finalizer)
+    monkeypatch.setattr(
+        helper,
+        "_download_signed_release_from_sources",
+        lambda *_args: (channel, release, channel["release_manifest_url"], None),
+    )
+    monkeypatch.setattr(helper, "_fetch_http_bytes", lambda *_args: bundle_bytes)
+    monkeypatch.setattr(helper, "_safe_extract_release", lambda *_args: None)
+    monkeypatch.setattr(helper, "_validate_release_content", lambda *_args: None)
+    monkeypatch.setattr(helper, "_current_python_abi", lambda: "cp314")
+    monkeypatch.setattr(
+        helper,
+        "_install_release_venv",
+        lambda *_args: [
+            {
+                "command": ["offline-install"],
+                "returncode": 0,
+                "success": True,
+                "stdout": "",
+                "stderr": "",
+            }
+        ],
+    )
+    monkeypatch.setattr(
+        helper,
+        "_sync_release_activation",
+        lambda: {
+            "command": ["release-activation-check", "durable_activation"],
+            "returncode": 0,
+            "success": True,
+            "stdout": "durable",
+            "stderr": "",
+            "layer": "durable_activation",
+        },
+    )
+    failed_command = {
+        "command": ["release-activation-check", "management_front_door"],
+        "returncode": 1,
+        "success": False,
+        "stdout": "",
+        "stderr": "front door version mismatch",
+        "layer": "management_front_door",
+    }
+    monkeypatch.setattr(
+        helper,
+        "_release_activation_verification",
+        lambda *_args, **_kwargs: (
+            {
+                "success": False,
+                "candidate_version": str(release["version"]),
+                "failure_layer": "management_front_door",
+            },
+            [failed_command],
+        ),
+    )
+
+    with pytest.raises(ValueError, match="management_front_door"):
+        helper._apply_atlaso_release({"job_id": "job-no-change"})
+
+    persisted = json.loads(finalizer.read_text(encoding="utf-8"))
+    assert persisted["status"] == "failed"
+    assert persisted["no_change"] is True
+    assert failed_command in persisted["commands"]
+
+
 @pytest.mark.parametrize(
     ("failure_stage", "expected_layer", "expected_rolled_back"),
     [
@@ -2659,7 +2833,28 @@ def test_failed_candidate_restores_previous_release_and_database(
         return []
 
     monkeypatch.setattr(helper, "_install_release_owned_files", install_owned_files)
-    monkeypatch.setattr(helper, "_migrate_release_esx_storage_claims", lambda *_args: None)
+    esx_allowlist = tmp_path / "host/etc/atlaso/esx-storage-disks.conf"
+    esx_allowlist.parent.mkdir(parents=True)
+    esx_allowlist.write_text("previous-claim\n", encoding="utf-8")
+    monkeypatch.setattr(helper, "ESX_STORAGE_DISK_ALLOWLIST_PATH", esx_allowlist)
+
+    def migrate_claims(backup_root, backups, *, before_mutation=None):
+        """Simulate an ESX alias migration that extends the rollback manifest.
+
+        Args:
+            backup_root: Transaction backup root used for the allowlist copy.
+            backups: Installed-asset manifest extended by the migration.
+            before_mutation: Durable checkpoint callback invoked before the simulated rewrite.
+        """
+        backup = backup_root.joinpath(*esx_allowlist.parts[1:])
+        backup.parent.mkdir(parents=True, exist_ok=True)
+        backup.write_bytes(esx_allowlist.read_bytes())
+        backups.append((backup, esx_allowlist))
+        if before_mutation is not None:
+            before_mutation(backups)
+        esx_allowlist.write_text("candidate-claim\n", encoding="utf-8")
+
+    monkeypatch.setattr(helper, "_migrate_release_esx_storage_claims", migrate_claims)
     identity_refreshes = 0
 
     def refresh_identity(**_kwargs):
@@ -2849,6 +3044,7 @@ def test_failed_candidate_restores_previous_release_and_database(
     monkeypatch.setattr(helper, "_write_update_info", lambda _payload: None)
     write_finalizer = helper._write_release_finalizer
     finalizer_statuses: list[str] = []
+    checkpoint_backup_counts: list[int] = []
 
     def finalizer(payload):
         """Inject a success-finalizer persistence failure inside the rollback boundary.
@@ -2857,6 +3053,9 @@ def test_failed_candidate_restores_previous_release_and_database(
             payload: Definitive or provisional transaction evidence to persist.
         """
         finalizer_statuses.append(str(payload.get("status") or ""))
+        if payload.get("status") == "transaction_pending":
+            recovery = payload.get("transaction_recovery") or {}
+            checkpoint_backup_counts.append(len(recovery.get("file_backups") or []))
         if payload.get("status") == "restart_pending":
             handoff_events.append("restart_pending")
         if payload.get("status") == "failed" and failure_stage != "rollback_gate":
@@ -2883,6 +3082,11 @@ def test_failed_candidate_restores_previous_release_and_database(
     assert finalizer["commands"]
     assert not credential_path.exists()
     assert "transaction_pending" in finalizer_statuses
+    assert esx_allowlist.read_text(encoding="utf-8") == "previous-claim\n"
+    if failure_stage == "systemd_assets":
+        assert checkpoint_backup_counts == [0]
+    else:
+        assert checkpoint_backup_counts[:2] == [0, 1]
     if failure_stage in {"worker_restart", "worker_activation", "finalizer_persistence"}:
         assert "restart_pending" in finalizer_statuses
         assert handoff_events.index("restart_pending") < handoff_events.index("gate")

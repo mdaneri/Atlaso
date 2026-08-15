@@ -416,7 +416,10 @@ status: current
   release root, persist a bounded rollback manifest before switching the active link, and persist restart-pending
   evidence before establishing the volatile runtime gate. Keep recovery blocked until the definitive finalizer write
   completes. Worker pre-start must distinguish a live helper by boot, PID, and process-start identity; stale provisional
-  evidence after a host restart must restore and verify the previous release before the worker is admitted.
+  evidence after a host restart must restore and verify the previous release before the worker is admitted. Refresh the
+  durable recovery manifest after adding the ESX allowlist backup and before mutating its claims or database, so both
+  rollback together.
+  An already-active release must complete from exact readiness evidence without an unverified delayed service restart.
   A gate timeout must exit worker startup for systemd retry, never enter the ordinary work loop. Remove and durably flush
   staged source credentials from the surviving helper before it restarts the calling worker. Require nginx plus web,
   worker, and console service state, and require the signed receipt, `current`, compatibility
