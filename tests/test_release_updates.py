@@ -256,11 +256,37 @@ def test_worker_publishes_candidate_identity_and_waits_for_release_finalizer(mon
         {"status": "succeeded"},
     ]
     monkeypatch.setattr(worker, "_release_finalizer", lambda: states.pop(0))
+    monkeypatch.setattr(worker, "_release_transaction_owner_alive", lambda _owner: True)
     monkeypatch.setattr(worker.time, "sleep", lambda _seconds: None)
 
     assert worker._wait_for_release_restart_finalizer(timeout_seconds=1) is True
 
     assert states == []
+
+
+def test_worker_rejects_stale_provisional_finalizer_without_runtime_gate(monkeypatch, tmp_path):
+    """Verify stale durable transaction evidence cannot admit ordinary job recovery.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace worker dependencies.
+        tmp_path: Temporary directory provided for the absent runtime gate.
+    """
+    import atlaso.app.worker as worker
+
+    monkeypatch.setattr(worker, "APPLIANCE_UPDATE_RESTART_GATE_PATH", tmp_path / "missing-gate")
+    monkeypatch.setattr(
+        worker,
+        "_release_finalizer",
+        lambda: {
+            "status": "restart_pending",
+            "transaction_recovery": {
+                "owner": {"boot_id": "previous-boot", "pid": 99, "start_ticks": "1"}
+            },
+        },
+    )
+    monkeypatch.setattr(worker, "_release_transaction_owner_alive", lambda _owner: False)
+
+    assert worker._wait_for_release_restart_finalizer(timeout_seconds=90) is False
 
 
 def test_worker_activation_requires_exact_systemd_and_release_identity(monkeypatch, tmp_path):
@@ -298,7 +324,7 @@ def test_worker_activation_requires_exact_systemd_and_release_identity(monkeypat
         timeout_seconds=1,
     )
 
-    assert result["success"] is True
+    assert result["success"] is True, result
     assert result["worker_pid"] == 202
     marker.write_text(
         json.dumps(
@@ -365,6 +391,188 @@ def test_worker_exits_when_release_restart_gate_does_not_open(monkeypatch):
     )
 
     assert worker.main() == 1
+
+
+@pytest.mark.parametrize(
+    ("status", "allow_worker"),
+    [("transaction_pending", False), ("restart_pending", True)],
+)
+def test_release_prestart_recovery_defers_to_live_transaction_owner(
+    monkeypatch,
+    tmp_path,
+    status,
+    allow_worker,
+):
+    """Verify pre-start recovery neither rolls back nor outruns the live helper.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace helper dependencies.
+        tmp_path: Temporary directory provided for provisional evidence.
+        status: Provisional transaction phase under test.
+        allow_worker: Whether the phase permits the intentional worker handoff.
+    """
+    from tests.test_appliance_update import load_helper_module
+
+    helper = load_helper_module()
+    finalizer = tmp_path / "finalizer.json"
+    finalizer.write_text(
+        json.dumps(
+            {
+                "status": status,
+                "job_id": "job-live-owner",
+                "transaction_recovery": {"owner": {"pid": 101}},
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(helper, "ATLASO_UPDATE_FINALIZER_PATH", finalizer)
+    monkeypatch.setattr(helper, "_release_transaction_owner_alive", lambda _owner: True)
+    monkeypatch.setattr(
+        helper,
+        "_validated_release_recovery_context",
+        lambda _payload: pytest.fail("live transaction owner must not be rolled back"),
+    )
+
+    result = helper._recover_interrupted_release_transaction()
+
+    assert result["status"] == "transaction_active"
+    assert result["allow_worker"] is allow_worker
+    assert result["success"] is allow_worker
+
+
+def test_release_prestart_recovery_rolls_back_stale_transaction(monkeypatch, tmp_path):
+    """Verify a reboot-stale provisional transaction restores the previous release.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace helper dependencies.
+        tmp_path: Temporary directory provided for recovery state.
+    """
+    from tests.test_appliance_update import load_helper_module
+
+    helper = load_helper_module()
+    releases = tmp_path / "releases"
+    previous = releases / "0.9.158"
+    candidate = releases / "0.9.159"
+    previous.mkdir(parents=True)
+    candidate.mkdir()
+    current = tmp_path / "current"
+    current.symlink_to(candidate, target_is_directory=True)
+    backup_root = tmp_path / "backups" / "transaction"
+    backup_root.mkdir(parents=True)
+    database_backup = backup_root / "atlaso.db"
+    database_backup.write_text("previous database", encoding="utf-8")
+    database = tmp_path / "atlaso.db"
+    database.write_text("candidate database", encoding="utf-8")
+    finalizer = tmp_path / "finalizer.json"
+    finalizer.write_text(
+        json.dumps(
+            {
+                "status": "restart_pending",
+                "job_id": "job-stale-owner",
+                "release": "0.9.159",
+                "candidate_version": "0.9.159",
+                "previous_version": "0.9.158",
+                "transaction_recovery": {
+                    "schema_version": 1,
+                    "owner": {"boot_id": "previous-boot", "pid": 101, "start_ticks": "1"},
+                },
+                "commands": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    gate = tmp_path / "restart-gate"
+    monkeypatch.setattr(helper, "ATLASO_CURRENT_LINK", current)
+    monkeypatch.setattr(helper, "ATLASO_DATABASE_PATH", database)
+    monkeypatch.setattr(helper, "ATLASO_UPDATE_FINALIZER_PATH", finalizer)
+    monkeypatch.setattr(helper, "ATLASO_UPDATE_RESTART_GATE_PATH", gate)
+    monkeypatch.setattr(helper, "_release_transaction_owner_alive", lambda _owner: False)
+
+    def restore_link(target, link):
+        """Replace the test release link without relying on Windows rename semantics.
+
+        Args:
+            target: Release directory that should become active.
+            link: Compatibility link to replace.
+        """
+        link.unlink(missing_ok=True)
+        link.symlink_to(target, target_is_directory=True)
+
+    monkeypatch.setattr(helper, "_atomic_symlink", restore_link)
+    monkeypatch.setattr(
+        helper,
+        "_validated_release_recovery_context",
+        lambda _payload: {
+            "previous": previous,
+            "candidate": candidate,
+            "backup_root": backup_root,
+            "database_backup": database_backup,
+            "file_backups": [],
+        },
+    )
+    monkeypatch.setattr(
+        helper,
+        "_service_command",
+        lambda action, *units: {
+            "command": ["systemctl", action, *units],
+            "returncode": 0,
+            "success": True,
+            "stdout": "",
+            "stderr": "",
+        },
+    )
+    monkeypatch.setattr(
+        helper,
+        "_set_release_maintenance",
+        lambda enabled: {
+            "command": ["maintenance", str(enabled)],
+            "returncode": 0,
+            "success": True,
+            "stdout": "",
+            "stderr": "",
+        },
+    )
+    monkeypatch.setattr(
+        helper,
+        "_wait_for_atlaso_health",
+        lambda: {"command": ["health"], "returncode": 0, "success": True, "stdout": "", "stderr": ""},
+    )
+    monkeypatch.setattr(helper, "_refresh_release_data_disk_identity", lambda **_kwargs: [])
+    monkeypatch.setattr(helper, "_restore_release_owned_files", lambda _backups: None)
+    monkeypatch.setattr(helper, "_restore_sqlite_backup", lambda source: database.write_bytes(source.read_bytes()))
+    monkeypatch.setattr(
+        helper,
+        "_sync_release_activation",
+        lambda: {
+            "command": ["sync"],
+            "returncode": 0,
+            "success": True,
+            "stdout": "",
+            "stderr": "",
+        },
+    )
+    monkeypatch.setattr(
+        helper,
+        "_release_activation_verification",
+        lambda *_args, **_kwargs: (
+            {"success": True, "candidate_version": "0.9.158", "failure_layer": ""},
+            [{"command": ["front-door"], "returncode": 0, "success": True, "stdout": "", "stderr": ""}],
+        ),
+    )
+    monkeypatch.setattr(helper, "_write_update_info", lambda _payload: None)
+
+    result = helper._recover_interrupted_release_transaction()
+
+    persisted = json.loads(finalizer.read_text(encoding="utf-8"))
+    assert result["success"] is True, result
+    assert result["allow_worker"] is True
+    assert result["rolled_back"] is True
+    assert persisted["status"] == "failed"
+    assert persisted["rolled_back"] is True
+    assert current.resolve() == previous.resolve()
+    assert database.read_text(encoding="utf-8") == "previous database"
+    assert not candidate.exists()
+    assert not gate.exists()
 
 
 @pytest.mark.parametrize(
@@ -2378,6 +2586,7 @@ def test_failed_candidate_restores_previous_release_and_database(
     monkeypatch.setattr(helper, "ATLASO_UPDATE_FINALIZER_PATH", tmp_path / "finalizer.json")
     monkeypatch.setattr(helper, "ATLASO_UPDATE_RESTART_GATE_PATH", tmp_path / "restart-gate")
     original_restart_gate = helper._set_release_restart_gate
+    handoff_events: list[str] = []
 
     def restart_gate(enabled: bool, job_id: str = "") -> None:
         """Inject a rollback gate creation failure.
@@ -2391,6 +2600,8 @@ def test_failed_candidate_restores_previous_release_and_database(
         """
         if failure_stage == "rollback_gate" and enabled:
             raise OSError("injected rollback gate creation failure")
+        if enabled:
+            handoff_events.append("gate")
         original_restart_gate(enabled, job_id)
 
     monkeypatch.setattr(helper, "_set_release_restart_gate", restart_gate)
@@ -2436,7 +2647,18 @@ def test_failed_candidate_restores_previous_release_and_database(
         return [{"command": ["offline-install"], "returncode": 0, "success": True, "stdout": "", "stderr": ""}]
 
     monkeypatch.setattr(helper, "_install_release_venv", install_venv)
-    monkeypatch.setattr(helper, "_install_release_owned_files", lambda *_args: [])
+    def install_owned_files(*_args, before_install=None):
+        """Invoke the durable checkpoint before simulating installed assets.
+
+        Args:
+            *_args: Release and backup roots accepted by the helper.
+            before_install: Durable pre-mutation checkpoint callback.
+        """
+        if before_install is not None:
+            before_install([])
+        return []
+
+    monkeypatch.setattr(helper, "_install_release_owned_files", install_owned_files)
     monkeypatch.setattr(helper, "_migrate_release_esx_storage_claims", lambda *_args: None)
     identity_refreshes = 0
 
@@ -2635,6 +2857,8 @@ def test_failed_candidate_restores_previous_release_and_database(
             payload: Definitive or provisional transaction evidence to persist.
         """
         finalizer_statuses.append(str(payload.get("status") or ""))
+        if payload.get("status") == "restart_pending":
+            handoff_events.append("restart_pending")
         if payload.get("status") == "failed" and failure_stage != "rollback_gate":
             assert (tmp_path / "restart-gate").exists()
         if failure_stage == "finalizer_persistence" and payload.get("status") == "succeeded":
@@ -2658,8 +2882,10 @@ def test_failed_candidate_restores_previous_release_and_database(
     assert finalizer["failure_layer"] == expected_layer
     assert finalizer["commands"]
     assert not credential_path.exists()
+    assert "transaction_pending" in finalizer_statuses
     if failure_stage in {"worker_restart", "worker_activation", "finalizer_persistence"}:
         assert "restart_pending" in finalizer_statuses
+        assert handoff_events.index("restart_pending") < handoff_events.index("gate")
         assert not (tmp_path / "restart-gate").exists()
     if failure_stage == "rollback_symlink_sync":
         assert "rollback_release_link" in finalizer["rollback_failures"]

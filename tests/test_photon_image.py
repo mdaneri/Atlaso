@@ -799,6 +799,10 @@ def test_photon_provisioning_installs_default_nginx_management_proxy():
     assert "HTTPS/443" in docs
     assert "HTTP/80 redirects to HTTPS" in docs
     assert "proxying HTTPS/443 to" in root_docs
+    assert (
+        "ExecStartPre=+/opt/atlaso/bin/atlaso-helper appliance-update recover-release --real"
+        in worker_unit
+    )
     assert "-PipGlobalIndex" in root_docs
     assert "-PipGlobalIndexUrl" in root_docs
     assert "Leave both options empty to keep" in root_docs

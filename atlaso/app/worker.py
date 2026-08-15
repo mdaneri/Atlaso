@@ -195,11 +195,47 @@ def _wait_for_release_restart_finalizer(timeout_seconds: int = 90) -> bool:
     """
     deadline = time.monotonic() + timeout_seconds
     while time.monotonic() < deadline:
-        finalizer_pending = str(_release_finalizer().get("status") or "") == "restart_pending"
-        if not APPLIANCE_UPDATE_RESTART_GATE_PATH.exists() and not finalizer_pending:
+        finalizer = _release_finalizer()
+        finalizer_status = str(finalizer.get("status") or "")
+        finalizer_pending = finalizer_status in {
+            "transaction_pending",
+            "restart_pending",
+            "rollback_pending",
+        }
+        gate_exists = APPLIANCE_UPDATE_RESTART_GATE_PATH.exists()
+        if not gate_exists and not finalizer_pending:
             return True
+        recovery = finalizer.get("transaction_recovery")
+        owner = recovery.get("owner") if isinstance(recovery, dict) else None
+        if not gate_exists and finalizer_pending and not _release_transaction_owner_alive(owner):
+            LOGGER.error(
+                "Atlaso worker startup found stale release transaction evidence that pre-start recovery did not resolve"
+            )
+            return False
         time.sleep(1)
     return False
+
+
+def _release_transaction_owner_alive(owner: object) -> bool:
+    """Return whether provisional release evidence still names a live helper.
+
+    Args:
+        owner: Persisted boot, PID, and process-start identity.
+    """
+    if not isinstance(owner, dict):
+        return False
+    try:
+        pid = int(owner.get("pid") or 0)
+        boot_id = Path("/proc/sys/kernel/random/boot_id").read_text(encoding="utf-8").strip()
+        start_ticks = Path(f"/proc/{pid}/stat").read_text(encoding="utf-8").split()[21]
+    except (OSError, ValueError, IndexError):
+        return False
+    return bool(
+        pid > 0
+        and boot_id
+        and boot_id == str(owner.get("boot_id") or "")
+        and start_ticks == str(owner.get("start_ticks") or "")
+    )
 
 
 def _recovered_appliance_update_step_result(

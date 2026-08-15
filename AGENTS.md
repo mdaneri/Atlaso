@@ -326,8 +326,10 @@ The following cross-cutting boundaries always apply:
   virtualenv, signed receipt, finalizer, internal OpenAPI version, nginx management-front-door version, maintenance
   cleanup, nginx validation/reload, and required service state must agree. Restart the worker under a provisional
   finalizer and prove its new PID, candidate version, release root, and job identity before writing definitive success;
-  establish the runtime transaction gate before any candidate or rollback worker restart and keep recovery behind it
-  until the definitive write completes, then resume only untouched pending
+  persist the bounded rollback manifest before switching the active link, persist restart-pending evidence before the
+  volatile runtime gate, and keep recovery behind that gate until the definitive write completes. Worker pre-start must
+  distinguish the live helper by boot, PID, and process-start identity and roll back stale provisional evidence before
+  admitting the worker after a host restart. Then resume only untouched pending
   update children. Gate timeout exits worker startup for systemd retry, and the surviving helper removes staged source
   credentials before restarting the caller. Definitive finalizers retain sanitized helper commands, and recovery uses
   the ordinary child, parent, terminal task-log, and audit completion path. Any post-switch failure restores the

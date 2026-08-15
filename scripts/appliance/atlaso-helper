@@ -83,7 +83,14 @@ COMMANDS: dict[str, set[str]] = {
     "esxi-pxe": {"validate", "apply"},
     "esx-storage": {"inventory", "validate", "apply", "status", "logs"},
     "public-services": {"validate", "apply"},
-    "appliance-update": {"check", "apply", "sync-sources", "restart-service", "bootstrap-data-disk-safety"},
+    "appliance-update": {
+        "check",
+        "apply",
+        "sync-sources",
+        "restart-service",
+        "bootstrap-data-disk-safety",
+        "recover-release",
+    },
     "automation": {"run"},
     "appliance-power": {"reboot", "shutdown"},
     "console": {"disable-services", "recover-management-plane", "restore-services", "status"},
@@ -144,6 +151,7 @@ NO_PATH_ACTIONS = {
     ("esx-storage", "inventory"),
     ("esx-storage", "status"),
     ("esx-storage", "logs"),
+    ("appliance-update", "recover-release"),
 }
 NON_PATH_ARGUMENT_ACTIONS = {
     ("local-users", "authenticate"),
@@ -10808,12 +10816,18 @@ def _release_data_disk_platform() -> str:
     return evidence.pop()
 
 
-def _install_release_owned_files(release_root: Path, backup_root: Path) -> list[tuple[Path | None, Path]]:
+def _install_release_owned_files(
+    release_root: Path,
+    backup_root: Path,
+    *,
+    before_install: Callable[[list[tuple[Path | None, Path]]], None] | None = None,
+) -> list[tuple[Path | None, Path]]:
     """Perform install release owned files.
 
     Args:
         release_root: Filesystem path associated with release root.
         backup_root: Filesystem path associated with backup root.
+        before_install: Durable checkpoint callback invoked after backup and before mutation.
     """
     data_disk_platform = _release_data_disk_platform()
     owned = [
@@ -10847,6 +10861,8 @@ def _install_release_owned_files(release_root: Path, backup_root: Path) -> list[
         else:
             backups.append((None, destination))
 
+    if before_install is not None:
+        before_install(backups)
     try:
         for source, destination, mode in owned:
             destination.parent.mkdir(parents=True, exist_ok=True)
@@ -11036,6 +11052,308 @@ def _restore_release_owned_files(backups: list[tuple[Path | None, Path]]) -> Non
             destination.unlink(missing_ok=True)
         else:
             shutil.copy2(backup, destination)
+
+
+def _validated_release_recovery_context(finalizer: dict) -> dict[str, object]:
+    """Validate and return the bounded rollback context from a provisional finalizer.
+
+    Args:
+        finalizer: Root-owned provisional release transaction evidence.
+
+    Raises:
+        ValueError: If any recovery path or field is outside the release transaction contract.
+    """
+    recovery = finalizer.get("transaction_recovery")
+    if not isinstance(recovery, dict) or recovery.get("schema_version") != 1:
+        raise ValueError("provisional release finalizer has no supported recovery manifest")
+    releases_root = ATLASO_RELEASES_DIR.resolve(strict=True)
+    backups_root = ATLASO_UPDATE_BACKUP_DIR.resolve(strict=True)
+    previous = Path(str(recovery.get("previous_release") or "")).resolve(strict=True)
+    candidate = Path(str(recovery.get("candidate_release") or "")).resolve(strict=True)
+    backup_root = Path(str(recovery.get("backup_root") or "")).resolve(strict=True)
+    database_backup = Path(str(recovery.get("database_backup") or "")).resolve(strict=True)
+    if previous.parent != releases_root or candidate.parent != releases_root or previous == candidate:
+        raise ValueError("provisional release recovery directories are outside the release root")
+    if not previous.is_dir() or previous.is_symlink() or not candidate.is_dir() or candidate.is_symlink():
+        raise ValueError("provisional release recovery requires ordinary release directories")
+    if not backup_root.is_dir() or backup_root.is_symlink() or not backup_root.is_relative_to(backups_root):
+        raise ValueError("provisional release backup root is invalid")
+    if database_backup != (backup_root / "atlaso.db").resolve(strict=True):
+        raise ValueError("provisional release database backup is invalid")
+    database_backed_up = recovery.get("database_backed_up") is True
+    if not database_backed_up:
+        raise ValueError("provisional release recovery has no complete database backup")
+
+    allowed_destinations = {
+        Path("/opt/atlaso/bin/atlaso-helper"),
+        ATLASO_NOTICE_PATH,
+        Path("/etc/systemd/system/atlaso.service"),
+        Path("/etc/systemd/system/atlaso-worker.service"),
+        Path("/etc/systemd/system/atlaso-console.service"),
+        ATLASO_MOUNT_DATA_DISKS_PATH,
+        ATLASO_DATA_DISK_UNIT_PATH,
+        ATLASO_SERVICE_DATA_DISK_DROPIN_PATH,
+        ATLASO_BOOTSTRAP_HTTPS_UNIT_PATH,
+        ATLASO_NGINX_DATA_DISK_DROPIN_PATH,
+        ATLASO_DISK_IDENTITY_UDEV_PATH,
+        ATLASO_DATA_DISK_POLICY_PATH,
+    }
+    raw_file_backups = recovery.get("file_backups")
+    if not isinstance(raw_file_backups, list) or not raw_file_backups:
+        raise ValueError("provisional release recovery has no installed-asset manifest")
+    file_backups: list[tuple[Path | None, Path]] = []
+    for item in raw_file_backups:
+        if not isinstance(item, dict):
+            raise ValueError("provisional release installed-asset manifest is invalid")
+        destination = Path(str(item.get("destination") or ""))
+        trusted_key = (
+            destination.parent == ATLASO_UPDATE_TRUST_DIR
+            and destination.suffix == ".pem"
+            and destination.name not in {"", ".", ".."}
+        )
+        if destination not in allowed_destinations and not trusted_key:
+            raise ValueError("provisional release installed-asset destination is not allowlisted")
+        backup_text = str(item.get("backup") or "")
+        if backup_text:
+            backup = Path(backup_text).resolve(strict=True)
+            expected_backup = backup_root.joinpath(*destination.parts[1:]).resolve(strict=True)
+            if backup != expected_backup or not backup.is_file():
+                raise ValueError("provisional release installed-asset backup is invalid")
+        else:
+            backup = None
+        file_backups.append((backup, destination))
+    return {
+        "previous": previous,
+        "candidate": candidate,
+        "backup_root": backup_root,
+        "database_backup": database_backup,
+        "file_backups": file_backups,
+    }
+
+
+def _recover_interrupted_release_transaction() -> dict:
+    """Rollback a stale provisional release transaction before the worker starts."""
+    try:
+        parsed = json.loads(ATLASO_UPDATE_FINALIZER_PATH.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return {"status": "not_required", "success": True, "allow_worker": True}
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        return {
+            "status": "recovery_failed",
+            "success": False,
+            "allow_worker": False,
+            "error": f"Release recovery finalizer could not be read: {type(exc).__name__}.",
+        }
+    if not isinstance(parsed, dict):
+        return {
+            "status": "recovery_failed",
+            "success": False,
+            "allow_worker": False,
+            "error": "Release recovery finalizer is not a JSON object.",
+        }
+    status = str(parsed.get("status") or "")
+    provisional = status in {"transaction_pending", "restart_pending", "rollback_pending"}
+    if not provisional:
+        return {"status": "not_required", "success": True, "allow_worker": True}
+    recovery = parsed.get("transaction_recovery")
+    owner = recovery.get("owner") if isinstance(recovery, dict) else None
+    if _release_transaction_owner_alive(owner):
+        allow_worker = status == "restart_pending"
+        return {
+            "status": "transaction_active",
+            "success": allow_worker,
+            "allow_worker": allow_worker,
+            "job_id": str(parsed.get("job_id") or ""),
+        }
+
+    commands = [command for command in parsed.get("commands", []) if isinstance(command, dict)]
+    rollback_failures: list[str] = []
+
+    def recovery_action(layer: str, action: Callable[[], object]) -> tuple[bool, object | None]:
+        """Run one reboot-recovery action and preserve sanitized evidence.
+
+        Args:
+            layer: Stable recovery layer represented by the action.
+            action: Recovery operation to execute.
+        """
+        try:
+            result = action()
+        except Exception as exc:  # noqa: BLE001 - recovery must retain every failure.
+            evidence = _release_check(
+                f"reboot_rollback_{layer}",
+                False,
+                f"Reboot rollback {layer.replace('_', ' ')} raised {type(exc).__name__}.",
+            )
+            commands.append(evidence)
+            rollback_failures.append(str(evidence["layer"]))
+            return False, None
+        if isinstance(result, list):
+            commands.extend(item for item in result if isinstance(item, dict))
+            success = all(isinstance(item, dict) and item.get("success") for item in result)
+        elif isinstance(result, dict):
+            result.setdefault("layer", f"reboot_rollback_{layer}")
+            commands.append(result)
+            success = bool(result.get("success"))
+        else:
+            success = True
+            commands.append(
+                _release_check(
+                    f"reboot_rollback_{layer}",
+                    True,
+                    f"Reboot rollback {layer.replace('_', ' ')} completed.",
+                )
+            )
+        if not success:
+            rollback_failures.append(f"reboot_rollback_{layer}")
+        return success, result
+
+    try:
+        context = _validated_release_recovery_context(parsed)
+    except (OSError, ValueError) as exc:
+        evidence = _release_check(
+            "reboot_rollback_manifest",
+            False,
+            f"Reboot rollback manifest validation failed: {exc}",
+        )
+        commands.append(evidence)
+        rollback_failures.append(str(evidence["layer"]))
+        return {
+            "status": "recovery_failed",
+            "success": False,
+            "allow_worker": False,
+            "commands": commands,
+            "rollback_failures": rollback_failures,
+            "error": evidence["stderr"],
+        }
+
+    previous = context["previous"]
+    candidate = context["candidate"]
+    database_backup = context["database_backup"]
+    file_backups = context["file_backups"]
+    assert isinstance(previous, Path)
+    assert isinstance(candidate, Path)
+    assert isinstance(database_backup, Path)
+    assert isinstance(file_backups, list)
+    job_id = str(parsed.get("job_id") or "")
+    gate_held, _ = recovery_action(
+        "worker_restart_gate_hold",
+        lambda: _set_release_restart_gate(True, job_id),
+    )
+    maintenance_held, _ = recovery_action("maintenance_hold", lambda: _set_release_maintenance(True))
+    services_stopped, _ = recovery_action(
+        "service_stop",
+        lambda: _service_command("stop", "atlaso.service", "atlaso-console.service"),
+    )
+    link_restored, _ = recovery_action("release_link", lambda: _atomic_symlink(previous, ATLASO_CURRENT_LINK))
+    database_restored, _ = recovery_action("database_restore", lambda: _restore_sqlite_backup(database_backup))
+    assets_restored, _ = recovery_action("asset_restore", lambda: _restore_release_owned_files(file_backups))
+    data_disk_restored, _ = recovery_action(
+        "data_disk_identity",
+        lambda: _refresh_release_data_disk_identity(validate=False),
+    )
+    systemd_reloaded, _ = recovery_action("systemd_reload", lambda: _service_command("daemon-reload"))
+    services_started, _ = recovery_action(
+        "service_start",
+        lambda: _service_command("start", "atlaso.service", "atlaso-console.service"),
+    )
+    health_ready, _ = recovery_action("internal_health", _wait_for_atlaso_health)
+    service_state_ready, service_state = recovery_action(
+        "service_state",
+        lambda: _service_command("is-active", "atlaso.service", "atlaso-console.service", "nginx.service"),
+    )
+    pre_cleanup_ready = all(
+        (
+            services_stopped,
+            gate_held,
+            maintenance_held,
+            link_restored,
+            database_restored,
+            assets_restored,
+            data_disk_restored,
+            systemd_reloaded,
+            services_started,
+            health_ready,
+            service_state_ready,
+        )
+    )
+    if pre_cleanup_ready:
+        maintenance_ready, _ = recovery_action(
+            "maintenance_cleanup",
+            lambda: _set_release_maintenance(False),
+        )
+    else:
+        maintenance_ready = False
+    durable_ready, _ = recovery_action("durable_activation", _sync_release_activation)
+    previous_version = str(parsed.get("previous_version") or _release_root_version(previous))
+    try:
+        activation, activation_commands = _release_activation_verification(
+            previous,
+            {"version": previous_version},
+            require_receipt=False,
+            include_worker=False,
+        )
+        commands.extend(activation_commands)
+    except Exception as exc:  # noqa: BLE001 - preserve fail-closed recovery evidence.
+        activation = {
+            "success": False,
+            "candidate_version": previous_version,
+            "failure_layer": "reboot_rollback_activation_verification",
+        }
+        evidence = _release_check(
+            "reboot_rollback_activation_verification",
+            False,
+            f"Reboot rollback activation verification raised {type(exc).__name__}.",
+        )
+        commands.append(evidence)
+        rollback_failures.append(str(evidence["layer"]))
+    rollback_ready = bool(
+        pre_cleanup_ready
+        and maintenance_ready
+        and durable_ready
+        and activation.get("success")
+    )
+    if not rollback_ready:
+        recovery_action("maintenance_fail_closed", lambda: _set_release_maintenance(True))
+    error = "Atlaso release activation was interrupted by a host restart and required rollback."
+    definitive = {
+        **parsed,
+        "status": "failed" if rollback_ready else "rollback_pending",
+        "success": False,
+        "rolled_back": rollback_ready,
+        "failure_layer": "reboot_recovery",
+        "rollback_health": rollback_ready,
+        "rollback_service_checks": service_state if isinstance(service_state, dict) else {},
+        "commands": commands,
+        "active_release_verification": activation,
+        "rollback_failures": list(dict.fromkeys(rollback_failures)),
+        "error": error,
+        "finished_at": datetime.now(timezone.utc).isoformat(),
+    }
+    try:
+        _write_release_finalizer(definitive)
+        _write_update_info(definitive)
+    except OSError as exc:
+        return {
+            "status": "recovery_failed",
+            "success": False,
+            "allow_worker": False,
+            "commands": commands,
+            "rollback_failures": list(dict.fromkeys([*rollback_failures, "reboot_rollback_finalizer"])),
+            "error": f"Reboot rollback evidence could not be persisted: {type(exc).__name__}.",
+        }
+    if rollback_ready:
+        _set_release_restart_gate(False)
+        if ATLASO_CURRENT_LINK.is_symlink() and ATLASO_CURRENT_LINK.resolve(strict=True) == previous:
+            shutil.rmtree(candidate, ignore_errors=True)
+    return {
+        "status": definitive["status"],
+        "success": rollback_ready,
+        "allow_worker": rollback_ready,
+        "rolled_back": rollback_ready,
+        "commands": commands,
+        "rollback_failures": definitive["rollback_failures"],
+        "error": error,
+    }
 
 
 def _refresh_release_data_disk_identity(*, validate: bool) -> list[dict]:
@@ -11297,6 +11615,80 @@ def _write_release_finalizer(payload: dict) -> None:
     _fsync_directory(ATLASO_UPDATE_FINALIZER_PATH.parent)
 
 
+def _release_transaction_owner() -> dict[str, object]:
+    """Return durable identity for the helper process that owns a release transaction."""
+    try:
+        boot_id = Path("/proc/sys/kernel/random/boot_id").read_text(encoding="utf-8").strip()
+        start_ticks = Path(f"/proc/{os.getpid()}/stat").read_text(encoding="utf-8").split()[21]
+    except (OSError, IndexError):
+        boot_id = ""
+        start_ticks = ""
+    return {
+        "boot_id": boot_id,
+        "pid": os.getpid(),
+        "start_ticks": start_ticks,
+    }
+
+
+def _release_transaction_owner_alive(owner: object) -> bool:
+    """Return whether durable owner evidence still identifies the running helper.
+
+    Args:
+        owner: Persisted boot, PID, and process-start identity.
+    """
+    if not isinstance(owner, dict):
+        return False
+    try:
+        pid = int(owner.get("pid") or 0)
+        boot_id = Path("/proc/sys/kernel/random/boot_id").read_text(encoding="utf-8").strip()
+        start_ticks = Path(f"/proc/{pid}/stat").read_text(encoding="utf-8").split()[21]
+    except (OSError, ValueError, IndexError):
+        return False
+    return bool(
+        pid > 0
+        and boot_id
+        and boot_id == str(owner.get("boot_id") or "")
+        and start_ticks == str(owner.get("start_ticks") or "")
+    )
+
+
+def _release_transaction_recovery_evidence(
+    *,
+    previous: Path,
+    candidate: Path,
+    backup_root: Path,
+    database_backup: Path,
+    database_backed_up: bool,
+    file_backups: list[tuple[Path | None, Path]],
+) -> dict[str, object]:
+    """Return the bounded root-owned rollback manifest persisted before activation.
+
+    Args:
+        previous: Previously active release directory.
+        candidate: Candidate release directory being activated.
+        backup_root: Transaction backup root.
+        database_backup: SQLite backup created before migration.
+        database_backed_up: Whether the SQLite backup is complete.
+        file_backups: Installed-asset backup and destination pairs.
+    """
+    return {
+        "schema_version": 1,
+        "owner": _release_transaction_owner(),
+        "previous_release": str(previous.resolve()),
+        "candidate_release": str(candidate.resolve()),
+        "backup_root": str(backup_root.resolve()),
+        "database_backup": str(database_backup.resolve()),
+        "database_backed_up": database_backed_up,
+        "file_backups": [
+            {
+                "backup": str(backup.resolve()) if backup is not None else "",
+                "destination": str(destination),
+            }
+            for backup, destination in file_backups
+        ],
+    }
+
+
 def _service_main_pid(unit: str) -> int:
     """Return the positive systemd main PID for a service, or zero when unavailable.
 
@@ -11493,6 +11885,7 @@ def _release_activation_verification(
     release: dict,
     *,
     require_receipt: bool = True,
+    include_worker: bool = True,
     timeout_seconds: int = 60,
 ) -> tuple[dict, list[dict]]:
     """Verify durable active-release, service, nginx, and exact-version agreement.
@@ -11501,6 +11894,7 @@ def _release_activation_verification(
         release_root: Installed release directory expected to be active.
         release: Signed release manifest used to validate the active receipt.
         require_receipt: Whether signed receipt identity is mandatory for this verification.
+        include_worker: Whether the worker must already be active during verification.
         timeout_seconds: Maximum readiness wait for each OpenAPI endpoint.
     """
     expected_version = str(release.get("version") or "").split("+", 1)[0]
@@ -11570,14 +11964,13 @@ def _release_activation_verification(
             "layer": "nginx_configuration",
         }
     )
-    services = _service_command(
-        "is-active",
-        "atlaso.service",
-        "atlaso-worker.service",
-        "atlaso-console.service",
-        "nginx.service",
-    )
+    required_services = ["atlaso.service"]
+    if include_worker:
+        required_services.append("atlaso-worker.service")
+    required_services.extend(("atlaso-console.service", "nginx.service"))
+    services = _service_command("is-active", *required_services)
     services["layer"] = "service_state"
+    services["worker_required"] = include_worker
     checks.append(services)
     checks.append(
         _wait_for_openapi_version(
@@ -11790,6 +12183,7 @@ def _apply_atlaso_release(
     database_backup = backup_root / "atlaso.db"
     backup_root.mkdir(parents=True, exist_ok=True)
     file_backups: list[tuple[Path | None, Path]] = []
+    transaction_recovery: dict[str, object] = {}
     maintenance = _set_release_maintenance(True)
     commands.append(maintenance)
     if not maintenance["success"]:
@@ -11804,7 +12198,39 @@ def _apply_atlaso_release(
         _sqlite_backup(database_backup)
         database_backed_up = True
         failure_layer = "systemd_assets"
-        file_backups = _install_release_owned_files(release_root, backup_root)
+
+        def persist_transaction_checkpoint(backups: list[tuple[Path | None, Path]]) -> None:
+            """Persist rollback evidence before any release-owned asset is replaced.
+
+            Args:
+                backups: Complete installed-asset backup and destination manifest.
+            """
+            nonlocal transaction_recovery
+            transaction_recovery = _release_transaction_recovery_evidence(
+                previous=previous,
+                candidate=release_root,
+                backup_root=backup_root,
+                database_backup=database_backup,
+                database_backed_up=database_backed_up,
+                file_backups=backups,
+            )
+            _write_release_finalizer(
+                {
+                    **finalizer_evidence,
+                    "status": "transaction_pending",
+                    "rolled_back": False,
+                    "transaction_recovery": transaction_recovery,
+                    "commands": commands,
+                    "started_at": datetime.now(timezone.utc).isoformat(),
+                }
+            )
+
+        failure_layer = "transaction_checkpoint"
+        file_backups = _install_release_owned_files(
+            release_root,
+            backup_root,
+            before_install=persist_transaction_checkpoint,
+        )
         failure_layer = "data_disk_identity"
         disk_identity_commands = _refresh_release_data_disk_identity(validate=False)
         commands.extend(disk_identity_commands)
@@ -11860,17 +12286,19 @@ def _apply_atlaso_release(
             failure_layer = str(activation.get("failure_layer") or "activation_verification")
             raise ValueError(f"Candidate Atlaso release failed activation verification at {failure_layer}")
         failure_layer = "worker_restart_pending"
-        _set_release_restart_gate(True, str(payload.get("job_id") or ""))
         _write_release_finalizer(
             {
                 **finalizer_evidence,
                 "status": "restart_pending",
                 "rolled_back": False,
                 "service_health": True,
+                "transaction_recovery": transaction_recovery,
+                "commands": commands,
                 "active_release_verification": activation,
                 "started_at": datetime.now(timezone.utc).isoformat(),
             }
         )
+        _set_release_restart_gate(True, str(payload.get("job_id") or ""))
         previous_worker_pid = _service_main_pid("atlaso-worker.service")
         failure_layer = "worker_restart"
         worker_restart = _service_command("restart", "atlaso-worker.service")
@@ -13679,6 +14107,18 @@ def _handle_appliance_update(action: str, args: list[str]) -> int:
         action: Action consumed by handle appliance update.
         args: Parsed command-line options consumed by the operation.
     """
+    if action == "recover-release":
+        if args:
+            print("recover-release does not accept arguments", file=sys.stderr)
+            return 2
+        result = _recover_interrupted_release_transaction()
+        print(json.dumps(result, indent=2, sort_keys=True))
+        if result.get("allow_worker") is True:
+            return 0
+        if result.get("error"):
+            print(str(result["error"]), file=sys.stderr)
+        return 75
+
     if action == "bootstrap-data-disk-safety":
         if len(args) != 1:
             print("bootstrap-data-disk-safety requires exactly one active release path", file=sys.stderr)

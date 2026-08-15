@@ -247,10 +247,14 @@ historical downgrades.
 Success is recorded only after Atlaso flushes the active switch and installed release assets, removes maintenance mode,
 validates and reloads nginx, and verifies web, worker, console, and nginx service state. The helper writes a provisional
 finalizer, restarts the worker through the candidate release, and requires the new systemd PID to publish the matching
-job, version, and release-root identity before success becomes definitive. The helper establishes a runtime gate before
-any candidate or rollback worker restart and keeps both workers from consuming a finalizer until its durable write and
-the surrounding transaction have finished. The worker exits for systemd retry instead of accepting work if that gate
-does not open within the bounded startup wait. The surviving privileged helper removes and flushes any staged
+job, version, and release-root identity before success becomes definitive. Before switching the active link, the helper
+durably records a bounded rollback manifest containing the previous and candidate releases plus the database and
+installed-asset backups. It persists restart-pending evidence before establishing the volatile runtime gate, then keeps
+both workers from consuming a finalizer until its durable write and the surrounding transaction have finished. Worker
+pre-start distinguishes the live helper by boot, PID, and process-start identity. If a reboot removes the gate and the
+recorded helper no longer owns the transaction, privileged pre-start recovery restores and verifies the previous
+release before admitting the worker. The worker exits for systemd retry instead of accepting work if that recovery or
+gate does not complete. The surviving privileged helper removes and flushes any staged
 source-credential file before restarting the calling worker. The definitive finalizer retains sanitized helper command
 evidence so startup recovery can run the same child completion, parent completion, terminal task-log, and audit
 bookkeeping as an uninterrupted update. The helper then requires
