@@ -832,6 +832,30 @@ def strip_markdown_inline_link_metadata(text: str) -> str:
             elif text[cursor] == "]":
                 label_depth -= 1
             cursor += 1
+        if not label_depth and cursor < len(text) and text[cursor] == "[":
+            reference_cursor = cursor + 1
+            while reference_cursor < len(text):
+                if (
+                    text[reference_cursor] == "\\"
+                    and reference_cursor + 1 < len(text)
+                ):
+                    reference_cursor += 2
+                    continue
+                if text[reference_cursor] == "]":
+                    reference_cursor += 1
+                    visible_parts.append(text[label_open:cursor])
+                    visible_parts.append(
+                        "".join(
+                            character
+                            for character in text[cursor:reference_cursor]
+                            if character in "\r\n"
+                        )
+                    )
+                    index = reference_cursor
+                    break
+                reference_cursor += 1
+            if index == reference_cursor:
+                continue
         if label_depth or cursor >= len(text) or text[cursor] != "(":
             visible_parts.append(text[index])
             index += 1
@@ -913,6 +937,14 @@ def strip_markdown_nonoperative_content(text: str) -> str:
             without_raw_html_blocks,
             flags=re.DOTALL | re.IGNORECASE,
         )
+    without_raw_html_blocks = re.sub(
+        r'''<(?!(?:area|base|br|col|embed|hr|img|input|link|meta|param|source|track|wbr)\b)'''
+        r'''(?P<tag>[A-Za-z][A-Za-z0-9-]*)\b(?:[^<>"']|"[^"]*"|'[^']*')*>'''
+        r'''.*?</(?P=tag)[ \t\r\n]*>''',
+        lambda match: re.sub(r"[^\r\n]", "", match.group(0)),
+        without_raw_html_blocks,
+        flags=re.DOTALL | re.IGNORECASE,
+    )
     without_html_tags = re.sub(
         r'''</?[A-Za-z][A-Za-z0-9-]*(?:[^<>"']|"[^"]*"|'[^']*')*>''',
         lambda match: re.sub(r"[^\r\n]", "", match.group(0)),

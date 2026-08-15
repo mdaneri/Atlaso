@@ -1061,8 +1061,45 @@ def test_agent_policy_gate_ignores_inline_link_metadata_markers(tmp_path: Path) 
                 )
 
 
+def test_agent_policy_gate_ignores_reference_link_metadata_markers(
+    tmp_path: Path,
+) -> None:
+    """Verify reference identifiers cannot satisfy cleanup markers.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    marker = '`cleanup-ready`'
+    sibling = "\n- following policy"
+    for relative_path in ORDERED_TERMINAL_CLEANUP_MARKERS:
+        for image_prefix in ("", "!"):
+            write_policy_files(tmp_path)
+            path = tmp_path / relative_path
+            anchor = TERMINAL_CLEANUP_SECTION_ANCHORS[relative_path]
+            link_prefix = "" if anchor.startswith("#") else "  "
+            text = path.read_text(encoding="utf-8").replace(marker, "", 1)
+            hidden_marker = (
+                f"\n{link_prefix}{image_prefix}[example][{marker}]"
+                f"\n{link_prefix}[{marker}]: https://example.invalid"
+            )
+            path.write_text(
+                text + hidden_marker
+                if anchor.startswith("#")
+                else text.replace(sibling, hidden_marker + sibling, 1),
+                encoding="utf-8",
+            )
+
+            findings = check_agent_policy_gate(tmp_path)
+
+            assert len(findings) == 1
+            assert findings[0].path == path
+            assert findings[0].message == (
+                f"completed-task cleanup section marker is missing: {marker}"
+            )
+
+
 def test_agent_policy_gate_ignores_raw_html_block_markers(tmp_path: Path) -> None:
-    """Verify raw HTML code-container bodies cannot satisfy markers.
+    """Verify raw HTML container bodies cannot satisfy markers.
 
     Args:
         tmp_path: Temporary directory provided by pytest for isolated filesystem state.
@@ -1079,6 +1116,9 @@ def test_agent_policy_gate_ignores_raw_html_block_markers(tmp_path: Path) -> Non
             "xmp",
             "template",
             "noscript",
+            "iframe",
+            "div",
+            "span",
         ):
             write_policy_files(tmp_path)
             path = tmp_path / relative_path
@@ -1122,6 +1162,9 @@ def test_agent_policy_gate_ignores_raw_html_policy_sections(tmp_path: Path) -> N
             "xmp",
             "template",
             "noscript",
+            "iframe",
+            "div",
+            "span",
         ):
             write_policy_files(tmp_path)
             path = tmp_path / relative_path
@@ -1145,6 +1188,26 @@ def test_agent_policy_gate_ignores_raw_html_policy_sections(tmp_path: Path) -> N
             assert findings[0].message == (
                 "completed-task cleanup section is missing: " + anchor
             )
+
+
+def test_agent_policy_gate_preserves_policy_after_void_html(tmp_path: Path) -> None:
+    """Verify void HTML tags do not consume following operative policy.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    for relative_path in ORDERED_TERMINAL_CLEANUP_MARKERS:
+        for void_element in ("<br>", '<img alt="divider">'):
+            write_policy_files(tmp_path)
+            path = tmp_path / relative_path
+            anchor = TERMINAL_CLEANUP_SECTION_ANCHORS[relative_path]
+            text = path.read_text(encoding="utf-8")
+            path.write_text(
+                text.replace(anchor, void_element + "\n" + anchor, 1),
+                encoding="utf-8",
+            )
+
+            assert check_agent_policy_gate(tmp_path) == []
 
 
 def test_agent_policy_gate_ignores_indented_cleanup_markers(tmp_path: Path) -> None:
