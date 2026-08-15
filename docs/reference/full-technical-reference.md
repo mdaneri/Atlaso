@@ -708,9 +708,9 @@ and a 60-second OpenSSH user certificate restricted to loopback source with forw
 disabled. The certificate removes the SSH-password prompt, but `sudo` retains the Photon OS account password policy.
 When management UI HTTPS is enabled, it uses the CA-managed `appliance:https` certificate, redirects public HTTP/80 to
 HTTPS/443, and reverse-proxies HTTPS to uvicorn on `127.0.0.1:8000`. When management UI HTTPS is disabled, including
-after factory reset plus apply, nginx serves public HTTP/80 as a plain reverse proxy to the same loopback upstream and
-does not expose a management HTTPS listener. See [Web terminal](../operate/web-terminal.md) for the operator flow and
-security boundaries.
+after the dedicated complete factory-reset transaction, nginx serves public HTTP/80 as a plain reverse proxy to the same
+loopback upstream and does not expose a management HTTPS listener. See
+[Web terminal](../operate/web-terminal.md) for the operator flow and security boundaries.
 
 Routes & WAN Simulation stages `/var/lib/atlaso/apply/wan/atlaso-wan.conf` and owns static lab route desired state,
 routing permissions, IPv4 masquerade NAT rules, and interface/VLAN-level `tc/netem` WAN impairment. Atlaso has no `wan`
@@ -929,16 +929,29 @@ nor restored. The archive does not include audit events, jobs, API tokens, passw
 generated PXE runtime files, or other runtime history. Restoring usable CA private material requires the same
 `ATLASO_SECRETS_KEY`.
 
-Restoring a settings archive replaces desired-state configuration in the control-plane database only. Factory reset
-removes current desired-state configuration and reseeds only core Atlaso defaults. It does not recreate demo VLANs,
-routes, NAT rules, WAN policies, trunk-only parent NIC posture, DHCP scopes or reservations, firewall rules, CA
-requests, vSphere Key Provider records, depot download profiles, or service listener bindings, including after a
-service restart. The core reset keeps only the appliance DNS zone derived from the appliance FQDN and an app-owned
-appliance A/AAAA record pointing at the management IP. The core reset leaves only `eth0` desired up for management;
-other physical NICs are desired admin down until an operator enables them. Disabled service settings reset with blank
-listen interfaces and addresses so `Appliance Apply` can submit a clean disabled baseline. Both restore and factory
-reset force service status rows to stopped, disabled, and `unconfigured`; host services are not mutated until the
-operator reviews and submits selected units through the global `Appliance Apply` workflow.
+Restoring a settings archive replaces desired-state configuration in the control-plane database only and leaves host
+mutation to the global `Appliance Apply` workflow. Complete factory reset is a separate crash-safe transaction. It
+removes every database record—including identities, password hashes, API tokens, jobs, schedules, audit history,
+archives, and desired/applied state—and creates a private candidate containing only factory/bootstrap records. Atlaso
+copies the previous apply baselines into that candidate long enough to derive removals, preflights all 16 generated unit
+configurations, activates them in dependency order, writes matching clean baselines, and atomically replaces the active
+SQLite database. A new appliance-instance ID invalidates every earlier session. Core routing, firewall, authentication,
+and management state finish enabled and coherent; optional services finish disabled; no follow-up Apply is pending.
+
+Factory reset does not recreate demo VLANs, routes, NAT rules, WAN policies, trunk-only parent NIC posture, DHCP scopes
+or reservations, firewall rules, CA requests, vSphere Key Provider records, depot download profiles,
+or service listener bindings. It keeps only the appliance DNS zone derived from the appliance FQDN and an app-owned
+appliance A/AAAA record pointing at the management IP. Only `eth0` is desired up for management; other physical NICs
+are desired admin down. Disabled service settings have blank listen interfaces and addresses. The reset returns
+management to the image-configured CIDR and HTTP preference, with the local console as the bounded handoff if the prior
+address becomes unavailable.
+
+Before database replacement, the root helper persists `/var/lib/atlaso/factory-reset/request.json`, quiesces Atlaso
+writers, validates generated nginx, network, firewall, resolver, systemd, and service configuration, and records only
+bounded non-secret progress. `atlaso.service` resumes that marker before uvicorn starts after a reboot. The candidate is
+mode `0600`; fixed secret staging is scrubbed on failure and all `/var/lib/atlaso/apply` staging is removed on success.
+Payload files under the VCF Offline Depot, backup, registry, and managed ESX Storage paths are preserved even though
+their database references are removed. `last-result.json` retains the safe terminal outcome.
 
 Before replacement begins, restore validates every supplied collection, row object, nested automation revision,
 required field, relationship, and enabled VLAN or static-route target. Any later restore failure rolls back the database

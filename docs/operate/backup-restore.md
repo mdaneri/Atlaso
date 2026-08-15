@@ -38,6 +38,46 @@ retain their `{{custom.*}}` prerequisites. Uploaded VCF Private Registry CA bund
 enabled registry depends on an uploaded bundle instead of the internal CA, the export records the registry as disabled;
 upload the CA bundle again and review the registry settings before re-enabling it.
 
+## Return the complete appliance to factory state
+
+**Factory reset appliance** is not a settings-only restore and does not require a later Appliance Apply. After the
+administrator confirms the destructive action, Atlaso creates a durable non-secret recovery marker, stops database
+writers, builds a private replacement database, validates all generated runtime configuration, and activates the clean
+state for all 16 apply units. Only after the candidate passes validation does Atlaso atomically replace the active
+database. The management plane restarts and the initiating browser is handed back to sign-in.
+
+The reset:
+
+- removes all control-plane records, including local and external users, password hashes, API tokens, sessions,
+  schedules, queued and completed jobs, automation history, audit events, vault entries, certificates, VLANs, routes,
+  service configuration, and settings-archive metadata;
+- recreates only factory/bootstrap records, including the bootstrap accounts, management `eth0`, the appliance DNS
+  record, and built-in CA profiles; VCF Offline Depot download profiles are not recreated;
+- enables the minimum routing, firewall, authentication, and management-plane defaults while leaving optional services
+  disabled, then records identical desired and applied baselines so **Review appliance changes** shows zero pending
+  units; and
+- changes the appliance-instance identity, invalidating every earlier browser session and bearer token.
+
+The operation deliberately preserves payload files on documented storage paths. This includes VCF Offline Depot
+content under `/mnt/atlaso-vcf-offline-depot`, backup artifacts under `/mnt/atlaso-vcf-backups`, VCF Private Registry
+payload under `/mnt/atlaso-vcf-registry`, and managed ESX Storage payloads. Their database references are removed, so
+an administrator must explicitly rediscover, reconfigure, or delete retained payload later. Fixed transient Apply
+staging under `/var/lib/atlaso/apply` is scrubbed; secret-bearing Local Users, CA, and LDAP staging is also removed on
+failure.
+
+Existing credentials stop working. Sign in with the bootstrap administrator credentials supplied when the appliance
+image was deployed. Factory state disables Management HTTPS and restores the packaged management network
+(`192.168.49.1/24` on `eth0`), so the browser may lose the old address or HTTPS endpoint. Use the VMware or
+Hyper-V console to find or correct management networking when the login page does not return at the former URL.
+
+Reset progress is recorded outside the database in `/var/lib/atlaso/factory-reset/request.json`; the last successful
+result is recorded in `last-result.json`. Atlaso resumes an incomplete marker before the web control plane starts after
+a reboot. If reset reports failure, preserve the VM, inspect `journalctl -u atlaso-factory-reset`, correct the reported
+runtime prerequisite, and reboot or run `sudo /opt/atlaso/bin/atlaso-helper factory-reset resume --real` from the local
+console. Resume is idempotent and retains the old database until a validated candidate is ready for replacement. A
+nonblocking transaction lock rejects overlapping scheduled, boot-resume, or console runners without allowing them to
+modify the active reset transaction.
+
 ## Restore safely
 
 1. Take a VM snapshot or equivalent rollback point.

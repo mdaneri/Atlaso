@@ -202,7 +202,9 @@ The following cross-cutting boundaries always apply:
   current page's group always opens without overwriting its saved choice. Keep the global **Review appliance changes**
   card outside the disclosures and preserve coherent groups at desktop, two-column narrow, and single-column mobile
   widths.
-- `/ui/management/appliance-apply` is the only desired-state host-mutation workflow.
+- `/ui/management/appliance-apply` is the only ordinary desired-state host-mutation workflow. The dedicated confirmed
+  factory-reset transaction is the sole exception: it preflights and activates every factory apply unit, atomically
+  replaces the database, records durable recovery state, invalidates sessions, and must finish with zero pending units.
 - Physical-interface desired-state updates from the API and UI use one atomic domain service. Capture the previous
   IPv4 and IPv6 CIDRs before mutation, refresh dependent service, ESX Storage, Web Terminal, DHCP, and Network Boot
   bindings before one commit, include child VLAN dependencies when their parent becomes unavailable, roll back every
@@ -348,6 +350,11 @@ The following cross-cutting boundaries always apply:
   before clearing desired state. A failed restore must roll back database changes and preserve separately staged LDAP
   recovery metadata and in-memory bytes. Clear staged recovery material only after a successful restore commit or
   factory reset commit.
+- Complete factory reset must replace every control-plane database record with factory/bootstrap records, invalidate
+  all sessions and credentials, activate coherent core defaults while disabling optional services, and preserve depot,
+  backup, and managed ESX Storage payload paths. Persist a non-secret recovery marker before database replacement,
+  make resume idempotent across interruption or reboot, validate all generated runtime configuration before activation,
+  scrub transient secret staging, and leave all 16 desired/applied baselines equal with no follow-up Apply workflow.
 - Keep internal CA custody and managed service-certificate deployment available without a public CA listen interface.
   Interface selection owns portal publication only. Every selected NTS server apply includes the CA unit and executes
   it before NTP/NTS validation so runtime certificate material is present even when the CA baseline is current. Turning

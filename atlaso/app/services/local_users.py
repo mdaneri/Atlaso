@@ -50,6 +50,24 @@ DEFAULT_PASSWORD_POLICY: dict[str, bool | int] = {
 _PENDING_OS_PASSWORDS: dict[str, tuple[str, datetime]] = {}
 
 
+def clear_all_pending_os_passwords() -> None:
+    """Remove every process-local staged Photon OS password."""
+    _PENDING_OS_PASSWORDS.clear()
+
+
+def pending_os_password_snapshot() -> dict[str, tuple[str, datetime]]:
+    """Return a copy of process-local staged Photon OS passwords."""
+    return dict(_PENDING_OS_PASSWORDS)
+
+
+def restore_pending_os_password_snapshot(
+    snapshot: dict[str, tuple[str, datetime]],
+) -> None:
+    """Replace process-local staged Photon OS passwords after rollback."""
+    _PENDING_OS_PASSWORDS.clear()
+    _PENDING_OS_PASSWORDS.update(snapshot)
+
+
 def _pending_key(user: User | str) -> str:
     """Return pending key.
 

@@ -135,7 +135,9 @@ prevents a queued task from applying state that the administrator did not inspec
 
 ## Safety boundaries
 
-- `/ui/management/appliance-apply` is the only desired-state host-mutation workflow.
+- `/ui/management/appliance-apply` is the only ordinary desired-state host-mutation workflow. The confirmed complete
+  factory reset on **Backup and Restore** is a dedicated recovery exception that validates and applies every clean
+  factory unit itself; it does not create a follow-up Apply submission.
 - Only one Appliance Apply master can be pending or running.
 - Photon mutations use constrained `atlaso-helper` actions; the web process does not receive broad root access.
 - Previews, diffs, task results, logs, and audit details redact sensitive-looking values.

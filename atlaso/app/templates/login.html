@@ -23,6 +23,9 @@
         >
         <h1>Sign in to the appliance</h1>
         <p class="muted">Atlaso supports POC, lab, and test environments by simplifying deployment, maintenance, and validation.</p>
+        {% if factory_reset_notice %}
+          <div class="alert warning" role="status">{{ factory_reset_notice }}</div>
+        {% endif %}
         {% if error %}
           <div class="alert error">{{ error }}</div>
         {% endif %}

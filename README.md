@@ -27,8 +27,9 @@ brings infrastructure, storage, identity, networking, and lifecycle workflows in
 - [Operations](docs/operate/index.md) — run the appliance and review desired-state changes.
 - [Primary navigation](docs/operate/navigation.md) — collapse authorized sidebar sections, understand active-page
   reopening, and use the same disclosure behavior at desktop and narrow viewports.
-- [Backup and restore](docs/operate/backup-restore.md) — export desired state and restore it atomically; malformed or
-  failed restores leave existing settings and separately staged LDAP recovery material unchanged.
+- [Backup and restore](docs/operate/backup-restore.md) — export and atomically restore desired state, or run the
+  dedicated crash-safe factory reset that replaces the control-plane database, restores all 16 appliance defaults,
+  invalidates existing credentials and sessions, and preserves appliance payload storage.
 - [Local appliance console](docs/operate/appliance-console.md) — correct management networking from `tty1` and have
   Atlaso reconcile Firewall, retry unfinished first-boot HTTPS, and verify the complete management front door.
 - [Network configuration](docs/operate/networking.md) — inspect physical interfaces and manage each tagged VLAN as one

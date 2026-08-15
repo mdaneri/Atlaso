@@ -559,9 +559,15 @@ nginx. It also writes `/etc/ssh/sshd_config.d/atlaso-root-login.conf`, validates
 is disabled by default and enabled only when the Appliance Settings switch is applied. When management UI HTTPS is
 enabled, the helper requires the CA-managed `appliance:https` cert/key files, redirects public HTTP/80 to HTTPS/443, and
 reverse-proxies HTTPS traffic to uvicorn on `127.0.0.1:8000`. Appliance FQDN or management IP changes automatically
-refresh the managed appliance leaf certificate before apply. When management UI HTTPS is disabled, including after
-factory reset plus apply, nginx serves public HTTP/80 as a plain reverse proxy to uvicorn on `127.0.0.1:8000` and does
+refresh the managed appliance leaf certificate before apply. When management UI HTTPS is disabled, including after the
+dedicated complete factory-reset transaction, nginx serves public HTTP/80 as a plain reverse proxy to uvicorn on
+`127.0.0.1:8000` and does
 not expose a management HTTPS listener.
+
+Complete factory reset is the sole exception to the ordinary Apply submission boundary. It reuses the same render,
+validation, execution ordering, and baseline code for all 16 units inside a root-owned, resumable transaction. It does
+not create an Apply job or modal: success means the replacement database and runtime are already at the same clean
+baseline, while a durable marker causes boot-time resume before `atlaso.service` starts after interruption.
 
 ### Operational logs and appliance power
 

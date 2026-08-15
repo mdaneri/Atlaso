@@ -59,6 +59,7 @@ from atlaso.app.adapters.system import AdapterResult, SystemAdapter
 from atlaso.app.audit import record_audit
 from atlaso.app.config import get_settings
 from atlaso.app.database import SessionLocal, get_db
+from atlaso.app.factory_reset import read_factory_reset_state
 from atlaso.app.models import (
     ApiToken,
     ApplianceSettings,
@@ -12937,6 +12938,7 @@ def depot_login_page(
     Args:
         request: Incoming HTTP request.
         next: Relative destination requested after authentication.
+        factory_reset: Factory-reset handoff state requested by the reset workflow.
         identity: Authenticated identity authorizing the request.
         db: Active database session.
 
@@ -13155,6 +13157,7 @@ def local_user_has_web_terminal_access(user: User | None) -> bool:
 def login_page(
     request: Request,
     next: str = Query(""),
+    factory_reset: str = Query(""),
     identity: Identity | None = Depends(get_session_identity),
     db: Session = Depends(get_db),
 ) -> HTMLResponse | RedirectResponse:
@@ -13172,7 +13175,26 @@ def login_page(
     return_to = safe_login_next(next)
     if identity:
         return RedirectResponse(return_to, status_code=303)
-    return render(request, "login.html", {"error": None, "return_to": return_to})
+    reset_notice = None
+    if factory_reset:
+        reset_state = read_factory_reset_state()
+        if factory_reset == "complete" or reset_state["state"] == "succeeded":
+            reset_notice = (
+                "Factory reset completed. Sign in with the bootstrap administrator credentials; "
+                "all earlier sessions and credentials are invalid."
+            )
+        elif reset_state["state"] == "failed":
+            reset_notice = reset_state["message"] or "Factory reset requires console recovery."
+        else:
+            reset_notice = (
+                "Factory reset is in progress. This page may be temporarily unavailable while the "
+                "management plane restarts."
+            )
+    return render(
+        request,
+        "login.html",
+        {"error": None, "return_to": return_to, "factory_reset_notice": reset_notice},
+    )
 
 
 @router.post("/login", response_model=None)
@@ -20096,7 +20118,7 @@ def factory_reset_backup_restore(
     csrf: str = Form(...),
     identity: Identity = Depends(require_session_identity),
     db: Session = Depends(get_db),
-) -> HTMLResponse:
+) -> HTMLResponse | RedirectResponse:
     """Handle the factory reset backup restore endpoint.
 
     Args:
@@ -20106,33 +20128,48 @@ def factory_reset_backup_restore(
         db: Active database session.
 
     Returns:
-        The endpoint response.
+        A safe login handoff after the dedicated reset is accepted or completed.
     """
     require_admin_identity(identity)
     verify_csrf(request, csrf)
-    counts = factory_reset_desired_state(db)
-    record_audit(
-        db,
-        actor=identity.username,
-        action="factory_reset_settings",
-        resource_type="settings_backup",
-        detail="Desired-state settings reset to core factory defaults without demo resources or service listener bindings; services forced stopped/unconfigured.",
-        request_id=request.state.request_id,
-    )
-    return render(
-        request,
-        "backup_restore.html",
-        {
-            "identity": identity,
-            **backup_restore_context(
-                db,
-                result={
-                    "title": "Factory reset complete",
-                    "message": "Desired-state settings were reset to core Atlaso defaults without demo resources or service listener bindings. Non-management NICs are desired admin down, and services are stopped and unconfigured until reviewed and applied through the global appliance workflow.",
-                    "counts": counts,
-                },
-            ),
-        },
+    settings = get_settings()
+    if settings.environment == "appliance" and not settings.dry_run_system_adapters:
+        scheduled = SystemAdapter(dry_run=False).schedule_factory_reset()
+        if scheduled.returncode != 0:
+            detail = (scheduled.stderr or scheduled.stdout or "Factory reset could not be scheduled.").strip()
+            return render(
+                request,
+                "backup_restore.html",
+                {"identity": identity, **backup_restore_context(db, error=detail)},
+                status_code=503,
+            )
+        request.session.clear()
+        return RedirectResponse(
+            f"{management_ui_path('/login')}?factory_reset=scheduled",
+            status_code=303,
+        )
+
+    previous_baselines = load_appliance_apply_baselines(db)
+    factory_reset_desired_state(db)
+    save_appliance_apply_baselines(db, previous_baselines)
+    units = appliance_apply_units(db)
+    invalid_units = [unit["label"] for unit in units if unit["validation_errors"]]
+    if invalid_units:
+        raise RuntimeError(
+            "Factory defaults failed validation for: " + ", ".join(invalid_units)
+        )
+    for unit in units:
+        result = execute_appliance_apply_unit(unit, adapter=SystemAdapter(dry_run=True), db=db)
+        if not result["success"]:
+            raise RuntimeError(f"Factory reset failed for {unit['label']}.")
+    final_units = appliance_apply_units(db, reconcile=False)
+    update_appliance_apply_baselines(db, final_units, {unit["id"] for unit in final_units})
+    db.commit()
+    invalidate_appliance_apply_status_projection()
+    request.session.clear()
+    return RedirectResponse(
+        f"{management_ui_path('/login')}?factory_reset=complete",
+        status_code=303,
     )
 
 

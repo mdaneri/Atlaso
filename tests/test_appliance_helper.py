@@ -104,6 +104,65 @@ def test_appliance_power_helper_fails_closed_without_systemd_run(monkeypatch, ca
     assert "refusing an immediate appliance power action" in capsys.readouterr().err
 
 
+def test_factory_reset_helper_persists_marker_before_detached_schedule(
+    monkeypatch,
+    tmp_path,
+):
+    """Factory-reset scheduling is durable before the detached runner starts.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    helper = load_helper_module()
+    state_directory = tmp_path / "factory-reset"
+    runner = tmp_path / "python"
+    runner.write_text("", encoding="utf-8")
+    commands: list[list[str]] = []
+
+    def fake_run(command: list[str], **_kwargs) -> subprocess.CompletedProcess[str]:
+        commands.append(command)
+        returncode = 3 if command[:3] == ["systemctl", "is-active", "--quiet"] else 0
+        return subprocess.CompletedProcess(command, returncode, "", "")
+
+    monkeypatch.setattr(helper, "ATLASO_FACTORY_RESET_DIR", state_directory)
+    monkeypatch.setattr(helper, "ATLASO_FACTORY_RESET_REQUEST_PATH", state_directory / "request.json")
+    monkeypatch.setattr(helper, "ATLASO_FACTORY_RESET_RESULT_PATH", state_directory / "last-result.json")
+    monkeypatch.setattr(helper, "ATLASO_FACTORY_RESET_PYTHON", runner)
+    monkeypatch.setattr(helper.shutil, "which", lambda command: f"/usr/bin/{command}" if command in {"systemd-run", "logger"} else None)
+    monkeypatch.setattr(helper, "_run", fake_run)
+
+    assert helper._handle_factory_reset("schedule", []) == 0
+    marker = json.loads((state_directory / "request.json").read_text(encoding="utf-8"))
+    assert marker["state"] == "scheduled"
+    scheduled = next(command for command in commands if command and command[0] == "/usr/bin/systemd-run")
+    assert "--on-active=2" in scheduled
+    assert f"--property=WorkingDirectory={helper.ATLASO_STATE_DIR}" in scheduled
+    assert f"--property=EnvironmentFile={helper.ATLASO_ENV_PATH}" in scheduled
+    assert scheduled[-3:] == [str(runner), "-m", "atlaso.app.factory_reset"]
+
+
+def test_factory_reset_helper_resume_is_idempotent(monkeypatch, tmp_path):
+    """Factory-reset resume is a no-op without an in-progress marker.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    helper = load_helper_module()
+    state_directory = tmp_path / "factory-reset"
+    monkeypatch.setattr(helper, "ATLASO_FACTORY_RESET_DIR", state_directory)
+    monkeypatch.setattr(helper, "ATLASO_FACTORY_RESET_REQUEST_PATH", state_directory / "request.json")
+    monkeypatch.setattr(helper, "ATLASO_FACTORY_RESET_RESULT_PATH", state_directory / "last-result.json")
+    monkeypatch.setattr(
+        helper,
+        "_factory_reset_runner",
+        lambda **_kwargs: pytest.fail("resume runner should not start without a request marker"),
+    )
+
+    assert helper._handle_factory_reset("resume", []) == 0
+
+
 def ldap_payload(*, enabled: bool = False) -> dict:
     """Return ldap payload.
 
@@ -2594,6 +2653,19 @@ def test_esxi_pxe_helper_writes_http_ipxe_script_without_profiles(monkeypatch, t
     assert (tftp_root / "snponly.efi").read_bytes() == b"uefi ipxe"
     assert (tftp_root / "pxelinux.0").read_bytes() == b"pxelinux"
     assert (tftp_root / "ldlinux.c32").read_bytes() == b"ldlinux"
+
+
+def test_esxi_pxe_helper_accepts_dormant_native_http_preference_when_disabled():
+    """Disabled PXE does not require a URL for its dormant native HTTP preference."""
+    helper = load_helper_module()
+
+    assert helper._esxi_pxe_boot_errors(
+        {
+            "enabled": False,
+            "native_uefi_http_enabled": True,
+            "native_uefi_http_url": "",
+        }
+    ) == []
 
 
 def test_esxi_pxe_helper_does_not_copy_host_artifact_to_default_fallback(monkeypatch, tmp_path):

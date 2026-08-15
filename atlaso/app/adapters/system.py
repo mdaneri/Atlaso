@@ -934,6 +934,26 @@ class SystemAdapter:
             timeout_seconds=5,
         )
 
+    def schedule_factory_reset(self) -> AdapterResult:
+        """Schedule the detached, durable complete factory-reset transaction."""
+        return self._helper_result(
+            "factory-reset",
+            "schedule",
+            dry_run_message="dry-run: complete factory reset scheduling command recorded",
+            timeout_seconds=10,
+        )
+
+    def factory_reset_status(self) -> AdapterResult:
+        """Read the bounded durable factory-reset status marker."""
+        return self._helper_result(
+            "factory-reset",
+            "status",
+            dry_run_message=json.dumps({"state": "idle", "updated_at": "", "message": ""}),
+            use_sudo=False,
+            timeout_seconds=5,
+            execute_in_dry_run=True,
+        )
+
     def _record_only_result(self, command: list[str], stdout: str) -> AdapterResult:
         """Persist only result.
 

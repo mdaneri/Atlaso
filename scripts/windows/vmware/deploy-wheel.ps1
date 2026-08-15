@@ -285,6 +285,7 @@ function Invoke-PasswordBackedDeploy {
         [string]$LocalBootBackgroundPath = '',
         [string]$LocalInventoryLinuxPackagePath = '',
         [Parameter(Mandatory = $true)][string[]]$LocalTrustKeyPaths,
+        [Parameter(Mandatory = $true)][string]$LocalAtlasoServicePath,
         [Parameter(Mandatory = $true)][string]$LocalWorkerServicePath,
         [Parameter(Mandatory = $true)][string]$LocalScriptPath,
         [Parameter(Mandatory = $true)][string]$RemoteDirectoryPath,
@@ -297,6 +298,7 @@ function Invoke-PasswordBackedDeploy {
         [string]$RemoteBootBackground = '',
         [string]$RemoteInventoryLinuxPackage = '',
         [Parameter(Mandatory = $true)][string[]]$RemoteTrustKeys,
+        [Parameter(Mandatory = $true)][string]$RemoteAtlasoService,
         [Parameter(Mandatory = $true)][string]$RemoteWorkerService,
         [Parameter(Mandatory = $true)][string]$RemoteScript,
         [Parameter(Mandatory = $true)][bool]$ResetVaultEntryTable,
@@ -347,6 +349,7 @@ parser.add_argument("--local-boot-theme", default="")
 parser.add_argument("--local-boot-background", default="")
 parser.add_argument("--local-inventory-linux-package", default="")
 parser.add_argument("--local-trust-key", action="append", default=[])
+parser.add_argument("--local-atlaso-service", required=True)
 parser.add_argument("--local-worker-service", required=True)
 parser.add_argument("--local-script", required=True)
 parser.add_argument("--remote-dir", required=True)
@@ -359,6 +362,7 @@ parser.add_argument("--remote-boot-theme", default="")
 parser.add_argument("--remote-boot-background", default="")
 parser.add_argument("--remote-inventory-linux-package", default="")
 parser.add_argument("--remote-trust-key", action="append", default=[])
+parser.add_argument("--remote-atlaso-service", required=True)
 parser.add_argument("--remote-worker-service", required=True)
 parser.add_argument("--remote-script", required=True)
 parser.add_argument("--reset-vault-entries", action="store_true")
@@ -378,6 +382,7 @@ if not password:
 uploads = [
     (pathlib.Path(args.local_wheel), args.remote_wheel),
     (pathlib.Path(args.local_script), args.remote_script),
+    (pathlib.Path(args.local_atlaso_service), args.remote_atlaso_service),
     (pathlib.Path(args.local_worker_service), args.remote_worker_service),
 ]
 uploads.extend(
@@ -451,6 +456,7 @@ try:
         f"{shell_quote(remote_boot_installer_argument)} "
         f"{shell_quote(remote_boot_theme_argument)} "
         f"{shell_quote(remote_boot_background_argument)} "
+        f"{shell_quote(args.remote_atlaso_service)} "
         f"{shell_quote(args.remote_worker_service)} "
         f"{shell_quote(remote_runtime_dependencies_argument)} "
         f"{shell_quote(remote_trust_keys_argument)} "
@@ -540,6 +546,8 @@ finally:
             $deployArguments += @('--remote-trust-key', $remoteTrustKey)
         }
         $deployArguments += @(
+            '--local-atlaso-service', $LocalAtlasoServicePath,
+            '--remote-atlaso-service', $RemoteAtlasoService,
             '--local-worker-service', $LocalWorkerServicePath,
             '--remote-worker-service', $RemoteWorkerService
         )
@@ -596,6 +604,7 @@ $trustKeyPaths = @(
         Sort-Object Name |
         Select-Object -ExpandProperty FullName
 )
+$atlasoServicePath = Join-Path $resolvedRepoRoot 'image\vmware-workstation\systemd\atlaso.service'
 $workerServicePath = Join-Path $resolvedRepoRoot 'image\common\systemd\atlaso-worker.service'
 $inventoryLinuxPackagePath = ''
 if (-not $SkipInventoryLinuxSync) {
@@ -630,6 +639,9 @@ if (-not $SkipBootBrandingSync) {
         }
     }
 }
+if (-not (Test-Path -LiteralPath $atlasoServicePath -PathType Leaf)) {
+    throw "Atlaso service not found: $atlasoServicePath"
+}
 if (-not (Test-Path -LiteralPath $workerServicePath -PathType Leaf)) {
     throw "Atlaso worker service not found: $workerServicePath"
 }
@@ -652,6 +664,7 @@ $remoteTrustKeyPaths = @(
         Join-RemotePath -Directory $RemoteDirectory -Leaf (Split-Path -Leaf $_)
     }
 )
+$remoteAtlasoServicePath = Join-RemotePath -Directory $RemoteDirectory -Leaf 'atlaso.service'
 $remoteWorkerServicePath = Join-RemotePath -Directory $RemoteDirectory -Leaf 'atlaso-worker.service'
 $remoteInventoryLinuxPackagePath = if ($inventoryLinuxPackagePath) {
     Join-RemotePath -Directory $RemoteDirectory -Leaf (Split-Path -Leaf $inventoryLinuxPackagePath)
@@ -686,11 +699,12 @@ console_manager_path="${5:-}"
 boot_installer_path="${6:-}"
 boot_theme_path="${7:-}"
 boot_background_path="${8:-}"
-worker_service_path="${9:?worker service path required}"
-runtime_dependency_paths="${10:?runtime dependency wheel paths required}"
-trust_key_paths="${11:?release trust key paths required}"
-reset_vault_entries="${12:-false}"
-inventory_linux_package="${13:-}"
+atlaso_service_path="${9:?atlaso service path required}"
+worker_service_path="${10:?worker service path required}"
+runtime_dependency_paths="${11:?runtime dependency wheel paths required}"
+trust_key_paths="${12:?release trust key paths required}"
+reset_vault_entries="${13:-false}"
+inventory_linux_package="${14:-}"
 venv="/opt/atlaso/.venv"
 python="$venv/bin/python"
 
@@ -951,6 +965,8 @@ fi
 usermod -a -G atlaso-automation atlaso
 install -d -o atlaso -g atlaso-automation -m 0750 /var/lib/atlaso/automation /var/lib/atlaso/automation/scripts
 install -d -o atlaso-automation -g atlaso-automation -m 0750 /var/lib/atlaso/automation/runs
+install -o root -g root -m 0644 "$atlaso_service_path" /etc/systemd/system/atlaso.service
+sed -i 's/\r$//' /etc/systemd/system/atlaso.service
 install -o root -g root -m 0644 "$worker_service_path" /etc/systemd/system/atlaso-worker.service
 sed -i 's/\r$//' /etc/systemd/system/atlaso-worker.service
 systemctl daemon-reload
@@ -997,6 +1013,7 @@ try {
     if (-not $SkipBootBrandingSync) {
         $uploadPaths += $bootInstallerPath
     }
+    $uploadPaths += $atlasoServicePath
     $uploadPaths += $workerServicePath
     if ($inventoryLinuxPackagePath) {
         $uploadPaths += $inventoryLinuxPackagePath
@@ -1030,6 +1047,7 @@ try {
             -LocalBootBackgroundPath $localBootBackgroundArgument `
             -LocalInventoryLinuxPackagePath $inventoryLinuxPackagePath `
             -LocalTrustKeyPaths $trustKeyPaths `
+            -LocalAtlasoServicePath $atlasoServicePath `
             -LocalWorkerServicePath $workerServicePath `
             -LocalScriptPath $tempScript `
             -RemoteDirectoryPath $RemoteDirectory `
@@ -1042,6 +1060,7 @@ try {
             -RemoteBootBackground $remoteBootBackgroundArgument `
             -RemoteInventoryLinuxPackage $remoteInventoryLinuxPackagePath `
             -RemoteTrustKeys $remoteTrustKeyPaths `
+            -RemoteAtlasoService $remoteAtlasoServicePath `
             -RemoteWorkerService $remoteWorkerServicePath `
             -RemoteScript $remoteScriptPath `
             -ResetVaultEntryTable ([bool]$ResetVaultEntries) `
@@ -1070,6 +1089,7 @@ try {
             $remoteBootInstallerArgument,
             $remoteBootThemeArgument,
             $remoteBootBackgroundArgument,
+            $remoteAtlasoServicePath,
             $remoteWorkerServicePath,
             $remoteRuntimeDependenciesArgument,
             $remoteTrustKeysArgument,

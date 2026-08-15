@@ -4196,7 +4196,8 @@ def test_backup_restore_page_exports_settings_archive(client):
     assert page.status_code == 200
     assert "Download settings backup" in page.text
     assert "Restore settings backup" in page.text
-    assert "Factory reset settings" in page.text
+    assert "Factory reset appliance" in page.text
+    assert "without a follow-up Appliance Apply" in page.text
     assert "LDAP Directory Recovery" in page.text
     assert "not part of the normal settings backup" in page.text
     assert 'action="/ui/management/backup-restore/ldap/export"' in page.text
@@ -6571,16 +6572,19 @@ def test_factory_reset_rolls_back_late_failure_without_clearing_staged_ldap_reco
         staged_id = staged.id
         LDAP_PENDING_RECOVERY_PAYLOADS[staged_id] = b"pending reset recovery payload"
 
-        def fail_after_reset_seed(*_args, **_kwargs):
+        original_seed_initial_data = settings_archive.seed_initial_data
+
+        def fail_after_reset_seed(*args, **kwargs):
             """Raise after reset seeding to exercise transaction rollback.
 
             Args:
                 *_args: Additional positional arguments accepted by the callable.
                 **_kwargs: Additional keyword arguments accepted by the callable.
             """
+            original_seed_initial_data(*args, **kwargs)
             raise RuntimeError("injected late factory reset failure")
 
-        monkeypatch.setattr(settings_archive, "_force_services_stopped_unconfigured", fail_after_reset_seed)
+        monkeypatch.setattr(settings_archive, "seed_initial_data", fail_after_reset_seed)
         try:
             with pytest.raises(RuntimeError, match="injected late factory reset failure"):
                 settings_archive.factory_reset_desired_state(db)
@@ -7777,8 +7781,66 @@ def test_backup_restore_rejects_enabled_settings_archive_without_vcf_backup_user
         assert settings.sftp_user_id is None
 
 
-def test_backup_restore_factory_reset_resets_desired_state_and_stops_services(client):
-    """Verify that backup restore factory reset resets desired state and stops services.
+def test_backup_restore_factory_reset_schedules_durable_appliance_transaction(client, monkeypatch):
+    """Verify a real appliance reset leaves the request before detached execution.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+    """
+    from types import SimpleNamespace
+
+    from sqlalchemy import select
+
+    from atlaso.app.adapters.system import AdapterResult, SystemAdapter
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Setting
+
+    login(client)
+    with SessionLocal() as db:
+        db.add(Setting(key="factory.reset.scheduled-retained", value="yes"))
+        db.commit()
+
+    page = client.get("/backup-restore")
+    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+
+    scheduled: list[bool] = []
+
+    def schedule_factory_reset(_adapter):
+        scheduled.append(True)
+        return AdapterResult(
+            command=["atlaso-helper", "factory-reset", "schedule"],
+            dry_run=False,
+            stdout='{"state":"scheduled"}',
+        )
+
+    monkeypatch.setattr(
+        "atlaso.app.ui.get_settings",
+        lambda: SimpleNamespace(environment="appliance", dry_run_system_adapters=False),
+    )
+    monkeypatch.setattr(
+        "atlaso.app.ui.management_ui_request_allowed",
+        lambda _request, _db: True,
+    )
+    monkeypatch.setattr(SystemAdapter, "schedule_factory_reset", schedule_factory_reset)
+
+    response = client.post(
+        "/ui/management/backup-restore/factory-reset",
+        data={"csrf": csrf},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 303
+    assert response.headers["location"].endswith("/login?factory_reset=scheduled")
+    assert scheduled == [True]
+    with SessionLocal() as db:
+        assert db.execute(
+            select(Setting).where(Setting.key == "factory.reset.scheduled-retained")
+        ).scalar_one().value == "yes"
+
+
+def test_backup_restore_factory_reset_replaces_database_and_baselines_runtime(client):
+    """Verify the in-process reset clears all records and leaves zero pending units.
 
     Args:
         client: HTTP test client used to exercise the Atlaso application.
@@ -7787,6 +7849,7 @@ def test_backup_restore_factory_reset_resets_desired_state_and_stops_services(cl
 
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import (
+        ApiToken,
         ApplianceSettings,
         AuditEvent,
         CaCertificate,
@@ -7797,13 +7860,16 @@ def test_backup_restore_factory_reset_resets_desired_state_and_stops_services(cl
         DnsRecord,
         DnsSettings,
         FirewallRule,
+        Job,
         KmsSettings,
         NatRule,
         PhysicalInterface,
         Route,
         RoutingRule,
+        Schedule,
         ServiceState,
         Setting,
+        User,
         VcfBackupSettings,
         VcfDepotDownloadProfile,
         VcfOfflineDepotSettings,
@@ -7812,6 +7878,7 @@ def test_backup_restore_factory_reset_resets_desired_state_and_stops_services(cl
         WanPolicy,
     )
     from atlaso.app.seed import SEED_EXAMPLES_SETTING_KEY, seed_initial_data
+    from atlaso.app.ui import appliance_apply_units
 
     login(client)
     with SessionLocal() as db:
@@ -7822,16 +7889,46 @@ def test_backup_restore_factory_reset_resets_desired_state_and_stops_services(cl
         service.running = True
         service.enabled = True
         service.health = "healthy"
+        admin = db.execute(select(User).where(User.username == "admin")).scalar_one()
+        db.add(User(username="remove-reset-user", role="admin"))
+        db.add(
+            ApiToken(
+                jti="remove-reset-token",
+                name="remove reset token",
+                owner_user_id=admin.id,
+                owner_username=admin.username,
+                role="admin",
+                scopes="admin:all",
+                expires_at=admin.created_at,
+                token_hash="remove-reset-token-hash",
+            )
+        )
+        db.add(Job(id="remove-reset-job", type="managed-script", status="succeeded", created_by="admin"))
+        db.add(
+            Schedule(
+                name="remove-reset-schedule",
+                task_type="managed-script",
+                created_by="admin",
+            )
+        )
         db.commit()
+
+    stale_session_cookie = client.cookies.get("session")
 
     page = client.get("/backup-restore")
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
-    reset = client.post("/backup-restore/factory-reset", data={"csrf": csrf})
+    reset = client.post(
+        "/backup-restore/factory-reset",
+        data={"csrf": csrf},
+        follow_redirects=False,
+    )
 
-    assert reset.status_code == 200
-    assert "Factory reset complete" in reset.text
-    assert "without demo resources" in reset.text
-    assert "Non-management NICs are desired admin down" in reset.text
+    assert reset.status_code == 303
+    assert reset.headers["location"].endswith("/login?factory_reset=complete")
+    login_handoff = client.get(reset.headers["location"])
+    assert "Factory reset completed" in login_handoff.text
+    assert "all earlier sessions and credentials are invalid" in login_handoff.text
+    assert client.get("/dashboard", follow_redirects=False).status_code in {303, 307}
     with SessionLocal() as db:
         settings = db.execute(select(ApplianceSettings)).scalar_one()
         assert settings.fqdn == "core.atlaso.internal"
@@ -7881,16 +7978,14 @@ def test_backup_restore_factory_reset_resets_desired_state_and_stops_services(cl
         assert db.execute(select(DhcpScope)).scalars().all() == []
         assert db.execute(select(DhcpReservation)).scalars().all() == []
         assert db.execute(select(FirewallRule)).scalars().all() == []
-        assert db.execute(select(CaProfile)).scalars().all() == []
+        assert {
+            profile.name for profile in db.execute(select(CaProfile)).scalars()
+        } == {"VCF KMIP client", "VCF service TLS"}
         assert db.execute(select(CaCertificate)).scalars().all() == []
         depot_profiles = db.execute(
             select(VcfDepotDownloadProfile).order_by(VcfDepotDownloadProfile.name)
         ).scalars().all()
-        assert [(profile.name, profile.profile_type, profile.enabled) for profile in depot_profiles] == [
-            ("Binaries", "binaries", False),
-            ("Esx", "esx", False),
-            ("Metadata", "metadata", False),
-        ]
+        assert depot_profiles == []
         marker = db.execute(select(Setting).where(Setting.key == SEED_EXAMPLES_SETTING_KEY)).scalar_one()
         assert marker.value == "false"
         seed_initial_data(db)
@@ -7901,16 +7996,30 @@ def test_backup_restore_factory_reset_resets_desired_state_and_stops_services(cl
         depot_profiles = db.execute(
             select(VcfDepotDownloadProfile).order_by(VcfDepotDownloadProfile.name)
         ).scalars().all()
-        assert [(profile.name, profile.profile_type, profile.enabled) for profile in depot_profiles] == [
-            ("Binaries", "binaries", False),
-            ("Esx", "esx", False),
-            ("Metadata", "metadata", False),
-        ]
-        services = db.execute(select(ServiceState)).scalars().all()
-        assert services
-        assert all(not service.running and not service.enabled and service.health == "unconfigured" for service in services)
-        event = db.execute(select(AuditEvent).where(AuditEvent.action == "factory_reset_settings")).scalar_one()
-        assert "services forced stopped/unconfigured" in (event.detail or "")
+        assert depot_profiles == []
+        assert {user.username for user in db.execute(select(User)).scalars()} == {
+            "admin",
+            "vcf-backup",
+            "vcf-depot",
+        }
+        assert db.execute(select(ApiToken)).scalars().all() == []
+        assert db.execute(select(Job)).scalars().all() == []
+        assert db.execute(select(Schedule)).scalars().all() == []
+        assert db.execute(select(AuditEvent)).scalars().all() == []
+        services = {service.service: service for service in db.execute(select(ServiceState)).scalars()}
+        assert services["routing"].running and services["routing"].enabled
+        assert services["firewall"].running and services["firewall"].enabled
+        assert services["auth"].running and services["auth"].enabled
+        optional = [service for key, service in services.items() if key not in {"routing", "firewall", "auth"}]
+        assert optional
+        assert all(not service.running and not service.enabled for service in optional)
+        assert [unit["label"] for unit in appliance_apply_units(db, reconcile=False) if unit["changed"]] == []
+
+    from fastapi.testclient import TestClient
+
+    stale_client = TestClient(client.app)
+    stale_client.cookies.set("session", stale_session_cookie)
+    assert stale_client.get("/dashboard", follow_redirects=False).status_code in {303, 307}
 
 
 def test_real_local_users_apply_preserves_pending_password_for_disabled_user():

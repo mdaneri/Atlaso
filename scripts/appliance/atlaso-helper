@@ -84,6 +84,7 @@ COMMANDS: dict[str, set[str]] = {
     "appliance-update": {"check", "apply", "sync-sources", "restart-service", "bootstrap-data-disk-safety"},
     "automation": {"run"},
     "appliance-power": {"reboot", "shutdown"},
+    "factory-reset": {"schedule", "resume", "status"},
     "console": {"disable-services", "recover-management-plane", "restore-services", "status"},
     "wan": {"validate", "apply"},
 }
@@ -131,6 +132,9 @@ NO_PATH_ACTIONS = {
     ("nginx", "error-logs"),
     ("appliance-power", "reboot"),
     ("appliance-power", "shutdown"),
+    ("factory-reset", "schedule"),
+    ("factory-reset", "resume"),
+    ("factory-reset", "status"),
     ("web-terminal", "status"),
     ("console", "disable-services"),
     ("console", "recover-management-plane"),
@@ -167,6 +171,10 @@ ATLASO_NOTICE_PATH = Path("/usr/share/doc/atlaso/THIRD_PARTY_NOTICES.md")
 ATLASO_UPDATE_TRUST_DIR = Path("/etc/atlaso/update-trust.d")
 ATLASO_UPDATE_BACKUP_DIR = ATLASO_STATE_DIR / "update-backups"
 ATLASO_DATABASE_PATH = ATLASO_STATE_DIR / "atlaso.db"
+ATLASO_FACTORY_RESET_DIR = ATLASO_STATE_DIR / "factory-reset"
+ATLASO_FACTORY_RESET_REQUEST_PATH = ATLASO_FACTORY_RESET_DIR / "request.json"
+ATLASO_FACTORY_RESET_RESULT_PATH = ATLASO_FACTORY_RESET_DIR / "last-result.json"
+ATLASO_FACTORY_RESET_PYTHON = ATLASO_VENV_LINK / "bin/python"
 SYSTEMD_NETWORK_INTERFACE_DIR = Path("/sys/class/net")
 SYSTEMD_NETWORK_LEASE_DIR = Path("/run/systemd/netif/leases")
 ATLASO_UPDATE_FINALIZER_PATH = ATLASO_STATE_DIR / "apply/appliance-update/finalizer-status.json"
@@ -1665,7 +1673,7 @@ def _esxi_pxe_boot_errors(boot: dict) -> list[str]:
                     f"{label} {filename} was not found. Install the Photon syslinux/ipxe boot packages "
                     f"or stage the expected bootloader under {PXE_BOOTLOADER_STAGING_DIR}."
                 )
-    if native_uefi_http_enabled:
+    if enabled and native_uefi_http_enabled:
         url = str(boot.get("native_uefi_http_url") or boot.get("effective_native_uefi_http_url") or "").strip()
         if not re.fullmatch(r"https?://[^\s\"'<>]+", url):
             errors.append("Native UEFI HTTP URL must be an absolute HTTP or HTTPS URL.")
@@ -12953,6 +12961,142 @@ def _handle_appliance_power(action: str, args: list[str]) -> int:
     return _schedule_appliance_power(action)
 
 
+def _write_factory_reset_marker(payload: dict) -> None:
+    """Write one root-owned, non-secret factory-reset marker atomically."""
+    ATLASO_FACTORY_RESET_DIR.mkdir(parents=True, exist_ok=True)
+    os.chmod(ATLASO_FACTORY_RESET_DIR, 0o750)
+    try:
+        shutil.chown(ATLASO_FACTORY_RESET_DIR, user="root", group=ATLASO_SERVICE_USER)
+    except (LookupError, OSError):
+        if os.name == "posix":
+            raise
+    temporary = ATLASO_FACTORY_RESET_REQUEST_PATH.with_name(".request.json.tmp")
+    with temporary.open("w", encoding="utf-8") as handle:
+        json.dump(payload, handle, indent=2, sort_keys=True)
+        handle.write("\n")
+        handle.flush()
+        os.fsync(handle.fileno())
+    os.chmod(temporary, 0o640)
+    try:
+        shutil.chown(temporary, user="root", group=ATLASO_SERVICE_USER)
+    except (LookupError, OSError):
+        if os.name == "posix":
+            raise
+    os.replace(temporary, ATLASO_FACTORY_RESET_REQUEST_PATH)
+
+
+def _factory_reset_state_payload() -> dict:
+    """Read a bounded reset marker without exposing request metadata."""
+    for path in (ATLASO_FACTORY_RESET_REQUEST_PATH, ATLASO_FACTORY_RESET_RESULT_PATH):
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (FileNotFoundError, OSError, json.JSONDecodeError):
+            continue
+        if isinstance(payload, dict):
+            return {
+                "schema_version": int(payload.get("schema_version") or 1),
+                "state": str(payload.get("state") or "unknown"),
+                "updated_at": str(payload.get("updated_at") or payload.get("requested_at") or ""),
+                "message": str(payload.get("message") or ""),
+            }
+    return {"schema_version": 1, "state": "idle", "updated_at": "", "message": ""}
+
+
+def _factory_reset_runner(*, boot_resume: bool) -> subprocess.CompletedProcess[str]:
+    """Run the installed reset transaction synchronously."""
+    if not ATLASO_FACTORY_RESET_PYTHON.is_file():
+        return subprocess.CompletedProcess(
+            [str(ATLASO_FACTORY_RESET_PYTHON), "-m", "atlaso.app.factory_reset"],
+            127,
+            "",
+            "Atlaso factory-reset runtime is unavailable.\n",
+        )
+    environment = os.environ.copy()
+    if boot_resume:
+        environment["ATLASO_FACTORY_RESET_BOOT_RESUME"] = "1"
+    return _run(
+        [str(ATLASO_FACTORY_RESET_PYTHON), "-m", "atlaso.app.factory_reset"],
+        env=environment,
+    )
+
+
+def _schedule_factory_reset() -> int:
+    """Persist and dispatch the detached reset transaction."""
+    if not ATLASO_FACTORY_RESET_REQUEST_PATH.is_file():
+        now = datetime.now(timezone.utc).isoformat()
+        _write_factory_reset_marker(
+            {
+                "schema_version": 1,
+                "state": "scheduled",
+                "requested_at": now,
+                "updated_at": now,
+                "message": "Factory reset is scheduled.",
+            }
+        )
+    systemd_run = shutil.which("systemd-run")
+    if systemd_run is None:
+        print("systemd-run is required to schedule factory reset", file=sys.stderr)
+        return 127
+    active = _run(["systemctl", "is-active", "--quiet", "atlaso-factory-reset.service"])
+    if active.returncode == 0:
+        print(json.dumps(_factory_reset_state_payload(), sort_keys=True))
+        return 0
+    _run(["systemctl", "reset-failed", "atlaso-factory-reset.service"])
+    result = _run(
+        [
+            systemd_run,
+            "--quiet",
+            "--on-active=2",
+            "--unit=atlaso-factory-reset",
+            "--property=Type=oneshot",
+            f"--property=WorkingDirectory={ATLASO_STATE_DIR}",
+            f"--property=EnvironmentFile={ATLASO_ENV_PATH}",
+            str(ATLASO_FACTORY_RESET_PYTHON),
+            "-m",
+            "atlaso.app.factory_reset",
+        ]
+    )
+    if result.returncode != 0:
+        failed = _factory_reset_state_payload()
+        failed.update(
+            {
+                "state": "failed",
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+                "message": "Factory reset could not be scheduled. Use the console recovery path.",
+            }
+        )
+        _write_factory_reset_marker(failed)
+        print(result.stderr or result.stdout, end="", file=sys.stderr)
+        return result.returncode
+    logger = shutil.which("logger")
+    if logger is not None:
+        _run([logger, "-t", "atlaso-factory-reset", "Factory reset accepted; durable recovery marker created."])
+    print(json.dumps(_factory_reset_state_payload(), sort_keys=True))
+    return 0
+
+
+def _handle_factory_reset(action: str, args: list[str]) -> int:
+    """Handle dedicated complete factory-reset lifecycle operations."""
+    if args:
+        print(f"factory-reset {action} does not accept a path", file=sys.stderr)
+        return 2
+    if action == "status":
+        print(json.dumps(_factory_reset_state_payload(), sort_keys=True))
+        return 0
+    if action == "schedule":
+        return _schedule_factory_reset()
+    if action == "resume":
+        if not ATLASO_FACTORY_RESET_REQUEST_PATH.is_file():
+            print(json.dumps(_factory_reset_state_payload(), sort_keys=True))
+            return 0
+        result = _factory_reset_runner(boot_resume=True)
+        print(result.stdout, end="")
+        print(result.stderr, end="", file=sys.stderr)
+        return result.returncode
+    print(f"unsupported factory-reset action: {action}", file=sys.stderr)
+    return 2
+
+
 def _handle_appliance_update(action: str, args: list[str]) -> int:
     """Handle appliance update.
 
@@ -13114,6 +13258,8 @@ def main(argv: list[str]) -> int:
         return _handle_automation(action, normalized_args)
     if group == "appliance-power":
         return _handle_appliance_power(action, normalized_args)
+    if group == "factory-reset":
+        return _handle_factory_reset(action, normalized_args)
     if group == "console":
         return _handle_console(action, normalized_args)
 
