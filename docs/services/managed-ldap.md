@@ -69,6 +69,10 @@ nested groups, and new groups default to Enabled before review. User creation ca
 non-grid user and group creation returns to the selected organization using its saved identity. Enabling an account
 without an applied or staged password causes LDAP apply validation to stop before host mutation.
 
+Rapid organization-tab selections and browser back or forward navigation follow the latest selection. A superseded
+partial response cannot replace the selected organization, its URL, or its directory content. Returning to the initial
+queryless Managed LDAP URL restores the server-default organization through the same ordered load path.
+
 The one-time VCF bind credential opens with its **Bind password** help collapsed and focus on **Done**, leaving the
 credential text unselected until the operator deliberately copies or saves it.
 

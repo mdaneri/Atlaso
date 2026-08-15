@@ -249,7 +249,9 @@ validates and reloads nginx, and verifies web, worker, console, and nginx servic
 finalizer, restarts the worker through the candidate release, and requires the new systemd PID to publish the matching
 job, version, and release-root identity before success becomes definitive. A runtime gate keeps both candidate and
 rollback workers from consuming a finalizer until its durable write and the surrounding transaction have finished. The
-helper then requires
+worker exits for systemd retry instead of accepting work if that gate does not open within the bounded startup wait. The
+surviving privileged helper removes and flushes any staged source-credential file before restarting the calling worker.
+The helper then requires
 `current`, the compatibility virtualenv, the signed release receipt, internal `/openapi.json`, and the applied HTTP or
 HTTPS nginx management front door to report the exact candidate version. The finalizer retains the candidate and
 previous versions, receipt identity, active-release verification, internal and front-door versions, and sanitized

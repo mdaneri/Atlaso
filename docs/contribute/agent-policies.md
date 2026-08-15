@@ -414,7 +414,9 @@ status: current
   installed assets, remove maintenance mode only through final nginx validation and reload, restart the worker into the
   candidate release under a provisional finalizer, require its new systemd PID to publish the matching job, version, and
   release root, and keep restarted worker recovery behind a runtime gate until the definitive finalizer write completes.
-  Require nginx plus web, worker, and console service state, and require the signed receipt, `current`, compatibility
+  A gate timeout must exit worker startup for systemd retry, never enter the ordinary work loop. Remove and durably flush
+  staged source credentials from the surviving helper before it restarts the calling worker. Require nginx plus web,
+  worker, and console service state, and require the signed receipt, `current`, compatibility
   virtualenv, internal OpenAPI version, nginx management-front-door OpenAPI version, and candidate version to agree. Any
   failure after the switch must restore the previous release, helper/systemd assets, SQLite snapshot, and working nginx
   front door, write

@@ -346,6 +346,27 @@ def test_worker_restart_gate_timeout_fails_closed(monkeypatch, tmp_path):
     assert worker._wait_for_release_restart_finalizer(timeout_seconds=1) is False
 
 
+def test_worker_exits_when_release_restart_gate_does_not_open(monkeypatch):
+    """Verify systemd retries worker startup instead of running work behind a closed release gate.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace worker startup dependencies.
+    """
+    import atlaso.app.worker as worker
+
+    monkeypatch.setattr(worker.signal, "signal", lambda *_args: None)
+    monkeypatch.setattr(worker, "init_db", lambda: None)
+    monkeypatch.setattr(worker, "_write_worker_startup_status", lambda: None)
+    monkeypatch.setattr(worker, "_wait_for_release_restart_finalizer", lambda: False)
+    monkeypatch.setattr(
+        worker,
+        "recover_interrupted_worker_jobs",
+        lambda *_args, **_kwargs: pytest.fail("closed-gate startup must not reconcile jobs"),
+    )
+
+    assert worker.main() == 1
+
+
 @pytest.mark.parametrize(
     ("mutation", "message"),
     [
@@ -2255,6 +2276,8 @@ def test_failed_candidate_restores_previous_release_and_database(
     monkeypatch.setattr(helper, "ATLASO_UPDATE_BACKUP_DIR", tmp_path / "backups")
     monkeypatch.setattr(helper, "ATLASO_UPDATE_FINALIZER_PATH", tmp_path / "finalizer.json")
     monkeypatch.setattr(helper, "ATLASO_UPDATE_RESTART_GATE_PATH", tmp_path / "restart-gate")
+    credential_path = tmp_path / "atlaso-update-credentials.json"
+    credential_path.write_text('{"sources": {}}', encoding="utf-8")
 
     def replace_symlink(target: Path, link: Path) -> None:
         """Handle replace symlink.
@@ -2499,7 +2522,7 @@ def test_failed_candidate_restores_previous_release_and_database(
 
     outcome = "rolled back" if expected_rolled_back else "rollback was incomplete"
     with pytest.raises(ValueError, match=outcome):
-        helper._apply_atlaso_release({}, {})
+        helper._apply_atlaso_release({}, {}, credential_path)
 
     link_restored = failure_stage != "rollback_link_restore"
     expected_release = previous if link_restored else releases / "0.9.0"
@@ -2510,6 +2533,7 @@ def test_failed_candidate_restores_previous_release_and_database(
     assert finalizer["rolled_back"] is expected_rolled_back
     assert finalizer["rollback_health"] is expected_rolled_back
     assert finalizer["failure_layer"] == expected_layer
+    assert not credential_path.exists()
     if failure_stage in {"worker_restart", "worker_activation", "finalizer_persistence"}:
         assert "restart_pending" in finalizer_statuses
         assert not (tmp_path / "restart-gate").exists()

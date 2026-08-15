@@ -938,6 +938,9 @@ def main() -> int:
     init_db()
     _write_worker_startup_status()
     release_finalizer_ready = _wait_for_release_restart_finalizer()
+    if not release_finalizer_ready:
+        LOGGER.error("Atlaso worker startup stopped because the release restart gate did not open")
+        return 1
     with SessionLocal() as db:
         recovered = recover_interrupted_worker_jobs(
             db,

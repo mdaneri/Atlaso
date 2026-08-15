@@ -11649,13 +11649,16 @@ def _prune_old_releases(*, current: Path, previous: Path) -> None:
 
 
 def _apply_atlaso_release(
-    payload: dict, credentials: dict[str, dict[str, str]] | None = None
+    payload: dict,
+    credentials: dict[str, dict[str, str]] | None = None,
+    credential_path: Path | None = None,
 ) -> tuple[dict, dict, list[dict]]:
     """Perform apply atlaso release.
 
     Args:
         payload: Validated request or task payload consumed by the operation.
         credentials: Credentials consumed by apply atlaso release.
+        credential_path: Protected staged credential file to remove before worker handoff.
     """
     credentials = credentials or {}
     channel, release, release_manifest_url, release_credential = _download_signed_release_from_sources(payload, credentials)
@@ -11668,6 +11671,9 @@ def _apply_atlaso_release(
         raise ValueError("Atlaso release bundle size does not match its signed manifest")
     if not hmac.compare_digest(digest, str(bundle["sha256"]).lower()):
         raise ValueError("Atlaso release bundle SHA256 does not match its signed manifest")
+    if credential_path is not None:
+        credential_path.unlink(missing_ok=True)
+        _fsync_directory(credential_path.parent)
 
     version = str(release["version"])
     if re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", version) is None:
@@ -12177,12 +12183,17 @@ def _apply_atlaso_release(
     return channel, release, commands
 
 
-def _apply_appliance_update(payload: dict, credentials: dict[str, dict[str, str]] | None = None) -> dict:
+def _apply_appliance_update(
+    payload: dict,
+    credentials: dict[str, dict[str, str]] | None = None,
+    credential_path: Path | None = None,
+) -> dict:
     """Perform apply appliance update.
 
     Args:
         payload: Validated request or task payload consumed by the operation.
         credentials: Credentials consumed by apply appliance update.
+        credential_path: Protected staged credential file owned by the active helper call.
     """
     credentials = credentials or {}
     selected = set(payload.get("selected_streams") or [])
@@ -12191,7 +12202,11 @@ def _apply_appliance_update(payload: dict, credentials: dict[str, dict[str, str]
     reboot_recommended = False
     restart_required = False
     if "atlaso_release" in selected:
-        channel, release, release_commands = _apply_atlaso_release(payload, credentials)
+        channel, release, release_commands = _apply_atlaso_release(
+            payload,
+            credentials,
+            credential_path,
+        )
         commands.extend(release_commands)
         attempted["atlaso_release"] = {
             "channel": channel.get("channel"),
@@ -13695,7 +13710,12 @@ def _handle_appliance_update(action: str, args: list[str]) -> int:
         return 0
     if action == "apply":
         try:
-            result = _apply_appliance_update(payload, credentials)
+            credential_path = Path(args[1]) if len(args) >= 2 else None
+            result = _apply_appliance_update(
+                payload,
+                credentials,
+                credential_path,
+            )
         except Exception as exc:  # noqa: BLE001 - helper reports update failures without tracebacks.
             print(str(exc), file=sys.stderr)
             return 1
