@@ -23,6 +23,7 @@ EXTRACTED_DOMAIN_MODULES = {
         "atlaso.app.routers.ui.network_boot",
         "atlaso.app.routers.ui.physical_vlans",
         "atlaso.app.routers.ui.routes_wan",
+        "atlaso.app.routers.ui.vcf_workflows",
     ),
     ROOT / "atlaso" / "app" / "api" / "v1.py": (
         "atlaso.app.routers.api_v1.dns_dhcp",
@@ -31,6 +32,7 @@ EXTRACTED_DOMAIN_MODULES = {
         "atlaso.app.routers.api_v1.network_boot",
         "atlaso.app.routers.api_v1.physical_vlans",
         "atlaso.app.routers.api_v1.routes_wan",
+        "atlaso.app.routers.api_v1.vcf_workflows",
     ),
 }
 
