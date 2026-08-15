@@ -53,8 +53,9 @@ def write_policy_files(root: Path) -> None:
         )
         policy_lines = list(other_markers)
         if section_anchor is not None:
+            content_prefix = "" if section_anchor.startswith("#") else "  "
             non_ordered_markers = tuple(
-                marker
+                content_prefix + marker
                 for marker in section_markers
                 if marker not in ORDERED_TERMINAL_CLEANUP_MARKERS[relative_path]
             )
@@ -67,7 +68,7 @@ def write_policy_files(root: Path) -> None:
                 (
                     section_anchor,
                     *non_ordered_markers,
-                    TERMINAL_CLEANUP_ORDER_ANCHOR,
+                    content_prefix + TERMINAL_CLEANUP_ORDER_ANCHOR,
                     "",
                     *order_lines,
                     "- following policy",
@@ -548,9 +549,9 @@ def test_agent_policy_gate_requires_terminal_cleanup_order(tmp_path: Path) -> No
         write_policy_files(tmp_path)
         path = tmp_path / relative_path
         text = path.read_text(encoding="utf-8")
-        earlier_summary = "\n".join(markers)
         anchor = TERMINAL_CLEANUP_SECTION_ANCHORS[relative_path]
         order_prefix = "" if anchor.startswith("#") else "  "
+        earlier_summary = "\n".join(order_prefix + marker for marker in markers)
         summary_position = text.index(anchor) + len(anchor)
         text_with_summary = (
             text[:summary_position]
@@ -594,11 +595,12 @@ def test_agent_policy_gate_ignores_incidental_marker_order(tmp_path: Path) -> No
         path = tmp_path / relative_path
         text = path.read_text(encoding="utf-8")
         anchor = TERMINAL_CLEANUP_SECTION_ANCHORS[relative_path]
+        summary_prefix = "" if anchor.startswith("#") else "  "
         summary_position = text.index(anchor) + len(anchor)
         path.write_text(
             text[:summary_position]
             + "\n"
-            + "\n".join(reversed(markers))
+            + "\n".join(summary_prefix + marker for marker in reversed(markers))
             + text[summary_position:],
             encoding="utf-8",
         )
@@ -743,6 +745,40 @@ def test_agent_policy_gate_honors_all_list_item_boundaries(tmp_path: Path) -> No
             )
 
 
+def test_agent_policy_gate_honors_top_level_block_boundaries(tmp_path: Path) -> None:
+    """Verify that unrelated top-level blocks end cleanup list items.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    marker = '`cleanup-ready`'
+    sibling = "\n- following policy"
+    for relative_path in ORDERED_TERMINAL_CLEANUP_MARKERS:
+        anchor = TERMINAL_CLEANUP_SECTION_ANCHORS[relative_path]
+        if anchor.startswith("#"):
+            continue
+        for boundary in ("## Following policy", "---"):
+            write_policy_files(tmp_path)
+            path = tmp_path / relative_path
+            text = path.read_text(encoding="utf-8").replace(marker, "", 1)
+            path.write_text(
+                text.replace(
+                    sibling,
+                    f"\n{boundary}\n{marker}" + sibling,
+                    1,
+                ),
+                encoding="utf-8",
+            )
+
+            findings = check_agent_policy_gate(tmp_path)
+
+            assert len(findings) == 1
+            assert findings[0].path == path
+            assert findings[0].message == (
+                f"completed-task cleanup section marker is missing: {marker}"
+            )
+
+
 def test_agent_policy_gate_ignores_fenced_cleanup_markers(tmp_path: Path) -> None:
     """Verify that fenced examples cannot satisfy cleanup section markers.
 
@@ -753,9 +789,20 @@ def test_agent_policy_gate_ignores_fenced_cleanup_markers(tmp_path: Path) -> Non
     for relative_path in ORDERED_TERMINAL_CLEANUP_MARKERS:
         write_policy_files(tmp_path)
         path = tmp_path / relative_path
+        anchor = TERMINAL_CLEANUP_SECTION_ANCHORS[relative_path]
+        fence_prefix = "" if anchor.startswith("#") else "  "
         text = path.read_text(encoding="utf-8").replace(marker, "", 1)
+        fenced_marker = (
+            f"{fence_prefix}```text\n{fence_prefix}{marker}\n{fence_prefix}```"
+        )
         path.write_text(
-            text + f"\n```text\n{marker}\n```\n",
+            text + "\n" + fenced_marker + "\n"
+            if anchor.startswith("#")
+            else text.replace(
+                "\n- following policy",
+                "\n" + fenced_marker + "\n- following policy",
+                1,
+            ),
             encoding="utf-8",
         )
 
@@ -782,15 +829,25 @@ def test_agent_policy_gate_ignores_fenced_terminal_order(tmp_path: Path) -> None
         order_prefix = "" if anchor.startswith("#") else "  "
         order_block = "\n".join(
             (
-                TERMINAL_CLEANUP_ORDER_ANCHOR,
+                order_prefix + TERMINAL_CLEANUP_ORDER_ANCHOR,
                 "",
                 *(order_prefix + line for line in TERMINAL_CLEANUP_ORDER_LINES),
             )
         )
-        incidental_markers = "\n".join(markers)
+        incidental_markers = "\n".join(order_prefix + marker for marker in markers)
+        fenced_order = "\n".join(
+            order_prefix + line if line else order_prefix
+            for line in ("```text", *order_block.splitlines(), "```")
+        )
+        text_without_order = text.replace(order_block, incidental_markers, 1)
         path.write_text(
-            text.replace(order_block, incidental_markers, 1)
-            + f"\n```text\n{order_block}\n```\n",
+            text_without_order + "\n" + fenced_order + "\n"
+            if anchor.startswith("#")
+            else text_without_order.replace(
+                "\n- following policy",
+                "\n" + fenced_order + "\n- following policy",
+                1,
+            ),
             encoding="utf-8",
         )
 
@@ -876,7 +933,7 @@ def test_agent_policy_gate_ignores_indented_terminal_order(tmp_path: Path) -> No
         code_prefix = "    " if anchor.startswith("#") else "      "
         order_block = "\n".join(
             (
-                TERMINAL_CLEANUP_ORDER_ANCHOR,
+                order_prefix + TERMINAL_CLEANUP_ORDER_ANCHOR,
                 "",
                 *(order_prefix + line for line in TERMINAL_CLEANUP_ORDER_LINES),
             )
@@ -884,7 +941,7 @@ def test_agent_policy_gate_ignores_indented_terminal_order(tmp_path: Path) -> No
         indented_order = "\n".join(
             code_prefix + line if line else code_prefix for line in order_block.splitlines()
         )
-        incidental_markers = "\n".join(markers)
+        incidental_markers = "\n".join(order_prefix + marker for marker in markers)
         path.write_text(
             text.replace(
                 order_block,
@@ -949,7 +1006,7 @@ def test_agent_policy_gate_ignores_quoted_terminal_order(tmp_path: Path) -> None
         order_prefix = "" if anchor.startswith("#") else "  "
         order_block = "\n".join(
             (
-                TERMINAL_CLEANUP_ORDER_ANCHOR,
+                order_prefix + TERMINAL_CLEANUP_ORDER_ANCHOR,
                 "",
                 *(order_prefix + line for line in TERMINAL_CLEANUP_ORDER_LINES),
             )
@@ -958,7 +1015,7 @@ def test_agent_policy_gate_ignores_quoted_terminal_order(tmp_path: Path) -> None
         quoted_order = "\n".join(
             quote_prefix + line.lstrip() for line in order_block.splitlines()
         )
-        incidental_markers = "\n".join(markers)
+        incidental_markers = "\n".join(order_prefix + marker for marker in markers)
         path.write_text(
             text.replace(
                 order_block,
