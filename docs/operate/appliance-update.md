@@ -257,7 +257,9 @@ both workers from consuming a finalizer until its durable write and the surround
 pre-start distinguishes the live helper by boot, PID, and process-start identity. If a reboot removes the gate and the
 recorded helper no longer owns the transaction, privileged pre-start recovery restores and verifies the previous
 release before admitting the worker. The worker exits for systemd retry instead of accepting work if that recovery or
-gate does not complete. The surviving privileged helper removes and flushes any staged
+gate does not complete. After a healthy runtime rollback proves the base services and front door, the helper durably
+publishes a live-owner, exact-job handoff so pre-start can admit the worker needed for final rollback proof. The surviving
+privileged helper removes and flushes any staged
 source-credential file before restarting the calling worker. The definitive finalizer retains sanitized helper command
 evidence so startup recovery can run the same child completion, parent completion, terminal task-log, and audit
 bookkeeping as an uninterrupted update. The helper then requires

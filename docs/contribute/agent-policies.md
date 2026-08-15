@@ -422,7 +422,9 @@ status: current
   both rollback together.
   An already-active release must complete from exact readiness evidence without an unverified delayed service restart.
   A matching definitive success or healthy rollback may clear or supersede an orphaned runtime gate. Incomplete rollback
-  must retain both maintenance and that gate so queued mutations cannot resume against inconsistent state.
+  must retain both maintenance and that gate so queued mutations cannot resume against inconsistent state. A healthy
+  rollback must durably publish a live-owner, exact-job worker handoff before starting the worker required to complete
+  rollback.
   A gate timeout must exit worker startup for systemd retry, never enter the ordinary work loop. Remove and durably flush
   staged source credentials from the surviving helper before it restarts the calling worker. Require nginx plus web,
   worker, and console service state, and require the signed receipt, `current`, compatibility
