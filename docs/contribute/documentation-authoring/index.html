@@ -3627,7 +3627,10 @@ artifact; never edit generated HTML directly.</p>
 <li>Put contribution policies and design standards under <strong>Contribute</strong>.</li>
 <li>Put brand guidance, roadmaps, and historical records under <strong>Project</strong>.</li>
 <li>Link to canonical instructions instead of copying them into the README, policy indexes, or component READMEs.</li>
-<li>Leave a redirect stub when a tracked Markdown page moves.</li>
+<li>Leave a redirect stub when a tracked Markdown page moves. Keep <code>redirect_to</code> as its only destination reference; do
+  not duplicate the target as a Markdown link in the body. <code>scripts/check_docs.py</code> validates the source and target with
+  the Markdown extensions configured for Zensical, while <code>scripts/build_docs.py</code> owns the deterministic strict build
+  and published redirect link generation.</li>
 </ul>
 <h2 id="required-metadata">Required metadata<a class="headerlink" href="#required-metadata" title="Permanent link">&para;</a></h2>
 <p>Every published page starts with YAML front matter containing <code>title</code>, <code>description</code>, <code>audience</code>, and <code>status</code>.
@@ -3696,11 +3699,17 @@ run the workflow. Maintainers can request the same rebuild from an authenticated
 <div class="language-powershell highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="n">npm</span> <span class="n">ci</span>
 </span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="n">npm</span> <span class="n">run</span> <span class="n">lint</span><span class="p">:</span><span class="n">markdown</span>
 </span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="p">.\.</span><span class="n">venv-docs</span><span class="p">\</span><span class="n">Scripts</span><span class="p">\</span><span class="n">python</span><span class="p">.</span><span class="n">exe</span> <span class="n">-m</span> <span class="n">pip</span> <span class="n">install</span> <span class="p">-</span><span class="n">-require-hashes</span> <span class="n">-r</span> <span class="n">requirements-docs</span><span class="p">.</span><span class="n">lock</span>
-</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="p">.\.</span><span class="n">venv-docs</span><span class="p">\</span><span class="n">Scripts</span><span class="p">\</span><span class="n">zensical</span><span class="p">.</span><span class="n">exe</span> <span class="n">build</span> <span class="p">-</span><span class="n">-clean</span> <span class="p">-</span><span class="n">-strict</span>
-</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="n">python</span> <span class="n">scripts</span><span class="p">/</span><span class="n">check_docs</span><span class="p">.</span><span class="n">py</span>
+</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="p">.\.</span><span class="n">venv-docs</span><span class="p">\</span><span class="n">Scripts</span><span class="p">\</span><span class="n">python</span><span class="p">.</span><span class="n">exe</span> <span class="n">scripts</span><span class="p">/</span><span class="n">build_docs</span><span class="p">.</span><span class="n">py</span>
+</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="p">.\.</span><span class="n">venv-docs</span><span class="p">\</span><span class="n">Scripts</span><span class="p">\</span><span class="n">python</span><span class="p">.</span><span class="n">exe</span> <span class="n">scripts</span><span class="p">/</span><span class="n">check_docs</span><span class="p">.</span><span class="n">py</span>
 </span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="n">python</span> <span class="n">scripts</span><span class="p">/</span><span class="n">check_repo</span><span class="p">.</span><span class="n">py</span>
 </span><span id="__span-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="n">git</span> <span class="nb">diff </span><span class="p">-</span><span class="n">-check</span>
 </span></code></pre></div>
+<p>The build wrapper removes only a repository-local Zensical <code>.cache</code> carrying its Atlaso-specific ownership marker, or
+the exact marker-free legacy Zensical file layout during migration, before invoking <code>build --clean --strict</code>. It then
+recreates the ownership marker and generates the legacy redirect pages. An ambiguous cache fails closed without being
+removed. Do not replace the wrapper with a direct Zensical invocation: stale cache entries can otherwise make unchanged
+redirect targets fail nondeterministically. The wrapper does not disable link or anchor validation, so genuine missing
+targets still fail the strict build.</p>
 <p>Documentation linting applies to every tracked Markdown source. Do not suppress existing files, create a warning-only
 baseline, or couple tests to exact explanatory prose when a stable marker or canonical path can express the contract.</p>
 
