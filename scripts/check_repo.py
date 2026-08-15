@@ -804,9 +804,30 @@ def strip_markdown_fenced_code(text: str) -> str:
     visible_lines: list[str] = []
     fence_character: str | None = None
     fence_length = 0
+    top_level_list_content_indent: int | None = None
     for line in text.splitlines(keepends=True):
-        candidate = line.lstrip(" ")
-        fence_match = re.match(r"(`{3,}|~{3,})", candidate)
+        if fence_character is None:
+            list_match = re.match(
+                r" {0,3}(?:[*+-]|\d{1,9}[.)])([ \t]+)",
+                line,
+            )
+            if list_match is not None:
+                top_level_list_content_indent = list_match.end()
+            elif line.strip() and not line.startswith((" ", "\t")):
+                top_level_list_content_indent = None
+        block_line = (
+            line[top_level_list_content_indent:]
+            if top_level_list_content_indent is not None
+            and line.startswith(" " * top_level_list_content_indent)
+            else line
+        )
+        relative_indent = len(block_line) - len(block_line.lstrip(" "))
+        candidate = block_line[relative_indent:]
+        fence_match = (
+            re.match(r"(`{3,}|~{3,})", candidate)
+            if relative_indent <= 3
+            else None
+        )
         if fence_character is None and fence_match is not None:
             fence = fence_match.group(1)
             fence_character = fence[0]
@@ -814,9 +835,14 @@ def strip_markdown_fenced_code(text: str) -> str:
             visible_lines.append("\n" if line.endswith("\n") else "")
             continue
         if fence_character is not None:
-            closing_match = re.fullmatch(
-                rf"{re.escape(fence_character)}{{{fence_length},}}[ \t]*(?:\r?\n)?",
-                candidate,
+            closing_match = (
+                re.fullmatch(
+                    rf"{re.escape(fence_character)}{{{fence_length},}}"
+                    r"[ \t]*(?:\r?\n)?",
+                    candidate,
+                )
+                if relative_indent <= 3
+                else None
             )
             if closing_match is not None:
                 fence_character = None
@@ -825,6 +851,49 @@ def strip_markdown_fenced_code(text: str) -> str:
             continue
         visible_lines.append(line)
     return "".join(visible_lines)
+
+
+def strip_markdown_html_comments(text: str) -> str:
+    """Blank HTML comments without matching openers inside tag attributes.
+
+    Args:
+        text: Fence-normalized Markdown source.
+    """
+    visible_parts: list[str] = []
+    index = 0
+    while index < len(text):
+        if text.startswith("<!--", index):
+            comment_end = text.find("-->", index + 4)
+            end = len(text) if comment_end < 0 else comment_end + 3
+            visible_parts.append(re.sub(r"[^\r\n]", "", text[index:end]))
+            index = end
+            continue
+        if text[index] == "<" and re.match(
+            r"/?[A-Za-z]",
+            text[index + 1 : index + 3],
+        ) is not None:
+            cursor = index + 1
+            quote: str | None = None
+            while cursor < len(text):
+                character = text[cursor]
+                if quote is not None:
+                    if character == quote:
+                        quote = None
+                elif character in {'"', "'"}:
+                    quote = character
+                elif character == ">":
+                    cursor += 1
+                    visible_parts.append(text[index:cursor])
+                    index = cursor
+                    break
+                cursor += 1
+            else:
+                visible_parts.append(text[index])
+                index += 1
+            continue
+        visible_parts.append(text[index])
+        index += 1
+    return "".join(visible_parts)
 
 
 def strip_markdown_inline_link_metadata(text: str) -> str:
@@ -1136,6 +1205,50 @@ def scan_reference_definition_label(text: str) -> tuple[int | None, bool]:
     return None, True
 
 
+def reference_destination_prefix_end(text: str) -> int | None:
+    """Return the end of a balanced reference destination prefix.
+
+    Args:
+        text: Candidate continuation line for a reference definition.
+    """
+    index = 0
+    while index < min(3, len(text)) and text[index] == " ":
+        index += 1
+    if index >= len(text):
+        return None
+    if text[index] == "<":
+        index += 1
+        while index < len(text):
+            if text[index] == "\\" and index + 1 < len(text):
+                index += 2
+                continue
+            if text[index] == ">":
+                return index + 1
+            if text[index] in "<>\r\n":
+                return None
+            index += 1
+        return None
+    destination_start = index
+    parenthesis_depth = 0
+    while index < len(text):
+        character = text[index]
+        if character == "\\" and index + 1 < len(text):
+            index += 2
+            continue
+        if character.isspace() or ord(character) < 0x20:
+            break
+        if character == "(":
+            parenthesis_depth += 1
+        elif character == ")":
+            if parenthesis_depth == 0:
+                return None
+            parenthesis_depth -= 1
+        index += 1
+    if index == destination_start or parenthesis_depth != 0:
+        return None
+    return index
+
+
 def unclosed_reference_title_delimiter(text: str) -> str | None:
     """Return the expected close for a reference title opened on this line.
 
@@ -1183,12 +1296,7 @@ def strip_markdown_nonoperative_content(text: str) -> str:
         text: Markdown source whose operative prose must be inspected.
     """
     without_fenced_code = strip_markdown_fenced_code(text)
-    without_comments = re.sub(
-        r"<!--.*?(?:-->|$)",
-        lambda match: re.sub(r"[^\r\n]", "", match.group(0)),
-        without_fenced_code,
-        flags=re.DOTALL,
-    )
+    without_comments = strip_markdown_html_comments(without_fenced_code)
     without_raw_directives = without_comments
     for directive_pattern in (
         r"<\?.*?(?:\?>|$)",
@@ -1331,33 +1439,30 @@ def strip_markdown_nonoperative_content(text: str) -> str:
                 pending_reference_label_lines = [(len(visible_lines), line)]
                 visible_lines.append("\n" if line.endswith("\n") else "")
                 continue
-        continued_destination_prefix_match = (
-            re.match(
-                r''' {0,3}(?:<(?:(?:\\.)|[^<>\r\n\\])*>|'''
-                r'''(?:(?:\\.)|[^\s\x00-\x20()\\]|'''
-                r'''\((?:(?:\\.)|[^()\s\\])*\))+)(?=[ \t\r\n]|$)''',
-                block_line,
-            )
+        continued_destination_prefix_end = (
+            reference_destination_prefix_end(block_line)
             if link_reference_destination_pending
             else None
         )
+        continued_destination_tail = (
+            block_line[continued_destination_prefix_end:]
+            if continued_destination_prefix_end is not None
+            else ""
+        )
         continued_open_title_delimiter = (
             unclosed_reference_title_delimiter(
-                block_line[continued_destination_prefix_match.end() :]
+                continued_destination_tail
             )
-            if continued_destination_prefix_match is not None
+            if continued_destination_prefix_end is not None
             else None
         )
         continued_destination_match = (
             re.fullmatch(
-                r''' {0,3}(?:<(?:(?:\\.)|[^<>\r\n\\])*>|'''
-                r'''(?:(?:\\.)|[^\s\x00-\x20()\\]|'''
-                r'''\((?:(?:\\.)|[^()\s\\])*\))+)(?:[ \t]+'''
-                r'''(?:"[^"\r\n]*"|'[^'\r\n]*'|\([^()\r\n]*\)))?'''
-                r'''[ \t]*(?:\r?\n)?''',
-                block_line,
+                r'''(?:[ \t]+(?:"[^"\r\n]*"|'[^'\r\n]*'|'''
+                r'''\([^()\r\n]*\)))?[ \t]*(?:\r?\n)?''',
+                continued_destination_tail,
             )
-            if link_reference_destination_pending
+            if continued_destination_prefix_end is not None
             else None
         )
         continued_title_match = (
