@@ -933,23 +933,29 @@ def extract_terminal_cleanup_order(cleanup_section: str) -> tuple[str, ...] | No
         if line.strip()
     )
     expected_count = len(TERMINAL_CLEANUP_ORDER_LINES)
-    order_lines = tuple(line.strip() for line in transition_lines[:expected_count])
-    first_transition_match = (
-        re.fullmatch(r"( *)\d+[.)]\s+.+", transition_lines[0])
-        if transition_lines
-        else None
-    )
-    if first_transition_match is not None:
-        top_level_indent = len(first_transition_match.group(1))
-        for candidate in transition_lines[expected_count:]:
-            candidate_match = re.fullmatch(r"( *)\d+[.)]\s+.+", candidate)
-            if (
-                candidate_match is not None
-                and len(candidate_match.group(1)) == top_level_indent
-            ):
-                order_lines += (candidate.strip(),)
+    order_lines: list[str] = []
+    top_level_indent: int | None = None
+    for candidate in transition_lines:
+        candidate_match = re.fullmatch(r"( *)\d+[.)]\s+.+", candidate)
+        if top_level_indent is None:
+            if candidate_match is None:
+                return (candidate.strip(),)
+            top_level_indent = len(candidate_match.group(1))
+            order_lines.append(candidate.strip())
+            continue
+        if candidate_match is not None:
+            candidate_indent = len(candidate_match.group(1))
+            if candidate_indent == top_level_indent:
+                order_lines.append(candidate.strip())
+                if len(order_lines) > expected_count:
+                    break
+            elif candidate_indent < top_level_indent:
                 break
-    return order_lines
+            continue
+        candidate_indent = len(candidate) - len(candidate.lstrip(" "))
+        if candidate_indent <= top_level_indent:
+            break
+    return tuple(order_lines)
 
 
 def extract_markdown_policy_section(text: str, anchor: str) -> str | None:
