@@ -37,7 +37,12 @@ def test_factory_reset_transaction_lock_rejects_overlapping_posix_runner(
     tmp_path,
     monkeypatch,
 ):
-    """A competing appliance runner cannot enter or alter the active transaction."""
+    """A competing appliance runner cannot enter or alter the active transaction.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+    """
     import pytest
 
     import atlaso.app.factory_reset as factory_reset
@@ -51,12 +56,25 @@ def test_factory_reset_transaction_lock_rejects_overlapping_posix_runner(
 
         @staticmethod
         def flock(_descriptor, operation):
+            """Reject every lock acquisition.
+
+            Args:
+                _descriptor: Open transaction-lock descriptor.
+                operation: Requested flock operation flags.
+            """
             if operation != ContendedFcntl.LOCK_UN:
                 raise BlockingIOError
 
     original_import = builtins.__import__
 
     def import_with_contended_fcntl(name, *args, **kwargs):
+        """Return the contended fcntl test double.
+
+        Args:
+            name: Module name requested by import.
+            *args: Additional import arguments.
+            **kwargs: Additional import keyword arguments.
+        """
         if name == "fcntl":
             return ContendedFcntl
         return original_import(name, *args, **kwargs)
@@ -73,7 +91,12 @@ def test_factory_reset_transaction_lock_rejects_overlapping_posix_runner(
 
 
 def test_factory_reset_scrubs_credentials_outside_apply_staging(tmp_path, monkeypatch):
-    """Reset removes retained SSH and Web Terminal credentials without touching payloads."""
+    """Reset removes retained SSH and Web Terminal credentials without touching payloads.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+    """
     import atlaso.app.factory_reset as factory_reset
 
     authorized_keys = tmp_path / "authorized_keys"
@@ -107,7 +130,12 @@ def test_factory_reset_scrubs_credentials_outside_apply_staging(tmp_path, monkey
 
 
 def test_managed_factory_reset_retains_marker_until_readiness(tmp_path, monkeypatch):
-    """A real reset cannot publish success before its post-restart finalizer."""
+    """A real reset cannot publish success before its post-restart finalizer.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+    """
     import atlaso.app.factory_reset as factory_reset
 
     database_path = tmp_path / "atlaso.db"
@@ -140,7 +168,11 @@ def test_managed_factory_reset_retains_marker_until_readiness(tmp_path, monkeypa
 
 
 def test_factory_reset_preflight_uses_generated_config_validators(monkeypatch):
-    """Real preflight validates generated nginx and sshd artifacts without applying them."""
+    """Real preflight validates generated nginx and sshd artifacts without applying them.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+    """
     import atlaso.app.factory_reset as factory_reset
 
     calls: list[tuple[str, str, tuple[object, ...]]] = []
@@ -152,6 +184,15 @@ def test_factory_reset_preflight_uses_generated_config_validators(monkeypatch):
         *args: object,
         **_kwargs: object,
     ) -> AdapterResult:
+        """Record one generated-config helper call.
+
+        Args:
+            _adapter: Adapter instance receiving the method call.
+            group: Helper command group.
+            action: Helper action.
+            *args: Helper positional arguments.
+            **_kwargs: Helper keyword arguments ignored by the test double.
+        """
         calls.append((group, action, args))
         return AdapterResult(command=[group, action], dry_run=False)
 
@@ -170,12 +211,22 @@ def test_factory_reset_preflight_uses_generated_config_validators(monkeypatch):
 
 
 def test_factory_reset_readiness_finalizer_is_detached(monkeypatch):
-    """The finalizer must release its caller before trying to acquire the reset lock."""
+    """The finalizer must release its caller before trying to acquire the reset lock.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+    """
     import atlaso.app.factory_reset as factory_reset
 
     commands: list[list[str]] = []
 
     def fake_run(command: list[str], **_kwargs) -> subprocess.CompletedProcess[str]:
+        """Record one systemd-run command.
+
+        Args:
+            command: Exact command arguments.
+            **_kwargs: Subprocess options ignored by the test double.
+        """
         commands.append(command)
         return subprocess.CompletedProcess(command, 0, "", "")
 
@@ -191,7 +242,12 @@ def test_factory_reset_readiness_finalizer_is_detached(monkeypatch):
 
 
 def test_factory_reset_finalizer_requires_stable_management_readiness(tmp_path, monkeypatch):
-    """Terminal success follows two consecutive service and OpenAPI readiness samples."""
+    """Terminal success follows two consecutive service and OpenAPI readiness samples.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+    """
     import atlaso.app.factory_reset as factory_reset
 
     state_directory = tmp_path / "factory-reset"
@@ -228,7 +284,12 @@ def test_factory_reset_finalizer_retains_failed_marker_when_readiness_never_stab
     tmp_path,
     monkeypatch,
 ):
-    """A restart or OpenAPI failure remains resumable and never publishes success."""
+    """A restart or OpenAPI failure remains resumable and never publishes success.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+    """
     import pytest
 
     import atlaso.app.factory_reset as factory_reset
@@ -249,7 +310,7 @@ def test_factory_reset_finalizer_retains_failed_marker_when_readiness_never_stab
         ),
         encoding="utf-8",
     )
-    monotonic = iter([0.0, 2.0])
+    monotonic = iter([0.0, 0.0, 2.0])
     monkeypatch.setattr(factory_reset, "factory_reset_state_directory", lambda: state_directory)
     monkeypatch.setattr(factory_reset, "_running_as_posix_root", lambda: False)
     monkeypatch.setattr(factory_reset, "_start_required_services", lambda: None)
@@ -264,7 +325,12 @@ def test_factory_reset_finalizer_retains_failed_marker_when_readiness_never_stab
 
 
 def test_factory_reset_finalizer_retries_post_commit_failure(tmp_path, monkeypatch):
-    """A failed readiness attempt resumes activation instead of rebuilding defaults."""
+    """A failed readiness attempt resumes activation instead of rebuilding defaults.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+    """
     import atlaso.app.factory_reset as factory_reset
 
     state_directory = tmp_path / "factory-reset"
@@ -296,7 +362,11 @@ def test_factory_reset_finalizer_retries_post_commit_failure(tmp_path, monkeypat
 
 
 def test_factory_host_inventory_is_stable_across_startup_refresh(tmp_path):
-    """Factory reset baselines every host NIC in its final desired posture."""
+    """Factory reset baselines every host NIC in its final desired posture.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
     engine = create_engine(f"sqlite:///{tmp_path / 'atlaso.db'}")
     Base.metadata.create_all(engine)
     session_factory = sessionmaker(bind=engine, autoflush=False, autocommit=False, expire_on_commit=False)
@@ -351,7 +421,12 @@ def test_complete_factory_reset_replaces_database_and_establishes_baselines(
     tmp_path,
     monkeypatch,
 ):
-    """Factory reset removes prior records and leaves every apply unit current."""
+    """Factory reset removes prior records and leaves every apply unit current.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+    """
     database_path = tmp_path / "atlaso.db"
     state_directory = tmp_path / "factory-reset"
     depot_payload = tmp_path / "depot" / "payload.bin"
@@ -449,7 +524,12 @@ def test_complete_factory_reset_retains_recovery_marker_after_failure(
     tmp_path,
     monkeypatch,
 ):
-    """An interrupted reset keeps the old database and a resumable marker."""
+    """An interrupted reset keeps the old database and a resumable marker.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+    """
     database_path = tmp_path / "atlaso.db"
     state_directory = tmp_path / "factory-reset"
     engine = create_engine(f"sqlite:///{database_path}", connect_args={"check_same_thread": False})
@@ -468,6 +548,11 @@ def test_complete_factory_reset_retains_recovery_marker_after_failure(
             super().__init__(dry_run=True)
 
         def apply_local_users_config(self, config_path: str):
+            """Inject one Local Users activation failure.
+
+            Args:
+                config_path: Staged Local Users configuration path.
+            """
             result = super().apply_local_users_config(config_path)
             return type(result)(
                 command=result.command,
@@ -501,7 +586,12 @@ def test_complete_factory_reset_resumes_after_post_replacement_interruption(
     tmp_path,
     monkeypatch,
 ):
-    """A failure after atomic replacement can idempotently finish on resume."""
+    """A failure after atomic replacement can idempotently finish on resume.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+    """
     import pytest
 
     import atlaso.app.factory_reset as factory_reset
@@ -521,6 +611,12 @@ def test_complete_factory_reset_resumes_after_post_replacement_interruption(
     replace_database = factory_reset._replace_database
 
     def interrupt_after_replace(source, candidate):
+        """Inject an interruption immediately after database replacement.
+
+        Args:
+            source: Installed database path.
+            candidate: Validated replacement database path.
+        """
         replace_database(source, candidate)
         raise FactoryResetError("injected post-replacement interruption")
 

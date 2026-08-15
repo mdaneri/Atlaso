@@ -1407,7 +1407,13 @@ def _systemd_unit_logs(unit: str) -> int:
 
 
 def _management_resolver_candidate(text: str, servers: list[str], domains: list[str]) -> str:
-    """Return the management networkd config with prospective resolver values."""
+    """Return the management networkd config with prospective resolver values.
+
+    Args:
+        text: Current management networkd configuration.
+        servers: Prospective resolver addresses.
+        domains: Prospective route-only search domains.
+    """
     lines = text.splitlines()
     updated: list[str] = []
     in_network = False
@@ -5118,7 +5124,12 @@ def _nginx_site_conflict(site_path: Path, text: str) -> str:
 
 
 def _validate_nginx_site_candidate(site_path: Path, text: str | None) -> subprocess.CompletedProcess[str]:
-    """Validate one prospective Atlaso nginx site in an isolated config tree."""
+    """Validate one prospective Atlaso nginx site in an isolated config tree.
+
+    Args:
+        site_path: Canonical destination used to identify the site filename.
+        text: Prospective site text, or ``None`` to validate removal.
+    """
     nginx = _nginx_binary()
     if nginx is None:
         return subprocess.CompletedProcess(["nginx", "-t"], 127, "", "nginx command not found\n")
@@ -5606,7 +5617,13 @@ def _sshd_main_config_with_dropin_include(
     *,
     unset_global_options: set[str] | None = None,
 ) -> str:
-    """Return an sshd main config with one pre-Match drop-in include."""
+    """Return an sshd main config with one pre-Match drop-in include.
+
+    Args:
+        text: Current sshd main configuration.
+        include_line: Isolated or installed drop-in include directive.
+        unset_global_options: Global directives delegated to Atlaso drop-ins.
+    """
     unset_options = {option.lower() for option in (unset_global_options or set())}
     next_lines: list[str] = []
     in_match_block = False
@@ -5635,7 +5652,12 @@ def _validate_sshd_dropin_candidates(
     *,
     unset_global_options: set[str] | None = None,
 ) -> subprocess.CompletedProcess[str]:
-    """Validate prospective sshd drop-ins in an isolated config tree."""
+    """Validate prospective sshd drop-ins in an isolated config tree.
+
+    Args:
+        replacements: Canonical drop-in paths mapped to prospective content or removal.
+        unset_global_options: Global directives delegated to Atlaso drop-ins.
+    """
     sshd = shutil.which("sshd") or ("/usr/sbin/sshd" if Path("/usr/sbin/sshd").exists() else None)
     if sshd is None:
         return subprocess.CompletedProcess(["sshd", "-t"], 127, "", "sshd command not found\n")
@@ -5960,7 +5982,11 @@ def _apply_vcf_download_tool_ceip(enabled: bool) -> tuple[int, str]:
 
 
 def _validate_atlaso_service_dropin(text: str) -> subprocess.CompletedProcess[str]:
-    """Validate a generated Atlaso service drop-in as a complete temporary unit."""
+    """Validate a generated Atlaso service drop-in as a complete temporary unit.
+
+    Args:
+        text: Prospective systemd drop-in content.
+    """
     systemd_analyze = shutil.which("systemd-analyze")
     if systemd_analyze is None:
         return subprocess.CompletedProcess(
@@ -5981,7 +6007,11 @@ def _validate_atlaso_service_dropin(text: str) -> subprocess.CompletedProcess[st
 
 
 def _preflight_appliance_settings(payload: dict) -> subprocess.CompletedProcess[str]:
-    """Validate every generated appliance-settings artifact without host mutation."""
+    """Validate every generated appliance-settings artifact without host mutation.
+
+    Args:
+        payload: Parsed appliance-settings apply payload.
+    """
     web_terminal_text = None
     if bool(payload.get("web_terminal_enabled")):
         web_terminal_text = (
@@ -13213,7 +13243,11 @@ def _handle_appliance_power(action: str, args: list[str]) -> int:
 
 
 def _write_factory_reset_marker(payload: dict) -> None:
-    """Write one root-owned, non-secret factory-reset marker atomically."""
+    """Write one root-owned, non-secret factory-reset marker atomically.
+
+    Args:
+        payload: Bounded reset state to persist.
+    """
     ATLASO_FACTORY_RESET_DIR.mkdir(parents=True, exist_ok=True)
     os.chmod(ATLASO_FACTORY_RESET_DIR, 0o750)
     try:
@@ -13254,7 +13288,11 @@ def _factory_reset_state_payload() -> dict:
 
 
 def _factory_reset_runner(*, boot_resume: bool) -> subprocess.CompletedProcess[str]:
-    """Run the installed reset transaction synchronously."""
+    """Run the installed reset transaction synchronously.
+
+    Args:
+        boot_resume: Whether the run is resuming from service startup.
+    """
     if not ATLASO_FACTORY_RESET_PYTHON.is_file():
         return subprocess.CompletedProcess(
             [str(ATLASO_FACTORY_RESET_PYTHON), "-m", "atlaso.app.factory_reset"],
@@ -13398,7 +13436,12 @@ def _schedule_factory_reset() -> int:
 
 
 def _handle_factory_reset(action: str, args: list[str]) -> int:
-    """Handle dedicated complete factory-reset lifecycle operations."""
+    """Handle dedicated complete factory-reset lifecycle operations.
+
+    Args:
+        action: Requested factory-reset lifecycle action.
+        args: Additional parsed command-line arguments.
+    """
     if args:
         print(f"factory-reset {action} does not accept a path", file=sys.stderr)
         return 2

@@ -12940,7 +12940,6 @@ def depot_login_page(
     Args:
         request: Incoming HTTP request.
         next: Relative destination requested after authentication.
-        factory_reset: Factory-reset handoff state requested by the reset workflow.
         identity: Authenticated identity authorizing the request.
         db: Active database session.
 
@@ -13168,6 +13167,7 @@ def login_page(
     Args:
         request: Incoming HTTP request.
         next: Relative destination requested after authentication.
+        factory_reset: Factory-reset handoff state requested by the reset workflow.
         identity: Authenticated identity authorizing the request.
         db: Active database session.
 

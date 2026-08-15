@@ -602,7 +602,11 @@ class SystemAdapter:
         return self._helper_result("appliance-settings", "validate", config_path, dry_run_message="dry-run: appliance settings validation command recorded")
 
     def preflight_appliance_settings_config(self, config_path: str) -> AdapterResult:
-        """Validate generated appliance settings artifacts without installing them."""
+        """Validate generated appliance settings artifacts without installing them.
+
+        Args:
+            config_path: Filesystem path containing the operation configuration.
+        """
         return self._helper_result(
             "appliance-settings",
             "preflight",
@@ -683,7 +687,11 @@ class SystemAdapter:
         return self._helper_result("vcf-backups", "validate", config_path, dry_run_message="dry-run: VCF backup SFTP validation command recorded")
 
     def preflight_vcf_backup_config(self, config_path: str) -> AdapterResult:
-        """Validate the generated VCF Backup sshd configuration without installing it."""
+        """Validate the generated VCF Backup sshd configuration without installing it.
+
+        Args:
+            config_path: Filesystem path containing the operation configuration.
+        """
         return self._helper_result(
             "vcf-backups",
             "preflight",
@@ -841,7 +849,11 @@ class SystemAdapter:
         return self._helper_result("public-services", "validate", config_path, dry_run_message="dry-run: public services nginx validation command recorded")
 
     def preflight_public_services_config(self, config_path: str) -> AdapterResult:
-        """Validate the generated public-services nginx site without installing it."""
+        """Validate the generated public-services nginx site without installing it.
+
+        Args:
+            config_path: Filesystem path containing the operation configuration.
+        """
         return self._helper_result(
             "public-services",
             "preflight",

@@ -121,6 +121,12 @@ def test_factory_reset_helper_persists_marker_before_detached_schedule(
     commands: list[list[str]] = []
 
     def fake_run(command: list[str], **_kwargs) -> subprocess.CompletedProcess[str]:
+        """Record one helper command.
+
+        Args:
+            command: Exact command arguments.
+            **_kwargs: Subprocess options ignored by the test double.
+        """
         commands.append(command)
         returncode = 3 if command[:3] == ["systemctl", "is-active", "--quiet"] else 0
         return subprocess.CompletedProcess(command, returncode, "", "")
@@ -129,6 +135,7 @@ def test_factory_reset_helper_persists_marker_before_detached_schedule(
     monkeypatch.setattr(helper, "ATLASO_FACTORY_RESET_REQUEST_PATH", state_directory / "request.json")
     monkeypatch.setattr(helper, "ATLASO_FACTORY_RESET_RESULT_PATH", state_directory / "last-result.json")
     monkeypatch.setattr(helper, "ATLASO_FACTORY_RESET_PYTHON", runner)
+    monkeypatch.setattr(helper.shutil, "chown", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(helper.shutil, "which", lambda command: f"/usr/bin/{command}" if command in {"systemd-run", "logger"} else None)
     monkeypatch.setattr(helper, "_run", fake_run)
 
@@ -144,7 +151,12 @@ def test_factory_reset_helper_persists_marker_before_detached_schedule(
 
 
 def test_factory_reset_helper_treats_pending_timer_as_active(monkeypatch, tmp_path):
-    """A duplicate request cannot replace a valid marker while its delay timer is active."""
+    """A duplicate request cannot replace a valid marker while its delay timer is active.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
     helper = load_helper_module()
     state_directory = tmp_path / "factory-reset"
     state_directory.mkdir()
@@ -156,6 +168,12 @@ def test_factory_reset_helper_treats_pending_timer_as_active(monkeypatch, tmp_pa
     commands: list[list[str]] = []
 
     def fake_run(command: list[str], **_kwargs) -> subprocess.CompletedProcess[str]:
+        """Model the active delay timer.
+
+        Args:
+            command: Exact command arguments.
+            **_kwargs: Subprocess options ignored by the test double.
+        """
         commands.append(command)
         if command[-1] == "atlaso-factory-reset.timer":
             return subprocess.CompletedProcess(command, 0, "", "")
@@ -194,7 +212,12 @@ def test_factory_reset_helper_resume_is_idempotent(monkeypatch, tmp_path):
 
 
 def test_factory_reset_helper_resume_queues_post_commit_finalizer(monkeypatch, tmp_path):
-    """Service preflight must not rerun a reset whose defaults are already committed."""
+    """Service preflight must not rerun a reset whose defaults are already committed.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
     helper = load_helper_module()
     state_directory = tmp_path / "factory-reset"
     state_directory.mkdir()
@@ -230,11 +253,21 @@ def test_factory_reset_helper_resume_queues_post_commit_finalizer(monkeypatch, t
 
 
 def test_factory_reset_helper_finalizer_does_not_block_service_preflight(monkeypatch):
-    """Boot resume queues readiness work and lets the Atlaso service continue starting."""
+    """Boot resume queues readiness work and lets the Atlaso service continue starting.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+    """
     helper = load_helper_module()
     commands: list[list[str]] = []
 
     def fake_run(command: list[str], **_kwargs) -> subprocess.CompletedProcess[str]:
+        """Record one detached finalizer command.
+
+        Args:
+            command: Exact command arguments.
+            **_kwargs: Subprocess options ignored by the test double.
+        """
         commands.append(command)
         return subprocess.CompletedProcess(command, 0, "", "")
 
@@ -4793,7 +4826,12 @@ def test_local_users_helper_creates_deletes_and_sets_password_without_leaking(mo
 
 
 def test_local_users_helper_deletes_managed_inventory_account_missing_from_baseline(monkeypatch, tmp_path):
-    """The root-owned managed-home inventory closes stale or absent baseline gaps."""
+    """The root-owned managed-home inventory closes stale or absent baseline gaps.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
     helper = load_helper_module()
     apply_dir = tmp_path / "apply" / "local-users"
     home_base = tmp_path / "users"
@@ -4810,6 +4848,11 @@ def test_local_users_helper_deletes_managed_inventory_account_missing_from_basel
     commands: list[list[str]] = []
 
     def fake_run(command: list[str]) -> subprocess.CompletedProcess[str]:
+        """Record one local-user helper command.
+
+        Args:
+            command: Exact command arguments.
+        """
         commands.append(command)
         return subprocess.CompletedProcess(command, 0, "", "")
 

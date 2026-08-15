@@ -114,13 +114,23 @@ class _ValidationOnlyAdapter(SystemAdapter):
         super().__init__(dry_run=False)
 
     def __getattribute__(self, name: str) -> Any:
-        """Replace a bounded mutating adapter method with a successful no-op."""
+        """Replace a bounded mutating adapter method with a successful no-op.
+
+        Args:
+            name: Adapter attribute requested by the apply workflow.
+        """
         generated_config_preflights = object.__getattribute__(self, "_GENERATED_CONFIG_PREFLIGHTS")
         if name in generated_config_preflights:
             return super().__getattribute__(generated_config_preflights[name])
         mutating_methods = object.__getattribute__(self, "_MUTATING_METHODS")
         if name in mutating_methods:
             def validation_noop(*_args: object, **_kwargs: object) -> AdapterResult:
+                """Record one deferred activation without changing the host.
+
+                Args:
+                    *_args: Positional arguments accepted by the adapter method.
+                    **_kwargs: Keyword arguments accepted by the adapter method.
+                """
                 return AdapterResult(
                     command=["atlaso-factory-reset", "preflight", name],
                     dry_run=True,
@@ -135,7 +145,12 @@ def _seed_factory_host_interfaces(
     db: Session,
     discovered: list[HostPhysicalInterface],
 ) -> None:
-    """Inventory appliance NICs while retaining packaged factory desired state."""
+    """Inventory appliance NICs while retaining packaged factory desired state.
+
+    Args:
+        db: Candidate database session receiving the discovered interfaces.
+        discovered: Authoritative host-interface inventory.
+    """
     if not discovered:
         raise FactoryResetError("Factory reset could not inventory host network interfaces.")
     interfaces = list(
@@ -197,7 +212,11 @@ def factory_reset_result_path() -> Path:
 
 @contextmanager
 def _factory_reset_transaction_lock(*, wait_seconds: float = 0) -> Iterator[None]:
-    """Admit exactly one reset runner on the POSIX appliance."""
+    """Admit exactly one reset runner on the POSIX appliance.
+
+    Args:
+        wait_seconds: Maximum time to wait for the reset lock.
+    """
     state_directory = factory_reset_state_directory()
     state_directory.mkdir(parents=True, exist_ok=True)
     state_directory.chmod(0o750)
@@ -227,7 +246,12 @@ def _factory_reset_transaction_lock(*, wait_seconds: float = 0) -> Iterator[None
 
 
 def _write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
-    """Write bounded reset state atomically and durably."""
+    """Write bounded reset state atomically and durably.
+
+    Args:
+        path: Durable marker path to replace.
+        payload: Bounded non-secret state to serialize.
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
     path.parent.chmod(0o750)
     if _running_as_posix_root():
@@ -267,7 +291,13 @@ def read_factory_reset_state() -> dict[str, Any]:
 
 
 def _update_request(state: str, message: str, **details: Any) -> dict[str, Any]:
-    """Update the resumable reset marker without secret-bearing data."""
+    """Update the resumable reset marker without secret-bearing data.
+
+    Args:
+        state: New reset lifecycle state.
+        message: Public-safe operator status message.
+        **details: Additional bounded non-secret marker fields.
+    """
     request_path = factory_reset_request_path()
     try:
         payload = json.loads(request_path.read_text(encoding="utf-8"))
@@ -286,7 +316,11 @@ def _update_request(state: str, message: str, **details: Any) -> dict[str, Any]:
 
 
 def _sqlite_database_path(database_url: str) -> Path:
-    """Resolve the appliance SQLite database path without accepting other backends."""
+    """Resolve the appliance SQLite database path without accepting other backends.
+
+    Args:
+        database_url: Configured SQLAlchemy database URL.
+    """
     prefix = "sqlite:///"
     if not database_url.startswith(prefix):
         raise FactoryResetError("Complete factory reset requires the appliance SQLite database backend.")
@@ -297,7 +331,11 @@ def _sqlite_database_path(database_url: str) -> Path:
 
 
 def _run_systemctl(*arguments: str) -> None:
-    """Run one bounded systemd command or fail closed."""
+    """Run one bounded systemd command or fail closed.
+
+    Args:
+        *arguments: Systemctl action and exact unit arguments.
+    """
     completed = subprocess.run(
         ["systemctl", *arguments],
         check=False,
@@ -310,7 +348,11 @@ def _run_systemctl(*arguments: str) -> None:
 
 
 def _stop_application_services(*, boot_resume: bool) -> None:
-    """Quiesce database writers before runtime and database replacement."""
+    """Quiesce database writers before runtime and database replacement.
+
+    Args:
+        boot_resume: Whether Atlaso is already stopped by service startup ordering.
+    """
     if boot_resume:
         _run_systemctl("stop", "atlaso-worker.service")
         return
@@ -362,7 +404,12 @@ def _clear_apply_staging() -> None:
 
 
 def _clear_fixed_directory_contents(path: Path, *, label: str) -> None:
-    """Remove direct credential entries from one fixed Atlaso-owned directory."""
+    """Remove direct credential entries from one fixed Atlaso-owned directory.
+
+    Args:
+        path: Fixed credential directory to clear.
+        label: Public-safe name used in validation failures.
+    """
     if not path.exists():
         return
     if path.is_symlink() or not path.is_dir() or path.resolve() != path:
@@ -427,7 +474,12 @@ def _start_required_services() -> None:
 
 
 def _mark_factory_reset_succeeded(request_payload: dict[str, Any], unit_count: int) -> dict[str, Any]:
-    """Persist terminal success before durably removing the recovery marker."""
+    """Persist terminal success before durably removing the recovery marker.
+
+    Args:
+        request_payload: Active durable reset request.
+        unit_count: Number of applied and baselined units.
+    """
     completed = {
         "schema_version": FACTORY_RESET_SCHEMA_VERSION,
         "state": "succeeded",
@@ -455,7 +507,12 @@ def finalize_factory_reset(
     readiness_timeout_seconds: float = 120,
     poll_seconds: float = 2,
 ) -> dict[str, Any]:
-    """Verify stable post-restart management readiness before terminal success."""
+    """Verify stable post-restart management readiness before terminal success.
+
+    Args:
+        readiness_timeout_seconds: Maximum readiness observation interval.
+        poll_seconds: Delay between readiness samples.
+    """
     with _factory_reset_transaction_lock(wait_seconds=30):
         request_path = factory_reset_request_path()
         try:
@@ -498,7 +555,12 @@ def finalize_factory_reset(
 
 
 def _preserve_database_ownership(source: Path, candidate: Path) -> None:
-    """Apply the installed database ownership and mode to the replacement."""
+    """Apply the installed database ownership and mode to the replacement.
+
+    Args:
+        source: Installed database whose metadata is authoritative.
+        candidate: Validated replacement database.
+    """
     source_stat = source.stat()
     candidate.chmod(source_stat.st_mode & 0o777)
     if os.name == "posix":
@@ -507,7 +569,12 @@ def _preserve_database_ownership(source: Path, candidate: Path) -> None:
 
 
 def _replace_database(source: Path, candidate: Path) -> None:
-    """Atomically replace the appliance database and discard stale SQLite sidecars."""
+    """Atomically replace the appliance database and discard stale SQLite sidecars.
+
+    Args:
+        source: Installed database path to replace.
+        candidate: Fully validated candidate database path.
+    """
     _preserve_database_ownership(source, candidate)
     for suffix in ("-wal", "-shm", "-journal"):
         Path(f"{source}{suffix}").unlink(missing_ok=True)
@@ -527,7 +594,14 @@ def _candidate_database(
     adapter: SystemAdapter,
     report_progress: bool = True,
 ) -> int:
-    """Build, preflight, activate, and baseline one clean candidate database."""
+    """Build, preflight, activate, and baseline one clean candidate database.
+
+    Args:
+        source_path: Current database used to retain compatible baseline metadata.
+        candidate_path: Private candidate database path.
+        adapter: System adapter used for validation and activation.
+        report_progress: Whether to update the durable appliance request marker.
+    """
     from atlaso.app.ui import (
         appliance_apply_units,
         execute_appliance_apply_unit,
@@ -634,7 +708,13 @@ def replace_database_with_factory_candidate(
     database_url: str,
     adapter: SystemAdapter,
 ) -> int:
-    """Validate an isolated candidate before atomically backing it into a local database."""
+    """Validate an isolated candidate before atomically backing it into a local database.
+
+    Args:
+        db: Active request database session to replace.
+        database_url: Configured SQLite database URL.
+        adapter: Dry-run adapter used by the non-appliance fallback.
+    """
     source_path = _sqlite_database_path(database_url)
     descriptor, candidate_name = tempfile.mkstemp(
         prefix=".atlaso-factory-reset-candidate-",
@@ -687,7 +767,13 @@ def _run_factory_reset_locked(
     adapter: SystemAdapter | None = None,
     manage_services: bool = True,
 ) -> dict[str, Any]:
-    """Complete or resume the dedicated appliance factory-reset transaction."""
+    """Complete or resume the dedicated appliance factory-reset transaction.
+
+    Args:
+        database_url: Optional SQLite database URL override.
+        adapter: Optional system adapter override.
+        manage_services: Whether to quiesce and restart appliance services.
+    """
     settings = get_settings()
     source_path = _sqlite_database_path(database_url or settings.database_url)
     state_directory = factory_reset_state_directory()
@@ -754,7 +840,13 @@ def run_factory_reset(
     adapter: SystemAdapter | None = None,
     manage_services: bool = True,
 ) -> dict[str, Any]:
-    """Complete or resume one serialized appliance factory-reset transaction."""
+    """Complete or resume one serialized appliance factory-reset transaction.
+
+    Args:
+        database_url: Optional SQLite database URL override.
+        adapter: Optional system adapter override.
+        manage_services: Whether to quiesce and restart appliance services.
+    """
     with _factory_reset_transaction_lock():
         return _run_factory_reset_locked(
             database_url=database_url,
@@ -764,7 +856,11 @@ def run_factory_reset(
 
 
 def main(arguments: list[str] | None = None) -> int:
-    """Run the appliance factory-reset entry point."""
+    """Run the appliance factory-reset entry point.
+
+    Args:
+        arguments: Optional command-line arguments for direct invocation or tests.
+    """
     parsed_arguments = list(arguments if arguments is not None else sys.argv[1:])
     if os.name == "posix" and not _running_as_posix_root():
         raise SystemExit("atlaso-factory-reset must run as root")

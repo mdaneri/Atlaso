@@ -6578,8 +6578,8 @@ def test_factory_reset_rolls_back_late_failure_without_clearing_staged_ldap_reco
             """Raise after reset seeding to exercise transaction rollback.
 
             Args:
-                *_args: Additional positional arguments accepted by the callable.
-                **_kwargs: Additional keyword arguments accepted by the callable.
+                *args: Additional positional arguments accepted by the callable.
+                **kwargs: Additional keyword arguments accepted by the callable.
             """
             original_seed_initial_data(*args, **kwargs)
             raise RuntimeError("injected late factory reset failure")
@@ -7807,6 +7807,11 @@ def test_backup_restore_factory_reset_schedules_durable_appliance_transaction(cl
     scheduled: list[bool] = []
 
     def schedule_factory_reset(_adapter):
+        """Record one appliance reset schedule request.
+
+        Args:
+            _adapter: Real-mode adapter supplied by the endpoint.
+        """
         scheduled.append(True)
         return AdapterResult(
             command=["atlaso-helper", "factory-reset", "schedule"],
@@ -8023,7 +8028,12 @@ def test_backup_restore_factory_reset_replaces_database_and_baselines_runtime(cl
 
 
 def test_backup_restore_factory_reset_rolls_back_failed_fallback_candidate(client, monkeypatch):
-    """A dry-run unit failure cannot commit the fallback reset's table deletion."""
+    """A dry-run unit failure cannot commit the fallback reset's table deletion.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+    """
     from sqlalchemy import select
 
     from atlaso.app.database import SessionLocal

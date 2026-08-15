@@ -63,7 +63,11 @@ def pending_os_password_snapshot() -> dict[str, tuple[str, datetime]]:
 def restore_pending_os_password_snapshot(
     snapshot: dict[str, tuple[str, datetime]],
 ) -> None:
-    """Replace process-local staged Photon OS passwords after rollback."""
+    """Replace process-local staged Photon OS passwords after rollback.
+
+    Args:
+        snapshot: Previously captured pending-password state.
+    """
     _PENDING_OS_PASSWORDS.clear()
     _PENDING_OS_PASSWORDS.update(snapshot)
 
