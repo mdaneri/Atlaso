@@ -108,6 +108,15 @@ class ManagedLdapUiRouter:
     endpoints: Mapping[str, Endpoint]
 
 
+def _ldap_organization_location(organization: LdapOrganization) -> str:
+    """Return the directory location for a loaded organization row.
+
+    Args:
+        organization: Persisted organization that owns the directory view.
+    """
+    return f"/ldap?organization_id={organization.id}"
+
+
 def build_router(dependencies: ManagedLdapUiDependencies) -> ManagedLdapUiRouter:
     """Build the Managed LDAP management UI router.
 
@@ -886,7 +895,7 @@ def build_router(dependencies: ManagedLdapUiDependencies) -> ManagedLdapUiRouter
         ) == "1" or "application/json" in request.headers.get("accept", ""):
             return JSONResponse(ldap_user_to_dict(user), status_code=201)
         return RedirectResponse(
-            f"/ldap?organization_id={organization_id}", status_code=303
+            _ldap_organization_location(organization), status_code=303
         )
 
     @router.post("/ldap/users/{user_id}/edit", response_model=None)
@@ -1284,7 +1293,7 @@ def build_router(dependencies: ManagedLdapUiDependencies) -> ManagedLdapUiRouter
         ) == "1" or "application/json" in request.headers.get("accept", ""):
             return JSONResponse(ldap_group_to_dict(group), status_code=201)
         return RedirectResponse(
-            f"/ldap?organization_id={organization_id}", status_code=303
+            _ldap_organization_location(organization), status_code=303
         )
 
     @router.post("/ldap/groups/{group_id}/edit", response_model=None)

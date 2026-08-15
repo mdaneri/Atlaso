@@ -245,6 +245,10 @@ def test_managed_ldap_page_creates_org_user_group_and_shows_secret_once(client):
         follow_redirects=False,
     )
     assert user.status_code == 303
+    assert (
+        user.headers["location"]
+        == f"/ui/management/ldap?organization_id={organization_id}"
+    )
     page = client.get(user.headers["location"])
     assert "operator" in page.text
     assert "pending apply" in page.text
@@ -287,6 +291,21 @@ def test_managed_ldap_page_creates_org_user_group_and_shows_secret_once(client):
     assert grid_group.status_code == 201
     assert grid_group.json()["enabled"] is False
     group_id = grid_group.json()["id"]
+    fallback_group = client.post(
+        f"/ldap/organizations/{organization_id}/groups",
+        data={
+            "name": "Fallback Operators",
+            "description": "Fallback navigation coverage",
+            "enabled": "on",
+            "csrf": csrf,
+        },
+        follow_redirects=False,
+    )
+    assert fallback_group.status_code == 303
+    assert (
+        fallback_group.headers["location"]
+        == f"/ui/management/ldap?organization_id={organization_id}"
+    )
     refreshed_directory = client.get(f"/ldap?organization_id={organization_id}")
     group_wizard = refreshed_directory.text.split('id="ldap-group-dialog"', 1)[1].split(
         "</dialog>", 1
