@@ -4,6 +4,7 @@ from pathlib import Path
 
 from scripts.check_repo import (
     LEGACY_TABULATOR_MARKER,
+    LOCAL_TASK_BRANCH_ABSENT_MARKER,
     ORDERED_TERMINAL_CLEANUP_MARKERS,
     PRIMARY_CHECKOUT_RESTORED_MARKER,
     PRIMARY_CHECKOUT_RESUME_MARKER,
@@ -15,6 +16,7 @@ from scripts.check_repo import (
     TERMINAL_CLEANUP_SECTION_ANCHORS,
     TERMINAL_CLEANUP_SECTION_MARKERS,
     TITLE_CONTROL_UNAVAILABLE_MARKER,
+    WORKTREE_REMOVAL_RESUME_MARKER,
     check_agent_policy_gate,
     check_ui_pattern_foundation,
     collect_files,
@@ -514,11 +516,13 @@ def test_agent_policy_gate_scopes_cleanup_contract_markers(tmp_path: Path) -> No
         for marker in (
             '`cleanup-ready`',
             '" · Done"',
+            LOCAL_TASK_BRANCH_ABSENT_MARKER,
             PRIVATE_REMEDIATION_CLEANUP_MARKER,
             PRIVATE_REMEDIATION_REMOTE_MARKER,
             PRIMARY_CHECKOUT_RESUME_MARKER,
             PRIMARY_CHECKOUT_RESTORED_MARKER,
             TITLE_CONTROL_UNAVAILABLE_MARKER,
+            WORKTREE_REMOVAL_RESUME_MARKER,
         ):
             write_policy_files(tmp_path)
             path = tmp_path / relative_path
@@ -1411,7 +1415,7 @@ def test_agent_policy_gate_ignores_quoted_cleanup_markers(tmp_path: Path) -> Non
         text = path.read_text(encoding="utf-8").replace(marker, "", 1)
         insertion = f"\n{quote_prefix}> quoted example\n{quote_prefix}{marker}"
         path.write_text(
-            text + insertion
+            text.replace(anchor, anchor + insertion, 1)
             if anchor.startswith("#")
             else text.replace(sibling, insertion + sibling, 1),
             encoding="utf-8",
@@ -1445,6 +1449,40 @@ def test_agent_policy_gate_preserves_headings_after_block_quotes(tmp_path: Path)
             text
             + "\n> quoted example\n"
             + f"{'#' * heading_level} Following policy\n\n{marker}\n",
+            encoding="utf-8",
+        )
+
+        findings = check_agent_policy_gate(tmp_path)
+
+        assert len(findings) == 1
+        assert findings[0].path == path
+        assert findings[0].message == (
+            f"completed-task cleanup section marker is missing: {marker}"
+        )
+
+
+def test_agent_policy_gate_keeps_noninitial_ordered_items_in_lazy_block_quotes(
+    tmp_path: Path,
+) -> None:
+    """Verify that ordered items starting above one remain lazy quote continuations.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    marker = '`cleanup-ready`'
+    for relative_path in ORDERED_TERMINAL_CLEANUP_MARKERS:
+        anchor = TERMINAL_CLEANUP_SECTION_ANCHORS[relative_path]
+        if not anchor.startswith("#"):
+            continue
+        write_policy_files(tmp_path)
+        path = tmp_path / relative_path
+        text = path.read_text(encoding="utf-8").replace(marker, "", 1)
+        path.write_text(
+            text.replace(
+                anchor,
+                anchor + f"\n> quoted example\n2. {marker}",
+                1,
+            ),
             encoding="utf-8",
         )
 

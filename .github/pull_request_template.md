@@ -38,6 +38,12 @@ surfaces.
   only then may supported title controls append the exact suffix " · Done" once. If no supported mutable title control
   exists, `task_title_done` as verified not applicable requires capability evidence and omits the visible suffix.
 
+  A non-primary task records `worktree_removed` only after removing and pruning its worktree, verifying path and
+  registration absence, deleting only the exact unreferenced local task branch that still equals the recorded head,
+  and verifying `local_task_branch_absent`. An interrupted `worktree_removal_resume` requires the remote ref, path, and
+  registration absent plus the same ownership, head, and merge evidence before deleting that local ref or accepting it
+  as already absent.
+
   A primary-checkout task records `primary_checkout_restored` only after switching a clean exact-head checkout to
   current `origin/main`, verifying HEAD, and deleting only the exact unreferenced local task branch.
   An interrupted `primary_checkout_resume` requires clean local `main` freshly fast-forwarded to current `origin/main`,

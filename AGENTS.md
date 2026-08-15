@@ -199,8 +199,15 @@ For private remediation, satisfy `advisory_remote_branch_absent` only on private
 private fork, private pull request, branch, task, and recorded head SHA through the advisory; if the ref exists, require
 it to equal that head before deleting only the ref and privately verifying absence. An already absent ref satisfies the
 gate only after the same private identity and merge evidence are verified. Never delete the temporary fork, change
-advisory state, or enable repository-wide automatic branch deletion. For `worktree_removed`, use `git worktree remove`,
-prune only stale worktree metadata for the affected repository, and verify both the path and registration are absent.
+advisory state, or enable repository-wide automatic branch deletion. For `worktree_removed`, first verify that the exact
+local task branch is absent or still equals the recorded pull-request head and is referenced only by the target
+worktree. Use `git worktree remove`, prune only stale worktree metadata for the affected repository, and verify both the
+path and registration are absent. Then require the local branch to be unreferenced by every registered worktree, delete
+only that exact ref when present, and verify `local_task_branch_absent` before recording `worktree_removed`. A retry
+interrupted after the path and registration disappeared but before local-ref deletion may enter
+`worktree_removal_resume` only when the remote ref remains absent, the path and registration remain absent, and the
+same task ownership, pull-request head, and merge evidence prove that the exact unreferenced local branch is safely
+deletable or already absent.
 For a task running in the primary checkout, the initial path requires a clean checkout still at the recorded task head;
 fetch current `origin/main`, switch to local `main` without force, fast-forward it exactly to `origin/main`, and verify
 the resulting HEAD. A retry interrupted after that switch may enter `primary_checkout_resume` only when the checkout is

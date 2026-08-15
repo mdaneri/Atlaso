@@ -78,7 +78,8 @@ brings infrastructure, storage, identity, networking, and lifecycle workflows in
 - [Technical reference](docs/reference/index.md) — API, image building, lifecycle testing, and detailed behavior.
 - [Contributing](CONTRIBUTING.md) — issue, version, focused local validation, full-suite GitHub CI, exact-head review
   follow-through, protected trusted-CI status handoff, multi-entry GitHub Pages publication serialization,
-  pull-request, capability-aware completed-task branch/worktree/title cleanup with guarded resumable primary-checkout restoration,
+  pull-request, capability-aware completed-task remote/local-branch, worktree, and title cleanup with guarded resumable
+  restoration,
   and seven-day Python dependency-age requirements.
 - [Dependency management](docs/contribute/dependency-management.md) — regenerate hash locks without selecting newly
   published packages that approved mirrors may not have synchronized.

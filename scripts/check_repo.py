@@ -313,6 +313,8 @@ PRIVATE_REMEDIATION_CLEANUP_MARKER = "`advisory_cleanup_ready`"
 PRIVATE_REMEDIATION_REMOTE_MARKER = "`advisory_remote_branch_absent`"
 PRIMARY_CHECKOUT_RESTORED_MARKER = "`primary_checkout_restored`"
 PRIMARY_CHECKOUT_RESUME_MARKER = "`primary_checkout_resume`"
+LOCAL_TASK_BRANCH_ABSENT_MARKER = "`local_task_branch_absent`"
+WORKTREE_REMOVAL_RESUME_MARKER = "`worktree_removal_resume`"
 TITLE_CONTROL_UNAVAILABLE_MARKER = "`task_title_done` as verified not applicable"
 TERMINAL_CLEANUP_SECTION_MARKERS = {
     path: (
@@ -321,6 +323,8 @@ TERMINAL_CLEANUP_SECTION_MARKERS = {
         '" · Done"',
         PRIMARY_CHECKOUT_RESTORED_MARKER,
         PRIMARY_CHECKOUT_RESUME_MARKER,
+        LOCAL_TASK_BRANCH_ABSENT_MARKER,
+        WORKTREE_REMOVAL_RESUME_MARKER,
         TITLE_CONTROL_UNAVAILABLE_MARKER,
         PRIVATE_REMEDIATION_CLEANUP_MARKER,
         PRIVATE_REMEDIATION_REMOTE_MARKER,
@@ -1014,7 +1018,7 @@ def strip_markdown_nonoperative_content(text: str) -> str:
     in_block_quote = False
     interrupting_block_patterns = (
         re.compile(r" {0,3}#{1,6}(?:[ \t]+|$)"),
-        re.compile(r" {0,3}(?:[*+-]|\d{1,9}[.)])(?:[ \t]+|$)"),
+        re.compile(r" {0,3}(?:[*+-]|1[.)])(?:[ \t]+|$)"),
         re.compile(r" {0,3}(?:`{3,}|~{3,})"),
         re.compile(
             r" {0,3}(?:(?:\*[ \t]*){3,}|(?:_[ \t]*){3,}|"

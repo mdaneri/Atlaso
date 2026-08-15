@@ -170,8 +170,14 @@ Terminal order:
   advisory's exact temporary fork, private pull request, branch, task, and recorded head SHA. Delete only that ref when
   it still equals the head, privately verify absence, and require the same identity and merge proof for an already
   absent ref. Never delete the temporary fork or change advisory state.
-- Complete `worktree_removed` second through `git worktree remove`, followed by affected-repository stale-registration
-  pruning and verification that both the absolute path and registration are absent. A primary-checkout task records the
+- Complete `worktree_removed` second by first proving that the exact local task branch is absent or still equals the
+  recorded pull-request head and is referenced only by the target worktree. Use `git worktree remove`, follow it with
+  affected-repository stale-registration pruning, and verify that both the absolute path and registration are absent.
+  Then require the exact local task branch to be unreferenced by every registered worktree, delete only that ref when
+  present, and verify `local_task_branch_absent` before recording `worktree_removed`. If interrupted after the path and
+  registration disappear but before local-ref deletion, `worktree_removal_resume` requires the remote ref, path, and
+  registration to remain absent and the same task ownership, recorded head, and merge evidence to prove that the exact
+  unreferenced local branch is safely deletable or already absent. A primary-checkout task records the
   gate as not applicable only after a clean checkout still at the recorded task head fetches current `origin/main`,
   switches to local `main` without force, fast-forwards exactly to `origin/main`, verifies HEAD, deletes only a local
   task branch that still equals the recorded pull-request head and is checked out nowhere, and records
@@ -189,8 +195,9 @@ Terminal order:
   pull-request head SHA and the recorded merge commit is reachable from current `origin/main`.
 - The daily Codex cleanup automation reconciles missed handoffs and partial transitions with these same gates. Its
   dry-run decisions must fail closed for an active or pinned task, dirty or locked worktree, mismatched head SHA, failed
-  remote deletion, failed worktree removal, or ambiguous ownership; it must accept an already absent remote branch,
-  avoid duplicating " · Done", and preserve the primary checkout.
+  remote deletion, failed worktree removal, failed local task-branch deletion, or ambiguous ownership; it must accept
+  an already absent remote or local task branch only with the same identity evidence, avoid duplicating " · Done", and
+  preserve the primary checkout.
 - Private vulnerability remediation also follows `SECURITY.md`. Keep task titles, handoffs, cleanup evidence, advisory
   identity, and temporary-fork remote operations sanitized and private, and retain the task while coordinated release,
   disclosure, or authorized advisory-state activity remains.
