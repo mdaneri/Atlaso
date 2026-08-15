@@ -965,6 +965,75 @@ def strip_markdown_blank_terminated_html_blocks(text: str) -> str:
     return "".join(visible_lines)
 
 
+def strip_markdown_closed_html_containers(text: str) -> str:
+    """Blank balanced non-void HTML containers while preserving line structure.
+
+    Args:
+        text: Markdown source whose closed raw HTML containers must be normalized.
+    """
+    void_elements = {
+        "area",
+        "base",
+        "br",
+        "col",
+        "embed",
+        "hr",
+        "img",
+        "input",
+        "link",
+        "meta",
+        "param",
+        "source",
+        "track",
+        "wbr",
+    }
+    tag_pattern = re.compile(
+        r'''<(?P<closing>/)?(?P<tag>[A-Za-z][A-Za-z0-9-]*)\b'''
+        r'''(?:[^<>"']|"[^"]*"|'[^']*')*(?P<self_closing>/)?[ \t\r\n]*>''',
+        flags=re.IGNORECASE,
+    )
+    visible_parts: list[str] = []
+    output_cursor = 0
+    search_cursor = 0
+    while opening_match := tag_pattern.search(text, search_cursor):
+        tag_name = opening_match.group("tag").casefold()
+        if (
+            opening_match.group("closing") is not None
+            or opening_match.group("self_closing") is not None
+            or tag_name in void_elements
+        ):
+            search_cursor = opening_match.end()
+            continue
+        depth = 1
+        nested_cursor = opening_match.end()
+        closing_end: int | None = None
+        while candidate := tag_pattern.search(text, nested_cursor):
+            nested_cursor = candidate.end()
+            if candidate.group("tag").casefold() != tag_name:
+                continue
+            if candidate.group("closing") is not None:
+                depth -= 1
+                if depth == 0:
+                    closing_end = candidate.end()
+                    break
+            elif (
+                candidate.group("self_closing") is None
+                and tag_name not in void_elements
+            ):
+                depth += 1
+        if closing_end is None:
+            search_cursor = opening_match.end()
+            continue
+        visible_parts.append(text[output_cursor : opening_match.start()])
+        visible_parts.append(
+            re.sub(r"[^\r\n]", "", text[opening_match.start() : closing_end])
+        )
+        output_cursor = closing_end
+        search_cursor = closing_end
+    visible_parts.append(text[output_cursor:])
+    return "".join(visible_parts)
+
+
 def strip_markdown_nonoperative_content(text: str) -> str:
     """Replace non-rendered Markdown content with blank lines.
 
@@ -1000,13 +1069,8 @@ def strip_markdown_nonoperative_content(text: str) -> str:
     without_raw_html_blocks = strip_markdown_blank_terminated_html_blocks(
         without_raw_html_blocks
     )
-    without_raw_html_blocks = re.sub(
-        r'''<(?!(?:area|base|br|col|embed|hr|img|input|link|meta|param|source|track|wbr)\b)'''
-        r'''(?P<tag>[A-Za-z][A-Za-z0-9-]*)\b(?:[^<>"']|"[^"]*"|'[^']*')*>'''
-        r'''.*?</(?P=tag)[ \t\r\n]*>''',
-        lambda match: re.sub(r"[^\r\n]", "", match.group(0)),
+    without_raw_html_blocks = strip_markdown_closed_html_containers(
         without_raw_html_blocks,
-        flags=re.DOTALL | re.IGNORECASE,
     )
     without_html_tags = re.sub(
         r'''</?[A-Za-z][A-Za-z0-9-]*(?:[^<>"']|"[^"]*"|'[^']*')*>''',
@@ -1045,6 +1109,9 @@ def strip_markdown_nonoperative_content(text: str) -> str:
             without_quotes_lines.append(line)
     without_quotes = "".join(without_quotes_lines)
     visible_lines: list[str] = []
+    link_reference_destination_pending = False
+    pending_reference_line_index: int | None = None
+    pending_reference_line: str | None = None
     link_reference_title_pending = False
     top_level_list_content_indent: int | None = None
     for line in without_quotes.splitlines(keepends=True):
@@ -1063,6 +1130,18 @@ def strip_markdown_nonoperative_content(text: str) -> str:
             else line
         )
         reference_match = re.match(r" {0,3}\[[^\]\r\n]+\]:", block_line)
+        continued_destination_match = (
+            re.fullmatch(
+                r''' {0,3}(?:<(?:(?:\\.)|[^<>\r\n\\])*>|'''
+                r'''(?:(?:\\.)|[^\s\x00-\x20()\\]|'''
+                r'''\((?:(?:\\.)|[^()\s\\])*\))+)(?:[ \t]+'''
+                r'''(?:"[^"\r\n]*"|'[^'\r\n]*'|\([^()\r\n]*\)))?'''
+                r'''[ \t]*(?:\r?\n)?''',
+                block_line,
+            )
+            if link_reference_destination_pending
+            else None
+        )
         continued_title_match = (
             re.fullmatch(
                 r''' {0,3}(?:"[^"\r\n]*"|'[^'\r\n]*'|\([^()\r\n]*\))[ \t]*(?:\r?\n)?''',
@@ -1071,22 +1150,53 @@ def strip_markdown_nonoperative_content(text: str) -> str:
             if link_reference_title_pending
             else None
         )
-        if reference_match is not None:
+        if continued_destination_match is not None:
+            link_reference_destination_pending = False
+            pending_reference_line_index = None
+            pending_reference_line = None
             inline_title_match = re.search(
                 r'''[ \t]+(?:"[^"\r\n]*"|'[^'\r\n]*'|\([^()\r\n]*\))[ \t]*(?:\r?\n)?$''',
                 block_line,
             )
             link_reference_title_pending = inline_title_match is None
             visible_lines.append("\n" if line.endswith("\n") else "")
-        elif continued_title_match is not None:
-            link_reference_title_pending = False
-            visible_lines.append("\n" if line.endswith("\n") else "")
-        elif re.match(r"(?: {4}|\t)", block_line) is not None:
-            link_reference_title_pending = False
-            visible_lines.append("\n" if line.endswith("\n") else "")
         else:
-            link_reference_title_pending = False
-            visible_lines.append(line)
+            if link_reference_destination_pending:
+                assert pending_reference_line_index is not None
+                assert pending_reference_line is not None
+                visible_lines[pending_reference_line_index] = pending_reference_line
+                link_reference_destination_pending = False
+                pending_reference_line_index = None
+                pending_reference_line = None
+            if reference_match is not None:
+                reference_tail = block_line[reference_match.end() :]
+                destination_is_pending = not reference_tail.strip()
+                link_reference_destination_pending = destination_is_pending
+                pending_reference_line_index = (
+                    len(visible_lines) if destination_is_pending else None
+                )
+                pending_reference_line = line if destination_is_pending else None
+                inline_title_match = re.search(
+                    r'''[ \t]+(?:"[^"\r\n]*"|'[^'\r\n]*'|\([^()\r\n]*\))[ \t]*(?:\r?\n)?$''',
+                    block_line,
+                )
+                link_reference_title_pending = (
+                    not destination_is_pending and inline_title_match is None
+                )
+                visible_lines.append("\n" if line.endswith("\n") else "")
+            elif continued_title_match is not None:
+                link_reference_title_pending = False
+                visible_lines.append("\n" if line.endswith("\n") else "")
+            elif re.match(r"(?: {4}|\t)", block_line) is not None:
+                link_reference_title_pending = False
+                visible_lines.append("\n" if line.endswith("\n") else "")
+            else:
+                link_reference_title_pending = False
+                visible_lines.append(line)
+    if link_reference_destination_pending:
+        assert pending_reference_line_index is not None
+        assert pending_reference_line is not None
+        visible_lines[pending_reference_line_index] = pending_reference_line
     without_indented_code = "".join(visible_lines)
     return strip_markdown_fenced_code(without_indented_code)
 
