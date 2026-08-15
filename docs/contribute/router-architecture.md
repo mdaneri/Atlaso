@@ -22,7 +22,8 @@ projection, logging, and audit behavior in the stable UI facade. Phase 7 extract
 API v1 transports while keeping OIDC protocol endpoints, managed LDAP transports, and identity-domain behavior in
 their established owners. Phase 8 extracts Managed LDAP UI and API v1 transports while retaining LDAP services,
 helpers, models, renderers, Appliance Apply execution, settings-archive core behavior, and OIDC protocol ownership in
-their established modules.
+their established modules. Phase 9 extracts Network Boot and ESXi PXE management transports plus the remaining ESXi
+PXE API v1 transports while leaving the dedicated Network Boot API and protocol/media router unchanged.
 
 ## Ownership and responsibilities
 
@@ -185,9 +186,8 @@ monolithic facade.
 
 The UI registry places `managed_ldap` between `facade_between_dns_dhcp_managed_ldap` and
 `facade_between_managed_ldap_identity`, preserving its established position after Certificate Authority and before
-vSphere Key Providers. The API v1 registry places `managed_ldap` between
-`facade_between_firewall_managed_ldap` and `facade_after_managed_ldap`, preserving its established position after ESXi
-PXE and before vSphere Key Providers.
+vSphere Key Providers. The API v1 registry places `managed_ldap` after `network_boot` and before
+`facade_after_managed_ldap`, preserving its established position after ESXi PXE and before vSphere Key Providers.
 
 Independently runnable transport coverage lives in `tests/routers/ui/test_managed_ldap.py` and
 `tests/routers/api_v1/test_managed_ldap.py`. LDAP protocol, models, credentials, helper actions, renderers, DNS and CA
@@ -196,6 +196,31 @@ behavior, and global Appliance Apply execution retain their existing owners and 
 template, browser asset, visible copy, route, route name, operation ID, authorization scope, session or CSRF behavior,
 schema, redirect, download, status code, route inventory, normalized OpenAPI output, desired state, or host-mutation
 boundary.
+
+## Extracted Network Boot and ESXi PXE ownership
+
+Network Boot and ESXi PXE management transports under `/ui/management/network-boot` and
+`/ui/management/esxi-pxe` live in `atlaso/app/routers/ui/network_boot.py`. The remaining `/api/v1/esxi-pxe` transports
+live in `atlaso/app/routers/api_v1/network_boot.py`. The stable facades continue to export every established endpoint
+and helper name while supplying facade-owned rendering, identity, CSRF, task, desired-state, and compatibility helpers
+through the typed UI router builder. Neither extracted router imports a monolithic facade.
+
+The UI registry places `network_boot` between `facade_between_identity_network_boot` and
+`facade_after_network_boot`, preserving its established position after Web Terminal and before Backup Restore. The API
+v1 registry places `network_boot` between `facade_between_firewall_network_boot` and `managed_ldap`, preserving its
+established position after VCF Private Registry and before Managed LDAP.
+
+The separate `atlaso/app/api/network_boot.py` owner of `/api/v1/network-boot` and the protocol/media routes remains
+unchanged. Network Boot and ESXi PXE services, helpers, models, renderers, cross-domain DHCP/DNS integration, task and
+media behavior, desired/applied-state handling, and global Appliance Apply ownership also retain their established
+modules.
+
+Independently runnable facade-transport coverage lives in `tests/routers/ui/test_network_boot.py` and
+`tests/routers/api_v1/test_network_boot.py`. Protocol, service, media, and lifecycle coverage remains in
+`tests/test_network_boot.py` and its existing specialized owners. This behavior-neutral extraction changes no
+template, browser asset, visible copy, interaction class, route, route name, operation ID, authorization scope, session
+or CSRF behavior, upload or download contract, redirect, status code, schema, audit action, route inventory, normalized
+OpenAPI output, desired state, or host-mutation boundary.
 
 ## Route and OpenAPI compatibility
 
@@ -258,6 +283,7 @@ python -m pytest -q tests/routers/ui/test_firewall.py tests/routers/api_v1/test_
 python -m pytest -q tests/routers/ui/test_dns_dhcp.py tests/routers/api_v1/test_dns_dhcp.py tests/test_dns_dhcp.py
 python -m pytest -q tests/routers/ui/test_identity.py tests/routers/api_v1/test_identity.py
 python -m pytest -q tests/routers/ui/test_managed_ldap.py tests/routers/api_v1/test_managed_ldap.py
+python -m pytest -q tests/routers/ui/test_network_boot.py tests/routers/api_v1/test_network_boot.py tests/test_network_boot.py
 python -m pytest -q tests/test_openapi_contract.py tests/test_ui_route_namespaces.py tests/test_ui_compliance.py
 python scripts/generate_router_contract_baselines.py --check
 python scripts/check_python_static_analysis.py
