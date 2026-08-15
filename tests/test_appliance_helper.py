@@ -242,6 +242,105 @@ def test_factory_reset_helper_resume_is_idempotent(monkeypatch, tmp_path):
     assert helper._handle_factory_reset("resume", []) == 0
 
 
+def test_factory_reset_network_runtime_cleanup_uses_live_owned_state(monkeypatch, tmp_path, capsys):
+    """Reset removes live Atlaso VLANs and WAN state without database baselines.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+        capsys: Pytest fixture used to capture standard output and standard error.
+    """
+    helper = load_helper_module()
+    state_directory = tmp_path / "factory-reset"
+    networkd_directory = tmp_path / "networkd"
+    state_directory.mkdir()
+    networkd_directory.mkdir()
+    request_path = state_directory / "request.json"
+    request_path.write_text(json.dumps({"schema_version": 1, "state": "applying"}), encoding="utf-8")
+    (networkd_directory / "10-atlaso-eth1.120.netdev").write_text(
+        "# Managed by Atlaso. Local changes may be overwritten.\n"
+        "[NetDev]\n"
+        "Name=eth1.120\n"
+        "Kind=vlan\n"
+        "\n[VLAN]\nId=120\n",
+        encoding="utf-8",
+    )
+    (networkd_directory / "10-atlaso-unrelated.netdev").write_text(
+        "# Not owned by Atlaso.\n[NetDev]\nName=unrelated\nKind=vlan\n",
+        encoding="utf-8",
+    )
+    commands: list[list[str]] = []
+
+    def fake_run(command: list[str], **_kwargs) -> subprocess.CompletedProcess[str]:
+        """Return bounded live route and VLAN state for cleanup.
+
+        Args:
+            command: Exact command arguments.
+            **_kwargs: Subprocess options ignored by the test double.
+        """
+        commands.append(command)
+        if command == ["ip", "-j", "route", "show", "table", "200"]:
+            return subprocess.CompletedProcess(command, 0, '[{"dev":"eth1"},{"dev":"eth2"},{"dev":"eth1.120"}]', "")
+        if command == ["ip", "-j", "-6", "route", "show", "table", "200"]:
+            return subprocess.CompletedProcess(
+                command,
+                2,
+                "[]\n",
+                "Error: ipv6: FIB table does not exist.\nDump terminated\n",
+            )
+        if command[:5] == ["tc", "-j", "qdisc", "show", "dev"]:
+            kind = "fq_codel" if command[-1] == "eth2" else "netem"
+            return subprocess.CompletedProcess(command, 0, json.dumps([{"kind": kind, "root": True}]), "")
+        if command == ["ip", "-j", "-d", "link", "show", "dev", "eth1.120"]:
+            return subprocess.CompletedProcess(command, 0, '[{"linkinfo":{"info_kind":"vlan"}}]', "")
+        if command[:4] == ["tc", "qdisc", "del", "dev"]:
+            return subprocess.CompletedProcess(command, 2, "", "no qdisc\n")
+        if command[:3] == ["ip", "-6", "route"]:
+            return subprocess.CompletedProcess(
+                command,
+                2,
+                "",
+                "Error: ipv6: FIB table does not exist.\nDump terminated\n",
+            )
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(helper, "ATLASO_FACTORY_RESET_REQUEST_PATH", request_path)
+    monkeypatch.setattr(helper, "NETWORKD_CONFIG_DIR", networkd_directory)
+    monkeypatch.setattr(helper.shutil, "which", lambda command: f"/usr/sbin/{command}")
+    monkeypatch.setattr(helper, "_run", fake_run)
+
+    assert helper._handle_factory_reset("reset-network-runtime", []) == 0
+    payload = json.loads(capsys.readouterr().out.splitlines()[-1])
+    assert payload["qdisc_interfaces"] == ["eth1", "eth1.120"]
+    assert payload["removed_vlans"] == ["eth1.120"]
+    assert ["ip", "route", "flush", "table", "100"] in commands
+    assert ["ip", "route", "flush", "table", "200"] in commands
+    assert ["ip", "-6", "route", "flush", "table", "100"] in commands
+    assert ["ip", "-6", "route", "flush", "table", "200"] in commands
+    assert ["ip", "link", "delete", "dev", "eth1.120"] in commands
+    assert ["tc", "qdisc", "del", "dev", "eth2", "root"] not in commands
+    assert not any("unrelated" in command for command in commands)
+
+
+def test_factory_reset_network_runtime_cleanup_requires_applying_marker(monkeypatch, tmp_path, capsys):
+    """The destructive runtime cleanup is unavailable outside reset activation.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+        capsys: Pytest fixture used to capture standard output and standard error.
+    """
+    helper = load_helper_module()
+    request_path = tmp_path / "missing-request.json"
+    commands: list[list[str]] = []
+    monkeypatch.setattr(helper, "ATLASO_FACTORY_RESET_REQUEST_PATH", request_path)
+    monkeypatch.setattr(helper, "_run", lambda command: commands.append(command))
+
+    assert helper._handle_factory_reset("reset-network-runtime", []) == 2
+    assert commands == []
+    assert "active applying marker" in capsys.readouterr().err
+
+
 def test_factory_reset_helper_resume_queues_post_commit_finalizer(monkeypatch, tmp_path):
     """Service preflight must not rerun a reset whose defaults are already committed.
 

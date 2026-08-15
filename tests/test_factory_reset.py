@@ -467,14 +467,23 @@ def test_complete_factory_reset_replaces_database_and_establishes_baselines(
     monkeypatch.setenv("ATLASO_APPLIANCE_MANAGEMENT_IPV6_ENABLED", "true")
     monkeypatch.setenv("ATLASO_APPLIANCE_EXTERNAL_DNS_SERVERS", "")
     get_settings.cache_clear()
+    adapter = SystemAdapter(dry_run=True)
+    runtime_cleanup_calls: list[bool] = []
+    monkeypatch.setattr(
+        adapter,
+        "reset_factory_network_runtime",
+        lambda: runtime_cleanup_calls.append(True)
+        or AdapterResult(command=["atlaso-helper", "factory-reset", "reset-network-runtime"], dry_run=True),
+    )
     result = run_factory_reset(
         database_url=f"sqlite:///{database_path}",
-        adapter=SystemAdapter(dry_run=True),
+        adapter=adapter,
         manage_services=False,
     )
 
     assert result["state"] == "succeeded"
     assert result["applied_unit_count"] == 16
+    assert runtime_cleanup_calls == [True]
     assert not (state_directory / "request.json").exists()
     assert json.loads((state_directory / "last-result.json").read_text(encoding="utf-8"))["state"] == "succeeded"
     for payload in (depot_payload, backup_payload, storage_payload):

@@ -672,6 +672,10 @@ def _candidate_database(
             if report_progress:
                 _update_request("applying", "Factory default configuration validated; activating runtime defaults.")
 
+            runtime_cleanup = adapter.reset_factory_network_runtime()
+            if runtime_cleanup.returncode != 0:
+                raise FactoryResetError("Factory reset could not clear Atlaso-managed network runtime state.")
+
             for unit in units:
                 result = execute_appliance_apply_unit(unit, adapter=adapter, db=db)
                 if not result["success"]:

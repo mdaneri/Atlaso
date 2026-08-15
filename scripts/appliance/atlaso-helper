@@ -94,7 +94,7 @@ COMMANDS: dict[str, set[str]] = {
     "appliance-update": {"check", "apply", "sync-sources", "restart-service", "bootstrap-data-disk-safety"},
     "automation": {"run"},
     "appliance-power": {"reboot", "shutdown"},
-    "factory-reset": {"schedule", "resume", "status"},
+    "factory-reset": {"schedule", "resume", "status", "reset-network-runtime"},
     "console": {"disable-services", "recover-management-plane", "restore-services", "status"},
     "wan": {"validate", "apply"},
 }
@@ -145,6 +145,7 @@ NO_PATH_ACTIONS = {
     ("factory-reset", "schedule"),
     ("factory-reset", "resume"),
     ("factory-reset", "status"),
+    ("factory-reset", "reset-network-runtime"),
     ("web-terminal", "status"),
     ("console", "disable-services"),
     ("console", "recover-management-plane"),
@@ -13441,6 +13442,171 @@ def _schedule_factory_reset() -> int:
                 fcntl.flock(lock_handle.fileno(), fcntl.LOCK_UN)
 
 
+def _factory_reset_runtime_cleanup_is_admitted() -> bool:
+    """Return whether the durable marker admits reset-only runtime cleanup."""
+    try:
+        payload = json.loads(ATLASO_FACTORY_RESET_REQUEST_PATH.read_text(encoding="utf-8"))
+    except (FileNotFoundError, OSError, json.JSONDecodeError):
+        return False
+    return payload.get("schema_version") == 1 and payload.get("state") == "applying"
+
+
+def _factory_reset_managed_vlan_names() -> list[str]:
+    """Inventory VLAN links from bounded Atlaso-owned networkd definitions."""
+    names: set[str] = set()
+    for path in sorted(NETWORKD_CONFIG_DIR.glob(f"{NETWORKD_MANAGED_PREFIX}*.netdev")):
+        if path.is_symlink() or not path.is_file():
+            continue
+        try:
+            if path.stat().st_size > 64 * 1024:
+                raise ValueError(f"managed networkd definition is unexpectedly large: {path.name}")
+            lines = path.read_text(encoding="utf-8").splitlines()
+        except OSError as exc:
+            raise ValueError(f"could not read managed networkd definition: {path.name}") from exc
+        if not lines or lines[0].strip() != "# Managed by Atlaso. Local changes may be overwritten.":
+            continue
+        section = ""
+        values: dict[str, str] = {}
+        for raw_line in lines:
+            line = raw_line.strip()
+            if not line or line.startswith("#"):
+                continue
+            if line.startswith("[") and line.endswith("]"):
+                section = line[1:-1]
+                continue
+            if section == "NetDev" and "=" in line:
+                key, value = [part.strip() for part in line.split("=", 1)]
+                values[key] = value
+        name = values.get("Name", "")
+        if values.get("Kind") != "vlan" or not _valid_network_interface_name(name):
+            raise ValueError(f"managed VLAN definition is invalid: {path.name}")
+        if path.name != _networkd_managed_filename(name, "netdev"):
+            raise ValueError(f"managed VLAN definition name does not match its filename: {path.name}")
+        names.add(name)
+    return sorted(names)
+
+
+def _factory_reset_wan_route_interfaces() -> list[str]:
+    """Inventory interfaces referenced by Atlaso's dedicated live lab route table."""
+    interfaces: set[str] = set()
+    for family_arguments in ([], ["-6"]):
+        command = ["ip", "-j", *family_arguments, "route", "show", "table", str(LAB_ROUTE_TABLE_ID)]
+        result = _run(command)
+        if result.returncode != 0:
+            empty_output = not result.stdout.strip()
+            if not empty_output:
+                try:
+                    empty_output = json.loads(result.stdout) == []
+                except json.JSONDecodeError:
+                    empty_output = False
+            if result.returncode == 2 and empty_output and "FIB table does not exist" in result.stderr:
+                continue
+            print(result.stdout, end="")
+            print(result.stderr, end="", file=sys.stderr)
+            raise ValueError(f"could not inventory Atlaso route table {LAB_ROUTE_TABLE_ID}")
+        try:
+            routes = json.loads(result.stdout or "[]")
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"Atlaso route table {LAB_ROUTE_TABLE_ID} returned invalid JSON") from exc
+        if not isinstance(routes, list):
+            raise ValueError(f"Atlaso route table {LAB_ROUTE_TABLE_ID} returned an invalid route inventory")
+        for route in routes:
+            interface_name = route.get("dev", "") if isinstance(route, dict) else ""
+            if interface_name and not _valid_network_interface_name(interface_name):
+                raise ValueError(f"Atlaso route table {LAB_ROUTE_TABLE_ID} returned an invalid interface name")
+            if interface_name:
+                interfaces.add(interface_name)
+    return sorted(interfaces)
+
+
+def _factory_reset_root_netem_interfaces(candidates: list[str]) -> list[str]:
+    """Select only route-bound interfaces with Atlaso's root netem qdisc shape."""
+    interfaces: list[str] = []
+    for interface_name in candidates:
+        command = ["tc", "-j", "qdisc", "show", "dev", interface_name]
+        result = _run(command)
+        if result.returncode != 0:
+            print(result.stdout, end="")
+            print(result.stderr, end="", file=sys.stderr)
+            raise ValueError(f"could not inventory qdisc state for {interface_name}")
+        try:
+            qdiscs = json.loads(result.stdout or "[]")
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"qdisc inventory for {interface_name} returned invalid JSON") from exc
+        if not isinstance(qdiscs, list):
+            raise ValueError(f"qdisc inventory for {interface_name} returned an invalid result")
+        if any(isinstance(qdisc, dict) and qdisc.get("kind") == "netem" and qdisc.get("root") is True for qdisc in qdiscs):
+            interfaces.append(interface_name)
+    return interfaces
+
+
+def _reset_factory_network_runtime() -> int:
+    """Clear bounded live VLAN, route-table, and WAN impairment state during reset."""
+    if not _factory_reset_runtime_cleanup_is_admitted():
+        print("factory-reset network runtime cleanup requires an active applying marker", file=sys.stderr)
+        return 2
+    if shutil.which("ip") is None:
+        print("ip command not found", file=sys.stderr)
+        return 127
+    if shutil.which("tc") is None:
+        print("tc command not found", file=sys.stderr)
+        return 127
+    try:
+        vlan_names = _factory_reset_managed_vlan_names()
+        wan_route_interfaces = _factory_reset_wan_route_interfaces()
+        netem_interfaces = _factory_reset_root_netem_interfaces(wan_route_interfaces)
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+
+    for interface_name in netem_interfaces:
+        result = _run(["tc", "qdisc", "del", "dev", interface_name, "root"])
+        print(result.stdout, end="")
+        print(result.stderr, end="", file=sys.stderr)
+        if result.returncode not in {0, 2}:
+            return result.returncode
+
+    for family_arguments in ([], ["-6"]):
+        for table_id in (MANAGEMENT_ROUTE_TABLE_ID, LAB_ROUTE_TABLE_ID):
+            command = ["ip", *family_arguments, "route", "flush", "table", str(table_id)]
+            result = _run(command)
+            print(result.stdout, end="")
+            print(result.stderr, end="", file=sys.stderr)
+            absent_table = (
+                result.returncode == 2
+                and "FIB table does not exist" in result.stderr
+            )
+            if result.returncode != 0 and not absent_table:
+                return result.returncode
+
+    removed_vlans: list[str] = []
+    for name in vlan_names:
+        if not _link_exists(name):
+            continue
+        if not _is_vlan_link(name):
+            print(f"refusing to delete non-VLAN link from managed definition: {name}", file=sys.stderr)
+            return 2
+        result = _run(["ip", "link", "delete", "dev", name])
+        print(result.stdout, end="")
+        print(result.stderr, end="", file=sys.stderr)
+        if result.returncode != 0:
+            return result.returncode
+        removed_vlans.append(name)
+
+    print(
+        json.dumps(
+            {
+                "factory_reset_network_runtime": "cleanup complete",
+                "qdisc_interfaces": netem_interfaces,
+                "removed_vlans": removed_vlans,
+                "route_tables": [MANAGEMENT_ROUTE_TABLE_ID, LAB_ROUTE_TABLE_ID],
+            },
+            sort_keys=True,
+        )
+    )
+    return 0
+
+
 def _handle_factory_reset(action: str, args: list[str]) -> int:
     """Handle dedicated complete factory-reset lifecycle operations.
 
@@ -13456,6 +13622,8 @@ def _handle_factory_reset(action: str, args: list[str]) -> int:
         return 0
     if action == "schedule":
         return _schedule_factory_reset()
+    if action == "reset-network-runtime":
+        return _reset_factory_network_runtime()
     if action == "resume":
         if not ATLASO_FACTORY_RESET_REQUEST_PATH.is_file():
             print(json.dumps(_factory_reset_state_payload(), sort_keys=True))

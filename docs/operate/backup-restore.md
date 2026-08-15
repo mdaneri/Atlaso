@@ -55,7 +55,10 @@ The reset:
   record, and built-in CA profiles; VCF Offline Depot download profiles are not recreated;
 - enables the minimum routing, firewall, authentication, and management-plane defaults while leaving optional services
   disabled, then records identical desired and applied baselines so **Review appliance changes** shows zero pending
-  units; and
+  units;
+- inventories live Atlaso-owned VLAN definitions and dedicated route tables after validation, then removes those VLAN
+  links, route-table entries, and route-bound WAN impairment qdiscs before applying factory networking; this bounded
+  cleanup does not depend on a possibly missing or stale database apply baseline; and
 - changes the appliance-instance identity, invalidating every earlier browser session and bearer token.
 
 The operation deliberately preserves payload files on documented storage paths. This includes VCF Offline Depot

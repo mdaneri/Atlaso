@@ -993,6 +993,15 @@ class SystemAdapter:
             execute_in_dry_run=True,
         )
 
+    def reset_factory_network_runtime(self) -> AdapterResult:
+        """Remove only live network resources owned by an active factory reset."""
+        return self._helper_result(
+            "factory-reset",
+            "reset-network-runtime",
+            dry_run_message="dry-run: factory-reset managed network runtime cleanup recorded",
+            timeout_seconds=30,
+        )
+
     def _record_only_result(self, command: list[str], stdout: str) -> AdapterResult:
         """Persist only result.
 
