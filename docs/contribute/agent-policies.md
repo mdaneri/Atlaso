@@ -148,9 +148,10 @@ status: current
   pull-request head SHA, and merge commit SHA. The controller waits for the task to be idle and unpinned and treats the
   handoff only as evidence to revalidate.
 - Re-fetch GitHub and Git state. Require the exact merged pull request and closed issue, completed post-merge activity,
-  exclusive task ownership of the branch and worktree, and a registered, clean, unlocked, non-reparse-point worktree
-  beneath the resolved Codex worktree root. Never remove the primary checkout, a permanent or user-created worktree, or
-  an ambiguous target.
+  and exclusive task ownership of the branch and checkout. Identify and verify a primary checkout first and exempt it
+  from removable-worktree and Codex-root checks. Only a non-primary target must be a registered, clean, unlocked,
+  non-reparse-point worktree beneath the resolved Codex worktree root. Never remove the primary checkout, a permanent
+  or user-created worktree, or an ambiguous target.
 - Complete `remote_branch_absent` first. If the same-repository task branch exists, require its ref to equal the recorded
   pull-request head SHA, delete only that ref, and verify it is absent. An already absent ref satisfies the gate. Do not
   enable repository-wide automatic branch deletion.

@@ -174,11 +174,12 @@ pull-request head SHA, and merge commit SHA. A handoff is evidence to revalidate
 
 The primary-checkout controller must wait until the originating task is idle and unpinned, then independently re-fetch
 task, GitHub, and Git worktree state. It must verify the exact merged pull request and closed issue, completed
-post-merge activity, exclusive task ownership of the branch and worktree, and a registered, clean, unlocked,
-non-reparse-point worktree beneath the resolved Codex worktree root. Never remove the primary checkout, a user-created
-or permanent worktree, or a worktree whose ownership or state is ambiguous. A squash-merged pull-request head need not
-be an ancestor of `main` only when the worktree HEAD equals the recorded pull-request head SHA and the recorded merge
-commit is reachable from current `origin/main`.
+post-merge activity, and exclusive task ownership of the branch and checkout. Determine first whether the task uses the
+repository's primary checkout and verify that identity separately. Only a non-primary target must be a registered,
+clean, unlocked, non-reparse-point worktree beneath the resolved Codex worktree root. Never remove the primary
+checkout, a user-created or permanent worktree, or a worktree whose ownership or state is ambiguous. A squash-merged
+pull-request head need not be an ancestor of `main` only when the worktree HEAD equals the recorded pull-request head
+SHA and the recorded merge commit is reachable from current `origin/main`.
 
 Complete the terminal transition in this order:
 

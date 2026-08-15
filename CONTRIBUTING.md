@@ -130,8 +130,8 @@ After all post-merge work is complete, a worktree-backed originating task sends 
 controller running from the primary checkout. The handoff identifies the repository, task and title, pull request,
 task-owned branch, absolute worktree path, pull-request head SHA, and merge commit SHA. The controller waits for an
 idle, unpinned task and independently revalidates the merged pull request, reachable merge commit, closed issue,
-completed post-merge activity, branch ownership, and a clean, registered, unlocked Codex worktree beneath the resolved
-Codex worktree root.
+completed post-merge activity, and branch/checkout ownership. It identifies and verifies a primary checkout first;
+only a non-primary target must be a clean, registered, unlocked Codex worktree beneath the resolved Codex worktree root.
 
 The controller completes the terminal states in order: `remote_branch_absent`, `worktree_removed`, then
 `task_title_done`. It deletes and verifies only the exact task-owned same-repository GitHub branch; repository-wide
