@@ -97,6 +97,7 @@ def test_documentation_build_resets_only_recognized_zensical_cache(tmp_path: Pat
         "Continue to [](current.md).\n",
         "Continue to [outer [inner]](current.md).\n",
         r"Continue to [escaped \]](current.md)." "\n",
+        '<div markdown="1">[Current](current.md)</div>\n',
     ),
 )
 def test_redirect_stub_rejects_redundant_markdown_link(

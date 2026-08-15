@@ -20,8 +20,9 @@ artifact; never edit generated HTML directly.
 - Put brand guidance, roadmaps, and historical records under **Project**.
 - Link to canonical instructions instead of copying them into the README, policy indexes, or component READMEs.
 - Leave a redirect stub when a tracked Markdown page moves. Keep `redirect_to` as its only destination reference; do
-  not duplicate the target as a Markdown link in the body. `scripts/check_docs.py` validates the source and target,
-  while `scripts/build_docs.py` owns the deterministic strict build and published redirect link generation.
+  not duplicate the target as a Markdown link in the body. `scripts/check_docs.py` validates the source and target with
+  the Markdown extensions configured for Zensical, while `scripts/build_docs.py` owns the deterministic strict build
+  and published redirect link generation.
 
 ## Required metadata
 

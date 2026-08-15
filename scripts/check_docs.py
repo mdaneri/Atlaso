@@ -104,8 +104,10 @@ class AnchorDetector(HTMLParser):
             tag: HTML element name.
             attrs: Parsed HTML attributes.
         """
-        del attrs
-        if tag.casefold() == "a":
+        if tag.casefold() != "a":
+            return
+        href = next((value for name, value in attrs if name.casefold() == "href"), None)
+        if href is not None and not href.startswith("#"):
             self.found = True
 
 
@@ -118,8 +120,28 @@ def contains_markdown_link(body: str) -> bool:
     Returns:
         Whether the rendered body contains an anchor.
     """
+    configuration = tomllib.loads(CONFIG.read_text(encoding="utf-8"))
+    extension_tables = configuration["project"]["markdown_extensions"]
+    extensions: list[str] = []
+    extension_configs: dict[str, dict[str, object]] = {}
+    for name, options in extension_tables.items():
+        if name == "pymdownx":
+            for extension, extension_options in options.items():
+                qualified_name = f"{name}.{extension}"
+                extensions.append(qualified_name)
+                extension_configs[qualified_name] = extension_options
+            continue
+        extensions.append(name)
+        extension_configs[name] = options
+
     detector = AnchorDetector()
-    detector.feed(markdown.markdown(body))
+    detector.feed(
+        markdown.markdown(
+            body,
+            extensions=extensions,
+            extension_configs=extension_configs,
+        )
+    )
     detector.close()
     return detector.found
 
