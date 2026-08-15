@@ -309,11 +309,13 @@ TERMINAL_CLEANUP_SECTION_ANCHORS = {
     Path("docs/contribute/agent-policies.md"): "### Completed task cleanup",
 }
 
+PRIVATE_REMEDIATION_CLEANUP_MARKER = "`advisory_cleanup_ready`"
 TERMINAL_CLEANUP_SECTION_MARKERS = {
     path: (
         "`cleanup-ready`",
         *ordered_markers,
         '" · Done"',
+        PRIVATE_REMEDIATION_CLEANUP_MARKER,
     )
     for path, ordered_markers in ORDERED_TERMINAL_CLEANUP_MARKERS.items()
 }
@@ -700,11 +702,11 @@ def check_agent_policy_gate(root: Path) -> list[Finding]:
             findings.append(Finding(path, "required agent policy entry point is missing or unreadable"))
             continue
         assert text is not None
-        for marker in markers:
-            if marker not in text:
-                findings.append(
-                    Finding(path, f"required agent policy marker is missing: {marker}")
-                )
+        missing_required_markers = tuple(marker for marker in markers if marker not in text)
+        for marker in missing_required_markers:
+            findings.append(
+                Finding(path, f"required agent policy marker is missing: {marker}")
+            )
         ordered_markers = ORDERED_TERMINAL_CLEANUP_MARKERS.get(relative_path)
         section_markers = TERMINAL_CLEANUP_SECTION_MARKERS.get(relative_path, ())
         section_anchor = TERMINAL_CLEANUP_SECTION_ANCHORS.get(relative_path)
@@ -725,7 +727,7 @@ def check_agent_policy_gate(root: Path) -> list[Finding]:
                 marker for marker in section_markers if marker not in cleanup_section
             )
             for marker in missing_section_markers:
-                if marker in text:
+                if marker not in missing_required_markers:
                     findings.append(
                         Finding(
                             path,

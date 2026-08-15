@@ -165,18 +165,24 @@ the linked issue or issues. Keep it accurate to the exact merged head and exclud
 
 ## Completed Task Cleanup
 
-An implementation task becomes cleanup-ready only after its pull request is merged, the merge commit is reachable from
-current `origin/main`, the linked issue is closed, applicable post-merge workflows are complete, and no review,
-deployment, release, or maintainer activity remains. Before becoming idle, a worktree-backed originating task must send
-a `cleanup-ready` handoff to a cleanup controller running from the repository's primary checkout. The handoff must name
+An ordinary implementation task becomes cleanup-ready only after its pull request is merged, the merge commit is
+reachable from current `origin/main`, the linked issue is closed, applicable post-merge workflows are complete, and no
+review, deployment, release, or maintainer activity remains. Private remediation uses `advisory_cleanup_ready` instead
+of the nonexistent public-issue gate: an explicitly authorized advisory administrator must have merged the private
+pull request through its draft advisory, the resulting commit must be reachable from current `origin/main`, required
+advisory-side review and recorded local validation must be complete, coordinated release and disclosure activity must
+be finished, and the advisory must require no further task activity. Before becoming idle, a worktree-backed
+originating task must send a `cleanup-ready` handoff to a cleanup controller running from the repository's primary
+checkout. The handoff must name
 the repository, task identifier and current title, pull-request number, task-owned branch, absolute worktree path,
 pull-request head SHA, and merge commit SHA. A handoff is evidence to revalidate, never authority to skip a gate.
 
 The primary-checkout controller must wait until the originating task is idle and unpinned, then independently re-fetch
-task, GitHub, and Git worktree state. It must verify the exact merged pull request and closed issue, completed
-post-merge activity, and exclusive task ownership of the branch and checkout. Determine first whether the task uses the
-repository's primary checkout and verify that identity separately. Only a non-primary target must be a registered,
-clean, unlocked, non-reparse-point worktree beneath the resolved Codex worktree root. Never remove the primary
+task, GitHub, and Git worktree state. It must verify the exact merged pull request, completed post-merge activity, and
+exclusive task ownership of the branch and checkout. Require a closed linked issue for ordinary work or privately
+revalidate every `advisory_cleanup_ready` criterion against the corresponding advisory record. Determine first whether
+the task uses the repository's primary checkout and verify that identity separately. Only a non-primary target must be
+a registered, clean, unlocked, non-reparse-point worktree beneath the resolved Codex worktree root. Never remove the primary
 checkout, a user-created or permanent worktree, or a worktree whose ownership or state is ambiguous. A squash-merged
 pull-request head need not be an ancestor of `main` only when the worktree HEAD equals the recorded pull-request head
 SHA and the recorded merge commit is reachable from current `origin/main`.
@@ -199,8 +205,9 @@ requests archival.
 Any failed or ambiguous gate blocks `task_title_done`; leave the task actionable and report the exact retry condition.
 The daily Codex cleanup automation is the reconciliation backstop for missed handoffs and partially completed terminal
 transitions, but it must apply the same checks and ordering. Private vulnerability remediation additionally follows
-`SECURITY.md`: keep titles, handoffs, controller output, and remote operations sanitized and private, and do not treat
-an advisory merge as lifecycle completion while coordinated release or disclosure work remains.
+`SECURITY.md`: keep titles, handoffs, controller output, advisory identity, and temporary-fork remote operations
+sanitized and private; block rather than expose or guess when private state cannot be verified; and do not treat an
+advisory merge as lifecycle completion while coordinated release, disclosure, or authorized advisory-state work remains.
 
 ## Documentation and branding
 

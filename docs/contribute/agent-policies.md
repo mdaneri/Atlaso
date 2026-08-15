@@ -143,6 +143,10 @@ status: current
 - A task becomes `cleanup-ready` only after its exact pull request is merged, the merge commit is reachable from current
   `origin/main`, the linked issue is closed, applicable post-merge workflows are complete, and no review, deployment,
   release, or maintainer activity remains.
+- Private remediation uses `advisory_cleanup_ready` in place of the ordinary linked-issue condition. Require an
+  explicitly authorized advisory-administrator merge, the resulting commit reachable from current `origin/main`,
+  completed advisory-side review and recorded local validation, finished coordinated release and disclosure activity,
+  and no remaining advisory task activity. Revalidate only on private surfaces and block if that state is unavailable.
 - Before becoming idle, a worktree-backed originating task sends the primary-checkout cleanup controller a handoff with
   the repository, task identifier and current title, pull-request number, task-owned branch, absolute worktree path,
   pull-request head SHA, and merge commit SHA. The controller waits for the task to be idle and unpinned and treats the
@@ -174,8 +178,9 @@ Terminal order:
   dry-run decisions must fail closed for an active or pinned task, dirty or locked worktree, mismatched head SHA, failed
   remote deletion, failed worktree removal, or ambiguous ownership; it must accept an already absent remote branch,
   avoid duplicating " · Done", and preserve the primary checkout.
-- Private vulnerability remediation also follows `SECURITY.md`. Keep task titles, handoffs, cleanup evidence, and remote
-  operations sanitized and private, and retain the task while coordinated release or disclosure activity remains.
+- Private vulnerability remediation also follows `SECURITY.md`. Keep task titles, handoffs, cleanup evidence, advisory
+  identity, and temporary-fork remote operations sanitized and private, and retain the task while coordinated release,
+  disclosure, or authorized advisory-state activity remains.
 
 ## API authoring
 

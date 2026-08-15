@@ -133,6 +133,12 @@ idle, unpinned task and independently revalidates the merged pull request, reach
 completed post-merge activity, and branch/checkout ownership. It identifies and verifies a primary checkout first;
 only a non-primary target must be a clean, registered, unlocked Codex worktree beneath the resolved Codex worktree root.
 
+Private remediation substitutes `advisory_cleanup_ready` for the ordinary closed-issue gate. Require an explicitly
+authorized advisory-administrator merge, a resulting commit reachable from current `origin/main`, completed
+advisory-side review and recorded local validation, finished coordinated release and disclosure activity, and no
+remaining advisory task activity. Revalidate those facts only on private surfaces and keep the advisory identity,
+title, handoff, evidence, and temporary-fork remote operations sanitized.
+
 Terminal order:
 
 1. `remote_branch_absent`
@@ -149,7 +155,7 @@ Failure or ambiguity at any gate blocks the " · Done" suffix and leaves an acti
 cleanup automation reconciles missed or partial transitions with the same fail-closed checks. A squash-merged head may
 be cleaned even though it is not an ancestor of `main` only when it exactly matches the recorded pull-request head and
 the recorded merge commit is reachable from current `origin/main`. Private-remediation cleanup remains subject to
-`SECURITY.md` and cannot expose or prematurely close coordinated advisory work.
+`SECURITY.md`, cannot expose or prematurely close coordinated advisory work, and blocks when private state is unavailable.
 
 Maintainers may explicitly enable auto-merge on an internal, ready-for-review pull request. When `main` advances, Atlaso
 automatically updates only those auto-merge-enabled branches that are in this repository, are not drafts, have no merge

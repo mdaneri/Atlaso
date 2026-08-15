@@ -32,4 +32,5 @@ and only then appends " · Done" to the task title; failed cleanup leaves the ta
 Validated sensitive vulnerabilities use the private advisory and temporary-fork workflow in the
 [Security policy](https://github.com/mdaneri/Atlaso/blob/main/SECURITY.md) instead of a public issue or public pull
 request. The ordinary version, local validation, and review requirements remain in force; required local validation
-replaces unavailable GitHub CI for temporary private forks.
+replaces unavailable GitHub CI for temporary private forks. Their sanitized tasks become cleanup-ready only after an
+authorized advisory merge is on `main` and coordinated release, disclosure, and remaining advisory activity finish.

@@ -5,6 +5,7 @@ from pathlib import Path
 from scripts.check_repo import (
     LEGACY_TABULATOR_MARKER,
     ORDERED_TERMINAL_CLEANUP_MARKERS,
+    PRIVATE_REMEDIATION_CLEANUP_MARKER,
     REQUIRED_POLICY_MARKERS,
     TERMINAL_CLEANUP_ORDER_ANCHOR,
     TERMINAL_CLEANUP_ORDER_LINES,
@@ -500,7 +501,11 @@ def test_agent_policy_gate_scopes_cleanup_contract_markers(tmp_path: Path) -> No
         tmp_path: Temporary directory provided by pytest for isolated filesystem state.
     """
     for relative_path in ORDERED_TERMINAL_CLEANUP_MARKERS:
-        for marker in ('`cleanup-ready`', '" · Done"'):
+        for marker in (
+            '`cleanup-ready`',
+            '" · Done"',
+            PRIVATE_REMEDIATION_CLEANUP_MARKER,
+        ):
             write_policy_files(tmp_path)
             path = tmp_path / relative_path
             text = path.read_text(encoding="utf-8")

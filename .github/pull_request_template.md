@@ -42,6 +42,9 @@ surfaces.
   1. `remote_branch_absent`
   2. `worktree_removed`
   3. `task_title_done`
+
+  Private remediation requires privately verified `advisory_cleanup_ready` instead of a closed public issue and retains
+  sanitized task state until coordinated release, disclosure, and authorized advisory-state activity are complete.
 - [ ] Evidence-backed issues discovered outside this pull request's linked scope were matched to existing issues or
   opened separately with one appropriate type label; suspected sensitive vulnerabilities were kept private.
 - [ ] For a temporary-private-fork pull request, advisory-side maintainer review and recorded local validation replace
