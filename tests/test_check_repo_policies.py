@@ -951,6 +951,28 @@ def test_agent_policy_gate_ignores_fenced_cleanup_markers(tmp_path: Path) -> Non
         )
 
 
+def test_agent_policy_gate_preserves_invalid_backtick_fence_info_strings(
+    tmp_path: Path,
+) -> None:
+    """Verify backticks in a would-be info string keep the line visible.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    marker = '`cleanup-ready`'
+    for relative_path in ORDERED_TERMINAL_CLEANUP_MARKERS:
+        write_policy_files(tmp_path)
+        path = tmp_path / relative_path
+        text = path.read_text(encoding="utf-8").replace(
+            marker,
+            f"```invalid`info {marker}",
+            1,
+        )
+        path.write_text(text, encoding="utf-8")
+
+        assert check_agent_policy_gate(tmp_path) == []
+
+
 def test_agent_policy_gate_ignores_link_reference_cleanup_markers(
     tmp_path: Path,
 ) -> None:
@@ -1012,6 +1034,31 @@ def test_agent_policy_gate_preserves_invalid_reference_definition_tails(
             path.write_text(text, encoding="utf-8")
 
             assert check_agent_policy_gate(tmp_path) == []
+
+
+def test_agent_policy_gate_preserves_definitions_inside_paragraphs(
+    tmp_path: Path,
+) -> None:
+    """Verify definition-shaped paragraph continuations stay visible.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    marker = '`cleanup-ready`'
+    for relative_path in ORDERED_TERMINAL_CLEANUP_MARKERS:
+        anchor = TERMINAL_CLEANUP_SECTION_ANCHORS[relative_path]
+        content_prefix = "" if anchor.startswith("#") else "  "
+        write_policy_files(tmp_path)
+        path = tmp_path / relative_path
+        text = path.read_text(encoding="utf-8").replace(
+            marker,
+            "ordinary visible prose\n"
+            f"{content_prefix}[handoff]: https://example.invalid/{marker}",
+            1,
+        )
+        path.write_text(text, encoding="utf-8")
+
+        assert check_agent_policy_gate(tmp_path) == []
 
 
 def test_agent_policy_gate_ignores_multiline_link_reference_titles(
@@ -1212,7 +1259,7 @@ def test_agent_policy_gate_ignores_reference_link_metadata_markers(
             text = path.read_text(encoding="utf-8").replace(marker, "", 1)
             hidden_marker = (
                 f"\n{link_prefix}{image_prefix}[example][{marker}]"
-                f"\n{link_prefix}[{marker}]: https://example.invalid"
+                f"\n\n{link_prefix}[{marker}]: https://example.invalid"
             )
             path.write_text(
                 text + hidden_marker
@@ -1404,7 +1451,7 @@ def test_agent_policy_gate_ignores_multiline_reference_label_metadata(
         text = path.read_text(encoding="utf-8").replace(marker, "", 1)
         hidden_marker = (
             f"\n{link_prefix}[handoff][policy label]"
-            f"\n{link_prefix}[policy\n{link_prefix} label]: "
+            f"\n\n{link_prefix}[policy\n{link_prefix} label]: "
             f"https://example.invalid/{marker}"
         )
         path.write_text(
@@ -1615,6 +1662,40 @@ def test_agent_policy_gate_ignores_hidden_html_policy_sections(
         assert findings[0].message == (
             "completed-task cleanup section is missing: " + anchor
         )
+
+
+def test_agent_policy_gate_ignores_unclosed_hidden_html_policy(
+    tmp_path: Path,
+) -> None:
+    """Verify hidden containers remain non-operative through end of input.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    marker = '`cleanup-ready`'
+    for relative_path in ORDERED_TERMINAL_CLEANUP_MARKERS:
+        for opening_tag in (
+            "<div hidden>",
+            '<div style="display:none">',
+            "<template>",
+        ):
+            write_policy_files(tmp_path)
+            path = tmp_path / relative_path
+            text = path.read_text(encoding="utf-8").replace(
+                marker,
+                opening_tag + "\n" + marker,
+                1,
+            )
+            path.write_text(text, encoding="utf-8")
+
+            findings = check_agent_policy_gate(tmp_path)
+
+            assert any(
+                finding.path == path
+                and finding.message
+                == f"completed-task cleanup section marker is missing: {marker}"
+                for finding in findings
+            )
 
 
 def test_agent_policy_gate_ignores_css_hidden_html_policy_sections(

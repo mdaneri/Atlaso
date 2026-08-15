@@ -840,6 +840,12 @@ def strip_markdown_fenced_code(text: str) -> str:
             if relative_indent <= 3
             else None
         )
+        if (
+            fence_match is not None
+            and fence_match.group(1).startswith("`")
+            and "`" in candidate[fence_match.end() :]
+        ):
+            fence_match = None
         if fence_character is None and fence_match is not None:
             fence = fence_match.group(1)
             fence_character = fence[0]
@@ -1210,8 +1216,13 @@ def strip_markdown_hidden_html_containers(text: str) -> str:
             elif candidate.group("self_closing") is None:
                 depth += 1
         if closing_end is None:
-            search_cursor = opening_match.end()
-            continue
+            visible_parts.append(text[output_cursor : opening_match.start()])
+            visible_parts.append(
+                re.sub(r"[^\r\n]", "", text[opening_match.start() :])
+            )
+            output_cursor = len(text)
+            search_cursor = len(text)
+            break
         visible_parts.append(text[output_cursor : opening_match.start()])
         visible_parts.append(
             re.sub(r"[^\r\n]", "", text[opening_match.start() : closing_end])
@@ -1434,6 +1445,7 @@ def strip_markdown_nonoperative_content(text: str) -> str:
     pending_reference_label_text = ""
     pending_reference_label_lines: list[tuple[int, str]] = []
     top_level_list_content_indent: int | None = None
+    paragraph_open = False
     for line in without_quotes.splitlines(keepends=True):
         top_level_list_match = re.match(
             r"(?:[*+-]|\d{1,9}[.)])([ \t]+)",
@@ -1449,6 +1461,8 @@ def strip_markdown_nonoperative_content(text: str) -> str:
             and line.startswith(" " * top_level_list_content_indent)
             else line
         )
+        if not block_line.strip():
+            paragraph_open = False
         reference_label_end: int | None = None
         completed_reference_label_lines: list[tuple[int, str]] = []
         if pending_reference_label_lines:
@@ -1488,7 +1502,7 @@ def strip_markdown_nonoperative_content(text: str) -> str:
                 visible_lines[line_index] = original_line
             open_reference_title_delimiter = None
             open_reference_title_lines = []
-        if reference_label_end is None:
+        if reference_label_end is None and not paragraph_open:
             reference_label_end, label_may_continue = scan_reference_definition_label(
                 block_line
             )
@@ -1617,15 +1631,21 @@ def strip_markdown_nonoperative_content(text: str) -> str:
                     if open_reference_title_delimiter is not None
                     else []
                 )
+                paragraph_open = False
             elif continued_title_match is not None:
                 link_reference_title_pending = False
                 visible_lines.append("\n" if line.endswith("\n") else "")
+                paragraph_open = False
             elif re.match(r"(?: {4}|\t)", block_line) is not None:
                 link_reference_title_pending = False
                 visible_lines.append("\n" if line.endswith("\n") else "")
+                paragraph_open = False
             else:
                 link_reference_title_pending = False
                 visible_lines.append(line)
+                paragraph_open = bool(block_line.strip()) and not (
+                    starts_markdown_block_construct(block_line)
+                )
     if link_reference_destination_pending:
         assert pending_reference_line_index is not None
         assert pending_reference_line is not None
