@@ -51,6 +51,11 @@ try:
 except ModuleNotFoundError:
     class _MissingPwd:
         @staticmethod
+        def getpwall() -> list[object]:
+            """Return an empty passwd inventory on unsupported platforms."""
+            return []
+
+        @staticmethod
         def getpwnam(name: str) -> object:
             """Perform getpwnam.
 
@@ -5963,24 +5968,15 @@ def _local_user_home(username: str) -> str:
 
 
 def _managed_local_usernames() -> list[str]:
-    """Return usernames represented by the root-owned managed-home inventory."""
-    if not LOCAL_USERS_HOME_BASE.exists():
-        return []
-    if LOCAL_USERS_HOME_BASE.is_symlink() or not LOCAL_USERS_HOME_BASE.is_dir():
-        raise ValueError(f"local users managed home base is unsafe: {LOCAL_USERS_HOME_BASE}")
-    base_stat = LOCAL_USERS_HOME_BASE.stat()
-    if os.name == "posix" and (base_stat.st_uid != 0 or base_stat.st_mode & 0o022):
-        raise ValueError("local users managed home base must be root-owned and not group/world writable.")
+    """Return Atlaso-managed usernames from the root-owned OS account inventory."""
     usernames: list[str] = []
-    for entry in LOCAL_USERS_HOME_BASE.iterdir():
-        username = entry.name.strip().lower()
-        if (
-            entry.is_symlink()
-            or not entry.is_dir()
-            or not LOCAL_USERS_USERNAME_PATTERN.fullmatch(username)
-            or username in LOCAL_USERS_RESERVED_USERNAMES
-        ):
-            raise ValueError(f"local users managed home inventory entry is unsafe: {entry.name}")
+    for account in pwd.getpwall():
+        username = str(getattr(account, "pw_name", "") or "").strip().lower()
+        home = str(getattr(account, "pw_dir", "") or "").strip()
+        if home != _local_user_home(username):
+            continue
+        if not LOCAL_USERS_USERNAME_PATTERN.fullmatch(username) or username in LOCAL_USERS_RESERVED_USERNAMES:
+            raise ValueError(f"local users operating-system inventory entry is unsafe: {username}")
         usernames.append(username)
     return sorted(set(usernames))
 

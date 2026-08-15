@@ -125,8 +125,8 @@ continues to enforce that account's password policy.
 The real Local Users apply path stages JSON at `/var/lib/atlaso/apply/local-users/atlaso-users.json`. The `local_users`
 unit synchronizes Atlaso local users to Photon OS users through `atlaso-helper local-users validate|apply`. Enabled
 Atlaso users are created under `/var/lib/atlaso/users/<username>` with the per-user desired shell, defaulting to
-`/sbin/nologin`. The helper unions explicit removals with direct entries from this root-owned, non-writable managed-home
-inventory, so disabled, removed, or database-baseline-orphaned managed users are removed from Photon OS with
+`/sbin/nologin`. The helper unions explicit removals with Atlaso-home entries from the root-owned operating-system
+account inventory, so disabled, removed, or database-baseline-orphaned managed users are removed from Photon OS with
 `userdel -r`. Photon image provisioning creates the bootstrap admin OS account before first apply. When VCF Backup
 desired state is off, Atlaso
 keeps the default `vcf-backup` user disabled so Local Users apply removes that OS account.

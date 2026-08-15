@@ -4710,8 +4710,6 @@ def test_local_users_helper_deletes_managed_inventory_account_missing_from_basel
     pam_path.parent.mkdir(parents=True)
     pam_path.write_text("password  required    pam_unix.so\n", encoding="utf-8")
     apply_dir.mkdir(parents=True)
-    (home_base / "sync-user").mkdir(parents=True)
-    (home_base / "stale-user").mkdir()
     config_path = apply_dir / "atlaso-users.json"
     payload = json.loads(local_users_json(password=None))
     payload["users"][0]["home"] = (home_base / "sync-user").as_posix()
@@ -4729,6 +4727,15 @@ def test_local_users_helper_deletes_managed_inventory_account_missing_from_basel
     monkeypatch.setattr(helper, "LOCAL_USERS_SYSTEM_PASSWORD_PAM_PATH", pam_path)
     monkeypatch.setattr(helper, "_command_path", lambda command: command)
     monkeypatch.setattr(helper, "_run", fake_run)
+    monkeypatch.setattr(
+        helper.pwd,
+        "getpwall",
+        lambda: [
+            SimpleNamespace(pw_name="sync-user", pw_dir=(home_base / "sync-user").as_posix()),
+            SimpleNamespace(pw_name="stale-user", pw_dir=(home_base / "stale-user").as_posix()),
+            SimpleNamespace(pw_name="operator", pw_dir="/home/operator"),
+        ],
+    )
 
     assert helper._handle_local_users("apply", [str(config_path)]) == 0
     assert ["userdel", "-r", "stale-user"] in commands
