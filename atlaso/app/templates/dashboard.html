@@ -17,7 +17,11 @@
       <span><strong>{{ "Dry-run" if dashboard.overall.dry_run else "Live apply" }}</strong><small>{{ "Adapters record command intent" if dashboard.overall.dry_run else "Host changes are enabled" }}</small></span>
       <span><strong>Last refreshed</strong><small><time datetime="{{ dashboard.generated_at }}">{{ dashboard.generated_at[:16].replace("T", " ") }} UTC</time></small></span>
     </div>
-    <a class="button primary" href="{{ dashboard.overall.primary_action.url }}">{{ dashboard.overall.primary_action.label }}</a>
+    {% if dashboard.overall.primary_action.url == "/appliance-apply" %}
+      <a class="button primary" href="{{ management_ui_root }}/dashboard#appliance-apply-review" data-appliance-apply-open>{{ dashboard.overall.primary_action.label }}</a>
+    {% else %}
+      <a class="button primary" href="{{ dashboard.overall.primary_action.url }}">{{ dashboard.overall.primary_action.label }}</a>
+    {% endif %}
   </section>
 
   <section class="dashboard-primary-grid">
@@ -33,7 +37,7 @@
       {% if dashboard.readiness.active %}
         <div class="dashboard-readiness-list">
           {% for item in dashboard.readiness["items"] %}
-            <a href="{{ item.url }}" class="dashboard-readiness-row {{ 'complete' if item.complete else 'incomplete' }}">
+            <a href="{{ management_ui_root ~ '/dashboard#appliance-apply-review' if item.url == '/appliance-apply' else item.url }}" class="dashboard-readiness-row {{ 'complete' if item.complete else 'incomplete' }}"{% if item.url == "/appliance-apply" %} data-appliance-apply-open{% endif %}>
               <span class="dashboard-check" aria-hidden="true">{{ "✓" if item.complete else "·" }}</span>
               <span><strong>{{ item.label }}</strong><small>{{ item.summary }}</small></span>
               <span class="status-pill {{ 'good' if item.complete else 'warn' }}">{{ "Ready" if item.complete else "Next" }}</span>

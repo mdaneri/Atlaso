@@ -10397,12 +10397,27 @@ def appliance_apply_context(db: Session) -> dict[str, Any]:
     units = appliance_apply_units(db)
     submitted_ids = active_appliance_apply_submitted_unit_ids(db)
     changed_units = [unit for unit in units if unit["changed"] and unit["id"] not in submitted_ids]
+    initial_apply_required = (
+        db.execute(
+            select(Job.id)
+            .where(Job.type == "appliance-apply", Job.status == JobStatus.SUCCEEDED.value)
+            .limit(1)
+        ).first()
+        is None
+    )
+    review_units = (
+        [unit for unit in units if unit["id"] not in submitted_ids]
+        if initial_apply_required
+        else changed_units
+    )
     return {
         "apply_units": units,
         "changed_apply_units": changed_units,
+        "review_apply_units": review_units,
         "unchanged_apply_units": [unit for unit in units if not unit["changed"]],
         "changed_apply_unit_count": len(changed_units),
         "submitted_apply_unit_ids": submitted_ids,
+        "initial_apply_required": initial_apply_required,
     }
 
 

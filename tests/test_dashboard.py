@@ -114,6 +114,7 @@ def test_dashboard_setup_exit_healthy_and_needs_attention_states(client, monkeyp
         assert setup["overall"]["state"] == "setup-incomplete"
         assert setup["readiness"]["active"] is True
         assert setup["readiness"]["items"][-1]["complete"] is False
+        assert setup["overall"]["primary_action"] == {"label": "Continue setup", "url": "/appliance-apply"}
 
         db.add(
             Job(
@@ -514,6 +515,7 @@ def test_dashboard_html_removes_old_inventory_and_javascript_refresh_is_resilien
     assert "/mnt/atlaso-vcf-backups" not in page.text
     assert "<h2>Routes &amp; WAN Simulation</h2>" not in page.text
     assert 'data-refresh-url="/ui/management/dashboard/data"' in page.text
+    assert 'href="/ui/management/dashboard#appliance-apply-review" data-appliance-apply-open>Continue setup</a>' in page.text
 
     javascript = Path("atlaso/app/static/app.js").read_text(encoding="utf-8")
     assert "function initializeDashboard()" in javascript
@@ -522,6 +524,7 @@ def test_dashboard_html_removes_old_inventory_and_javascript_refresh_is_resilien
     assert "window.setTimeout(refresh, 30000)" in javascript
     assert "markStale();" in javascript
     assert "root.innerHTML = dashboardSnapshotMarkup(snapshot);" in javascript
+    assert 'const actionOpensApplianceApply = action.url === "/appliance-apply";' in javascript
     assert "focusTarget.focus({ preventScroll: true })" in javascript
 
     css = Path("atlaso/app/static/app.css").read_text(encoding="utf-8")

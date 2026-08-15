@@ -105,13 +105,14 @@ def build_router(dependencies: ApplianceApplyUiDependencies) -> ApplianceApplyUi
                     if volume.get("requires_format")
                 ],
             }
-            for unit in context["changed_apply_units"]
+            for unit in context["review_apply_units"]
         ]
         active_job = dependencies.active_appliance_apply_job(db)
         return JSONResponse(
             {
                 "units": units,
                 "pending_count": len(units),
+                "initial_apply_required": context["initial_apply_required"],
                 "active_task": dependencies.task_row(active_job, identity) if active_job is not None else None,
             }
         )
