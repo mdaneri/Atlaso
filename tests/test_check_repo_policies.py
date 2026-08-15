@@ -739,6 +739,67 @@ def test_agent_policy_gate_honors_all_list_item_boundaries(tmp_path: Path) -> No
             )
 
 
+def test_agent_policy_gate_ignores_fenced_cleanup_markers(tmp_path: Path) -> None:
+    """Verify that fenced examples cannot satisfy cleanup section markers.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    marker = '`cleanup-ready`'
+    for relative_path in ORDERED_TERMINAL_CLEANUP_MARKERS:
+        write_policy_files(tmp_path)
+        path = tmp_path / relative_path
+        text = path.read_text(encoding="utf-8").replace(marker, "", 1)
+        path.write_text(
+            text + f"\n```text\n{marker}\n```\n",
+            encoding="utf-8",
+        )
+
+        findings = check_agent_policy_gate(tmp_path)
+
+        assert len(findings) == 1
+        assert findings[0].path == path
+        assert findings[0].message == (
+            f"completed-task cleanup section marker is missing: {marker}"
+        )
+
+
+def test_agent_policy_gate_ignores_fenced_terminal_order(tmp_path: Path) -> None:
+    """Verify that a fenced terminal sequence is not operative policy.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    for relative_path, markers in ORDERED_TERMINAL_CLEANUP_MARKERS.items():
+        write_policy_files(tmp_path)
+        path = tmp_path / relative_path
+        text = path.read_text(encoding="utf-8")
+        anchor = TERMINAL_CLEANUP_SECTION_ANCHORS[relative_path]
+        order_prefix = "" if anchor.startswith("#") else "  "
+        order_block = "\n".join(
+            (
+                TERMINAL_CLEANUP_ORDER_ANCHOR,
+                "",
+                *(order_prefix + line for line in TERMINAL_CLEANUP_ORDER_LINES),
+            )
+        )
+        incidental_markers = "\n".join(markers)
+        path.write_text(
+            text.replace(order_block, incidental_markers, 1)
+            + f"\n```text\n{order_block}\n```\n",
+            encoding="utf-8",
+        )
+
+        findings = check_agent_policy_gate(tmp_path)
+
+        assert len(findings) == 1
+        assert findings[0].path == path
+        assert findings[0].message == (
+            "completed-task cleanup markers must remain ordered: "
+            + " -> ".join(markers)
+        )
+
+
 def test_agent_policy_gate_rejects_fourth_terminal_transition(tmp_path: Path) -> None:
     """Verify that the terminal lifecycle contains exactly three transitions.
 

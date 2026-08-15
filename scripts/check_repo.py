@@ -712,18 +712,19 @@ def check_agent_policy_gate(root: Path) -> list[Finding]:
         ordered_markers = ORDERED_TERMINAL_CLEANUP_MARKERS.get(relative_path)
         section_markers = TERMINAL_CLEANUP_SECTION_MARKERS.get(relative_path, ())
         section_anchor = TERMINAL_CLEANUP_SECTION_ANCHORS.get(relative_path)
+        operative_text = strip_markdown_fenced_code(text)
         section_anchor_count = (
             sum(
                 line == section_anchor
                 if section_anchor.startswith("#")
                 else line.startswith(section_anchor)
-                for line in text.splitlines()
+                for line in operative_text.splitlines()
             )
             if section_anchor is not None
             else 0
         )
         cleanup_section = (
-            extract_markdown_policy_section(text, section_anchor)
+            extract_markdown_policy_section(operative_text, section_anchor)
             if section_anchor is not None and section_anchor_count == 1
             else None
         )
@@ -765,6 +766,38 @@ def check_agent_policy_gate(root: Path) -> list[Finding]:
                     )
                 )
     return findings
+
+
+def strip_markdown_fenced_code(text: str) -> str:
+    """Replace fenced Markdown content with blank lines.
+
+    Args:
+        text: Markdown source whose operative prose must be inspected.
+    """
+    visible_lines: list[str] = []
+    fence_character: str | None = None
+    fence_length = 0
+    for line in text.splitlines(keepends=True):
+        candidate = line.lstrip(" ")
+        fence_match = re.match(r"(`{3,}|~{3,})", candidate)
+        if fence_character is None and fence_match is not None:
+            fence = fence_match.group(1)
+            fence_character = fence[0]
+            fence_length = len(fence)
+            visible_lines.append("\n" if line.endswith("\n") else "")
+            continue
+        if fence_character is not None:
+            closing_match = re.fullmatch(
+                rf"{re.escape(fence_character)}{{{fence_length},}}[ \t]*(?:\r?\n)?",
+                candidate,
+            )
+            if closing_match is not None:
+                fence_character = None
+                fence_length = 0
+            visible_lines.append("\n" if line.endswith("\n") else "")
+            continue
+        visible_lines.append(line)
+    return "".join(visible_lines)
 
 
 def extract_terminal_cleanup_order(cleanup_section: str) -> tuple[str, ...] | None:
