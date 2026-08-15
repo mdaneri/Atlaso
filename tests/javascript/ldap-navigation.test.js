@@ -35,8 +35,10 @@ const context = vm.createContext({});
 vm.runInContext(
   `${functionSource("createLdapOrganizationLoadCoordinator")}\n` +
     `${functionSource("shouldSuppressLdapOrganizationHistory")}\n` +
+    `${functionSource("ldapOrganizationIdForHistory")}\n` +
     "globalThis.createLdapOrganizationLoadCoordinator = createLdapOrganizationLoadCoordinator;\n" +
-    "globalThis.shouldSuppressLdapOrganizationHistory = shouldSuppressLdapOrganizationHistory;",
+    "globalThis.shouldSuppressLdapOrganizationHistory = shouldSuppressLdapOrganizationHistory;\n" +
+    "globalThis.ldapOrganizationIdForHistory = ldapOrganizationIdForHistory;",
   context,
 );
 
@@ -118,4 +120,24 @@ test("an active LDAP tab suppresses history only when it matches the current URL
   assert.equal(context.shouldSuppressLdapOrganizationHistory("organization-b", true, "organization-b"), true);
   assert.equal(context.shouldSuppressLdapOrganizationHistory("organization-b", true, "organization-a"), false);
   assert.equal(context.shouldSuppressLdapOrganizationHistory("organization-b", false, "organization-b"), false);
+});
+
+test("queryless LDAP history resolves to the server-default organization", () => {
+  assert.equal(context.ldapOrganizationIdForHistory("", "organization-a"), "organization-a");
+  assert.equal(context.ldapOrganizationIdForHistory("organization-b", "organization-a"), "organization-b");
+});
+
+test("queryless LDAP history supersedes a pending organization selection", async () => {
+  const state = deferredLoadHarness();
+  const pendingSelection = state.coordinator.load({ organizationId: "organization-c", options: {} });
+  const querylessHistory = state.coordinator.load({ organizationId: "organization-a", options: { history: false } });
+
+  state.pending[0].resolve("content-c");
+  assert.equal(await pendingSelection, false);
+  assert.deepEqual(state.rendered, []);
+
+  state.pending[1].resolve("content-a");
+  assert.equal(await querylessHistory, true);
+  assert.equal(state.rendered[0].selection.organizationId, "organization-a");
+  assert.equal(state.rendered[0].selection.options.history, false);
 });

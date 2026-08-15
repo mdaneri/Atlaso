@@ -5364,6 +5364,10 @@ function shouldSuppressLdapOrganizationHistory(organizationId, isActive, urlOrga
   return isActive && organizationId === urlOrganizationId;
 }
 
+function ldapOrganizationIdForHistory(urlOrganizationId, querylessOrganizationId) {
+  return urlOrganizationId || querylessOrganizationId;
+}
+
 function initializeLdapPageState() {
   initializeLdapSettingsStatus();
   const tabList = document.querySelector("[data-ldap-organization-tabs]");
@@ -5371,6 +5375,7 @@ function initializeLdapPageState() {
   const links = Array.from(tabList.querySelectorAll("[data-ldap-organization-id]"));
   const currentId = new URL(window.location.href).searchParams.get("organization_id") || "";
   const activeId = tabList.querySelector("[data-ldap-organization-id].active")?.dataset.ldapOrganizationId || "";
+  const querylessOrganizationId = currentId ? "" : activeId;
   let storedId = "";
   try {
     storedId = window.localStorage.getItem(LDAP_ORGANIZATION_SELECTION_KEY) || "";
@@ -5469,7 +5474,8 @@ function initializeLdapPageState() {
   });
   window.addEventListener("popstate", () => {
     if (window.location.pathname !== managementUiPath("/ldap")) return;
-    const organizationId = new URL(window.location.href).searchParams.get("organization_id") || "";
+    const urlOrganizationId = new URL(window.location.href).searchParams.get("organization_id") || "";
+    const organizationId = ldapOrganizationIdForHistory(urlOrganizationId, querylessOrganizationId);
     const targetLink = links.find((link) => link.dataset.ldapOrganizationId === organizationId);
     if (targetLink instanceof HTMLAnchorElement) loadOrganization(targetLink, { history: false });
   });
