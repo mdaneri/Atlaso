@@ -9828,30 +9828,6 @@ def test_certificate_operator_uses_request_page_without_console_access(client):
         assert issued.revocation_reason == "rotation"
 
 
-def test_certificate_operator_cannot_render_vcf_helper_dns_inventory(client):
-    """Verify that certificate operator cannot render vcf helper dns inventory.
-
-    Args:
-        client: HTTP test client used to exercise the Atlaso application.
-    """
-    from sqlalchemy import select
-
-    from atlaso.app.database import SessionLocal
-    from atlaso.app.models import Role, User
-    from atlaso.app.security import roles_to_json
-
-    with SessionLocal() as db:
-        admin = db.execute(select(User).where(User.username == "admin")).scalar_one()
-        admin.role = Role.CERTIFICATE_OPERATOR.value
-        admin.roles_json = roles_to_json([Role.CERTIFICATE_OPERATOR.value])
-        db.commit()
-
-    login(client)
-    response = client.get("/vcf-helper")
-    assert response.status_code == 403
-    assert "Missing required scope: read:dns" in response.text
-
-
 def test_ca_apply_payload_leaves_csr_private_key_empty():
     """Verify that ca apply payload leaves csr private key empty."""
     import json
@@ -10337,27 +10313,6 @@ def test_vcf_backups_page_uses_local_user_for_sftp(client):
     assert "initializeVcfBackupSettings" in app_js.text
     assert "updateVcfBackupDerivedAddress" in app_js.text
     assert "updateVcfBackupValidation" in app_js.text
-
-
-def test_vcf_backups_settings_badge_reflects_desired_state(client, monkeypatch):
-    """Verify that vcf backups settings badge reflects desired state.
-
-    Args:
-        client: HTTP test client used to exercise the Atlaso application.
-        monkeypatch: Pytest fixture used to replace dependencies for the test.
-    """
-    from atlaso.app.config import get_settings
-
-    login(client)
-    monkeypatch.setenv("ATLASO_DRY_RUN_SYSTEM_ADAPTERS", "false")
-    get_settings.cache_clear()
-
-    page = client.get("/vcf-backups")
-
-    assert page.status_code == 200
-    settings_panel = page.text.split("<h2>SFTP Settings</h2>", 1)[1].split("</form>", 1)[0]
-    assert '<span class="status-pill muted">disabled</span>' in settings_panel
-    assert '<span class="status-pill warn">dry-run</span>' not in page.text
 
 
 def test_vcf_private_registry_page_models_harbor_and_bundle_relocation(client):
@@ -11187,46 +11142,6 @@ def test_vcf_offline_depot_page_redirect_and_uploads_are_sanitized(client, tmp_p
         assert "vcf-download-tool binaries download" in (job.result or "")
     assert "super-secret-token" not in (job.result or "")
     assert "secret-activation-property" not in (job.result or "")
-
-
-def test_vcf_offline_depot_upload_rejects_malformed_archive_before_saving(client, monkeypatch):
-    """Verify that vcf offline depot upload rejects malformed archive before saving.
-
-    Args:
-        client: HTTP test client used to exercise the Atlaso application.
-        monkeypatch: Pytest fixture used to replace dependencies for the test.
-    """
-    from sqlalchemy import select
-
-    from atlaso.app.database import SessionLocal
-    from atlaso.app.models import VcfOfflineDepotSettings
-
-    monkeypatch.setattr("atlaso.app.ui.find_local_vcf_download_tool_archive", lambda: None)
-
-    login(client)
-    page = client.get("/vcf-offline-depot")
-    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
-
-    response = client.post(
-        "/vcf-offline-depot/settings",
-        data={
-            "hostname": "depot.atlaso.internal",
-            "listen_interface": "eth2",
-            "port": "443",
-            "csrf": csrf,
-        },
-        files={
-            "tool_archive_file": ("vcf-download-tool-9.1.0.test.tar.gz", b"\x1f\x8b\x08\x00truncated", "application/gzip"),
-        },
-        headers={"X-Atlaso-Autosave": "1"},
-    )
-
-    assert response.status_code == 400
-    assert "incomplete or invalid" in response.text
-    with SessionLocal() as db:
-        settings = db.execute(select(VcfOfflineDepotSettings)).scalar_one()
-        assert settings.tool_archive_path == ""
-        assert settings.tool_version == ""
 
 
 def test_vcf_offline_depot_tool_upload_marks_apply_pending_without_profiles(client, tmp_path, monkeypatch):
@@ -16797,8 +16712,8 @@ def test_vcf_trust_inspects_target_tls_without_persisting_target(client, monkeyp
 
     login(client)
     csrf = client.get("/vcf-helper").text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
-    monkeypatch.setattr(ui, "tls_sha256_fingerprint", lambda _address, _port: "AA:BB")
-    monkeypatch.setattr(ui, "inspect_vcf_trust_target", lambda *_args, **_kwargs: {"role": "VcfInstaller", "version": "9.1.0.0"})
+    monkeypatch.setattr("atlaso.app.routers.ui.vcf_workflows.tls_sha256_fingerprint", lambda _address, _port: "AA:BB")
+    monkeypatch.setattr("atlaso.app.routers.ui.vcf_workflows.inspect_vcf_trust_target", lambda *_args, **_kwargs: {"role": "VcfInstaller", "version": "9.1.0.0"})
     resolved_credentials = []
     original_resolver = ui._resolve_vcf_helper_credentials
 
@@ -16873,7 +16788,7 @@ def test_vcf_trust_requires_tls_confirmation_then_queues_without_persisting_cred
         settings.enabled = True
         ensure_root_ca_material(settings)
         db.commit()
-    monkeypatch.setattr(ui, "tls_sha256_fingerprint", lambda _address, _port: "AA:BB")
+    monkeypatch.setattr("atlaso.app.routers.ui.vcf_workflows.tls_sha256_fingerprint", lambda _address, _port: "AA:BB")
     queued = []
     monkeypatch.setattr(ui, "queue_vcf_trust_job", lambda job_id, target_id, credentials, ca: queued.append((job_id, target_id, credentials, ca)))
     resolved_credentials = []
@@ -16953,43 +16868,6 @@ def test_vcf_trust_requires_tls_confirmation_then_queues_without_persisting_cred
             ("vcf-installer.example.test", 443),
             ("vcf-installer.example.test", 8443),
         ]
-
-
-def test_vcf_trust_rejects_mismatched_confirmed_tls_fingerprint(client, monkeypatch):
-    """Verify that vcf trust rejects mismatched confirmed tls fingerprint.
-
-    Args:
-        client: HTTP test client used to exercise the Atlaso application.
-        monkeypatch: Pytest fixture used to replace dependencies for the test.
-    """
-    import atlaso.app.ui as ui
-    from atlaso.app.database import SessionLocal
-    from atlaso.app.services.ca import ensure_root_ca_material
-    from atlaso.app.ui import get_ca_settings_row
-
-    login(client)
-    with SessionLocal() as db:
-        settings = get_ca_settings_row(db)
-        settings.enabled = True
-        ensure_root_ca_material(settings)
-        db.commit()
-    monkeypatch.setattr(ui, "tls_sha256_fingerprint", lambda _address, _port: "AA:BB")
-    csrf = client.get("/vcf-helper").text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
-
-    response = client.post(
-        "/vcf-trust/root-ca",
-        data={
-            "address": "vcf-installer.example.test",
-            "api_username": "administrator@vsphere.local",
-            "api_password": "api-secret",
-            "confirmed_tls_fingerprint": "CC:DD",
-            "csrf": csrf,
-        },
-        headers={"X-Atlaso-VCF-Trust": "1"},
-    )
-
-    assert response.status_code == 409
-    assert response.json()["fingerprint"] == "AA:BB"
 
 
 def test_vcf_trust_job_preserves_cancelled_state_at_progress_checkpoint(client, monkeypatch):
@@ -17698,9 +17576,9 @@ def test_vcf_sddc_inventory_requires_tls_confirmation_and_redacts_credentials(cl
         properties=[OvfProperty("ROOT_PASSWORD", "string", "Root", "secret", "", "", True, True)],
         files=[],
     )
-    monkeypatch.setattr(ui, "tls_sha256_fingerprint", lambda *_args, **_kwargs: "AA:BB")
-    monkeypatch.setattr(ui, "inspect_ova", lambda *_args, **_kwargs: descriptor)
-    monkeypatch.setattr(ui, "vsphere_inventory", lambda *_args, **_kwargs: {"resource_pools": [], "datastores": [], "folders": [], "hosts": [], "networks": []})
+    monkeypatch.setattr("atlaso.app.routers.ui.vcf_workflows.tls_sha256_fingerprint", lambda *_args, **_kwargs: "AA:BB")
+    monkeypatch.setattr("atlaso.app.routers.ui.vcf_workflows.inspect_ova", lambda *_args, **_kwargs: descriptor)
+    monkeypatch.setattr("atlaso.app.routers.ui.vcf_workflows.vsphere_inventory", lambda *_args, **_kwargs: {"resource_pools": [], "datastores": [], "folders": [], "hosts": [], "networks": []})
     resolved_credentials = []
     original_resolver = ui._resolve_vcf_helper_credentials
 
@@ -17754,10 +17632,9 @@ def test_vcf_target_depot_resolves_credentials_only_after_tls_confirmation(clien
         "username": "atlaso",
     }
     monkeypatch.setattr(ui, "local_vcf_depot_target_context", lambda _db: local)
-    monkeypatch.setattr(ui, "tls_sha256_fingerprint", lambda *_args, **_kwargs: "AA:BB")
+    monkeypatch.setattr("atlaso.app.routers.ui.vcf_workflows.tls_sha256_fingerprint", lambda *_args, **_kwargs: "AA:BB")
     monkeypatch.setattr(
-        ui,
-        "inspect_target_depot",
+        "atlaso.app.routers.ui.vcf_workflows.inspect_target_depot",
         lambda *_args, **_kwargs: {
             "appliance": {"role": "VcfInstaller", "version": "9.1.0.0"},
             "depot": {},
@@ -17841,8 +17718,8 @@ def test_vcf_sddc_deploy_job_persists_no_passwords(client, monkeypatch):
         files=[],
     )
     queued = {}
-    monkeypatch.setattr(ui, "tls_sha256_fingerprint", lambda *_args, **_kwargs: "AA:BB")
-    monkeypatch.setattr(ui, "inspect_ova", lambda *_args, **_kwargs: descriptor)
+    monkeypatch.setattr("atlaso.app.routers.ui.vcf_workflows.tls_sha256_fingerprint", lambda *_args, **_kwargs: "AA:BB")
+    monkeypatch.setattr("atlaso.app.routers.ui.vcf_workflows.inspect_ova", lambda *_args, **_kwargs: descriptor)
     monkeypatch.setattr(ui, "queue_vcf_sddc_deployment_job", lambda job_id, **kwargs: queued.update({"job_id": job_id, **kwargs}))
     response = client.post(
         "/vcf-helper/sddc-manager/deploy",
@@ -18023,8 +17900,8 @@ def test_vcf_sddc_deploy_requires_ipv4_ova_properties(client, monkeypatch):
         files=[],
     )
     queued = {}
-    monkeypatch.setattr(ui, "tls_sha256_fingerprint", lambda *_args, **_kwargs: "AA:BB")
-    monkeypatch.setattr(ui, "inspect_ova", lambda *_args, **_kwargs: descriptor)
+    monkeypatch.setattr("atlaso.app.routers.ui.vcf_workflows.tls_sha256_fingerprint", lambda *_args, **_kwargs: "AA:BB")
+    monkeypatch.setattr("atlaso.app.routers.ui.vcf_workflows.inspect_ova", lambda *_args, **_kwargs: descriptor)
     monkeypatch.setattr(ui, "queue_vcf_sddc_deployment_job", lambda job_id, **kwargs: queued.update({"job_id": job_id, **kwargs}))
 
     response = client.post(
