@@ -2,7 +2,6 @@
 
 import json
 import socket
-from datetime import datetime
 from ipaddress import ip_interface
 from typing import Annotated, Any
 from uuid import UUID, uuid4
@@ -42,8 +41,6 @@ from atlaso.app.models import (
     EsxStorageVolume,
     FirewallRule,
     FirewallSettings,
-    Job,
-    JobStatus,
     KmsSettings,
     LdapSettings,
     NtpSettings,
@@ -79,6 +76,10 @@ from atlaso.app.routers.api_v1.managed_ldap import (
 from atlaso.app.routers.api_v1.network_boot import (
     build_router as build_network_boot_api_router,
 )
+from atlaso.app.routers.api_v1.operations import OperationsApiDependencies
+from atlaso.app.routers.api_v1.operations import (
+    build_router as build_operations_api_router,
+)
 from atlaso.app.routers.api_v1.physical_vlans import PhysicalVlanApiDependencies
 from atlaso.app.routers.api_v1.physical_vlans import (
     build_router as build_physical_vlan_api_router,
@@ -96,7 +97,6 @@ from atlaso.app.schemas import (
     ApiTokenCreate,
     ApiTokenCreated,
     ApplianceVersionResponse,
-    AuditEventResponse,
     DashboardResponse,
     EsxNfsShareCreate,
     EsxNfsShareResponse,
@@ -107,10 +107,8 @@ from atlaso.app.schemas import (
     EsxStorageVolumeCreate,
     EsxStorageVolumeResponse,
     EsxStorageVolumeUpdate,
-    JobResponse,
     MonitorResponse,
     PhysicalInterfaceResponse,
-    ServiceActionResponse,
     ServiceStateResponse,
     SettingsResponse,
     SettingsUpdate,
@@ -202,14 +200,12 @@ from atlaso.app.services.firewall import (
 )
 from atlaso.app.services.kms import KMS_DEFAULT_CONFIG_PATH, join_csv
 from atlaso.app.services.monitoring import monitor_payload
-from atlaso.app.services.network_boot import cleanup_network_boot_upload
 from atlaso.app.services.networking import (
     normalize_interface_mode,
     normalize_interface_role,
 )
 from atlaso.app.services.ntp import default_ntp_upstream_fields
 from atlaso.app.services.service_registry import (
-    SERVICE_STATE_IDS,
     SERVICE_SYSTEMD_UNITS,
 )
 from atlaso.app.services.vcf_backups import (
@@ -256,9 +252,6 @@ from atlaso.app.ui import refresh_interface_service_dns_aliases
 
 router = APIRouter(prefix="/api/v1", route_class=DocumentedAPIRoute)
 DNSMASQ_STAGED_CONFIG_PATH = "/var/lib/atlaso/apply/dnsmasq/atlaso.conf"
-
-APPROVED_SERVICES = set(SERVICE_STATE_IDS) | {"vcf-offline-depot"}
-
 
 def backing_systemd_unit_active(unit: str) -> bool | None:
     """Return backing systemd unit active.
@@ -1208,337 +1201,35 @@ apply_firewall = _firewall_api.endpoints["apply_firewall"]
 get_firewall_logs = _firewall_api.endpoints["get_firewall_logs"]
 
 router = APIRouter(prefix="/api/v1", route_class=DocumentedAPIRoute)
-@router.get("/services", response_model=list[ServiceStateResponse], tags=["Services"], operation_id="listServices")
-def list_services(identity: Annotated[Identity, Depends(require_scope("read:services"))], db: Session = Depends(get_db)) -> list[ServiceStateResponse]:
-    """List Services.
+_api_between_firewall_operations_router = router
+_operations_api = build_operations_api_router(
+    OperationsApiDependencies(
+        get_dhcp_settings_row=get_dhcp_settings_row,
+        get_dns_settings_row=get_dns_settings_row,
+        service_state_response=service_state_response,
+    )
+)
+operations_router = _operations_api.router
+list_services = _operations_api.endpoints["list_services"]
+get_service = _operations_api.endpoints["get_service"]
+service_action = _operations_api.endpoints["service_action"]
+start_service = _operations_api.endpoints["start_service"]
+stop_service = _operations_api.endpoints["stop_service"]
+restart_service = _operations_api.endpoints["restart_service"]
+enable_service = _operations_api.endpoints["enable_service"]
+disable_service = _operations_api.endpoints["disable_service"]
+get_service_logs = _operations_api.endpoints["get_service_logs"]
+list_logs = _operations_api.endpoints["list_logs"]
+get_log_source = _operations_api.endpoints["get_log_source"]
+list_audit_events = _operations_api.endpoints["list_audit_events"]
+list_jobs = _operations_api.endpoints["list_jobs"]
+create_job = _operations_api.endpoints["create_job"]
+get_job = _operations_api.endpoints["get_job"]
+cancel_job = _operations_api.endpoints["cancel_job"]
 
-    Requires the `read:services` API scope. This read-only operation does not change saved desired
-    state or appliance runtime state.
-
-    Args:
-        identity: Authenticated identity authorizing the operation.
-        db: Active database session used by the operation.
-    """
-    rows = db.execute(select(ServiceState).where(ServiceState.service.in_(SERVICE_STATE_IDS)).order_by(ServiceState.display_name)).scalars().all()
-    return [service_state_response(row, db) for row in rows]
-
-
-@router.get("/services/{service}", response_model=ServiceStateResponse, tags=["Services"], operation_id="getService")
-def get_service(service: Annotated[str, ApiPath(description='Path value for service, identifying the resource addressed by `/api/v1/services/{service}`.')], identity: Annotated[Identity, Depends(require_scope("read:services"))], db: Session = Depends(get_db)) -> ServiceStateResponse:
-    """Get Service.
-
-    Requires the `read:services` API scope. This read-only operation does not change saved desired
-    state or appliance runtime state.
-
-    Args:
-        service: Atlaso or host service affected by the operation.
-        identity: Authenticated identity authorizing the operation.
-        db: Active database session used by the operation.
-    """
-    if service not in SERVICE_STATE_IDS:
-        raise HTTPException(status_code=404, detail="Service not found")
-    row = db.execute(select(ServiceState).where(ServiceState.service == service)).scalar_one_or_none()
-    if not row:
-        raise HTTPException(status_code=404, detail="Service not found")
-    return service_state_response(row, db)
+router = APIRouter(prefix="/api/v1", route_class=DocumentedAPIRoute)
 
 
-def service_action(service: str, action: str, identity: Identity, db: Session) -> ServiceActionResponse:
-    """Return service action.
-
-    Args:
-        service: Atlaso service affected by the operation.
-        action: Operation to perform on the target resource.
-        identity: Authenticated identity authorizing the request.
-        db: Active database session.
-
-    Raises:
-        HTTPException: If the request cannot be fulfilled.
-    """
-    if service not in APPROVED_SERVICES:
-        raise HTTPException(status_code=404, detail="Service is not approved for control")
-    if action not in {"start", "stop", "restart", "enable", "disable"}:
-        raise HTTPException(status_code=422, detail="Unsupported service action")
-    row = db.execute(select(ServiceState).where(ServiceState.service == service)).scalar_one_or_none()
-    if not row:
-        raise HTTPException(status_code=404, detail="Service not found")
-    if action == "enable":
-        row.enabled = True
-        if service == "dns":
-            get_dns_settings_row(db).enabled = True
-        elif service == "dhcp":
-            get_dhcp_settings_row(db).enabled = True
-    elif action == "disable":
-        row.enabled = False
-        if service == "dns":
-            get_dns_settings_row(db).enabled = False
-        elif service == "dhcp":
-            get_dhcp_settings_row(db).enabled = False
-    elif action in {"start", "restart"}:
-        row.running = True
-    elif action == "stop":
-        row.running = False
-    db.add(row)
-    result = SystemAdapter().service_action(service, action)
-    record_audit(db, actor=identity.username, action=f"{action}_service_dry_run", resource_type="service", resource_id=service, detail=" ".join(result.command))
-    return ServiceActionResponse(service=service, action=action, dry_run=result.dry_run, command=result.command)
-
-
-@router.post("/services/{service}/start", response_model=ServiceActionResponse, tags=["Services"], operation_id="startService")
-def start_service(service: Annotated[str, ApiPath(description='Path value for service, identifying the resource addressed by `/api/v1/services/{service}/start`.')], identity: Annotated[Identity, Depends(require_scope("write:services"))], db: Session = Depends(get_db)) -> ServiceActionResponse:
-    """Start Service.
-
-    Requires the `write:services` API scope. The action runs through the endpoint's existing audited
-    adapter or task boundary; inspect the returned state before treating the operation as complete.
-
-    Args:
-        service: Atlaso or host service affected by the operation.
-        identity: Authenticated identity authorizing the operation.
-        db: Active database session used by the operation.
-    """
-    return service_action(service, "start", identity, db)
-
-
-@router.post("/services/{service}/stop", response_model=ServiceActionResponse, tags=["Services"], operation_id="stopService")
-def stop_service(service: Annotated[str, ApiPath(description='Path value for service, identifying the resource addressed by `/api/v1/services/{service}/stop`.')], identity: Annotated[Identity, Depends(require_scope("write:services"))], db: Session = Depends(get_db)) -> ServiceActionResponse:
-    """Stop Service.
-
-    Requires the `write:services` API scope. The action runs through the endpoint's existing audited
-    adapter or task boundary; inspect the returned state before treating the operation as complete.
-
-    Args:
-        service: Atlaso or host service affected by the operation.
-        identity: Authenticated identity authorizing the operation.
-        db: Active database session used by the operation.
-    """
-    return service_action(service, "stop", identity, db)
-
-
-@router.post("/services/{service}/restart", response_model=ServiceActionResponse, tags=["Services"], operation_id="restartService")
-def restart_service(service: Annotated[str, ApiPath(description='Path value for service, identifying the resource addressed by `/api/v1/services/{service}/restart`.')], identity: Annotated[Identity, Depends(require_scope("write:services"))], db: Session = Depends(get_db)) -> ServiceActionResponse:
-    """Restart Service.
-
-    Requires the `write:services` API scope. The action runs through the endpoint's existing audited
-    adapter or task boundary; inspect the returned state before treating the operation as complete.
-
-    Args:
-        service: Atlaso or host service affected by the operation.
-        identity: Authenticated identity authorizing the operation.
-        db: Active database session used by the operation.
-    """
-    return service_action(service, "restart", identity, db)
-
-
-@router.post("/services/{service}/enable", response_model=ServiceActionResponse, tags=["Services"], operation_id="enableService")
-def enable_service(service: Annotated[str, ApiPath(description='Path value for service, identifying the resource addressed by `/api/v1/services/{service}/enable`.')], identity: Annotated[Identity, Depends(require_scope("write:services"))], db: Session = Depends(get_db)) -> ServiceActionResponse:
-    """Enable Service.
-
-    Requires the `write:services` API scope. The operation changes saved Atlaso application state;
-    any appliance host enforcement remains subject to the documented apply or task boundary for the
-    resource.
-
-    Args:
-        service: Atlaso or host service affected by the operation.
-        identity: Authenticated identity authorizing the operation.
-        db: Active database session used by the operation.
-    """
-    return service_action(service, "enable", identity, db)
-
-
-@router.post("/services/{service}/disable", response_model=ServiceActionResponse, tags=["Services"], operation_id="disableService")
-def disable_service(service: Annotated[str, ApiPath(description='Path value for service, identifying the resource addressed by `/api/v1/services/{service}/disable`.')], identity: Annotated[Identity, Depends(require_scope("write:services"))], db: Session = Depends(get_db)) -> ServiceActionResponse:
-    """Disable Service.
-
-    Requires the `write:services` API scope. The operation changes saved Atlaso application state;
-    any appliance host enforcement remains subject to the documented apply or task boundary for the
-    resource.
-
-    Args:
-        service: Atlaso or host service affected by the operation.
-        identity: Authenticated identity authorizing the operation.
-        db: Active database session used by the operation.
-    """
-    return service_action(service, "disable", identity, db)
-
-
-@router.get("/services/{service}/logs", response_model=list[str], tags=["Services"], operation_id="getServiceLogs")
-def get_service_logs(service: Annotated[str, ApiPath(description='Path value for service, identifying the resource addressed by `/api/v1/services/{service}/logs`.')], identity: Annotated[Identity, Depends(require_scope("read:logs"))]) -> list[str]:
-    """Get Service Logs.
-
-    Requires the `read:logs` API scope. This read-only operation does not change saved desired state
-    or appliance runtime state.
-
-    Args:
-        service: Atlaso or host service affected by the operation.
-        identity: Authenticated identity authorizing the operation.
-    """
-    if service not in APPROVED_SERVICES:
-        raise HTTPException(status_code=404, detail="Log source is not approved")
-    return [f"dry-run log source for {service}", "No host journal is read in development mode."]
-
-
-@router.get("/logs", response_model=list[str], tags=["Logs"], operation_id="listLogs")
-def list_logs(identity: Annotated[Identity, Depends(require_scope("read:logs"))]) -> list[str]:
-    """List Logs.
-
-    Requires the `read:logs` API scope. This read-only operation does not change saved desired state
-    or appliance runtime state.
-
-    Args:
-        identity: Authenticated identity authorizing the operation.
-    """
-    return ["system", "atlaso", "dnsmasq", "ldap", "ntp", "nginx", "openssh", "nftables"]
-
-
-@router.get("/logs/{source}", response_model=list[str], tags=["Logs"], operation_id="getLogSource")
-def get_log_source(source: Annotated[str, ApiPath(description='Path value for source, identifying the resource addressed by `/api/v1/logs/{source}`.')], identity: Annotated[Identity, Depends(require_scope("read:logs"))]) -> list[str]:
-    """Get Log Source.
-
-    Requires the `read:logs` API scope. This read-only operation does not change saved desired state
-    or appliance runtime state.
-
-    Args:
-        source: Source object or location from which data is obtained.
-        identity: Authenticated identity authorizing the operation.
-    """
-    if source not in {"system", "atlaso", "dnsmasq", "ldap", "ntp", "nginx", "openssh", "nftables"}:
-        raise HTTPException(status_code=404, detail="Log source is not approved")
-    return [f"dry-run log source for {source}", "Host log streaming is not enabled in the MVP scaffold."]
-
-
-@router.get("/audit", response_model=list[AuditEventResponse], tags=["Audit"], operation_id="listAuditEvents")
-def list_audit_events(
-    identity: Annotated[Identity, Depends(require_scope("read:audit"))],
-    db: Session = Depends(get_db),
-    user: Annotated[str | None, Query(description='Optional query value controlling user for this response.')] = None,
-    action: Annotated[str | None, Query(description='Optional query value controlling action for this response.')] = None,
-    resource_type: Annotated[str | None, Query(description='Optional query value controlling resource type for this response.')] = None,
-    success: Annotated[bool | None, Query(description='Optional query value controlling success for this response.')] = None,
-    start_time: Annotated[datetime | None, Query(description='Optional query value controlling start time for this response.')] = None,
-    end_time: Annotated[datetime | None, Query(description='Optional query value controlling end time for this response.')] = None,
-) -> list[AuditEventResponse]:
-    """List Audit Events.
-
-    Requires the `read:audit` API scope. This read-only operation does not change saved desired
-    state or appliance runtime state.
-
-    Args:
-        identity: Authenticated identity authorizing the operation.
-        db: Active database session used by the operation.
-        user: User record or identity affected by the operation.
-        action: Action consumed by list audit events.
-        resource_type: Resource type consumed by list audit events.
-        success: Success consumed by list audit events.
-        start_time: Start time consumed by list audit events.
-        end_time: End time consumed by list audit events.
-    """
-    query = select(AuditEvent)
-    if user:
-        query = query.where(AuditEvent.actor == user)
-    if action:
-        query = query.where(AuditEvent.action == action)
-    if resource_type:
-        query = query.where(AuditEvent.resource_type == resource_type)
-    if success is not None:
-        query = query.where(AuditEvent.success.is_(success))
-    if start_time:
-        query = query.where(AuditEvent.created_at >= start_time)
-    if end_time:
-        query = query.where(AuditEvent.created_at <= end_time)
-    return [AuditEventResponse.model_validate(row) for row in db.execute(query.order_by(desc(AuditEvent.created_at)).limit(200)).scalars().all()]
-
-
-@router.get("/jobs", response_model=list[JobResponse], tags=["Jobs"], operation_id="listJobs")
-def list_jobs(identity: Annotated[Identity, Depends(require_scope("read:dashboard"))], db: Session = Depends(get_db)) -> list[JobResponse]:
-    """List Jobs.
-
-    Requires the `read:dashboard` API scope. This read-only operation does not change saved desired
-    state or appliance runtime state.
-
-    Args:
-        identity: Authenticated identity authorizing the operation.
-        db: Active database session used by the operation.
-    """
-    return [JobResponse.model_validate(row) for row in db.execute(select(Job).order_by(desc(Job.created_at))).scalars().all()]
-
-
-@router.post("/jobs", response_model=JobResponse, status_code=202, tags=["Jobs"], operation_id="createJob")
-def create_job(identity: Annotated[Identity, Depends(require_scope("admin:all"))], db: Session = Depends(get_db)) -> JobResponse:
-    """Create Job.
-
-    Requires the `admin:all` API scope. The operation changes saved Atlaso application state; any
-    appliance host enforcement remains subject to the documented apply or task boundary for the
-    resource.
-
-    Args:
-        identity: Authenticated identity authorizing the operation.
-        db: Active database session used by the operation.
-    """
-    job = Job(id=f"job_{uuid4().hex[:12]}", type="manual-placeholder", created_by=identity.username)
-    db.add(job)
-    db.commit()
-    db.refresh(job)
-    record_audit(db, actor=identity.username, action="create_job", resource_type="job", resource_id=job.id)
-    return JobResponse.model_validate(job)
-
-
-@router.get("/jobs/{job_id}", response_model=JobResponse, tags=["Jobs"], operation_id="getJob")
-def get_job(job_id: Annotated[str, ApiPath(description='Unique identifier of the job record addressed by this operation.')], identity: Annotated[Identity, Depends(require_scope("read:dashboard"))], db: Session = Depends(get_db)) -> JobResponse:
-    """Get Job.
-
-    Requires the `read:dashboard` API scope. This read-only operation does not change saved desired
-    state or appliance runtime state.
-
-    Args:
-        job_id: Stable identifier of the associated job resource.
-        identity: Authenticated identity authorizing the operation.
-        db: Active database session used by the operation.
-    """
-    job = db.get(Job, job_id)
-    if not job:
-        raise HTTPException(status_code=404, detail="Job not found")
-    return JobResponse.model_validate(job)
-
-
-@router.post("/jobs/{job_id}/cancel", response_model=JobResponse, tags=["Jobs"], operation_id="cancelJob")
-def cancel_job(job_id: Annotated[str, ApiPath(description='Unique identifier of the job record addressed by this operation.')], identity: Annotated[Identity, Depends(require_scope("admin:all"))], db: Session = Depends(get_db)) -> JobResponse:
-    """Cancel Job.
-
-    Requires the `admin:all` API scope. The operation changes saved Atlaso application state; any
-    appliance host enforcement remains subject to the documented apply or task boundary for the
-    resource.
-
-    Args:
-        job_id: Stable identifier of the associated job resource.
-        identity: Authenticated identity authorizing the operation.
-        db: Active database session used by the operation.
-    """
-    job = db.get(Job, job_id)
-    if not job:
-        raise HTTPException(status_code=404, detail="Job not found")
-    if job.type == "pxe-media-sync" and job.status == JobStatus.RUNNING.value:
-        try:
-            config = json.loads(job.task_config_json or "{}")
-        except json.JSONDecodeError:
-            config = {}
-        if config.get("source") == "delete":
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail="A running Network Boot media deletion cannot be cancelled.",
-            )
-    if job.type == "pxe-media-sync" and job.status == "pending":
-        try:
-            config = json.loads(job.task_config_json or "{}")
-        except json.JSONDecodeError:
-            config = {}
-        if config.get("source") == "upload":
-            cleanup_network_boot_upload(job.id)
-    job.status = "cancelled"
-    job.finished_at = utcnow()
-    db.commit()
-    db.refresh(job)
-    record_audit(db, actor=identity.username, action="cancel_job", resource_type="job", resource_id=job.id)
-    return JobResponse.model_validate(job)
 
 
 @router.get("/settings", response_model=SettingsResponse, tags=["Settings"], operation_id="getSettings")
@@ -1609,7 +1300,7 @@ def update_app_settings(
     return appliance_settings_response(db, settings)
 
 
-_api_between_firewall_vcf_backups_router = router
+_api_between_operations_vcf_backups_router = router
 _vcf_workflows_api = build_vcf_workflows_api_routers(
     VcfWorkflowsApiDependencies(
         build_vcf_offline_depot_status=lambda *args, **kwargs: build_vcf_offline_depot_status(*args, **kwargs),
@@ -3075,7 +2766,11 @@ API_V1_ROUTER_REGISTRY.register(
 )
 API_V1_ROUTER_REGISTRY.register(
     "facade_between_identity_physical_vlans",
-    (RouterContribution(plane="api_v1", router=_api_between_identity_physical_vlans_router),),
+    (
+        RouterContribution(
+            plane="api_v1", router=_api_between_identity_physical_vlans_router
+        ),
+    ),
 )
 API_V1_ROUTER_REGISTRY.register(
     "physical_vlans",
@@ -3103,8 +2798,24 @@ API_V1_ROUTER_REGISTRY.register(
     (RouterContribution(plane="api_v1", router=firewall_router),),
 )
 API_V1_ROUTER_REGISTRY.register(
-    "facade_between_firewall_vcf_backups",
-    (RouterContribution(plane="api_v1", router=_api_between_firewall_vcf_backups_router),),
+    "facade_between_firewall_operations",
+    (
+        RouterContribution(
+            plane="api_v1", router=_api_between_firewall_operations_router
+        ),
+    ),
+)
+API_V1_ROUTER_REGISTRY.register(
+    "operations",
+    (RouterContribution(plane="api_v1", router=operations_router),),
+)
+API_V1_ROUTER_REGISTRY.register(
+    "facade_between_operations_vcf_backups",
+    (
+        RouterContribution(
+            plane="api_v1", router=_api_between_operations_vcf_backups_router
+        ),
+    ),
 )
 API_V1_ROUTER_REGISTRY.register(
     "vcf_workflows_backups",
@@ -3112,7 +2823,11 @@ API_V1_ROUTER_REGISTRY.register(
 )
 API_V1_ROUTER_REGISTRY.register(
     "facade_between_vcf_backups_offline_depot",
-    (RouterContribution(plane="api_v1", router=_api_between_vcf_backups_offline_depot_router),),
+    (
+        RouterContribution(
+            plane="api_v1", router=_api_between_vcf_backups_offline_depot_router
+        ),
+    ),
 )
 API_V1_ROUTER_REGISTRY.register(
     "vcf_workflows_offline_depot",
@@ -3120,7 +2835,11 @@ API_V1_ROUTER_REGISTRY.register(
 )
 API_V1_ROUTER_REGISTRY.register(
     "facade_between_offline_depot_private_registry",
-    (RouterContribution(plane="api_v1", router=_api_between_offline_depot_private_registry_router),),
+    (
+        RouterContribution(
+            plane="api_v1", router=_api_between_offline_depot_private_registry_router
+        ),
+    ),
 )
 API_V1_ROUTER_REGISTRY.register(
     "vcf_workflows_private_registry",
@@ -3128,7 +2847,11 @@ API_V1_ROUTER_REGISTRY.register(
 )
 API_V1_ROUTER_REGISTRY.register(
     "facade_between_vcf_private_registry_network_boot",
-    (RouterContribution(plane="api_v1", router=_api_between_vcf_private_registry_network_boot_router),),
+    (
+        RouterContribution(
+            plane="api_v1", router=_api_between_vcf_private_registry_network_boot_router
+        ),
+    ),
 )
 API_V1_ROUTER_REGISTRY.register(
     "network_boot",
@@ -3152,7 +2875,9 @@ API_V1_ROUTER_REGISTRY.validate_domains(
         "facade_between_routes_wan_dns_dhcp",
         "dns_dhcp",
         "firewall",
-        "facade_between_firewall_vcf_backups",
+        "facade_between_firewall_operations",
+        "operations",
+        "facade_between_operations_vcf_backups",
         "vcf_workflows_backups",
         "facade_between_vcf_backups_offline_depot",
         "vcf_workflows_offline_depot",
@@ -3164,6 +2889,8 @@ API_V1_ROUTER_REGISTRY.validate_domains(
         "facade_after_managed_ldap",
     )
 )
+
+
 
 router = APIRouter()
 for registered_router in API_V1_ROUTER_REGISTRY.routers_for_plane("api_v1"):
