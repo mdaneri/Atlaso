@@ -817,18 +817,31 @@ def strip_markdown_nonoperative_content(text: str) -> str:
         flags=re.DOTALL,
     )
     without_html_tags = re.sub(
-        r"</?[A-Za-z][A-Za-z0-9-]*(?:[ \t\r\n]+[^<>]*?)?[ \t\r\n]*/?>",
+        r'''</?[A-Za-z][A-Za-z0-9-]*(?:[^<>"']|"[^"]*"|'[^']*')*>''',
         lambda match: re.sub(r"[^\r\n]", "", match.group(0)),
         without_comments,
     )
     without_quotes_lines: list[str] = []
     in_block_quote = False
+    interrupting_block_patterns = (
+        re.compile(r" {0,3}#{1,6}(?:[ \t]+|$)"),
+        re.compile(r" {0,3}(?:[*+-]|\d{1,9}[.)])(?:[ \t]+|$)"),
+        re.compile(r" {0,3}(?:`{3,}|~{3,})"),
+        re.compile(
+            r" {0,3}(?:(?:\*[ \t]*){3,}|(?:_[ \t]*){3,}|"
+            r"(?:-[ \t]*){3,})(?:\r?\n)?$"
+        ),
+    )
     for line in without_html_tags.splitlines(keepends=True):
         if re.match(r" {0,3}>", line) is not None:
             in_block_quote = True
             without_quotes_lines.append("\n" if line.endswith("\n") else "")
         elif in_block_quote and line.strip():
-            if re.match(r" {0,3}#{1,6}(?:[ \t]+|$)", line) is not None:
+            starts_interrupting_block = any(
+                pattern.match(line) is not None
+                for pattern in interrupting_block_patterns
+            )
+            if starts_interrupting_block:
                 in_block_quote = False
                 without_quotes_lines.append(line)
             else:
