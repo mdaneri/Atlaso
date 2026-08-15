@@ -175,7 +175,11 @@ Terminal order:
   gate as not applicable only after a clean checkout still at the recorded task head fetches current `origin/main`,
   switches to local `main` without force, fast-forwards exactly to `origin/main`, verifies HEAD, deletes only a local
   task branch that still equals the recorded pull-request head and is checked out nowhere, and records
-  `primary_checkout_restored`. Never remove the primary checkout.
+  `primary_checkout_restored`. If interrupted after the switch, `primary_checkout_resume` requires a clean local
+  `main`, a fresh fetch and non-forced fast-forward to exact current `origin/main`, an absent remote task ref, and the
+  local task branch either still equal to the recorded head and checked out nowhere or already absent under the same
+  ownership and merge evidence. Delete it when present, then record the restored state. Never remove the primary
+  checkout.
 - Complete `task_title_done` last by using supported title controls to append the exact suffix " · Done" once while
   preserving description and issue/pull-request traceability. Keep the task unarchived unless archival is separately
   requested. If the runtime exposes no supported mutable title control, record `task_title_done` as verified not applicable

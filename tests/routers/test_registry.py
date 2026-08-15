@@ -74,7 +74,9 @@ def test_facades_register_extracted_domains_in_exact_order():
         "dns_dhcp",
         "facade_between_dns_dhcp_managed_ldap",
         "managed_ldap",
-        "facade_between_managed_ldap_identity",
+        "facade_between_managed_ldap_vcf_workflows",
+        "vcf_workflows",
+        "facade_between_vcf_workflows_identity",
         "identity",
         "facade_between_identity_network_boot",
         "network_boot",
@@ -89,7 +91,9 @@ def test_facades_register_extracted_domains_in_exact_order():
         ui.dns_dhcp_router,
         ui._management_between_dns_dhcp_managed_ldap_router,
         ui.managed_ldap_router,
-        ui._management_between_managed_ldap_identity_router,
+        ui._management_between_managed_ldap_vcf_workflows_router,
+        ui.vcf_workflows_router,
+        ui._management_between_vcf_workflows_identity_router,
         ui.identity_router,
         ui._management_between_identity_network_boot_router,
         ui.network_boot_router,
@@ -109,7 +113,13 @@ def test_facades_register_extracted_domains_in_exact_order():
         "facade_between_routes_wan_dns_dhcp",
         "dns_dhcp",
         "firewall",
-        "facade_between_firewall_network_boot",
+        "facade_between_firewall_vcf_backups",
+        "vcf_workflows_backups",
+        "facade_between_vcf_backups_offline_depot",
+        "vcf_workflows_offline_depot",
+        "facade_between_offline_depot_private_registry",
+        "vcf_workflows_private_registry",
+        "facade_between_vcf_private_registry_network_boot",
         "network_boot",
         "managed_ldap",
         "facade_after_managed_ldap",
@@ -123,7 +133,13 @@ def test_facades_register_extracted_domains_in_exact_order():
         v1._api_between_routes_wan_dns_dhcp_router,
         v1.dns_dhcp_router,
         v1.firewall_router,
-        v1._api_between_firewall_network_boot_router,
+        v1._api_between_firewall_vcf_backups_router,
+        v1.vcf_workflows_backups_router,
+        v1._api_between_vcf_backups_offline_depot_router,
+        v1.vcf_workflows_offline_depot_router,
+        v1._api_between_offline_depot_private_registry_router,
+        v1.vcf_workflows_private_registry_router,
+        v1._api_between_vcf_private_registry_network_boot_router,
         v1.network_boot_router,
         v1.managed_ldap_router,
         v1._api_after_managed_ldap_router,
@@ -152,6 +168,9 @@ def test_facades_register_extracted_domains_in_exact_order():
     assert {route.endpoint.__module__ for route in ui.network_boot_router.routes} == {
         "atlaso.app.routers.ui.network_boot"
     }
+    assert {route.endpoint.__module__ for route in ui.vcf_workflows_router.routes} == {
+        "atlaso.app.routers.ui.vcf_workflows"
+    }
     assert {route.endpoint.__module__ for route in v1.routes_wan_router.routes} == {
         "atlaso.app.routers.api_v1.routes_wan"
     }
@@ -173,6 +192,15 @@ def test_facades_register_extracted_domains_in_exact_order():
     assert {route.endpoint.__module__ for route in v1.network_boot_router.routes} == {
         "atlaso.app.routers.api_v1.network_boot"
     }
+    assert {
+        route.endpoint.__module__
+        for router in (
+            v1.vcf_workflows_backups_router,
+            v1.vcf_workflows_offline_depot_router,
+            v1.vcf_workflows_private_registry_router,
+        )
+        for route in router.routes
+    } == {"atlaso.app.routers.api_v1.vcf_workflows"}
 
 
 def test_registry_rejects_duplicate_domain_names():

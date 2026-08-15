@@ -312,6 +312,7 @@ TERMINAL_CLEANUP_SECTION_ANCHORS = {
 PRIVATE_REMEDIATION_CLEANUP_MARKER = "`advisory_cleanup_ready`"
 PRIVATE_REMEDIATION_REMOTE_MARKER = "`advisory_remote_branch_absent`"
 PRIMARY_CHECKOUT_RESTORED_MARKER = "`primary_checkout_restored`"
+PRIMARY_CHECKOUT_RESUME_MARKER = "`primary_checkout_resume`"
 TITLE_CONTROL_UNAVAILABLE_MARKER = "`task_title_done` as verified not applicable"
 TERMINAL_CLEANUP_SECTION_MARKERS = {
     path: (
@@ -319,6 +320,7 @@ TERMINAL_CLEANUP_SECTION_MARKERS = {
         *ordered_markers,
         '" · Done"',
         PRIMARY_CHECKOUT_RESTORED_MARKER,
+        PRIMARY_CHECKOUT_RESUME_MARKER,
         TITLE_CONTROL_UNAVAILABLE_MARKER,
         PRIVATE_REMEDIATION_CLEANUP_MARKER,
         PRIVATE_REMEDIATION_REMOTE_MARKER,
@@ -821,6 +823,11 @@ def strip_markdown_nonoperative_content(text: str) -> str:
         lambda match: re.sub(r"[^\r\n]", "", match.group(0)),
         without_comments,
     )
+    without_link_metadata = re.sub(
+        r"(?<!!)(\[[^\]\r\n]*\])\((?:[^()\r\n]|\([^()\r\n]*\))*\)",
+        r"\1",
+        without_html_tags,
+    )
     without_quotes_lines: list[str] = []
     in_block_quote = False
     interrupting_block_patterns = (
@@ -832,7 +839,7 @@ def strip_markdown_nonoperative_content(text: str) -> str:
             r"(?:-[ \t]*){3,})(?:\r?\n)?$"
         ),
     )
-    for line in without_html_tags.splitlines(keepends=True):
+    for line in without_link_metadata.splitlines(keepends=True):
         if re.match(r" {0,3}>", line) is not None:
             in_block_quote = True
             without_quotes_lines.append("\n" if line.endswith("\n") else "")

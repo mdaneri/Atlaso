@@ -40,6 +40,8 @@ surfaces.
 
   A primary-checkout task records `primary_checkout_restored` only after switching a clean exact-head checkout to
   current `origin/main`, verifying HEAD, and deleting only the exact unreferenced local task branch.
+  An interrupted `primary_checkout_resume` requires clean local `main` freshly fast-forwarded to current `origin/main`,
+  the remote ref absent, and the exact local task branch safely deletable or already absent under the same evidence.
 
   Terminal order:
 

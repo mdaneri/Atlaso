@@ -28,7 +28,8 @@ GitHub CI owns the complete Python test suite. Automated contributors keep the o
 current-head checks, comments, reviews, and review threads through completion. After an authorized merge and all
 post-merge activity, the primary-checkout controller deletes the task-owned GitHub branch, removes the Codex worktree,
 and only then appends " · Done" to the task title. Primary-checkout tasks instead restore a clean checkout to current
-`origin/main` and delete the exact local task branch. A runtime without supported title controls records the title state
+`origin/main` and delete the exact local task branch, with fail-closed resume from an interrupted clean `main` state.
+A runtime without supported title controls records the title state
 as not applicable with capability evidence; failed available cleanup operations leave the task actionable.
 
 Validated sensitive vulnerabilities use the private advisory and temporary-fork workflow in the

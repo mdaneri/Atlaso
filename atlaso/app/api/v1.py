@@ -56,7 +56,6 @@ from atlaso.app.models import (
     VcfDepotDownloadProfile,
     VcfOfflineDepotSettings,
     VcfPrivateRegistrySettings,
-    VcfRegistryBundle,
     VlanInterface,
     VsphereKeyProvider,
     VsphereTrustedVcenter,
@@ -88,6 +87,10 @@ from atlaso.app.routers.api_v1.routes_wan import RoutesWanApiDependencies
 from atlaso.app.routers.api_v1.routes_wan import (
     build_router as build_routes_wan_api_router,
 )
+from atlaso.app.routers.api_v1.vcf_workflows import VcfWorkflowsApiDependencies
+from atlaso.app.routers.api_v1.vcf_workflows import (
+    build_routers as build_vcf_workflows_api_routers,
+)
 from atlaso.app.routers.registry import RouterContribution
 from atlaso.app.schemas import (
     ApiTokenCreate,
@@ -111,9 +114,7 @@ from atlaso.app.schemas import (
     ServiceStateResponse,
     SettingsResponse,
     SettingsUpdate,
-    VcfBackupStatusResponse,
     VcfOfflineDepotStatusResponse,
-    VcfPrivateRegistryStatusResponse,
     VlanCreate,
     VsphereKeyProviderCreate,
     VsphereKeyProviderResponse,
@@ -213,7 +214,6 @@ from atlaso.app.services.service_registry import (
 )
 from atlaso.app.services.vcf_backups import (
     vcf_backup_service_state,
-    vcf_backup_settings_to_dict,
 )
 from atlaso.app.services.vcf_offline_depot import (
     VCF_DEPOT_ACTIVATION_VALUE_KEY,
@@ -235,8 +235,6 @@ from atlaso.app.services.vcf_offline_depot import (
 )
 from atlaso.app.services.vcf_private_registry import (
     VCF_REGISTRY_UPLOADED_CA_BUNDLE_PEM_KEY,
-    validate_vcf_registry_state,
-    vcf_registry_settings_to_dict,
 )
 from atlaso.app.services.vsphere_key_providers import (
     authenticated_provider_counts,
@@ -1611,35 +1609,23 @@ def update_app_settings(
     return appliance_settings_response(db, settings)
 
 
-@router.get("/vcf-backups/status", response_model=VcfBackupStatusResponse, tags=["VCF Backups"], operation_id="getVcfBackupsStatus")
-def get_vcf_backups_status(
-    identity: Annotated[Identity, Depends(require_scope("read:vcf-backups"))],
-    db: Session = Depends(get_db),
-) -> VcfBackupStatusResponse:
-    """Get Vcf Backups Status.
-
-    Requires the `read:vcf-backups` API scope. This read-only operation does not change saved
-    desired state or appliance runtime state.
-
-    Args:
-        identity: Authenticated identity authorizing the operation.
-        db: Active database session used by the operation.
-    """
-    settings = get_vcf_backup_settings(db)
-    row = db.execute(select(ServiceState).where(ServiceState.service == "vcf-backups")).scalar_one_or_none()
-    payload = vcf_backup_settings_to_dict(settings)
-    return VcfBackupStatusResponse(
-        enabled=settings.enabled,
-        service=ServiceStateResponse.model_validate(row) if row else None,
-        listen_interface=payload["listen_interface"],
-        listen_address=payload["listen_address"],
-        port=payload["port"],
-        sftp_username=payload["sftp_username"] or None,
-        storage_path=payload["storage_path"],
-        remote_directory=payload["remote_directory"],
-        config_path=payload["config_path"],
-        dry_run=get_settings().dry_run_system_adapters,
+_api_between_firewall_vcf_backups_router = router
+_vcf_workflows_api = build_vcf_workflows_api_routers(
+    VcfWorkflowsApiDependencies(
+        build_vcf_offline_depot_status=lambda *args, **kwargs: build_vcf_offline_depot_status(*args, **kwargs),
+        get_vcf_backup_settings=get_vcf_backup_settings,
+        get_vcf_private_registry_settings=get_vcf_private_registry_settings,
+        vcf_registry_ca_bundle_status=vcf_registry_ca_bundle_status,
     )
+)
+vcf_workflows_backups_router = _vcf_workflows_api.backups_router
+vcf_workflows_offline_depot_router = _vcf_workflows_api.offline_depot_router
+vcf_workflows_private_registry_router = _vcf_workflows_api.private_registry_router
+get_vcf_backups_status = _vcf_workflows_api.endpoints["get_vcf_backups_status"]
+get_vcf_offline_depot_status = _vcf_workflows_api.endpoints["get_vcf_offline_depot_status"]
+get_vcf_private_registry_status = _vcf_workflows_api.endpoints["get_vcf_private_registry_status"]
+
+router = APIRouter(prefix="/api/v1", route_class=DocumentedAPIRoute)
 
 
 def get_esx_storage_settings(db: Session) -> EsxStorageSettings:
@@ -2158,26 +2144,8 @@ def build_vcf_offline_depot_status(db: Session) -> VcfOfflineDepotStatusResponse
     )
 
 
-@router.get(
-    "/vcf-offline-depot/status",
-    response_model=VcfOfflineDepotStatusResponse,
-    tags=["VCF Offline Depot"],
-    operation_id="getVcfOfflineDepotStatus",
-)
-def get_vcf_offline_depot_status(
-    identity: Annotated[Identity, Depends(require_scope("read:repository"))],
-    db: Session = Depends(get_db),
-) -> VcfOfflineDepotStatusResponse:
-    """Get Vcf Offline Depot Status.
-
-    Requires the `read:repository` API scope. This read-only operation does not change saved desired
-    state or appliance runtime state.
-
-    Args:
-        identity: Authenticated identity authorizing the operation.
-        db: Active database session used by the operation.
-    """
-    return build_vcf_offline_depot_status(db)
+_api_between_vcf_backups_offline_depot_router = router
+router = APIRouter(prefix="/api/v1", route_class=DocumentedAPIRoute)
 
 
 @router.get(
@@ -2202,54 +2170,9 @@ def get_repository_status_alias(
     return build_vcf_offline_depot_status(db)
 
 
-@router.get(
-    "/vcf-private-registry/status",
-    response_model=VcfPrivateRegistryStatusResponse,
-    tags=["VCF Private Registry"],
-    operation_id="getVcfPrivateRegistryStatus",
-)
-def get_vcf_private_registry_status(
-    identity: Annotated[Identity, Depends(require_scope("read:vcf-registry"))],
-    db: Session = Depends(get_db),
-) -> VcfPrivateRegistryStatusResponse:
-    """Get Vcf Private Registry Status.
-
-    Requires the `read:vcf-registry` API scope. This read-only operation does not change saved
-    desired state or appliance runtime state.
-
-    Args:
-        identity: Authenticated identity authorizing the operation.
-        db: Active database session used by the operation.
-    """
-    settings = get_vcf_private_registry_settings(db)
-    bundles = db.execute(select(VcfRegistryBundle).order_by(VcfRegistryBundle.name)).scalars().all()
-    row = db.execute(select(ServiceState).where(ServiceState.service == "vcf-private-registry")).scalar_one_or_none()
-    ca_bundle_source, ca_bundle_available = vcf_registry_ca_bundle_status(db)
-    validation_errors, _warnings = validate_vcf_registry_state(
-        settings,
-        bundles,
-        ca_bundle_source=ca_bundle_source,
-        ca_bundle_available=ca_bundle_available,
-    )
-    payload = vcf_registry_settings_to_dict(settings)
-    return VcfPrivateRegistryStatusResponse(
-        enabled=settings.enabled,
-        service=ServiceStateResponse.model_validate(row) if row else None,
-        hostname=str(payload["hostname"]),
-        endpoint=str(payload["endpoint"]),
-        listen_interface=str(payload["listen_interface"]),
-        listen_address=str(payload["listen_address"]),
-        port=int(payload["port"]),
-        harbor_project=str(payload["harbor_project"]),
-        storage_path=str(payload["storage_path"]),
-        config_path=str(payload["config_path"]),
-        bundle_count=len([bundle for bundle in bundles if bundle.enabled]),
-        valid=not validation_errors,
-        dry_run=get_settings().dry_run_system_adapters,
-    )
-
-
-_api_between_firewall_network_boot_router = router
+_api_between_offline_depot_private_registry_router = router
+router = APIRouter(prefix="/api/v1", route_class=DocumentedAPIRoute)
+_api_between_vcf_private_registry_network_boot_router = router
 _network_boot_api = build_network_boot_api_router()
 network_boot_router = _network_boot_api.router
 _kickstart_response = _network_boot_api.endpoints["_kickstart_response"]
@@ -3180,8 +3103,32 @@ API_V1_ROUTER_REGISTRY.register(
     (RouterContribution(plane="api_v1", router=firewall_router),),
 )
 API_V1_ROUTER_REGISTRY.register(
-    "facade_between_firewall_network_boot",
-    (RouterContribution(plane="api_v1", router=_api_between_firewall_network_boot_router),),
+    "facade_between_firewall_vcf_backups",
+    (RouterContribution(plane="api_v1", router=_api_between_firewall_vcf_backups_router),),
+)
+API_V1_ROUTER_REGISTRY.register(
+    "vcf_workflows_backups",
+    (RouterContribution(plane="api_v1", router=vcf_workflows_backups_router),),
+)
+API_V1_ROUTER_REGISTRY.register(
+    "facade_between_vcf_backups_offline_depot",
+    (RouterContribution(plane="api_v1", router=_api_between_vcf_backups_offline_depot_router),),
+)
+API_V1_ROUTER_REGISTRY.register(
+    "vcf_workflows_offline_depot",
+    (RouterContribution(plane="api_v1", router=vcf_workflows_offline_depot_router),),
+)
+API_V1_ROUTER_REGISTRY.register(
+    "facade_between_offline_depot_private_registry",
+    (RouterContribution(plane="api_v1", router=_api_between_offline_depot_private_registry_router),),
+)
+API_V1_ROUTER_REGISTRY.register(
+    "vcf_workflows_private_registry",
+    (RouterContribution(plane="api_v1", router=vcf_workflows_private_registry_router),),
+)
+API_V1_ROUTER_REGISTRY.register(
+    "facade_between_vcf_private_registry_network_boot",
+    (RouterContribution(plane="api_v1", router=_api_between_vcf_private_registry_network_boot_router),),
 )
 API_V1_ROUTER_REGISTRY.register(
     "network_boot",
@@ -3205,7 +3152,13 @@ API_V1_ROUTER_REGISTRY.validate_domains(
         "facade_between_routes_wan_dns_dhcp",
         "dns_dhcp",
         "firewall",
-        "facade_between_firewall_network_boot",
+        "facade_between_firewall_vcf_backups",
+        "vcf_workflows_backups",
+        "facade_between_vcf_backups_offline_depot",
+        "vcf_workflows_offline_depot",
+        "facade_between_offline_depot_private_registry",
+        "vcf_workflows_private_registry",
+        "facade_between_vcf_private_registry_network_boot",
         "network_boot",
         "managed_ldap",
         "facade_after_managed_ldap",

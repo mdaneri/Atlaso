@@ -154,7 +154,10 @@ advisory state, and keep repository-wide automatic branch deletion disabled. The
 and verifies that the worktree path and registration are absent. A primary-checkout task records worktree removal as
 not applicable only after a clean exact-head checkout fetches current `origin/main`, switches to local `main` without
 force, fast-forwards exactly to `origin/main`, verifies HEAD, deletes only an exact matching unreferenced local task
-branch, and records `primary_checkout_restored`. Finally, supported title controls append the exact suffix " · Done"
+branch, and records `primary_checkout_restored`. An interrupted retry may use `primary_checkout_resume` only from a
+clean local `main` that freshly fast-forwards to current `origin/main`, with the remote ref absent and the exact local
+task branch either still safely deletable or already absent under the same ownership and merge proof. Finally,
+supported title controls append the exact suffix " · Done"
 once and leave the task unarchived unless archival is separately requested. If the runtime has no supported mutable
 title control, record `task_title_done` as verified not applicable with capability evidence, omit the visible suffix,
 and allow otherwise-complete cleanup to finish.
