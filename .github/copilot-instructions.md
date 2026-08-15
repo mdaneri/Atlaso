@@ -35,8 +35,10 @@ New Tabulators must use `window.AtlasoUiPatterns.createGrid(...)`; every new or 
   and keep GitHub auto-merge as a separate explicit maintainer choice;
 - after an authorized merge and all remaining activity, send the primary-checkout controller a `cleanup-ready` handoff
   and require the ordered terminal states `remote_branch_absent`, `worktree_removed`, and `task_title_done`; delete only
-  the task-owned GitHub branch, never remove the primary checkout, and append the exact suffix " · Done" once only after
-  every cleanup gate succeeds. If no supported mutable task-title control exists,
+  the task-owned GitHub branch with an atomic expected-SHA lease such as
+  `--force-with-lease=refs/heads/BRANCH:HEAD_SHA`, fail closed on a lease rejection or unavailable atomic guard,
+  never remove the primary checkout, and append the exact suffix " · Done" once only after every cleanup gate succeeds.
+  If no supported mutable task-title control exists,
   record `task_title_done` as verified not applicable with capability evidence, omit the visible suffix, and do not block
   otherwise-complete cleanup;
 
@@ -61,7 +63,7 @@ New Tabulators must use `window.AtlasoUiPatterns.createGrid(...)`; every new or 
   advisory identity, title, handoff, evidence, and temporary-fork operations sanitized, and retain the task through
   coordinated release, disclosure, and authorized advisory-state activity. Fulfill the first terminal state through
   `advisory_remote_branch_absent` by privately binding and deleting only the exact temporary-fork ref at the recorded
-  private-pull-request head; never delete the fork or change advisory state.
+  private-pull-request head with the same atomic expected-SHA lease; never delete the fork or change advisory state.
 - keep each pull request within its linked scope; search for an existing issue and open a separately typed, sanitized
   issue when an evidence-backed unrelated problem has no tracking record, while routing suspected vulnerabilities
   through `SECURITY.md` instead of a public issue;

@@ -145,10 +145,14 @@ Terminal order:
 2. `worktree_removed`
 3. `task_title_done`
 
-For ordinary work, the controller deletes and verifies only the exact task-owned same-repository GitHub branch. Private
+For ordinary work, the controller deletes and verifies only the exact task-owned same-repository GitHub branch. An
+existing ref must still equal the recorded pull-request head and be deleted with an atomic expected-SHA lease such as
+`--force-with-lease=refs/heads/BRANCH:HEAD_SHA`; any lease rejection or unavailable atomic guard blocks cleanup.
+Private
 remediation uses `advisory_remote_branch_absent`: privately bind the advisory's exact temporary fork, private pull
-request, branch, task, and recorded head SHA; delete only that ref when it still equals the head; and privately verify
-absence. An already absent ref still requires that identity and merge proof. Never delete the temporary fork or change
+request, branch, task, and recorded head SHA; delete only that ref with the same expected-SHA lease when it still equals
+the head; and privately verify absence. An already absent ref still requires that identity and merge proof. Never delete
+the temporary fork or change
 advisory state, and keep repository-wide automatic branch deletion disabled. The controller then uses
 `git worktree remove`, prunes stale registration metadata, verifies that the worktree path and registration are absent,
 deletes only the exact local task branch after proving that it still equals the pull-request head and is unreferenced by

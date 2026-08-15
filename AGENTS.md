@@ -193,12 +193,15 @@ Terminal order:
 2. `worktree_removed`
 3. `task_title_done`
 
-For ordinary `remote_branch_absent`, delete only the exact task-owned branch from its same-repository GitHub remote
-after verifying that the ref is absent or still equals the pull-request head SHA, then verify the remote ref is absent.
+For ordinary `remote_branch_absent`, delete only the exact task-owned branch from its same-repository GitHub remote.
+If the ref exists, require it to equal the pull-request head SHA and delete it with an atomic expected-SHA lease such as
+`--force-with-lease=refs/heads/BRANCH:HEAD_SHA`; a lease rejection or unsupported atomic guard blocks cleanup. Then
+verify the remote ref is absent.
 For private remediation, satisfy `advisory_remote_branch_absent` only on private surfaces: bind the exact temporary
 private fork, private pull request, branch, task, and recorded head SHA through the advisory; if the ref exists, require
-it to equal that head before deleting only the ref and privately verifying absence. An already absent ref satisfies the
-gate only after the same private identity and merge evidence are verified. Never delete the temporary fork, change
+it to equal that head and use the same atomic expected-SHA lease before deleting only the ref and privately verifying
+absence. An already absent ref satisfies the gate only after the same private identity and merge evidence are verified.
+Never delete the temporary fork, change
 advisory state, or enable repository-wide automatic branch deletion. For `worktree_removed`, first verify that the exact
 local task branch is absent or still equals the recorded pull-request head and is referenced only by the target
 worktree. Use `git worktree remove`, prune only stale worktree metadata for the affected repository, and verify both the

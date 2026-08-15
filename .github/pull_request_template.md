@@ -35,8 +35,10 @@ surfaces.
   this pull request is outside that policy.
 - [ ] After any authorized merge and remaining post-merge activity, the originating task will send a `cleanup-ready`
   handoff and remain incomplete until `remote_branch_absent`, `worktree_removed`, and `task_title_done` occur in order;
-  only then may supported title controls append the exact suffix " · Done" once. If no supported mutable title control
-  exists, `task_title_done` as verified not applicable requires capability evidence and omits the visible suffix.
+  an existing remote ref will be deleted only with an atomic expected-SHA lease such as
+  `--force-with-lease=refs/heads/BRANCH:HEAD_SHA`, and any lease rejection or unavailable guard blocks cleanup. Only
+  then may supported title controls append the exact suffix " · Done" once. If no supported mutable title control exists,
+  `task_title_done` as verified not applicable requires capability evidence and omits the visible suffix.
 
   A non-primary task records `worktree_removed` only after removing and pruning its worktree, verifying path and
   registration absence, deleting only the exact unreferenced local task branch that still equals the recorded head,
@@ -57,7 +59,8 @@ surfaces.
 
   Private remediation requires privately verified `advisory_cleanup_ready` instead of a closed public issue and retains
   sanitized task state until coordinated release, disclosure, and authorized advisory-state activity are complete. Its
-  `advisory_remote_branch_absent` gate privately binds and removes only the exact temporary-fork ref, never the fork.
+  `advisory_remote_branch_absent` gate privately binds and removes only the exact temporary-fork ref with the same
+  atomic expected-SHA lease, never the fork.
 - [ ] Evidence-backed issues discovered outside this pull request's linked scope were matched to existing issues or
   opened separately with one appropriate type label; suspected sensitive vulnerabilities were kept private.
 - [ ] For a temporary-private-fork pull request, advisory-side maintainer review and recorded local validation replace
