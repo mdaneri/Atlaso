@@ -20,6 +20,7 @@ ADDITIONAL_END = "<!-- END GENERATED ADDITIONAL SCREENSHOTS -->"
 PRIMARY_IMAGES = {
     "getting-started/index.md": "login-desktop.webp",
     "operate/dashboard.md": "dashboard-clean-desktop.webp",
+    "operate/navigation.md": "primary-navigation-expanded-desktop.webp",
     "operate/audit-log.md": "audit-log-clean-desktop.webp",
     "operate/logs.md": "logs-clean-desktop.webp",
     "operate/monitor.md": "monitor-clean-desktop.webp",

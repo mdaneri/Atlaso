@@ -139,6 +139,18 @@ Figure: Dashboard in the verified clean-appliance responsive state.
 
 Figure: Dashboard with valid pending changes and a unit needing attention.
 
+![Atlaso Dashboard with Appliance Setup, Identity and Trust, and VCF Workflows navigation sections collapsed.](../assets/screenshots/primary-navigation-collapsed-desktop.webp)
+
+Figure: Authenticated primary navigation with independent sections partially collapsed.
+
+![Atlaso Dashboard responsive layout with independent expanded and collapsed navigation sections.](../assets/screenshots/primary-navigation-collapsed-responsive.webp)
+
+Figure: Authenticated primary navigation with complete disclosure rows at the responsive viewport.
+
+![Atlaso Dashboard with all authorized primary navigation sections expanded.](../assets/screenshots/primary-navigation-expanded-desktop.webp)
+
+Figure: Authenticated primary navigation with every authorized section expanded.
+
 ## Dashboard: Appliance Apply Review
 
 Route: `/ui/management/dashboard#appliance-apply-review`

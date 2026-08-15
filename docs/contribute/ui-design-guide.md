@@ -183,6 +183,25 @@ Do not perform host mutation as a side effect of moving between steps. Wizard su
 established workflow is an explicit task action. Appliance configuration enforcement remains owned by the global
 `/ui/management/appliance-apply` workflow.
 
+## Authenticated primary navigation
+
+The management sidebar is an approved `custom/other` disclosure interaction. It reuses native disclosure semantics and
+the authenticated sidebar's existing typography, width, link order, active state, and responsive shell.
+
+- Filter links by the signed-in identity before rendering a group. Do not render empty group markup, identifiers, or
+  browser-state keys.
+- Use a native button for each group label with accurate `aria-expanded` and `aria-controls` values. Associate the link
+  container with that button and show a standard chevron whose direction communicates state without color.
+- Start every rendered group expanded when no saved browser-local choice exists. Ignore malformed, obsolete, or
+  unavailable storage and keep navigation usable without persistence.
+- Restore saved choices only for inactive groups. Always expand the group containing the current page on load without
+  overwriting its saved choice, so navigating elsewhere can restore the operator's preference.
+- Hide collapsed link containers with the native `hidden` contract so their links leave the tab order and accessibility
+  tree. Native button activation owns Enter and Space behavior; do not add competing key handlers.
+- Keep the global **Review appliance changes** card outside every disclosure and visible whenever pending changes exist.
+- At the two-column breakpoint, keep each group heading and its links as one grid item. Return to one group per row at
+  the mobile breakpoint without clipping labels or adding horizontal overflow.
+
 ### VCF Helper remote-credential wizard contract
 
 Every VCF Helper wizard that connects to a remote VCF component uses the same first four steps:

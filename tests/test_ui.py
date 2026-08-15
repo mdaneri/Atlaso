@@ -53,6 +53,18 @@ def test_login_and_dashboard_render(client):
     nav = response.text.split('<nav class="nav-stack"', 1)[1].split("</nav>", 1)[0]
     for section in ["Overview", "Appliance Setup", "Core Services", "Identity &amp; Trust", "VCF Workflows", "Operations"]:
         assert section in nav
+    assert nav.count("data-primary-nav-group") == 6
+    assert nav.count("data-primary-nav-toggle") == 6
+    assert nav.count('aria-expanded="true"') == 6
+    assert nav.count('role="group"') == 6
+    assert 'data-nav-group-key="overview"' in nav
+    assert 'id="primary-nav-overview-toggle"' in nav
+    assert 'aria-controls="primary-nav-overview-links"' in nav
+    assert 'id="primary-nav-overview-links"' in nav
+    assert 'aria-labelledby="primary-nav-overview-toggle"' in nav
+    assert 'href="/ui/management/dashboard" aria-current="page"' in nav
+    assert 'type="button"' in nav
+    assert "data-appliance-apply-sidebar" not in nav
     expected_nav_order = [
         "/ui/management/dashboard",
         "/ui/management/monitor",
@@ -980,7 +992,7 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert service_worker.headers["cache-control"] == "no-cache"
     assert service_worker.headers["service-worker-allowed"] == "/ui/management/"
     assert "ATLASO_CACHE" in service_worker.text
-    assert "atlaso-management-pwa-v255" in service_worker.text
+    assert "atlaso-management-pwa-v256" in service_worker.text
     assert 'fetch(asset, { cache: "reload" })' in service_worker.text
     assert ".catch(() => undefined)" in service_worker.text
     assert 'request.mode === "navigate"' in service_worker.text
@@ -994,11 +1006,11 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert 'accept.includes("text/html")' in service_worker.text
     assert '!hasDownloadLikePath(url)' in service_worker.text
     assert "/static/vendor/monaco/atlaso-monaco.min.js?v=atlaso-monaco-20260806-7" in service_worker.text
-    assert "/static/app.css?v=vlan-interface-wizard-304-2" in service_worker.text
+    assert "/static/app.css?v=issue-338-1" in service_worker.text
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-8" in service_worker.text
     assert "/static/appliance-apply-polling.js?v=issue-294-2" in service_worker.text
     assert "/static/ui-routes.js?v=issue-287-1" in service_worker.text
-    assert "/static/app.js?v=network-boot-latest-host-20260814-1" in service_worker.text
+    assert "/static/app.js?v=issue-338-1" in service_worker.text
     assert "/static/terminal.js?v=issue-287-2" in service_worker.text
     assert "/static/pwa.js?v=issue-287-2" in service_worker.text
     assert "vcfdt-configuration-248-20260807-14" not in service_worker.text
@@ -1014,7 +1026,7 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     offline = client.get("/static/offline.html")
     assert offline.status_code == 200
     assert "Appliance connection unavailable" in offline.text
-    assert "/static/app.css?v=vlan-interface-wizard-304-2" in offline.text
+    assert "/static/app.css?v=issue-338-1" in offline.text
 
 
 def test_shared_ui_pattern_shell_and_wizard_contracts(client):
@@ -1030,8 +1042,8 @@ def test_shared_ui_pattern_shell_and_wizard_contracts(client):
     base = (templates / "base.html").read_text(encoding="utf-8")
     public_base = (templates / "public_portal_base.html").read_text(encoding="utf-8")
     for shell, app_asset in (
-        (base, "/static/app.js?v=network-boot-latest-host-20260814-1"),
-        (public_base, "/static/app.js?v=network-boot-latest-host-20260814-1"),
+        (base, "/static/app.js?v=issue-338-1"),
+        (public_base, "/static/app.js?v=issue-338-1"),
         (base, "/static/appliance-apply-polling.js?v=issue-294-2"),
     ):
         assert shell.index("/static/vendor/tabulator/tabulator.min.js") < shell.index(
@@ -1675,9 +1687,9 @@ def test_monitor_page_renders_and_data_endpoint(client):
     assert "Loading devices" not in page.text
     assert "<th>Device</th><th>Read/s</th><th>Write/s</th>" in page.text
     assert "swagger-link-icon" in page.text
-    assert "/static/app.css?v=vlan-interface-wizard-304-2" in page.text
+    assert "/static/app.css?v=issue-338-1" in page.text
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-8" in page.text
-    assert "/static/app.js?v=network-boot-latest-host-20260814-1" in page.text
+    assert "/static/app.js?v=issue-338-1" in page.text
     app_css = client.get("/static/app.css")
     assert app_css.status_code == 200
     assert ".split-workspace > .wide-panel" in app_css.text
@@ -1925,6 +1937,86 @@ def test_sidebar_appliance_apply_uses_bottom_pending_cta(client):
     assert "Review appliance changes" in response.text
     assert "pending unit" in response.text
     assert 'class="nav-link " href="/appliance-apply"' not in response.text
+    assert response.text.index("</nav>") < response.text.index("data-appliance-apply-sidebar")
+
+
+def test_primary_navigation_omits_empty_permission_filtered_groups(client):
+    """Verify that empty navigation groups expose no markup or browser-local state key.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
+    from sqlalchemy import select
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Role, User
+    from atlaso.app.security import roles_to_json
+
+    login(client)
+    with SessionLocal() as db:
+        admin = db.execute(select(User).where(User.username == "admin")).scalar_one()
+        admin.role = Role.CERTIFICATE_OPERATOR.value
+        admin.roles_json = roles_to_json([Role.CERTIFICATE_OPERATOR.value])
+        db.commit()
+
+    response = client.get("/ui/management/dashboard")
+    assert response.status_code == 200
+    nav = response.text.split('<nav class="nav-stack"', 1)[1].split("</nav>", 1)[0]
+    assert 'data-nav-group-key="overview"' in nav
+    assert 'data-nav-group-key="identity-trust"' in nav
+    assert 'data-nav-group-key="vcf-workflows"' in nav
+    assert 'data-nav-group-key="operations"' in nav
+    assert 'data-nav-group-key="appliance-setup"' not in nav
+    assert 'primary-nav-appliance-setup' not in nav
+    assert 'data-nav-group-key="core-services"' not in nav
+    assert 'primary-nav-core-services' not in nav
+
+
+def test_primary_navigation_maps_secondary_routes_to_their_parent_link(client):
+    """Verify that secondary management routes reveal their owning navigation group.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
+    login(client)
+
+    ca_response = client.get("/ui/management/ca/requests")
+    assert ca_response.status_code == 200
+    ca_nav = ca_response.text.split('<nav class="nav-stack"', 1)[1].split("</nav>", 1)[0]
+    assert '<section class="nav-section active" data-primary-nav-group data-nav-group-key="identity-trust">' in ca_nav
+    assert 'href="/ui/management/certificate-authority" aria-current="page"' in ca_nav
+
+    service_response = client.get("/ui/management/services/routing/logs")
+    assert service_response.status_code == 200
+    service_nav = service_response.text.split('<nav class="nav-stack"', 1)[1].split("</nav>", 1)[0]
+    assert '<section class="nav-section active" data-primary-nav-group data-nav-group-key="operations">' in service_nav
+    assert 'href="/ui/management/services" aria-current="page"' in service_nav
+
+
+def test_primary_navigation_activates_ca_group_for_certificate_operator(client):
+    """Verify that certificate operators see CA Requests in its active navigation group.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
+    from sqlalchemy import select
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Role, User
+    from atlaso.app.security import roles_to_json
+
+    login(client)
+    with SessionLocal() as db:
+        admin = db.execute(select(User).where(User.username == "admin")).scalar_one()
+        admin.role = Role.CERTIFICATE_OPERATOR.value
+        admin.roles_json = roles_to_json([Role.CERTIFICATE_OPERATOR.value])
+        db.commit()
+
+    response = client.get("/ui/management/ca/requests")
+    assert response.status_code == 200
+    nav = response.text.split('<nav class="nav-stack"', 1)[1].split("</nav>", 1)[0]
+    assert '<section class="nav-section active" data-primary-nav-group data-nav-group-key="identity-trust">' in nav
+    assert 'href="/ui/management/certificate-authority"' not in nav
 
 
 def test_dns_settings_derives_listen_addresses_from_selected_interface(client):

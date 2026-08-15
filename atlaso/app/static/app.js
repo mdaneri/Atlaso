@@ -510,6 +510,82 @@ function storedDnsActiveZone() {
   }
 }
 
+const PRIMARY_NAVIGATION_STORAGE_KEY = "atlaso:primary-navigation:v1";
+
+function primaryNavigationStorage() {
+  try {
+    return window.localStorage;
+  } catch {
+    return null;
+  }
+}
+
+function readPrimaryNavigationState(storage) {
+  if (!storage) return {};
+  try {
+    const parsed = JSON.parse(storage.getItem(PRIMARY_NAVIGATION_STORAGE_KEY) || "null");
+    if (!parsed || parsed.version !== 1 || !parsed.groups || typeof parsed.groups !== "object" || Array.isArray(parsed.groups)) {
+      return {};
+    }
+    return Object.fromEntries(
+      Object.entries(parsed.groups).filter(([key, value]) => /^[a-z0-9-]+$/.test(key) && typeof value === "boolean"),
+    );
+  } catch {
+    return {};
+  }
+}
+
+function writePrimaryNavigationState(storage, groups) {
+  if (!storage) return;
+  try {
+    storage.setItem(PRIMARY_NAVIGATION_STORAGE_KEY, JSON.stringify({ version: 1, groups }));
+  } catch {
+    // Navigation remains usable when private browsing or policy disables storage.
+  }
+}
+
+function setPrimaryNavigationGroupExpanded(group, expanded) {
+  const toggle = group.querySelector("[data-primary-nav-toggle]");
+  const links = group.querySelector("[data-primary-nav-links]");
+  if (!(toggle instanceof HTMLButtonElement) || !(links instanceof HTMLElement)) return false;
+  toggle.setAttribute("aria-expanded", String(expanded));
+  links.hidden = !expanded;
+  group.classList.toggle("collapsed", !expanded);
+  return true;
+}
+
+function initializePrimaryNavigation(root = document) {
+  const groups = Array.from(root.querySelectorAll("[data-primary-nav-group]")).filter(
+    (group) => group instanceof HTMLElement,
+  );
+  if (!groups.length) return;
+  const storage = primaryNavigationStorage();
+  const persistedState = readPrimaryNavigationState(storage);
+  const renderedKeys = new Set(groups.map((group) => group.dataset.navGroupKey || "").filter(Boolean));
+  const storedState = Object.fromEntries(
+    Object.entries(persistedState).filter(([key]) => renderedKeys.has(key)),
+  );
+  if (Object.keys(storedState).length !== Object.keys(persistedState).length) {
+    writePrimaryNavigationState(storage, storedState);
+  }
+  groups.forEach((group) => {
+    const key = group.dataset.navGroupKey || "";
+    const toggle = group.querySelector("[data-primary-nav-toggle]");
+    if (!key || !(toggle instanceof HTMLButtonElement)) return;
+    const isActiveGroup =
+      group.classList.contains("active") || Boolean(group.querySelector('.nav-link[aria-current="page"]'));
+    const storedExpanded = Object.prototype.hasOwnProperty.call(storedState, key) ? storedState[key] : true;
+    setPrimaryNavigationGroupExpanded(group, isActiveGroup || storedExpanded);
+    toggle.addEventListener("click", () => {
+      const expanded = toggle.getAttribute("aria-expanded") === "true";
+      const nextExpanded = !expanded;
+      if (!setPrimaryNavigationGroupExpanded(group, nextExpanded)) return;
+      storedState[key] = nextExpanded;
+      writePrimaryNavigationState(storage, storedState);
+    });
+  });
+}
+
 function dnsZoneTabButtonForDomain(domain) {
   if (!domain) {
     return null;
@@ -21122,6 +21198,7 @@ function initializeNetworkBootPage() {
 }
 
 document.addEventListener("DOMContentLoaded", initializeDashboard);
+document.addEventListener("DOMContentLoaded", () => initializePrimaryNavigation());
 document.addEventListener("DOMContentLoaded", initializeNetworkBootWorkspace);
 document.addEventListener("DOMContentLoaded", initializeEsxiHostReferenceWizard);
 document.addEventListener("DOMContentLoaded", initializeEsxiBootAuthorizationWizard);
