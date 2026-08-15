@@ -124,6 +124,12 @@ REQUIRED_POLICY_MARKERS = {
         "no merge queue is required",
         "--match-head-commit <head-sha>",
         "### Extended merge descriptions",
+        "## Completed Task Cleanup",
+        "`cleanup-ready`",
+        "`remote_branch_absent`",
+        "`worktree_removed`",
+        "`task_title_done`",
+        '" · Done"',
         "AtlasoUiPatterns.createGrid",
         "AtlasoUiPatterns.createWizard",
     ),
@@ -151,6 +157,12 @@ REQUIRED_POLICY_MARKERS = {
         "private vulnerability remediation",
         "advisory-side maintainer review",
         "complete Python test suite locally",
+        "### Completed task cleanup",
+        "`cleanup-ready`",
+        "`remote_branch_absent`",
+        "`worktree_removed`",
+        "`task_title_done`",
+        '" · Done"',
     ),
     Path(".github/copilot-instructions.md"): (
         "Mandatory Agent Startup Gate",
@@ -176,6 +188,11 @@ REQUIRED_POLICY_MARKERS = {
         "private vulnerability remediation",
         "advisory-side maintainer review",
         "complete Python test suite locally",
+        "`cleanup-ready`",
+        "`remote_branch_absent`",
+        "`worktree_removed`",
+        "`task_title_done`",
+        '" · Done"',
     ),
     Path("SECURITY.md"): (
         "## Privately fixing a validated vulnerability",
@@ -215,6 +232,12 @@ REQUIRED_POLICY_MARKERS = {
         "explicit merge instruction",
         "strict up-to-date required checks",
         "no required merge queue",
+        "### Completed task cleanup",
+        "`cleanup-ready`",
+        "`remote_branch_absent`",
+        "`worktree_removed`",
+        "`task_title_done`",
+        '" · Done"',
     ),
     Path(".github/pull_request_template.md"): (
         "Closes #",
@@ -237,6 +260,11 @@ REQUIRED_POLICY_MARKERS = {
         "private vulnerability-remediation pull request",
         "advisory-side maintainer review",
         "complete Python test suite ran locally",
+        "`cleanup-ready`",
+        "`remote_branch_absent`",
+        "`worktree_removed`",
+        "`task_title_done`",
+        '" · Done"',
     ),
     Path("docs/contribute/ui-design-guide.md"): (
         "# Atlaso UI Design Guide",
@@ -252,6 +280,21 @@ REQUIRED_POLICY_MARKERS = {
         "AtlasoUiPatterns.createGrid",
         "AtlasoUiPatterns.createWizard",
     ),
+}
+
+ORDERED_TERMINAL_CLEANUP_MARKERS = {
+    path: (
+        "`remote_branch_absent`",
+        "`worktree_removed`",
+        "`task_title_done`",
+    )
+    for path in (
+        Path("AGENTS.md"),
+        Path("CONTRIBUTING.md"),
+        Path(".github/copilot-instructions.md"),
+        Path(".github/pull_request_template.md"),
+        Path("docs/contribute/agent-policies.md"),
+    )
 }
 
 
@@ -632,6 +675,17 @@ def check_agent_policy_gate(root: Path) -> list[Finding]:
             if marker not in text:
                 findings.append(
                     Finding(path, f"required agent policy marker is missing: {marker}")
+                )
+        ordered_markers = ORDERED_TERMINAL_CLEANUP_MARKERS.get(relative_path)
+        if ordered_markers is not None and all(marker in text for marker in ordered_markers):
+            positions = tuple(text.index(marker) for marker in ordered_markers)
+            if positions != tuple(sorted(positions)):
+                findings.append(
+                    Finding(
+                        path,
+                        "completed-task cleanup markers must remain ordered: "
+                        + " -> ".join(ordered_markers),
+                    )
                 )
     return findings
 

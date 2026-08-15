@@ -25,7 +25,9 @@ status: current
 Every repository change starts with a labeled issue and ends with a reviewed pull request that closes it. Run the
 focused local tests, documentation validation, applicable repository checks, and `git diff --check` before delivery.
 GitHub CI owns the complete Python test suite. Automated contributors keep the originating task active to follow
-current-head checks, comments, reviews, and review threads through completion.
+current-head checks, comments, reviews, and review threads through completion. After an authorized merge and all
+post-merge activity, the primary-checkout controller deletes the task-owned GitHub branch, removes the Codex worktree,
+and only then appends " · Done" to the task title; failed cleanup leaves the task actionable.
 
 Validated sensitive vulnerabilities use the private advisory and temporary-fork workflow in the
 [Security policy](https://github.com/mdaneri/Atlaso/blob/main/SECURITY.md) instead of a public issue or public pull

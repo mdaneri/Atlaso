@@ -124,6 +124,28 @@ explains the outcome and rationale, summarizes principal changes, records valida
 Afterward, verify the merged state, confirm that the squash commit is reachable from current `origin/main`, check linked
 issue closure, and monitor applicable post-merge workflows before reporting completion.
 
+### Completed task cleanup
+
+After all post-merge work is complete, a worktree-backed originating task sends a `cleanup-ready` handoff to a cleanup
+controller running from the primary checkout. The handoff identifies the repository, task and title, pull request,
+task-owned branch, absolute worktree path, pull-request head SHA, and merge commit SHA. The controller waits for an
+idle, unpinned task and independently revalidates the merged pull request, reachable merge commit, closed issue,
+completed post-merge activity, branch ownership, and a clean, registered, unlocked Codex worktree beneath the resolved
+Codex worktree root.
+
+The controller completes the terminal states in order: `remote_branch_absent`, `worktree_removed`, then
+`task_title_done`. It deletes and verifies only the exact task-owned same-repository GitHub branch; repository-wide
+automatic branch deletion remains disabled. It then uses `git worktree remove`, prunes stale registration metadata,
+and verifies that the worktree path and registration are absent. A primary-checkout task records worktree removal as
+not applicable and never removes that checkout. Finally, supported title controls append the exact suffix " · Done"
+once and leave the task unarchived unless archival is separately requested.
+
+Failure or ambiguity at any gate blocks the " · Done" suffix and leaves an actionable retry condition. The daily Codex
+cleanup automation reconciles missed or partial transitions with the same fail-closed checks. A squash-merged head may
+be cleaned even though it is not an ancestor of `main` only when it exactly matches the recorded pull-request head and
+the recorded merge commit is reachable from current `origin/main`. Private-remediation cleanup remains subject to
+`SECURITY.md` and cannot expose or prematurely close coordinated advisory work.
+
 Maintainers may explicitly enable auto-merge on an internal, ready-for-review pull request. When `main` advances, Atlaso
 automatically updates only those auto-merge-enabled branches that are in this repository, are not drafts, have no merge
 conflict, and are behind `main`. The update uses the observed head commit as a concurrency guard. Forks and pull requests

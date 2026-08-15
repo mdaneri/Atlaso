@@ -4,6 +4,7 @@ from pathlib import Path
 
 from scripts.check_repo import (
     LEGACY_TABULATOR_MARKER,
+    ORDERED_TERMINAL_CLEANUP_MARKERS,
     REQUIRED_POLICY_MARKERS,
     check_agent_policy_gate,
     check_ui_pattern_foundation,
@@ -413,6 +414,79 @@ def test_agent_policy_gate_rejects_missing_merge_queue_guard(tmp_path: Path) -> 
         assert findings[0].path == path
         assert findings[0].message == (
             f"required agent policy marker is missing: {marker}"
+        )
+
+
+def test_agent_policy_gate_requires_completed_task_cleanup_contract(
+    tmp_path: Path,
+) -> None:
+    """Verify that every agent entry point retains terminal cleanup enforcement.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    for relative_path in ORDERED_TERMINAL_CLEANUP_MARKERS:
+        write_policy_files(tmp_path)
+        path = tmp_path / relative_path
+        path.write_text(
+            path.read_text(encoding="utf-8").replace("`cleanup-ready`", ""),
+            encoding="utf-8",
+        )
+
+        findings = check_agent_policy_gate(tmp_path)
+
+        assert len(findings) == 1
+        assert findings[0].path == path
+        assert findings[0].message == (
+            "required agent policy marker is missing: `cleanup-ready`"
+        )
+
+
+def test_agent_policy_gate_requires_done_title_suffix(tmp_path: Path) -> None:
+    """Verify that terminal cleanup retains the exact idempotent title suffix.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    for relative_path in ORDERED_TERMINAL_CLEANUP_MARKERS:
+        write_policy_files(tmp_path)
+        path = tmp_path / relative_path
+        path.write_text(
+            path.read_text(encoding="utf-8").replace('" · Done"', ""),
+            encoding="utf-8",
+        )
+
+        findings = check_agent_policy_gate(tmp_path)
+
+        assert len(findings) == 1
+        assert findings[0].path == path
+        assert findings[0].message == (
+            'required agent policy marker is missing: " · Done"'
+        )
+
+
+def test_agent_policy_gate_requires_terminal_cleanup_order(tmp_path: Path) -> None:
+    """Verify that branch, worktree, and title transitions remain ordered.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    for relative_path, markers in ORDERED_TERMINAL_CLEANUP_MARKERS.items():
+        write_policy_files(tmp_path)
+        path = tmp_path / relative_path
+        text = path.read_text(encoding="utf-8")
+        path.write_text(
+            text.replace("\n".join(markers), "\n".join(reversed(markers))),
+            encoding="utf-8",
+        )
+
+        findings = check_agent_policy_gate(tmp_path)
+
+        assert len(findings) == 1
+        assert findings[0].path == path
+        assert findings[0].message == (
+            "completed-task cleanup markers must remain ordered: "
+            + " -> ".join(markers)
         )
 
 

@@ -138,6 +138,37 @@ status: current
 - After merging, verify the pull request state, confirm that the squash commit is reachable from current `origin/main`,
   check linked issue closure, and monitor applicable post-merge workflows before reporting completion.
 
+### Completed task cleanup
+
+- A task becomes `cleanup-ready` only after its exact pull request is merged, the merge commit is reachable from current
+  `origin/main`, the linked issue is closed, applicable post-merge workflows are complete, and no review, deployment,
+  release, or maintainer activity remains.
+- Before becoming idle, a worktree-backed originating task sends the primary-checkout cleanup controller a handoff with
+  the repository, task identifier and current title, pull-request number, task-owned branch, absolute worktree path,
+  pull-request head SHA, and merge commit SHA. The controller waits for the task to be idle and unpinned and treats the
+  handoff only as evidence to revalidate.
+- Re-fetch GitHub and Git state. Require the exact merged pull request and closed issue, completed post-merge activity,
+  exclusive task ownership of the branch and worktree, and a registered, clean, unlocked, non-reparse-point worktree
+  beneath the resolved Codex worktree root. Never remove the primary checkout, a permanent or user-created worktree, or
+  an ambiguous target.
+- Complete `remote_branch_absent` first. If the same-repository task branch exists, require its ref to equal the recorded
+  pull-request head SHA, delete only that ref, and verify it is absent. An already absent ref satisfies the gate. Do not
+  enable repository-wide automatic branch deletion.
+- Complete `worktree_removed` second through `git worktree remove`, followed by affected-repository stale-registration
+  pruning and verification that both the absolute path and registration are absent. A primary-checkout task records the
+  gate as not applicable after proving the checkout identity and never removes it.
+- Complete `task_title_done` last by using supported title controls to append the exact suffix " · Done" once while
+  preserving description and issue/pull-request traceability. Keep the task unarchived unless archival is separately
+  requested. Any failure or ambiguity blocks this title transition and leaves an actionable retry condition.
+- A squash-merged head that is not an ancestor of `main` is eligible only when the worktree HEAD equals the recorded
+  pull-request head SHA and the recorded merge commit is reachable from current `origin/main`.
+- The daily Codex cleanup automation reconciles missed handoffs and partial transitions with these same gates. Its
+  dry-run decisions must fail closed for an active or pinned task, dirty or locked worktree, mismatched head SHA, failed
+  remote deletion, failed worktree removal, or ambiguous ownership; it must accept an already absent remote branch,
+  avoid duplicating " · Done", and preserve the primary checkout.
+- Private vulnerability remediation also follows `SECURITY.md`. Keep task titles, handoffs, cleanup evidence, and remote
+  operations sanitized and private, and retain the task while coordinated release or disclosure activity remains.
+
 ## API authoring
 
 - Follow the [API authoring standard](api-authoring.md) for every new or changed `/api/v1` operation.

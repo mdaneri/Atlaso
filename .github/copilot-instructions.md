@@ -33,6 +33,10 @@ New Tabulators must use `window.AtlasoUiPatterns.createGrid(...)`; every new or 
   preserve explicit holds, require strict up-to-date required checks to bind the validated base, also guard the head
   SHA, never use an administrative bypass, fail closed instead of invoking `gh pr merge` when a merge queue is required,
   and keep GitHub auto-merge as a separate explicit maintainer choice;
+- after an authorized merge and all remaining activity, send the primary-checkout controller a `cleanup-ready` handoff
+  and require the ordered terminal states `remote_branch_absent`, `worktree_removed`, and `task_title_done`; delete only
+  the task-owned GitHub branch, never remove the primary checkout, and append the exact suffix " · Done" once only after
+  every cleanup gate succeeds;
 - keep each pull request within its linked scope; search for an existing issue and open a separately typed, sanitized
   issue when an evidence-backed unrelated problem has no tracking record, while routing suspected vulnerabilities
   through `SECURITY.md` instead of a public issue;

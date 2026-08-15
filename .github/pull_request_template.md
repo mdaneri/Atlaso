@@ -33,6 +33,9 @@ surfaces.
   one. Before any authorized squash merge, explicit holds, strict up-to-date required checks that bind the base, an
   expected-head guard without administrative bypass, and confirmation that no merge queue is required were checked; or
   this pull request is outside that policy.
+- [ ] After any authorized merge and remaining post-merge activity, the originating task will send a `cleanup-ready`
+  handoff and remain incomplete until `remote_branch_absent`, `worktree_removed`, and `task_title_done` occur in order;
+  only then may supported title controls append the exact suffix " · Done" once.
 - [ ] Evidence-backed issues discovered outside this pull request's linked scope were matched to existing issues or
   opened separately with one appropriate type label; suspected sensitive vulnerabilities were kept private.
 - [ ] For a temporary-private-fork pull request, advisory-side maintainer review and recorded local validation replace
