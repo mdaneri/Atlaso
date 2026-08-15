@@ -211,8 +211,8 @@ live in `atlaso/app/routers/api_v1/network_boot.py`. The stable facades continue
 and helper name while supplying facade-owned rendering, identity, CSRF, task, desired-state, and compatibility helpers
 through the typed UI router builder. Neither extracted router imports a monolithic facade.
 
-The UI registry places `network_boot` between `facade_between_identity_network_boot` and
-`facade_after_network_boot`, preserving its established position after Web Terminal and before Backup Restore. The API
+The UI registry places `network_boot` between `facade_between_identity_network_boot` and `settings_backup`, preserving
+its established position after Web Terminal and before Backup Restore. The API
 v1 registry places `network_boot` between `facade_between_vcf_private_registry_network_boot` and `managed_ldap`,
 preserving its established position after VCF Private Registry and before Managed LDAP.
 
@@ -244,7 +244,7 @@ route block; extraction into the VCF workflow router would change both ownership
 
 The three API v1 status transports live together in `atlaso/app/routers/api_v1/vcf_workflows.py`, but the module returns
 three ordered router contributions so their effective positions do not collapse. `vcf_workflows_backups` remains
-immediately after `facade_between_operations_vcf_backups`; the facade segment through ESX Storage remains before
+immediately after `settings`; the facade segment through ESX Storage remains before
 `vcf_workflows_offline_depot`; the compatibility `/api/v1/repository/status` alias remains in
 `facade_between_offline_depot_private_registry`; and `vcf_workflows_private_registry` remains before
 `facade_between_vcf_private_registry_network_boot` and Network Boot. The stable API v1 facade continues to export all
@@ -275,7 +275,7 @@ Boot. The stable UI facade continues to export all established endpoints and com
 
 The contiguous service, log, audit-event, and job API v1 transports live in
 `atlaso/app/routers/api_v1/operations.py`. The API registry places `operations` between
-`facade_between_firewall_operations` and `facade_between_operations_vcf_backups`, retaining the original position
+`facade_between_firewall_operations` and `settings`, retaining the original position
 after Dashboard/Monitor and the intervening networking domains, and before Settings and later VCF Backups status.
 Every path, method, name, operation ID, tag, scope, status, response schema, audit, cancellation, and redaction
 contract remains unchanged.
