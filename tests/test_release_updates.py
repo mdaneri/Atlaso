@@ -2389,6 +2389,122 @@ def test_worker_restart_uses_matching_root_release_finalizer(
         assert completed.status == "succeeded"
 
 
+def test_worker_restart_resumes_untouched_children_after_healthy_release_rollback(
+    client,
+    monkeypatch,
+    tmp_path,
+):
+    """Verify healthy rollback resumes independent children without rerunning release.
+
+    Args:
+        client: HTTP test client providing isolated application state.
+        monkeypatch: Pytest fixture used to replace completion side effects.
+        tmp_path: Temporary directory provided for finalizer evidence.
+    """
+    from sqlalchemy import select
+
+    from atlaso.app import ui, worker
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job, JobStep
+    from atlaso.app.services.appliance_update import ensure_appliance_update_job_steps
+
+    finalizer = tmp_path / "rollback-finalizer.json"
+    finalizer.write_text(
+        json.dumps(
+            {
+                "job_id": "job_release_rollback_handoff",
+                "status": "failed",
+                "release": "0.9.0",
+                "rolled_back": True,
+                "rollback_health": True,
+                "failure_layer": "management_front_door",
+                "commands": [],
+                "error": "candidate readiness failed",
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(worker, "APPLIANCE_UPDATE_FINALIZER_PATH", str(finalizer))
+    with SessionLocal() as db:
+        job = Job(
+            id="job_release_rollback_handoff",
+            type="appliance-update",
+            status="running",
+            created_by="admin",
+            task_config_json=json.dumps(
+                {
+                    "selected_streams": ["atlaso_release", "powershell_modules", "photon_os"],
+                    "settings": {},
+                    "mode": "run",
+                }
+            ),
+            result='{"status":"running","success":false}',
+        )
+        db.add(job)
+        db.flush()
+        steps = ensure_appliance_update_job_steps(
+            db,
+            job=job,
+            selected_streams=["atlaso_release", "powershell_modules", "photon_os"],
+        )
+        steps[0].status = "running"
+        db.commit()
+
+        assert worker.recover_interrupted_worker_jobs(db) == 1
+        recovered = db.get(Job, job.id)
+        assert recovered.status == "pending"
+        recovered_steps = db.execute(
+            select(JobStep).where(JobStep.job_id == job.id).order_by(JobStep.position)
+        ).scalars().all()
+        assert [(step.component_key, step.status) for step in recovered_steps] == [
+            ("atlaso_release", "failed"),
+            ("powershell_modules", "pending"),
+            ("photon_os", "pending"),
+        ]
+
+    calls: list[str] = []
+
+    def execute_remaining(**kwargs):
+        """Return a successful result for the independent PowerShell child.
+
+        Args:
+            **kwargs: Appliance Update execution fields supplied by the worker.
+        """
+        stream = str(kwargs["selected_stream_ids"][0])
+        calls.append(stream)
+        return {
+            "unit_id": stream,
+            "label": stream,
+            "mode": "run",
+            "selected_streams": [stream],
+            "selected_labels": [stream],
+            "status": "succeeded",
+            "success": True,
+            "dry_run": False,
+            "restart_after_commit": False,
+            "commands": [],
+            "config_path": "",
+            "config_preview": "",
+        }
+
+    monkeypatch.setattr(ui, "execute_appliance_update_job", execute_remaining)
+
+    assert worker.run_worker_once() == "job_release_rollback_handoff"
+    assert calls == ["powershell_modules"]
+    with SessionLocal() as db:
+        completed = db.get(Job, "job_release_rollback_handoff")
+        completed_steps = db.execute(
+            select(JobStep).where(JobStep.job_id == completed.id).order_by(JobStep.position)
+        ).scalars().all()
+        assert completed.status == "failed"
+        assert [(step.component_key, step.status) for step in completed_steps] == [
+            ("atlaso_release", "failed"),
+            ("powershell_modules", "succeeded"),
+            ("photon_os", "skipped"),
+        ]
+        assert "earlier selected update stream failed" in (completed_steps[-1].error or "")
+
+
 @pytest.mark.parametrize("finalizer_status", ["succeeded", "failed"])
 def test_worker_restart_runs_normal_release_completion_bookkeeping(
     client,

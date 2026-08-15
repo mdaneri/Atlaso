@@ -393,11 +393,24 @@ def recover_interrupted_worker_jobs(
                     total=len(update_steps),
                 )
             remaining_steps = [step for step in update_steps if step is not release_step]
-            resume_pending_children = bool(
+            release_handoff_complete = bool(
                 recovered
-                and finalizer_status == JobStatus.SUCCEEDED.value
                 and release_step is not None
-                and release_step.status == JobStatus.SUCCEEDED.value
+                and (
+                    (
+                        finalizer_status == JobStatus.SUCCEEDED.value
+                        and release_step.status == JobStatus.SUCCEEDED.value
+                    )
+                    or (
+                        finalizer_status == JobStatus.FAILED.value
+                        and release_step.status == JobStatus.FAILED.value
+                        and definitive.get("rolled_back") is True
+                        and definitive.get("rollback_health") is True
+                    )
+                )
+            )
+            resume_pending_children = bool(
+                release_handoff_complete
                 and remaining_steps
                 and all(step.status == JobStatus.PENDING.value for step in remaining_steps)
             )
@@ -659,7 +672,7 @@ def _run_appliance_update(job_id: str) -> None:
         execute_appliance_update_job,
     )
 
-    completed_stream_results: dict[str, dict[str, Any]] = {}
+    terminal_stream_results: dict[str, dict[str, Any]] = {}
     with SessionLocal() as db:
         job = db.get(Job, job_id)
         if job is None:
@@ -673,14 +686,18 @@ def _run_appliance_update(job_id: str) -> None:
         if mode != "source_sync":
             steps = ensure_appliance_update_job_steps(db, job=job, selected_streams=selected)
             for step in steps:
-                if step.status != JobStatus.SUCCEEDED.value:
+                if step.status not in {
+                    JobStatus.SUCCEEDED.value,
+                    JobStatus.FAILED.value,
+                    JobStatus.SKIPPED.value,
+                }:
                     continue
                 try:
                     parsed_result = json.loads(step.result or "{}")
                 except json.JSONDecodeError:
                     parsed_result = {}
-                if isinstance(parsed_result, dict) and parsed_result.get("success") is True:
-                    completed_stream_results[step.component_key] = parsed_result
+                if isinstance(parsed_result, dict) and str(parsed_result.get("status") or "") == step.status:
+                    terminal_stream_results[step.component_key] = parsed_result
             db.commit()
     if mode == "source_sync":
         try:
@@ -706,8 +723,8 @@ def _run_appliance_update(job_id: str) -> None:
         stream_results: list[dict[str, Any]] = []
         earlier_failed = False
         for index, stream in enumerate(execution_streams, start=1):
-            if stream in completed_stream_results:
-                stream_result = completed_stream_results[stream]
+            if stream in terminal_stream_results:
+                stream_result = terminal_stream_results[stream]
             elif mode == "run" and stream == "photon_os" and earlier_failed:
                 skip_reason = "Photon OS was not started because an earlier selected update stream failed."
                 stream_result = {
@@ -754,7 +771,7 @@ def _run_appliance_update(job_id: str) -> None:
                     )
             stream_results.append(stream_result)
             earlier_failed = earlier_failed or not bool(stream_result.get("success"))
-            if stream not in completed_stream_results:
+            if stream not in terminal_stream_results:
                 _complete_appliance_update_step(
                     job_id,
                     stream,

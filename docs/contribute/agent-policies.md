@@ -435,7 +435,10 @@ status: current
   the ordinary child completion, parent completion, terminal task-log, and audit bookkeeping. Any
   failure after the switch must restore the previous release, helper/systemd assets, SQLite snapshot, and working nginx
   front door, write
-  `rolled_back=true` with a sanitized failing layer, and fail both release child and parent. Worker startup must reject
+  `rolled_back=true` with a sanitized failing layer, and fail both release child and parent. After a verified healthy
+  rollback, preserve the terminal failed release child and requeue untouched children without rerunning it; retain the
+  normal rule that independently runnable PowerShell Modules proceeds while Photon OS skips after an earlier failure.
+  Worker startup must reject
   a success finalizer that disagrees with the durable active release or running version. On the first transition from
   the legacy updater, recognize only its bounded successful service-health or no-change finalizer shape and reconcile
   it from the exact active links, signed receipt identity, and running candidate version; do not reinterpret missing

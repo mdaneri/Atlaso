@@ -264,7 +264,9 @@ helper stops and verifies the caller inactive before publishing incomplete rollb
 removes and flushes any staged
 source-credential file before restarting the calling worker. The definitive finalizer retains sanitized helper command
 evidence so startup recovery can run the same child completion, parent completion, terminal task-log, and audit
-bookkeeping as an uninterrupted update. The helper then requires
+bookkeeping as an uninterrupted update. After a verified healthy release rollback, recovery preserves the failed
+release child and requeues untouched children: PowerShell Modules still runs independently, while Photon OS is skipped
+under the normal earlier-failure rule. The failed release is never rerun implicitly. The helper then requires
 `current`, the compatibility virtualenv, the signed release receipt, internal `/openapi.json`, and the applied HTTP or
 HTTPS nginx management front door to report the exact candidate version. The finalizer retains the candidate and
 previous versions, receipt identity, active-release verification, internal and front-door versions, and sanitized
