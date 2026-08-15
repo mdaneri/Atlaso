@@ -1915,6 +1915,7 @@ def test_worker_restart_keeps_release_finalizer_scoped_to_its_child(client, monk
         ("finalizer_persistence", "finalizer_persistence", True),
         ("rollback_symlink_sync", "candidate_startup", True),
         ("rollback_link_restore", "candidate_startup", False),
+        ("rollback_activation", "candidate_startup", False),
     ],
 )
 def test_failed_candidate_restores_previous_release_and_database(
@@ -2106,7 +2107,12 @@ def test_failed_candidate_restores_previous_release_and_database(
             candidate_starts += 1
             success = (
                 failure_stage
-                not in {"candidate_startup", "rollback_symlink_sync", "rollback_link_restore"}
+                not in {
+                    "candidate_startup",
+                    "rollback_symlink_sync",
+                    "rollback_link_restore",
+                    "rollback_activation",
+                }
                 or candidate_starts > 1
             )
         return {
@@ -2119,10 +2125,12 @@ def test_failed_candidate_restores_previous_release_and_database(
 
     monkeypatch.setattr(helper, "_service_command", service_command)
     maintenance_disables = 0
+    maintenance_states: list[bool] = []
 
     def maintenance(enabled):
         """Inject one failure while removing candidate maintenance mode."""
         nonlocal maintenance_disables
+        maintenance_states.append(enabled)
         success = True
         if not enabled:
             maintenance_disables += 1
@@ -2164,7 +2172,13 @@ def test_failed_candidate_restores_previous_release_and_database(
     def activation(root, release_definition, **_kwargs):
         """Inject candidate final-readiness failures while keeping rollback healthy."""
         is_candidate = root.name == "0.9.0"
-        layer = failure_stage if is_candidate and failure_stage in {"nginx_configuration", "management_front_door"} else ""
+        layer = (
+            failure_stage
+            if is_candidate and failure_stage in {"nginx_configuration", "management_front_door"}
+            else "management_front_door"
+            if not is_candidate and failure_stage == "rollback_activation"
+            else ""
+        )
         success = not layer
         evidence = {
             "success": success,
@@ -2199,10 +2213,11 @@ def test_failed_candidate_restores_previous_release_and_database(
     with pytest.raises(ValueError, match=outcome):
         helper._apply_atlaso_release({}, {})
 
-    expected_release = previous if expected_rolled_back else releases / "0.9.0"
+    link_restored = failure_stage != "rollback_link_restore"
+    expected_release = previous if link_restored else releases / "0.9.0"
     assert current.resolve() == expected_release.resolve()
     assert get_identity() == "before"
-    assert (releases / "0.9.0").exists() is not expected_rolled_back
+    assert (releases / "0.9.0").exists() is not link_restored
     finalizer = json.loads((tmp_path / "finalizer.json").read_text(encoding="utf-8"))
     assert finalizer["rolled_back"] is expected_rolled_back
     assert finalizer["rollback_health"] is expected_rolled_back
@@ -2212,6 +2227,12 @@ def test_failed_candidate_restores_previous_release_and_database(
     if failure_stage == "rollback_link_restore":
         assert "rollback_release_link" in finalizer["rollback_failures"]
         assert "rollback_active_release_link" in finalizer["rollback_failures"]
+        assert False not in maintenance_states
+        assert maintenance_states[-1] is True
+    if failure_stage == "rollback_activation":
+        assert "rollback_activation_verification" in finalizer["rollback_failures"]
+        assert False in maintenance_states
+        assert maintenance_states[-1] is True
 
 
 def test_release_activation_verification_requires_exact_candidate_through_nginx(monkeypatch, tmp_path):

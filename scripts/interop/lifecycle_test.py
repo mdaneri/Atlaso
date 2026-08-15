@@ -3018,14 +3018,19 @@ def _reboot_appliance_and_wait(
             except LifecycleError:
                 after_boot_id = ""
             if after_boot_id and after_boot_id != before_boot_id:
-                ready = HttpClient(client.base_url).request("GET", "/openapi.json", timeout=5)
-                if ready[0] == 200:
-                    return {
-                        "scheduled": True,
-                        "endpoint_interrupted": observed_unavailable,
-                        "boot_id_changed": True,
-                        "openapi_status": ready[0],
-                    }
+                try:
+                    ready = HttpClient(client.base_url).request("GET", "/openapi.json", timeout=5)
+                except Exception:  # noqa: BLE001 - nginx may still be recovering after SSH returns.
+                    observed_unavailable = True
+                else:
+                    if ready[0] == 200:
+                        return {
+                            "scheduled": True,
+                            "endpoint_interrupted": observed_unavailable,
+                            "boot_id_changed": True,
+                            "openapi_status": ready[0],
+                        }
+                    observed_unavailable = True
         time.sleep(3)
     raise LifecycleError("Appliance reboot did not produce a new nginx-ready kernel boot within the lifecycle timeout.")
 

@@ -268,6 +268,7 @@ def test_reboot_appliance_waits_for_new_boot_and_host_facing_readiness(monkeypat
         [
             "11111111-1111-1111-1111-111111111111",
             "22222222-2222-2222-2222-222222222222",
+            "22222222-2222-2222-2222-222222222222",
         ]
     )
     monkeypatch.setattr(lifecycle, "_appliance_boot_id", lambda _args: next(boot_ids))
@@ -295,7 +296,11 @@ def test_reboot_appliance_waits_for_new_boot_and_host_facing_readiness(monkeypat
         def request(self, method, path, **_kwargs):  # type: ignore[no-untyped-def]  # Minimal fake accepts the production client's dynamic request shape.
             assert (method, path) == ("GET", "/openapi.json")
             type(self).calls += 1
-            return (503 if self.calls == 1 else 200), "{}", {}
+            if self.calls == 1:
+                return 503, "{}", {}
+            if self.calls == 2:
+                raise lifecycle.urllib.error.URLError("nginx is still starting")
+            return 200, "{}", {}
 
     monkeypatch.setattr(lifecycle, "HttpClient", ProbeClient)
     monkeypatch.setattr(lifecycle.time, "sleep", lambda _seconds: None)
@@ -308,6 +313,7 @@ def test_reboot_appliance_waits_for_new_boot_and_host_facing_readiness(monkeypat
         "boot_id_changed": True,
         "openapi_status": 200,
     }
+    assert ProbeClient.calls == 4
 
 
 def test_routing_wan_only_plan_and_routing_rule_payload():

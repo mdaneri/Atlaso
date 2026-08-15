@@ -11816,32 +11816,6 @@ def _apply_atlaso_release(
             if isinstance(rollback_services_result, dict)
             else _release_check("rollback_service_state", False, "Rollback service state was unavailable.")
         )
-        _maintenance_ok, rollback_maintenance_result = rollback_action(
-            "maintenance_cleanup",
-            lambda: _set_release_maintenance(False),
-        )
-        rollback_maintenance = (
-            rollback_maintenance_result
-            if isinstance(rollback_maintenance_result, dict)
-            else _release_check(
-                "rollback_maintenance_cleanup",
-                False,
-                "Rollback maintenance cleanup was unavailable.",
-            )
-        )
-        _durable_ok, rollback_durable_result = rollback_action(
-            "durable_activation",
-            _sync_release_activation,
-        )
-        rollback_durable = (
-            rollback_durable_result
-            if isinstance(rollback_durable_result, dict)
-            else _release_check(
-                "rollback_durable_activation",
-                False,
-                "Rollback durability evidence was unavailable.",
-            )
-        )
         _link_ok, rollback_link_result = rollback_action(
             "active_release_link",
             lambda: _release_check(
@@ -11861,6 +11835,55 @@ def _apply_atlaso_release(
                 "rollback_active_release_link",
                 False,
                 "Rollback active-release link evidence was unavailable.",
+            )
+        )
+        rollback_completed = bool(
+            database_restored
+            and assets_restored
+            and rollback_link.get("success", False)
+        )
+        rollback_pre_cleanup_ready = bool(
+            rollback_completed
+            and data_disk_restored
+            and systemd_reloaded
+            and services_started
+            and rollback_health.get("success", False)
+            and rollback_services.get("success", False)
+        )
+        if rollback_pre_cleanup_ready:
+            _maintenance_ok, rollback_maintenance_result = rollback_action(
+                "maintenance_cleanup",
+                lambda: _set_release_maintenance(False),
+            )
+            rollback_maintenance = (
+                rollback_maintenance_result
+                if isinstance(rollback_maintenance_result, dict)
+                else _release_check(
+                    "rollback_maintenance_cleanup",
+                    False,
+                    "Rollback maintenance cleanup was unavailable.",
+                )
+            )
+        else:
+            rollback_action("maintenance_hold", lambda: _set_release_maintenance(True))
+            rollback_maintenance = _release_check(
+                "rollback_maintenance_cleanup",
+                False,
+                "Maintenance remains enabled because rollback readiness is incomplete.",
+            )
+            commands.append(rollback_maintenance)
+            rollback_failures.append(rollback_maintenance)
+        _durable_ok, rollback_durable_result = rollback_action(
+            "durable_activation",
+            _sync_release_activation,
+        )
+        rollback_durable = (
+            rollback_durable_result
+            if isinstance(rollback_durable_result, dict)
+            else _release_check(
+                "rollback_durable_activation",
+                False,
+                "Rollback durability evidence was unavailable.",
             )
         )
         rollback_release = {"version": previous_version}
@@ -11884,22 +11907,30 @@ def _apply_atlaso_release(
                 "candidate_version": previous_version,
                 "failure_layer": "rollback_activation_verification",
             }
-        rollback_completed = bool(
-            database_restored
-            and assets_restored
-            and rollback_link.get("success", False)
-        )
+        if not rollback_activation.get("success", False):
+            evidence = _release_check(
+                "rollback_activation_verification",
+                False,
+                "Rollback activation verification did not prove the previous release ready.",
+            )
+            rollback_failures.append(evidence)
+            commands.append(evidence)
         rollback_ready = bool(
-            rollback_completed
-            and data_disk_restored
-            and systemd_reloaded
-            and services_started
-            and rollback_health.get("success", False)
-            and rollback_services.get("success", False)
+            rollback_pre_cleanup_ready
             and rollback_maintenance.get("success", False)
             and rollback_durable.get("success", False)
             and rollback_activation.get("success", False)
         )
+        if not rollback_ready:
+            rollback_action("maintenance_fail_closed", lambda: _set_release_maintenance(True))
+            rollback_maintenance = _release_check(
+                "rollback_maintenance_cleanup",
+                False,
+                "Maintenance is required because rollback verification is incomplete.",
+            )
+            commands.append(rollback_maintenance)
+            if not any(item.get("layer") == rollback_maintenance["layer"] for item in rollback_failures):
+                rollback_failures.append(rollback_maintenance)
         rollback_payload = {
             "status": "failed",
             "success": False,
