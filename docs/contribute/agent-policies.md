@@ -55,6 +55,11 @@ status: current
   issue created or linked before implementation begins, exactly one applicable type label, relevant documentation
   updated in the same change, and a pull request linked with `Closes #<issue>`. Do not commit changes directly to
   `main`.
+- Keep every pull request within its linked issue scope. When a reproducible or otherwise evidence-backed actionable
+  problem outside that scope is discovered, search open and closed issues for an existing record. If none exists, open
+  a separate issue with exactly one appropriate type label and sanitized evidence. Link it when useful, but do not add
+  `Closes` unless the active pull request resolves it, and do not expand the pull request without explicit maintainer
+  approval. Route suspected sensitive vulnerabilities through `SECURITY.md`, never a public issue.
 - The private vulnerability remediation workflow in
   [SECURITY.md](https://github.com/mdaneri/Atlaso/blob/main/SECURITY.md) is the only exception to the public issue,
   repository branch, and `Closes #<issue>` requirements. Use the draft advisory as the private tracking record, create
@@ -102,6 +107,32 @@ status: current
   push, request `@codex review`, and restart monitoring for the new exact head. Completion requires successful
   current-head checks with no unanswered actionable comment or unresolved non-outdated review thread. Escalate genuine
   maintainer decisions or external failures rather than guessing or reporting completion.
+
+### Default merge authorization
+
+- An implementation or pull-request delivery request grants standing authorization for an automated contributor to
+  merge the ordinary, ready-for-review pull request authored and owned by its active task when it targets `main` from a
+  same-repository branch. Exclude human-authored pull requests, forks, drafts, review-only or diagnostic tasks, and
+  private vulnerability remediation. GitHub auto-merge remains a separate explicit maintainer choice.
+- Treat **do not merge**, **leave the pull request open**, **pull request only**, **wait for approval**, and equivalent
+  instructions as holds that override the default until explicitly withdrawn.
+- Immediately before merging, re-fetch the pull request and `main`, then verify the linked issue and type label,
+  documentation, synchronized patch version, all applicable exact-head checks, answered actionable feedback, resolved
+  non-outdated `reviewThreads`, and conflict-free merge state. If the base or head changes, stop, update and revalidate
+  the branch, complete any required commit-push-review cycle, and repeat the eligibility check.
+- An expected-head option does not bind the base SHA. Direct agent merging therefore requires an active branch rule with
+  strict up-to-date required checks that blocks the merge if `main` advances after validation. Re-read the rule
+  immediately before merging, never use an administrative bypass, and stop for maintainer direction when strict base
+  enforcement is unavailable.
+- Inspect the active rules for a required merge queue. If one is present, do not invoke `gh pr merge`, because it may
+  enqueue the pull request or enable auto-merge rather than complete a synchronous guarded merge. Stop for maintainer
+  direction instead of entering that workflow implicitly.
+- With both base and head guards present and no required merge queue, perform only a squash merge guarded by the expected
+  head SHA. Supply the finalized pull-request title as the subject and an extended body describing the outcome,
+  rationale, principal changes, validation, and linked issues. Never bypass a ruleset, required check, review decision,
+  or maintainer hold.
+- After merging, verify the pull request state, confirm that the squash commit is reachable from current `origin/main`,
+  check linked issue closure, and monitor applicable post-merge workflows before reporting completion.
 
 ## API authoring
 
