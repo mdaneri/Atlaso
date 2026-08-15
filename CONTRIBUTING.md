@@ -94,20 +94,24 @@ failures that require maintainer action.
 
 `main` accepts squash merges only after required checks pass. Do not commit directly to `main`.
 
-### Default merge authorization
+### Explicit merge authorization
 
-An implementation or pull-request delivery request grants an automated contributor standing authorization to merge the
-ordinary, ready-for-review pull request that its active task authors and owns when the pull request targets `main` from
-a branch in this repository. The default excludes human-authored pull requests, forks, drafts, review-only or diagnostic
-tasks, and private vulnerability remediation. It authorizes a guarded agent-performed merge; it does not enable
-GitHub auto-merge.
+Preparing a change and merging it are separate authorities. An implementation, fix, **solve**, pull-request delivery,
+or similar request authorizes an automated contributor to prepare and publish a ready-for-review pull request, but does
+not authorize merging it. Merge the ordinary same-repository pull request authored and owned by the active task only
+after an explicit merge instruction for that pull request. The instruction may be part of the original request or a
+later direction. Without an explicit merge instruction, leave the pull request open after delivery and follow-through
+are complete. This policy does not grant authority over human-authored pull requests, forks, drafts, review-only or
+diagnostic tasks, or private vulnerability remediation. GitHub auto-merge remains a separate explicit maintainer
+choice.
 
 An explicit **do not merge**, **leave the pull request open**, **pull request only**, **wait for approval**, or equivalent
-hold overrides the default until explicitly withdrawn. Immediately before merging, re-fetch the pull request and
-`main`; verify the linked issue and type label, documentation, synchronized patch version, all applicable checks for the
-exact head, answered actionable feedback, resolved non-outdated review threads, and a conflict-free merge state. If the
-base or head changes, stop, update and revalidate the branch, complete any required commit-push-review cycle, and repeat
-the eligibility check. Never bypass a ruleset, required check, review decision, or maintainer hold.
+hold blocks merging until it is explicitly withdrawn and the merge is authorized. Immediately before any authorized
+merge, re-fetch the pull request and `main`; verify the linked issue and type label, documentation, synchronized patch
+version, all applicable checks for the exact head, answered actionable feedback, resolved non-outdated review threads,
+and a conflict-free merge state. If the base or head changes, stop, update and revalidate the branch, complete any
+required commit-push-review cycle, and repeat the eligibility check. Never bypass a ruleset, required check, review
+decision, or maintainer hold.
 
 Because an expected-head option does not bind the base SHA, direct agent merging also requires an active branch rule
 with strict up-to-date required checks that blocks the merge if `main` advances after validation. Re-read that rule
