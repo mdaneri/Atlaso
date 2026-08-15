@@ -126,21 +126,24 @@ monitoring for the new exact head. Do not report completion while current-head c
 actionable comment is unanswered, or a non-outdated review thread remains unresolved. Escalate genuine maintainer
 decisions and external failures instead of guessing or claiming completion.
 
-### Default merge authorization
+### Explicit merge authorization
 
-An implementation or pull-request delivery request grants an automated contributor standing authorization to merge the
-ordinary, ready-for-review pull request that the active task authors and owns, provided it targets `main` from a branch
-in this repository. This default does not apply to human-authored pull requests, forks, drafts, review-only or
-diagnostic tasks, or private vulnerability remediation. GitHub auto-merge remains a separate explicit maintainer
-choice.
+Preparing a change and merging it are separate authorities. An implementation, fix, **solve**, pull-request delivery,
+or similar request authorizes an automated contributor to prepare and publish a ready-for-review pull request, but does
+not authorize merging it. Merge the ordinary same-repository pull request authored and owned by the active task only
+when the user or maintainer gives an explicit merge instruction for that pull request. The instruction may be included
+in the original request or given later. If no explicit merge instruction exists, leave the pull request open after all
+delivery and follow-through gates pass and report its ready state. This policy does not grant authority over
+human-authored pull requests, forks, drafts, review-only or diagnostic tasks, or private vulnerability remediation.
+GitHub auto-merge remains a separate explicit maintainer choice.
 
 An instruction such as **do not merge**, **leave the pull request open**, **pull request only**, **wait for approval**,
-or an equivalent hold overrides the default until the user or maintainer explicitly withdraws it. Before merging,
-re-fetch the pull request and `main`, then verify that the linked issue and type label, documentation, synchronized patch
-version, applicable exact-head checks, actionable comments, authoritative `reviewThreads`, and conflict-free merge state
-are all complete for the current head. If the base or head changes, stop the merge, update and revalidate the branch,
-repeat any required commit-push-review cycle, and reassess authorization and eligibility. Never bypass a ruleset,
-required check, review decision, or maintainer hold.
+or an equivalent hold blocks merging until the user or maintainer explicitly withdraws it and authorizes the merge.
+Before any authorized merge, re-fetch the pull request and `main`, then verify that the linked issue and type label,
+documentation, synchronized patch version, applicable exact-head checks, actionable comments, authoritative
+`reviewThreads`, and conflict-free merge state are all complete for the current head. If the base or head changes, stop
+the merge, update and revalidate the branch, repeat any required commit-push-review cycle, and reassess authorization
+and eligibility. Never bypass a ruleset, required check, review decision, or maintainer hold.
 
 An expected-head option does not bind the base SHA. Direct agent merging therefore also requires an active branch rule
 with strict up-to-date required checks that blocks the merge if `main` advances after validation. Re-read that rule

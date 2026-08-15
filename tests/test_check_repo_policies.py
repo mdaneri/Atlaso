@@ -245,25 +245,59 @@ def test_agent_policy_gate_rejects_missing_pr_follow_through_contract(
         )
 
 
-def test_agent_policy_gate_rejects_missing_default_merge_authorization(
+def test_agent_policy_gate_rejects_missing_explicit_merge_authorization(
     tmp_path: Path,
 ) -> None:
-    """Verify that every agent entry point retains default merge authorization.
+    """Verify that every agent entry point requires explicit merge authorization.
 
     Args:
         tmp_path: Temporary directory provided by pytest for isolated filesystem state.
     """
     required_entry_markers = {
-        Path("AGENTS.md"): "### Default merge authorization",
-        Path("CONTRIBUTING.md"): "### Default merge authorization",
-        Path(".github/copilot-instructions.md"): "Default merge authorization",
-        Path(".github/pull_request_template.md"): "Default merge authorization",
+        Path("AGENTS.md"): "### Explicit merge authorization",
+        Path("CONTRIBUTING.md"): "### Explicit merge authorization",
+        Path(".github/copilot-instructions.md"): "Explicit merge authorization",
+        Path(".github/pull_request_template.md"): "Explicit merge authorization",
         Path("docs/contribute/agent-policies.md"): (
-            "### Default merge authorization"
+            "### Explicit merge authorization"
         ),
     }
 
     for relative_path, marker in required_entry_markers.items():
+        write_policy_files(tmp_path)
+        path = tmp_path / relative_path
+        path.write_text(
+            path.read_text(encoding="utf-8").replace(marker, ""),
+            encoding="utf-8",
+        )
+
+        findings = check_agent_policy_gate(tmp_path)
+
+        assert len(findings) == 1
+        assert findings[0].path == path
+        assert findings[0].message == (
+            f"required agent policy marker is missing: {marker}"
+        )
+
+
+def test_agent_policy_gate_rejects_missing_explicit_merge_instruction(
+    tmp_path: Path,
+) -> None:
+    """Verify that agent entry points require an explicit merge instruction.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    required_entry_points = (
+        Path("AGENTS.md"),
+        Path("CONTRIBUTING.md"),
+        Path(".github/copilot-instructions.md"),
+        Path(".github/pull_request_template.md"),
+        Path("docs/contribute/agent-policies.md"),
+    )
+    marker = "explicit merge instruction"
+
+    for relative_path in required_entry_points:
         write_policy_files(tmp_path)
         path = tmp_path / relative_path
         path.write_text(
