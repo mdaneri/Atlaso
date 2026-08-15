@@ -122,6 +122,13 @@ fails before dnsmasq is changed. Restore or renew the management DHCP lease, or 
 review and resubmit the DNS/DHCP unit. After apply, confirm both an Atlaso-managed name and an external name resolve with
 `getent hosts` or direct `dig @127.0.0.1` queries.
 
+## Transport ownership
+
+The management DNS transports and their API v1 counterparts are owned by the dedicated `dns_dhcp` domain routers.
+The stable UI and API facade modules continue to aggregate and export those handlers. This internal ownership split
+does not change any path, method, permission, response, desired-state behavior, dnsmasq rendering, or the global
+Appliance Apply boundary described above.
+
 <!-- BEGIN GENERATED ADDITIONAL SCREENSHOTS -->
 ## Additional verified states
 

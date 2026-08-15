@@ -15,7 +15,8 @@ aggregation facades throughout that migration. Phase 1 established the registrie
 extracted physical-interface and VLAN transport ownership without changing their external contracts. Phase 3 places
 physical-interface desired-state mutation, dependent reconciliation, and audit persistence behind one typed domain
 service shared by both extracted transports. Phase 4 extracts Routes/WAN and Firewall transport ownership while
-preserving the established UI, API v1, desired-state, and global Appliance Apply contracts.
+preserving the established UI, API v1, desired-state, and global Appliance Apply contracts. Phase 5 extracts DNS/DHCP
+transport ownership while retaining dnsmasq behavior and every cross-domain integration.
 
 ## Ownership and responsibilities
 
@@ -97,11 +98,10 @@ in `atlaso/app/routers/ui/firewall.py` and `atlaso/app/routers/api_v1/firewall.p
 the established endpoint and helper names while supplying facade-owned compatibility helpers to each router builder.
 Neither domain router imports a monolithic facade.
 
-The UI registry preserves the effective sequence `facade_before_routes_wan`, `routes_wan`, `firewall`,
-`physical_vlans`, and `facade_after_physical_vlans`. The API v1 registry preserves
-`facade_before_physical_vlans`, `physical_vlans`, `routes_wan`, `facade_between_routes_wan_firewall`, `firewall`, and
-`facade_after_firewall`. These complete expected-domain tuples make an omitted or reordered contribution fail during
-facade import.
+At the Phase 4 boundary, the UI registry ended with `physical_vlans` and `facade_after_physical_vlans`, while the API
+v1 registry placed `facade_between_routes_wan_firewall` between `routes_wan` and `firewall`. Phase 5 extends those
+historical tuples with the DNS/DHCP ownership and current effective sequences documented below. Complete
+expected-domain tuples make an omitted or reordered contribution fail during facade import.
 
 Independently runnable transport coverage lives in:
 
@@ -113,6 +113,25 @@ Independently runnable transport coverage lives in:
 Service rendering, helper, lifecycle, and global Appliance Apply tests retain their existing ownership. This extraction
 does not change templates, browser assets, visible copy, API operations, normalized OpenAPI, route inventory, audit
 actions, or host-mutation boundaries.
+
+## Extracted DNS/DHCP ownership
+
+DNS and DHCP management transports live in `atlaso/app/routers/ui/dns_dhcp.py`; their API v1 transports live in
+`atlaso/app/routers/api_v1/dns_dhcp.py`. The stable facades continue to export the established endpoint and helper
+names while supplying facade-owned compatibility helpers to each router builder. Neither domain router imports a
+monolithic facade.
+
+The UI registry preserves the effective sequence through `physical_vlans`, `dns_dhcp`, and
+`facade_after_dns_dhcp`. The API v1 registry preserves `routes_wan`, the helper-only
+`facade_between_routes_wan_dns_dhcp` segment, `dns_dhcp`, and `firewall`. Independently runnable
+transport coverage lives in `tests/routers/ui/test_dns_dhcp.py` and
+`tests/routers/api_v1/test_dns_dhcp.py`.
+
+Rendering and low-level validation remain in `atlaso/app/services/dnsmasq.py` with their existing
+`tests/test_dns_dhcp.py` coverage. Appliance Apply, VCF, Network Boot/PXE, firewall generation, interface
+reconciliation, and other cross-domain lifecycle tests retain their existing owners. This extraction does not change
+templates, browser assets, visible copy, API operations, normalized OpenAPI, route inventory, audits, desired state, or
+the global Appliance Apply boundary.
 
 ## Route and OpenAPI compatibility
 
@@ -172,6 +191,7 @@ python -m pytest -q tests/routers
 python -m pytest -q tests/routers/ui/test_physical_vlans.py tests/routers/api_v1/test_physical_vlans.py
 python -m pytest -q tests/routers/ui/test_routes_wan.py tests/routers/api_v1/test_routes_wan.py
 python -m pytest -q tests/routers/ui/test_firewall.py tests/routers/api_v1/test_firewall.py
+python -m pytest -q tests/routers/ui/test_dns_dhcp.py tests/routers/api_v1/test_dns_dhcp.py tests/test_dns_dhcp.py
 python -m pytest -q tests/test_openapi_contract.py tests/test_ui_route_namespaces.py tests/test_ui_compliance.py
 python scripts/generate_router_contract_baselines.py --check
 python scripts/check_python_static_analysis.py
