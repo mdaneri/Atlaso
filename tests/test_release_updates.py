@@ -1913,6 +1913,7 @@ def test_worker_restart_keeps_release_finalizer_scoped_to_its_child(client, monk
         ("nginx_configuration", "nginx_configuration"),
         ("management_front_door", "management_front_door"),
         ("finalizer_persistence", "finalizer_persistence"),
+        ("rollback_symlink_sync", "candidate_startup"),
     ],
 )
 def test_failed_candidate_restores_previous_release_and_database(
@@ -2020,6 +2021,8 @@ def test_failed_candidate_restores_previous_release_and_database(
             set_identity("after")
         link.unlink(missing_ok=True)
         link.symlink_to(target, target_is_directory=True)
+        if failure_stage == "rollback_symlink_sync" and target == previous:
+            raise OSError("injected rollback symlink directory sync failure")
 
     monkeypatch.setattr(helper, "_atomic_symlink", replace_symlink)
     monkeypatch.setattr(
@@ -2097,7 +2100,10 @@ def test_failed_candidate_restores_previous_release_and_database(
             success = failure_stage != "symlink_switch" or daemon_reloads > 1
         if action == "start" and units == ("atlaso.service",):
             candidate_starts += 1
-            success = failure_stage != "candidate_startup" or candidate_starts > 1
+            success = (
+                failure_stage not in {"candidate_startup", "rollback_symlink_sync"}
+                or candidate_starts > 1
+            )
         return {
             "command": ["systemctl", action, *units],
             "returncode": 0 if success else 1,
@@ -2194,6 +2200,8 @@ def test_failed_candidate_restores_previous_release_and_database(
     assert finalizer["rolled_back"] is True
     assert finalizer["rollback_health"] is True
     assert finalizer["failure_layer"] == expected_layer
+    if failure_stage == "rollback_symlink_sync":
+        assert "rollback_release_link" in finalizer["rollback_failures"]
 
 
 def test_release_activation_verification_requires_exact_candidate_through_nginx(monkeypatch, tmp_path):

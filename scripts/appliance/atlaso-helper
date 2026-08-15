@@ -26,6 +26,7 @@ import tarfile
 import tempfile
 import time
 import uuid
+from collections.abc import Callable
 from datetime import datetime, timezone
 from ipaddress import ip_address, ip_interface, ip_network
 from pathlib import Path, PurePosixPath
@@ -11726,70 +11727,223 @@ def _apply_atlaso_release(
             }
         )
     except Exception as exc:
-        _service_command("stop", "atlaso.service", "atlaso-console.service")
-        _atomic_symlink(previous, ATLASO_CURRENT_LINK)
+        transaction_error = str(exc)
+        rollback_failures: list[dict] = []
+
+        def rollback_action(layer: str, action: Callable[[], object]) -> tuple[bool, object | None]:
+            """Run one rollback step without preventing later recovery attempts."""
+            try:
+                result = action()
+            except Exception as rollback_exc:  # noqa: BLE001 - rollback must continue after every step.
+                evidence = _release_check(
+                    f"rollback_{layer}",
+                    False,
+                    f"Rollback {layer.replace('_', ' ')} raised {type(rollback_exc).__name__}.",
+                )
+                rollback_failures.append(evidence)
+                commands.append(evidence)
+                return False, None
+            if isinstance(result, list):
+                commands.extend(item for item in result if isinstance(item, dict))
+                success = all(isinstance(item, dict) and item.get("success") for item in result)
+                evidence = _release_check(
+                    f"rollback_{layer}",
+                    success,
+                    f"Rollback {layer.replace('_', ' ')} {'completed' if success else 'failed'}.",
+                )
+                commands.append(evidence)
+                if not success:
+                    rollback_failures.append(evidence)
+                return success, result
+            if isinstance(result, dict):
+                result.setdefault("layer", f"rollback_{layer}")
+                commands.append(result)
+                if not result.get("success"):
+                    rollback_failures.append(result)
+                return bool(result.get("success")), result
+            evidence = _release_check(
+                f"rollback_{layer}",
+                True,
+                f"Rollback {layer.replace('_', ' ')} completed.",
+            )
+            commands.append(evidence)
+            return True, result
+
+        rollback_action(
+            "service_stop",
+            lambda: _service_command("stop", "atlaso.service", "atlaso-console.service"),
+        )
+        rollback_action("release_link", lambda: _atomic_symlink(previous, ATLASO_CURRENT_LINK))
+        database_restored = True
         if database_backed_up:
-            _restore_sqlite_backup(database_backup)
-        _restore_release_owned_files(file_backups)
-        _refresh_release_data_disk_identity(validate=False)
-        _service_command("daemon-reload")
-        _service_command("start", "atlaso.service", "atlaso-console.service")
-        rollback_health = _wait_for_atlaso_health()
-        rollback_services = _service_command(
-            "is-active",
-            "atlaso.service",
-            "atlaso-worker.service",
-            "atlaso-console.service",
+            database_restored, _database_result = rollback_action(
+                "database_restore",
+                lambda: _restore_sqlite_backup(database_backup),
+            )
+        assets_restored, _assets_result = rollback_action(
+            "asset_restore",
+            lambda: _restore_release_owned_files(file_backups),
         )
-        rollback_maintenance = _set_release_maintenance(False)
-        rollback_durable = _sync_release_activation()
+        data_disk_restored, _data_disk_result = rollback_action(
+            "data_disk_identity",
+            lambda: _refresh_release_data_disk_identity(validate=False),
+        )
+        systemd_reloaded, _systemd_result = rollback_action(
+            "systemd_reload",
+            lambda: _service_command("daemon-reload"),
+        )
+        services_started, _start_result = rollback_action(
+            "service_start",
+            lambda: _service_command("start", "atlaso.service", "atlaso-console.service"),
+        )
+        _health_ok, rollback_health_result = rollback_action("internal_health", _wait_for_atlaso_health)
+        rollback_health = (
+            rollback_health_result
+            if isinstance(rollback_health_result, dict)
+            else _release_check("rollback_internal_health", False, "Rollback internal health was unavailable.")
+        )
+        _services_ok, rollback_services_result = rollback_action(
+            "service_state",
+            lambda: _service_command(
+                "is-active",
+                "atlaso.service",
+                "atlaso-worker.service",
+                "atlaso-console.service",
+            ),
+        )
+        rollback_services = (
+            rollback_services_result
+            if isinstance(rollback_services_result, dict)
+            else _release_check("rollback_service_state", False, "Rollback service state was unavailable.")
+        )
+        _maintenance_ok, rollback_maintenance_result = rollback_action(
+            "maintenance_cleanup",
+            lambda: _set_release_maintenance(False),
+        )
+        rollback_maintenance = (
+            rollback_maintenance_result
+            if isinstance(rollback_maintenance_result, dict)
+            else _release_check(
+                "rollback_maintenance_cleanup",
+                False,
+                "Rollback maintenance cleanup was unavailable.",
+            )
+        )
+        _durable_ok, rollback_durable_result = rollback_action(
+            "durable_activation",
+            _sync_release_activation,
+        )
+        rollback_durable = (
+            rollback_durable_result
+            if isinstance(rollback_durable_result, dict)
+            else _release_check(
+                "rollback_durable_activation",
+                False,
+                "Rollback durability evidence was unavailable.",
+            )
+        )
+        _link_ok, rollback_link_result = rollback_action(
+            "active_release_link",
+            lambda: _release_check(
+                "rollback_active_release_link",
+                ATLASO_CURRENT_LINK.is_symlink()
+                and ATLASO_CURRENT_LINK.resolve(strict=True) == previous.resolve(strict=True),
+                "The previous Atlaso release link is restored."
+                if ATLASO_CURRENT_LINK.is_symlink()
+                and ATLASO_CURRENT_LINK.resolve(strict=True) == previous.resolve(strict=True)
+                else "The previous Atlaso release link is not restored.",
+            ),
+        )
+        rollback_link = (
+            rollback_link_result
+            if isinstance(rollback_link_result, dict)
+            else _release_check(
+                "rollback_active_release_link",
+                False,
+                "Rollback active-release link evidence was unavailable.",
+            )
+        )
         rollback_release = {"version": previous_version}
-        rollback_activation, rollback_activation_commands = _release_activation_verification(
-            previous,
-            rollback_release,
-            require_receipt=False,
+        try:
+            rollback_activation, rollback_activation_commands = _release_activation_verification(
+                previous,
+                rollback_release,
+                require_receipt=False,
+            )
+            commands.extend(rollback_activation_commands)
+        except Exception as rollback_exc:  # noqa: BLE001 - retain definitive failed rollback evidence.
+            evidence = _release_check(
+                "rollback_activation_verification",
+                False,
+                f"Rollback activation verification raised {type(rollback_exc).__name__}.",
+            )
+            rollback_failures.append(evidence)
+            commands.append(evidence)
+            rollback_activation = {
+                "success": False,
+                "candidate_version": previous_version,
+                "failure_layer": "rollback_activation_verification",
+            }
+        rollback_completed = bool(
+            database_restored
+            and assets_restored
+            and rollback_link.get("success", False)
         )
-        commands.extend([rollback_health, rollback_services, rollback_maintenance, rollback_durable])
-        commands.extend(rollback_activation_commands)
         rollback_ready = bool(
-            rollback_health.get("success", False)
+            rollback_completed
+            and data_disk_restored
+            and systemd_reloaded
+            and services_started
+            and rollback_health.get("success", False)
             and rollback_services.get("success", False)
             and rollback_maintenance.get("success", False)
             and rollback_durable.get("success", False)
             and rollback_activation.get("success", False)
         )
-        _write_update_info(
-            {
-                "status": "failed",
-                "success": False,
-                "release": version,
-                "rolled_back": True,
-                "failure_layer": failure_layer,
-                "rollback_health": {
-                    "openapi": rollback_health,
-                    "services": rollback_services,
-                    "maintenance": rollback_maintenance,
-                    "active_release_verification": rollback_activation,
-                },
-                "error": str(exc),
-                "finished_at": datetime.now(timezone.utc).isoformat(),
-            }
-        )
-        _write_release_finalizer(
-            {
-                **finalizer_evidence,
-                "status": "failed",
-                "rolled_back": True,
-                "failure_layer": failure_layer,
-                "rollback_health": rollback_ready,
-                "rollback_service_checks": rollback_services,
+        rollback_payload = {
+            "status": "failed",
+            "success": False,
+            "release": version,
+            "rolled_back": rollback_completed,
+            "failure_layer": failure_layer,
+            "rollback_health": {
+                "openapi": rollback_health,
+                "services": rollback_services,
+                "maintenance": rollback_maintenance,
                 "active_release_verification": rollback_activation,
-                "error": str(exc),
-                "finished_at": datetime.now(timezone.utc).isoformat(),
-            }
+            },
+            "rollback_failures": [
+                str(item.get("layer") or "rollback_unknown") for item in rollback_failures
+            ],
+            "error": transaction_error,
+            "finished_at": datetime.now(timezone.utc).isoformat(),
+        }
+        rollback_action("status_evidence", lambda: _write_update_info(rollback_payload))
+        rollback_action(
+            "finalizer_persistence",
+            lambda: _write_release_finalizer(
+                {
+                    **finalizer_evidence,
+                    "status": "failed",
+                    "rolled_back": rollback_completed,
+                    "failure_layer": failure_layer,
+                    "rollback_health": rollback_ready,
+                    "rollback_service_checks": rollback_services,
+                    "active_release_verification": rollback_activation,
+                    "rollback_failures": [
+                        str(item.get("layer") or "rollback_unknown")
+                        for item in rollback_failures
+                    ],
+                    "error": transaction_error,
+                    "finished_at": datetime.now(timezone.utc).isoformat(),
+                }
+            ),
         )
         shutil.rmtree(release_root, ignore_errors=True)
-        raise ValueError(f"Atlaso release {version} failed and was rolled back: {exc}") from exc
+        rollback_outcome = "was rolled back" if rollback_completed else "rollback was incomplete"
+        raise ValueError(
+            f"Atlaso release {version} failed and {rollback_outcome}: {transaction_error}"
+        ) from exc
     return channel, release, commands
 
 
