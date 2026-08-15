@@ -2838,6 +2838,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#extracted-appliance-settings-and-backup-restore-ownership" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Extracted Appliance Settings and Backup Restore ownership
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#route-and-openapi-compatibility" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -3587,6 +3598,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#extracted-appliance-settings-and-backup-restore-ownership" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Extracted Appliance Settings and Backup Restore ownership
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#route-and-openapi-compatibility" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -3746,7 +3768,9 @@ PXE API v1 transports while leaving the dedicated Network Boot API and protocol/
 extracts the VCF workflow management transports and their three API v1 status operations while preserving their
 separated effective positions and the Automation-owned contextual schedule transport. Phase 11 extracts Automation
 and operational management transports plus the contiguous operational API v1 block without changing route order,
-behavior, or cross-domain service ownership.</p>
+behavior, or cross-domain service ownership. Phase 12 extracts Appliance Settings and Backup Restore management
+transports plus the two API v1 Settings operations while retaining settings-archive, recovery, factory-reset,
+credential-custody, and global Appliance Apply behavior in their established owners.</p>
 <h2 id="ownership-and-responsibilities">Ownership and responsibilities<a class="headerlink" href="#ownership-and-responsibilities" title="Permanent link">&para;</a></h2>
 <ul>
 <li><code>atlaso/app/main.py</code> owns application construction, middleware, mounts, and the top-level order in which stable facade
@@ -3896,8 +3920,8 @@ boundary.</p>
 live in <code>atlaso/app/routers/api_v1/network_boot.py</code>. The stable facades continue to export every established endpoint
 and helper name while supplying facade-owned rendering, identity, CSRF, task, desired-state, and compatibility helpers
 through the typed UI router builder. Neither extracted router imports a monolithic facade.</p>
-<p>The UI registry places <code>network_boot</code> between <code>facade_between_identity_network_boot</code> and
-<code>facade_after_network_boot</code>, preserving its established position after Web Terminal and before Backup Restore. The API
+<p>The UI registry places <code>network_boot</code> between <code>facade_between_identity_network_boot</code> and <code>settings_backup</code>, preserving
+its established position after Web Terminal and before Backup Restore. The API
 v1 registry places <code>network_boot</code> between <code>facade_between_vcf_private_registry_network_boot</code> and <code>managed_ldap</code>,
 preserving its established position after VCF Private Registry and before Managed LDAP.</p>
 <p>The separate <code>atlaso/app/api/network_boot.py</code> owner of <code>/api/v1/network-boot</code> and the protocol/media routes remains
@@ -3923,7 +3947,7 @@ precede the extracted Identity router. The contextual
 route block; extraction into the VCF workflow router would change both ownership and effective order.</p>
 <p>The three API v1 status transports live together in <code>atlaso/app/routers/api_v1/vcf_workflows.py</code>, but the module returns
 three ordered router contributions so their effective positions do not collapse. <code>vcf_workflows_backups</code> remains
-immediately after <code>facade_between_operations_vcf_backups</code>; the facade segment through ESX Storage remains before
+immediately after <code>settings</code>; the facade segment through ESX Storage remains before
 <code>vcf_workflows_offline_depot</code>; the compatibility <code>/api/v1/repository/status</code> alias remains in
 <code>facade_between_offline_depot_private_registry</code>; and <code>vcf_workflows_private_registry</code> remains before
 <code>facade_between_vcf_private_registry_network_boot</code> and Network Boot. The stable API v1 facade continues to export all
@@ -3949,7 +3973,7 @@ between <code>facade_before_automation</code> and <code>facade_between_automatio
 Boot. The stable UI facade continues to export all established endpoints and compatibility helpers.</p>
 <p>The contiguous service, log, audit-event, and job API v1 transports live in
 <code>atlaso/app/routers/api_v1/operations.py</code>. The API registry places <code>operations</code> between
-<code>facade_between_firewall_operations</code> and <code>facade_between_operations_vcf_backups</code>, retaining the original position
+<code>facade_between_firewall_operations</code> and <code>settings</code>, retaining the original position
 after Dashboard/Monitor and the intervening networking domains, and before Settings and later VCF Backups status.
 Every path, method, name, operation ID, tag, scope, status, response schema, audit, cancellation, and redaction
 contract remains unchanged.</p>
@@ -3959,6 +3983,28 @@ task-execution, lifecycle, protocol, and browser-JavaScript behavior retain thei
 behavior-neutral extraction changes no template, CSS, JavaScript, control, layout, visible copy, interaction class,
 route inventory, normalized OpenAPI output, desired state, service-control boundary, or global Appliance Apply
 behavior.</p>
+<h2 id="extracted-appliance-settings-and-backup-restore-ownership">Extracted Appliance Settings and Backup Restore ownership<a class="headerlink" href="#extracted-appliance-settings-and-backup-restore-ownership" title="Permanent link">&para;</a></h2>
+<p>Appliance Settings and Backup Restore management transports live in
+<code>atlaso/app/routers/ui/settings_backup.py</code>. This owner includes the Backup Restore page, settings-archive export and
+restore submissions, factory-reset submission, Appliance Settings page and desired-state update, VMware CEIP policy
+update, and operational-logging settings update. Settings-archive services, preflight and transaction behavior,
+rollback, staged Managed LDAP recovery custody, factory-reset reseeding, runtime logging configuration, templates, and
+browser assets retain their established owners. The stable UI facade continues to export every endpoint and helper
+name while supplying the extracted router with bounded compatibility dependencies.</p>
+<p>The UI registry places <code>settings_backup</code> after <code>network_boot</code> and before <code>facade_after_settings_backup</code>. That final
+facade segment retains the management placeholder catch-all, so every fixed Settings and Backup Restore route remains
+at its original effective position and before the fallback.</p>
+<p>The two Settings API v1 operations live in <code>atlaso/app/routers/api_v1/settings.py</code>. The API registry places <code>settings</code>
+immediately after <code>operations</code> and before <code>vcf_workflows_backups</code>, preserving the established position between the
+operational API block and VCF Backups status. The stable API facade continues to export both operation callables and
+the appliance-settings response and desired-state compatibility helpers.</p>
+<p>Independently runnable facade-transport coverage lives in
+<code>tests/routers/ui/test_settings_backup.py</code> and <code>tests/routers/api_v1/test_settings.py</code>. Settings-archive, restore,
+factory-reset, Managed LDAP recovery, credential-custody, lifecycle, and global Appliance Apply behavior retain their
+established test owners. This behavior-neutral extraction changes no template, CSS, JavaScript, visible copy, control,
+layout, interaction class, route, route name, operation ID, tag, authorization scope, session or CSRF behavior, upload
+or download contract, redirect, status code, response schema, audit action, caching or redaction contract, route
+inventory, normalized OpenAPI output, desired state, or host-mutation boundary.</p>
 <h2 id="route-and-openapi-compatibility">Route and OpenAPI compatibility<a class="headerlink" href="#route-and-openapi-compatibility" title="Permanent link">&para;</a></h2>
 <p><code>tests/contracts/route_inventory.json</code> records every effective application route in order, including browser,
 protocol, WebSocket, mount, and API routes. Its stable fields are plane, path, methods, route name, explicit operation
