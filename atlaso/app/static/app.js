@@ -5467,7 +5467,8 @@ function initializeLdapPageState() {
       const organizationId = link.dataset.ldapOrganizationId || "";
       const alreadyActive = link.classList.contains("active");
       const urlOrganizationId = new URL(window.location.href).searchParams.get("organization_id") || "";
-      const suppressHistory = shouldSuppressLdapOrganizationHistory(organizationId, alreadyActive, urlOrganizationId);
+      const historyOrganizationId = ldapOrganizationIdForHistory(urlOrganizationId, querylessOrganizationId);
+      const suppressHistory = shouldSuppressLdapOrganizationHistory(organizationId, alreadyActive, historyOrganizationId);
       if (suppressHistory && !loadCoordinator.isLoading()) return;
       loadOrganization(link, suppressHistory ? { history: false } : {});
     });

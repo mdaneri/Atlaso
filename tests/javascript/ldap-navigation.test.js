@@ -125,6 +125,8 @@ test("an active LDAP tab suppresses history only when it matches the current URL
 test("queryless LDAP history resolves to the server-default organization", () => {
   assert.equal(context.ldapOrganizationIdForHistory("", "organization-a"), "organization-a");
   assert.equal(context.ldapOrganizationIdForHistory("organization-b", "organization-a"), "organization-b");
+  const querylessDefault = context.ldapOrganizationIdForHistory("", "organization-a");
+  assert.equal(context.shouldSuppressLdapOrganizationHistory("organization-a", true, querylessDefault), true);
 });
 
 test("queryless LDAP history supersedes a pending organization selection", async () => {
