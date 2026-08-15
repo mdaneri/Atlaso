@@ -26,6 +26,8 @@ This verified appliance view provides visual orientation before you begin.
 
 - Start with the appliance totals before expanding per-CPU, per-interface, or per-device series.
 - Use the common time-range selector to compare the same interval across charts.
+- A range selected during a refresh is loaded next. Rapid changes coalesce to the latest selection, and Atlaso does not
+  render an older range beneath the newly active control.
 - Expand a chart when series overlap; full-screen zoom does not change the selected history range.
 - Use the read-only interface and device grids below Network Throughput and Disk Activity for the latest per-resource
   values. Live refresh replaces grid data in place so sorting and scroll context remain stable.

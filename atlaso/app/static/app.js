@@ -16582,6 +16582,61 @@ function renderMonitorPage(root, payload) {
   refreshMonitorDetailTables(payload);
 }
 
+function createMonitorLoadCoordinator(options) {
+  let selectedRange = Number(options.initialRange);
+  let selectedRevision = 0;
+  let inFlight = null;
+  let queued = false;
+
+  const start = () => {
+    const requestRange = selectedRange;
+    const requestRevision = selectedRevision;
+    queued = false;
+    options.onStart?.(requestRange);
+    let requestResult;
+    try {
+      requestResult = options.request(requestRange);
+    } catch (error) {
+      requestResult = Promise.reject(error);
+    }
+    const request = Promise.resolve(requestResult)
+      .then((payload) => {
+        if (requestRevision !== selectedRevision || requestRange !== selectedRange) return null;
+        return Promise.resolve(options.onData(payload, { range: requestRange })).then(() => payload);
+      })
+      .catch((error) => {
+        if (requestRevision === selectedRevision && requestRange === selectedRange) {
+          options.onError?.(error, { range: requestRange });
+        }
+        return null;
+      })
+      .finally(() => {
+        if (inFlight === request) inFlight = null;
+        if (queued) start();
+      });
+    inFlight = request;
+    return request;
+  };
+
+  return {
+    refresh() {
+      return inFlight || start();
+    },
+    selectRange(range) {
+      const nextRange = Number(range);
+      if (!Number.isFinite(nextRange) || nextRange <= 0) return inFlight || Promise.resolve(null);
+      const changed = nextRange !== selectedRange;
+      selectedRange = nextRange;
+      if (changed) selectedRevision += 1;
+      if (inFlight) {
+        if (changed) queued = true;
+        return inFlight;
+      }
+      return start();
+    },
+  };
+}
+
 function initializeMonitorPage() {
   const root = document.querySelector("[data-monitor-page]");
   if (!(root instanceof HTMLElement)) {
@@ -16590,7 +16645,6 @@ function initializeMonitorPage() {
   initializeMonitorDetailTables(root);
   let hours = 6;
   let latestPayload = null;
-  let loading = false;
   let expandedType = "";
   let expandedZoomPercent = 100;
   let expandedZoomCenterTime = null;
@@ -16626,18 +16680,18 @@ function initializeMonitorPage() {
       status.textContent = value;
     }
   };
-  const load = async () => {
-    if (loading) {
-      return;
-    }
-    loading = true;
-    setStatus("Refreshing metrics");
-    try {
-      const response = await fetch(managementUiPath(`/monitor/data?hours=${hours}`), { credentials: "same-origin" });
+  const loadCoordinator = createMonitorLoadCoordinator({
+    initialRange: hours,
+    onStart: () => setStatus("Refreshing metrics"),
+    request: async (requestHours) => {
+      const response = await fetch(managementUiPath(`/monitor/data?hours=${requestHours}`), { credentials: "same-origin" });
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}`);
       }
-      latestPayload = await response.json();
+      return response.json();
+    },
+    onData: (payload) => {
+      latestPayload = payload;
       renderMonitorPage(root, latestPayload);
       renderExpandedChart();
       if (latestPayload.enabled === false) {
@@ -16646,19 +16700,17 @@ function initializeMonitorPage() {
       }
       const sampleTime = latestPayload.last_sample_at ? new Date(latestPayload.last_sample_at) : null;
       setStatus(sampleTime ? `Last sample ${sampleTime.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}` : "Waiting for samples");
-    } catch (error) {
-      setStatus(`Monitor unavailable: ${error.message}`);
-    } finally {
-      loading = false;
-    }
-  };
+    },
+    onError: (error) => setStatus(`Monitor unavailable: ${error.message}`),
+  });
+  const load = () => loadCoordinator.refresh();
   buttons.forEach((button) => {
     button.addEventListener("click", () => {
       hours = Number(button.dataset.monitorRange || 6);
       expandedZoomPercent = 100;
       expandedZoomCenterTime = null;
       buttons.forEach((candidate) => candidate.classList.toggle("active", candidate === button));
-      load();
+      loadCoordinator.selectRange(hours);
     });
   });
   root.querySelectorAll("[data-monitor-chart-expand]").forEach((button) => {

@@ -1010,7 +1010,7 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-8" in service_worker.text
     assert "/static/appliance-apply-polling.js?v=issue-294-2" in service_worker.text
     assert "/static/ui-routes.js?v=issue-287-1" in service_worker.text
-    assert "/static/app.js?v=issue-338-1" in service_worker.text
+    assert "/static/app.js?v=monitor-network-boot-navigation-races-20260814-1" in service_worker.text
     assert "/static/terminal.js?v=issue-287-2" in service_worker.text
     assert "/static/pwa.js?v=issue-287-2" in service_worker.text
     assert "vcfdt-configuration-248-20260807-14" not in service_worker.text
@@ -1042,8 +1042,8 @@ def test_shared_ui_pattern_shell_and_wizard_contracts(client):
     base = (templates / "base.html").read_text(encoding="utf-8")
     public_base = (templates / "public_portal_base.html").read_text(encoding="utf-8")
     for shell, app_asset in (
-        (base, "/static/app.js?v=issue-338-1"),
-        (public_base, "/static/app.js?v=issue-338-1"),
+        (base, "/static/app.js?v=monitor-network-boot-navigation-races-20260814-1"),
+        (public_base, "/static/app.js?v=monitor-network-boot-navigation-races-20260814-1"),
         (base, "/static/appliance-apply-polling.js?v=issue-294-2"),
     ):
         assert shell.index("/static/vendor/tabulator/tabulator.min.js") < shell.index(
@@ -1689,7 +1689,7 @@ def test_monitor_page_renders_and_data_endpoint(client):
     assert "swagger-link-icon" in page.text
     assert "/static/app.css?v=issue-338-1" in page.text
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-8" in page.text
-    assert "/static/app.js?v=issue-338-1" in page.text
+    assert "/static/app.js?v=monitor-network-boot-navigation-races-20260814-1" in page.text
     app_css = client.get("/static/app.css")
     assert app_css.status_code == 200
     assert ".split-workspace > .wide-panel" in app_css.text
