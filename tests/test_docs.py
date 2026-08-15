@@ -68,6 +68,15 @@ def test_documentation_workflows_use_deterministic_build_wrapper() -> None:
         assert "zensical build --clean --strict" not in workflow
 
 
+def test_documentation_guide_uses_docs_interpreter_for_docs_checks() -> None:
+    """Verify the isolated docs environment runs every dependency-backed docs check."""
+    root = Path(__file__).resolve().parents[1]
+    guide = (root / "docs" / "contribute" / "documentation-authoring.md").read_text(encoding="utf-8")
+
+    assert ".\\.venv-docs\\Scripts\\python.exe scripts/build_docs.py" in guide
+    assert ".\\.venv-docs\\Scripts\\python.exe scripts/check_docs.py" in guide
+
+
 def test_documentation_build_resets_only_recognized_zensical_cache(tmp_path: Path) -> None:
     """Verify the wrapper clears its owned cache and rejects an unknown cache.
 

@@ -105,7 +105,7 @@ npm ci
 npm run lint:markdown
 .\.venv-docs\Scripts\python.exe -m pip install --require-hashes -r requirements-docs.lock
 .\.venv-docs\Scripts\python.exe scripts/build_docs.py
-python scripts/check_docs.py
+.\.venv-docs\Scripts\python.exe scripts/check_docs.py
 python scripts/check_repo.py
 git diff --check
 ```
