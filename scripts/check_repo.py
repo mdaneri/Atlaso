@@ -1310,7 +1310,8 @@ def unclosed_reference_title_delimiter(text: str) -> str | None:
     Args:
         text: Reference-definition text after its label and colon.
     """
-    for opening_match in re.finditer(r'''[ \t]+(?P<opening>["'(])''', text):
+    opening_match = re.match(r'''[ \t]+(?P<opening>["'(])''', text)
+    if opening_match is not None:
         opening = opening_match.group("opening")
         closing = ")" if opening == "(" else opening
         cursor = opening_match.end()
@@ -1395,7 +1396,7 @@ def strip_markdown_nonoperative_content(text: str) -> str:
     in_block_quote = False
     interrupting_block_patterns = (
         re.compile(r" {0,3}#{1,6}(?:[ \t]+|$)"),
-        re.compile(r" {0,3}(?:[*+-]|1[.)])(?:[ \t]+|$)"),
+        re.compile(r" {0,3}(?:[*+-]|1[.)])[ \t]+(?=\S)"),
         re.compile(r" {0,3}(?:`{3,}|~{3,})"),
         re.compile(
             r" {0,3}(?:(?:\*[ \t]*){3,}|(?:_[ \t]*){3,}|"
@@ -1449,6 +1450,7 @@ def strip_markdown_nonoperative_content(text: str) -> str:
             else line
         )
         reference_label_end: int | None = None
+        completed_reference_label_lines: list[tuple[int, str]] = []
         if pending_reference_label_lines:
             combined_label = pending_reference_label_text + block_line
             combined_label_end, label_may_continue = scan_reference_definition_label(
@@ -1458,6 +1460,7 @@ def strip_markdown_nonoperative_content(text: str) -> str:
                 reference_label_end = combined_label_end - len(
                     pending_reference_label_text
                 )
+                completed_reference_label_lines = pending_reference_label_lines
                 pending_reference_label_text = ""
                 pending_reference_label_lines = []
             elif label_may_continue and line.strip():
@@ -1494,6 +1497,42 @@ def strip_markdown_nonoperative_content(text: str) -> str:
                 pending_reference_label_lines = [(len(visible_lines), line)]
                 visible_lines.append("\n" if line.endswith("\n") else "")
                 continue
+        inline_open_title_delimiter: str | None = None
+        if reference_label_end is not None:
+            inline_reference_tail = block_line[reference_label_end:]
+            if inline_reference_tail.strip():
+                inline_destination_end = reference_destination_prefix_end(
+                    inline_reference_tail
+                )
+                inline_destination_tail = (
+                    inline_reference_tail[inline_destination_end:]
+                    if inline_destination_end is not None
+                    else ""
+                )
+                inline_open_title_delimiter = (
+                    unclosed_reference_title_delimiter(inline_destination_tail)
+                    if inline_destination_end is not None
+                    else None
+                )
+                inline_destination_match = (
+                    re.fullmatch(
+                        r'''(?:[ \t]+(?:"[^"\r\n]*"|'[^'\r\n]*'|'''
+                        r'''\([^()\r\n]*\)))?[ \t]*(?:\r?\n)?''',
+                        inline_destination_tail,
+                    )
+                    if inline_destination_end is not None
+                    else None
+                )
+                if (
+                    inline_destination_match is None
+                    and inline_open_title_delimiter is None
+                ):
+                    for (
+                        line_index,
+                        original_line,
+                    ) in completed_reference_label_lines:
+                        visible_lines[line_index] = original_line
+                    reference_label_end = None
         continued_destination_prefix_end = (
             reference_destination_prefix_end(block_line)
             if link_reference_destination_pending
@@ -1570,11 +1609,7 @@ def strip_markdown_nonoperative_content(text: str) -> str:
                     not destination_is_pending and inline_title_match is None
                 )
                 visible_lines.append("\n" if line.endswith("\n") else "")
-                open_reference_title_delimiter = (
-                    unclosed_reference_title_delimiter(reference_tail)
-                    if not destination_is_pending
-                    else None
-                )
+                open_reference_title_delimiter = inline_open_title_delimiter
                 if open_reference_title_delimiter is not None:
                     link_reference_title_pending = False
                 open_reference_title_lines = (

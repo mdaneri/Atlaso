@@ -987,6 +987,33 @@ def test_agent_policy_gate_ignores_link_reference_cleanup_markers(
         )
 
 
+def test_agent_policy_gate_preserves_invalid_reference_definition_tails(
+    tmp_path: Path,
+) -> None:
+    """Verify invalid reference tails remain visible policy prose.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    marker = '`cleanup-ready`'
+    for relative_path in ORDERED_TERMINAL_CLEANUP_MARKERS:
+        for visible_line in (
+            f"[handoff]: ordinary visible prose containing {marker}",
+            f"[handoff]: https://example.invalid extra prose containing {marker}",
+            f'[handoff]: https://example.invalid extra "prose containing {marker}',
+        ):
+            write_policy_files(tmp_path)
+            path = tmp_path / relative_path
+            text = path.read_text(encoding="utf-8").replace(
+                marker,
+                visible_line,
+                1,
+            )
+            path.write_text(text, encoding="utf-8")
+
+            assert check_agent_policy_gate(tmp_path) == []
+
+
 def test_agent_policy_gate_ignores_multiline_link_reference_titles(
     tmp_path: Path,
 ) -> None:
@@ -2080,6 +2107,39 @@ def test_agent_policy_gate_keeps_noninitial_ordered_items_in_lazy_block_quotes(
         assert findings[0].message == (
             f"completed-task cleanup section marker is missing: {marker}"
         )
+
+
+def test_agent_policy_gate_keeps_empty_list_markers_in_lazy_block_quotes(
+    tmp_path: Path,
+) -> None:
+    """Verify empty list markers do not interrupt quoted paragraphs.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    marker = '`cleanup-ready`'
+    for relative_path in ORDERED_TERMINAL_CLEANUP_MARKERS:
+        anchor = TERMINAL_CLEANUP_SECTION_ANCHORS[relative_path]
+        content_prefix = "" if anchor.startswith("#") else "  "
+        for list_marker in ("-", "*", "+", "1.", "1)"):
+            write_policy_files(tmp_path)
+            path = tmp_path / relative_path
+            text = path.read_text(encoding="utf-8").replace(
+                marker,
+                f"> quoted example\n{content_prefix}{list_marker}\n"
+                f"{content_prefix}{marker}",
+                1,
+            )
+            path.write_text(text, encoding="utf-8")
+
+            findings = check_agent_policy_gate(tmp_path)
+
+            assert any(
+                finding.path == path
+                and finding.message
+                == f"completed-task cleanup section marker is missing: {marker}"
+                for finding in findings
+            )
 
 
 def test_agent_policy_gate_preserves_list_items_after_block_quotes(
