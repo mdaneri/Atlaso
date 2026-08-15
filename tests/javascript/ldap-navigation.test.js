@@ -34,7 +34,9 @@ function functionSource(name) {
 const context = vm.createContext({});
 vm.runInContext(
   `${functionSource("createLdapOrganizationLoadCoordinator")}\n` +
-    "globalThis.createLdapOrganizationLoadCoordinator = createLdapOrganizationLoadCoordinator;",
+    `${functionSource("shouldSuppressLdapOrganizationHistory")}\n` +
+    "globalThis.createLdapOrganizationLoadCoordinator = createLdapOrganizationLoadCoordinator;\n" +
+    "globalThis.shouldSuppressLdapOrganizationHistory = shouldSuppressLdapOrganizationHistory;",
   context,
 );
 
@@ -110,4 +112,10 @@ test("the latest LDAP failure retains full-navigation fallback", async () => {
   assert.equal(await load, false);
   assert.deepEqual(state.errors.map(({ message }) => message), ["latest response failed"]);
   assert.equal(state.coordinator.isLoading(), false);
+});
+
+test("an active LDAP tab suppresses history only when it matches the current URL", () => {
+  assert.equal(context.shouldSuppressLdapOrganizationHistory("organization-b", true, "organization-b"), true);
+  assert.equal(context.shouldSuppressLdapOrganizationHistory("organization-b", true, "organization-a"), false);
+  assert.equal(context.shouldSuppressLdapOrganizationHistory("organization-b", false, "organization-b"), false);
 });
