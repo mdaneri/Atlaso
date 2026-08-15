@@ -664,6 +664,40 @@ def test_agent_policy_gate_rejects_suffixed_cleanup_headings(tmp_path: Path) -> 
         )
 
 
+def test_agent_policy_gate_rejects_html_wrapped_cleanup_headings(
+    tmp_path: Path,
+) -> None:
+    """Verify rendered raw HTML text cannot become a Markdown heading anchor.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    for relative_path in ORDERED_TERMINAL_CLEANUP_MARKERS:
+        anchor = TERMINAL_CLEANUP_SECTION_ANCHORS[relative_path]
+        if not anchor.startswith("#"):
+            continue
+        for replacement in (
+            f"<div>{anchor}</div>",
+            f"<div>\n{anchor}\n</div>",
+        ):
+            write_policy_files(tmp_path)
+            path = tmp_path / relative_path
+            text = path.read_text(encoding="utf-8").replace(
+                anchor,
+                replacement,
+                1,
+            )
+            path.write_text(text, encoding="utf-8")
+
+            findings = check_agent_policy_gate(tmp_path)
+
+            assert len(findings) == 1
+            assert findings[0].path == path
+            assert findings[0].message == (
+                "completed-task cleanup section is missing: " + anchor
+            )
+
+
 def test_agent_policy_gate_honors_indented_heading_boundaries(tmp_path: Path) -> None:
     """Verify that valid indented headings end heading-based cleanup sections.
 

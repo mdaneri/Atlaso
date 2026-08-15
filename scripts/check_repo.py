@@ -723,16 +723,25 @@ def check_agent_policy_gate(root: Path) -> list[Finding]:
         section_markers = TERMINAL_CLEANUP_SECTION_MARKERS.get(relative_path, ())
         section_anchor = TERMINAL_CLEANUP_SECTION_ANCHORS.get(relative_path)
         operative_text = strip_markdown_nonoperative_content(text)
+        source_lines = text.splitlines()
+        raw_html_block_lines = markdown_raw_html_block_lines(text)
         section_anchor_lines = (
             tuple(
                 index
                 for index, line in enumerate(operative_text.splitlines())
                 if (
                     line == section_anchor
-                    if section_anchor.startswith("#")
-                    else line.startswith(section_anchor)
+                        if section_anchor.startswith("#")
+                        else line.startswith(section_anchor)
+                    )
+                    and index < len(source_lines)
+                    and (
+                        source_lines[index] == section_anchor
+                        if section_anchor.startswith("#")
+                        else source_lines[index].startswith(section_anchor)
+                    )
+                    and index not in raw_html_block_lines
                 )
-            )
             if section_anchor is not None
             else ()
         )
@@ -743,6 +752,7 @@ def check_agent_policy_gate(root: Path) -> list[Finding]:
                 cleanup_section = extract_markdown_policy_section(
                     operative_text,
                     section_anchor,
+                    start_line=section_anchor_lines[0],
                 )
             else:
                 structural_section = extract_markdown_policy_section(
@@ -1126,6 +1136,27 @@ def starts_markdown_block_construct(line: str) -> bool:
             ),
         )
     ) or starts_markdown_html_block(line)
+
+
+def markdown_raw_html_block_lines(text: str) -> set[int]:
+    """Return source lines inside blank-line-terminated raw HTML blocks.
+
+    Args:
+        text: Structural Markdown source.
+    """
+    block_lines: set[int] = set()
+    in_raw_block = False
+    for index, line in enumerate(text.splitlines(keepends=True)):
+        if in_raw_block:
+            if not line.strip():
+                in_raw_block = False
+            else:
+                block_lines.add(index)
+            continue
+        if starts_markdown_html_block(line):
+            in_raw_block = True
+            block_lines.add(index)
+    return block_lines
 
 
 def strip_markdown_hidden_html_containers(text: str) -> str:
