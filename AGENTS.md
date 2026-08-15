@@ -330,8 +330,9 @@ The following cross-cutting boundaries always apply:
   management front door. Once committed, preserve the candidate and retry cleanup, host-facing proof, and definitive
   finalization forward; never restore the database snapshot after operator writes can be admitted. After reboot,
   recreate the matching volatile gate from durable committed evidence, let pre-start admit the gated candidate without
-  requiring its own worker to be active, and complete forward activation only after that worker publishes exact identity.
-  persist the bounded rollback manifest before switching the active link, persist restart-pending evidence before the
+  requiring its own worker to be active, and complete forward activation only after that worker publishes exact job,
+  version, release-root, current-boot, PID, and process-start identity.
+  Persist the bounded rollback manifest before switching the active link, persist restart-pending evidence before the
   volatile runtime gate, and keep recovery behind that gate until the definitive write completes. Worker pre-start must
   distinguish the live helper by boot, PID, and process-start identity and roll back stale provisional evidence before
   admitting the worker after a host restart. Flush every database and installed-asset rollback backup plus its directory

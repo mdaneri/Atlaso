@@ -12097,8 +12097,11 @@ def _wait_for_worker_activation(
     observed_version = ""
     observed_release = ""
     observed_job_id = ""
+    observed_boot_id = ""
+    observed_start_ticks = ""
     while time.monotonic() < deadline:
         observed_pid = _service_main_pid("atlaso-worker.service")
+        running_identity = _running_worker_process_identity(observed_pid)
         try:
             marker = json.loads(ATLASO_WORKER_STARTUP_STATUS_PATH.read_text(encoding="utf-8"))
         except (OSError, UnicodeDecodeError, json.JSONDecodeError):
@@ -12107,6 +12110,8 @@ def _wait_for_worker_activation(
             observed_version = str(marker.get("version") or "").split("+", 1)[0]
             observed_release = str(marker.get("current_release") or "")
             observed_job_id = str(marker.get("release_job_id") or "")
+            observed_boot_id = str(marker.get("boot_id") or "")
+            observed_start_ticks = str(marker.get("start_ticks") or "")
             try:
                 marker_pid = int(marker.get("pid") or 0)
             except (TypeError, ValueError):
@@ -12121,6 +12126,8 @@ def _wait_for_worker_activation(
                 observed_pid > 0
                 and observed_pid != previous_pid
                 and marker_pid == observed_pid
+                and observed_boot_id == str(running_identity.get("boot_id") or "")
+                and observed_start_ticks == str(running_identity.get("start_ticks") or "")
                 and observed_version == expected_version
                 and observed_job_id == expected_job_id
                 and release_matches
@@ -12133,6 +12140,8 @@ def _wait_for_worker_activation(
                     worker_version=observed_version,
                     worker_release=observed_release,
                     release_job_id=observed_job_id,
+                    worker_boot_id=observed_boot_id,
+                    worker_start_ticks=observed_start_ticks,
                 )
         time.sleep(1)
     return _release_check(
@@ -12143,7 +12152,30 @@ def _wait_for_worker_activation(
         worker_version=observed_version,
         worker_release=observed_release,
         release_job_id=observed_job_id,
+        worker_boot_id=observed_boot_id,
+        worker_start_ticks=observed_start_ticks,
     )
+
+
+def _running_worker_process_identity(pid: int) -> dict[str, object]:
+    """Return boot and process-start identity for the running systemd worker PID.
+
+    Args:
+        pid: Main PID reported by systemd for ``atlaso-worker.service``.
+    """
+    if pid <= 0:
+        return {}
+    if os.name != "posix":
+        return {"boot_id": "non-posix-test", "pid": pid, "start_ticks": "non-posix-test"}
+    try:
+        boot_id = Path("/proc/sys/kernel/random/boot_id").read_text(encoding="utf-8").strip()
+        process_stat = Path(f"/proc/{pid}/stat").read_text(encoding="utf-8")
+        start_ticks = process_stat.rsplit(")", 1)[1].split()[19]
+    except (OSError, IndexError):
+        return {}
+    if not boot_id or not start_ticks:
+        return {}
+    return {"boot_id": boot_id, "pid": pid, "start_ticks": start_ticks}
 
 
 def _release_root_version(release_root: Path) -> str:

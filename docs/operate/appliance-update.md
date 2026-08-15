@@ -300,7 +300,8 @@ installation never reboots the appliance automatically. After `activation_commit
 `nginx -t`, front-door version readiness, and finalizer persistence are forward-only recovery stages. If a reboot removes
 the volatile gate during this state, pre-start recreates it and schedules a root-owned completion service, admits the
 still-gated candidate worker without requiring that service to be active prematurely, and opens the front door only
-after the new worker publishes the exact committed job, version, and release-root identity.
+after the new worker publishes the exact committed job, version, release-root, current-boot, PID, and process-start
+identity. Persistent startup evidence from an earlier boot or an earlier process is never accepted.
 
 ## Photon OS boundary
 

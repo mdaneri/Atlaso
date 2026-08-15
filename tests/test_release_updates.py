@@ -242,11 +242,15 @@ def test_worker_publishes_candidate_identity_and_waits_for_release_finalizer(mon
     monkeypatch.setattr(worker, "WORKER_STARTUP_STATUS_PATH", marker)
     monkeypatch.setattr(worker, "APPLIANCE_UPDATE_FINALIZER_PATH", str(finalizer))
     monkeypatch.setattr(worker, "__version__", "0.9.156+gtest")
+    monkeypatch.setattr(worker, "_worker_process_identity", lambda: ("current-boot", "4242"))
 
     worker._write_worker_startup_status()
 
     payload = json.loads(marker.read_text(encoding="utf-8"))
+    assert payload["schema_version"] == 2
+    assert payload["boot_id"] == "current-boot"
     assert payload["pid"] == os.getpid()
+    assert payload["start_ticks"] == "4242"
     assert payload["version"] == "0.9.156"
     assert payload["current_release"] == str(release_root.resolve())
     assert payload["release_job_id"] == "job_release_restart"
@@ -311,7 +315,9 @@ def test_worker_activation_requires_exact_systemd_and_release_identity(monkeypat
     marker.write_text(
         json.dumps(
             {
+                "boot_id": "current-boot",
                 "pid": 202,
+                "start_ticks": "200",
                 "version": "0.9.156",
                 "current_release": str(expected_release),
                 "release_job_id": "job_release_restart",
@@ -321,6 +327,11 @@ def test_worker_activation_requires_exact_systemd_and_release_identity(monkeypat
     )
     monkeypatch.setattr(helper, "ATLASO_WORKER_STARTUP_STATUS_PATH", marker)
     monkeypatch.setattr(helper, "_service_main_pid", lambda _unit: 202)
+    monkeypatch.setattr(
+        helper,
+        "_running_worker_process_identity",
+        lambda _pid: {"boot_id": "current-boot", "pid": 202, "start_ticks": "200"},
+    )
 
     result = helper._wait_for_worker_activation(
         expected_version="0.9.156",
@@ -335,7 +346,9 @@ def test_worker_activation_requires_exact_systemd_and_release_identity(monkeypat
     marker.write_text(
         json.dumps(
             {
+                "boot_id": "current-boot",
                 "pid": 202,
+                "start_ticks": "200",
                 "version": "0.9.156",
                 "current_release": str(tmp_path / "missing-release"),
                 "release_job_id": "job_release_restart",
@@ -356,6 +369,69 @@ def test_worker_activation_requires_exact_systemd_and_release_identity(monkeypat
     )
 
     assert result["success"] is False
+
+
+@pytest.mark.parametrize(
+    ("marker_boot_id", "marker_start_ticks"),
+    [("prior-boot", "200"), ("current-boot", "prior-start")],
+)
+def test_worker_activation_rejects_stale_marker_with_reused_pid(
+    monkeypatch,
+    tmp_path,
+    marker_boot_id,
+    marker_start_ticks,
+):
+    """Verify reboot recovery rejects startup evidence from an older boot or process.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace helper dependencies.
+        tmp_path: Temporary directory provided for isolated startup evidence.
+        marker_boot_id: Boot identity persisted in the simulated stale marker.
+        marker_start_ticks: Process-start identity persisted in the simulated stale marker.
+    """
+    from tests.test_appliance_update import load_helper_module
+
+    helper = load_helper_module()
+    expected_release = tmp_path / "releases" / "0.9.160"
+    expected_release.mkdir(parents=True)
+    marker = tmp_path / "worker-startup.json"
+    marker.write_text(
+        json.dumps(
+            {
+                "schema_version": 2,
+                "boot_id": marker_boot_id,
+                "pid": 202,
+                "start_ticks": marker_start_ticks,
+                "version": "0.9.160",
+                "current_release": str(expected_release),
+                "release_job_id": "job-committed-reboot",
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(helper, "ATLASO_WORKER_STARTUP_STATUS_PATH", marker)
+    monkeypatch.setattr(helper, "_service_main_pid", lambda _unit: 202)
+    monkeypatch.setattr(
+        helper,
+        "_running_worker_process_identity",
+        lambda _pid: {"boot_id": "current-boot", "pid": 202, "start_ticks": "200"},
+    )
+    monotonic = iter((0.0, 0.0, 2.0))
+    monkeypatch.setattr(helper.time, "monotonic", lambda: next(monotonic))
+    monkeypatch.setattr(helper.time, "sleep", lambda _seconds: None)
+
+    result = helper._wait_for_worker_activation(
+        expected_version="0.9.160",
+        expected_release=expected_release,
+        expected_job_id="job-committed-reboot",
+        previous_pid=0,
+        timeout_seconds=1,
+    )
+
+    assert result["success"] is False
+    assert result["worker_pid"] == 202
+    assert result["worker_boot_id"] == marker_boot_id
+    assert result["worker_start_ticks"] == marker_start_ticks
 
 
 def test_worker_restart_gate_timeout_fails_closed(monkeypatch, tmp_path):

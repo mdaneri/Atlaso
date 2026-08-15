@@ -153,6 +153,18 @@ def _release_finalizer() -> dict[str, Any]:
     return payload if isinstance(payload, dict) else {}
 
 
+def _worker_process_identity() -> tuple[str, str]:
+    """Return the current boot ID and this worker's process-start ticks."""
+    if os.name != "posix":
+        return ("non-posix-test", "non-posix-test")
+    boot_id = Path("/proc/sys/kernel/random/boot_id").read_text(encoding="utf-8").strip()
+    process_stat = Path(f"/proc/{os.getpid()}/stat").read_text(encoding="utf-8")
+    start_ticks = process_stat.rsplit(")", 1)[1].split()[19]
+    if not boot_id or not start_ticks:
+        raise ValueError("worker process identity is incomplete")
+    return (boot_id, start_ticks)
+
+
 def _write_worker_startup_status() -> None:
     """Publish the running worker identity for release-activation proof."""
     finalizer = _release_finalizer()
@@ -163,13 +175,16 @@ def _write_worker_startup_status() -> None:
     )
     try:
         current_release = str(ATLASO_CURRENT_RELEASE_PATH.resolve(strict=True))
+        boot_id, start_ticks = _worker_process_identity()
         WORKER_STARTUP_STATUS_PATH.parent.mkdir(parents=True, exist_ok=True)
         temporary = WORKER_STARTUP_STATUS_PATH.with_name(f"startup.{os.getpid()}.tmp")
         temporary.write_text(
             json.dumps(
                 {
-                    "schema_version": 1,
+                    "schema_version": 2,
+                    "boot_id": boot_id,
                     "pid": os.getpid(),
+                    "start_ticks": start_ticks,
                     "version": __version__.split("+", 1)[0],
                     "current_release": current_release,
                     "release_job_id": release_job_id,
@@ -183,7 +198,7 @@ def _write_worker_startup_status() -> None:
         )
         temporary.chmod(0o644)
         os.replace(temporary, WORKER_STARTUP_STATUS_PATH)
-    except OSError:
+    except (OSError, ValueError, IndexError):
         LOGGER.exception("Could not publish the Atlaso worker startup identity")
 
 
