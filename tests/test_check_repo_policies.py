@@ -687,6 +687,35 @@ def test_agent_policy_gate_honors_indented_heading_boundaries(tmp_path: Path) ->
         )
 
 
+def test_agent_policy_gate_honors_empty_atx_heading_boundaries(tmp_path: Path) -> None:
+    """Verify that empty same-level ATX headings end cleanup sections.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    marker = '`cleanup-ready`'
+    for relative_path in ORDERED_TERMINAL_CLEANUP_MARKERS:
+        anchor = TERMINAL_CLEANUP_SECTION_ANCHORS[relative_path]
+        if not anchor.startswith("#"):
+            continue
+        write_policy_files(tmp_path)
+        path = tmp_path / relative_path
+        text = path.read_text(encoding="utf-8").replace(marker, "", 1)
+        heading_level = len(anchor) - len(anchor.lstrip("#"))
+        path.write_text(
+            text + f"\n{'#' * heading_level}\n{marker}\n",
+            encoding="utf-8",
+        )
+
+        findings = check_agent_policy_gate(tmp_path)
+
+        assert len(findings) == 1
+        assert findings[0].path == path
+        assert findings[0].message == (
+            f"completed-task cleanup section marker is missing: {marker}"
+        )
+
+
 def test_agent_policy_gate_honors_setext_heading_boundaries(tmp_path: Path) -> None:
     """Verify that Setext headings end heading-based cleanup sections.
 
@@ -952,6 +981,37 @@ def test_agent_policy_gate_ignores_commented_cleanup_sections(tmp_path: Path) ->
         assert findings[0].path == path
         assert findings[0].message == (
             "completed-task cleanup section is missing: " + anchor
+        )
+
+
+def test_agent_policy_gate_ignores_inline_html_metadata_markers(tmp_path: Path) -> None:
+    """Verify that invisible inline HTML attributes cannot satisfy markers.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    marker = '`cleanup-ready`'
+    sibling = "\n- following policy"
+    for relative_path in ORDERED_TERMINAL_CLEANUP_MARKERS:
+        write_policy_files(tmp_path)
+        path = tmp_path / relative_path
+        anchor = TERMINAL_CLEANUP_SECTION_ANCHORS[relative_path]
+        html_prefix = "" if anchor.startswith("#") else "  "
+        text = path.read_text(encoding="utf-8").replace(marker, "", 1)
+        hidden_marker = f'\n{html_prefix}<span data-example="{marker}"></span>'
+        path.write_text(
+            text + hidden_marker
+            if anchor.startswith("#")
+            else text.replace(sibling, hidden_marker + sibling, 1),
+            encoding="utf-8",
+        )
+
+        findings = check_agent_policy_gate(tmp_path)
+
+        assert len(findings) == 1
+        assert findings[0].path == path
+        assert findings[0].message == (
+            f"completed-task cleanup section marker is missing: {marker}"
         )
 
 

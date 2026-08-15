@@ -816,9 +816,14 @@ def strip_markdown_nonoperative_content(text: str) -> str:
         text,
         flags=re.DOTALL,
     )
+    without_html_tags = re.sub(
+        r"</?[A-Za-z][A-Za-z0-9-]*(?:[ \t\r\n]+[^<>]*?)?[ \t\r\n]*/?>",
+        lambda match: re.sub(r"[^\r\n]", "", match.group(0)),
+        without_comments,
+    )
     without_quotes_lines: list[str] = []
     in_block_quote = False
-    for line in without_comments.splitlines(keepends=True):
+    for line in without_html_tags.splitlines(keepends=True):
         if re.match(r" {0,3}>", line) is not None:
             in_block_quote = True
             without_quotes_lines.append("\n" if line.endswith("\n") else "")
@@ -914,7 +919,10 @@ def extract_markdown_policy_section(text: str, anchor: str) -> str | None:
     if anchor.startswith("#"):
         heading_level = len(anchor) - len(anchor.lstrip("#"))
         for end in range(start + 1, len(lines)):
-            heading_match = re.match(r" {0,3}(#{1,6})[ \t]+", lines[end])
+            heading_match = re.match(
+                r" {0,3}(#{1,6})(?:[ \t]+|(?=\r?\n?$))",
+                lines[end],
+            )
             if heading_match is not None and len(heading_match.group(1)) <= heading_level:
                 return "".join(lines[start:end])
             title_line = lines[end].rstrip("\r\n")
