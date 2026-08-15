@@ -76,7 +76,9 @@ def test_facades_register_extracted_domains_in_exact_order():
         "managed_ldap",
         "facade_between_managed_ldap_identity",
         "identity",
-        "facade_after_identity",
+        "facade_between_identity_network_boot",
+        "network_boot",
+        "facade_after_network_boot",
     )
     assert ui.UI_ROUTER_REGISTRY.routers_for_plane("management") == (
         ui._management_before_routes_wan_router,
@@ -89,7 +91,9 @@ def test_facades_register_extracted_domains_in_exact_order():
         ui.managed_ldap_router,
         ui._management_between_managed_ldap_identity_router,
         ui.identity_router,
-        ui._management_after_identity_router,
+        ui._management_between_identity_network_boot_router,
+        ui.network_boot_router,
+        ui._management_after_network_boot_router,
     )
     assert ui.UI_ROUTER_REGISTRY.routers_for_plane("public") == (ui.public_router,)
     assert ui.UI_ROUTER_REGISTRY.routers_for_plane("front_door") == (
@@ -105,7 +109,8 @@ def test_facades_register_extracted_domains_in_exact_order():
         "facade_between_routes_wan_dns_dhcp",
         "dns_dhcp",
         "firewall",
-        "facade_between_firewall_managed_ldap",
+        "facade_between_firewall_network_boot",
+        "network_boot",
         "managed_ldap",
         "facade_after_managed_ldap",
     )
@@ -118,7 +123,8 @@ def test_facades_register_extracted_domains_in_exact_order():
         v1._api_between_routes_wan_dns_dhcp_router,
         v1.dns_dhcp_router,
         v1.firewall_router,
-        v1._api_between_firewall_managed_ldap_router,
+        v1._api_between_firewall_network_boot_router,
+        v1.network_boot_router,
         v1.managed_ldap_router,
         v1._api_after_managed_ldap_router,
     )
@@ -143,6 +149,9 @@ def test_facades_register_extracted_domains_in_exact_order():
     assert {route.endpoint.__module__ for route in ui.managed_ldap_router.routes} == {
         "atlaso.app.routers.ui.managed_ldap"
     }
+    assert {route.endpoint.__module__ for route in ui.network_boot_router.routes} == {
+        "atlaso.app.routers.ui.network_boot"
+    }
     assert {route.endpoint.__module__ for route in v1.routes_wan_router.routes} == {
         "atlaso.app.routers.api_v1.routes_wan"
     }
@@ -160,6 +169,9 @@ def test_facades_register_extracted_domains_in_exact_order():
     }
     assert {route.endpoint.__module__ for route in v1.managed_ldap_router.routes} == {
         "atlaso.app.routers.api_v1.managed_ldap"
+    }
+    assert {route.endpoint.__module__ for route in v1.network_boot_router.routes} == {
+        "atlaso.app.routers.api_v1.network_boot"
     }
 
 
