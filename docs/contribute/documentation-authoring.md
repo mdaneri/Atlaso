@@ -110,10 +110,12 @@ python scripts/check_repo.py
 git diff --check
 ```
 
-The build wrapper removes only a recognized repository-local Zensical `.cache` before invoking `build --clean
---strict`, then generates the legacy redirect pages. Do not replace it with a direct Zensical invocation: stale cache
-entries can otherwise make unchanged redirect targets fail nondeterministically. The wrapper does not disable link or
-anchor validation, so genuine missing targets still fail the strict build.
+The build wrapper removes only a repository-local Zensical `.cache` carrying its Atlaso-specific ownership marker, or
+the exact marker-free legacy Zensical file layout during migration, before invoking `build --clean --strict`. It then
+recreates the ownership marker and generates the legacy redirect pages. An ambiguous cache fails closed without being
+removed. Do not replace the wrapper with a direct Zensical invocation: stale cache entries can otherwise make unchanged
+redirect targets fail nondeterministically. The wrapper does not disable link or anchor validation, so genuine missing
+targets still fail the strict build.
 
 Documentation linting applies to every tracked Markdown source. Do not suppress existing files, create a warning-only
 baseline, or couple tests to exact explanatory prose when a stable marker or canonical path can express the contract.

@@ -86,16 +86,31 @@ def test_documentation_build_resets_only_recognized_zensical_cache(tmp_path: Pat
     cache = tmp_path / ".cache"
     cache.mkdir()
     (cache / ".gitignore").write_text("*\n", encoding="utf-8")
-    (cache / "stale-entry").write_text("stale", encoding="utf-8")
+    (cache / "autorefs.json").write_text("{}\n", encoding="utf-8")
+    (cache / "objects.inv").write_bytes(b"")
+    (cache / "123456789").write_text("stale", encoding="utf-8")
 
     build_docs.reset_zensical_cache(tmp_path)
 
     assert not cache.exists()
     cache.mkdir()
+    (cache / ".gitignore").write_text("*\n", encoding="utf-8")
     (cache / "unrelated-entry").write_text("keep", encoding="utf-8")
     with pytest.raises(RuntimeError, match="unrecognized Zensical cache"):
         build_docs.reset_zensical_cache(tmp_path)
     assert (cache / "unrelated-entry").read_text(encoding="utf-8") == "keep"
+
+    (cache / build_docs.CACHE_MARKER_NAME).write_text(
+        build_docs.CACHE_MARKER_CONTENT,
+        encoding="utf-8",
+    )
+    build_docs.reset_zensical_cache(tmp_path)
+    assert not cache.exists()
+
+    build_docs.initialize_zensical_cache(tmp_path)
+    assert (cache / build_docs.CACHE_MARKER_NAME).read_text(encoding="utf-8") == (
+        build_docs.CACHE_MARKER_CONTENT
+    )
 
 
 @pytest.mark.parametrize(
