@@ -36,7 +36,9 @@ New Tabulators must use `window.AtlasoUiPatterns.createGrid(...)`; every new or 
 - after an authorized merge and all remaining activity, send the primary-checkout controller a `cleanup-ready` handoff
   and require the ordered terminal states `remote_branch_absent`, `worktree_removed`, and `task_title_done`; delete only
   the task-owned GitHub branch, never remove the primary checkout, and append the exact suffix " · Done" once only after
-  every cleanup gate succeeds.
+  every cleanup gate succeeds. If no supported mutable task-title control exists,
+  record `task_title_done` as verified not applicable with capability evidence, omit the visible suffix, and do not block
+  otherwise-complete cleanup;
 
   Terminal order:
 

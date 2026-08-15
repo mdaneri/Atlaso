@@ -35,7 +35,8 @@ surfaces.
   this pull request is outside that policy.
 - [ ] After any authorized merge and remaining post-merge activity, the originating task will send a `cleanup-ready`
   handoff and remain incomplete until `remote_branch_absent`, `worktree_removed`, and `task_title_done` occur in order;
-  only then may supported title controls append the exact suffix " · Done" once.
+  only then may supported title controls append the exact suffix " · Done" once. If no supported mutable title control
+  exists, `task_title_done` as verified not applicable requires capability evidence and omits the visible suffix.
 
   Terminal order:
 

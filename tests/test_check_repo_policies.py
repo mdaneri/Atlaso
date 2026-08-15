@@ -12,6 +12,7 @@ from scripts.check_repo import (
     TERMINAL_CLEANUP_ORDER_LINES,
     TERMINAL_CLEANUP_SECTION_ANCHORS,
     TERMINAL_CLEANUP_SECTION_MARKERS,
+    TITLE_CONTROL_UNAVAILABLE_MARKER,
     check_agent_policy_gate,
     check_ui_pattern_foundation,
     collect_files,
@@ -512,6 +513,7 @@ def test_agent_policy_gate_scopes_cleanup_contract_markers(tmp_path: Path) -> No
             '" · Done"',
             PRIVATE_REMEDIATION_CLEANUP_MARKER,
             PRIVATE_REMEDIATION_REMOTE_MARKER,
+            TITLE_CONTROL_UNAVAILABLE_MARKER,
         ):
             write_policy_files(tmp_path)
             path = tmp_path / relative_path
@@ -797,6 +799,32 @@ def test_agent_policy_gate_ignores_fenced_terminal_order(tmp_path: Path) -> None
         assert findings[0].message == (
             "completed-task cleanup markers must remain ordered: "
             + " -> ".join(markers)
+        )
+
+
+def test_agent_policy_gate_ignores_commented_cleanup_sections(tmp_path: Path) -> None:
+    """Verify that an HTML-commented cleanup section is not operative policy.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    for relative_path in ORDERED_TERMINAL_CLEANUP_MARKERS:
+        write_policy_files(tmp_path)
+        path = tmp_path / relative_path
+        anchor = TERMINAL_CLEANUP_SECTION_ANCHORS[relative_path]
+        text = path.read_text(encoding="utf-8")
+        section_start = text.index(anchor)
+        path.write_text(
+            text[:section_start] + "<!--\n" + text[section_start:] + "\n-->\n",
+            encoding="utf-8",
+        )
+
+        findings = check_agent_policy_gate(tmp_path)
+
+        assert len(findings) == 1
+        assert findings[0].path == path
+        assert findings[0].message == (
+            "completed-task cleanup section is missing: " + anchor
         )
 
 

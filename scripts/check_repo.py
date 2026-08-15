@@ -311,11 +311,13 @@ TERMINAL_CLEANUP_SECTION_ANCHORS = {
 
 PRIVATE_REMEDIATION_CLEANUP_MARKER = "`advisory_cleanup_ready`"
 PRIVATE_REMEDIATION_REMOTE_MARKER = "`advisory_remote_branch_absent`"
+TITLE_CONTROL_UNAVAILABLE_MARKER = "`task_title_done` as verified not applicable"
 TERMINAL_CLEANUP_SECTION_MARKERS = {
     path: (
         "`cleanup-ready`",
         *ordered_markers,
         '" · Done"',
+        TITLE_CONTROL_UNAVAILABLE_MARKER,
         PRIVATE_REMEDIATION_CLEANUP_MARKER,
         PRIVATE_REMEDIATION_REMOTE_MARKER,
     )
@@ -712,7 +714,7 @@ def check_agent_policy_gate(root: Path) -> list[Finding]:
         ordered_markers = ORDERED_TERMINAL_CLEANUP_MARKERS.get(relative_path)
         section_markers = TERMINAL_CLEANUP_SECTION_MARKERS.get(relative_path, ())
         section_anchor = TERMINAL_CLEANUP_SECTION_ANCHORS.get(relative_path)
-        operative_text = strip_markdown_fenced_code(text)
+        operative_text = strip_markdown_nonoperative_content(text)
         section_anchor_count = (
             sum(
                 line == section_anchor
@@ -798,6 +800,21 @@ def strip_markdown_fenced_code(text: str) -> str:
             continue
         visible_lines.append(line)
     return "".join(visible_lines)
+
+
+def strip_markdown_nonoperative_content(text: str) -> str:
+    """Replace HTML comments and fenced examples with blank lines.
+
+    Args:
+        text: Markdown source whose operative prose must be inspected.
+    """
+    without_comments = re.sub(
+        r"<!--.*?(?:-->|$)",
+        lambda match: re.sub(r"[^\r\n]", "", match.group(0)),
+        text,
+        flags=re.DOTALL,
+    )
+    return strip_markdown_fenced_code(without_comments)
 
 
 def extract_terminal_cleanup_order(cleanup_section: str) -> tuple[str, ...] | None:

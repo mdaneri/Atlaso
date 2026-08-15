@@ -205,7 +205,9 @@ For a task running in the primary checkout, record this gate as not applicable a
 remove the checkout.
 For `task_title_done`, use supported task-title controls to append the exact suffix " · Done" once, preserving the
 description and issue/pull-request traceability. Keep the completed task unarchived unless a maintainer separately
-requests archival.
+requests archival. Only when the runtime exposes no supported mutable task-title control,
+record `task_title_done` as verified not applicable with the capability evidence; do not append or claim a visible Done
+suffix, and do not block otherwise-complete cleanup on the unavailable control.
 
 Any failed or ambiguous gate blocks `task_title_done`; leave the task actionable and report the exact retry condition.
 The daily Codex cleanup automation is the reconciliation backstop for missed handoffs and partially completed terminal

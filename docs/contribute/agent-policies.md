@@ -175,7 +175,9 @@ Terminal order:
   gate as not applicable after proving the checkout identity and never removes it.
 - Complete `task_title_done` last by using supported title controls to append the exact suffix " · Done" once while
   preserving description and issue/pull-request traceability. Keep the task unarchived unless archival is separately
-  requested. Any failure or ambiguity blocks this title transition and leaves an actionable retry condition.
+  requested. If the runtime exposes no supported mutable title control, record `task_title_done` as verified not applicable
+  with capability evidence, omit the visible suffix, and allow otherwise-complete cleanup to finish. Any failure or
+  ambiguity in an available control blocks the title transition and leaves an actionable retry condition.
 - A squash-merged head that is not an ancestor of `main` is eligible only when the worktree HEAD equals the recorded
   pull-request head SHA and the recorded merge commit is reachable from current `origin/main`.
 - The daily Codex cleanup automation reconciles missed handoffs and partial transitions with these same gates. Its
