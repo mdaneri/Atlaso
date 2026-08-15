@@ -815,6 +815,42 @@ def test_agent_policy_gate_ignores_fenced_cleanup_markers(tmp_path: Path) -> Non
         )
 
 
+def test_agent_policy_gate_ignores_link_reference_cleanup_markers(
+    tmp_path: Path,
+) -> None:
+    """Verify that link-reference metadata cannot satisfy cleanup markers.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    marker = '`cleanup-ready`'
+    sibling = "\n- following policy"
+    for relative_path in ORDERED_TERMINAL_CLEANUP_MARKERS:
+        write_policy_files(tmp_path)
+        path = tmp_path / relative_path
+        anchor = TERMINAL_CLEANUP_SECTION_ANCHORS[relative_path]
+        definition_prefix = "" if anchor.startswith("#") else "  "
+        text = path.read_text(encoding="utf-8").replace(marker, "", 1)
+        definition = (
+            f'\n{definition_prefix}[cleanup-marker]: '
+            f'https://example.invalid "{marker}"'
+        )
+        path.write_text(
+            text + definition
+            if anchor.startswith("#")
+            else text.replace(sibling, definition + sibling, 1),
+            encoding="utf-8",
+        )
+
+        findings = check_agent_policy_gate(tmp_path)
+
+        assert len(findings) == 1
+        assert findings[0].path == path
+        assert findings[0].message == (
+            f"completed-task cleanup section marker is missing: {marker}"
+        )
+
+
 def test_agent_policy_gate_ignores_fenced_terminal_order(tmp_path: Path) -> None:
     """Verify that a fenced terminal sequence is not operative policy.
 

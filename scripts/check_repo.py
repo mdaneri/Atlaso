@@ -805,7 +805,7 @@ def strip_markdown_fenced_code(text: str) -> str:
 
 
 def strip_markdown_nonoperative_content(text: str) -> str:
-    """Replace HTML comments and fenced examples with blank lines.
+    """Replace non-rendered Markdown content with blank lines.
 
     Args:
         text: Markdown source whose operative prose must be inspected.
@@ -831,7 +831,10 @@ def strip_markdown_nonoperative_content(text: str) -> str:
     without_quotes = "".join(without_quotes_lines)
     visible_lines: list[str] = []
     for line in without_quotes.splitlines(keepends=True):
-        if re.match(r"(?: {4}|\t)", line) is not None:
+        if (
+            re.match(r"(?: {4}|\t)", line) is not None
+            or re.match(r" {0,3}\[[^\]\r\n]+\]:", line) is not None
+        ):
             visible_lines.append("\n" if line.endswith("\n") else "")
         else:
             visible_lines.append(line)
