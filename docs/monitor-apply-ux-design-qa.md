@@ -10,4 +10,4 @@ redirect_to: project/monitor-apply-ux-design-qa.md
 
 # Monitor design QA moved
 
-Continue to [Monitor hierarchy and interaction design QA](project/monitor-apply-ux-design-qa.md).
+The documentation build replaces this source with the canonical redirect.

@@ -9,4 +9,4 @@ redirect_to: services/dns.md
 
 # DNS moved
 
-Continue to [DNS](services/dns.md).
+The documentation build replaces this source with the canonical redirect.

@@ -12,10 +12,13 @@ import sys
 import tomllib
 from collections import Counter
 from dataclasses import dataclass
+from html.parser import HTMLParser
 from pathlib import Path
 from types import ModuleType
 from typing import Iterable
 from urllib.parse import unquote, urlparse
+
+import markdown
 
 ROOT = Path(__file__).resolve().parents[1]
 DOCS = ROOT / "docs"
@@ -84,6 +87,63 @@ class Finding:
         """
         path = self.path.relative_to(ROOT)
         return f"{path}:{self.line}: {self.message}" if self.line else f"{path}: {self.message}"
+
+
+class AnchorDetector(HTMLParser):
+    """Record whether rendered Markdown contains a link element."""
+
+    def __init__(self) -> None:
+        """Initialize the detector without converting character references."""
+        super().__init__(convert_charrefs=False)
+        self.found = False
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        """Record rendered anchor start tags.
+
+        Args:
+            tag: HTML element name.
+            attrs: Parsed HTML attributes.
+        """
+        if tag.casefold() != "a":
+            return
+        href = next((value for name, value in attrs if name.casefold() == "href"), None)
+        if href is not None and not href.startswith("#"):
+            self.found = True
+
+
+def contains_markdown_link(body: str) -> bool:
+    """Return whether the body renders any Markdown link syntax.
+
+    Args:
+        body: Markdown body to parse.
+
+    Returns:
+        Whether the rendered body contains an anchor.
+    """
+    configuration = tomllib.loads(CONFIG.read_text(encoding="utf-8"))
+    extension_tables = configuration["project"]["markdown_extensions"]
+    extensions: list[str] = []
+    extension_configs: dict[str, dict[str, object]] = {}
+    for name, options in extension_tables.items():
+        if name == "pymdownx":
+            for extension, extension_options in options.items():
+                qualified_name = f"{name}.{extension}"
+                extensions.append(qualified_name)
+                extension_configs[qualified_name] = extension_options
+            continue
+        extensions.append(name)
+        extension_configs[name] = options
+
+    detector = AnchorDetector()
+    detector.feed(
+        markdown.markdown(
+            body,
+            extensions=extensions,
+            extension_configs=extension_configs,
+        )
+    )
+    detector.close()
+    return detector.found
 
 
 def load_ui_routes() -> ModuleType:
@@ -386,6 +446,8 @@ def validate_page(path: Path, nav: set[str]) -> tuple[dict[str, object], list[Fi
             findings.append(Finding(path, "redirect page requires redirect_to"))
         elif not (DOCS / target).is_file():
             findings.append(Finding(path, f"redirect target does not exist: {target}"))
+        if contains_markdown_link(body):
+            findings.append(Finding(path, "redirect page body must not duplicate its target as a Markdown link"))
     elif relative not in nav:
         findings.append(Finding(path, "canonical page is missing from Zensical navigation"))
     return meta, findings

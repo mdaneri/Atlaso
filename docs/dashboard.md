@@ -9,4 +9,4 @@ redirect_to: operate/dashboard.md
 
 # Dashboard moved
 
-Continue to [Dashboard](operate/dashboard.md).
+The documentation build replaces this source with the canonical redirect.

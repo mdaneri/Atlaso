@@ -9,4 +9,4 @@ redirect_to: services/managed-ldap.md
 
 # Managed LDAP moved
 
-Continue to [Managed LDAP](services/managed-ldap.md).
+The documentation build replaces this source with the canonical redirect.
