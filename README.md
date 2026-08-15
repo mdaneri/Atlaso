@@ -41,7 +41,9 @@ brings infrastructure, storage, identity, networking, and lifecycle workflows in
   sources in read-only repository tabs, then create or edit desired source state through the shared reviewed wizard
   before explicitly synchronizing package clients. The built-in Atlaso source follows the signed `stable` channel;
   Pages publication guards verify that its pointer, immutable release manifest, trust key, and CPython 3.14
-  compatibility remain usable.
+  compatibility remain usable. Atlaso Release installation reports success only after the durable active link, signed
+  receipt, running version, internal API, nginx management front door, and post-maintenance service state all agree on
+  the candidate; final-readiness failures roll back automatically and startup rejects inconsistent success evidence.
 - [Services](docs/services/index.md) — configure DNS, identity, storage, network boot, and VCF integrations.
 - [Network configuration](docs/operate/networking.md) — distinguish static paths from forwarding permissions and manage
   Static Routes, Routing Permissions, IPv4 masquerade NAT rules, and interface-level WAN Simulation through reviewed

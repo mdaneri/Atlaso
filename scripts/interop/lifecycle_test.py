@@ -2963,6 +2963,73 @@ print(json.dumps({
     return payload
 
 
+def _appliance_boot_id(args: argparse.Namespace) -> str:
+    """Return the current appliance kernel boot identifier."""
+    result = ssh_command(
+        args.appliance_ssh_host,
+        args,
+        "cat /proc/sys/kernel/random/boot_id",
+        role="appliance",
+        appliance_as_root=False,
+    )
+    require_success(result, "appliance boot identifier probe")
+    boot_id = result["stdout"].strip()
+    if re.fullmatch(r"[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}", boot_id) is None:
+        raise LifecycleError("Appliance boot identifier probe returned an invalid value.")
+    return boot_id
+
+
+def _reboot_appliance_and_wait(
+    client: HttpClient,
+    args: argparse.Namespace,
+    *,
+    timeout_seconds: int = 300,
+) -> dict[str, Any]:
+    """Schedule an audited appliance reboot and prove a new ready kernel boot."""
+    before_boot_id = _appliance_boot_id(args)
+    status, body, _headers = client.request("GET", "/dashboard")
+    if status >= 400:
+        raise LifecycleError(f"GET /dashboard failed with HTTP {status} before lifecycle reboot.")
+    csrf = extract_csrf(body)
+    status, response_body, _headers = client.request(
+        "POST",
+        "/appliance/power/reboot",
+        form={"csrf": csrf},
+        follow_redirects=False,
+    )
+    if status != 303:
+        raise LifecycleError(
+            f"Appliance reboot submission failed with HTTP {status}: {summarize_html_response(response_body)}"
+        )
+
+    deadline = time.monotonic() + timeout_seconds
+    started = time.monotonic()
+    observed_unavailable = False
+    while time.monotonic() < deadline:
+        try:
+            probe = HttpClient(client.base_url).request("GET", "/openapi.json", timeout=5)
+            if probe[0] >= 400:
+                observed_unavailable = True
+        except Exception:  # noqa: BLE001 - reboot intentionally interrupts the management endpoint.
+            observed_unavailable = True
+        if observed_unavailable or time.monotonic() - started >= 8:
+            try:
+                after_boot_id = _appliance_boot_id(args)
+            except LifecycleError:
+                after_boot_id = ""
+            if after_boot_id and after_boot_id != before_boot_id:
+                ready = HttpClient(client.base_url).request("GET", "/openapi.json", timeout=5)
+                if ready[0] == 200:
+                    return {
+                        "scheduled": True,
+                        "endpoint_interrupted": observed_unavailable,
+                        "boot_id_changed": True,
+                        "openapi_status": ready[0],
+                    }
+        time.sleep(3)
+    raise LifecycleError("Appliance reboot did not produce a new nginx-ready kernel boot within the lifecycle timeout.")
+
+
 def signed_release_update_check(client: HttpClient, args: argparse.Namespace) -> dict[str, Any]:
     """Return signed release update check.
 
@@ -2985,6 +3052,18 @@ def signed_release_update_check(client: HttpClient, args: argparse.Namespace) ->
     after_success = _release_database_identity(args)
     if after_success["current_release"] == before["current_release"]:
         raise LifecycleError("The preview lifecycle release did not switch /opt/atlaso/current.")
+    successful_transaction = (successful_task.get("result") or {}).get("release_transaction") or {}
+    successful_version = str(successful_transaction.get("candidate_version") or successful_transaction.get("release") or "")
+    success_health = appliance_health(client, args)
+    if success_health["version"]["base_version"] != successful_version:
+        raise LifecycleError("The successful release task does not match the host-facing candidate version.")
+    success_reboot = _reboot_appliance_and_wait(client, args)
+    success_post_reboot_health = appliance_health(client, args)
+    if success_post_reboot_health["version"]["base_version"] != successful_version:
+        raise LifecycleError("The successful candidate release did not remain active after reboot.")
+    after_success_reboot = _release_database_identity(args)
+    if after_success_reboot["current_release"] != after_success["current_release"]:
+        raise LifecycleError("The successful candidate release link changed after reboot.")
 
     broken_source = _configure_signed_release_source(client, args, channel="development")
     broken_baseline = _release_database_identity(args)
@@ -2997,7 +3076,19 @@ def signed_release_update_check(client: HttpClient, args: argparse.Namespace) ->
     transaction = (failed_task.get("result") or {}).get("release_transaction") or {}
     if transaction.get("rolled_back") is not True or transaction.get("rollback_health") is not True:
         raise LifecycleError("Broken release task did not record a healthy automatic rollback.")
-    health = appliance_health(client, args)
+    if transaction.get("failure_layer") not in {"nginx_configuration", "management_front_door"}:
+        raise LifecycleError("Broken release fixture did not fail at the final nginx/front-door readiness boundary.")
+    rollback_health = appliance_health(client, args)
+    if rollback_health["version"]["base_version"] != successful_version:
+        raise LifecycleError("Automatic rollback did not restore the previous host-facing Atlaso version.")
+    rollback_reboot = _reboot_appliance_and_wait(client, args)
+    rollback_post_reboot_health = appliance_health(client, args)
+    if rollback_post_reboot_health["version"]["base_version"] != successful_version:
+        raise LifecycleError("The rolled-back Atlaso version did not remain active after reboot.")
+    after_rollback_reboot = _release_database_identity(args)
+    for key in ("current_release", "compatibility_venv", "schema_sha256", "users"):
+        if after_rollback_reboot[key] != after_rollback[key]:
+            raise LifecycleError(f"Broken release rollback field {key} changed after reboot.")
     return {
         "preview_source": preview_source,
         "successful_task_id": successful_task.get("id"),
@@ -3007,8 +3098,14 @@ def signed_release_update_check(client: HttpClient, args: argparse.Namespace) ->
         "verified_key_id": transaction.get("verified_key_id"),
         "bundle_sha256": transaction.get("bundle_sha256"),
         "rolled_back": transaction.get("rolled_back"),
+        "failure_layer": transaction.get("failure_layer"),
         "database_identity_restored": True,
-        "service_health": health,
+        "successful_version": successful_version,
+        "successful_reboot": success_reboot,
+        "successful_post_reboot_health": success_post_reboot_health,
+        "rollback_health": rollback_health,
+        "rollback_reboot": rollback_reboot,
+        "rollback_post_reboot_health": rollback_post_reboot_health,
     }
 
 

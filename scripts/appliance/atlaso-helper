@@ -19,6 +19,7 @@ import re
 import shutil
 import socket
 import sqlite3
+import ssl
 import subprocess
 import sys
 import tarfile
@@ -10641,6 +10642,26 @@ def _atomic_symlink(target: Path, link: Path) -> None:
     temporary.unlink(missing_ok=True)
     temporary.symlink_to(target)
     os.replace(temporary, link)
+    _fsync_directory(link.parent)
+
+
+def _fsync_directory(path: Path) -> None:
+    """Persist directory-entry changes on appliance filesystems."""
+    if os.name != "posix":
+        return
+    descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
+def _fsync_file(path: Path) -> None:
+    """Persist one regular file before an atomic rename."""
+    if os.name != "posix":
+        return
+    with path.open("rb") as handle:
+        os.fsync(handle.fileno())
 
 
 def _active_release_root() -> Path:
@@ -11232,13 +11253,23 @@ def _set_release_maintenance(enabled: bool) -> dict:
         result["command"] = ["maintenance", "enable"]
         return result
     ATLASO_UPDATE_MAINTENANCE_PATH.unlink(missing_ok=True)
-    return {
-        "command": ["maintenance", "disable"],
-        "returncode": 0,
-        "success": True,
-        "stdout": "Atlaso management maintenance response disabled.",
-        "stderr": "",
-    }
+    validation = _nginx_test_command()
+    if validation.returncode != 0:
+        ATLASO_UPDATE_MAINTENANCE_PATH.touch(mode=0o644, exist_ok=True)
+        return {
+            "command": ["maintenance", "disable", "nginx", "-t"],
+            "returncode": validation.returncode,
+            "success": False,
+            "stdout": validation.stdout[-4000:],
+            "stderr": validation.stderr[-4000:],
+        }
+    result = _service_command("reload", "nginx.service")
+    result["command"] = ["maintenance", "disable", "reload", "nginx.service"]
+    if result["success"]:
+        result["stdout"] = "Atlaso management maintenance response disabled and nginx reloaded."
+    else:
+        ATLASO_UPDATE_MAINTENANCE_PATH.touch(mode=0o644, exist_ok=True)
+    return result
 
 
 def _write_release_finalizer(payload: dict) -> None:
@@ -11251,7 +11282,217 @@ def _write_release_finalizer(payload: dict) -> None:
     temporary = ATLASO_UPDATE_FINALIZER_PATH.with_suffix(".tmp")
     temporary.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     temporary.chmod(0o644)
+    _fsync_file(temporary)
     os.replace(temporary, ATLASO_UPDATE_FINALIZER_PATH)
+    _fsync_directory(ATLASO_UPDATE_FINALIZER_PATH.parent)
+
+
+def _release_root_version(release_root: Path) -> str:
+    """Return the version declared by an installed release root."""
+    for name in (".release-manifest.json", "bundle-metadata.json"):
+        try:
+            payload = json.loads((release_root / name).read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if isinstance(payload, dict) and str(payload.get("version") or "").strip():
+            return str(payload["version"]).split("+", 1)[0]
+    return release_root.name.removeprefix("bootstrap-")
+
+
+def _release_check(
+    layer: str,
+    success: bool,
+    message: str,
+    **evidence: object,
+) -> dict:
+    """Return one sanitized release-activation check result."""
+    return {
+        "command": ["release-activation-check", layer],
+        "returncode": 0 if success else 1,
+        "success": success,
+        "stdout": message if success else "",
+        "stderr": "" if success else message,
+        "layer": layer,
+        **evidence,
+    }
+
+
+def _wait_for_openapi_version(
+    *,
+    layer: str,
+    url: str,
+    expected_version: str,
+    insecure: bool = False,
+    timeout_seconds: int = 60,
+) -> dict:
+    """Wait for one OpenAPI endpoint to report the exact candidate version."""
+    deadline = time.monotonic() + timeout_seconds
+    observed_version = ""
+    last_error = "endpoint unavailable"
+    context = ssl._create_unverified_context() if insecure else None  # noqa: SLF001 - local CA probe.
+    while time.monotonic() < deadline:
+        try:
+            with urlopen(url, timeout=3, context=context) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+            observed_version = str((payload.get("info") or {}).get("version") or "").split("+", 1)[0]
+            if response.status == 200 and observed_version == expected_version:
+                return _release_check(
+                    layer,
+                    True,
+                    f"{layer} reported Atlaso {expected_version}.",
+                    expected_version=expected_version,
+                    observed_version=observed_version,
+                )
+            last_error = f"reported version {observed_version or 'unknown'}"
+        except Exception as exc:  # noqa: BLE001 - bounded readiness retry with sanitized evidence.
+            last_error = type(exc).__name__
+        time.sleep(1)
+    return _release_check(
+        layer,
+        False,
+        f"{layer} did not report candidate Atlaso {expected_version} within {timeout_seconds} seconds ({last_error}).",
+        expected_version=expected_version,
+        observed_version=observed_version,
+    )
+
+
+def _release_activation_verification(
+    release_root: Path,
+    release: dict,
+    *,
+    require_receipt: bool = True,
+    timeout_seconds: int = 60,
+) -> tuple[dict, list[dict]]:
+    """Verify durable active-release, service, nginx, and exact-version agreement."""
+    expected_version = str(release.get("version") or "").split("+", 1)[0]
+    checks: list[dict] = []
+    try:
+        active_root = _active_release_root()
+        active_matches = active_root.resolve() == release_root.resolve()
+        checks.append(
+            _release_check(
+                "active_release",
+                active_matches,
+                "Active release and compatibility virtualenv resolve to the candidate."
+                if active_matches
+                else "Active release or compatibility virtualenv does not resolve to the candidate.",
+                current_release=str(active_root),
+                compatibility_venv=str(ATLASO_VENV_LINK.resolve()),
+            )
+        )
+    except (OSError, ValueError) as exc:
+        active_root = None
+        checks.append(_release_check("active_release", False, str(exc)))
+
+    receipt_version = ""
+    receipt_sha256 = ""
+    receipt_matches = not require_receipt
+    try:
+        receipt = json.loads((release_root / ".release-manifest.json").read_text(encoding="utf-8"))
+        if isinstance(receipt, dict):
+            receipt_version = str(receipt.get("version") or "").split("+", 1)[0]
+            receipt_sha256 = hashlib.sha256(
+                json.dumps(receipt, separators=(",", ":"), sort_keys=True).encode("utf-8")
+            ).hexdigest()
+            receipt_matches = receipt == release if require_receipt else receipt_version == expected_version
+    except (OSError, json.JSONDecodeError):
+        receipt_matches = not require_receipt and _release_root_version(release_root) == expected_version
+    checks.append(
+        _release_check(
+            "release_receipt",
+            receipt_matches,
+            "Signed release receipt matches the candidate."
+            if receipt_matches
+            else "Signed release receipt does not match the candidate.",
+            expected_version=expected_version,
+            observed_version=receipt_version,
+            receipt_manifest_sha256=receipt_sha256,
+        )
+    )
+
+    maintenance_removed = not ATLASO_UPDATE_MAINTENANCE_PATH.exists()
+    checks.append(
+        _release_check(
+            "maintenance_cleanup",
+            maintenance_removed,
+            "Nginx maintenance mode is removed."
+            if maintenance_removed
+            else "Nginx maintenance mode remains enabled.",
+        )
+    )
+    nginx = _nginx_test_command()
+    checks.append(
+        {
+            "command": ["nginx", "-t"],
+            "returncode": nginx.returncode,
+            "success": nginx.returncode == 0,
+            "stdout": nginx.stdout[-4000:],
+            "stderr": nginx.stderr[-4000:],
+            "layer": "nginx_configuration",
+        }
+    )
+    services = _service_command(
+        "is-active",
+        "atlaso.service",
+        "atlaso-worker.service",
+        "atlaso-console.service",
+        "nginx.service",
+    )
+    services["layer"] = "service_state"
+    checks.append(services)
+    checks.append(
+        _wait_for_openapi_version(
+            layer="internal_openapi",
+            url="http://127.0.0.1:8000/openapi.json",
+            expected_version=expected_version,
+            timeout_seconds=timeout_seconds,
+        )
+    )
+    try:
+        _https_enabled, readiness_checks = _console_management_readiness_checks()
+        _label, front_door_url, insecure, _expected_status = next(
+            check for check in readiness_checks if check[0].startswith("nginx") and check[1].endswith("/openapi.json")
+        )
+        checks.append(
+            _wait_for_openapi_version(
+                layer="management_front_door",
+                url=front_door_url,
+                expected_version=expected_version,
+                insecure=insecure,
+                timeout_seconds=timeout_seconds,
+            )
+        )
+    except (OSError, StopIteration, ValueError) as exc:
+        checks.append(_release_check("management_front_door", False, str(exc)))
+
+    failed = next((check for check in checks if not check.get("success")), None)
+    checks_by_layer = {str(check.get("layer") or ""): check for check in checks}
+    verification = {
+        "success": failed is None,
+        "candidate_version": expected_version,
+        "current_release": str(active_root) if active_root is not None else "",
+        "compatibility_venv": str(ATLASO_VENV_LINK.resolve()) if ATLASO_VENV_LINK.exists() else "",
+        "receipt_version": receipt_version,
+        "receipt_manifest_sha256": receipt_sha256,
+        "maintenance_removed": maintenance_removed,
+        "nginx_ready": bool(checks_by_layer.get("nginx_configuration", {}).get("success")),
+        "services_active": bool(services.get("success")),
+        "internal_version": str(checks_by_layer.get("internal_openapi", {}).get("observed_version") or ""),
+        "host_facing_version": str(checks_by_layer.get("management_front_door", {}).get("observed_version") or ""),
+        "failure_layer": str((failed or {}).get("layer") or ""),
+    }
+    return verification, checks
+
+
+def _sync_release_activation() -> dict:
+    """Flush release activation changes before definitive success is recorded."""
+    try:
+        sync = getattr(os, "sync", None)
+        if sync is not None:
+            sync()
+    except OSError as exc:
+        return _release_check("durable_activation", False, f"Persisting release activation failed: {exc}")
+    return _release_check("durable_activation", True, "Release activation changes were flushed to durable storage.")
 
 
 def _prune_old_releases(*, current: Path, previous: Path) -> None:
@@ -11330,6 +11571,7 @@ def _apply_atlaso_release(
             shutil.rmtree(staging)
         else:
             os.replace(content, release_root)
+            _fsync_directory(ATLASO_RELEASES_DIR)
             created_release_root = True
             shutil.rmtree(staging)
     except Exception:
@@ -11339,11 +11581,14 @@ def _apply_atlaso_release(
         raise
 
     previous = _active_release_root()
+    previous_version = _release_root_version(previous)
     python_abi = _current_python_abi()
     finalizer_evidence = {
         "job_id": str(payload.get("job_id") or ""),
         "channel": channel.get("channel"),
         "release": version,
+        "candidate_version": version,
+        "previous_version": previous_version,
         "git_commit": release.get("git_commit"),
         "release_manifest_url": release_manifest_url,
         "release_manifest_sha256": hashlib.sha256(
@@ -11363,12 +11608,33 @@ def _apply_atlaso_release(
     }
     ATLASO_UPDATE_FINALIZER_PATH.unlink(missing_ok=True)
     if previous.resolve() == release_root.resolve():
+        durable = _sync_release_activation()
+        commands.append(durable)
+        activation, activation_commands = _release_activation_verification(release_root, release)
+        commands.extend(activation_commands)
+        if not durable["success"] or not activation["success"]:
+            failure_layer = "durable_activation" if not durable["success"] else activation["failure_layer"]
+            error = f"Active Atlaso release verification failed at {failure_layer}."
+            _write_release_finalizer(
+                {
+                    **finalizer_evidence,
+                    "status": "failed",
+                    "rolled_back": False,
+                    "no_change": True,
+                    "failure_layer": failure_layer,
+                    "active_release_verification": activation,
+                    "error": error,
+                    "finished_at": datetime.now(timezone.utc).isoformat(),
+                }
+            )
+            raise ValueError(error)
         _write_release_finalizer(
             {
                 **finalizer_evidence,
                 "status": "succeeded",
                 "rolled_back": False,
                 "no_change": True,
+                "active_release_verification": activation,
                 "finished_at": datetime.now(timezone.utc).isoformat(),
             }
         )
@@ -11383,6 +11649,7 @@ def _apply_atlaso_release(
     if not maintenance["success"]:
         raise ValueError("Could not enter the nginx maintenance response before release transaction")
     database_backed_up = False
+    failure_layer = "service_shutdown"
     try:
         stopped = _service_command("stop", "atlaso.service", "atlaso-console.service")
         commands.append(stopped)
@@ -11390,7 +11657,9 @@ def _apply_atlaso_release(
             raise ValueError("Could not stop Atlaso services before release transaction")
         _sqlite_backup(database_backup)
         database_backed_up = True
+        failure_layer = "systemd_assets"
         file_backups = _install_release_owned_files(release_root, backup_root)
+        failure_layer = "data_disk_identity"
         disk_identity_commands = _refresh_release_data_disk_identity(validate=False)
         commands.extend(disk_identity_commands)
         if not all(command["success"] for command in disk_identity_commands):
@@ -11400,25 +11669,50 @@ def _apply_atlaso_release(
         commands.append(disk_preflight)
         if not disk_preflight["success"]:
             raise ValueError("Candidate Atlaso release failed data-disk policy validation")
+        failure_layer = "symlink_switch"
         _atomic_symlink(release_root, ATLASO_CURRENT_LINK)
-        commands.append(_service_command("daemon-reload"))
-        commands.append(_service_command("start", "atlaso.service"))
+        failure_layer = "systemd_reload"
+        daemon_reload = _service_command("daemon-reload")
+        commands.append(daemon_reload)
+        if not daemon_reload["success"]:
+            raise ValueError("Candidate Atlaso release failed systemd daemon reload")
+        failure_layer = "candidate_startup"
+        candidate_start = _service_command("start", "atlaso.service")
+        commands.append(candidate_start)
+        if not candidate_start["success"]:
+            raise ValueError("Candidate Atlaso release failed to start")
         health = _wait_for_atlaso_health()
         commands.append(health)
-        if not all(command["success"] for command in commands):
+        if not health["success"]:
             raise ValueError("Candidate Atlaso release failed service validation")
-        commands.append(_service_command("start", "atlaso-console.service"))
-        commands.append(
-            _service_command(
-                "is-active",
-                "atlaso.service",
-                "atlaso-worker.service",
-                "atlaso-console.service",
-            )
+        console_start = _service_command("start", "atlaso-console.service")
+        commands.append(console_start)
+        if not console_start["success"]:
+            raise ValueError("Candidate Atlaso release console failed to start")
+        active_services = _service_command(
+            "is-active",
+            "atlaso.service",
+            "atlaso-worker.service",
+            "atlaso-console.service",
         )
-        commands.append(_set_release_maintenance(False))
-        if not all(command["success"] for command in commands):
+        commands.append(active_services)
+        if not active_services["success"]:
+            raise ValueError("Candidate Atlaso release services are not active")
+        failure_layer = "maintenance_cleanup"
+        maintenance_cleanup = _set_release_maintenance(False)
+        commands.append(maintenance_cleanup)
+        if not maintenance_cleanup["success"]:
             raise ValueError("Candidate Atlaso release failed final service validation")
+        failure_layer = "durable_activation"
+        durable = _sync_release_activation()
+        commands.append(durable)
+        if not durable["success"]:
+            raise ValueError("Candidate Atlaso release activation could not be persisted")
+        activation, activation_commands = _release_activation_verification(release_root, release)
+        commands.extend(activation_commands)
+        if not activation["success"]:
+            failure_layer = str(activation.get("failure_layer") or "activation_verification")
+            raise ValueError(f"Candidate Atlaso release failed activation verification at {failure_layer}")
     except Exception as exc:
         _service_command("stop", "atlaso.service", "atlaso-console.service")
         _atomic_symlink(previous, ATLASO_CURRENT_LINK)
@@ -11435,16 +11729,35 @@ def _apply_atlaso_release(
             "atlaso-worker.service",
             "atlaso-console.service",
         )
-        _set_release_maintenance(False)
+        rollback_maintenance = _set_release_maintenance(False)
+        rollback_durable = _sync_release_activation()
+        rollback_release = {"version": previous_version}
+        rollback_activation, rollback_activation_commands = _release_activation_verification(
+            previous,
+            rollback_release,
+            require_receipt=False,
+        )
+        commands.extend([rollback_health, rollback_services, rollback_maintenance, rollback_durable])
+        commands.extend(rollback_activation_commands)
+        rollback_ready = bool(
+            rollback_health.get("success", False)
+            and rollback_services.get("success", False)
+            and rollback_maintenance.get("success", False)
+            and rollback_durable.get("success", False)
+            and rollback_activation.get("success", False)
+        )
         _write_update_info(
             {
                 "status": "failed",
                 "success": False,
                 "release": version,
                 "rolled_back": True,
+                "failure_layer": failure_layer,
                 "rollback_health": {
                     "openapi": rollback_health,
                     "services": rollback_services,
+                    "maintenance": rollback_maintenance,
+                    "active_release_verification": rollback_activation,
                 },
                 "error": str(exc),
                 "finished_at": datetime.now(timezone.utc).isoformat(),
@@ -11455,11 +11768,10 @@ def _apply_atlaso_release(
                 **finalizer_evidence,
                 "status": "failed",
                 "rolled_back": True,
-                "rollback_health": bool(
-                    rollback_health.get("success", False)
-                    and rollback_services.get("success", False)
-                ),
+                "failure_layer": failure_layer,
+                "rollback_health": rollback_ready,
                 "rollback_service_checks": rollback_services,
+                "active_release_verification": rollback_activation,
                 "error": str(exc),
                 "finished_at": datetime.now(timezone.utc).isoformat(),
             }
@@ -11473,6 +11785,7 @@ def _apply_atlaso_release(
             "status": "succeeded",
             "rolled_back": False,
             "service_health": True,
+            "active_release_verification": activation,
             "finished_at": datetime.now(timezone.utc).isoformat(),
         }
     )

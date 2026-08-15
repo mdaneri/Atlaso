@@ -322,6 +322,12 @@ The following cross-cutting boundaries always apply:
   through the shared reviewed source wizard, with **Edit repository** beside the destructive action. Wizard submission
   saves desired runtime-maintenance state only; package-client changes still require the explicit audited
   **Synchronize repositories** task.
+- A signed Atlaso Release update succeeds only after durable candidate activation is proven: `current`, the compatibility
+  virtualenv, signed receipt, finalizer, internal OpenAPI version, nginx management-front-door version, maintenance
+  cleanup, nginx validation/reload, and required service state must agree. Any post-switch failure restores the previous
+  release, assets, database, and nginx-ready front door with `rolled_back=true`. Worker startup must reject a success
+  finalizer that disagrees with the durable active release or running version. Lifecycle coverage proves both successful
+  activation and rollback before and after audited appliance reboots; never reboot automatically as part of installation.
 - Boot ShredOS only from the verified stable ISO's allowlisted `/boot/bzImage` kernel through iPXE. Do not restore raw
   disk-image SAN boot or add unattended erase arguments.
 - OIDC clients use explicit validated identity sources and emit only granted, explicitly mapped claims; see the detailed

@@ -409,6 +409,15 @@ status: current
   Photon-supported `tdnf repoquery python3` form and select the highest advertised minor ABI, reject unsupported
   candidate Python ABIs, reconstruct from the retained wheelhouse after supported ABI changes, and do not claim
   automatic RPM rollback or reboot.
+- Do not write a successful Atlaso Release finalizer until durable activation is proven. Flush the active switch and
+  installed assets, remove maintenance mode only through final nginx validation and reload, require nginx plus web,
+  worker, and console service state, and require the signed receipt, `current`, compatibility virtualenv, internal
+  OpenAPI version, nginx management-front-door OpenAPI version, and candidate version to agree. Any failure after the
+  switch must restore the previous release, helper/systemd assets, SQLite snapshot, and working nginx front door, write
+  `rolled_back=true` with a sanitized failing layer, and fail both release child and parent. Worker startup must reject
+  a success finalizer that disagrees with the durable active release or running version. Signed-release lifecycle
+  coverage must prove the candidate and a healthy rollback both before and after audited appliance reboots; installation
+  itself must not reboot automatically.
 - Release publication recovery must use the protected **Publish appliance release** manual dispatch with the exact
   successful `main` push CI SHA. Atlaso starts a new signed update lineage at `v0.9.18`; do not publish or consume a
   retired-product bridge. Preserve tag/release commit and asset-byte idempotency checks. A rerun after tag/release

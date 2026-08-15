@@ -242,6 +242,20 @@ running parent failed even when every child step committed before the restart; c
 recovery evidence. Only the current and previous known-good releases are retained; the UI does not expose arbitrary
 historical downgrades.
 
+Success is recorded only after Atlaso flushes the active switch and installed release assets, removes maintenance mode,
+validates and reloads nginx, and verifies web, worker, console, and nginx service state. The helper then requires
+`current`, the compatibility virtualenv, the signed release receipt, internal `/openapi.json`, and the applied HTTP or
+HTTPS nginx management front door to report the exact candidate version. The finalizer retains the candidate and
+previous versions, receipt identity, active-release verification, internal and front-door versions, and sanitized
+failing layer. Worker startup rechecks the success finalizer against the durable links, signed receipt, and running
+version; inconsistent success evidence fails recovery instead of being accepted.
+
+A failure in systemd asset activation, the atomic switch, candidate startup, maintenance removal, final `nginx -t`, or
+front-door version readiness enters the same rollback boundary. Rollback restores the previous release, assets, and
+database, validates and reloads nginx after removing maintenance mode, and proves the previous version through both
+internal and management-front-door OpenAPI before writing `rolled_back=true`. Atlaso Release installation never reboots
+the appliance automatically.
+
 ## Photon OS boundary
 
 Manual and scheduled Photon checks/installations remain available. Before mutation, the helper records an inspection of
@@ -269,11 +283,13 @@ scripts/windows/hyperv/invoke-lifecycle-test.ps1 `
 
 The fixture must use the appliance's named test trust key. Its signed `preview` channel must select a healthy release
 newer than the image baseline; its signed `development` channel must select a candidate that reaches database startup
-and then fails the service-health probe. The lifecycle runner proves that each release task exposes a Atlaso Release
-child step, proves the preview upgrade, expects the development parent and child to fail with `rolled_back=true`, and
-compares the active release, compatibility virtualenv, database schema hash, and user identities before and after
-rollback. It then rechecks the web, worker, console, internal `/openapi.json`, and host-facing API. Omitting the URL
-skips only this externally supplied fixture.
+and then fails final nginx or management-front-door readiness. The lifecycle runner proves that each release task
+exposes an Atlaso Release child step, proves the preview upgrade and exact host-facing candidate version, performs an
+audited appliance reboot, and requires the same candidate version and release link afterward. It then expects the
+development parent and child to fail with `rolled_back=true`, compares the active release, compatibility virtualenv,
+database schema hash, and user identities before and after rollback, and rechecks the previous version through the web,
+worker, console, internal `/openapi.json`, and host-facing API. A second audited reboot must preserve that healthy
+rollback identity and version. Omitting the URL skips only this externally supplied fixture.
 
 ## Release operator workflow
 

@@ -261,6 +261,55 @@ def test_appliance_health_checks_version_before_authentication(monkeypatch):
     assert evidence["version"] == version_payload
 
 
+def test_reboot_appliance_waits_for_new_boot_and_host_facing_readiness(monkeypatch):
+    """Verify reboot coverage requires a changed boot ID and recovered nginx front door."""
+    lifecycle = load_lifecycle_module()
+    boot_ids = iter(
+        [
+            "11111111-1111-1111-1111-111111111111",
+            "22222222-2222-2222-2222-222222222222",
+        ]
+    )
+    monkeypatch.setattr(lifecycle, "_appliance_boot_id", lambda _args: next(boot_ids))
+
+    class FakeClient:
+        """Model the authenticated reboot request."""
+
+        base_url = "https://192.0.2.10"
+
+        def request(self, method, path, **_kwargs):  # type: ignore[no-untyped-def]  # Minimal fake accepts the production client's dynamic request shape.
+            if (method, path) == ("GET", "/dashboard"):
+                return 200, '<input type="hidden" name="csrf" value="csrf-367">', {}
+            if (method, path) == ("POST", "/appliance/power/reboot"):
+                return 303, "", {}
+            raise AssertionError(f"unexpected authenticated request: {method} {path}")
+
+    class ProbeClient:
+        """Model an interrupted and then recovered host-facing endpoint."""
+
+        calls = 0
+
+        def __init__(self, _base_url):  # type: ignore[no-untyped-def]  # Minimal fake stores only the untyped lifecycle URL.
+            pass
+
+        def request(self, method, path, **_kwargs):  # type: ignore[no-untyped-def]  # Minimal fake accepts the production client's dynamic request shape.
+            assert (method, path) == ("GET", "/openapi.json")
+            type(self).calls += 1
+            return (503 if self.calls == 1 else 200), "{}", {}
+
+    monkeypatch.setattr(lifecycle, "HttpClient", ProbeClient)
+    monkeypatch.setattr(lifecycle.time, "sleep", lambda _seconds: None)
+
+    evidence = lifecycle._reboot_appliance_and_wait(FakeClient(), argparse.Namespace())
+
+    assert evidence == {
+        "scheduled": True,
+        "endpoint_interrupted": True,
+        "boot_id_changed": True,
+        "openapi_status": 200,
+    }
+
+
 def test_routing_wan_only_plan_and_routing_rule_payload():
     """Verify that routing wan only plan and routing rule payload."""
     lifecycle = load_lifecycle_module()

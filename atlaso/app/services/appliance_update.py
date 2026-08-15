@@ -25,6 +25,8 @@ APPLIANCE_UPDATE_STAGED_CONFIG_PATH = "/var/lib/atlaso/apply/appliance-update/at
 APPLIANCE_UPDATE_STAGED_CREDENTIALS_PATH = "/var/lib/atlaso/apply/appliance-update/atlaso-update-credentials.json"
 APPLIANCE_UPDATE_INFO_PATH = "/etc/atlaso/update-info"
 APPLIANCE_UPDATE_FINALIZER_PATH = "/var/lib/atlaso/apply/appliance-update/finalizer-status.json"
+ATLASO_CURRENT_RELEASE_PATH = Path("/opt/atlaso/current")
+ATLASO_COMPATIBILITY_VENV_PATH = Path("/opt/atlaso/.venv")
 PHOTON_REPOSITORY_DIR = Path("/etc/yum.repos.d")
 DEFAULT_ATLASO_RELEASE_URL = "https://mdaneri.github.io/Atlaso/updates"
 DEFAULT_ATLASO_MANIFEST_URL = f"{DEFAULT_ATLASO_RELEASE_URL}/channels/stable/manifest.json"
@@ -35,6 +37,81 @@ UPDATE_STREAM_LABELS = {
     "powershell_modules": "PowerShell Modules",
     "atlaso_release": "Atlaso Release",
 }
+
+
+def reconcile_release_success_finalizer(finalizer: dict[str, Any]) -> tuple[dict[str, Any], bool]:
+    """Validate a success finalizer against live release and running-version state."""
+    if str(finalizer.get("status") or "") != JobStatus.SUCCEEDED.value:
+        return finalizer, True
+
+    expected_version = str(finalizer.get("candidate_version") or finalizer.get("release") or "").split("+", 1)[0]
+    activation = finalizer.get("active_release_verification")
+    errors: list[str] = []
+    if not expected_version:
+        errors.append("candidate version is missing")
+    if not isinstance(activation, dict) or activation.get("success") is not True:
+        errors.append("definitive activation evidence is missing")
+    try:
+        if not ATLASO_CURRENT_RELEASE_PATH.is_symlink():
+            raise ValueError("active release link is missing")
+        current_root = ATLASO_CURRENT_RELEASE_PATH.resolve(strict=True)
+    except (OSError, ValueError) as exc:
+        current_root = None
+        errors.append(str(exc))
+    try:
+        if not ATLASO_COMPATIBILITY_VENV_PATH.is_symlink():
+            raise ValueError("compatibility virtualenv link is missing")
+        compatibility_venv = ATLASO_COMPATIBILITY_VENV_PATH.resolve(strict=True)
+    except (OSError, ValueError) as exc:
+        compatibility_venv = None
+        errors.append(str(exc))
+    if current_root is not None and compatibility_venv != (current_root / ".venv").resolve():
+        errors.append("compatibility virtualenv does not resolve through the active release")
+
+    receipt: dict[str, Any] = {}
+    if current_root is not None:
+        try:
+            parsed = json.loads((current_root / ".release-manifest.json").read_text(encoding="utf-8"))
+            receipt = parsed if isinstance(parsed, dict) else {}
+        except (OSError, json.JSONDecodeError):
+            receipt = {}
+    if not receipt:
+        errors.append("active signed-release receipt is missing or invalid")
+    receipt_version = str(receipt.get("version") or "").split("+", 1)[0]
+    if receipt_version != expected_version:
+        errors.append("active signed-release receipt version does not match the finalizer")
+    receipt_sha256 = hashlib.sha256(
+        json.dumps(receipt, separators=(",", ":"), sort_keys=True).encode("utf-8")
+    ).hexdigest() if receipt else ""
+    if receipt_sha256 != str(finalizer.get("release_manifest_sha256") or ""):
+        errors.append("active signed-release receipt identity does not match the finalizer")
+    if str(receipt.get("git_commit") or "") != str(finalizer.get("git_commit") or ""):
+        errors.append("active signed-release commit does not match the finalizer")
+    if str((receipt.get("bundle") or {}).get("sha256") or "") != str(finalizer.get("bundle_sha256") or ""):
+        errors.append("active signed-release bundle does not match the finalizer")
+    running_version = __version__.split("+", 1)[0]
+    if running_version != expected_version:
+        errors.append("running Atlaso version does not match the finalizer")
+    if isinstance(activation, dict):
+        for field in ("candidate_version", "receipt_version", "internal_version", "host_facing_version"):
+            if str(activation.get(field) or "").split("+", 1)[0] != expected_version:
+                errors.append(f"recorded {field.replace('_', ' ')} does not match the finalizer")
+
+    if not errors:
+        return finalizer, True
+    reconciled = dict(finalizer)
+    reconciled.update(
+        {
+            "status": JobStatus.FAILED.value,
+            "success": False,
+            "failure_layer": "startup_reconciliation",
+            "startup_consistent": False,
+            "error": "Successful Atlaso release finalizer is inconsistent with the durable active release: "
+            + "; ".join(dict.fromkeys(errors))
+            + ".",
+        }
+    )
+    return reconciled, False
 
 
 def ensure_appliance_update_job_steps(

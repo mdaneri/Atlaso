@@ -35,6 +35,7 @@ from atlaso.app.services.appliance_update import (
     APPLIANCE_UPDATE_FINALIZER_PATH,
     UPDATE_STREAM_LABELS,
     ensure_appliance_update_job_steps,
+    reconcile_release_success_finalizer,
 )
 from atlaso.app.services.automation import (
     enqueue_due_schedules,
@@ -164,6 +165,16 @@ def recover_interrupted_worker_jobs(db: Session) -> int:
     ).scalars().all()
     now = utcnow()
     finalizer = _release_finalizer()
+    if str(finalizer.get("status") or "") == JobStatus.SUCCEEDED.value:
+        finalizer, startup_consistent = reconcile_release_success_finalizer(finalizer)
+        if not startup_consistent:
+            finalizer_job = db.get(Job, str(finalizer.get("job_id") or ""))
+            if (
+                finalizer_job is not None
+                and finalizer_job.type == "appliance-update"
+                and all(job.id != finalizer_job.id for job in jobs)
+            ):
+                jobs.append(finalizer_job)
     for job in jobs:
         if job.type == "pxe-media-sync":
             cleanup_network_boot_upload(job.id)
@@ -172,6 +183,8 @@ def recover_interrupted_worker_jobs(db: Session) -> int:
             if job.type == "appliance-update" and str(finalizer.get("job_id") or "") == job.id
             else {}
         )
+        if definitive:
+            definitive, _startup_consistent = reconcile_release_success_finalizer(definitive)
         finalizer_status = str(definitive.get("status") or "")
         recovered = finalizer_status in {JobStatus.SUCCEEDED.value, JobStatus.FAILED.value}
         update_steps = list(job.steps) if job.type == "appliance-update" else []

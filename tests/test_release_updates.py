@@ -1551,8 +1551,20 @@ def test_worker_restart_uses_matching_root_release_finalizer(client, monkeypatch
     from atlaso.app import worker
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import Job
+    from atlaso.app.services import appliance_update
 
     finalizer = tmp_path / "finalizer-status.json"
+    release = release_payload()
+    release_root = tmp_path / "releases/0.9.0"
+    (release_root / ".venv").mkdir(parents=True)
+    (release_root / ".release-manifest.json").write_text(json.dumps(release), encoding="utf-8")
+    current = tmp_path / "current"
+    current.symlink_to(release_root, target_is_directory=True)
+    compatibility_venv = tmp_path / ".venv"
+    compatibility_venv.symlink_to(Path("current/.venv"), target_is_directory=True)
+    receipt_sha256 = hashlib.sha256(
+        json.dumps(release, separators=(",", ":"), sort_keys=True).encode("utf-8")
+    ).hexdigest()
     finalizer.write_text(
         json.dumps(
             {
@@ -1562,12 +1574,23 @@ def test_worker_restart_uses_matching_root_release_finalizer(client, monkeypatch
                 "git_commit": "a" * 40,
                 "verified_key_id": "atlaso-release-2026-01",
                 "bundle_sha256": "b" * 64,
+                "release_manifest_sha256": receipt_sha256,
                 "rolled_back": False,
+                "active_release_verification": {
+                    "success": True,
+                    "candidate_version": "0.9.0",
+                    "receipt_version": "0.9.0",
+                    "internal_version": "0.9.0",
+                    "host_facing_version": "0.9.0",
+                },
             }
         ),
         encoding="utf-8",
     )
     monkeypatch.setattr(worker, "APPLIANCE_UPDATE_FINALIZER_PATH", str(finalizer))
+    monkeypatch.setattr(appliance_update, "ATLASO_CURRENT_RELEASE_PATH", current)
+    monkeypatch.setattr(appliance_update, "ATLASO_COMPATIBILITY_VENV_PATH", compatibility_venv)
+    monkeypatch.setattr(appliance_update, "__version__", "0.9.0")
     with SessionLocal() as db:
         db.add(
             Job(
@@ -1586,6 +1609,141 @@ def test_worker_restart_uses_matching_root_release_finalizer(client, monkeypatch
         result = json.loads(recovered.result)
         assert result["worker_recovery"] == "root_finalizer"
         assert result["release_transaction"]["verified_key_id"] == "atlaso-release-2026-01"
+
+
+def test_worker_restart_rejects_success_finalizer_for_another_running_version(client, monkeypatch, tmp_path):
+    """Verify startup rejects success evidence that disagrees with the running release."""
+    from atlaso.app import worker
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job
+    from atlaso.app.services import appliance_update
+
+    release = release_payload()
+    release_root = tmp_path / "releases/0.9.0"
+    (release_root / ".venv").mkdir(parents=True)
+    (release_root / ".release-manifest.json").write_text(json.dumps(release), encoding="utf-8")
+    current = tmp_path / "current"
+    current.symlink_to(release_root, target_is_directory=True)
+    compatibility_venv = tmp_path / ".venv"
+    compatibility_venv.symlink_to(Path("current/.venv"), target_is_directory=True)
+    receipt_sha256 = hashlib.sha256(
+        json.dumps(release, separators=(",", ":"), sort_keys=True).encode("utf-8")
+    ).hexdigest()
+    finalizer = tmp_path / "finalizer-status.json"
+    finalizer.write_text(
+        json.dumps(
+            {
+                "job_id": "job_inconsistent_release_finalizer",
+                "status": "succeeded",
+                "release": "0.9.0",
+                "candidate_version": "0.9.0",
+                "git_commit": release["git_commit"],
+                "bundle_sha256": release["bundle"]["sha256"],
+                "release_manifest_sha256": receipt_sha256,
+                "rolled_back": False,
+                "active_release_verification": {
+                    "success": True,
+                    "candidate_version": "0.9.0",
+                    "receipt_version": "0.9.0",
+                    "internal_version": "0.9.0",
+                    "host_facing_version": "0.9.0",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(worker, "APPLIANCE_UPDATE_FINALIZER_PATH", str(finalizer))
+    monkeypatch.setattr(appliance_update, "ATLASO_CURRENT_RELEASE_PATH", current)
+    monkeypatch.setattr(appliance_update, "ATLASO_COMPATIBILITY_VENV_PATH", compatibility_venv)
+    monkeypatch.setattr(appliance_update, "__version__", "0.8.9")
+
+    with SessionLocal() as db:
+        db.add(
+            Job(
+                id="job_inconsistent_release_finalizer",
+                type="appliance-update",
+                status="running",
+                created_by="admin",
+                result='{"selected_streams":["atlaso_release"]}',
+            )
+        )
+        db.commit()
+        assert worker.recover_interrupted_worker_jobs(db) == 1
+        recovered = db.get(Job, "job_inconsistent_release_finalizer")
+        assert recovered.status == "failed"
+        assert "running Atlaso version" in (recovered.error or "")
+        result = json.loads(recovered.result)
+        assert result["release_transaction"]["failure_layer"] == "startup_reconciliation"
+        assert result["release_transaction"]["startup_consistent"] is False
+
+
+def test_worker_restart_reconciles_completed_success_against_durable_release(client, monkeypatch, tmp_path):
+    """Verify startup revises a completed success when the durable release disagrees."""
+    from atlaso.app import worker
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job
+    from atlaso.app.services import appliance_update
+
+    release = release_payload()
+    release_root = tmp_path / "releases/0.9.0"
+    (release_root / ".venv").mkdir(parents=True)
+    (release_root / ".release-manifest.json").write_text(json.dumps(release), encoding="utf-8")
+    current = tmp_path / "current"
+    current.symlink_to(release_root, target_is_directory=True)
+    compatibility_venv = tmp_path / ".venv"
+    compatibility_venv.symlink_to(Path("current/.venv"), target_is_directory=True)
+    receipt_sha256 = hashlib.sha256(
+        json.dumps(release, separators=(",", ":"), sort_keys=True).encode("utf-8")
+    ).hexdigest()
+    finalizer = tmp_path / "finalizer-status.json"
+    finalizer.write_text(
+        json.dumps(
+            {
+                "job_id": "job_completed_inconsistent_release",
+                "status": "succeeded",
+                "release": "0.9.0",
+                "candidate_version": "0.9.0",
+                "git_commit": release["git_commit"],
+                "bundle_sha256": release["bundle"]["sha256"],
+                "release_manifest_sha256": receipt_sha256,
+                "rolled_back": False,
+                "active_release_verification": {
+                    "success": True,
+                    "candidate_version": "0.9.0",
+                    "receipt_version": "0.9.0",
+                    "internal_version": "0.9.0",
+                    "host_facing_version": "0.9.0",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(worker, "APPLIANCE_UPDATE_FINALIZER_PATH", str(finalizer))
+    monkeypatch.setattr(appliance_update, "ATLASO_CURRENT_RELEASE_PATH", current)
+    monkeypatch.setattr(appliance_update, "ATLASO_COMPATIBILITY_VENV_PATH", compatibility_venv)
+    monkeypatch.setattr(appliance_update, "__version__", "0.8.9")
+
+    with SessionLocal() as db:
+        db.add(
+            Job(
+                id="job_completed_inconsistent_release",
+                type="appliance-update",
+                status="succeeded",
+                created_by="admin",
+                progress_percent=100,
+                result='{"status":"succeeded","success":true}',
+            )
+        )
+        db.commit()
+
+        assert worker.recover_interrupted_worker_jobs(db) == 1
+        recovered = db.get(Job, "job_completed_inconsistent_release")
+        assert recovered.status == "failed"
+        assert "running Atlaso version" in (recovered.error or "")
+        result = json.loads(recovered.result)
+        assert result["status"] == "failed"
+        assert result["success"] is False
+        assert result["release_transaction"]["failure_layer"] == "startup_reconciliation"
 
 
 def test_worker_restart_fails_update_parent_after_children_commit(client, monkeypatch, tmp_path):
@@ -1704,6 +1862,7 @@ def test_worker_restart_keeps_release_finalizer_scoped_to_its_child(client, monk
         encoding="utf-8",
     )
     monkeypatch.setattr(worker, "APPLIANCE_UPDATE_FINALIZER_PATH", str(finalizer))
+    monkeypatch.setattr(worker, "reconcile_release_success_finalizer", lambda payload: (payload, True))
     with SessionLocal() as db:
         job = Job(
             id="job_release_partial_finalizer",
@@ -1739,8 +1898,23 @@ def test_worker_restart_keeps_release_finalizer_scoped_to_its_child(client, monk
         assert "worker restarted" in (steps[-1].error or "")
 
 
-@pytest.mark.parametrize("failure_stage", ["database_migration", "symlink_switch", "service_health"])
-def test_failed_candidate_restores_previous_release_and_database(monkeypatch, tmp_path, failure_stage):
+@pytest.mark.parametrize(
+    ("failure_stage", "expected_layer"),
+    [
+        ("systemd_assets", "data_disk_identity"),
+        ("symlink_switch", "systemd_reload"),
+        ("candidate_startup", "candidate_startup"),
+        ("maintenance_cleanup", "maintenance_cleanup"),
+        ("nginx_configuration", "nginx_configuration"),
+        ("management_front_door", "management_front_door"),
+    ],
+)
+def test_failed_candidate_restores_previous_release_and_database(
+    monkeypatch,
+    tmp_path,
+    failure_stage,
+    expected_layer,
+):
     """Verify that failed candidate restores previous release and database.
 
     Args:
@@ -1836,9 +2010,8 @@ def test_failed_candidate_restores_previous_release_and_database(monkeypatch, tm
         Raises:
             OSError: If the operating-system operation fails.
         """
-        if failure_stage == "symlink_switch" and target.name == "0.9.0":
+        if target.name == "0.9.0":
             set_identity("after")
-            raise OSError("injected symlink switch failure")
         link.unlink(missing_ok=True)
         link.symlink_to(target, target_is_directory=True)
 
@@ -1863,19 +2036,24 @@ def test_failed_candidate_restores_previous_release_and_database(monkeypatch, tm
     monkeypatch.setattr(helper, "_install_release_venv", install_venv)
     monkeypatch.setattr(helper, "_install_release_owned_files", lambda *_args: [])
     monkeypatch.setattr(helper, "_migrate_release_esx_storage_claims", lambda *_args: None)
-    monkeypatch.setattr(
-        helper,
-        "_refresh_release_data_disk_identity",
-        lambda **_kwargs: [
+    identity_refreshes = 0
+
+    def refresh_identity(**_kwargs):
+        """Inject one failure after candidate systemd assets are installed."""
+        nonlocal identity_refreshes
+        identity_refreshes += 1
+        success = failure_stage != "systemd_assets" or identity_refreshes > 1
+        return [
             {
                 "command": ["data-disk-preflight"],
-                "returncode": 0,
-                "success": True,
+                "returncode": 0 if success else 1,
+                "success": success,
                 "stdout": "",
-                "stderr": "",
+                "stderr": "" if success else "injected post-asset failure",
             }
-        ],
-    )
+        ]
+
+    monkeypatch.setattr(helper, "_refresh_release_data_disk_identity", refresh_identity)
     original_command_payload = helper._command_payload
 
     def command_payload(command, **kwargs):
@@ -1896,7 +2074,8 @@ def test_failed_candidate_restores_previous_release_and_database(monkeypatch, tm
         return original_command_payload(command, **kwargs)
 
     monkeypatch.setattr(helper, "_command_payload", command_payload)
-    migration_injected = False
+    daemon_reloads = 0
+    candidate_starts = 0
 
     def service_command(action, *units):
         """Return service command.
@@ -1905,15 +2084,198 @@ def test_failed_candidate_restores_previous_release_and_database(monkeypatch, tm
             action: Action supplied to the test scenario.
             *units: Additional positional arguments accepted by the callable.
         """
-        nonlocal migration_injected
-        if (
-            failure_stage == "database_migration"
-            and action == "start"
-            and "atlaso.service" in units
-            and not migration_injected
-        ):
-            set_identity("after")
-            migration_injected = True
+        nonlocal daemon_reloads, candidate_starts
+        success = True
+        if action == "daemon-reload":
+            daemon_reloads += 1
+            success = failure_stage != "symlink_switch" or daemon_reloads > 1
+        if action == "start" and units == ("atlaso.service",):
+            candidate_starts += 1
+            success = failure_stage != "candidate_startup" or candidate_starts > 1
+        return {
+            "command": ["systemctl", action, *units],
+            "returncode": 0 if success else 1,
+            "success": success,
+            "stdout": "",
+            "stderr": "" if success else "injected service failure",
+        }
+
+    monkeypatch.setattr(helper, "_service_command", service_command)
+    maintenance_disables = 0
+
+    def maintenance(enabled):
+        """Inject one failure while removing candidate maintenance mode."""
+        nonlocal maintenance_disables
+        success = True
+        if not enabled:
+            maintenance_disables += 1
+            success = failure_stage != "maintenance_cleanup" or maintenance_disables > 1
+        return {
+            "command": ["maintenance", str(enabled)],
+            "returncode": 0 if success else 1,
+            "success": success,
+            "stdout": "",
+            "stderr": "" if success else "injected maintenance cleanup failure",
+        }
+
+    monkeypatch.setattr(helper, "_set_release_maintenance", maintenance)
+
+    def health():
+        """Return health."""
+        return {
+            "command": ["health"],
+            "returncode": 0,
+            "success": True,
+            "stdout": "",
+            "stderr": "",
+        }
+
+    monkeypatch.setattr(helper, "_wait_for_atlaso_health", health)
+    monkeypatch.setattr(
+        helper,
+        "_sync_release_activation",
+        lambda: {
+            "command": ["release-activation-check", "durable_activation"],
+            "returncode": 0,
+            "success": True,
+            "stdout": "",
+            "stderr": "",
+            "layer": "durable_activation",
+        },
+    )
+
+    def activation(root, release_definition, **_kwargs):
+        """Inject candidate final-readiness failures while keeping rollback healthy."""
+        is_candidate = root.name == "0.9.0"
+        layer = failure_stage if is_candidate and failure_stage in {"nginx_configuration", "management_front_door"} else ""
+        success = not layer
+        evidence = {
+            "success": success,
+            "candidate_version": str(release_definition["version"]),
+            "failure_layer": layer,
+        }
+        commands = [
+            {
+                "command": ["release-activation-check", layer or "complete"],
+                "returncode": 0 if success else 1,
+                "success": success,
+                "stdout": "",
+                "stderr": "" if success else "injected final readiness failure",
+                "layer": layer or "complete",
+            }
+        ]
+        return evidence, commands
+
+    monkeypatch.setattr(helper, "_release_activation_verification", activation)
+    monkeypatch.setattr(helper, "_write_update_info", lambda _payload: None)
+
+    with pytest.raises(ValueError, match="rolled back"):
+        helper._apply_atlaso_release({}, {})
+
+    assert current.resolve() == previous.resolve()
+    assert get_identity() == "before"
+    assert not (releases / "0.9.0").exists()
+    finalizer = json.loads((tmp_path / "finalizer.json").read_text(encoding="utf-8"))
+    assert finalizer["rolled_back"] is True
+    assert finalizer["rollback_health"] is True
+    assert finalizer["failure_layer"] == expected_layer
+
+
+def test_release_activation_verification_requires_exact_candidate_through_nginx(monkeypatch, tmp_path):
+    """Verify success evidence agrees across links, receipt, services, and both OpenAPI paths."""
+    from tests.test_appliance_update import load_helper_module
+
+    helper = load_helper_module()
+    release = release_payload()
+    release_root = tmp_path / "releases/0.9.0"
+    (release_root / ".venv").mkdir(parents=True)
+    (release_root / ".release-manifest.json").write_text(json.dumps(release), encoding="utf-8")
+    current = tmp_path / "current"
+    current.symlink_to(release_root, target_is_directory=True)
+    venv = tmp_path / ".venv"
+    venv.symlink_to(Path("current/.venv"), target_is_directory=True)
+    monkeypatch.setattr(helper, "ATLASO_CURRENT_LINK", current)
+    monkeypatch.setattr(helper, "ATLASO_VENV_LINK", venv)
+    monkeypatch.setattr(helper, "ATLASO_UPDATE_MAINTENANCE_PATH", tmp_path / "maintenance")
+    monkeypatch.setattr(
+        helper,
+        "_nginx_test_command",
+        lambda: subprocess.CompletedProcess(["nginx", "-t"], 0, "configuration is valid", ""),
+    )
+    monkeypatch.setattr(
+        helper,
+        "_service_command",
+        lambda action, *units: {
+            "command": ["systemctl", action, *units],
+            "returncode": 0,
+            "success": True,
+            "stdout": "active",
+            "stderr": "",
+        },
+    )
+    monkeypatch.setattr(
+        helper,
+        "_console_management_readiness_checks",
+        lambda: (
+            True,
+            (
+                ("Atlaso application loopback", "http://127.0.0.1:8000/openapi.json", False, "200"),
+                ("nginx HTTPS readiness", "https://127.0.0.1/openapi.json", True, "200"),
+            ),
+        ),
+    )
+
+    def version_check(*, layer, expected_version, **_kwargs):
+        """Return exact candidate-version readiness for either endpoint."""
+        return helper._release_check(
+            layer,
+            True,
+            f"{layer} reported Atlaso {expected_version}.",
+            expected_version=expected_version,
+            observed_version=expected_version,
+        )
+
+    monkeypatch.setattr(helper, "_wait_for_openapi_version", version_check)
+
+    evidence, checks = helper._release_activation_verification(release_root, release)
+
+    assert evidence == {
+        "success": True,
+        "candidate_version": "0.9.0",
+        "current_release": str(release_root.resolve()),
+        "compatibility_venv": str((release_root / ".venv").resolve()),
+        "receipt_version": "0.9.0",
+        "receipt_manifest_sha256": hashlib.sha256(
+            json.dumps(release, separators=(",", ":"), sort_keys=True).encode("utf-8")
+        ).hexdigest(),
+        "maintenance_removed": True,
+        "nginx_ready": True,
+        "services_active": True,
+        "internal_version": "0.9.0",
+        "host_facing_version": "0.9.0",
+        "failure_layer": "",
+    }
+    assert all(check["success"] for check in checks)
+
+
+def test_release_maintenance_cleanup_validates_and_reloads_nginx(monkeypatch, tmp_path):
+    """Verify leaving maintenance mode proves the final nginx configuration and reload."""
+    from tests.test_appliance_update import load_helper_module
+
+    helper = load_helper_module()
+    maintenance = tmp_path / "maintenance"
+    maintenance.write_text("", encoding="utf-8")
+    monkeypatch.setattr(helper, "ATLASO_UPDATE_MAINTENANCE_PATH", maintenance)
+    monkeypatch.setattr(
+        helper,
+        "_nginx_test_command",
+        lambda: subprocess.CompletedProcess(["nginx", "-t"], 0, "configuration is valid", ""),
+    )
+    calls = []
+
+    def service_command(action, *units):
+        """Record the nginx reload performed after maintenance removal."""
+        calls.append((action, units))
         return {
             "command": ["systemctl", action, *units],
             "returncode": 0,
@@ -1923,42 +2285,32 @@ def test_failed_candidate_restores_previous_release_and_database(monkeypatch, tm
         }
 
     monkeypatch.setattr(helper, "_service_command", service_command)
+
+    result = helper._set_release_maintenance(False)
+
+    assert result["success"] is True
+    assert not maintenance.exists()
+    assert calls == [("reload", ("nginx.service",))]
+
+
+def test_release_maintenance_cleanup_failure_keeps_nginx_in_maintenance(monkeypatch, tmp_path):
+    """Verify final nginx validation failure preserves the fail-closed response."""
+    from tests.test_appliance_update import load_helper_module
+
+    helper = load_helper_module()
+    maintenance = tmp_path / "maintenance"
+    maintenance.write_text("", encoding="utf-8")
+    monkeypatch.setattr(helper, "ATLASO_UPDATE_MAINTENANCE_PATH", maintenance)
     monkeypatch.setattr(
         helper,
-        "_set_release_maintenance",
-        lambda enabled: {
-            "command": ["maintenance", str(enabled)],
-            "returncode": 0,
-            "success": True,
-            "stdout": "",
-            "stderr": "",
-        },
+        "_nginx_test_command",
+        lambda: subprocess.CompletedProcess(["nginx", "-t"], 1, "", "invalid configuration"),
     )
-    health_attempts = iter([True] if failure_stage == "symlink_switch" else [False, True])
 
-    def health():
-        """Return health."""
-        success = next(health_attempts)
-        if not success and failure_stage == "service_health":
-            set_identity("after")
-        return {
-            "command": ["health"],
-            "returncode": 0 if success else 1,
-            "success": success,
-            "stdout": "",
-            "stderr": "" if success else "candidate failed",
-        }
+    result = helper._set_release_maintenance(False)
 
-    monkeypatch.setattr(helper, "_wait_for_atlaso_health", health)
-    monkeypatch.setattr(helper, "_write_update_info", lambda _payload: None)
-
-    with pytest.raises(ValueError, match="rolled back"):
-        helper._apply_atlaso_release({}, {})
-
-    assert current.resolve() == previous.resolve()
-    assert get_identity() == "before"
-    assert not (releases / "0.9.0").exists()
-    assert json.loads((tmp_path / "finalizer.json").read_text(encoding="utf-8"))["rolled_back"] is True
+    assert result["success"] is False
+    assert maintenance.is_file()
 
 
 @pytest.mark.parametrize("failure_stage", ["download", "signature", "extraction", "installation"])
