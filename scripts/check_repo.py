@@ -1684,8 +1684,12 @@ def strip_markdown_nonoperative_content(text: str) -> str:
     for line_index, line in enumerate(
         without_html_tags.splitlines(keepends=True)
     ):
-        if re.match(r" {0,3}>", line) is not None:
-            in_block_quote = True
+        if quote_match := re.match(r" {0,3}>[ \t]?", line):
+            quoted_content = line[quote_match.end() :]
+            in_block_quote = bool(quoted_content.strip()) and not (
+                quoted_content.startswith("    ")
+                or starts_markdown_block_construct(quoted_content)
+            )
             without_quotes_lines.append("\n" if line.endswith("\n") else "")
         elif in_block_quote and line.strip():
             starts_interrupting_block = any(

@@ -2214,6 +2214,30 @@ def test_agent_policy_gate_ignores_quoted_cleanup_markers(tmp_path: Path) -> Non
         )
 
 
+def test_agent_policy_gate_preserves_policy_after_quoted_headings(
+    tmp_path: Path,
+) -> None:
+    """Verify a quoted heading cannot start lazy paragraph continuation.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    marker = '`cleanup-ready`'
+    for relative_path in ORDERED_TERMINAL_CLEANUP_MARKERS:
+        write_policy_files(tmp_path)
+        path = tmp_path / relative_path
+        anchor = TERMINAL_CLEANUP_SECTION_ANCHORS[relative_path]
+        content_prefix = "" if anchor.startswith("#") else "  "
+        text = path.read_text(encoding="utf-8").replace(
+            marker,
+            f"> # Example\n{content_prefix}{marker}",
+            1,
+        )
+        path.write_text(text, encoding="utf-8")
+
+        assert check_agent_policy_gate(tmp_path) == []
+
+
 def test_agent_policy_gate_preserves_headings_after_block_quotes(tmp_path: Path) -> None:
     """Verify that an ATX heading ends a block quote without a blank line.
 
