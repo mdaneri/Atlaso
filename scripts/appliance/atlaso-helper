@@ -10551,12 +10551,13 @@ def _sync_appliance_update_sources(payload: dict, credentials: dict[str, dict[st
                 "if ($existing) { Unregister-PSRepository -Name $name }; "
                 "[pscustomobject]@{Name=$name;Removed=[bool]$existing} | ConvertTo-Json -Compress"
             )
-            commands.append(
-                _command_payload(
-                    [pwsh, "-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", _powershell_encoded_command(script)],
-                    env=_appliance_update_powershell_environment(),
-                )
+            command = _command_payload(
+                [pwsh, "-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", _powershell_encoded_command(script)],
+                env=_appliance_update_powershell_environment(),
             )
+            commands.append(command)
+            if not command.get("success"):
+                current_powershell_names.add(name)
     UPDATE_SOURCE_STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
     UPDATE_SOURCE_STATE_PATH.write_text(
         json.dumps({"powershell_repositories": sorted(current_powershell_names)}, indent=2, sort_keys=True) + "\n",
