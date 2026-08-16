@@ -1192,9 +1192,15 @@ status: current
   overlapping runner or active delay timer must not overwrite or remove the active runner's marker, candidate, or result.
   Preserve depot content, backup artifacts, managed ESX Storage payloads, and other documented payload paths by default;
   clear only logical database references and fixed transient Apply staging. Scrub secret-bearing staging on success and
-  failure, including retained VCF Backup authorized keys, Web Terminal CA material, and pending terminal requests. Keep
-  the request marker in `awaiting_readiness` until Atlaso, worker, nginx, and the management OpenAPI front door are stable;
-  a restart or readiness failure must retain a resumable failure marker. If management addressing returns to the image
+  failure, including retained VCF Backup authorized keys, Web Terminal CA material, pending terminal requests, KMIP
+  operational state, managed Photon repository credentials, and Atlaso-synchronized package-source state. Keep
+  explicit keep-or-change choices for both the bootstrap administrator and root passwords. New values must satisfy the
+  Local Users policy, remain only in mode-0600 transient and root-owned durable reset recovery files, reach OS password
+  tools only through the constrained helper and stdin, and never enter the database, marker, jobs, audits, logs, or UI
+  responses. The bootstrap choice covers both web and Photon OS authentication; the root choice must not enable root
+  SSH. Keep the request marker in `awaiting_readiness` until Atlaso, worker, nginx, and the management OpenAPI front
+  door are stable; a restart or readiness failure must retain a resumable failure marker. If management addressing
+  returns to the image
   default, provide a login and local-console handoff instead of requiring the operator to discover a pending Apply modal.
 - Settings archives must not include vault entries. Restore and factory reset clear vaults and the unused legacy
   Kickstart-binding compatibility table; operators reimport or recreate vault contents afterward.

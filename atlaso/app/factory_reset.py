@@ -24,11 +24,14 @@ from sqlalchemy.orm import Session, sessionmaker
 from atlaso.app.adapters.system import AdapterResult, SystemAdapter
 from atlaso.app.config import get_settings
 from atlaso.app.database import Base
-from atlaso.app.models import CaCertificate, PhysicalInterface, Setting
+from atlaso.app.models import CaCertificate, PhysicalInterface, Setting, User
 from atlaso.app.seed import (
     FACTORY_MANAGEMENT_CIDR,
     SEED_EXAMPLES_SETTING_KEY,
     seed_initial_data,
+)
+from atlaso.app.services.bootstrap_credentials import (
+    write_bootstrap_admin_password_verifier,
 )
 from atlaso.app.services.ldap import (
     LDAP_PENDING_PASSWORDS,
@@ -36,8 +39,10 @@ from atlaso.app.services.ldap import (
 )
 from atlaso.app.services.local_users import (
     clear_all_pending_os_passwords,
+    clear_pending_os_password,
     pending_os_password_snapshot,
     restore_pending_os_password_snapshot,
+    stage_user_os_password,
 )
 from atlaso.app.services.networking import (
     HostPhysicalInterface,
@@ -50,6 +55,10 @@ FACTORY_RESET_STATE_DIRECTORY = Path("/var/lib/atlaso/factory-reset")
 FACTORY_RESET_REQUEST_NAME = "request.json"
 FACTORY_RESET_RESULT_NAME = "last-result.json"
 FACTORY_RESET_CANDIDATE_NAME = "factory-candidate.db"
+FACTORY_RESET_CREDENTIALS_NAME = "credentials.json"
+FACTORY_RESET_STAGED_CREDENTIALS_PATH = (
+    "/var/lib/atlaso/apply/factory-reset/credentials.json"
+)
 FACTORY_RESET_LOCK_NAME = "transaction.lock"
 ATLASO_SERVICE_USER = "atlaso"
 FACTORY_RESET_MANAGEMENT_HOST = "127.0.0.1"
@@ -71,6 +80,8 @@ WEB_TERMINAL_CREDENTIAL_PATHS = (
     Path("/etc/atlaso/ssh/web-terminal-ca.pub"),
 )
 WEB_TERMINAL_REQUEST_DIRECTORY = Path("/var/lib/atlaso/web-terminal/requests")
+FACTORY_RESET_PASSWORD_ACTIONS = frozenset({"keep", "change"})
+FACTORY_RESET_CREDENTIALS_MAX_BYTES = 16 * 1024
 
 
 class FactoryResetError(RuntimeError):
@@ -214,6 +225,59 @@ def factory_reset_request_path() -> Path:
 def factory_reset_result_path() -> Path:
     """Return the durable last-result marker path."""
     return factory_reset_state_directory() / FACTORY_RESET_RESULT_NAME
+
+
+def factory_reset_credentials_path() -> Path:
+    """Return the root-owned durable factory-reset credential path."""
+    return factory_reset_state_directory() / FACTORY_RESET_CREDENTIALS_NAME
+
+
+def _factory_reset_credential_plan() -> dict[str, str]:
+    """Read and validate the durable factory-reset password choices."""
+    path = factory_reset_credentials_path()
+    if path.is_symlink():
+        raise FactoryResetError("Factory reset credential state is unsafe.")
+    if not path.exists():
+        return {"admin_action": "keep", "root_action": "keep"}
+    if not path.is_file() or path.resolve() != path:
+        raise FactoryResetError("Factory reset credential state is unsafe.")
+    try:
+        file_stat = path.stat()
+        if file_stat.st_size > FACTORY_RESET_CREDENTIALS_MAX_BYTES:
+            raise FactoryResetError("Factory reset credential state is too large.")
+        if os.name == "posix" and (file_stat.st_mode & 0o077 or file_stat.st_uid != 0):
+            raise FactoryResetError("Factory reset credential state is unsafe.")
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise FactoryResetError("Factory reset credential state is invalid.") from exc
+    if not isinstance(payload, dict) or payload.get("schema_version") != 1:
+        raise FactoryResetError("Factory reset credential state is invalid.")
+    allowed_keys = {
+        "schema_version",
+        "admin_action",
+        "admin_password",
+        "root_action",
+        "root_password",
+    }
+    if set(payload) - allowed_keys:
+        raise FactoryResetError("Factory reset credential state is invalid.")
+    plan: dict[str, str] = {}
+    for account in ("admin", "root"):
+        action = payload.get(f"{account}_action")
+        password = payload.get(f"{account}_password", "")
+        if action not in FACTORY_RESET_PASSWORD_ACTIONS or not isinstance(password, str):
+            raise FactoryResetError("Factory reset credential state is invalid.")
+        if (action == "change") != bool(password):
+            raise FactoryResetError("Factory reset credential state is incomplete.")
+        if password and (
+            len(password) > 1024
+            or any(character in password for character in ("\x00", "\r", "\n"))
+        ):
+            raise FactoryResetError("Factory reset credential state is invalid.")
+        plan[f"{account}_action"] = action
+        if action == "change":
+            plan[f"{account}_password"] = password
+    return plan
 
 
 @contextmanager
@@ -445,11 +509,27 @@ def _clear_apply_staging() -> None:
         return
     if apply_root.is_symlink() or not apply_root.is_dir() or apply_root.resolve() != apply_root:
         raise FactoryResetError(f"Atlaso apply staging root is unsafe: {apply_root}")
+    removed = False
     for child in apply_root.iterdir():
         if child.is_symlink() or child.is_file():
             child.unlink(missing_ok=True)
+            removed = True
         elif child.is_dir():
             shutil.rmtree(child)
+            removed = True
+    if removed:
+        _fsync_directory(apply_root)
+
+
+def _fsync_directory(path: Path) -> None:
+    """Synchronize one directory after removing a secret-bearing entry."""
+    if os.name != "posix":
+        return
+    descriptor = os.open(path, os.O_RDONLY)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
 
 
 def _clear_fixed_directory_contents(path: Path, *, label: str) -> None:
@@ -463,11 +543,15 @@ def _clear_fixed_directory_contents(path: Path, *, label: str) -> None:
         return
     if path.is_symlink() or not path.is_dir() or path.resolve() != path:
         raise FactoryResetError(f"Factory reset {label} directory is unsafe: {path}")
+    removed = False
     for child in path.iterdir():
         if child.is_symlink() or child.is_file():
             child.unlink(missing_ok=True)
+            removed = True
         else:
             raise FactoryResetError(f"Factory reset {label} entry is unsafe: {child.name}")
+    if removed:
+        _fsync_directory(path)
 
 
 def _scrub_bootstrap_authorized_keys() -> None:
@@ -485,12 +569,16 @@ def _scrub_bootstrap_authorized_keys() -> None:
         raise FactoryResetError("Factory reset bootstrap SSH directory is unsafe.")
     if not ssh_directory.exists():
         return
+    removed = False
     for name in BOOTSTRAP_AUTHORIZED_KEY_NAMES:
         path = ssh_directory / name
         if path.is_symlink() or path.is_file():
             path.unlink(missing_ok=True)
+            removed = True
         elif path.exists():
             raise FactoryResetError(f"Factory reset bootstrap SSH authorization entry is unsafe: {name}")
+    if removed:
+        _fsync_directory(ssh_directory)
 
 
 def _ca_private_key_paths(db: Session) -> set[Path]:
@@ -532,22 +620,21 @@ def _remove_retired_ca_private_keys(paths: set[Path]) -> None:
             synced_directories.add(path.parent)
         elif path.exists():
             raise FactoryResetError("Factory reset encountered an unsafe retired CA private-key entry.")
-    if os.name == "posix":
-        for directory in sorted(synced_directories):
-            descriptor = os.open(directory, os.O_RDONLY)
-            try:
-                os.fsync(descriptor)
-            finally:
-                os.close(descriptor)
+    for directory in sorted(synced_directories):
+        _fsync_directory(directory)
 
 
 def _scrub_retained_credentials() -> None:
     """Remove fixed credential material that intentionally lives outside Apply staging."""
+    synced_directories: set[Path] = set()
     for path in WEB_TERMINAL_CREDENTIAL_PATHS:
         if path.is_symlink() or path.is_file():
             path.unlink(missing_ok=True)
+            synced_directories.add(path.parent)
         elif path.exists():
             raise FactoryResetError(f"Factory reset web-terminal credential path is unsafe: {path}")
+    for directory in sorted(synced_directories):
+        _fsync_directory(directory)
     _clear_fixed_directory_contents(
         WEB_TERMINAL_REQUEST_DIRECTORY,
         label="web-terminal request",
@@ -713,6 +800,7 @@ def _candidate_database(
     candidate_path: Path,
     *,
     adapter: SystemAdapter,
+    credential_plan: dict[str, str] | None = None,
     report_progress: bool = True,
 ) -> int:
     """Build, preflight, activate, and baseline one clean candidate database.
@@ -721,6 +809,7 @@ def _candidate_database(
         source_path: Current database used to retain compatible baseline metadata.
         candidate_path: Private candidate database path.
         adapter: System adapter used for validation and activation.
+        credential_plan: Validated keep-or-change password choices for admin and root.
         report_progress: Whether to update the durable appliance request marker.
     """
     from atlaso.app.ui import (
@@ -750,6 +839,7 @@ def _candidate_database(
     Base.metadata.create_all(candidate_engine)
     candidate_path.chmod(0o600)
     candidate_session = sessionmaker(bind=candidate_engine, autoflush=False, autocommit=False, expire_on_commit=False)
+    password_plan = credential_plan or {"admin_action": "keep", "root_action": "keep"}
     try:
         with candidate_session() as db:
             seed_initial_data(
@@ -759,6 +849,16 @@ def _candidate_database(
                 factory_defaults=True,
                 commit=False,
             )
+            bootstrap_username = get_settings().bootstrap_admin_username
+            bootstrap_user = db.execute(
+                select(User).where(User.username == bootstrap_username)
+            ).scalar_one()
+            clear_pending_os_password(bootstrap_user)
+            if password_plan["admin_action"] == "change":
+                stage_user_os_password(
+                    bootstrap_user,
+                    password_plan["admin_password"],
+                )
             if not adapter.dry_run:
                 _seed_factory_host_interfaces(db, discover_host_physical_interfaces())
             db.add(Setting(key=SEED_EXAMPLES_SETTING_KEY, value="false"))
@@ -805,6 +905,16 @@ def _candidate_database(
                     raise FactoryResetError(f"Factory reset activation failed for {unit['label']}.")
                 db.flush()
             if not adapter.dry_run:
+                retained_runtime_cleanup = adapter.reset_factory_retained_runtime()
+                if retained_runtime_cleanup.returncode != 0:
+                    raise FactoryResetError("Factory reset could not remove retained credential-bearing runtime state.")
+                root_password_result = adapter.apply_factory_reset_root_password()
+                if root_password_result.returncode != 0:
+                    raise FactoryResetError("Factory reset could not apply the selected root password action.")
+                if password_plan["admin_action"] == "change":
+                    write_bootstrap_admin_password_verifier(
+                        password_plan["admin_password"]
+                    )
                 _remove_retired_ca_private_keys(retired_ca_private_key_paths)
 
             final_units = appliance_apply_units(db, reconcile=False)
@@ -836,6 +946,7 @@ def replace_database_with_factory_candidate(
     *,
     database_url: str,
     adapter: SystemAdapter,
+    credential_plan: dict[str, str] | None = None,
 ) -> int:
     """Validate an isolated candidate before atomically backing it into a local database.
 
@@ -843,6 +954,7 @@ def replace_database_with_factory_candidate(
         db: Active request database session to replace.
         database_url: Configured SQLite database URL.
         adapter: Dry-run adapter used by the non-appliance fallback.
+        credential_plan: Validated keep-or-change password choices for admin and root.
     """
     source_path = _sqlite_database_path(database_url)
     descriptor, candidate_name = tempfile.mkstemp(
@@ -864,6 +976,7 @@ def replace_database_with_factory_candidate(
             source_path,
             candidate_path,
             adapter=adapter,
+            credential_plan=credential_plan,
             report_progress=False,
         )
         db.rollback()
@@ -914,6 +1027,7 @@ def _run_factory_reset_locked(
     state_directory.chmod(0o750)
     request_payload = _update_request("stopping", "Stopping Atlaso database writers for factory reset.")
     try:
+        credential_plan = _factory_reset_credential_plan()
         if manage_services:
             _stop_application_services(boot_resume=boot_resume)
         _update_request("building", "Building a clean factory database and validating packaged defaults.")
@@ -921,12 +1035,22 @@ def _run_factory_reset_locked(
             source_path,
             candidate_path,
             adapter=adapter or SystemAdapter(dry_run=False),
+            credential_plan=credential_plan,
         )
         _update_request("committing", "Replacing the Atlaso database with the validated factory database.")
         _replace_database(source_path, candidate_path)
         if not (adapter and adapter.dry_run):
             _clear_apply_staging()
             _scrub_retained_credentials()
+            credential_path = factory_reset_credentials_path()
+            if credential_path.is_file():
+                credential_path.unlink()
+                if os.name == "posix":
+                    directory_descriptor = os.open(state_directory, os.O_RDONLY)
+                    try:
+                        os.fsync(directory_descriptor)
+                    finally:
+                        os.close(directory_descriptor)
         if not manage_services:
             return _mark_factory_reset_succeeded(request_payload, unit_count)
         awaiting_readiness = _update_request(

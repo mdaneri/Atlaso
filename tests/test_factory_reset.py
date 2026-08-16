@@ -4,6 +4,7 @@ import builtins
 import json
 import subprocess
 import sys
+from pathlib import Path
 from types import SimpleNamespace
 
 from sqlalchemy import create_engine, select
@@ -165,6 +166,7 @@ def test_factory_reset_scrubs_credentials_outside_apply_staging(tmp_path, monkey
         path.write_text("credential", encoding="utf-8")
     retained_home_file = local_users_home / "admin" / "profile.ps1"
     retained_home_file.write_text("retained payload", encoding="utf-8")
+    synced_directories: list[Path] = []
 
     monkeypatch.setattr(factory_reset, "VCF_BACKUPS_AUTHORIZED_KEYS_DIRECTORY", authorized_keys)
     monkeypatch.setattr(factory_reset, "WEB_TERMINAL_REQUEST_DIRECTORY", terminal_requests)
@@ -179,7 +181,11 @@ def test_factory_reset_scrubs_credentials_outside_apply_staging(tmp_path, monkey
         "get_settings",
         lambda: SimpleNamespace(bootstrap_admin_username="admin"),
     )
-
+    monkeypatch.setattr(
+        factory_reset,
+        "_fsync_directory",
+        synced_directories.append,
+    )
     _scrub_retained_credentials()
 
     assert list(authorized_keys.iterdir()) == []
@@ -189,6 +195,44 @@ def test_factory_reset_scrubs_credentials_outside_apply_staging(tmp_path, monkey
     assert not (bootstrap_ssh / "authorized_keys").exists()
     assert not (bootstrap_ssh / "authorized_keys2").exists()
     assert retained_home_file.read_text(encoding="utf-8") == "retained payload"
+    assert set(synced_directories) == {
+        authorized_keys,
+        terminal_requests,
+        terminal_private_key.parent,
+        bootstrap_ssh,
+    }
+
+
+def test_factory_reset_durably_clears_apply_staging(tmp_path, monkeypatch):
+    """Reset synchronizes the apply root after removing staged secrets.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+    """
+    import atlaso.app.factory_reset as factory_reset
+
+    apply_root = tmp_path / "apply"
+    staged_directory = apply_root / "local-users"
+    staged_directory.mkdir(parents=True)
+    (staged_directory / "atlaso-users.json").write_text("secret", encoding="utf-8")
+    synced_directories: list[Path] = []
+    real_path = factory_reset.Path
+    monkeypatch.setattr(
+        factory_reset,
+        "Path",
+        lambda value: apply_root if value == "/var/lib/atlaso/apply" else real_path(value),
+    )
+    monkeypatch.setattr(
+        factory_reset,
+        "_fsync_directory",
+        synced_directories.append,
+    )
+
+    factory_reset._clear_apply_staging()
+
+    assert list(apply_root.iterdir()) == []
+    assert synced_directories == [apply_root]
 
 
 def test_factory_reset_removes_only_retired_ca_private_keys(tmp_path, monkeypatch):

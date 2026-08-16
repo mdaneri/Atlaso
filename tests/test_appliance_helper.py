@@ -116,9 +116,29 @@ def test_factory_reset_helper_persists_marker_before_detached_schedule(
     """
     helper = load_helper_module()
     state_directory = tmp_path / "factory-reset"
+    staged_credentials = tmp_path / "apply" / "factory-reset" / "credentials.json"
+    staged_credentials.parent.mkdir(parents=True)
+    staged_credentials.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "admin_action": "change",
+                "admin_password": "Protected-Admin1!",
+                "root_action": "keep",
+            }
+        ),
+        encoding="utf-8",
+    )
+    staged_credentials.chmod(0o600)
+
+    class Account:
+        """Represent the service account owning the protected staging file."""
+
+        pw_uid = staged_credentials.stat().st_uid
     runner = tmp_path / "python"
     runner.write_text("", encoding="utf-8")
     commands: list[list[str]] = []
+    synced_directories: list[Path] = []
 
     def fake_run(command: list[str], **_kwargs) -> subprocess.CompletedProcess[str]:
         """Record one helper command.
@@ -134,14 +154,29 @@ def test_factory_reset_helper_persists_marker_before_detached_schedule(
     monkeypatch.setattr(helper, "ATLASO_FACTORY_RESET_DIR", state_directory)
     monkeypatch.setattr(helper, "ATLASO_FACTORY_RESET_REQUEST_PATH", state_directory / "request.json")
     monkeypatch.setattr(helper, "ATLASO_FACTORY_RESET_RESULT_PATH", state_directory / "last-result.json")
+    monkeypatch.setattr(helper, "ATLASO_FACTORY_RESET_CREDENTIALS_PATH", state_directory / "credentials.json")
+    monkeypatch.setattr(helper, "ATLASO_FACTORY_RESET_STAGED_CREDENTIALS_PATH", staged_credentials)
     monkeypatch.setattr(helper, "ATLASO_FACTORY_RESET_PYTHON", runner)
     monkeypatch.setattr(helper.shutil, "chown", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(helper.pwd, "getpwnam", lambda _username: Account())
     monkeypatch.setattr(helper.shutil, "which", lambda command: f"/usr/bin/{command}" if command in {"systemd-run", "logger"} else None)
     monkeypatch.setattr(helper, "_run", fake_run)
+    monkeypatch.setattr(
+        helper,
+        "_fsync_factory_reset_directory",
+        synced_directories.append,
+    )
 
-    assert helper._handle_factory_reset("schedule", []) == 0
+    assert helper._handle_factory_reset("schedule", [str(staged_credentials)]) == 0
     marker = json.loads((state_directory / "request.json").read_text(encoding="utf-8"))
     assert marker["state"] == "scheduled"
+    assert marker["admin_password_action"] == "change"
+    assert marker["root_password_action"] == "keep"
+    persisted = json.loads((state_directory / "credentials.json").read_text(encoding="utf-8"))
+    assert persisted["admin_action"] == "change"
+    assert persisted["root_action"] == "keep"
+    assert not staged_credentials.exists()
+    assert synced_directories == [staged_credentials.parent]
     if os.name == "posix":
         assert not (state_directory / ".request.json.tmp").exists()
     scheduled = next(command for command in commands if command and command[0] == "/usr/bin/systemd-run")
@@ -162,6 +197,24 @@ def test_factory_reset_helper_treats_pending_timer_as_active(monkeypatch, tmp_pa
     helper = load_helper_module()
     state_directory = tmp_path / "factory-reset"
     state_directory.mkdir()
+    staged_credentials = tmp_path / "apply" / "factory-reset" / "credentials.json"
+    staged_credentials.parent.mkdir(parents=True)
+    staged_credentials.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "admin_action": "keep",
+                "root_action": "keep",
+            }
+        ),
+        encoding="utf-8",
+    )
+    staged_credentials.chmod(0o600)
+
+    class Account:
+        """Represent the service account owning the protected staging file."""
+
+        pw_uid = staged_credentials.stat().st_uid
     request_path = state_directory / "request.json"
     request_path.write_text(
         json.dumps({"schema_version": 1, "state": "scheduled", "message": "scheduled"}),
@@ -184,11 +237,15 @@ def test_factory_reset_helper_treats_pending_timer_as_active(monkeypatch, tmp_pa
     monkeypatch.setattr(helper, "ATLASO_FACTORY_RESET_DIR", state_directory)
     monkeypatch.setattr(helper, "ATLASO_FACTORY_RESET_REQUEST_PATH", request_path)
     monkeypatch.setattr(helper, "ATLASO_FACTORY_RESET_RESULT_PATH", state_directory / "last-result.json")
+    monkeypatch.setattr(helper, "ATLASO_FACTORY_RESET_CREDENTIALS_PATH", state_directory / "credentials.json")
+    monkeypatch.setattr(helper, "ATLASO_FACTORY_RESET_STAGED_CREDENTIALS_PATH", staged_credentials)
+    monkeypatch.setattr(helper.pwd, "getpwnam", lambda _username: Account())
     monkeypatch.setattr(helper.shutil, "which", lambda command: f"/usr/bin/{command}")
     monkeypatch.setattr(helper, "_run", fake_run)
 
-    assert helper._handle_factory_reset("schedule", []) == 0
+    assert helper._handle_factory_reset("schedule", [str(staged_credentials)]) == 0
     assert json.loads(request_path.read_text(encoding="utf-8"))["state"] == "scheduled"
+    assert not staged_credentials.exists()
     assert not any(command and command[0] == "/usr/bin/systemd-run" for command in commands)
 
 
@@ -339,6 +396,106 @@ def test_factory_reset_network_runtime_cleanup_requires_applying_marker(monkeypa
     assert helper._handle_factory_reset("reset-network-runtime", []) == 2
     assert commands == []
     assert "active applying marker" in capsys.readouterr().err
+
+
+def test_factory_reset_retained_runtime_cleanup_removes_bounded_state(
+    monkeypatch,
+    tmp_path,
+    capsys,
+):
+    """Reset removes KMIP and synchronized package-source state through the helper.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+        capsys: Pytest fixture used to capture standard output and standard error.
+    """
+    helper = load_helper_module()
+    kmip_state = tmp_path / "kmip"
+    kmip_state.mkdir()
+    for name in ("store.db", "store.db-wal", "kek.json"):
+        (kmip_state / name).write_text("fixture", encoding="utf-8")
+    managed_repo = tmp_path / "atlaso-managed.repo"
+    managed_repo.write_text("credential-bearing fixture", encoding="utf-8")
+    update_state = tmp_path / "update-sources.json"
+    update_state.write_text(
+        json.dumps({"powershell_repositories": ["PrivateGallery"]}),
+        encoding="utf-8",
+    )
+
+    def sync_sources(payload):
+        """Model successful synchronized package-source removal.
+
+        Args:
+            payload: Factory source definition payload supplied to the helper.
+        """
+        assert payload == {"source_definitions": []}
+        managed_repo.unlink()
+        return {"status": "succeeded"}
+
+    monkeypatch.setattr(
+        helper,
+        "_factory_reset_runtime_cleanup_is_admitted",
+        lambda: True,
+    )
+    monkeypatch.setattr(helper, "KMS_STATE_DIR", kmip_state)
+    monkeypatch.setattr(helper, "MANAGED_PHOTON_REPO_PATH", managed_repo)
+    monkeypatch.setattr(helper, "UPDATE_SOURCE_STATE_PATH", update_state)
+    monkeypatch.setattr(
+        helper,
+        "_command_path",
+        lambda name: "/usr/bin/pwsh" if name == "pwsh" else None,
+    )
+    monkeypatch.setattr(helper, "_sync_appliance_update_sources", sync_sources)
+
+    assert helper._handle_factory_reset("reset-retained-runtime", []) == 0
+    assert list(kmip_state.iterdir()) == []
+    assert not managed_repo.exists()
+    assert not update_state.exists()
+    output = json.loads(capsys.readouterr().out)
+    assert output["kmip_entries_removed"] == 3
+    assert output["powershell_repositories_removed"] == 1
+
+
+def test_factory_reset_root_password_action_uses_protected_input(
+    monkeypatch,
+    capsys,
+):
+    """Root password change uses the protected durable payload without outputting it.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+        capsys: Pytest fixture used to capture standard output and standard error.
+    """
+    helper = load_helper_module()
+    password = "Protected-Root1!"
+    calls: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        helper,
+        "_factory_reset_runtime_cleanup_is_admitted",
+        lambda: True,
+    )
+    monkeypatch.setattr(
+        helper,
+        "_read_durable_factory_reset_credentials",
+        lambda: {
+            "schema_version": 1,
+            "admin_action": "keep",
+            "root_action": "change",
+            "root_password": password,
+        },
+    )
+    monkeypatch.setattr(
+        helper,
+        "_set_os_user_password",
+        lambda username, value: calls.append((username, value)) or 0,
+    )
+
+    assert helper._handle_factory_reset("apply-root-password", []) == 0
+    captured = capsys.readouterr()
+    assert calls == [("root", password)]
+    assert password not in captured.out
+    assert json.loads(captured.out)["factory_reset_root_password"] == "change"
 
 
 def test_factory_reset_helper_resume_queues_post_commit_finalizer(monkeypatch, tmp_path):

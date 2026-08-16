@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Depends, File, Form, Request, UploadFile
@@ -34,10 +35,14 @@ class SettingsBackupUiDependencies:
     archive_summary: Endpoint
     restore_settings_archive: Endpoint
     get_runtime_settings: Endpoint
+    local_users_password_policy: Endpoint
+    validate_password: Endpoint
+    stage_appliance_apply_config: Endpoint
     system_adapter_factory: Endpoint
     replace_database_with_factory_candidate: Endpoint
     invalidate_appliance_apply_status_projection: Endpoint
     management_ui_path: Endpoint
+    factory_reset_staged_credentials_path: str
     appliance_settings_context: Endpoint
     appliance_apply_status: Endpoint
     get_appliance_settings_row: Endpoint
@@ -92,6 +97,9 @@ def build_router(dependencies: SettingsBackupUiDependencies) -> SettingsBackupUi
     archive_summary = dependencies.archive_summary
     restore_settings_archive = dependencies.restore_settings_archive
     get_runtime_settings = dependencies.get_runtime_settings
+    local_users_password_policy = dependencies.local_users_password_policy
+    validate_password = dependencies.validate_password
+    stage_appliance_apply_config = dependencies.stage_appliance_apply_config
     system_adapter_factory = dependencies.system_adapter_factory
     replace_database_with_factory_candidate = (
         dependencies.replace_database_with_factory_candidate
@@ -100,6 +108,9 @@ def build_router(dependencies: SettingsBackupUiDependencies) -> SettingsBackupUi
         dependencies.invalidate_appliance_apply_status_projection
     )
     management_ui_path = dependencies.management_ui_path
+    FACTORY_RESET_STAGED_CREDENTIALS_PATH = (
+        dependencies.factory_reset_staged_credentials_path
+    )
     appliance_settings_context = dependencies.appliance_settings_context
     appliance_apply_status = dependencies.appliance_apply_status
     get_appliance_settings_row = dependencies.get_appliance_settings_row
@@ -271,6 +282,12 @@ def build_router(dependencies: SettingsBackupUiDependencies) -> SettingsBackupUi
     )
     def factory_reset_backup_restore(
         request: Request,
+        admin_password_action: str = Form(...),
+        admin_password: str = Form(""),
+        admin_password_confirm: str = Form(""),
+        root_password_action: str = Form(...),
+        root_password: str = Form(""),
+        root_password_confirm: str = Form(""),
         csrf: str = Form(...),
         identity: Identity = Depends(require_session_identity),
         db: Session = Depends(get_db),
@@ -279,6 +296,12 @@ def build_router(dependencies: SettingsBackupUiDependencies) -> SettingsBackupUi
 
         Args:
             request: Incoming HTTP request.
+            admin_password_action: Whether to keep or change the bootstrap administrator password.
+            admin_password: New bootstrap administrator password when change is selected.
+            admin_password_confirm: Repeated bootstrap administrator password.
+            root_password_action: Whether to keep or change the root password.
+            root_password: New root password when change is selected.
+            root_password_confirm: Repeated root password.
             csrf: Validated CSRF token authorizing the request.
             identity: Authenticated identity authorizing the request.
             db: Active database session.
@@ -289,9 +312,72 @@ def build_router(dependencies: SettingsBackupUiDependencies) -> SettingsBackupUi
         require_admin_identity(identity)
         verify_csrf(request, csrf)
         settings = get_runtime_settings()
+        password_plan: dict[str, str | int] = {"schema_version": 1}
+        policy = local_users_password_policy(db)
+        validation_errors: list[str] = []
+        account_inputs = (
+            (
+                "admin",
+                "Bootstrap administrator",
+                settings.bootstrap_admin_username,
+                admin_password_action,
+                admin_password,
+                admin_password_confirm,
+            ),
+            (
+                "root",
+                "Root",
+                "root",
+                root_password_action,
+                root_password,
+                root_password_confirm,
+            ),
+        )
+        for key, label, username, action, password, confirmation in account_inputs:
+            if action not in {"keep", "change"}:
+                validation_errors.append(f"Choose whether to keep or change the {label.lower()} password.")
+                continue
+            password_plan[f"{key}_action"] = action
+            if action == "keep":
+                if password or confirmation:
+                    validation_errors.append(
+                        f"Clear the new {label.lower()} password fields or choose Change password."
+                    )
+                continue
+            if password != confirmation:
+                validation_errors.append(f"The new {label.lower()} passwords do not match.")
+                continue
+            if any(character in password for character in ("\x00", "\r", "\n")):
+                validation_errors.append(
+                    f"The new {label.lower()} password contains unsupported characters."
+                )
+                continue
+            password_errors = validate_password(password, username, policy)
+            validation_errors.extend(
+                f"{label}: {error}" for error in password_errors
+            )
+            if not password_errors:
+                password_plan[f"{key}_password"] = password
+        if validation_errors:
+            return render(
+                request,
+                "backup_restore.html",
+                {
+                    "identity": identity,
+                    **backup_restore_context(db, error=" ".join(validation_errors)),
+                },
+                status_code=422,
+            )
         if settings.environment == "appliance" and not settings.dry_run_system_adapters:
-            scheduled = system_adapter_factory(dry_run=False).schedule_factory_reset()
+            credentials_path = stage_appliance_apply_config(
+                FACTORY_RESET_STAGED_CREDENTIALS_PATH,
+                json.dumps(password_plan, sort_keys=True),
+            )
+            scheduled = system_adapter_factory(dry_run=False).schedule_factory_reset(
+                credentials_path
+            )
             if scheduled.returncode != 0:
+                Path(credentials_path).unlink(missing_ok=True)
                 detail = (
                     scheduled.stderr
                     or scheduled.stdout
@@ -309,10 +395,29 @@ def build_router(dependencies: SettingsBackupUiDependencies) -> SettingsBackupUi
                 status_code=303,
             )
 
+        if any(password_plan[f"{account}_action"] == "change" for account in ("admin", "root")):
+            return render(
+                request,
+                "backup_restore.html",
+                {
+                    "identity": identity,
+                    **backup_restore_context(
+                        db,
+                        error="Password changes require the appliance runtime. Choose Keep current password for both accounts in development.",
+                    ),
+                },
+                status_code=422,
+            )
+
         replace_database_with_factory_candidate(
             db,
             database_url=settings.database_url,
             adapter=system_adapter_factory(dry_run=True),
+            credential_plan={
+                key: str(value)
+                for key, value in password_plan.items()
+                if key != "schema_version"
+            },
         )
         invalidate_appliance_apply_status_projection()
         request.session.clear()

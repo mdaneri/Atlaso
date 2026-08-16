@@ -106,6 +106,7 @@
         <span class="status-pill warn">admin action</span>
       </div>
       <form
+        class="form-stack"
         action="{{ management_ui_root }}/backup-restore/factory-reset"
         method="post"
         data-confirm-modal
@@ -114,6 +115,29 @@
         data-confirm-label="Factory reset appliance"
       >
         <input type="hidden" name="csrf" value="{{ csrf_token }}">
+        <p id="factory-reset-password-policy" class="muted">New passwords must satisfy the current Local Users policy: {{ factory_reset_password_policy_summary }}. Password values are used only by the protected reset transaction and are never stored in the Atlaso database, task, audit, or reset marker.</p>
+        <fieldset>
+          <legend><span class="field-label"><span>Bootstrap administrator password</span><button class="help-icon" type="button" data-help="Keep the current admin web and Photon OS password, or replace both during factory reset. The bootstrap administrator account is recreated either way.">i</button></span></legend>
+          <div class="choice-list compact">
+            <label class="choice-row"><input type="radio" name="admin_password_action" value="keep" checked><span class="choice-copy"><strong>Keep current password</strong><small>Preserve the current admin web and Photon OS password.</small></span></label>
+            <label class="choice-row"><input type="radio" name="admin_password_action" value="change"><span class="choice-copy"><strong>Change password</strong><small>Use the new password below for admin web and Photon OS access.</small></span></label>
+          </div>
+        </fieldset>
+        <div class="form-grid">
+          <label><span class="field-label"><span>New administrator password</span><button class="help-icon" type="button" data-help="Required only when Change password is selected. The value is staged in a mode-0600 transient file and never written to the database or reset marker.">i</button></span><input type="password" name="admin_password" autocomplete="new-password" aria-describedby="factory-reset-password-policy"></label>
+          <label><span>Confirm administrator password</span><input type="password" name="admin_password_confirm" autocomplete="new-password" aria-describedby="factory-reset-password-policy"></label>
+        </div>
+        <fieldset>
+          <legend><span class="field-label"><span>Root password</span><button class="help-icon" type="button" data-help="Keep the current Photon root password, or replace it during the protected factory-reset transaction. This does not enable root SSH.">i</button></span></legend>
+          <div class="choice-list compact">
+            <label class="choice-row"><input type="radio" name="root_password_action" value="keep" checked><span class="choice-copy"><strong>Keep current password</strong><small>Preserve the current Photon root password.</small></span></label>
+            <label class="choice-row"><input type="radio" name="root_password_action" value="change"><span class="choice-copy"><strong>Change password</strong><small>Apply the new Photon root password during reset.</small></span></label>
+          </div>
+        </fieldset>
+        <div class="form-grid">
+          <label><span class="field-label"><span>New root password</span><button class="help-icon" type="button" data-help="Required only when Change password is selected. The value is passed to the constrained root helper through protected storage and stdin.">i</button></span><input type="password" name="root_password" autocomplete="new-password" aria-describedby="factory-reset-password-policy"></label>
+          <label><span>Confirm root password</span><input type="password" name="root_password_confirm" autocomplete="new-password" aria-describedby="factory-reset-password-policy"></label>
+        </div>
         <button class="button danger" type="submit">Factory reset appliance</button>
       </form>
     </div>

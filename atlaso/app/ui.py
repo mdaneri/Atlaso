@@ -59,6 +59,7 @@ from atlaso.app.audit import record_audit
 from atlaso.app.config import get_settings
 from atlaso.app.database import SessionLocal, get_db
 from atlaso.app.factory_reset import (
+    FACTORY_RESET_STAGED_CREDENTIALS_PATH,
     read_factory_reset_state,
     replace_database_with_factory_candidate,
 )
@@ -430,6 +431,7 @@ from atlaso.app.services.local_users import (
     render_local_users_apply_config,
     render_local_users_preview,
     validate_local_usernames,
+    validate_password,
 )
 from atlaso.app.services.monitoring import monitor_payload
 from atlaso.app.services.networking import (
@@ -12235,7 +12237,12 @@ def cleanup_transient_secret_staging_files() -> None:
         PermissionError: If the operation lacks the required permission.
     """
     adapter = SystemAdapter()
-    for path_value in (LOCAL_USERS_STAGED_CONFIG_PATH, CA_STAGED_CONFIG_PATH, LDAP_STAGED_CONFIG_PATH):
+    for path_value in (
+        LOCAL_USERS_STAGED_CONFIG_PATH,
+        CA_STAGED_CONFIG_PATH,
+        LDAP_STAGED_CONFIG_PATH,
+        FACTORY_RESET_STAGED_CREDENTIALS_PATH,
+    ):
         staged_path = Path(path_value)
         if not adapter.dry_run:
             repair = adapter.prepare_apply_staging_path(str(staged_path))
@@ -13180,8 +13187,9 @@ def login_page(
         )
         if reset_state["state"] == "succeeded" or authenticated_completion:
             reset_notice = (
-                "Factory reset completed. Sign in with the bootstrap administrator credentials; "
-                "all earlier sessions and credentials are invalid."
+                "Factory reset completed. Sign in with the bootstrap administrator password "
+                "selected for this reset. Earlier sessions, tokens, and removed account "
+                "credentials are invalid."
             )
         elif reset_state["state"] == "failed":
             reset_notice = (
@@ -18076,6 +18084,9 @@ def backup_restore_context(db: Session, result: dict[str, Any] | None = None, er
         "settings_backup_total_rows": sum(counts.values()),
         "backup_restore_result": result,
         "backup_restore_error": error,
+        "factory_reset_password_policy_summary": password_policy_summary(
+            local_users_password_policy(db)
+        ),
         "ldap_recovery_archive": ldap_recovery_archive,
         "ldap_recovery_ready": bool(
             ldap_recovery_archive is not None and ldap_recovery_archive.id in LDAP_PENDING_RECOVERY_PAYLOADS
@@ -18393,6 +18404,13 @@ _settings_backup_ui = build_settings_backup_ui_router(
             *args, **kwargs
         ),
         get_runtime_settings=lambda: get_settings(),
+        local_users_password_policy=lambda *args, **kwargs: local_users_password_policy(
+            *args, **kwargs
+        ),
+        validate_password=lambda *args, **kwargs: validate_password(*args, **kwargs),
+        stage_appliance_apply_config=lambda *args, **kwargs: stage_appliance_apply_config(
+            *args, **kwargs
+        ),
         system_adapter_factory=lambda *args, **kwargs: SystemAdapter(*args, **kwargs),
         replace_database_with_factory_candidate=lambda *args, **kwargs: replace_database_with_factory_candidate(
             *args, **kwargs
@@ -18401,6 +18419,7 @@ _settings_backup_ui = build_settings_backup_ui_router(
         management_ui_path=lambda *args, **kwargs: management_ui_path(
             *args, **kwargs
         ),
+        factory_reset_staged_credentials_path=FACTORY_RESET_STAGED_CREDENTIALS_PATH,
         appliance_settings_context=lambda *args, **kwargs: appliance_settings_context(
             *args, **kwargs
         ),

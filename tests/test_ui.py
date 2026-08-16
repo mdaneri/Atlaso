@@ -7558,15 +7558,17 @@ def test_backup_restore_factory_reset_schedules_durable_appliance_transaction(cl
     page = client.get("/backup-restore")
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
 
-    scheduled: list[bool] = []
+    scheduled: list[str] = []
+    staged_payloads: list[dict[str, object]] = []
 
-    def schedule_factory_reset(_adapter):
+    def schedule_factory_reset(_adapter, credentials_path):
         """Record one appliance reset schedule request.
 
         Args:
             _adapter: Real-mode adapter supplied by the endpoint.
+            credentials_path: Protected credential-choice staging path.
         """
-        scheduled.append(True)
+        scheduled.append(credentials_path)
         return AdapterResult(
             command=["atlaso-helper", "factory-reset", "schedule"],
             dry_run=False,
@@ -7575,27 +7577,81 @@ def test_backup_restore_factory_reset_schedules_durable_appliance_transaction(cl
 
     monkeypatch.setattr(
         "atlaso.app.ui.get_settings",
-        lambda: SimpleNamespace(environment="appliance", dry_run_system_adapters=False),
+        lambda: SimpleNamespace(
+            environment="appliance",
+            dry_run_system_adapters=False,
+            bootstrap_admin_username="admin",
+        ),
     )
     monkeypatch.setattr(
         "atlaso.app.ui.management_ui_request_allowed",
         lambda _request, _db: True,
     )
     monkeypatch.setattr(SystemAdapter, "schedule_factory_reset", schedule_factory_reset)
+    monkeypatch.setattr(
+        "atlaso.app.ui.stage_appliance_apply_config",
+        lambda path, payload: staged_payloads.append(json.loads(payload)) or path,
+    )
 
     response = client.post(
         "/ui/management/backup-restore/factory-reset",
-        data={"csrf": csrf},
+        data={
+            "csrf": csrf,
+            "admin_password_action": "change",
+            "admin_password": "Selected-Web2!",
+            "admin_password_confirm": "Selected-Web2!",
+            "root_password_action": "change",
+            "root_password": "Selected-System3!",
+            "root_password_confirm": "Selected-System3!",
+        },
         follow_redirects=False,
     )
 
     assert response.status_code == 303
     assert response.headers["location"].endswith("/login?factory_reset=scheduled")
-    assert scheduled == [True]
+    assert scheduled == ["/var/lib/atlaso/apply/factory-reset/credentials.json"]
+    assert staged_payloads == [
+        {
+            "schema_version": 1,
+            "admin_action": "change",
+            "admin_password": "Selected-Web2!",
+            "root_action": "change",
+            "root_password": "Selected-System3!",
+        }
+    ]
     with SessionLocal() as db:
         assert db.execute(
             select(Setting).where(Setting.key == "factory.reset.scheduled-retained")
         ).scalar_one().value == "yes"
+
+
+def test_backup_restore_factory_reset_validates_both_password_choices(client):
+    """Reset rejects mismatched password input without reflecting the secret.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
+    login(client)
+    page = client.get("/backup-restore")
+    assert 'name="admin_password_action"' in page.text
+    assert 'name="root_password_action"' in page.text
+    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    supplied_password = "Mismatch-Web2!"
+
+    response = client.post(
+        "/backup-restore/factory-reset",
+        data={
+            "csrf": csrf,
+            "admin_password_action": "change",
+            "admin_password": supplied_password,
+            "admin_password_confirm": "Different-Web3!",
+            "root_password_action": "keep",
+        },
+    )
+
+    assert response.status_code == 422
+    assert "administrator passwords do not match" in response.text
+    assert supplied_password not in response.text
 
 
 def test_factory_reset_completion_notice_requires_durable_success(client, monkeypatch):
@@ -7705,7 +7761,11 @@ def test_backup_restore_factory_reset_replaces_database_and_baselines_runtime(cl
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
     reset = client.post(
         "/backup-restore/factory-reset",
-        data={"csrf": csrf},
+        data={
+            "csrf": csrf,
+            "admin_password_action": "keep",
+            "root_password_action": "keep",
+        },
         follow_redirects=False,
     )
 
@@ -7713,7 +7773,7 @@ def test_backup_restore_factory_reset_replaces_database_and_baselines_runtime(cl
     assert reset.headers["location"].endswith("/login?factory_reset=complete")
     login_handoff = client.get(reset.headers["location"])
     assert "Factory reset completed" in login_handoff.text
-    assert "all earlier sessions and credentials are invalid" in login_handoff.text
+    assert "bootstrap administrator password selected for this reset" in login_handoff.text
     assert client.get("/dashboard", follow_redirects=False).status_code in {303, 307}
     with SessionLocal() as db:
         settings = db.execute(select(ApplianceSettings)).scalar_one()
@@ -7838,7 +7898,11 @@ def test_backup_restore_factory_reset_rolls_back_failed_fallback_candidate(clien
     with pytest.raises(RuntimeError, match="Factory reset preflight failed"):
         client.post(
             "/backup-restore/factory-reset",
-            data={"csrf": csrf},
+            data={
+                "csrf": csrf,
+                "admin_password_action": "keep",
+                "root_password_action": "keep",
+            },
             follow_redirects=False,
         )
 
@@ -15113,12 +15177,26 @@ def test_application_restart_removes_stale_secret_staging_inputs(client, monkeyp
     local_users_path = tmp_path / "apply" / "local-users" / "atlaso-users.json"
     ca_path = tmp_path / "apply" / "ca" / "atlaso-ca.json"
     ldap_path = tmp_path / "apply" / "ldap" / "atlaso-ldap.json"
+    factory_reset_path = tmp_path / "apply" / "factory-reset" / "credentials.json"
     status_path = local_users_path.with_name(".atlaso-users.status-stale.json")
     atomic_temp_paths = [
         path.with_name(f".{path.name}.stale.tmp")
-        for path in (local_users_path, ca_path, ldap_path, status_path)
+        for path in (
+            local_users_path,
+            ca_path,
+            ldap_path,
+            factory_reset_path,
+            status_path,
+        )
     ]
-    stale_paths = [local_users_path, ca_path, ldap_path, status_path, *atomic_temp_paths]
+    stale_paths = [
+        local_users_path,
+        ca_path,
+        ldap_path,
+        factory_reset_path,
+        status_path,
+        *atomic_temp_paths,
+    ]
     for path in stale_paths:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text('{"password":"RestartSecret1!"}', encoding="utf-8")
@@ -15127,6 +15205,7 @@ def test_application_restart_removes_stale_secret_staging_inputs(client, monkeyp
     monkeypatch.setattr(ui, "LOCAL_USERS_STAGED_CONFIG_PATH", str(local_users_path))
     monkeypatch.setattr(ui, "CA_STAGED_CONFIG_PATH", str(ca_path))
     monkeypatch.setattr(ui, "LDAP_STAGED_CONFIG_PATH", str(ldap_path))
+    monkeypatch.setattr(ui, "FACTORY_RESET_STAGED_CREDENTIALS_PATH", str(factory_reset_path))
 
     with TestClient(create_app()) as restarted_client:
         assert restarted_client.get("/openapi.json").status_code == 200
@@ -15148,6 +15227,7 @@ def test_secret_staging_cleanup_repairs_ownership_before_unlink(monkeypatch, tmp
         tmp_path / "apply" / "local-users" / "atlaso-users.json",
         tmp_path / "apply" / "ca" / "atlaso-ca.json",
         tmp_path / "apply" / "ldap" / "atlaso-ldap.json",
+        tmp_path / "apply" / "factory-reset" / "credentials.json",
     ]
     for path in staged_paths:
         path.parent.mkdir(parents=True)
@@ -15174,6 +15254,7 @@ def test_secret_staging_cleanup_repairs_ownership_before_unlink(monkeypatch, tmp
     monkeypatch.setattr(ui, "LOCAL_USERS_STAGED_CONFIG_PATH", str(staged_paths[0]))
     monkeypatch.setattr(ui, "CA_STAGED_CONFIG_PATH", str(staged_paths[1]))
     monkeypatch.setattr(ui, "LDAP_STAGED_CONFIG_PATH", str(staged_paths[2]))
+    monkeypatch.setattr(ui, "FACTORY_RESET_STAGED_CREDENTIALS_PATH", str(staged_paths[3]))
     monkeypatch.setattr(ui, "SystemAdapter", RepairingAdapter)
 
     ui.cleanup_transient_secret_staging_files()
