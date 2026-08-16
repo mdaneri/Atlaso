@@ -522,7 +522,11 @@ def _clear_apply_staging() -> None:
 
 
 def _fsync_directory(path: Path) -> None:
-    """Synchronize one directory after removing a secret-bearing entry."""
+    """Synchronize one directory after removing a secret-bearing entry.
+
+    Args:
+        path: Directory whose entry changes must be durable.
+    """
     if os.name != "posix":
         return
     descriptor = os.open(path, os.O_RDONLY)

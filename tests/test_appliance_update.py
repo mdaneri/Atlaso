@@ -1350,6 +1350,7 @@ def test_helper_retries_failed_powershell_repository_removal(monkeypatch, tmp_pa
     )
     monkeypatch.setattr(helper, "MANAGED_PHOTON_REPO_PATH", tmp_path / "atlaso-managed.repo")
     monkeypatch.setattr(helper, "UPDATE_SOURCE_STATE_PATH", state_path)
+    monkeypatch.setattr(helper, "ATLASO_POWERSHELL_HOME", tmp_path / "powershell-home")
     monkeypatch.setattr(helper, "_command_path", lambda _name: "/usr/bin/pwsh")
     attempts = 0
 
