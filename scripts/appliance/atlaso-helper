@@ -11722,12 +11722,35 @@ def _recover_interrupted_release_transaction() -> dict:
     try:
         _write_update_info(definitive)
     except OSError as exc:
+        maintenance = _set_release_maintenance(True)
+        commands.append(maintenance)
+        provisional = {
+            **definitive,
+            "status": "rollback_pending",
+            "rolled_back": False,
+            "rollback_health": False,
+            "commands": commands,
+            "rollback_failures": list(
+                dict.fromkeys([*rollback_failures, "reboot_rollback_status"])
+            ),
+        }
+        while True:
+            try:
+                _write_release_finalizer(provisional)
+                break
+            except OSError:
+                # The definitive marker above exists only to authorize candidate
+                # bookkeeping.  Never expose it to the restored worker when the
+                # companion status write failed; systemd may time out this
+                # pre-start helper and retry, but worker admission stays closed.
+                time.sleep(1)
         return {
             "status": "recovery_failed",
             "success": False,
             "allow_worker": False,
+            "rolled_back": False,
             "commands": commands,
-            "rollback_failures": list(dict.fromkeys([*rollback_failures, "reboot_rollback_status"])),
+            "rollback_failures": provisional["rollback_failures"],
             "error": f"Reboot rollback status could not be persisted: {type(exc).__name__}.",
         }
     if rollback_ready:

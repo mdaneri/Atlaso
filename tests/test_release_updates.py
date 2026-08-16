@@ -712,11 +712,13 @@ def test_release_prestart_recovery_handles_gate_after_definitive_write(
 
 @pytest.mark.parametrize("bookkeeping_success", [True, False])
 @pytest.mark.parametrize("finalizer_write_success", [True, False])
+@pytest.mark.parametrize("status_write_success", [True, False])
 def test_release_prestart_recovery_rolls_back_stale_transaction(
     monkeypatch,
     tmp_path,
     bookkeeping_success,
     finalizer_write_success,
+    status_write_success,
 ):
     """Verify a reboot-stale provisional transaction restores the previous release.
 
@@ -725,6 +727,7 @@ def test_release_prestart_recovery_rolls_back_stale_transaction(
         tmp_path: Temporary directory provided for recovery state.
         bookkeeping_success: Whether candidate-version task recovery completes.
         finalizer_write_success: Whether definitive rollback evidence can be persisted.
+        status_write_success: Whether reboot rollback status can be persisted.
     """
     from tests.test_appliance_update import load_helper_module
 
@@ -845,7 +848,16 @@ def test_release_prestart_recovery_rolls_back_stale_transaction(
             [{"command": ["front-door"], "returncode": 0, "success": True, "stdout": "", "stderr": ""}],
         ),
     )
-    monkeypatch.setattr(helper, "_write_update_info", lambda _payload: None)
+    def write_status(_payload):
+        """Persist status or inject the post-finalizer status failure.
+
+        Args:
+            _payload: Reboot rollback status selected for publication.
+        """
+        if not status_write_success:
+            raise OSError("injected reboot status failure")
+
+    monkeypatch.setattr(helper, "_write_update_info", write_status)
     if not finalizer_write_success:
         def fail_finalizer(_payload):
             """Inject failure before definitive reboot rollback evidence is durable.
@@ -885,6 +897,17 @@ def test_release_prestart_recovery_rolls_back_stale_transaction(
         assert result["allow_worker"] is False
         assert result["rolled_back"] is False
         assert persisted["status"] == "restart_pending"
+        assert maintenance_states[-1] is True
+        assert not candidate_recovery
+        assert candidate.exists()
+        assert gate.exists()
+        return
+    if not status_write_success:
+        assert result["success"] is False
+        assert result["allow_worker"] is False
+        assert result["rolled_back"] is False
+        assert persisted["status"] == "rollback_pending"
+        assert persisted["rolled_back"] is False
         assert maintenance_states[-1] is True
         assert not candidate_recovery
         assert candidate.exists()
