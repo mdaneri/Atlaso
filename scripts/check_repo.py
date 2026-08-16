@@ -1374,7 +1374,6 @@ def has_css_hidden_style(attributes: str) -> bool:
             "display": r"none",
             "visibility": r"(?:hidden|collapse)",
             "content-visibility": r"hidden",
-            "opacity": r"(?:0+(?:\.0*)?|0*\.0+|0%)",
         }
         if any(
             property_name in computed
@@ -1385,6 +1384,9 @@ def has_css_hidden_style(attributes: str) -> bool:
             )
             is not None
             for property_name, pattern in hidden_values.items()
+        ) or (
+            "opacity" in computed
+            and css_opacity_is_hidden(computed["opacity"][0])
         ):
             return True
     return False
@@ -1496,6 +1498,20 @@ def css_property_value_is_valid(property_name: str, value: str) -> bool:
             and len(token_set & {"flow", "flow-root"}) == 1
         )
     return False
+
+
+def css_opacity_is_hidden(value: str) -> bool:
+    """Return whether a literal opacity value computes or clamps to zero.
+
+    Args:
+        value: Validated decoded opacity value.
+    """
+    numeric_match = re.fullmatch(
+        r"(?P<number>[-+]?(?:(?:\d+(?:\.\d*)?)|(?:\.\d+))(?:e[-+]?\d+)?)%?",
+        value,
+        flags=re.IGNORECASE,
+    )
+    return numeric_match is not None and float(numeric_match.group("number")) <= 0
 
 
 def decode_css_escapes(value: str) -> str:
@@ -1902,8 +1918,10 @@ def strip_markdown_nonoperative_content(text: str) -> str:
     for line_index, line in enumerate(
         without_html_tags.splitlines(keepends=True)
     ):
-        if quote_match := re.match(r" {0,3}>[ \t]?", line):
-            quoted_content = line[quote_match.end() :]
+        if re.match(r" {0,3}>[ \t]?", line) is not None:
+            quoted_content = line
+            while quote_match := re.match(r" {0,3}>[ \t]?", quoted_content):
+                quoted_content = quoted_content[quote_match.end() :]
             in_block_quote = bool(quoted_content.strip()) and not (
                 quoted_content.startswith("    ")
                 or starts_markdown_block_construct(quoted_content)
