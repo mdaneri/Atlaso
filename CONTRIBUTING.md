@@ -124,6 +124,58 @@ explains the outcome and rationale, summarizes principal changes, records valida
 Afterward, verify the merged state, confirm that the squash commit is reachable from current `origin/main`, check linked
 issue closure, and monitor applicable post-merge workflows before reporting completion.
 
+### Completed task cleanup
+
+After all post-merge work is complete, a worktree-backed originating task sends a `cleanup-ready` handoff to a cleanup
+controller running from the primary checkout. The handoff identifies the repository, task and title, pull request,
+task-owned branch, absolute worktree path, pull-request head SHA, and merge commit SHA. The controller waits for an
+idle, unpinned task and independently revalidates the merged pull request, reachable merge commit, closed issue,
+completed post-merge activity, and branch/checkout ownership. It identifies and verifies a primary checkout first;
+only a non-primary target must be a clean, registered, unlocked Codex worktree beneath the resolved Codex worktree root.
+
+Private remediation substitutes `advisory_cleanup_ready` for the ordinary closed-issue gate. Require an explicitly
+authorized advisory-administrator merge, a resulting commit reachable from current `origin/main`, completed
+advisory-side review and recorded local validation, finished coordinated release and disclosure activity, and no
+remaining advisory task activity. Revalidate those facts only on private surfaces and keep the advisory identity,
+title, handoff, evidence, and temporary-fork remote operations sanitized.
+
+Terminal order:
+
+1. `remote_branch_absent`
+2. `worktree_removed`
+3. `task_title_done`
+
+For ordinary work, the controller deletes and verifies only the exact task-owned same-repository GitHub branch. An
+existing ref must still equal the recorded pull-request head and be deleted with an atomic expected-SHA lease such as
+`--force-with-lease=refs/heads/BRANCH:HEAD_SHA`; any lease rejection or unavailable atomic guard blocks cleanup.
+Private
+remediation uses `advisory_remote_branch_absent`: privately bind the advisory's exact temporary fork, private pull
+request, branch, task, and recorded head SHA; delete only that ref with the same expected-SHA lease when it still equals
+the head; and privately verify absence. An already absent ref still requires that identity and merge proof. Never delete
+the temporary fork or change
+advisory state, and keep repository-wide automatic branch deletion disabled. The controller then uses
+`git worktree remove`, prunes stale registration metadata, verifies that the worktree path and registration are absent,
+deletes only the exact local task branch after proving that it still equals the pull-request head and is unreferenced by
+every registered worktree, and verifies `local_task_branch_absent` before recording `worktree_removed`. An interrupted
+`worktree_removal_resume` may finish local-ref deletion only while the remote ref, path, and registration remain absent
+and the same task ownership, head, and merge evidence prove that the exact unreferenced local branch is safely
+deletable or already absent. A primary-checkout task records worktree removal as
+not applicable only after a clean exact-head checkout fetches current `origin/main`, switches to local `main` without
+force, fast-forwards exactly to `origin/main`, verifies HEAD, deletes only an exact matching unreferenced local task
+branch, and records `primary_checkout_restored`. An interrupted retry may use `primary_checkout_resume` only from a
+clean local `main` that freshly fast-forwards to current `origin/main`, with the remote ref absent and the exact local
+task branch either still safely deletable or already absent under the same ownership and merge proof. Finally,
+supported title controls append the exact suffix " · Done"
+once and leave the task unarchived unless archival is separately requested. If the runtime has no supported mutable
+title control, record `task_title_done` as verified not applicable with capability evidence, omit the visible suffix,
+and allow otherwise-complete cleanup to finish.
+
+Failure or ambiguity at any gate blocks the " · Done" suffix and leaves an actionable retry condition. The daily Codex
+cleanup automation reconciles missed or partial transitions with the same fail-closed checks. A squash-merged head may
+be cleaned even though it is not an ancestor of `main` only when it exactly matches the recorded pull-request head and
+the recorded merge commit is reachable from current `origin/main`. Private-remediation cleanup remains subject to
+`SECURITY.md`, cannot expose or prematurely close coordinated advisory work, and blocks when private state is unavailable.
+
 Maintainers may explicitly enable auto-merge on an internal, ready-for-review pull request. When `main` advances, Atlaso
 automatically updates only those auto-merge-enabled branches that are in this repository, are not drafts, have no merge
 conflict, and are behind `main`. The update uses the observed head commit as a concurrency guard. Forks and pull requests
