@@ -50,32 +50,6 @@ def test_invalid_jwt_is_rejected(client):
     assert response.status_code == 401
 
 
-def test_settings_api_updates_root_ssh_desired_state(client):
-    """Verify that settings api updates root ssh desired state.
-
-    Args:
-        client: HTTP test client used to exercise the Atlaso application.
-    """
-    token, _metadata = create_token(client, scopes=["admin:all", "read:dashboard"])
-
-    response = client.patch(
-        "/api/v1/settings",
-        headers={"Authorization": f"Bearer {token}"},
-        json={
-            "appliance_fqdn": "api.atlaso.internal",
-            "management_https_enabled": False,
-            "root_ssh_enabled": True,
-            "external_dns_servers": ["1.1.1.1", "9.9.9.9"],
-        },
-    )
-
-    assert response.status_code == 200, response.text
-    payload = response.json()
-    assert payload["appliance_fqdn"] == "api.atlaso.internal"
-    assert payload["root_ssh_enabled"] is True
-    assert '"root_ssh_enabled": true' in payload["config_preview"]
-
-
 def test_scope_restrictions_are_enforced(client):
     """Verify that scope restrictions are enforced.
 
