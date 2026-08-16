@@ -1478,6 +1478,28 @@ def test_agent_policy_gate_ignores_escaped_reference_title_delimiters(
         )
 
 
+def test_agent_policy_gate_preserves_whitespace_only_reference_labels(
+    tmp_path: Path,
+) -> None:
+    """Verify an empty normalized reference label remains visible prose.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    marker = '`cleanup-ready`'
+    for relative_path in ORDERED_TERMINAL_CLEANUP_MARKERS:
+        write_policy_files(tmp_path)
+        path = tmp_path / relative_path
+        text = path.read_text(encoding="utf-8").replace(
+            marker,
+            f'[   ]: /destination "{marker}"',
+            1,
+        )
+        path.write_text(text, encoding="utf-8")
+
+        assert check_agent_policy_gate(tmp_path) == []
+
+
 def test_agent_policy_gate_ignores_escaped_reference_label_metadata(
     tmp_path: Path,
 ) -> None:
@@ -1874,6 +1896,34 @@ def test_agent_policy_gate_preserves_visible_css_cascade_results(
             text = path.read_text(encoding="utf-8").replace(
                 marker,
                 f'<span style="{style}">{marker}</span>',
+                1,
+            )
+            path.write_text(text, encoding="utf-8")
+
+            assert check_agent_policy_gate(tmp_path) == []
+
+
+def test_agent_policy_gate_preserves_policy_after_hidden_void_elements(
+    tmp_path: Path,
+) -> None:
+    """Verify hidden void elements cannot consume following visible policy.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    marker = '`cleanup-ready`'
+    for relative_path in ORDERED_TERMINAL_CLEANUP_MARKERS:
+        for void_tag in (
+            "<input hidden>",
+            '<img style="display:none">',
+        ):
+            write_policy_files(tmp_path)
+            path = tmp_path / relative_path
+            anchor = TERMINAL_CLEANUP_SECTION_ANCHORS[relative_path]
+            content_prefix = "" if anchor.startswith("#") else "  "
+            text = path.read_text(encoding="utf-8").replace(
+                marker,
+                f"{void_tag}\n{content_prefix}{marker}",
                 1,
             )
             path.write_text(text, encoding="utf-8")

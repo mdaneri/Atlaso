@@ -1490,6 +1490,22 @@ def strip_markdown_hidden_html_containers(text: str) -> str:
         text: Markdown source whose hidden raw HTML containers must be normalized.
     """
     inert_elements = {"head", "iframe", "noscript", "template", "title", "xmp"}
+    void_elements = {
+        "area",
+        "base",
+        "br",
+        "col",
+        "embed",
+        "hr",
+        "img",
+        "input",
+        "link",
+        "meta",
+        "param",
+        "source",
+        "track",
+        "wbr",
+    }
     tag_pattern = re.compile(
         r'''<(?P<closing>/)?(?P<tag>[A-Za-z][A-Za-z0-9-]*)\b'''
         r'''(?P<attributes>(?:[^<>"']|"[^"]*"|'[^']*')*?)'''
@@ -1504,6 +1520,7 @@ def strip_markdown_hidden_html_containers(text: str) -> str:
         if (
             opening_match.group("closing") is not None
             or opening_match.group("self_closing") is not None
+            or tag_name in void_elements
             or (
                 tag_name not in inert_elements
                 and not has_hidden_html_attribute(
@@ -1580,7 +1597,12 @@ def scan_reference_definition_label(text: str) -> tuple[int | None, bool]:
             return None, False
         elif text[index] == "]":
             if index + 1 < len(text) and text[index + 1] == ":":
-                return (index + 2, False) if index > label_start else (None, False)
+                label = text[label_start:index]
+                return (
+                    (index + 2, False)
+                    if any(not character.isspace() for character in label)
+                    else (None, False)
+                )
             return None, False
         index += 1
     return None, True
