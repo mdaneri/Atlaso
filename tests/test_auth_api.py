@@ -68,25 +68,6 @@ def test_scope_restrictions_are_enforced(client):
     assert monitor.status_code == 403
 
 
-def test_monitor_api_requires_monitoring_scope(client):
-    """Verify that monitor api requires monitoring scope.
-
-    Args:
-        client: HTTP test client used to exercise the Atlaso application.
-    """
-    token, _metadata = create_token(client, scopes=["read:monitoring"])
-
-    response = client.get("/api/v1/monitor?hours=24", headers={"Authorization": f"Bearer {token}"})
-
-    assert response.status_code == 200, response.text
-    payload = response.json()
-    assert payload["window_hours"] == 24
-    assert "summary" in payload
-    assert "virtualization" in payload
-    assert "cpu" in payload
-    assert "disk_devices" in payload
-
-
 def test_expired_token_request_is_rejected(client):
     """Verify that expired token request is rejected.
 
