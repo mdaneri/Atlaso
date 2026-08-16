@@ -12859,17 +12859,29 @@ def _apply_atlaso_release(
 
         def stop_worker_fail_closed() -> list[dict]:
             """Stop and prove the caller inactive before incomplete rollback evidence."""
-            stopped = _service_command("stop", "atlaso-worker.service")
-            active = _service_command("is-active", "atlaso-worker.service")
-            inactive = {
-                **active,
-                "command": ["systemctl", "is-inactive", "atlaso-worker.service"],
-                "returncode": 0 if not active.get("success") else 1,
-                "success": not active.get("success"),
-                "stdout": "Atlaso worker is stopped." if not active.get("success") else "",
-                "stderr": "" if not active.get("success") else "Atlaso worker remained active.",
-            }
-            return [stopped, inactive]
+            attempts = 0
+            while True:
+                attempts += 1
+                stopped = _service_command("stop", "atlaso-worker.service")
+                state = _service_command(
+                    "show",
+                    "--property=ActiveState",
+                    "--value",
+                    "atlaso-worker.service",
+                )
+                active_state = str(state.get("stdout") or "").strip()
+                inactive = bool(state.get("success") and active_state == "inactive")
+                if inactive:
+                    verification = {
+                        **state,
+                        "success": True,
+                        "returncode": 0,
+                        "stdout": "Atlaso worker ActiveState is inactive.",
+                        "stderr": "",
+                        "attempts": attempts,
+                    }
+                    return [stopped, verification]
+                time.sleep(1)
 
         rollback_gate_ready, _rollback_gate_result = rollback_action(
             "worker_restart_gate_hold",
@@ -13114,8 +13126,6 @@ def _apply_atlaso_release(
                 "worker_restart_gate",
                 lambda: _set_release_restart_gate(False),
             )
-        if rollback_link.get("success", False):
-            shutil.rmtree(release_root, ignore_errors=True)
         rollback_outcome = "was rolled back" if rollback_ready else "rollback was incomplete"
         raise ValueError(
             f"Atlaso release {version} failed and {rollback_outcome}: {transaction_error}"

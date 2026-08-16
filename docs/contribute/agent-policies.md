@@ -440,7 +440,9 @@ status: current
   preserve and verify the already-running worker until the definitive rollback write; it must never start a restored
   legacy worker inside the transaction. After recovery bookkeeping, a candidate worker must exit so systemd starts the
   restored release without executing pending children itself. Before publishing any incomplete rollback, retain the
-  provisional owner evidence and stop and verify the caller inactive, including when the runtime gate exists.
+  provisional owner evidence and stop and verify exact `ActiveState=inactive`, including when the runtime gate exists.
+  A failed status query is not inactive proof: retry from the live helper without returning to the caller. Retain the
+  candidate directory through candidate-version bookkeeping and restored-worker handoff, including incomplete retries.
   A gate timeout must exit worker startup for systemd retry, never enter the ordinary work loop. Remove and durably flush
   staged source credentials from the surviving helper before it restarts the calling worker. Require nginx plus web,
   worker, and console service state, and require the signed receipt, `current`, compatibility

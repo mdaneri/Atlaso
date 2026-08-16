@@ -3372,6 +3372,7 @@ def test_no_change_release_failure_finalizer_retains_readiness_commands(monkeypa
         ("rollback_link_restore", "candidate_startup", False),
         ("rollback_activation", "candidate_startup", False),
         ("rollback_worker_state", "candidate_startup", False),
+        ("rollback_worker_status_query", "candidate_startup", False),
         ("rollback_gate", "candidate_startup", False),
     ],
 )
@@ -3476,7 +3477,7 @@ def test_failed_candidate_restores_previous_release_and_database(
         Args:
             source: SQLite transaction backup selected for restoration.
         """
-        if failure_stage == "rollback_database_missing":
+        if failure_stage in {"rollback_database_missing", "rollback_worker_status_query"}:
             source.unlink(missing_ok=True)
         return restore_sqlite_backup(source)
 
@@ -3623,6 +3624,7 @@ def test_failed_candidate_restores_previous_release_and_database(
     candidate_starts = 0
     rollback_worker_starts = 0
     rollback_worker_fail_closed_stops = 0
+    rollback_worker_state_queries = 0
     worker_stopped_fail_closed = False
 
     def service_command(action, *units):
@@ -3633,7 +3635,7 @@ def test_failed_candidate_restores_previous_release_and_database(
             *units: Additional positional arguments accepted by the callable.
         """
         nonlocal daemon_reloads, candidate_starts, rollback_worker_starts
-        nonlocal rollback_worker_fail_closed_stops, worker_stopped_fail_closed
+        nonlocal rollback_worker_fail_closed_stops, rollback_worker_state_queries, worker_stopped_fail_closed
         success = True
         if action == "daemon-reload":
             daemon_reloads += 1
@@ -3649,6 +3651,7 @@ def test_failed_candidate_restores_previous_release_and_database(
                         "rollback_link_restore",
                         "rollback_activation",
                         "rollback_worker_state",
+                        "rollback_worker_status_query",
                         "rollback_gate",
                 }
                 or candidate_starts > 1
@@ -3665,6 +3668,22 @@ def test_failed_candidate_restores_previous_release_and_database(
             pytest.fail("rollback must preserve the existing worker instead of starting a restored unit")
         if action == "is-active" and units == ("atlaso-worker.service",):
             success = not worker_stopped_fail_closed and failure_stage != "rollback_worker_state"
+        if action == "show" and units == (
+            "--property=ActiveState",
+            "--value",
+            "atlaso-worker.service",
+        ):
+            rollback_worker_state_queries += 1
+            success = not (
+                failure_stage == "rollback_worker_status_query" and rollback_worker_state_queries == 1
+            )
+            return {
+                "command": ["systemctl", action, *units],
+                "returncode": 0 if success else 1,
+                "success": success,
+                "stdout": "inactive" if success else "",
+                "stderr": "" if success else "injected systemd query failure",
+            }
         return {
             "command": ["systemctl", action, *units],
             "returncode": 0 if success else 1,
@@ -3828,8 +3847,12 @@ def test_failed_candidate_restores_previous_release_and_database(
     link_restored = failure_stage != "rollback_link_restore"
     expected_release = previous if link_restored else releases / "0.9.0"
     assert current.resolve() == expected_release.resolve()
-    assert get_identity() == ("after" if failure_stage == "rollback_database_missing" else "before")
-    assert (releases / "0.9.0").exists() is not link_restored
+    assert get_identity() == (
+        "after"
+        if failure_stage in {"rollback_database_missing", "rollback_worker_status_query"}
+        else "before"
+    )
+    assert (releases / "0.9.0").exists()
     finalizer = json.loads((tmp_path / "finalizer.json").read_text(encoding="utf-8"))
     assert finalizer["rolled_back"] is expected_rolled_back
     assert finalizer["rollback_health"] is expected_rolled_back
@@ -3837,7 +3860,15 @@ def test_failed_candidate_restores_previous_release_and_database(
     assert finalizer["commands"]
     assert not credential_path.exists()
     assert rollback_worker_starts == 0
-    assert rollback_worker_fail_closed_stops == (0 if expected_rolled_back else 1)
+    expected_stop_attempts = (
+        0
+        if expected_rolled_back
+        else 2
+        if failure_stage == "rollback_worker_status_query"
+        else 1
+    )
+    assert rollback_worker_fail_closed_stops == expected_stop_attempts
+    assert rollback_worker_state_queries == expected_stop_attempts
     if failure_stage == "transaction_backup_sync":
         assert "transaction_pending" not in finalizer_statuses
         assert not checkpoint_backup_counts

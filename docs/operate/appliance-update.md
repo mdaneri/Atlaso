@@ -271,7 +271,10 @@ already-running caller or candidate worker until the
 definitive rollback write and never starts a restored legacy worker inside the transaction. After completing rollback
 bookkeeping, a candidate worker exits without running pending children so systemd starts the restored release. Before
 publishing any incomplete rollback, the helper retains provisional owner evidence and stops and verifies the caller
-inactive, including when the runtime gate exists. The surviving privileged helper
+has exact `ActiveState=inactive`, including when the runtime gate exists. A failed systemd status query is not inactive
+proof, so the live helper retries without returning to the caller. The candidate directory remains available through
+candidate-version bookkeeping and the restored-worker handoff, including incomplete rollback retries. The surviving
+privileged helper
 removes and flushes any staged
 source-credential file before restarting the calling worker. The definitive finalizer retains sanitized helper command
 evidence so startup recovery can run the same child completion, parent completion, terminal task-log, and audit
