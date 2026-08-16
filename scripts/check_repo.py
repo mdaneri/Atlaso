@@ -1584,6 +1584,8 @@ def scan_reference_definition_label(text: str) -> tuple[int | None, bool]:
     label_start = index
     line_endings = 0
     while index < len(text):
+        if index - label_start > 999:
+            return None, False
         if text[index] == "\\" and index + 1 < len(text):
             index += 2
             continue

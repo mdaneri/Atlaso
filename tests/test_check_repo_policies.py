@@ -1500,6 +1500,29 @@ def test_agent_policy_gate_preserves_whitespace_only_reference_labels(
         assert check_agent_policy_gate(tmp_path) == []
 
 
+def test_agent_policy_gate_preserves_overlong_reference_labels(
+    tmp_path: Path,
+) -> None:
+    """Verify a label beyond CommonMark's limit remains visible prose.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    marker = '`cleanup-ready`'
+    overlong_label = "x" * 1000
+    for relative_path in ORDERED_TERMINAL_CLEANUP_MARKERS:
+        write_policy_files(tmp_path)
+        path = tmp_path / relative_path
+        text = path.read_text(encoding="utf-8").replace(
+            marker,
+            f'[{overlong_label}]: /destination "{marker}"',
+            1,
+        )
+        path.write_text(text, encoding="utf-8")
+
+        assert check_agent_policy_gate(tmp_path) == []
+
+
 def test_agent_policy_gate_ignores_escaped_reference_label_metadata(
     tmp_path: Path,
 ) -> None:
