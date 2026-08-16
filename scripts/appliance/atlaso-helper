@@ -11582,6 +11582,7 @@ def _recover_interrupted_release_transaction() -> dict:
             "status": "recovery_failed",
             "success": False,
             "allow_worker": False,
+            "rolled_back": False,
             "commands": commands,
             "rollback_failures": rollback_failures,
             "error": evidence["stderr"],
@@ -11692,6 +11693,33 @@ def _recover_interrupted_release_transaction() -> dict:
     }
     try:
         _write_release_finalizer(definitive)
+    except OSError as exc:
+        maintenance = _set_release_maintenance(True)
+        commands.append(maintenance)
+        incomplete = {
+            **definitive,
+            "status": "rollback_pending",
+            "rolled_back": False,
+            "rollback_health": False,
+            "commands": commands,
+            "rollback_failures": list(
+                dict.fromkeys([*rollback_failures, "reboot_rollback_finalizer"])
+            ),
+        }
+        try:
+            _write_update_info(incomplete)
+        except OSError:
+            pass
+        return {
+            "status": "recovery_failed",
+            "success": False,
+            "allow_worker": False,
+            "rolled_back": False,
+            "commands": commands,
+            "rollback_failures": incomplete["rollback_failures"],
+            "error": f"Reboot rollback evidence could not be persisted: {type(exc).__name__}.",
+        }
+    try:
         _write_update_info(definitive)
     except OSError as exc:
         return {
@@ -11699,8 +11727,8 @@ def _recover_interrupted_release_transaction() -> dict:
             "success": False,
             "allow_worker": False,
             "commands": commands,
-            "rollback_failures": list(dict.fromkeys([*rollback_failures, "reboot_rollback_finalizer"])),
-            "error": f"Reboot rollback evidence could not be persisted: {type(exc).__name__}.",
+            "rollback_failures": list(dict.fromkeys([*rollback_failures, "reboot_rollback_status"])),
+            "error": f"Reboot rollback status could not be persisted: {type(exc).__name__}.",
         }
     if rollback_ready:
         bookkeeping_ready, _ = recovery_action(
@@ -13121,6 +13149,24 @@ def _apply_atlaso_release(
                 }
             ),
         )
+        if not finalizer_restored:
+            rollback_ready = False
+            rollback_action("maintenance_fail_closed", lambda: _set_release_maintenance(True))
+            rollback_action("worker_fail_closed_stop", stop_worker_fail_closed)
+            rollback_payload.update(
+                {
+                    "rolled_back": False,
+                    "rollback_failures": [
+                        str(item.get("layer") or "rollback_unknown")
+                        for item in rollback_failures
+                    ],
+                    "error": (
+                        f"{transaction_error} Definitive rollback evidence could not be persisted; "
+                        "rollback remains incomplete."
+                    ),
+                }
+            )
+            rollback_action("status_evidence_fail_closed", lambda: _write_update_info(rollback_payload))
         if finalizer_restored and rollback_ready:
             rollback_action(
                 "worker_restart_gate",

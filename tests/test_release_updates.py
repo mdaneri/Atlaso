@@ -711,10 +711,12 @@ def test_release_prestart_recovery_handles_gate_after_definitive_write(
 
 
 @pytest.mark.parametrize("bookkeeping_success", [True, False])
+@pytest.mark.parametrize("finalizer_write_success", [True, False])
 def test_release_prestart_recovery_rolls_back_stale_transaction(
     monkeypatch,
     tmp_path,
     bookkeeping_success,
+    finalizer_write_success,
 ):
     """Verify a reboot-stale provisional transaction restores the previous release.
 
@@ -722,6 +724,7 @@ def test_release_prestart_recovery_rolls_back_stale_transaction(
         monkeypatch: Pytest fixture used to replace helper dependencies.
         tmp_path: Temporary directory provided for recovery state.
         bookkeeping_success: Whether candidate-version task recovery completes.
+        finalizer_write_success: Whether definitive rollback evidence can be persisted.
     """
     from tests.test_appliance_update import load_helper_module
 
@@ -797,17 +800,24 @@ def test_release_prestart_recovery_rolls_back_stale_transaction(
             "stderr": "",
         },
     )
-    monkeypatch.setattr(
-        helper,
-        "_set_release_maintenance",
-        lambda enabled: {
+    maintenance_states: list[bool] = []
+
+    def maintenance(enabled):
+        """Record whether reboot recovery closes or opens the front door.
+
+        Args:
+            enabled: Whether maintenance must remain enabled.
+        """
+        maintenance_states.append(enabled)
+        return {
             "command": ["maintenance", str(enabled)],
             "returncode": 0,
             "success": True,
             "stdout": "",
             "stderr": "",
-        },
-    )
+        }
+
+    monkeypatch.setattr(helper, "_set_release_maintenance", maintenance)
     monkeypatch.setattr(
         helper,
         "_wait_for_atlaso_health",
@@ -836,6 +846,16 @@ def test_release_prestart_recovery_rolls_back_stale_transaction(
         ),
     )
     monkeypatch.setattr(helper, "_write_update_info", lambda _payload: None)
+    if not finalizer_write_success:
+        def fail_finalizer(_payload):
+            """Inject failure before definitive reboot rollback evidence is durable.
+
+            Args:
+                _payload: Definitive rollback evidence rejected by the test.
+            """
+            raise OSError("injected reboot finalizer failure")
+
+        monkeypatch.setattr(helper, "_write_release_finalizer", fail_finalizer)
     candidate_recovery: list[Path] = []
 
     def recover_candidate(release):
@@ -860,6 +880,16 @@ def test_release_prestart_recovery_rolls_back_stale_transaction(
     result = helper._recover_interrupted_release_transaction()
 
     persisted = json.loads(finalizer.read_text(encoding="utf-8"))
+    if not finalizer_write_success:
+        assert result["success"] is False
+        assert result["allow_worker"] is False
+        assert result["rolled_back"] is False
+        assert persisted["status"] == "restart_pending"
+        assert maintenance_states[-1] is True
+        assert not candidate_recovery
+        assert candidate.exists()
+        assert gate.exists()
+        return
     assert result["success"] is bookkeeping_success, result
     assert result["allow_worker"] is bookkeeping_success
     assert result["rolled_back"] is bookkeeping_success
@@ -3373,6 +3403,7 @@ def test_no_change_release_failure_finalizer_retains_readiness_commands(monkeypa
         ("rollback_activation", "candidate_startup", False),
         ("rollback_worker_state", "candidate_startup", False),
         ("rollback_worker_status_query", "candidate_startup", False),
+        ("rollback_finalizer_persistence", "candidate_startup", False),
         ("rollback_gate", "candidate_startup", False),
     ],
 )
@@ -3652,6 +3683,7 @@ def test_failed_candidate_restores_previous_release_and_database(
                         "rollback_activation",
                         "rollback_worker_state",
                         "rollback_worker_status_query",
+                        "rollback_finalizer_persistence",
                         "rollback_gate",
                 }
                 or candidate_starts > 1
@@ -3834,6 +3866,8 @@ def test_failed_candidate_restores_previous_release_and_database(
             handoff_events.append("restart_pending")
         if payload.get("status") == "failed" and failure_stage != "rollback_gate":
             assert (tmp_path / "restart-gate").exists()
+        if failure_stage == "rollback_finalizer_persistence" and payload.get("status") == "failed":
+            raise OSError("injected definitive rollback finalizer failure")
         if failure_stage == "finalizer_persistence" and payload.get("status") == "succeeded":
             raise OSError("injected finalizer directory sync failure")
         write_finalizer(payload)
@@ -3854,9 +3888,14 @@ def test_failed_candidate_restores_previous_release_and_database(
     )
     assert (releases / "0.9.0").exists()
     finalizer = json.loads((tmp_path / "finalizer.json").read_text(encoding="utf-8"))
-    assert finalizer["rolled_back"] is expected_rolled_back
-    assert finalizer["rollback_health"] is expected_rolled_back
-    assert finalizer["failure_layer"] == expected_layer
+    if failure_stage == "rollback_finalizer_persistence":
+        assert finalizer["status"] == "transaction_pending"
+        assert finalizer["rolled_back"] is False
+        assert maintenance_states[-1] is True
+    else:
+        assert finalizer["rolled_back"] is expected_rolled_back
+        assert finalizer["rollback_health"] is expected_rolled_back
+        assert finalizer["failure_layer"] == expected_layer
     assert finalizer["commands"]
     assert not credential_path.exists()
     assert rollback_worker_starts == 0
@@ -3892,7 +3931,7 @@ def test_failed_candidate_restores_previous_release_and_database(
     if failure_stage == "rollback_database_missing":
         assert "rollback_database_restore" in finalizer["rollback_failures"]
         assert maintenance_states[-1] is True
-    if not expected_rolled_back:
+    if not expected_rolled_back and failure_stage != "rollback_finalizer_persistence":
         assert finalizer["status"] == "rollback_pending"
         assert finalizer["transaction_recovery"]["owner"]
     if failure_stage == "rollback_link_restore":
