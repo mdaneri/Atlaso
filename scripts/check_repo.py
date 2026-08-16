@@ -1536,6 +1536,11 @@ def decode_css_escapes(value: str) -> str:
         value: Raw CSS declaration text.
     """
     def replace_hex_escape(match: re.Match[str]) -> str:
+        """Decode one bounded CSS hexadecimal escape.
+
+        Args:
+            match: Regex match containing the hexadecimal CSS code point.
+        """
         codepoint = int(match.group("hex"), 16)
         if codepoint == 0 or codepoint > 0x10FFFF or 0xD800 <= codepoint <= 0xDFFF:
             return "\ufffd"
