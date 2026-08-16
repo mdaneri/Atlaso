@@ -16,6 +16,7 @@ import subprocess
 import sys
 import tomllib
 from dataclasses import dataclass
+from html import unescape
 from pathlib import Path
 from urllib.parse import unquote
 
@@ -124,6 +125,12 @@ REQUIRED_POLICY_MARKERS = {
         "no merge queue is required",
         "--match-head-commit <head-sha>",
         "### Extended merge descriptions",
+        "## Completed Task Cleanup",
+        "`cleanup-ready`",
+        "`remote_branch_absent`",
+        "`worktree_removed`",
+        "`task_title_done`",
+        '" · Done"',
         "AtlasoUiPatterns.createGrid",
         "AtlasoUiPatterns.createWizard",
     ),
@@ -151,6 +158,12 @@ REQUIRED_POLICY_MARKERS = {
         "private vulnerability remediation",
         "advisory-side maintainer review",
         "complete Python test suite locally",
+        "### Completed task cleanup",
+        "`cleanup-ready`",
+        "`remote_branch_absent`",
+        "`worktree_removed`",
+        "`task_title_done`",
+        '" · Done"',
     ),
     Path(".github/copilot-instructions.md"): (
         "Mandatory Agent Startup Gate",
@@ -176,6 +189,11 @@ REQUIRED_POLICY_MARKERS = {
         "private vulnerability remediation",
         "advisory-side maintainer review",
         "complete Python test suite locally",
+        "`cleanup-ready`",
+        "`remote_branch_absent`",
+        "`worktree_removed`",
+        "`task_title_done`",
+        '" · Done"',
     ),
     Path("SECURITY.md"): (
         "## Privately fixing a validated vulnerability",
@@ -215,6 +233,12 @@ REQUIRED_POLICY_MARKERS = {
         "explicit merge instruction",
         "strict up-to-date required checks",
         "no required merge queue",
+        "### Completed task cleanup",
+        "`cleanup-ready`",
+        "`remote_branch_absent`",
+        "`worktree_removed`",
+        "`task_title_done`",
+        '" · Done"',
     ),
     Path(".github/pull_request_template.md"): (
         "Closes #",
@@ -237,6 +261,11 @@ REQUIRED_POLICY_MARKERS = {
         "private vulnerability-remediation pull request",
         "advisory-side maintainer review",
         "complete Python test suite ran locally",
+        "`cleanup-ready`",
+        "`remote_branch_absent`",
+        "`worktree_removed`",
+        "`task_title_done`",
+        '" · Done"',
     ),
     Path("docs/contribute/ui-design-guide.md"): (
         "# Atlaso UI Design Guide",
@@ -253,6 +282,66 @@ REQUIRED_POLICY_MARKERS = {
         "AtlasoUiPatterns.createWizard",
     ),
 }
+
+ORDERED_TERMINAL_CLEANUP_MARKERS = {
+    path: (
+        "`remote_branch_absent`",
+        "`worktree_removed`",
+        "`task_title_done`",
+    )
+    for path in (
+        Path("AGENTS.md"),
+        Path("CONTRIBUTING.md"),
+        Path(".github/copilot-instructions.md"),
+        Path(".github/pull_request_template.md"),
+        Path("docs/contribute/agent-policies.md"),
+    )
+}
+
+TERMINAL_CLEANUP_SECTION_ANCHORS = {
+    Path("AGENTS.md"): "## Completed Task Cleanup",
+    Path("CONTRIBUTING.md"): "### Completed task cleanup",
+    Path(".github/copilot-instructions.md"): (
+        "- after an authorized merge and all remaining activity,"
+    ),
+    Path(".github/pull_request_template.md"): (
+        "- [ ] After any authorized merge and remaining post-merge activity,"
+    ),
+    Path("docs/contribute/agent-policies.md"): "### Completed task cleanup",
+}
+
+PRIVATE_REMEDIATION_CLEANUP_MARKER = "`advisory_cleanup_ready`"
+PRIVATE_REMEDIATION_REMOTE_MARKER = "`advisory_remote_branch_absent`"
+PRIMARY_CHECKOUT_RESTORED_MARKER = "`primary_checkout_restored`"
+PRIMARY_CHECKOUT_RESUME_MARKER = "`primary_checkout_resume`"
+LOCAL_TASK_BRANCH_ABSENT_MARKER = "`local_task_branch_absent`"
+REMOTE_BRANCH_LEASE_MARKER = "`--force-with-lease=refs/heads/BRANCH:HEAD_SHA`"
+WORKTREE_REMOVAL_RESUME_MARKER = "`worktree_removal_resume`"
+TITLE_CONTROL_UNAVAILABLE_MARKER = "`task_title_done` as verified not applicable"
+TERMINAL_CLEANUP_SECTION_MARKERS = {
+    path: (
+        "`cleanup-ready`",
+        *ordered_markers,
+        '" · Done"',
+        PRIMARY_CHECKOUT_RESTORED_MARKER,
+        PRIMARY_CHECKOUT_RESUME_MARKER,
+        LOCAL_TASK_BRANCH_ABSENT_MARKER,
+        REMOTE_BRANCH_LEASE_MARKER,
+        WORKTREE_REMOVAL_RESUME_MARKER,
+        TITLE_CONTROL_UNAVAILABLE_MARKER,
+        PRIVATE_REMEDIATION_CLEANUP_MARKER,
+        PRIVATE_REMEDIATION_REMOTE_MARKER,
+    )
+    for path, ordered_markers in ORDERED_TERMINAL_CLEANUP_MARKERS.items()
+}
+
+TERMINAL_CLEANUP_ORDER_ANCHOR = "Terminal order:"
+TERMINAL_CLEANUP_ORDER_LINES = tuple(
+    f"{position}. {marker}"
+    for position, marker in enumerate(
+        next(iter(ORDERED_TERMINAL_CLEANUP_MARKERS.values())), start=1
+    )
+)
 
 
 @dataclass(frozen=True)
@@ -628,12 +717,1662 @@ def check_agent_policy_gate(root: Path) -> list[Finding]:
             findings.append(Finding(path, "required agent policy entry point is missing or unreadable"))
             continue
         assert text is not None
-        for marker in markers:
-            if marker not in text:
+        missing_required_markers = tuple(marker for marker in markers if marker not in text)
+        for marker in missing_required_markers:
+            findings.append(
+                Finding(path, f"required agent policy marker is missing: {marker}")
+            )
+        ordered_markers = ORDERED_TERMINAL_CLEANUP_MARKERS.get(relative_path)
+        section_markers = TERMINAL_CLEANUP_SECTION_MARKERS.get(relative_path, ())
+        section_anchor = TERMINAL_CLEANUP_SECTION_ANCHORS.get(relative_path)
+        operative_text = strip_markdown_nonoperative_content(text)
+        source_lines = text.splitlines()
+        raw_html_block_lines = markdown_raw_html_block_lines(text)
+        section_anchor_lines = (
+            tuple(
+                index
+                for index, line in enumerate(operative_text.splitlines())
+                if (
+                    line == section_anchor
+                        if section_anchor.startswith("#")
+                        else line.startswith(section_anchor)
+                    )
+                    and index < len(source_lines)
+                    and (
+                        source_lines[index] == section_anchor
+                        if section_anchor.startswith("#")
+                        else source_lines[index].startswith(section_anchor)
+                    )
+                    and index not in raw_html_block_lines
+                )
+            if section_anchor is not None
+            else ()
+        )
+        section_anchor_count = len(section_anchor_lines)
+        cleanup_section: str | None = None
+        if section_anchor is not None and section_anchor_count == 1:
+            if section_anchor.startswith("#"):
+                cleanup_section = extract_markdown_policy_section(
+                    operative_text,
+                    section_anchor,
+                    start_line=section_anchor_lines[0],
+                )
+            else:
+                structural_section = extract_markdown_policy_section(
+                    text,
+                    section_anchor,
+                    start_line=section_anchor_lines[0],
+                )
+                cleanup_section = (
+                    strip_markdown_nonoperative_content(structural_section)
+                    if structural_section is not None
+                    else None
+                )
+        if section_anchor is not None and section_anchor_count == 0:
+            findings.append(
+                Finding(
+                    path,
+                    f"completed-task cleanup section is missing: {section_anchor}",
+                )
+            )
+        elif section_anchor is not None and section_anchor_count > 1:
+            findings.append(
+                Finding(
+                    path,
+                    "completed-task cleanup section must appear exactly once: "
+                    + section_anchor,
+                )
+            )
+        if section_markers and cleanup_section is not None:
+            missing_section_markers = tuple(
+                marker for marker in section_markers if marker not in cleanup_section
+            )
+            for marker in missing_section_markers:
+                if marker not in missing_required_markers:
+                    findings.append(
+                        Finding(
+                            path,
+                            f"completed-task cleanup section marker is missing: {marker}",
+                        )
+                    )
+        if ordered_markers is not None and cleanup_section is not None:
+            order_lines = extract_terminal_cleanup_order(cleanup_section)
+            if order_lines != TERMINAL_CLEANUP_ORDER_LINES:
                 findings.append(
-                    Finding(path, f"required agent policy marker is missing: {marker}")
+                    Finding(
+                        path,
+                        "completed-task cleanup markers must remain ordered: "
+                        + " -> ".join(ordered_markers),
+                    )
                 )
     return findings
+
+
+def strip_markdown_fenced_code(text: str) -> str:
+    """Replace fenced Markdown content with blank lines.
+
+    Args:
+        text: Markdown source whose operative prose must be inspected.
+    """
+    visible_lines: list[str] = []
+    fence_character: str | None = None
+    fence_length = 0
+    list_content_indents: list[int] = []
+    paragraph_open = False
+    for line in text.splitlines(keepends=True):
+        list_content_indent = update_markdown_list_content_indent(
+            line,
+            list_content_indents,
+            paragraph_open=paragraph_open,
+        )
+        block_line = (
+            line[list_content_indent:]
+            if list_content_indent is not None
+            and line.startswith(" " * list_content_indent)
+            else line
+        )
+        relative_indent = len(block_line) - len(block_line.lstrip(" "))
+        candidate = block_line[relative_indent:]
+        fence_match = (
+            re.match(r"(`{3,}|~{3,})", candidate)
+            if relative_indent <= 3
+            else None
+        )
+        if (
+            fence_match is not None
+            and fence_match.group(1).startswith("`")
+            and "`" in candidate[fence_match.end() :]
+        ):
+            fence_match = None
+        if fence_character is None and fence_match is not None:
+            fence = fence_match.group(1)
+            fence_character = fence[0]
+            fence_length = len(fence)
+            paragraph_open = False
+            visible_lines.append("\n" if line.endswith("\n") else "")
+            continue
+        if fence_character is not None:
+            closing_match = (
+                re.fullmatch(
+                    rf"{re.escape(fence_character)}{{{fence_length},}}"
+                    r"[ \t]*(?:\r?\n)?",
+                    candidate,
+                )
+                if relative_indent <= 3
+                else None
+            )
+            if closing_match is not None:
+                fence_character = None
+                fence_length = 0
+            visible_lines.append("\n" if line.endswith("\n") else "")
+            continue
+        visible_lines.append(line)
+        paragraph_open = bool(block_line.strip()) and not (
+            starts_markdown_block_construct(block_line)
+            or re.match(r"(?: {4}|\t)", block_line) is not None
+        )
+    return "".join(visible_lines)
+
+
+def update_markdown_list_content_indent(
+    line: str,
+    content_indents: list[int],
+    *,
+    paragraph_open: bool,
+) -> int | None:
+    """Update nested list indentation and return the active content indent.
+
+    Args:
+        line: Current Markdown source line.
+        content_indents: Mutable stack of active absolute content indents.
+        paragraph_open: Whether the preceding line ended in paragraph content.
+    """
+    leading_spaces = len(line) - len(line.lstrip(" "))
+    list_match = re.match(
+        r"(?P<indent> *)(?P<marker>[*+-]|\d{1,9}[.)])(?P<spacing>[ \t]+)",
+        line,
+    )
+    marker_can_interrupt = (
+        list_match is not None
+        and (
+            not paragraph_open
+            or list_match.group("marker") in {"*", "+", "-", "1.", "1)"}
+        )
+    )
+    list_can_start = (
+        list_match is not None
+        and marker_can_interrupt
+        and (
+            leading_spaces <= 3
+            if not content_indents
+            else leading_spaces <= content_indents[-1] + 3
+        )
+    )
+    if list_can_start:
+        while content_indents and content_indents[-1] > leading_spaces:
+            content_indents.pop()
+        container_indent = content_indents[-1] if content_indents else None
+        spacing_width = len(list_match.group("spacing"))
+        padding_width = spacing_width if spacing_width <= 4 else 1
+        content_indent = (
+            leading_spaces + len(list_match.group("marker")) + padding_width
+        )
+        if not content_indents or content_indents[-1] != content_indent:
+            content_indents.append(content_indent)
+        return container_indent
+    elif line.strip():
+        while content_indents and content_indents[-1] > leading_spaces:
+            content_indents.pop()
+    return content_indents[-1] if content_indents else None
+
+
+MARKDOWN_CODE_SPAN_PROTECTION = str.maketrans(
+    {
+        "!": "\ue000",
+        "<": "\ue001",
+        ">": "\ue002",
+        "[": "\ue003",
+        "]": "\ue004",
+        "(": "\ue005",
+        ")": "\ue006",
+    }
+)
+MARKDOWN_CODE_SPAN_RESTORATION = str.maketrans(
+    {replacement: source for source, replacement in MARKDOWN_CODE_SPAN_PROTECTION.items()}
+)
+
+
+def protect_markdown_code_spans(text: str) -> str:
+    """Protect rendered code-span content from later Markdown tokenizers.
+
+    Args:
+        text: Fence-normalized Markdown source.
+    """
+    protected_parts: list[str] = []
+    index = 0
+    while index < len(text):
+        if text[index] != "`":
+            protected_parts.append(text[index])
+            index += 1
+            continue
+        run_end = index + 1
+        while run_end < len(text) and text[run_end] == "`":
+            run_end += 1
+        delimiter = text[index:run_end]
+        cursor = run_end
+        closing_start: int | None = None
+        while cursor < len(text):
+            candidate = text.find(delimiter, cursor)
+            if candidate < 0:
+                break
+            before_is_backtick = candidate > 0 and text[candidate - 1] == "`"
+            closing_end = candidate + len(delimiter)
+            after_is_backtick = (
+                closing_end < len(text) and text[closing_end] == "`"
+            )
+            if not before_is_backtick and not after_is_backtick:
+                closing_start = candidate
+                break
+            cursor = closing_end
+        if closing_start is None:
+            protected_parts.append(delimiter)
+            index = run_end
+            continue
+        protected_parts.append(delimiter)
+        protected_parts.append(
+            text[run_end:closing_start].translate(MARKDOWN_CODE_SPAN_PROTECTION)
+        )
+        protected_parts.append(delimiter)
+        index = closing_start + len(delimiter)
+    return "".join(protected_parts)
+
+
+def strip_markdown_html_comments(text: str) -> str:
+    """Blank HTML comments and raw-text blocks with token-aware precedence.
+
+    Args:
+        text: Fence-normalized Markdown source.
+    """
+    visible_parts: list[str] = []
+    index = 0
+    while index < len(text):
+        if text.startswith("<!--", index):
+            comment_end = text.find("-->", index + 4)
+            end = len(text) if comment_end < 0 else comment_end + 3
+            visible_parts.append(re.sub(r"[^\r\n]", "", text[index:end]))
+            index = end
+            continue
+        if text[index] == "<" and re.match(
+            r"/?[A-Za-z]",
+            text[index + 1 : index + 3],
+        ) is not None:
+            tag_match = re.match(
+                r"<(?P<closing>/)?(?P<tag>[A-Za-z][A-Za-z0-9-]*)",
+                text[index:],
+            )
+            cursor = index + 1
+            quote: str | None = None
+            while cursor < len(text):
+                character = text[cursor]
+                if quote is not None:
+                    if character == quote:
+                        quote = None
+                elif character in {'"', "'"}:
+                    quote = character
+                elif character == ">":
+                    cursor += 1
+                    tag_text = text[index:cursor]
+                    tag_name = (
+                        tag_match.group("tag").casefold()
+                        if tag_match is not None
+                        else ""
+                    )
+                    if (
+                        tag_match is not None
+                        and tag_match.group("closing") is None
+                        and tag_name in {"pre", "script", "style", "textarea"}
+                        and re.search(r"/[ \t\r\n]*>$", tag_text) is None
+                    ):
+                        closing_match = re.search(
+                            rf"</{re.escape(tag_name)}[ \t\r\n]*>",
+                            text[cursor:],
+                            flags=re.IGNORECASE,
+                        )
+                        raw_end = (
+                            len(text)
+                            if closing_match is None
+                            else cursor + closing_match.end()
+                        )
+                        visible_parts.append(
+                            re.sub(r"[^\r\n]", "", text[index:raw_end])
+                        )
+                        index = raw_end
+                    else:
+                        visible_parts.append(tag_text)
+                        index = cursor
+                    break
+                cursor += 1
+            else:
+                visible_parts.append(text[index])
+                index += 1
+            continue
+        visible_parts.append(text[index])
+        index += 1
+    return "".join(visible_parts)
+
+
+def normalize_reference_label(label: str) -> str:
+    """Return a case-folded, whitespace-normalized reference label.
+
+    Args:
+        label: Reference label content without the surrounding brackets.
+    """
+    unescaped = re.sub(r"\\([!\"#$%&'()*+,./:;<=>?@\[\\\]^_`{|}~-])", r"\1", label)
+    return re.sub(r"\s+", " ", unescaped).strip().casefold()
+
+
+def inline_link_target_is_valid(target: str) -> bool:
+    """Return whether parenthesized inline-link metadata is valid.
+
+    Args:
+        target: Text inside the link's outer parentheses.
+    """
+    index = 0
+    while index < len(target) and target[index].isspace():
+        index += 1
+    if index == len(target):
+        return True
+    if target[index] == "<":
+        index += 1
+        while index < len(target):
+            if target[index] == "\\" and index + 1 < len(target):
+                index += 2
+                continue
+            if target[index] == ">":
+                index += 1
+                break
+            if target[index] in "<>\r\n":
+                return False
+            index += 1
+        else:
+            return False
+    else:
+        destination_start = index
+        depth = 0
+        while index < len(target):
+            character = target[index]
+            if character == "\\" and index + 1 < len(target):
+                index += 2
+                continue
+            if character.isspace() or ord(character) < 0x20:
+                break
+            if character in "<>" or (character == ")" and depth == 0):
+                return False
+            if character == "(":
+                depth += 1
+            elif character == ")":
+                depth -= 1
+            index += 1
+        if index == destination_start or depth != 0:
+            return False
+    tail = target[index:]
+    if not tail.strip():
+        return True
+    if not tail[0].isspace():
+        return False
+    title = tail.strip()
+    if title[0] in {'"', "'"}:
+        closing = title[0]
+    elif title[0] == "(":
+        closing = ")"
+    else:
+        return False
+    cursor = 1
+    while cursor < len(title):
+        if title[cursor] == "\\" and cursor + 1 < len(title):
+            cursor += 2
+            continue
+        if title[cursor] == closing:
+            return not title[cursor + 1 :].strip()
+        if closing == ")" and title[cursor] == "(":
+            return False
+        cursor += 1
+    return False
+
+
+def strip_markdown_inline_link_metadata(
+    text: str,
+    reference_labels: frozenset[str] = frozenset(),
+) -> str:
+    """Preserve rendered labels while removing inline link/image metadata.
+
+    Args:
+        text: Markdown source whose inline links and images must be normalized.
+        reference_labels: Valid definition labels available to full-reference links.
+    """
+    visible_parts: list[str] = []
+    index = 0
+    while index < len(text):
+        is_image = text.startswith("![", index)
+        label_open = index + 1 if is_image else index
+        if label_open >= len(text) or text[label_open] != "[":
+            visible_parts.append(text[index])
+            index += 1
+            continue
+        cursor = label_open + 1
+        label_depth = 1
+        while cursor < len(text) and label_depth:
+            if text[cursor] == "\\" and cursor + 1 < len(text):
+                cursor += 2
+                continue
+            if text[cursor] == "[":
+                label_depth += 1
+            elif text[cursor] == "]":
+                label_depth -= 1
+            cursor += 1
+        label_close = cursor - 1
+        if not label_depth and cursor < len(text) and text[cursor] == "[":
+            reference_cursor = cursor + 1
+            while reference_cursor < len(text):
+                if (
+                    text[reference_cursor] == "\\"
+                    and reference_cursor + 1 < len(text)
+                ):
+                    reference_cursor += 2
+                    continue
+                if text[reference_cursor] == "]":
+                    reference_cursor += 1
+                    reference_label = text[cursor + 1 : reference_cursor - 1]
+                    if not reference_label:
+                        reference_label = text[label_open + 1 : label_close]
+                    if normalize_reference_label(reference_label) not in reference_labels:
+                        visible_parts.append(text[index:reference_cursor])
+                        index = reference_cursor
+                        break
+                    visible_parts.append(
+                        strip_markdown_inline_link_metadata(
+                            text[label_open:cursor],
+                            reference_labels,
+                        )
+                    )
+                    visible_parts.append(
+                        "".join(
+                            character
+                            for character in text[cursor:reference_cursor]
+                            if character in "\r\n"
+                        )
+                    )
+                    index = reference_cursor
+                    break
+                reference_cursor += 1
+            if index == reference_cursor:
+                continue
+        if label_depth or cursor >= len(text) or text[cursor] != "(":
+            visible_parts.append(text[index])
+            index += 1
+            continue
+        target_open = cursor
+        cursor += 1
+        target_depth = 1
+        quote_character: str | None = None
+        in_angle_destination = False
+        while cursor < len(text) and target_depth:
+            character = text[cursor]
+            if character == "\\" and cursor + 1 < len(text):
+                cursor += 2
+                continue
+            if quote_character is not None:
+                if character == quote_character:
+                    quote_character = None
+                cursor += 1
+                continue
+            if in_angle_destination:
+                if character == ">":
+                    in_angle_destination = False
+                cursor += 1
+                continue
+            if character == "<":
+                in_angle_destination = True
+            elif character in {'"', "'"} and (
+                cursor == target_open + 1 or text[cursor - 1].isspace()
+            ):
+                quote_character = character
+            elif character == "(":
+                target_depth += 1
+            elif character == ")":
+                target_depth -= 1
+            cursor += 1
+        if target_depth:
+            visible_parts.append(text[index])
+            index += 1
+            continue
+        if not inline_link_target_is_valid(text[target_open + 1 : cursor - 1]):
+            visible_parts.append(text[index:cursor])
+            index = cursor
+            continue
+        visible_parts.append(
+            strip_markdown_inline_link_metadata(
+                text[label_open : label_close + 1],
+                reference_labels,
+            )
+        )
+        visible_parts.append(
+            "".join(
+                character
+                for character in text[label_close + 1 : cursor]
+                if character in "\r\n"
+            )
+        )
+        index = cursor
+    return "".join(visible_parts)
+
+
+def strip_markdown_blank_terminated_inert_html_blocks(text: str) -> str:
+    """Blank inert raw HTML blocks whose boundary is the next blank line.
+
+    Args:
+        text: Markdown source whose inert raw HTML blocks must be normalized.
+    """
+    block_tags = "code|head|iframe|noscript|template|title|xmp"
+    block_start = re.compile(
+        rf" {{0,3}}</?(?P<tag>{block_tags})(?=(?:\s|/?>|$))",
+        flags=re.IGNORECASE,
+    )
+    visible_lines: list[str] = []
+    in_raw_block = False
+    for line in text.splitlines(keepends=True):
+        if in_raw_block:
+            if not line.strip():
+                in_raw_block = False
+                visible_lines.append(line)
+            else:
+                visible_lines.append("\n" if line.endswith("\n") else "")
+            continue
+        if start_match := block_start.match(line):
+            same_line_close = re.search(
+                rf"</{re.escape(start_match.group('tag'))}[ \t\r\n]*>",
+                line[start_match.end() :],
+                flags=re.IGNORECASE,
+            )
+            if same_line_close is not None:
+                visible_lines.append(line)
+                continue
+            in_raw_block = True
+            visible_lines.append("\n" if line.endswith("\n") else "")
+        else:
+            visible_lines.append(line)
+    return "".join(visible_lines)
+
+
+def has_hidden_html_attribute(attributes: str) -> bool:
+    """Return whether an HTML start tag carries the ``hidden`` attribute.
+
+    Args:
+        attributes: Raw attribute text from an HTML start tag.
+    """
+    return re.search(
+        r'''(?:^|[ \t\r\n\f])hidden(?:[ \t\r\n\f]*=[ \t\r\n\f]*'''
+        r'''(?:"[^"]*"|'[^']*'|[^\s"'=<>`]+))?(?=[ \t\r\n\f/]|$)''',
+        attributes,
+        flags=re.IGNORECASE,
+    ) is not None
+
+
+def has_css_hidden_style(attributes: str) -> bool:
+    """Return whether inline CSS removes an element from rendering.
+
+    Args:
+        attributes: Raw attribute text from an HTML start tag.
+    """
+    for style_match in re.finditer(
+        r'''(?:^|[ \t\r\n\f])style[ \t\r\n\f]*=[ \t\r\n\f]*'''
+        r'''(?:"(?P<double>[^"]*)"|'(?P<single>[^']*)'|'''
+        r'''(?P<bare>[^\s"'=<>`]+))''',
+        attributes,
+        flags=re.IGNORECASE,
+    ):
+        style = next(
+            value
+            for value in (
+                style_match.group("double"),
+                style_match.group("single"),
+                style_match.group("bare"),
+            )
+            if value is not None
+        )
+        style = unescape(style)
+        style = re.sub(r"/\*.*?\*/", "", style, flags=re.DOTALL)
+        computed: dict[str, tuple[str, bool]] = {}
+        for declaration in split_css_declarations(style):
+            raw_property, separator, raw_value = declaration.partition(":")
+            if not separator:
+                continue
+            property_name = decode_css_escapes(raw_property).strip().casefold()
+            if property_name not in {
+                "content-visibility",
+                "display",
+                "opacity",
+                "visibility",
+            }:
+                continue
+            value = decode_css_escapes(raw_value).strip()
+            important_match = re.search(
+                r"\s*!\s*important\s*$",
+                value,
+                flags=re.IGNORECASE,
+            )
+            important = important_match is not None
+            if important_match is not None:
+                value = value[: important_match.start()].strip()
+            if not css_property_value_is_valid(property_name, value):
+                continue
+            previous = computed.get(property_name)
+            if previous is not None and previous[1] and not important:
+                continue
+            computed[property_name] = (value, important)
+        hidden_values = {
+            "display": r"none",
+            "visibility": r"(?:hidden|collapse)",
+            "content-visibility": r"hidden",
+        }
+        if any(
+            property_name in computed
+            and re.fullmatch(
+                pattern,
+                computed[property_name][0],
+                flags=re.IGNORECASE,
+            )
+            is not None
+            for property_name, pattern in hidden_values.items()
+        ) or (
+            "opacity" in computed
+            and css_opacity_is_hidden(computed["opacity"][0])
+        ):
+            return True
+    return False
+
+
+def split_css_declarations(style: str) -> list[str]:
+    """Split an inline style without treating quoted or functional semicolons as separators.
+
+    Args:
+        style: Comment-free inline CSS source.
+    """
+    declarations: list[str] = []
+    start = 0
+    cursor = 0
+    quote: str | None = None
+    parenthesis_depth = 0
+    while cursor < len(style):
+        character = style[cursor]
+        if character == "\\" and cursor + 1 < len(style):
+            cursor += 2
+            continue
+        if quote is not None:
+            if character == quote:
+                quote = None
+        elif character in {'"', "'"}:
+            quote = character
+        elif character == "(":
+            parenthesis_depth += 1
+        elif character == ")" and parenthesis_depth:
+            parenthesis_depth -= 1
+        elif character == ";" and parenthesis_depth == 0:
+            declarations.append(style[start:cursor])
+            start = cursor + 1
+        cursor += 1
+    declarations.append(style[start:])
+    return declarations
+
+
+def css_property_value_is_valid(property_name: str, value: str) -> bool:
+    """Return whether a tracked CSS property has a syntactically usable value.
+
+    Args:
+        property_name: Normalized CSS property name.
+        value: Decoded CSS value without a trailing important annotation.
+    """
+    normalized = " ".join(value.casefold().split())
+    global_values = {"inherit", "initial", "revert", "revert-layer", "unset"}
+    if normalized in global_values or re.fullmatch(
+        r"(?:var|env)\(.+\)",
+        normalized,
+        flags=re.DOTALL,
+    ):
+        return True
+    if property_name == "visibility":
+        return normalized in {"collapse", "hidden", "visible"}
+    if property_name == "content-visibility":
+        return normalized in {"auto", "hidden", "visible"}
+    if property_name == "opacity":
+        return (
+            re.fullmatch(
+                r"[-+]?(?:(?:\d+(?:\.\d*)?)|(?:\.\d+))(?:e[-+]?\d+)?%?",
+                normalized,
+                flags=re.IGNORECASE,
+            )
+            is not None
+            or re.fullmatch(
+                r"(?:calc|min|max|clamp)\(.+\)",
+                normalized,
+                flags=re.DOTALL,
+            )
+            is not None
+        )
+    if property_name != "display":
+        return False
+    legacy_display_values = {
+        "contents",
+        "inline-block",
+        "inline-flex",
+        "inline-grid",
+        "inline-list-item",
+        "inline-table",
+        "list-item",
+        "none",
+        "ruby-base",
+        "ruby-base-container",
+        "ruby-text",
+        "ruby-text-container",
+        "table-caption",
+        "table-cell",
+        "table-column",
+        "table-column-group",
+        "table-footer-group",
+        "table-header-group",
+        "table-row",
+        "table-row-group",
+    }
+    if normalized in legacy_display_values:
+        return True
+    tokens = normalized.split()
+    outer_values = {"block", "inline", "run-in"}
+    inner_values = {"flex", "flow", "flow-root", "grid", "ruby", "table"}
+    if len(tokens) == 1:
+        return tokens[0] in outer_values | inner_values
+    if len(tokens) == 2:
+        token_set = set(tokens)
+        return (
+            len(token_set & outer_values) == 1
+            and len(token_set & inner_values) == 1
+        ) or (
+            "list-item" in token_set
+            and bool(token_set & (outer_values | {"flow", "flow-root"}))
+        )
+    if len(tokens) == 3:
+        token_set = set(tokens)
+        return (
+            "list-item" in token_set
+            and len(token_set & outer_values) == 1
+            and len(token_set & {"flow", "flow-root"}) == 1
+        )
+    return False
+
+
+def css_opacity_is_hidden(value: str) -> bool:
+    """Return whether a literal opacity value computes or clamps to zero.
+
+    Args:
+        value: Validated decoded opacity value.
+    """
+    numeric_match = re.fullmatch(
+        r"(?P<number>[-+]?(?:(?:\d+(?:\.\d*)?)|(?:\.\d+))(?:e[-+]?\d+)?)%?",
+        value,
+        flags=re.IGNORECASE,
+    )
+    if numeric_match is not None:
+        return float(numeric_match.group("number")) <= 0
+    return re.fullmatch(
+        r"(?:var|env|calc|min|max|clamp)\(.+\)",
+        value,
+        flags=re.IGNORECASE | re.DOTALL,
+    ) is not None
+
+
+def decode_css_escapes(value: str) -> str:
+    """Decode CSS escapes before declaration matching.
+
+    Args:
+        value: Raw CSS declaration text.
+    """
+    def replace_hex_escape(match: re.Match[str]) -> str:
+        """Decode one bounded CSS hexadecimal escape.
+
+        Args:
+            match: Regex match containing the hexadecimal CSS code point.
+        """
+        codepoint = int(match.group("hex"), 16)
+        if codepoint == 0 or codepoint > 0x10FFFF or 0xD800 <= codepoint <= 0xDFFF:
+            return "\ufffd"
+        return chr(codepoint)
+
+    decoded = re.sub(
+        r"\\(?P<hex>[0-9A-Fa-f]{1,6})(?:[ \t\r\n\f])?",
+        replace_hex_escape,
+        value,
+    )
+    decoded = re.sub(r"\\(?:\r\n|[\r\n\f])", "", decoded)
+    return re.sub(r"\\([^\r\n\f])", r"\1", decoded)
+
+
+def starts_markdown_html_block(line: str) -> bool:
+    """Return whether a visible block HTML tag interrupts a Markdown quote.
+
+    Args:
+        line: Structural Markdown source line.
+    """
+    block_elements = (
+        "address|article|aside|base|basefont|blockquote|body|caption|center|"
+        "col|colgroup|dd|details|dialog|dir|div|dl|dt|fieldset|figcaption|"
+        "figure|footer|form|frame|frameset|h[1-6]|head|header|hr|html|iframe|"
+        "legend|li|link|main|menu|menuitem|nav|noframes|ol|optgroup|option|"
+        "p|param|search|section|summary|table|tbody|td|tfoot|th|thead|title|"
+        "tr|track|ul"
+    )
+    return re.match(
+        rf" {{0,3}}</?(?:{block_elements})(?=(?:[ \t\r\n/>]|$))",
+        line,
+        flags=re.IGNORECASE,
+    ) is not None
+
+
+def starts_valid_markdown_fence(line: str) -> bool:
+    """Return whether a line is a valid fenced-code opener.
+
+    Args:
+        line: Structural Markdown source line.
+    """
+    relative_indent = len(line) - len(line.lstrip(" "))
+    if relative_indent > 3:
+        return False
+    candidate = line[relative_indent:]
+    fence_match = re.match(r"(`{3,}|~{3,})", candidate)
+    if fence_match is None:
+        return False
+    fence = fence_match.group(1)
+    return not (
+        fence.startswith("`") and "`" in candidate[fence_match.end() :]
+    )
+
+
+def starts_markdown_block_construct(line: str) -> bool:
+    """Return whether a line starts a non-paragraph Markdown block.
+
+    Args:
+        line: Structural Markdown source line.
+    """
+    return any(
+        pattern.match(line) is not None
+        for pattern in (
+            re.compile(r" {0,3}>"),
+            re.compile(r" {0,3}(?:[*+-]|\d{1,9}[.)])(?:[ \t]+|$)"),
+            re.compile(r" {0,3}(?:#{1,6})(?:[ \t]+|$)"),
+            re.compile(
+                r" {0,3}(?:(?:\*[ \t]*){3,}|(?:_[ \t]*){3,}|"
+                r"(?:-[ \t]*){3,})$"
+            ),
+        )
+    ) or starts_valid_markdown_fence(line) or starts_markdown_html_block(line)
+
+
+def markdown_raw_html_block_lines(text: str) -> set[int]:
+    """Return source lines inside blank-line-terminated raw HTML blocks.
+
+    Args:
+        text: Structural Markdown source.
+    """
+    block_lines: set[int] = set()
+    in_raw_block = False
+    for index, line in enumerate(text.splitlines(keepends=True)):
+        if in_raw_block:
+            if not line.strip():
+                in_raw_block = False
+            else:
+                block_lines.add(index)
+            continue
+        if starts_markdown_html_block(line):
+            in_raw_block = True
+            block_lines.add(index)
+    return block_lines
+
+
+def strip_markdown_hidden_html_containers(text: str) -> str:
+    """Blank balanced non-rendered HTML containers while preserving lines.
+
+    Args:
+        text: Markdown source whose hidden raw HTML containers must be normalized.
+    """
+    inert_elements = {"head", "iframe", "noscript", "template", "title", "xmp"}
+    void_elements = {
+        "area",
+        "base",
+        "br",
+        "col",
+        "embed",
+        "hr",
+        "img",
+        "input",
+        "link",
+        "meta",
+        "param",
+        "source",
+        "track",
+        "wbr",
+    }
+    tag_pattern = re.compile(
+        r'''<(?P<closing>/)?(?P<tag>[A-Za-z][A-Za-z0-9-]*)\b'''
+        r'''(?P<attributes>(?:[^<>"']|"[^"]*"|'[^']*')*?)'''
+        r'''(?P<self_closing>/)?[ \t\r\n]*>''',
+        flags=re.IGNORECASE,
+    )
+    visible_parts: list[str] = []
+    output_cursor = 0
+    search_cursor = 0
+    while opening_match := tag_pattern.search(text, search_cursor):
+        tag_name = opening_match.group("tag").casefold()
+        if (
+            opening_match.group("closing") is not None
+            or opening_match.group("self_closing") is not None
+            or tag_name in void_elements
+            or (
+                tag_name not in inert_elements
+                and not has_hidden_html_attribute(
+                    opening_match.group("attributes")
+                )
+                and not has_css_hidden_style(
+                    opening_match.group("attributes")
+                )
+            )
+        ):
+            search_cursor = opening_match.end()
+            continue
+        depth = 1
+        nested_cursor = opening_match.end()
+        closing_end: int | None = None
+        while candidate := tag_pattern.search(text, nested_cursor):
+            nested_cursor = candidate.end()
+            if candidate.group("tag").casefold() != tag_name:
+                continue
+            if candidate.group("closing") is not None:
+                depth -= 1
+                if depth == 0:
+                    closing_end = candidate.end()
+                    break
+            elif candidate.group("self_closing") is None:
+                depth += 1
+        if closing_end is None:
+            visible_parts.append(text[output_cursor : opening_match.start()])
+            visible_parts.append(
+                re.sub(r"[^\r\n]", "", text[opening_match.start() :])
+            )
+            output_cursor = len(text)
+            search_cursor = len(text)
+            break
+        visible_parts.append(text[output_cursor : opening_match.start()])
+        visible_parts.append(
+            re.sub(r"[^\r\n]", "", text[opening_match.start() : closing_end])
+        )
+        output_cursor = closing_end
+        search_cursor = closing_end
+    visible_parts.append(text[output_cursor:])
+    return "".join(visible_parts)
+
+
+def scan_reference_definition_label(text: str) -> tuple[int | None, bool]:
+    """Scan an escape-aware, optionally multiline reference label.
+
+    Args:
+        text: Candidate Markdown reference-definition text.
+
+    Returns:
+        The index after a complete label and colon, plus whether an incomplete
+        candidate may continue on the next line.
+    """
+    index = 0
+    while index < min(3, len(text)) and text[index] == " ":
+        index += 1
+    if index >= len(text) or text[index] != "[":
+        return None, False
+    index += 1
+    label_start = index
+    line_endings = 0
+    while index < len(text):
+        if index - label_start > 999:
+            return None, False
+        if text[index] == "\\" and index + 1 < len(text):
+            index += 2
+            continue
+        if text[index] in "\r\n":
+            if text[index] == "\r" and index + 1 < len(text) and text[index + 1] == "\n":
+                index += 1
+            line_endings += 1
+            if line_endings > 1:
+                return None, False
+        elif text[index] == "[":
+            return None, False
+        elif text[index] == "]":
+            if index + 1 < len(text) and text[index + 1] == ":":
+                label = text[label_start:index]
+                return (
+                    (index + 2, False)
+                    if any(not character.isspace() for character in label)
+                    else (None, False)
+                )
+            return None, False
+        index += 1
+    return None, True
+
+
+def normalized_reference_definition_label(text: str, end: int) -> str:
+    """Return the normalized label from a scanned definition prefix.
+
+    Args:
+        text: Reference-definition source containing the label.
+        end: Index immediately after the label's trailing colon.
+    """
+    label_start = text.find("[", 0, end)
+    return normalize_reference_label(text[label_start + 1 : end - 2])
+
+
+def reference_destination_prefix_end(text: str) -> int | None:
+    """Return the end of a balanced reference destination prefix.
+
+    Args:
+        text: Candidate continuation line for a reference definition.
+    """
+    index = 0
+    while index < min(3, len(text)) and text[index] == " ":
+        index += 1
+    if index >= len(text):
+        return None
+    if text[index] == "<":
+        index += 1
+        while index < len(text):
+            if text[index] == "\\" and index + 1 < len(text):
+                index += 2
+                continue
+            if text[index] == ">":
+                return index + 1
+            if text[index] in "<>\r\n":
+                return None
+            index += 1
+        return None
+    destination_start = index
+    parenthesis_depth = 0
+    while index < len(text):
+        character = text[index]
+        if character == "\\" and index + 1 < len(text):
+            index += 2
+            continue
+        if character.isspace() or ord(character) < 0x20:
+            break
+        if character == "(":
+            parenthesis_depth += 1
+        elif character == ")":
+            if parenthesis_depth == 0:
+                return None
+            parenthesis_depth -= 1
+        index += 1
+    if index == destination_start or parenthesis_depth != 0:
+        return None
+    return index
+
+
+def unclosed_reference_title_delimiter(text: str) -> str | None:
+    """Return the expected close for a reference title opened on this line.
+
+    Args:
+        text: Reference-definition text after its label and colon.
+    """
+    opening_match = re.match(r'''[ \t]+(?P<opening>["'(])''', text)
+    if opening_match is not None:
+        opening = opening_match.group("opening")
+        closing = ")" if opening == "(" else opening
+        cursor = opening_match.end()
+        while cursor < len(text):
+            if text[cursor] == "\\" and cursor + 1 < len(text):
+                cursor += 2
+                continue
+            if text[cursor] == closing:
+                break
+            cursor += 1
+        else:
+            return closing
+    return None
+
+
+def closes_reference_title(line: str, delimiter: str) -> bool:
+    """Return whether a continuation line validly closes a reference title.
+
+    Args:
+        line: Candidate continuation line.
+        delimiter: Expected quote or parenthesis closing delimiter.
+    """
+    cursor = 0
+    while cursor < len(line):
+        if line[cursor] == "\\" and cursor + 1 < len(line):
+            cursor += 2
+            continue
+        if line[cursor] == delimiter:
+            return re.fullmatch(r"[ \t]*(?:\r?\n)?", line[cursor + 1 :]) is not None
+        cursor += 1
+    return False
+
+
+def complete_reference_title(text: str, *, require_separator: bool) -> bool:
+    """Return whether text contains one complete escape-aware reference title.
+
+    Args:
+        text: Candidate title text, including its optional indentation.
+        require_separator: Whether at least one space or tab must precede the title.
+    """
+    candidate = text.removesuffix("\n").removesuffix("\r")
+    if "\r" in candidate or "\n" in candidate:
+        return False
+    cursor = 0
+    while cursor < len(candidate) and candidate[cursor] in " \t":
+        cursor += 1
+    if require_separator:
+        if cursor == 0:
+            return False
+    elif "\t" in candidate[:cursor] or cursor > 3:
+        return False
+    if cursor >= len(candidate) or candidate[cursor] not in {'"', "'", "("}:
+        return False
+    opening = candidate[cursor]
+    closing = ")" if opening == "(" else opening
+    cursor += 1
+    while cursor < len(candidate):
+        character = candidate[cursor]
+        if character == "\\" and cursor + 1 < len(candidate):
+            cursor += 2
+            continue
+        if opening == "(" and character == "(":
+            return False
+        if character == closing:
+            return candidate[cursor + 1 :].strip(" \t") == ""
+        cursor += 1
+    return False
+
+
+def strip_markdown_nonoperative_content(text: str) -> str:
+    """Replace non-rendered Markdown content with blank lines.
+
+    Args:
+        text: Markdown source whose operative prose must be inspected.
+    """
+    without_fenced_code = strip_markdown_fenced_code(text)
+    with_protected_code_spans = protect_markdown_code_spans(without_fenced_code)
+    without_comments = strip_markdown_html_comments(with_protected_code_spans)
+    without_raw_directives = without_comments
+    for directive_pattern in (
+        r"<\?.*?(?:\?>|$)",
+        r"<!\[CDATA\[.*?(?:\]\]>|$)",
+        r"<![A-Z].*?(?:>|$)",
+    ):
+        without_raw_directives = re.sub(
+            directive_pattern,
+            lambda match: re.sub(r"[^\r\n]", "", match.group(0)),
+            without_raw_directives,
+            flags=re.DOTALL,
+        )
+    without_raw_html_blocks = without_raw_directives
+    for tag_name in ("script", "style", "pre", "textarea"):
+        without_raw_html_blocks = re.sub(
+            rf'''<{tag_name}\b(?:[^<>"']|"[^"]*"|'[^']*')*>.*?(?:</{tag_name}[ \t\r\n]*>|$)''',
+            lambda match: re.sub(r"[^\r\n]", "", match.group(0)),
+            without_raw_html_blocks,
+            flags=re.DOTALL | re.IGNORECASE,
+        )
+    without_raw_html_blocks = strip_markdown_blank_terminated_inert_html_blocks(
+        without_raw_html_blocks
+    )
+    without_raw_html_blocks = strip_markdown_hidden_html_containers(
+        without_raw_html_blocks,
+    )
+    html_block_interrupt_lines = {
+        index
+        for index, line in enumerate(
+            without_raw_html_blocks.splitlines(keepends=True)
+        )
+        if starts_markdown_html_block(line)
+    }
+    without_html_tags = re.sub(
+        r'''</?[A-Za-z][A-Za-z0-9-]*(?:[^<>"']|"[^"]*"|'[^']*')*>''',
+        lambda match: re.sub(r"[^\r\n]", "", match.group(0)),
+        without_raw_html_blocks,
+    )
+    without_quotes_lines: list[str] = []
+    in_block_quote = False
+    interrupting_block_patterns = (
+        re.compile(r" {0,3}#{1,6}(?:[ \t]+|$)"),
+        re.compile(r" {0,3}(?:[*+-]|1[.)])[ \t]+(?=\S)"),
+        re.compile(
+            r" {0,3}(?:(?:\*[ \t]*){3,}|(?:_[ \t]*){3,}|"
+            r"(?:-[ \t]*){3,})(?:\r?\n)?$"
+        ),
+    )
+    for line_index, line in enumerate(
+        without_html_tags.splitlines(keepends=True)
+    ):
+        if re.match(r" {0,3}>[ \t]?", line) is not None:
+            quoted_content = line
+            while quote_match := re.match(r" {0,3}>[ \t]?", quoted_content):
+                quoted_content = quoted_content[quote_match.end() :]
+            in_block_quote = bool(quoted_content.strip()) and not (
+                quoted_content.startswith("    ")
+                or starts_markdown_block_construct(quoted_content)
+            )
+            without_quotes_lines.append("\n" if line.endswith("\n") else "")
+        elif in_block_quote and line.strip():
+            starts_interrupting_block = any(
+                pattern.match(line) is not None
+                for pattern in interrupting_block_patterns
+            ) or (
+                starts_valid_markdown_fence(line)
+                or line_index in html_block_interrupt_lines
+            )
+            if starts_interrupting_block:
+                in_block_quote = False
+                without_quotes_lines.append(line)
+            else:
+                without_quotes_lines.append("\n" if line.endswith("\n") else "")
+        else:
+            if not line.strip():
+                in_block_quote = False
+            without_quotes_lines.append(line)
+    without_quotes = "".join(without_quotes_lines)
+    visible_lines: list[str] = []
+    link_reference_destination_pending = False
+    pending_reference_line_index: int | None = None
+    pending_reference_line: str | None = None
+    link_reference_title_pending = False
+    open_reference_title_delimiter: str | None = None
+    open_reference_title_lines: list[tuple[int, str]] = []
+    pending_reference_label_text = ""
+    pending_reference_label_lines: list[tuple[int, str]] = []
+    pending_reference_normalized_label: str | None = None
+    open_reference_normalized_label: str | None = None
+    valid_reference_labels: set[str] = set()
+    list_content_indents: list[int] = []
+    paragraph_open = False
+    for line in without_quotes.splitlines(keepends=True):
+        list_content_indent = update_markdown_list_content_indent(
+            line,
+            list_content_indents,
+            paragraph_open=paragraph_open,
+        )
+        block_line = (
+            line[list_content_indent:]
+            if list_content_indent is not None
+            and line.startswith(" " * list_content_indent)
+            else line
+        )
+        if not block_line.strip():
+            paragraph_open = False
+        reference_label_end: int | None = None
+        reference_normalized_label: str | None = None
+        completed_reference_label_lines: list[tuple[int, str]] = []
+        if pending_reference_label_lines:
+            combined_label = pending_reference_label_text + block_line
+            combined_label_end, label_may_continue = scan_reference_definition_label(
+                combined_label
+            )
+            if combined_label_end is not None:
+                reference_label_end = combined_label_end - len(
+                    pending_reference_label_text
+                )
+                completed_reference_label_lines = pending_reference_label_lines
+                reference_normalized_label = normalized_reference_definition_label(
+                    combined_label,
+                    combined_label_end,
+                )
+                pending_reference_label_text = ""
+                pending_reference_label_lines = []
+            elif label_may_continue and line.strip():
+                pending_reference_label_text = combined_label
+                pending_reference_label_lines.append((len(visible_lines), line))
+                visible_lines.append("\n" if line.endswith("\n") else "")
+                continue
+            else:
+                for line_index, original_line in pending_reference_label_lines:
+                    visible_lines[line_index] = original_line
+                pending_reference_label_text = ""
+                pending_reference_label_lines = []
+        if open_reference_title_delimiter is not None:
+            if line.strip():
+                open_reference_title_lines.append((len(visible_lines), line))
+                visible_lines.append("\n" if line.endswith("\n") else "")
+                if closes_reference_title(
+                    block_line,
+                    open_reference_title_delimiter,
+                ):
+                    if open_reference_normalized_label is not None:
+                        valid_reference_labels.add(open_reference_normalized_label)
+                    open_reference_title_delimiter = None
+                    open_reference_title_lines = []
+                    open_reference_normalized_label = None
+                continue
+            for line_index, original_line in open_reference_title_lines:
+                visible_lines[line_index] = original_line
+            open_reference_title_delimiter = None
+            open_reference_title_lines = []
+            open_reference_normalized_label = None
+        if reference_label_end is None and not paragraph_open:
+            reference_label_end, label_may_continue = scan_reference_definition_label(
+                block_line
+            )
+            if reference_label_end is None and label_may_continue:
+                pending_reference_label_text = block_line
+                pending_reference_label_lines = [(len(visible_lines), line)]
+                visible_lines.append("\n" if line.endswith("\n") else "")
+                continue
+            if reference_label_end is not None:
+                reference_normalized_label = normalized_reference_definition_label(
+                    block_line,
+                    reference_label_end,
+                )
+        inline_open_title_delimiter: str | None = None
+        inline_title_is_complete = False
+        if reference_label_end is not None:
+            inline_reference_tail = block_line[reference_label_end:]
+            if inline_reference_tail.strip():
+                inline_destination_end = reference_destination_prefix_end(
+                    inline_reference_tail
+                )
+                inline_destination_tail = (
+                    inline_reference_tail[inline_destination_end:]
+                    if inline_destination_end is not None
+                    else ""
+                )
+                inline_open_title_delimiter = (
+                    unclosed_reference_title_delimiter(inline_destination_tail)
+                    if inline_destination_end is not None
+                    else None
+                )
+                inline_title_is_complete = complete_reference_title(
+                    inline_destination_tail,
+                    require_separator=True,
+                )
+                inline_destination_is_valid = (
+                    re.fullmatch(
+                        r"[ \t]*(?:\r?\n)?",
+                        inline_destination_tail,
+                    )
+                    is not None
+                    or inline_title_is_complete
+                )
+                if (
+                    not inline_destination_is_valid
+                    and inline_open_title_delimiter is None
+                ):
+                    for (
+                        line_index,
+                        original_line,
+                    ) in completed_reference_label_lines:
+                        visible_lines[line_index] = original_line
+                    reference_label_end = None
+                    reference_normalized_label = None
+        continued_destination_prefix_end = (
+            reference_destination_prefix_end(block_line)
+            if link_reference_destination_pending
+            else None
+        )
+        continued_destination_tail = (
+            block_line[continued_destination_prefix_end:]
+            if continued_destination_prefix_end is not None
+            else ""
+        )
+        continued_open_title_delimiter = (
+            unclosed_reference_title_delimiter(
+                continued_destination_tail
+            )
+            if continued_destination_prefix_end is not None
+            else None
+        )
+        continued_title_is_complete = complete_reference_title(
+            continued_destination_tail,
+            require_separator=True,
+        )
+        continued_destination_is_valid = (
+            continued_destination_prefix_end is not None
+            and (
+                re.fullmatch(
+                    r"[ \t]*(?:\r?\n)?",
+                    continued_destination_tail,
+                )
+                is not None
+                or continued_title_is_complete
+            )
+        )
+        continued_title_is_valid = (
+            complete_reference_title(
+                block_line,
+                require_separator=False,
+            )
+            if link_reference_title_pending
+            else False
+        )
+        if (
+            continued_destination_is_valid
+            or continued_open_title_delimiter is not None
+        ):
+            completed_reference_label = pending_reference_normalized_label
+            link_reference_destination_pending = False
+            pending_reference_line_index = None
+            pending_reference_line = None
+            pending_reference_normalized_label = None
+            visible_lines.append("\n" if line.endswith("\n") else "")
+            if continued_open_title_delimiter is not None:
+                link_reference_title_pending = False
+                open_reference_title_delimiter = continued_open_title_delimiter
+                open_reference_title_lines = [(len(visible_lines) - 1, line)]
+                open_reference_normalized_label = completed_reference_label
+            else:
+                if completed_reference_label is not None:
+                    valid_reference_labels.add(completed_reference_label)
+                link_reference_title_pending = not continued_title_is_complete
+        else:
+            if link_reference_destination_pending:
+                assert pending_reference_line_index is not None
+                assert pending_reference_line is not None
+                visible_lines[pending_reference_line_index] = pending_reference_line
+                link_reference_destination_pending = False
+                pending_reference_line_index = None
+                pending_reference_line = None
+                pending_reference_normalized_label = None
+            if reference_label_end is not None:
+                assert reference_normalized_label is not None
+                reference_tail = block_line[reference_label_end:]
+                destination_is_pending = not reference_tail.strip()
+                link_reference_destination_pending = destination_is_pending
+                pending_reference_line_index = (
+                    len(visible_lines) if destination_is_pending else None
+                )
+                pending_reference_line = line if destination_is_pending else None
+                pending_reference_normalized_label = (
+                    reference_normalized_label if destination_is_pending else None
+                )
+                link_reference_title_pending = (
+                    not destination_is_pending and not inline_title_is_complete
+                )
+                visible_lines.append("\n" if line.endswith("\n") else "")
+                open_reference_title_delimiter = inline_open_title_delimiter
+                if open_reference_title_delimiter is not None:
+                    link_reference_title_pending = False
+                    open_reference_normalized_label = reference_normalized_label
+                elif not destination_is_pending:
+                    valid_reference_labels.add(reference_normalized_label)
+                open_reference_title_lines = (
+                    [(len(visible_lines) - 1, line)]
+                    if open_reference_title_delimiter is not None
+                    else []
+                )
+                paragraph_open = False
+            elif continued_title_is_valid:
+                link_reference_title_pending = False
+                visible_lines.append("\n" if line.endswith("\n") else "")
+                paragraph_open = False
+            elif re.match(r"(?: {4}|\t)", block_line) is not None:
+                link_reference_title_pending = False
+                visible_lines.append("\n" if line.endswith("\n") else "")
+                paragraph_open = False
+            else:
+                link_reference_title_pending = False
+                visible_lines.append(line)
+                paragraph_open = bool(block_line.strip()) and not (
+                    starts_markdown_block_construct(block_line)
+                )
+    if link_reference_destination_pending:
+        assert pending_reference_line_index is not None
+        assert pending_reference_line is not None
+        visible_lines[pending_reference_line_index] = pending_reference_line
+    if open_reference_title_delimiter is not None:
+        for line_index, original_line in open_reference_title_lines:
+            visible_lines[line_index] = original_line
+    for line_index, original_line in pending_reference_label_lines:
+        visible_lines[line_index] = original_line
+    without_indented_code = "".join(visible_lines)
+    without_link_metadata = strip_markdown_inline_link_metadata(
+        without_indented_code,
+        frozenset(valid_reference_labels),
+    )
+    normalized = strip_markdown_fenced_code(without_link_metadata)
+    return normalized.translate(MARKDOWN_CODE_SPAN_RESTORATION)
+
+
+def extract_terminal_cleanup_order(cleanup_section: str) -> tuple[str, ...] | None:
+    """Return the three numbered transitions following the terminal-order anchor.
+
+    Args:
+        cleanup_section: Canonical cleanup heading section or top-level list item.
+    """
+    lines = cleanup_section.splitlines()
+    anchors = tuple(
+        index
+        for index, line in enumerate(lines)
+        if line.strip() == TERMINAL_CLEANUP_ORDER_ANCHOR
+    )
+    if len(anchors) != 1:
+        return None
+    transition_lines = tuple(
+        line.rstrip("\r\n")
+        for line in lines[anchors[0] + 1 :]
+        if line.strip()
+    )
+    expected_count = len(TERMINAL_CLEANUP_ORDER_LINES)
+    order_lines: list[str] = []
+    top_level_indent: int | None = None
+    top_level_content_indent: int | None = None
+    for candidate in transition_lines:
+        candidate_match = re.fullmatch(r"( *)(\d+[.)])(\s+).+", candidate)
+        if top_level_indent is None:
+            if candidate_match is None:
+                return (candidate.strip(),)
+            top_level_indent = len(candidate_match.group(1))
+            top_level_content_indent = (
+                top_level_indent
+                + len(candidate_match.group(2))
+                + len(candidate_match.group(3))
+            )
+            order_lines.append(candidate.strip())
+            continue
+        if candidate_match is not None:
+            candidate_indent = len(candidate_match.group(1))
+            if candidate_indent < top_level_indent:
+                break
+            if (
+                top_level_content_indent is not None
+                and candidate_indent < top_level_content_indent
+            ):
+                order_lines.append(candidate.strip())
+                if len(order_lines) > expected_count:
+                    break
+            continue
+        candidate_indent = len(candidate) - len(candidate.lstrip(" "))
+        if candidate_indent <= top_level_indent:
+            break
+    return tuple(order_lines)
+
+
+def extract_markdown_policy_section(
+    text: str,
+    anchor: str,
+    *,
+    start_line: int | None = None,
+) -> str | None:
+    """Return the canonical heading section or top-level list item at ``anchor``.
+
+    Args:
+        text: Markdown policy entry point.
+        anchor: Exact heading or top-level list-item prefix for the cleanup policy.
+        start_line: Prevalidated structural anchor line, when normalization was separate.
+    """
+    lines = text.splitlines(keepends=True)
+    if start_line is None:
+        starts = tuple(
+            index
+            for index, line in enumerate(lines)
+            if (
+                line.rstrip("\r\n") == anchor
+                if anchor.startswith("#")
+                else line.startswith(anchor)
+            )
+        )
+    elif 0 <= start_line < len(lines) and (
+        lines[start_line].rstrip("\r\n") == anchor
+        if anchor.startswith("#")
+        else lines[start_line].startswith(anchor)
+    ):
+        starts = (start_line,)
+    else:
+        starts = ()
+    if len(starts) != 1:
+        return None
+    start = starts[0]
+
+    if anchor.startswith("#"):
+        heading_level = len(anchor) - len(anchor.lstrip("#"))
+        for end in range(start + 1, len(lines)):
+            heading_match = re.match(
+                r" {0,3}(#{1,6})(?:[ \t]+|(?=\r?\n?$))",
+                lines[end],
+            )
+            if heading_match is not None and len(heading_match.group(1)) <= heading_level:
+                return "".join(lines[start:end])
+            title_line = lines[end].rstrip("\r\n")
+            title_indent = len(title_line) - len(title_line.lstrip(" "))
+            title_starts_block = starts_markdown_block_construct(title_line)
+            setext_match = (
+                re.fullmatch(r" {0,3}(=+|-+)[ \t]*(?:\r?\n)?", lines[end + 1])
+                if end + 1 < len(lines)
+                and title_line.strip()
+                and title_indent <= 3
+                and not title_starts_block
+                else None
+            )
+            if setext_match is not None:
+                next_level = 1 if setext_match.group(1).startswith("=") else 2
+                if next_level <= heading_level:
+                    paragraph_start = end
+                    while paragraph_start > start + 1:
+                        previous_line = lines[paragraph_start - 1].rstrip("\r\n")
+                        previous_indent = len(previous_line) - len(
+                            previous_line.lstrip(" ")
+                        )
+                        if (
+                            not previous_line.strip()
+                            or previous_indent > 3
+                            or starts_markdown_block_construct(previous_line)
+                        ):
+                            break
+                        paragraph_start -= 1
+                    return "".join(lines[start:paragraph_start])
+    else:
+        for end in range(start + 1, len(lines)):
+            if lines[end].strip() and not lines[end].startswith(("  ", "\t")):
+                return "".join(lines[start:end])
+    return "".join(lines[start:])
 
 
 def check_ui_pattern_foundation(root: Path) -> list[Finding]:
