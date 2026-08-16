@@ -1442,6 +1442,42 @@ def test_agent_policy_gate_ignores_multiline_reference_titles(
             )
 
 
+def test_agent_policy_gate_ignores_escaped_reference_title_delimiters(
+    tmp_path: Path,
+) -> None:
+    """Verify escaped title delimiters cannot expose reference metadata.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    marker = '`cleanup-ready`'
+    sibling = "\n- following policy"
+    for relative_path in ORDERED_TERMINAL_CLEANUP_MARKERS:
+        write_policy_files(tmp_path)
+        path = tmp_path / relative_path
+        anchor = TERMINAL_CLEANUP_SECTION_ANCHORS[relative_path]
+        link_prefix = "" if anchor.startswith("#") else "  "
+        text = path.read_text(encoding="utf-8").replace(marker, "", 1)
+        hidden_marker = (
+            f'\n{link_prefix}[hidden]: /destination '
+            f'"metadata with \\" and {marker}"'
+        )
+        path.write_text(
+            text + hidden_marker
+            if anchor.startswith("#")
+            else text.replace(sibling, hidden_marker + sibling, 1),
+            encoding="utf-8",
+        )
+
+        findings = check_agent_policy_gate(tmp_path)
+
+        assert len(findings) == 1
+        assert findings[0].path == path
+        assert findings[0].message == (
+            f"completed-task cleanup section marker is missing: {marker}"
+        )
+
+
 def test_agent_policy_gate_ignores_escaped_reference_label_metadata(
     tmp_path: Path,
 ) -> None:
@@ -1783,6 +1819,8 @@ def test_agent_policy_gate_ignores_css_hidden_html_policy_sections(
             "display&#58;none",
             "display:/**/none",
             r"display:\6e one",
+            "display:inline; display:none",
+            "display:none !important; display:inline",
             "color:red; DISPLAY: none !important;",
             "visibility:hidden",
             "visibility: collapse !important",
@@ -1811,6 +1849,36 @@ def test_agent_policy_gate_ignores_css_hidden_html_policy_sections(
             assert findings[0].message == (
                 "completed-task cleanup section is missing: " + anchor
             )
+
+
+def test_agent_policy_gate_preserves_visible_css_cascade_results(
+    tmp_path: Path,
+) -> None:
+    """Verify later or important visible declarations keep policy operative.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    marker = '`cleanup-ready`'
+    for relative_path in ORDERED_TERMINAL_CLEANUP_MARKERS:
+        for style in (
+            "display:none; display:inline",
+            "display:none !important; display:inline !important",
+            "display:inline !important; display:none",
+            "visibility:hidden; visibility:visible",
+            "content-visibility:hidden; content-visibility:visible",
+            "opacity:0; opacity:1",
+        ):
+            write_policy_files(tmp_path)
+            path = tmp_path / relative_path
+            text = path.read_text(encoding="utf-8").replace(
+                marker,
+                f'<span style="{style}">{marker}</span>',
+                1,
+            )
+            path.write_text(text, encoding="utf-8")
+
+            assert check_agent_policy_gate(tmp_path) == []
 
 
 def test_agent_policy_gate_preserves_policy_after_same_line_code_html(

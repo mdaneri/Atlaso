@@ -1320,24 +1320,83 @@ def has_css_hidden_style(attributes: str) -> bool:
         )
         style = unescape(style)
         style = re.sub(r"/\*.*?\*/", "", style, flags=re.DOTALL)
-        style = decode_css_escapes(style)
-        hidden_declarations = (
-            r"display\s*:\s*none",
-            r"visibility\s*:\s*(?:hidden|collapse)",
-            r"content-visibility\s*:\s*hidden",
-            r"opacity\s*:\s*(?:0+(?:\.0*)?|0*\.0+|0%)",
-        )
+        computed: dict[str, tuple[str, bool]] = {}
+        for declaration in split_css_declarations(style):
+            raw_property, separator, raw_value = declaration.partition(":")
+            if not separator:
+                continue
+            property_name = decode_css_escapes(raw_property).strip().casefold()
+            if property_name not in {
+                "content-visibility",
+                "display",
+                "opacity",
+                "visibility",
+            }:
+                continue
+            value = decode_css_escapes(raw_value).strip()
+            important_match = re.search(
+                r"\s*!\s*important\s*$",
+                value,
+                flags=re.IGNORECASE,
+            )
+            important = important_match is not None
+            if important_match is not None:
+                value = value[: important_match.start()].strip()
+            previous = computed.get(property_name)
+            if previous is not None and previous[1] and not important:
+                continue
+            computed[property_name] = (value, important)
+        hidden_values = {
+            "display": r"none",
+            "visibility": r"(?:hidden|collapse)",
+            "content-visibility": r"hidden",
+            "opacity": r"(?:0+(?:\.0*)?|0*\.0+|0%)",
+        }
         if any(
-            re.search(
-                rf"(?:^|;)\s*{declaration}(?:\s*!important)?\s*(?:;|$)",
-                style,
+            property_name in computed
+            and re.fullmatch(
+                pattern,
+                computed[property_name][0],
                 flags=re.IGNORECASE,
             )
             is not None
-            for declaration in hidden_declarations
+            for property_name, pattern in hidden_values.items()
         ):
             return True
     return False
+
+
+def split_css_declarations(style: str) -> list[str]:
+    """Split an inline style without treating quoted or functional semicolons as separators.
+
+    Args:
+        style: Comment-free inline CSS source.
+    """
+    declarations: list[str] = []
+    start = 0
+    cursor = 0
+    quote: str | None = None
+    parenthesis_depth = 0
+    while cursor < len(style):
+        character = style[cursor]
+        if character == "\\" and cursor + 1 < len(style):
+            cursor += 2
+            continue
+        if quote is not None:
+            if character == quote:
+                quote = None
+        elif character in {'"', "'"}:
+            quote = character
+        elif character == "(":
+            parenthesis_depth += 1
+        elif character == ")" and parenthesis_depth:
+            parenthesis_depth -= 1
+        elif character == ";" and parenthesis_depth == 0:
+            declarations.append(style[start:cursor])
+            start = cursor + 1
+        cursor += 1
+    declarations.append(style[start:])
+    return declarations
 
 
 def decode_css_escapes(value: str) -> str:
@@ -1623,6 +1682,42 @@ def closes_reference_title(line: str, delimiter: str) -> bool:
     return False
 
 
+def complete_reference_title(text: str, *, require_separator: bool) -> bool:
+    """Return whether text contains one complete escape-aware reference title.
+
+    Args:
+        text: Candidate title text, including its optional indentation.
+        require_separator: Whether at least one space or tab must precede the title.
+    """
+    candidate = text.removesuffix("\n").removesuffix("\r")
+    if "\r" in candidate or "\n" in candidate:
+        return False
+    cursor = 0
+    while cursor < len(candidate) and candidate[cursor] in " \t":
+        cursor += 1
+    if require_separator:
+        if cursor == 0:
+            return False
+    elif "\t" in candidate[:cursor] or cursor > 3:
+        return False
+    if cursor >= len(candidate) or candidate[cursor] not in {'"', "'", "("}:
+        return False
+    opening = candidate[cursor]
+    closing = ")" if opening == "(" else opening
+    cursor += 1
+    while cursor < len(candidate):
+        character = candidate[cursor]
+        if character == "\\" and cursor + 1 < len(candidate):
+            cursor += 2
+            continue
+        if opening == "(" and character == "(":
+            return False
+        if character == closing:
+            return candidate[cursor + 1 :].strip(" \t") == ""
+        cursor += 1
+    return False
+
+
 def strip_markdown_nonoperative_content(text: str) -> str:
     """Replace non-rendered Markdown content with blank lines.
 
@@ -1796,6 +1891,7 @@ def strip_markdown_nonoperative_content(text: str) -> str:
                     reference_label_end,
                 )
         inline_open_title_delimiter: str | None = None
+        inline_title_is_complete = False
         if reference_label_end is not None:
             inline_reference_tail = block_line[reference_label_end:]
             if inline_reference_tail.strip():
@@ -1812,17 +1908,20 @@ def strip_markdown_nonoperative_content(text: str) -> str:
                     if inline_destination_end is not None
                     else None
                 )
-                inline_destination_match = (
+                inline_title_is_complete = complete_reference_title(
+                    inline_destination_tail,
+                    require_separator=True,
+                )
+                inline_destination_is_valid = (
                     re.fullmatch(
-                        r'''(?:[ \t]+(?:"[^"\r\n]*"|'[^'\r\n]*'|'''
-                        r'''\([^()\r\n]*\)))?[ \t]*(?:\r?\n)?''',
+                        r"[ \t]*(?:\r?\n)?",
                         inline_destination_tail,
                     )
-                    if inline_destination_end is not None
-                    else None
+                    is not None
+                    or inline_title_is_complete
                 )
                 if (
-                    inline_destination_match is None
+                    not inline_destination_is_valid
                     and inline_open_title_delimiter is None
                 ):
                     for (
@@ -1849,25 +1948,31 @@ def strip_markdown_nonoperative_content(text: str) -> str:
             if continued_destination_prefix_end is not None
             else None
         )
-        continued_destination_match = (
-            re.fullmatch(
-                r'''(?:[ \t]+(?:"[^"\r\n]*"|'[^'\r\n]*'|'''
-                r'''\([^()\r\n]*\)))?[ \t]*(?:\r?\n)?''',
-                continued_destination_tail,
-            )
-            if continued_destination_prefix_end is not None
-            else None
+        continued_title_is_complete = complete_reference_title(
+            continued_destination_tail,
+            require_separator=True,
         )
-        continued_title_match = (
-            re.fullmatch(
-                r''' {0,3}(?:"[^"\r\n]*"|'[^'\r\n]*'|\([^()\r\n]*\))[ \t]*(?:\r?\n)?''',
+        continued_destination_is_valid = (
+            continued_destination_prefix_end is not None
+            and (
+                re.fullmatch(
+                    r"[ \t]*(?:\r?\n)?",
+                    continued_destination_tail,
+                )
+                is not None
+                or continued_title_is_complete
+            )
+        )
+        continued_title_is_valid = (
+            complete_reference_title(
                 block_line,
+                require_separator=False,
             )
             if link_reference_title_pending
-            else None
+            else False
         )
         if (
-            continued_destination_match is not None
+            continued_destination_is_valid
             or continued_open_title_delimiter is not None
         ):
             completed_reference_label = pending_reference_normalized_label
@@ -1875,10 +1980,6 @@ def strip_markdown_nonoperative_content(text: str) -> str:
             pending_reference_line_index = None
             pending_reference_line = None
             pending_reference_normalized_label = None
-            inline_title_match = re.search(
-                r'''[ \t]+(?:"[^"\r\n]*"|'[^'\r\n]*'|\([^()\r\n]*\))[ \t]*(?:\r?\n)?$''',
-                block_line,
-            )
             visible_lines.append("\n" if line.endswith("\n") else "")
             if continued_open_title_delimiter is not None:
                 link_reference_title_pending = False
@@ -1888,7 +1989,7 @@ def strip_markdown_nonoperative_content(text: str) -> str:
             else:
                 if completed_reference_label is not None:
                     valid_reference_labels.add(completed_reference_label)
-                link_reference_title_pending = inline_title_match is None
+                link_reference_title_pending = not continued_title_is_complete
         else:
             if link_reference_destination_pending:
                 assert pending_reference_line_index is not None
@@ -1910,12 +2011,8 @@ def strip_markdown_nonoperative_content(text: str) -> str:
                 pending_reference_normalized_label = (
                     reference_normalized_label if destination_is_pending else None
                 )
-                inline_title_match = re.search(
-                    r'''[ \t]+(?:"[^"\r\n]*"|'[^'\r\n]*'|\([^()\r\n]*\))[ \t]*(?:\r?\n)?$''',
-                    block_line,
-                )
                 link_reference_title_pending = (
-                    not destination_is_pending and inline_title_match is None
+                    not destination_is_pending and not inline_title_is_complete
                 )
                 visible_lines.append("\n" if line.endswith("\n") else "")
                 open_reference_title_delimiter = inline_open_title_delimiter
@@ -1930,7 +2027,7 @@ def strip_markdown_nonoperative_content(text: str) -> str:
                     else []
                 )
                 paragraph_open = False
-            elif continued_title_match is not None:
+            elif continued_title_is_valid:
                 link_reference_title_pending = False
                 visible_lines.append("\n" if line.endswith("\n") else "")
                 paragraph_open = False
