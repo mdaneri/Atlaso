@@ -84,7 +84,8 @@ def test_facades_register_extracted_domains_in_exact_order():
         "operations",
         "facade_between_identity_network_boot",
         "network_boot",
-        "facade_after_network_boot",
+        "settings_backup",
+        "facade_after_settings_backup",
     )
     assert ui.UI_ROUTER_REGISTRY.routers_for_plane("management") == (
         ui._management_before_automation_router,
@@ -105,7 +106,8 @@ def test_facades_register_extracted_domains_in_exact_order():
         ui.operations_router,
         ui._management_between_identity_network_boot_router,
         ui.network_boot_router,
-        ui._management_after_network_boot_router,
+        ui.settings_backup_router,
+        ui._management_after_settings_backup_router,
     )
     assert ui.UI_ROUTER_REGISTRY.routers_for_plane("public") == (ui.public_router,)
     assert ui.UI_ROUTER_REGISTRY.routers_for_plane("front_door") == (
@@ -123,7 +125,7 @@ def test_facades_register_extracted_domains_in_exact_order():
         "firewall",
         "facade_between_firewall_operations",
         "operations",
-        "facade_between_operations_vcf_backups",
+        "settings",
         "vcf_workflows_backups",
         "facade_between_vcf_backups_offline_depot",
         "vcf_workflows_offline_depot",
@@ -145,7 +147,7 @@ def test_facades_register_extracted_domains_in_exact_order():
         v1.firewall_router,
         v1._api_between_firewall_operations_router,
         v1.operations_router,
-        v1._api_between_operations_vcf_backups_router,
+        v1.settings_router,
         v1.vcf_workflows_backups_router,
         v1._api_between_vcf_backups_offline_depot_router,
         v1.vcf_workflows_offline_depot_router,
@@ -189,6 +191,9 @@ def test_facades_register_extracted_domains_in_exact_order():
     assert {route.endpoint.__module__ for route in ui.operations_router.routes} == {
         "atlaso.app.routers.ui.operations"
     }
+    assert {
+        route.endpoint.__module__ for route in ui.settings_backup_router.routes
+    } == {"atlaso.app.routers.ui.settings_backup"}
     assert {route.endpoint.__module__ for route in v1.routes_wan_router.routes} == {
         "atlaso.app.routers.api_v1.routes_wan"
     }
@@ -212,6 +217,9 @@ def test_facades_register_extracted_domains_in_exact_order():
     }
     assert {route.endpoint.__module__ for route in v1.operations_router.routes} == {
         "atlaso.app.routers.api_v1.operations"
+    }
+    assert {route.endpoint.__module__ for route in v1.settings_router.routes} == {
+        "atlaso.app.routers.api_v1.settings"
     }
     assert {
         route.endpoint.__module__

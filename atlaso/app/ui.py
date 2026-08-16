@@ -34,7 +34,6 @@ from fastapi import (
     APIRouter,
     BackgroundTasks,
     Depends,
-    File,
     Form,
     HTTPException,
     Query,
@@ -161,6 +160,10 @@ from atlaso.app.routers.ui.physical_vlans import (
 )
 from atlaso.app.routers.ui.routes_wan import RoutesWanUiDependencies
 from atlaso.app.routers.ui.routes_wan import build_router as build_routes_wan_ui_router
+from atlaso.app.routers.ui.settings_backup import SettingsBackupUiDependencies
+from atlaso.app.routers.ui.settings_backup import (
+    build_router as build_settings_backup_ui_router,
+)
 from atlaso.app.routers.ui.vcf_workflows import VcfWorkflowsUiDependencies
 from atlaso.app.routers.ui.vcf_workflows import (
     build_router as build_vcf_workflows_ui_router,
@@ -18355,463 +18358,116 @@ router = APIRouter(
 )
 
 
-@router.get("/backup-restore", response_class=HTMLResponse, response_model=None)
-def backup_restore_page(
-    request: Request,
-    identity: Identity = Depends(require_session_identity),
-    db: Session = Depends(get_db),
-) -> HTMLResponse:
-    """Handle the backup restore page endpoint.
-
-    Args:
-        request: Incoming HTTP request.
-        identity: Authenticated identity authorizing the request.
-        db: Active database session.
-
-    Returns:
-        The endpoint response.
-    """
-    require_admin_identity(identity)
-    return render(request, "backup_restore.html", {"identity": identity, **backup_restore_context(db)})
-
-
-@router.post("/backup-restore/export", response_model=None)
-def export_backup_restore_archive(
-    request: Request,
-    csrf: str = Form(...),
-    identity: Identity = Depends(require_session_identity),
-    db: Session = Depends(get_db),
-) -> Response:
-    """Handle the export backup restore archive endpoint.
-
-    Args:
-        request: Incoming HTTP request.
-        csrf: Validated CSRF token authorizing the request.
-        identity: Authenticated identity authorizing the request.
-        db: Active database session.
-
-    Returns:
-        The endpoint response.
-    """
-    require_admin_identity(identity)
-    verify_csrf(request, csrf)
-    archive = export_settings_archive(db, actor=identity.username)
-    exported_at = utcnow().strftime("%Y%m%d-%H%M%SZ")
-    record_audit(
-        db,
-        actor=identity.username,
-        action="export_settings_backup",
-        resource_type="settings_backup",
-        detail=f"{sum(len(value) for value in archive['data'].values() if isinstance(value, list))} desired-state rows",
-        request_id=request.state.request_id,
-    )
-    return Response(
-        json.dumps(archive, indent=2, sort_keys=True),
-        media_type="application/json",
-        headers={"Content-Disposition": f'attachment; filename="atlaso-settings-{exported_at}.json"'},
-    )
-
-
-@router.post("/backup-restore/restore", response_class=HTMLResponse, response_model=None)
-async def restore_backup_restore_archive(
-    request: Request,
-    archive_file: UploadFile = File(...),
-    csrf: str = Form(...),
-    identity: Identity = Depends(require_session_identity),
-    db: Session = Depends(get_db),
-) -> HTMLResponse:
-    """Handle the restore backup restore archive endpoint.
-
-    Args:
-        request: Incoming HTTP request.
-        archive_file: Archive file supplied by the caller.
-        csrf: Validated CSRF token authorizing the request.
-        identity: Authenticated identity authorizing the request.
-        db: Active database session.
-
-    Returns:
-        The endpoint response.
-    """
-    require_admin_identity(identity)
-    verify_csrf(request, csrf)
-    raw_archive = await archive_file.read()
-    if len(raw_archive) > 3_000_000:
-        return render(
-            request,
-            "backup_restore.html",
-            {"identity": identity, **backup_restore_context(db, error="The settings archive is too large.")},
-            status_code=413,
-        )
-    try:
-        archive = json.loads(raw_archive.decode("utf-8"))
-        summary = archive_summary(archive)
-        counts = restore_settings_archive(db, archive)
-    except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
-        return render(
-            request,
-            "backup_restore.html",
-            {"identity": identity, **backup_restore_context(db, error=str(exc))},
-            status_code=400,
-        )
-    record_audit(
-        db,
-        actor=identity.username,
-        action="restore_settings_backup",
-        resource_type="settings_backup",
-        detail=f"Restored {sum(counts.values())} desired-state rows from {archive_file.filename or 'uploaded archive'}; services forced stopped/unconfigured.",
-        request_id=request.state.request_id,
-    )
-    return render(
-        request,
-        "backup_restore.html",
-        {
-            "identity": identity,
-            **backup_restore_context(
-                db,
-                result={
-                    "title": "Settings restored",
-                    "message": "Desired-state settings were restored. Services are stopped and unconfigured until reviewed and applied through the global appliance workflow.",
-                    "summary": summary,
-                    "counts": counts,
-                },
-            ),
-        },
-    )
-
-
-@router.post("/backup-restore/factory-reset", response_class=HTMLResponse, response_model=None)
-def factory_reset_backup_restore(
-    request: Request,
-    csrf: str = Form(...),
-    identity: Identity = Depends(require_session_identity),
-    db: Session = Depends(get_db),
-) -> HTMLResponse:
-    """Handle the factory reset backup restore endpoint.
-
-    Args:
-        request: Incoming HTTP request.
-        csrf: Validated CSRF token authorizing the request.
-        identity: Authenticated identity authorizing the request.
-        db: Active database session.
-
-    Returns:
-        The endpoint response.
-    """
-    require_admin_identity(identity)
-    verify_csrf(request, csrf)
-    counts = factory_reset_desired_state(db)
-    record_audit(
-        db,
-        actor=identity.username,
-        action="factory_reset_settings",
-        resource_type="settings_backup",
-        detail="Desired-state settings reset to core factory defaults without demo resources or service listener bindings; services forced stopped/unconfigured.",
-        request_id=request.state.request_id,
-    )
-    return render(
-        request,
-        "backup_restore.html",
-        {
-            "identity": identity,
-            **backup_restore_context(
-                db,
-                result={
-                    "title": "Factory reset complete",
-                    "message": "Desired-state settings were reset to core Atlaso defaults without demo resources or service listener bindings. Non-management NICs are desired admin down, and services are stopped and unconfigured until reviewed and applied through the global appliance workflow.",
-                    "counts": counts,
-                },
-            ),
-        },
-    )
-
-
-@router.get("/settings", response_class=HTMLResponse, response_model=None)
-def settings_page(
-    request: Request,
-    identity: Identity = Depends(require_session_identity),
-    db: Session = Depends(get_db),
-) -> HTMLResponse:
-    """Handle the settings page endpoint.
-
-    Args:
-        request: Incoming HTTP request.
-        identity: Authenticated identity authorizing the request.
-        db: Active database session.
-
-    Returns:
-        The endpoint response.
-    """
-    return render(
-        request,
-        "settings.html",
-        {"identity": identity, **appliance_settings_context(db), "appliance_apply_status": appliance_apply_status(db, "appliance_settings")},
-    )
-
-
-@router.post("/settings", response_model=None)
-def update_settings_from_ui(
-    request: Request,
-    fqdn: str = Form("core.atlaso.internal"),
-    management_https_enabled: bool = Form(False),
-    web_terminal_enabled: bool = Form(False),
-    web_terminal_interfaces: list[str] = Form(default_factory=list),
-    web_terminal_interfaces_present: str | None = Form(None),
-    root_ssh_enabled: bool = Form(False),
-    service_dns_target_naming: str = Form("ip"),
-    external_dns_servers: str = Form(""),
-    csrf: str = Form(...),
-    identity: Identity = Depends(require_session_identity),
-    db: Session = Depends(get_db),
-) -> RedirectResponse | JSONResponse:
-    """Handle the update settings from ui endpoint.
-
-    Args:
-        request: Incoming HTTP request.
-        fqdn: Fully qualified domain name to validate or use.
-        management_https_enabled: Management https enabled supplied by the caller.
-        web_terminal_enabled: Web terminal enabled supplied by the caller.
-        web_terminal_interfaces: Web terminal interfaces supplied by the caller.
-        web_terminal_interfaces_present: Web terminal interfaces present supplied by the caller.
-        root_ssh_enabled: Root ssh enabled supplied by the caller.
-        service_dns_target_naming: Service dns target naming supplied by the caller.
-        external_dns_servers: External dns servers supplied by the caller.
-        csrf: Validated CSRF token authorizing the request.
-        identity: Authenticated identity authorizing the request.
-        db: Active database session.
-
-    Returns:
-        The endpoint response.
-    """
-    verify_csrf(request, csrf)
-    settings = get_appliance_settings_row(db)
-    previous_fqdn = settings.fqdn
-    previous_service_dns_target_naming = normalize_service_dns_target_naming(settings.service_dns_target_naming)
-    settings.fqdn = normalize_fqdn(fqdn) or "core.atlaso.internal"
-    settings.management_https_enabled = bool(management_https_enabled)
-    settings.web_terminal_enabled = bool(web_terminal_enabled)
-    settings.root_ssh_enabled = bool(root_ssh_enabled)
-    settings.service_dns_target_naming = normalize_service_dns_target_naming(service_dns_target_naming)
-    settings.external_dns_servers = normalize_multiline_values(external_dns_servers)
-    settings.config_path = APPLIANCE_SETTINGS_STAGED_CONFIG_PATH
-    settings.updated_at = utcnow()
-    dns_settings = get_dns_settings_row(db)
-    management = appliance_settings_management_context(db)
-    physical_interfaces = db.execute(select(PhysicalInterface).order_by(PhysicalInterface.name)).scalars().all()
-    vlan_interfaces = db.execute(select(VlanInterface).order_by(VlanInterface.parent_interface, VlanInterface.vlan_id)).scalars().all()
-    terminal_options = web_terminal_interface_options(physical_interfaces, vlan_interfaces)
-    requested_terminal_interfaces = web_terminal_interfaces if web_terminal_interfaces_present is not None else normalized_web_terminal_interfaces(settings, management)
-    if settings.web_terminal_enabled and management.get("name"):
-        requested_terminal_interfaces = [management["name"], *[name for name in requested_terminal_interfaces if name != management["name"]]]
-    settings.web_terminal_interfaces_json = web_terminal_interfaces_to_json(requested_terminal_interfaces)
-    ca_settings = get_ca_settings_row(db)
-    preflight_errors, _preflight_warnings = validate_appliance_settings(
-        settings,
-        local_dns_enabled=bool(dns_settings.enabled),
-        management_interface=management,
-        dns_record_conflict=bool(dns_settings.enabled) and appliance_dns_record_conflict(db, settings.fqdn),
-        ca_enabled=bool(ca_settings.enabled),
-        management_https_cert_available=True,
-        web_terminal_options=terminal_options,
-    )
-    ca_state_errors: list[str] = []
-    if settings.management_https_enabled and ca_settings.enabled and not preflight_errors:
-        ca_state_errors = ensure_ca_state(db)
-        management = appliance_settings_management_context(db)
-        ca_settings = get_ca_settings_row(db)
-    management_https_cert_path, management_https_key_path, _management_https_chain_path = ca_managed_certificate_paths(db, "appliance:https")
-    management_https_cert_available = bool(management_https_cert_path and management_https_key_path and ca_certificate_available(db, "appliance:https"))
-    validation_errors, _validation_warnings = validate_appliance_settings(
-        settings,
-        local_dns_enabled=bool(dns_settings.enabled),
-        management_interface=management,
-        dns_record_conflict=bool(dns_settings.enabled) and appliance_dns_record_conflict(db, settings.fqdn),
-        ca_enabled=bool(ca_settings.enabled),
-        management_https_cert_available=management_https_cert_available,
-        web_terminal_options=terminal_options,
-    )
-    validation_errors = [*ca_state_errors, *validation_errors]
-    dns_record_action = None
-    if not validation_errors:
-        dns_record_action = ensure_dns_for_appliance_settings(db, settings, previous_fqdn=previous_fqdn, actor=identity.username)
-        if previous_service_dns_target_naming != settings.service_dns_target_naming:
-            reconcile_service_dns_aliases(db, actor=identity.username)
-    db.add(settings)
-    db.commit()
-    record_audit(db, actor=identity.username, action="update_appliance_settings", resource_type="settings", resource_id=str(settings.id))
-    if request.headers.get("X-Atlaso-Autosave") == "1":
-        context = appliance_settings_context(db, reconcile_dns=not validation_errors)
-        saved = context["appliance_settings"]
-        return JSONResponse(
-            {
-                "status": "saved",
-                "updated_at": saved.updated_at.isoformat(),
-                "fqdn": saved.fqdn,
-                "management_https_enabled": saved.management_https_enabled,
-                "web_terminal_enabled": saved.web_terminal_enabled,
-                "web_terminal_interfaces": context["selected_web_terminal_interfaces"],
-                "web_terminal_addresses": context["web_terminal_addresses"],
-                "management_https_cert_available": context["management_https_cert_available"],
-                "root_ssh_enabled": saved.root_ssh_enabled,
-                "service_dns_target_naming": normalize_service_dns_target_naming(saved.service_dns_target_naming),
-                "external_dns_servers": context["appliance_settings_json"]["external_dns_servers"],
-                "resolver_mode": context["appliance_settings_resolver_mode"],
-                "observed_dhcp_dns_servers": context["appliance_settings_observed_dhcp_dns_servers"],
-                "local_dns_enabled": context["local_dns_enabled"],
-                "management_interface": context["management_interface"],
-                "dns_record_action": dns_record_action,
-                "valid": not context["appliance_settings_validation_errors"],
-                "validation_errors": context["appliance_settings_validation_errors"],
-                "validation_warnings": context["appliance_settings_validation_warnings"],
-                "config_path": saved.config_path,
-                "config_preview": context["appliance_settings_config_preview"],
-            }
-        )
-    return RedirectResponse("/settings", status_code=303)
-
-
-@router.post("/settings/vmware-ceip", response_model=None)
-def update_vmware_ceip_from_ui(
-    request: Request,
-    vmware_ceip_enabled: bool = Form(False),
-    csrf: str = Form(...),
-    identity: Identity = Depends(require_session_identity),
-    db: Session = Depends(get_db),
-) -> RedirectResponse | JSONResponse:
-    """Handle the update vmware ceip from ui endpoint.
-
-    Args:
-        request: Incoming HTTP request.
-        vmware_ceip_enabled: Vmware ceip enabled supplied by the caller.
-        csrf: Validated CSRF token authorizing the request.
-        identity: Authenticated identity authorizing the request.
-        db: Active database session.
-
-    Returns:
-        The endpoint response.
-    """
-    verify_csrf(request, csrf)
-    settings = get_appliance_settings_row(db)
-    settings.vmware_ceip_enabled = bool(vmware_ceip_enabled)
-    settings.config_path = APPLIANCE_SETTINGS_STAGED_CONFIG_PATH
-    settings.updated_at = utcnow()
-    db.add(settings)
-    db.commit()
-    record_audit(
-        db,
-        actor=identity.username,
-        action="update_vmware_ceip_policy",
-        resource_type="settings",
-        resource_id=str(settings.id),
-        detail=f"enabled={str(settings.vmware_ceip_enabled).lower()}",
-    )
-    if request.headers.get("X-Atlaso-Autosave") == "1":
-        context = appliance_settings_context(db)
-        saved = context["appliance_settings"]
-        return JSONResponse(
-            {
-                "status": "saved",
-                "updated_at": saved.updated_at.isoformat(),
-                "fqdn": saved.fqdn,
-                "management_https_enabled": saved.management_https_enabled,
-                "web_terminal_enabled": saved.web_terminal_enabled,
-                "web_terminal_interfaces": context["selected_web_terminal_interfaces"],
-                "web_terminal_addresses": context["web_terminal_addresses"],
-                "management_https_cert_available": context["management_https_cert_available"],
-                "root_ssh_enabled": saved.root_ssh_enabled,
-                "vmware_ceip_enabled": saved.vmware_ceip_enabled,
-                "service_dns_target_naming": normalize_service_dns_target_naming(saved.service_dns_target_naming),
-                "external_dns_servers": context["appliance_settings_json"]["external_dns_servers"],
-                "resolver_mode": context["appliance_settings_resolver_mode"],
-                "observed_dhcp_dns_servers": context["appliance_settings_observed_dhcp_dns_servers"],
-                "local_dns_enabled": context["local_dns_enabled"],
-                "management_interface": context["management_interface"],
-                "dns_record_action": None,
-                "valid": not context["appliance_settings_validation_errors"],
-                "validation_errors": context["appliance_settings_validation_errors"],
-                "validation_warnings": context["appliance_settings_validation_warnings"],
-                "config_path": saved.config_path,
-                "config_preview": context["appliance_settings_config_preview"],
-            }
-        )
-    return RedirectResponse("/settings", status_code=303)
-
-
-@router.post("/settings/logging", response_model=None)
-def update_logging_settings_from_ui(
-    request: Request,
-    level: str = Form("INFO"),
-    syslog_enabled: bool = Form(False),
-    syslog_host: str = Form(""),
-    syslog_port: str = Form("514"),
-    syslog_protocol: str = Form("udp"),
-    syslog_facility: str = Form("local0"),
-    syslog_level: str = Form("INFO"),
-    csrf: str = Form(...),
-    identity: Identity = Depends(require_session_identity),
-    db: Session = Depends(get_db),
-) -> RedirectResponse | JSONResponse:
-    """Handle the update logging settings from ui endpoint.
-
-    Args:
-        request: Incoming HTTP request.
-        level: Level supplied by the caller.
-        syslog_enabled: Syslog enabled supplied by the caller.
-        syslog_host: Syslog host supplied by the caller.
-        syslog_port: Syslog port supplied by the caller.
-        syslog_protocol: Syslog protocol supplied by the caller.
-        syslog_facility: Syslog facility supplied by the caller.
-        syslog_level: Syslog level supplied by the caller.
-        csrf: Validated CSRF token authorizing the request.
-        identity: Authenticated identity authorizing the request.
-        db: Active database session.
-
-    Returns:
-        The endpoint response.
-    """
-    verify_csrf(request, csrf)
-    try:
-        preferences = save_logging_preferences(
-            db,
-            level=level,
-            syslog_enabled=bool(syslog_enabled),
-            syslog_host=syslog_host,
-            syslog_port=syslog_port,
-            syslog_protocol=syslog_protocol,
-            syslog_facility=syslog_facility,
-            syslog_level=syslog_level,
-        )
-    except ValueError as exc:
-        if request.headers.get("X-Atlaso-Autosave") == "1":
-            return JSONResponse({"status": "error", "message": str(exc)}, status_code=422)
-        return render(
-            request,
-            "settings.html",
-            {
-                "identity": identity,
-                **appliance_settings_context(db),
-                "appliance_apply_status": appliance_apply_status(db, "appliance_settings"),
-                "logging_settings_error": str(exc),
-            },
-            status_code=422,
-        )
-    db.commit()
-    configure_operational_logging(db)
-    record_audit(
-        db,
-        actor=identity.username,
-        action="update_operational_logging_settings",
-        resource_type="logging",
-        detail=(
-            f"level={preferences.level} syslog={'enabled' if preferences.syslog_enabled else 'disabled'} "
-            f"syslog_level={preferences.syslog_level} syslog_protocol={preferences.syslog_protocol} "
-            f"syslog_facility={preferences.syslog_facility}"
+_settings_backup_ui = build_settings_backup_ui_router(
+    SettingsBackupUiDependencies(
+        require_management_ui_request=require_management_ui_request,
+        require_admin_identity=lambda *args, **kwargs: require_admin_identity(
+            *args, **kwargs
         ),
-        request_id=request.state.request_id,
+        render=lambda *args, **kwargs: render(*args, **kwargs),
+        verify_csrf=lambda *args, **kwargs: verify_csrf(*args, **kwargs),
+        backup_restore_context=lambda *args, **kwargs: backup_restore_context(
+            *args, **kwargs
+        ),
+        export_settings_archive=lambda *args, **kwargs: export_settings_archive(
+            *args, **kwargs
+        ),
+        archive_summary=lambda *args, **kwargs: archive_summary(*args, **kwargs),
+        restore_settings_archive=lambda *args, **kwargs: restore_settings_archive(
+            *args, **kwargs
+        ),
+        factory_reset_desired_state=lambda *args, **kwargs: factory_reset_desired_state(
+            *args, **kwargs
+        ),
+        appliance_settings_context=lambda *args, **kwargs: appliance_settings_context(
+            *args, **kwargs
+        ),
+        appliance_apply_status=lambda *args, **kwargs: appliance_apply_status(
+            *args, **kwargs
+        ),
+        get_appliance_settings_row=lambda *args, **kwargs: get_appliance_settings_row(
+            *args, **kwargs
+        ),
+        get_dns_settings_row=lambda *args, **kwargs: get_dns_settings_row(
+            *args, **kwargs
+        ),
+        appliance_settings_management_context=lambda *args, **kwargs: appliance_settings_management_context(
+            *args, **kwargs
+        ),
+        web_terminal_interface_options=lambda *args, **kwargs: web_terminal_interface_options(
+            *args, **kwargs
+        ),
+        normalized_web_terminal_interfaces=lambda *args, **kwargs: normalized_web_terminal_interfaces(
+            *args, **kwargs
+        ),
+        web_terminal_interfaces_to_json=lambda *args, **kwargs: web_terminal_interfaces_to_json(
+            *args, **kwargs
+        ),
+        get_ca_settings_row=lambda *args, **kwargs: get_ca_settings_row(
+            *args, **kwargs
+        ),
+        normalize_fqdn=lambda *args, **kwargs: normalize_fqdn(*args, **kwargs),
+        normalize_service_dns_target_naming=lambda *args, **kwargs: normalize_service_dns_target_naming(
+            *args, **kwargs
+        ),
+        normalize_multiline_values=lambda *args, **kwargs: normalize_multiline_values(
+            *args, **kwargs
+        ),
+        validate_appliance_settings=lambda *args, **kwargs: validate_appliance_settings(
+            *args, **kwargs
+        ),
+        appliance_dns_record_conflict=lambda *args, **kwargs: appliance_dns_record_conflict(
+            *args, **kwargs
+        ),
+        ensure_ca_state=lambda *args, **kwargs: ensure_ca_state(*args, **kwargs),
+        ca_managed_certificate_paths=lambda *args, **kwargs: ca_managed_certificate_paths(
+            *args, **kwargs
+        ),
+        ca_certificate_available=lambda *args, **kwargs: ca_certificate_available(
+            *args, **kwargs
+        ),
+        ensure_dns_for_appliance_settings=lambda *args, **kwargs: ensure_dns_for_appliance_settings(
+            *args, **kwargs
+        ),
+        reconcile_service_dns_aliases=lambda *args, **kwargs: reconcile_service_dns_aliases(
+            *args, **kwargs
+        ),
+        save_logging_preferences=lambda *args, **kwargs: save_logging_preferences(
+            *args, **kwargs
+        ),
+        configure_operational_logging=lambda *args, **kwargs: configure_operational_logging(
+            *args, **kwargs
+        ),
+        logging_preferences_to_dict=lambda *args, **kwargs: logging_preferences_to_dict(
+            *args, **kwargs
+        ),
+        appliance_settings_staged_config_path=APPLIANCE_SETTINGS_STAGED_CONFIG_PATH,
     )
-    if request.headers.get("X-Atlaso-Autosave") == "1":
-        return JSONResponse({"status": "saved", "logging_preferences": logging_preferences_to_dict(preferences)})
-    return RedirectResponse("/settings", status_code=303)
+)
+settings_backup_router = _settings_backup_ui.router
+backup_restore_page = _settings_backup_ui.endpoints["backup_restore_page"]
+export_backup_restore_archive = _settings_backup_ui.endpoints[
+    "export_backup_restore_archive"
+]
+restore_backup_restore_archive = _settings_backup_ui.endpoints[
+    "restore_backup_restore_archive"
+]
+factory_reset_backup_restore = _settings_backup_ui.endpoints[
+    "factory_reset_backup_restore"
+]
+settings_page = _settings_backup_ui.endpoints["settings_page"]
+update_settings_from_ui = _settings_backup_ui.endpoints["update_settings_from_ui"]
+update_vmware_ceip_from_ui = _settings_backup_ui.endpoints[
+    "update_vmware_ceip_from_ui"
+]
+update_logging_settings_from_ui = _settings_backup_ui.endpoints[
+    "update_logging_settings_from_ui"
+]
 
+router = APIRouter(
+    prefix=MANAGEMENT_UI_ROOT,
+    dependencies=[Depends(require_management_ui_request)],
+)
 
 @router.get("/{page}", response_class=HTMLResponse, response_model=None)
 def placeholder_page(page: str, request: Request, identity: Identity = Depends(require_session_identity)) -> HTMLResponse:
@@ -18847,7 +18503,7 @@ allow_compatible_route_shadow(
     later_path="/PROD/",
     methods=("GET", "HEAD"),
 )
-_management_after_network_boot_router = router
+_management_after_settings_backup_router = router
 UI_ROUTER_REGISTRY.register(
     "facade_before_automation",
     (
@@ -18955,10 +18611,14 @@ UI_ROUTER_REGISTRY.register(
     (RouterContribution(plane="management", router=network_boot_router),),
 )
 UI_ROUTER_REGISTRY.register(
-    "facade_after_network_boot",
+    "settings_backup",
+    (RouterContribution(plane="management", router=settings_backup_router),),
+)
+UI_ROUTER_REGISTRY.register(
+    "facade_after_settings_backup",
     (
         RouterContribution(
-            plane="management", router=_management_after_network_boot_router
+            plane="management", router=_management_after_settings_backup_router
         ),
     ),
 )
@@ -18982,7 +18642,8 @@ UI_ROUTER_REGISTRY.validate_domains(
         "operations",
         "facade_between_identity_network_boot",
         "network_boot",
-        "facade_after_network_boot",
+        "settings_backup",
+        "facade_after_settings_backup",
     )
 )
 
