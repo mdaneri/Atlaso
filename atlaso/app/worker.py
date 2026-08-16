@@ -213,12 +213,21 @@ def _wait_for_release_restart_finalizer(timeout_seconds: int = 90) -> bool:
         observed_at = time.monotonic()
         finalizer = _release_finalizer()
         finalizer_status = str(finalizer.get("status") or "")
-        finalizer_pending = finalizer_status in {
-            "transaction_pending",
-            "restart_pending",
-            "rollback_pending",
-            "activation_committed",
-        }
+        recovery = finalizer.get("transaction_recovery")
+        finalizer_pending = bool(
+            finalizer_status
+            in {
+                "transaction_pending",
+                "restart_pending",
+                "rollback_pending",
+                "activation_committed",
+            }
+            or (
+                finalizer_status == JobStatus.FAILED.value
+                and finalizer.get("rolled_back") is not True
+                and isinstance(recovery, dict)
+            )
+        )
         gate_exists = APPLIANCE_UPDATE_RESTART_GATE_PATH.exists()
         if not gate_exists and not finalizer_pending:
             return True
@@ -235,7 +244,6 @@ def _wait_for_release_restart_finalizer(timeout_seconds: int = 90) -> bool:
                     "Atlaso worker startup ignored a stale release gate backed by definitive transaction evidence"
                 )
                 return True
-        recovery = finalizer.get("transaction_recovery")
         owner = recovery.get("owner") if isinstance(recovery, dict) else None
         owner_alive = _release_transaction_owner_alive(owner)
         if not gate_exists and finalizer_pending and not owner_alive:
@@ -286,10 +294,10 @@ def _rollback_requires_worker_restart() -> bool:
 
 
 def _complete_recovered_rollback_job() -> bool:
-    """Complete the exact recovered release job before restoring the old worker.
+    """Complete the exact recovered release handoff before restoring the old worker.
 
     Returns:
-        Whether the recovered Appliance Update parent reached a terminal state.
+        Whether the recovered Appliance Update parent is safe for the restored worker.
     """
     finalizer = _release_finalizer()
     job_id = str(finalizer.get("job_id") or "")
@@ -300,15 +308,11 @@ def _complete_recovered_rollback_job() -> bool:
         if job is None or job.type != "appliance-update":
             return False
         status = job.status
-    if status == JobStatus.PENDING.value:
-        _run_appliance_update(job_id)
-    with SessionLocal() as db:
-        completed = db.get(Job, job_id)
-        return bool(
-            completed is not None
-            and completed.type == "appliance-update"
-            and completed.status in {JobStatus.SUCCEEDED.value, JobStatus.FAILED.value}
-        )
+    return status in {
+        JobStatus.PENDING.value,
+        JobStatus.SUCCEEDED.value,
+        JobStatus.FAILED.value,
+    }
 
 
 def recover_release_rollback_handoff() -> int:

@@ -345,8 +345,9 @@ The following cross-cutting boundaries always apply:
   unverified service restart. A matching definitive success or healthy rollback may clear or supersede an orphaned gate;
   incomplete rollback must retain maintenance and the gate. Rollback must preserve and verify the already-running worker
   until the definitive rollback write; never start a restored legacy worker inside the transaction. After recovery
-  bookkeeping, a candidate worker must exit for systemd to start the restored release. If the rollback gate cannot be
-  established, stop and verify the caller inactive before publishing incomplete rollback. Then resume only untouched
+  bookkeeping, a candidate worker must exit for systemd to start the restored release. Before publishing any incomplete
+  rollback, retain provisional owner evidence and stop and verify the caller inactive, including when the gate exists.
+  Then resume only untouched
   pending update children, including a mixed terminal/pending set after a second worker restart, without rerunning terminal
   children. Gate timeout exits worker startup for systemd retry, and the surviving helper removes staged source
   credentials before restarting the caller. Definitive finalizers retain sanitized helper commands, and recovery uses

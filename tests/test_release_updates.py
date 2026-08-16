@@ -468,8 +468,9 @@ def test_worker_restart_gate_wait_extends_while_transaction_owner_is_live(monkey
     finalizers = iter(
         (
             {
-                "status": "rollback_pending",
+                "status": "failed",
                 "job_id": "job-live-rollback",
+                "rolled_back": False,
                 "transaction_recovery": {"owner": {"pid": 99}},
             },
             {"status": "failed", "job_id": "job-live-rollback", "rolled_back": True},
@@ -2774,6 +2775,19 @@ def test_worker_restart_resumes_untouched_children_after_healthy_release_rollbac
             ("photon_os", "pending"),
         ]
 
+    run_appliance_update = worker._run_appliance_update
+    monkeypatch.setattr(worker, "_rollback_requires_worker_restart", lambda: True)
+    monkeypatch.setattr(
+        worker,
+        "_run_appliance_update",
+        lambda _job_id: pytest.fail("the rejected candidate must not resume pending update children"),
+    )
+    assert worker._complete_recovered_rollback_job() is True
+    with SessionLocal() as db:
+        assert db.get(Job, "job_release_rollback_handoff").status == "pending"
+    monkeypatch.setattr(worker, "_rollback_requires_worker_restart", lambda: False)
+    monkeypatch.setattr(worker, "_run_appliance_update", run_appliance_update)
+
     calls: list[str] = []
 
     def execute_remaining(**kwargs):
@@ -3642,8 +3656,8 @@ def test_failed_candidate_restores_previous_release_and_database(
         if action == "restart" and units == ("atlaso-worker.service",):
             success = failure_stage != "worker_restart"
         if action == "stop" and "atlaso-worker.service" in units:
-            if failure_stage != "rollback_gate":
-                pytest.fail("rollback must not stop a worker while its runtime gate is held")
+            if expected_rolled_back and failure_stage != "rollback_gate":
+                pytest.fail("healthy rollback must preserve the running worker through its definitive write")
             rollback_worker_fail_closed_stops += 1
             worker_stopped_fail_closed = True
         if action == "start" and "atlaso-worker.service" in units:
@@ -3823,7 +3837,7 @@ def test_failed_candidate_restores_previous_release_and_database(
     assert finalizer["commands"]
     assert not credential_path.exists()
     assert rollback_worker_starts == 0
-    assert rollback_worker_fail_closed_stops == (1 if failure_stage == "rollback_gate" else 0)
+    assert rollback_worker_fail_closed_stops == (0 if expected_rolled_back else 1)
     if failure_stage == "transaction_backup_sync":
         assert "transaction_pending" not in finalizer_statuses
         assert not checkpoint_backup_counts
@@ -3847,6 +3861,9 @@ def test_failed_candidate_restores_previous_release_and_database(
     if failure_stage == "rollback_database_missing":
         assert "rollback_database_restore" in finalizer["rollback_failures"]
         assert maintenance_states[-1] is True
+    if not expected_rolled_back:
+        assert finalizer["status"] == "rollback_pending"
+        assert finalizer["transaction_recovery"]["owner"]
     if failure_stage == "rollback_link_restore":
         assert "rollback_release_link" in finalizer["rollback_failures"]
         assert "rollback_active_release_link" in finalizer["rollback_failures"]

@@ -266,8 +266,9 @@ runtime gate for retry. The worker unit allows up to 30 minutes for this recover
 instead of accepting work if that recovery or gate does not complete. Runtime rollback preserves and verifies the
 already-running caller or candidate worker until the
 definitive rollback write and never starts a restored legacy worker inside the transaction. After completing rollback
-bookkeeping, a candidate worker exits so systemd starts the restored release. If the runtime gate cannot be created, the
-helper stops and verifies the caller inactive before publishing incomplete rollback. The surviving privileged helper
+bookkeeping, a candidate worker exits without running pending children so systemd starts the restored release. Before
+publishing any incomplete rollback, the helper retains provisional owner evidence and stops and verifies the caller
+inactive, including when the runtime gate exists. The surviving privileged helper
 removes and flushes any staged
 source-credential file before restarting the calling worker. The definitive finalizer retains sanitized helper command
 evidence so startup recovery can run the same child completion, parent completion, terminal task-log, and audit
