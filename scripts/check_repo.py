@@ -818,10 +818,12 @@ def strip_markdown_fenced_code(text: str) -> str:
     fence_character: str | None = None
     fence_length = 0
     list_content_indents: list[int] = []
+    paragraph_open = False
     for line in text.splitlines(keepends=True):
         list_content_indent = update_markdown_list_content_indent(
             line,
             list_content_indents,
+            paragraph_open=paragraph_open,
         )
         block_line = (
             line[list_content_indent:]
@@ -846,6 +848,7 @@ def strip_markdown_fenced_code(text: str) -> str:
             fence = fence_match.group(1)
             fence_character = fence[0]
             fence_length = len(fence)
+            paragraph_open = False
             visible_lines.append("\n" if line.endswith("\n") else "")
             continue
         if fence_character is not None:
@@ -864,26 +867,41 @@ def strip_markdown_fenced_code(text: str) -> str:
             visible_lines.append("\n" if line.endswith("\n") else "")
             continue
         visible_lines.append(line)
+        paragraph_open = bool(block_line.strip()) and not (
+            starts_markdown_block_construct(block_line)
+            or re.match(r"(?: {4}|\t)", block_line) is not None
+        )
     return "".join(visible_lines)
 
 
 def update_markdown_list_content_indent(
     line: str,
     content_indents: list[int],
+    *,
+    paragraph_open: bool,
 ) -> int | None:
     """Update nested list indentation and return the active content indent.
 
     Args:
         line: Current Markdown source line.
         content_indents: Mutable stack of active absolute content indents.
+        paragraph_open: Whether the preceding line ended in paragraph content.
     """
     leading_spaces = len(line) - len(line.lstrip(" "))
     list_match = re.match(
-        r"(?P<indent> *)(?:[*+-]|\d{1,9}[.)])(?P<spacing>[ \t]+)",
+        r"(?P<indent> *)(?P<marker>[*+-]|\d{1,9}[.)])(?P<spacing>[ \t]+)",
         line,
+    )
+    marker_can_interrupt = (
+        list_match is not None
+        and (
+            not paragraph_open
+            or list_match.group("marker") in {"*", "+", "-", "1.", "1)"}
+        )
     )
     list_can_start = (
         list_match is not None
+        and marker_can_interrupt
         and (
             leading_spaces <= 3
             if not content_indents
@@ -1843,6 +1861,7 @@ def strip_markdown_nonoperative_content(text: str) -> str:
         list_content_indent = update_markdown_list_content_indent(
             line,
             list_content_indents,
+            paragraph_open=paragraph_open,
         )
         block_line = (
             line[list_content_indent:]

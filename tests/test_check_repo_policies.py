@@ -2468,6 +2468,37 @@ def test_agent_policy_gate_keeps_noninitial_ordered_items_in_lazy_block_quotes(
         )
 
 
+def test_agent_policy_gate_ignores_indented_code_after_paragraph_ordered_text(
+    tmp_path: Path,
+) -> None:
+    """Verify noninterrupting ordered prose cannot create list indentation.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    marker = '`cleanup-ready`'
+    for relative_path in ORDERED_TERMINAL_CLEANUP_MARKERS:
+        write_policy_files(tmp_path)
+        path = tmp_path / relative_path
+        anchor = TERMINAL_CLEANUP_SECTION_ANCHORS[relative_path]
+        content_prefix = "" if anchor.startswith("#") else "  "
+        replacement = (
+            f"paragraph\n{content_prefix}2. prose\n{content_prefix}\n"
+            f"{content_prefix}    {marker}"
+        )
+        text = path.read_text(encoding="utf-8").replace(marker, replacement, 1)
+        path.write_text(text, encoding="utf-8")
+
+        findings = check_agent_policy_gate(tmp_path)
+
+        assert any(
+            finding.path == path
+            and finding.message
+            == f"completed-task cleanup section marker is missing: {marker}"
+            for finding in findings
+        )
+
+
 def test_agent_policy_gate_keeps_empty_list_markers_in_lazy_block_quotes(
     tmp_path: Path,
 ) -> None:
