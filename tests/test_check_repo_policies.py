@@ -1866,11 +1866,15 @@ def test_agent_policy_gate_ignores_css_hidden_html_policy_sections(
             r"display:\6e one",
             "display:inline; display:none",
             "display:none !important; display:inline",
+            "display:none; display:bogus",
             "color:red; DISPLAY: none !important;",
             "visibility:hidden",
+            "visibility:hidden; visibility:bogus",
             "visibility: collapse !important",
             "content-visibility:hidden",
+            "content-visibility:hidden; content-visibility:bogus",
             "opacity:0",
+            "opacity:0; opacity:bogus",
         ):
             write_policy_files(tmp_path)
             path = tmp_path / relative_path
@@ -2486,6 +2490,34 @@ def test_agent_policy_gate_ignores_indented_code_after_paragraph_ordered_text(
             f"paragraph\n{content_prefix}2. prose\n{content_prefix}\n"
             f"{content_prefix}    {marker}"
         )
+        text = path.read_text(encoding="utf-8").replace(marker, replacement, 1)
+        path.write_text(text, encoding="utf-8")
+
+        findings = check_agent_policy_gate(tmp_path)
+
+        assert any(
+            finding.path == path
+            and finding.message
+            == f"completed-task cleanup section marker is missing: {marker}"
+            for finding in findings
+        )
+
+
+def test_agent_policy_gate_applies_wide_list_padding_to_indented_code(
+    tmp_path: Path,
+) -> None:
+    """Verify five-space list padding leaves four code-indent spaces.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    marker = '`cleanup-ready`'
+    for relative_path in ORDERED_TERMINAL_CLEANUP_MARKERS:
+        write_policy_files(tmp_path)
+        path = tmp_path / relative_path
+        anchor = TERMINAL_CLEANUP_SECTION_ANCHORS[relative_path]
+        content_prefix = "" if anchor.startswith("#") else "  "
+        replacement = f"-     example\n{content_prefix}      {marker}"
         text = path.read_text(encoding="utf-8").replace(marker, replacement, 1)
         path.write_text(text, encoding="utf-8")
 

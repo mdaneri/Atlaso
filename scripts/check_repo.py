@@ -912,7 +912,11 @@ def update_markdown_list_content_indent(
         while content_indents and content_indents[-1] > leading_spaces:
             content_indents.pop()
         container_indent = content_indents[-1] if content_indents else None
-        content_indent = list_match.end()
+        spacing_width = len(list_match.group("spacing"))
+        padding_width = spacing_width if spacing_width <= 4 else 1
+        content_indent = (
+            leading_spaces + len(list_match.group("marker")) + padding_width
+        )
         if not content_indents or content_indents[-1] != content_indent:
             content_indents.append(content_indent)
         return container_indent
@@ -1360,6 +1364,8 @@ def has_css_hidden_style(attributes: str) -> bool:
             important = important_match is not None
             if important_match is not None:
                 value = value[: important_match.start()].strip()
+            if not css_property_value_is_valid(property_name, value):
+                continue
             previous = computed.get(property_name)
             if previous is not None and previous[1] and not important:
                 continue
@@ -1415,6 +1421,81 @@ def split_css_declarations(style: str) -> list[str]:
         cursor += 1
     declarations.append(style[start:])
     return declarations
+
+
+def css_property_value_is_valid(property_name: str, value: str) -> bool:
+    """Return whether a tracked CSS property has a syntactically usable value.
+
+    Args:
+        property_name: Normalized CSS property name.
+        value: Decoded CSS value without a trailing important annotation.
+    """
+    normalized = " ".join(value.casefold().split())
+    global_values = {"inherit", "initial", "revert", "revert-layer", "unset"}
+    if normalized in global_values or re.fullmatch(
+        r"(?:var|env|calc|min|max|clamp)\(.+\)",
+        normalized,
+        flags=re.DOTALL,
+    ):
+        return True
+    if property_name == "visibility":
+        return normalized in {"collapse", "hidden", "visible"}
+    if property_name == "content-visibility":
+        return normalized in {"auto", "hidden", "visible"}
+    if property_name == "opacity":
+        return re.fullmatch(
+            r"[-+]?(?:(?:\d+(?:\.\d*)?)|(?:\.\d+))(?:e[-+]?\d+)?%?",
+            normalized,
+            flags=re.IGNORECASE,
+        ) is not None
+    if property_name != "display":
+        return False
+    legacy_display_values = {
+        "contents",
+        "inline-block",
+        "inline-flex",
+        "inline-grid",
+        "inline-list-item",
+        "inline-table",
+        "list-item",
+        "none",
+        "ruby-base",
+        "ruby-base-container",
+        "ruby-text",
+        "ruby-text-container",
+        "table-caption",
+        "table-cell",
+        "table-column",
+        "table-column-group",
+        "table-footer-group",
+        "table-header-group",
+        "table-row",
+        "table-row-group",
+    }
+    if normalized in legacy_display_values:
+        return True
+    tokens = normalized.split()
+    outer_values = {"block", "inline", "run-in"}
+    inner_values = {"flex", "flow", "flow-root", "grid", "ruby", "table"}
+    if len(tokens) == 1:
+        return tokens[0] in outer_values | inner_values
+    if len(tokens) == 2:
+        token_set = set(tokens)
+        return (
+            len(token_set & outer_values) == 1
+            and len(token_set & inner_values) == 1
+        ) or (
+            "list-item" in token_set
+            and bool(token_set & (outer_values | {"flow", "flow-root"}))
+        )
+    if len(tokens) == 3:
+        token_set = set(tokens)
+        return (
+            "list-item" in token_set
+            and len(token_set & outer_values) == 1
+            and len(token_set & {"flow", "flow-root"}) == 1
+        )
+    return False
 
 
 def decode_css_escapes(value: str) -> str:
