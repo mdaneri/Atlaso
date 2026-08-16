@@ -1435,7 +1435,7 @@ def css_property_value_is_valid(property_name: str, value: str) -> bool:
     normalized = " ".join(value.casefold().split())
     global_values = {"inherit", "initial", "revert", "revert-layer", "unset"}
     if normalized in global_values or re.fullmatch(
-        r"(?:var|env|calc|min|max|clamp)\(.+\)",
+        r"(?:var|env)\(.+\)",
         normalized,
         flags=re.DOTALL,
     ):
@@ -1445,11 +1445,20 @@ def css_property_value_is_valid(property_name: str, value: str) -> bool:
     if property_name == "content-visibility":
         return normalized in {"auto", "hidden", "visible"}
     if property_name == "opacity":
-        return re.fullmatch(
-            r"[-+]?(?:(?:\d+(?:\.\d*)?)|(?:\.\d+))(?:e[-+]?\d+)?%?",
-            normalized,
-            flags=re.IGNORECASE,
-        ) is not None
+        return (
+            re.fullmatch(
+                r"[-+]?(?:(?:\d+(?:\.\d*)?)|(?:\.\d+))(?:e[-+]?\d+)?%?",
+                normalized,
+                flags=re.IGNORECASE,
+            )
+            is not None
+            or re.fullmatch(
+                r"(?:calc|min|max|clamp)\(.+\)",
+                normalized,
+                flags=re.DOTALL,
+            )
+            is not None
+        )
     if property_name != "display":
         return False
     legacy_display_values = {
@@ -1511,7 +1520,13 @@ def css_opacity_is_hidden(value: str) -> bool:
         value,
         flags=re.IGNORECASE,
     )
-    return numeric_match is not None and float(numeric_match.group("number")) <= 0
+    if numeric_match is not None:
+        return float(numeric_match.group("number")) <= 0
+    return re.fullmatch(
+        r"(?:var|env|calc|min|max|clamp)\(.+\)",
+        value,
+        flags=re.IGNORECASE | re.DOTALL,
+    ) is not None
 
 
 def decode_css_escapes(value: str) -> str:
@@ -1556,6 +1571,25 @@ def starts_markdown_html_block(line: str) -> bool:
     ) is not None
 
 
+def starts_valid_markdown_fence(line: str) -> bool:
+    """Return whether a line is a valid fenced-code opener.
+
+    Args:
+        line: Structural Markdown source line.
+    """
+    relative_indent = len(line) - len(line.lstrip(" "))
+    if relative_indent > 3:
+        return False
+    candidate = line[relative_indent:]
+    fence_match = re.match(r"(`{3,}|~{3,})", candidate)
+    if fence_match is None:
+        return False
+    fence = fence_match.group(1)
+    return not (
+        fence.startswith("`") and "`" in candidate[fence_match.end() :]
+    )
+
+
 def starts_markdown_block_construct(line: str) -> bool:
     """Return whether a line starts a non-paragraph Markdown block.
 
@@ -1568,13 +1602,12 @@ def starts_markdown_block_construct(line: str) -> bool:
             re.compile(r" {0,3}>"),
             re.compile(r" {0,3}(?:[*+-]|\d{1,9}[.)])(?:[ \t]+|$)"),
             re.compile(r" {0,3}(?:#{1,6})(?:[ \t]+|$)"),
-            re.compile(r" {0,3}(?:`{3,}|~{3,})"),
             re.compile(
                 r" {0,3}(?:(?:\*[ \t]*){3,}|(?:_[ \t]*){3,}|"
                 r"(?:-[ \t]*){3,})$"
             ),
         )
-    ) or starts_markdown_html_block(line)
+    ) or starts_valid_markdown_fence(line) or starts_markdown_html_block(line)
 
 
 def markdown_raw_html_block_lines(text: str) -> set[int]:
@@ -1909,7 +1942,6 @@ def strip_markdown_nonoperative_content(text: str) -> str:
     interrupting_block_patterns = (
         re.compile(r" {0,3}#{1,6}(?:[ \t]+|$)"),
         re.compile(r" {0,3}(?:[*+-]|1[.)])[ \t]+(?=\S)"),
-        re.compile(r" {0,3}(?:`{3,}|~{3,})"),
         re.compile(
             r" {0,3}(?:(?:\*[ \t]*){3,}|(?:_[ \t]*){3,}|"
             r"(?:-[ \t]*){3,})(?:\r?\n)?$"
@@ -1931,7 +1963,10 @@ def strip_markdown_nonoperative_content(text: str) -> str:
             starts_interrupting_block = any(
                 pattern.match(line) is not None
                 for pattern in interrupting_block_patterns
-            ) or line_index in html_block_interrupt_lines
+            ) or (
+                starts_valid_markdown_fence(line)
+                or line_index in html_block_interrupt_lines
+            )
             if starts_interrupting_block:
                 in_block_quote = False
                 without_quotes_lines.append(line)

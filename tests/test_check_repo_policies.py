@@ -1867,16 +1867,23 @@ def test_agent_policy_gate_ignores_css_hidden_html_policy_sections(
             "display:inline; display:none",
             "display:none !important; display:inline",
             "display:none; display:bogus",
+            "display:none; display:calc(1)",
             "color:red; DISPLAY: none !important;",
             "visibility:hidden",
             "visibility:hidden; visibility:bogus",
+            "visibility:hidden; visibility:calc(1)",
             "visibility: collapse !important",
             "content-visibility:hidden",
             "content-visibility:hidden; content-visibility:bogus",
+            "content-visibility:hidden; content-visibility:calc(1)",
             "opacity:0",
             "opacity:-1",
             "opacity:-0.5",
             "opacity:-10%",
+            "opacity:calc(0)",
+            "opacity:min(0, 1)",
+            "opacity:max(0, 0)",
+            "opacity:clamp(0, 0, 1)",
             "opacity:0; opacity:bogus",
         ):
             write_policy_files(tmp_path)
@@ -2379,6 +2386,42 @@ def test_agent_policy_gate_ignores_nested_quote_lazy_continuations(
         quote_prefix = "" if anchor.startswith("#") else "  "
         text = path.read_text(encoding="utf-8").replace(marker, "", 1)
         insertion = f"\n{quote_prefix}> > quoted example\n{quote_prefix}{marker}"
+        path.write_text(
+            text.replace(anchor, anchor + insertion, 1)
+            if anchor.startswith("#")
+            else text.replace(sibling, insertion + sibling, 1),
+            encoding="utf-8",
+        )
+
+        findings = check_agent_policy_gate(tmp_path)
+
+        assert len(findings) == 1
+        assert findings[0].path == path
+        assert findings[0].message == (
+            f"completed-task cleanup section marker is missing: {marker}"
+        )
+
+
+def test_agent_policy_gate_keeps_invalid_fences_in_lazy_block_quotes(
+    tmp_path: Path,
+) -> None:
+    """Verify invalid backtick info cannot interrupt a quoted paragraph.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    marker = '`cleanup-ready`'
+    sibling = "\n- following policy"
+    for relative_path in ORDERED_TERMINAL_CLEANUP_MARKERS:
+        write_policy_files(tmp_path)
+        path = tmp_path / relative_path
+        anchor = TERMINAL_CLEANUP_SECTION_ANCHORS[relative_path]
+        quote_prefix = "" if anchor.startswith("#") else "  "
+        text = path.read_text(encoding="utf-8").replace(marker, "", 1)
+        insertion = (
+            f"\n{quote_prefix}> quoted example\n"
+            f"{quote_prefix}```invalid {marker}"
+        )
         path.write_text(
             text.replace(anchor, anchor + insertion, 1)
             if anchor.startswith("#")
