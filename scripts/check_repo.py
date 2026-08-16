@@ -16,6 +16,7 @@ import subprocess
 import sys
 import tomllib
 from dataclasses import dataclass
+from html import unescape
 from pathlib import Path
 from urllib.parse import unquote
 
@@ -1252,7 +1253,7 @@ def strip_markdown_blank_terminated_inert_html_blocks(text: str) -> str:
     """
     block_tags = "code|head|iframe|noscript|template|title|xmp"
     block_start = re.compile(
-        rf" {{0,3}}</?(?:{block_tags})(?=(?:\s|/?>|$))",
+        rf" {{0,3}}</?(?P<tag>{block_tags})(?=(?:\s|/?>|$))",
         flags=re.IGNORECASE,
     )
     visible_lines: list[str] = []
@@ -1265,7 +1266,15 @@ def strip_markdown_blank_terminated_inert_html_blocks(text: str) -> str:
             else:
                 visible_lines.append("\n" if line.endswith("\n") else "")
             continue
-        if block_start.match(line) is not None:
+        if start_match := block_start.match(line):
+            same_line_close = re.search(
+                rf"</{re.escape(start_match.group('tag'))}[ \t\r\n]*>",
+                line[start_match.end() :],
+                flags=re.IGNORECASE,
+            )
+            if same_line_close is not None:
+                visible_lines.append(line)
+                continue
             in_raw_block = True
             visible_lines.append("\n" if line.endswith("\n") else "")
         else:
@@ -1309,6 +1318,7 @@ def has_css_hidden_style(attributes: str) -> bool:
             )
             if value is not None
         )
+        style = unescape(style)
         style = re.sub(r"/\*.*?\*/", "", style, flags=re.DOTALL)
         style = decode_css_escapes(style)
         hidden_declarations = (
