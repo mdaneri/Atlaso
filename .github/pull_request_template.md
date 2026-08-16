@@ -33,6 +33,34 @@ surfaces.
   one. Before any authorized squash merge, explicit holds, strict up-to-date required checks that bind the base, an
   expected-head guard without administrative bypass, and confirmation that no merge queue is required were checked; or
   this pull request is outside that policy.
+- [ ] After any authorized merge and remaining post-merge activity, the originating task will send a `cleanup-ready`
+  handoff and remain incomplete until `remote_branch_absent`, `worktree_removed`, and `task_title_done` occur in order;
+  an existing remote ref will be deleted only with an atomic expected-SHA lease such as
+  `--force-with-lease=refs/heads/BRANCH:HEAD_SHA`, and any lease rejection or unavailable guard blocks cleanup. Only
+  then may supported title controls append the exact suffix " · Done" once. If no supported mutable title control exists,
+  `task_title_done` as verified not applicable requires capability evidence and omits the visible suffix.
+
+  A non-primary task records `worktree_removed` only after removing and pruning its worktree, verifying path and
+  registration absence, deleting only the exact unreferenced local task branch that still equals the recorded head,
+  and verifying `local_task_branch_absent`. An interrupted `worktree_removal_resume` requires the remote ref, path, and
+  registration absent plus the same ownership, head, and merge evidence before deleting that local ref or accepting it
+  as already absent.
+
+  A primary-checkout task records `primary_checkout_restored` only after switching a clean exact-head checkout to
+  current `origin/main`, verifying HEAD, and deleting only the exact unreferenced local task branch.
+  An interrupted `primary_checkout_resume` requires clean local `main` freshly fast-forwarded to current `origin/main`,
+  the remote ref absent, and the exact local task branch safely deletable or already absent under the same evidence.
+
+  Terminal order:
+
+  1. `remote_branch_absent`
+  2. `worktree_removed`
+  3. `task_title_done`
+
+  Private remediation requires privately verified `advisory_cleanup_ready` instead of a closed public issue and retains
+  sanitized task state until coordinated release, disclosure, and authorized advisory-state activity are complete. Its
+  `advisory_remote_branch_absent` gate privately binds and removes only the exact temporary-fork ref with the same
+  atomic expected-SHA lease, never the fork.
 - [ ] Evidence-backed issues discovered outside this pull request's linked scope were matched to existing issues or
   opened separately with one appropriate type label; suspected sensitive vulnerabilities were kept private.
 - [ ] For a temporary-private-fork pull request, advisory-side maintainer review and recorded local validation replace

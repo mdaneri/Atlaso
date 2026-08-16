@@ -33,6 +33,37 @@ New Tabulators must use `window.AtlasoUiPatterns.createGrid(...)`; every new or 
   preserve explicit holds, require strict up-to-date required checks to bind the validated base, also guard the head
   SHA, never use an administrative bypass, fail closed instead of invoking `gh pr merge` when a merge queue is required,
   and keep GitHub auto-merge as a separate explicit maintainer choice;
+- after an authorized merge and all remaining activity, send the primary-checkout controller a `cleanup-ready` handoff
+  and require the ordered terminal states `remote_branch_absent`, `worktree_removed`, and `task_title_done`; delete only
+  the task-owned GitHub branch with an atomic expected-SHA lease such as
+  `--force-with-lease=refs/heads/BRANCH:HEAD_SHA`, fail closed on a lease rejection or unavailable atomic guard,
+  never remove the primary checkout, and append the exact suffix " · Done" once only after every cleanup gate succeeds.
+  If no supported mutable task-title control exists,
+  record `task_title_done` as verified not applicable with capability evidence, omit the visible suffix, and do not block
+  otherwise-complete cleanup;
+
+  For a non-primary worktree, record `worktree_removed` only after `git worktree remove`, stale-registration pruning,
+  path and registration absence, deletion of the exact unreferenced local task branch that still equals the recorded
+  head, and verified `local_task_branch_absent`. An interrupted `worktree_removal_resume` may finish that local-ref
+  deletion only when the remote ref, path, and registration remain absent and the same ownership, head, and merge
+  evidence still proves the exact local branch safely deletable or already absent.
+
+  A primary-checkout task must restore the clean checkout to current `origin/main`, verify HEAD, delete only the exact
+  unreferenced local task branch, and record `primary_checkout_restored` before worktree removal becomes not applicable.
+  An interrupted `primary_checkout_resume` is valid only from clean local `main` freshly fast-forwarded to current
+  `origin/main`, with the remote ref absent and the exact local task branch safely deletable or already absent.
+
+  Terminal order:
+
+  1. `remote_branch_absent`
+  2. `worktree_removed`
+  3. `task_title_done`
+
+  Private remediation requires privately verified `advisory_cleanup_ready` in place of a closed public issue; keep the
+  advisory identity, title, handoff, evidence, and temporary-fork operations sanitized, and retain the task through
+  coordinated release, disclosure, and authorized advisory-state activity. Fulfill the first terminal state through
+  `advisory_remote_branch_absent` by privately binding and deleting only the exact temporary-fork ref at the recorded
+  private-pull-request head with the same atomic expected-SHA lease; never delete the fork or change advisory state.
 - keep each pull request within its linked scope; search for an existing issue and open a separately typed, sanitized
   issue when an evidence-backed unrelated problem has no tracking record, while routing suspected vulnerabilities
   through `SECURITY.md` instead of a public issue;

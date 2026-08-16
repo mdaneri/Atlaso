@@ -163,6 +163,75 @@ explicit subject and extended squash-commit body instead of accepting a title-on
 The body must explain the outcome and rationale, summarize the principal changes, record validation evidence, and name
 the linked issue or issues. Keep it accurate to the exact merged head and exclude secrets.
 
+## Completed Task Cleanup
+
+An ordinary implementation task becomes cleanup-ready only after its pull request is merged, the merge commit is
+reachable from current `origin/main`, the linked issue is closed, applicable post-merge workflows are complete, and no
+review, deployment, release, or maintainer activity remains. Private remediation uses `advisory_cleanup_ready` instead
+of the nonexistent public-issue gate: an explicitly authorized advisory administrator must have merged the private
+pull request through its draft advisory, the resulting commit must be reachable from current `origin/main`, required
+advisory-side review and recorded local validation must be complete, coordinated release and disclosure activity must
+be finished, and the advisory must require no further task activity. Before becoming idle, a worktree-backed
+originating task must send a `cleanup-ready` handoff to a cleanup controller running from the repository's primary
+checkout. The handoff must name
+the repository, task identifier and current title, pull-request number, task-owned branch, absolute worktree path,
+pull-request head SHA, and merge commit SHA. A handoff is evidence to revalidate, never authority to skip a gate.
+
+The primary-checkout controller must wait until the originating task is idle and unpinned, then independently re-fetch
+task, GitHub, and Git worktree state. It must verify the exact merged pull request, completed post-merge activity, and
+exclusive task ownership of the branch and checkout. Require a closed linked issue for ordinary work or privately
+revalidate every `advisory_cleanup_ready` criterion against the corresponding advisory record. Determine first whether
+the task uses the repository's primary checkout and verify that identity separately. Only a non-primary target must be
+a registered, clean, unlocked, non-reparse-point worktree beneath the resolved Codex worktree root. Never remove the primary
+checkout, a user-created or permanent worktree, or a worktree whose ownership or state is ambiguous. A squash-merged
+pull-request head need not be an ancestor of `main` only when the worktree HEAD equals the recorded pull-request head
+SHA and the recorded merge commit is reachable from current `origin/main`.
+
+Terminal order:
+
+1. `remote_branch_absent`
+2. `worktree_removed`
+3. `task_title_done`
+
+For ordinary `remote_branch_absent`, delete only the exact task-owned branch from its same-repository GitHub remote.
+If the ref exists, require it to equal the pull-request head SHA and delete it with an atomic expected-SHA lease such as
+`--force-with-lease=refs/heads/BRANCH:HEAD_SHA`; a lease rejection or unsupported atomic guard blocks cleanup. Then
+verify the remote ref is absent.
+For private remediation, satisfy `advisory_remote_branch_absent` only on private surfaces: bind the exact temporary
+private fork, private pull request, branch, task, and recorded head SHA through the advisory; if the ref exists, require
+it to equal that head and use the same atomic expected-SHA lease before deleting only the ref and privately verifying
+absence. An already absent ref satisfies the gate only after the same private identity and merge evidence are verified.
+Never delete the temporary fork, change
+advisory state, or enable repository-wide automatic branch deletion. For `worktree_removed`, first verify that the exact
+local task branch is absent or still equals the recorded pull-request head and is referenced only by the target
+worktree. Use `git worktree remove`, prune only stale worktree metadata for the affected repository, and verify both the
+path and registration are absent. Then require the local branch to be unreferenced by every registered worktree, delete
+only that exact ref when present, and verify `local_task_branch_absent` before recording `worktree_removed`. A retry
+interrupted after the path and registration disappeared but before local-ref deletion may enter
+`worktree_removal_resume` only when the remote ref remains absent, the path and registration remain absent, and the
+same task ownership, pull-request head, and merge evidence prove that the exact unreferenced local branch is safely
+deletable or already absent.
+For a task running in the primary checkout, the initial path requires a clean checkout still at the recorded task head;
+fetch current `origin/main`, switch to local `main` without force, fast-forward it exactly to `origin/main`, and verify
+the resulting HEAD. A retry interrupted after that switch may enter `primary_checkout_resume` only when the checkout is
+clean on local `main`, a fresh fetch and non-forced fast-forward makes it equal current `origin/main`, the remote task
+ref remains absent, and the local task branch either still equals the recorded pull-request head while checked out
+nowhere or is already absent under the same task ownership and merge evidence. Delete the exact local task branch when
+it remains, record `primary_checkout_restored`, then record worktree removal as not applicable and never remove the
+checkout.
+For `task_title_done`, use supported task-title controls to append the exact suffix " · Done" once, preserving the
+description and issue/pull-request traceability. Keep the completed task unarchived unless a maintainer separately
+requests archival. Only when the runtime exposes no supported mutable task-title control,
+record `task_title_done` as verified not applicable with the capability evidence; do not append or claim a visible Done
+suffix, and do not block otherwise-complete cleanup on the unavailable control.
+
+Any failed or ambiguous gate blocks `task_title_done`; leave the task actionable and report the exact retry condition.
+The daily Codex cleanup automation is the reconciliation backstop for missed handoffs and partially completed terminal
+transitions, but it must apply the same checks and ordering. Private vulnerability remediation additionally follows
+`SECURITY.md`: keep titles, handoffs, controller output, advisory identity, and temporary-fork remote operations
+sanitized and private; block rather than expose or guess when private state cannot be verified; and do not treat an
+advisory merge as lifecycle completion while coordinated release, disclosure, or authorized advisory-state work remains.
+
 ## Documentation and branding
 
 Markdown is the canonical documentation source. Follow the
