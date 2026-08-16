@@ -4116,9 +4116,13 @@ def test_committed_prestart_recreates_gate_and_defers_worker_proof(monkeypatch, 
     monkeypatch.setattr(
         helper,
         "_schedule_committed_release_completion",
-        lambda: helper._release_check("committed_activation_handoff", True, "scheduled"),
+        lambda _job_id: {
+            **helper._release_check("committed_activation_handoff", True, "scheduled"),
+            "owner": {"boot_id": "new", "pid": 202, "start_ticks": "22"},
+        },
     )
-    monkeypatch.setattr(helper, "_write_release_finalizer", lambda _payload: None)
+    persisted: list[dict] = []
+    monkeypatch.setattr(helper, "_write_release_finalizer", lambda payload: persisted.append(payload))
     monkeypatch.setattr(helper, "_write_update_info", lambda _payload: None)
     monkeypatch.setattr(
         helper,
@@ -4131,6 +4135,11 @@ def test_committed_prestart_recreates_gate_and_defers_worker_proof(monkeypatch, 
     assert result["status"] == "activation_committed"
     assert result["allow_worker"] is True
     assert gate_calls == [(True, "job-committed-reboot")]
+    assert persisted[-1]["transaction_recovery"]["owner"] == {
+        "boot_id": "new",
+        "pid": 202,
+        "start_ticks": "22",
+    }
 
 
 def test_committed_handoff_waits_for_new_worker_before_front_door(monkeypatch, tmp_path):
@@ -4181,6 +4190,45 @@ def test_committed_handoff_waits_for_new_worker_before_front_door(monkeypatch, t
     assert observed["expected_release"] == candidate
     assert observed["expected_job_id"] == "job-committed-worker"
     assert observed["previous_pid"] == 0
+
+
+def test_committed_forward_scheduler_binds_stable_unit_owner(monkeypatch):
+    """Verify reboot forward completion reports one stable live helper identity.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace systemd process discovery.
+    """
+    from tests.test_appliance_update import load_helper_module
+
+    helper = load_helper_module()
+    commands: list[list[str]] = []
+
+    def command_payload(command):
+        """Record the transient-unit command and return successful scheduling evidence.
+
+        Args:
+            command: Root-owned systemd-run command selected by the helper.
+        """
+        commands.append(command)
+        return helper._release_check("committed_activation_handoff", True, "scheduled")
+
+    monkeypatch.setattr(helper, "_command_payload", command_payload)
+    monkeypatch.setattr(helper, "_service_main_pid", lambda _unit: 303)
+    monkeypatch.setattr(
+        helper,
+        "_running_worker_process_identity",
+        lambda _pid: {"boot_id": "current", "pid": 303, "start_ticks": "33"},
+    )
+
+    first = helper._schedule_committed_release_completion("job-stable-forward")
+    second = helper._schedule_committed_release_completion("job-stable-forward")
+
+    first_unit = commands[0][commands[0].index("--unit") + 1]
+    second_unit = commands[1][commands[1].index("--unit") + 1]
+    assert first_unit == second_unit
+    assert first["unit"] == f"{first_unit}.service"
+    assert first["owner"] == {"boot_id": "current", "pid": 303, "start_ticks": "33"}
+    assert second["owner"] == first["owner"]
 
 
 def test_release_maintenance_cleanup_validates_and_reloads_nginx(monkeypatch, tmp_path):

@@ -261,8 +261,11 @@ pre-start distinguishes the live helper by boot, PID, and process-start identity
 recorded helper no longer owns the transaction, privileged pre-start recovery restores and verifies the previous
 release, then runs the restored task's normal child, parent, log, and audit bookkeeping once through the retained
 candidate environment before deleting it or admitting the previous worker. This bounded handoff runs as the Atlaso
-service account and may finish untouched safe children; a failure retains the candidate, maintenance response, and
-runtime gate for retry. The worker unit allows up to 30 minutes for this recovery. The worker exits for systemd retry
+service account but leaves untouched children pending for the restored worker; a failure retains the candidate,
+maintenance response, and runtime gate for retry. Committed forward recovery instead schedules one stable per-job
+systemd unit and durably replaces the prior-boot owner with that helper's exact live identity before the candidate starts,
+preventing both premature timeout and overlapping completion helpers. The worker unit allows up to 30 minutes for this
+recovery. The worker exits for systemd retry
 instead of accepting work if that recovery or gate does not complete. Runtime rollback preserves and verifies the
 already-running caller or candidate worker until the
 definitive rollback write and never starts a restored legacy worker inside the transaction. After completing rollback

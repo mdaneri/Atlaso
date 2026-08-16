@@ -419,8 +419,9 @@ status: current
   validating, reloading, and opening nginx. Failures after that commit must preserve the candidate and retry forward;
   never restore the database snapshot after the front door can admit operator writes. Worker pre-start must distinguish
   a live helper by boot, PID, and process-start identity. Stale committed evidence after reboot must recreate its
-  volatile gate, schedule root-owned completion, and admit the gated candidate without requiring the not-yet-started
-  worker; definitive completion then requires that worker's exact published job, version, release-root, current-boot,
+  volatile gate, schedule one stable per-job root-owned completion unit, durably replace the prior-boot owner with that
+  helper's exact live identity, and admit the gated candidate without requiring the not-yet-started worker; definitive
+  completion then requires that worker's exact published job, version, release-root, current-boot,
   PID, and process-start identity. Stale provisional
   evidence after a host restart must restore and verify the previous release before the worker is admitted. Flush the
   database and every installed-asset rollback backup plus its directory entries before publishing the durable recovery

@@ -335,7 +335,9 @@ The following cross-cutting boundaries always apply:
   Persist the bounded rollback manifest before switching the active link, persist restart-pending evidence before the
   volatile runtime gate, and keep recovery behind that gate until the definitive write completes. Worker pre-start must
   distinguish the live helper by boot, PID, and process-start identity and roll back stale provisional evidence before
-  admitting the worker after a host restart. While that exact helper remains live, extend the candidate worker's gate
+  admitting the worker after a host restart. Reboot forward recovery must use one stable per-job systemd unit and replace
+  the prior-boot owner with that helper's exact live identity before admitting the candidate worker. While that exact
+  helper remains live, extend the candidate worker's gate
   wait so a timeout cannot restart through a restored legacy unit before definitive rollback evidence. Flush every
   database and installed-asset rollback backup plus its directory entries before publishing the durable manifest.
   A missing database backup makes rollback incomplete, and restore every installed asset independently so one failure

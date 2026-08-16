@@ -11375,13 +11375,18 @@ def _finish_committed_release_after_worker_start() -> dict:
     return _complete_committed_release_activation(parsed)
 
 
-def _schedule_committed_release_completion() -> dict:
-    """Schedule root-owned forward completion after worker ExecStart begins."""
-    return _command_payload(
+def _schedule_committed_release_completion(job_id: str) -> dict:
+    """Schedule root-owned forward completion and return its exact process owner.
+
+    Args:
+        job_id: Appliance Update job used to derive the stable transient-unit name.
+    """
+    unit = f"atlaso-release-forward-{hashlib.sha256(job_id.encode('utf-8')).hexdigest()[:16]}"
+    scheduled = _command_payload(
         [
             "systemd-run",
             "--unit",
-            f"atlaso-release-forward-{os.getpid()}",
+            unit,
             "--collect",
             "--no-block",
             "--property=Type=oneshot",
@@ -11392,6 +11397,20 @@ def _schedule_committed_release_completion() -> dict:
             "--real",
         ]
     )
+    if not scheduled.get("success"):
+        return scheduled
+    for _attempt in range(50):
+        owner = _running_worker_process_identity(_service_main_pid(f"{unit}.service"))
+        if owner:
+            return {**scheduled, "unit": f"{unit}.service", "owner": owner}
+        time.sleep(0.1)
+    return {
+        **scheduled,
+        "returncode": 1,
+        "success": False,
+        "stderr": "Committed activation completion did not publish a live process identity.",
+        "unit": f"{unit}.service",
+    }
 
 
 def _recover_interrupted_release_transaction() -> dict:
@@ -11434,11 +11453,20 @@ def _recover_interrupted_release_transaction() -> dict:
             commands.append(maintenance)
             if not maintenance.get("success"):
                 raise ValueError("committed activation could not restore maintenance mode")
-            scheduled = _schedule_committed_release_completion()
+            scheduled = _schedule_committed_release_completion(job_id)
             commands.append(scheduled)
             if not scheduled.get("success"):
                 raise ValueError("committed activation completion could not be scheduled")
-            pending = {**parsed, "commands": commands}
+            forward_owner = scheduled.get("owner")
+            if not isinstance(forward_owner, dict):
+                raise ValueError("committed activation completion has no live process identity")
+            pending_recovery = dict(recovery) if isinstance(recovery, dict) else {}
+            pending_recovery["owner"] = forward_owner
+            pending = {
+                **parsed,
+                "commands": commands,
+                "transaction_recovery": pending_recovery,
+            }
             _write_release_finalizer(pending)
             _write_update_info(pending)
             return {
