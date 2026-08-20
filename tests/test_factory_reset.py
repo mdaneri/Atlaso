@@ -4,6 +4,7 @@ import builtins
 import json
 import subprocess
 import sys
+from contextlib import contextmanager
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -94,6 +95,39 @@ def test_factory_reset_transaction_lock_rejects_overlapping_posix_runner(
     with pytest.raises(FactoryResetError, match="already running"):
         with factory_reset._factory_reset_transaction_lock():
             pytest.fail("contending runner must not enter the transaction")
+
+
+def test_factory_reset_runner_waits_for_admission_lock(monkeypatch):
+    """The detached runner tolerates the scheduler's bounded lock handoff race.
+
+    Args:
+        monkeypatch: Pytest fixture used to record runner lock admission.
+    """
+    import atlaso.app.factory_reset as factory_reset
+
+    observed_waits: list[float] = []
+
+    @contextmanager
+    def fake_lock(*, wait_seconds=0):
+        """Record the bounded wait and admit the test runner.
+
+        Args:
+            wait_seconds: Maximum lock handoff wait requested by the runner.
+        """
+        observed_waits.append(wait_seconds)
+        yield
+
+    monkeypatch.setattr(factory_reset, "_factory_reset_transaction_lock", fake_lock)
+    monkeypatch.setattr(
+        factory_reset,
+        "_run_factory_reset_locked",
+        lambda **_kwargs: {"state": "succeeded"},
+    )
+
+    result = factory_reset.run_factory_reset(manage_services=False)
+
+    assert result == {"state": "succeeded"}
+    assert observed_waits == [factory_reset.FACTORY_RESET_RUNNER_LOCK_WAIT_SECONDS]
 
 
 def test_factory_reset_stops_transient_helper_restart_and_automation_units(monkeypatch):

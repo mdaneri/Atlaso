@@ -1,6 +1,7 @@
 """Translate validated operations into dry-run records or helper calls."""
 
 import json
+import os
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -1068,7 +1069,12 @@ class SystemAdapter:
             return AdapterResult(command=display_command, dry_run=True, stdout=dry_run_message, returncode=dry_run_returncode)
 
         command = [self.HELPER_PATH, group, action, "--real", *args]
-        if use_sudo:
+        running_as_root = bool(
+            os.name == "posix"
+            and callable(getattr(os, "geteuid", None))
+            and os.geteuid() == 0
+        )
+        if use_sudo and not running_as_root:
             command = ["sudo", "-n", *command]
         run_kwargs: dict[str, object] = {
             "check": False,

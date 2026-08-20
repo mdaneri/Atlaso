@@ -83,6 +83,7 @@ HELPER_ACTION_TRANSIENT_UNIT_PATTERN = re.compile(
     r"^atlaso-helper-action-[0-9a-f]{32}\.service$"
 )
 HELPER_ACTION_QUIESCE_MAX_PASSES = 16
+FACTORY_RESET_RUNNER_LOCK_WAIT_SECONDS = 30
 UPDATE_RESTART_TIMER_PATTERN = re.compile(r"^atlaso-update-restart-\d{20}\.timer$")
 UPDATE_RESTART_SERVICE_PATTERN = re.compile(r"^atlaso-update-restart-\d{20}\.service$")
 WEB_TERMINAL_CREDENTIAL_PATHS = (
@@ -1336,7 +1337,9 @@ def run_factory_reset(
         adapter: Optional system adapter override.
         manage_services: Whether to quiesce and restart appliance services.
     """
-    with _factory_reset_transaction_lock():
+    with _factory_reset_transaction_lock(
+        wait_seconds=FACTORY_RESET_RUNNER_LOCK_WAIT_SECONDS
+    ):
         return _run_factory_reset_locked(
             database_url=database_url,
             adapter=adapter,

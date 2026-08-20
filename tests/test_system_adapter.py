@@ -144,6 +144,43 @@ def test_factory_reset_network_runtime_cleanup_uses_constrained_helper(monkeypat
     assert commands == [result.command]
 
 
+def test_root_helper_call_avoids_sudo_environment_scrub(monkeypatch):
+    """A root reset runner invokes the helper without a root-to-root sudo hop.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace process identity and execution.
+    """
+    import atlaso.app.adapters.system as system_adapter
+
+    commands: list[list[str]] = []
+
+    def fake_run(command, **_kwargs):
+        """Record the helper command and return success.
+
+        Args:
+            command: Exact command arguments passed to subprocess.
+            **_kwargs: Subprocess options ignored by the test double.
+        """
+        commands.append(command)
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(system_adapter.os, "name", "posix")
+    monkeypatch.setattr(system_adapter.os, "geteuid", lambda: 0, raising=False)
+    monkeypatch.setenv("ATLASO_HELPER_USE_SYSTEMD_RUN", "1")
+    monkeypatch.setattr(system_adapter.subprocess, "run", fake_run)
+
+    result = SystemAdapter(dry_run=False).reset_factory_network_runtime()
+
+    expected = [
+        SystemAdapter.HELPER_PATH,
+        "factory-reset",
+        "reset-network-runtime",
+        "--real",
+    ]
+    assert result.command == expected
+    assert commands == [expected]
+
+
 def test_appliance_power_action_rejects_unknown_action():
     """Verify that appliance power action rejects unknown action."""
     result = SystemAdapter(dry_run=False).schedule_appliance_power("restart")

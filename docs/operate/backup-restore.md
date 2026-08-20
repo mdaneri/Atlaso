@@ -115,6 +115,11 @@ does not clear the later administrator's session or imply that their password ch
 password summary beside the reset form always describes the packaged factory Local Users policy that validates changed
 administrator and root values, even when current desired state contains a different policy.
 
+The detached runner waits up to 30 seconds for the scheduler's short admission lock handoff, so a submission racing the
+two-second timer cannot strand an accepted request in `scheduled`. Because the runner is already root, its SystemAdapter
+helper calls also bypass a redundant root-to-root `sudo` hop; this preserves the helper-action isolation mode supplied
+by the transient unit without broadening the non-root sudoers contract.
+
 Reset progress and only the non-secret `keep`/`change` choices are recorded outside the database in
 `/var/lib/atlaso/factory-reset/request.json`; the last successful result is recorded in `last-result.json`. Atlaso
 resumes an incomplete marker before the web control plane starts after
