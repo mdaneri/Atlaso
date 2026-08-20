@@ -2306,6 +2306,42 @@ def test_inventory_storage_pruning_preserves_assigned_hosts(db_session, monkeypa
     assert db_session.get(NetworkBootDiscoveredHost, stale_host.id) is None
 
 
+def test_host_reference_lifecycle_lock_uses_postgresql_transaction_lock():
+    """Verify that PostgreSQL serializes Host Reference lifecycle transactions."""
+
+    class PostgreSqlBind:
+        """Expose the PostgreSQL dialect name used by the lock helper."""
+
+        class Dialect:
+            """Represent the database dialect."""
+
+            name = "postgresql"
+
+        dialect = Dialect()
+
+    class RecordingSession:
+        """Record the SQL statement issued by the lock helper."""
+
+        bind = PostgreSqlBind()
+
+        def __init__(self):
+            self.calls = []
+
+        def execute(self, statement, parameters):
+            self.calls.append((str(statement), parameters))
+
+    session = RecordingSession()
+
+    network_boot.lock_esxi_host_reference_lifecycle(session)
+
+    assert session.calls == [
+        (
+            "SELECT pg_advisory_xact_lock(:lock_id)",
+            {"lock_id": network_boot.ESXI_HOST_REFERENCE_LIFECYCLE_LOCK_ID},
+        )
+    ]
+
+
 @pytest.mark.parametrize(
     ("maximum_hosts", "maximum_reports"),
     [(1, 2), (2, 1)],

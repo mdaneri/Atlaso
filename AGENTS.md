@@ -375,7 +375,9 @@ The following cross-cutting boundaries always apply:
   and host row only through the explicit associated-discovery option. Keep
   Host Reference association IDs synchronized during live discovery refresh,
   and reject associated-discovery cleanup while another Host Reference still
-  owns any reported MAC for that discovery. Protect assigned discoveries and
+  owns any reported MAC for that discovery. Serialize Host Reference writes
+  with associated-discovery cleanup so the ownership preflight remains valid
+  through commit. Protect assigned discoveries and
   all of their retained reports from automatic capacity pruning; reject new
   report admission as retryable when live or assigned state alone fills either
   global storage limit. Expose the same retain-or-clean-up lifecycle through

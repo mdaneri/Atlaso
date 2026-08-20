@@ -48,6 +48,7 @@ from atlaso.app.services.esxi_pxe import (
     validate_kickstart_vault_references,
 )
 from atlaso.app.services.network_boot import (
+    lock_esxi_host_reference_lifecycle,
     remove_esxi_host_discovery_state,
 )
 from atlaso.app.ui_routes import MANAGEMENT_UI_ROOT
@@ -1130,6 +1131,7 @@ def build_router(dependencies: NetworkBootUiDependencies) -> NetworkBootUiRouter
         """
         require_esxi_pxe_write(identity)
         verify_csrf(request, csrf)
+        lock_esxi_host_reference_lifecycle(db)
         normalized_kickstart_id = parse_optional_esxi_kickstart_id(db, kickstart_id)
         try:
             normalized_mac = normalize_host_mac(mac_address)
@@ -1221,6 +1223,7 @@ def build_router(dependencies: NetworkBootUiDependencies) -> NetworkBootUiRouter
         """
         require_esxi_pxe_write(identity)
         verify_csrf(request, csrf)
+        lock_esxi_host_reference_lifecycle(db)
         host = db.get(EsxiPxeHost, host_id)
         if not host:
             raise HTTPException(status_code=404, detail="ESXi PXE host not found")
@@ -1351,6 +1354,7 @@ def build_router(dependencies: NetworkBootUiDependencies) -> NetworkBootUiRouter
         """
         require_esxi_pxe_write(identity)
         verify_csrf(request, csrf)
+        lock_esxi_host_reference_lifecycle(db)
         host = db.get(EsxiPxeHost, host_id)
         if not host:
             raise HTTPException(status_code=404, detail="ESXi PXE host not found")

@@ -30,7 +30,7 @@ from typing import Any, Callable, Iterable
 
 import pycdlib
 from pycdlib import pycdlibexception
-from sqlalchemy import delete, desc, func, select, update
+from sqlalchemy import delete, desc, func, select, text, update
 from sqlalchemy.orm import Session
 
 from atlaso.app.config import get_settings
@@ -79,6 +79,7 @@ NETWORK_BOOT_MAX_DEVICE_FLAGS = 32
 NETWORK_BOOT_REPORTS_PER_HOST = 11
 NETWORK_BOOT_MAX_HOSTS = 512
 NETWORK_BOOT_MAX_REPORTS = 2048
+ESXI_HOST_REFERENCE_LIFECYCLE_LOCK_ID = 0x45535849484F5354
 NETWORK_BOOT_MAX_SESSIONS = 4096
 NETWORK_BOOT_SESSION_LIFETIME = timedelta(hours=8)
 NETWORK_BOOT_ONLINE_THRESHOLD = timedelta(seconds=30)
@@ -1866,6 +1867,7 @@ def remove_esxi_host_discovery_state(
     Raises:
         ValueError: If another Host Reference still owns an associated discovery.
     """
+    lock_esxi_host_reference_lifecycle(db)
     discovered_hosts = discovered_hosts_for_esxi_host(db, esxi_host)
     assignments_by_mac = esxi_host_assignments_by_mac(db)
     blocking_assignments: dict[int, str] = {}
@@ -1898,6 +1900,15 @@ def remove_esxi_host_discovery_state(
             removal_counts[key] += counts[key]
         removal_counts["discovered_hosts_removed"] += 1
     return removal_counts
+
+
+def lock_esxi_host_reference_lifecycle(db: Session) -> None:
+    """Serialize Host Reference writes with associated discovery cleanup."""
+    if db.bind is not None and db.bind.dialect.name == "postgresql":
+        db.execute(
+            text("SELECT pg_advisory_xact_lock(:lock_id)"),
+            {"lock_id": ESXI_HOST_REFERENCE_LIFECYCLE_LOCK_ID},
+        )
 
 
 def remove_discovered_host_state(

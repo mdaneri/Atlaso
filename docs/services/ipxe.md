@@ -417,7 +417,9 @@ discovered host and retained inventory state**; selecting it removes the Host
 Reference and matching discovery commands, sessions, reports, and host row in
 the same transaction. Atlaso rejects that cleanup when the same discovery is
 also assigned to another Host Reference; retry without inventory cleanup or
-remove the other assignment first. API clients use `DELETE
+remove the other assignment first. Atlaso serializes Host Reference writes
+with associated-discovery cleanup so a concurrent create or MAC update cannot
+invalidate that ownership check before commit. API clients use `DELETE
 /api/v1/esxi-pxe/hosts/{host_id}` with `write:esxi-pxe`; the default retains
 discovery history. The optional `remove_discovered_host=true` query additionally
 requires `write:pxe` and applies the same transactional shared-assignment guard.

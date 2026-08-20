@@ -69,7 +69,10 @@ from atlaso.app.services.esxi_pxe import (
     validate_kickstart_custom_references,
     validate_kickstart_vault_references,
 )
-from atlaso.app.services.network_boot import remove_esxi_host_discovery_state
+from atlaso.app.services.network_boot import (
+    lock_esxi_host_reference_lifecycle,
+    remove_esxi_host_discovery_state,
+)
 
 Endpoint = Callable[..., Any]
 
@@ -894,6 +897,7 @@ def build_router() -> NetworkBootApiRouter:
             identity: Authenticated identity authorizing the operation.
             db: Active database session used by the operation.
         """
+        lock_esxi_host_reference_lifecycle(db)
         if payload.kickstart_id and not db.get(EsxiKickstart, payload.kickstart_id):
             raise HTTPException(status_code=404, detail="Kickstart not found")
         try:
@@ -971,6 +975,7 @@ def build_router() -> NetworkBootApiRouter:
             identity: Authenticated identity authorizing the operation.
             db: Active database session used by the operation.
         """
+        lock_esxi_host_reference_lifecycle(db)
         host = db.get(EsxiPxeHost, host_id)
         if not host:
             raise HTTPException(status_code=404, detail="ESXi PXE host not found")
@@ -1095,6 +1100,7 @@ def build_router() -> NetworkBootApiRouter:
                 status_code=403,
                 detail="Missing required scope: write:pxe",
             )
+        lock_esxi_host_reference_lifecycle(db)
         host = db.get(EsxiPxeHost, host_id)
         if not host:
             raise HTTPException(status_code=404, detail="ESXi PXE host not found")
