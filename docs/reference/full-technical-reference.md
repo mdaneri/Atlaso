@@ -951,7 +951,8 @@ writers, repeatedly inventories, stops, and verifies UUID-named `atlaso-helper-a
 and only then inventories delayed update restarts so an in-flight update or nested account mutation cannot escape the
 reset checks. Reset runtime cleanup and root-password mutations use the same bounded family. It validates generated
 nginx, network, firewall, resolver, systemd, and service configuration, and records only bounded non-secret progress.
-`atlaso.service`
+The scheduled reset runner explicitly enables helper-action mode instead of depending on a web-service-only
+environment. `atlaso.service`
 resumes that marker before uvicorn starts after a reboot. Each scheduling
 request owns a distinct mode-`0600` credential file. Nonblocking admission reports lock contention as a retryable
 failure and deletes only that request's file; accepted replacement passwords are prevalidated against the packaged

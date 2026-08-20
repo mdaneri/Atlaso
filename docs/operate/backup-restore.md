@@ -55,7 +55,8 @@ The reset:
 - stops Atlaso, its worker, and the tty1 console, then repeatedly inventories, stops, and verifies UUID-named
   `atlaso-helper-action-*` transient services until none remain before inventorying and cancelling every bounded
   `atlaso-update-restart-*` timer and service; reset cleanup and root-password actions use that bounded family too; it
-  then stops and verifies every timestamped `atlaso-automation-*` transient service before runtime activation so no
+  propagates the helper-action mode into the scheduled reset runner so those bounds also apply to web-triggered resets;
+  it then stops and verifies every timestamped `atlaso-automation-*` transient service before runtime activation so no
   in-flight helper, delayed update restart, console mutation, or pre-reset script with a loaded vault credential can
   outlive the reset transaction; readiness restarts and verifies the console with the other required services;
 - recreates only factory/bootstrap records, including the bootstrap accounts, management `eth0`, the appliance DNS

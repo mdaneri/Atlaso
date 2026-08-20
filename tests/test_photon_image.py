@@ -800,6 +800,10 @@ def test_photon_provisioning_installs_default_nginx_management_proxy():
     assert "HTTPS/443" in docs
     assert "HTTP/80 redirects to HTTPS" in docs
     assert "proxying HTTPS/443 to" in root_docs
+    assert (
+        "ExecStartPre=+/opt/atlaso/bin/atlaso-helper appliance-update recover-release --real"
+        in worker_unit
+    )
     assert "-PipGlobalIndex" in root_docs
     assert "-PipGlobalIndexUrl" in root_docs
     assert "Leave both options empty to keep" in root_docs
@@ -912,6 +916,12 @@ def test_photon_provisioning_prepares_attached_data_disks():
     assert "ExecStart=/opt/atlaso/bin/atlaso-mount-data-disks" in data_disks_unit
     assert "Requires=atlaso-data-disks.service" in bootstrap_unit
     assert "Requires=atlaso-data-disks.service" in nginx_dropin
+    startup_guard = (
+        "ExecStartPre=+/opt/atlaso/bin/atlaso-helper "
+        "appliance-update guard-release --real"
+    )
+    assert startup_guard in atlaso_dropin
+    assert startup_guard in nginx_dropin
     assert "/etc/systemd/system/nginx.service.d/atlaso-data-disks.conf" in provision
     assert "/etc/systemd/system/atlaso.service.d/atlaso-data-disks.conf" in provision
     assert provision.index("systemctl enable --now nginx") < provision.index(
@@ -1575,6 +1585,8 @@ def test_vmware_deploy_wheel_supports_password_backed_noninteractive_deploy():
     assert "import paramiko" in script
     assert 'sys.stdout.reconfigure(errors="replace")' in script
     assert "--local-worker-service" in script
+    assert "--local-atlaso-service-drop-in" in script
+    assert "--local-nginx-service-drop-in" in script
     assert '--local-trust-key", action="append"' in script
     assert '--remote-trust-key", action="append"' in script
     assert "At least one matched local and remote Atlaso release trust key is required." in script
@@ -1591,6 +1603,8 @@ def test_vmware_deploy_wheel_supports_password_backed_noninteractive_deploy():
     assert "Matched local and remote runtime dependency wheels are required." in script
     assert '"$python" -m pip install --force-reinstall --no-deps "$runtime_dependency_path"' in script
     assert '"$python" -m pip install --force-reinstall --no-deps "$wheel"' in script
+    assert "/etc/systemd/system/atlaso.service.d/atlaso-data-disks.conf" in script
+    assert "/etc/systemd/system/nginx.service.d/atlaso-data-disks.conf" in script
     assert "systemctl enable atlaso-worker.service" in script
     assert "systemctl restart atlaso-worker.service" in script
     assert "systemctl is-active atlaso-worker.service" in script

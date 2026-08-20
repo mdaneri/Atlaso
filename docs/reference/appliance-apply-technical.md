@@ -580,9 +580,10 @@ the native validators there without changing the active host configuration. Befo
 the tty1 console with Atlaso and its worker, then repeatedly inventories, stops, and verifies exact UUID-shaped
 `atlaso-helper-action-*` services until none remain. Only then does it inventory and cancel the timestamp-shaped
 `atlaso-update-restart-*` timers and services created by update Apply. Reset runtime cleanup and root-password actions
-also use the bounded helper family. That ordering prevents an in-flight helper or nested account command from mutating
-runtime or scheduling a three-second restart after the restart inventory. Readiness starts and verifies the console
-with the other required services. The non-appliance
+also use the bounded helper family, and the scheduled reset runner explicitly enables that helper-action mode rather
+than depending on the web or worker service environment. That ordering prevents an in-flight helper or nested account
+command from mutating runtime or scheduling a three-second restart after the restart inventory. Readiness starts and
+verifies the console with the other required services. The non-appliance
 fallback likewise
 builds and validates an isolated SQLite candidate, then copies its data under one `BEGIN IMMEDIATE` transaction that
 waits for earlier writers and blocks later writers until replacement commits.

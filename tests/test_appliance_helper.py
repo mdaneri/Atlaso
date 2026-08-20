@@ -187,6 +187,7 @@ def test_factory_reset_helper_persists_marker_before_detached_schedule(
     assert "--on-active=2" in scheduled
     assert f"--property=WorkingDirectory={helper.ATLASO_STATE_DIR}" in scheduled
     assert f"--property=EnvironmentFile={helper.ATLASO_ENV_PATH}" in scheduled
+    assert "--setenv=ATLASO_HELPER_USE_SYSTEMD_RUN=1" in scheduled
     assert scheduled[-3:] == [str(runner), "-m", "atlaso.app.factory_reset"]
 
 
