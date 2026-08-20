@@ -2882,6 +2882,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#extracted-certificate-trust-ownership" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Extracted certificate-trust ownership
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#route-and-openapi-compatibility" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -3675,6 +3686,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#extracted-certificate-trust-ownership" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Extracted certificate-trust ownership
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#route-and-openapi-compatibility" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -4150,6 +4172,41 @@ extraction changes no template, CSS, JavaScript, visible copy, control, layout, 
 interaction class, route, route name, listener, authorization, admin permission, session or CSRF behavior, redirect,
 status code, response, rendering, caching, task, audit, adapter, helper, update-manifest, credential-custody,
 release-signature, activation, rollback, recovery, redaction, route inventory, normalized OpenAPI output, or global
+Appliance Apply boundary.</p>
+<h2 id="extracted-certificate-trust-ownership">Extracted certificate-trust ownership<a class="headerlink" href="#extracted-certificate-trust-ownership" title="Permanent link">&para;</a></h2>
+<p>Certificate Authority and vSphere Key Provider management transports live in
+<code>atlaso/app/routers/ui/certificate_trust.py</code>. The module contributes two ordered
+management routers around Managed LDAP: Certificate Authority remains after the
+DNS/DHCP facade segment and before Managed LDAP, while vSphere Key Providers
+remain after Managed LDAP and before the facade segment that owns NTP, ESX
+Storage, and later VCF workflows. The existing public CA and certificate-request
+routes retain the shared public and protocol router positions supplied by the
+stable UI facade.</p>
+<p>The vSphere Key Provider API v1 operations and the Certificate Authority status
+compatibility operation live in
+<code>atlaso/app/routers/api_v1/certificate_trust.py</code>. The API registry places this
+domain immediately after Managed LDAP and before the remaining Backup Restore
+compatibility operation. The stable <code>atlaso/app/ui.py</code> and
+<code>atlaso/app/api/v1.py</code> facades continue to export every established endpoint and
+helper name while supplying facade-owned rendering, listener, CSRF, desired-state,
+DNS, certificate, and Appliance Apply helpers as bounded dependencies.</p>
+<p>Independently runnable transport coverage lives in
+<code>tests/routers/ui/test_certificate_trust.py</code> and
+<code>tests/routers/api_v1/test_certificate_trust.py</code>. CA and KMIP service, lifecycle,
+protocol, settings-archive, rendering, credential-custody, worker, and global
+Appliance Apply behavior retain their established test owners. Certificate
+Authority singleton settings remain <code>non-grid settings</code> using the DNS settings
+and validation-rail reference. Certificate profiles, request intake, providers,
+trusted vCenters, and certificate lifecycle retain their existing
+<code>wizard-backed Tabulator</code> interactions using ESX Storage. Management and public
+request collections and operational inspection retain their existing
+<code>read-only Tabulator</code> behavior using Tasks and Audit Events.</p>
+<p>This behavior-neutral extraction changes no template, CSS, JavaScript, visible
+copy, control, layout, interaction class, route, route name, operation ID, tag,
+authorization scope, session or CSRF behavior, redirect, status, response schema,
+audit action, public-certificate or redaction contract, certificate/private-key
+custody, managed-certificate ownership, vCenter trust, provider identity, route
+inventory, normalized OpenAPI output, desired state, KMIP protocol, or global
 Appliance Apply boundary.</p>
 <h2 id="route-and-openapi-compatibility">Route and OpenAPI compatibility<a class="headerlink" href="#route-and-openapi-compatibility" title="Permanent link">&para;</a></h2>
 <p><code>tests/contracts/route_inventory.json</code> records every effective application route in order, including browser,
