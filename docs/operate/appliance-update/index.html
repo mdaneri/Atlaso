@@ -3697,9 +3697,14 @@ the update task.</p>
 <p>The appliance never performs a broad runtime <code>pip --upgrade</code> and never contacts PyPI during a Atlaso release update.
 Application dependencies and bootstrap tools are exact, hash-locked wheels inside the release bundle.</p>
 <p>Checks execute every selected child even when another check fails, which keeps diagnostics independent. Installations
-preserve the safety order Atlaso Release, PowerShell Modules, then Photon OS. PowerShell remains independently
-observable after a release failure, while Photon is marked <strong>skipped</strong> with an explicit reason if either earlier
-selected stream failed. The parent succeeds only when every selected child succeeds.</p>
+preserve the safety order Atlaso Release, PowerShell Modules, then Photon OS. After a successful transactional release
+handoff, the restarted candidate worker resumes only the untouched pending module and OS children; it never reruns a
+child that had already started. If rollback restores an older worker that cannot preserve terminal child results,
+Atlaso leaves untouched children explicitly skipped and the parent failed instead of allowing that worker to rerun the
+rejected release; submit those independent streams separately after reviewing the rollback. PowerShell remains
+independently observable after a release failure when the restored worker supports the handoff, while Photon is
+marked <strong>skipped</strong> with an explicit reason if either earlier selected stream failed. The parent succeeds only when every
+selected child succeeds.</p>
 <h2 id="release-sources-and-channels">Release sources and channels<a class="headerlink" href="#release-sources-and-channels" title="Permanent link">&para;</a></h2>
 <p>GitHub is the default distribution origin:</p>
 <ul>
@@ -3853,6 +3858,84 @@ can persist the durable task outcome. Without a matching definitive finalizer, w
 running parent failed even when every child step committed before the restart; child results remain available as
 recovery evidence. Only the current and previous known-good releases are retained; the UI does not expose arbitrary
 historical downgrades.</p>
+<p>Success is recorded only after Atlaso flushes the active switch and installed release assets, validates and reloads
+nginx, removes maintenance mode, and verifies web, worker, console, and nginx service state. The helper writes a
+provisional finalizer, restarts the worker through the candidate release, and requires the new systemd PID to publish
+the matching job, version, and release-root identity. Maintenance remains closed through every stage that can still
+restore the database snapshot. The helper then writes a durable <code>activation_committed</code> checkpoint before opening the
+management front door. A later cleanup, host-facing probe, or definitive-finalizer failure preserves the candidate,
+restores maintenance, and retries forward instead of discarding operator writes. Before switching the active link, the helper
+flushes the database and every installed-asset rollback backup plus their directory entries, then durably records a
+bounded rollback manifest containing the previous and candidate releases. If ESX Storage aliases migrate, the helper
+flushes its added allowlist backup and refreshes the manifest before rewriting either the claims or database, so
+rollback cannot diverge. It persists
+restart-pending evidence before establishing the volatile runtime gate, then keeps
+both workers from consuming a finalizer until its durable write and the surrounding transaction have finished. Atlaso
+and nginx service pre-start guards inspect the durable finalizer and recreate the volatile maintenance response before
+either service starts, so a reboot cannot expose the control plane while rollback is unresolved. Worker pre-start then
+distinguishes the live helper by boot, PID, and process-start identity. If a reboot removes the gate and the recorded
+helper no longer owns the transaction, privileged recovery restores and internally verifies the previous release, then
+runs the restored task's normal child, parent, log, and audit bookkeeping once through the retained candidate environment
+while both maintenance and provisional rollback evidence remain held. That bounded one-shot opens the existing restored
+schema directly; it does not run candidate schema creation or candidate startup reconciliation. Only afterward does
+recovery remove maintenance,
+prove the previous version at the host front door, write definitive healthy-rollback evidence, delete the candidate, and
+admit the previous worker. This bounded handoff runs as the Atlaso
+service account but leaves untouched children pending for the restored worker; a failure retains the candidate,
+maintenance response, and runtime gate for retry. Committed forward recovery instead schedules one stable per-job
+systemd unit and durably replaces the prior-boot owner with that helper's exact live identity before the candidate starts,
+preventing both premature timeout and overlapping completion helpers. The worker unit allows up to 30 minutes for this
+recovery. The worker exits for systemd retry
+instead of accepting work if that recovery or gate does not complete. Runtime rollback preserves and verifies the
+already-running caller or candidate worker until the
+definitive rollback write and never starts a restored legacy worker inside the transaction. After completing rollback
+bookkeeping, a candidate worker exits without running pending children so systemd starts the restored release. Before
+publishing any incomplete rollback, the helper retains provisional owner evidence and stops and verifies the caller
+has exact <code>ActiveState=inactive</code>, including when the runtime gate exists. A failed systemd status query is not inactive
+proof, so the live helper retries without returning to the caller. The candidate directory remains available through
+candidate-version bookkeeping and the restored-worker handoff, including incomplete rollback retries. The surviving
+privileged helper
+removes and flushes any staged
+source-credential file before restarting the calling worker. The definitive finalizer retains sanitized helper command
+evidence so startup recovery can run the same child completion, parent completion, terminal task-log, and audit
+bookkeeping as an uninterrupted update. After a verified healthy release rollback, recovery preserves the failed
+release child and requeues untouched children: PowerShell Modules still runs independently, while Photon OS is skipped
+under the normal earlier-failure rule. A second worker restart requeues any remaining pending children while preserving
+terminal child results. The failed release and completed children are never rerun implicitly. The helper then requires
+<code>current</code>, the compatibility virtualenv, the signed release receipt, internal <code>/openapi.json</code>, and the applied HTTP or
+HTTPS nginx management front door to report the exact candidate version. The finalizer retains the candidate and
+previous versions, receipt identity, active-release verification, internal and front-door versions, and sanitized
+failing layer. Worker startup rechecks the success finalizer against the durable links, signed receipt, and running
+version; inconsistent success evidence fails recovery instead of being accepted. During the first transition from the
+legacy updater, a successful finalizer has only its historical service-health marker. The candidate worker recognizes
+that bounded legacy shape and accepts it only after the active release, compatibility virtualenv, signed receipt
+identity, and running candidate version all agree; startup records that reconciliation with the recovered task result.
+When the signed candidate is already the active release, these same readiness checks are definitive and Atlaso does not
+schedule a second, unobserved delayed service restart. A failed no-change verification retains every sanitized readiness
+command in its finalizer.
+A matching definitive success or verified healthy rollback is authoritative if the helper exits before removing its
+runtime gate: privileged pre-start recovery clears that orphaned gate, and worker startup can defensively supersede it.
+An incomplete rollback keeps maintenance and the gate in place, preventing queued work until rollback can be retried or
+an administrator repairs the recorded failing layer.</p>
+<p>A failure in systemd asset activation, the atomic switch, candidate startup, internal readiness, or worker handoff before
+<code>activation_committed</code> enters the rollback boundary. Before rollback can restart a worker,
+the helper closes the same runtime gate; rollback then restores the previous release, assets, and database and proves
+internal readiness while maintenance remains held. Runtime rollback flushes that restored activation and durably writes
+<code>rolled_back=true</code> before removing maintenance, so a crash can never make the snapshot replayable after an operator write
+is admitted. It then reloads nginx, proves the management-front-door OpenAPI reports the previous version, and durably
+adds that host-facing evidence; a failed probe or final evidence write restores maintenance without reverting the
+definitive no-replay checkpoint. Reboot recovery completes candidate-version task bookkeeping before opening nginx and
+publishing its definitive rollback. A missing
+database backup leaves rollback incomplete,
+and each installed asset is restored independently so one failed destination cannot block later attempts. While the
+recorded helper remains live, the candidate worker extends its gate wait instead of timing out and restarting through a
+restored legacy unit before definitive rollback evidence. Atlaso Release
+installation never reboots the appliance automatically. After <code>activation_committed</code>, maintenance removal, final
+<code>nginx -t</code>, front-door version readiness, and finalizer persistence are forward-only recovery stages. If a reboot removes
+the volatile gate during this state, pre-start recreates it and schedules a root-owned completion service, admits the
+still-gated candidate worker without requiring that service to be active prematurely, and opens the front door only
+after the new worker publishes the exact committed job, version, release-root, current-boot, PID, and process-start
+identity. Persistent startup evidence from an earlier boot or an earlier process is never accepted.</p>
 <h2 id="photon-os-boundary">Photon OS boundary<a class="headerlink" href="#photon-os-boundary" title="Permanent link">&para;</a></h2>
 <p>Manual and scheduled Photon checks/installations remain available. Before mutation, the helper records an inspection of
 the proposed tdnf transaction and queries all repository candidates with the Photon-supported <code>tdnf repoquery python3</code>
@@ -3872,11 +3955,13 @@ sources directly.</p>
 </span></code></pre></div>
 <p>The fixture must use the appliance's named test trust key. Its signed <code>preview</code> channel must select a healthy release
 newer than the image baseline; its signed <code>development</code> channel must select a candidate that reaches database startup
-and then fails the service-health probe. The lifecycle runner proves that each release task exposes a Atlaso Release
-child step, proves the preview upgrade, expects the development parent and child to fail with <code>rolled_back=true</code>, and
-compares the active release, compatibility virtualenv, database schema hash, and user identities before and after
-rollback. It then rechecks the web, worker, console, internal <code>/openapi.json</code>, and host-facing API. Omitting the URL
-skips only this externally supplied fixture.</p>
+and then fails final nginx or management-front-door readiness. The lifecycle runner proves that each release task
+exposes an Atlaso Release child step, proves the preview upgrade and exact host-facing candidate version, performs an
+audited appliance reboot, and requires the same candidate version and release link afterward. It then expects the
+development parent and child to fail with <code>rolled_back=true</code>, compares the active release, compatibility virtualenv,
+database schema hash, and user identities before and after rollback, and rechecks the previous version through the web,
+worker, console, internal <code>/openapi.json</code>, and host-facing API. A second audited reboot must preserve that healthy
+rollback identity and version. Omitting the URL skips only this externally supplied fixture.</p>
 <h2 id="release-operator-workflow">Release operator workflow<a class="headerlink" href="#release-operator-workflow" title="Permanent link">&para;</a></h2>
 <p>The protected workflows use these checked-in inputs:</p>
 <div class="language-text highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>requirements-appliance.lock

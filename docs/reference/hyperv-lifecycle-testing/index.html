@@ -3685,6 +3685,9 @@ the current run that start with the lifecycle lab prefix. Both scripts refuse to
   lifecycle evidence.</li>
 <li>settings backup export, appliance redeploy, settings restore, restored desired-state apply, downloaded Client A
   certificate comparison, and restored CA archive certificate comparison unless <code>-SkipBackupRestoreTest</code> is used</li>
+<li>optional signed Atlaso Release coverage when <code>-SignedReleaseRepositoryUrl</code> is supplied: exact candidate-version
+  agreement through nginx, candidate persistence after an audited appliance reboot, injected final nginx/front-door
+  failure with <code>rolled_back=true</code>, and the restored release identity and version remaining healthy after a second reboot</li>
 </ul>
 <p>The runner submits only global <code>/ui/management/appliance-apply</code> units. It does not call service-specific apply routes.</p>
 <p>ESX Storage acceptance records the global job IDs, stable disk identity and fingerprint, generated family names, direct
