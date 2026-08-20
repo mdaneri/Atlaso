@@ -6671,7 +6671,7 @@ def test_network_boot_host_management_report_and_print_contract(client):
 
     app_js = client.get("/static/app.js").text
     renderer = app_js.split("function renderNetworkBootReport", 1)[1].split(
-        "function initializeNetworkBootPage", 1
+        "function reconcileNetworkBootDiscoveredHosts", 1
     )[0]
     assert ".innerHTML" not in renderer
     assert "textContent" in renderer
@@ -6733,7 +6733,10 @@ def test_network_boot_host_management_report_and_print_contract(client):
     assert "Open the row menu" in page.text
     assert "initializeNetworkBootDiscoveredHostRefresh(hostsTable, discoveredStatus);" in page_initializer
     assert 'request("/api/v1/network-boot/hosts")' in host_refresh
-    assert "await reconcileNetworkBootDiscoveredHosts(hostsTable, hosts);" in host_refresh
+    assert (
+        "await reconcileNetworkBootDiscoveredHosts(hostsTable, hosts, hostReferencesTable);"
+        in host_refresh
+    )
     assert "networkBootChangedRowValues(current, updated)" in app_js
     assert "if (Object.keys(changed).length) await row.update(changed);" in app_js
     assert 'document.addEventListener("visibilitychange", handleVisibilityChange);' in host_refresh
