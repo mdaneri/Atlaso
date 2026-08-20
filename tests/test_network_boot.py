@@ -495,11 +495,15 @@ def test_network_boot_available_versions_endpoint_uses_read_scope(client, monkey
     assert response.json() == expected
 
 
-def test_network_boot_mutation_endpoints_persist_jobs_commands_profiles_and_audits(client):
+def test_network_boot_mutation_endpoints_persist_jobs_commands_profiles_and_audits(
+    client,
+    monkeypatch,
+):
     """Verify that network boot mutation endpoints persist jobs commands profiles and audits.
 
     Args:
         client: HTTP test client used to exercise the Atlaso application.
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
     """
     raw_token = create_api_token(client, ["read:pxe", "write:pxe"])
     api_headers = {"Authorization": f"Bearer {raw_token}"}
@@ -584,6 +588,12 @@ def test_network_boot_mutation_endpoints_persist_jobs_commands_profiles_and_audi
         "Promotion MAC must match the discovered boot MAC."
     )
 
+    lifecycle_events = []
+    monkeypatch.setattr(
+        network_boot_api,
+        "lock_esxi_host_reference_lifecycle",
+        lambda _db: lifecycle_events.append("lock"),
+    )
     promotion = client.post(
         f"/api/v1/network-boot/hosts/{host_id}/promote",
         headers=api_headers,
@@ -598,6 +608,7 @@ def test_network_boot_mutation_endpoints_persist_jobs_commands_profiles_and_audi
         },
     )
     assert promotion.status_code == 201, promotion.text
+    assert lifecycle_events == ["lock"]
 
     discovered_hosts = client.get("/api/v1/network-boot/hosts", headers=api_headers)
     assert discovered_hosts.status_code == 200, discovered_hosts.text
@@ -1576,12 +1587,35 @@ def test_report_download_is_exact_self_contained_and_rejects_cross_host(client):
     assert cross_host.status_code == 404
 
 
-def test_remove_discovered_host_cleans_inventory_and_preserves_esxi_state(client):
-    """Verify that remove discovered host cleans inventory and preserves esxi state.
+def test_remove_unassigned_discovered_host_cleans_inventory_state(client, monkeypatch):
+    """Verify that removing an unassigned discovered host cleans inventory state.
 
     Args:
         client: HTTP test client used to exercise the Atlaso application.
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
     """
+    lifecycle_events = []
+    original_assignments = network_boot_api.esxi_host_assignments_by_mac
+    monkeypatch.setattr(
+        network_boot_api,
+        "lock_esxi_host_reference_lifecycle",
+        lambda _db: lifecycle_events.append("lock"),
+    )
+
+    def record_assignment_snapshot(db):
+        """Record that assignment state was read after the lifecycle lock.
+
+        Args:
+            db: Active database session passed to the assignment lookup.
+        """
+        lifecycle_events.append("assignments")
+        return original_assignments(db)
+
+    monkeypatch.setattr(
+        network_boot_api,
+        "esxi_host_assignments_by_mac",
+        record_assignment_snapshot,
+    )
     raw_token = create_api_token(client, ["write:pxe"])
     headers = {"Authorization": f"Bearer {raw_token}"}
     inventory_session = client.post("/pxe/inventory/sessions").json()
@@ -1599,21 +1633,12 @@ def test_remove_discovered_host_cleans_inventory_and_preserves_esxi_state(client
 
     from atlaso.app.database import SessionLocal
 
-    with SessionLocal() as db:
-        reference = EsxiPxeHost(
-            hostname="promoted-state-remains",
-            mac_address="52:54:00:12:34:56",
-            enabled=False,
-        )
-        db.add(reference)
-        db.commit()
-        reference_id = reference.id
-
     response = client.delete(
         f"/api/v1/network-boot/hosts/{host_id}",
         headers=headers,
     )
     assert response.status_code == 200, response.text
+    assert lifecycle_events == ["lock", "assignments"]
     assert response.json() == {
         "host_id": host_id,
         "removed": True,
@@ -1627,7 +1652,6 @@ def test_remove_discovered_host_cleans_inventory_and_preserves_esxi_state(client
         assert db.get(NetworkBootInventorySession, inventory_session["session_id"]) is None
         assert db.get(NetworkBootInventoryCommand, reboot.json()["id"]) is None
         assert db.get(NetworkBootInventoryReport, submitted.json()["report_id"]) is None
-        assert db.get(EsxiPxeHost, reference_id) is not None
         event = db.execute(
             select(AuditEvent).where(
                 AuditEvent.action == "remove_discovered_host",
@@ -1635,6 +1659,48 @@ def test_remove_discovered_host_cleans_inventory_and_preserves_esxi_state(client
             )
         ).scalar_one()
         assert event.detail == "reports=1; sessions=1; commands=1"
+
+
+def test_remove_assigned_discovered_host_names_blocking_esxi_reference(client):
+    """Verify that an assigned discovered host cannot bypass ESXi lifecycle ownership.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
+    raw_token = create_api_token(client, ["write:pxe"])
+    inventory_session = client.post("/pxe/inventory/sessions").json()
+    submitted = client.post(
+        "/pxe/inventory/report",
+        json=inventory_report(),
+        headers={"Authorization": f"Bearer {inventory_session['access_token']}"},
+    )
+    host_id = submitted.json()["host_id"]
+
+    from atlaso.app.database import SessionLocal
+
+    with SessionLocal() as db:
+        reference = EsxiPxeHost(
+            hostname="vmware20-1",
+            mac_address="52:54:00:12:34:56",
+            enabled=False,
+        )
+        db.add(reference)
+        db.commit()
+
+    response = client.delete(
+        f"/api/v1/network-boot/hosts/{host_id}",
+        headers={"Authorization": f"Bearer {raw_token}"},
+    )
+
+    assert response.status_code == 409, response.text
+    assert response.json()["detail"] == (
+        "This discovered host is assigned to ESXi host `vmware20-1`. "
+        "Remove the ESXi host from ESXi Kickstarts before deleting its discovery record."
+    )
+    with SessionLocal() as db:
+        assert db.get(NetworkBootDiscoveredHost, host_id) is not None
+        assert db.get(NetworkBootInventorySession, inventory_session["session_id"]) is not None
+        assert db.get(NetworkBootInventoryReport, submitted.json()["report_id"]) is not None
 
 
 def test_host_management_requires_scopes_and_returns_missing_resources(client):
@@ -2217,6 +2283,250 @@ def test_inventory_storage_pruning_preserves_live_hosts(db_session, monkeypatch)
     assert db_session.get(NetworkBootDiscoveredHost, stale_host.id) is None
 
 
+def test_inventory_storage_pruning_preserves_assigned_hosts(db_session, monkeypatch):
+    """Verify that storage pruning preserves assigned hosts and their reports.
+
+    Args:
+        db_session: Active database session used by the operation.
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+    """
+    monkeypatch.setattr(network_boot, "NETWORK_BOOT_MAX_HOSTS", 2)
+    monkeypatch.setattr(network_boot, "NETWORK_BOOT_MAX_REPORTS", 2)
+
+    assigned_session, _token = issue_inventory_session(db_session)
+    assigned_host, assigned_report = store_inventory_report(
+        db_session,
+        session=assigned_session,
+        payload=inventory_report(
+            dmi_uuid="4c4c4544-004b-4d10-8052-cac04f4c5111",
+            boot_mac="52:54:00:12:34:11",
+        ),
+    )
+    assigned_session.heartbeat_at = utcnow() - timedelta(minutes=5)
+    db_session.add(
+        EsxiPxeHost(
+            hostname="assigned-stale-host",
+            mac_address="52:54:00:12:34:11",
+            enabled=False,
+        )
+    )
+    db_session.commit()
+
+    stale_session, _token = issue_inventory_session(db_session)
+    stale_host, _report = store_inventory_report(
+        db_session,
+        session=stale_session,
+        payload=inventory_report(
+            dmi_uuid="4c4c4544-004b-4d10-8052-cac04f4c5112",
+            boot_mac="52:54:00:12:34:12",
+        ),
+    )
+    stale_session.heartbeat_at = utcnow() - timedelta(minutes=5)
+    db_session.commit()
+
+    newest_session, _token = issue_inventory_session(db_session)
+    newest_host, _report = store_inventory_report(
+        db_session,
+        session=newest_session,
+        payload=inventory_report(
+            dmi_uuid="4c4c4544-004b-4d10-8052-cac04f4c5113",
+            boot_mac="52:54:00:12:34:13",
+        ),
+    )
+    db_session.flush()
+
+    assert db_session.get(NetworkBootDiscoveredHost, assigned_host.id) is not None
+    assert db_session.get(NetworkBootInventoryReport, assigned_report.id) is not None
+    assert db_session.get(NetworkBootDiscoveredHost, newest_host.id) is not None
+    assert db_session.get(NetworkBootDiscoveredHost, stale_host.id) is None
+
+
+def test_host_reference_lifecycle_lock_uses_postgresql_transaction_lock():
+    """Verify that PostgreSQL serializes Host Reference lifecycle transactions."""
+
+    class PostgreSqlBind:
+        """Expose the PostgreSQL dialect name used by the lock helper."""
+
+        class Dialect:
+            """Represent the database dialect."""
+
+            name = "postgresql"
+
+        dialect = Dialect()
+
+    class RecordingSession:
+        """Record the SQL statement issued by the lock helper."""
+
+        bind = PostgreSqlBind()
+
+        def __init__(self):
+            self.calls = []
+
+        def execute(self, statement, parameters):
+            """Record one lifecycle-lock SQL execution.
+
+            Args:
+                statement: SQL statement submitted by the lock helper.
+                parameters: Bound parameters submitted with the statement.
+            """
+            self.calls.append((str(statement), parameters))
+
+    session = RecordingSession()
+
+    network_boot.lock_esxi_host_reference_lifecycle(session)
+
+    assert session.calls == [
+        (
+            "SELECT pg_advisory_xact_lock(:lock_id)",
+            {"lock_id": network_boot.ESXI_HOST_REFERENCE_LIFECYCLE_LOCK_ID},
+        )
+    ]
+
+
+def test_inventory_storage_pruning_locks_before_assignment_snapshot(
+    db_session,
+    monkeypatch,
+):
+    """Verify pruning serializes its assignment snapshot with Host Reference writes.
+
+    Args:
+        db_session: Active database session used by the operation.
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+    """
+    lifecycle_events = []
+    original_assignments = network_boot.esxi_host_assignments_by_mac
+    monkeypatch.setattr(
+        network_boot,
+        "lock_esxi_host_reference_lifecycle",
+        lambda _db: lifecycle_events.append("lock"),
+    )
+
+    def record_assignment_snapshot(db):
+        """Record that assignment state was read after the lifecycle lock.
+
+        Args:
+            db: Active database session passed to the assignment lookup.
+        """
+        lifecycle_events.append("assignments")
+        return original_assignments(db)
+
+    monkeypatch.setattr(
+        network_boot,
+        "esxi_host_assignments_by_mac",
+        record_assignment_snapshot,
+    )
+
+    network_boot._prune_inventory_storage(db_session, preserve_host_id=0)
+
+    assert lifecycle_events == ["lock", "assignments"]
+
+
+def test_inventory_report_locks_before_identity_and_mac_mutation(
+    db_session,
+    monkeypatch,
+):
+    """Verify report storage serializes before deriving or changing host identity.
+
+    Args:
+        db_session: Active database session used by the operation.
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+    """
+    session, _token = issue_inventory_session(db_session)
+    lifecycle_events = []
+    original_report_identity = network_boot.report_identity
+    monkeypatch.setattr(
+        network_boot,
+        "lock_esxi_host_reference_lifecycle",
+        lambda _db: lifecycle_events.append("lock"),
+    )
+
+    def record_report_identity(report):
+        """Record identity derivation after the lifecycle lock.
+
+        Args:
+            report: Inventory report passed to identity derivation.
+        """
+        lifecycle_events.append("identity")
+        return original_report_identity(report)
+
+    monkeypatch.setattr(network_boot, "report_identity", record_report_identity)
+
+    store_inventory_report(db_session, session=session, payload=inventory_report())
+
+    assert lifecycle_events == ["lock", "identity", "lock"]
+
+
+@pytest.mark.parametrize(
+    ("maximum_hosts", "maximum_reports"),
+    [(1, 2), (2, 1)],
+)
+def test_inventory_storage_rejects_when_assigned_state_fills_capacity(
+    client,
+    monkeypatch,
+    maximum_hosts,
+    maximum_reports,
+):
+    """Verify that assigned state cannot be evicted to admit another report.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+        maximum_hosts: Maximum retained discovered hosts for the scenario.
+        maximum_reports: Maximum retained inventory reports for the scenario.
+    """
+    monkeypatch.setattr(network_boot, "NETWORK_BOOT_MAX_HOSTS", maximum_hosts)
+    monkeypatch.setattr(network_boot, "NETWORK_BOOT_MAX_REPORTS", maximum_reports)
+
+    first_session = client.post("/pxe/inventory/sessions").json()
+    first = client.post(
+        "/pxe/inventory/report",
+        headers={"Authorization": f"Bearer {first_session['access_token']}"},
+        json=inventory_report(
+            dmi_uuid="4c4c4544-004b-4d10-8052-cac04f4c5121",
+            boot_mac="52:54:00:12:34:21",
+        ),
+    )
+    assert first.status_code == 201, first.text
+
+    from atlaso.app.database import SessionLocal
+
+    with SessionLocal() as db:
+        db.add(
+            EsxiPxeHost(
+                hostname="assigned-capacity-host",
+                mac_address="52:54:00:12:34:21",
+                enabled=False,
+            )
+        )
+        assigned_session = db.get(
+            NetworkBootInventorySession,
+            first_session["session_id"],
+        )
+        assert assigned_session is not None
+        assigned_session.heartbeat_at = utcnow() - timedelta(minutes=5)
+        db.commit()
+
+    second_session = client.post("/pxe/inventory/sessions").json()
+    rejected = client.post(
+        "/pxe/inventory/report",
+        headers={"Authorization": f"Bearer {second_session['access_token']}"},
+        json=inventory_report(
+            dmi_uuid="4c4c4544-004b-4d10-8052-cac04f4c5122",
+            boot_mac="52:54:00:12:34:22",
+        ),
+    )
+
+    assert rejected.status_code == 503, rejected.text
+    assert rejected.json()["detail"] == (
+        "Inventory storage capacity is occupied by live or assigned hosts; "
+        "retry later."
+    )
+    with SessionLocal() as db:
+        assert db.get(NetworkBootDiscoveredHost, first.json()["host_id"]) is not None
+        assert db.get(NetworkBootInventoryReport, first.json()["report_id"]) is not None
+        assert len(db.execute(select(NetworkBootDiscoveredHost)).scalars().all()) == 1
+
+
 def test_inventory_session_cap_preserves_live_and_command_sessions(
     db_session,
     monkeypatch,
@@ -2300,8 +2610,8 @@ def test_public_inventory_session_binds_identity_and_rejects_replay(client):
     assert replay.status_code == 409
 
 
-def test_public_inventory_report_marks_live_capacity_as_retryable(client, monkeypatch):
-    """Verify that public inventory report marks live capacity as retryable.
+def test_public_inventory_report_marks_protected_capacity_as_retryable(client, monkeypatch):
+    """Verify that public inventory report marks protected capacity as retryable.
 
     Args:
         client: HTTP test client used to exercise the Atlaso application.
@@ -2323,7 +2633,8 @@ def test_public_inventory_report_marks_live_capacity_as_retryable(client, monkey
             ValueError: If an input value is invalid.
         """
         raise ValueError(
-            "Inventory storage capacity is occupied by live clients; retry later."
+            "Inventory storage capacity is occupied by live or assigned hosts; "
+            "retry later."
         )
 
     monkeypatch.setattr(network_boot_api, "store_inventory_report", capacity_error)
@@ -2678,11 +2989,13 @@ def test_settings_archive_keeps_desired_environment_but_excludes_media_and_histo
 
 def test_settings_restore_and_factory_reset_preserve_installed_media_metadata(
     db_session,
+    monkeypatch,
 ):
     """Verify that settings restore and factory reset preserve installed media metadata.
 
     Args:
         db_session: Active database session used by the operation.
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
     """
     from atlaso.app.services.settings_archive import (
         export_settings_archive,
@@ -2705,14 +3018,22 @@ def test_settings_restore_and_factory_reset_preserve_installed_media_metadata(
     states["memtest86plus"].active_version = media.version
     db_session.commit()
     archive = export_settings_archive(db_session, actor="test")
+    lifecycle_events = []
+    monkeypatch.setattr(
+        network_boot,
+        "lock_esxi_host_reference_lifecycle",
+        lambda _db: lifecycle_events.append("lock"),
+    )
 
     restore_settings_archive(db_session, archive)
+    assert lifecycle_events == ["lock"]
     assert db_session.get(NetworkBootMedia, media.id) is not None
     restored = db_session.get(type(states["memtest86plus"]), "memtest86plus")
     assert restored.desired_version == "8.10"
     assert restored.active_version == ""
 
     factory_reset_desired_state(db_session)
+    assert lifecycle_events == ["lock", "lock"]
     assert db_session.get(NetworkBootMedia, media.id) is not None
     reset = db_session.get(type(states["memtest86plus"]), "memtest86plus")
     assert reset.enabled is False

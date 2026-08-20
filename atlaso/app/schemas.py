@@ -1303,6 +1303,24 @@ class EsxiPxeHostResponse(EsxiPxeHostCreate):
     updated_at: Annotated[datetime, Field(description='UTC timestamp when the resource was last updated.')]
 
 
+class EsxiPxeHostDeleteResponse(BaseModel):
+    """Lifecycle counts returned after deleting an ESXi Host Reference.
+
+    Attributes:
+        deleted: Whether the Host Reference was deleted.
+        discovered_hosts_removed: Number of associated discovered-host rows removed.
+        reports: Number of retained inventory reports removed.
+        sessions: Number of retained inventory sessions removed.
+        commands: Number of retained inventory commands removed.
+    """
+
+    deleted: Annotated[bool, Field(description='Whether the ESXi Host Reference was deleted.')]
+    discovered_hosts_removed: Annotated[int, Field(description='Number of associated discovered-host rows removed.')]
+    reports: Annotated[int, Field(description='Number of retained inventory reports removed.')]
+    sessions: Annotated[int, Field(description='Number of retained inventory sessions removed.')]
+    commands: Annotated[int, Field(description='Number of retained inventory commands removed.')]
+
+
 class EsxiBootAuthorizationRequest(BaseModel):
     """Console code identifying the exact pending ESXi boot attempt."""
 
