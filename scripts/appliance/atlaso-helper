@@ -321,6 +321,7 @@ MANAGEMENT_HANDOFF_BACKUP_DIR = MANAGEMENT_HANDOFF_STATE_DIR / "backup"
 MANAGEMENT_HANDOFF_COMMIT_PATH = MANAGEMENT_HANDOFF_STATE_DIR / "last-commit.json"
 MANAGEMENT_HANDOFF_HOLDOVER_PREFIX = "00-0-atlaso-management-handoff-"
 MANAGEMENT_HANDOFF_APPLY_UNIT = "atlaso-management-handoff-apply.service"
+MANAGEMENT_HANDOFF_RECOVERY_UNIT = "atlaso-management-handoff-recovery.service"
 WAN_APPLY_DIR = Path("/var/lib/atlaso/apply/wan")
 APPLIANCE_UPDATE_APPLY_DIR = Path("/var/lib/atlaso/apply/appliance-update")
 APPLIANCE_UPDATE_INFO_PATH = Path("/etc/atlaso/update-info")
@@ -587,8 +588,26 @@ def _run_real_action_with_systemd(group: str, action: str, args: list[str]) -> i
         "--service-type=exec",
         f"--setenv={SYSTEMD_RUN_CHILD_ENV}=1",
     ]
-    if (group, action) == ("management-handoff", "apply"):
-        command.append(f"--unit={MANAGEMENT_HANDOFF_APPLY_UNIT.removesuffix('.service')}")
+    if group == "management-handoff" and action in {"apply", "recover"}:
+        unit = MANAGEMENT_HANDOFF_APPLY_UNIT
+        if action == "recover":
+            unit = MANAGEMENT_HANDOFF_RECOVERY_UNIT
+            try:
+                _quiesce_management_handoff_unit(unit, "recovery")
+            except ValueError as exc:
+                print(
+                    json.dumps(
+                        {
+                            "management_handoff": "rollback incomplete",
+                            "failing_layer": "interruption serialization",
+                            "error": str(exc),
+                        },
+                        sort_keys=True,
+                    ),
+                    file=sys.stderr,
+                )
+                return 1
+        command.append(f"--unit={unit.removesuffix('.service')}")
     if group == "appliance-update":
         powershell_env = _appliance_update_powershell_environment()
         command.extend(
@@ -16150,8 +16169,12 @@ def _acknowledge_management_handoff(job_id: str) -> int:
     return 0
 
 
-def _quiesce_management_handoff_apply() -> dict[str, object]:
-    """Stop and verify any surviving transient apply helper before rollback.
+def _quiesce_management_handoff_unit(unit_name: str, unit_label: str) -> dict[str, object]:
+    """Stop and verify one surviving transient handoff helper.
+
+    Args:
+        unit_name: Stable systemd unit identity to serialize.
+        unit_label: Bounded evidence label for the unit.
 
     Returns:
         Bounded systemd unit evidence.
@@ -16186,22 +16209,27 @@ def _quiesce_management_handoff_apply() -> dict[str, object]:
             raise ValueError(f"{stage} handoff helper state could not be verified")
         return state
 
-    status = _run(["systemctl", "is-active", MANAGEMENT_HANDOFF_APPLY_UNIT])
+    status = _run(["systemctl", "is-active", unit_name])
     state = verified_state(status, "initial")
     if state not in {"active", "activating", "deactivating", "reloading"}:
-        return {"apply_unit": MANAGEMENT_HANDOFF_APPLY_UNIT, "state": state}
-    stop = _run(["systemctl", "stop", MANAGEMENT_HANDOFF_APPLY_UNIT])
+        return {f"{unit_label}_unit": unit_name, "state": state}
+    stop = _run(["systemctl", "stop", unit_name])
     if stop.returncode != 0:
         raise ValueError("surviving management handoff helper could not be stopped")
-    final = _run(["systemctl", "is-active", MANAGEMENT_HANDOFF_APPLY_UNIT])
+    final = _run(["systemctl", "is-active", unit_name])
     final_state = verified_state(final, "post-stop")
     if final_state in {"active", "activating", "deactivating", "reloading"}:
         raise ValueError("surviving management handoff helper did not stop")
     return {
-        "apply_unit": MANAGEMENT_HANDOFF_APPLY_UNIT,
+        f"{unit_label}_unit": unit_name,
         "state": final_state,
         "stop_returncode": stop.returncode,
     }
+
+
+def _quiesce_management_handoff_apply() -> dict[str, object]:
+    """Stop and verify any surviving transient apply helper before rollback."""
+    return _quiesce_management_handoff_unit(MANAGEMENT_HANDOFF_APPLY_UNIT, "apply")
 
 
 def _recover_management_handoff() -> int:

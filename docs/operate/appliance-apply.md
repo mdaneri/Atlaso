@@ -157,16 +157,17 @@ the command intent; it does not prove that Photon services changed.
    remain pending when their desired state still differs.
 4. Submit only the units required for the corrected run.
 
-If Atlaso restarts during an ordinary apply, startup marks the running child failed, marks pending children skipped,
-fails the master task, and releases the global lock. For an interrupted management handoff, startup first asks the
-privileged helper to stop and verify any surviving handoff process before restoring the captured previous runtime state,
-then records the recovery result on the failed task.
-The same stop-and-recover path runs immediately if Atlaso times out while waiting for the privileged helper, because the
-fixed handoff service can outlive its waiting process.
+If Atlaso restarts during an ordinary apply, startup fails the running child and master task, skips pending children,
+and releases the global lock. For an interrupted management handoff, the privileged helper first stops and verifies any
+surviving apply process, restores the captured previous runtime state, and records the recovery result.
+The same path runs immediately after a helper wait timeout because the fixed apply service can outlive its waiting
+process. Recovery uses a separate fixed service identity; before retrying, the helper stops and verifies any surviving
+recovery service so two rollback attempts cannot mutate the same network state concurrently.
 The helper retains that rollback state until Atlaso durably commits the bundled component results and baselines. If a
 restart occurs after that database commit, startup idempotently acknowledges the committed candidate instead of falsely
-claiming a rollback. A failed task whose helper acknowledgement is not proven retains the global Apply lock until startup
-or immediate exception recovery reconciles that state. Review the task before resubmitting.
+claiming a rollback. A failed task whose helper acknowledgement or rollback is not proven retains the global Apply lock
+until startup or immediate exception recovery reconciles that state, even when an older task payload lacks the newer
+pending marker. Review the task before resubmitting.
 
 If a selected unit changed after submission but before execution, Atlaso fails closed and asks for a new review. This
 prevents a queued task from applying state that the administrator did not inspect.

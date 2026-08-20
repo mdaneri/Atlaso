@@ -35,6 +35,7 @@ interface=eth1
             "name": "eth0",
             "parent": "",
             "role": "management",
+            "mtu": "",
             "ipv4_method": "static",
             "ip_cidr": "192.0.2.10/24",
             "gateway": "192.0.2.1",
@@ -49,6 +50,7 @@ interface=eth1
             "name": "eth1",
             "parent": "",
             "role": "access",
+            "mtu": "",
             "ipv4_method": "",
             "ip_cidr": "198.51.100.10/24",
             "gateway": "",
@@ -124,6 +126,28 @@ interface=eth0
   ipv6_enabled=false
 """
     candidate = previous.replace("ipv6_enabled=false", "ipv6_enabled=true")
+
+    assert management_handoff_required(
+        {"raw_config_preview": candidate},
+        {"config_preview": previous},
+    )
+
+
+def test_management_handoff_detects_flagged_access_vlan_mtu_change():
+    """Treat a management-listener VLAN MTU change as a handoff boundary."""
+    from atlaso.app.ui import management_handoff_required
+
+    previous = """[vlan_interfaces]
+vlan=eth1.20
+  parent=eth1
+  role=access
+  admin_state=up
+  access_management_ui_enabled=true
+  mtu=1500
+  ipv4_method=static
+  ip_cidr=192.0.2.20/24
+"""
+    candidate = previous.replace("mtu=1500", "mtu=9000")
 
     assert management_handoff_required(
         {"raw_config_preview": candidate},
@@ -612,19 +636,37 @@ def test_interrupted_handoff_reconciles_application_commit_without_false_rollbac
             )
         )
         db.commit()
-        assert ui.recover_interrupted_appliance_apply_jobs(db) == 2
+        db.add(
+            Job(
+                id="handoff-unproven",
+                type="appliance-apply",
+                status=JobStatus.RUNNING.value,
+                created_by="admin",
+                progress_percent=10,
+                result=json.dumps({"management_handoff": True}),
+            )
+        )
+        db.commit()
+        assert ui.recover_interrupted_appliance_apply_jobs(db) == 3
 
         committed = db.get(Job, "handoff-committed")
         missing = db.get(Job, "handoff-no-marker")
-        assert committed is not None and missing is not None
+        unproven = db.get(Job, "handoff-unproven")
+        assert committed is not None and missing is not None and unproven is not None
         committed_payload = json.loads(committed.result or "{}")
+        unproven_payload = json.loads(unproven.result or "{}")
         assert committed_payload["management_handoff_runtime_committed"] is True
         assert committed_payload["management_handoff_runtime_commit_pending"] is False
         assert "management_handoff_application_committed" not in committed_payload
         assert "candidate management path remains active" in (committed.error or "")
         assert "could not prove either" in (missing.error or "")
         assert "rolled back" not in (missing.error or "").lower()
-        assert recovery_calls == ["acknowledge:handoff-committed", "recover"]
+        assert unproven_payload["management_handoff_runtime_commit_pending"] is True
+        assert "management_handoff_application_committed" not in unproven_payload
+        retained_lock = ui.active_appliance_apply_job(db)
+        assert retained_lock is not None
+        assert retained_lock.id in {"handoff-no-marker", "handoff-unproven"}
+        assert recovery_calls == ["acknowledge:handoff-committed", "recover", "recover"]
 
 
 def test_management_handoff_exception_reconciliation_selects_transaction_boundary():

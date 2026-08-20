@@ -3291,6 +3291,10 @@ def recover_interrupted_appliance_apply_jobs(db: Session) -> int:
             elif recovery_result.returncode == 0 and recovery_evidence.get("rolled_back") is True:
                 payload.pop("management_handoff_runtime_commit_pending", None)
                 payload.pop("management_handoff_application_committed", None)
+            else:
+                payload["management_handoff_runtime_commit_pending"] = True
+                if payload.get("management_handoff_application_committed") is not True:
+                    payload.pop("management_handoff_application_committed", None)
         job.result = json.dumps(payload, indent=2, sort_keys=True)
     db.commit()
     return len(jobs)
@@ -9255,6 +9259,7 @@ def network_management_paths(config_preview: str) -> list[dict[str, str]]:
                 "name": row.get("name", ""),
                 "parent": row.get("parent", ""),
                 "role": row.get("role", ""),
+                "mtu": row.get("mtu", ""),
                 "ipv4_method": row.get("ipv4_method", ""),
                 "ip_cidr": row.get("ip_cidr", ""),
                 "gateway": row.get("gateway", ""),
@@ -9269,6 +9274,7 @@ def network_management_paths(config_preview: str) -> list[dict[str, str]]:
             item["name"],
             item["kind"],
             item["parent"],
+            item["mtu"],
             item["ip_cidr"],
             item["gateway"],
             item["ipv6_enabled"],

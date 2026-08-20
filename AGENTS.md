@@ -272,7 +272,8 @@ The following cross-cutting boundaries always apply:
   card outside the disclosures and preserve coherent groups at desktop, two-column narrow, and single-column mobile
   widths.
 - `/ui/management/appliance-apply` is the only desired-state host-mutation workflow.
-- A management address, gateway, role, interface, VLAN, or flagged-access listener change must use one recoverable
+- A management address, gateway, role, interface, VLAN, management VLAN MTU, or flagged-access listener change must
+  use one recoverable
   handoff across Certificate Authority, Network, Firewall, Appliance Settings, and Public Services. Submitting any one
   of those dependent units while such a Network change is pending must force all five into the handoff. Keep the previous
   known-good configured and observed global addresses, public port, protocol, and snapshotted TLS identity active until
@@ -286,9 +287,10 @@ The following cross-cutting boundaries always apply:
   and explicitly acknowledges that commit. Record separate durable application-commit proof before selecting
   acknowledgement during startup; an incomplete pre-commit rollback must retry recovery instead. Sync every backup file
   and its backup directory before publishing the marker. Retain the global apply lock while recovery or acknowledgement
-  is pending. On failure,
-  timeout, indeterminate helper return, interruption, or startup recovery, first stop and verify any surviving handoff
-  helper, then restore every captured runtime
+  is pending, including when startup cannot prove either outcome from a legacy or incomplete task payload. On failure,
+  timeout, indeterminate helper return, interruption, or startup recovery, first stop and verify any surviving
+  fixed-identity apply helper; serialize every retry under a separate fixed-identity recovery unit and stop and verify
+  any surviving recovery unit before starting another. Then restore every captured runtime
   file and link, reconfigure pre-existing candidate links, remove candidate-only VLANs, fail closed without host
   mutation when an active appliance has no known-good Network baseline, restore a previously absent firewall by
   disabling its candidate service and flushing the candidate ruleset, keep the old path reachable, and record a

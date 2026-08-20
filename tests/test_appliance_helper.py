@@ -4524,6 +4524,37 @@ def test_management_handoff_apply_uses_fixed_systemd_unit(monkeypatch, tmp_path)
     assert f"--unit={helper.MANAGEMENT_HANDOFF_APPLY_UNIT.removesuffix('.service')}" in commands[0]
 
 
+def test_management_handoff_recovery_uses_fixed_systemd_unit(monkeypatch):
+    """Serialize repeated recovery attempts under one stable systemd identity.
+
+    Args:
+        monkeypatch: Pytest fixture used to capture systemd serialization.
+    """
+    helper = load_helper_module()
+    commands: list[list[str]] = []
+    quiesced: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        helper.shutil,
+        "which",
+        lambda command: "/usr/bin/systemd-run" if command == "systemd-run" else None,
+    )
+    monkeypatch.setattr(
+        helper,
+        "_quiesce_management_handoff_unit",
+        lambda unit, label: quiesced.append((unit, label)) or {"state": "inactive"},
+    )
+    monkeypatch.setattr(
+        helper,
+        "_run",
+        lambda command: commands.append(command) or subprocess.CompletedProcess(command, 0, "", ""),
+    )
+
+    assert helper._run_real_action_with_systemd("management-handoff", "recover", []) == 0
+
+    assert quiesced == [(helper.MANAGEMENT_HANDOFF_RECOVERY_UNIT, "recovery")]
+    assert f"--unit={helper.MANAGEMENT_HANDOFF_RECOVERY_UNIT.removesuffix('.service')}" in commands[0]
+
+
 def test_powercli_helper_actions_receive_writable_root_configuration_environment(monkeypatch, tmp_path):
     """Verify that powercli helper actions receive writable root configuration environment.
 

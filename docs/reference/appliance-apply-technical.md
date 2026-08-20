@@ -198,9 +198,10 @@ configured address, IPv6 link-local addressing, and the optional default route i
 lab route table. When a VLAN was present in successful Atlaso network apply history and is no longer desired, the staged
 config includes an explicit removal target and the helper deletes that VLAN link after verifying it is a VLAN device.
 
-Any change to the effective management address, gateway, dedicated-management role, or flagged access-management
-listener converts five apply units into one `management-handoff` helper transaction whenever an operator submits any
-one of them: Certificate Authority, Network, Firewall, Appliance Settings, and Public Services. This forced dependency
+Any change to the effective management address, gateway, dedicated-management role, flagged access-management
+listener, or management-listener VLAN MTU converts five apply units into one `management-handoff` helper transaction
+whenever an operator submits any one of them: Certificate Authority, Network, Firewall, Appliance Settings, and Public
+Services. This forced dependency
 closure prevents a partial Firewall, certificate, listener, or resolver apply from publishing candidate-derived state
 before candidate networking exists. The helper validates all staged inputs before mutation, snapshots
 the Atlaso-owned networkd, nftables, nginx, certificate, and related runtime files under a root-only state directory,
@@ -241,14 +242,17 @@ captured state requires it. Rollback explicitly reconfigures every pre-existing 
 candidate-only VLAN after restoring its files. A previously absent firewall state is restored by disabling/stopping the
 candidate `atlaso-firewall.service`, deleting its snapshotted-as-absent unit and config, reloading systemd, and running
 `nft flush ruleset`. The helper leaves a durable transaction marker until Atlaso commits the
-bundled task state and baselines and sends an idempotent acknowledgement. A fixed transient systemd unit serializes
-apply with startup recovery, which stops and verifies any surviving helper before rollback. Startup rolls back when
+bundled task state and baselines and sends an idempotent acknowledgement. One fixed transient systemd unit identifies
+apply for startup recovery, which stops and verifies any surviving apply helper before rollback. A separate fixed
+recovery unit serializes rollback attempts; the launcher stops and verifies a surviving recovery unit before retrying.
+Startup rolls back when
 interruption precedes that database boundary and completes the acknowledgement only when a separate durable task field
 proves the database already committed the candidate. A retained helper marker without that proof selects recovery, so
 an incomplete pre-commit rollback is retried. Adapter timeouts and other indeterminate apply returns invoke that same
 fixed-unit stop and rollback before the task becomes terminal. Empty or malformed systemd unit-state evidence fails
 closed before rollback. Exceptions
-reconcile the same boundary immediately, and an unproven acknowledgement keeps the global Apply lock held. Results
+reconcile the same boundary immediately. An unproven acknowledgement or rollback keeps the global Apply lock held even
+when a legacy or incomplete task payload did not already carry the pending marker. Results
 expose only a bounded failing-layer identifier and
 non-secret error text; Appliance Apply writes that evidence to every bundled component and updates none of their
 baselines unless the transaction commits. The committed baselines come from the exact snapshots hash-checked and staged
