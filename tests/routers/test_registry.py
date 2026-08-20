@@ -79,9 +79,11 @@ def test_facades_register_extracted_domains_in_exact_order():
         "firewall",
         "physical_vlans",
         "dns_dhcp",
-        "facade_between_dns_dhcp_managed_ldap",
+        "facade_between_dns_dhcp_certificate_trust",
+        "certificate_trust_ca",
         "managed_ldap",
-        "facade_between_managed_ldap_vcf_workflows",
+        "certificate_trust_kms",
+        "facade_between_certificate_trust_vcf_workflows",
         "vcf_workflows",
         "facade_between_vcf_workflows_identity",
         "identity",
@@ -107,7 +109,9 @@ def test_facades_register_extracted_domains_in_exact_order():
         ui.physical_vlans_router,
         ui.dns_dhcp_router,
         ui._management_between_dns_dhcp_managed_ldap_router,
+        ui.certificate_trust_ca_router,
         ui.managed_ldap_router,
+        ui.certificate_trust_kms_router,
         ui._management_between_managed_ldap_vcf_workflows_router,
         ui.vcf_workflows_router,
         ui._management_between_vcf_workflows_identity_router,
@@ -144,7 +148,8 @@ def test_facades_register_extracted_domains_in_exact_order():
         "facade_between_vcf_private_registry_network_boot",
         "network_boot",
         "managed_ldap",
-        "facade_after_managed_ldap",
+        "certificate_trust",
+        "facade_after_certificate_trust",
     )
     assert v1.API_V1_ROUTER_REGISTRY.routers_for_plane("api_v1") == (
         v1._api_before_identity_router,
@@ -166,7 +171,8 @@ def test_facades_register_extracted_domains_in_exact_order():
         v1._api_between_vcf_private_registry_network_boot_router,
         v1.network_boot_router,
         v1.managed_ldap_router,
-        v1._api_after_managed_ldap_router,
+        v1.certificate_trust_router,
+        v1._api_after_certificate_trust_router,
     )
     assert {
         route.endpoint.__module__ for route in ui.appliance_apply_router.routes
@@ -203,6 +209,12 @@ def test_facades_register_extracted_domains_in_exact_order():
     assert {route.endpoint.__module__ for route in ui.managed_ldap_router.routes} == {
         "atlaso.app.routers.ui.managed_ldap"
     }
+    assert {
+        route.endpoint.__module__ for route in ui.certificate_trust_ca_router.routes
+    } == {"atlaso.app.routers.ui.certificate_trust"}
+    assert {
+        route.endpoint.__module__ for route in ui.certificate_trust_kms_router.routes
+    } == {"atlaso.app.routers.ui.certificate_trust"}
     assert {route.endpoint.__module__ for route in ui.network_boot_router.routes} == {
         "atlaso.app.routers.ui.network_boot"
     }
@@ -239,6 +251,9 @@ def test_facades_register_extracted_domains_in_exact_order():
     assert {route.endpoint.__module__ for route in v1.managed_ldap_router.routes} == {
         "atlaso.app.routers.api_v1.managed_ldap"
     }
+    assert {
+        route.endpoint.__module__ for route in v1.certificate_trust_router.routes
+    } == {"atlaso.app.routers.api_v1.certificate_trust"}
     assert {route.endpoint.__module__ for route in v1.network_boot_router.routes} == {
         "atlaso.app.routers.api_v1.network_boot"
     }
