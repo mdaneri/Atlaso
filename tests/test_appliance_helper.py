@@ -112,12 +112,23 @@ def test_management_candidate_network_defers_old_link_retirement(monkeypatch, tm
     candidate.write_text("candidate", encoding="utf-8")
 
     def install(_path, *, defer_down_links=None):
-        """Capture deferred links and return a successful install."""
+        """Capture deferred links and return a successful install.
+
+        Args:
+            _path: Staged network configuration path ignored by this test double.
+            defer_down_links: Links whose shutdown must be deferred.
+        """
         calls["defer_down_links"] = defer_down_links
         return 0, [], [], []
 
     def vlans(_path, *, preserve_address_links=None, defer_removed=False):
-        """Capture transitional VLAN preservation arguments."""
+        """Capture transitional VLAN preservation arguments.
+
+        Args:
+            _path: Staged network configuration path ignored by this test double.
+            preserve_address_links: Links whose addresses must remain active.
+            defer_removed: Whether VLAN deletion must be deferred.
+        """
         calls["preserve_address_links"] = preserve_address_links
         calls["defer_removed"] = defer_removed
         return 0

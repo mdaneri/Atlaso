@@ -288,10 +288,18 @@ def test_interrupted_handoff_reconciles_application_commit_without_false_rollbac
         """Return deterministic commit and no-marker recovery evidence."""
 
         def __init__(self, **_kwargs):
-            """Accept the production adapter construction contract."""
+            """Accept the production adapter construction contract.
+
+            Args:
+                **_kwargs: Adapter options ignored by this test double.
+            """
 
         def acknowledge_management_handoff(self, job_id):
-            """Return an idempotent acknowledgement for the committed task."""
+            """Return an idempotent acknowledgement for the committed task.
+
+            Args:
+                job_id: Appliance Apply task being acknowledged.
+            """
             return AdapterResult(
                 command=["atlaso-helper", "management-handoff", "acknowledge", job_id],
                 dry_run=False,
