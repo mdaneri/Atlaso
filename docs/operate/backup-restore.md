@@ -76,8 +76,9 @@ an administrator must explicitly rediscover, reconfigure, or delete retained pay
 staging under `/var/lib/atlaso/apply` is scrubbed; secret-bearing Local Users, CA, and LDAP staging is also removed on
 failure. Successful reset also removes retained VCF Backup authorized keys, the Web Terminal CA key pair, and pending
 Web Terminal signing requests so re-enabling either feature cannot reuse credentials from before reset. The bootstrap
-account home is retained, but its SSH authorization files are removed. OIDC browser cookies carry the appliance-instance
-identity and are rejected after reset even when a recreated bootstrap user receives the same database identifier. CA
+and root account homes are retained, but both accounts' `authorized_keys` and `authorized_keys2` files are removed; other
+SSH configuration remains untouched. OIDC browser cookies carry the appliance-instance identity and are rejected after
+reset even when a recreated bootstrap user receives the same database identifier. CA
 private-key paths present before reset but omitted from validated factory state are removed after runtime activation;
 paths retained by factory state are rewritten and preserved. The disabled KMIP service's operational store and KEK are
 removed, as are the managed Photon repository file, its embedded credentials, the synchronized update-source state, and

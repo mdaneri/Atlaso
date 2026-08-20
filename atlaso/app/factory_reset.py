@@ -77,7 +77,8 @@ VCF_BACKUPS_AUTHORIZED_KEYS_DIRECTORY = Path("/etc/atlaso/ssh/authorized_keys")
 CA_MANAGED_PATH_BASE = Path("/etc/atlaso")
 LOCAL_USERS_HOME_DIRECTORY = Path("/var/lib/atlaso/users")
 LOCAL_USER_NAME_PATTERN = re.compile(r"^[a-z_][a-z0-9_-]{0,31}$")
-BOOTSTRAP_AUTHORIZED_KEY_NAMES = ("authorized_keys", "authorized_keys2")
+ROOT_SSH_DIRECTORY = Path("/root/.ssh")
+SSH_AUTHORIZED_KEY_NAMES = ("authorized_keys", "authorized_keys2")
 AUTOMATION_TRANSIENT_UNIT_PATTERN = re.compile(r"^atlaso-automation-\d{20}\.service$")
 HELPER_ACTION_TRANSIENT_UNIT_PATTERN = re.compile(
     r"^atlaso-helper-action-[0-9a-f]{32}\.service$"
@@ -741,8 +742,33 @@ def _clear_fixed_directory_contents(path: Path, *, label: str) -> None:
         _fsync_directory(path)
 
 
+def _scrub_authorized_keys(ssh_directory: Path, *, label: str) -> None:
+    """Remove bounded SSH server authorization files from one retained home.
+
+    Args:
+        ssh_directory: Exact retained account SSH directory to inspect.
+        label: Public-safe account description used in failures.
+    """
+    if ssh_directory.is_symlink() or (ssh_directory.exists() and not ssh_directory.is_dir()):
+        raise FactoryResetError(f"Factory reset {label} SSH directory is unsafe.")
+    if not ssh_directory.exists():
+        return
+    removed = False
+    for name in SSH_AUTHORIZED_KEY_NAMES:
+        path = ssh_directory / name
+        if path.is_symlink() or path.is_file():
+            path.unlink(missing_ok=True)
+            removed = True
+        elif path.exists():
+            raise FactoryResetError(
+                f"Factory reset {label} SSH authorization entry is unsafe: {name}"
+            )
+    if removed:
+        _fsync_directory(ssh_directory)
+
+
 def _scrub_bootstrap_authorized_keys() -> None:
-    """Remove only SSH server authorization files from the retained bootstrap home."""
+    """Remove SSH authorization files from the retained bootstrap home."""
     username = get_settings().bootstrap_admin_username.strip().lower()
     if not LOCAL_USER_NAME_PATTERN.fullmatch(username):
         raise FactoryResetError("Factory reset bootstrap local-user name is unsafe.")
@@ -751,21 +777,12 @@ def _scrub_bootstrap_authorized_keys() -> None:
         raise FactoryResetError("Factory reset bootstrap local-user home is unsafe.")
     if not home.exists():
         return
-    ssh_directory = home / ".ssh"
-    if ssh_directory.is_symlink() or (ssh_directory.exists() and not ssh_directory.is_dir()):
-        raise FactoryResetError("Factory reset bootstrap SSH directory is unsafe.")
-    if not ssh_directory.exists():
-        return
-    removed = False
-    for name in BOOTSTRAP_AUTHORIZED_KEY_NAMES:
-        path = ssh_directory / name
-        if path.is_symlink() or path.is_file():
-            path.unlink(missing_ok=True)
-            removed = True
-        elif path.exists():
-            raise FactoryResetError(f"Factory reset bootstrap SSH authorization entry is unsafe: {name}")
-    if removed:
-        _fsync_directory(ssh_directory)
+    _scrub_authorized_keys(home / ".ssh", label="bootstrap")
+
+
+def _scrub_root_authorized_keys() -> None:
+    """Remove SSH authorization files without changing other root SSH state."""
+    _scrub_authorized_keys(ROOT_SSH_DIRECTORY, label="root")
 
 
 def _ca_private_key_paths(db: Session) -> set[Path]:
@@ -831,6 +848,7 @@ def _scrub_retained_credentials() -> None:
         label="VCF Backup authorized-key",
     )
     _scrub_bootstrap_authorized_keys()
+    _scrub_root_authorized_keys()
 
 
 def _remove_factory_reset_credentials() -> None:

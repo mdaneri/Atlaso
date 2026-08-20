@@ -1325,8 +1325,9 @@ Terminal order:
   overlapping runner or active delay timer must not overwrite or remove the active runner's marker, candidate, or result.
   Preserve depot content, backup artifacts, managed ESX Storage payloads, and other documented payload paths by default;
   clear only logical database references and fixed transient Apply staging. Scrub secret-bearing staging on success and
-  failure, including retained VCF Backup authorized keys, Web Terminal CA material, pending terminal requests, KMIP
-  operational state, managed Photon repository credentials, and Atlaso-synchronized package-source state. Keep
+  failure, including retained bootstrap and root SSH authorization files, VCF Backup authorized keys, Web Terminal CA
+  material, pending terminal requests, KMIP operational state, managed Photon repository credentials, and
+  Atlaso-synchronized package-source state. Keep
   credential-bearing repository removal durable by fsyncing its parent directory before advancing the reset marker.
   Keep
   explicit keep-or-change choices for both the bootstrap administrator and root passwords. New values must satisfy the

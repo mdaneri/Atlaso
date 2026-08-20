@@ -459,9 +459,11 @@ def test_factory_reset_scrubs_credentials_outside_apply_staging(tmp_path, monkey
     terminal_public_key = tmp_path / "web-terminal-ca.pub"
     local_users_home = tmp_path / "users"
     bootstrap_ssh = local_users_home / "admin" / ".ssh"
+    root_ssh = tmp_path / "root" / ".ssh"
     authorized_keys.mkdir()
     terminal_requests.mkdir(parents=True)
     bootstrap_ssh.mkdir(parents=True)
+    root_ssh.mkdir(parents=True)
     for path in (
         authorized_keys / "vcf-backup",
         terminal_requests / "request.json",
@@ -469,10 +471,14 @@ def test_factory_reset_scrubs_credentials_outside_apply_staging(tmp_path, monkey
         terminal_public_key,
         bootstrap_ssh / "authorized_keys",
         bootstrap_ssh / "authorized_keys2",
+        root_ssh / "authorized_keys",
+        root_ssh / "authorized_keys2",
     ):
         path.write_text("credential", encoding="utf-8")
     retained_home_file = local_users_home / "admin" / "profile.ps1"
     retained_home_file.write_text("retained payload", encoding="utf-8")
+    retained_root_ssh_config = root_ssh / "config"
+    retained_root_ssh_config.write_text("retained root SSH config", encoding="utf-8")
     synced_directories: list[Path] = []
 
     monkeypatch.setattr(factory_reset, "VCF_BACKUPS_AUTHORIZED_KEYS_DIRECTORY", authorized_keys)
@@ -483,6 +489,7 @@ def test_factory_reset_scrubs_credentials_outside_apply_staging(tmp_path, monkey
         (terminal_private_key, terminal_public_key),
     )
     monkeypatch.setattr(factory_reset, "LOCAL_USERS_HOME_DIRECTORY", local_users_home)
+    monkeypatch.setattr(factory_reset, "ROOT_SSH_DIRECTORY", root_ssh)
     monkeypatch.setattr(
         factory_reset,
         "get_settings",
@@ -501,13 +508,38 @@ def test_factory_reset_scrubs_credentials_outside_apply_staging(tmp_path, monkey
     assert not terminal_public_key.exists()
     assert not (bootstrap_ssh / "authorized_keys").exists()
     assert not (bootstrap_ssh / "authorized_keys2").exists()
+    assert not (root_ssh / "authorized_keys").exists()
+    assert not (root_ssh / "authorized_keys2").exists()
     assert retained_home_file.read_text(encoding="utf-8") == "retained payload"
+    assert retained_root_ssh_config.read_text(encoding="utf-8") == "retained root SSH config"
     assert set(synced_directories) == {
         authorized_keys,
         terminal_requests,
         terminal_private_key.parent,
         bootstrap_ssh,
+        root_ssh,
     }
+
+
+def test_factory_reset_rejects_unsafe_root_authorization_entry(tmp_path, monkeypatch):
+    """Reset fails closed rather than recursively deleting a root SSH entry.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+    """
+    import pytest
+
+    import atlaso.app.factory_reset as factory_reset
+
+    root_ssh = tmp_path / "root" / ".ssh"
+    (root_ssh / "authorized_keys").mkdir(parents=True)
+    monkeypatch.setattr(factory_reset, "ROOT_SSH_DIRECTORY", root_ssh)
+
+    with pytest.raises(factory_reset.FactoryResetError, match="root SSH authorization entry"):
+        factory_reset._scrub_root_authorized_keys()
+
+    assert (root_ssh / "authorized_keys").is_dir()
 
 
 def test_factory_reset_durably_clears_apply_staging(tmp_path, monkeypatch):
