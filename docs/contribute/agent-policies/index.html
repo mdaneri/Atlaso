@@ -4258,6 +4258,15 @@
 <li>Apply actions should create one global job/task that captures selected units, skipped changed units, current desired
   state summaries, rendered config previews/diffs, validation results, adapter commands, dry-run status, and audit
   event.</li>
+<li>Real Appliance Settings tasks must persist server-owned management-restart context only after the helper confirms that
+  it scheduled the restart. While the component is succeeded and within the helper's declared delayed-restart and recovery
+  interval, the shared monitor may use that context for one bounded neutral reconnecting window without dropping last-known
+  progress or the global lock. Measure that interval with browser-local elapsed time beginning when the confirmed context
+  is first observed; never compare independent browser and appliance wall clocks. Browser-submitted and local-console
+  forced-real tasks must carry the same confirmed context. When Appliance Settings is the last or only component, retain
+  the terminal task and server mutation lock until the confirmed restart window is consumed.
+  Recovery clears the notice automatically; missing, unexpected, pre-confirmation, or out-of-window status failures retain
+  the actionable availability warning and active retry cadence.</li>
 <li>Label the global submit action around the user's intent, such as <code>Submit appliance changes</code>, and explain that the task
   validates and applies selected desired state through Atlaso adapters.</li>
 <li>Fresh Photon appliance startup may initialize the factory desired-state baseline automatically when no baseline,

@@ -4461,12 +4461,24 @@ The browser permits only one status request at a time, polls active work every t
 polling from ten to sixty seconds, suspends polling while hidden, and refreshes immediately after successful desired-
 state mutations, visibility return, and Apply completion. Once a master task is observed, the browser retains its ID
 until <code>/ui/management/tasks/&lt;id&gt;/status</code> returns a valid terminal task. A transient status or terminal-follow-up failure
-keeps the global lock visible, shows a retry warning in the open monitor, and retries at the two-second active cadence.
-Successful reconciliation clears that warning and converges the modal, sidebar badge, pending count, and lock from the
+keeps the global lock visible and retries at the two-second active cadence. A real Appliance Settings helper result adds
+<code>management_status_transition</code> only after <code>systemd-run</code> accepts the delayed restart; an idempotent apply that does not
+schedule a restart carries no transition. Once that child is <code>succeeded</code> with the confirmed context, the monitor permits
+at most 15 seconds of neutral <strong>reconnecting to task status</strong> presentation around the helper's three-second delayed
+restart. A successful status response at or after the scheduled restart instant, or recovery after an observed outage,
+consumes that one-time window so a later unrelated failure returns to the actionable warning. Every task response derives
+the delay and total time remaining from the server's persisted settings-step completion time. The browser anchors only
+that bounded remainder to its local elapsed timer, so clock differences cannot change the duration and a late observer
+cannot create a fresh window. The same result-driven contract applies to forced-real tasks created by the local appliance
+console. It does not apply while that child is pending or running, to dry-run tasks, or to tasks without complete
+transition metadata.
+Continued failure after the grace window and every unexpected failure use the actionable availability warning.
+Successful reconciliation clears either notice and converges the modal, sidebar badge, pending count, and lock from the
 authoritative status and task responses. Terminal task state is sticky so an older in-flight <code>pending</code> or <code>running</code>
 response cannot replace a newer <code>succeeded</code>, <code>failed</code>, or <code>cancelled</code> result. If another session starts a new Apply
 between polls, the browser reconciles the retained task and runs its terminal completion refresh before accepting the
-new active task. Directly observed terminal responses, including cancellation races, run the same completion refresh.</p>
+new active task.
+Directly observed terminal responses, including cancellation races, run the same completion refresh.</p>
 <p>Submitting transforms the review modal into a live master/child task grid. One <code>appliance-apply</code> master owns one child
 execution record per selected component. Every signed-in session sees the blocking grid while the master is pending or
 running. Atlaso rejects other UI and API mutations with HTTP <code>423 Locked</code>; read-only pages, authentication/session

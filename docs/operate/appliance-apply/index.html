@@ -3728,9 +3728,19 @@ inspection, authentication actions, and safe cancellation remain available.</p>
 <p>Safe cancellation does not interrupt the component already running. Every helper or adapter command in that component
 continues to completion. After the component returns, Atlaso skips the remaining components and releases the mutation
 lock when the master task becomes terminal.</p>
-<p>If the dialog shows <strong>Live task status is temporarily unavailable</strong>, leave it open while Atlaso retries. The last known
-task and lock remain visible until an authoritative response arrives. If the warning persists, open <strong>Tasks</strong> in another
-tab to inspect the master task and verify appliance connectivity before deciding whether to reload the affected page.</p>
+<p>When a real Appliance Settings component reaches its planned management-service restart, the dialog shows <strong>Applying
+management settings; Atlaso is reconnecting to task status.</strong> This neutral state keeps the last known task progress and
+global lock visible. Leave the dialog open: Atlaso retries every two seconds, clears the notice when the front door
+returns, and follows the same master task to its terminal state without a page reload. The bounded reconnect interval
+uses the remaining server-owned restart window reported with each task response. A browser opened or resumed after the
+scheduled restart therefore cannot start a fresh grace interval, and clock differences between the browser and appliance
+do not change the boundary. For a settings-only apply, the completed master remains visible and keeps appliance changes
+locked only until that restart window ends.</p>
+<p>If that reconnect exceeds the bounded grace window, or a status failure is not part of the planned restart, the dialog
+instead shows <strong>Live task status is temporarily unavailable</strong> with a link-free instruction to open <strong>Tasks</strong> in another
+tab if the problem persists. Atlaso continues retrying and retains the last known task and lock until an authoritative
+response arrives. Use Tasks to inspect the master task and verify appliance connectivity before deciding whether to
+reload the affected page.</p>
 <h2 id="verify-the-result">Verify the result<a class="headerlink" href="#verify-the-result" title="Permanent link">&para;</a></h2>
 <p>Do not treat a submitted task as proof that the appliance changed successfully.</p>
 <ol>
