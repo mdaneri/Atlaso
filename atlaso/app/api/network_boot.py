@@ -25,7 +25,7 @@ from fastapi import (
 from fastapi import Path as ApiPath
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import ValidationError
-from sqlalchemy import delete, desc, func, select
+from sqlalchemy import desc, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -75,11 +75,11 @@ from atlaso.app.services.network_boot import (
     normalize_mac,
     poll_inventory_command,
     queue_reboot_command,
+    remove_discovered_host_state,
     render_esxi_boot_claim,
     render_network_boot_menu,
     report_history,
     report_identity,
-    remove_discovered_host_state,
     request_host_boot_override,
     send_wake_on_lan,
     set_environment_desired_state,
