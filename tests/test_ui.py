@@ -989,7 +989,7 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert service_worker.headers["cache-control"] == "no-cache"
     assert service_worker.headers["service-worker-allowed"] == "/ui/management/"
     assert "ATLASO_CACHE" in service_worker.text
-    assert "atlaso-management-pwa-v260" in service_worker.text
+    assert "atlaso-management-pwa-v261" in service_worker.text
     assert 'fetch(asset, { cache: "reload" })' in service_worker.text
     assert ".catch(() => undefined)" in service_worker.text
     assert 'request.mode === "navigate"' in service_worker.text
@@ -1023,7 +1023,15 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     offline = client.get("/static/offline.html")
     assert offline.status_code == 200
     assert "Appliance connection unavailable" in offline.text
-    assert "/static/app.css?v=issue-338-1" in offline.text
+    offline_stylesheet = re.search(
+        r'<link rel="stylesheet" href="([^"]+)">',
+        offline.text,
+    )
+    assert offline_stylesheet is not None
+    assert offline_stylesheet.group(1) == (
+        "/static/app.css?v=network-boot-lifecycle-430-432-20260820-3"
+    )
+    assert f'"{offline_stylesheet.group(1)}"' in service_worker.text
 
 
 def test_shared_ui_pattern_shell_and_wizard_contracts(client):
