@@ -6795,6 +6795,11 @@ uses UEFI or legacy BIOS firmware.</p>
 <hr />
 <h2 id="boot-the-esx-installer-by-using-native-uefi-http">Boot the ESX installer by using native UEFI HTTP<a class="headerlink" href="#boot-the-esx-installer-by-using-native-uefi-http" title="Permanent link">&para;</a></h2>
 <p>Native UEFI HTTP boot does not require PXELINUX or iPXE if the firmware supports HTTP boot.</p>
+<p>Atlaso defaults Native UEFI HTTP off while Network Boot / ESXi PXE is disabled. A legacy or restored disabled-PXE
+configuration that still contains an enabled Native UEFI HTTP flag and a blank URL remains dormant and does not expose
+boot services. When ESXi PXE is enabled, Atlaso accepts Native UEFI HTTP only after an absolute HTTP(S) boot URL can be
+derived from a selected IPv4 DHCP zone (or a valid absolute URL is already stored); otherwise the settings and global
+Appliance Apply review show a blocking validation error with a link back to Network Boot.</p>
 <h3 id="prerequisites-for-using-native-uefi-http">Prerequisites for using native UEFI HTTP<a class="headerlink" href="#prerequisites-for-using-native-uefi-http" title="Permanent link">&para;</a></h3>
 <table>
 <thead>
