@@ -150,6 +150,22 @@ Legacy `/api/v1/dns/apply`, `/api/v1/dhcp/apply`, and `/api/v1/firewall/apply` r
 but are intentionally absent from Swagger because they predate the reviewed global workflow. New clients must save
 desired state and use `/ui/management/appliance-apply`; do not build new automation around the legacy direct-apply routes.
 
+## Delete an ESXi Host Reference
+
+`DELETE /api/v1/esxi-pxe/hosts/{host_id}` requires `write:esxi-pxe` and
+removes one saved Host Reference. By default, Atlaso retains matching Network
+Boot discovery history so the host can be rediscovered or promoted again. The
+response reports whether the reference was deleted and returns zero removal
+counts for discovered hosts, reports, sessions, and commands.
+
+Set `remove_discovered_host=true` only when the client also has `write:pxe` and
+the administrator intends to remove matching discovery commands, sessions,
+reports, and host rows in the same transaction. Atlaso returns `409 Conflict`
+without mutation when another Host Reference owns any reported MAC for that
+discovery; delete without cleanup or remove the other assignment first. A
+successful deletion changes saved desired state immediately, while generated
+PXE state changes only through global Appliance Apply.
+
 ## Authorize one ESXi boot
 
 `POST /api/v1/network-boot/esxi-hosts/{host_id}/authorize-boot-once` requires
