@@ -116,7 +116,10 @@ def test_factory_reset_helper_persists_marker_before_detached_schedule(
     """
     helper = load_helper_module()
     state_directory = tmp_path / "factory-reset"
-    staged_credentials = tmp_path / "apply" / "factory-reset" / "credentials.json"
+    staged_template = tmp_path / "apply" / "factory-reset" / "credentials.json"
+    staged_credentials = staged_template.with_name(
+        "credentials-0123456789abcdef0123456789abcdef.json"
+    )
     staged_credentials.parent.mkdir(parents=True)
     staged_credentials.write_text(
         json.dumps(
@@ -155,7 +158,7 @@ def test_factory_reset_helper_persists_marker_before_detached_schedule(
     monkeypatch.setattr(helper, "ATLASO_FACTORY_RESET_REQUEST_PATH", state_directory / "request.json")
     monkeypatch.setattr(helper, "ATLASO_FACTORY_RESET_RESULT_PATH", state_directory / "last-result.json")
     monkeypatch.setattr(helper, "ATLASO_FACTORY_RESET_CREDENTIALS_PATH", state_directory / "credentials.json")
-    monkeypatch.setattr(helper, "ATLASO_FACTORY_RESET_STAGED_CREDENTIALS_PATH", staged_credentials)
+    monkeypatch.setattr(helper, "ATLASO_FACTORY_RESET_STAGED_CREDENTIALS_PATH", staged_template)
     monkeypatch.setattr(helper, "ATLASO_FACTORY_RESET_PYTHON", runner)
     monkeypatch.setattr(helper.shutil, "chown", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(helper.pwd, "getpwnam", lambda _username: Account())
@@ -197,7 +200,10 @@ def test_factory_reset_helper_treats_pending_timer_as_active(monkeypatch, tmp_pa
     helper = load_helper_module()
     state_directory = tmp_path / "factory-reset"
     state_directory.mkdir()
-    staged_credentials = tmp_path / "apply" / "factory-reset" / "credentials.json"
+    staged_template = tmp_path / "apply" / "factory-reset" / "credentials.json"
+    staged_credentials = staged_template.with_name(
+        "credentials-fedcba9876543210fedcba9876543210.json"
+    )
     staged_credentials.parent.mkdir(parents=True)
     staged_credentials.write_text(
         json.dumps(
@@ -238,7 +244,7 @@ def test_factory_reset_helper_treats_pending_timer_as_active(monkeypatch, tmp_pa
     monkeypatch.setattr(helper, "ATLASO_FACTORY_RESET_REQUEST_PATH", request_path)
     monkeypatch.setattr(helper, "ATLASO_FACTORY_RESET_RESULT_PATH", state_directory / "last-result.json")
     monkeypatch.setattr(helper, "ATLASO_FACTORY_RESET_CREDENTIALS_PATH", state_directory / "credentials.json")
-    monkeypatch.setattr(helper, "ATLASO_FACTORY_RESET_STAGED_CREDENTIALS_PATH", staged_credentials)
+    monkeypatch.setattr(helper, "ATLASO_FACTORY_RESET_STAGED_CREDENTIALS_PATH", staged_template)
     monkeypatch.setattr(helper.pwd, "getpwnam", lambda _username: Account())
     monkeypatch.setattr(helper.shutil, "which", lambda command: f"/usr/bin/{command}")
     monkeypatch.setattr(helper, "_run", fake_run)
@@ -247,6 +253,81 @@ def test_factory_reset_helper_treats_pending_timer_as_active(monkeypatch, tmp_pa
     assert json.loads(request_path.read_text(encoding="utf-8"))["state"] == "scheduled"
     assert not staged_credentials.exists()
     assert not any(command and command[0] == "/usr/bin/systemd-run" for command in commands)
+
+
+def test_factory_reset_helper_rejects_busy_admission_without_touching_other_request(
+    monkeypatch,
+    tmp_path,
+    capsys,
+):
+    """A lock loser removes only its request-bound credential file and reports busy.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+        capsys: Pytest fixture used to capture standard output and standard error.
+    """
+    helper = load_helper_module()
+    state_directory = tmp_path / "factory-reset"
+    staged_template = tmp_path / "apply" / "factory-reset" / "credentials.json"
+    losing_request = staged_template.with_name(
+        "credentials-11111111111111111111111111111111.json"
+    )
+    other_request = staged_template.with_name(
+        "credentials-22222222222222222222222222222222.json"
+    )
+    losing_request.parent.mkdir(parents=True)
+    for path in (losing_request, other_request):
+        path.write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "admin_action": "keep",
+                    "root_action": "keep",
+                }
+            ),
+            encoding="utf-8",
+        )
+        path.chmod(0o600)
+
+    def reject_lock(_descriptor: int, operation: int) -> None:
+        """Model a transaction lock already held by another request.
+
+        Args:
+            _descriptor: Open transaction-lock file descriptor.
+            operation: Requested flock operation flags.
+        """
+        assert operation == 3
+        raise BlockingIOError
+
+    monkeypatch.setattr(helper, "ATLASO_FACTORY_RESET_DIR", state_directory)
+    monkeypatch.setattr(
+        helper,
+        "ATLASO_FACTORY_RESET_REQUEST_PATH",
+        state_directory / "request.json",
+    )
+    monkeypatch.setattr(
+        helper,
+        "ATLASO_FACTORY_RESET_STAGED_CREDENTIALS_PATH",
+        staged_template,
+    )
+    monkeypatch.setattr(
+        helper,
+        "fcntl",
+        SimpleNamespace(LOCK_EX=1, LOCK_NB=2, LOCK_UN=8, flock=reject_lock),
+    )
+    monkeypatch.setattr(helper, "_factory_reset_state_payload", lambda: {"state": "running"})
+
+    assert (
+        helper._handle_factory_reset("schedule", [str(losing_request)])
+        == helper.ATLASO_FACTORY_RESET_ADMISSION_BUSY_EXIT_CODE
+    )
+    captured = capsys.readouterr()
+    assert json.loads(captured.out)["state"] == "running"
+    assert "admission is busy" in captured.err
+    assert not losing_request.exists()
+    assert other_request.exists()
+    assert not (state_directory / "request.json").exists()
 
 
 def test_factory_reset_marker_fsyncs_replaced_directory(monkeypatch, tmp_path):
@@ -422,6 +503,7 @@ def test_factory_reset_retained_runtime_cleanup_removes_bounded_state(
         json.dumps({"powershell_repositories": ["PrivateGallery"]}),
         encoding="utf-8",
     )
+    synced_directories: list[Path] = []
 
     def sync_sources(payload):
         """Model successful synchronized package-source removal.
@@ -447,11 +529,17 @@ def test_factory_reset_retained_runtime_cleanup_removes_bounded_state(
         lambda name: "/usr/bin/pwsh" if name == "pwsh" else None,
     )
     monkeypatch.setattr(helper, "_sync_appliance_update_sources", sync_sources)
+    monkeypatch.setattr(
+        helper,
+        "_fsync_factory_reset_directory",
+        synced_directories.append,
+    )
 
     assert helper._handle_factory_reset("reset-retained-runtime", []) == 0
     assert list(kmip_state.iterdir()) == []
     assert not managed_repo.exists()
     assert not update_state.exists()
+    assert synced_directories == [managed_repo.parent, kmip_state, update_state.parent]
     output = json.loads(capsys.readouterr().out)
     assert output["kmip_entries_removed"] == 3
     assert output["powershell_repositories_removed"] == 1

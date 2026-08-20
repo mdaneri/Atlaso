@@ -577,6 +577,11 @@ management OpenAPI successes. A restart/readiness failure retains the marker for
 drop-ins, the management resolver file, and the Atlaso service loopback drop-in into isolated temporary trees and runs
 the native validators there without changing the active host configuration. The non-appliance fallback likewise
 builds and validates an isolated SQLite candidate before replacing the request connection through SQLite backup.
+Each web request stages its keep-or-change password plan in a distinct mode-`0600` file. Nonblocking helper admission
+accepts at most one plan, reports contention as a retryable scheduling failure, and deletes only the calling request's
+file. Changed values are prevalidated against the packaged factory Local Users policy rather than mutable current
+desired state. Retained credential cleanup fsyncs the managed Photon repository directory before the reset transaction
+may advance to management-readiness verification.
 
 ### Operational logs and appliance power
 

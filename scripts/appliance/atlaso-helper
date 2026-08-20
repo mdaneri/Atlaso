@@ -197,6 +197,10 @@ ATLASO_FACTORY_RESET_CREDENTIALS_PATH = ATLASO_FACTORY_RESET_DIR / "credentials.
 ATLASO_FACTORY_RESET_STAGED_CREDENTIALS_PATH = (
     ATLASO_STATE_DIR / "apply" / "factory-reset" / "credentials.json"
 )
+ATLASO_FACTORY_RESET_STAGED_CREDENTIAL_NAME_PATTERN = re.compile(
+    r"^credentials-[0-9a-f]{32}\.json$"
+)
+ATLASO_FACTORY_RESET_ADMISSION_BUSY_EXIT_CODE = 75
 ATLASO_FACTORY_RESET_PYTHON = ATLASO_VENV_LINK / "bin/python"
 SYSTEMD_NETWORK_INTERFACE_DIR = Path("/sys/class/net")
 SYSTEMD_NETWORK_LEASE_DIR = Path("/run/systemd/netif/leases")
@@ -13328,15 +13332,39 @@ def _normalize_factory_reset_credentials(payload: object) -> dict[str, str | int
     return normalized
 
 
-def _read_factory_reset_credentials(path_value: str) -> dict[str, str | int]:
-    """Validate one fixed, protected factory-reset credential-choice file.
+def _factory_reset_staged_credentials_path(path_value: str) -> Path:
+    """Validate one request-bound factory-reset credential staging path.
 
     Args:
-        path_value: Exact transient staging path supplied by the control plane.
+        path_value: Transient staging path supplied by the control plane.
     """
     path = Path(path_value)
-    if path != ATLASO_FACTORY_RESET_STAGED_CREDENTIALS_PATH:
-        raise ValueError("factory-reset credentials must use the fixed staging path")
+    staging_directory = ATLASO_FACTORY_RESET_STAGED_CREDENTIALS_PATH.parent
+    if (
+        path.parent != staging_directory
+        or not ATLASO_FACTORY_RESET_STAGED_CREDENTIAL_NAME_PATTERN.fullmatch(
+            path.name
+        )
+    ):
+        raise ValueError(
+            "factory-reset credentials must use a request-bound staging path"
+        )
+    if (
+        staging_directory.is_symlink()
+        or not staging_directory.is_dir()
+        or staging_directory.resolve() != staging_directory
+    ):
+        raise ValueError("factory-reset credential staging directory is unsafe")
+    return path
+
+
+def _read_factory_reset_credentials(path_value: str) -> dict[str, str | int]:
+    """Validate one request-bound, protected credential-choice file.
+
+    Args:
+        path_value: Transient staging path supplied by the control plane.
+    """
+    path = _factory_reset_staged_credentials_path(path_value)
     if path.is_symlink() or not path.is_file() or path.resolve() != path:
         raise ValueError("factory-reset credential staging path is unsafe")
     file_stat = path.stat()
@@ -13562,34 +13590,46 @@ def _schedule_factory_reset(credentials_path: str) -> int:
     """Serialize protected reset admission before creating its marker and timer.
 
     Args:
-        credentials_path: Fixed transient credential-choice staging path.
+        credentials_path: Request-bound transient credential-choice staging path.
     """
-    ATLASO_FACTORY_RESET_DIR.mkdir(parents=True, exist_ok=True)
-    os.chmod(ATLASO_FACTORY_RESET_DIR, 0o750)
-    lock_path = ATLASO_FACTORY_RESET_DIR / "transaction.lock"
-    with lock_path.open("a+b") as lock_handle:
-        os.chmod(lock_path, 0o600)
-        if fcntl is not None:
-            try:
-                fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-            except BlockingIOError:
-                print(json.dumps(_factory_reset_state_payload(), sort_keys=True))
-                return 0
-        try:
-            credentials = _read_factory_reset_credentials(credentials_path)
-            return _schedule_factory_reset_locked(credentials)
-        except (OSError, ValueError) as exc:
-            print(str(exc), file=sys.stderr)
-            return 2
-        finally:
-            staged_path = Path(credentials_path)
-            if staged_path == ATLASO_FACTORY_RESET_STAGED_CREDENTIALS_PATH:
-                staging_directory = staged_path.parent
-                staged_path.unlink(missing_ok=True)
-                if staging_directory.is_dir():
-                    _fsync_factory_reset_directory(staging_directory)
+    try:
+        staged_path = _factory_reset_staged_credentials_path(credentials_path)
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+    try:
+        ATLASO_FACTORY_RESET_DIR.mkdir(parents=True, exist_ok=True)
+        os.chmod(ATLASO_FACTORY_RESET_DIR, 0o750)
+        lock_path = ATLASO_FACTORY_RESET_DIR / "transaction.lock"
+        with lock_path.open("a+b") as lock_handle:
+            os.chmod(lock_path, 0o600)
             if fcntl is not None:
-                fcntl.flock(lock_handle.fileno(), fcntl.LOCK_UN)
+                try:
+                    fcntl.flock(
+                        lock_handle.fileno(),
+                        fcntl.LOCK_EX | fcntl.LOCK_NB,
+                    )
+                except BlockingIOError:
+                    print(json.dumps(_factory_reset_state_payload(), sort_keys=True))
+                    print(
+                        "Factory reset admission is busy; retry after the active request is recorded.",
+                        file=sys.stderr,
+                    )
+                    return ATLASO_FACTORY_RESET_ADMISSION_BUSY_EXIT_CODE
+            try:
+                credentials = _read_factory_reset_credentials(credentials_path)
+                return _schedule_factory_reset_locked(credentials)
+            finally:
+                if fcntl is not None:
+                    fcntl.flock(lock_handle.fileno(), fcntl.LOCK_UN)
+    except (OSError, ValueError) as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+    finally:
+        staging_directory = staged_path.parent
+        staged_path.unlink(missing_ok=True)
+        if staging_directory.is_dir():
+            _fsync_factory_reset_directory(staging_directory)
 
 
 def _factory_reset_runtime_cleanup_is_admitted() -> bool:
@@ -13831,10 +13871,15 @@ def _reset_factory_retained_runtime() -> int:
         return 2
     try:
         repositories = _factory_reset_retained_runtime_paths_are_safe()
+        managed_photon_repo_existed = MANAGED_PHOTON_REPO_PATH.is_file()
         result = _sync_appliance_update_sources({"source_definitions": []})
         if result.get("status") != "succeeded":
             print("factory-reset could not remove synchronized package-source runtime state", file=sys.stderr)
             return 1
+        if MANAGED_PHOTON_REPO_PATH.exists():
+            raise ValueError("factory-reset managed Photon repository cleanup did not complete")
+        if managed_photon_repo_existed:
+            _fsync_factory_reset_directory(MANAGED_PHOTON_REPO_PATH.parent)
         removed_kmip_entries = 0
         if KMS_STATE_DIR.is_dir():
             for child in KMS_STATE_DIR.iterdir():
@@ -13845,8 +13890,6 @@ def _reset_factory_retained_runtime() -> int:
         if UPDATE_SOURCE_STATE_PATH.is_file():
             UPDATE_SOURCE_STATE_PATH.unlink()
             _fsync_factory_reset_directory(UPDATE_SOURCE_STATE_PATH.parent)
-        if MANAGED_PHOTON_REPO_PATH.exists():
-            raise ValueError("factory-reset managed Photon repository cleanup did not complete")
     except (OSError, ValueError) as exc:
         print(str(exc), file=sys.stderr)
         return 1
@@ -13898,7 +13941,10 @@ def _handle_factory_reset(action: str, args: list[str]) -> int:
     """
     if action == "schedule":
         if len(args) != 1:
-            print("factory-reset schedule requires the fixed credential staging path", file=sys.stderr)
+            print(
+                "factory-reset schedule requires one request-bound credential staging path",
+                file=sys.stderr,
+            )
             return 2
         return _schedule_factory_reset(args[0])
     if args:

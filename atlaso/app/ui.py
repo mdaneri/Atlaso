@@ -420,6 +420,7 @@ from atlaso.app.services.ldap import (
 )
 from atlaso.app.services.local_users import (
     DEFAULT_LOCAL_USER_SHELL,
+    DEFAULT_PASSWORD_POLICY,
     LOCAL_USER_SHELLS,
     LOCAL_USERS_PASSWORD_POLICY_KEY,
     LOCAL_USERS_STAGED_CONFIG_PATH,
@@ -12256,6 +12257,24 @@ def cleanup_transient_secret_staging_files() -> None:
         staged_path.unlink(missing_ok=True)
         for temp_path in staged_path.parent.glob(f".{staged_path.name}.*.tmp"):
             temp_path.unlink(missing_ok=True)
+    factory_reset_template = Path(FACTORY_RESET_STAGED_CREDENTIALS_PATH)
+    request_name_pattern = re.compile(
+        rf"^{re.escape(factory_reset_template.stem)}-[0-9a-f]{{32}}{re.escape(factory_reset_template.suffix)}$"
+    )
+    request_temp_name_pattern = re.compile(
+        rf"^\.{re.escape(factory_reset_template.stem)}-[0-9a-f]{{32}}"
+        rf"{re.escape(factory_reset_template.suffix)}\.[0-9a-f]{{32}}\.tmp$"
+    )
+    for request_path in factory_reset_template.parent.glob(
+        f"{factory_reset_template.stem}-*{factory_reset_template.suffix}"
+    ):
+        if request_name_pattern.fullmatch(request_path.name):
+            request_path.unlink(missing_ok=True)
+    for request_temp_path in factory_reset_template.parent.glob(
+        f".{factory_reset_template.stem}-*{factory_reset_template.suffix}.*.tmp"
+    ):
+        if request_temp_name_pattern.fullmatch(request_temp_path.name):
+            request_temp_path.unlink(missing_ok=True)
     local_users_path = Path(LOCAL_USERS_STAGED_CONFIG_PATH)
     for status_path in local_users_path.parent.glob(
         f".{local_users_path.stem}.status-*{local_users_path.suffix}"
@@ -18301,9 +18320,7 @@ _settings_backup_ui = build_settings_backup_ui_router(
             *args, **kwargs
         ),
         get_runtime_settings=lambda: get_settings(),
-        local_users_password_policy=lambda *args, **kwargs: local_users_password_policy(
-            *args, **kwargs
-        ),
+        factory_password_policy=DEFAULT_PASSWORD_POLICY,
         validate_password=lambda *args, **kwargs: validate_password(*args, **kwargs),
         stage_appliance_apply_config=lambda *args, **kwargs: stage_appliance_apply_config(
             *args, **kwargs

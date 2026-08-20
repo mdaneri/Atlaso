@@ -948,8 +948,12 @@ address becomes unavailable.
 
 Before database replacement, the root helper persists `/var/lib/atlaso/factory-reset/request.json`, quiesces Atlaso
 writers, validates generated nginx, network, firewall, resolver, systemd, and service configuration, and records only
-bounded non-secret progress. `atlaso.service` resumes that marker before uvicorn starts after a reboot. The candidate is
-mode `0600`; fixed secret staging is scrubbed on failure and all `/var/lib/atlaso/apply` staging is removed on success.
+bounded non-secret progress. `atlaso.service` resumes that marker before uvicorn starts after a reboot. Each scheduling
+request owns a distinct mode-`0600` credential file. Nonblocking admission reports lock contention as a retryable
+failure and deletes only that request's file; accepted replacement passwords are prevalidated against the packaged
+factory Local Users policy. The candidate is mode `0600`; transient secret staging is scrubbed on failure and all
+`/var/lib/atlaso/apply` staging is removed on success. Managed Photon repository removal is ordered durably by fsyncing
+its parent directory before the reset may advance to readiness verification.
 Successful activation also removes retained VCF Backup authorized keys, the Web Terminal CA key pair, and pending Web
 Terminal signing requests. The request remains `awaiting_readiness` until an independent finalizer observes Atlaso,
 worker, nginx, and two consecutive management OpenAPI successes; restart/readiness failure keeps a resumable marker.

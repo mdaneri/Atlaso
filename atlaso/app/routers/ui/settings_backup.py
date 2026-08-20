@@ -7,6 +7,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 from fastapi import APIRouter, Depends, File, Form, Request, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
@@ -35,7 +36,7 @@ class SettingsBackupUiDependencies:
     archive_summary: Endpoint
     restore_settings_archive: Endpoint
     get_runtime_settings: Endpoint
-    local_users_password_policy: Endpoint
+    factory_password_policy: Mapping[str, bool | int]
     validate_password: Endpoint
     stage_appliance_apply_config: Endpoint
     system_adapter_factory: Endpoint
@@ -97,7 +98,7 @@ def build_router(dependencies: SettingsBackupUiDependencies) -> SettingsBackupUi
     archive_summary = dependencies.archive_summary
     restore_settings_archive = dependencies.restore_settings_archive
     get_runtime_settings = dependencies.get_runtime_settings
-    local_users_password_policy = dependencies.local_users_password_policy
+    factory_password_policy = dict(dependencies.factory_password_policy)
     validate_password = dependencies.validate_password
     stage_appliance_apply_config = dependencies.stage_appliance_apply_config
     system_adapter_factory = dependencies.system_adapter_factory
@@ -313,7 +314,7 @@ def build_router(dependencies: SettingsBackupUiDependencies) -> SettingsBackupUi
         verify_csrf(request, csrf)
         settings = get_runtime_settings()
         password_plan: dict[str, str | int] = {"schema_version": 1}
-        policy = local_users_password_policy(db)
+        policy = factory_password_policy
         validation_errors: list[str] = []
         account_inputs = (
             (
@@ -369,8 +370,12 @@ def build_router(dependencies: SettingsBackupUiDependencies) -> SettingsBackupUi
                 status_code=422,
             )
         if settings.environment == "appliance" and not settings.dry_run_system_adapters:
+            staging_template = Path(FACTORY_RESET_STAGED_CREDENTIALS_PATH)
+            request_credentials_path = staging_template.with_name(
+                f"{staging_template.stem}-{uuid4().hex}{staging_template.suffix}"
+            )
             credentials_path = stage_appliance_apply_config(
-                FACTORY_RESET_STAGED_CREDENTIALS_PATH,
+                str(request_credentials_path),
                 json.dumps(password_plan, sort_keys=True),
             )
             scheduled = system_adapter_factory(dry_run=False).schedule_factory_reset(

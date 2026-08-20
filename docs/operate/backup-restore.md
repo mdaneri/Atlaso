@@ -84,9 +84,11 @@ Earlier sessions, bearer tokens, service credentials, and removed-account creden
 the current bootstrap administrator web/Photon password and root password for each **Keep current password** choice. A
 **Change password** choice applies the submitted value during the protected reset transaction; the administrator value
 becomes both the bootstrap web credential and its Photon OS password, while the root value changes only the Photon root
-account and does not enable root SSH. New values must satisfy the current Local Users password policy. Atlaso stages
-them at mode `0600`, copies them into root-only durable reset recovery state, passes OS values through the constrained
-helper and stdin, and removes the credential file after successful database replacement. Password values never enter
+account and does not enable root SSH. New values must satisfy the packaged factory Local Users password policy, even
+when the appliance currently permits a weaker policy. Atlaso gives each reset request its own mode-`0600` staging file;
+the helper admits only one request at a time and a busy request removes only its own file. An admitted request copies
+the values into root-only durable reset recovery state, passes OS values through the constrained helper and stdin, and
+removes the credential file after successful database replacement. Password values never enter
 the database, recovery marker, tasks, audits, logs, or UI responses. Sign in using the bootstrap administrator password
 selected for the reset. Factory state disables Management HTTPS and restores the packaged management network
 (`192.168.49.1/24` on `eth0`), so the browser may lose the old address or HTTPS endpoint. Use the VMware or

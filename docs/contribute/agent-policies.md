@@ -1260,10 +1260,13 @@ Terminal order:
   clear only logical database references and fixed transient Apply staging. Scrub secret-bearing staging on success and
   failure, including retained VCF Backup authorized keys, Web Terminal CA material, pending terminal requests, KMIP
   operational state, managed Photon repository credentials, and Atlaso-synchronized package-source state. Keep
+  credential-bearing repository removal durable by fsyncing its parent directory before advancing the reset marker.
+  Keep
   explicit keep-or-change choices for both the bootstrap administrator and root passwords. New values must satisfy the
-  Local Users policy, remain only in mode-0600 transient and root-owned durable reset recovery files, reach OS password
-  tools only through the constrained helper and stdin, and never enter the database, marker, jobs, audits, logs, or UI
-  responses. The bootstrap choice covers both web and Photon OS authentication; the root choice must not enable root
+  packaged factory Local Users policy, remain only in request-bound mode-0600 transient and root-owned durable reset
+  recovery files, reach OS password tools only through the constrained helper and stdin, and never enter the database,
+  marker, jobs, audits, logs, or UI responses. The bootstrap choice covers both web and Photon OS authentication; the
+  root choice must not enable root
   SSH. Keep the request marker in `awaiting_readiness` until Atlaso, worker, nginx, and the management OpenAPI front
   door are stable; a restart or readiness failure must retain a resumable failure marker. If management addressing
   returns to the image

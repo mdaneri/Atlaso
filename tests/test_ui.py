@@ -7538,7 +7538,7 @@ def test_backup_restore_factory_reset_schedules_durable_appliance_transaction(cl
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
 
     scheduled: list[str] = []
-    staged_payloads: list[dict[str, object]] = []
+    staged_requests: list[tuple[str, dict[str, object]]] = []
 
     def schedule_factory_reset(_adapter, credentials_path):
         """Record one appliance reset schedule request.
@@ -7569,7 +7569,7 @@ def test_backup_restore_factory_reset_schedules_durable_appliance_transaction(cl
     monkeypatch.setattr(SystemAdapter, "schedule_factory_reset", schedule_factory_reset)
     monkeypatch.setattr(
         "atlaso.app.ui.stage_appliance_apply_config",
-        lambda path, payload: staged_payloads.append(json.loads(payload)) or path,
+        lambda path, payload: staged_requests.append((path, json.loads(payload))) or path,
     )
 
     response = client.post(
@@ -7588,20 +7588,80 @@ def test_backup_restore_factory_reset_schedules_durable_appliance_transaction(cl
 
     assert response.status_code == 303
     assert response.headers["location"].endswith("/login?factory_reset=scheduled")
-    assert scheduled == ["/var/lib/atlaso/apply/factory-reset/credentials.json"]
-    assert staged_payloads == [
-        {
-            "schema_version": 1,
-            "admin_action": "change",
-            "admin_password": "Selected-Web2!",
-            "root_action": "change",
-            "root_password": "Selected-System3!",
-        }
+    assert len(scheduled) == 1
+    assert re.fullmatch(
+        r"/var/lib/atlaso/apply/factory-reset/credentials-[0-9a-f]{32}\.json",
+        scheduled[0].replace("\\", "/"),
+    )
+    assert staged_requests == [
+        (
+            scheduled[0],
+            {
+                "schema_version": 1,
+                "admin_action": "change",
+                "admin_password": "Selected-Web2!",
+                "root_action": "change",
+                "root_password": "Selected-System3!",
+            },
+        )
     ]
     with SessionLocal() as db:
         assert db.execute(
             select(Setting).where(Setting.key == "factory.reset.scheduled-retained")
         ).scalar_one().value == "yes"
+
+
+def test_backup_restore_factory_reset_uses_factory_password_policy(client):
+    """Replacement passwords must satisfy the policy restored by factory reset.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
+    from sqlalchemy import select
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Setting
+    from atlaso.app.services.local_users import LOCAL_USERS_PASSWORD_POLICY_KEY
+
+    login(client)
+    with SessionLocal() as db:
+        configured_policy = db.execute(
+            select(Setting).where(Setting.key == LOCAL_USERS_PASSWORD_POLICY_KEY)
+        ).scalar_one_or_none()
+        weak_policy = json.dumps(
+            {
+                "min_length": 8,
+                "require_uppercase": False,
+                "require_lowercase": False,
+                "require_number": False,
+                "require_special": False,
+                "disallow_username": False,
+            }
+        )
+        if configured_policy is None:
+            db.add(Setting(key=LOCAL_USERS_PASSWORD_POLICY_KEY, value=weak_policy))
+        else:
+            configured_policy.value = weak_policy
+        db.commit()
+
+    page = client.get("/backup-restore")
+    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    response = client.post(
+        "/backup-restore/factory-reset",
+        data={
+            "csrf": csrf,
+            "admin_password_action": "change",
+            "admin_password": "lowercase",
+            "admin_password_confirm": "lowercase",
+            "root_password_action": "keep",
+        },
+    )
+
+    assert response.status_code == 422
+    assert "Password must be at least 12 characters" in response.text
+    assert "Password must include an uppercase letter" in response.text
+    assert "Password must include a number" in response.text
+    assert "Password must include a special character" in response.text
 
 
 def test_backup_restore_factory_reset_validates_both_password_choices(client):
@@ -15157,6 +15217,9 @@ def test_application_restart_removes_stale_secret_staging_inputs(client, monkeyp
     ca_path = tmp_path / "apply" / "ca" / "atlaso-ca.json"
     ldap_path = tmp_path / "apply" / "ldap" / "atlaso-ldap.json"
     factory_reset_path = tmp_path / "apply" / "factory-reset" / "credentials.json"
+    factory_reset_request_path = factory_reset_path.with_name(
+        "credentials-0123456789abcdef0123456789abcdef.json"
+    )
     status_path = local_users_path.with_name(".atlaso-users.status-stale.json")
     atomic_temp_paths = [
         path.with_name(f".{path.name}.stale.tmp")
@@ -15168,12 +15231,17 @@ def test_application_restart_removes_stale_secret_staging_inputs(client, monkeyp
             status_path,
         )
     ]
+    factory_reset_request_temp_path = factory_reset_request_path.with_name(
+        f".{factory_reset_request_path.name}.0123456789abcdef0123456789abcdef.tmp"
+    )
     stale_paths = [
         local_users_path,
         ca_path,
         ldap_path,
         factory_reset_path,
         status_path,
+        factory_reset_request_path,
+        factory_reset_request_temp_path,
         *atomic_temp_paths,
     ]
     for path in stale_paths:

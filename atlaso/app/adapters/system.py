@@ -977,7 +977,7 @@ class SystemAdapter:
         """Schedule the detached reset with one protected credential-choice file.
 
         Args:
-            credentials_path: Fixed transient credential-choice path staged by the web process.
+            credentials_path: Request-bound transient credential-choice path staged by the web process.
         """
         return self._helper_result(
             "factory-reset",
