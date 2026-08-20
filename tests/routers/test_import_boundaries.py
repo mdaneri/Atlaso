@@ -26,6 +26,7 @@ EXTRACTED_DOMAIN_MODULES = {
         "atlaso.app.routers.ui.routes_wan",
         "atlaso.app.routers.ui.settings_backup",
         "atlaso.app.routers.ui.vcf_workflows",
+        "atlaso.app.routers.ui.vaults",
     ),
     ROOT / "atlaso" / "app" / "api" / "v1.py": (
         "atlaso.app.routers.api_v1.dashboard_monitor",

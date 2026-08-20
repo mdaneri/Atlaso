@@ -105,7 +105,6 @@ from atlaso.app.models import (
     UpdateSource,
     User,
     Vault,
-    VaultEntry,
     VcfBackupSettings,
     VcfDepotDownloadProfile,
     VcfOfflineDepotSettings,
@@ -168,6 +167,8 @@ from atlaso.app.routers.ui.settings_backup import SettingsBackupUiDependencies
 from atlaso.app.routers.ui.settings_backup import (
     build_router as build_settings_backup_ui_router,
 )
+from atlaso.app.routers.ui.vaults import VaultsUiDependencies
+from atlaso.app.routers.ui.vaults import build_router as build_vaults_ui_router
 from atlaso.app.routers.ui.vcf_workflows import VcfWorkflowsUiDependencies
 from atlaso.app.routers.ui.vcf_workflows import (
     build_router as build_vcf_workflows_ui_router,
@@ -10942,395 +10943,51 @@ def _vaults_render_error(
     )
 
 
-@router.get("/vaults", response_class=HTMLResponse, response_model=None)
-def vaults_page(
-    request: Request,
-    identity: Identity = Depends(require_session_identity),
-    db: Session = Depends(get_db),
-) -> HTMLResponse:
-    """Handle the vaults page endpoint.
-
-    Args:
-        request: Incoming HTTP request.
-        identity: Authenticated identity authorizing the request.
-        db: Active database session.
-
-    Returns:
-        The endpoint response.
-    """
-    require_admin_identity(identity)
-    return render(request, "vaults.html", {"identity": identity, **vaults_context(db)})
-
-
-@router.post("/vaults", response_model=None)
-def create_vault_from_ui(
-    request: Request,
-    name: str = Form(...),
-    description: str = Form(""),
-    csrf: str = Form(...),
-    identity: Identity = Depends(require_session_identity),
-    db: Session = Depends(get_db),
-) -> Response:
-    """Handle the create vault from ui endpoint.
-
-    Args:
-        request: Incoming HTTP request.
-        name: Name of the target object.
-        description: Human-readable description of the resource.
-        csrf: Validated CSRF token authorizing the request.
-        identity: Authenticated identity authorizing the request.
-        db: Active database session.
-
-    Returns:
-        The endpoint response.
-    """
-    verify_csrf(request, csrf)
-    require_admin_identity(identity)
-    try:
-        vault = create_vault(db, name=name, description=description, actor=identity.username)
-        db.commit()
-    except ValueError as exc:
-        db.rollback()
-        return _vaults_render_error(request, identity, db, str(exc))
-    except IntegrityError:
-        db.rollback()
-        return _vaults_render_error(request, identity, db, "A vault with this name already exists.", status_code=409)
-    record_audit(
-        db,
-        actor=identity.username,
-        action="create_vault",
-        resource_type="vault",
-        resource_id=str(vault.id),
+_management_before_vaults_router = router
+_vaults_ui = build_vaults_ui_router(
+    VaultsUiDependencies(
+        require_management_ui_request=require_management_ui_request,
+        require_admin_identity=lambda *args, **kwargs: require_admin_identity(
+            *args, **kwargs
+        ),
+        render=lambda *args, **kwargs: render(*args, **kwargs),
+        verify_csrf=lambda *args, **kwargs: verify_csrf(*args, **kwargs),
+        vaults_context=lambda *args, **kwargs: vaults_context(*args, **kwargs),
+        vaults_render_error=lambda *args, **kwargs: _vaults_render_error(
+            *args, **kwargs
+        ),
+        create_vault=lambda *args, **kwargs: create_vault(*args, **kwargs),
+        decrypt_secret=lambda *args, **kwargs: decrypt_secret(*args, **kwargs),
+        kickstart_template_variables=lambda *args, **kwargs: kickstart_template_variables(
+            *args, **kwargs
+        ),
+        parse_vault_uris_json=lambda *args, **kwargs: parse_vault_uris_json(
+            *args, **kwargs
+        ),
+        record_audit=lambda *args, **kwargs: record_audit(*args, **kwargs),
+        update_vault_entry=lambda *args, **kwargs: update_vault_entry(
+            *args, **kwargs
+        ),
+        upsert_vault_entry=lambda *args, **kwargs: upsert_vault_entry(
+            *args, **kwargs
+        ),
+        vault_entry_input=lambda *args, **kwargs: VaultEntryInput(*args, **kwargs),
+        vault_marker_name=lambda *args, **kwargs: vault_marker_name(*args, **kwargs),
     )
-    return RedirectResponse(f"/vaults#vault-panel-{vault.id}", status_code=303)
+)
+vaults_router = _vaults_ui.router
+vaults_page = _vaults_ui.endpoints["vaults_page"]
+create_vault_from_ui = _vaults_ui.endpoints["create_vault_from_ui"]
+create_vault_entry_from_ui = _vaults_ui.endpoints["create_vault_entry_from_ui"]
+edit_vault_entry_from_ui = _vaults_ui.endpoints["edit_vault_entry_from_ui"]
+reveal_vault_entry_from_ui = _vaults_ui.endpoints["reveal_vault_entry_from_ui"]
+delete_vault_entry_from_ui = _vaults_ui.endpoints["delete_vault_entry_from_ui"]
+delete_vault_from_ui = _vaults_ui.endpoints["delete_vault_from_ui"]
 
-
-@router.post("/vaults/{vault_id}/entries", response_model=None)
-def create_vault_entry_from_ui(
-    vault_id: int,
-    request: Request,
-    key: str = Form(...),
-    value: str = Form(""),
-    description: str = Form(""),
-    username: str = Form(""),
-    resource_name: str = Form(""),
-    uris_json: str = Form("[]"),
-    copy_entry_id: str = Form(""),
-    csrf: str = Form(...),
-    identity: Identity = Depends(require_session_identity),
-    db: Session = Depends(get_db),
-) -> Response:
-    """Handle the create vault entry from ui endpoint.
-
-    Args:
-        vault_id: Identifier of the vault.
-        request: Incoming HTTP request.
-        key: Stable setting, vault, or mapping key.
-        value: Value to process.
-        description: Human-readable description of the resource.
-        username: Account name used for authentication or lookup.
-        resource_name: Resource name supplied by the caller.
-        uris_json: Uris json supplied by the caller.
-        copy_entry_id: Identifier of the copy entry.
-        csrf: Validated CSRF token authorizing the request.
-        identity: Authenticated identity authorizing the request.
-        db: Active database session.
-
-    Returns:
-        The endpoint response.
-
-    Raises:
-        HTTPException: If the request cannot be fulfilled.
-        ValueError: If an input value is invalid.
-    """
-    verify_csrf(request, csrf)
-    require_admin_identity(identity)
-    vault = db.get(Vault, vault_id)
-    if vault is None:
-        raise HTTPException(status_code=404, detail="Vault not found.")
-    source_entry: VaultEntry | None = None
-    if copy_entry_id.strip():
-        try:
-            source_entry = db.get(VaultEntry, int(copy_entry_id))
-        except ValueError as exc:
-            raise HTTPException(status_code=422, detail="Choose a valid vault entry to copy.") from exc
-        if source_entry is None or source_entry.vault_id != vault.id:
-            raise HTTPException(status_code=404, detail="Vault entry not found.")
-    copied_value = decrypt_secret(source_entry.encrypted_value) if source_entry is not None and not value else value
-    try:
-        _entry, created = upsert_vault_entry(
-            db,
-            vault=vault,
-            entry=VaultEntryInput(
-                key=key,
-                secret_type=source_entry.secret_type if source_entry is not None else ("esx_password" if key.strip().lower().startswith("esx.") else "vcf_password"),
-                value=copied_value,
-                description=description,
-                username=username,
-                resource_name=source_entry.resource_name if source_entry is not None else resource_name,
-                source_type=(source_entry.source_type or "manual") if source_entry is not None else "manual",
-                source_endpoint=(source_entry.source_endpoint or "") if source_entry is not None else "",
-                uris=parse_vault_uris_json(uris_json),
-                imported_at=source_entry.imported_at if source_entry is not None else None,
-            ),
-            actor=identity.username,
-        )
-        if not created:
-            raise ValueError("That key already exists. Edit the existing entry to rotate its password.")
-        db.commit()
-    except ValueError as exc:
-        db.rollback()
-        return _vaults_render_error(request, identity, db, str(exc), status_code=409)
-    except IntegrityError:
-        db.rollback()
-        return _vaults_render_error(request, identity, db, "That key already exists in this vault.", status_code=409)
-    record_audit(
-        db,
-        actor=identity.username,
-        action="create_vault_entry",
-        resource_type="vault_entry",
-        resource_id=str(_entry.id),
-        detail=f"vault_id={vault.id}; key={_entry.key}; type={_entry.secret_type}"
-        + (f"; copied_from_entry_id={source_entry.id}" if source_entry is not None else ""),
-    )
-    return RedirectResponse(f"/vaults#vault-panel-{vault.id}", status_code=303)
-
-
-@router.post("/vaults/{vault_id}/entries/{entry_id}/edit", response_model=None)
-def edit_vault_entry_from_ui(
-    vault_id: int,
-    entry_id: int,
-    request: Request,
-    key: str = Form(...),
-    value: str = Form(""),
-    description: str = Form(""),
-    username: str = Form(""),
-    resource_name: str | None = Form(None),
-    uris_json: str = Form("[]"),
-    csrf: str = Form(...),
-    identity: Identity = Depends(require_session_identity),
-    db: Session = Depends(get_db),
-) -> Response:
-    """Handle the edit vault entry from ui endpoint.
-
-    Args:
-        vault_id: Identifier of the vault.
-        entry_id: Identifier of the entry.
-        request: Incoming HTTP request.
-        key: Stable setting, vault, or mapping key.
-        value: Value to process.
-        description: Human-readable description of the resource.
-        username: Account name used for authentication or lookup.
-        resource_name: Resource name supplied by the caller.
-        uris_json: Uris json supplied by the caller.
-        csrf: Validated CSRF token authorizing the request.
-        identity: Authenticated identity authorizing the request.
-        db: Active database session.
-
-    Returns:
-        The endpoint response.
-
-    Raises:
-        HTTPException: If the request cannot be fulfilled.
-    """
-    verify_csrf(request, csrf)
-    require_admin_identity(identity)
-    entry = db.get(VaultEntry, entry_id)
-    if entry is None or entry.vault_id != vault_id:
-        raise HTTPException(status_code=404, detail="Vault entry not found.")
-    try:
-        update_vault_entry(
-            entry,
-            key=key,
-            secret_type=entry.secret_type,
-            value=value,
-            description=description,
-            username=username,
-            resource_name=entry.resource_name if resource_name is None else resource_name,
-            uris=parse_vault_uris_json(uris_json),
-        )
-        db.add(entry)
-        db.commit()
-    except ValueError as exc:
-        db.rollback()
-        return _vaults_render_error(request, identity, db, str(exc))
-    except IntegrityError:
-        db.rollback()
-        return _vaults_render_error(request, identity, db, "That key already exists in this vault.", status_code=409)
-    record_audit(
-        db,
-        actor=identity.username,
-        action="update_vault_entry",
-        resource_type="vault_entry",
-        resource_id=str(entry.id),
-        detail=f"vault_id={vault_id}; key={entry.key}; type={entry.secret_type}",
-    )
-    return RedirectResponse("/vaults", status_code=303)
-
-
-@router.post("/vaults/{vault_id}/entries/{entry_id}/reveal", response_class=JSONResponse, response_model=None)
-def reveal_vault_entry_from_ui(
-    vault_id: int,
-    entry_id: int,
-    request: Request,
-    csrf: str = Form(...),
-    identity: Identity = Depends(require_session_identity),
-    db: Session = Depends(get_db),
-) -> JSONResponse:
-    """Handle the reveal vault entry from ui endpoint.
-
-    Args:
-        vault_id: Identifier of the vault.
-        entry_id: Identifier of the entry.
-        request: Incoming HTTP request.
-        csrf: Validated CSRF token authorizing the request.
-        identity: Authenticated identity authorizing the request.
-        db: Active database session.
-
-    Returns:
-        The endpoint response.
-
-    Raises:
-        HTTPException: If the request cannot be fulfilled.
-    """
-    verify_csrf(request, csrf)
-    require_admin_identity(identity)
-    entry = db.get(VaultEntry, entry_id)
-    if entry is None or entry.vault_id != vault_id:
-        raise HTTPException(status_code=404, detail="Vault entry not found.")
-    value = decrypt_secret(entry.encrypted_value)
-    record_audit(
-        db,
-        actor=identity.username,
-        action="reveal_vault_entry",
-        resource_type="vault_entry",
-        resource_id=str(entry.id),
-        detail=f"vault_id={vault_id}; key={entry.key}",
-    )
-    return JSONResponse(
-        {"value": value},
-        headers={
-            "Cache-Control": "no-store, private",
-            "Pragma": "no-cache",
-        },
-    )
-
-
-@router.post("/vaults/{vault_id}/entries/{entry_id}/delete", response_model=None)
-def delete_vault_entry_from_ui(
-    vault_id: int,
-    entry_id: int,
-    request: Request,
-    csrf: str = Form(...),
-    identity: Identity = Depends(require_session_identity),
-    db: Session = Depends(get_db),
-) -> Response:
-    """Handle the delete vault entry from ui endpoint.
-
-    Args:
-        vault_id: Identifier of the vault.
-        entry_id: Identifier of the entry.
-        request: Incoming HTTP request.
-        csrf: Validated CSRF token authorizing the request.
-        identity: Authenticated identity authorizing the request.
-        db: Active database session.
-
-    Returns:
-        The endpoint response.
-
-    Raises:
-        HTTPException: If the request cannot be fulfilled.
-    """
-    verify_csrf(request, csrf)
-    require_admin_identity(identity)
-    entry = db.get(VaultEntry, entry_id)
-    if entry is None or entry.vault_id != vault_id:
-        raise HTTPException(status_code=404, detail="Vault entry not found.")
-    key = entry.key
-    db.delete(entry)
-    db.commit()
-    record_audit(
-        db,
-        actor=identity.username,
-        action="delete_vault_entry",
-        resource_type="vault_entry",
-        resource_id=str(entry_id),
-        detail=f"vault_id={vault_id}; key={key}",
-    )
-    return RedirectResponse("/vaults", status_code=303)
-
-
-@router.post("/vaults/{vault_id}/delete", response_model=None)
-def delete_vault_from_ui(
-    vault_id: int,
-    request: Request,
-    csrf: str = Form(...),
-    identity: Identity = Depends(require_session_identity),
-    db: Session = Depends(get_db),
-) -> Response:
-    """Handle the delete vault from ui endpoint.
-
-    Args:
-        vault_id: Identifier of the vault.
-        request: Incoming HTTP request.
-        csrf: Validated CSRF token authorizing the request.
-        identity: Authenticated identity authorizing the request.
-        db: Active database session.
-
-    Returns:
-        The endpoint response.
-
-    Raises:
-        HTTPException: If the request cannot be fulfilled.
-    """
-    verify_csrf(request, csrf)
-    require_admin_identity(identity)
-    vault = db.get(Vault, vault_id)
-    if vault is None:
-        raise HTTPException(status_code=404, detail="Vault not found.")
-    dependent_schedules: list[str] = []
-    for schedule in db.execute(select(Schedule).where(Schedule.task_type == "managed_script")).scalars():
-        try:
-            if int(json.loads(schedule.task_config_json or "{}").get("vault_id") or 0) == vault.id:
-                dependent_schedules.append(schedule.name)
-        except (AttributeError, TypeError, ValueError, json.JSONDecodeError):
-            continue
-    if dependent_schedules:
-        return _vaults_render_error(
-            request,
-            identity,
-            db,
-            f"Remove this vault from these schedules first: {', '.join(dependent_schedules)}.",
-            status_code=409,
-        )
-    marker_prefix = f"vault.{vault_marker_name(vault.name)}."
-    dependent_kickstarts = [
-        kickstart.name
-        for kickstart in db.execute(
-            select(EsxiKickstart).where(EsxiKickstart.enabled.is_(True)).order_by(EsxiKickstart.name)
-        ).scalars()
-        if any(name.startswith(marker_prefix) for name in kickstart_template_variables(kickstart.content)[0])
-    ]
-    if dependent_kickstarts:
-        return _vaults_render_error(
-            request,
-            identity,
-            db,
-            f"Remove this vault from these enabled Kickstarts first: {', '.join(dependent_kickstarts)}.",
-            status_code=409,
-        )
-    name = vault.name
-    db.delete(vault)
-    db.commit()
-    record_audit(
-        db,
-        actor=identity.username,
-        action="delete_vault",
-        resource_type="vault",
-        resource_id=str(vault_id),
-        detail=f"name={name}",
-    )
-    return RedirectResponse("/vaults", status_code=303)
+router = APIRouter(
+    prefix=MANAGEMENT_UI_ROOT,
+    dependencies=[Depends(require_management_ui_request)],
+)
 
 
 def automation_context(db: Session) -> dict[str, Any]:
@@ -13422,7 +13079,7 @@ def appliance_power_action(
     return RedirectResponse(f"/tasks?job_id={job.id}", status_code=303)
 
 
-_management_before_dashboard_monitor_router = router
+_management_between_vaults_dashboard_monitor_router = router
 _dashboard_monitor_ui = build_dashboard_monitor_ui_router(
     DashboardMonitorUiDependencies(
         require_management_ui_request=require_management_ui_request,
@@ -18430,14 +18087,27 @@ allow_compatible_route_shadow(
 )
 _management_after_settings_backup_router = router
 UI_ROUTER_REGISTRY.register(
-    "facade_before_dashboard_monitor",
+    "facade_before_vaults",
     (
         RouterContribution(plane="front_door", router=front_door_router),
         RouterContribution(plane="protocol", router=protocol_router),
         RouterContribution(plane="public", router=public_router),
         RouterContribution(
             plane="management",
-            router=_management_before_dashboard_monitor_router,
+            router=_management_before_vaults_router,
+        ),
+    ),
+)
+UI_ROUTER_REGISTRY.register(
+    "vaults",
+    (RouterContribution(plane="management", router=vaults_router),),
+)
+UI_ROUTER_REGISTRY.register(
+    "facade_between_vaults_dashboard_monitor",
+    (
+        RouterContribution(
+            plane="management",
+            router=_management_between_vaults_dashboard_monitor_router,
         ),
     ),
 )
@@ -18561,7 +18231,9 @@ UI_ROUTER_REGISTRY.register(
 )
 UI_ROUTER_REGISTRY.validate_domains(
     (
-        "facade_before_dashboard_monitor",
+        "facade_before_vaults",
+        "vaults",
+        "facade_between_vaults_dashboard_monitor",
         "dashboard_monitor",
         "facade_between_dashboard_monitor_automation",
         "automation",
