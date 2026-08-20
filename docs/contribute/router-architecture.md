@@ -32,7 +32,9 @@ transports plus the two API v1 Settings operations while retaining settings-arch
 credential-custody, and global Appliance Apply behavior in their established owners. Phase 13 extracts the Dashboard
 and Monitor management transports plus their two API v1 operations while retaining dashboard projections, monitoring
 sampling and service behavior, templates, browser assets, and every operator-visible interaction in their established
-owners.
+owners. Phase 14 extracts the seven Vault management transports while retaining Vault services, encryption, CLI,
+templates, browser assets, remote-terminal tickets, Kickstart dependencies, and cross-domain integrations in their
+established owners.
 
 ## Ownership and responsibilities
 
@@ -326,7 +328,7 @@ facade, and monitoring collection, sampling, persistence, and payload constructi
 `atlaso/app/services/monitoring.py`. Templates, authored CSS, browser JavaScript, screenshots, refresh cadence, and
 operator guidance retain their established owners.
 
-The UI registry places `dashboard_monitor` between `facade_before_dashboard_monitor` and
+The UI registry places `dashboard_monitor` between `facade_between_vaults_dashboard_monitor` and
 `facade_between_dashboard_monitor_automation`, preserving the original effective position after the front-door,
 protocol, public, and earlier management routes and before Appliance Update, Automation, and every later management
 domain. The stable UI facade continues to export all five endpoint callables plus the dashboard, monitoring-access,
@@ -348,6 +350,34 @@ behavior-neutral extraction changes no template, CSS, JavaScript, visible copy, 
 refresh cadence, interaction class, route, route name, operation ID, tag, authorization scope, session, caching,
 redirect, status code, response schema, monitoring sample, task or apply projection, redaction, audit, route inventory,
 or normalized OpenAPI contract.
+
+## Extracted Vault ownership
+
+The seven Vault management transports live in `atlaso/app/routers/ui/vaults.py`: the Vault page, Vault creation, entry
+creation, entry editing, explicit timed reveal, entry deletion, and Vault deletion. The dedicated Vault service, CLI,
+template and browser JavaScript, encryption and secret custody, VCF Helper integration, managed-script scope, remote
+URI and one-use Web Terminal ticket behavior, and Network Boot/Kickstart dependency handling retain their established
+owners.
+
+The UI registry places `vaults` between `facade_before_vaults` and
+`facade_between_vaults_dashboard_monitor`. The first facade segment retains front-door, protocol, public, and earlier
+management routes through the Web Terminal WebSocket. The following facade segment begins with management home and
+login and continues to Dashboard and Monitor. This preserves Vault's exact original position after Web Terminal and
+before management home without collapsing the later Dashboard and Monitor contribution.
+
+The stable `atlaso/app/ui.py` facade continues to export `vaults_page`, `create_vault_from_ui`,
+`create_vault_entry_from_ui`, `edit_vault_entry_from_ui`, `reveal_vault_entry_from_ui`,
+`delete_vault_entry_from_ui`, and `delete_vault_from_ui`. It also retains the `vaults_context` and
+`_vaults_render_error` compatibility helpers supplied to the extracted router. The domain router does not import the
+UI facade or another monolithic facade.
+
+Independently runnable transport coverage lives in `tests/routers/ui/test_vaults.py`. Vault service, encryption, CLI,
+browser-JavaScript, remote-URI and one-use-ticket, Kickstart dependency, settings-archive, worker, and VCF Helper
+integration coverage remains in `tests/test_vaults.py` and its established specialized owners. This behavior-neutral
+extraction changes no template, CSS, JavaScript, visible copy, control, layout, accessibility, responsive behavior,
+interaction class, route, route name, listener eligibility, authorization scope, session or CSRF behavior, redirect,
+status code, rendering or cache contract, audit action, encryption, masking, timed reveal, delete-dependency behavior,
+route inventory, or normalized OpenAPI output.
 
 ## Route and OpenAPI compatibility
 
@@ -414,6 +444,7 @@ python -m pytest -q tests/routers/ui/test_network_boot.py tests/routers/api_v1/t
 python -m pytest -q tests/routers/ui/test_vcf_workflows.py tests/routers/api_v1/test_vcf_workflows.py
 python -m pytest -q tests/routers/ui/test_automation.py tests/routers/ui/test_operations.py tests/routers/api_v1/test_operations.py
 python -m pytest -q tests/routers/ui/test_dashboard_monitor.py tests/routers/api_v1/test_dashboard_monitor.py
+python -m pytest -q tests/routers/ui/test_vaults.py tests/test_vaults.py
 python -m pytest -q tests/test_openapi_contract.py tests/test_ui_route_namespaces.py tests/test_ui_compliance.py
 python scripts/generate_router_contract_baselines.py --check
 python scripts/check_python_static_analysis.py
