@@ -998,6 +998,53 @@ def test_management_handoff_syncs_backups_before_publishing_marker(monkeypatch, 
     assert backup_path.read_text(encoding="utf-8") == "previous runtime\n"
 
 
+def test_management_handoff_syncs_final_candidate_artifacts(monkeypatch, tmp_path):
+    """Flush final files and directory entries before application acknowledgement.
+
+    Args:
+        monkeypatch: Pytest fixture used to isolate durability operations.
+        tmp_path: Temporary root containing candidate runtime artifacts.
+    """
+    helper = load_helper_module()
+    networkd_dir = tmp_path / "networkd"
+    networkd_dir.mkdir()
+    existing_path = tmp_path / "nginx" / "management.conf"
+    existing_path.parent.mkdir()
+    existing_path.write_text("candidate nginx\n", encoding="utf-8")
+    removed_path = tmp_path / "nginx" / "old-management.conf"
+    network_path = networkd_dir / "10-atlaso-eth1.network"
+    network_path.write_text("candidate network\n", encoding="utf-8")
+    synced_files: list[Path] = []
+    synced_directories: list[Path] = []
+    monkeypatch.setattr(helper, "NETWORKD_CONFIG_DIR", networkd_dir)
+    monkeypatch.setattr(
+        helper,
+        "_systemd_networkd_files",
+        lambda _path: ({network_path.name: "candidate network\n"}, [], []),
+    )
+    monkeypatch.setattr(helper, "_fsync_file", lambda path: synced_files.append(path))
+    monkeypatch.setattr(
+        helper,
+        "_fsync_directory",
+        lambda path: synced_directories.append(path),
+    )
+
+    helper._sync_management_handoff_candidate(
+        {
+            "snapshots": [
+                {"path": str(existing_path), "existed": True},
+                {"path": str(removed_path), "existed": True},
+            ]
+        },
+        {"network_config_path": str(tmp_path / "candidate-network.conf")},
+    )
+
+    assert set(synced_files) == {existing_path, network_path}
+    assert existing_path.parent in synced_directories
+    assert networkd_dir in synced_directories
+    assert tmp_path in synced_directories
+
+
 def test_management_handoff_discovers_slaac_candidate_addresses(monkeypatch, tmp_path):
     """Probe runtime IPv6 addresses when an effective listener enables SLAAC.
 
@@ -1372,13 +1419,20 @@ def test_management_handoff_keeps_previous_https_identity(monkeypatch, tmp_path,
     assert "X-Forwarded-Proto https" in holdover
 
 
-def test_successful_management_handoff_retains_rollback_state_until_ack(monkeypatch, tmp_path, capsys):
-    """Do not clear the durable transaction in the privileged apply process.
+@pytest.mark.parametrize("candidate_sync_error", [False, True], ids=["durable", "sync-failure"])
+def test_management_handoff_candidate_durability_gates_ack(
+    monkeypatch,
+    tmp_path,
+    capsys,
+    candidate_sync_error,
+):
+    """Acknowledge only a durable candidate and roll back a sync failure.
 
     Args:
         monkeypatch: Pytest fixture used to replace host mutation dependencies.
         tmp_path: Temporary directory provided for staged firewall state.
         capsys: Pytest fixture used to inspect bounded helper output.
+        candidate_sync_error: Whether to inject the final durability failure.
     """
     helper = load_helper_module()
     state = {
@@ -1392,6 +1446,8 @@ def test_successful_management_handoff_retains_rollback_state_until_ack(monkeypa
     }
     phases: list[str] = []
     cleared: list[bool] = []
+    restored: list[bool] = []
+    durability_calls: list[bool] = []
     nginx_suffixes: list[str] = []
     retirement_operations: list[str] = []
     monkeypatch.setattr(helper, "_snapshot_management_handoff", lambda _payload: state)
@@ -1459,6 +1515,18 @@ def test_successful_management_handoff_retains_rollback_state_until_ack(monkeypa
     monkeypatch.setattr(helper, "_parse_network_config", lambda _path: ([], [], []))
     monkeypatch.setattr(helper, "_link_exists", lambda _interface: False)
     monkeypatch.setattr(helper, "_clear_management_handoff_state", lambda **_kwargs: cleared.append(True))
+    monkeypatch.setattr(
+        helper,
+        "_restore_management_handoff",
+        lambda _state: restored.append(True) or {"old_path_ready": True},
+    )
+
+    def sync_candidate(_state, _payload):
+        durability_calls.append(True)
+        if candidate_sync_error:
+            raise OSError("candidate sync failed")
+
+    monkeypatch.setattr(helper, "_sync_management_handoff_candidate", sync_candidate)
     previous_firewall = tmp_path / "previous-firewall.nft"
     previous_firewall.write_text(
         'flush ruleset\ntable inet atlaso {\n  chain input {\n    type filter hook input priority filter; policy drop;\n'
@@ -1479,9 +1547,22 @@ def test_successful_management_handoff_retains_rollback_state_until_ack(monkeypa
         }
     )
 
+    assert durability_calls == [True]
+    if candidate_sync_error:
+        assert result == 1
+        assert "awaiting-application-commit" not in phases
+        assert restored == [True]
+        assert cleared == [True]
+        payload = json.loads(capsys.readouterr().err.splitlines()[-1])
+        assert payload["management_handoff"] == "rolled back"
+        assert payload["failing_layer"] == "candidate durability"
+        assert payload["error"] == "candidate sync failed"
+        return
+
     assert result == 0
     assert phases[-1] == "awaiting-application-commit"
     assert cleared == []
+    assert restored == []
     assert resolver_calls == ["eth1", "eth1"]
     assert retirement_operations == ["resolver", "final-network", "resolver"]
     assert len(applied_firewalls) == 2

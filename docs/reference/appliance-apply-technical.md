@@ -267,8 +267,11 @@ candidate management rule and retains its interface plus IPv4 or IPv6 source exp
 receives an unconditional custom-port rule. When enabling filtering from an open state, the
 transitional ruleset remains open. The enabled or disabled candidate ruleset applies only after readiness while the old
 path retires. A second
-readiness pass protects retirement. Any validation, mutation, service, probe, or retirement failure restores every
-captured file, reloads networkd and nftables, restores the captured live MTU on every pre-existing candidate VLAN,
+readiness pass protects retirement. Before publishing `awaiting-application-commit`, the helper flushes every final
+candidate networkd, resolver, firewall, nginx, and Certificate Authority file and its affected directory-entry chain.
+An artifact or directory sync failure remains inside the rollback boundary. Any validation, mutation, service, probe,
+or retirement failure restores every captured file, reloads networkd and nftables, restores the captured live MTU on
+every pre-existing candidate VLAN,
 reconfigures previous links, reloads nginx, and restarts Atlaso when the
 captured state requires it. Each captured artifact, link, and later runtime layer is restored independently; one unreadable
 backup is reported as an incomplete rollback but does not prevent restoration attempts for the remaining network,

@@ -127,6 +127,9 @@ Desired-state edits saved from another session while readiness checks run are no
 Atlaso commits baselines from the exact submitted snapshots, so those newer edits remain pending for a later review.
 Atlaso records durable application-commit proof separately from the retained helper marker. After a restart it retries
 rollback unless that proof exists; only a proven database commit selects idempotent helper acknowledgement.
+Before Atlaso may record that commit, the helper flushes every final candidate networkd, resolver, firewall, nginx, and
+certificate artifact plus affected directory entries to durable storage. A sync failure rolls the handoff back while
+the previous path remains recoverable.
 
 Safe cancellation does not interrupt the component already running. Every helper or adapter command in that component
 continues to completion. After the component returns, Atlaso skips the remaining components and releases the mutation

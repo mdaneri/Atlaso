@@ -15359,6 +15359,35 @@ def _management_handoff_runtime_paths(payload: dict) -> list[Path]:
     return list(unique.values())
 
 
+def _sync_management_handoff_candidate(state: dict, payload: dict) -> None:
+    """Persist final candidate artifacts before application commit can be acknowledged.
+
+    Args:
+        state: Durable management-handoff transaction state.
+        payload: Validated handoff payload used to derive final networkd files.
+    """
+    paths = {
+        Path(str(item["path"]))
+        for item in state.get("snapshots", [])
+        if isinstance(item, dict) and item.get("path")
+    }
+    network_files, _reconfigure, _admin_down = _systemd_networkd_files(
+        Path(str(payload["network_config_path"]))
+    )
+    paths.update(NETWORKD_CONFIG_DIR / filename for filename in network_files)
+    directories: set[Path] = set()
+    for path in sorted(paths, key=str):
+        if path.is_file():
+            _fsync_file(path)
+        parent = path.parent
+        while parent != parent.parent:
+            if parent.is_dir():
+                directories.add(parent)
+            parent = parent.parent
+    for directory in sorted(directories, key=lambda item: len(item.parts), reverse=True):
+        _fsync_directory(directory)
+
+
 def _management_handoff_candidate_links(payload: dict) -> tuple[list[str], list[str], dict[str, dict[str, object]]]:
     """Capture candidate link identity and pre-mutation administrative state.
 
@@ -16871,6 +16900,10 @@ def _apply_management_handoff(payload: dict) -> int:
             candidate_https,
             candidate_public_port,
         )
+        failing_layer = "candidate durability"
+        _sync_management_handoff_candidate(state, payload)
+        state["candidate_addresses"] = candidate_addresses
+        _write_management_handoff_state(state, "awaiting-application-commit")
     except (OSError, ValueError, json.JSONDecodeError) as exc:
         rollback_error = ""
         try:
@@ -16897,8 +16930,6 @@ def _apply_management_handoff(payload: dict) -> int:
             file=sys.stderr,
         )
         return 1
-    state["candidate_addresses"] = candidate_addresses
-    _write_management_handoff_state(state, "awaiting-application-commit")
     print(
         json.dumps(
             {
