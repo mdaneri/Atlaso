@@ -101,6 +101,9 @@ keeps the previous listener active until consecutive bounded checks prove the At
 listener, and host-facing `/openapi.json` are ready. On failure, each bundled component records the same failing layer
 and rollback result. The handoff applies only the management front-door portion of Appliance Settings; unrelated
 Appliance Settings differences remain pending for a later Apply instead of being folded into the network transaction.
+An active appliance without a last-applied Network baseline cannot safely identify its previous management path, so
+Atlaso blocks Network apply without host mutation until a known-good settings archive restores that baseline or a
+maintainer completes local-console recovery.
 
 Safe cancellation does not interrupt the component already running. Every helper or adapter command in that component
 continues to completion. After the component returns, Atlaso skips the remaining components and releases the mutation

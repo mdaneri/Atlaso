@@ -9278,11 +9278,12 @@ def management_handoff_required(network_unit: dict[str, Any], baseline: dict[str
         Whether a previous known-good management path changes.
     """
     previous_preview = str((baseline or {}).get("config_preview") or "")
-    if not previous_preview:
-        return False
-    return network_management_paths(previous_preview) != network_management_paths(
+    current_paths = network_management_paths(
         str(network_unit.get("raw_config_preview") or network_unit.get("config_preview") or "")
     )
+    if not previous_preview:
+        return bool(current_paths)
+    return network_management_paths(previous_preview) != current_paths
 
 
 def management_handoff_completes_appliance_settings(
@@ -10085,13 +10086,24 @@ def appliance_apply_units(db: Session, *, reconcile: bool = True) -> list[dict[s
         network_summary.append(f"management IPv6 gateway {management_interface.ipv6_gateway or 'none'}")
     if network_removed_vlans:
         network_summary.append(f"{len(network_removed_vlans)} VLAN removals")
+    network_validation_errors = list(network["network_validation_errors"])
+    network_baseline_preview = str((network_baseline or {}).get("config_preview") or "")
+    if (
+        get_settings().environment == "appliance"
+        and not network_baseline_preview
+        and _has_operator_appliance_activity(db)
+    ):
+        network_validation_errors.append(
+            "Network apply is blocked because the last-applied Network baseline is unavailable. Restore a known-good "
+            "settings archive containing apply baselines or use the local console for maintainer-guided recovery."
+        )
     network_unit = make_appliance_apply_unit(
         unit_id="network",
         label="Network",
         page_url="/physical-interfaces",
         context=network,
         summary=network_summary,
-        validation_errors=network["network_validation_errors"],
+        validation_errors=network_validation_errors,
         config_path=network["network_config_path"],
         config_preview=network["network_config_preview"],
         baseline=network_baseline,
@@ -10102,7 +10114,7 @@ def appliance_apply_units(db: Session, *, reconcile: bool = True) -> list[dict[s
         network_baseline,
     )
     network_unit["previous_management_paths"] = network_management_paths(
-        str((network_baseline or {}).get("config_preview") or "")
+        network_baseline_preview
     )
 
     wan_baseline = baselines.get("wan")

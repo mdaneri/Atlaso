@@ -13411,7 +13411,16 @@ def _management_handoff_firewall_text(candidate: str, previous: str) -> str:
         line
         for line in previous.splitlines()
         if " accept " in f" {line} "
-        and any(marker in line for marker in ("Management console", "Management UI", "Atlaso management access"))
+        and any(
+            marker in line
+            for marker in (
+                'comment "mgmt-console"',
+                'comment "management-ui-',
+                "Management console",
+                "Management UI",
+                "Atlaso management access",
+            )
+        )
     ]
     additions = [line for line in previous_rules if line not in candidate]
     if not additions:

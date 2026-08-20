@@ -57,6 +57,24 @@ interface=eth1
     ]
 
 
+def test_management_handoff_fails_closed_without_network_baseline():
+    """Require the handoff path when no known-good baseline can identify the old listener."""
+    from atlaso.app.ui import management_handoff_required
+
+    network_unit = {
+        "raw_config_preview": """[physical_interfaces]
+interface=eth1
+  role=management
+  mode=access
+  admin_state=up
+  ipv4_method=static
+  ip_cidr=198.51.100.10/24
+"""
+    }
+
+    assert management_handoff_required(network_unit, None)
+
+
 def test_management_handoff_settings_baseline_ignores_only_applied_front_door_fields():
     """Keep unrelated Appliance Settings pending after the management transaction."""
     from atlaso.app.ui import management_handoff_completes_appliance_settings

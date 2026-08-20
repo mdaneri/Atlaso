@@ -35,14 +35,15 @@ def test_management_handoff_firewall_keeps_previous_management_rules():
     helper = load_helper_module()
     previous = '''table inet atlaso {
   chain input {
-    iifname "eth0" tcp dport { 22,80,443 } accept comment "Management console"
+    iifname "eth0" tcp dport { 22,80,443 } accept comment "mgmt-console"
+    iifname "eth2" tcp dport { 80,443 } accept comment "management-ui-eth2"
   }
 }
 '''
     candidate = '''flush ruleset
 table inet atlaso {
   chain input {
-    iifname "eth1" tcp dport { 22,80,443 } accept comment "Management console"
+    iifname "eth1" tcp dport { 22,80,443 } accept comment "mgmt-console"
   }
 }
 '''
@@ -50,6 +51,7 @@ table inet atlaso {
     transitional = helper._management_handoff_firewall_text(candidate, previous)
 
     assert 'iifname "eth0"' in transitional
+    assert 'iifname "eth2"' in transitional
     assert 'iifname "eth1"' in transitional
     assert transitional.index('iifname "eth0"') < transitional.index('iifname "eth1"')
 

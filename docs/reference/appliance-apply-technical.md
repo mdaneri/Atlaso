@@ -735,7 +735,10 @@ its password.
 
 When desired state changes later, the global apply page compares the current rendered config preview to the last-applied
 preview and shows a unified config diff when available. On first apply, no baseline exists yet, so the page shows the
-current preview instead.
+current preview instead. If an appliance already has operator activity but its Network baseline is absent, Network
+apply fails closed before helper execution because Atlaso cannot prove which management path must remain reachable.
+Restore a known-good settings archive containing the apply baselines or complete maintainer-guided local-console
+recovery before retrying Network apply.
 
 Rendered previews and job results must redact sensitive-looking values such as passwords, tokens, credentials, private
 keys, robot accounts, activation codes, encrypted CA private material, and uploaded secret contents.
