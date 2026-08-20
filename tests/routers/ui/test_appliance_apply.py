@@ -418,6 +418,81 @@ def test_management_move_submits_all_handoff_units_atomically(client):
         )
 
 
+def test_management_handoff_baselines_exact_applied_snapshot(client, monkeypatch):
+    """Leave a desired-state edit saved during readiness pending.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+        monkeypatch: Pytest fixture used to inject a concurrent desired-state edit.
+    """
+    from sqlalchemy import select
+
+    import atlaso.app.ui as ui
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job, JobStatus, PhysicalInterface
+
+    login(client)
+    with SessionLocal() as db:
+        units = ui.appliance_apply_units(db)
+        ui.update_appliance_apply_baselines(db, units, {unit["id"] for unit in units})
+        management = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == "eth0"))
+        assert management is not None
+        management.ip_cidr = "192.168.49.21/24"
+        db.commit()
+
+    original_execute = ui.execute_management_handoff
+
+    def execute_with_concurrent_edit(*args, **kwargs):
+        """Apply the captured candidate, then save a newer desired address.
+
+        Args:
+            *args: Positional arguments forwarded to the production executor.
+            **kwargs: Keyword arguments forwarded to the production executor.
+
+        Returns:
+            The production management-handoff result.
+        """
+        result = original_execute(*args, **kwargs)
+        with SessionLocal() as edit_db:
+            management = edit_db.scalar(
+                select(PhysicalInterface).where(PhysicalInterface.name == "eth0")
+            )
+            assert management is not None
+            management.ip_cidr = "192.168.49.22/24"
+            edit_db.commit()
+        return result
+
+    monkeypatch.setattr(ui, "execute_management_handoff", execute_with_concurrent_edit)
+    page = client.get("/dashboard")
+    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+
+    response = client.post(
+        "/appliance-apply",
+        data={"csrf": csrf, "selected_units": "network"},
+        headers={"Accept": "application/json"},
+    )
+
+    assert response.status_code == 202
+    with SessionLocal() as db:
+        job = db.get(Job, response.json()["job_id"])
+        assert job is not None
+        assert job.status == JobStatus.SUCCEEDED.value
+        payload = json.loads(job.result or "{}")
+        captured = next(
+            unit for unit in payload["captured_units"] if unit["unit_id"] == "network"
+        )
+        baseline = ui.load_appliance_apply_baselines(db)["network"]
+        current = next(
+            unit
+            for unit in ui.appliance_apply_units(db, reconcile=False)
+            if unit["id"] == "network"
+        )
+        assert baseline["snapshot_hash"] == captured["snapshot_hash"]
+        assert baseline["config_preview"] == captured["config_preview"]
+        assert current["snapshot_hash"] != baseline["snapshot_hash"]
+        assert current["changed"] is True
+
+
 def test_interrupted_handoff_reconciles_application_commit_without_false_rollback(client, monkeypatch):
     """Acknowledge a committed baseline and distinguish a missing rollback marker.
 

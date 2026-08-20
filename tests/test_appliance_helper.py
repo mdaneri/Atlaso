@@ -71,6 +71,30 @@ def test_management_handoff_snapshot_covers_every_nginx_side_effect():
     }.issubset(paths)
 
 
+def test_management_handoff_snapshot_includes_previous_tls_identity(monkeypatch, tmp_path):
+    """Capture the certificate files named by the applied management site.
+
+    Args:
+        monkeypatch: Pytest fixture used to isolate managed certificate paths.
+        tmp_path: Temporary directory containing the applied nginx site.
+    """
+    helper = load_helper_module()
+    certificate = tmp_path / "previous.crt"
+    key = tmp_path / "previous.key"
+    site = tmp_path / "management.conf"
+    site.write_text(
+        f"ssl_certificate {certificate};\nssl_certificate_key {key};\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(helper, "NGINX_MANAGEMENT_SITE_PATH", site)
+    monkeypatch.setattr(helper, "_ca_managed_path", lambda value, _field: Path(value))
+
+    paths = set(helper._management_handoff_runtime_paths({"ca_config_path": ""}))
+
+    assert certificate in paths
+    assert key in paths
+
+
 def test_management_handoff_networkd_transition_keeps_old_and_candidate_paths():
     """Carry old addressing and routes in the candidate networkd transition."""
     helper = load_helper_module()
@@ -220,6 +244,58 @@ def test_management_handoff_readiness_requires_consecutive_samples(monkeypatch):
     assert evidence["statuses"]["management 198.51.100.10"] == "200"
 
 
+def test_management_handoff_discovers_slaac_candidate_addresses(monkeypatch, tmp_path):
+    """Probe runtime IPv6 addresses when an effective listener enables SLAAC.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace network parsing and address observation.
+        tmp_path: Temporary staged network configuration path.
+    """
+    helper = load_helper_module()
+    network_path = tmp_path / "atlaso-network.conf"
+    network_path.write_text("candidate\n", encoding="utf-8")
+    monkeypatch.setattr(
+        helper,
+        "_parse_network_config",
+        lambda _path: (
+            [
+                {
+                    "name": "eth1",
+                    "role": "management",
+                    "mode": "access",
+                    "admin_state": "up",
+                    "ipv4_method": "static",
+                    "ip_cidr": "198.51.100.10/24",
+                    "ipv6_enabled": "true",
+                    "ipv6_cidr": "",
+                }
+            ],
+            [],
+            [],
+        ),
+    )
+    observed = json.dumps(
+        [
+            {
+                "addr_info": [
+                    {"family": "inet", "scope": "global", "local": "198.51.100.10"},
+                    {"family": "inet6", "scope": "link", "local": "fe80::10"},
+                    {"family": "inet6", "scope": "global", "local": "2001:db8::10"},
+                ]
+            }
+        ]
+    )
+    monkeypatch.setattr(
+        helper,
+        "_run",
+        lambda command: subprocess.CompletedProcess(command, 0, observed, ""),
+    )
+
+    addresses = helper._management_handoff_addresses(network_path)
+
+    assert addresses == ["198.51.100.10", "2001:db8::10"]
+
+
 def test_management_handoff_keeps_previous_http_during_https_transition():
     """Render an address-specific old-protocol listener beside the candidate."""
     helper = load_helper_module()
@@ -237,25 +313,35 @@ def test_management_handoff_keeps_previous_http_during_https_transition():
         },
     )
 
-    assert "listen 192.0.2.10:8080;" in holdover
-    assert "listen [2001:db8::10]:8080;" in holdover
+    assert "listen 192.0.2.10:8080 bind;" in holdover
+    assert "listen [2001:db8::10]:8080 bind;" in holdover
     assert "X-Forwarded-Proto http" in holdover
-    assert " ssl;" not in holdover
+    assert " ssl bind;" not in holdover
 
 
-def test_management_handoff_keeps_previous_https_during_http_transition(monkeypatch):
-    """Reuse the captured certificate paths for the old HTTPS listener.
+@pytest.mark.parametrize("candidate_https", [False, True])
+def test_management_handoff_keeps_previous_https_identity(monkeypatch, tmp_path, candidate_https):
+    """Use separate captured TLS bytes until old-listener retirement.
 
     Args:
         monkeypatch: Pytest fixture used to supply the captured nginx site.
+        tmp_path: Temporary directory containing old and snapshotted TLS files.
+        candidate_https: Whether the candidate retains HTTPS while rotating identity.
     """
     helper = load_helper_module()
+    certificate = tmp_path / "canonical.crt"
+    key = tmp_path / "canonical.key"
+    certificate_backup = tmp_path / "snapshot.crt"
+    key_backup = tmp_path / "snapshot.key"
+    certificate_backup.write_text("previous certificate", encoding="utf-8")
+    key_backup.write_text("previous key", encoding="utf-8")
+    monkeypatch.setattr(helper, "_ca_managed_path", lambda value, _field: Path(value))
     monkeypatch.setattr(
         helper,
         "_management_handoff_snapshot_text",
         lambda *_args: (
-            "  ssl_certificate /etc/atlaso/ca/certs/appliance.crt;\n"
-            "  ssl_certificate_key /etc/atlaso/ca/private/appliance.key;\n"
+            f"  ssl_certificate {certificate};\n"
+            f"  ssl_certificate_key {key};\n"
         ),
     )
 
@@ -264,17 +350,31 @@ def test_management_handoff_keeps_previous_https_during_http_transition(monkeypa
             "previous_https_enabled": True,
             "previous_management_public_port": 4443,
             "previous_management_addresses": ["192.0.2.10"],
+            "snapshots": [
+                {
+                    "path": str(certificate),
+                    "existed": True,
+                    "backup": str(certificate_backup),
+                },
+                {
+                    "path": str(key),
+                    "existed": True,
+                    "backup": str(key_backup),
+                },
+            ],
         },
         {
-            "management_https_enabled": False,
+            "management_https_enabled": candidate_https,
             "management_upstream_host": "127.0.0.1",
             "management_upstream_port": 8000,
         },
     )
 
-    assert "listen 192.0.2.10:4443 ssl;" in holdover
-    assert "ssl_certificate /etc/atlaso/ca/certs/appliance.crt;" in holdover
-    assert "ssl_certificate_key /etc/atlaso/ca/private/appliance.key;" in holdover
+    assert "listen 192.0.2.10:4443 ssl bind;" in holdover
+    assert f"ssl_certificate {certificate_backup};" in holdover
+    assert f"ssl_certificate_key {key_backup};" in holdover
+    assert str(certificate) not in holdover
+    assert str(key) not in holdover
     assert "X-Forwarded-Proto https" in holdover
 
 

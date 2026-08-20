@@ -205,14 +205,16 @@ the Atlaso-owned networkd, nftables, nginx, certificate, and related runtime fil
 and installs temporary higher-priority networkd holdovers for the previous management links. It then applies the
 candidate network and a transitional firewall that admits both previous and candidate management addresses. If the
 public protocol changes, address-specific nginx blocks retain the old address, port, and HTTP/HTTPS behavior beside the
-candidate listener until candidate readiness succeeds.
+candidate listener until candidate readiness succeeds. Previous HTTPS blocks always use separate snapshotted
+certificate and key files, including when the protocol remains HTTPS while the candidate certificate rotates.
 Within Appliance Settings, this transaction applies only the Atlaso loopback drop-in and management nginx front door.
 If another Appliance Settings field differs from its baseline, that unit remains pending after a successful handoff so
 hostname, resolver, SSH, Web Terminal trust, and telemetry mutations stay within their ordinary complete apply path.
 
 Readiness is fail-closed and bounded. The helper first requires Atlaso's loopback `/openapi.json` upstream to succeed;
 only then may it validate and reload nginx. It requires consecutive successful direct candidate-listener probes and
-host-facing probes for every candidate address before deleting the holdovers and applying the final firewall. A second
+host-facing probes for every configured, DHCP-discovered, and SLAAC-discovered candidate address before deleting the
+holdovers and applying the final firewall. A second
 readiness pass protects retirement. Any validation, mutation, service, probe, or retirement failure restores every
 captured file, reloads networkd and nftables, reconfigures previous links, reloads nginx, and restarts Atlaso when the
 captured state requires it. Rollback explicitly reconfigures every pre-existing candidate link and removes a
@@ -225,7 +227,8 @@ the task becomes terminal. Exceptions reconcile the same boundary immediately, a
 the global Apply lock held. Results
 expose only a bounded failing-layer identifier and
 non-secret error text; Appliance Apply writes that evidence to every bundled component and updates none of their
-baselines unless the transaction commits.
+baselines unless the transaction commits. The committed baselines come from the exact snapshots hash-checked and staged
+at task start; desired-state edits saved during the helper's bounded readiness interval remain pending.
 
 ### Routes and WAN apply
 

@@ -15058,6 +15058,29 @@ def _management_handoff_certificate_paths(payload: dict) -> list[Path]:
     return paths
 
 
+def _management_handoff_previous_certificate_paths() -> list[Path]:
+    """Return certificate files referenced by the applied management site.
+
+    Returns:
+        The validated certificate and key paths used by the previous listener.
+    """
+    if not NGINX_MANAGEMENT_SITE_PATH.is_file():
+        return []
+    try:
+        site_text = NGINX_MANAGEMENT_SITE_PATH.read_text(encoding="utf-8")
+    except OSError:
+        return []
+    paths: list[Path] = []
+    for directive, field in (
+        ("ssl_certificate", "management_https_cert_path"),
+        ("ssl_certificate_key", "management_https_key_path"),
+    ):
+        match = re.search(rf"(?m)^\s*{directive}\s+([^;]+);\s*$", site_text)
+        if match is not None:
+            paths.append(_ca_managed_path(match.group(1).strip(), field))
+    return paths
+
+
 def _management_handoff_runtime_paths(payload: dict) -> list[Path]:
     """Return runtime files that require exact rollback snapshots.
 
@@ -15079,6 +15102,7 @@ def _management_handoff_runtime_paths(payload: dict) -> list[Path]:
         VCF_DEPOT_HTPASSWD_PATH,
         ATLASO_SERVICE_HTTPS_DROPIN_PATH,
         *_management_handoff_certificate_paths(payload),
+        *_management_handoff_previous_certificate_paths(),
     ]
     unique: dict[str, Path] = {}
     for path in paths:
@@ -15421,7 +15445,12 @@ def _management_handoff_addresses(
             value = str(row.get(key) or "")
             if value:
                 addresses.append(str(ip_interface(value).ip))
-        if row.get("role") == "management" and row.get("ipv4_method") == "dhcp":
+        needs_runtime_ipv4 = row.get("ipv4_method") == "dhcp"
+        needs_runtime_ipv6 = (
+            str(row.get("ipv6_enabled", "false")).lower() == "true"
+            and not str(row.get("ipv6_cidr") or "")
+        )
+        if needs_runtime_ipv4 or needs_runtime_ipv6:
             result = _run(["ip", "-j", "address", "show", "dev", str(row.get("name") or "")])
             runtime_addresses: list[str] = []
             if result.returncode == 0:
@@ -15432,7 +15461,12 @@ def _management_handoff_addresses(
                 for entry in entries:
                     for info in entry.get("addr_info", []):
                         local = str(info.get("local") or "")
-                        if info.get("scope") == "global" and local:
+                        family = str(info.get("family") or "")
+                        if info.get("scope") != "global" or not local:
+                            continue
+                        if (family == "inet" and needs_runtime_ipv4) or (
+                            family == "inet6" and needs_runtime_ipv6
+                        ):
                             runtime_addresses.append(local)
             fresh_addresses = [address for address in runtime_addresses if address not in previous_addresses]
             addresses.extend(fresh_addresses or runtime_addresses)
@@ -15524,19 +15558,42 @@ def _management_handoff_snapshot_text(state: dict, runtime_path: Path) -> str:
     return ""
 
 
+def _management_handoff_snapshot_backup_path(state: dict, runtime_path: Path) -> Path:
+    """Return the durable backup for one snapshotted runtime file.
+
+    Args:
+        state: Durable transaction state.
+        runtime_path: Runtime file whose pre-mutation bytes are required.
+
+    Returns:
+        The separate backup path retained for the transaction.
+
+    Raises:
+        ValueError: If the runtime file was not captured with backup bytes.
+    """
+    for item in state.get("snapshots", []):
+        if str(item.get("path") or "") != str(runtime_path):
+            continue
+        backup = Path(str(item.get("backup") or ""))
+        if bool(item.get("existed")) and backup.is_file():
+            return backup
+        break
+    raise ValueError(f"previous management TLS artifact was not captured: {runtime_path}")
+
+
 def _management_handoff_protocol_holdover(state: dict, payload: dict) -> str:
-    """Render address-specific old-protocol listeners during a protocol change.
+    """Render address-specific previous listeners during a handoff.
 
     Args:
         state: Durable transaction state containing the old listener contract.
         payload: Candidate Appliance Settings payload.
 
     Returns:
-        Transitional nginx server blocks, or an empty string when unchanged.
+        Transitional nginx server blocks, or an empty string when no holdover is required.
     """
     previous_https = bool(state.get("previous_https_enabled", True))
     candidate_https = bool(payload.get("management_https_enabled"))
-    if previous_https == candidate_https:
+    if previous_https == candidate_https and not previous_https:
         return ""
     upstream_host = str(payload.get("management_upstream_host") or "127.0.0.1")
     upstream_port = int(payload.get("management_upstream_port") or payload.get("management_http_port") or 8000)
@@ -15548,9 +15605,13 @@ def _management_handoff_protocol_holdover(state: dict, payload: dict) -> str:
         key = re.search(r"(?m)^\s*ssl_certificate_key\s+([^;]+);\s*$", previous_site)
         if cert is None or key is None:
             raise ValueError("previous HTTPS listener certificate paths could not be preserved")
+        previous_cert_path = _ca_managed_path(cert.group(1).strip(), "management_https_cert_path")
+        previous_key_path = _ca_managed_path(key.group(1).strip(), "management_https_key_path")
+        holdover_cert_path = _management_handoff_snapshot_backup_path(state, previous_cert_path)
+        holdover_key_path = _management_handoff_snapshot_backup_path(state, previous_key_path)
         certificate_lines = [
-            f"  ssl_certificate {cert.group(1)};",
-            f"  ssl_certificate_key {key.group(1)};",
+            f"  ssl_certificate {holdover_cert_path};",
+            f"  ssl_certificate_key {holdover_key_path};",
         ]
     blocks: list[str] = []
     for address in state.get("previous_management_addresses", []):
@@ -15560,7 +15621,7 @@ def _management_handoff_protocol_holdover(state: dict, payload: dict) -> str:
         blocks.extend(
             [
                 "server {",
-                f"  listen {listen_address}:{public_port}{ssl};",
+                f"  listen {listen_address}:{public_port}{ssl} bind;",
                 "  server_name _;",
                 *certificate_lines,
                 *_management_proxy_location(

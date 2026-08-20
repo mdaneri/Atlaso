@@ -14955,12 +14955,16 @@ def run_appliance_apply_job(job_id: str, *, force_real: bool = False) -> None:
                         next_payload.pop("management_handoff_runtime_commit_pending", None)
                     job.result = json.dumps(next_payload, indent=2)
                     if handoff_succeeded:
-                        db.expire_all()
-                        refreshed = appliance_apply_units(db, reconcile=False)
+                        # These units were hash-checked against the submitted
+                        # snapshots immediately before execution and are the
+                        # exact configuration staged for the helper. Desired
+                        # state may change in another session while the bounded
+                        # readiness probes run; never promote that newer,
+                        # unexecuted state into the applied baselines.
                         applied = [
-                            candidate
-                            for candidate in refreshed
-                            if candidate["id"] in handoff_unit_ids
+                            current_by_id[unit_id]
+                            for unit_id in MANAGEMENT_HANDOFF_UNIT_IDS
+                            if unit_id in handoff_unit_ids
                         ]
                         applied_ids = set(handoff_unit_ids)
                         baselines = load_appliance_apply_baselines(db)

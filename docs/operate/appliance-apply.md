@@ -97,14 +97,17 @@ inspection, authentication actions, and safe cancellation remain available.
 
 A management-path change is the exception to independent component execution: Atlaso selects Certificate Authority,
 Network, Firewall, Appliance Settings, and Public Services together and runs them as one recoverable handoff. The task
-keeps the previous address, public port, and HTTP/HTTPS listener active until consecutive bounded checks prove the
-Atlaso loopback upstream, candidate nginx listener, and host-facing `/openapi.json` are ready. On failure, each bundled
+keeps the previous address, public port, HTTP/HTTPS listener, and snapshotted TLS certificate active until consecutive
+bounded checks prove the Atlaso loopback upstream, candidate nginx listener, and host-facing `/openapi.json` are ready.
+On failure, each bundled
 component records the same failing layer
 and rollback result. The handoff applies only the management front-door portion of Appliance Settings; unrelated
 Appliance Settings differences remain pending for a later Apply instead of being folded into the network transaction.
 An active appliance without a last-applied Network baseline cannot safely identify its previous management path, so
 Atlaso blocks Network apply without host mutation until a known-good settings archive restores that baseline or a
 maintainer completes local-console recovery.
+Desired-state edits saved from another session while readiness checks run are not folded into the successful task.
+Atlaso commits baselines from the exact submitted snapshots, so those newer edits remain pending for a later review.
 
 Safe cancellation does not interrupt the component already running. Every helper or adapter command in that component
 continues to completion. After the component returns, Atlaso skips the remaining components and releases the mutation
