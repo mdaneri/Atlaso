@@ -52,10 +52,12 @@ keeps the global lock visible and retries at the two-second active cadence. A re
 schedule a restart carries no transition. Once that child is `succeeded` with the confirmed context, the monitor permits
 at most 15 seconds of neutral **reconnecting to task status** presentation around the helper's three-second delayed
 restart. A successful status response at or after the scheduled restart instant, or recovery after an observed outage,
-consumes that one-time window so a later unrelated failure returns to the actionable warning. Task timestamps are
-normalized to explicit UTC offsets before the browser calculates that boundary, so the grace remains the same in every
-browser timezone. The same result-driven contract applies to forced-real tasks created by the local appliance console. It
-does not apply while that child is pending or running, to dry-run tasks, or to tasks without complete transition metadata.
+consumes that one-time window so a later unrelated failure returns to the actionable warning. Every task response derives
+the delay and total time remaining from the server's persisted settings-step completion time. The browser anchors only
+that bounded remainder to its local elapsed timer, so clock differences cannot change the duration and a late observer
+cannot create a fresh window. The same result-driven contract applies to forced-real tasks created by the local appliance
+console. It does not apply while that child is pending or running, to dry-run tasks, or to tasks without complete
+transition metadata.
 Continued failure after the grace window and every unexpected failure use the actionable availability warning.
 Successful reconciliation clears either notice and converges the modal, sidebar badge, pending count, and lock from the
 authoritative status and task responses. Terminal task state is sticky so an older in-flight `pending` or `running`

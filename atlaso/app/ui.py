@@ -8105,6 +8105,10 @@ def _task_row(job: Job, identity: Identity | None = None) -> dict[str, Any]:
     }
     if job.type == "vcf-depot-download":
         row["log_url"] = f"/vcf-offline-depot/tasks/{job.id}/log"
+    if job.type == "appliance-apply":
+        management_restart_window = appliance_apply_management_restart_window(job)
+        if management_restart_window is not None:
+            row["management_restart_window"] = management_restart_window
     if steps:
         row["_children"] = [_job_step_row(step) for step in steps]
     return row
@@ -13389,6 +13393,56 @@ APPLIANCE_APPLY_SUBMIT_LOCK = threading.Lock()
 VCF_DEPOT_SUBMIT_LOCK = threading.Lock()
 
 
+def appliance_apply_management_restart_window(
+    job: Job,
+    *,
+    now: datetime | None = None,
+) -> dict[str, int] | None:
+    """Return server-owned remaining time for a confirmed management restart.
+
+    Args:
+        job: Appliance Apply job carrying helper-confirmed transition metadata.
+        now: Optional current UTC instant used by deterministic callers and tests.
+    """
+    transition = _job_payload(job).get("management_status_transition")
+    if not isinstance(transition, dict) or transition.get("kind") != "planned_service_restart":
+        return None
+    restart_delay_seconds = transition.get("restart_delay_seconds")
+    grace_seconds = transition.get("grace_seconds")
+    if (
+        not isinstance(restart_delay_seconds, int)
+        or isinstance(restart_delay_seconds, bool)
+        or restart_delay_seconds != APPLIANCE_APPLY_MANAGEMENT_RESTART_DELAY_SECONDS
+    ):
+        return None
+    if (
+        not isinstance(grace_seconds, int)
+        or isinstance(grace_seconds, bool)
+        or grace_seconds != APPLIANCE_APPLY_MANAGEMENT_RECONNECT_GRACE_SECONDS
+    ):
+        return None
+    settings_step = next(
+        (
+            step
+            for step in job.steps
+            if step.component_key == "appliance_settings"
+            and step.status == JobStatus.SUCCEEDED.value
+            and step.finished_at is not None
+        ),
+        None,
+    )
+    if settings_step is None:
+        return None
+    observed_at = ensure_aware(now or utcnow())
+    step_finished_at = ensure_aware(settings_step.finished_at)
+    restart_at = step_finished_at + timedelta(seconds=restart_delay_seconds)
+    deadline = restart_at + timedelta(seconds=grace_seconds)
+    return {
+        "restart_delay_remaining_ms": int(max(0.0, (restart_at - observed_at).total_seconds()) * 1000),
+        "remaining_ms": int(max(0.0, (deadline - observed_at).total_seconds()) * 1000),
+    }
+
+
 def active_appliance_apply_job(db: Session) -> Job | None:
     """Return the Appliance Apply job that currently holds the mutation lock.
 
@@ -13433,37 +13487,8 @@ def active_appliance_apply_job(db: Session) -> Job | None:
         .order_by(desc(Job.finished_at))
     ).all()
     for job in recent:
-        transition = _job_payload(job).get("management_status_transition")
-        if not isinstance(transition, dict) or transition.get("kind") != "planned_service_restart":
-            continue
-        restart_delay_seconds = transition.get("restart_delay_seconds")
-        grace_seconds = transition.get("grace_seconds")
-        if (
-            not isinstance(restart_delay_seconds, int)
-            or isinstance(restart_delay_seconds, bool)
-            or restart_delay_seconds != APPLIANCE_APPLY_MANAGEMENT_RESTART_DELAY_SECONDS
-        ):
-            continue
-        if (
-            not isinstance(grace_seconds, int)
-            or isinstance(grace_seconds, bool)
-            or grace_seconds != APPLIANCE_APPLY_MANAGEMENT_RECONNECT_GRACE_SECONDS
-        ):
-            continue
-        settings_step = next(
-            (
-                step
-                for step in job.steps
-                if step.component_key == "appliance_settings"
-                and step.status == JobStatus.SUCCEEDED.value
-                and step.finished_at is not None
-            ),
-            None,
-        )
-        if settings_step is None:
-            continue
-        deadline = ensure_aware(settings_step.finished_at) + maximum_window
-        if now < deadline:
+        restart_window = appliance_apply_management_restart_window(job, now=now)
+        if restart_window is not None and restart_window["remaining_ms"] > 0:
             return job
     return None
 

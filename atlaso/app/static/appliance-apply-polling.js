@@ -97,11 +97,21 @@
     if (!settingsStep || String(settingsStep.status || "") !== "succeeded") return null;
     const graceSeconds = Number(transition.grace_seconds);
     const restartDelaySeconds = Number(transition.restart_delay_seconds);
+    const restartWindow = task?.management_restart_window;
+    const remainingMs = Number(restartWindow?.remaining_ms);
+    const restartDelayRemainingMs = Number(restartWindow?.restart_delay_remaining_ms);
     if (!Number.isFinite(graceSeconds) || graceSeconds <= 0) return null;
     if (!Number.isFinite(restartDelaySeconds) || restartDelaySeconds < 0) return null;
+    const maximumWindowMs = (graceSeconds + restartDelaySeconds) * 1000;
+    if (!Number.isFinite(remainingMs) || remainingMs < 0 || remainingMs > maximumWindowMs) return null;
+    if (
+      !Number.isFinite(restartDelayRemainingMs)
+      || restartDelayRemainingMs < 0
+      || restartDelayRemainingMs > remainingMs
+    ) return null;
     return {
-      graceMs: graceSeconds * 1000,
-      restartDelayMs: restartDelaySeconds * 1000,
+      remainingMs,
+      restartDelayRemainingMs,
       settingsStep,
     };
   }
@@ -115,6 +125,9 @@
     let reconnectTaskId = "";
     let reconnectObservedAt = null;
     let reconnectObservedTaskId = "";
+    let reconnectRestartAt = null;
+    let reconnectWindowEndsAt = null;
+    let reconnectWindowMs = 0;
     let completedReconnectTaskId = "";
 
     const now = () => (typeof options.now === "function" ? options.now() : Date.now());
@@ -131,14 +144,28 @@
       acceptedSequence = observedSequence;
       const reconnect = plannedReconnectDetails(task);
       if (reconnect && taskId !== completedReconnectTaskId) {
+        const observedAt = now();
         if (reconnectObservedTaskId !== taskId) {
-          reconnectObservedAt = now();
+          reconnectObservedAt = observedAt;
           reconnectObservedTaskId = taskId;
+          reconnectRestartAt = observedAt + reconnect.restartDelayRemainingMs;
+          reconnectWindowEndsAt = observedAt + reconnect.remainingMs;
+          reconnectWindowMs = reconnect.remainingMs;
+        } else {
+          reconnectRestartAt = Math.min(
+            reconnectRestartAt,
+            observedAt + reconnect.restartDelayRemainingMs,
+          );
+          reconnectWindowEndsAt = Math.min(
+            reconnectWindowEndsAt,
+            observedAt + reconnect.remainingMs,
+          );
         }
         if (
-          reconnectStartedAt === null
-          && reconnectObservedAt !== null
-          && now() >= reconnectObservedAt + reconnect.restartDelayMs
+          reconnectRestartAt === null
+          || reconnectWindowEndsAt === null
+          || observedAt >= reconnectRestartAt
+          || observedAt >= reconnectWindowEndsAt
         ) {
           completedReconnectTaskId = taskId;
         }
@@ -226,17 +253,18 @@
           reconnect?.settingsStep?.status === "succeeded"
           && reconnectObservedTaskId === currentTaskId
           && reconnectObservedAt !== null
+          && reconnectWindowEndsAt !== null
         ) {
-          reconnectGraceMs = reconnect.restartDelayMs + reconnect.graceMs;
+          reconnectGraceMs = reconnectWindowMs;
           reconnectElapsedMs = Math.max(0, observedAt - reconnectObservedAt);
-          if (reconnectElapsedMs < reconnectGraceMs && reconnectStartedAt === null) {
+          if (observedAt < reconnectWindowEndsAt && reconnectStartedAt === null) {
             reconnectStartedAt = observedAt;
           }
         }
         if (reconnectStartedAt !== null) {
           reconnectTaskId = currentTaskId;
         }
-        const expectedReconnect = reconnectGraceMs > 0 && reconnectElapsedMs < reconnectGraceMs;
+        const expectedReconnect = reconnectGraceMs > 0 && observedAt < reconnectWindowEndsAt;
         if (typeof options.onError === "function") {
           options.onError(error, { ...state, expectedReconnect, reconnectElapsedMs, reconnectGraceMs });
         }

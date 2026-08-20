@@ -121,15 +121,19 @@ def test_appliance_apply_status_uses_lightweight_projection(client, monkeypatch)
     assert reconcile_values == [False, False]
 
 
-def test_appliance_apply_status_preserves_planned_management_restart_context(client):
+def test_appliance_apply_status_preserves_planned_management_restart_context(client, monkeypatch):
     """Keep durable reconnect context available before the management front door restarts.
 
     Args:
         client: HTTP test client used to exercise the Atlaso application.
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
     """
+    from atlaso.app import ui
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import Job, JobStatus, JobStep
 
+    observed_at = datetime(2026, 8, 20, 19, 30, 1, tzinfo=timezone.utc)
+    monkeypatch.setattr(ui, "utcnow", lambda: observed_at)
     login(client)
     with SessionLocal() as db:
         job = Job(
@@ -186,6 +190,10 @@ def test_appliance_apply_status_preserves_planned_management_restart_context(cli
         "kind": "planned_service_restart",
         "restart_delay_seconds": 3,
         "grace_seconds": 15,
+    }
+    assert task["management_restart_window"] == {
+        "restart_delay_remaining_ms": 2000,
+        "remaining_ms": 17000,
     }
     assert [(step["component_key"], step["status"]) for step in task["_children"]] == [
         ("appliance_settings", "succeeded"),
@@ -252,6 +260,10 @@ def test_appliance_apply_status_retains_terminal_planned_restart_lock(client, mo
     assert retained.json()["active_task"]["id"] == "job_terminal_management_restart"
     assert retained.json()["active_task"]["status"] == JobStatus.SUCCEEDED.value
     assert retained.json()["active_task"]["mutation_locked"] is True
+    assert retained.json()["active_task"]["management_restart_window"] == {
+        "restart_delay_remaining_ms": 3000,
+        "remaining_ms": 18000,
+    }
 
     blocked = client.post(
         "/appliance-apply",

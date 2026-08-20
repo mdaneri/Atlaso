@@ -70,6 +70,10 @@ function plannedRestartTask(status = "running") {
   return {
     id: "job-1",
     status: "running",
+    management_restart_window: {
+      restart_delay_remaining_ms: 3000,
+      remaining_ms: 18000,
+    },
     result: {
       management_status_transition: {
         kind: "planned_service_restart",
@@ -350,6 +354,37 @@ test("uses browser-local elapsed time when appliance and browser clocks differ",
   await state.timers.at(-1).callback();
   assert.equal(state.errorStates[1].expectedReconnect, false);
   assert.equal(state.errorStates[1].reconnectElapsedMs, 19000);
+});
+
+test("does not grant a fresh reconnect window to a late observer", async () => {
+  let now = 1000;
+  const completedRestartTask = plannedRestartTask("succeeded");
+  completedRestartTask.management_restart_window = {
+    restart_delay_remaining_ms: 0,
+    remaining_ms: 9000,
+  };
+  const statusPayloads = [
+    { active_task: completedRestartTask, pending_count: 0 },
+    new Error("unrelated outage after the scheduled restart"),
+  ];
+  const state = monitorHarness({
+    requestStatus: async () => {
+      const payload = statusPayloads.shift();
+      if (payload instanceof Error) throw payload;
+      return payload;
+    },
+    requestTask: async () => completedRestartTask,
+    now: () => now,
+  });
+
+  await state.monitor.refresh();
+  now += 1000;
+  await state.timers.at(-1).callback();
+
+  assert.equal(state.errorStates[0].expectedReconnect, false);
+  assert.equal(state.errorStates[0].reconnectGraceMs, 0);
+  assert.equal(state.ui.pollNotice, "unavailable");
+  assert.equal(state.ui.pollTone, "warning");
 });
 
 test("retains a terminal settings-only task through its server mutation lock", async () => {
