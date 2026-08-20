@@ -59,6 +59,39 @@ interface=eth1
     ]
 
 
+def test_appliance_settings_stages_flagged_access_resolver_interface(client):
+    """Bind resolver staging to the effective flagged-access listener.
+
+    Args:
+        client: HTTP test client used to initialize an isolated database.
+    """
+    from sqlalchemy import select
+
+    from atlaso.app import ui
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import PhysicalInterface
+
+    with SessionLocal() as db:
+        interface = db.execute(
+            select(PhysicalInterface).where(PhysicalInterface.name == "eth0")
+        ).scalar_one()
+        interface.role = "access"
+        interface.mode = "access"
+        interface.admin_state = "up"
+        interface.oper_state = "up"
+        interface.ipv4_method = "static"
+        interface.ip_cidr = "198.51.100.10/24"
+        interface.access_management_ui_enabled = True
+        db.commit()
+
+        context = ui.appliance_settings_context(db, reconcile_dns=False)
+
+    preview = json.loads(context["appliance_settings_config_preview"])
+    assert context["management_interface"]["name"] == "eth0"
+    assert preview["management_interface"] == "eth0"
+    assert preview["management_ip"] == "198.51.100.10"
+
+
 def test_management_handoff_fails_closed_without_network_baseline():
     """Require the handoff path when no known-good baseline can identify the old listener."""
     from atlaso.app.ui import management_handoff_required

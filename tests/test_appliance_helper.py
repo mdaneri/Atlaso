@@ -226,6 +226,96 @@ def test_management_handoff_rollback_restores_candidate_links(monkeypatch, tmp_p
     assert ["ip", "link", "set", "dev", "eth1", "down"] in commands
 
 
+def test_management_handoff_rollback_reverts_candidate_resolver(monkeypatch):
+    """Clear transient candidate DNS before networkd restores prior link state.
+
+    Args:
+        monkeypatch: Pytest fixture used to capture resolver rollback commands.
+    """
+    helper = load_helper_module()
+    commands: list[list[str]] = []
+    monkeypatch.setattr(
+        helper,
+        "_run",
+        lambda command: commands.append(command)
+        or subprocess.CompletedProcess(command, 0, "", ""),
+    )
+    evidence: list[dict[str, object]] = []
+
+    helper._restore_management_handoff_resolver(
+        {
+            "candidate_management_interface": "eth1",
+            "resolver_apply_started": True,
+        },
+        evidence,
+    )
+
+    assert commands == [["resolvectl", "revert", "eth1"]]
+    assert evidence == [
+        {
+            "stage": "resolver rollback",
+            "interface": "eth1",
+            "returncode": 0,
+        }
+    ]
+
+
+@pytest.mark.parametrize(
+    ("resolver_mode", "resolver_servers", "expected_kind", "expected_domains"),
+    [
+        ("local_dns", ["127.0.0.1"], "static", ["~."]),
+        ("external", ["192.0.2.53"], "static", []),
+        ("dhcp", [], "dhcp", None),
+    ],
+)
+def test_management_handoff_applies_candidate_resolver(
+    monkeypatch,
+    resolver_mode,
+    resolver_servers,
+    expected_kind,
+    expected_domains,
+):
+    """Apply every supported resolver mode to the candidate interface.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace resolver mutations.
+        resolver_mode: Candidate resolver mode.
+        resolver_servers: Candidate resolver server addresses.
+        expected_kind: Expected static or DHCP mutation path.
+        expected_domains: Expected systemd-resolved route-only domains.
+    """
+    helper = load_helper_module()
+    calls: list[tuple[object, ...]] = []
+    success = subprocess.CompletedProcess(["resolvectl"], 0, "", "")
+    monkeypatch.setattr(
+        helper,
+        "_configure_resolver",
+        lambda interface, servers, domains: calls.append(
+            ("static", interface, servers, domains)
+        )
+        or success,
+    )
+    monkeypatch.setattr(
+        helper,
+        "_configure_dhcp_resolver",
+        lambda interface: calls.append(("dhcp", interface)) or success,
+    )
+
+    result = helper._configure_management_handoff_resolver(
+        {
+            "management_interface": "eth1",
+            "resolver_mode": resolver_mode,
+            "resolver_servers": resolver_servers,
+        }
+    )
+
+    assert result.returncode == 0
+    if expected_kind == "dhcp":
+        assert calls == [("dhcp", "eth1")]
+    else:
+        assert calls == [("static", "eth1", resolver_servers, expected_domains)]
+
+
 def test_management_handoff_readiness_requires_consecutive_samples(monkeypatch):
     """Reset the readiness streak after any upstream or candidate failure.
 
@@ -392,6 +482,8 @@ def test_successful_management_handoff_retains_rollback_state_until_ack(monkeypa
         "previous_management_interfaces": ["eth0"],
         "previous_management_addresses": ["192.0.2.10"],
         "previous_https_enabled": False,
+        "candidate_management_interface": "eth1",
+        "resolver_apply_started": False,
     }
     phases: list[str] = []
     cleared: list[bool] = []
@@ -408,7 +500,23 @@ def test_successful_management_handoff_retains_rollback_state_until_ack(monkeypa
     monkeypatch.setattr(helper, "_apply_management_candidate_network", lambda *_args: None)
     monkeypatch.setattr(helper, "_handle_network", lambda *_args: 0)
     monkeypatch.setattr(helper, "_handle_firewall", lambda *_args: 0)
-    monkeypatch.setattr(helper, "_load_appliance_settings_config", lambda _path: {"management_https_enabled": True})
+    monkeypatch.setattr(
+        helper,
+        "_load_appliance_settings_config",
+        lambda _path: {
+            "management_https_enabled": True,
+            "management_interface": "eth1",
+            "resolver_mode": "external",
+            "resolver_servers": ["192.0.2.53"],
+        },
+    )
+    resolver_calls: list[str] = []
+    monkeypatch.setattr(
+        helper,
+        "_configure_management_handoff_resolver",
+        lambda payload: resolver_calls.append(str(payload["management_interface"]))
+        or subprocess.CompletedProcess(["resolvectl"], 0, "", ""),
+    )
     monkeypatch.setattr(
         helper,
         "_configure_atlaso_management_https",
@@ -442,6 +550,8 @@ def test_successful_management_handoff_retains_rollback_state_until_ack(monkeypa
     assert result == 0
     assert phases[-1] == "awaiting-application-commit"
     assert cleared == []
+    assert resolver_calls == ["eth1"]
+    assert "resolver-applying" in phases
     assert nginx_suffixes == ["old protocol listener", ""]
     payload = json.loads(capsys.readouterr().out.splitlines()[-1])
     assert payload["management_handoff"] == "awaiting application commit"
@@ -494,6 +604,82 @@ def test_management_handoff_failure_rolls_back_with_truthful_layer(monkeypatch, 
     assert payload["management_handoff"] == "rolled back"
     assert payload["failing_layer"] == "firewall"
     assert payload["rollback"]["readiness"] == "old-ready"
+
+
+def test_management_handoff_resolver_failure_rolls_back_before_nginx(
+    monkeypatch,
+    tmp_path,
+    capsys,
+):
+    """Report resolver failure and preserve the old path before nginx activation.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace host mutation dependencies.
+        tmp_path: Temporary directory provided for staged firewall state.
+        capsys: Pytest fixture used to inspect bounded helper output.
+    """
+    helper = load_helper_module()
+    state = {
+        "previous_management_interfaces": ["eth0"],
+        "previous_management_addresses": ["192.0.2.10"],
+        "previous_https_enabled": True,
+        "candidate_management_interface": "eth1",
+        "resolver_apply_started": False,
+    }
+    restored: list[dict] = []
+    nginx_calls: list[bool] = []
+    monkeypatch.setattr(helper, "_snapshot_management_handoff", lambda _payload: state)
+    monkeypatch.setattr(helper, "_management_handoff_readiness", lambda *_args, **_kwargs: {"stable_samples": 3})
+    monkeypatch.setattr(helper, "_management_handoff_upstream_readiness", lambda: {"stable_samples": 3})
+    monkeypatch.setattr(helper, "_install_management_holdovers", lambda _state, _payload: [])
+    monkeypatch.setattr(helper, "_write_management_handoff_state", lambda *_args: None)
+    monkeypatch.setattr(helper, "_apply_management_candidate_network", lambda *_args: None)
+    monkeypatch.setattr(helper, "_handle_firewall", lambda *_args: 0)
+    monkeypatch.setattr(
+        helper,
+        "_load_appliance_settings_config",
+        lambda _path: {
+            "management_interface": "eth1",
+            "resolver_mode": "external",
+            "resolver_servers": ["192.0.2.53"],
+        },
+    )
+    monkeypatch.setattr(
+        helper,
+        "_configure_management_handoff_resolver",
+        lambda _payload: subprocess.CompletedProcess(["resolvectl"], 1, "", "failed"),
+    )
+    monkeypatch.setattr(
+        helper,
+        "_configure_atlaso_management_https",
+        lambda *_args, **_kwargs: nginx_calls.append(True) or 0,
+    )
+    monkeypatch.setattr(
+        helper,
+        "_restore_management_handoff",
+        lambda value: restored.append(value) or {"readiness": "old-ready"},
+    )
+    monkeypatch.setattr(helper, "_clear_management_handoff_state", lambda: None)
+    monkeypatch.setattr(helper, "FIREWALL_CONFIG_PATH", tmp_path / "missing-previous-firewall")
+    monkeypatch.setattr(helper, "FIREWALL_APPLY_DIR", tmp_path)
+    candidate = tmp_path / "candidate-firewall.nft"
+    candidate.write_text("table inet atlaso {\n  chain input {\n  }\n}\n", encoding="utf-8")
+
+    result = helper._apply_management_handoff(
+        {
+            "network_config_path": "candidate-network",
+            "firewall_config_path": str(candidate),
+            "appliance_settings_config_path": "candidate-settings",
+            "public_services_config_path": "candidate-public",
+        }
+    )
+
+    assert result == 1
+    assert restored == [state]
+    assert nginx_calls == []
+    payload = json.loads(capsys.readouterr().err.splitlines()[-1])
+    assert payload["failing_layer"] == "resolver"
+    assert payload["management_handoff"] == "rolled back"
 
 
 def test_management_handoff_never_activates_nginx_with_unhealthy_upstream(monkeypatch, tmp_path, capsys):

@@ -207,9 +207,16 @@ candidate network and a transitional firewall that admits both previous and cand
 public protocol changes, address-specific nginx blocks retain the old address, port, and HTTP/HTTPS behavior beside the
 candidate listener until candidate readiness succeeds. Previous HTTPS blocks always use separate snapshotted
 certificate and key files, including when the protocol remains HTTPS while the candidate certificate rotates.
-Within Appliance Settings, this transaction applies only the Atlaso loopback drop-in and management nginx front door.
+Within Appliance Settings, this transaction applies the management resolver interface, Atlaso loopback drop-in, and
+management nginx front door. The helper writes the selected static/local resolver directives into the candidate
+management networkd file or reverts that link to DHCP-provided DNS, then applies the matching per-link runtime state.
+The resolver interface follows the effective listener precedence: dedicated management first, then a flagged access
+physical interface, then a flagged access VLAN.
 If another Appliance Settings field differs from its baseline, that unit remains pending after a successful handoff so
-hostname, resolver, SSH, Web Terminal trust, and telemetry mutations stay within their ordinary complete apply path.
+the full hostname, resolver, SSH, Web Terminal trust, and telemetry apply remains pending. A staged resolver-mode or
+server change is used for candidate safety but is not baseline-committed by the handoff when another unrelated setting
+also differs. Rollback restores the snapshotted networkd resolver directives, reverts the candidate link's transient
+resolver override, and reconfigures the restored links before checking the previous listener.
 
 Readiness is fail-closed and bounded. The helper first requires Atlaso's loopback `/openapi.json` upstream to succeed;
 only then may it validate and reload nginx. It requires consecutive successful direct candidate-listener probes and

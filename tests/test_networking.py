@@ -21,7 +21,10 @@ from atlaso.app.models import (
     Setting,
     VlanInterface,
 )
-from atlaso.app.services.appliance_settings import management_ui_context
+from atlaso.app.services.appliance_settings import (
+    management_dhcp_dns_context,
+    management_ui_context,
+)
 from atlaso.app.services.networking import (
     NETWORK_INVENTORY_CLEANUP_WARNING_KEY,
     NETWORK_ROLES,
@@ -905,6 +908,8 @@ def test_management_ui_context_prefers_dedicated_then_flagged_eth0_then_vlan():
         [flagged_vlan],
     )["name"] == "eth0"
     assert management_ui_context([], [flagged_vlan])["name"] == "eth1.20"
+    assert management_dhcp_dns_context([flagged_eth1, flagged_eth0], [flagged_vlan])[0]["name"] == "eth0"
+    assert management_dhcp_dns_context([], [flagged_vlan])[0]["name"] == "eth1.20"
 
 
 def test_validate_network_state_rejects_lockout_and_non_access_flag():

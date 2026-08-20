@@ -400,13 +400,21 @@ def observed_management_dhcp_dns_servers(interface_name: str) -> list[str]:
     return servers
 
 
-def management_dhcp_dns_context(interfaces: list[PhysicalInterface]) -> tuple[dict[str, str], list[str]]:
+def management_dhcp_dns_context(
+    interfaces: list[PhysicalInterface],
+    vlans: list[VlanInterface] | None = None,
+) -> tuple[dict[str, str], list[str]]:
     """Return management dhcp dns context.
 
     Args:
         interfaces: Interfaces consumed by management dhcp DNS context.
+        vlans: VLANs used when the effective listener may be flagged access.
     """
-    management = management_interface_context(interfaces)
+    management = (
+        management_ui_context(interfaces, vlans)
+        if vlans is not None
+        else management_interface_context(interfaces)
+    )
     if management.get("ipv4_method") != "dhcp":
         return management, []
     servers = []

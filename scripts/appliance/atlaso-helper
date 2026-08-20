@@ -1486,6 +1486,24 @@ def _configure_dhcp_resolver(interface_name: str) -> subprocess.CompletedProcess
     return result
 
 
+def _configure_management_handoff_resolver(payload: dict) -> subprocess.CompletedProcess[str]:
+    """Move the management resolver to the candidate listener interface.
+
+    Args:
+        payload: Validated Appliance Settings payload for the handoff.
+
+    Returns:
+        The final resolver mutation result.
+    """
+    interface_name = str(payload["management_interface"])
+    resolver_mode = str(payload["resolver_mode"])
+    resolver_servers = [str(server) for server in payload["resolver_servers"]]
+    if resolver_mode == "dhcp":
+        return _configure_dhcp_resolver(interface_name)
+    domains = ["~."] if resolver_mode == "local_dns" else []
+    return _configure_resolver(interface_name, resolver_servers, domains)
+
+
 def _configure_local_resolver() -> subprocess.CompletedProcess[str]:
     """Perform configure local resolver.
 
@@ -15169,6 +15187,12 @@ def _snapshot_management_handoff(payload: dict) -> dict:
             item["uid"] = stat.st_uid
             item["gid"] = stat.st_gid
         snapshots.append(item)
+    settings_payload = _load_appliance_settings_config(
+        Path(str(payload["appliance_settings_config_path"]))
+    )
+    candidate_management_interface = str(settings_payload.get("management_interface") or "")
+    if not _valid_network_interface_name(candidate_management_interface):
+        raise ValueError("candidate management resolver interface is invalid")
     previous_addresses = list(payload["previous_management_addresses"])
     if not previous_addresses:
         for interface in payload["previous_management_interfaces"]:
@@ -15202,6 +15226,8 @@ def _snapshot_management_handoff(payload: dict) -> dict:
         "candidate_physical_interfaces": candidate_physical,
         "candidate_vlan_interfaces": candidate_vlans,
         "candidate_link_states": candidate_link_states,
+        "candidate_management_interface": candidate_management_interface,
+        "resolver_apply_started": False,
     }
     _durable_management_handoff_state_write(state, MANAGEMENT_HANDOFF_STATE_PATH)
     MANAGEMENT_HANDOFF_COMMIT_PATH.unlink(missing_ok=True)
@@ -15733,6 +15759,30 @@ def _restore_management_handoff_links(state: dict, commands: list[dict[str, obje
             raise ValueError(f"network rollback could not restore {interface} administrative state")
 
 
+def _restore_management_handoff_resolver(state: dict, commands: list[dict[str, object]]) -> None:
+    """Clear a candidate resolver override before restored links reconfigure.
+
+    Args:
+        state: Durable transaction state.
+        commands: Bounded rollback command evidence to extend.
+    """
+    if not bool(state.get("resolver_apply_started")):
+        return
+    resolver_interface = str(state.get("candidate_management_interface") or "")
+    if not _valid_network_interface_name(resolver_interface):
+        raise ValueError("resolver rollback interface is invalid")
+    result = _run(["resolvectl", "revert", resolver_interface])
+    commands.append(
+        {
+            "stage": "resolver rollback",
+            "interface": resolver_interface,
+            "returncode": result.returncode,
+        }
+    )
+    if result.returncode != 0:
+        raise ValueError("resolver rollback failed")
+
+
 def _restore_management_handoff(state: dict) -> dict:
     """Restore every snapshotted management runtime artifact.
 
@@ -15763,6 +15813,7 @@ def _restore_management_handoff(state: dict) -> dict:
         commands.append({"stage": "rollback", "command": command, "returncode": result.returncode})
         if result.returncode != 0:
             raise ValueError(f"rollback command failed: {' '.join(command)}")
+    _restore_management_handoff_resolver(state, commands)
     _restore_management_handoff_links(state, commands)
     if FIREWALL_CONFIG_PATH.is_file():
         result = _run(["nft", "-f", str(FIREWALL_CONFIG_PATH)])
@@ -16030,6 +16081,15 @@ def _apply_management_handoff(payload: dict) -> int:
         failing_layer = "Atlaso upstream"
         upstream_readiness = _management_handoff_upstream_readiness()
         settings_payload = _load_appliance_settings_config(Path(str(payload["appliance_settings_config_path"])))
+        resolver_interface = str(settings_payload.get("management_interface") or "")
+        if resolver_interface != str(state.get("candidate_management_interface") or ""):
+            raise ValueError("candidate management resolver interface changed after snapshot")
+        state["resolver_apply_started"] = True
+        _write_management_handoff_state(state, "resolver-applying")
+        failing_layer = "resolver"
+        resolver = _configure_management_handoff_resolver(settings_payload)
+        if resolver.returncode != 0:
+            raise ValueError("candidate management resolver apply failed")
         protocol_holdover = _management_handoff_protocol_holdover(state, settings_payload)
         failing_layer = "nginx management front door"
         if _configure_atlaso_management_https(settings_payload, site_suffix=protocol_holdover) != 0:
