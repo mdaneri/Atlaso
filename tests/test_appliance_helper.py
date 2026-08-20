@@ -242,6 +242,7 @@ Name=eth0
 [Network]
 Address=192.0.2.10/24
 IPv6AcceptRA=yes
+LinkLocalAddressing=ipv6
 
 [Route]
 Gateway=192.0.2.1
@@ -252,6 +253,7 @@ Name=eth0
 [Network]
 Address=198.51.100.10/24
 IPv6AcceptRA=no
+LinkLocalAddressing=no
 
 [Route]
 Gateway=198.51.100.1
@@ -264,9 +266,12 @@ Gateway=198.51.100.1
     assert "Gateway=192.0.2.1" in transitional
     assert "Gateway=198.51.100.1" in transitional
     assert transitional.rfind("IPv6AcceptRA=yes") > transitional.rfind("IPv6AcceptRA=no")
+    assert transitional.rfind("LinkLocalAddressing=ipv6") > transitional.rfind("LinkLocalAddressing=no")
     reverse_transitional = helper._networkd_handoff_text(candidate, previous)
     assert "IPv6AcceptRA=yes" in reverse_transitional
     assert "IPv6AcceptRA=no" not in reverse_transitional
+    assert "LinkLocalAddressing=ipv6" in reverse_transitional
+    assert "LinkLocalAddressing=no" not in reverse_transitional
 
 
 def test_management_handoff_rollback_continues_after_missing_snapshot(monkeypatch, tmp_path):

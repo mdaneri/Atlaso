@@ -207,8 +207,9 @@ before candidate networking exists. The helper validates all staged inputs befor
 the Atlaso-owned networkd, nftables, nginx, certificate, and related runtime files under a root-only state directory,
 syncs every backup file and the backup directory before publishing the rollback marker,
 and merges global runtime addresses from every previous management interface with the configured addresses before it
-installs temporary higher-priority networkd holdovers for the previous management links. Those holdovers retain DHCP
-state and IPv6 router-advertisement acceptance so dynamic old-path addresses remain owned until retirement, without
+installs temporary higher-priority networkd holdovers for the previous management links. Those holdovers retain DHCP,
+IPv6 link-local addressing, and router-advertisement acceptance so dynamic old-path addresses remain owned until
+retirement, without
 letting a previous disabled-RA state override candidate SLAAC acquisition. Flagged
 access physical listeners also preserve their real DHCP/static method when the resolver fallback is selected. It then
 applies the candidate network and a transitional firewall that admits both previous and candidate management

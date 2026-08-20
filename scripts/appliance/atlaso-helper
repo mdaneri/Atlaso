@@ -15382,8 +15382,10 @@ def _networkd_handoff_text(previous: str, candidate: str) -> str:
     network_values = [
         line
         for line in previous_lines
-        if re.match(r"^(Address|DHCP|DNS|Domains|IPv6AcceptRA)=", line) and line not in candidate_lines
+        if re.match(r"^(Address|DHCP|DNS|Domains|IPv6AcceptRA|LinkLocalAddressing)=", line)
+        and line not in candidate_lines
         and not (line == "IPv6AcceptRA=no" and "IPv6AcceptRA=yes" in candidate_lines)
+        and not (line == "LinkLocalAddressing=no" and "LinkLocalAddressing=ipv6" in candidate_lines)
     ]
     next_section = next(
         (
