@@ -5312,12 +5312,14 @@ report navigation and export controls only. Operators with Network Boot write
 access can use the same row menu to <strong>Promote to ESXi</strong>, <strong>Reboot</strong>, <strong>Wake
 host</strong>, or <strong>Remove discovered host</strong>. Wake, reboot, and removal share Atlaso's
 confirmation flow. Reboot is available only for an online Inventory Linux
-session. Removal transactionally deletes that discovered host's commands,
-sessions, and reports, but retains any separately promoted ESXi desired-state
-reference. The grid marks a discovered host as <strong>Assigned</strong> when one of its
-reported MACs matches an ESXi Host Reference and shows the assigned ESXi
-hostname and IP address. <strong>Promote to ESXi</strong> is disabled for an assigned host,
-preventing a duplicate Host Reference workflow. Promotion requires explicit hostname, a discovered MAC, address,
+session. Removal transactionally deletes an unassigned discovered host's
+commands, sessions, and reports. The grid marks a discovered host as
+<strong>Assigned</strong> when one of its reported MACs matches an ESXi Host Reference and
+shows the assigned ESXi hostname and IP address. Both <strong>Promote to ESXi</strong> and
+<strong>Remove discovered host</strong> are disabled for an assigned host. A direct API
+deletion attempt is rejected with the blocking ESXi hostname so automation must
+remove the Host Reference first. Promotion loads the selected row's identity
+before step validation and requires explicit hostname, discovered MAC, address,
 Kickstart, installer ISO, variables, and enabled-state review. It creates
 desired state only.</p>
 <h2 id="boot-media-packages-and-activation">Boot media packages and activation<a class="headerlink" href="#boot-media-packages-and-activation" title="Permanent link">&para;</a></h2>
@@ -5508,7 +5510,15 @@ Runtime inventory storage retains at
 most 512 discovered hosts, 2,048 reports across all hosts, 11 reports per host,
 and 4,096 sessions; expired sessions and the oldest inactive inventory are
 pruned as new sessions and reports arrive. Hosts with a recent heartbeat or an
-unacknowledged command are never selected for storage eviction.</p>
+unacknowledged command are never selected for storage eviction. A discovered
+host assigned to an ESXi Host Reference and all of its retained reports are
+also protected until the administrator uses the explicit Host Reference
+deletion lifecycle. When live or assigned state alone occupies either global
+limit, Atlaso rejects a new report as retryable instead of evicting protected
+inventory. On PostgreSQL, report admission serializes its identity and MAC
+mutation, assignment snapshot, and any resulting capacity pruning with every
+Host Reference writer, including promotion, DHCP-lease creation, and settings
+archive restore or factory reset.</p>
 <h2 id="manage-esxi-host-references">Manage ESXi Host References<a class="headerlink" href="#manage-esxi-host-references" title="Permanent link">&para;</a></h2>
 <p>Open <strong>ESXi Kickstarts</strong>, select <strong>Host References</strong>, and use <strong>+ Add host
 reference here</strong> to open the guided Host Reference workflow. When an eligible
@@ -5533,15 +5543,31 @@ storage as an implementation detail. When an installer ISO is selected, a new re
 or promotion defaults to Enabled. An administrator can still turn Enabled off
 explicitly, and editing preserves the saved state. Saving creates or updates
 the Host References grid immediately without a page reload and refreshes the
-matching discovered-host assignment. Use the global <strong>Review appliance
+matching discovered-host assignment. Automatic discovery refresh also updates
+the Host References grid's association state, so deletion choices reflect hosts
+reported after the page opened. Use the global <strong>Review appliance
 changes</strong> workflow to enforce desired state on the appliance.</p>
 <p>Double-click an existing reference or choose <strong>Edit host reference</strong> from its
 row menu to reopen the same workflow. The Enabled value remains directly
 toggleable in the collection. The row menu also retains <strong>Boot Inventory Linux
 once</strong>, <strong>Authorize ESXi boot once</strong>, <strong>Wake host</strong>, and <strong>Delete host
-reference</strong> where applicable. Start the assigned host first and choose its ESXi
-entry. The host console displays a one-time code while its unpredictable boot
-claim waits. Then choose <strong>Authorize ESXi boot once</strong>, enter that console code
+reference</strong> where applicable. Deleting a Host Reference retains its associated
+discovered host by default so it can be rediscovered or promoted again. When an
+association exists, the confirmation offers <strong>Also remove the associated
+discovered host and retained inventory state</strong>; selecting it removes the Host
+Reference and matching discovery commands, sessions, reports, and host row in
+the same transaction. Atlaso rejects that cleanup when the same discovery is
+also assigned to another Host Reference; retry without inventory cleanup or
+remove the other assignment first. Atlaso serializes Host Reference writes
+with both direct discovery deletion and associated-discovery cleanup so a
+concurrent create or MAC update cannot invalidate an ownership check before
+commit. API clients use <code>DELETE
+/api/v1/esxi-pxe/hosts/{host_id}</code> with <code>write:esxi-pxe</code>; the default retains
+discovery history. The optional <code>remove_discovered_host=true</code> query additionally
+requires <code>write:pxe</code> and applies the same transactional shared-assignment guard.
+Start the assigned host first and choose its ESXi entry.
+The host console displays a one-time code while its unpredictable boot claim
+waits. Then choose <strong>Authorize ESXi boot once</strong>, enter that console code
 in the shared two-step wizard, and review the host before submitting. Atlaso
 creates a ten-minute, single-use authorization bound to that exact claim,
 applied Host Reference, applied Kickstart revision, HTTP listener, and boot

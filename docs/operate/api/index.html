@@ -1369,6 +1369,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#delete-an-esxi-host-reference" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Delete an ESXi Host Reference
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#authorize-one-esxi-boot" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -3500,6 +3511,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#delete-an-esxi-host-reference" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Delete an ESXi Host Reference
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#authorize-one-esxi-boot" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -3791,6 +3813,19 @@ or Tasks interfaces and verify terminal results.</p>
 <p>Legacy <code>/api/v1/dns/apply</code>, <code>/api/v1/dhcp/apply</code>, and <code>/api/v1/firewall/apply</code> routes remain available for compatibility
 but are intentionally absent from Swagger because they predate the reviewed global workflow. New clients must save
 desired state and use <code>/ui/management/appliance-apply</code>; do not build new automation around the legacy direct-apply routes.</p>
+<h2 id="delete-an-esxi-host-reference">Delete an ESXi Host Reference<a class="headerlink" href="#delete-an-esxi-host-reference" title="Permanent link">&para;</a></h2>
+<p><code>DELETE /api/v1/esxi-pxe/hosts/{host_id}</code> requires <code>write:esxi-pxe</code> and
+removes one saved Host Reference. By default, Atlaso retains matching Network
+Boot discovery history so the host can be rediscovered or promoted again. The
+response reports whether the reference was deleted and returns zero removal
+counts for discovered hosts, reports, sessions, and commands.</p>
+<p>Set <code>remove_discovered_host=true</code> only when the client also has <code>write:pxe</code> and
+the administrator intends to remove matching discovery commands, sessions,
+reports, and host rows in the same transaction. Atlaso returns <code>409 Conflict</code>
+without mutation when another Host Reference owns any reported MAC for that
+discovery; delete without cleanup or remove the other assignment first. A
+successful deletion changes saved desired state immediately, while generated
+PXE state changes only through global Appliance Apply.</p>
 <h2 id="authorize-one-esxi-boot">Authorize one ESXi boot<a class="headerlink" href="#authorize-one-esxi-boot" title="Permanent link">&para;</a></h2>
 <p><code>POST /api/v1/network-boot/esxi-hosts/{host_id}/authorize-boot-once</code> requires
 <code>write:pxe</code> and accepts JSON containing the <code>boot_code</code> displayed by the exact
