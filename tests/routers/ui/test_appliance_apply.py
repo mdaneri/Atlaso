@@ -34,6 +34,7 @@ interface=eth1
             "kind": "physical",
             "name": "eth0",
             "parent": "",
+            "parent_admin_state": "",
             "role": "management",
             "mtu": "",
             "ipv4_method": "static",
@@ -49,6 +50,7 @@ interface=eth1
             "kind": "physical",
             "name": "eth1",
             "parent": "",
+            "parent_admin_state": "",
             "role": "access",
             "mtu": "",
             "ipv4_method": "",
@@ -149,6 +151,37 @@ vlan=eth1.20
 """
     candidate = previous.replace("mtu=1500", "mtu=9000")
 
+    assert management_handoff_required(
+        {"raw_config_preview": candidate},
+        {"config_preview": previous},
+    )
+
+
+def test_management_handoff_detects_flagged_access_vlan_parent_admin_down():
+    """Protect a management VLAN when its trunk parent is disabled."""
+    from atlaso.app.ui import management_handoff_required, network_management_paths
+
+    previous = """[physical_interfaces]
+interface=eth1
+  role=access
+  mode=trunk
+  admin_state=up
+[vlan_interfaces]
+vlan=eth1.20
+  parent=eth1
+  role=access
+  admin_state=up
+  access_management_ui_enabled=true
+  mtu=1500
+  ipv4_method=static
+  ip_cidr=192.0.2.20/24
+"""
+    candidate = previous.replace("admin_state=up", "admin_state=down", 1)
+
+    previous_paths = network_management_paths(previous)
+    candidate_paths = network_management_paths(candidate)
+    assert previous_paths[0]["parent_admin_state"] == "up"
+    assert candidate_paths[0]["parent_admin_state"] == "down"
     assert management_handoff_required(
         {"raw_config_preview": candidate},
         {"config_preview": previous},

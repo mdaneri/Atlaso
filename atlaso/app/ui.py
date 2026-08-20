@@ -9237,6 +9237,11 @@ def network_management_paths(config_preview: str) -> list[dict[str, str]]:
         elif current is not None and section in {"physical_interfaces", "vlan_interfaces"}:
             current[key] = value
     paths: list[dict[str, str]] = []
+    physical_admin_states = {
+        row.get("name", ""): row.get("admin_state", "")
+        for row in rows
+        if row.get("kind") == "physical"
+    }
     for row in rows:
         dedicated = row.get("kind") == "physical" and row.get("role") == "management"
         flagged_physical = (
@@ -9258,6 +9263,7 @@ def network_management_paths(config_preview: str) -> list[dict[str, str]]:
                 "kind": row.get("kind", ""),
                 "name": row.get("name", ""),
                 "parent": row.get("parent", ""),
+                "parent_admin_state": physical_admin_states.get(row.get("parent", ""), ""),
                 "role": row.get("role", ""),
                 "mtu": row.get("mtu", ""),
                 "ipv4_method": row.get("ipv4_method", ""),
@@ -9274,6 +9280,7 @@ def network_management_paths(config_preview: str) -> list[dict[str, str]]:
             item["name"],
             item["kind"],
             item["parent"],
+            item["parent_admin_state"],
             item["mtu"],
             item["ip_cidr"],
             item["gateway"],
