@@ -615,6 +615,15 @@ def effective_native_uefi_http_url(boot: dict[str, Any]) -> str:
     return f"{base_url}/{ESXI_PXE_UEFI_BOOTFILE}" if base_url else ""
 
 
+def native_uefi_http_url_is_absolute(value: str) -> bool:
+    """Return whether a Native UEFI HTTP URL is absolute and supported.
+
+    Args:
+        value: Candidate URL supplied by desired state or a restored setting.
+    """
+    return bool(re.fullmatch(r"https?://[^\s\"'<>]+", (value or "").strip()))
+
+
 def esxi_pxe_service_state_from_boot(boot: dict[str, Any]) -> dict[str, Any]:
     """Return esxi pxe service state from boot.
 
@@ -838,7 +847,7 @@ def esxi_pxe_boot_settings(db: Session) -> dict[str, Any]:
     """
     rows = {row.key: row.value for row in db.execute(select(Setting).where(Setting.key.like("esxi_pxe.boot.%"))).scalars().all()}
     enabled = rows.get(ESXI_PXE_BOOT_ENABLED_KEY, "false").strip().lower() in {"1", "true", "yes", "on"}
-    native_uefi_http_enabled = rows.get(ESXI_PXE_NATIVE_UEFI_HTTP_ENABLED_KEY, "true").strip().lower() in {"1", "true", "yes", "on"}
+    native_uefi_http_enabled = rows.get(ESXI_PXE_NATIVE_UEFI_HTTP_ENABLED_KEY, "false").strip().lower() in {"1", "true", "yes", "on"}
     dhcp_scopes = _selected_dhcp_scopes(
         db,
         rows.get(ESXI_PXE_DHCP_SCOPE_IDS_KEY),
@@ -1227,7 +1236,7 @@ def _normalize_native_uefi_http_url(value: str) -> str:
     url = (value or "").strip()
     if not url:
         return ""
-    if not re.fullmatch(r"https?://[^\s\"'<>]+", url):
+    if not native_uefi_http_url_is_absolute(url):
         raise ValueError("Native UEFI HTTP boot URL must be an absolute HTTP or HTTPS URL.")
     return url
 
@@ -2037,7 +2046,7 @@ def render_esxi_pxe_manifest(
         "bios_second_stage_bootfile": ESXI_PXE_BIOS_SECOND_STAGE_BOOTFILE,
         "uefi_second_stage_bootfile": ESXI_PXE_UEFI_SECOND_STAGE_BOOTFILE,
         "native_uefi_bootfile": ESXI_PXE_NATIVE_UEFI_BOOTFILE,
-        "native_uefi_http_enabled": True,
+        "native_uefi_http_enabled": False,
         "native_uefi_http_url": "",
         "ipxe_script_name": ESXI_PXE_IPXE_SCRIPT_NAME,
         "ipxe_script": default_ipxe_script(),

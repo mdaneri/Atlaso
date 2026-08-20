@@ -360,6 +360,11 @@ HTTP boot URLs are generated per selected IPv4 zone from that zone's appliance a
 `snponly.efi` first stage. Both BIOS and UEFI iPXE requests then load `/pxe/boot.ipxe`, where Atlaso safely resolves the
 exact host assignment or inventory default. DHCP never returns an ESXi loader directly.
 
+Fresh desired state keeps both ESXi PXE and Native UEFI HTTP disabled. Native UEFI HTTP is dormant whenever ESXi PXE is
+disabled, including for compatible restored state that still carries the older enabled flag with a blank URL. When
+ESXi PXE is enabled, Native UEFI HTTP requires either a saved absolute HTTP(S) URL or an effective URL derived from a
+selected IPv4 DHCP zone; the shared validation blocks Appliance Apply before helper execution when neither is available.
+
 Host PXE definitions can optionally include an IP address. Blank IPs keep normal DHCP behavior. A concrete host IP
 creates or updates an ESXi-managed DHCP reservation and matching DNS A/AAAA record, and the IP must fall inside one of
 the selected ESXi PXE DHCP zones. The default undefined-MAC profile remains DHCP-only and never creates a reservation.
