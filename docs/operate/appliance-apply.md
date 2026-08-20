@@ -95,6 +95,13 @@ Components run sequentially. If one component fails, Atlaso stops the sequence a
 **skipped**. Other write operations are locked while the master task is pending or running; read-only pages, task
 inspection, authentication actions, and safe cancellation remain available.
 
+A management-path change is the exception to independent component execution: Atlaso selects Certificate Authority,
+Network, Firewall, Appliance Settings, and Public Services together and runs them as one recoverable handoff. The task
+keeps the previous listener active until consecutive bounded checks prove the Atlaso loopback upstream, candidate nginx
+listener, and host-facing `/openapi.json` are ready. On failure, each bundled component records the same failing layer
+and rollback result. The handoff applies only the management front-door portion of Appliance Settings; unrelated
+Appliance Settings differences remain pending for a later Apply instead of being folded into the network transaction.
+
 Safe cancellation does not interrupt the component already running. Every helper or adapter command in that component
 continues to completion. After the component returns, Atlaso skips the remaining components and releases the mutation
 lock when the master task becomes terminal.
@@ -127,8 +134,10 @@ the command intent; it does not prove that Photon services changed.
    remain pending when their desired state still differs.
 4. Submit only the units required for the corrected run.
 
-If Atlaso restarts during an apply, startup marks the running child failed, marks pending children skipped, fails the
-master task, and releases the global lock. Review the task before resubmitting.
+If Atlaso restarts during an ordinary apply, startup marks the running child failed, marks pending children skipped,
+fails the master task, and releases the global lock. For an interrupted management handoff, startup first asks the
+privileged helper to restore the captured previous runtime state, then records the recovery result on the failed task.
+Review the task before resubmitting.
 
 If a selected unit changed after submission but before execution, Atlaso fails closed and asks for a new review. This
 prevents a queued task from applying state that the administrator did not inspect.

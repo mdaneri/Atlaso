@@ -30,6 +30,254 @@ def load_helper_module():
     return module
 
 
+def test_management_handoff_firewall_keeps_previous_management_rules():
+    """Keep old management firewall access during candidate validation."""
+    helper = load_helper_module()
+    previous = '''table inet atlaso {
+  chain input {
+    iifname "eth0" tcp dport { 22,80,443 } accept comment "Management console"
+  }
+}
+'''
+    candidate = '''flush ruleset
+table inet atlaso {
+  chain input {
+    iifname "eth1" tcp dport { 22,80,443 } accept comment "Management console"
+  }
+}
+'''
+
+    transitional = helper._management_handoff_firewall_text(candidate, previous)
+
+    assert 'iifname "eth0"' in transitional
+    assert 'iifname "eth1"' in transitional
+    assert transitional.index('iifname "eth0"') < transitional.index('iifname "eth1"')
+
+
+def test_management_handoff_networkd_transition_keeps_old_and_candidate_paths():
+    """Carry old addressing and routes in the candidate networkd transition."""
+    helper = load_helper_module()
+    previous = """[Match]
+Name=eth0
+
+[Network]
+Address=192.0.2.10/24
+
+[Route]
+Gateway=192.0.2.1
+"""
+    candidate = """[Match]
+Name=eth0
+
+[Network]
+Address=198.51.100.10/24
+
+[Route]
+Gateway=198.51.100.1
+"""
+
+    transitional = helper._networkd_handoff_text(previous, candidate)
+
+    assert "Address=192.0.2.10/24" in transitional
+    assert "Address=198.51.100.10/24" in transitional
+    assert "Gateway=192.0.2.1" in transitional
+    assert "Gateway=198.51.100.1" in transitional
+
+
+def test_management_candidate_network_defers_old_link_retirement(monkeypatch, tmp_path):
+    """Keep old links up and old VLAN addresses intact during candidate activation.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace network mutation dependencies.
+        tmp_path: Temporary directory provided for the candidate config path.
+    """
+    helper = load_helper_module()
+    calls: dict[str, object] = {}
+    candidate = tmp_path / "atlaso-network.conf"
+    candidate.write_text("candidate", encoding="utf-8")
+
+    def install(_path, *, defer_down_links=None):
+        """Capture deferred links and return a successful install."""
+        calls["defer_down_links"] = defer_down_links
+        return 0, [], [], []
+
+    def vlans(_path, *, preserve_address_links=None, defer_removed=False):
+        """Capture transitional VLAN preservation arguments."""
+        calls["preserve_address_links"] = preserve_address_links
+        calls["defer_removed"] = defer_removed
+        return 0
+
+    commands: list[list[str]] = []
+    monkeypatch.setattr(helper, "_install_systemd_networkd_files", install)
+    monkeypatch.setattr(helper, "_apply_vlan_interfaces", vlans)
+    monkeypatch.setattr(
+        helper,
+        "_parse_network_config",
+        lambda _path: ([{"name": "eth1", "role": "management"}], [], []),
+    )
+    monkeypatch.setattr(helper, "_link_exists", lambda _name: True)
+    monkeypatch.setattr(
+        helper,
+        "_run",
+        lambda command: commands.append(command) or subprocess.CompletedProcess(command, 0, "", ""),
+    )
+
+    helper._apply_management_candidate_network(
+        candidate,
+        {"previous_management_interfaces": ["eth0"]},
+    )
+
+    assert calls["defer_down_links"] == {"eth0"}
+    assert calls["preserve_address_links"] == {"eth0"}
+    assert calls["defer_removed"] is True
+    assert ["networkctl", "reconfigure", "eth0"] in commands
+    assert ["networkctl", "reconfigure", "eth1"] in commands
+
+
+def test_management_handoff_readiness_requires_consecutive_samples(monkeypatch):
+    """Reset the readiness streak after any upstream or candidate failure.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace bounded probe dependencies.
+    """
+    helper = load_helper_module()
+    statuses = iter(["200", "200", "500", "200", "200", "200", "200", "200"])
+    monkeypatch.setattr(helper.shutil, "which", lambda command: "/usr/bin/curl" if command == "curl" else None)
+    monkeypatch.setattr(helper, "_console_management_http_status", lambda *_args, **_kwargs: next(statuses))
+    monkeypatch.setattr(helper.time, "sleep", lambda _seconds: None)
+
+    evidence = helper._management_handoff_readiness(["198.51.100.10"], True, samples=2)
+
+    assert evidence["stable_samples"] == 2
+    assert evidence["statuses"]["management 198.51.100.10"] == "200"
+
+
+def test_management_handoff_failure_rolls_back_with_truthful_layer(monkeypatch, tmp_path, capsys):
+    """Rollback every snapshot when candidate firewall activation fails.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+        tmp_path: Temporary directory provided for staged test files.
+        capsys: Pytest fixture used to capture bounded helper output.
+    """
+    helper = load_helper_module()
+    state = {
+        "previous_management_interfaces": ["eth0"],
+        "previous_management_addresses": ["192.0.2.10"],
+        "previous_https_enabled": True,
+    }
+    restored: list[dict] = []
+    monkeypatch.setattr(helper, "_snapshot_management_handoff", lambda _payload: state)
+    monkeypatch.setattr(helper, "_management_handoff_readiness", lambda *_args, **_kwargs: {"stable_samples": 3})
+    monkeypatch.setattr(helper, "_install_management_holdovers", lambda _state, _payload: [])
+    monkeypatch.setattr(helper, "_write_management_handoff_state", lambda *_args: None)
+    monkeypatch.setattr(helper, "_apply_management_candidate_network", lambda *_args: None)
+    monkeypatch.setattr(helper, "_handle_network", lambda *_args: 0)
+    monkeypatch.setattr(helper, "_handle_firewall", lambda *_args: 1)
+    monkeypatch.setattr(helper, "_restore_management_handoff", lambda value: restored.append(value) or {"readiness": "old-ready"})
+    monkeypatch.setattr(helper, "_clear_management_handoff_state", lambda: None)
+    monkeypatch.setattr(helper, "FIREWALL_CONFIG_PATH", tmp_path / "missing-previous-firewall")
+    candidate = tmp_path / "candidate-firewall.nft"
+    candidate.write_text("table inet atlaso {\n  chain input {\n  }\n}\n", encoding="utf-8")
+    monkeypatch.setattr(helper, "FIREWALL_APPLY_DIR", tmp_path)
+    try:
+        result = helper._apply_management_handoff(
+            {
+                "network_config_path": "candidate-network",
+                "firewall_config_path": str(candidate),
+                "appliance_settings_config_path": "candidate-settings",
+                "public_services_config_path": "candidate-public",
+            }
+        )
+    finally:
+        candidate.unlink(missing_ok=True)
+        (tmp_path / "atlaso-management-handoff.nft").unlink(missing_ok=True)
+
+    assert result == 1
+    assert restored == [state]
+    payload = json.loads(capsys.readouterr().err.splitlines()[-1])
+    assert payload["management_handoff"] == "rolled back"
+    assert payload["failing_layer"] == "firewall"
+    assert payload["rollback"]["readiness"] == "old-ready"
+
+
+def test_management_handoff_never_activates_nginx_with_unhealthy_upstream(monkeypatch, tmp_path, capsys):
+    """Stop before candidate nginx activation when Atlaso loopback is unhealthy.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+        tmp_path: Temporary directory provided for staged test files.
+        capsys: Pytest fixture used to capture bounded helper output.
+    """
+    helper = load_helper_module()
+    state = {
+        "previous_management_interfaces": ["eth0"],
+        "previous_management_addresses": ["192.0.2.10"],
+        "previous_https_enabled": True,
+    }
+    settings_calls: list[str] = []
+    monkeypatch.setattr(helper, "_snapshot_management_handoff", lambda _payload: state)
+    monkeypatch.setattr(helper, "_management_handoff_readiness", lambda *_args, **_kwargs: {"stable_samples": 3})
+    monkeypatch.setattr(helper, "_install_management_holdovers", lambda _state, _payload: [])
+    monkeypatch.setattr(helper, "_write_management_handoff_state", lambda *_args: None)
+    monkeypatch.setattr(helper, "_apply_management_candidate_network", lambda *_args: None)
+    monkeypatch.setattr(helper, "_handle_firewall", lambda *_args: 0)
+    monkeypatch.setattr(
+        helper,
+        "_management_handoff_upstream_readiness",
+        lambda **_kwargs: (_ for _ in ()).throw(ValueError("Atlaso loopback upstream did not stabilize")),
+    )
+    monkeypatch.setattr(
+        helper,
+        "_configure_atlaso_management_https",
+        lambda *_args: settings_calls.append("activated") or 0,
+    )
+    monkeypatch.setattr(helper, "_restore_management_handoff", lambda _state: {"readiness": "old-ready"})
+    monkeypatch.setattr(helper, "_clear_management_handoff_state", lambda: None)
+    monkeypatch.setattr(helper, "FIREWALL_CONFIG_PATH", tmp_path / "missing-previous-firewall")
+    monkeypatch.setattr(helper, "FIREWALL_APPLY_DIR", tmp_path)
+    candidate = tmp_path / "candidate-firewall.nft"
+    candidate.write_text("table inet atlaso {\n  chain input {\n  }\n}\n", encoding="utf-8")
+
+    result = helper._apply_management_handoff(
+        {
+            "network_config_path": "candidate-network",
+            "firewall_config_path": str(candidate),
+            "appliance_settings_config_path": "candidate-settings",
+            "public_services_config_path": "candidate-public",
+        }
+    )
+
+    assert result == 1
+    assert settings_calls == []
+    payload = json.loads(capsys.readouterr().err.splitlines()[-1])
+    assert payload["failing_layer"] == "Atlaso upstream"
+    assert payload["management_handoff"] == "rolled back"
+
+
+def test_interrupted_management_handoff_recovers_old_path(monkeypatch, tmp_path, capsys):
+    """Recover a durable interruption marker before task recovery.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+        tmp_path: Temporary directory provided for the marker.
+        capsys: Pytest fixture used to capture bounded helper output.
+    """
+    helper = load_helper_module()
+    state_path = tmp_path / "state.json"
+    state_path.write_text('{"phase":"candidate-ready"}', encoding="utf-8")
+    cleared: list[bool] = []
+    monkeypatch.setattr(helper, "MANAGEMENT_HANDOFF_STATE_PATH", state_path)
+    monkeypatch.setattr(helper, "_restore_management_handoff", lambda state: {"phase": state["phase"], "readiness": "old-ready"})
+    monkeypatch.setattr(helper, "_clear_management_handoff_state", lambda: cleared.append(True))
+
+    assert helper._recover_management_handoff() == 0
+    assert cleared == [True]
+    payload = json.loads(capsys.readouterr().out.splitlines()[-1])
+    assert payload["management_handoff"] == "rolled back after interruption"
+    assert payload["readiness"] == "old-ready"
+
+
 def test_appliance_power_helper_schedules_reboot(monkeypatch):
     """Verify that appliance power helper schedules reboot.
 
@@ -3386,6 +3634,40 @@ def test_network_helper_installs_networkd_files_and_reconfigures_non_management(
     assert any(path.endswith("00-atlaso-mgmt.network") for path in installed)
     assert links == ["eth2", "eth2.20"]
     assert admin_down_links == []
+
+
+def test_network_helper_retires_stale_dedicated_management_file_for_flagged_access(monkeypatch, tmp_path):
+    """Remove the old dedicated match only after a flagged-access candidate is selected.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+        tmp_path: Temporary directory provided for networkd files.
+    """
+    helper = load_helper_module()
+    config_path = tmp_path / "atlaso-network.conf"
+    config = network_config_text().replace("  role=management", "  role=access", 1)
+    config = config.replace("  mode=access", "  mode=access\n  access_management_ui_enabled=true", 1)
+    config_path.write_text(config, encoding="utf-8")
+    networkd_dir = tmp_path / "systemd-network"
+    networkd_dir.mkdir()
+    stale = networkd_dir / "00-atlaso-mgmt.network"
+    stale.write_text("[Match]\nName=eth0\n", encoding="utf-8")
+    monkeypatch.setattr(helper, "NETWORKD_CONFIG_DIR", networkd_dir)
+    monkeypatch.setattr(helper, "NETWORKD_MGMT_CONFIG_PATH", stale)
+    monkeypatch.setattr(helper.shutil, "which", lambda command: f"/usr/bin/{command}")
+    monkeypatch.setattr(
+        helper,
+        "_run",
+        lambda command: subprocess.CompletedProcess(command, 0, "", ""),
+    )
+    monkeypatch.setattr(helper, "_link_exists", lambda _name: True)
+
+    returncode, installed, _links, _admin_down = helper._install_systemd_networkd_files(config_path)
+
+    assert returncode == 0
+    assert not stale.exists()
+    assert all(not path.endswith("00-atlaso-mgmt.network") for path in installed)
+    assert (networkd_dir / "10-atlaso-eth0.network").is_file()
 
 
 def test_network_helper_sets_admin_down_links_down_after_reload(monkeypatch, tmp_path):

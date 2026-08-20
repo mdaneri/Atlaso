@@ -577,6 +577,52 @@ class SystemAdapter:
         """
         return self._helper_result("network", "validate", config_path, dry_run_message="dry-run: network validation command recorded")
 
+    def validate_management_handoff(self, manifest_path: str) -> AdapterResult:
+        """Validate a staged management-plane handoff.
+
+        Args:
+            manifest_path: Filesystem path containing the reviewed handoff manifest.
+
+        Returns:
+            The management-handoff validation result.
+        """
+        return self._helper_result(
+            "management-handoff",
+            "validate",
+            manifest_path,
+            dry_run_message="dry-run: management handoff validation command recorded",
+        )
+
+    def apply_management_handoff(self, manifest_path: str) -> AdapterResult:
+        """Apply a reachability-safe management-plane handoff.
+
+        Args:
+            manifest_path: Filesystem path containing the reviewed handoff manifest.
+
+        Returns:
+            The management-handoff apply result.
+        """
+        return self._helper_result(
+            "management-handoff",
+            "apply",
+            manifest_path,
+            dry_run_message="dry-run: management handoff apply command recorded",
+            timeout_seconds=420,
+        )
+
+    def recover_management_handoff(self) -> AdapterResult:
+        """Roll back any interrupted management-plane handoff.
+
+        Returns:
+            The recovery result.
+        """
+        return self._helper_result(
+            "management-handoff",
+            "recover",
+            dry_run_message="dry-run: no management handoff recovery performed",
+            timeout_seconds=180,
+        )
+
     def apply_appliance_settings_config(self, config_path: str) -> AdapterResult:
         """Update appliance settings config.
 

@@ -1,6 +1,85 @@
 """Test Appliance Apply management UI transport behavior."""
 
+import json
+
 from tests.routers.ui.helpers import login
+
+
+def test_management_path_signature_covers_dedicated_and_flagged_access_transitions():
+    """Detect every supported management-listener topology change."""
+    from atlaso.app.ui import network_management_paths
+
+    dedicated = """[physical_interfaces]
+interface=eth0
+  role=management
+  mode=access
+  admin_state=up
+  ipv4_method=static
+  ip_cidr=192.0.2.10/24
+  gateway=192.0.2.1
+interface=eth1
+  role=access
+  mode=access
+  admin_state=up
+  access_management_ui_enabled=false
+  ip_cidr=198.51.100.10/24
+"""
+    flagged = dedicated.replace("role=management", "role=access", 1).replace(
+        "access_management_ui_enabled=false",
+        "access_management_ui_enabled=true",
+    )
+
+    assert network_management_paths(dedicated) == [
+        {
+            "kind": "physical",
+            "name": "eth0",
+            "parent": "",
+            "role": "management",
+            "ipv4_method": "static",
+            "ip_cidr": "192.0.2.10/24",
+            "gateway": "192.0.2.1",
+            "ipv6_cidr": "",
+            "ipv6_gateway": "",
+        }
+    ]
+    assert network_management_paths(flagged) == [
+        {
+            "kind": "physical",
+            "name": "eth1",
+            "parent": "",
+            "role": "access",
+            "ipv4_method": "",
+            "ip_cidr": "198.51.100.10/24",
+            "gateway": "",
+            "ipv6_cidr": "",
+            "ipv6_gateway": "",
+        }
+    ]
+
+
+def test_management_handoff_settings_baseline_ignores_only_applied_front_door_fields():
+    """Keep unrelated Appliance Settings pending after the management transaction."""
+    from atlaso.app.ui import management_handoff_completes_appliance_settings
+
+    previous = {
+        "fqdn": "atlaso.example",
+        "management_interface": "eth0",
+        "management_ip": "192.0.2.10",
+        "management_https_enabled": True,
+        "root_ssh_enabled": False,
+    }
+    baseline = {"config_preview": json.dumps(previous)}
+    management_only = {
+        **previous,
+        "management_interface": "eth1",
+        "management_ip": "198.51.100.10",
+    }
+
+    assert management_handoff_completes_appliance_settings(json.dumps(management_only), baseline)
+    assert not management_handoff_completes_appliance_settings(
+        json.dumps({**management_only, "root_ssh_enabled": True}),
+        baseline,
+    )
 
 
 def test_appliance_apply_router_owns_exact_transport_set():
@@ -143,6 +222,54 @@ def test_appliance_apply_review_returns_management_address_connection_warning(cl
     network = next(unit for unit in review.json()["units"] if unit["id"] == "network")
     assert len(network["connection_warnings"]) == 1
     assert "from 192.168.49.1/24 to 192.168.49.20/24" in network["connection_warnings"][0]
+
+
+def test_management_move_submits_all_handoff_units_atomically(client):
+    """Bundle every runtime layer required for a management move.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
+    from sqlalchemy import select
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job, PhysicalInterface
+    from atlaso.app.ui import appliance_apply_units, update_appliance_apply_baselines
+
+    login(client)
+    with SessionLocal() as db:
+        units = appliance_apply_units(db)
+        update_appliance_apply_baselines(db, units, {unit["id"] for unit in units})
+        management = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == "eth0"))
+        assert management is not None
+        management.ip_cidr = "192.168.49.21/24"
+        db.commit()
+    page = client.get("/dashboard")
+    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+
+    response = client.post(
+        "/appliance-apply",
+        data={"csrf": csrf, "selected_units": "network"},
+        headers={"Accept": "application/json"},
+    )
+
+    assert response.status_code == 202
+    with SessionLocal() as db:
+        job = db.get(Job, response.json()["job_id"])
+        assert job is not None
+        payload = json.loads(job.result or "{}")
+        assert payload["management_handoff"] is True
+        assert set(payload["management_handoff_units"]) == {
+            "ca",
+            "network",
+            "firewall",
+            "appliance_settings",
+            "public_services",
+        }
+        assert all(
+            unit["management_handoff"]["management_handoff"] == "committed"
+            for unit in payload["units"]
+        )
 
 
 def test_appliance_apply_json_submission_returns_master_with_live_child_status(client):

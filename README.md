@@ -11,6 +11,11 @@ shared task monitor retries transient status failures, follows a completed maste
 the modal, sidebar, pending count, and global lock synchronized without requiring a page reload. It completes a retained
 task's terminal refresh before following a newer Apply started by another session.
 
+Management-path changes use one recoverable Appliance Apply handoff across Network, Firewall, Certificate Authority,
+Appliance Settings, and Public Services. Atlaso keeps the previous path active until the candidate listener passes
+bounded application-upstream, nginx, and host-facing readiness checks; a failure or restart restores the previous
+runtime state and records the non-secret failing layer in the task.
+
 ![Atlaso — Everything your virtualization lab needs](docs/assets/brand/atlaso-docs-header-dark-1600x400.png)
 
 **Everything your virtualization lab needs.**

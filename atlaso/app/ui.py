@@ -670,6 +670,23 @@ APPLIANCE_UPDATE_LOGGER = logging.getLogger("atlaso.appliance_update")
 KICKSTART_REFERENCE_VALIDATION_ERROR = "Kickstart source is invalid. Review its variable and vault markers."
 KICKSTART_UPLOAD_ERROR = "Kickstart upload is invalid. Review the file, name, and reference markers."
 NETWORK_STAGED_CONFIG_PATH = "/var/lib/atlaso/apply/network/atlaso-network.conf"
+MANAGEMENT_HANDOFF_STAGED_MANIFEST_PATH = "/var/lib/atlaso/apply/management-handoff/atlaso-management-handoff.json"
+MANAGEMENT_HANDOFF_UNIT_IDS = ("ca", "network", "firewall", "appliance_settings", "public_services")
+MANAGEMENT_HANDOFF_APPLIANCE_SETTINGS_KEYS = {
+    "management_interface",
+    "management_ip",
+    "management_ip_cidr",
+    "management_http_port",
+    "management_public_http_port",
+    "management_public_https_port",
+    "management_upstream_host",
+    "management_upstream_port",
+    "management_https_enabled",
+    "management_https_cert_path",
+    "management_https_key_path",
+    "web_terminal_interfaces",
+    "web_terminal_addresses",
+}
 DNSMASQ_STAGED_CONFIG_PATH = "/var/lib/atlaso/apply/dnsmasq/atlaso.conf"
 PUBLIC_DOCUMENTATION_URL = "https://mdaneri.github.io/Atlaso/docs/"
 
@@ -3190,6 +3207,10 @@ def recover_interrupted_appliance_apply_jobs(db: Session) -> int:
     if not jobs:
         return 0
     finished = utcnow()
+    handoff_jobs = [job for job in jobs if _job_payload(job).get("management_handoff")]
+    handoff_recovery: AdapterResult | None = None
+    if handoff_jobs:
+        handoff_recovery = SystemAdapter(dry_run=False).recover_management_handoff()
     for job in jobs:
         for step in job.steps:
             if step.status == JobStatus.RUNNING.value:
@@ -3205,14 +3226,30 @@ def recover_interrupted_appliance_apply_jobs(db: Session) -> int:
         job.status = JobStatus.FAILED.value
         job.finished_at = finished
         job.progress_percent = 100
-        job.error = (
-            "Interrupted by a Atlaso restart before completion. "
-            "Review current appliance state and submit the selected changes again."
-        )
+        if job in handoff_jobs and handoff_recovery is not None:
+            if handoff_recovery.returncode == 0:
+                job.error = (
+                    "Interrupted during the management handoff. Atlaso rolled back to the previous management path; "
+                    "review the task evidence and submit the desired change again."
+                )
+            else:
+                job.error = (
+                    "Interrupted during the management handoff, and automatic rollback could not prove the previous "
+                    "management path ready. Use the local appliance console and inspect the recovery task evidence."
+                )
+        else:
+            job.error = (
+                "Interrupted by a Atlaso restart before completion. "
+                "Review current appliance state and submit the selected changes again."
+            )
         payload = _job_payload(job)
         payload["state"] = "failed"
         payload["interrupted"] = True
         payload["interrupted_at"] = finished.isoformat()
+        if job in handoff_jobs and handoff_recovery is not None:
+            payload["management_handoff_recovery"] = adapter_result_to_payload(
+                handoff_recovery
+            )
         job.result = json.dumps(payload, indent=2, sort_keys=True)
     db.commit()
     return len(jobs)
@@ -9123,6 +9160,122 @@ def network_management_signature(config_preview: str) -> dict[str, str]:
     }
 
 
+def network_management_paths(config_preview: str) -> list[dict[str, str]]:
+    """Return every effective management browser path in a network preview.
+
+    Args:
+        config_preview: Rendered network configuration approved for staging.
+
+    Returns:
+        Normalized dedicated and flagged-access management paths.
+    """
+    rows: list[dict[str, str]] = []
+    section = ""
+    current: dict[str, str] | None = None
+    for raw_line in (config_preview or "").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("[") and line.endswith("]"):
+            section = line.strip("[]")
+            current = None
+            continue
+        if "=" not in line:
+            continue
+        key, value = [part.strip() for part in line.split("=", 1)]
+        if section == "physical_interfaces" and key == "interface":
+            current = {"kind": "physical", "name": value}
+            rows.append(current)
+        elif section == "vlan_interfaces" and key == "vlan":
+            current = {"kind": "vlan", "name": value}
+            rows.append(current)
+        elif current is not None and section in {"physical_interfaces", "vlan_interfaces"}:
+            current[key] = value
+    paths: list[dict[str, str]] = []
+    for row in rows:
+        dedicated = row.get("kind") == "physical" and row.get("role") == "management"
+        flagged_physical = (
+            row.get("kind") == "physical"
+            and row.get("role") == "access"
+            and row.get("mode") == "access"
+            and row.get("admin_state") == "up"
+            and row.get("access_management_ui_enabled", "false").lower() == "true"
+        )
+        flagged_vlan = (
+            row.get("kind") == "vlan"
+            and row.get("role") == "access"
+            and row.get("access_management_ui_enabled", "false").lower() == "true"
+        )
+        if not (dedicated or flagged_physical or flagged_vlan):
+            continue
+        paths.append(
+            {
+                "kind": row.get("kind", ""),
+                "name": row.get("name", ""),
+                "parent": row.get("parent", ""),
+                "role": row.get("role", ""),
+                "ipv4_method": row.get("ipv4_method", ""),
+                "ip_cidr": row.get("ip_cidr", ""),
+                "gateway": row.get("gateway", ""),
+                "ipv6_cidr": row.get("ipv6_cidr", ""),
+                "ipv6_gateway": row.get("ipv6_gateway", ""),
+            }
+        )
+    return sorted(
+        paths,
+        key=lambda item: (
+            item["name"],
+            item["kind"],
+            item["parent"],
+            item["ip_cidr"],
+            item["gateway"],
+            item["ipv6_cidr"],
+            item["ipv6_gateway"],
+        ),
+    )
+
+
+def management_handoff_required(network_unit: dict[str, Any], baseline: dict[str, Any] | None) -> bool:
+    """Return whether Network changes require a two-phase handoff.
+
+    Args:
+        network_unit: Current Network apply unit.
+        baseline: Last successful Network baseline.
+
+    Returns:
+        Whether a previous known-good management path changes.
+    """
+    previous_preview = str((baseline or {}).get("config_preview") or "")
+    if not previous_preview:
+        return False
+    return network_management_paths(previous_preview) != network_management_paths(
+        str(network_unit.get("raw_config_preview") or network_unit.get("config_preview") or "")
+    )
+
+
+def management_handoff_completes_appliance_settings(
+    current_preview: str,
+    baseline: dict[str, Any] | None,
+) -> bool:
+    """Return whether the handoff covers every Appliance Settings difference.
+
+    Args:
+        current_preview: Current redacted Appliance Settings preview.
+        baseline: Last successful Appliance Settings baseline.
+
+    Returns:
+        Whether non-handoff settings already match the applied baseline.
+    """
+    previous = json_config_object(str((baseline or {}).get("config_preview") or ""))
+    current = json_config_object(current_preview)
+    if not previous or not current:
+        return False
+    for key in MANAGEMENT_HANDOFF_APPLIANCE_SETTINGS_KEYS:
+        if key in previous or key in current:
+            previous[key] = current.get(key)
+    return previous == current
+
+
 def management_address_label(signature: dict[str, str]) -> str:
     """Return management address label.
 
@@ -9912,6 +10065,13 @@ def appliance_apply_units(db: Session, *, reconcile: bool = True) -> list[dict[s
         baseline=network_baseline,
     )
     network_unit["removed_vlan_interfaces"] = network_removed_vlans
+    network_unit["management_handoff_required"] = management_handoff_required(
+        network_unit,
+        network_baseline,
+    )
+    network_unit["previous_management_paths"] = network_management_paths(
+        str((network_baseline or {}).get("config_preview") or "")
+    )
 
     wan_baseline = baselines.get("wan")
     wan_removed_routes = removed_wan_route_entries(wan["wan_config_preview"], wan_baseline)
@@ -12572,6 +12732,156 @@ def execute_appliance_apply_unit(
     }
 
 
+def execute_management_handoff(
+    units_by_id: dict[str, dict[str, Any]],
+    *,
+    job_id: str,
+    adapter: SystemAdapter | None = None,
+    db: Session,
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    """Execute management-affecting apply units as one recoverable transaction.
+
+    Args:
+        units_by_id: Current apply units keyed by stable identifier.
+        job_id: Appliance Apply task identifier.
+        adapter: System adapter used for helper execution.
+        db: Active database session.
+
+    Returns:
+        The group result and one truthful result per bundled apply unit.
+    """
+    adapter = adapter or SystemAdapter()
+    network = units_by_id["network"]
+    settings = units_by_id["appliance_settings"]
+    firewall = units_by_id["firewall"]
+    public_services = units_by_id["public_services"]
+    ca = units_by_id["ca"]
+    baselines = load_appliance_apply_baselines(db)
+    previous_paths = list(network.get("previous_management_paths") or [])
+    previous_addresses: list[str] = []
+    previous_interfaces: list[str] = []
+    for path in previous_paths:
+        parent = str(path.get("parent") or "")
+        if parent and parent not in previous_interfaces:
+            previous_interfaces.append(parent)
+        name = str(path.get("name") or "")
+        if name and name not in previous_interfaces:
+            previous_interfaces.append(name)
+        for field in ("ip_cidr", "ipv6_cidr"):
+            value = str(path.get(field) or "")
+            if value:
+                previous_addresses.append(str(ip_interface(value).ip))
+    previous_settings = json_config_object(
+        str((baselines.get("appliance_settings") or {}).get("config_preview") or "")
+    )
+    manifest_path = MANAGEMENT_HANDOFF_STAGED_MANIFEST_PATH
+    ca_path = CA_STAGED_CONFIG_PATH
+    if not adapter.dry_run:
+        network_preview = network_config_with_removed_vlans(
+            network["raw_config_preview"],
+            network.get("removed_vlan_interfaces", []),
+        )
+        network_path = stage_appliance_apply_config(NETWORK_STAGED_CONFIG_PATH, network_preview)
+        firewall_path = stage_appliance_apply_config(
+            FIREWALL_STAGED_CONFIG_PATH,
+            firewall["raw_config_preview"],
+        )
+        settings_path = stage_appliance_apply_config(
+            APPLIANCE_SETTINGS_STAGED_CONFIG_PATH,
+            settings["raw_config_preview"],
+        )
+        public_path = stage_appliance_apply_config(
+            PUBLIC_SERVICES_STAGED_CONFIG_PATH,
+            public_services["raw_config_preview"],
+        )
+        ca_context_value = ca["context"]
+        ca_path = stage_appliance_apply_config(
+            CA_STAGED_CONFIG_PATH,
+            render_ca_apply_payload(
+                ca_context_value["ca_settings"],
+                ca_context_value["ca_certificates"],
+                include_private_keys=True,
+            ),
+        )
+        manifest = {
+            "schema_version": 1,
+            "job_id": job_id,
+            "network_config_path": network_path,
+            "firewall_config_path": firewall_path,
+            "appliance_settings_config_path": settings_path,
+            "public_services_config_path": public_path,
+            "ca_config_path": ca_path,
+            "previous_management_interfaces": previous_interfaces,
+            "previous_management_addresses": list(dict.fromkeys(previous_addresses)),
+            "previous_https_enabled": bool(
+                previous_settings.get("management_https_enabled", True)
+            ),
+        }
+        manifest_path = stage_appliance_apply_config(
+            MANAGEMENT_HANDOFF_STAGED_MANIFEST_PATH,
+            json.dumps(manifest, indent=2, sort_keys=True),
+        )
+    results = []
+    try:
+        results = [adapter.validate_management_handoff(manifest_path)]
+        if results[0].returncode == 0:
+            results.append(adapter.apply_management_handoff(manifest_path))
+    finally:
+        if not adapter.dry_run:
+            Path(ca_path).unlink(missing_ok=True)
+    succeeded = bool(results) and all(result.returncode == 0 for result in results)
+    evidence: dict[str, Any] = {}
+    for result in reversed(results):
+        for stream in (result.stdout, result.stderr):
+            for line in reversed((stream or "").splitlines()):
+                try:
+                    candidate = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(candidate, dict) and "management_handoff" in candidate:
+                    evidence = candidate
+                    break
+            if evidence:
+                break
+        if evidence:
+            break
+    group_result = {
+        "success": succeeded,
+        "dry_run": any(result.dry_run for result in results),
+        "commands": [adapter_result_to_payload(result) for result in results],
+        "management_handoff": evidence or {
+            "management_handoff": "committed" if succeeded else "failed before bounded helper evidence"
+        },
+    }
+    failure_layer = str(group_result["management_handoff"].get("failing_layer") or "")
+    failure_error = str(group_result["management_handoff"].get("error") or "")
+    rolled_back = group_result["management_handoff"].get("management_handoff") == "rolled back"
+    unit_results = []
+    for unit_id in MANAGEMENT_HANDOFF_UNIT_IDS:
+        unit = units_by_id[unit_id]
+        unit_results.append(
+            {
+                "unit_id": unit_id,
+                "label": unit["label"],
+                "status": JobStatus.SUCCEEDED.value if succeeded else JobStatus.FAILED.value,
+                "success": succeeded,
+                "dry_run": group_result["dry_run"],
+                "commands": group_result["commands"] if unit_id == "network" else [],
+                "management_handoff": group_result["management_handoff"],
+                "failing_layer": failure_layer,
+                "rolled_back": rolled_back,
+                "error": failure_error if not succeeded else "",
+                "summary": unit["summary"],
+                "validation_errors": unit["validation_errors"],
+                "validation_warnings": unit["validation_warnings"],
+                "config_path": unit["config_path"],
+                "config_preview": unit["config_preview"],
+                "config_diff": unit["config_diff"],
+            }
+        )
+    return group_result, unit_results
+
+
 def update_appliance_apply_baselines(db: Session, units: list[dict[str, Any]], selected_ids: set[str]) -> None:
     """Update appliance apply baselines.
 
@@ -14381,6 +14691,12 @@ def run_appliance_apply_job(job_id: str, *, force_real: bool = False) -> None:
             total_steps = max(len(selected_units), 1)
             failed = False
             cancelled = False
+            handoff_completed = False
+            handoff_unit_ids = set(
+                job_result.get("management_handoff_units", [])
+                if job_result.get("management_handoff")
+                else []
+            )
             for index, unit in enumerate(selected_units, start=1):
                 db.refresh(job)
                 current_payload = _job_payload(job)
@@ -14397,6 +14713,130 @@ def run_appliance_apply_job(job_id: str, *, force_real: bool = False) -> None:
                         remaining.result = json.dumps({"summary": remaining_unit["summary"], "reason": "cancelled"}, indent=2)
                     db.commit()
                     break
+
+                if unit["id"] in handoff_unit_ids:
+                    if handoff_completed:
+                        continue
+                    bundled_units = [
+                        current_by_id[unit_id]
+                        for unit_id in MANAGEMENT_HANDOFF_UNIT_IDS
+                        if unit_id in handoff_unit_ids
+                    ]
+                    if {item["id"] for item in bundled_units} != set(MANAGEMENT_HANDOFF_UNIT_IDS):
+                        raise ApplianceApplyJobError(
+                            "Management handoff is missing a required Network, Firewall, Certificate Authority, "
+                            "Appliance Settings, or Public Services component."
+                        )
+                    started = utcnow()
+                    for bundled in bundled_units:
+                        bundled_step = steps_by_key.get(bundled["id"])
+                        if bundled_step is None:
+                            raise ApplianceApplyJobError(
+                                f"Component task record is missing for {bundled['label']}."
+                            )
+                        bundled_step.status = JobStatus.RUNNING.value
+                        bundled_step.started_at = started
+                        bundled_step.progress_percent = 5
+                    job.progress_percent = min(95, int(((index - 1) / total_steps) * 100))
+                    db.commit()
+                    group_result, bundled_results = execute_management_handoff(
+                        current_by_id,
+                        job_id=job.id,
+                        adapter=SystemAdapter(dry_run=False) if force_real else None,
+                        db=db,
+                    )
+                    bundled_results = [_redact_task_value(result) for result in bundled_results]
+                    unit_results.extend(bundled_results)
+                    finished = utcnow()
+                    handoff_succeeded = all(result["success"] for result in bundled_results)
+                    for result in bundled_results:
+                        bundled_step = steps_by_key[result["unit_id"]]
+                        bundled_step.result = json.dumps(result, indent=2, sort_keys=True)
+                        bundled_step.status = (
+                            JobStatus.SUCCEEDED.value if result["success"] else JobStatus.FAILED.value
+                        )
+                        bundled_step.finished_at = finished
+                        bundled_step.progress_percent = 100
+                        messages = _task_failure_messages(result)
+                        bundled_step.error = None if result["success"] else (
+                            messages[0]
+                            if messages
+                            else "Management handoff failed and the previous path was rolled back."
+                        )
+                    current_payload = _job_payload(job)
+                    job.result = json.dumps({**current_payload, "units": unit_results}, indent=2)
+                    if handoff_succeeded:
+                        db.expire_all()
+                        refreshed = appliance_apply_units(db, reconcile=False)
+                        applied = [
+                            candidate
+                            for candidate in refreshed
+                            if candidate["id"] in handoff_unit_ids
+                        ]
+                        applied_ids = set(handoff_unit_ids)
+                        baselines = load_appliance_apply_baselines(db)
+                        settings_unit = next(
+                            (candidate for candidate in applied if candidate["id"] == "appliance_settings"),
+                            None,
+                        )
+                        settings_complete = bool(
+                            settings_unit is not None
+                            and management_handoff_completes_appliance_settings(
+                                str(settings_unit.get("config_preview") or ""),
+                                baselines.get("appliance_settings"),
+                            )
+                        )
+                        if not settings_complete:
+                            applied_ids.discard("appliance_settings")
+                        settings_result = next(
+                            (result for result in unit_results if result["unit_id"] == "appliance_settings"),
+                            None,
+                        )
+                        if settings_result is not None:
+                            settings_result["baseline_updated"] = settings_complete
+                            if not settings_complete:
+                                settings_result["remaining_pending_reason"] = (
+                                    "Non-management Appliance Settings changes remain pending."
+                                )
+                            settings_step = steps_by_key.get("appliance_settings")
+                            if settings_step is not None:
+                                settings_step.result = json.dumps(settings_result, indent=2, sort_keys=True)
+                        update_appliance_apply_baselines(
+                            db,
+                            applied,
+                            applied_ids,
+                        )
+                    else:
+                        failed = True
+                        handoff_evidence = group_result.get("management_handoff", {})
+                        failing_layer = str(handoff_evidence.get("failing_layer") or "unknown layer")
+                        rollback_state = str(handoff_evidence.get("management_handoff") or "failed")
+                        job.error = (
+                            f"Management handoff failed at {failing_layer}; transaction state: {rollback_state}. "
+                            "The component task result contains the bounded non-secret diagnostic."
+                        )
+                        for remaining_unit in selected_units[index:]:
+                            if remaining_unit["id"] in handoff_unit_ids:
+                                continue
+                            remaining = steps_by_key.get(remaining_unit["id"])
+                            if remaining is None or remaining.status != JobStatus.PENDING.value:
+                                continue
+                            remaining.status = "skipped"
+                            remaining.progress_percent = 100
+                            remaining.finished_at = finished
+                            remaining.error = "Skipped because the management handoff failed and rolled back."
+                            remaining.result = json.dumps(
+                                {
+                                    "summary": remaining_unit["summary"],
+                                    "reason": "management_handoff_failed",
+                                },
+                                indent=2,
+                            )
+                    handoff_completed = True
+                    db.commit()
+                    if failed:
+                        break
+                    continue
 
                 step = steps_by_key.get(unit["id"])
                 if step is None:
@@ -14555,7 +14995,7 @@ def run_appliance_apply_job(job_id: str, *, force_real: bool = False) -> None:
             else:
                 job.status = JobStatus.FAILED.value
                 job_result["state"] = JobStatus.FAILED.value
-                job.error = "One or more appliance apply components reported a failure."
+                job.error = job.error or "One or more appliance apply components reported a failure."
             job.finished_at = utcnow()
             job.progress_percent = 100
             job.result = json.dumps(job_result, indent=2)
@@ -14832,6 +15272,14 @@ def _submit_appliance_apply(
     )
     if ca_required_for_nts:
         selected_ids.add("ca")
+    management_handoff = bool(
+        "network" in selected_ids
+        and unit_map.get("network", {}).get("management_handoff_required")
+    )
+    if management_handoff:
+        selected_ids.update(
+            unit_id for unit_id in MANAGEMENT_HANDOFF_UNIT_IDS if unit_id in unit_map
+        )
     ldap_related_units = {"ca", "dnsmasq", "firewall", "ldap"}
     ldap_context_for_apply = unit_map.get("ldap", {}).get("context", {})
     ldap_dependency_active = bool(
@@ -14931,6 +15379,12 @@ def _submit_appliance_apply(
         "dry_run": bool(get_settings().dry_run_system_adapters),
         "format_authorizations": [],
         "refresh_vcf_depot_software_depot_id": refresh_vcf_depot_software_depot_id,
+        "management_handoff": management_handoff,
+        "management_handoff_units": [
+            unit_id
+            for unit_id in MANAGEMENT_HANDOFF_UNIT_IDS
+            if management_handoff and unit_id in selected_ids
+        ],
     }
     vcf_depot_submit_guard = VCF_DEPOT_SUBMIT_LOCK if "vcf_offline_depot" in selected_ids else nullcontext()
     with vcf_depot_submit_guard, APPLIANCE_APPLY_SUBMIT_LOCK:

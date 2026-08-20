@@ -198,6 +198,26 @@ configured address, IPv6 link-local addressing, and the optional default route i
 lab route table. When a VLAN was present in successful Atlaso network apply history and is no longer desired, the staged
 config includes an explicit removal target and the helper deletes that VLAN link after verifying it is a VLAN device.
 
+Any change to the effective management address, gateway, dedicated-management role, or flagged access-management
+listener converts five apply units into one `management-handoff` helper transaction: Certificate Authority, Network,
+Firewall, Appliance Settings, and Public Services. The helper validates all staged inputs before mutation, snapshots
+the Atlaso-owned networkd, nftables, nginx, certificate, and related runtime files under a root-only state directory,
+and installs temporary higher-priority networkd holdovers for the previous management links. It then applies the
+candidate network and a transitional firewall that admits both previous and candidate management addresses.
+Within Appliance Settings, this transaction applies only the Atlaso loopback drop-in and management nginx front door.
+If another Appliance Settings field differs from its baseline, that unit remains pending after a successful handoff so
+hostname, resolver, SSH, Web Terminal trust, and telemetry mutations stay within their ordinary complete apply path.
+
+Readiness is fail-closed and bounded. The helper first requires Atlaso's loopback `/openapi.json` upstream to succeed;
+only then may it validate and reload nginx. It requires consecutive successful direct candidate-listener probes and
+host-facing probes for every candidate address before deleting the holdovers and applying the final firewall. A second
+readiness pass protects retirement. Any validation, mutation, service, probe, or retirement failure restores every
+captured file, reloads networkd and nftables, reconfigures previous links, reloads nginx, and restarts Atlaso when the
+captured state requires it. The helper leaves a durable transaction marker until commit, so startup can perform the
+same rollback after process interruption or reboot. Results expose only a bounded failing-layer identifier and
+non-secret error text; Appliance Apply writes that evidence to every bundled component and updates none of their
+baselines unless the transaction commits.
+
 ### Routes and WAN apply
 
 The real Routes & WAN Simulation apply path stages config at `/var/lib/atlaso/apply/wan/atlaso-wan.conf`. The `wan` unit
