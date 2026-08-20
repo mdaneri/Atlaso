@@ -127,6 +127,8 @@ Desired-state edits saved from another session while readiness checks run are no
 Atlaso commits baselines from the exact submitted snapshots, so those newer edits remain pending for a later review.
 Atlaso records durable application-commit proof separately from the retained helper marker. After a restart it retries
 rollback unless that proof exists; only a proven database commit selects idempotent helper acknowledgement.
+If an acknowledgement wrote its commit receipt but could not durably remove the rollback marker or backups, the next
+acknowledgement retries that cleanup before reporting the candidate already committed.
 Before Atlaso may record that commit, the helper flushes every final candidate networkd, resolver, firewall, nginx, and
 certificate artifact plus affected directory entries to durable storage. A sync failure rolls the handoff back while
 the previous path remains recoverable.
@@ -162,6 +164,8 @@ Do not treat a submitted task as proof that the appliance changed successfully.
 When enabling local DNS, apply **DNS/DHCP (dnsmasq)** before the subsequent Appliance Settings resolver change. Atlaso
 keeps the last-applied external or DHCP resolver active until the DNS/DHCP unit is applied, so an unapplied local-DNS
 selection cannot redirect the appliance to loopback prematurely.
+When disabling applied local DNS, selecting **DNS/DHCP (dnsmasq)** automatically includes **Appliance Settings** first.
+That ordering moves the management resolver away from `127.0.0.1` before the local listener stops.
 
 Examples include checking service health, resolving a managed DNS name, reaching the intended listener, or confirming
 the installed configuration from the appliance console. Use the service-specific verification procedure rather than

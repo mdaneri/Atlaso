@@ -16532,6 +16532,22 @@ def _acknowledge_management_handoff(job_id: str) -> int:
         except (OSError, json.JSONDecodeError):
             receipt = {}
         if receipt.get("job_id") == job_id and receipt.get("phase") == "committed":
+            try:
+                _clear_management_handoff_state(keep_commit_receipt=True)
+            except OSError as exc:
+                print(
+                    json.dumps(
+                        {
+                            "management_handoff": "acknowledgement failed",
+                            "failing_layer": "application commit acknowledgement",
+                            "error": f"commit receipt is durable but rollback state cleanup failed: {exc}",
+                            "job_id": job_id,
+                        },
+                        sort_keys=True,
+                    ),
+                    file=sys.stderr,
+                )
+                return 1
             print(json.dumps({"management_handoff": "already committed", "job_id": job_id}, sort_keys=True))
             return 0
         print(

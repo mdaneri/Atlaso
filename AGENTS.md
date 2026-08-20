@@ -284,11 +284,13 @@ The following cross-cutting boundaries always apply:
   candidate interface inside the transaction, persist its directives in the effective dedicated or flagged-access
   networkd file both before readiness and after the final Network regeneration, and restore the
   previous resolver state with the network snapshot on rollback. Derive loopback/local-DNS resolver mode only from the
-  last-applied DNS/DHCP baseline; leave an unapplied DNS enablement pending instead of activating loopback early. Retire
-  the old path only
+  last-applied DNS/DHCP baseline; leave an unapplied DNS enablement pending instead of activating loopback early. When
+  disabling applied local DNS, force Appliance Settings ahead of DNS/DHCP so the resolver leaves loopback before the
+  listener stops. Retire the old path only
   after readiness succeeds; retain the durable rollback marker until Atlaso commits the bundled task state and baselines
   and explicitly acknowledges that commit. Record separate durable application-commit proof before selecting
-  acknowledgement during startup; an incomplete pre-commit rollback must retry recovery instead. Sync every backup file
+  acknowledgement during startup; an incomplete pre-commit rollback must retry recovery instead. A matching durable
+  commit receipt must retry rollback-marker and backup cleanup before acknowledgement succeeds. Sync every backup file
   and its backup directory before publishing the marker. Sync every final candidate runtime file and affected directory
   before entering the application-commit phase. Retain the global apply lock while recovery or acknowledgement
   is pending, including when startup cannot prove either outcome from a legacy or incomplete task payload. A pending

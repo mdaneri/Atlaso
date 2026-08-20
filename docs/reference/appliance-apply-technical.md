@@ -244,6 +244,9 @@ and runtime resolver apply before reconfiguring the links. This persistence appl
 The staged resolver mode derives local-DNS availability from the last-applied DNS/DHCP baseline, not unapplied desired
 state. Enabling DNS without applying its unit therefore leaves the resolver change pending and cannot point the
 management link at loopback before dnsmasq is active.
+Desired DNS disablement immediately stages the non-loopback resolver projection. If DNS/DHCP is selected while its
+last-applied baseline enabled local DNS, submission also selects Appliance Settings; unit order moves the resolver
+before dnsmasq removes the loopback listener.
 The resolver interface follows the effective listener precedence: dedicated management first, then a flagged access
 physical interface, then a flagged access VLAN.
 If another Appliance Settings field differs from its baseline, that unit remains pending after a successful handoff so
@@ -293,6 +296,9 @@ fixed-unit stop and rollback before the task becomes terminal. Empty or malforme
 closed before rollback. Exceptions
 reconcile the same boundary immediately. An unproven acknowledgement or rollback keeps the global Apply lock held even
 when a legacy or incomplete task payload did not already carry the pending marker.
+A matching durable commit receipt is not sufficient by itself to return `already committed`: acknowledgement retries
+idempotent marker, backup, and holdover cleanup and reports failure while any cleanup or directory sync remains
+incomplete.
 A task still durably pending when the helper reports a successful `no interrupted transaction` result proves privileged
 mutation never began; startup fails that task truthfully and releases its lock without inventing rollback evidence.
 Results expose only a bounded failing-layer identifier and

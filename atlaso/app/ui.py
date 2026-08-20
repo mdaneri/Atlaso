@@ -2462,8 +2462,9 @@ def appliance_settings_context(db: Session, *, reconcile_dns: bool = True) -> di
         db.commit()
         db.refresh(settings)
         db.refresh(dns_settings)
-    local_dns_enabled = applied_local_dns_enabled(
-        load_appliance_apply_baselines(db).get("dnsmasq")
+    local_dns_enabled = bool(
+        dns_settings.enabled
+        and applied_local_dns_enabled(load_appliance_apply_baselines(db).get("dnsmasq"))
     )
     interfaces = db.execute(select(PhysicalInterface).order_by(PhysicalInterface.name)).scalars().all()
     vlans = db.execute(select(VlanInterface).order_by(VlanInterface.parent_interface, VlanInterface.vlan_id)).scalars().all()
@@ -14850,6 +14851,14 @@ def _submit_appliance_apply(
         selected_ids.update(
             unit_id for unit_id in MANAGEMENT_HANDOFF_UNIT_IDS if unit_id in unit_map
         )
+    dns_settings_for_apply = unit_map.get("dnsmasq", {}).get("context", {}).get("dns_settings")
+    local_dns_disable_requires_resolver = bool(
+        "dnsmasq" in selected_ids
+        and not getattr(dns_settings_for_apply, "enabled", False)
+        and applied_local_dns_enabled(load_appliance_apply_baselines(db).get("dnsmasq"))
+    )
+    if local_dns_disable_requires_resolver and "appliance_settings" in unit_map:
+        selected_ids.add("appliance_settings")
     ldap_related_units = {"ca", "dnsmasq", "firewall", "ldap"}
     ldap_context_for_apply = unit_map.get("ldap", {}).get("context", {})
     ldap_dependency_active = bool(

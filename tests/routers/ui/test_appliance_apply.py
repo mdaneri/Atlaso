@@ -135,10 +135,60 @@ def test_appliance_settings_uses_last_applied_dns_state_for_resolver(client):
         db.commit()
         applied_context = ui.appliance_settings_context(db, reconcile_dns=False)
         applied_preview = json.loads(applied_context["appliance_settings_config_preview"])
+        assert applied_context["local_dns_enabled"] is True
+        assert applied_preview["resolver_mode"] == "local_dns"
+        assert applied_preview["resolver_servers"] == ["127.0.0.1"]
 
-    assert applied_context["local_dns_enabled"] is True
-    assert applied_preview["resolver_mode"] == "local_dns"
-    assert applied_preview["resolver_servers"] == ["127.0.0.1"]
+        dns_settings.enabled = False
+        db.commit()
+        disabling_context = ui.appliance_settings_context(db, reconcile_dns=False)
+        disabling_preview = json.loads(disabling_context["appliance_settings_config_preview"])
+
+    assert disabling_context["local_dns_enabled"] is False
+    assert disabling_preview["resolver_mode"] != "local_dns"
+    assert disabling_preview["resolver_servers"] != ["127.0.0.1"]
+
+
+def test_local_dns_disable_forces_resolver_move_before_dns_stop(client):
+    """Move the resolver before an applied local DNS listener is disabled.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import DnsSettings, Job
+    from atlaso.app.ui import appliance_apply_units, update_appliance_apply_baselines
+
+    login(client)
+    with SessionLocal() as db:
+        dns_settings = db.query(DnsSettings).one()
+        dns_settings.enabled = True
+        db.commit()
+        units = appliance_apply_units(db)
+        update_appliance_apply_baselines(db, units, {unit["id"] for unit in units})
+        units = appliance_apply_units(db)
+        update_appliance_apply_baselines(db, units, {"appliance_settings"})
+        dns_settings.enabled = False
+        db.commit()
+    page = client.get("/dashboard")
+    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+
+    response = client.post(
+        "/appliance-apply",
+        data={"csrf": csrf, "selected_units": "dnsmasq"},
+        headers={"Accept": "application/json"},
+    )
+
+    assert response.status_code == 202
+    with SessionLocal() as db:
+        job = db.get(Job, response.json()["job_id"])
+        assert job is not None
+        payload = json.loads(job.result or "{}")
+    assert payload["selected_units"] == ["appliance_settings", "dnsmasq"]
+    assert [unit["unit_id"] for unit in payload["captured_units"]] == [
+        "appliance_settings",
+        "dnsmasq",
+    ]
 
 
 def test_management_handoff_fails_closed_without_network_baseline():

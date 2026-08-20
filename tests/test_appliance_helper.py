@@ -2037,7 +2037,7 @@ def test_management_handoff_acknowledgement_is_durable_and_idempotent(monkeypatc
 
 
 def test_management_handoff_acknowledgement_reports_cleanup_failure(monkeypatch, tmp_path, capsys):
-    """Report a durable receipt without claiming incomplete cleanup succeeded.
+    """Retry incomplete cleanup before accepting a durable commit receipt.
 
     Args:
         monkeypatch: Pytest fixture used to inject cleanup failure.
@@ -2060,17 +2060,31 @@ def test_management_handoff_acknowledgement_reports_cleanup_failure(monkeypatch,
     )
     monkeypatch.setattr(helper, "MANAGEMENT_HANDOFF_STATE_PATH", state_path)
     monkeypatch.setattr(helper, "MANAGEMENT_HANDOFF_COMMIT_PATH", receipt_path)
-    monkeypatch.setattr(
-        helper,
-        "_clear_management_handoff_state",
-        lambda **_kwargs: (_ for _ in ()).throw(OSError("directory sync failed")),
-    )
+    cleanup_calls: list[bool] = []
+
+    def clear_state(*, keep_commit_receipt=False):
+        """Fail the first cleanup after unlinking the state marker.
+
+        Args:
+            keep_commit_receipt: Whether the durable commit receipt is retained.
+        """
+        cleanup_calls.append(keep_commit_receipt)
+        state_path.unlink(missing_ok=True)
+        if len(cleanup_calls) == 1:
+            raise OSError("directory sync failed")
+
+    monkeypatch.setattr(helper, "_clear_management_handoff_state", clear_state)
 
     assert helper._acknowledge_management_handoff("job-435") == 1
     assert json.loads(receipt_path.read_text(encoding="utf-8"))["phase"] == "committed"
     payload = json.loads(capsys.readouterr().err.splitlines()[-1])
     assert payload["management_handoff"] == "acknowledgement failed"
     assert "commit receipt is durable" in payload["error"]
+
+    assert helper._acknowledge_management_handoff("job-435") == 0
+    retry = json.loads(capsys.readouterr().out.splitlines()[-1])
+    assert retry["management_handoff"] == "already committed"
+    assert cleanup_calls == [True, True]
 
 
 def test_appliance_power_helper_schedules_reboot(monkeypatch):
