@@ -7062,6 +7062,10 @@ def test_esxi_pxe_boot_settings_update_dnsmasq_and_apply_manifest(client):
         assert manifest["boot"]["dhcp_scope_id"] == int(pxe_scope_id)
         assert manifest["boot"]["http_port"] == 8080
         assert manifest["boot"]["bios_second_stage_bootfile"] == "pxelinux.0"
+        assert manifest["boot"]["native_uefi_http_enabled"] is True
+        assert manifest["boot"]["effective_native_uefi_http_url"] == (
+            "http://192.168.50.1:8080/pxe/esxi/snponly.efi"
+        )
     dhcp_page = client.get("/dhcp")
     assert dhcp_page.status_code == 200
     assert dhcp_page.text.index("Desired State") < dhcp_page.text.index("Generated PXE") < dhcp_page.text.index("Actual Leases")
@@ -7254,6 +7258,96 @@ def test_esxi_pxe_boot_settings_migrate_legacy_first_stage_defaults(client):
         assert boot["uefi_bootfile"] == "snponly.efi"
         saved_bios = db.execute(select(Setting).where(Setting.key == "esxi_pxe.boot.bios_bootfile")).scalar_one()
         assert saved_bios.value == "pxelinux.0"
+
+
+def test_esxi_pxe_native_http_fresh_default_and_disabled_compatibility(client):
+    """Keep fresh and legacy disabled-PXE Native UEFI HTTP state safe.
+
+    Args:
+        client: Authenticated test client backed by the isolated test database.
+    """
+    import json
+
+    from sqlalchemy import select
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Setting
+    from atlaso.app.seed import seed_initial_data
+    from atlaso.app.services.esxi_pxe import (
+        ESXI_PXE_BOOT_ENABLED_KEY,
+        ESXI_PXE_NATIVE_UEFI_HTTP_ENABLED_KEY,
+        esxi_pxe_boot_settings,
+        render_esxi_pxe_manifest,
+    )
+    from atlaso.app.ui import appliance_apply_units, esxi_pxe_context
+
+    login(client)
+    with SessionLocal() as db:
+        seeded_native_http = db.execute(
+            select(Setting).where(
+                Setting.key == ESXI_PXE_NATIVE_UEFI_HTTP_ENABLED_KEY
+            )
+        ).scalar_one()
+        assert seeded_native_http.value == "false"
+        assert esxi_pxe_boot_settings(db)["native_uefi_http_enabled"] is False
+        assert json.loads(render_esxi_pxe_manifest([], []))["boot"][
+            "native_uefi_http_enabled"
+        ] is False
+
+        seeded_native_http.value = "true"
+        db.add(Setting(key=ESXI_PXE_BOOT_ENABLED_KEY, value="false"))
+        db.commit()
+        seed_initial_data(db, include_examples=False)
+
+        boot = esxi_pxe_boot_settings(db)
+        assert boot["enabled"] is False
+        assert boot["native_uefi_http_enabled"] is True
+        assert boot["effective_native_uefi_http_url"] == ""
+        context = esxi_pxe_context(db)
+        assert not [
+            message
+            for message in [
+                *context["esxi_pxe_validation_errors"],
+                *context["esxi_pxe_validation_warnings"],
+            ]
+            if "Native UEFI HTTP" in message
+        ]
+        manifest = json.loads(context["esxi_pxe_manifest"])
+        assert manifest["boot"]["enabled"] is False
+        assert manifest["boot"]["native_uefi_http_enabled"] is True
+        assert manifest["boot"]["effective_native_uefi_http_url"] == ""
+        unit = next(
+            unit for unit in appliance_apply_units(db) if unit["id"] == "esxi_pxe"
+        )
+        assert unit["valid"] is True
+
+        boot_enabled = db.execute(
+            select(Setting).where(Setting.key == ESXI_PXE_BOOT_ENABLED_KEY)
+        ).scalar_one()
+        boot_enabled.value = "true"
+        db.commit()
+        enabled_context = esxi_pxe_context(db)
+        assert any(
+            "Select an IPv4 DHCP zone with a listen address or turn off Native UEFI HTTP."
+            in message
+            for message in enabled_context["esxi_pxe_validation_errors"]
+        )
+        enabled_unit = next(
+            unit for unit in appliance_apply_units(db) if unit["id"] == "esxi_pxe"
+        )
+        assert enabled_unit["valid"] is False
+
+    dashboard = client.get("/dashboard")
+    csrf = dashboard.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    submission = client.post(
+        "/appliance-apply",
+        data={"csrf": csrf, "selected_units": "esxi_pxe"},
+        headers={"Accept": "application/json"},
+    )
+    assert submission.status_code == 422
+    assert submission.json() == {
+        "detail": "Resolve validation errors before submitting appliance changes."
+    }
 
 
 def test_esxi_kickstarts_round_trip_in_settings_archive(client, monkeypatch, tmp_path):
@@ -14996,6 +15090,7 @@ def test_appliance_startup_initializes_factory_apply_baseline(monkeypatch, tmp_p
     monkeypatch.setenv("ATLASO_SECRET_KEY", "test-secret-key-with-enough-length")
     monkeypatch.setenv("ATLASO_BOOTSTRAP_ADMIN_PASSWORD", "atlaso-admin")
     monkeypatch.setenv("ATLASO_ENVIRONMENT", "appliance")
+    monkeypatch.setenv("ATLASO_DRY_RUN_SYSTEM_ADAPTERS", "true")
     get_settings.cache_clear()
     database.engine.dispose()
     database.engine = database.create_engine(
@@ -15014,21 +15109,39 @@ def test_appliance_startup_initializes_factory_apply_baseline(monkeypatch, tmp_p
         review = test_client.get("/appliance-apply/review")
         assert review.status_code == 200
         assert review.json()["initial_apply_required"] is True
-        assert review.json()["units"]
+        assert len(review.json()["units"]) == 16
         assert all(unit["selected"] is unit["valid"] for unit in review.json()["units"])
+        esxi_pxe_unit = next(
+            unit for unit in review.json()["units"] if unit["id"] == "esxi_pxe"
+        )
+        assert esxi_pxe_unit["valid"] is True
+        esxi_pxe_boot = json.loads(esxi_pxe_unit["config_preview"])["boot"]
+        assert esxi_pxe_boot["enabled"] is False
+        assert esxi_pxe_boot["native_uefi_http_enabled"] is False
+        assert esxi_pxe_boot["native_uefi_http_url"] == ""
+        assert esxi_pxe_boot["effective_native_uefi_http_url"] == ""
 
+        dashboard = test_client.get("/dashboard")
+        csrf = dashboard.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+        selected_unit_ids = [
+            unit["id"] for unit in review.json()["units"] if unit["selected"]
+        ]
+        submission = test_client.post(
+            "/appliance-apply",
+            data={"csrf": csrf, "selected_units": selected_unit_ids},
+            headers={"Accept": "application/json"},
+        )
+        assert submission.status_code == 202, submission.text
         with database.SessionLocal() as db:
-            db.add(
-                Job(
-                    id="job_factory_initial_apply",
-                    type="appliance-apply",
-                    status=JobStatus.SUCCEEDED.value,
-                    created_by="admin",
-                    progress_percent=100,
-                    result='{"selected_units": []}',
-                )
+            initial_apply = db.get(Job, submission.json()["job_id"])
+            assert initial_apply is not None
+            assert initial_apply.status == JobStatus.SUCCEEDED.value
+            result = json.loads(initial_apply.result or "{}")
+            assert result["selected_units"] == selected_unit_ids
+            assert all(
+                unit["status"] == JobStatus.SUCCEEDED.value
+                for unit in result["units"]
             )
-            db.commit()
 
         completed_review = test_client.get("/appliance-apply/review")
         assert completed_review.status_code == 200

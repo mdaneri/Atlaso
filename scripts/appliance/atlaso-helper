@@ -1644,7 +1644,8 @@ def _esxi_pxe_boot_errors(boot: dict) -> list[str]:
     native_uefi_http_enabled = bool(boot.get("native_uefi_http_enabled"))
     if enabled:
         hostname = str(boot.get("hostname") or "").strip()
-        listen_address = str(boot.get("listen_address") or "").splitlines()[0].strip()
+        listen_addresses = str(boot.get("listen_address") or "").splitlines()
+        listen_address = listen_addresses[0].strip() if listen_addresses else ""
         if not hostname or "." not in hostname:
             errors.append("ESXi PXE hostname must be a fully qualified DNS name.")
         try:
@@ -1681,7 +1682,7 @@ def _esxi_pxe_boot_errors(boot: dict) -> list[str]:
                     f"{label} {filename} was not found. Install the Photon syslinux/ipxe boot packages "
                     f"or stage the expected bootloader under {PXE_BOOTLOADER_STAGING_DIR}."
                 )
-    if native_uefi_http_enabled:
+    if enabled and native_uefi_http_enabled:
         url = str(boot.get("native_uefi_http_url") or boot.get("effective_native_uefi_http_url") or "").strip()
         if not re.fullmatch(r"https?://[^\s\"'<>]+", url):
             errors.append("Native UEFI HTTP URL must be an absolute HTTP or HTTPS URL.")
