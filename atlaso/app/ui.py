@@ -14026,7 +14026,13 @@ def active_appliance_apply_job(db: Session) -> Job | None:
         .options(selectinload(Job.steps))
         .where(
             Job.type == "appliance-apply",
-            Job.status == JobStatus.SUCCEEDED.value,
+            Job.status.in_(
+                [
+                    JobStatus.SUCCEEDED.value,
+                    JobStatus.FAILED.value,
+                    JobStatus.CANCELLED.value,
+                ]
+            ),
             Job.finished_at.is_not(None),
             Job.finished_at >= now - maximum_window,
         )
@@ -14227,6 +14233,10 @@ def run_appliance_apply_job(job_id: str, *, force_real: bool = False) -> None:
                 )
                 job.progress_percent = min(99, int((index / total_steps) * 100))
                 job.result = json.dumps({**current_payload, "units": unit_results}, indent=2)
+                if unit["id"] == "appliance_settings" and isinstance(management_status_transition, dict):
+                    # The helper's three-second restart timer is already running. Make the
+                    # confirmed transition and completed step durable before reconciliation.
+                    db.commit()
                 prune_network_boot_media = False
                 if result["success"]:
                     if unit["id"] == "esxi_pxe" and not result.get("dry_run"):
