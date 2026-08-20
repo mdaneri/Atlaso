@@ -220,6 +220,64 @@ def test_management_handoff_readiness_requires_consecutive_samples(monkeypatch):
     assert evidence["statuses"]["management 198.51.100.10"] == "200"
 
 
+def test_management_handoff_keeps_previous_http_during_https_transition():
+    """Render an address-specific old-protocol listener beside the candidate."""
+    helper = load_helper_module()
+
+    holdover = helper._management_handoff_protocol_holdover(
+        {
+            "previous_https_enabled": False,
+            "previous_management_public_port": 8080,
+            "previous_management_addresses": ["192.0.2.10", "2001:db8::10"],
+        },
+        {
+            "management_https_enabled": True,
+            "management_upstream_host": "127.0.0.1",
+            "management_upstream_port": 8000,
+        },
+    )
+
+    assert "listen 192.0.2.10:8080;" in holdover
+    assert "listen [2001:db8::10]:8080;" in holdover
+    assert "X-Forwarded-Proto http" in holdover
+    assert " ssl;" not in holdover
+
+
+def test_management_handoff_keeps_previous_https_during_http_transition(monkeypatch):
+    """Reuse the captured certificate paths for the old HTTPS listener.
+
+    Args:
+        monkeypatch: Pytest fixture used to supply the captured nginx site.
+    """
+    helper = load_helper_module()
+    monkeypatch.setattr(
+        helper,
+        "_management_handoff_snapshot_text",
+        lambda *_args: (
+            "  ssl_certificate /etc/atlaso/ca/certs/appliance.crt;\n"
+            "  ssl_certificate_key /etc/atlaso/ca/private/appliance.key;\n"
+        ),
+    )
+
+    holdover = helper._management_handoff_protocol_holdover(
+        {
+            "previous_https_enabled": True,
+            "previous_management_public_port": 4443,
+            "previous_management_addresses": ["192.0.2.10"],
+        },
+        {
+            "management_https_enabled": False,
+            "management_upstream_host": "127.0.0.1",
+            "management_upstream_port": 8000,
+        },
+    )
+
+    assert "listen 192.0.2.10:4443 ssl;" in holdover
+    assert "ssl_certificate /etc/atlaso/ca/certs/appliance.crt;" in holdover
+    assert "ssl_certificate_key /etc/atlaso/ca/private/appliance.key;" in holdover
+    assert "X-Forwarded-Proto https" in holdover
+
+
 def test_successful_management_handoff_retains_rollback_state_until_ack(monkeypatch, tmp_path, capsys):
     """Do not clear the durable transaction in the privileged apply process.
 
@@ -233,10 +291,11 @@ def test_successful_management_handoff_retains_rollback_state_until_ack(monkeypa
         "job_id": "job-435",
         "previous_management_interfaces": ["eth0"],
         "previous_management_addresses": ["192.0.2.10"],
-        "previous_https_enabled": True,
+        "previous_https_enabled": False,
     }
     phases: list[str] = []
     cleared: list[bool] = []
+    nginx_suffixes: list[str] = []
     monkeypatch.setattr(helper, "_snapshot_management_handoff", lambda _payload: state)
     monkeypatch.setattr(
         helper,
@@ -250,7 +309,12 @@ def test_successful_management_handoff_retains_rollback_state_until_ack(monkeypa
     monkeypatch.setattr(helper, "_handle_network", lambda *_args: 0)
     monkeypatch.setattr(helper, "_handle_firewall", lambda *_args: 0)
     monkeypatch.setattr(helper, "_load_appliance_settings_config", lambda _path: {"management_https_enabled": True})
-    monkeypatch.setattr(helper, "_configure_atlaso_management_https", lambda _payload: 0)
+    monkeypatch.setattr(
+        helper,
+        "_configure_atlaso_management_https",
+        lambda _payload, *, site_suffix="": nginx_suffixes.append(site_suffix) or 0,
+    )
+    monkeypatch.setattr(helper, "_management_handoff_protocol_holdover", lambda *_args: "old protocol listener")
     monkeypatch.setattr(helper, "_handle_public_services", lambda *_args: 0)
     monkeypatch.setattr(
         helper,
@@ -278,6 +342,7 @@ def test_successful_management_handoff_retains_rollback_state_until_ack(monkeypa
     assert result == 0
     assert phases[-1] == "awaiting-application-commit"
     assert cleared == []
+    assert nginx_suffixes == ["old protocol listener", ""]
     payload = json.loads(capsys.readouterr().out.splitlines()[-1])
     assert payload["management_handoff"] == "awaiting application commit"
 
@@ -398,6 +463,7 @@ def test_interrupted_management_handoff_recovers_old_path(monkeypatch, tmp_path,
     state_path.write_text('{"phase":"candidate-ready"}', encoding="utf-8")
     cleared: list[bool] = []
     monkeypatch.setattr(helper, "MANAGEMENT_HANDOFF_STATE_PATH", state_path)
+    monkeypatch.setattr(helper, "_quiesce_management_handoff_apply", lambda: {"state": "inactive"})
     monkeypatch.setattr(helper, "_restore_management_handoff", lambda state: {"phase": state["phase"], "readiness": "old-ready"})
     monkeypatch.setattr(helper, "_clear_management_handoff_state", lambda: cleared.append(True))
 
@@ -406,6 +472,35 @@ def test_interrupted_management_handoff_recovers_old_path(monkeypatch, tmp_path,
     payload = json.loads(capsys.readouterr().out.splitlines()[-1])
     assert payload["management_handoff"] == "rolled back after interruption"
     assert payload["readiness"] == "old-ready"
+
+
+def test_management_handoff_recovery_stops_surviving_apply_unit(monkeypatch):
+    """Serialize startup rollback against a transient helper that outlived Atlaso.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace systemd command execution.
+    """
+    helper = load_helper_module()
+    commands: list[list[str]] = []
+    states = iter(["active\n", "inactive\n"])
+    monkeypatch.setattr(helper.shutil, "which", lambda command: "/usr/bin/systemctl" if command == "systemctl" else None)
+
+    def run(command):
+        """Return active, stop-success, then inactive systemd evidence.
+
+        Args:
+            command: Systemd command being simulated.
+        """
+        commands.append(command)
+        stdout = next(states) if command[1] == "is-active" else ""
+        return subprocess.CompletedProcess(command, 0 if command[1] == "stop" else 3, stdout, "")
+
+    monkeypatch.setattr(helper, "_run", run)
+
+    evidence = helper._quiesce_management_handoff_apply()
+
+    assert ["systemctl", "stop", helper.MANAGEMENT_HANDOFF_APPLY_UNIT] in commands
+    assert evidence["state"] == "inactive"
 
 
 def test_management_handoff_acknowledgement_is_durable_and_idempotent(monkeypatch, tmp_path, capsys):
@@ -3618,6 +3713,36 @@ def test_real_mutating_helper_action_escapes_service_mount_namespace(monkeypatch
         f"--setenv={helper.SYSTEMD_RUN_CHILD_ENV}=1",
     ]
     assert commands[0][-4:] == ["dnsmasq", "apply", "--real", str(config_path)]
+
+
+def test_management_handoff_apply_uses_fixed_systemd_unit(monkeypatch, tmp_path):
+    """Give recovery a stable unit identity for an interrupted apply helper.
+
+    Args:
+        monkeypatch: Pytest fixture used to capture the systemd-run command.
+        tmp_path: Temporary directory used for the staged manifest path.
+    """
+    helper = load_helper_module()
+    manifest_path = tmp_path / "atlaso-management-handoff.json"
+    commands: list[list[str]] = []
+    monkeypatch.setattr(
+        helper.shutil,
+        "which",
+        lambda command: "/usr/bin/systemd-run" if command == "systemd-run" else None,
+    )
+    monkeypatch.setattr(
+        helper,
+        "_run",
+        lambda command: commands.append(command) or subprocess.CompletedProcess(command, 0, "", ""),
+    )
+
+    assert helper._run_real_action_with_systemd(
+        "management-handoff",
+        "apply",
+        [str(manifest_path)],
+    ) == 0
+
+    assert f"--unit={helper.MANAGEMENT_HANDOFF_APPLY_UNIT.removesuffix('.service')}" in commands[0]
 
 
 def test_powercli_helper_actions_receive_writable_root_configuration_environment(monkeypatch, tmp_path):

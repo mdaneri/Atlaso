@@ -97,8 +97,9 @@ inspection, authentication actions, and safe cancellation remain available.
 
 A management-path change is the exception to independent component execution: Atlaso selects Certificate Authority,
 Network, Firewall, Appliance Settings, and Public Services together and runs them as one recoverable handoff. The task
-keeps the previous listener active until consecutive bounded checks prove the Atlaso loopback upstream, candidate nginx
-listener, and host-facing `/openapi.json` are ready. On failure, each bundled component records the same failing layer
+keeps the previous address, public port, and HTTP/HTTPS listener active until consecutive bounded checks prove the
+Atlaso loopback upstream, candidate nginx listener, and host-facing `/openapi.json` are ready. On failure, each bundled
+component records the same failing layer
 and rollback result. The handoff applies only the management front-door portion of Appliance Settings; unrelated
 Appliance Settings differences remain pending for a later Apply instead of being folded into the network transaction.
 An active appliance without a last-applied Network baseline cannot safely identify its previous management path, so
@@ -139,10 +140,12 @@ the command intent; it does not prove that Photon services changed.
 
 If Atlaso restarts during an ordinary apply, startup marks the running child failed, marks pending children skipped,
 fails the master task, and releases the global lock. For an interrupted management handoff, startup first asks the
-privileged helper to restore the captured previous runtime state, then records the recovery result on the failed task.
+privileged helper to stop and verify any surviving handoff process before restoring the captured previous runtime state,
+then records the recovery result on the failed task.
 The helper retains that rollback state until Atlaso durably commits the bundled component results and baselines. If a
 restart occurs after that database commit, startup idempotently acknowledges the committed candidate instead of falsely
-claiming a rollback. Review the task before resubmitting.
+claiming a rollback. A failed task whose helper acknowledgement is not proven retains the global Apply lock until startup
+or immediate exception recovery reconciles that state. Review the task before resubmitting.
 
 If a selected unit changed after submission but before execution, Atlaso fails closed and asks for a new review. This
 prevents a queued task from applying state that the administrator did not inspect.

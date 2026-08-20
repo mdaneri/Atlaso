@@ -203,7 +203,9 @@ listener converts five apply units into one `management-handoff` helper transact
 Firewall, Appliance Settings, and Public Services. The helper validates all staged inputs before mutation, snapshots
 the Atlaso-owned networkd, nftables, nginx, certificate, and related runtime files under a root-only state directory,
 and installs temporary higher-priority networkd holdovers for the previous management links. It then applies the
-candidate network and a transitional firewall that admits both previous and candidate management addresses.
+candidate network and a transitional firewall that admits both previous and candidate management addresses. If the
+public protocol changes, address-specific nginx blocks retain the old address, port, and HTTP/HTTPS behavior beside the
+candidate listener until candidate readiness succeeds.
 Within Appliance Settings, this transaction applies only the Atlaso loopback drop-in and management nginx front door.
 If another Appliance Settings field differs from its baseline, that unit remains pending after a successful handoff so
 hostname, resolver, SSH, Web Terminal trust, and telemetry mutations stay within their ordinary complete apply path.
@@ -215,8 +217,11 @@ readiness pass protects retirement. Any validation, mutation, service, probe, or
 captured file, reloads networkd and nftables, reconfigures previous links, reloads nginx, and restarts Atlaso when the
 captured state requires it. Rollback explicitly reconfigures every pre-existing candidate link and removes a
 candidate-only VLAN after restoring its files. The helper leaves a durable transaction marker until Atlaso commits the
-bundled task state and baselines and sends an idempotent acknowledgement. Startup rolls back when interruption precedes
-that database boundary and completes the acknowledgement when the database already records the candidate. Results
+bundled task state and baselines and sends an idempotent acknowledgement. A fixed transient systemd unit serializes
+apply with startup recovery, which stops and verifies any surviving helper before rollback. Startup rolls back when
+interruption precedes that database boundary and completes the acknowledgement when the database already records the
+candidate. Exceptions reconcile the same boundary immediately, and an unproven acknowledgement keeps the global Apply
+lock held. Results
 expose only a bounded failing-layer identifier and
 non-secret error text; Appliance Apply writes that evidence to every bundled component and updates none of their
 baselines unless the transaction commits.

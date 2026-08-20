@@ -304,6 +304,7 @@ MANAGEMENT_HANDOFF_STATE_PATH = MANAGEMENT_HANDOFF_STATE_DIR / "state.json"
 MANAGEMENT_HANDOFF_BACKUP_DIR = MANAGEMENT_HANDOFF_STATE_DIR / "backup"
 MANAGEMENT_HANDOFF_COMMIT_PATH = MANAGEMENT_HANDOFF_STATE_DIR / "last-commit.json"
 MANAGEMENT_HANDOFF_HOLDOVER_PREFIX = "00-0-atlaso-management-handoff-"
+MANAGEMENT_HANDOFF_APPLY_UNIT = "atlaso-management-handoff-apply.service"
 WAN_APPLY_DIR = Path("/var/lib/atlaso/apply/wan")
 APPLIANCE_UPDATE_APPLY_DIR = Path("/var/lib/atlaso/apply/appliance-update")
 APPLIANCE_UPDATE_INFO_PATH = Path("/etc/atlaso/update-info")
@@ -570,6 +571,8 @@ def _run_real_action_with_systemd(group: str, action: str, args: list[str]) -> i
         "--service-type=exec",
         f"--setenv={SYSTEMD_RUN_CHILD_ENV}=1",
     ]
+    if (group, action) == ("management-handoff", "apply"):
+        command.append(f"--unit={MANAGEMENT_HANDOFF_APPLY_UNIT.removesuffix('.service')}")
     if group == "appliance-update":
         powershell_env = _appliance_update_powershell_environment()
         command.extend(
@@ -5451,11 +5454,12 @@ def _management_nginx_config(payload: dict, cert_path: Path | None = None, key_p
     return "\n".join(lines)
 
 
-def _configure_atlaso_management_https(payload: dict) -> int:
+def _configure_atlaso_management_https(payload: dict, *, site_suffix: str = "") -> int:
     """Perform configure atlaso management HTTPS.
 
     Args:
         payload: Validated request or task payload consumed by the operation.
+        site_suffix: Additional transitional server blocks installed in the same site.
     """
     enabled = bool(payload.get("management_https_enabled"))
     changed = False
@@ -5467,7 +5471,10 @@ def _configure_atlaso_management_https(payload: dict) -> int:
         cert_path = _ca_managed_path(str(payload["management_https_cert_path"]), "management_https_cert_path")
         key_path = _ca_managed_path(str(payload["management_https_key_path"]), "management_https_key_path")
         _grant_atlaso_service_key_read(key_path)
-    site_apply = _install_nginx_site(NGINX_MANAGEMENT_SITE_PATH, _management_nginx_config(payload, cert_path, key_path))
+    site_text = _management_nginx_config(payload, cert_path, key_path).rstrip() + "\n"
+    if site_suffix.strip():
+        site_text += "\n" + site_suffix.strip() + "\n"
+    site_apply = _install_nginx_site(NGINX_MANAGEMENT_SITE_PATH, site_text)
     if site_apply != 0:
         return site_apply
     next_text = _atlaso_service_loopback_dropin(upstream_host, port)
@@ -13048,6 +13055,15 @@ def _load_management_handoff_manifest(path: Path) -> dict:
         values = payload[field]
         if not isinstance(values, list) or any(not isinstance(value, str) for value in values):
             raise ValueError(f"management handoff {field} must be a string list")
+    previous_port = payload.get("previous_management_public_port")
+    if previous_port is not None:
+        try:
+            previous_port = int(previous_port)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("management handoff previous public port must be an integer") from exc
+        if previous_port < 1 or previous_port > 65535:
+            raise ValueError("management handoff previous public port must be between 1 and 65535")
+        payload["previous_management_public_port"] = previous_port
     return payload
 
 
@@ -13226,6 +13242,10 @@ def _snapshot_management_handoff(payload: dict) -> dict:
         "previous_management_interfaces": payload["previous_management_interfaces"],
         "previous_management_addresses": list(dict.fromkeys(previous_addresses)),
         "previous_https_enabled": bool(payload.get("previous_https_enabled", True)),
+        "previous_management_public_port": int(
+            payload.get("previous_management_public_port")
+            or (443 if payload.get("previous_https_enabled", True) else 80)
+        ),
         "candidate_physical_interfaces": candidate_physical,
         "candidate_vlan_interfaces": candidate_vlans,
         "candidate_link_states": candidate_link_states,
@@ -13557,6 +13577,77 @@ def _management_handoff_upstream_readiness(*, samples: int = 3) -> dict:
     raise ValueError(f"Atlaso loopback upstream did not stabilize (status={status})")
 
 
+def _management_handoff_snapshot_text(state: dict, runtime_path: Path) -> str:
+    """Return snapshotted text for one runtime path.
+
+    Args:
+        state: Durable transaction state.
+        runtime_path: Runtime file whose pre-mutation text is required.
+
+    Returns:
+        The captured text, or an empty string when the file did not exist.
+    """
+    for item in state.get("snapshots", []):
+        if str(item.get("path") or "") != str(runtime_path):
+            continue
+        backup = str(item.get("backup") or "")
+        return Path(backup).read_text(encoding="utf-8") if backup else ""
+    return ""
+
+
+def _management_handoff_protocol_holdover(state: dict, payload: dict) -> str:
+    """Render address-specific old-protocol listeners during a protocol change.
+
+    Args:
+        state: Durable transaction state containing the old listener contract.
+        payload: Candidate Appliance Settings payload.
+
+    Returns:
+        Transitional nginx server blocks, or an empty string when unchanged.
+    """
+    previous_https = bool(state.get("previous_https_enabled", True))
+    candidate_https = bool(payload.get("management_https_enabled"))
+    if previous_https == candidate_https:
+        return ""
+    upstream_host = str(payload.get("management_upstream_host") or "127.0.0.1")
+    upstream_port = int(payload.get("management_upstream_port") or payload.get("management_http_port") or 8000)
+    public_port = int(state.get("previous_management_public_port") or (443 if previous_https else 80))
+    certificate_lines: list[str] = []
+    if previous_https:
+        previous_site = _management_handoff_snapshot_text(state, NGINX_MANAGEMENT_SITE_PATH)
+        cert = re.search(r"(?m)^\s*ssl_certificate\s+([^;]+);\s*$", previous_site)
+        key = re.search(r"(?m)^\s*ssl_certificate_key\s+([^;]+);\s*$", previous_site)
+        if cert is None or key is None:
+            raise ValueError("previous HTTPS listener certificate paths could not be preserved")
+        certificate_lines = [
+            f"  ssl_certificate {cert.group(1)};",
+            f"  ssl_certificate_key {key.group(1)};",
+        ]
+    blocks: list[str] = []
+    for address in state.get("previous_management_addresses", []):
+        parsed = ip_address(str(address))
+        listen_address = f"[{parsed}]" if parsed.version == 6 else str(parsed)
+        ssl = " ssl" if previous_https else ""
+        blocks.extend(
+            [
+                "server {",
+                f"  listen {listen_address}:{public_port}{ssl};",
+                "  server_name _;",
+                *certificate_lines,
+                *_management_proxy_location(
+                    upstream_host,
+                    upstream_port,
+                    "https" if previous_https else "http",
+                ),
+                "}",
+                "",
+            ]
+        )
+    if not blocks:
+        raise ValueError("previous listener addresses are unavailable for protocol preservation")
+    return "\n".join(blocks)
+
+
 def _management_handoff_vlan_parents(vlan_interfaces: set[str]) -> set[str]:
     """Return restored physical parents that declare the supplied VLAN links.
 
@@ -13782,10 +13873,60 @@ def _acknowledge_management_handoff(job_id: str) -> int:
     return 0
 
 
+def _quiesce_management_handoff_apply() -> dict[str, object]:
+    """Stop and verify any surviving transient apply helper before rollback.
+
+    Returns:
+        Bounded systemd unit evidence.
+    """
+    if shutil.which("systemctl") is None:
+        raise ValueError("systemctl is unavailable; surviving management handoff state cannot be serialized")
+    status = _run(["systemctl", "is-active", MANAGEMENT_HANDOFF_APPLY_UNIT])
+    state = status.stdout.strip() or "inactive"
+    if state not in {"active", "activating", "deactivating", "reloading"}:
+        return {"apply_unit": MANAGEMENT_HANDOFF_APPLY_UNIT, "state": state}
+    stop = _run(["systemctl", "stop", MANAGEMENT_HANDOFF_APPLY_UNIT])
+    if stop.returncode != 0:
+        raise ValueError("surviving management handoff helper could not be stopped")
+    final = _run(["systemctl", "is-active", MANAGEMENT_HANDOFF_APPLY_UNIT])
+    final_state = final.stdout.strip() or "inactive"
+    if final_state in {"active", "activating", "deactivating", "reloading"}:
+        raise ValueError("surviving management handoff helper did not stop")
+    return {
+        "apply_unit": MANAGEMENT_HANDOFF_APPLY_UNIT,
+        "state": final_state,
+        "stop_returncode": stop.returncode,
+    }
+
+
 def _recover_management_handoff() -> int:
     """Roll back an interrupted management handoff before Atlaso task recovery."""
+    try:
+        helper_state = _quiesce_management_handoff_apply()
+    except ValueError as exc:
+        print(
+            json.dumps(
+                {
+                    "management_handoff": "rollback incomplete",
+                    "failing_layer": "interruption serialization",
+                    "error": str(exc),
+                },
+                sort_keys=True,
+            ),
+            file=sys.stderr,
+        )
+        return 1
     if not MANAGEMENT_HANDOFF_STATE_PATH.is_file():
-        print(json.dumps({"management_handoff": "no interrupted transaction", "rolled_back": False}, sort_keys=True))
+        print(
+            json.dumps(
+                {
+                    "management_handoff": "no interrupted transaction",
+                    "rolled_back": False,
+                    "helper_state": helper_state,
+                },
+                sort_keys=True,
+            )
+        )
         return 0
     try:
         state = json.loads(MANAGEMENT_HANDOFF_STATE_PATH.read_text(encoding="utf-8"))
@@ -13804,7 +13945,17 @@ def _recover_management_handoff() -> int:
         )
         return 1
     _clear_management_handoff_state()
-    print(json.dumps({"management_handoff": "rolled back after interruption", "rolled_back": True, **evidence}, sort_keys=True))
+    print(
+        json.dumps(
+            {
+                "management_handoff": "rolled back after interruption",
+                "rolled_back": True,
+                "helper_state": helper_state,
+                **evidence,
+            },
+            sort_keys=True,
+        )
+    )
     return 0
 
 
@@ -13861,8 +14012,9 @@ def _apply_management_handoff(payload: dict) -> int:
         failing_layer = "Atlaso upstream"
         upstream_readiness = _management_handoff_upstream_readiness()
         settings_payload = _load_appliance_settings_config(Path(str(payload["appliance_settings_config_path"])))
+        protocol_holdover = _management_handoff_protocol_holdover(state, settings_payload)
         failing_layer = "nginx management front door"
-        if _configure_atlaso_management_https(settings_payload) != 0:
+        if _configure_atlaso_management_https(settings_payload, site_suffix=protocol_holdover) != 0:
             raise ValueError("candidate management nginx apply failed")
         if _handle_public_services("apply", [str(payload["public_services_config_path"])]) != 0:
             raise ValueError("candidate public-services nginx apply failed")
@@ -13901,6 +14053,10 @@ def _apply_management_handoff(payload: dict) -> int:
                 raise ValueError(f"networkd could not retire the previous path on {interface}")
         if _handle_firewall("apply", [str(candidate_firewall_path)]) != 0:
             raise ValueError("final nftables apply failed while retiring the previous path")
+        if protocol_holdover:
+            failing_layer = "previous-protocol retirement"
+            if _configure_atlaso_management_https(settings_payload) != 0:
+                raise ValueError("candidate nginx could not retire the previous protocol listener")
         failing_layer = "post-retirement readiness"
         final_readiness = _management_handoff_readiness(
             candidate_addresses,

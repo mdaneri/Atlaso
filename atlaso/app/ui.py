@@ -9249,6 +9249,7 @@ def network_management_paths(config_preview: str) -> list[dict[str, str]]:
                 "ipv4_method": row.get("ipv4_method", ""),
                 "ip_cidr": row.get("ip_cidr", ""),
                 "gateway": row.get("gateway", ""),
+                "ipv6_enabled": row.get("ipv6_enabled", ""),
                 "ipv6_cidr": row.get("ipv6_cidr", ""),
                 "ipv6_gateway": row.get("ipv6_gateway", ""),
             }
@@ -9261,6 +9262,7 @@ def network_management_paths(config_preview: str) -> list[dict[str, str]]:
             item["parent"],
             item["ip_cidr"],
             item["gateway"],
+            item["ipv6_enabled"],
             item["ipv6_cidr"],
             item["ipv6_gateway"],
         ),
@@ -12880,6 +12882,14 @@ def execute_management_handoff(
             "previous_https_enabled": bool(
                 previous_settings.get("management_https_enabled", True)
             ),
+            "previous_management_public_port": int(
+                previous_settings.get(
+                    "management_public_https_port"
+                    if previous_settings.get("management_https_enabled", True)
+                    else "management_public_http_port",
+                    443 if previous_settings.get("management_https_enabled", True) else 80,
+                )
+            ),
         }
         manifest_path = stage_appliance_apply_config(
             MANAGEMENT_HANDOFF_STAGED_MANIFEST_PATH,
@@ -14643,7 +14653,10 @@ def active_appliance_apply_job(db: Session) -> Job | None:
         .options(selectinload(Job.steps))
         .where(
             Job.type == "appliance-apply",
-            Job.status.in_([JobStatus.PENDING.value, JobStatus.RUNNING.value]),
+            or_(
+                Job.status.in_([JobStatus.PENDING.value, JobStatus.RUNNING.value]),
+                Job.result.like('%"management_handoff_runtime_commit_pending": true%'),
+            ),
         )
         .order_by(Job.created_at)
         .limit(1)
@@ -14691,6 +14704,30 @@ def vcf_depot_execution_conflict_detail(job: Job) -> str:
     )
 
 
+def reconcile_management_handoff_exception(
+    adapter: SystemAdapter,
+    job_id: str,
+    *,
+    application_committed: bool,
+) -> tuple[AdapterResult, dict[str, Any]]:
+    """Reconcile retained helper state before an exception becomes terminal.
+
+    Args:
+        adapter: System adapter that owns the helper transaction.
+        job_id: Appliance Apply task identifier.
+        application_committed: Whether baselines and pending acknowledgement are durable.
+
+    Returns:
+        Adapter result and parsed bounded evidence.
+    """
+    result = (
+        adapter.acknowledge_management_handoff(job_id)
+        if application_committed
+        else adapter.recover_management_handoff()
+    )
+    return result, management_handoff_result_evidence(result)
+
+
 def run_appliance_apply_job(job_id: str, *, force_real: bool = False) -> None:
     """Run appliance apply job.
 
@@ -14715,6 +14752,9 @@ def run_appliance_apply_job(job_id: str, *, force_real: bool = False) -> None:
         db.commit()
 
         unit_results: list[dict[str, Any]] = []
+        handoff_recovery_adapter: SystemAdapter | None = None
+        handoff_runtime_pending = False
+        handoff_application_committed = False
         try:
             job_result = json.loads(job.result or "{}")
             selected_order = [str(unit_id) for unit_id in job_result.get("selected_units", [])]
@@ -14803,6 +14843,9 @@ def run_appliance_apply_job(job_id: str, *, force_real: bool = False) -> None:
                         adapter=handoff_adapter,
                         db=db,
                     )
+                    if group_result.get("success") and not group_result.get("dry_run"):
+                        handoff_recovery_adapter = handoff_adapter
+                        handoff_runtime_pending = True
                     bundled_results = [_redact_task_value(result) for result in bundled_results]
                     unit_results.extend(bundled_results)
                     finished = utcnow()
@@ -14877,6 +14920,7 @@ def run_appliance_apply_job(job_id: str, *, force_real: bool = False) -> None:
                         # startup recovery rolls back before it and idempotently
                         # acknowledges the candidate after it.
                         db.commit()
+                        handoff_application_committed = True
                         acknowledgement = handoff_adapter.acknowledge_management_handoff(job.id)
                         acknowledgement_evidence = management_handoff_result_evidence(acknowledgement)
                         group_result["commands"].append(adapter_result_to_payload(acknowledgement))
@@ -14919,6 +14963,7 @@ def run_appliance_apply_job(job_id: str, *, force_real: bool = False) -> None:
                                     indent=2,
                                 )
                         else:
+                            handoff_runtime_pending = False
                             committed_evidence = {
                                 **group_result.get("management_handoff", {}),
                                 "management_handoff": "committed",
@@ -15146,10 +15191,36 @@ def run_appliance_apply_job(job_id: str, *, force_real: bool = False) -> None:
         except Exception as exc:  # noqa: BLE001 - background task must persist a safe terminal state.
             APPLY_LOGGER.exception("Appliance apply task %s failed before completion", job_id)
             db.rollback()
+            exception_recovery: tuple[AdapterResult, dict[str, Any]] | None = None
+            if handoff_runtime_pending and handoff_recovery_adapter is not None:
+                exception_recovery = reconcile_management_handoff_exception(
+                    handoff_recovery_adapter,
+                    job_id,
+                    application_committed=handoff_application_committed,
+                )
             job = db.get(Job, job_id)
             if job is None:
                 return
             safe_error = str(exc) if isinstance(exc, ApplianceApplyJobError) else "Appliance apply task failed unexpectedly."
+            recovery_evidence: dict[str, Any] = {}
+            if exception_recovery is not None:
+                recovery_result, recovery_evidence = exception_recovery
+                recovery_state = str(recovery_evidence.get("management_handoff") or "")
+                if recovery_result.returncode == 0 and recovery_evidence.get("rolled_back") is True:
+                    safe_error = (
+                        "Appliance Apply failed after candidate activation; the previous management path was rolled "
+                        "back before the task became terminal."
+                    )
+                elif recovery_result.returncode == 0 and recovery_state in {"committed", "already committed"}:
+                    safe_error = (
+                        "Appliance Apply failed after the management baselines committed; the candidate management "
+                        "path remains active and its helper acknowledgement is complete."
+                    )
+                else:
+                    safe_error = (
+                        "Appliance Apply failed after candidate activation, and immediate management recovery could "
+                        "not be proven. The global apply lock remains held for recovery."
+                    )
             finished = utcnow()
             for step in job.steps:
                 if step.status == JobStatus.RUNNING.value:
@@ -15163,6 +15234,20 @@ def run_appliance_apply_job(job_id: str, *, force_real: bool = False) -> None:
                     step.finished_at = finished
                     step.progress_percent = 100
             job_result = json.loads(job.result or "{}")
+            if exception_recovery is not None:
+                recovery_result, recovery_evidence = exception_recovery
+                job_result["management_handoff_exception_recovery"] = {
+                    **adapter_result_to_payload(recovery_result),
+                    "evidence": recovery_evidence,
+                }
+                recovery_state = str(recovery_evidence.get("management_handoff") or "")
+                if recovery_result.returncode == 0 and recovery_evidence.get("rolled_back") is True:
+                    job_result.pop("management_handoff_runtime_commit_pending", None)
+                elif recovery_result.returncode == 0 and recovery_state in {"committed", "already committed"}:
+                    job_result.pop("management_handoff_runtime_commit_pending", None)
+                    job_result["management_handoff_runtime_committed"] = True
+                else:
+                    job_result["management_handoff_runtime_commit_pending"] = True
             job.status = JobStatus.FAILED.value
             job.finished_at = finished
             job.progress_percent = 100

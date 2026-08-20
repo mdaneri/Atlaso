@@ -38,6 +38,7 @@ interface=eth1
             "ipv4_method": "static",
             "ip_cidr": "192.0.2.10/24",
             "gateway": "192.0.2.1",
+            "ipv6_enabled": "",
             "ipv6_cidr": "",
             "ipv6_gateway": "",
         }
@@ -51,6 +52,7 @@ interface=eth1
             "ipv4_method": "",
             "ip_cidr": "198.51.100.10/24",
             "gateway": "",
+            "ipv6_enabled": "",
             "ipv6_cidr": "",
             "ipv6_gateway": "",
         }
@@ -73,6 +75,27 @@ interface=eth1
     }
 
     assert management_handoff_required(network_unit, None)
+
+
+def test_management_handoff_detects_ipv6_router_advertisement_toggle():
+    """Treat SLAAC enablement as a management listener topology change."""
+    from atlaso.app.ui import management_handoff_required
+
+    previous = """[physical_interfaces]
+interface=eth0
+  role=management
+  mode=access
+  admin_state=up
+  ipv4_method=static
+  ip_cidr=192.0.2.10/24
+  ipv6_enabled=false
+"""
+    candidate = previous.replace("ipv6_enabled=false", "ipv6_enabled=true")
+
+    assert management_handoff_required(
+        {"raw_config_preview": candidate},
+        {"config_preview": previous},
+    )
 
 
 def test_management_handoff_settings_baseline_ignores_only_applied_front_door_fields():
@@ -336,33 +359,36 @@ def test_interrupted_handoff_reconciles_application_commit_without_false_rollbac
 
     monkeypatch.setattr(ui, "SystemAdapter", RecoveryAdapter)
     with SessionLocal() as db:
-        db.add_all(
-            [
-                Job(
-                    id="handoff-committed",
-                    type="appliance-apply",
-                    status=JobStatus.RUNNING.value,
-                    created_by="admin",
-                    progress_percent=80,
-                    result=json.dumps(
-                        {
-                            "management_handoff": True,
-                            "management_handoff_runtime_commit_pending": True,
-                        }
-                    ),
+        db.add(
+            Job(
+                id="handoff-committed",
+                type="appliance-apply",
+                status=JobStatus.FAILED.value,
+                created_by="admin",
+                progress_percent=80,
+                result=json.dumps(
+                    {
+                        "management_handoff": True,
+                        "management_handoff_runtime_commit_pending": True,
+                    }
                 ),
-                Job(
-                    id="handoff-no-marker",
-                    type="appliance-apply",
-                    status=JobStatus.RUNNING.value,
-                    created_by="admin",
-                    progress_percent=20,
-                    result=json.dumps({"management_handoff": True}),
-                ),
-            ]
+            )
         )
         db.commit()
 
+        active = ui.active_appliance_apply_job(db)
+        assert active is not None and active.id == "handoff-committed"
+        db.add(
+            Job(
+                id="handoff-no-marker",
+                type="appliance-apply",
+                status=JobStatus.RUNNING.value,
+                created_by="admin",
+                progress_percent=20,
+                result=json.dumps({"management_handoff": True}),
+            )
+        )
+        db.commit()
         assert ui.recover_interrupted_appliance_apply_jobs(db) == 2
 
         committed = db.get(Job, "handoff-committed")
@@ -374,6 +400,61 @@ def test_interrupted_handoff_reconciles_application_commit_without_false_rollbac
         assert "candidate management path remains active" in (committed.error or "")
         assert "could not prove either" in (missing.error or "")
         assert "rolled back" not in (missing.error or "").lower()
+
+
+def test_management_handoff_exception_reconciliation_selects_transaction_boundary():
+    """Roll back before the application commit and acknowledge after it."""
+    from atlaso.app.adapters.system import AdapterResult
+    from atlaso.app.ui import reconcile_management_handoff_exception
+
+    class RecoveryAdapter:
+        """Record which retained helper reconciliation path was selected."""
+
+        def __init__(self):
+            """Initialize the recorded helper calls."""
+            self.calls: list[str] = []
+
+        def recover_management_handoff(self):
+            """Return bounded rollback evidence."""
+            self.calls.append("recover")
+            return AdapterResult(
+                command=["atlaso-helper", "management-handoff", "recover"],
+                dry_run=False,
+                stdout=json.dumps({"management_handoff": "rolled back", "rolled_back": True}),
+                returncode=0,
+            )
+
+        def acknowledge_management_handoff(self, job_id):
+            """Return bounded committed-candidate evidence.
+
+            Args:
+                job_id: Appliance Apply task being acknowledged.
+            """
+            self.calls.append(f"acknowledge:{job_id}")
+            return AdapterResult(
+                command=["atlaso-helper", "management-handoff", "acknowledge", job_id],
+                dry_run=False,
+                stdout=json.dumps({"management_handoff": "committed", "job_id": job_id}),
+                returncode=0,
+            )
+
+    adapter = RecoveryAdapter()
+    rollback, rollback_evidence = reconcile_management_handoff_exception(
+        adapter,
+        "job-before-commit",
+        application_committed=False,
+    )
+    acknowledgement, acknowledgement_evidence = reconcile_management_handoff_exception(
+        adapter,
+        "job-after-commit",
+        application_committed=True,
+    )
+
+    assert rollback.returncode == 0
+    assert rollback_evidence["rolled_back"] is True
+    assert acknowledgement.returncode == 0
+    assert acknowledgement_evidence["management_handoff"] == "committed"
+    assert adapter.calls == ["recover", "acknowledge:job-after-commit"]
 
 
 def test_appliance_apply_json_submission_returns_master_with_live_child_status(client):
