@@ -1721,6 +1721,27 @@ def esxi_pxe_manifest(http_root: Path, *, enabled: bool = True, stale_id: int = 
     }
 
 
+def test_esxi_pxe_helper_ignores_dormant_native_http_when_pxe_is_disabled():
+    """Accept legacy disabled-PXE state without weakening enabled validation."""
+    helper = load_helper_module()
+    dormant_boot = {
+        "enabled": False,
+        "native_uefi_http_enabled": True,
+        "native_uefi_http_url": "",
+        "effective_native_uefi_http_url": "",
+    }
+
+    assert helper._esxi_pxe_boot_errors(dormant_boot) == []
+
+    enabled_errors = helper._esxi_pxe_boot_errors(
+        {
+            **dormant_boot,
+            "enabled": True,
+        }
+    )
+    assert "Native UEFI HTTP URL must be an absolute HTTP or HTTPS URL." in enabled_errors
+
+
 def test_esxi_pxe_helper_validates_network_boot_media_hashes(monkeypatch, tmp_path):
     """Verify that esxi pxe helper validates network boot media hashes.
 

@@ -404,6 +404,48 @@ The following cross-cutting boundaries always apply:
   through the shared reviewed source wizard, with **Edit repository** beside the destructive action. Wizard submission
   saves desired runtime-maintenance state only; package-client changes still require the explicit audited
   **Synchronize repositories** task.
+- A signed Atlaso Release update succeeds only after durable candidate activation is proven: `current`, the compatibility
+  virtualenv, signed receipt, finalizer, internal OpenAPI version, nginx management-front-door version, maintenance
+  cleanup, nginx validation/reload, and required service state must agree. Restart the worker under a provisional
+  finalizer and prove its new PID, candidate version, release root, and job identity before writing definitive success;
+  retain maintenance through every rollback-capable stage and durably record `activation_committed` before opening the
+  management front door. Once committed, preserve the candidate and retry cleanup, host-facing proof, and definitive
+  finalization forward; never restore the database snapshot after operator writes can be admitted. After reboot,
+  recreate the matching volatile gate from durable committed evidence, let pre-start admit the gated candidate without
+  requiring its own worker to be active, and complete forward activation only after that worker publishes exact job,
+  version, release-root, current-boot, PID, and process-start identity.
+  Persist the bounded rollback manifest before switching the active link, persist restart-pending evidence before the
+  volatile runtime gate, and keep recovery behind that gate until the definitive write completes. Worker pre-start must
+  distinguish the live helper by boot, PID, and process-start identity and roll back stale provisional evidence before
+  admitting the worker after a host restart. Reboot forward recovery must use one stable per-job systemd unit and replace
+  the prior-boot owner with that helper's exact live identity before admitting the candidate worker. While that exact
+  helper remains live, extend the candidate worker's gate
+  wait so a timeout cannot restart through a restored legacy unit before definitive rollback evidence. Flush every
+  database and installed-asset rollback backup plus its directory entries before publishing the durable manifest.
+  A missing database backup makes rollback incomplete, and restore every installed asset independently so one failure
+  cannot prevent later restores. Refresh the manifest after the ESX allowlist backup is added and
+  before claim migration mutates its allowlist or database, so both restore together. An already-active release completes
+  from exact readiness evidence without scheduling an
+  unverified service restart. A matching definitive success or healthy rollback may clear or supersede an orphaned gate;
+  incomplete rollback must retain maintenance and the gate. Atlaso and nginx service pre-start guards must recreate the
+  volatile maintenance hold from durable provisional evidence before either service can start after reboot. Reboot
+  rollback must keep that hold and a provisional finalizer through candidate-version child, parent, log, and audit
+  bookkeeping; only then may it open and prove the front door and publish definitive healthy-rollback evidence.
+  Rollback must preserve and verify the already-running worker
+  until the definitive rollback write; never start a restored legacy worker inside the transaction. After recovery
+  bookkeeping, a candidate worker must exit for systemd to start the restored release. Before publishing any incomplete
+  rollback, retain provisional owner evidence and stop and verify the caller inactive, including when the gate exists.
+  Then resume only untouched pending update children when the restored worker can preserve terminal child results,
+  including a mixed terminal/pending set after a second worker restart, without rerunning terminal children. When a
+  rollback restores an older worker without that capability, leave untouched children explicitly skipped and the
+  parent failed so the restored worker cannot rerun the rejected release. Gate timeout exits worker startup for systemd
+  retry, and the surviving helper removes staged source
+  credentials before restarting the caller. Definitive finalizers retain sanitized helper commands, and recovery uses
+  the ordinary child, parent, terminal task-log, and audit completion path. Any post-switch failure before the durable
+  activation commit restores the previous release, assets, database, and nginx-ready front door with
+  `rolled_back=true`; failures after that commit remain fail-closed and recover forward. Worker startup must reject a success
+  finalizer that disagrees with the durable active release or running version. Lifecycle coverage proves both successful
+  activation and rollback before and after audited appliance reboots; never reboot automatically as part of installation.
 - Boot ShredOS only from the verified stable ISO's allowlisted `/boot/bzImage` kernel through iPXE. Do not restore raw
   disk-image SAN boot or add unattended erase arguments.
 - OIDC clients use explicit validated identity sources and emit only granted, explicitly mapped claims; see the detailed

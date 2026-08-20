@@ -286,6 +286,8 @@ function Invoke-PasswordBackedDeploy {
         [string]$LocalInventoryLinuxPackagePath = '',
         [Parameter(Mandatory = $true)][string[]]$LocalTrustKeyPaths,
         [Parameter(Mandatory = $true)][string]$LocalWorkerServicePath,
+        [Parameter(Mandatory = $true)][string]$LocalAtlasoServiceDropInPath,
+        [Parameter(Mandatory = $true)][string]$LocalNginxServiceDropInPath,
         [Parameter(Mandatory = $true)][string]$LocalScriptPath,
         [Parameter(Mandatory = $true)][string]$RemoteDirectoryPath,
         [Parameter(Mandatory = $true)][string]$RemoteWheel,
@@ -298,6 +300,8 @@ function Invoke-PasswordBackedDeploy {
         [string]$RemoteInventoryLinuxPackage = '',
         [Parameter(Mandatory = $true)][string[]]$RemoteTrustKeys,
         [Parameter(Mandatory = $true)][string]$RemoteWorkerService,
+        [Parameter(Mandatory = $true)][string]$RemoteAtlasoServiceDropIn,
+        [Parameter(Mandatory = $true)][string]$RemoteNginxServiceDropIn,
         [Parameter(Mandatory = $true)][string]$RemoteScript,
         [Parameter(Mandatory = $true)][bool]$ResetVaultEntryTable,
         [Parameter(Mandatory = $true)][int]$TimeoutSeconds,
@@ -348,6 +352,8 @@ parser.add_argument("--local-boot-background", default="")
 parser.add_argument("--local-inventory-linux-package", default="")
 parser.add_argument("--local-trust-key", action="append", default=[])
 parser.add_argument("--local-worker-service", required=True)
+parser.add_argument("--local-atlaso-service-drop-in", required=True)
+parser.add_argument("--local-nginx-service-drop-in", required=True)
 parser.add_argument("--local-script", required=True)
 parser.add_argument("--remote-dir", required=True)
 parser.add_argument("--remote-wheel", required=True)
@@ -360,6 +366,8 @@ parser.add_argument("--remote-boot-background", default="")
 parser.add_argument("--remote-inventory-linux-package", default="")
 parser.add_argument("--remote-trust-key", action="append", default=[])
 parser.add_argument("--remote-worker-service", required=True)
+parser.add_argument("--remote-atlaso-service-drop-in", required=True)
+parser.add_argument("--remote-nginx-service-drop-in", required=True)
 parser.add_argument("--remote-script", required=True)
 parser.add_argument("--reset-vault-entries", action="store_true")
 parser.add_argument("--timeout", type=int, required=True)
@@ -379,6 +387,8 @@ uploads = [
     (pathlib.Path(args.local_wheel), args.remote_wheel),
     (pathlib.Path(args.local_script), args.remote_script),
     (pathlib.Path(args.local_worker_service), args.remote_worker_service),
+    (pathlib.Path(args.local_atlaso_service_drop_in), args.remote_atlaso_service_drop_in),
+    (pathlib.Path(args.local_nginx_service_drop_in), args.remote_nginx_service_drop_in),
 ]
 uploads.extend(
     (pathlib.Path(local_path), remote_path)
@@ -452,6 +462,8 @@ try:
         f"{shell_quote(remote_boot_theme_argument)} "
         f"{shell_quote(remote_boot_background_argument)} "
         f"{shell_quote(args.remote_worker_service)} "
+        f"{shell_quote(args.remote_atlaso_service_drop_in)} "
+        f"{shell_quote(args.remote_nginx_service_drop_in)} "
         f"{shell_quote(remote_runtime_dependencies_argument)} "
         f"{shell_quote(remote_trust_keys_argument)} "
         f"{shell_quote('true' if args.reset_vault_entries else 'false')} "
@@ -541,7 +553,11 @@ finally:
         }
         $deployArguments += @(
             '--local-worker-service', $LocalWorkerServicePath,
-            '--remote-worker-service', $RemoteWorkerService
+            '--remote-worker-service', $RemoteWorkerService,
+            '--local-atlaso-service-drop-in', $LocalAtlasoServiceDropInPath,
+            '--remote-atlaso-service-drop-in', $RemoteAtlasoServiceDropIn,
+            '--local-nginx-service-drop-in', $LocalNginxServiceDropInPath,
+            '--remote-nginx-service-drop-in', $RemoteNginxServiceDropIn
         )
         Invoke-CheckedCommand -FilePath $PythonCommand -WorkingDirectory $WorkingDirectory -Arguments $deployArguments
     } finally {
@@ -597,6 +613,8 @@ $trustKeyPaths = @(
         Select-Object -ExpandProperty FullName
 )
 $workerServicePath = Join-Path $resolvedRepoRoot 'image\common\systemd\atlaso-worker.service'
+$atlasoServiceDropInPath = Join-Path $resolvedRepoRoot 'image\common\systemd\atlaso-require-data-disks.conf'
+$nginxServiceDropInPath = Join-Path $resolvedRepoRoot 'image\common\systemd\nginx-atlaso-data-disks.conf'
 $inventoryLinuxPackagePath = ''
 if (-not $SkipInventoryLinuxSync) {
     $inventoryLinuxOutput = Join-Path $resolvedRepoRoot 'image\inventory-linux\output'
@@ -633,6 +651,11 @@ if (-not $SkipBootBrandingSync) {
 if (-not (Test-Path -LiteralPath $workerServicePath -PathType Leaf)) {
     throw "Atlaso worker service not found: $workerServicePath"
 }
+foreach ($serviceDropInPath in @($atlasoServiceDropInPath, $nginxServiceDropInPath)) {
+    if (-not (Test-Path -LiteralPath $serviceDropInPath -PathType Leaf)) {
+        throw "Atlaso service drop-in not found: $serviceDropInPath"
+    }
+}
 if ($trustKeyPaths.Count -eq 0) {
     throw "No Atlaso release trust keys found under: $trustKeyDirectory"
 }
@@ -653,6 +676,8 @@ $remoteTrustKeyPaths = @(
     }
 )
 $remoteWorkerServicePath = Join-RemotePath -Directory $RemoteDirectory -Leaf 'atlaso-worker.service'
+$remoteAtlasoServiceDropInPath = Join-RemotePath -Directory $RemoteDirectory -Leaf 'atlaso-require-data-disks.conf'
+$remoteNginxServiceDropInPath = Join-RemotePath -Directory $RemoteDirectory -Leaf 'nginx-atlaso-data-disks.conf'
 $remoteInventoryLinuxPackagePath = if ($inventoryLinuxPackagePath) {
     Join-RemotePath -Directory $RemoteDirectory -Leaf (Split-Path -Leaf $inventoryLinuxPackagePath)
 } else {
@@ -687,10 +712,12 @@ boot_installer_path="${6:-}"
 boot_theme_path="${7:-}"
 boot_background_path="${8:-}"
 worker_service_path="${9:?worker service path required}"
-runtime_dependency_paths="${10:?runtime dependency wheel paths required}"
-trust_key_paths="${11:?release trust key paths required}"
-reset_vault_entries="${12:-false}"
-inventory_linux_package="${13:-}"
+atlaso_service_drop_in_path="${10:?Atlaso service drop-in path required}"
+nginx_service_drop_in_path="${11:?nginx service drop-in path required}"
+runtime_dependency_paths="${12:?runtime dependency wheel paths required}"
+trust_key_paths="${13:?release trust key paths required}"
+reset_vault_entries="${14:-false}"
+inventory_linux_package="${15:-}"
 venv="/opt/atlaso/.venv"
 python="$venv/bin/python"
 
@@ -953,6 +980,10 @@ install -d -o atlaso -g atlaso-automation -m 0750 /var/lib/atlaso/automation /va
 install -d -o atlaso-automation -g atlaso-automation -m 0750 /var/lib/atlaso/automation/runs
 install -o root -g root -m 0644 "$worker_service_path" /etc/systemd/system/atlaso-worker.service
 sed -i 's/\r$//' /etc/systemd/system/atlaso-worker.service
+install -d -o root -g root -m 0755 /etc/systemd/system/atlaso.service.d /etc/systemd/system/nginx.service.d
+install -o root -g root -m 0644 "$atlaso_service_drop_in_path" /etc/systemd/system/atlaso.service.d/atlaso-data-disks.conf
+install -o root -g root -m 0644 "$nginx_service_drop_in_path" /etc/systemd/system/nginx.service.d/atlaso-data-disks.conf
+sed -i 's/\r$//' /etc/systemd/system/atlaso.service.d/atlaso-data-disks.conf /etc/systemd/system/nginx.service.d/atlaso-data-disks.conf
 systemctl daemon-reload
 find "$venv" -type d -exec chmod 755 {} \;
 find "$venv" -type f -exec chmod 644 {} \;
@@ -998,6 +1029,8 @@ try {
         $uploadPaths += $bootInstallerPath
     }
     $uploadPaths += $workerServicePath
+    $uploadPaths += $atlasoServiceDropInPath
+    $uploadPaths += $nginxServiceDropInPath
     if ($inventoryLinuxPackagePath) {
         $uploadPaths += $inventoryLinuxPackagePath
     }
@@ -1031,6 +1064,8 @@ try {
             -LocalInventoryLinuxPackagePath $inventoryLinuxPackagePath `
             -LocalTrustKeyPaths $trustKeyPaths `
             -LocalWorkerServicePath $workerServicePath `
+            -LocalAtlasoServiceDropInPath $atlasoServiceDropInPath `
+            -LocalNginxServiceDropInPath $nginxServiceDropInPath `
             -LocalScriptPath $tempScript `
             -RemoteDirectoryPath $RemoteDirectory `
             -RemoteWheel $remoteWheelPath `
@@ -1043,6 +1078,8 @@ try {
             -RemoteInventoryLinuxPackage $remoteInventoryLinuxPackagePath `
             -RemoteTrustKeys $remoteTrustKeyPaths `
             -RemoteWorkerService $remoteWorkerServicePath `
+            -RemoteAtlasoServiceDropIn $remoteAtlasoServiceDropInPath `
+            -RemoteNginxServiceDropIn $remoteNginxServiceDropInPath `
             -RemoteScript $remoteScriptPath `
             -ResetVaultEntryTable ([bool]$ResetVaultEntries) `
             -TimeoutSeconds $ReadinessTimeoutSeconds `
@@ -1071,6 +1108,8 @@ try {
             $remoteBootThemeArgument,
             $remoteBootBackgroundArgument,
             $remoteWorkerServicePath,
+            $remoteAtlasoServiceDropInPath,
+            $remoteNginxServiceDropInPath,
             $remoteRuntimeDependenciesArgument,
             $remoteTrustKeysArgument,
             $resetVaultEntriesArgument,

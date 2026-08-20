@@ -447,9 +447,12 @@ Terminal order:
 - Represent every manual or scheduled Appliance Update check/install as one parent job with ordered `JobStep` children
   for the selected Atlaso Release, PowerShell Modules, and Photon OS streams. Checks run every selected child for
   complete diagnostics. Installs preserve release, PowerShell, then Photon ordering; Photon is explicitly skipped when
-  an earlier selected stream fails. Keep child output, compatibility evidence, and errors independent, and derive the
-  parent outcome from all selected children. Give privileged PowerShell update work the root-owned persistent home
-  `/var/lib/atlaso/powershell`; do not point it at the service's read-only `/root` view.
+  an earlier selected stream fails. After a definitive release worker handoff, resume only untouched pending children
+  when the restored worker can preserve terminal child results, and never rerun a child that had started. If rollback
+  restores an older worker without that capability, explicitly skip untouched children and fail the parent rather than
+  requeueing terminal work. Keep child output, compatibility evidence, and errors independent, and
+  derive the parent outcome from all selected children. Give privileged PowerShell update work the root-owned
+  persistent home `/var/lib/atlaso/powershell`; do not point it at the service's read-only `/root` view.
 - Submit manual Appliance Update checks and installations asynchronously from Update Streams. Refresh only the embedded
   shared Tasks grid, highlight the newly created task, and keep both task actions disabled until the active Appliance
   Update task reaches a terminal state; do not restore a separate submission-result card.
@@ -475,6 +478,66 @@ Terminal order:
   Photon-supported `tdnf repoquery python3` form and select the highest advertised minor ABI, reject unsupported
   candidate Python ABIs, reconstruct from the retained wheelhouse after supported ABI changes, and do not claim
   automatic RPM rollback or reboot.
+- Do not write a successful Atlaso Release finalizer until durable activation is proven. Flush the active switch and
+  installed assets, restart the worker into the
+  candidate release under a provisional finalizer, require its new systemd PID to publish the matching job, version, and
+  release root, persist a bounded rollback manifest before switching the active link, and persist restart-pending
+  evidence before establishing the volatile runtime gate. Keep recovery blocked until the definitive finalizer write
+  completes. Retain maintenance through every rollback-capable stage, then durably record `activation_committed` before
+  validating, reloading, and opening nginx. Failures after that commit must preserve the candidate and retry forward;
+  never restore the database snapshot after the front door can admit operator writes. Worker pre-start must distinguish
+  a live helper by boot, PID, and process-start identity. Stale committed evidence after reboot must recreate its
+  volatile gate, schedule one stable per-job root-owned completion unit, durably replace the prior-boot owner with that
+  helper's exact live identity, and admit the gated candidate without requiring the not-yet-started worker; definitive
+  completion then requires that worker's exact published job, version, release-root, current-boot,
+  PID, and process-start identity. Stale provisional
+  evidence after a host restart must make Atlaso and nginx service pre-start guards recreate maintenance from the
+  durable provisional finalizer before either service starts, then restore and verify the previous release before the
+  worker is admitted. Flush the
+  database and every installed-asset rollback backup plus its directory entries before publishing the durable recovery
+  manifest. Missing database backup bytes make rollback incomplete. Restore installed assets independently so one
+  failure cannot prevent later destinations from being attempted. While the exact recorded helper remains live, extend
+  the candidate worker's runtime-gate wait so timeout cannot restart it through a restored legacy unit before the
+  definitive rollback write. Refresh the manifest after adding the ESX allowlist backup and before mutating its claims
+  or database, so both rollback together. Reboot recovery must retain the candidate environment after restoring the
+  previous runtime, execute the exact release task's child, parent, terminal-log, and audit bookkeeping through that
+  candidate as the
+  Atlaso service account while maintenance and provisional rollback evidence remain held, using the restored database
+  schema directly without candidate schema creation or startup reconciliation. Only after that bookkeeping
+  may recovery remove maintenance, prove the host-facing previous version, publish definitive healthy-rollback evidence,
+  remove the candidate, and admit the restored worker. A failed candidate bookkeeping handoff
+  must retain the candidate, maintenance response, and runtime gate for retry.
+  An already-active release must complete from exact readiness evidence without an unverified delayed service restart.
+  A matching definitive success or healthy rollback may clear or supersede an orphaned runtime gate. Incomplete rollback
+  must retain both maintenance and that gate so queued mutations cannot resume against inconsistent state. Rollback must
+  preserve and verify the already-running worker until the definitive rollback write; it must never start a restored
+  legacy worker inside the transaction. After recovery bookkeeping, a candidate worker must exit so systemd starts the
+  restored release without executing pending children itself. Before publishing any incomplete rollback, retain the
+  provisional owner evidence and stop and verify exact `ActiveState=inactive`, including when the runtime gate exists.
+  A failed status query is not inactive proof: retry from the live helper without returning to the caller. Retain the
+  candidate directory through candidate-version bookkeeping and restored-worker handoff, including incomplete retries.
+  A gate timeout must exit worker startup for systemd retry, never enter the ordinary work loop. Remove and durably flush
+  staged source credentials from the surviving helper before it restarts the calling worker. Require nginx plus web,
+  worker, and console service state, and require the signed receipt, `current`, compatibility
+  virtualenv, internal OpenAPI version, nginx management-front-door OpenAPI version, and candidate version to agree.
+  Definitive finalizers must retain sanitized helper command evidence; startup recovery must pass that evidence through
+  the ordinary child completion, parent completion, terminal task-log, and audit bookkeeping. Any
+  failure after the switch but before `activation_committed` must restore the previous release, helper/systemd assets,
+  SQLite snapshot, and working nginx front door. Runtime rollback must verify and flush the restored release internally
+  while maintenance remains held, durably write `rolled_back=true` with a sanitized failing layer so the snapshot cannot
+  be replayed, and only then remove maintenance, prove the host-facing previous version, and persist that host-facing
+  evidence. A failed final front-door probe or evidence write must restore maintenance without making the snapshot
+  eligible for replay. Fail both release child and parent. After a verified healthy
+  rollback, preserve the terminal failed release child and requeue untouched children without rerunning it. Requeue a
+  mixed terminal/pending set after another worker restart while preserving every terminal result; retain the
+  normal rule that independently runnable PowerShell Modules proceeds while Photon OS skips after an earlier failure.
+  Worker startup must reject
+  a success finalizer that disagrees with the durable active release or running version. On the first transition from
+  the legacy updater, recognize only its bounded successful service-health or no-change finalizer shape and reconcile
+  it from the exact active links, signed receipt identity, and running candidate version; do not reinterpret missing
+  current-protocol fields alone as a failed update. Signed-release lifecycle
+  coverage must prove the candidate and a healthy rollback both before and after audited appliance reboots; installation
+  itself must not reboot automatically.
 - Release publication recovery must use the protected **Publish appliance release** manual dispatch with the exact
   successful `main` push CI SHA. Atlaso starts a new signed update lineage at `v0.9.18`; do not publish or consume a
   retired-product bridge. Preserve tag/release commit and asset-byte idempotency checks. A rerun after tag/release

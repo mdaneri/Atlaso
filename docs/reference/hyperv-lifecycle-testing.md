@@ -174,6 +174,9 @@ The lifecycle runner records structured evidence in `test-results/hyperv-lifecyc
   lifecycle evidence.
 - settings backup export, appliance redeploy, settings restore, restored desired-state apply, downloaded Client A
   certificate comparison, and restored CA archive certificate comparison unless `-SkipBackupRestoreTest` is used
+- optional signed Atlaso Release coverage when `-SignedReleaseRepositoryUrl` is supplied: exact candidate-version
+  agreement through nginx, candidate persistence after an audited appliance reboot, injected final nginx/front-door
+  failure with `rolled_back=true`, and the restored release identity and version remaining healthy after a second reboot
 
 The runner submits only global `/ui/management/appliance-apply` units. It does not call service-specific apply routes.
 
