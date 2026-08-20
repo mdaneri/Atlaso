@@ -54,6 +54,21 @@ table inet atlaso {
     assert transitional.index('iifname "eth0"') < transitional.index('iifname "eth1"')
 
 
+def test_management_handoff_snapshot_covers_every_nginx_side_effect():
+    """Snapshot global nginx and authentication files touched by site installation."""
+    helper = load_helper_module()
+
+    paths = set(helper._management_handoff_runtime_paths({"ca_config_path": ""}))
+
+    assert {
+        helper.NGINX_MAIN_CONFIG_PATH,
+        helper.NGINX_CONF_INCLUDE_PATH,
+        helper.NGINX_MANAGEMENT_SITE_PATH,
+        helper.NGINX_PUBLIC_SERVICES_SITE_PATH,
+        helper.VCF_DEPOT_HTPASSWD_PATH,
+    }.issubset(paths)
+
+
 def test_management_handoff_networkd_transition_keeps_old_and_candidate_paths():
     """Carry old addressing and routes in the candidate networkd transition."""
     helper = load_helper_module()

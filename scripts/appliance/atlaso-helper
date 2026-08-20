@@ -13124,8 +13124,11 @@ def _management_handoff_runtime_paths(payload: dict) -> list[Path]:
         *sorted(NETWORKD_CONFIG_DIR.glob(f"{NETWORKD_MANAGED_PREFIX}*")),
         *[NETWORKD_CONFIG_DIR / name for name in sorted(NETWORKD_DEFAULT_APPLIANCE_FILES)],
         FIREWALL_CONFIG_PATH,
+        NGINX_MAIN_CONFIG_PATH,
+        NGINX_CONF_INCLUDE_PATH,
         NGINX_MANAGEMENT_SITE_PATH,
         NGINX_PUBLIC_SERVICES_SITE_PATH,
+        VCF_DEPOT_HTPASSWD_PATH,
         ATLASO_SERVICE_HTTPS_DROPIN_PATH,
         *_management_handoff_certificate_paths(payload),
     ]
