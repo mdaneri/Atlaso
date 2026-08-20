@@ -1557,7 +1557,7 @@ def submit_inventory_report(
         db.rollback()
         message = str(exc)
         logger.warning("Rejected Inventory Linux report: %s", message)
-        if "occupied by live clients; retry later" in message:
+        if "Inventory storage capacity is occupied by" in message:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail=message,

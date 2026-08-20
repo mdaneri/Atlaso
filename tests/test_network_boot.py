@@ -2248,6 +2248,135 @@ def test_inventory_storage_pruning_preserves_live_hosts(db_session, monkeypatch)
     assert db_session.get(NetworkBootDiscoveredHost, stale_host.id) is None
 
 
+def test_inventory_storage_pruning_preserves_assigned_hosts(db_session, monkeypatch):
+    """Verify that storage pruning preserves assigned hosts and their reports.
+
+    Args:
+        db_session: Active database session used by the operation.
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+    """
+    monkeypatch.setattr(network_boot, "NETWORK_BOOT_MAX_HOSTS", 2)
+    monkeypatch.setattr(network_boot, "NETWORK_BOOT_MAX_REPORTS", 2)
+
+    assigned_session, _token = issue_inventory_session(db_session)
+    assigned_host, assigned_report = store_inventory_report(
+        db_session,
+        session=assigned_session,
+        payload=inventory_report(
+            dmi_uuid="4c4c4544-004b-4d10-8052-cac04f4c5111",
+            boot_mac="52:54:00:12:34:11",
+        ),
+    )
+    assigned_session.heartbeat_at = utcnow() - timedelta(minutes=5)
+    db_session.add(
+        EsxiPxeHost(
+            hostname="assigned-stale-host",
+            mac_address="52:54:00:12:34:11",
+            enabled=False,
+        )
+    )
+    db_session.commit()
+
+    stale_session, _token = issue_inventory_session(db_session)
+    stale_host, _report = store_inventory_report(
+        db_session,
+        session=stale_session,
+        payload=inventory_report(
+            dmi_uuid="4c4c4544-004b-4d10-8052-cac04f4c5112",
+            boot_mac="52:54:00:12:34:12",
+        ),
+    )
+    stale_session.heartbeat_at = utcnow() - timedelta(minutes=5)
+    db_session.commit()
+
+    newest_session, _token = issue_inventory_session(db_session)
+    newest_host, _report = store_inventory_report(
+        db_session,
+        session=newest_session,
+        payload=inventory_report(
+            dmi_uuid="4c4c4544-004b-4d10-8052-cac04f4c5113",
+            boot_mac="52:54:00:12:34:13",
+        ),
+    )
+    db_session.flush()
+
+    assert db_session.get(NetworkBootDiscoveredHost, assigned_host.id) is not None
+    assert db_session.get(NetworkBootInventoryReport, assigned_report.id) is not None
+    assert db_session.get(NetworkBootDiscoveredHost, newest_host.id) is not None
+    assert db_session.get(NetworkBootDiscoveredHost, stale_host.id) is None
+
+
+@pytest.mark.parametrize(
+    ("maximum_hosts", "maximum_reports"),
+    [(1, 2), (2, 1)],
+)
+def test_inventory_storage_rejects_when_assigned_state_fills_capacity(
+    client,
+    monkeypatch,
+    maximum_hosts,
+    maximum_reports,
+):
+    """Verify that assigned state cannot be evicted to admit another report.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+        maximum_hosts: Maximum retained discovered hosts for the scenario.
+        maximum_reports: Maximum retained inventory reports for the scenario.
+    """
+    monkeypatch.setattr(network_boot, "NETWORK_BOOT_MAX_HOSTS", maximum_hosts)
+    monkeypatch.setattr(network_boot, "NETWORK_BOOT_MAX_REPORTS", maximum_reports)
+
+    first_session = client.post("/pxe/inventory/sessions").json()
+    first = client.post(
+        "/pxe/inventory/report",
+        headers={"Authorization": f"Bearer {first_session['access_token']}"},
+        json=inventory_report(
+            dmi_uuid="4c4c4544-004b-4d10-8052-cac04f4c5121",
+            boot_mac="52:54:00:12:34:21",
+        ),
+    )
+    assert first.status_code == 201, first.text
+
+    from atlaso.app.database import SessionLocal
+
+    with SessionLocal() as db:
+        db.add(
+            EsxiPxeHost(
+                hostname="assigned-capacity-host",
+                mac_address="52:54:00:12:34:21",
+                enabled=False,
+            )
+        )
+        assigned_session = db.get(
+            NetworkBootInventorySession,
+            first_session["session_id"],
+        )
+        assert assigned_session is not None
+        assigned_session.heartbeat_at = utcnow() - timedelta(minutes=5)
+        db.commit()
+
+    second_session = client.post("/pxe/inventory/sessions").json()
+    rejected = client.post(
+        "/pxe/inventory/report",
+        headers={"Authorization": f"Bearer {second_session['access_token']}"},
+        json=inventory_report(
+            dmi_uuid="4c4c4544-004b-4d10-8052-cac04f4c5122",
+            boot_mac="52:54:00:12:34:22",
+        ),
+    )
+
+    assert rejected.status_code == 503, rejected.text
+    assert rejected.json()["detail"] == (
+        "Inventory storage capacity is occupied by live or assigned hosts; "
+        "retry later."
+    )
+    with SessionLocal() as db:
+        assert db.get(NetworkBootDiscoveredHost, first.json()["host_id"]) is not None
+        assert db.get(NetworkBootInventoryReport, first.json()["report_id"]) is not None
+        assert len(db.execute(select(NetworkBootDiscoveredHost)).scalars().all()) == 1
+
+
 def test_inventory_session_cap_preserves_live_and_command_sessions(
     db_session,
     monkeypatch,
@@ -2331,8 +2460,8 @@ def test_public_inventory_session_binds_identity_and_rejects_replay(client):
     assert replay.status_code == 409
 
 
-def test_public_inventory_report_marks_live_capacity_as_retryable(client, monkeypatch):
-    """Verify that public inventory report marks live capacity as retryable.
+def test_public_inventory_report_marks_protected_capacity_as_retryable(client, monkeypatch):
+    """Verify that public inventory report marks protected capacity as retryable.
 
     Args:
         client: HTTP test client used to exercise the Atlaso application.
@@ -2354,7 +2483,8 @@ def test_public_inventory_report_marks_live_capacity_as_retryable(client, monkey
             ValueError: If an input value is invalid.
         """
         raise ValueError(
-            "Inventory storage capacity is occupied by live clients; retry later."
+            "Inventory storage capacity is occupied by live or assigned hosts; "
+            "retry later."
         )
 
     monkeypatch.setattr(network_boot_api, "store_inventory_report", capacity_error)

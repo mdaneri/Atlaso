@@ -1273,6 +1273,15 @@ def _prune_inventory_storage(
             )
         ).scalars()
     )
+    assignments_by_mac = esxi_host_assignments_by_mac(db)
+    protected_host_ids.update(
+        int(host.id)
+        for host in db.execute(select(NetworkBootDiscoveredHost)).scalars()
+        if esxi_host_assignments_for_discovered_host(
+            host,
+            assignments_by_mac=assignments_by_mac,
+        )
+    )
     protected_host_ids.add(preserve_host_id)
     host_rows = db.execute(
         select(
@@ -1303,7 +1312,8 @@ def _prune_inventory_storage(
         or retained_reports > NETWORK_BOOT_MAX_REPORTS
     ):
         raise ValueError(
-            "Inventory storage capacity is occupied by live clients; retry later."
+            "Inventory storage capacity is occupied by live or assigned hosts; "
+            "retry later."
         )
     for host_id, report_count in host_rows:
         host_id = int(host_id)

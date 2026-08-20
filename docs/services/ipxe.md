@@ -368,7 +368,12 @@ Runtime inventory storage retains at
 most 512 discovered hosts, 2,048 reports across all hosts, 11 reports per host,
 and 4,096 sessions; expired sessions and the oldest inactive inventory are
 pruned as new sessions and reports arrive. Hosts with a recent heartbeat or an
-unacknowledged command are never selected for storage eviction.
+unacknowledged command are never selected for storage eviction. A discovered
+host assigned to an ESXi Host Reference and all of its retained reports are
+also protected until the administrator uses the explicit Host Reference
+deletion lifecycle. When live or assigned state alone occupies either global
+limit, Atlaso rejects a new report as retryable instead of evicting protected
+inventory.
 
 ## Manage ESXi Host References
 
