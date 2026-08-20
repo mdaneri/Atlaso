@@ -15055,7 +15055,12 @@ def _load_management_handoff_manifest(path: Path) -> dict:
         if not ca_path.is_file() or not ca_path.is_relative_to(CA_APPLY_DIR):
             raise ValueError(f"management handoff ca_config_path must name a staged file under {CA_APPLY_DIR}")
         payload["ca_config_path"] = str(ca_path)
-    for field in ("previous_management_interfaces", "previous_management_addresses"):
+    payload.setdefault("previous_management_parent_interfaces", [])
+    for field in (
+        "previous_management_interfaces",
+        "previous_management_parent_interfaces",
+        "previous_management_addresses",
+    ):
         values = payload[field]
         if not isinstance(values, list) or any(not isinstance(value, str) for value in values):
             raise ValueError(f"management handoff {field} must be a string list")
@@ -15294,6 +15299,10 @@ def _snapshot_management_handoff(payload: dict) -> dict:
         "phase": "snapshotted",
         "snapshots": snapshots,
         "previous_management_interfaces": payload["previous_management_interfaces"],
+        "previous_management_parent_interfaces": payload.get(
+            "previous_management_parent_interfaces",
+            [],
+        ),
         "previous_management_addresses": list(dict.fromkeys(previous_addresses)),
         "previous_https_enabled": bool(payload.get("previous_https_enabled", True)),
         "previous_management_public_port": int(
@@ -15397,6 +15406,23 @@ def _networkd_handoff_text(previous: str, candidate: str) -> str:
     return "\n".join(candidate_lines).rstrip() + "\n"
 
 
+def _management_handoff_previous_link_interfaces(state: dict) -> set[str]:
+    """Return prior listener and VLAN-parent links retained for rollback.
+
+    Args:
+        state: Durable management-handoff transaction state.
+
+    Returns:
+        Interfaces whose network state must survive candidate readiness.
+    """
+    return {
+        str(value)
+        for field in ("previous_management_interfaces", "previous_management_parent_interfaces")
+        for value in state.get(field, [])
+        if value
+    }
+
+
 def _install_management_holdovers(state: dict, payload: dict) -> list[Path]:
     """Install higher-priority copies of the previous management network files.
 
@@ -15407,7 +15433,7 @@ def _install_management_holdovers(state: dict, payload: dict) -> list[Path]:
     Returns:
         The installed holdover files.
     """
-    previous_interfaces = set(state.get("previous_management_interfaces") or [])
+    previous_interfaces = _management_handoff_previous_link_interfaces(state)
     candidate_files, _reconfigure, _admin_down = _systemd_networkd_files(Path(payload["network_config_path"]))
     candidate_by_interface: dict[str, str] = {}
     for content in candidate_files.values():
@@ -15442,7 +15468,7 @@ def _apply_management_candidate_network(path: Path, state: dict) -> None:
         path: Candidate staged network configuration.
         state: Durable transaction state.
     """
-    previous_interfaces = set(state.get("previous_management_interfaces") or [])
+    previous_interfaces = _management_handoff_previous_link_interfaces(state)
     install_result, _installed, _reconfigure, _admin_down = _install_systemd_networkd_files(
         path,
         defer_down_links=previous_interfaces,
@@ -15878,7 +15904,7 @@ def _restore_management_handoff_links(state: dict, commands: list[dict[str, obje
         state: Durable transaction state.
         commands: Bounded rollback command evidence to extend.
     """
-    previous_interfaces = set(str(value) for value in state.get("previous_management_interfaces", []))
+    previous_interfaces = _management_handoff_previous_link_interfaces(state)
     candidate_physical = set(str(value) for value in state.get("candidate_physical_interfaces", []))
     candidate_vlans = set(str(value) for value in state.get("candidate_vlan_interfaces", []))
     raw_link_states = state.get("candidate_link_states") or {}
@@ -16405,7 +16431,7 @@ def _apply_management_handoff(payload: dict) -> int:
         candidate_physical, _candidate_vlans, _removed = _parse_network_config(
             Path(str(payload["network_config_path"]))
         )
-        reconfigure_interfaces = set(state["previous_management_interfaces"])
+        reconfigure_interfaces = _management_handoff_previous_link_interfaces(state)
         reconfigure_interfaces.update(str(row.get("name") or "") for row in candidate_physical)
         for interface in sorted(reconfigure_interfaces):
             if not interface or not _link_exists(interface):

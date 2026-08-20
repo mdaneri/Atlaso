@@ -209,6 +209,8 @@ syncs every backup file and the backup directory before publishing the rollback 
 and merges global runtime addresses from every previous management interface with the configured addresses before it
 installs temporary higher-priority networkd holdovers for the previous management links. It then applies the
 candidate network and a transitional firewall that admits both previous and candidate management addresses. If the
+previous listener is a flagged-access VLAN, its trunk parent is retained separately for link restoration; parent
+addresses are never discovered or probed as management listeners. If the
 public protocol or same-protocol HTTP port changes, address-specific nginx blocks retain the old address, port, and
 HTTP/HTTPS behavior beside the candidate listener until candidate readiness succeeds. Previous HTTPS blocks always use
 separate snapshotted certificate and key files, including when the protocol remains HTTPS while the candidate

@@ -232,8 +232,8 @@ def test_management_handoff_timeout_stops_and_recovers_indeterminate_helper(monk
     }
     units["network"]["previous_management_paths"] = [
         {
-            "name": "eth0",
-            "parent": "",
+            "name": "eth0.20",
+            "parent": "eth0",
             "ip_cidr": "192.0.2.10/24",
             "ipv6_cidr": "",
         }
@@ -241,7 +241,22 @@ def test_management_handoff_timeout_stops_and_recovers_indeterminate_helper(monk
     units["network"]["removed_vlan_interfaces"] = []
     units["ca"]["context"] = {"ca_settings": object(), "ca_certificates": []}
     monkeypatch.setattr(ui, "load_appliance_apply_baselines", lambda _db: {"appliance_settings": {}})
-    monkeypatch.setattr(ui, "stage_appliance_apply_config", lambda target, _content: target)
+    staged: dict[str, str] = {}
+
+    def stage_config(target, content):
+        """Capture staged handoff content by target path.
+
+        Args:
+            target: Canonical staged configuration path.
+            content: Rendered staged configuration content.
+
+        Returns:
+            The unchanged target path.
+        """
+        staged[str(target)] = content
+        return target
+
+    monkeypatch.setattr(ui, "stage_appliance_apply_config", stage_config)
     monkeypatch.setattr(ui, "render_ca_apply_payload", lambda *_args, **_kwargs: "{}")
     adapter = TimeoutAdapter()
 
@@ -258,6 +273,9 @@ def test_management_handoff_timeout_stops_and_recovers_indeterminate_helper(monk
     assert group["management_handoff"]["management_handoff"] == "rolled back"
     assert group["management_handoff"]["failing_layer"] == "handoff helper wait"
     assert all(result["rolled_back"] is True for result in results)
+    manifest = json.loads(staged[str(ui.MANAGEMENT_HANDOFF_STAGED_MANIFEST_PATH)])
+    assert manifest["previous_management_interfaces"] == ["eth0.20"]
+    assert manifest["previous_management_parent_interfaces"] == ["eth0"]
 
 
 def test_management_handoff_settings_baseline_ignores_only_applied_front_door_fields():

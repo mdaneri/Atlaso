@@ -12523,10 +12523,11 @@ def execute_management_handoff(
     previous_paths = list(network.get("previous_management_paths") or [])
     previous_addresses: list[str] = []
     previous_interfaces: list[str] = []
+    previous_parent_interfaces: list[str] = []
     for path in previous_paths:
         parent = str(path.get("parent") or "")
-        if parent and parent not in previous_interfaces:
-            previous_interfaces.append(parent)
+        if parent and parent not in previous_parent_interfaces:
+            previous_parent_interfaces.append(parent)
         name = str(path.get("name") or "")
         if name and name not in previous_interfaces:
             previous_interfaces.append(name)
@@ -12575,6 +12576,7 @@ def execute_management_handoff(
             "public_services_config_path": public_path,
             "ca_config_path": ca_path,
             "previous_management_interfaces": previous_interfaces,
+            "previous_management_parent_interfaces": previous_parent_interfaces,
             "previous_management_addresses": list(dict.fromkeys(previous_addresses)),
             "previous_https_enabled": bool(
                 previous_settings.get("management_https_enabled", True)

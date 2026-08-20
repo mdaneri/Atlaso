@@ -560,12 +560,13 @@ def test_management_handoff_readiness_requires_consecutive_samples(monkeypatch):
 
 
 def test_management_handoff_merges_previous_static_and_dynamic_addresses(monkeypatch):
-    """Capture SLAAC alongside a configured static address on the old listener.
+    """Capture listener addresses without probing a flagged VLAN's trunk parent.
 
     Args:
         monkeypatch: Pytest fixture used to replace runtime address observation.
     """
     helper = load_helper_module()
+    commands: list[list[str]] = []
     observed = json.dumps(
         [
             {
@@ -580,17 +581,19 @@ def test_management_handoff_merges_previous_static_and_dynamic_addresses(monkeyp
     monkeypatch.setattr(
         helper,
         "_run",
-        lambda command: subprocess.CompletedProcess(command, 0, observed, ""),
+        lambda command: commands.append(command) or subprocess.CompletedProcess(command, 0, observed, ""),
     )
 
-    addresses = helper._management_handoff_previous_addresses(
-        {
-            "previous_management_interfaces": ["eth0"],
-            "previous_management_addresses": ["192.0.2.10"],
-        }
-    )
+    payload = {
+        "previous_management_interfaces": ["eth0.20"],
+        "previous_management_parent_interfaces": ["eth0"],
+        "previous_management_addresses": ["192.0.2.10"],
+    }
+    addresses = helper._management_handoff_previous_addresses(payload)
 
     assert addresses == ["192.0.2.10", "2001:db8::10"]
+    assert commands == [["ip", "-j", "address", "show", "dev", "eth0.20"]]
+    assert helper._management_handoff_previous_link_interfaces(payload) == {"eth0", "eth0.20"}
 
 
 def test_management_handoff_syncs_backups_before_publishing_marker(monkeypatch, tmp_path):

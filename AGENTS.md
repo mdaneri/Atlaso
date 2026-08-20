@@ -300,7 +300,8 @@ The following cross-cutting boundaries always apply:
   firewall state changes in either direction; apply the enabled or disabled candidate ruleset only after readiness. Commit
   baselines only from the exact staged snapshots, and leave desired-state edits made during readiness pending. A
   flagged-access candidate must remove a stale dedicated `00-atlaso-mgmt.network` file when that file is not part of the
-  candidate configuration.
+  candidate configuration. Retain a flagged-management VLAN's trunk parent for link rollback without treating the
+  parent's addresses as management listeners or readiness targets.
 - Physical-interface desired-state updates from the API and UI use one atomic domain service. Capture the previous
   IPv4 and IPv6 CIDRs before mutation, refresh dependent service, ESX Storage, Web Terminal, DHCP, and Network Boot
   bindings before one commit, include child VLAN dependencies when their parent becomes unavailable, roll back every
