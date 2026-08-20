@@ -220,8 +220,11 @@ resolver override, and reconfigures the restored links before checking the previ
 
 Readiness is fail-closed and bounded. The helper first requires Atlaso's loopback `/openapi.json` upstream to succeed;
 only then may it validate and reload nginx. It requires consecutive successful direct candidate-listener probes and
-host-facing probes for every configured, DHCP-discovered, and SLAAC-discovered candidate address before deleting the
-holdovers and applying the final firewall. A second
+host-facing probes for every configured candidate address. Each dynamic listener row must acquire an address for every
+requested DHCP or SLAAC family within the shared bounded discovery window; readiness cannot succeed on another row or
+family when one is missing. When the candidate disables nftables, the transitional ruleset keeps the previous filtering
+policy and adds only the candidate management admission rules; the chainless disabled ruleset applies after readiness
+while the old path retires. A second
 readiness pass protects retirement. Any validation, mutation, service, probe, or retirement failure restores every
 captured file, reloads networkd and nftables, reconfigures previous links, reloads nginx, and restarts Atlaso when the
 captured state requires it. Rollback explicitly reconfigures every pre-existing candidate link and removes a

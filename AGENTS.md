@@ -284,7 +284,9 @@ The following cross-cutting boundaries always apply:
   helper, then restore every captured runtime
   file and link, reconfigure pre-existing candidate links, remove candidate-only VLANs, fail closed without host
   mutation when an active appliance has no known-good Network baseline, keep the old path reachable, and record a
-  truthful non-secret failing layer. Discover and probe DHCP and SLAAC candidate addresses before retirement, commit
+  truthful non-secret failing layer. Require every dynamic candidate listener to acquire and probe each requested DHCP
+  or SLAAC address family before retirement. Preserve the previous firewall policy plus minimal candidate admission when
+  the same handoff disables the firewall, and apply the disabled ruleset only after candidate readiness. Commit
   baselines only from the exact staged snapshots, and leave desired-state edits made during readiness pending. A
   flagged-access candidate must remove a stale dedicated `00-atlaso-mgmt.network` file when that file is not part of the
   candidate configuration.

@@ -15396,12 +15396,56 @@ def _apply_management_candidate_network(path: Path, state: dict) -> None:
             raise ValueError(f"candidate networkd reconfigure failed for {interface}")
 
 
-def _management_handoff_firewall_text(candidate: str, previous: str) -> str:
+def _management_handoff_candidate_firewall_rules(network_path: Path) -> list[str]:
+    """Return minimal candidate-listener admission rules for a transition.
+
+    Args:
+        network_path: Candidate staged network configuration.
+
+    Returns:
+        Nftables input rules for effective candidate management listeners.
+    """
+    physical, vlans, _removed = _parse_network_config(network_path)
+    rules: list[str] = []
+    for row in physical:
+        name = str(row.get("name") or "")
+        if row.get("role") == "management":
+            rules.append(
+                f'    iifname "{name}" tcp dport {{ 22, 80, 443 }} accept comment "mgmt-console"'
+            )
+        elif (
+            row.get("role") == "access"
+            and row.get("mode") == "access"
+            and row.get("admin_state") == "up"
+            and row.get("access_management_ui_enabled", "false").lower() == "true"
+        ):
+            rules.append(
+                f'    iifname "{name}" tcp dport {{ 80, 443 }} accept comment "management-ui-{name}"'
+            )
+    for row in vlans:
+        name = str(row.get("name") or "")
+        if (
+            row.get("role") == "access"
+            and row.get("access_management_ui_enabled", "false").lower() == "true"
+        ):
+            rules.append(
+                f'    iifname "{name}" tcp dport {{ 80, 443 }} accept comment "management-ui-{name}"'
+            )
+    return rules
+
+
+def _management_handoff_firewall_text(
+    candidate: str,
+    previous: str,
+    *,
+    candidate_management_rules: list[str] | None = None,
+) -> str:
     """Add the previous management accept rules to the candidate firewall.
 
     Args:
         candidate: Candidate nftables configuration.
         previous: Previous applied nftables configuration.
+        candidate_management_rules: Minimal candidate admission rules.
 
     Returns:
         The transitional nftables configuration.
@@ -15421,10 +15465,19 @@ def _management_handoff_firewall_text(candidate: str, previous: str) -> str:
             )
         )
     ]
-    additions = [line for line in previous_rules if line not in candidate]
-    if not additions:
+    candidate_disabled = "Atlaso firewall desired state is disabled" in candidate
+    if candidate_disabled and "chain input {" not in previous:
         return candidate
-    lines = candidate.splitlines()
+    base = previous if candidate_disabled and "chain input {" in previous else candidate
+    desired_rules = (
+        list(candidate_management_rules or [])
+        if candidate_disabled
+        else previous_rules
+    )
+    additions = [line for line in desired_rules if line not in base]
+    if not additions:
+        return base
+    lines = base.splitlines()
     insert_at = next((index + 1 for index, line in enumerate(lines) if line.strip() == "chain input {"), 0)
     if not insert_at:
         raise ValueError("candidate firewall has no input chain for management holdover")
@@ -15438,12 +15491,14 @@ def _management_handoff_addresses(
     network_path: Path,
     *,
     previous_addresses: set[str] | None = None,
+    discovery_attempts: int = 45,
 ) -> list[str]:
     """Return configured candidate management listener addresses.
 
     Args:
         network_path: Candidate staged network configuration.
         previous_addresses: Addresses retained only for the old-path transition.
+        discovery_attempts: Bounded runtime-address discovery attempts.
 
     Returns:
         The configured address list.
@@ -15466,6 +15521,7 @@ def _management_handoff_addresses(
     )
     addresses: list[str] = []
     previous_addresses = previous_addresses or set()
+    dynamic_requirements: list[tuple[str, set[str]]] = []
     for row in rows:
         for key in ("ip_cidr", "ipv6_cidr"):
             value = str(row.get(key) or "")
@@ -15476,26 +15532,55 @@ def _management_handoff_addresses(
             str(row.get("ipv6_enabled", "false")).lower() == "true"
             and not str(row.get("ipv6_cidr") or "")
         )
-        if needs_runtime_ipv4 or needs_runtime_ipv6:
-            result = _run(["ip", "-j", "address", "show", "dev", str(row.get("name") or "")])
-            runtime_addresses: list[str] = []
-            if result.returncode == 0:
-                try:
-                    entries = json.loads(result.stdout)
-                except json.JSONDecodeError:
-                    entries = []
-                for entry in entries:
-                    for info in entry.get("addr_info", []):
-                        local = str(info.get("local") or "")
-                        family = str(info.get("family") or "")
-                        if info.get("scope") != "global" or not local:
-                            continue
-                        if (family == "inet" and needs_runtime_ipv4) or (
-                            family == "inet6" and needs_runtime_ipv6
-                        ):
-                            runtime_addresses.append(local)
-            fresh_addresses = [address for address in runtime_addresses if address not in previous_addresses]
-            addresses.extend(fresh_addresses or runtime_addresses)
+        required_families = set()
+        if needs_runtime_ipv4:
+            required_families.add("inet")
+        if needs_runtime_ipv6:
+            required_families.add("inet6")
+        if required_families:
+            dynamic_requirements.append((str(row.get("name") or ""), required_families))
+    discovered: dict[tuple[str, str], list[str]] = {}
+    for attempt in range(max(1, discovery_attempts)):
+        for interface, families in dynamic_requirements:
+            if all(discovered.get((interface, family)) for family in families):
+                continue
+            result = _run(["ip", "-j", "address", "show", "dev", interface])
+            if result.returncode != 0:
+                continue
+            try:
+                entries = json.loads(result.stdout)
+            except json.JSONDecodeError:
+                continue
+            for entry in entries:
+                for info in entry.get("addr_info", []):
+                    local = str(info.get("local") or "")
+                    family = str(info.get("family") or "")
+                    if info.get("scope") != "global" or not local or family not in families:
+                        continue
+                    discovered.setdefault((interface, family), []).append(local)
+        if all(
+            discovered.get((interface, family))
+            for interface, families in dynamic_requirements
+            for family in families
+        ):
+            break
+        if attempt + 1 < max(1, discovery_attempts):
+            time.sleep(1)
+    missing = [
+        f"{interface} {'DHCP IPv4' if family == 'inet' else 'SLAAC IPv6'}"
+        for interface, families in dynamic_requirements
+        for family in sorted(families)
+        if not discovered.get((interface, family))
+    ]
+    if missing:
+        raise ValueError(
+            "candidate runtime address was not acquired for " + ", ".join(missing)
+        )
+    for runtime_addresses in discovered.values():
+        fresh_addresses = [
+            address for address in runtime_addresses if address not in previous_addresses
+        ]
+        addresses.extend(fresh_addresses or runtime_addresses)
     return list(dict.fromkeys(addresses))
 
 
@@ -16071,7 +16156,13 @@ def _apply_management_handoff(payload: dict) -> int:
         candidate_firewall_path = Path(str(payload["firewall_config_path"]))
         transition_path = FIREWALL_APPLY_DIR / "atlaso-management-handoff.nft"
         transition_path.write_text(
-            _management_handoff_firewall_text(candidate_firewall_path.read_text(encoding="utf-8"), previous_firewall),
+            _management_handoff_firewall_text(
+                candidate_firewall_path.read_text(encoding="utf-8"),
+                previous_firewall,
+                candidate_management_rules=_management_handoff_candidate_firewall_rules(
+                    Path(str(payload["network_config_path"]))
+                ),
+            ),
             encoding="utf-8",
         )
         os.chmod(transition_path, 0o600)

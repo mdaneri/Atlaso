@@ -56,6 +56,88 @@ table inet atlaso {
     assert transitional.index('iifname "eth0"') < transitional.index('iifname "eth1"')
 
 
+def test_management_handoff_firewall_disable_preserves_filtered_transition():
+    """Keep the previous firewall plus candidate admission until retirement."""
+    helper = load_helper_module()
+    previous = '''flush ruleset
+table inet atlaso {
+  chain input {
+    type filter hook input priority filter; policy drop;
+    iifname "eth0" tcp dport { 22,80,443 } accept comment "mgmt-console"
+  }
+}
+'''
+    candidate = '''# Managed by Atlaso.
+flush ruleset
+# Atlaso firewall desired state is disabled.
+'''
+    candidate_rule = '    iifname "eth1" tcp dport { 80, 443 } accept comment "management-ui-eth1"'
+
+    transitional = helper._management_handoff_firewall_text(
+        candidate,
+        previous,
+        candidate_management_rules=[candidate_rule],
+    )
+
+    assert "policy drop" in transitional
+    assert 'iifname "eth0"' in transitional
+    assert candidate_rule in transitional
+    assert "firewall desired state is disabled" not in transitional
+
+
+def test_management_handoff_firewall_stays_disabled_when_already_disabled():
+    """Avoid inventing a filter table when both firewall states are open."""
+    helper = load_helper_module()
+    disabled = "flush ruleset\n# Atlaso firewall desired state is disabled.\n"
+
+    transitional = helper._management_handoff_firewall_text(
+        disabled,
+        disabled,
+        candidate_management_rules=['    iifname "eth1" accept'],
+    )
+
+    assert transitional == disabled
+
+
+def test_management_handoff_builds_candidate_listener_firewall_rules(monkeypatch):
+    """Admit dedicated and flagged-access candidates under prior filtering.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace staged network parsing.
+    """
+    helper = load_helper_module()
+    monkeypatch.setattr(
+        helper,
+        "_parse_network_config",
+        lambda _path: (
+            [
+                {"name": "eth1", "role": "management"},
+                {
+                    "name": "eth2",
+                    "role": "access",
+                    "mode": "access",
+                    "admin_state": "up",
+                    "access_management_ui_enabled": "true",
+                },
+            ],
+            [
+                {
+                    "name": "eth3.20",
+                    "role": "access",
+                    "access_management_ui_enabled": "true",
+                }
+            ],
+            [],
+        ),
+    )
+
+    rules = helper._management_handoff_candidate_firewall_rules(Path("candidate"))
+
+    assert any('iifname "eth1"' in rule and "22, 80, 443" in rule for rule in rules)
+    assert any('iifname "eth2"' in rule and "80, 443" in rule for rule in rules)
+    assert any('iifname "eth3.20"' in rule and "80, 443" in rule for rule in rules)
+
+
 def test_management_handoff_snapshot_covers_every_nginx_side_effect():
     """Snapshot global nginx and authentication files touched by site installation."""
     helper = load_helper_module()
@@ -386,6 +468,80 @@ def test_management_handoff_discovers_slaac_candidate_addresses(monkeypatch, tmp
     assert addresses == ["198.51.100.10", "2001:db8::10"]
 
 
+@pytest.mark.parametrize(
+    ("row", "observed_family", "expected_label"),
+    [
+        (
+            {
+                "name": "eth1",
+                "role": "management",
+                "mode": "access",
+                "admin_state": "up",
+                "ipv4_method": "dhcp",
+                "ipv6_enabled": "false",
+            },
+            "inet6",
+            "eth1 DHCP IPv4",
+        ),
+        (
+            {
+                "name": "eth1",
+                "role": "management",
+                "mode": "access",
+                "admin_state": "up",
+                "ipv4_method": "static",
+                "ip_cidr": "198.51.100.10/24",
+                "ipv6_enabled": "true",
+                "ipv6_cidr": "",
+            },
+            "inet",
+            "eth1 SLAAC IPv6",
+        ),
+    ],
+)
+def test_management_handoff_requires_each_dynamic_candidate_family(
+    monkeypatch,
+    tmp_path,
+    row,
+    observed_family,
+    expected_label,
+):
+    """Do not retire the old path when DHCP or SLAAC never materializes.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace runtime address discovery.
+        tmp_path: Temporary staged network configuration path.
+        row: Dynamic management-listener row under test.
+        observed_family: Non-required family returned by the runtime probe.
+        expected_label: Missing dynamic family named in the failure.
+    """
+    helper = load_helper_module()
+    network_path = tmp_path / "atlaso-network.conf"
+    network_path.write_text("candidate\n", encoding="utf-8")
+    monkeypatch.setattr(helper, "_parse_network_config", lambda _path: ([row], [], []))
+    observed = json.dumps(
+        [
+            {
+                "addr_info": [
+                    {
+                        "family": observed_family,
+                        "scope": "global",
+                        "local": "198.51.100.20" if observed_family == "inet" else "2001:db8::20",
+                    }
+                ]
+            }
+        ]
+    )
+    monkeypatch.setattr(
+        helper,
+        "_run",
+        lambda command: subprocess.CompletedProcess(command, 0, observed, ""),
+    )
+
+    with pytest.raises(ValueError, match=expected_label):
+        helper._management_handoff_addresses(network_path, discovery_attempts=1)
+
+
 def test_management_handoff_keeps_previous_http_during_https_transition():
     """Render an address-specific old-protocol listener beside the candidate."""
     helper = load_helper_module()
@@ -498,6 +654,7 @@ def test_successful_management_handoff_retains_rollback_state_until_ack(monkeypa
     monkeypatch.setattr(helper, "_install_management_holdovers", lambda _state, _payload: [])
     monkeypatch.setattr(helper, "_write_management_handoff_state", lambda _state, phase: phases.append(phase))
     monkeypatch.setattr(helper, "_apply_management_candidate_network", lambda *_args: None)
+    monkeypatch.setattr(helper, "_management_handoff_candidate_firewall_rules", lambda _path: [])
     monkeypatch.setattr(helper, "_handle_network", lambda *_args: 0)
     monkeypatch.setattr(helper, "_handle_firewall", lambda *_args: 0)
     monkeypatch.setattr(
@@ -577,6 +734,7 @@ def test_management_handoff_failure_rolls_back_with_truthful_layer(monkeypatch, 
     monkeypatch.setattr(helper, "_install_management_holdovers", lambda _state, _payload: [])
     monkeypatch.setattr(helper, "_write_management_handoff_state", lambda *_args: None)
     monkeypatch.setattr(helper, "_apply_management_candidate_network", lambda *_args: None)
+    monkeypatch.setattr(helper, "_management_handoff_candidate_firewall_rules", lambda _path: [])
     monkeypatch.setattr(helper, "_handle_network", lambda *_args: 0)
     monkeypatch.setattr(helper, "_handle_firewall", lambda *_args: 1)
     monkeypatch.setattr(helper, "_restore_management_handoff", lambda value: restored.append(value) or {"readiness": "old-ready"})
@@ -634,6 +792,7 @@ def test_management_handoff_resolver_failure_rolls_back_before_nginx(
     monkeypatch.setattr(helper, "_install_management_holdovers", lambda _state, _payload: [])
     monkeypatch.setattr(helper, "_write_management_handoff_state", lambda *_args: None)
     monkeypatch.setattr(helper, "_apply_management_candidate_network", lambda *_args: None)
+    monkeypatch.setattr(helper, "_management_handoff_candidate_firewall_rules", lambda _path: [])
     monkeypatch.setattr(helper, "_handle_firewall", lambda *_args: 0)
     monkeypatch.setattr(
         helper,
@@ -702,6 +861,7 @@ def test_management_handoff_never_activates_nginx_with_unhealthy_upstream(monkey
     monkeypatch.setattr(helper, "_install_management_holdovers", lambda _state, _payload: [])
     monkeypatch.setattr(helper, "_write_management_handoff_state", lambda *_args: None)
     monkeypatch.setattr(helper, "_apply_management_candidate_network", lambda *_args: None)
+    monkeypatch.setattr(helper, "_management_handoff_candidate_firewall_rules", lambda _path: [])
     monkeypatch.setattr(helper, "_handle_firewall", lambda *_args: 0)
     monkeypatch.setattr(
         helper,
