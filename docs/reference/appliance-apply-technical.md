@@ -212,7 +212,9 @@ certificate and key files, including when the protocol remains HTTPS while the c
 Within Appliance Settings, this transaction applies the management resolver interface, Atlaso loopback drop-in, and
 management nginx front door. The helper writes the selected static/local resolver directives into the candidate
 generated effective-listener networkd file or reverts that link to DHCP-provided DNS, then applies the matching per-link
-runtime state. This persistence applies equally to `00-atlaso-mgmt.network` and flagged-access physical/VLAN files.
+runtime state. After final Network retirement regenerates the managed networkd files, the helper repeats that persistent
+and runtime resolver apply before reconfiguring the links. This persistence applies equally to
+`00-atlaso-mgmt.network` and flagged-access physical/VLAN files.
 The resolver interface follows the effective listener precedence: dedicated management first, then a flagged access
 physical interface, then a flagged access VLAN.
 If another Appliance Settings field differs from its baseline, that unit remains pending after a successful handoff so

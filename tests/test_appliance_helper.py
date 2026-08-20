@@ -776,6 +776,7 @@ def test_successful_management_handoff_retains_rollback_state_until_ack(monkeypa
     phases: list[str] = []
     cleared: list[bool] = []
     nginx_suffixes: list[str] = []
+    retirement_operations: list[str] = []
     monkeypatch.setattr(helper, "_snapshot_management_handoff", lambda _payload: state)
     monkeypatch.setattr(
         helper,
@@ -787,7 +788,11 @@ def test_successful_management_handoff_retains_rollback_state_until_ack(monkeypa
     monkeypatch.setattr(helper, "_write_management_handoff_state", lambda _state, phase: phases.append(phase))
     monkeypatch.setattr(helper, "_apply_management_candidate_network", lambda *_args: None)
     monkeypatch.setattr(helper, "_management_handoff_candidate_firewall_rules", lambda _path: [])
-    monkeypatch.setattr(helper, "_handle_network", lambda *_args: 0)
+    monkeypatch.setattr(
+        helper,
+        "_handle_network",
+        lambda *_args: retirement_operations.append("final-network") or 0,
+    )
     monkeypatch.setattr(helper, "_handle_firewall", lambda *_args: 0)
     monkeypatch.setattr(
         helper,
@@ -803,7 +808,8 @@ def test_successful_management_handoff_retains_rollback_state_until_ack(monkeypa
     monkeypatch.setattr(
         helper,
         "_configure_management_handoff_resolver",
-        lambda payload: resolver_calls.append(str(payload["management_interface"]))
+        lambda payload: retirement_operations.append("resolver")
+        or resolver_calls.append(str(payload["management_interface"]))
         or subprocess.CompletedProcess(["resolvectl"], 0, "", ""),
     )
     monkeypatch.setattr(
@@ -839,7 +845,8 @@ def test_successful_management_handoff_retains_rollback_state_until_ack(monkeypa
     assert result == 0
     assert phases[-1] == "awaiting-application-commit"
     assert cleared == []
-    assert resolver_calls == ["eth1"]
+    assert resolver_calls == ["eth1", "eth1"]
+    assert retirement_operations == ["resolver", "final-network", "resolver"]
     assert "resolver-applying" in phases
     assert nginx_suffixes == ["old protocol listener", ""]
     payload = json.loads(capsys.readouterr().out.splitlines()[-1])

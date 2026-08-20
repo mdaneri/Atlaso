@@ -16328,6 +16328,10 @@ def _apply_management_handoff(payload: dict) -> int:
             path.unlink(missing_ok=True)
         if _handle_network("apply", [str(payload["network_config_path"])]) != 0:
             raise ValueError("final network apply failed while retiring the previous path")
+        failing_layer = "resolver persistence"
+        resolver = _configure_management_handoff_resolver(settings_payload)
+        if resolver.returncode != 0:
+            raise ValueError("candidate management resolver persistence failed after final network apply")
         candidate_physical, _candidate_vlans, _removed = _parse_network_config(
             Path(str(payload["network_config_path"]))
         )
