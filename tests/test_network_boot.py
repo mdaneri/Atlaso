@@ -1603,7 +1603,11 @@ def test_remove_unassigned_discovered_host_cleans_inventory_state(client, monkey
     )
 
     def record_assignment_snapshot(db):
-        """Record that assignment state was read after the lifecycle lock."""
+        """Record that assignment state was read after the lifecycle lock.
+
+        Args:
+            db: Active database session passed to the assignment lookup.
+        """
         lifecycle_events.append("assignments")
         return original_assignments(db)
 
@@ -2359,6 +2363,12 @@ def test_host_reference_lifecycle_lock_uses_postgresql_transaction_lock():
             self.calls = []
 
         def execute(self, statement, parameters):
+            """Record one lifecycle-lock SQL execution.
+
+            Args:
+                statement: SQL statement submitted by the lock helper.
+                parameters: Bound parameters submitted with the statement.
+            """
             self.calls.append((str(statement), parameters))
 
     session = RecordingSession()
@@ -2392,7 +2402,11 @@ def test_inventory_storage_pruning_locks_before_assignment_snapshot(
     )
 
     def record_assignment_snapshot(db):
-        """Record that assignment state was read after the lifecycle lock."""
+        """Record that assignment state was read after the lifecycle lock.
+
+        Args:
+            db: Active database session passed to the assignment lookup.
+        """
         lifecycle_events.append("assignments")
         return original_assignments(db)
 
@@ -2427,7 +2441,11 @@ def test_inventory_report_locks_before_identity_and_mac_mutation(
     )
 
     def record_report_identity(report):
-        """Record identity derivation after the lifecycle lock."""
+        """Record identity derivation after the lifecycle lock.
+
+        Args:
+            report: Inventory report passed to identity derivation.
+        """
         lifecycle_events.append("identity")
         return original_report_identity(report)
 

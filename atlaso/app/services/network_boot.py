@@ -1905,7 +1905,11 @@ def remove_esxi_host_discovery_state(
 
 
 def lock_esxi_host_reference_lifecycle(db: Session) -> None:
-    """Serialize Host Reference writes with assignment-dependent inventory changes."""
+    """Serialize Host Reference writes with assignment-dependent inventory changes.
+
+    Args:
+        db: Active database session that owns the lifecycle transaction.
+    """
     if db.bind is not None and db.bind.dialect.name == "postgresql":
         db.execute(
             text("SELECT pg_advisory_xact_lock(:lock_id)"),
