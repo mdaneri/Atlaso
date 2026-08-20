@@ -4866,11 +4866,55 @@ def _load_appliance_settings_config(path: Path) -> dict:
     return payload
 
 
-def _appliance_settings_config_errors(path: Path) -> list[str]:
+def _staged_management_https_material(
+    ca_path: Path,
+    certificate_path: Path,
+    private_key_path: Path,
+) -> tuple[str, str]:
+    """Return the staged CA certificate pair for the management listener.
+
+    Args:
+        ca_path: Staged Certificate Authority payload.
+        certificate_path: Configured management certificate destination.
+        private_key_path: Configured management private-key destination.
+
+    Returns:
+        Staged certificate and private-key PEM values.
+
+    Raises:
+        ValueError: If the staged payload does not own the configured pair.
+    """
+    payload = _load_ca_payload(ca_path)
+    certificates = payload.get("certificates")
+    if not isinstance(certificates, list):
+        raise ValueError("staged CA payload certificates must be a list")
+    for certificate in certificates:
+        if not isinstance(certificate, dict):
+            continue
+        cert_value = str(certificate.get("cert_path") or "")
+        key_value = str(certificate.get("key_path") or "")
+        if not cert_value or not key_value:
+            continue
+        staged_cert_path = _ca_managed_path(cert_value, "staged management certificate path")
+        staged_key_path = _ca_managed_path(key_value, "staged management private key path")
+        if staged_cert_path == certificate_path and staged_key_path == private_key_path:
+            return (
+                str(certificate.get("certificate_pem") or ""),
+                str(certificate.get("private_key_pem") or ""),
+            )
+    raise ValueError("staged CA payload does not contain the configured management HTTPS certificate and key")
+
+
+def _appliance_settings_config_errors(
+    path: Path,
+    *,
+    staged_ca_path: Path | None = None,
+) -> list[str]:
     """Perform appliance settings config errors.
 
     Args:
         path: Filesystem path read, validated, or updated by the operation.
+        staged_ca_path: Bundled CA payload that will install management TLS material.
     """
     errors: list[str] = []
     try:
@@ -4969,6 +5013,10 @@ def _appliance_settings_config_errors(path: Path) -> list[str]:
     if bool(payload.get("management_https_enabled")):
         cert_path_value = str(payload.get("management_https_cert_path") or "")
         key_path_value = str(payload.get("management_https_key_path") or "")
+        cert_path: Path | None = None
+        key_path: Path | None = None
+        cert_pem: str | None = None
+        key_pem: str | None = None
         if not cert_path_value:
             errors.append("management_https_cert_path is required when management HTTPS is enabled.")
         if not key_path_value:
@@ -4976,31 +5024,48 @@ def _appliance_settings_config_errors(path: Path) -> list[str]:
         if cert_path_value:
             try:
                 cert_path = _ca_managed_path(cert_path_value, "management_https_cert_path")
-                if not cert_path.is_file():
-                    errors.append(f"management HTTPS certificate does not exist: {cert_path}")
-                else:
-                    cert_pem = cert_path.read_text(encoding="utf-8")
-                    errors.extend(_pem_errors(cert_pem, "management HTTPS certificate"))
-            except (OSError, ValueError) as exc:
+            except ValueError as exc:
                 errors.append(str(exc))
         if key_path_value:
             try:
                 key_path = _ca_managed_path(key_path_value, "management_https_key_path")
-                if not key_path.is_file():
-                    errors.append(f"management HTTPS private key does not exist: {key_path}")
-                else:
-                    key_pem = key_path.read_text(encoding="utf-8")
-                    errors.extend(_pem_errors(key_pem, "management HTTPS private key", private_key=True))
+            except ValueError as exc:
+                errors.append(str(exc))
+        if cert_path is not None and key_path is not None and staged_ca_path is not None:
+            try:
+                cert_pem, key_pem = _staged_management_https_material(
+                    staged_ca_path,
+                    cert_path,
+                    key_path,
+                )
             except (OSError, ValueError) as exc:
                 errors.append(str(exc))
-        if cert_path_value and key_path_value:
+        else:
+            if cert_path is not None:
+                try:
+                    if not cert_path.is_file():
+                        errors.append(f"management HTTPS certificate does not exist: {cert_path}")
+                    else:
+                        cert_pem = cert_path.read_text(encoding="utf-8")
+                except OSError as exc:
+                    errors.append(str(exc))
+            if key_path is not None:
+                try:
+                    if not key_path.is_file():
+                        errors.append(f"management HTTPS private key does not exist: {key_path}")
+                    else:
+                        key_pem = key_path.read_text(encoding="utf-8")
+                except OSError as exc:
+                    errors.append(str(exc))
+        if cert_pem is not None:
+            errors.extend(_pem_errors(cert_pem, "management HTTPS certificate"))
+        if key_pem is not None:
+            errors.extend(_pem_errors(key_pem, "management HTTPS private key", private_key=True))
+        if cert_pem is not None and key_pem is not None:
             try:
-                cert_path = _ca_managed_path(cert_path_value, "management_https_cert_path")
-                key_path = _ca_managed_path(key_path_value, "management_https_key_path")
-                if cert_path.is_file() and key_path.is_file():
-                    matches = _ca_key_matches_certificate(cert_path.read_text(encoding="utf-8"), key_path.read_text(encoding="utf-8"))
-                    if matches is False:
-                        errors.append("management HTTPS private key does not match the certificate public key.")
+                matches = _ca_key_matches_certificate(cert_pem, key_pem)
+                if matches is False:
+                    errors.append("management HTTPS private key does not match the certificate public key.")
             except (OSError, ValueError) as exc:
                 errors.append(str(exc))
     return errors
@@ -15087,21 +15152,25 @@ def _management_handoff_validation_errors(payload: dict) -> list[str]:
     """
     errors: list[str] = []
     network_path = Path(payload["network_config_path"])
+    ca_path_value = str(payload.get("ca_config_path") or "")
+    staged_ca_path = Path(ca_path_value) if ca_path_value else None
     errors.extend(f"network: {error}" for error in _network_config_errors(network_path))
     firewall_result = _validate_firewall_config(Path(payload["firewall_config_path"]))
     if firewall_result.returncode != 0:
         errors.append(f"firewall: {(firewall_result.stderr or firewall_result.stdout).strip()}")
     errors.extend(
         f"appliance settings: {error}"
-        for error in _appliance_settings_config_errors(Path(payload["appliance_settings_config_path"]))
+        for error in _appliance_settings_config_errors(
+            Path(payload["appliance_settings_config_path"]),
+            staged_ca_path=staged_ca_path,
+        )
     )
     errors.extend(
         f"public services: {error}"
         for error in _public_services_config_errors(Path(payload["public_services_config_path"]))
     )
-    ca_path = str(payload.get("ca_config_path") or "")
-    if ca_path:
-        errors.extend(f"certificate: {error}" for error in _ca_payload_errors(Path(ca_path)))
+    if staged_ca_path is not None:
+        errors.extend(f"certificate: {error}" for error in _ca_payload_errors(staged_ca_path))
     return [error for error in errors if error]
 
 

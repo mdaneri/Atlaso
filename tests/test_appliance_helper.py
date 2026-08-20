@@ -8128,6 +8128,73 @@ def test_appliance_settings_helper_requires_https_cert_files(tmp_path):
     assert "management_https_key_path is required when management HTTPS is enabled." in errors
 
 
+def test_appliance_settings_handoff_accepts_staged_https_cert_files(monkeypatch, tmp_path):
+    """Validate bundled management TLS material before its CA apply installs files.
+
+    Args:
+        monkeypatch: Pytest fixture used to isolate CA-managed paths and key matching.
+        tmp_path: Temporary directory containing staged settings and CA payloads.
+    """
+    helper = load_helper_module()
+    managed_root = tmp_path / "managed"
+    cert_path = managed_root / "https" / "management.crt"
+    key_path = managed_root / "https" / "management.key"
+    settings_path = tmp_path / "atlaso-settings.json"
+    settings_path.write_text(
+        appliance_settings_json(
+            management_https_enabled=True,
+            management_https_cert_path=str(cert_path),
+            management_https_key_path=str(key_path),
+        ),
+        encoding="utf-8",
+    )
+    ca_path = tmp_path / "atlaso-ca.json"
+    ca_path.write_text(
+        json.dumps(
+            {
+                "certificates": [
+                    {
+                        "cert_path": str(cert_path),
+                        "key_path": str(key_path),
+                        "certificate_pem": "-----BEGIN CERTIFICATE-----\nleaf\n-----END CERTIFICATE-----\n",
+                        "private_key_pem": "-----BEGIN PRIVATE KEY-----\nkey\n-----END PRIVATE KEY-----\n",
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(helper, "CA_MANAGED_PATH_BASE", managed_root)
+    monkeypatch.setattr(helper, "_ca_key_matches_certificate", lambda *_args: True)
+
+    assert not cert_path.exists()
+    assert not key_path.exists()
+    assert helper._appliance_settings_config_errors(
+        settings_path,
+        staged_ca_path=ca_path,
+    ) == []
+    monkeypatch.setattr(helper, "_network_config_errors", lambda _path: [])
+    monkeypatch.setattr(
+        helper,
+        "_validate_firewall_config",
+        lambda _path: subprocess.CompletedProcess(["nft", "--check"], 0, "", ""),
+    )
+    monkeypatch.setattr(helper, "_public_services_config_errors", lambda _path: [])
+    monkeypatch.setattr(helper, "_ca_payload_errors", lambda _path: [])
+    assert helper._management_handoff_validation_errors(
+        {
+            "network_config_path": str(tmp_path / "network.conf"),
+            "firewall_config_path": str(tmp_path / "firewall.nft"),
+            "appliance_settings_config_path": str(settings_path),
+            "public_services_config_path": str(tmp_path / "public-services.conf"),
+            "ca_config_path": str(ca_path),
+        }
+    ) == []
+    deployed_errors = helper._appliance_settings_config_errors(settings_path)
+    assert any("management HTTPS certificate does not exist" in error for error in deployed_errors)
+    assert any("management HTTPS private key does not exist" in error for error in deployed_errors)
+
+
 def test_appliance_settings_helper_requires_https_and_management_for_web_terminal(tmp_path):
     """Verify that appliance settings helper requires https and management for web terminal.
 
