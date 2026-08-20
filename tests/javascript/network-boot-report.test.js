@@ -12,6 +12,13 @@ function loadFunction(name, nextName, context = {}) {
   return vm.runInNewContext(`(function ${name}${functionSource})`, context);
 }
 
+function loadAsyncFunction(name, nextName, context = {}) {
+  const functionSource = source
+    .split(`async function ${name}`, 2)[1]
+    .split(`function ${nextName}`, 1)[0];
+  return vm.runInNewContext(`(async function ${name}${functionSource})`, context);
+}
+
 const networkBootReportValue = loadFunction(
   "networkBootReportValue",
   "networkBootAddressListOptions",
@@ -165,6 +172,28 @@ test("ESXi promotion selects the clicked discovered host instead of the first ca
   assert.equal(select.value, "47");
   assert.equal(selectEsxiDiscoveredHostOption(select, 99), false);
   assert.equal(select.value, "47");
+});
+
+test("ESXi Host Reference actions preserve JSON lifecycle conflict details", async () => {
+  class FormData {
+    set() {}
+  }
+  const detail = "Associated discovered-host inventory is also assigned to ESXi Host Reference `esx-02`.";
+  const postEsxiHostAction = loadAsyncFunction(
+    "postEsxiHostAction",
+    "newEsxiHostRow",
+    {
+      FormData,
+      Object,
+      atlasoGridWizardRequest: async () => { throw new Error(detail); },
+      window: { location: { reload: () => assert.fail("must not reload after a conflict") } },
+    },
+  );
+
+  await assert.rejects(
+    postEsxiHostAction("/esxi-pxe/hosts/7/delete", {}, "csrf"),
+    new RegExp(detail.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")),
+  );
 });
 
 test("Network Boot discovered hosts refresh while visible and immediately on visibility return", async () => {

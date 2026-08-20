@@ -3147,15 +3147,7 @@ async function postEsxiHostAction(url, data, csrf, options = {}) {
     }
     body.set(key, value ?? "");
   }
-  const response = await fetch(url, {
-    method: "POST",
-    body,
-    credentials: "same-origin",
-  });
-  if (!response.ok) {
-    const text = await response.text();
-    throw new Error(text.match(/ESXi PXE host[^<]*/)?.[0] || text.match(/Default ESXi PXE[^<]*/)?.[0] || "The ESXi PXE host reference could not be saved.");
-  }
+  await atlasoGridWizardRequest(url, body, { expectJson: false });
   if (reload) {
     window.location.reload();
   }

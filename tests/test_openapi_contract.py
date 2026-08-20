@@ -305,6 +305,32 @@ def test_network_boot_discovered_host_removal_openapi_contract(client):
     assert "assigned host" not in media_removal["description"]
 
 
+def test_esxi_host_reference_removal_openapi_contract(client):
+    """Advertise API Host Reference deletion and optional discovery cleanup.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
+    schema = client.get("/openapi.json").json()
+    removal = schema["paths"]["/api/v1/esxi-pxe/hosts/{host_id}"]["delete"]
+
+    assert removal["operationId"] == "deleteEsxiPxeHost"
+    assert "write:esxi-pxe" in removal["description"]
+    assert "write:pxe" in removal["description"]
+    assert "global Appliance Apply" in removal["description"]
+    assert removal["responses"]["200"]["content"]["application/json"]["schema"] == {
+        "$ref": "#/components/schemas/EsxiPxeHostDeleteResponse"
+    }
+    assert removal["responses"]["409"]["content"]["application/json"]["schema"] == {
+        "$ref": "#/components/schemas/ProblemDetails"
+    }
+    parameter = next(
+        item for item in removal["parameters"] if item["name"] == "remove_discovered_host"
+    )
+    assert parameter["in"] == "query"
+    assert parameter["required"] is False
+
+
 def test_esxi_custom_variable_openapi_contract(client):
     """Verify that esxi custom variable openapi contract.
 

@@ -375,7 +375,8 @@ The following cross-cutting boundaries always apply:
   and host row only through the explicit associated-discovery option. Keep
   Host Reference association IDs synchronized during live discovery refresh,
   and reject associated-discovery cleanup while another Host Reference still
-  owns any reported MAC for that discovery.
+  owns any reported MAC for that discovery. Expose the same retain-or-clean-up
+  lifecycle through the scoped `/api/v1` Host Reference deletion operation.
 - Windows Inventory Linux and Photon builds select the dedicated `Atlaso-Build` WSL distribution by default. WSL is a
   pre-existing host prerequisite: ordinary builds must never install or configure WSL, create a missing distribution,
   change the default distribution, elevate, reboot, or remove a distribution. Keep the pinned setup contract, explicit

@@ -412,7 +412,11 @@ discovered host and retained inventory state**; selecting it removes the Host
 Reference and matching discovery commands, sessions, reports, and host row in
 the same transaction. Atlaso rejects that cleanup when the same discovery is
 also assigned to another Host Reference; retry without inventory cleanup or
-remove the other assignment first. Start the assigned host first and choose its ESXi entry.
+remove the other assignment first. API clients use `DELETE
+/api/v1/esxi-pxe/hosts/{host_id}` with `write:esxi-pxe`; the default retains
+discovery history. The optional `remove_discovered_host=true` query additionally
+requires `write:pxe` and applies the same transactional shared-assignment guard.
+Start the assigned host first and choose its ESXi entry.
 The host console displays a one-time code while its unpredictable boot claim
 waits. Then choose **Authorize ESXi boot once**, enter that console code
 in the shared two-step wizard, and review the host before submitting. Atlaso

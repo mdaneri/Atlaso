@@ -3163,6 +3163,45 @@
         "title": "EsxiPxeHostCreate",
         "type": "object"
       },
+      "EsxiPxeHostDeleteResponse": {
+        "description": "Lifecycle counts returned after deleting an ESXi Host Reference.\n\nAttributes:\n    deleted: Whether the Host Reference was deleted.\n    discovered_hosts_removed: Number of associated discovered-host rows removed.\n    reports: Number of retained inventory reports removed.\n    sessions: Number of retained inventory sessions removed.\n    commands: Number of retained inventory commands removed.",
+        "properties": {
+          "commands": {
+            "description": "Number of retained inventory commands removed.",
+            "title": "Commands",
+            "type": "integer"
+          },
+          "deleted": {
+            "description": "Whether the ESXi Host Reference was deleted.",
+            "title": "Deleted",
+            "type": "boolean"
+          },
+          "discovered_hosts_removed": {
+            "description": "Number of associated discovered-host rows removed.",
+            "title": "Discovered Hosts Removed",
+            "type": "integer"
+          },
+          "reports": {
+            "description": "Number of retained inventory reports removed.",
+            "title": "Reports",
+            "type": "integer"
+          },
+          "sessions": {
+            "description": "Number of retained inventory sessions removed.",
+            "title": "Sessions",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "deleted",
+          "discovered_hosts_removed",
+          "reports",
+          "sessions",
+          "commands"
+        ],
+        "title": "EsxiPxeHostDeleteResponse",
+        "type": "object"
+      },
       "EsxiPxeHostResponse": {
         "description": "Fields returned by the Atlaso esxi pxe host API.\n\nAttributes:\n    id: Unique database identifier assigned to this resource.\n    kickstart_name: Returned kickstart name value for this esxi pxe host resource.\n    installer_iso_name: Returned installer iso name value for this esxi pxe host resource.\n    created_at: UTC timestamp when the resource was created.\n    updated_at: UTC timestamp when the resource was last updated.",
         "properties": {
@@ -11236,6 +11275,96 @@
       }
     },
     "/api/v1/esxi-pxe/hosts/{host_id}": {
+      "delete": {
+        "description": "Delete one ESXi Host Reference with an explicit discovery-retention choice.\n\nRequires the `write:esxi-pxe` API scope. By default, deletion retains\nassociated discovered-host inventory so it can be promoted again. Setting\n`remove_discovered_host=true` additionally requires `write:pxe` and removes\nexclusively associated commands, sessions, reports, and discovered-host rows\nin the same transaction. Cleanup returns 409 before mutation if another Host\nReference owns any reported MAC. Saved desired state changes immediately;\ngenerated PXE state changes only through global Appliance Apply.",
+        "operationId": "deleteEsxiPxeHost",
+        "parameters": [
+          {
+            "description": "Unique identifier of the ESXi Host Reference to delete.",
+            "in": "path",
+            "name": "host_id",
+            "required": true,
+            "schema": {
+              "description": "Unique identifier of the ESXi Host Reference to delete.",
+              "title": "Host Id",
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Also remove associated discovered-host inventory state. This optional cleanup requires the write:pxe scope and fails when another Host Reference owns the same discovery.",
+            "in": "query",
+            "name": "remove_discovered_host",
+            "required": false,
+            "schema": {
+              "default": false,
+              "description": "Also remove associated discovered-host inventory state. This optional cleanup requires the write:pxe scope and fails when another Host Reference owns the same discovery.",
+              "title": "Remove Discovered Host",
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EsxiPxeHostDeleteResponse"
+                }
+              }
+            },
+            "description": "Delete one ESXi Host Reference with an explicit discovery-retention choice. The response body matches the documented success schema."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "The token lacks write:esxi-pxe, or optional discovery cleanup was requested without write:pxe."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "The ESXi Host Reference does not exist."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Associated discovery cleanup was requested, but another ESXi Host Reference still owns a reported MAC for that discovery."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "The request parameters or body failed Atlaso validation. The response includes a request ID that can be correlated with operational logs."
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Delete Esxi Pxe Host",
+        "tags": [
+          "ESXi PXE"
+        ]
+      },
       "put": {
         "description": "Update Esxi Pxe Host.\n\nRequires the `write:esxi-pxe` API scope. The operation updates saved Atlaso state and does not\nbypass the documented global Appliance Apply or service lifecycle boundary.",
         "operationId": "updateEsxiPxeHost",

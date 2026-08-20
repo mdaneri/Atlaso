@@ -1836,6 +1836,60 @@ def discovered_hosts_for_esxi_host(
     return matches
 
 
+def remove_esxi_host_discovery_state(
+    db: Session,
+    esxi_host: EsxiPxeHost,
+) -> dict[str, int]:
+    """Remove discoveries owned exclusively by one ESXi Host Reference.
+
+    The caller owns Host Reference removal, audit attribution, and the transaction
+    commit. Cleanup fails before mutation when another Host Reference owns any
+    reported MAC for an associated discovery.
+
+    Args:
+        db: Active database session.
+        esxi_host: ESXi Host Reference whose associated discoveries are removed.
+
+    Returns:
+        Counts of removed discovered hosts and retained inventory resources.
+
+    Raises:
+        ValueError: If another Host Reference still owns an associated discovery.
+    """
+    discovered_hosts = discovered_hosts_for_esxi_host(db, esxi_host)
+    assignments_by_mac = esxi_host_assignments_by_mac(db)
+    blocking_assignments: dict[int, str] = {}
+    for discovered_host in discovered_hosts:
+        for assignment in esxi_host_assignments_for_discovered_host(
+            discovered_host,
+            assignments_by_mac=assignments_by_mac,
+        ):
+            if assignment["id"] != esxi_host.id:
+                blocking_assignments[assignment["id"]] = assignment["hostname"]
+    if blocking_assignments:
+        blockers = ", ".join(
+            f"`{hostname}`" for hostname in blocking_assignments.values()
+        )
+        raise ValueError(
+            "Associated discovered-host inventory is also assigned to "
+            f"ESXi Host Reference {blockers}. Delete this Host Reference "
+            "without inventory cleanup, or remove the other assignments first."
+        )
+
+    removal_counts = {
+        "discovered_hosts_removed": 0,
+        "commands": 0,
+        "sessions": 0,
+        "reports": 0,
+    }
+    for discovered_host in discovered_hosts:
+        counts = remove_discovered_host_state(db, discovered_host)
+        for key in ("commands", "sessions", "reports"):
+            removal_counts[key] += counts[key]
+        removal_counts["discovered_hosts_removed"] += 1
+    return removal_counts
+
+
 def remove_discovered_host_state(
     db: Session,
     host: NetworkBootDiscoveredHost,

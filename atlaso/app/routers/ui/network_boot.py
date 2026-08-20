@@ -48,10 +48,7 @@ from atlaso.app.services.esxi_pxe import (
     validate_kickstart_vault_references,
 )
 from atlaso.app.services.network_boot import (
-    discovered_hosts_for_esxi_host,
-    esxi_host_assignments_by_mac,
-    esxi_host_assignments_for_discovered_host,
-    remove_discovered_host_state,
+    remove_esxi_host_discovery_state,
 )
 from atlaso.app.ui_routes import MANAGEMENT_UI_ROOT
 
@@ -1358,36 +1355,17 @@ def build_router(dependencies: NetworkBootUiDependencies) -> NetworkBootUiRouter
         if not host:
             raise HTTPException(status_code=404, detail="ESXi PXE host not found")
         hostname = host.hostname
-        discovered_hosts = discovered_hosts_for_esxi_host(db, host)
-        removal_counts = {"commands": 0, "sessions": 0, "reports": 0}
-        removed_discovered_hosts = 0
+        removal_counts = {
+            "discovered_hosts_removed": 0,
+            "commands": 0,
+            "sessions": 0,
+            "reports": 0,
+        }
         if remove_discovered_host:
-            assignments_by_mac = esxi_host_assignments_by_mac(db)
-            blocking_assignments: dict[int, str] = {}
-            for discovered_host in discovered_hosts:
-                for assignment in esxi_host_assignments_for_discovered_host(
-                    discovered_host,
-                    assignments_by_mac=assignments_by_mac,
-                ):
-                    if assignment["id"] != host.id:
-                        blocking_assignments[assignment["id"]] = assignment["hostname"]
-            if blocking_assignments:
-                blockers = ", ".join(
-                    f"`{hostname}`" for hostname in blocking_assignments.values()
-                )
-                raise HTTPException(
-                    status_code=409,
-                    detail=(
-                        "Associated discovered-host inventory is also assigned to "
-                        f"ESXi Host Reference {blockers}. Delete this Host Reference "
-                        "without inventory cleanup, or remove the other assignments first."
-                    ),
-                )
-            for discovered_host in discovered_hosts:
-                counts = remove_discovered_host_state(db, discovered_host)
-                for key in removal_counts:
-                    removal_counts[key] += counts[key]
-                removed_discovered_hosts += 1
+            try:
+                removal_counts = remove_esxi_host_discovery_state(db, host)
+            except ValueError as exc:
+                raise HTTPException(status_code=409, detail=str(exc)) from exc
         host.ip_address = ""
         sync_esxi_pxe_host_network_records(db, host, esxi_pxe_boot_settings(db))
         db.delete(host)
@@ -1398,7 +1376,7 @@ def build_router(dependencies: NetworkBootUiDependencies) -> NetworkBootUiRouter
             resource_type="esxi_pxe_host",
             resource_id=str(host_id),
             detail=(
-                f"hostname={hostname}; discovered_hosts_removed={removed_discovered_hosts}; "
+                f"hostname={hostname}; discovered_hosts_removed={removal_counts['discovered_hosts_removed']}; "
                 f"reports={removal_counts['reports']}; sessions={removal_counts['sessions']}; "
                 f"commands={removal_counts['commands']}"
             ),
