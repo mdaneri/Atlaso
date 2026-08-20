@@ -141,6 +141,10 @@ from atlaso.app.routers.ui.appliance_apply import (
 )
 from atlaso.app.routers.ui.automation import AutomationUiDependencies
 from atlaso.app.routers.ui.automation import build_router as build_automation_ui_router
+from atlaso.app.routers.ui.dashboard_monitor import DashboardMonitorUiDependencies
+from atlaso.app.routers.ui.dashboard_monitor import (
+    build_router as build_dashboard_monitor_ui_router,
+)
 from atlaso.app.routers.ui.dns_dhcp import DnsDhcpUiDependencies
 from atlaso.app.routers.ui.dns_dhcp import build_router as build_dns_dhcp_ui_router
 from atlaso.app.routers.ui.firewall import FirewallUiDependencies
@@ -13429,136 +13433,29 @@ def appliance_power_action(
     return RedirectResponse(f"/tasks?job_id={job.id}", status_code=303)
 
 
-@router.get("/dashboard", response_class=HTMLResponse, response_model=None)
-def dashboard(
-    request: Request,
-    identity: Identity = Depends(require_session_identity),
-    db: Session = Depends(get_db),
-) -> HTMLResponse:
-    """Handle the dashboard endpoint.
-
-    Args:
-        request: Incoming HTTP request.
-        identity: Authenticated identity authorizing the request.
-        db: Active database session.
-
-    Returns:
-        The endpoint response.
-    """
-    snapshot = dashboard_snapshot(db)
-    return render(
-        request,
-        "dashboard.html",
-        {
-            "identity": identity,
-            "dashboard": snapshot,
-            "sidebar_pending_apply_count": snapshot["pending_changes"]["count"] + snapshot["pending_changes"]["invalid_count"],
-        },
+_management_before_dashboard_monitor_router = router
+_dashboard_monitor_ui = build_dashboard_monitor_ui_router(
+    DashboardMonitorUiDependencies(
+        require_management_ui_request=require_management_ui_request,
+        render=render,
+        dashboard_snapshot=dashboard_snapshot,
+        require_monitoring_read=require_monitoring_read,
+        monitor_payload=monitor_payload,
+        format_byte_rate=_format_byte_rate,
+        utcnow=utcnow,
     )
+)
+dashboard_monitor_router = _dashboard_monitor_ui.router
+dashboard = _dashboard_monitor_ui.endpoints["dashboard"]
+dashboard_data = _dashboard_monitor_ui.endpoints["dashboard_data"]
+monitor_page = _dashboard_monitor_ui.endpoints["monitor_page"]
+monitor_data = _dashboard_monitor_ui.endpoints["monitor_data"]
+server_time = _dashboard_monitor_ui.endpoints["server_time"]
 
-
-@router.get("/dashboard/data", response_class=JSONResponse, response_model=None)
-def dashboard_data(
-    _identity: Identity = Depends(require_session_identity),
-    db: Session = Depends(get_db),
-) -> JSONResponse:
-    """Handle the dashboard data endpoint.
-
-    Args:
-        _identity: Authenticated identity supplied by the dependency layer.
-        db: Active database session.
-
-    Returns:
-        The endpoint response.
-    """
-    return JSONResponse(dashboard_snapshot(db))
-
-
-@router.get("/monitor", response_class=HTMLResponse, response_model=None)
-def monitor_page(
-    request: Request,
-    identity: Identity = Depends(require_session_identity),
-    db: Session = Depends(get_db),
-) -> HTMLResponse:
-    """Handle the monitor page endpoint.
-
-    Args:
-        request: Incoming HTTP request.
-        identity: Authenticated identity authorizing the request.
-        db: Active database session.
-
-    Returns:
-        The endpoint response.
-    """
-    require_monitoring_read(identity)
-    initial_payload = monitor_payload(db, hours=6)
-    network_rows = [
-        {
-            **row,
-            "rx_rate_label": _format_byte_rate(row.get("rx_bytes_per_sec")),
-            "tx_rate_label": _format_byte_rate(row.get("tx_bytes_per_sec")),
-            "errors": int(row.get("rx_errors") or 0) + int(row.get("tx_errors") or 0),
-            "drops": int(row.get("rx_dropped") or 0) + int(row.get("tx_dropped") or 0),
-        }
-        for row in initial_payload.get("networks", [])
-    ]
-    disk_rows = [
-        {
-            **row,
-            "read_rate_label": _format_byte_rate(row.get("read_bytes_per_sec")),
-            "write_rate_label": _format_byte_rate(row.get("write_bytes_per_sec")),
-        }
-        for row in initial_payload.get("disk_devices", [])
-    ]
-    return render(
-        request,
-        "monitor.html",
-        {
-            "identity": identity,
-            "monitor_initial_payload": initial_payload,
-            "monitor_network_fallback_rows": network_rows,
-            "monitor_disk_fallback_rows": disk_rows,
-        },
-    )
-
-
-@router.get("/monitor/data", response_class=JSONResponse, response_model=None)
-def monitor_data(
-    identity: Identity = Depends(require_session_identity),
-    db: Session = Depends(get_db),
-    hours: int = Query(default=6, ge=1, le=24),
-) -> JSONResponse:
-    """Handle the monitor data endpoint.
-
-    Args:
-        identity: Authenticated identity authorizing the request.
-        db: Active database session.
-        hours: Hours supplied by the caller.
-
-    Returns:
-        The endpoint response.
-    """
-    require_monitoring_read(identity)
-    return JSONResponse(monitor_payload(db, hours=hours))
-
-
-@router.get("/server-time", response_class=JSONResponse, response_model=None)
-def server_time(_identity: Identity = Depends(require_session_identity)) -> JSONResponse:
-    """Handle the server time endpoint.
-
-    Args:
-        _identity: Authenticated identity supplied by the dependency layer.
-
-    Returns:
-        The endpoint response.
-    """
-    now = utcnow()
-    return JSONResponse(
-        {
-            "server_time": now.isoformat(),
-            "label": now.strftime("Server %H:%M:%S UTC"),
-        }
-    )
+router = APIRouter(
+    prefix=MANAGEMENT_UI_ROOT,
+    dependencies=[Depends(require_management_ui_request)],
+)
 
 
 @router.get("/appliance-update", response_class=HTMLResponse, response_model=None)
@@ -18546,14 +18443,26 @@ allow_compatible_route_shadow(
 )
 _management_after_settings_backup_router = router
 UI_ROUTER_REGISTRY.register(
-    "facade_before_automation",
+    "facade_before_dashboard_monitor",
     (
         RouterContribution(plane="front_door", router=front_door_router),
         RouterContribution(plane="protocol", router=protocol_router),
         RouterContribution(plane="public", router=public_router),
         RouterContribution(
             plane="management",
-            router=_management_before_automation_router,
+            router=_management_before_dashboard_monitor_router,
+        ),
+    ),
+)
+UI_ROUTER_REGISTRY.register(
+    "dashboard_monitor",
+    (RouterContribution(plane="management", router=dashboard_monitor_router),),
+)
+UI_ROUTER_REGISTRY.register(
+    "facade_between_dashboard_monitor_automation",
+    (
+        RouterContribution(
+            plane="management", router=_management_before_automation_router
         ),
     ),
 )
@@ -18665,7 +18574,9 @@ UI_ROUTER_REGISTRY.register(
 )
 UI_ROUTER_REGISTRY.validate_domains(
     (
-        "facade_before_automation",
+        "facade_before_dashboard_monitor",
+        "dashboard_monitor",
+        "facade_between_dashboard_monitor_automation",
         "automation",
         "facade_between_automation_routes_wan",
         "appliance_apply",
