@@ -328,7 +328,7 @@ facade, and monitoring collection, sampling, persistence, and payload constructi
 `atlaso/app/services/monitoring.py`. Templates, authored CSS, browser JavaScript, screenshots, refresh cadence, and
 operator guidance retain their established owners.
 
-The UI registry places `dashboard_monitor` between `facade_before_dashboard_monitor` and
+The UI registry places `dashboard_monitor` between `facade_between_vaults_dashboard_monitor` and
 `facade_between_dashboard_monitor_automation`, preserving the original effective position after the front-door,
 protocol, public, and earlier management routes and before Appliance Update, Automation, and every later management
 domain. The stable UI facade continues to export all five endpoint callables plus the dashboard, monitoring-access,
