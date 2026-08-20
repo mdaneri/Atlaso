@@ -373,8 +373,10 @@ host assigned to an ESXi Host Reference and all of its retained reports are
 also protected until the administrator uses the explicit Host Reference
 deletion lifecycle. When live or assigned state alone occupies either global
 limit, Atlaso rejects a new report as retryable instead of evicting protected
-inventory. On PostgreSQL, report admission serializes its assignment snapshot
-and any resulting capacity pruning with Host Reference writes.
+inventory. On PostgreSQL, report admission serializes its identity and MAC
+mutation, assignment snapshot, and any resulting capacity pruning with every
+Host Reference writer, including promotion, DHCP-lease creation, and settings
+archive restore or factory reset.
 
 ## Manage ESXi Host References
 

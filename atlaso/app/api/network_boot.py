@@ -1261,6 +1261,7 @@ def promote_discovered_host(
         identity: Authenticated identity authorizing the operation.
         db: Active database session used by the operation.
     """
+    lock_esxi_host_reference_lifecycle(db)
     discovered = db.get(NetworkBootDiscoveredHost, host_id)
     if discovered is None:
         raise HTTPException(status_code=404, detail="Discovered host not found.")

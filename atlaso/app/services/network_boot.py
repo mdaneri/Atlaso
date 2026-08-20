@@ -1374,6 +1374,7 @@ def store_inventory_report(
     """
     if session.report_submitted_at is not None:
         raise ValueError("This inventory session has already submitted its report.")
+    lock_esxi_host_reference_lifecycle(db)
     report = normalize_inventory_report(payload)
     identity_key, dmi_uuid, macs = report_identity(report)
     candidates: list[NetworkBootDiscoveredHost] = []

@@ -495,11 +495,15 @@ def test_network_boot_available_versions_endpoint_uses_read_scope(client, monkey
     assert response.json() == expected
 
 
-def test_network_boot_mutation_endpoints_persist_jobs_commands_profiles_and_audits(client):
+def test_network_boot_mutation_endpoints_persist_jobs_commands_profiles_and_audits(
+    client,
+    monkeypatch,
+):
     """Verify that network boot mutation endpoints persist jobs commands profiles and audits.
 
     Args:
         client: HTTP test client used to exercise the Atlaso application.
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
     """
     raw_token = create_api_token(client, ["read:pxe", "write:pxe"])
     api_headers = {"Authorization": f"Bearer {raw_token}"}
@@ -584,6 +588,12 @@ def test_network_boot_mutation_endpoints_persist_jobs_commands_profiles_and_audi
         "Promotion MAC must match the discovered boot MAC."
     )
 
+    lifecycle_events = []
+    monkeypatch.setattr(
+        network_boot_api,
+        "lock_esxi_host_reference_lifecycle",
+        lambda _db: lifecycle_events.append("lock"),
+    )
     promotion = client.post(
         f"/api/v1/network-boot/hosts/{host_id}/promote",
         headers=api_headers,
@@ -598,6 +608,7 @@ def test_network_boot_mutation_endpoints_persist_jobs_commands_profiles_and_audi
         },
     )
     assert promotion.status_code == 201, promotion.text
+    assert lifecycle_events == ["lock"]
 
     discovered_hosts = client.get("/api/v1/network-boot/hosts", headers=api_headers)
     assert discovered_hosts.status_code == 200, discovered_hosts.text
@@ -2396,6 +2407,37 @@ def test_inventory_storage_pruning_locks_before_assignment_snapshot(
     assert lifecycle_events == ["lock", "assignments"]
 
 
+def test_inventory_report_locks_before_identity_and_mac_mutation(
+    db_session,
+    monkeypatch,
+):
+    """Verify report storage serializes before deriving or changing host identity.
+
+    Args:
+        db_session: Active database session used by the operation.
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+    """
+    session, _token = issue_inventory_session(db_session)
+    lifecycle_events = []
+    original_report_identity = network_boot.report_identity
+    monkeypatch.setattr(
+        network_boot,
+        "lock_esxi_host_reference_lifecycle",
+        lambda _db: lifecycle_events.append("lock"),
+    )
+
+    def record_report_identity(report):
+        """Record identity derivation after the lifecycle lock."""
+        lifecycle_events.append("identity")
+        return original_report_identity(report)
+
+    monkeypatch.setattr(network_boot, "report_identity", record_report_identity)
+
+    store_inventory_report(db_session, session=session, payload=inventory_report())
+
+    assert lifecycle_events == ["lock", "identity", "lock"]
+
+
 @pytest.mark.parametrize(
     ("maximum_hosts", "maximum_reports"),
     [(1, 2), (2, 1)],
@@ -2929,11 +2971,13 @@ def test_settings_archive_keeps_desired_environment_but_excludes_media_and_histo
 
 def test_settings_restore_and_factory_reset_preserve_installed_media_metadata(
     db_session,
+    monkeypatch,
 ):
     """Verify that settings restore and factory reset preserve installed media metadata.
 
     Args:
         db_session: Active database session used by the operation.
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
     """
     from atlaso.app.services.settings_archive import (
         export_settings_archive,
@@ -2956,14 +3000,22 @@ def test_settings_restore_and_factory_reset_preserve_installed_media_metadata(
     states["memtest86plus"].active_version = media.version
     db_session.commit()
     archive = export_settings_archive(db_session, actor="test")
+    lifecycle_events = []
+    monkeypatch.setattr(
+        network_boot,
+        "lock_esxi_host_reference_lifecycle",
+        lambda _db: lifecycle_events.append("lock"),
+    )
 
     restore_settings_archive(db_session, archive)
+    assert lifecycle_events == ["lock"]
     assert db_session.get(NetworkBootMedia, media.id) is not None
     restored = db_session.get(type(states["memtest86plus"]), "memtest86plus")
     assert restored.desired_version == "8.10"
     assert restored.active_version == ""
 
     factory_reset_desired_state(db_session)
+    assert lifecycle_events == ["lock", "lock"]
     assert db_session.get(NetworkBootMedia, media.id) is not None
     reset = db_session.get(type(states["memtest86plus"]), "memtest86plus")
     assert reset.enabled is False

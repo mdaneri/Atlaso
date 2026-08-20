@@ -63,6 +63,7 @@ from atlaso.app.services.esxi_pxe import (
     normalize_pxe_mac,
     sync_esxi_pxe_host_network_records,
 )
+from atlaso.app.services.network_boot import lock_esxi_host_reference_lifecycle
 from atlaso.app.ui_routes import (
     MANAGEMENT_UI_ROOT,
 )
@@ -1638,6 +1639,7 @@ def build_router(dependencies: DnsDhcpUiDependencies) -> DnsDhcpUiRouter:
             raise HTTPException(
                 status_code=400, detail="Lease MAC address is not valid for ESXi PXE."
             )
+        lock_esxi_host_reference_lifecycle(db)
         default_host = esxi_pxe_default_host_settings(db)
         normalized_iso_path = normalize_installer_iso_path(
             str(default_host.get("installer_iso_path") or "")
