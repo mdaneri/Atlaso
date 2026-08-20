@@ -12895,15 +12895,19 @@ def execute_management_handoff(
             MANAGEMENT_HANDOFF_STAGED_MANIFEST_PATH,
             json.dumps(manifest, indent=2, sort_keys=True),
         )
-    results = []
+    results: list[AdapterResult] = []
+    recovery_result: AdapterResult | None = None
     try:
         results = [adapter.validate_management_handoff(manifest_path)]
         if results[0].returncode == 0:
             results.append(adapter.apply_management_handoff(manifest_path))
+            if not adapter.dry_run and results[-1].returncode != 0:
+                recovery_result = adapter.recover_management_handoff()
     finally:
         if not adapter.dry_run:
             Path(ca_path).unlink(missing_ok=True)
     succeeded = bool(results) and all(result.returncode == 0 for result in results)
+    apply_result = results[1] if len(results) > 1 else None
     evidence = next(
         (
             parsed
@@ -12912,17 +12916,66 @@ def execute_management_handoff(
         ),
         {},
     )
+    recovery_evidence = (
+        management_handoff_result_evidence(recovery_result)
+        if recovery_result is not None
+        else {}
+    )
+    if apply_result is not None and apply_result.returncode == 124 and not evidence.get("failing_layer"):
+        evidence = {
+            **evidence,
+            "failing_layer": "handoff helper wait",
+            "error": "Management handoff helper wait timed out; immediate recovery was attempted.",
+        }
+    apply_rolled_back = bool(evidence.get("rolled_back")) or evidence.get("management_handoff") == "rolled back"
+    if recovery_evidence:
+        evidence = {**evidence, "recovery": recovery_evidence}
+        if recovery_result is not None and recovery_result.returncode == 0 and recovery_evidence.get("rolled_back") is True:
+            evidence = {
+                **evidence,
+                "management_handoff": "rolled back",
+                "rolled_back": True,
+            }
+    recovery_rolled_back = bool(
+        recovery_result is not None
+        and recovery_result.returncode == 0
+        and recovery_evidence.get("rolled_back") is True
+    )
+    rolled_back = apply_rolled_back or recovery_rolled_back
+    recovery_state = str(recovery_evidence.get("management_handoff") or "")
+    rollback_proven = (
+        apply_result is None
+        or apply_rolled_back
+        or recovery_rolled_back
+        or bool(
+            recovery_result is not None
+            and recovery_result.returncode == 0
+            and recovery_state == "no interrupted transaction"
+        )
+    )
+    if not succeeded and apply_result is not None and not rollback_proven:
+        evidence = {
+            **evidence,
+            "failing_layer": str(evidence.get("failing_layer") or "interruption recovery"),
+            "error": str(
+                evidence.get("error")
+                or "Management handoff failed and immediate recovery could not be proven."
+            ),
+        }
     group_result = {
         "success": succeeded,
         "dry_run": any(result.dry_run for result in results),
-        "commands": [adapter_result_to_payload(result) for result in results],
+        "commands": [
+            adapter_result_to_payload(result)
+            for result in [*results, *([recovery_result] if recovery_result is not None else [])]
+        ],
         "management_handoff": evidence or {
             "management_handoff": "committed" if succeeded else "failed before bounded helper evidence"
         },
+        "rollback_proven": rollback_proven,
     }
     failure_layer = str(group_result["management_handoff"].get("failing_layer") or "")
     failure_error = str(group_result["management_handoff"].get("error") or "")
-    rolled_back = group_result["management_handoff"].get("management_handoff") == "rolled back"
     unit_results = []
     for unit_id in MANAGEMENT_HANDOFF_UNIT_IDS:
         unit = units_by_id[unit_id]
@@ -12937,6 +12990,7 @@ def execute_management_handoff(
                 "management_handoff": group_result["management_handoff"],
                 "failing_layer": failure_layer,
                 "rolled_back": rolled_back,
+                "rollback_proven": rollback_proven,
                 "error": failure_error if not succeeded else "",
                 "summary": unit["summary"],
                 "validation_errors": unit["validation_errors"],
@@ -14837,15 +14891,17 @@ def run_appliance_apply_job(job_id: str, *, force_real: bool = False) -> None:
                     job.progress_percent = min(95, int(((index - 1) / total_steps) * 100))
                     db.commit()
                     handoff_adapter = SystemAdapter(dry_run=False) if force_real else SystemAdapter()
+                    if not handoff_adapter.dry_run:
+                        handoff_recovery_adapter = handoff_adapter
+                        handoff_runtime_pending = True
                     group_result, bundled_results = execute_management_handoff(
                         current_by_id,
                         job_id=job.id,
                         adapter=handoff_adapter,
                         db=db,
                     )
-                    if group_result.get("success") and not group_result.get("dry_run"):
-                        handoff_recovery_adapter = handoff_adapter
-                        handoff_runtime_pending = True
+                    if not group_result.get("success") and group_result.get("rollback_proven"):
+                        handoff_runtime_pending = False
                     bundled_results = [_redact_task_value(result) for result in bundled_results]
                     unit_results.extend(bundled_results)
                     finished = utcnow()
@@ -14865,7 +14921,12 @@ def run_appliance_apply_job(job_id: str, *, force_real: bool = False) -> None:
                             else "Management handoff failed and the previous path was rolled back."
                         )
                     current_payload = _job_payload(job)
-                    job.result = json.dumps({**current_payload, "units": unit_results}, indent=2)
+                    next_payload = {**current_payload, "units": unit_results}
+                    if handoff_runtime_pending:
+                        next_payload["management_handoff_runtime_commit_pending"] = True
+                    else:
+                        next_payload.pop("management_handoff_runtime_commit_pending", None)
+                    job.result = json.dumps(next_payload, indent=2)
                     if handoff_succeeded:
                         db.expire_all()
                         refreshed = appliance_apply_units(db, reconcile=False)

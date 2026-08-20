@@ -220,8 +220,9 @@ candidate-only VLAN after restoring its files. The helper leaves a durable trans
 bundled task state and baselines and sends an idempotent acknowledgement. A fixed transient systemd unit serializes
 apply with startup recovery, which stops and verifies any surviving helper before rollback. Startup rolls back when
 interruption precedes that database boundary and completes the acknowledgement when the database already records the
-candidate. Exceptions reconcile the same boundary immediately, and an unproven acknowledgement keeps the global Apply
-lock held. Results
+candidate. Adapter timeouts and other indeterminate apply returns invoke that same fixed-unit stop and rollback before
+the task becomes terminal. Exceptions reconcile the same boundary immediately, and an unproven acknowledgement keeps
+the global Apply lock held. Results
 expose only a bounded failing-layer identifier and
 non-secret error text; Appliance Apply writes that evidence to every bundled component and updates none of their
 baselines unless the transaction commits.

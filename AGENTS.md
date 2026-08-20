@@ -279,7 +279,8 @@ The following cross-cutting boundaries always apply:
   healthy. Retire the old path only
   after readiness succeeds; retain the durable rollback marker until Atlaso commits the bundled task state and baselines
   and explicitly acknowledges that commit. Retain the global apply lock while acknowledgement is pending. On failure,
-  interruption, or startup recovery, first stop and verify any surviving handoff helper, then restore every captured runtime
+  timeout, indeterminate helper return, interruption, or startup recovery, first stop and verify any surviving handoff
+  helper, then restore every captured runtime
   file and link, reconfigure pre-existing candidate links, remove candidate-only VLANs, fail closed without host
   mutation when an active appliance has no known-good Network baseline, keep the old path reachable, and record a
   truthful non-secret failing layer. A flagged-access candidate must remove a

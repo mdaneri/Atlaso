@@ -142,6 +142,8 @@ If Atlaso restarts during an ordinary apply, startup marks the running child fai
 fails the master task, and releases the global lock. For an interrupted management handoff, startup first asks the
 privileged helper to stop and verify any surviving handoff process before restoring the captured previous runtime state,
 then records the recovery result on the failed task.
+The same stop-and-recover path runs immediately if Atlaso times out while waiting for the privileged helper, because the
+fixed handoff service can outlive its waiting process.
 The helper retains that rollback state until Atlaso durably commits the bundled component results and baselines. If a
 restart occurs after that database commit, startup idempotently acknowledges the committed candidate instead of falsely
 claiming a rollback. A failed task whose helper acknowledgement is not proven retains the global Apply lock until startup

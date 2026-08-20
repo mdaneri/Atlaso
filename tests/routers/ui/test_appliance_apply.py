@@ -98,6 +98,111 @@ interface=eth0
     )
 
 
+def test_management_handoff_timeout_stops_and_recovers_indeterminate_helper(monkeypatch):
+    """Recover the fixed helper unit when the adapter wait times out.
+
+    Args:
+        monkeypatch: Pytest fixture used to isolate staging and helper execution.
+    """
+    from atlaso.app import ui
+    from atlaso.app.adapters.system import AdapterResult
+
+    class TimeoutAdapter:
+        """Return an indeterminate apply result followed by proven rollback."""
+
+        dry_run = False
+
+        def __init__(self):
+            """Initialize the recorded helper actions."""
+            self.actions: list[str] = []
+
+        def validate_management_handoff(self, manifest_path):
+            """Accept the staged manifest.
+
+            Args:
+                manifest_path: Staged handoff manifest path.
+            """
+            self.actions.append("validate")
+            return AdapterResult(
+                command=["atlaso-helper", "management-handoff", "validate", manifest_path],
+                dry_run=False,
+                returncode=0,
+            )
+
+        def apply_management_handoff(self, manifest_path):
+            """Return the adapter timeout used for indeterminate execution.
+
+            Args:
+                manifest_path: Staged handoff manifest path.
+            """
+            self.actions.append("apply")
+            return AdapterResult(
+                command=["atlaso-helper", "management-handoff", "apply", manifest_path],
+                dry_run=False,
+                stderr="management handoff helper wait timed out",
+                returncode=124,
+            )
+
+        def recover_management_handoff(self):
+            """Return bounded proof that the surviving helper was rolled back."""
+            self.actions.append("recover")
+            return AdapterResult(
+                command=["atlaso-helper", "management-handoff", "recover"],
+                dry_run=False,
+                stdout=json.dumps(
+                    {
+                        "management_handoff": "rolled back after interruption",
+                        "rolled_back": True,
+                        "failing_layer": "interruption serialization",
+                    }
+                ),
+                returncode=0,
+            )
+
+    unit_defaults = {
+        "label": "Management handoff component",
+        "summary": "Apply the management handoff component.",
+        "validation_errors": [],
+        "validation_warnings": [],
+        "config_path": "",
+        "config_preview": "",
+        "config_diff": "",
+        "raw_config_preview": "",
+    }
+    units = {
+        unit_id: {**unit_defaults, "id": unit_id}
+        for unit_id in ui.MANAGEMENT_HANDOFF_UNIT_IDS
+    }
+    units["network"]["previous_management_paths"] = [
+        {
+            "name": "eth0",
+            "parent": "",
+            "ip_cidr": "192.0.2.10/24",
+            "ipv6_cidr": "",
+        }
+    ]
+    units["network"]["removed_vlan_interfaces"] = []
+    units["ca"]["context"] = {"ca_settings": object(), "ca_certificates": []}
+    monkeypatch.setattr(ui, "load_appliance_apply_baselines", lambda _db: {"appliance_settings": {}})
+    monkeypatch.setattr(ui, "stage_appliance_apply_config", lambda target, _content: target)
+    monkeypatch.setattr(ui, "render_ca_apply_payload", lambda *_args, **_kwargs: "{}")
+    adapter = TimeoutAdapter()
+
+    group, results = ui.execute_management_handoff(
+        units,
+        job_id="job_timeout435",
+        adapter=adapter,
+        db=object(),
+    )
+
+    assert adapter.actions == ["validate", "apply", "recover"]
+    assert group["success"] is False
+    assert group["rollback_proven"] is True
+    assert group["management_handoff"]["management_handoff"] == "rolled back"
+    assert group["management_handoff"]["failing_layer"] == "handoff helper wait"
+    assert all(result["rolled_back"] is True for result in results)
+
+
 def test_management_handoff_settings_baseline_ignores_only_applied_front_door_fields():
     """Keep unrelated Appliance Settings pending after the management transaction."""
     from atlaso.app.ui import management_handoff_completes_appliance_settings
