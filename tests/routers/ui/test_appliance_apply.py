@@ -1,6 +1,7 @@
 """Test Appliance Apply management UI transport behavior."""
 
 import json
+from datetime import datetime
 
 from tests.routers.ui.helpers import login
 
@@ -154,6 +155,19 @@ def test_appliance_apply_status_preserves_planned_management_restart_context(cli
                 component_key="appliance_settings",
                 label="Appliance Settings",
                 position=1,
+                status=JobStatus.SUCCEEDED.value,
+                progress_percent=100,
+                finished_at=datetime(2026, 8, 20, 19, 30, 0),
+                result="{}",
+            )
+        )
+        db.add(
+            JobStep(
+                id=f"{job.id}:firewall",
+                job=job,
+                component_key="firewall",
+                label="Firewall",
+                position=2,
                 status=JobStatus.RUNNING.value,
                 progress_percent=50,
                 result="{}",
@@ -172,8 +186,10 @@ def test_appliance_apply_status_preserves_planned_management_restart_context(cli
         "grace_seconds": 15,
     }
     assert [(step["component_key"], step["status"]) for step in task["_children"]] == [
-        ("appliance_settings", "running")
+        ("appliance_settings", "succeeded"),
+        ("firewall", "running"),
     ]
+    assert task["_children"][0]["finished_at"] == "2026-08-20T19:30:00+00:00"
 
 
 def test_appliance_apply_transition_context_is_real_settings_apply_only():

@@ -8003,7 +8003,9 @@ def _task_time_label(value: datetime | None) -> str:
     """
     if not value:
         return ""
-    return value.isoformat()
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc).isoformat()
 
 
 def _can_cancel_task(job: Job, identity: Identity | None = None) -> bool:

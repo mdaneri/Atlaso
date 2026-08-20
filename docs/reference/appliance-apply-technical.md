@@ -52,9 +52,11 @@ persists `management_status_transition` before execution. Once that child is `ru
 seconds of neutral **reconnecting to task status** presentation. After the child succeeds, the server-owned contract
 covers the helper's three-second delayed restart plus the 15-second recovery grace. A successful status response at or
 after the scheduled restart instant, or recovery after an observed outage, consumes that one-time window so a later
-unrelated failure returns to the actionable warning. The same contract applies to forced-real tasks created by the local
-appliance console. It does not apply while that child is pending, to dry-run tasks, or to tasks without complete transition
-metadata. Continued failure after the grace window and every unexpected failure use the actionable availability warning.
+unrelated failure returns to the actionable warning. Task timestamps are normalized to explicit UTC offsets before the
+browser calculates that boundary, so the grace remains the same in every browser timezone. The same contract applies to
+forced-real tasks created by the local appliance console. It does not apply while that child is pending, to dry-run tasks,
+or to tasks without complete transition metadata. Continued failure after the grace window and every unexpected failure
+use the actionable availability warning.
 Successful reconciliation clears either notice and converges the modal, sidebar badge, pending count, and lock from the
 authoritative status and task responses. Terminal task state is sticky so an older in-flight `pending` or `running`
 response cannot replace a newer `succeeded`, `failed`, or `cancelled` result. If another session starts a new Apply

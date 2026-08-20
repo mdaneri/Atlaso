@@ -243,7 +243,7 @@ test("uses a neutral bounded reconnect state for a planned management restart", 
 test("keeps reconnect grace through the delayed restart after settings success", async () => {
   let now = 1000;
   const afterSettingsTask = plannedRestartTask("succeeded");
-  afterSettingsTask._children[0].finished_at = new Date(now).toISOString();
+  afterSettingsTask._children[0].finished_at = new Date(now).toISOString().replace("Z", "+00:00");
   afterSettingsTask._children.push({ component_key: "firewall", status: "running" });
   const statusPayloads = [
     { active_task: plannedRestartTask(), pending_count: 0 },
@@ -288,7 +288,7 @@ test("keeps reconnect grace through the delayed restart after settings success",
 test("consumes unused grace after a successful poll beyond the scheduled restart", async () => {
   let now = 1000;
   const afterSettingsTask = plannedRestartTask("succeeded");
-  afterSettingsTask._children[0].finished_at = new Date(now).toISOString();
+  afterSettingsTask._children[0].finished_at = new Date(now).toISOString().replace("Z", "+00:00");
   afterSettingsTask._children.push({ component_key: "firewall", status: "running" });
   const statusPayloads = [
     { active_task: plannedRestartTask(), pending_count: 0 },
