@@ -2682,7 +2682,11 @@ def test_settings_autosave_does_not_update_ntp_servers_when_ntp_is_disabled(clie
 
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import ApplianceSettings, DnsSettings, NtpSettings
-    from atlaso.app.ui import appliance_apply_status
+    from atlaso.app.ui import (
+        appliance_apply_status,
+        appliance_apply_units,
+        update_appliance_apply_baselines,
+    )
 
     login(client)
     with SessionLocal() as db:
@@ -2691,6 +2695,9 @@ def test_settings_autosave_does_not_update_ntp_servers_when_ntp_is_disabled(clie
         ntp_settings = db.execute(select(NtpSettings)).scalar_one()
         ntp_settings.enabled = False
         db.add_all([dns_settings, ntp_settings])
+        db.commit()
+        units = appliance_apply_units(db)
+        update_appliance_apply_baselines(db, units, {unit["id"] for unit in units})
         db.commit()
 
     page = client.get("/settings")
@@ -3687,12 +3694,17 @@ def test_appliance_settings_apply_task_records_redacted_dry_run_command_evidence
 
     from sqlalchemy import select
 
+    import atlaso.app.ui as ui
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import Job
 
     login(client)
     page = client.get("/settings")
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    with SessionLocal() as db:
+        units = ui.appliance_apply_units(db)
+        ui.update_appliance_apply_baselines(db, units, {unit["id"] for unit in units})
+        db.commit()
     saved = client.post(
         "/settings",
         data={
@@ -3742,10 +3754,16 @@ def test_appliance_apply_failure_renders_command_details(client, monkeypatch):
     import atlaso.app.ui as ui_module
     from atlaso.app.adapters.system import AdapterResult
     from atlaso.app.database import SessionLocal
-    from atlaso.app.models import Job
+    from atlaso.app.models import ApplianceSettings, Job
 
     base_system_adapter = ui_module.SystemAdapter
     monkeypatch.setattr(ui_module, "stage_appliance_apply_config", lambda path, _config: path)
+    with SessionLocal() as db:
+        units = ui_module.appliance_apply_units(db)
+        ui_module.update_appliance_apply_baselines(db, units, {unit["id"] for unit in units})
+        settings = db.execute(select(ApplianceSettings)).scalar_one()
+        settings.root_ssh_enabled = not settings.root_ssh_enabled
+        db.commit()
 
     class FailingApplianceSettingsAdapter(base_system_adapter):
         """Represent failing appliance settings adapter."""
@@ -3826,10 +3844,14 @@ def test_appliance_apply_stops_unit_after_validation_failure(client, monkeypatch
     import atlaso.app.ui as ui_module
     from atlaso.app.adapters.system import AdapterResult
     from atlaso.app.database import SessionLocal
-    from atlaso.app.models import Job
+    from atlaso.app.models import ApplianceSettings, Job
 
     base_system_adapter = ui_module.SystemAdapter
     monkeypatch.setattr(ui_module, "stage_appliance_apply_config", lambda path, _config: path)
+    with SessionLocal() as db:
+        units = ui_module.appliance_apply_units(db)
+        ui_module.update_appliance_apply_baselines(db, units, {unit["id"] for unit in units})
+        db.commit()
 
     class ValidationFailingApplianceSettingsAdapter(base_system_adapter):
         """Represent validation failing appliance settings adapter."""
@@ -3888,6 +3910,10 @@ def test_appliance_apply_stops_unit_after_validation_failure(client, monkeypatch
         headers={"X-Atlaso-Autosave": "1"},
     )
     assert saved.status_code == 200
+    with SessionLocal() as db:
+        settings = db.execute(select(ApplianceSettings)).scalar_one()
+        settings.root_ssh_enabled = not settings.root_ssh_enabled
+        db.commit()
 
     response = client.post("/appliance-apply", data={"csrf": csrf, "selected_units": "appliance_settings"})
 
@@ -13554,6 +13580,7 @@ def test_global_appliance_apply_tracks_baselines_diffs_and_skips(client):
 
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import Job, JobStep, Setting
+    from atlaso.app.ui import MANAGEMENT_HANDOFF_UNIT_IDS
 
     login(client)
     page = client.get("/dashboard")
@@ -13585,7 +13612,9 @@ def test_global_appliance_apply_tracks_baselines_diffs_and_skips(client):
         baseline_job = db.execute(select(Job).where(Job.type == "appliance-apply").order_by(Job.created_at.desc())).scalars().first()
         assert baseline_job is not None
         steps = db.scalars(select(JobStep).where(JobStep.job_id == baseline_job.id)).all()
-        assert [(step.component_key, step.status) for step in steps] == [("firewall", "succeeded")]
+        assert {(step.component_key, step.status) for step in steps} == {
+            (unit_id, "succeeded") for unit_id in MANAGEMENT_HANDOFF_UNIT_IDS
+        }
 
     firewall_page = client.get("/firewall")
     csrf = firewall_page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
@@ -16236,6 +16265,7 @@ def test_ca_live_apply_stages_decrypted_private_keys_without_leaking_job_output(
 
     from sqlalchemy import select
 
+    import atlaso.app.ui as ui
     from atlaso.app.adapters.system import AdapterResult
     from atlaso.app.config import get_settings
     from atlaso.app.database import SessionLocal
@@ -16243,6 +16273,11 @@ def test_ca_live_apply_stages_decrypted_private_keys_without_leaking_job_output(
 
     staged_path = tmp_path / "atlaso-ca.json"
     captured: dict[str, str] = {}
+
+    with SessionLocal() as db:
+        units = ui.appliance_apply_units(db)
+        ui.update_appliance_apply_baselines(db, units, {unit["id"] for unit in units})
+        db.commit()
 
     def fake_validate_ca_config(self, config_path: str):
         """Return fake validate ca config.

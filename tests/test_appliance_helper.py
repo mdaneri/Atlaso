@@ -995,7 +995,15 @@ def test_management_handoff_accepts_unchanged_dynamic_address(
     family,
     address,
 ):
-    """Accept an existing dynamic lease during an unrelated protected change."""
+    """Accept an existing dynamic lease during an unrelated protected change.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace network parsing and address observation.
+        tmp_path: Temporary staged network configuration path.
+        row: Candidate management listener under test.
+        family: Dynamic address family already used by the listener.
+        address: Existing runtime address that remains valid.
+    """
     helper = load_helper_module()
     network_path = tmp_path / "atlaso-network.conf"
     network_path.write_text("candidate\n", encoding="utf-8")
@@ -1522,7 +1530,13 @@ def test_interrupted_management_handoff_recovers_old_path(monkeypatch, tmp_path,
 
 
 def test_interrupted_management_handoff_reports_cleanup_failure(monkeypatch, tmp_path, capsys):
-    """Keep recovery failed when rollback-state durability cannot be proven."""
+    """Keep recovery failed when rollback-state durability cannot be proven.
+
+    Args:
+        monkeypatch: Pytest fixture used to isolate recovery dependencies.
+        tmp_path: Temporary root containing the interruption marker.
+        capsys: Pytest fixture used to inspect bounded helper evidence.
+    """
     helper = load_helper_module()
     state_path = tmp_path / "state.json"
     state_path.write_text('{"phase":"candidate-ready"}', encoding="utf-8")
@@ -1543,7 +1557,12 @@ def test_interrupted_management_handoff_reports_cleanup_failure(monkeypatch, tmp
 
 
 def test_management_handoff_state_cleanup_is_durable(monkeypatch, tmp_path):
-    """Sync marker, backup, holdover, and state-directory removals."""
+    """Sync marker, backup, holdover, and state-directory removals.
+
+    Args:
+        monkeypatch: Pytest fixture used to redirect helper state paths.
+        tmp_path: Temporary root containing rollback state and holdovers.
+    """
     helper = load_helper_module()
     state_dir = tmp_path / "state"
     backup_dir = state_dir / "backup"
@@ -1696,7 +1715,13 @@ def test_management_handoff_acknowledgement_is_durable_and_idempotent(monkeypatc
 
 
 def test_management_handoff_acknowledgement_reports_cleanup_failure(monkeypatch, tmp_path, capsys):
-    """Report a durable receipt without claiming incomplete cleanup succeeded."""
+    """Report a durable receipt without claiming incomplete cleanup succeeded.
+
+    Args:
+        monkeypatch: Pytest fixture used to inject cleanup failure.
+        tmp_path: Temporary root containing transaction markers.
+        capsys: Pytest fixture used to inspect bounded helper evidence.
+    """
     helper = load_helper_module()
     state_path = tmp_path / "state.json"
     receipt_path = tmp_path / "last-commit.json"
