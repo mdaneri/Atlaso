@@ -15197,6 +15197,36 @@ def _management_handoff_candidate_links(payload: dict) -> tuple[list[str], list[
     return physical_names, vlan_names, link_states
 
 
+def _management_handoff_previous_addresses(payload: dict) -> list[str]:
+    """Merge configured and runtime addresses for every previous listener interface.
+
+    Args:
+        payload: Validated management-handoff manifest.
+
+    Returns:
+        Deduplicated global addresses that comprise the previous management path.
+    """
+    previous_addresses = [str(ip_address(address)) for address in payload["previous_management_addresses"]]
+    for interface in payload["previous_management_interfaces"]:
+        result = _run(["ip", "-j", "address", "show", "dev", str(interface)])
+        if result.returncode != 0:
+            raise ValueError(f"previous management addresses could not be observed on {interface}")
+        try:
+            entries = json.loads(result.stdout)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"previous management addresses were malformed on {interface}") from exc
+        if not isinstance(entries, list):
+            raise ValueError(f"previous management addresses were malformed on {interface}")
+        for entry in entries:
+            for info in entry.get("addr_info", []):
+                local = str(info.get("local") or "")
+                if info.get("scope") == "global" and local:
+                    previous_addresses.append(str(ip_address(local)))
+    if not previous_addresses:
+        raise ValueError("previous management listener addresses could not be captured")
+    return list(dict.fromkeys(previous_addresses))
+
+
 def _snapshot_management_handoff(payload: dict) -> dict:
     """Create the durable pre-mutation snapshot and interruption marker.
 
@@ -15232,23 +15262,7 @@ def _snapshot_management_handoff(payload: dict) -> dict:
     candidate_management_interface = str(settings_payload.get("management_interface") or "")
     if not _valid_network_interface_name(candidate_management_interface):
         raise ValueError("candidate management resolver interface is invalid")
-    previous_addresses = list(payload["previous_management_addresses"])
-    if not previous_addresses:
-        for interface in payload["previous_management_interfaces"]:
-            result = _run(["ip", "-j", "address", "show", "dev", str(interface)])
-            if result.returncode != 0:
-                continue
-            try:
-                entries = json.loads(result.stdout)
-            except json.JSONDecodeError:
-                entries = []
-            for entry in entries:
-                for info in entry.get("addr_info", []):
-                    local = str(info.get("local") or "")
-                    if info.get("scope") == "global" and local:
-                        previous_addresses.append(local)
-    if not previous_addresses:
-        raise ValueError("previous management listener addresses could not be captured")
+    previous_addresses = _management_handoff_previous_addresses(payload)
     candidate_physical, candidate_vlans, candidate_link_states = _management_handoff_candidate_links(payload)
     previous_firewall_config_existed = FIREWALL_CONFIG_PATH.is_file()
     previous_firewall_service_existed = FIREWALL_SERVICE_PATH.is_file()
@@ -15635,12 +15649,19 @@ def _management_handoff_addresses(
     return list(dict.fromkeys(addresses))
 
 
-def _management_handoff_readiness(addresses: list[str], https_enabled: bool, *, samples: int = 3) -> dict:
+def _management_handoff_readiness(
+    addresses: list[str],
+    https_enabled: bool,
+    public_port: int,
+    *,
+    samples: int = 3,
+) -> dict:
     """Require stable loopback and direct-address management readiness.
 
     Args:
         addresses: Management listener addresses to probe.
         https_enabled: Whether the applied management front door uses HTTPS.
+        public_port: Configured host-facing management listener port.
         samples: Required consecutive successful samples.
 
     Returns:
@@ -15651,6 +15672,8 @@ def _management_handoff_readiness(addresses: list[str], https_enabled: bool, *, 
         raise ValueError("curl is not installed for management handoff readiness")
     if not addresses:
         raise ValueError("management handoff has no candidate listener address")
+    if public_port < 1 or public_port > 65535:
+        raise ValueError("management handoff readiness port must be between 1 and 65535")
     deadline = time.monotonic() + 45
     consecutive = 0
     statuses: dict[str, str] = {}
@@ -15661,7 +15684,7 @@ def _management_handoff_readiness(addresses: list[str], https_enabled: bool, *, 
             scheme = "https" if https_enabled else "http"
             statuses[f"management {address}"] = _console_management_http_status(
                 curl,
-                f"{scheme}://{host}/openapi.json",
+                f"{scheme}://{host}:{public_port}/openapi.json",
                 insecure=https_enabled,
             )
         if all(status == "200" for status in statuses.values()):
@@ -15755,11 +15778,15 @@ def _management_handoff_protocol_holdover(state: dict, payload: dict) -> str:
     """
     previous_https = bool(state.get("previous_https_enabled", True))
     candidate_https = bool(payload.get("management_https_enabled"))
-    if previous_https == candidate_https and not previous_https:
+    public_port = int(state.get("previous_management_public_port") or (443 if previous_https else 80))
+    candidate_port = int(
+        payload.get("management_public_https_port" if candidate_https else "management_public_http_port")
+        or (443 if candidate_https else 80)
+    )
+    if not previous_https and not candidate_https and public_port == candidate_port:
         return ""
     upstream_host = str(payload.get("management_upstream_host") or "127.0.0.1")
     upstream_port = int(payload.get("management_upstream_port") or payload.get("management_http_port") or 8000)
-    public_port = int(state.get("previous_management_public_port") or (443 if previous_https else 80))
     certificate_lines: list[str] = []
     if previous_https:
         previous_site = _management_handoff_snapshot_text(state, NGINX_MANAGEMENT_SITE_PATH)
@@ -16035,6 +16062,10 @@ def _restore_management_handoff(state: dict) -> dict:
     readiness = _management_handoff_readiness(
         list(state.get("previous_management_addresses") or []),
         bool(state.get("previous_https_enabled", True)),
+        int(
+            state.get("previous_management_public_port")
+            or (443 if state.get("previous_https_enabled", True) else 80)
+        ),
     )
     return {"commands": commands, "readiness": readiness}
 
@@ -16262,6 +16293,7 @@ def _apply_management_handoff(payload: dict) -> int:
         previous_preflight = _management_handoff_readiness(
             list(state["previous_management_addresses"]),
             bool(state["previous_https_enabled"]),
+            int(state["previous_management_public_port"]),
         )
         holdovers = _install_management_holdovers(state, payload)
         _write_management_handoff_state(state, "old-path-retained")
@@ -16316,11 +16348,20 @@ def _apply_management_handoff(payload: dict) -> int:
         old_readiness = _management_handoff_readiness(
             list(state["previous_management_addresses"]),
             bool(state["previous_https_enabled"]),
+            int(state["previous_management_public_port"]),
         )
         failing_layer = "candidate readiness"
+        candidate_https = bool(settings_payload.get("management_https_enabled"))
+        candidate_public_port = int(
+            settings_payload.get(
+                "management_public_https_port" if candidate_https else "management_public_http_port"
+            )
+            or (443 if candidate_https else 80)
+        )
         candidate_readiness = _management_handoff_readiness(
             candidate_addresses,
-            bool(settings_payload.get("management_https_enabled")),
+            candidate_https,
+            candidate_public_port,
         )
         _write_management_handoff_state(state, "candidate-ready")
         failing_layer = "previous-path retirement"
@@ -16352,7 +16393,8 @@ def _apply_management_handoff(payload: dict) -> int:
         failing_layer = "post-retirement readiness"
         final_readiness = _management_handoff_readiness(
             candidate_addresses,
-            bool(settings_payload.get("management_https_enabled")),
+            candidate_https,
+            candidate_public_port,
         )
     except (OSError, ValueError, json.JSONDecodeError) as exc:
         rollback_error = ""

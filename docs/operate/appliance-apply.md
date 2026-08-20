@@ -98,8 +98,9 @@ inspection, authentication actions, and safe cancellation remain available.
 A management-path change is the exception to independent component execution: if any of Certificate Authority,
 Network, Firewall, Appliance Settings, or Public Services is submitted while such a Network change is pending, Atlaso
 selects all five together and runs them as one recoverable handoff. The task
-keeps the previous address, public port, HTTP/HTTPS listener, and snapshotted TLS certificate active until consecutive
-bounded checks prove the Atlaso loopback upstream, candidate nginx listener, and host-facing `/openapi.json` are ready.
+keeps every previous configured or runtime global address, public port, HTTP/HTTPS listener, and snapshotted TLS
+certificate active until consecutive bounded checks on the applicable old and candidate public ports prove the Atlaso
+loopback upstream, candidate nginx listener, and host-facing `/openapi.json` are ready.
 The same transaction moves the management resolver to the candidate interface and persists its directives in the
 effective dedicated or flagged-access physical/VLAN networkd file. Atlaso writes those directives again after the final
 Network install so a later networkd restart or appliance reboot retains them. If either resolver apply fails, rollback

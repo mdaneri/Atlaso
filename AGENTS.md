@@ -275,7 +275,8 @@ The following cross-cutting boundaries always apply:
 - A management address, gateway, role, interface, VLAN, or flagged-access listener change must use one recoverable
   handoff across Certificate Authority, Network, Firewall, Appliance Settings, and Public Services. Submitting any one
   of those dependent units while such a Network change is pending must force all five into the handoff. Keep the previous
-  known-good address, port, protocol, and snapshotted TLS identity active until consecutive bounded Atlaso loopback,
+  known-good configured and observed global addresses, public port, protocol, and snapshotted TLS identity active until
+  consecutive bounded Atlaso loopback,
   candidate nginx, and host-facing `/openapi.json` checks pass. Never expose a candidate nginx front door before its
   Atlaso upstream is healthy. Move the persistent and runtime management resolver to the candidate interface inside
   the transaction, persist its directives in the effective dedicated or flagged-access networkd file both before
@@ -288,7 +289,8 @@ The following cross-cutting boundaries always apply:
   file and link, reconfigure pre-existing candidate links, remove candidate-only VLANs, fail closed without host
   mutation when an active appliance has no known-good Network baseline, restore a previously absent firewall by
   disabling its candidate service and flushing the candidate ruleset, keep the old path reachable, and record a
-  truthful non-secret failing layer. Require every dynamic candidate listener to acquire and probe each requested DHCP
+  truthful non-secret failing layer. Probe old and candidate listeners on their configured public ports. Require every
+  dynamic candidate listener to acquire and probe each requested DHCP
   or SLAAC address family before retirement. Preserve the previous firewall policy plus minimal candidate admission when
   firewall state changes in either direction; apply the enabled or disabled candidate ruleset only after readiness. Commit
   baselines only from the exact staged snapshots, and leave desired-state edits made during readiness pending. A

@@ -204,11 +204,13 @@ one of them: Certificate Authority, Network, Firewall, Appliance Settings, and P
 closure prevents a partial Firewall, certificate, listener, or resolver apply from publishing candidate-derived state
 before candidate networking exists. The helper validates all staged inputs before mutation, snapshots
 the Atlaso-owned networkd, nftables, nginx, certificate, and related runtime files under a root-only state directory,
-and installs temporary higher-priority networkd holdovers for the previous management links. It then applies the
+and merges global runtime addresses from every previous management interface with the configured addresses before it
+installs temporary higher-priority networkd holdovers for the previous management links. It then applies the
 candidate network and a transitional firewall that admits both previous and candidate management addresses. If the
-public protocol changes, address-specific nginx blocks retain the old address, port, and HTTP/HTTPS behavior beside the
-candidate listener until candidate readiness succeeds. Previous HTTPS blocks always use separate snapshotted
-certificate and key files, including when the protocol remains HTTPS while the candidate certificate rotates.
+public protocol or same-protocol HTTP port changes, address-specific nginx blocks retain the old address, port, and
+HTTP/HTTPS behavior beside the candidate listener until candidate readiness succeeds. Previous HTTPS blocks always use
+separate snapshotted certificate and key files, including when the protocol remains HTTPS while the candidate
+certificate rotates.
 Within Appliance Settings, this transaction applies the management resolver interface, Atlaso loopback drop-in, and
 management nginx front door. The helper writes the selected static/local resolver directives into the candidate
 generated effective-listener networkd file or reverts that link to DHCP-provided DNS, then applies the matching per-link
@@ -223,7 +225,8 @@ server change is used for candidate safety but is not baseline-committed by the 
 also differs. Rollback restores the snapshotted networkd resolver directives, reverts the candidate link's transient
 resolver override, and reconfigures the restored links before checking the previous listener.
 
-Readiness is fail-closed and bounded. The helper first requires Atlaso's loopback `/openapi.json` upstream to succeed;
+Readiness is fail-closed and bounded. Every host-facing probe includes the previous or candidate configured public port.
+The helper first requires Atlaso's loopback `/openapi.json` upstream to succeed;
 only then may it validate and reload nginx. It requires consecutive successful direct candidate-listener probes and
 host-facing probes for every configured candidate address. Each dynamic listener row must acquire an address for every
 requested DHCP or SLAAC family within the shared bounded discovery window; readiness cannot succeed on another row or

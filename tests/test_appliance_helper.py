@@ -538,14 +538,59 @@ def test_management_handoff_readiness_requires_consecutive_samples(monkeypatch):
     """
     helper = load_helper_module()
     statuses = iter(["200", "200", "500", "200", "200", "200", "200", "200"])
+    urls: list[str] = []
     monkeypatch.setattr(helper.shutil, "which", lambda command: "/usr/bin/curl" if command == "curl" else None)
-    monkeypatch.setattr(helper, "_console_management_http_status", lambda *_args, **_kwargs: next(statuses))
+    monkeypatch.setattr(
+        helper,
+        "_console_management_http_status",
+        lambda _curl, url, **_kwargs: urls.append(url) or next(statuses),
+    )
     monkeypatch.setattr(helper.time, "sleep", lambda _seconds: None)
 
-    evidence = helper._management_handoff_readiness(["198.51.100.10"], True, samples=2)
+    evidence = helper._management_handoff_readiness(
+        ["198.51.100.10"],
+        True,
+        8443,
+        samples=2,
+    )
 
     assert evidence["stable_samples"] == 2
     assert evidence["statuses"]["management 198.51.100.10"] == "200"
+    assert "https://198.51.100.10:8443/openapi.json" in urls
+
+
+def test_management_handoff_merges_previous_static_and_dynamic_addresses(monkeypatch):
+    """Capture SLAAC alongside a configured static address on the old listener.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace runtime address observation.
+    """
+    helper = load_helper_module()
+    observed = json.dumps(
+        [
+            {
+                "addr_info": [
+                    {"family": "inet", "scope": "global", "local": "192.0.2.10"},
+                    {"family": "inet6", "scope": "link", "local": "fe80::10"},
+                    {"family": "inet6", "scope": "global", "local": "2001:db8::10"},
+                ]
+            }
+        ]
+    )
+    monkeypatch.setattr(
+        helper,
+        "_run",
+        lambda command: subprocess.CompletedProcess(command, 0, observed, ""),
+    )
+
+    addresses = helper._management_handoff_previous_addresses(
+        {
+            "previous_management_interfaces": ["eth0"],
+            "previous_management_addresses": ["192.0.2.10"],
+        }
+    )
+
+    assert addresses == ["192.0.2.10", "2001:db8::10"]
 
 
 def test_management_handoff_discovers_slaac_candidate_addresses(monkeypatch, tmp_path):
@@ -697,6 +742,28 @@ def test_management_handoff_keeps_previous_http_during_https_transition():
     assert " ssl bind;" not in holdover
 
 
+def test_management_handoff_keeps_previous_http_when_port_changes():
+    """Retain the old HTTP socket beside a candidate on another HTTP port."""
+    helper = load_helper_module()
+
+    holdover = helper._management_handoff_protocol_holdover(
+        {
+            "previous_https_enabled": False,
+            "previous_management_public_port": 8080,
+            "previous_management_addresses": ["192.0.2.10"],
+        },
+        {
+            "management_https_enabled": False,
+            "management_public_http_port": 8081,
+            "management_upstream_host": "127.0.0.1",
+            "management_upstream_port": 8000,
+        },
+    )
+
+    assert "listen 192.0.2.10:8080 bind;" in holdover
+    assert "X-Forwarded-Proto http" in holdover
+
+
 @pytest.mark.parametrize("candidate_https", [False, True])
 def test_management_handoff_keeps_previous_https_identity(monkeypatch, tmp_path, candidate_https):
     """Use separate captured TLS bytes until old-listener retirement.
@@ -770,6 +837,7 @@ def test_successful_management_handoff_retains_rollback_state_until_ack(monkeypa
         "previous_management_interfaces": ["eth0"],
         "previous_management_addresses": ["192.0.2.10"],
         "previous_https_enabled": False,
+        "previous_management_public_port": 80,
         "candidate_management_interface": "eth1",
         "resolver_apply_started": False,
     }
@@ -866,6 +934,7 @@ def test_management_handoff_failure_rolls_back_with_truthful_layer(monkeypatch, 
         "previous_management_interfaces": ["eth0"],
         "previous_management_addresses": ["192.0.2.10"],
         "previous_https_enabled": True,
+        "previous_management_public_port": 443,
     }
     restored: list[dict] = []
     monkeypatch.setattr(helper, "_snapshot_management_handoff", lambda _payload: state)
@@ -920,6 +989,7 @@ def test_management_handoff_resolver_failure_rolls_back_before_nginx(
         "previous_management_interfaces": ["eth0"],
         "previous_management_addresses": ["192.0.2.10"],
         "previous_https_enabled": True,
+        "previous_management_public_port": 443,
         "candidate_management_interface": "eth1",
         "resolver_apply_started": False,
     }
@@ -993,6 +1063,7 @@ def test_management_handoff_never_activates_nginx_with_unhealthy_upstream(monkey
         "previous_management_interfaces": ["eth0"],
         "previous_management_addresses": ["192.0.2.10"],
         "previous_https_enabled": True,
+        "previous_management_public_port": 443,
     }
     settings_calls: list[str] = []
     monkeypatch.setattr(helper, "_snapshot_management_handoff", lambda _payload: state)
