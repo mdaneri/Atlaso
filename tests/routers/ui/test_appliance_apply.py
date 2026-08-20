@@ -140,6 +140,7 @@ def test_appliance_apply_status_preserves_planned_management_restart_context(cli
                     "selected_units": ["appliance_settings"],
                     "management_status_transition": {
                         "kind": "planned_service_restart",
+                        "restart_delay_seconds": 3,
                         "grace_seconds": 15,
                     },
                 }
@@ -167,6 +168,7 @@ def test_appliance_apply_status_preserves_planned_management_restart_context(cli
     assert task["id"] == "job_planned_management_restart"
     assert task["result"]["management_status_transition"] == {
         "kind": "planned_service_restart",
+        "restart_delay_seconds": 3,
         "grace_seconds": 15,
     }
     assert [(step["component_key"], step["status"]) for step in task["_children"]] == [
@@ -180,6 +182,7 @@ def test_appliance_apply_transition_context_is_real_settings_apply_only():
 
     assert appliance_apply_management_status_transition({"appliance_settings"}, dry_run=False) == {
         "kind": "planned_service_restart",
+        "restart_delay_seconds": 3,
         "grace_seconds": 15,
     }
     assert appliance_apply_management_status_transition({"appliance_settings"}, dry_run=True) is None

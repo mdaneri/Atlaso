@@ -1525,6 +1525,61 @@ def test_forced_real_apply_seam_rejects_non_console_jobs(client):
         run_appliance_apply_job("job_not_console", force_real=True)
 
 
+def test_console_settings_apply_persists_management_restart_context(client, monkeypatch):
+    """Verify forced-real console tasks expose the shared planned restart contract.
+
+    Args:
+        client: HTTP test client used to initialize an isolated database.
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+    """
+    from atlaso.app import ui as ui_module
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job, JobStatus
+
+    selected = [{"id": "appliance_settings", "label": "Appliance Settings"}]
+    payload = {
+        "selected_units": ["appliance_settings"],
+        "skipped_changed_units": [],
+        "captured_units": [{"unit_id": "appliance_settings"}],
+        "units": [],
+        "dry_run": False,
+        "source": "local_appliance_console",
+    }
+    captured_results = []
+
+    monkeypatch.setattr(ui_module, "appliance_apply_units", lambda _db: [])
+    monkeypatch.setattr(
+        appliance_console,
+        "_captured_apply_payload",
+        lambda _units, _selected_ids: (selected, payload),
+    )
+
+    def complete_job(job_id: str, *, force_real: bool) -> None:
+        """Capture the committed task context and mark the fake execution successful.
+
+        Args:
+            job_id: Persisted Appliance Apply task identifier.
+            force_real: Whether the console requested the constrained real adapter seam.
+        """
+        assert force_real is True
+        with SessionLocal() as db:
+            job = db.get(Job, job_id)
+            assert job is not None
+            captured_results.append(json.loads(job.result or "{}"))
+            job.status = JobStatus.SUCCEEDED.value
+            db.commit()
+
+    monkeypatch.setattr(ui_module, "run_appliance_apply_job", complete_job)
+
+    appliance_console._submit_console_apply({"appliance_settings"})
+
+    assert captured_results[0]["management_status_transition"] == {
+        "kind": "planned_service_restart",
+        "restart_delay_seconds": 3,
+        "grace_seconds": 15,
+    }
+
+
 def test_console_vcf_apply_waits_for_the_complete_download_queue(client):
     """Verify console apply participates in the queue-wide VCFDT admission gate.
 

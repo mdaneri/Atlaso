@@ -1024,6 +1024,7 @@ def _submit_console_apply(required_ids: set[str]) -> str:
     from atlaso.app.ui import (
         active_appliance_apply_job,
         active_vcf_depot_execution_job,
+        appliance_apply_management_status_transition,
         appliance_apply_units,
         run_appliance_apply_job,
     )
@@ -1043,6 +1044,12 @@ def _submit_console_apply(required_ids: set[str]) -> str:
                 )
         units = appliance_apply_units(db)
         selected, payload = _captured_apply_payload(units, selected_ids)
+        management_status_transition = appliance_apply_management_status_transition(
+            selected_ids,
+            dry_run=False,
+        )
+        if management_status_transition is not None:
+            payload["management_status_transition"] = management_status_transition
         job_id = f"job_{uuid4().hex[:12]}"
         job = Job(
             id=job_id,

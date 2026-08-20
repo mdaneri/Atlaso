@@ -8957,6 +8957,7 @@ def _normalize_vcf_trust_address(address: str) -> tuple[str, list[str]]:
 
 
 APPLIANCE_APPLY_BASELINES_KEY = "appliance_apply.baselines.v1"
+APPLIANCE_APPLY_MANAGEMENT_RESTART_DELAY_SECONDS = 3
 APPLIANCE_APPLY_MANAGEMENT_RECONNECT_GRACE_SECONDS = 15
 MANAGEMENT_CERTIFICATE_CONNECTION_WARNING = (
     "Applying the selected management HTTPS change will replace or rebind the management certificate. "
@@ -9000,6 +9001,7 @@ def appliance_apply_management_status_transition(
         return None
     return {
         "kind": "planned_service_restart",
+        "restart_delay_seconds": APPLIANCE_APPLY_MANAGEMENT_RESTART_DELAY_SECONDS,
         "grace_seconds": APPLIANCE_APPLY_MANAGEMENT_RECONNECT_GRACE_SECONDS,
     }
 

@@ -88,24 +88,22 @@
     return ["pending", "running"].includes(String(task?.status || ""));
   }
 
-  function plannedReconnectGraceMs(task) {
+  function plannedReconnectDetails(task) {
     const transition = task?.result?.management_status_transition;
-    if (transition?.kind !== "planned_service_restart") return 0;
+    if (transition?.kind !== "planned_service_restart") return null;
     const settingsStep = Array.isArray(task?._children)
       ? task._children.find((step) => step?.component_key === "appliance_settings")
       : null;
-    if (!settingsStep || !["running", "succeeded"].includes(String(settingsStep.status || ""))) return 0;
+    if (!settingsStep || !["running", "succeeded"].includes(String(settingsStep.status || ""))) return null;
     const graceSeconds = Number(transition.grace_seconds);
-    return Number.isFinite(graceSeconds) && graceSeconds > 0 ? graceSeconds * 1000 : 0;
-  }
-
-  function plannedReconnectCompleted(task) {
-    const transition = task?.result?.management_status_transition;
-    if (transition?.kind !== "planned_service_restart") return false;
-    const settingsStep = Array.isArray(task?._children)
-      ? task._children.find((step) => step?.component_key === "appliance_settings")
-      : null;
-    return settingsStep?.status === "succeeded";
+    const restartDelaySeconds = Number(transition.restart_delay_seconds);
+    if (!Number.isFinite(graceSeconds) || graceSeconds <= 0) return null;
+    if (!Number.isFinite(restartDelaySeconds) || restartDelaySeconds < 0) return null;
+    return {
+      graceMs: graceSeconds * 1000,
+      restartDelayMs: restartDelaySeconds * 1000,
+      settingsStep,
+    };
   }
 
   function createMonitor(options) {
@@ -117,6 +115,7 @@
     let reconnectTaskId = "";
     let completedReconnectTaskId = "";
 
+    const now = () => (typeof options.now === "function" ? options.now() : Date.now());
     const beginRequest = () => ++sequence;
     const hasTrackedTask = () => Boolean(trackedJobId);
 
@@ -128,7 +127,15 @@
       if (sameTask && !taskActive(currentTask) && taskActive(task)) return false;
       currentTask = task;
       acceptedSequence = observedSequence;
-      if (plannedReconnectCompleted(task)) completedReconnectTaskId = taskId;
+      const reconnect = plannedReconnectDetails(task);
+      const restartScheduledAt = Date.parse(reconnect?.settingsStep?.finished_at || "");
+      if (
+        reconnect?.settingsStep?.status === "succeeded"
+        && Number.isFinite(restartScheduledAt)
+        && now() >= restartScheduledAt + reconnect.restartDelayMs
+      ) {
+        completedReconnectTaskId = taskId;
+      }
       if (taskActive(task)) trackedJobId = taskId;
       else if (trackedJobId === taskId) trackedJobId = "";
       options.onTask(task);
@@ -200,17 +207,31 @@
         return { active: hasTrackedTask() };
       },
       onError: (error, state) => {
-        const now = typeof options.now === "function" ? options.now() : Date.now();
+        const observedAt = now();
         const currentTaskId = String(currentTask?.id || "");
-        const reconnectGraceMs = error?.atlasoPollPhase === "terminal_reconciliation"
+        const reconnect = error?.atlasoPollPhase === "terminal_reconciliation"
           || (currentTaskId && currentTaskId === completedReconnectTaskId)
-          ? 0
-          : plannedReconnectGraceMs(currentTask);
-        if (reconnectGraceMs > 0 && reconnectStartedAt === null) {
-          reconnectStartedAt = now;
+          ? null
+          : plannedReconnectDetails(currentTask);
+        let reconnectGraceMs = 0;
+        let reconnectElapsedMs = 0;
+        if (reconnect?.settingsStep?.status === "running") {
+          if (reconnectStartedAt === null) reconnectStartedAt = observedAt;
+          reconnectGraceMs = reconnect.graceMs;
+          reconnectElapsedMs = Math.max(0, observedAt - reconnectStartedAt);
+        } else if (reconnect?.settingsStep?.status === "succeeded") {
+          const restartScheduledAt = Date.parse(reconnect.settingsStep.finished_at || "");
+          if (Number.isFinite(restartScheduledAt)) {
+            reconnectGraceMs = reconnect.restartDelayMs + reconnect.graceMs;
+            reconnectElapsedMs = Math.max(0, observedAt - restartScheduledAt);
+            if (reconnectElapsedMs < reconnectGraceMs && reconnectStartedAt === null) {
+              reconnectStartedAt = observedAt;
+            }
+          }
+        }
+        if (reconnectStartedAt !== null) {
           reconnectTaskId = currentTaskId;
         }
-        const reconnectElapsedMs = reconnectStartedAt === null ? 0 : Math.max(0, now - reconnectStartedAt);
         const expectedReconnect = reconnectGraceMs > 0 && reconnectElapsedMs < reconnectGraceMs;
         if (typeof options.onError === "function") {
           options.onError(error, { ...state, expectedReconnect, reconnectElapsedMs, reconnectGraceMs });

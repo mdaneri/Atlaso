@@ -73,6 +73,7 @@ function plannedRestartTask(status = "running") {
     result: {
       management_status_transition: {
         kind: "planned_service_restart",
+        restart_delay_seconds: 3,
         grace_seconds: 15,
       },
     },
@@ -239,8 +240,55 @@ test("uses a neutral bounded reconnect state for a planned management restart", 
   assert.equal(state.ui.pollTone, "warning");
 });
 
-test("consumes an unused reconnect grace after settings restart success", async () => {
+test("keeps reconnect grace through the delayed restart after settings success", async () => {
+  let now = 1000;
   const afterSettingsTask = plannedRestartTask("succeeded");
+  afterSettingsTask._children[0].finished_at = new Date(now).toISOString();
+  afterSettingsTask._children.push({ component_key: "firewall", status: "running" });
+  const statusPayloads = [
+    { active_task: plannedRestartTask(), pending_count: 0 },
+    { active_task: afterSettingsTask, pending_count: 0 },
+    new Error("scheduled restart"),
+    { active_task: afterSettingsTask, pending_count: 0 },
+    new Error("later unrelated outage"),
+  ];
+  const state = monitorHarness({
+    requestStatus: async () => {
+      const payload = statusPayloads.shift();
+      if (payload instanceof Error) throw payload;
+      return payload;
+    },
+    requestTask: async () => afterSettingsTask,
+    now: () => now,
+  });
+
+  await state.monitor.refresh();
+  now = 3000;
+  await state.timers.at(-1).callback();
+  now = 5000;
+  await state.timers.at(-1).callback();
+
+  assert.equal(state.errorStates[0].expectedReconnect, true);
+  assert.equal(state.errorStates[0].reconnectGraceMs, 18000);
+  assert.equal(state.ui.pollTone, "neutral");
+
+  now = 6000;
+  await state.timers.at(-1).callback();
+  now = 7000;
+  await state.timers.at(-1).callback();
+
+  assert.equal(state.errorStates[1].expectedReconnect, false);
+  assert.equal(state.errorStates[1].reconnectGraceMs, 0);
+  assert.equal(state.ui.pollNotice, "unavailable");
+  assert.equal(state.ui.pollTone, "warning");
+  assert.equal(state.ui.modalStatus, "running");
+  assert.equal(state.ui.locked, true);
+});
+
+test("consumes unused grace after a successful poll beyond the scheduled restart", async () => {
+  let now = 1000;
+  const afterSettingsTask = plannedRestartTask("succeeded");
+  afterSettingsTask._children[0].finished_at = new Date(now).toISOString();
   afterSettingsTask._children.push({ component_key: "firewall", status: "running" });
   const statusPayloads = [
     { active_task: plannedRestartTask(), pending_count: 0 },
@@ -254,18 +302,18 @@ test("consumes an unused reconnect grace after settings restart success", async 
       return payload;
     },
     requestTask: async () => afterSettingsTask,
+    now: () => now,
   });
 
   await state.monitor.refresh();
+  now = 5000;
   await state.timers.at(-1).callback();
+  now = 6000;
   await state.timers.at(-1).callback();
 
   assert.equal(state.errorStates[0].expectedReconnect, false);
   assert.equal(state.errorStates[0].reconnectGraceMs, 0);
-  assert.equal(state.ui.pollNotice, "unavailable");
   assert.equal(state.ui.pollTone, "warning");
-  assert.equal(state.ui.modalStatus, "running");
-  assert.equal(state.ui.locked, true);
 });
 
 test("escalates a planned reconnect after its grace window", async () => {

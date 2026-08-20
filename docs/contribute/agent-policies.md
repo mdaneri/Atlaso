@@ -280,9 +280,11 @@ Terminal order:
   state summaries, rendered config previews/diffs, validation results, adapter commands, dry-run status, and audit
   event.
 - Real Appliance Settings tasks must persist server-owned management-restart context before helper execution. While its
-  component is running or succeeded, the shared monitor may use that context for one bounded neutral reconnecting
-  window without dropping last-known progress or the global lock. Recovery clears the notice automatically; missing,
-  unexpected, or out-of-window status failures retain the actionable availability warning and active retry cadence.
+  component is running or within the helper's declared delayed-restart and recovery interval, the shared monitor may use
+  that context for one bounded neutral reconnecting window without dropping last-known progress or the global lock.
+  Browser-submitted and local-console forced-real tasks must carry the same context. Recovery clears the notice
+  automatically; missing, unexpected, or out-of-window status failures retain the actionable availability warning and
+  active retry cadence.
 - Label the global submit action around the user's intent, such as `Submit appliance changes`, and explain that the task
   validates and applies selected desired state through Atlaso adapters.
 - Fresh Photon appliance startup may initialize the factory desired-state baseline automatically when no baseline,
