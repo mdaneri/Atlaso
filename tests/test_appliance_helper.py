@@ -7860,6 +7860,49 @@ def test_appliance_settings_helper_writes_http_management_proxy_without_https(mo
     assert any(command[:5] == ["/usr/bin/systemd-run", "--quiet", "--collect", "--on-active=3", "--unit=atlaso-management-ui-restart"] for command in commands)
 
 
+def test_management_https_change_suppresses_restart_during_factory_reset(
+    monkeypatch,
+    tmp_path,
+):
+    """Factory activation leaves Atlaso stopped until the reset readiness handoff.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace helper paths and execution.
+        tmp_path: Temporary directory provided for the reset marker and drop-in.
+    """
+    helper = load_helper_module()
+    marker = tmp_path / "factory-reset" / "request.json"
+    dropin = tmp_path / "atlaso.service.d" / "management-https.conf"
+    marker.parent.mkdir(parents=True)
+    marker.write_text(
+        json.dumps({"schema_version": 1, "state": "applying"}),
+        encoding="utf-8",
+    )
+    commands: list[list[str]] = []
+
+    def fake_run(command: list[str]) -> subprocess.CompletedProcess[str]:
+        """Record the system command and return success.
+
+        Args:
+            command: Exact command arguments passed by the helper.
+        """
+        commands.append(command)
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(helper, "ATLASO_FACTORY_RESET_REQUEST_PATH", marker)
+    monkeypatch.setattr(helper, "ATLASO_SERVICE_DROPIN_DIR", dropin.parent)
+    monkeypatch.setattr(helper, "ATLASO_SERVICE_HTTPS_DROPIN_PATH", dropin)
+    monkeypatch.setattr(helper, "_install_nginx_site", lambda *_args: 0)
+    monkeypatch.setattr(helper, "_run", fake_run)
+    monkeypatch.setattr(helper.shutil, "which", lambda _command: "/usr/bin/systemd-run")
+
+    payload = json.loads(appliance_settings_json(management_https_enabled=False))
+    assert helper._configure_atlaso_management_https(payload) == 0
+
+    assert commands == [["systemctl", "daemon-reload"]]
+    assert dropin.is_file()
+
+
 def test_appliance_settings_helper_applies_local_resolver_without_timesyncd(monkeypatch, tmp_path):
     """Verify that appliance settings helper applies local resolver without timesyncd.
 

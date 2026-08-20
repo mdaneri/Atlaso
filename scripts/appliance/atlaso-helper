@@ -5643,6 +5643,13 @@ def _configure_atlaso_management_https(payload: dict) -> int:
     if daemon_reload.returncode != 0:
         return daemon_reload.returncode
 
+    # Factory reset already owns service quiescence and starts the complete
+    # management stack only after runtime activation and credential cleanup.
+    # A delayed restart here could launch a second reset resume runner while
+    # the first transaction still owns its durable credential plan.
+    if _factory_reset_runtime_cleanup_is_admitted():
+        return 0
+
     restart_command = ["systemctl", "restart", "atlaso.service"]
     systemd_run = shutil.which("systemd-run")
     if systemd_run is not None:
