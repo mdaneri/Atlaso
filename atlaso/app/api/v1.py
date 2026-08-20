@@ -1791,6 +1791,7 @@ upload_esxi_installer_iso = _network_boot_api.endpoints["upload_esxi_installer_i
 list_esxi_pxe_hosts = _network_boot_api.endpoints["list_esxi_pxe_hosts"]
 create_esxi_pxe_host = _network_boot_api.endpoints["create_esxi_pxe_host"]
 update_esxi_pxe_host = _network_boot_api.endpoints["update_esxi_pxe_host"]
+delete_esxi_pxe_host = _network_boot_api.endpoints["delete_esxi_pxe_host"]
 
 
 _managed_ldap_api = build_managed_ldap_api_router(

@@ -669,6 +669,7 @@ def test_dhcp_leases_page_reflects_live_adapter_output(client, monkeypatch):
 
     from sqlalchemy import select
 
+    import atlaso.app.routers.ui.dns_dhcp as dns_dhcp_router
     from atlaso.app.adapters.system import AdapterResult
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import DhcpReservation, DnsRecord, EsxiPxeHost
@@ -794,6 +795,12 @@ def test_dhcp_leases_page_reflects_live_adapter_output(client, monkeypatch):
         )
         db.commit()
 
+    lifecycle_events = []
+    monkeypatch.setattr(
+        dns_dhcp_router,
+        "lock_esxi_host_reference_lifecycle",
+        lambda _db: lifecycle_events.append("lock"),
+    )
     pxe_response = client.post(
         "/dhcp/leases/pxe-host",
         data={
@@ -805,6 +812,7 @@ def test_dhcp_leases_page_reflects_live_adapter_output(client, monkeypatch):
         follow_redirects=False,
     )
     assert pxe_response.status_code == 303
+    assert lifecycle_events == ["lock"]
     assert pxe_response.headers["location"] == "/ui/management/esxi-pxe#esxi-pxe-hosts"
     with SessionLocal() as db:
         host = db.execute(

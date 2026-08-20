@@ -8,7 +8,16 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Response, UploadFile
+from fastapi import (
+    APIRouter,
+    Depends,
+    File,
+    Form,
+    HTTPException,
+    Query,
+    Response,
+    UploadFile,
+)
 from fastapi import Path as ApiPath
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -31,7 +40,9 @@ from atlaso.app.schemas import (
     EsxiKickstartUpdate,
     EsxiKickstartValidationResponse,
     EsxiPxeHostCreate,
+    EsxiPxeHostDeleteResponse,
     EsxiPxeHostResponse,
+    ProblemDetails,
 )
 from atlaso.app.security import Identity, require_scope
 from atlaso.app.services.esxi_pxe import (
@@ -57,6 +68,10 @@ from atlaso.app.services.esxi_pxe import (
     sync_esxi_pxe_host_network_records,
     validate_kickstart_custom_references,
     validate_kickstart_vault_references,
+)
+from atlaso.app.services.network_boot import (
+    lock_esxi_host_reference_lifecycle,
+    remove_esxi_host_discovery_state,
 )
 
 Endpoint = Callable[..., Any]
@@ -882,6 +897,7 @@ def build_router() -> NetworkBootApiRouter:
             identity: Authenticated identity authorizing the operation.
             db: Active database session used by the operation.
         """
+        lock_esxi_host_reference_lifecycle(db)
         if payload.kickstart_id and not db.get(EsxiKickstart, payload.kickstart_id):
             raise HTTPException(status_code=404, detail="Kickstart not found")
         try:
@@ -959,6 +975,7 @@ def build_router() -> NetworkBootApiRouter:
             identity: Authenticated identity authorizing the operation.
             db: Active database session used by the operation.
         """
+        lock_esxi_host_reference_lifecycle(db)
         host = db.get(EsxiPxeHost, host_id)
         if not host:
             raise HTTPException(status_code=404, detail="ESXi PXE host not found")
@@ -1010,6 +1027,113 @@ def build_router() -> NetworkBootApiRouter:
         )
         return EsxiPxeHostResponse(**host_to_dict(host))
 
+    @router.delete(
+        "/esxi-pxe/hosts/{host_id}",
+        response_model=EsxiPxeHostDeleteResponse,
+        responses={
+            403: {
+                "model": ProblemDetails,
+                "description": (
+                    "The token lacks write:esxi-pxe, or optional discovery cleanup "
+                    "was requested without write:pxe."
+                ),
+            },
+            404: {
+                "model": ProblemDetails,
+                "description": "The ESXi Host Reference does not exist.",
+            },
+            409: {
+                "model": ProblemDetails,
+                "description": (
+                    "Associated discovery cleanup was requested, but another ESXi Host "
+                    "Reference still owns a reported MAC for that discovery."
+                ),
+            },
+        },
+        tags=["ESXi PXE"],
+        operation_id="deleteEsxiPxeHost",
+    )
+    def delete_esxi_pxe_host(
+        host_id: Annotated[
+            int,
+            ApiPath(
+                description="Unique identifier of the ESXi Host Reference to delete."
+            ),
+        ],
+        identity: Annotated[Identity, Depends(require_scope("write:esxi-pxe"))],
+        remove_discovered_host: Annotated[
+            bool,
+            Query(
+                description=(
+                    "Also remove associated discovered-host inventory state. This optional "
+                    "cleanup requires the write:pxe scope and fails when another Host "
+                    "Reference owns the same discovery."
+                )
+            ),
+        ] = False,
+        db: Session = Depends(get_db),
+    ) -> EsxiPxeHostDeleteResponse:
+        """Delete one ESXi Host Reference with an explicit discovery-retention choice.
+
+        Requires the `write:esxi-pxe` API scope. By default, deletion retains
+        associated discovered-host inventory so it can be promoted again. Setting
+        `remove_discovered_host=true` additionally requires `write:pxe` and removes
+        exclusively associated commands, sessions, reports, and discovered-host rows
+        in the same transaction. Cleanup returns 409 before mutation if another Host
+        Reference owns any reported MAC. Saved desired state changes immediately;
+        generated PXE state changes only through global Appliance Apply.
+
+        Args:
+            host_id: Stable identifier of the ESXi Host Reference.
+            identity: Authenticated identity authorizing the operation.
+            remove_discovered_host: Whether to remove exclusively associated inventory.
+            db: Active database session used by the operation.
+
+        Returns:
+            Deletion confirmation and retained-inventory removal counts.
+
+        Raises:
+            HTTPException: If authorization, lookup, cleanup, or reconciliation fails.
+        """
+        if remove_discovered_host and not identity.can("write:pxe"):
+            raise HTTPException(
+                status_code=403,
+                detail="Missing required scope: write:pxe",
+            )
+        lock_esxi_host_reference_lifecycle(db)
+        host = db.get(EsxiPxeHost, host_id)
+        if not host:
+            raise HTTPException(status_code=404, detail="ESXi PXE host not found")
+        hostname = host.hostname
+        removal_counts = {
+            "discovered_hosts_removed": 0,
+            "commands": 0,
+            "sessions": 0,
+            "reports": 0,
+        }
+        try:
+            if remove_discovered_host:
+                removal_counts = remove_esxi_host_discovery_state(db, host)
+            host.ip_address = ""
+            sync_esxi_pxe_host_network_records(db, host, esxi_pxe_boot_settings(db))
+            db.delete(host)
+        except ValueError as exc:
+            db.rollback()
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        record_audit(
+            db,
+            actor=identity.username,
+            action="delete_esxi_pxe_host",
+            resource_type="esxi_pxe_host",
+            resource_id=str(host_id),
+            detail=(
+                f"hostname={hostname}; discovered_hosts_removed={removal_counts['discovered_hosts_removed']}; "
+                f"reports={removal_counts['reports']}; sessions={removal_counts['sessions']}; "
+                f"commands={removal_counts['commands']}"
+            ),
+        )
+        return EsxiPxeHostDeleteResponse(deleted=True, **removal_counts)
+
     return NetworkBootApiRouter(
         router=router,
         endpoints={
@@ -1034,5 +1158,6 @@ def build_router() -> NetworkBootApiRouter:
             "list_esxi_pxe_hosts": list_esxi_pxe_hosts,
             "create_esxi_pxe_host": create_esxi_pxe_host,
             "update_esxi_pxe_host": update_esxi_pxe_host,
+            "delete_esxi_pxe_host": delete_esxi_pxe_host,
         },
     )

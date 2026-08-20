@@ -530,6 +530,7 @@ def test_esxi_pxe_host_reference_wizard_and_grid_responses(client):
     ].split("async function postEsxiHostAction", 1)[0]
     assert "eligibleDiscoveredHosts" in wizard_js
     assert "availableMacs" in wizard_js
+    assert "discoveredHostIdsForMac" in wizard_js
     assert "return [host?.boot_mac]" in wizard_js
     assert "esxiDiscoveredHostIsRegistered(host, used)" in wizard_js
     assert 'const mac = host?.boot_mac || "no boot MAC"' in app_js
@@ -541,6 +542,7 @@ def test_esxi_pxe_host_reference_wizard_and_grid_responses(client):
     assert "form.elements.host_id.value !== discoveredHostSelect.value" in wizard_js
     assert 'mode === "edit"' in wizard_js
     assert 'mode === "promote"' in wizard_js
+    assert "selectEsxiDiscoveredHostOption(discoveredHostSelect" in wizard_js
     assert 'pattern: "direct-edit"' in wizard_js
     assert "parseEsxiHostVariableRows" in wizard_js
     assert "enabledWasEdited" in wizard_js

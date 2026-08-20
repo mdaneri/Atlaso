@@ -6583,6 +6583,23 @@ textarea {
   white-space: normal;
 }
 
+.confirm-modal-checkbox-group {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 10px 12px;
+  background: var(--surface-soft);
+  color: var(--text);
+  line-height: 1.4;
+}
+
+.confirm-modal-checkbox-group input {
+  flex: 0 0 auto;
+  margin-top: 2px;
+}
+
 .confirm-modal.wide-modal {
   width: min(920px, calc(100vw - 32px));
 }
