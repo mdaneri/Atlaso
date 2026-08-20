@@ -2860,6 +2860,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#extracted-vault-ownership" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Extracted Vault ownership
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#route-and-openapi-compatibility" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -3631,6 +3642,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#extracted-vault-ownership" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Extracted Vault ownership
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#route-and-openapi-compatibility" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -3795,7 +3817,9 @@ transports plus the two API v1 Settings operations while retaining settings-arch
 credential-custody, and global Appliance Apply behavior in their established owners. Phase 13 extracts the Dashboard
 and Monitor management transports plus their two API v1 operations while retaining dashboard projections, monitoring
 sampling and service behavior, templates, browser assets, and every operator-visible interaction in their established
-owners.</p>
+owners. Phase 14 extracts the seven Vault management transports while retaining Vault services, encryption, CLI,
+templates, browser assets, remote-terminal tickets, Kickstart dependencies, and cross-domain integrations in their
+established owners.</p>
 <h2 id="ownership-and-responsibilities">Ownership and responsibilities<a class="headerlink" href="#ownership-and-responsibilities" title="Permanent link">&para;</a></h2>
 <ul>
 <li><code>atlaso/app/main.py</code> owns application construction, middleware, mounts, and the top-level order in which stable facade
@@ -4037,7 +4061,7 @@ page and data response, and management server-time response. Dashboard projectio
 facade, and monitoring collection, sampling, persistence, and payload construction remain in
 <code>atlaso/app/services/monitoring.py</code>. Templates, authored CSS, browser JavaScript, screenshots, refresh cadence, and
 operator guidance retain their established owners.</p>
-<p>The UI registry places <code>dashboard_monitor</code> between <code>facade_before_dashboard_monitor</code> and
+<p>The UI registry places <code>dashboard_monitor</code> between <code>facade_between_vaults_dashboard_monitor</code> and
 <code>facade_between_dashboard_monitor_automation</code>, preserving the original effective position after the front-door,
 protocol, public, and earlier management routes and before Appliance Update, Automation, and every later management
 domain. The stable UI facade continues to export all five endpoint callables plus the dashboard, monitoring-access,
@@ -4057,6 +4081,29 @@ behavior-neutral extraction changes no template, CSS, JavaScript, visible copy, 
 refresh cadence, interaction class, route, route name, operation ID, tag, authorization scope, session, caching,
 redirect, status code, response schema, monitoring sample, task or apply projection, redaction, audit, route inventory,
 or normalized OpenAPI contract.</p>
+<h2 id="extracted-vault-ownership">Extracted Vault ownership<a class="headerlink" href="#extracted-vault-ownership" title="Permanent link">&para;</a></h2>
+<p>The seven Vault management transports live in <code>atlaso/app/routers/ui/vaults.py</code>: the Vault page, Vault creation, entry
+creation, entry editing, explicit timed reveal, entry deletion, and Vault deletion. The dedicated Vault service, CLI,
+template and browser JavaScript, encryption and secret custody, VCF Helper integration, managed-script scope, remote
+URI and one-use Web Terminal ticket behavior, and Network Boot/Kickstart dependency handling retain their established
+owners.</p>
+<p>The UI registry places <code>vaults</code> between <code>facade_before_vaults</code> and
+<code>facade_between_vaults_dashboard_monitor</code>. The first facade segment retains front-door, protocol, public, and earlier
+management routes through the Web Terminal WebSocket. The following facade segment begins with management home and
+login and continues to Dashboard and Monitor. This preserves Vault's exact original position after Web Terminal and
+before management home without collapsing the later Dashboard and Monitor contribution.</p>
+<p>The stable <code>atlaso/app/ui.py</code> facade continues to export <code>vaults_page</code>, <code>create_vault_from_ui</code>,
+<code>create_vault_entry_from_ui</code>, <code>edit_vault_entry_from_ui</code>, <code>reveal_vault_entry_from_ui</code>,
+<code>delete_vault_entry_from_ui</code>, and <code>delete_vault_from_ui</code>. It also retains the <code>vaults_context</code> and
+<code>_vaults_render_error</code> compatibility helpers supplied to the extracted router. The domain router does not import the
+UI facade or another monolithic facade.</p>
+<p>Independently runnable transport coverage lives in <code>tests/routers/ui/test_vaults.py</code>. Vault service, encryption, CLI,
+browser-JavaScript, remote-URI and one-use-ticket, Kickstart dependency, settings-archive, worker, and VCF Helper
+integration coverage remains in <code>tests/test_vaults.py</code> and its established specialized owners. This behavior-neutral
+extraction changes no template, CSS, JavaScript, visible copy, control, layout, accessibility, responsive behavior,
+interaction class, route, route name, listener eligibility, authorization scope, session or CSRF behavior, redirect,
+status code, rendering or cache contract, audit action, encryption, masking, timed reveal, delete-dependency behavior,
+route inventory, or normalized OpenAPI output.</p>
 <h2 id="route-and-openapi-compatibility">Route and OpenAPI compatibility<a class="headerlink" href="#route-and-openapi-compatibility" title="Permanent link">&para;</a></h2>
 <p><code>tests/contracts/route_inventory.json</code> records every effective application route in order, including browser,
 protocol, WebSocket, mount, and API routes. Its stable fields are plane, path, methods, route name, explicit operation
@@ -4108,9 +4155,10 @@ complete the <a href="../ui-design-guide/">UI Design Guide</a> gate.</p>
 </span><span id="__span-1-9"><a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a><span class="n">python</span> <span class="n">-m</span> <span class="n">pytest</span> <span class="n">-q</span> <span class="n">tests</span><span class="p">/</span><span class="n">routers</span><span class="p">/</span><span class="n">ui</span><span class="p">/</span><span class="n">test_vcf_workflows</span><span class="p">.</span><span class="n">py</span> <span class="n">tests</span><span class="p">/</span><span class="n">routers</span><span class="p">/</span><span class="n">api_v1</span><span class="p">/</span><span class="n">test_vcf_workflows</span><span class="p">.</span><span class="n">py</span>
 </span><span id="__span-1-10"><a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a><span class="n">python</span> <span class="n">-m</span> <span class="n">pytest</span> <span class="n">-q</span> <span class="n">tests</span><span class="p">/</span><span class="n">routers</span><span class="p">/</span><span class="n">ui</span><span class="p">/</span><span class="n">test_automation</span><span class="p">.</span><span class="n">py</span> <span class="n">tests</span><span class="p">/</span><span class="n">routers</span><span class="p">/</span><span class="n">ui</span><span class="p">/</span><span class="n">test_operations</span><span class="p">.</span><span class="n">py</span> <span class="n">tests</span><span class="p">/</span><span class="n">routers</span><span class="p">/</span><span class="n">api_v1</span><span class="p">/</span><span class="n">test_operations</span><span class="p">.</span><span class="n">py</span>
 </span><span id="__span-1-11"><a id="__codelineno-1-11" name="__codelineno-1-11" href="#__codelineno-1-11"></a><span class="n">python</span> <span class="n">-m</span> <span class="n">pytest</span> <span class="n">-q</span> <span class="n">tests</span><span class="p">/</span><span class="n">routers</span><span class="p">/</span><span class="n">ui</span><span class="p">/</span><span class="n">test_dashboard_monitor</span><span class="p">.</span><span class="n">py</span> <span class="n">tests</span><span class="p">/</span><span class="n">routers</span><span class="p">/</span><span class="n">api_v1</span><span class="p">/</span><span class="n">test_dashboard_monitor</span><span class="p">.</span><span class="n">py</span>
-</span><span id="__span-1-12"><a id="__codelineno-1-12" name="__codelineno-1-12" href="#__codelineno-1-12"></a><span class="n">python</span> <span class="n">-m</span> <span class="n">pytest</span> <span class="n">-q</span> <span class="n">tests</span><span class="p">/</span><span class="n">test_openapi_contract</span><span class="p">.</span><span class="n">py</span> <span class="n">tests</span><span class="p">/</span><span class="n">test_ui_route_namespaces</span><span class="p">.</span><span class="n">py</span> <span class="n">tests</span><span class="p">/</span><span class="n">test_ui_compliance</span><span class="p">.</span><span class="n">py</span>
-</span><span id="__span-1-13"><a id="__codelineno-1-13" name="__codelineno-1-13" href="#__codelineno-1-13"></a><span class="n">python</span> <span class="n">scripts</span><span class="p">/</span><span class="n">generate_router_contract_baselines</span><span class="p">.</span><span class="n">py</span> <span class="p">-</span><span class="n">-check</span>
-</span><span id="__span-1-14"><a id="__codelineno-1-14" name="__codelineno-1-14" href="#__codelineno-1-14"></a><span class="n">python</span> <span class="n">scripts</span><span class="p">/</span><span class="n">check_python_static_analysis</span><span class="p">.</span><span class="n">py</span>
+</span><span id="__span-1-12"><a id="__codelineno-1-12" name="__codelineno-1-12" href="#__codelineno-1-12"></a><span class="n">python</span> <span class="n">-m</span> <span class="n">pytest</span> <span class="n">-q</span> <span class="n">tests</span><span class="p">/</span><span class="n">routers</span><span class="p">/</span><span class="n">ui</span><span class="p">/</span><span class="n">test_vaults</span><span class="p">.</span><span class="n">py</span> <span class="n">tests</span><span class="p">/</span><span class="n">test_vaults</span><span class="p">.</span><span class="n">py</span>
+</span><span id="__span-1-13"><a id="__codelineno-1-13" name="__codelineno-1-13" href="#__codelineno-1-13"></a><span class="n">python</span> <span class="n">-m</span> <span class="n">pytest</span> <span class="n">-q</span> <span class="n">tests</span><span class="p">/</span><span class="n">test_openapi_contract</span><span class="p">.</span><span class="n">py</span> <span class="n">tests</span><span class="p">/</span><span class="n">test_ui_route_namespaces</span><span class="p">.</span><span class="n">py</span> <span class="n">tests</span><span class="p">/</span><span class="n">test_ui_compliance</span><span class="p">.</span><span class="n">py</span>
+</span><span id="__span-1-14"><a id="__codelineno-1-14" name="__codelineno-1-14" href="#__codelineno-1-14"></a><span class="n">python</span> <span class="n">scripts</span><span class="p">/</span><span class="n">generate_router_contract_baselines</span><span class="p">.</span><span class="n">py</span> <span class="p">-</span><span class="n">-check</span>
+</span><span id="__span-1-15"><a id="__codelineno-1-15" name="__codelineno-1-15" href="#__codelineno-1-15"></a><span class="n">python</span> <span class="n">scripts</span><span class="p">/</span><span class="n">check_python_static_analysis</span><span class="p">.</span><span class="n">py</span>
 </span></code></pre></div>
 <p>Then run the repository's required documentation, version, and diff checks; canonical CI owns the complete Python
 suite. Later phases remain incomplete until their own linked issue, documentation, validation, review, and merge gates
