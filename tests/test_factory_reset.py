@@ -108,7 +108,11 @@ def test_factory_reset_stops_transient_helper_restart_and_automation_units(monke
         "atlaso-automation-20260815230000123456.service",
         "atlaso-automation-20260815230100654321.service",
     ]
-    helper_unit = "atlaso-helper-action-0123456789abcdef0123456789abcdef.service"
+    helper_units = [
+        "atlaso-helper-action-0123456789abcdef0123456789abcdef.service",
+        "atlaso-helper-action-fedcba9876543210fedcba9876543210.service",
+    ]
+    helper_inventories = [[helper_units[0]], [helper_units[1]], []]
     restart_timer = "atlaso-update-restart-20260820152500123456.timer"
     restart_service = "atlaso-update-restart-20260820152500123456.service"
 
@@ -122,7 +126,10 @@ def test_factory_reset_stops_transient_helper_restart_and_automation_units(monke
         commands.append(command)
         if command[1] == "list-units":
             if command[-1] == "atlaso-helper-action-*.service":
-                stdout = f"{helper_unit} loaded active running Atlaso helper action"
+                stdout = "\n".join(
+                    f"{unit} loaded active running Atlaso helper action"
+                    for unit in helper_inventories.pop(0)
+                )
             elif command[-1] == "atlaso-update-restart-*.timer":
                 stdout = f"{restart_timer} loaded active waiting Atlaso update restart"
             elif command[-1] == "atlaso-update-restart-*.service":
@@ -149,20 +156,55 @@ def test_factory_reset_stops_transient_helper_restart_and_automation_units(monke
         "atlaso-console.service",
     ]
     assert commands[1][-1] == "atlaso-helper-action-*.service"
-    assert commands[2] == ["systemctl", "stop", helper_unit]
-    assert commands[3] == ["systemctl", "is-active", "--quiet", helper_unit]
-    assert commands[4][-1] == "atlaso-update-restart-*.timer"
-    assert commands[5] == ["systemctl", "stop", restart_timer]
-    assert commands[6] == ["systemctl", "is-active", "--quiet", restart_timer]
-    assert commands[7][-1] == "atlaso-update-restart-*.service"
-    assert commands[8] == ["systemctl", "stop", restart_service]
-    assert commands[9] == ["systemctl", "is-active", "--quiet", restart_service]
-    assert commands[10][-1] == "atlaso-automation-*.service"
-    assert commands[11] == ["systemctl", "stop", *automation_units]
-    assert commands[12:] == [
+    assert commands[2] == ["systemctl", "stop", helper_units[0]]
+    assert commands[3] == ["systemctl", "is-active", "--quiet", helper_units[0]]
+    assert commands[4][-1] == "atlaso-helper-action-*.service"
+    assert commands[5] == ["systemctl", "stop", helper_units[1]]
+    assert commands[6] == ["systemctl", "is-active", "--quiet", helper_units[1]]
+    assert commands[7][-1] == "atlaso-helper-action-*.service"
+    assert commands[8][-1] == "atlaso-update-restart-*.timer"
+    assert commands[9] == ["systemctl", "stop", restart_timer]
+    assert commands[10] == ["systemctl", "is-active", "--quiet", restart_timer]
+    assert commands[11][-1] == "atlaso-update-restart-*.service"
+    assert commands[12] == ["systemctl", "stop", restart_service]
+    assert commands[13] == ["systemctl", "is-active", "--quiet", restart_service]
+    assert commands[14][-1] == "atlaso-automation-*.service"
+    assert commands[15] == ["systemctl", "stop", *automation_units]
+    assert commands[16:] == [
         ["systemctl", "is-active", "--quiet", automation_units[0]],
         ["systemctl", "is-active", "--quiet", automation_units[1]],
     ]
+
+
+def test_factory_reset_fails_closed_when_helper_actions_do_not_quiesce(monkeypatch):
+    """Reset refuses activation when the bounded helper family never drains.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+    """
+    import pytest
+
+    import atlaso.app.factory_reset as factory_reset
+
+    unit = "atlaso-helper-action-0123456789abcdef0123456789abcdef.service"
+    inventories = iter([[unit], [unit]])
+    stopped: list[list[str]] = []
+    monkeypatch.setattr(factory_reset, "HELPER_ACTION_QUIESCE_MAX_PASSES", 1)
+    monkeypatch.setattr(
+        factory_reset,
+        "_inventory_transient_units",
+        lambda **_kwargs: next(inventories),
+    )
+    monkeypatch.setattr(
+        factory_reset,
+        "_stop_and_verify_transient_units",
+        lambda units, **_kwargs: stopped.append(units),
+    )
+
+    with pytest.raises(factory_reset.FactoryResetError, match="could not quiesce"):
+        factory_reset._stop_transient_helper_action_units()
+
+    assert stopped == [[unit]]
 
 
 def test_fallback_sqlite_replacement_serializes_an_earlier_writer(tmp_path):

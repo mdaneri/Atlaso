@@ -4044,6 +4044,50 @@ def test_account_commands_use_bounded_helper_action_units(monkeypatch):
     assert stdin_commands[0][1] == "operator:secret\n"
 
 
+@pytest.mark.parametrize(
+    "action",
+    ["reset-network-runtime", "reset-retained-runtime", "apply-root-password"],
+)
+def test_factory_reset_mutations_use_bounded_helper_action_units(
+    monkeypatch,
+    action,
+):
+    """Reset mutations re-enter through the reset-visible transient family.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+        action: Factory-reset helper action under test.
+    """
+    helper = load_helper_module()
+    calls: list[tuple[str, str, list[str]]] = []
+
+    monkeypatch.setenv("ATLASO_HELPER_USE_SYSTEMD_RUN", "1")
+    monkeypatch.delenv(helper.SYSTEMD_RUN_CHILD_ENV, raising=False)
+    monkeypatch.setattr(
+        helper.shutil,
+        "which",
+        lambda command: "/usr/bin/systemd-run" if command == "systemd-run" else None,
+    )
+    monkeypatch.setattr(
+        helper,
+        "_run_real_action_with_systemd",
+        lambda group, selected_action, args: calls.append(
+            (group, selected_action, args)
+        )
+        or 0,
+    )
+    monkeypatch.setattr(
+        helper,
+        "_handle_factory_reset",
+        lambda *_args: (_ for _ in ()).throw(
+            AssertionError("handler should run in the transient child")
+        ),
+    )
+
+    assert helper.main(["atlaso-helper", "factory-reset", action, "--real"]) == 0
+    assert calls == [("factory-reset", action, [])]
+
+
 def test_powercli_helper_actions_receive_writable_root_configuration_environment(monkeypatch, tmp_path):
     """Verify that powercli helper actions receive writable root configuration environment.
 

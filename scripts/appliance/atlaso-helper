@@ -132,6 +132,9 @@ SYSTEMD_RUN_REAL_ACTIONS = {
     "restart-service",
     "recover-management-plane",
     "sync-sources",
+    "reset-network-runtime",
+    "reset-retained-runtime",
+    "apply-root-password",
 }
 SYSTEMD_RUN_CHILD_ENV = "ATLASO_HELPER_SYSTEMD_RUN_CHILD"
 SYSTEMD_RUN_ACTION_UNIT_PREFIX = "atlaso-helper-action"

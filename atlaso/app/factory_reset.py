@@ -79,6 +79,7 @@ AUTOMATION_TRANSIENT_UNIT_PATTERN = re.compile(r"^atlaso-automation-\d{20}\.serv
 HELPER_ACTION_TRANSIENT_UNIT_PATTERN = re.compile(
     r"^atlaso-helper-action-[0-9a-f]{32}\.service$"
 )
+HELPER_ACTION_QUIESCE_MAX_PASSES = 16
 UPDATE_RESTART_TIMER_PATTERN = re.compile(r"^atlaso-update-restart-\d{20}\.timer$")
 UPDATE_RESTART_SERVICE_PATTERN = re.compile(r"^atlaso-update-restart-\d{20}\.service$")
 WEB_TERMINAL_CREDENTIAL_PATHS = (
@@ -507,13 +508,20 @@ def _stop_transient_update_restart_units() -> None:
 
 def _stop_transient_helper_action_units() -> None:
     """Stop privileged helper actions after their Atlaso callers are quiescent."""
-    units = _inventory_transient_units(
-        unit_type="service",
-        unit_glob="atlaso-helper-action-*.service",
-        unit_pattern=HELPER_ACTION_TRANSIENT_UNIT_PATTERN,
-        label="helper action",
-    )
-    _stop_and_verify_transient_units(units, label="helper action")
+    for pass_index in range(HELPER_ACTION_QUIESCE_MAX_PASSES + 1):
+        units = _inventory_transient_units(
+            unit_type="service",
+            unit_glob="atlaso-helper-action-*.service",
+            unit_pattern=HELPER_ACTION_TRANSIENT_UNIT_PATTERN,
+            label="helper action",
+        )
+        if not units:
+            return
+        if pass_index == HELPER_ACTION_QUIESCE_MAX_PASSES:
+            raise FactoryResetError(
+                "Factory reset could not quiesce Atlaso helper action units."
+            )
+        _stop_and_verify_transient_units(units, label="helper action")
 
 
 def _stop_transient_automation_units() -> None:

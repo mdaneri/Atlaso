@@ -52,8 +52,9 @@ The reset:
 - removes all control-plane records, including local and external users, password hashes, API tokens, sessions,
   schedules, queued and completed jobs, automation history, audit events, vault entries, certificates, VLANs, routes,
   service configuration, and settings-archive metadata;
-- stops Atlaso, its worker, and the tty1 console, then stops and verifies every UUID-named `atlaso-helper-action-*`
-  transient service before inventorying and cancelling every bounded `atlaso-update-restart-*` timer and service; it
+- stops Atlaso, its worker, and the tty1 console, then repeatedly inventories, stops, and verifies UUID-named
+  `atlaso-helper-action-*` transient services until none remain before inventorying and cancelling every bounded
+  `atlaso-update-restart-*` timer and service; reset cleanup and root-password actions use that bounded family too; it
   then stops and verifies every timestamped `atlaso-automation-*` transient service before runtime activation so no
   in-flight helper, delayed update restart, console mutation, or pre-reset script with a loaded vault credential can
   outlive the reset transaction; readiness restarts and verifies the console with the other required services;
