@@ -15151,6 +15151,7 @@ def _management_handoff_runtime_paths(payload: dict) -> list[Path]:
         *sorted(NETWORKD_CONFIG_DIR.glob(f"{NETWORKD_MANAGED_PREFIX}*")),
         *[NETWORKD_CONFIG_DIR / name for name in sorted(NETWORKD_DEFAULT_APPLIANCE_FILES)],
         FIREWALL_CONFIG_PATH,
+        FIREWALL_SERVICE_PATH,
         NGINX_MAIN_CONFIG_PATH,
         NGINX_CONF_INCLUDE_PATH,
         NGINX_MANAGEMENT_SITE_PATH,
@@ -15249,6 +15250,10 @@ def _snapshot_management_handoff(payload: dict) -> dict:
     if not previous_addresses:
         raise ValueError("previous management listener addresses could not be captured")
     candidate_physical, candidate_vlans, candidate_link_states = _management_handoff_candidate_links(payload)
+    previous_firewall_config_existed = FIREWALL_CONFIG_PATH.is_file()
+    previous_firewall_service_existed = FIREWALL_SERVICE_PATH.is_file()
+    if previous_firewall_config_existed != previous_firewall_service_existed:
+        raise ValueError("previous firewall config and service state are incoherent")
     state = {
         "schema_version": 1,
         "job_id": payload["job_id"],
@@ -15266,6 +15271,8 @@ def _snapshot_management_handoff(payload: dict) -> dict:
         "candidate_link_states": candidate_link_states,
         "candidate_management_interface": candidate_management_interface,
         "resolver_apply_started": False,
+        "previous_firewall_config_existed": previous_firewall_config_existed,
+        "previous_firewall_service_existed": previous_firewall_service_existed,
     }
     _durable_management_handoff_state_write(state, MANAGEMENT_HANDOFF_STATE_PATH)
     MANAGEMENT_HANDOFF_COMMIT_PATH.unlink(missing_ok=True)
@@ -15912,6 +15919,77 @@ def _restore_management_handoff_resolver(state: dict, commands: list[dict[str, o
         raise ValueError("resolver rollback failed")
 
 
+def _quiesce_management_handoff_firewall(
+    state: dict,
+    commands: list[dict[str, object]],
+) -> None:
+    """Stop a candidate firewall service absent from the previous state.
+
+    Args:
+        state: Durable transaction state.
+        commands: Bounded rollback command evidence to extend.
+    """
+    previous_service_existed = state.get("previous_firewall_service_existed")
+    if previous_service_existed is None:
+        previous_service_existed = _management_handoff_previous_firewall_config_existed(state)
+    if bool(previous_service_existed) or not FIREWALL_SERVICE_PATH.is_file():
+        return
+    result = _run(["systemctl", "disable", "--now", "atlaso-firewall.service"])
+    commands.append(
+        {
+            "stage": "firewall service rollback",
+            "returncode": result.returncode,
+        }
+    )
+    if result.returncode != 0:
+        raise ValueError("firewall service rollback failed")
+
+
+def _restore_management_handoff_firewall(
+    state: dict,
+    commands: list[dict[str, object]],
+) -> None:
+    """Restore the previous filtered or explicitly open nftables state.
+
+    Args:
+        state: Durable transaction state.
+        commands: Bounded rollback command evidence to extend.
+    """
+    if _management_handoff_previous_firewall_config_existed(state):
+        if not FIREWALL_CONFIG_PATH.is_file():
+            raise ValueError("firewall rollback config is missing")
+        command = ["nft", "-f", str(FIREWALL_CONFIG_PATH)]
+    else:
+        command = ["nft", "flush", "ruleset"]
+    result = _run(command)
+    commands.append(
+        {
+            "stage": "firewall rollback",
+            "command": command,
+            "returncode": result.returncode,
+        }
+    )
+    if result.returncode != 0:
+        raise ValueError("firewall rollback failed")
+
+
+def _management_handoff_previous_firewall_config_existed(state: dict) -> bool:
+    """Return prior firewall presence, including legacy transaction markers.
+
+    Args:
+        state: Durable transaction state.
+
+    Returns:
+        Whether the previous Atlaso firewall config existed.
+    """
+    if "previous_firewall_config_existed" in state:
+        return bool(state["previous_firewall_config_existed"])
+    for item in state.get("snapshots", []):
+        if str(item.get("path") or "") == str(FIREWALL_CONFIG_PATH):
+            return bool(item.get("existed"))
+    raise ValueError("previous firewall snapshot state is missing")
+
+
 def _restore_management_handoff(state: dict) -> dict:
     """Restore every snapshotted management runtime artifact.
 
@@ -15921,6 +15999,8 @@ def _restore_management_handoff(state: dict) -> dict:
     Returns:
         Bounded rollback evidence.
     """
+    commands: list[dict[str, object]] = []
+    _quiesce_management_handoff_firewall(state, commands)
     for path in NETWORKD_CONFIG_DIR.glob(f"{MANAGEMENT_HANDOFF_HOLDOVER_PREFIX}*.network"):
         path.unlink(missing_ok=True)
     current_managed = [NETWORKD_MGMT_CONFIG_PATH, *NETWORKD_CONFIG_DIR.glob(f"{NETWORKD_MANAGED_PREFIX}*")]
@@ -15936,7 +16016,6 @@ def _restore_management_handoff(state: dict) -> dict:
             os.chown(path, int(item.get("uid", 0)), int(item.get("gid", 0)))
         else:
             path.unlink(missing_ok=True)
-    commands: list[dict[str, object]] = []
     for command in (["networkctl", "reload"], ["systemctl", "daemon-reload"]):
         result = _run(command)
         commands.append({"stage": "rollback", "command": command, "returncode": result.returncode})
@@ -15944,11 +16023,7 @@ def _restore_management_handoff(state: dict) -> dict:
             raise ValueError(f"rollback command failed: {' '.join(command)}")
     _restore_management_handoff_resolver(state, commands)
     _restore_management_handoff_links(state, commands)
-    if FIREWALL_CONFIG_PATH.is_file():
-        result = _run(["nft", "-f", str(FIREWALL_CONFIG_PATH)])
-        commands.append({"stage": "firewall rollback", "returncode": result.returncode})
-        if result.returncode != 0:
-            raise ValueError("firewall rollback failed")
+    _restore_management_handoff_firewall(state, commands)
     nginx = _nginx_binary()
     if nginx is None or _nginx_test_command().returncode != 0:
         raise ValueError("nginx rollback validation failed")

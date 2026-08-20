@@ -66,7 +66,9 @@ def _router(
 def test_facades_register_extracted_domains_in_exact_order():
     """Keep every extracted router in its established facade sequence."""
     assert ui.UI_ROUTER_REGISTRY.domains == (
-        "facade_before_dashboard_monitor",
+        "facade_before_vaults",
+        "vaults",
+        "facade_between_vaults_dashboard_monitor",
         "dashboard_monitor",
         "facade_between_dashboard_monitor_automation",
         "automation",
@@ -90,7 +92,9 @@ def test_facades_register_extracted_domains_in_exact_order():
         "facade_after_settings_backup",
     )
     assert ui.UI_ROUTER_REGISTRY.routers_for_plane("management") == (
-        ui._management_before_dashboard_monitor_router,
+        ui._management_before_vaults_router,
+        ui.vaults_router,
+        ui._management_between_vaults_dashboard_monitor_router,
         ui.dashboard_monitor_router,
         ui._management_before_automation_router,
         ui.automation_router,
@@ -168,6 +172,9 @@ def test_facades_register_extracted_domains_in_exact_order():
     assert {
         route.endpoint.__module__ for route in ui.dashboard_monitor_router.routes
     } == {"atlaso.app.routers.ui.dashboard_monitor"}
+    assert {route.endpoint.__module__ for route in ui.vaults_router.routes} == {
+        "atlaso.app.routers.ui.vaults"
+    }
     assert {route.endpoint.__module__ for route in ui.routes_wan_router.routes} == {
         "atlaso.app.routers.ui.routes_wan"
     }

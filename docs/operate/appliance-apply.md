@@ -107,6 +107,9 @@ dynamic listener cannot mask a missing lease or router-advertised address. When 
 the transition retains the previous filtering policy with minimal candidate listener admission until readiness. When
 the same Apply enables filtering from an open state, the transition remains open until readiness. In both directions,
 the candidate firewall state applies only while retiring the old path.
+If rollback started from a state with no Atlaso firewall config or service, it disables and stops any candidate service,
+removes the candidate unit/config through the snapshot restore, reloads systemd, and explicitly flushes nftables back
+to the previous open policy.
 On failure, each bundled
 component records the same failing layer
 and rollback result. The handoff applies only the management front-door portion of Appliance Settings; unrelated

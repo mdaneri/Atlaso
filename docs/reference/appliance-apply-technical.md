@@ -230,7 +230,9 @@ path retires. A second
 readiness pass protects retirement. Any validation, mutation, service, probe, or retirement failure restores every
 captured file, reloads networkd and nftables, reconfigures previous links, reloads nginx, and restarts Atlaso when the
 captured state requires it. Rollback explicitly reconfigures every pre-existing candidate link and removes a
-candidate-only VLAN after restoring its files. The helper leaves a durable transaction marker until Atlaso commits the
+candidate-only VLAN after restoring its files. A previously absent firewall state is restored by disabling/stopping the
+candidate `atlaso-firewall.service`, deleting its snapshotted-as-absent unit and config, reloading systemd, and running
+`nft flush ruleset`. The helper leaves a durable transaction marker until Atlaso commits the
 bundled task state and baselines and sends an idempotent acknowledgement. A fixed transient systemd unit serializes
 apply with startup recovery, which stops and verifies any surviving helper before rollback. Startup rolls back when
 interruption precedes that database boundary and completes the acknowledgement when the database already records the

@@ -164,12 +164,49 @@ def test_management_handoff_snapshot_covers_every_nginx_side_effect():
     paths = set(helper._management_handoff_runtime_paths({"ca_config_path": ""}))
 
     assert {
+        helper.FIREWALL_SERVICE_PATH,
         helper.NGINX_MAIN_CONFIG_PATH,
         helper.NGINX_CONF_INCLUDE_PATH,
         helper.NGINX_MANAGEMENT_SITE_PATH,
         helper.NGINX_PUBLIC_SERVICES_SITE_PATH,
         helper.VCF_DEPOT_HTPASSWD_PATH,
     }.issubset(paths)
+
+
+def test_management_handoff_rollback_restores_absent_firewall(monkeypatch, tmp_path):
+    """Disable the candidate service and flush rules for a prior open state.
+
+    Args:
+        monkeypatch: Pytest fixture used to isolate firewall runtime state.
+        tmp_path: Temporary directory containing the candidate service unit.
+    """
+    helper = load_helper_module()
+    service_path = tmp_path / "atlaso-firewall.service"
+    service_path.write_text("[Service]\n", encoding="utf-8")
+    commands: list[list[str]] = []
+    monkeypatch.setattr(helper, "FIREWALL_SERVICE_PATH", service_path)
+    monkeypatch.setattr(helper, "FIREWALL_CONFIG_PATH", tmp_path / "missing.nft")
+    monkeypatch.setattr(
+        helper,
+        "_run",
+        lambda command: commands.append(command)
+        or subprocess.CompletedProcess(command, 0, "", ""),
+    )
+    evidence: list[dict[str, object]] = []
+    state = {
+        "previous_firewall_config_existed": False,
+        "previous_firewall_service_existed": False,
+    }
+
+    helper._quiesce_management_handoff_firewall(state, evidence)
+    helper._restore_management_handoff_firewall(state, evidence)
+
+    assert ["systemctl", "disable", "--now", "atlaso-firewall.service"] in commands
+    assert ["nft", "flush", "ruleset"] in commands
+    assert [entry["stage"] for entry in evidence] == [
+        "firewall service rollback",
+        "firewall rollback",
+    ]
 
 
 def test_management_handoff_snapshot_includes_previous_tls_identity(monkeypatch, tmp_path):
