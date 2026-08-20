@@ -143,7 +143,7 @@
           completedReconnectTaskId = taskId;
         }
       }
-      if (taskActive(task)) trackedJobId = taskId;
+      if (taskActive(task) || task?.mutation_locked === true) trackedJobId = taskId;
       else if (trackedJobId === taskId) trackedJobId = "";
       options.onTask(task);
       return true;

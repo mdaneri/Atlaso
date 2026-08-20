@@ -284,7 +284,8 @@ Terminal order:
   interval, the shared monitor may use that context for one bounded neutral reconnecting window without dropping last-known
   progress or the global lock. Measure that interval with browser-local elapsed time beginning when the confirmed context
   is first observed; never compare independent browser and appliance wall clocks. Browser-submitted and local-console
-  forced-real tasks must carry the same confirmed context.
+  forced-real tasks must carry the same confirmed context. When Appliance Settings is the last or only component, retain
+  the terminal task and server mutation lock until the confirmed restart window is consumed.
   Recovery clears the notice automatically; missing, unexpected, pre-confirmation, or out-of-window status failures retain
   the actionable availability warning and active retry cadence.
 - Label the global submit action around the user's intent, such as `Submit appliance changes`, and explain that the task

@@ -13996,12 +13996,12 @@ VCF_DEPOT_SUBMIT_LOCK = threading.Lock()
 
 
 def active_appliance_apply_job(db: Session) -> Job | None:
-    """Return active appliance apply job.
+    """Return the Appliance Apply job that currently holds the mutation lock.
 
     Args:
         db: Active database session.
     """
-    return db.scalars(
+    active = db.scalars(
         select(Job)
         .options(selectinload(Job.steps))
         .where(
@@ -14011,6 +14011,61 @@ def active_appliance_apply_job(db: Session) -> Job | None:
         .order_by(Job.created_at)
         .limit(1)
     ).first()
+    if active is not None:
+        return active
+
+    now = utcnow()
+    maximum_window = timedelta(
+        seconds=(
+            APPLIANCE_APPLY_MANAGEMENT_RESTART_DELAY_SECONDS
+            + APPLIANCE_APPLY_MANAGEMENT_RECONNECT_GRACE_SECONDS
+        )
+    )
+    recent = db.scalars(
+        select(Job)
+        .options(selectinload(Job.steps))
+        .where(
+            Job.type == "appliance-apply",
+            Job.status == JobStatus.SUCCEEDED.value,
+            Job.finished_at.is_not(None),
+            Job.finished_at >= now - maximum_window,
+        )
+        .order_by(desc(Job.finished_at))
+    ).all()
+    for job in recent:
+        transition = _job_payload(job).get("management_status_transition")
+        if not isinstance(transition, dict) or transition.get("kind") != "planned_service_restart":
+            continue
+        restart_delay_seconds = transition.get("restart_delay_seconds")
+        grace_seconds = transition.get("grace_seconds")
+        if (
+            not isinstance(restart_delay_seconds, int)
+            or isinstance(restart_delay_seconds, bool)
+            or restart_delay_seconds != APPLIANCE_APPLY_MANAGEMENT_RESTART_DELAY_SECONDS
+        ):
+            continue
+        if (
+            not isinstance(grace_seconds, int)
+            or isinstance(grace_seconds, bool)
+            or grace_seconds != APPLIANCE_APPLY_MANAGEMENT_RECONNECT_GRACE_SECONDS
+        ):
+            continue
+        settings_step = next(
+            (
+                step
+                for step in job.steps
+                if step.component_key == "appliance_settings"
+                and step.status == JobStatus.SUCCEEDED.value
+                and step.finished_at is not None
+            ),
+            None,
+        )
+        if settings_step is None:
+            continue
+        deadline = ensure_aware(settings_step.finished_at) + maximum_window
+        if now < deadline:
+            return job
+    return None
 
 
 def active_appliance_apply_submitted_unit_ids(db: Session) -> set[str]:

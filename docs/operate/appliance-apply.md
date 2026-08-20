@@ -104,7 +104,8 @@ management settings; Atlaso is reconnecting to task status.** This neutral state
 global lock visible. Leave the dialog open: Atlaso retries every two seconds, clears the notice when the front door
 returns, and follows the same master task to its terminal state without a page reload. The bounded reconnect interval
 starts when this browser first observes the helper-confirmed restart, so clock differences between the browser and appliance
-do not change its duration.
+do not change its duration. For a settings-only apply, the completed master remains visible and keeps appliance changes
+locked until that restart window ends.
 
 If that reconnect exceeds the bounded grace window, or a status failure is not part of the planned restart, the dialog
 instead shows **Live task status is temporarily unavailable** with a link-free instruction to open **Tasks** in another

@@ -15815,7 +15815,7 @@ function renderApplianceApplyStepDetail(task) {
 function renderApplianceApplyTask(task) {
   const elements = applianceApplyModalElements();
   if (!(elements.modal instanceof HTMLDialogElement) || !task) return;
-  const active = taskStatusActive(task.status);
+  const active = taskStatusActive(task.status) || task.mutation_locked === true;
   elements.modal.dataset.active = active ? "true" : "false";
   elements.modal.dataset.taskId = String(task.id || "");
   elements.modal.dataset.taskStatus = String(task.status || "");

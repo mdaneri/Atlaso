@@ -40,7 +40,7 @@ function monitorHarness({ requestStatus, requestTask, now = () => Date.now() }) 
     onTask: (task) => {
       tasks.push(task);
       ui.modalStatus = task.status;
-      ui.locked = ["pending", "running"].includes(task.status);
+      ui.locked = ["pending", "running"].includes(task.status) || task.mutation_locked === true;
     },
     onTerminal: async (task) => terminals.push(task.status),
     onError: (error, state) => {
@@ -350,6 +350,42 @@ test("uses browser-local elapsed time when appliance and browser clocks differ",
   await state.timers.at(-1).callback();
   assert.equal(state.errorStates[1].expectedReconnect, false);
   assert.equal(state.errorStates[1].reconnectElapsedMs, 19000);
+});
+
+test("retains a terminal settings-only task through its server mutation lock", async () => {
+  let now = 1000;
+  const terminalTask = plannedRestartTask("succeeded");
+  terminalTask.status = "succeeded";
+  terminalTask.mutation_locked = true;
+  const statusPayloads = [
+    { active_task: terminalTask, pending_count: 0, locked: true },
+    new Error("scheduled restart"),
+    { active_task: null, pending_count: 0, locked: false },
+  ];
+  const state = monitorHarness({
+    requestStatus: async () => {
+      const payload = statusPayloads.shift();
+      if (payload instanceof Error) throw payload;
+      return payload;
+    },
+    requestTask: async () => ({ ...terminalTask, mutation_locked: false }),
+    now: () => now,
+  });
+
+  await state.monitor.refresh();
+  assert.equal(state.monitor.trackedJobId(), "job-1");
+  assert.equal(state.ui.locked, true);
+
+  now += 4000;
+  await state.timers.at(-1).callback();
+  assert.equal(state.errorStates[0].expectedReconnect, true);
+  assert.equal(state.ui.pollTone, "neutral");
+
+  now += 2000;
+  await state.timers.at(-1).callback();
+  assert.equal(state.monitor.trackedJobId(), "");
+  assert.equal(state.ui.locked, false);
+  assert.deepEqual(state.terminals, ["succeeded"]);
 });
 
 test("consumes unused grace after a successful poll beyond the scheduled restart", async () => {

@@ -1,7 +1,7 @@
 """Test Appliance Apply management UI transport behavior."""
 
 import json
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 
 from tests.routers.ui.helpers import login
 
@@ -190,6 +190,79 @@ def test_appliance_apply_status_preserves_planned_management_restart_context(cli
         ("firewall", "running"),
     ]
     assert task["_children"][0]["finished_at"] == "2026-08-20T19:30:00+00:00"
+
+
+def test_appliance_apply_status_retains_terminal_planned_restart_lock(client, monkeypatch):
+    """Keep a settings-only task and the mutation lock through its restart window.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+    """
+    from atlaso.app import ui
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job, JobStatus, JobStep
+
+    observed_at = datetime(2026, 8, 20, 20, 30, tzinfo=timezone.utc)
+    monkeypatch.setattr(ui, "utcnow", lambda: observed_at)
+    login(client)
+    page = client.get("/dashboard")
+    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    transition = {
+        "kind": "planned_service_restart",
+        "restart_delay_seconds": 3,
+        "grace_seconds": 15,
+    }
+    with SessionLocal() as db:
+        job = Job(
+            id="job_terminal_management_restart",
+            type="appliance-apply",
+            status=JobStatus.SUCCEEDED.value,
+            created_by="admin",
+            progress_percent=100,
+            finished_at=observed_at,
+            result=json.dumps(
+                {
+                    "selected_units": ["appliance_settings"],
+                    "management_status_transition": transition,
+                }
+            ),
+        )
+        db.add(job)
+        db.add(
+            JobStep(
+                id=f"{job.id}:appliance_settings",
+                job=job,
+                component_key="appliance_settings",
+                label="Appliance Settings",
+                position=1,
+                status=JobStatus.SUCCEEDED.value,
+                progress_percent=100,
+                finished_at=observed_at,
+                result="{}",
+            )
+        )
+        db.commit()
+
+    retained = client.get("/appliance-apply/status?refresh=true")
+    assert retained.status_code == 200
+    assert retained.json()["locked"] is True
+    assert retained.json()["active_task"]["id"] == "job_terminal_management_restart"
+    assert retained.json()["active_task"]["status"] == JobStatus.SUCCEEDED.value
+    assert retained.json()["active_task"]["mutation_locked"] is True
+
+    blocked = client.post(
+        "/appliance-apply",
+        data={"csrf": csrf, "selected_units": "firewall"},
+    )
+    assert blocked.status_code == 423
+    assert blocked.json()["job_id"] == "job_terminal_management_restart"
+
+    monkeypatch.setattr(ui, "utcnow", lambda: observed_at + timedelta(seconds=19))
+    released = client.get("/appliance-apply/status?refresh=true")
+    assert released.status_code == 200
+    assert released.json()["locked"] is False
+    assert released.json()["active_task"] is None
 
 
 def test_appliance_apply_transition_context_requires_helper_confirmation():
