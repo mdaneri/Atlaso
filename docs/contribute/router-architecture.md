@@ -29,7 +29,10 @@ separated effective positions and the Automation-owned contextual schedule trans
 and operational management transports plus the contiguous operational API v1 block without changing route order,
 behavior, or cross-domain service ownership. Phase 12 extracts Appliance Settings and Backup Restore management
 transports plus the two API v1 Settings operations while retaining settings-archive, recovery, factory-reset,
-credential-custody, and global Appliance Apply behavior in their established owners.
+credential-custody, and global Appliance Apply behavior in their established owners. Phase 13 extracts the Dashboard
+and Monitor management transports plus their two API v1 operations while retaining dashboard projections, monitoring
+sampling and service behavior, templates, browser assets, and every operator-visible interaction in their established
+owners.
 
 ## Ownership and responsibilities
 
@@ -314,6 +317,38 @@ layout, interaction class, route, route name, operation ID, tag, authorization s
 or download contract, redirect, status code, response schema, audit action, caching or redaction contract, route
 inventory, normalized OpenAPI output, desired state, or host-mutation boundary.
 
+## Extracted Dashboard and Monitor ownership
+
+Dashboard and Monitor management transports live in
+`atlaso/app/routers/ui/dashboard_monitor.py`. This owner includes the Dashboard page and private data response, Monitor
+page and data response, and management server-time response. Dashboard projection helpers remain in the stable UI
+facade, and monitoring collection, sampling, persistence, and payload construction remain in
+`atlaso/app/services/monitoring.py`. Templates, authored CSS, browser JavaScript, screenshots, refresh cadence, and
+operator guidance retain their established owners.
+
+The UI registry places `dashboard_monitor` between `facade_before_dashboard_monitor` and
+`facade_between_dashboard_monitor_automation`, preserving the original effective position after the front-door,
+protocol, public, and earlier management routes and before Appliance Update, Automation, and every later management
+domain. The stable UI facade continues to export all five endpoint callables plus the dashboard, monitoring-access,
+formatting, and projection compatibility helpers.
+
+The bearer-authenticated Dashboard and Monitor API v1 operations live in
+`atlaso/app/routers/api_v1/dashboard_monitor.py`. The API registry places `dashboard_monitor` immediately after
+`identity` and before `physical_vlans`, preserving the established position after API login and identity operations and
+before the physical-interface, VLAN, networking, operational, Settings, VCF, Network Boot, and Managed LDAP blocks.
+The stable API v1 facade continues to export both operation callables and the monitoring payload compatibility helper.
+
+Independently runnable facade-transport coverage lives in
+`tests/routers/ui/test_dashboard_monitor.py` and
+`tests/routers/api_v1/test_dashboard_monitor.py`. Dashboard projection, monitoring service and sampling, lifecycle,
+browser-JavaScript, template, and cross-domain behavior retain their established test owners. Monitor detail
+collections remain read-only Tabulator surfaces that reuse Tasks and Audit Events operational-grid behavior. Dashboard
+command-center cards and Monitor chart/status panels remain their existing reviewed custom read-only surfaces. This
+behavior-neutral extraction changes no template, CSS, JavaScript, visible copy, control, layout, chart, grid, tab,
+refresh cadence, interaction class, route, route name, operation ID, tag, authorization scope, session, caching,
+redirect, status code, response schema, monitoring sample, task or apply projection, redaction, audit, route inventory,
+or normalized OpenAPI contract.
+
 ## Route and OpenAPI compatibility
 
 `tests/contracts/route_inventory.json` records every effective application route in order, including browser,
@@ -378,6 +413,7 @@ python -m pytest -q tests/routers/ui/test_managed_ldap.py tests/routers/api_v1/t
 python -m pytest -q tests/routers/ui/test_network_boot.py tests/routers/api_v1/test_network_boot.py tests/test_network_boot.py
 python -m pytest -q tests/routers/ui/test_vcf_workflows.py tests/routers/api_v1/test_vcf_workflows.py
 python -m pytest -q tests/routers/ui/test_automation.py tests/routers/ui/test_operations.py tests/routers/api_v1/test_operations.py
+python -m pytest -q tests/routers/ui/test_dashboard_monitor.py tests/routers/api_v1/test_dashboard_monitor.py
 python -m pytest -q tests/test_openapi_contract.py tests/test_ui_route_namespaces.py tests/test_ui_compliance.py
 python scripts/generate_router_contract_baselines.py --check
 python scripts/check_python_static_analysis.py

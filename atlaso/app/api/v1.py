@@ -16,7 +16,7 @@ from fastapi import (
     status,
 )
 from fastapi import Path as ApiPath
-from sqlalchemy import desc, select
+from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
@@ -27,7 +27,6 @@ from atlaso.app.config import Settings, get_settings
 from atlaso.app.database import get_db
 from atlaso.app.models import (
     ApplianceSettings,
-    AuditEvent,
     CaCertificate,
     CaSettings,
     DhcpOption,
@@ -57,11 +56,16 @@ from atlaso.app.models import (
     VsphereKeyProvider,
     VsphereTrustedVcenter,
     VsphereTrustedVcenterCertificate,
-    WanPolicy,
     utcnow,
 )
 from atlaso.app.openapi import DocumentedAPIRoute
 from atlaso.app.routers.api_v1 import API_V1_ROUTER_REGISTRY
+from atlaso.app.routers.api_v1.dashboard_monitor import (
+    DashboardMonitorApiDependencies,
+)
+from atlaso.app.routers.api_v1.dashboard_monitor import (
+    build_router as build_dashboard_monitor_api_router,
+)
 from atlaso.app.routers.api_v1.dns_dhcp import DnsDhcpApiDependencies
 from atlaso.app.routers.api_v1.dns_dhcp import (
     build_router as build_dns_dhcp_api_router,
@@ -99,7 +103,6 @@ from atlaso.app.schemas import (
     ApiTokenCreate,
     ApiTokenCreated,
     ApplianceVersionResponse,
-    DashboardResponse,
     EsxNfsShareCreate,
     EsxNfsShareResponse,
     EsxNfsShareUpdate,
@@ -109,8 +112,6 @@ from atlaso.app.schemas import (
     EsxStorageVolumeCreate,
     EsxStorageVolumeResponse,
     EsxStorageVolumeUpdate,
-    MonitorResponse,
-    PhysicalInterfaceResponse,
     ServiceStateResponse,
     SettingsResponse,
     VcfOfflineDepotStatusResponse,
@@ -129,7 +130,6 @@ from atlaso.app.schemas import (
     VsphereTrustedVcenterCreate,
     VsphereTrustedVcenterResponse,
     VsphereTrustedVcenterUpdate,
-    WanPolicyResponse,
 )
 from atlaso.app.schemas import SettingsUpdate as SettingsUpdate
 from atlaso.app.security import (
@@ -879,72 +879,13 @@ revoke_token = _identity_api.endpoints["revoke_token"]
 delete_api_token = _identity_api.endpoints["delete_api_token"]
 revoke_api_token = _identity_api.endpoints["revoke_api_token"]
 
-router = APIRouter(prefix="/api/v1", route_class=DocumentedAPIRoute)
-@router.get("/dashboard", response_model=DashboardResponse, tags=["Dashboard"], operation_id="getDashboard")
-def get_dashboard(
-    identity: Annotated[Identity, Depends(require_scope("read:dashboard"))],
-    db: Session = Depends(get_db),
-    settings: Settings = Depends(get_settings),
-) -> DashboardResponse:
-    """Get Dashboard.
+_dashboard_monitor_api = build_dashboard_monitor_api_router(
+    DashboardMonitorApiDependencies(monitor_payload=monitor_payload)
+)
+dashboard_monitor_router = _dashboard_monitor_api.router
+get_dashboard = _dashboard_monitor_api.endpoints["get_dashboard"]
+get_monitor = _dashboard_monitor_api.endpoints["get_monitor"]
 
-    Requires the `read:dashboard` API scope. This read-only operation does not change saved desired
-    state or appliance runtime state.
-
-    Args:
-        identity: Authenticated identity authorizing the operation.
-        db: Active database session used by the operation.
-        settings: Current Atlaso settings used to configure the operation.
-    """
-    services = db.execute(select(ServiceState).order_by(ServiceState.display_name)).scalars().all()
-    interfaces = db.execute(select(PhysicalInterface).order_by(PhysicalInterface.name)).scalars().all()
-    policies = db.execute(select(WanPolicy).where(WanPolicy.enabled.is_(True)).order_by(WanPolicy.name)).scalars().all()
-    audit_events = db.execute(select(AuditEvent).order_by(desc(AuditEvent.created_at)).limit(5)).scalars().all()
-    return DashboardResponse(
-        appliance={
-            "hostname": socket.gethostname(),
-            "management_ip": "127.0.0.1",
-            "uptime": "development session",
-            "cpu_usage_percent": 12,
-            "memory_usage_percent": 38,
-        },
-        service_health=[ServiceStateResponse.model_validate(service) for service in services],
-        interfaces=[PhysicalInterfaceResponse.model_validate(interface) for interface in interfaces],
-        active_wan_policies=[WanPolicyResponse.model_validate(policy) for policy in policies],
-        disk_usage={"root_percent": 41, "repository_percent": 3, "vcf_backup_percent": 1},
-        recent_audit_events=[
-            {
-                "created_at": event.created_at.isoformat(),
-                "actor": event.actor,
-                "action": event.action,
-                "resource_type": event.resource_type,
-                "success": event.success,
-            }
-            for event in audit_events
-        ],
-    )
-
-
-@router.get("/monitor", response_model=MonitorResponse, tags=["Monitor"], operation_id="getMonitor")
-def get_monitor(
-    identity: Annotated[Identity, Depends(require_scope("read:monitoring"))],
-    db: Session = Depends(get_db),
-    hours: int = Query(default=6, ge=1, le=24, description='Monitoring history window, in hours, from 1 through 24.'),
-) -> MonitorResponse:
-    """Get Monitor.
-
-    Requires the `read:monitoring` API scope. This read-only operation does not change saved desired
-    state or appliance runtime state.
-
-    Args:
-        identity: Authenticated identity authorizing the operation.
-        db: Active database session used by the operation.
-        hours: Hours consumed by get monitor.
-    """
-    return MonitorResponse(**monitor_payload(db, hours=hours))
-
-
-_api_between_identity_physical_vlans_router = router
 _physical_vlans_api = build_physical_vlan_api_router(
     PhysicalVlanApiDependencies(
         refresh_interface_service_dns_aliases=refresh_interface_service_dns_aliases,
@@ -2728,12 +2669,8 @@ API_V1_ROUTER_REGISTRY.register(
     (RouterContribution(plane="api_v1", router=identity_router),),
 )
 API_V1_ROUTER_REGISTRY.register(
-    "facade_between_identity_physical_vlans",
-    (
-        RouterContribution(
-            plane="api_v1", router=_api_between_identity_physical_vlans_router
-        ),
-    ),
+    "dashboard_monitor",
+    (RouterContribution(plane="api_v1", router=dashboard_monitor_router),),
 )
 API_V1_ROUTER_REGISTRY.register(
     "physical_vlans",
@@ -2828,7 +2765,7 @@ API_V1_ROUTER_REGISTRY.validate_domains(
     (
         "facade_before_identity",
         "identity",
-        "facade_between_identity_physical_vlans",
+        "dashboard_monitor",
         "physical_vlans",
         "routes_wan",
         "facade_between_routes_wan_dns_dhcp",

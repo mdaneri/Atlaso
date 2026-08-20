@@ -49,54 +49,6 @@ def controlled_units(*, invalid_changed: bool = False, valid_changed: bool = Fal
     ]
 
 
-def test_dashboard_data_requires_session_and_preserves_public_api_contract(client):
-    """Verify that dashboard data requires session and preserves public api contract.
-
-    Args:
-        client: HTTP test client used to exercise the Atlaso application.
-    """
-    legacy = client.get("/dashboard/data", follow_redirects=False)
-    assert legacy.status_code == 307
-    assert legacy.headers["location"] == "/ui/management/dashboard/data"
-
-    private = client.get("/ui/management/dashboard/data", follow_redirects=False)
-    assert private.status_code == 303
-    assert private.headers["location"] == "/ui/management/login?next=/ui/management/dashboard/data"
-
-    login(client)
-    private = client.get("/ui/management/dashboard/data")
-    assert private.status_code == 200
-    payload = private.json()
-    assert set(payload) == {
-        "generated_at",
-        "overall",
-        "readiness",
-        "attention_items",
-        "pending_changes",
-        "tasks",
-        "services",
-        "network",
-        "recent_activity",
-    }
-    assert set(payload["overall"]) == {"state", "label", "hostname", "fqdn", "dry_run", "primary_action"}
-
-    token_response = client.post(
-        "/api/v1/auth/login?username=admin&password=atlaso-admin",
-        json={"name": "dashboard contract", "scopes": ["read:dashboard"]},
-    )
-    token = token_response.json()["raw_token"]
-    public = client.get("/api/v1/dashboard", headers={"Authorization": f"Bearer {token}"})
-    assert public.status_code == 200
-    assert set(public.json()) == {
-        "appliance",
-        "service_health",
-        "interfaces",
-        "active_wan_policies",
-        "disk_usage",
-        "recent_audit_events",
-    }
-
-
 def test_dashboard_setup_exit_healthy_and_needs_attention_states(client, monkeypatch):
     """Verify that dashboard setup exit healthy and needs attention states.
 
