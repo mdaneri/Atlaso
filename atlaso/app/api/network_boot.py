@@ -72,6 +72,7 @@ from atlaso.app.services.network_boot import (
     host_to_dict,
     inventory_session_for_token,
     issue_inventory_session,
+    lock_esxi_host_reference_lifecycle,
     network_boot_upload_path,
     normalize_mac,
     poll_inventory_command,
@@ -820,6 +821,7 @@ def remove_discovered_host(
         identity: Authenticated identity authorizing the operation.
         db: Active database session used by the operation.
     """
+    lock_esxi_host_reference_lifecycle(db)
     host = db.get(NetworkBootDiscoveredHost, host_id)
     if host is None:
         raise HTTPException(status_code=404, detail="Discovered host not found.")

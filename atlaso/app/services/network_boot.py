@@ -1249,6 +1249,7 @@ def _prune_inventory_storage(
     Raises:
         ValueError: If an input value is invalid.
     """
+    lock_esxi_host_reference_lifecycle(db)
     now = utcnow()
     heartbeat_cutoff = now - NETWORK_BOOT_ONLINE_THRESHOLD
     protected_host_ids = {
@@ -1903,7 +1904,7 @@ def remove_esxi_host_discovery_state(
 
 
 def lock_esxi_host_reference_lifecycle(db: Session) -> None:
-    """Serialize Host Reference writes with associated discovery cleanup."""
+    """Serialize Host Reference writes with assignment-dependent inventory changes."""
     if db.bind is not None and db.bind.dialect.name == "postgresql":
         db.execute(
             text("SELECT pg_advisory_xact_lock(:lock_id)"),

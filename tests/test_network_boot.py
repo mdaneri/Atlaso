@@ -1576,12 +1576,31 @@ def test_report_download_is_exact_self_contained_and_rejects_cross_host(client):
     assert cross_host.status_code == 404
 
 
-def test_remove_unassigned_discovered_host_cleans_inventory_state(client):
+def test_remove_unassigned_discovered_host_cleans_inventory_state(client, monkeypatch):
     """Verify that removing an unassigned discovered host cleans inventory state.
 
     Args:
         client: HTTP test client used to exercise the Atlaso application.
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
     """
+    lifecycle_events = []
+    original_assignments = network_boot_api.esxi_host_assignments_by_mac
+    monkeypatch.setattr(
+        network_boot_api,
+        "lock_esxi_host_reference_lifecycle",
+        lambda _db: lifecycle_events.append("lock"),
+    )
+
+    def record_assignment_snapshot(db):
+        """Record that assignment state was read after the lifecycle lock."""
+        lifecycle_events.append("assignments")
+        return original_assignments(db)
+
+    monkeypatch.setattr(
+        network_boot_api,
+        "esxi_host_assignments_by_mac",
+        record_assignment_snapshot,
+    )
     raw_token = create_api_token(client, ["write:pxe"])
     headers = {"Authorization": f"Bearer {raw_token}"}
     inventory_session = client.post("/pxe/inventory/sessions").json()
@@ -1604,6 +1623,7 @@ def test_remove_unassigned_discovered_host_cleans_inventory_state(client):
         headers=headers,
     )
     assert response.status_code == 200, response.text
+    assert lifecycle_events == ["lock", "assignments"]
     assert response.json() == {
         "host_id": host_id,
         "removed": True,
@@ -2340,6 +2360,40 @@ def test_host_reference_lifecycle_lock_uses_postgresql_transaction_lock():
             {"lock_id": network_boot.ESXI_HOST_REFERENCE_LIFECYCLE_LOCK_ID},
         )
     ]
+
+
+def test_inventory_storage_pruning_locks_before_assignment_snapshot(
+    db_session,
+    monkeypatch,
+):
+    """Verify pruning serializes its assignment snapshot with Host Reference writes.
+
+    Args:
+        db_session: Active database session used by the operation.
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+    """
+    lifecycle_events = []
+    original_assignments = network_boot.esxi_host_assignments_by_mac
+    monkeypatch.setattr(
+        network_boot,
+        "lock_esxi_host_reference_lifecycle",
+        lambda _db: lifecycle_events.append("lock"),
+    )
+
+    def record_assignment_snapshot(db):
+        """Record that assignment state was read after the lifecycle lock."""
+        lifecycle_events.append("assignments")
+        return original_assignments(db)
+
+    monkeypatch.setattr(
+        network_boot,
+        "esxi_host_assignments_by_mac",
+        record_assignment_snapshot,
+    )
+
+    network_boot._prune_inventory_storage(db_session, preserve_host_id=0)
+
+    assert lifecycle_events == ["lock", "assignments"]
 
 
 @pytest.mark.parametrize(
