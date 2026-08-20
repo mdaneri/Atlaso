@@ -538,6 +538,8 @@ def test_interrupted_handoff_reconciles_application_commit_without_false_rollbac
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import Job, JobStatus
 
+    recovery_calls: list[str] = []
+
     class RecoveryAdapter:
         """Return deterministic commit and no-marker recovery evidence."""
 
@@ -554,6 +556,7 @@ def test_interrupted_handoff_reconciles_application_commit_without_false_rollbac
             Args:
                 job_id: Appliance Apply task being acknowledged.
             """
+            recovery_calls.append(f"acknowledge:{job_id}")
             return AdapterResult(
                 command=["atlaso-helper", "management-handoff", "acknowledge", job_id],
                 dry_run=False,
@@ -563,6 +566,7 @@ def test_interrupted_handoff_reconciles_application_commit_without_false_rollbac
 
         def recover_management_handoff(self):
             """Return a successful command that explicitly performed no rollback."""
+            recovery_calls.append("recover")
             return AdapterResult(
                 command=["atlaso-helper", "management-handoff", "recover"],
                 dry_run=False,
@@ -583,6 +587,7 @@ def test_interrupted_handoff_reconciles_application_commit_without_false_rollbac
                     {
                         "management_handoff": True,
                         "management_handoff_runtime_commit_pending": True,
+                        "management_handoff_application_committed": True,
                     }
                 ),
             )
@@ -598,7 +603,12 @@ def test_interrupted_handoff_reconciles_application_commit_without_false_rollbac
                 status=JobStatus.RUNNING.value,
                 created_by="admin",
                 progress_percent=20,
-                result=json.dumps({"management_handoff": True}),
+                result=json.dumps(
+                    {
+                        "management_handoff": True,
+                        "management_handoff_runtime_commit_pending": True,
+                    }
+                ),
             )
         )
         db.commit()
@@ -610,9 +620,11 @@ def test_interrupted_handoff_reconciles_application_commit_without_false_rollbac
         committed_payload = json.loads(committed.result or "{}")
         assert committed_payload["management_handoff_runtime_committed"] is True
         assert committed_payload["management_handoff_runtime_commit_pending"] is False
+        assert "management_handoff_application_committed" not in committed_payload
         assert "candidate management path remains active" in (committed.error or "")
         assert "could not prove either" in (missing.error or "")
         assert "rolled back" not in (missing.error or "").lower()
+        assert recovery_calls == ["acknowledge:handoff-committed", "recover"]
 
 
 def test_management_handoff_exception_reconciliation_selects_transaction_boundary():

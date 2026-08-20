@@ -593,6 +593,63 @@ def test_management_handoff_merges_previous_static_and_dynamic_addresses(monkeyp
     assert addresses == ["192.0.2.10", "2001:db8::10"]
 
 
+def test_management_handoff_syncs_backups_before_publishing_marker(monkeypatch, tmp_path):
+    """Make backup directory entries durable before the rollback marker.
+
+    Args:
+        monkeypatch: Pytest fixture used to isolate snapshot dependencies.
+        tmp_path: Temporary root containing runtime and durable state files.
+    """
+    helper = load_helper_module()
+    state_dir = tmp_path / "state"
+    backup_dir = state_dir / "backup"
+    runtime_path = tmp_path / "runtime.conf"
+    runtime_path.write_text("previous runtime\n", encoding="utf-8")
+    operations: list[tuple[str, Path]] = []
+    monkeypatch.setattr(helper, "MANAGEMENT_HANDOFF_STATE_DIR", state_dir)
+    monkeypatch.setattr(helper, "MANAGEMENT_HANDOFF_BACKUP_DIR", backup_dir)
+    monkeypatch.setattr(helper, "MANAGEMENT_HANDOFF_STATE_PATH", state_dir / "state.json")
+    monkeypatch.setattr(helper, "MANAGEMENT_HANDOFF_COMMIT_PATH", state_dir / "last-commit.json")
+    monkeypatch.setattr(helper, "FIREWALL_CONFIG_PATH", tmp_path / "missing-firewall.nft")
+    monkeypatch.setattr(helper, "FIREWALL_SERVICE_PATH", tmp_path / "missing-firewall.service")
+    monkeypatch.setattr(helper.os, "fsync", lambda _descriptor: None)
+    monkeypatch.setattr(helper, "_management_handoff_runtime_paths", lambda _payload: [runtime_path])
+    monkeypatch.setattr(
+        helper,
+        "_load_appliance_settings_config",
+        lambda _path: {"management_interface": "eth1"},
+    )
+    monkeypatch.setattr(helper, "_management_handoff_previous_addresses", lambda _payload: ["192.0.2.10"])
+    monkeypatch.setattr(helper, "_management_handoff_candidate_links", lambda _payload: ([], [], {}))
+    monkeypatch.setattr(
+        helper,
+        "_fsync_directory",
+        lambda path: operations.append(("sync", path)),
+    )
+    monkeypatch.setattr(
+        helper,
+        "_durable_management_handoff_state_write",
+        lambda _state, path: operations.append(("publish", path)),
+    )
+
+    state = helper._snapshot_management_handoff(
+        {
+            "job_id": "job-435",
+            "appliance_settings_config_path": "candidate-settings",
+            "previous_management_interfaces": ["eth0"],
+            "previous_management_addresses": ["192.0.2.10"],
+            "previous_https_enabled": False,
+        }
+    )
+
+    assert operations == [
+        ("sync", backup_dir),
+        ("publish", state_dir / "state.json"),
+    ]
+    backup_path = Path(str(state["snapshots"][0]["backup"]))
+    assert backup_path.read_text(encoding="utf-8") == "previous runtime\n"
+
+
 def test_management_handoff_discovers_slaac_candidate_addresses(monkeypatch, tmp_path):
     """Probe runtime IPv6 addresses when an effective listener enables SLAAC.
 

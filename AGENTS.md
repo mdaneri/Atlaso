@@ -283,7 +283,10 @@ The following cross-cutting boundaries always apply:
   readiness and after the final Network regeneration, and restore the
   previous resolver state with the network snapshot on rollback. Retire the old path only
   after readiness succeeds; retain the durable rollback marker until Atlaso commits the bundled task state and baselines
-  and explicitly acknowledges that commit. Retain the global apply lock while acknowledgement is pending. On failure,
+  and explicitly acknowledges that commit. Record separate durable application-commit proof before selecting
+  acknowledgement during startup; an incomplete pre-commit rollback must retry recovery instead. Sync every backup file
+  and its backup directory before publishing the marker. Retain the global apply lock while recovery or acknowledgement
+  is pending. On failure,
   timeout, indeterminate helper return, interruption, or startup recovery, first stop and verify any surviving handoff
   helper, then restore every captured runtime
   file and link, reconfigure pre-existing candidate links, remove candidate-only VLANs, fail closed without host

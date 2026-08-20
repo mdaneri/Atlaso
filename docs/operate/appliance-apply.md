@@ -122,6 +122,8 @@ Atlaso blocks Network apply without host mutation until a known-good settings ar
 maintainer completes local-console recovery.
 Desired-state edits saved from another session while readiness checks run are not folded into the successful task.
 Atlaso commits baselines from the exact submitted snapshots, so those newer edits remain pending for a later review.
+Atlaso records durable application-commit proof separately from the retained helper marker. After a restart it retries
+rollback unless that proof exists; only a proven database commit selects idempotent helper acknowledgement.
 
 Safe cancellation does not interrupt the component already running. Every helper or adapter command in that component
 continues to completion. After the component returns, Atlaso skips the remaining components and releases the mutation

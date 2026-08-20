@@ -3223,7 +3223,10 @@ def recover_interrupted_appliance_apply_jobs(db: Session) -> int:
         adapter = SystemAdapter(dry_run=False)
         for handoff_job in handoff_jobs:
             handoff_payload = _job_payload(handoff_job)
-            if handoff_payload.get("management_handoff_runtime_commit_pending"):
+            if (
+                handoff_payload.get("management_handoff_runtime_commit_pending")
+                and handoff_payload.get("management_handoff_application_committed") is True
+            ):
                 recovery = adapter.acknowledge_management_handoff(handoff_job.id)
             else:
                 recovery = adapter.recover_management_handoff()
@@ -3283,7 +3286,11 @@ def recover_interrupted_appliance_apply_jobs(db: Session) -> int:
             payload["management_handoff_recovery"]["evidence"] = recovery_evidence
             if recovery_evidence.get("management_handoff") in {"committed", "already committed"}:
                 payload["management_handoff_runtime_commit_pending"] = False
+                payload.pop("management_handoff_application_committed", None)
                 payload["management_handoff_runtime_committed"] = True
+            elif recovery_result.returncode == 0 and recovery_evidence.get("rolled_back") is True:
+                payload.pop("management_handoff_runtime_commit_pending", None)
+                payload.pop("management_handoff_application_committed", None)
         job.result = json.dumps(payload, indent=2, sort_keys=True)
     db.commit()
     return len(jobs)
@@ -14662,6 +14669,7 @@ def run_appliance_apply_job(job_id: str, *, force_real: bool = False) -> None:
                                 **pending_payload,
                                 "units": unit_results,
                                 "management_handoff_runtime_commit_pending": True,
+                                "management_handoff_application_committed": True,
                             },
                             indent=2,
                         )
@@ -14726,6 +14734,7 @@ def run_appliance_apply_job(job_id: str, *, force_real: bool = False) -> None:
                                 bundled_step.result = json.dumps(result, indent=2, sort_keys=True)
                             committed_payload = _job_payload(job)
                             committed_payload.pop("management_handoff_runtime_commit_pending", None)
+                            committed_payload.pop("management_handoff_application_committed", None)
                             job.result = json.dumps(
                                 {
                                     **committed_payload,
@@ -14992,11 +15001,17 @@ def run_appliance_apply_job(job_id: str, *, force_real: bool = False) -> None:
                 recovery_state = str(recovery_evidence.get("management_handoff") or "")
                 if recovery_result.returncode == 0 and recovery_evidence.get("rolled_back") is True:
                     job_result.pop("management_handoff_runtime_commit_pending", None)
+                    job_result.pop("management_handoff_application_committed", None)
                 elif recovery_result.returncode == 0 and recovery_state in {"committed", "already committed"}:
                     job_result.pop("management_handoff_runtime_commit_pending", None)
+                    job_result.pop("management_handoff_application_committed", None)
                     job_result["management_handoff_runtime_committed"] = True
                 else:
                     job_result["management_handoff_runtime_commit_pending"] = True
+                    if handoff_application_committed:
+                        job_result["management_handoff_application_committed"] = True
+                    else:
+                        job_result.pop("management_handoff_application_committed", None)
             job.status = JobStatus.FAILED.value
             job.finished_at = finished
             job.progress_percent = 100

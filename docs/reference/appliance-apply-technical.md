@@ -204,6 +204,7 @@ one of them: Certificate Authority, Network, Firewall, Appliance Settings, and P
 closure prevents a partial Firewall, certificate, listener, or resolver apply from publishing candidate-derived state
 before candidate networking exists. The helper validates all staged inputs before mutation, snapshots
 the Atlaso-owned networkd, nftables, nginx, certificate, and related runtime files under a root-only state directory,
+syncs every backup file and the backup directory before publishing the rollback marker,
 and merges global runtime addresses from every previous management interface with the configured addresses before it
 installs temporary higher-priority networkd holdovers for the previous management links. It then applies the
 candidate network and a transitional firewall that admits both previous and candidate management addresses. If the
@@ -242,9 +243,11 @@ candidate `atlaso-firewall.service`, deleting its snapshotted-as-absent unit and
 `nft flush ruleset`. The helper leaves a durable transaction marker until Atlaso commits the
 bundled task state and baselines and sends an idempotent acknowledgement. A fixed transient systemd unit serializes
 apply with startup recovery, which stops and verifies any surviving helper before rollback. Startup rolls back when
-interruption precedes that database boundary and completes the acknowledgement when the database already records the
-candidate. Adapter timeouts and other indeterminate apply returns invoke that same fixed-unit stop and rollback before
-the task becomes terminal. Empty or malformed systemd unit-state evidence fails closed before rollback. Exceptions
+interruption precedes that database boundary and completes the acknowledgement only when a separate durable task field
+proves the database already committed the candidate. A retained helper marker without that proof selects recovery, so
+an incomplete pre-commit rollback is retried. Adapter timeouts and other indeterminate apply returns invoke that same
+fixed-unit stop and rollback before the task becomes terminal. Empty or malformed systemd unit-state evidence fails
+closed before rollback. Exceptions
 reconcile the same boundary immediately, and an unproven acknowledgement keeps the global Apply lock held. Results
 expose only a bounded failing-layer identifier and
 non-secret error text; Appliance Apply writes that evidence to every bundled component and updates none of their

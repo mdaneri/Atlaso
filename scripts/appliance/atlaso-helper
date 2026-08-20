@@ -15256,6 +15256,7 @@ def _snapshot_management_handoff(payload: dict) -> dict:
             item["uid"] = stat.st_uid
             item["gid"] = stat.st_gid
         snapshots.append(item)
+    _fsync_directory(MANAGEMENT_HANDOFF_BACKUP_DIR)
     settings_payload = _load_appliance_settings_config(
         Path(str(payload["appliance_settings_config_path"]))
     )
