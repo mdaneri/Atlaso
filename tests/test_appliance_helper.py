@@ -884,6 +884,79 @@ def test_management_handoff_discovers_slaac_candidate_addresses(monkeypatch, tmp
     assert addresses == ["198.51.100.10", "2001:db8::10"]
 
 
+def test_management_handoff_dynamic_address_must_not_be_retained_old_address(monkeypatch, tmp_path):
+    """Require a fresh DHCP address instead of accepting the static holdover.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace network parsing and address observation.
+        tmp_path: Temporary staged network configuration path.
+    """
+    helper = load_helper_module()
+    network_path = tmp_path / "atlaso-network.conf"
+    network_path.write_text("candidate\n", encoding="utf-8")
+    monkeypatch.setattr(
+        helper,
+        "_parse_network_config",
+        lambda _path: (
+            [
+                {
+                    "name": "eth1",
+                    "role": "management",
+                    "mode": "access",
+                    "admin_state": "up",
+                    "ipv4_method": "dhcp",
+                    "ipv6_enabled": "false",
+                }
+            ],
+            [],
+            [],
+        ),
+    )
+    old_only = json.dumps(
+        [
+            {
+                "addr_info": [
+                    {"family": "inet", "scope": "global", "local": "192.0.2.10"},
+                ]
+            }
+        ]
+    )
+    monkeypatch.setattr(
+        helper,
+        "_run",
+        lambda command: subprocess.CompletedProcess(command, 0, old_only, ""),
+    )
+
+    with pytest.raises(ValueError, match=r"candidate runtime address was not acquired for eth1 DHCP IPv4"):
+        helper._management_handoff_addresses(
+            network_path,
+            previous_addresses={"192.0.2.10"},
+            discovery_attempts=1,
+        )
+
+    acquired = json.dumps(
+        [
+            {
+                "addr_info": [
+                    {"family": "inet", "scope": "global", "local": "192.0.2.10"},
+                    {"family": "inet", "scope": "global", "local": "198.51.100.25"},
+                ]
+            }
+        ]
+    )
+    monkeypatch.setattr(
+        helper,
+        "_run",
+        lambda command: subprocess.CompletedProcess(command, 0, acquired, ""),
+    )
+
+    assert helper._management_handoff_addresses(
+        network_path,
+        previous_addresses={"192.0.2.10"},
+        discovery_attempts=1,
+    ) == ["198.51.100.25"]
+
+
 @pytest.mark.parametrize(
     ("row", "observed_family", "expected_label"),
     [

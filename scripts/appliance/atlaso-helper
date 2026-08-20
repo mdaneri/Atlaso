@@ -15641,7 +15641,9 @@ def _management_handoff_addresses(
         and row.get("access_management_ui_enabled", "false").lower() == "true"
     )
     addresses: list[str] = []
-    previous_addresses = previous_addresses or set()
+    previous_addresses = {
+        str(ip_address(address)) for address in (previous_addresses or set())
+    }
     dynamic_requirements: list[tuple[str, set[str]]] = []
     for row in rows:
         for key in ("ip_cidr", "ipv6_cidr"):
@@ -15678,7 +15680,13 @@ def _management_handoff_addresses(
                     family = str(info.get("family") or "")
                     if info.get("scope") != "global" or not local or family not in families:
                         continue
-                    discovered.setdefault((interface, family), []).append(local)
+                    try:
+                        normalized = str(ip_address(local))
+                    except ValueError:
+                        continue
+                    if normalized in previous_addresses:
+                        continue
+                    discovered.setdefault((interface, family), []).append(normalized)
         if all(
             discovered.get((interface, family))
             for interface, families in dynamic_requirements
@@ -15698,10 +15706,7 @@ def _management_handoff_addresses(
             "candidate runtime address was not acquired for " + ", ".join(missing)
         )
     for runtime_addresses in discovered.values():
-        fresh_addresses = [
-            address for address in runtime_addresses if address not in previous_addresses
-        ]
-        addresses.extend(fresh_addresses or runtime_addresses)
+        addresses.extend(runtime_addresses)
     return list(dict.fromkeys(addresses))
 
 

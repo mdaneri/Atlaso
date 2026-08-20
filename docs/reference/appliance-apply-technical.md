@@ -239,7 +239,8 @@ The helper first requires Atlaso's loopback `/openapi.json` upstream to succeed;
 only then may it validate and reload nginx. It requires consecutive successful direct candidate-listener probes and
 host-facing probes for every configured candidate address. Each dynamic listener row must acquire an address for every
 requested DHCP or SLAAC family within the shared bounded discovery window; readiness cannot succeed on another row or
-family when one is missing. When the candidate disables nftables, the transitional ruleset keeps the previous filtering
+family when one is missing, and a retained old-path address cannot satisfy dynamic candidate acquisition. When the
+candidate disables nftables, the transitional ruleset keeps the previous filtering
 policy and adds only the candidate management admission rules. When enabling filtering from an open state, the
 transitional ruleset remains open. The enabled or disabled candidate ruleset applies only after readiness while the old
 path retires. A second
