@@ -1319,6 +1319,8 @@ Terminal order:
 - Before replacing the database, complete factory reset must persist a bounded, non-secret journal/marker outside the
   database, construct and validate a private candidate database, preflight generated nginx, network, firewall, resolver,
   systemd, and service configuration, and quiesce Atlaso database writers. The same marker drives idempotent boot resume.
+  After helper-action quiescence, stop and verify any pre-existing fixed-name management restart timer and service, then
+  stop and verify the application services again before factory activation.
   Serialize scheduled, boot-resume, and console runners with a nonblocking appliance transaction lock; a rejected
   overlapping runner or active delay timer must not overwrite or remove the active runner's marker, candidate, or result.
   Preserve depot content, backup artifacts, managed ESX Storage payloads, and other documented payload paths by default;

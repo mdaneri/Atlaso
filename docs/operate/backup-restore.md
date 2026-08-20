@@ -127,6 +127,9 @@ by the transient unit without broadening the non-root sudoers contract.
 When factory activation changes the Atlaso Management HTTPS service drop-in, the helper reloads systemd but suppresses
 its ordinary delayed management restart. The reset readiness handoff remains the sole owner of starting Atlaso,
 worker, console, and nginx after runtime activation and protected credential cleanup finish.
+Before activation, reset also stops and verifies any management restart timer or service that an ordinary Appliance
+Settings apply scheduled before reset began, then stops and verifies the application services again. This prevents a
+pre-existing delayed restart from reviving a database writer during factory replacement.
 
 Reset progress and only the non-secret `keep`/`change` choices are recorded outside the database in
 `/var/lib/atlaso/factory-reset/request.json`; the last successful result is recorded in `last-result.json`. Atlaso

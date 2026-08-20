@@ -84,6 +84,8 @@ HELPER_ACTION_TRANSIENT_UNIT_PATTERN = re.compile(
 )
 HELPER_ACTION_QUIESCE_MAX_PASSES = 16
 FACTORY_RESET_RUNNER_LOCK_WAIT_SECONDS = 30
+MANAGEMENT_RESTART_TIMER_PATTERN = re.compile(r"^atlaso-management-ui-restart\.timer$")
+MANAGEMENT_RESTART_SERVICE_PATTERN = re.compile(r"^atlaso-management-ui-restart\.service$")
 UPDATE_RESTART_TIMER_PATTERN = re.compile(r"^atlaso-update-restart-\d{20}\.timer$")
 UPDATE_RESTART_SERVICE_PATTERN = re.compile(r"^atlaso-update-restart-\d{20}\.service$")
 WEB_TERMINAL_CREDENTIAL_PATHS = (
@@ -510,6 +512,24 @@ def _stop_transient_update_restart_units() -> None:
     _stop_and_verify_transient_units(services, label="update-restart service")
 
 
+def _stop_transient_management_restart_units() -> None:
+    """Cancel a pre-existing management restart before factory activation."""
+    timers = _inventory_transient_units(
+        unit_type="timer",
+        unit_glob="atlaso-management-ui-restart.timer",
+        unit_pattern=MANAGEMENT_RESTART_TIMER_PATTERN,
+        label="management-restart timer",
+    )
+    _stop_and_verify_transient_units(timers, label="management-restart timer")
+    services = _inventory_transient_units(
+        unit_type="service",
+        unit_glob="atlaso-management-ui-restart.service",
+        unit_pattern=MANAGEMENT_RESTART_SERVICE_PATTERN,
+        label="management-restart service",
+    )
+    _stop_and_verify_transient_units(services, label="management-restart service")
+
+
 def _stop_transient_helper_action_units() -> None:
     """Stop privileged helper actions after their Atlaso callers are quiescent."""
     for pass_index in range(HELPER_ACTION_QUIESCE_MAX_PASSES + 1):
@@ -599,6 +619,35 @@ def _stop_application_services(*, boot_resume: bool) -> None:
     # check and helper quiescence. Preserve that manifest and fail before any
     # factory database or apply-staging mutation.
     _require_terminal_release_update()
+    # An ordinary Appliance Settings apply may have scheduled this fixed-name
+    # restart before the reset marker entered applying. Cancel both sides of
+    # the timer handoff, then stop and verify the application services again.
+    _stop_transient_management_restart_units()
+    application_services: tuple[str, ...]
+    if boot_resume:
+        application_services = ("atlaso-worker.service", "atlaso-console.service")
+    else:
+        application_services = (
+            "atlaso-worker.service",
+            "atlaso.service",
+            "atlaso-console.service",
+        )
+    _run_systemctl("stop", *application_services)
+    for service in application_services:
+        active = subprocess.run(
+            ["systemctl", "is-active", "--quiet", service],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        if active.returncode == 0:
+            raise FactoryResetError(
+                "Factory reset could not stop an Atlaso application service."
+            )
+        if active.returncode not in {3, 4}:
+            raise FactoryResetError(
+                "Factory reset could not verify an Atlaso application service stopped."
+            )
     _stop_transient_update_restart_units()
     _stop_transient_automation_units()
 

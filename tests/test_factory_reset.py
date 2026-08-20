@@ -131,7 +131,7 @@ def test_factory_reset_runner_waits_for_admission_lock(monkeypatch):
 
 
 def test_factory_reset_stops_transient_helper_restart_and_automation_units(monkeypatch):
-    """Reset quiesces helper actions, delayed restarts, and automation.
+    """Reset quiesces helper actions, both delayed restarts, and automation.
 
     Args:
         monkeypatch: Pytest fixture used to replace dependencies for the test.
@@ -148,6 +148,8 @@ def test_factory_reset_stops_transient_helper_restart_and_automation_units(monke
         "atlaso-helper-action-fedcba9876543210fedcba9876543210.service",
     ]
     helper_inventories = [[helper_units[0]], [helper_units[1]], []]
+    management_restart_timer = "atlaso-management-ui-restart.timer"
+    management_restart_service = "atlaso-management-ui-restart.service"
     restart_timer = "atlaso-update-restart-20260820152500123456.timer"
     restart_service = "atlaso-update-restart-20260820152500123456.service"
 
@@ -164,6 +166,16 @@ def test_factory_reset_stops_transient_helper_restart_and_automation_units(monke
                 stdout = "\n".join(
                     f"{unit} loaded active running Atlaso helper action"
                     for unit in helper_inventories.pop(0)
+                )
+            elif command[-1] == "atlaso-management-ui-restart.timer":
+                stdout = (
+                    f"{management_restart_timer} loaded active waiting "
+                    "Atlaso management restart"
+                )
+            elif command[-1] == "atlaso-management-ui-restart.service":
+                stdout = (
+                    f"{management_restart_service} loaded active running "
+                    "Atlaso management restart"
                 )
             elif command[-1] == "atlaso-update-restart-*.timer":
                 stdout = f"{restart_timer} loaded active waiting Atlaso update restart"
@@ -197,17 +209,94 @@ def test_factory_reset_stops_transient_helper_restart_and_automation_units(monke
     assert commands[5] == ["systemctl", "stop", helper_units[1]]
     assert commands[6] == ["systemctl", "is-active", "--quiet", helper_units[1]]
     assert commands[7][-1] == "atlaso-helper-action-*.service"
-    assert commands[8][-1] == "atlaso-update-restart-*.timer"
-    assert commands[9] == ["systemctl", "stop", restart_timer]
-    assert commands[10] == ["systemctl", "is-active", "--quiet", restart_timer]
-    assert commands[11][-1] == "atlaso-update-restart-*.service"
-    assert commands[12] == ["systemctl", "stop", restart_service]
-    assert commands[13] == ["systemctl", "is-active", "--quiet", restart_service]
-    assert commands[14][-1] == "atlaso-automation-*.service"
-    assert commands[15] == ["systemctl", "stop", *automation_units]
-    assert commands[16:] == [
+    assert commands[8][-1] == "atlaso-management-ui-restart.timer"
+    assert commands[9] == ["systemctl", "stop", management_restart_timer]
+    assert commands[10] == [
+        "systemctl",
+        "is-active",
+        "--quiet",
+        management_restart_timer,
+    ]
+    assert commands[11][-1] == "atlaso-management-ui-restart.service"
+    assert commands[12] == ["systemctl", "stop", management_restart_service]
+    assert commands[13] == [
+        "systemctl",
+        "is-active",
+        "--quiet",
+        management_restart_service,
+    ]
+    application_services = [
+        "atlaso-worker.service",
+        "atlaso.service",
+        "atlaso-console.service",
+    ]
+    assert commands[14] == ["systemctl", "stop", *application_services]
+    assert commands[15:18] == [
+        ["systemctl", "is-active", "--quiet", service]
+        for service in application_services
+    ]
+    assert commands[18][-1] == "atlaso-update-restart-*.timer"
+    assert commands[19] == ["systemctl", "stop", restart_timer]
+    assert commands[20] == ["systemctl", "is-active", "--quiet", restart_timer]
+    assert commands[21][-1] == "atlaso-update-restart-*.service"
+    assert commands[22] == ["systemctl", "stop", restart_service]
+    assert commands[23] == ["systemctl", "is-active", "--quiet", restart_service]
+    assert commands[24][-1] == "atlaso-automation-*.service"
+    assert commands[25] == ["systemctl", "stop", *automation_units]
+    assert commands[26:] == [
         ["systemctl", "is-active", "--quiet", automation_units[0]],
         ["systemctl", "is-active", "--quiet", automation_units[1]],
+    ]
+
+
+def test_factory_reset_fails_if_management_restart_revives_application(monkeypatch):
+    """Reset rejects activation when a delayed restart revives Atlaso.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+    """
+    import pytest
+
+    import atlaso.app.factory_reset as factory_reset
+
+    commands: list[list[str]] = []
+
+    def fake_run(command, **_kwargs):
+        """Model Atlaso becoming active after restart-unit cancellation.
+
+        Args:
+            command: Exact system command arguments.
+            **_kwargs: Subprocess options ignored by the test double.
+        """
+        commands.append(command)
+        if command[1] == "is-active" and command[-1] == "atlaso.service":
+            return subprocess.CompletedProcess(command, 0, "", "")
+        if command[1] == "is-active":
+            return subprocess.CompletedProcess(command, 3, "", "")
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(factory_reset.subprocess, "run", fake_run)
+    monkeypatch.setattr(factory_reset, "_stop_transient_helper_action_units", lambda: None)
+    monkeypatch.setattr(factory_reset, "_require_terminal_release_update", lambda: None)
+    monkeypatch.setattr(factory_reset, "_stop_transient_management_restart_units", lambda: None)
+    monkeypatch.setattr(factory_reset, "_stop_transient_update_restart_units", lambda: None)
+    monkeypatch.setattr(factory_reset, "_stop_transient_automation_units", lambda: None)
+
+    with pytest.raises(factory_reset.FactoryResetError, match="application service"):
+        factory_reset._stop_application_services(boot_resume=False)
+
+    application_services = [
+        "atlaso-worker.service",
+        "atlaso.service",
+        "atlaso-console.service",
+    ]
+    assert commands[:2] == [
+        ["systemctl", "stop", *application_services],
+        ["systemctl", "stop", *application_services],
+    ]
+    assert commands[2:] == [
+        ["systemctl", "is-active", "--quiet", "atlaso-worker.service"],
+        ["systemctl", "is-active", "--quiet", "atlaso.service"],
     ]
 
 
