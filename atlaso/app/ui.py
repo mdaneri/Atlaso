@@ -14998,6 +14998,11 @@ def run_appliance_apply_job(job_id: str, *, force_real: bool = False) -> None:
                         "Appliance Apply failed after the management baselines committed; the candidate management "
                         "path remains active and its helper acknowledgement is complete."
                     )
+                elif recovery_result.returncode == 0 and recovery_state == "no interrupted transaction":
+                    safe_error = (
+                        "Appliance Apply failed before the privileged management handoff transaction began; "
+                        "no runtime rollback was necessary."
+                    )
                 else:
                     safe_error = (
                         "Appliance Apply failed after candidate activation, and immediate management recovery could "
@@ -15030,6 +15035,9 @@ def run_appliance_apply_job(job_id: str, *, force_real: bool = False) -> None:
                     job_result.pop("management_handoff_runtime_commit_pending", None)
                     job_result.pop("management_handoff_application_committed", None)
                     job_result["management_handoff_runtime_committed"] = True
+                elif recovery_result.returncode == 0 and recovery_state == "no interrupted transaction":
+                    job_result.pop("management_handoff_runtime_commit_pending", None)
+                    job_result.pop("management_handoff_application_committed", None)
                 else:
                     job_result["management_handoff_runtime_commit_pending"] = True
                     if handoff_application_committed:

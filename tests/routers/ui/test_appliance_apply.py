@@ -609,6 +609,84 @@ def test_management_handoff_baselines_exact_applied_snapshot(client, monkeypatch
         assert current["changed"] is True
 
 
+def test_management_handoff_staging_failure_clears_unstarted_runtime_lock(client, monkeypatch):
+    """Do not retain the Apply lock when the helper proves no transaction began.
+
+    Args:
+        client: HTTP test client providing an isolated database.
+        monkeypatch: Pytest fixture used to fail before privileged helper execution.
+    """
+    from sqlalchemy import select
+
+    import atlaso.app.ui as ui
+    from atlaso.app.adapters.system import AdapterResult
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job, JobStatus, PhysicalInterface
+
+    login(client)
+    with SessionLocal() as db:
+        units = ui.appliance_apply_units(db)
+        ui.update_appliance_apply_baselines(db, units, {unit["id"] for unit in units})
+        management = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == "eth0"))
+        assert management is not None
+        management.ip_cidr = "192.168.49.21/24"
+        db.commit()
+
+    original_run = ui.run_appliance_apply_job
+    monkeypatch.setattr(ui, "run_appliance_apply_job", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        ui,
+        "execute_management_handoff",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("staging failed")),
+    )
+    no_transaction = AdapterResult(
+        command=["atlaso-helper", "management-handoff", "recover"],
+        dry_run=False,
+        stdout=json.dumps(
+            {
+                "management_handoff": "no interrupted transaction",
+                "rolled_back": False,
+            }
+        ),
+        returncode=0,
+    )
+    monkeypatch.setattr(
+        ui,
+        "reconcile_management_handoff_exception",
+        lambda *_args, **_kwargs: (
+            no_transaction,
+            ui.management_handoff_result_evidence(no_transaction),
+        ),
+    )
+    page = client.get("/dashboard")
+    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+
+    response = client.post(
+        "/appliance-apply",
+        data={"csrf": csrf, "selected_units": "network"},
+        headers={"Accept": "application/json"},
+    )
+
+    assert response.status_code == 202
+    with SessionLocal() as db:
+        job = db.get(Job, response.json()["job_id"])
+        assert job is not None
+        job.created_by = "console:root"
+        db.commit()
+    original_run(response.json()["job_id"], force_real=True)
+    with SessionLocal() as db:
+        job = db.get(Job, response.json()["job_id"])
+        assert job is not None
+        assert job.status == JobStatus.FAILED.value
+        payload = json.loads(job.result or "{}")
+        assert "management_handoff_runtime_commit_pending" not in payload
+        assert "management_handoff_application_committed" not in payload
+        recovery = payload["management_handoff_exception_recovery"]["evidence"]
+        assert recovery["management_handoff"] == "no interrupted transaction"
+        assert "no runtime rollback was necessary" in (job.error or "")
+        assert ui.active_appliance_apply_job(db) is None
+
+
 def test_interrupted_handoff_reconciles_application_commit_without_false_rollback(client, monkeypatch):
     """Acknowledge a committed baseline and distinguish a missing rollback marker.
 
