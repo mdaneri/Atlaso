@@ -1,13 +1,13 @@
-const ATLASO_CACHE = "atlaso-management-pwa-v261";
+const ATLASO_CACHE = "atlaso-management-pwa-v267";
 const ATLASO_ASSETS = [
   "/manifest.webmanifest",
   "/favicon.ico",
   "/static/offline.html",
-  "/static/app.css?v=network-boot-lifecycle-430-432-20260820-3",
+  "/static/app.css?v=planned-restart-network-boot-20260820-1",
   "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-8",
   "/static/ui-routes.js?v=issue-287-1",
-  "/static/appliance-apply-polling.js?v=issue-294-2",
-  "/static/app.js?v=network-boot-lifecycle-430-432-20260820-3",
+  "/static/appliance-apply-polling.js?v=issue-420-6",
+  "/static/app.js?v=planned-restart-network-boot-20260820-1",
   "/static/terminal.js?v=issue-287-2",
   "/static/vendor/xterm/xterm.css?v=5.5.0",
   "/static/vendor/xterm/xterm.js?v=5.5.0",

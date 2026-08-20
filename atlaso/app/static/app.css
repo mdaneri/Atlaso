@@ -7960,6 +7960,11 @@ dialog.has-expanded-monaco .confirm-modal-panel {
   color: var(--warn);
 }
 
+.alert.neutral {
+  background: #e2e8f0;
+  color: #334155;
+}
+
 .alert.warning code {
   color: #92400e;
   font-weight: 800;

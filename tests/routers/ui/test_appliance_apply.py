@@ -1,5 +1,10 @@
 """Test Appliance Apply management UI transport behavior."""
 
+import json
+from datetime import datetime, timedelta, timezone
+
+import pytest
+
 from tests.routers.ui.helpers import login
 
 
@@ -114,6 +119,374 @@ def test_appliance_apply_status_uses_lightweight_projection(client, monkeypatch)
     assert refreshed.status_code == 200
     assert first.json().keys() == second.json().keys()
     assert reconcile_values == [False, False]
+
+
+def test_appliance_apply_status_preserves_planned_management_restart_context(client, monkeypatch):
+    """Keep durable reconnect context available before the management front door restarts.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+    """
+    from atlaso.app import ui
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job, JobStatus, JobStep
+
+    observed_at = datetime(2026, 8, 20, 19, 30, 1, tzinfo=timezone.utc)
+    monkeypatch.setattr(ui, "utcnow", lambda: observed_at)
+    login(client)
+    with SessionLocal() as db:
+        job = Job(
+            id="job_planned_management_restart",
+            type="appliance-apply",
+            status=JobStatus.RUNNING.value,
+            created_by="admin",
+            progress_percent=50,
+            result=json.dumps(
+                {
+                    "selected_units": ["appliance_settings"],
+                    "management_status_transition": {
+                        "kind": "planned_service_restart",
+                        "restart_delay_seconds": 3,
+                        "grace_seconds": 15,
+                    },
+                }
+            ),
+        )
+        db.add(job)
+        db.add(
+            JobStep(
+                id=f"{job.id}:appliance_settings",
+                job=job,
+                component_key="appliance_settings",
+                label="Appliance Settings",
+                position=1,
+                status=JobStatus.SUCCEEDED.value,
+                progress_percent=100,
+                finished_at=datetime(2026, 8, 20, 19, 30, 0),
+                result="{}",
+            )
+        )
+        db.add(
+            JobStep(
+                id=f"{job.id}:firewall",
+                job=job,
+                component_key="firewall",
+                label="Firewall",
+                position=2,
+                status=JobStatus.RUNNING.value,
+                progress_percent=50,
+                result="{}",
+            )
+        )
+        db.commit()
+
+    response = client.get("/appliance-apply/status")
+
+    assert response.status_code == 200
+    task = response.json()["active_task"]
+    assert task["id"] == "job_planned_management_restart"
+    assert task["result"]["management_status_transition"] == {
+        "kind": "planned_service_restart",
+        "restart_delay_seconds": 3,
+        "grace_seconds": 15,
+    }
+    assert task["management_restart_window"] == {
+        "restart_delay_remaining_ms": 2000,
+        "remaining_ms": 17000,
+    }
+    assert [(step["component_key"], step["status"]) for step in task["_children"]] == [
+        ("appliance_settings", "succeeded"),
+        ("firewall", "running"),
+    ]
+    assert task["_children"][0]["finished_at"] == "2026-08-20T19:30:00+00:00"
+
+
+def test_appliance_apply_status_retains_terminal_planned_restart_lock(client, monkeypatch):
+    """Keep a settings-only task and the mutation lock through its restart window.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+    """
+    from atlaso.app import ui
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job, JobStatus, JobStep
+
+    observed_at = datetime(2026, 8, 20, 20, 30, tzinfo=timezone.utc)
+    monkeypatch.setattr(ui, "utcnow", lambda: observed_at)
+    login(client)
+    page = client.get("/dashboard")
+    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    transition = {
+        "kind": "planned_service_restart",
+        "restart_delay_seconds": 3,
+        "grace_seconds": 15,
+    }
+    with SessionLocal() as db:
+        job = Job(
+            id="job_terminal_management_restart",
+            type="appliance-apply",
+            status=JobStatus.SUCCEEDED.value,
+            created_by="admin",
+            progress_percent=100,
+            finished_at=observed_at,
+            result=json.dumps(
+                {
+                    "selected_units": ["appliance_settings"],
+                    "management_status_transition": transition,
+                }
+            ),
+        )
+        db.add(job)
+        db.add(
+            JobStep(
+                id=f"{job.id}:appliance_settings",
+                job=job,
+                component_key="appliance_settings",
+                label="Appliance Settings",
+                position=1,
+                status=JobStatus.SUCCEEDED.value,
+                progress_percent=100,
+                finished_at=observed_at,
+                result="{}",
+            )
+        )
+        db.commit()
+
+    retained = client.get("/appliance-apply/status?refresh=true")
+    assert retained.status_code == 200
+    assert retained.json()["locked"] is True
+    assert retained.json()["active_task"]["id"] == "job_terminal_management_restart"
+    assert retained.json()["active_task"]["status"] == JobStatus.SUCCEEDED.value
+    assert retained.json()["active_task"]["mutation_locked"] is True
+    assert retained.json()["active_task"]["management_restart_window"] == {
+        "restart_delay_remaining_ms": 3000,
+        "remaining_ms": 18000,
+    }
+
+    blocked = client.post(
+        "/appliance-apply",
+        data={"csrf": csrf, "selected_units": "firewall"},
+    )
+    assert blocked.status_code == 423
+    assert blocked.json()["job_id"] == "job_terminal_management_restart"
+
+    monkeypatch.setattr(ui, "utcnow", lambda: observed_at + timedelta(seconds=19))
+    released = client.get("/appliance-apply/status?refresh=true")
+    assert released.status_code == 200
+    assert released.json()["locked"] is False
+    assert released.json()["active_task"] is None
+
+
+@pytest.mark.parametrize("terminal_status", ["failed", "cancelled"])
+def test_appliance_apply_status_retains_non_successful_terminal_restart_lock(
+    client,
+    monkeypatch,
+    terminal_status,
+):
+    """Retain every terminal master carrying a valid confirmed restart.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+        terminal_status: Terminal master status exercised by the regression.
+    """
+    from atlaso.app import ui
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job, JobStatus, JobStep
+
+    observed_at = datetime(2026, 8, 20, 20, 45, tzinfo=timezone.utc)
+    monkeypatch.setattr(ui, "utcnow", lambda: observed_at)
+    login(client)
+    with SessionLocal() as db:
+        job = Job(
+            id=f"job_terminal_management_restart_{terminal_status}",
+            type="appliance-apply",
+            status=terminal_status,
+            created_by="admin",
+            progress_percent=100,
+            finished_at=observed_at,
+            result=json.dumps(
+                {
+                    "selected_units": ["appliance_settings"],
+                    "management_status_transition": {
+                        "kind": "planned_service_restart",
+                        "restart_delay_seconds": 3,
+                        "grace_seconds": 15,
+                    },
+                }
+            ),
+        )
+        db.add(job)
+        db.add(
+            JobStep(
+                id=f"{job.id}:appliance_settings",
+                job=job,
+                component_key="appliance_settings",
+                label="Appliance Settings",
+                position=1,
+                status=JobStatus.SUCCEEDED.value,
+                progress_percent=100,
+                finished_at=observed_at,
+                result="{}",
+            )
+        )
+        db.commit()
+
+    retained = client.get("/appliance-apply/status?refresh=true")
+    assert retained.status_code == 200
+    assert retained.json()["locked"] is True
+    assert retained.json()["active_task"]["status"] == terminal_status
+    assert retained.json()["active_task"]["mutation_locked"] is True
+
+
+def test_appliance_apply_transition_context_requires_helper_confirmation():
+    """Mark only a real helper-confirmed Appliance Settings restart as planned."""
+    from atlaso.app.adapters.system import AdapterResult
+    from atlaso.app.ui import appliance_settings_management_status_transition
+
+    confirmed = AdapterResult(
+        command=["atlaso-helper", "appliance-settings", "apply"],
+        dry_run=False,
+        stdout=json.dumps(
+            {
+                "appliance_settings": "apply complete",
+                "management_status_transition": {
+                    "kind": "planned_service_restart",
+                    "restart_delay_seconds": 3,
+                },
+            }
+        ),
+    )
+    assert appliance_settings_management_status_transition([confirmed]) == {
+        "kind": "planned_service_restart",
+        "restart_delay_seconds": 3,
+        "grace_seconds": 15,
+    }
+    assert appliance_settings_management_status_transition(
+        [AdapterResult(command=confirmed.command, dry_run=False, stdout='{"appliance_settings":"apply complete"}')]
+    ) is None
+    assert appliance_settings_management_status_transition(
+        [AdapterResult(command=confirmed.command, dry_run=True, stdout=confirmed.stdout)]
+    ) is None
+    assert appliance_settings_management_status_transition(
+        [AdapterResult(command=confirmed.command, dry_run=False, stdout=confirmed.stdout, returncode=1)]
+    ) is None
+
+
+def test_appliance_apply_job_persists_helper_confirmed_transition(client, monkeypatch):
+    """Persist confirmed restart context before the helper's delayed restart fires.
+
+    Args:
+        client: HTTP test client used to initialize an isolated database.
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+    """
+    from atlaso.app import ui
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job, JobStatus, JobStep
+
+    transition = {
+        "kind": "planned_service_restart",
+        "restart_delay_seconds": 3,
+        "grace_seconds": 15,
+    }
+    unit = {
+        "id": "appliance_settings",
+        "label": "Appliance Settings",
+        "snapshot_hash": "captured-settings",
+        "summary": ["Apply settings"],
+        "validation_errors": [],
+        "validation_warnings": [],
+        "config_path": "/etc/atlaso/atlaso-settings.json",
+        "config_preview": "{}\n",
+        "config_diff": "",
+    }
+    with SessionLocal() as db:
+        job = Job(
+            id="job_confirmed_management_restart",
+            type="appliance-apply",
+            status=JobStatus.PENDING.value,
+            created_by="admin",
+            result=json.dumps(
+                {
+                    "selected_units": ["appliance_settings"],
+                    "captured_units": [
+                        {
+                            "unit_id": "appliance_settings",
+                            "snapshot_hash": "captured-settings",
+                        }
+                    ],
+                    "units": [],
+                    "dry_run": False,
+                }
+            ),
+        )
+        db.add(job)
+        db.add(
+            JobStep(
+                id=f"{job.id}:appliance_settings",
+                job=job,
+                component_key="appliance_settings",
+                label="Appliance Settings",
+                position=1,
+                status=JobStatus.PENDING.value,
+                result="{}",
+            )
+        )
+        db.commit()
+
+    unit_projection_calls = 0
+    durable_before_reconciliation = False
+
+    def appliance_apply_units_with_durable_probe(_db, reconcile=True):
+        """Verify confirmed restart state before post-helper reconciliation.
+
+        Args:
+            _db: Active job database session.
+            reconcile: Whether to reconcile current host observations.
+        """
+        nonlocal unit_projection_calls, durable_before_reconciliation
+        unit_projection_calls += 1
+        if unit_projection_calls == 2:
+            with SessionLocal() as verification_db:
+                persisted = verification_db.get(Job, "job_confirmed_management_restart")
+                assert persisted is not None
+                persisted_step = verification_db.get(
+                    JobStep,
+                    "job_confirmed_management_restart:appliance_settings",
+                )
+                durable_before_reconciliation = (
+                    json.loads(persisted.result or "{}").get("management_status_transition") == transition
+                    and persisted_step is not None
+                    and persisted_step.status == JobStatus.SUCCEEDED.value
+                    and persisted_step.finished_at is not None
+                )
+        return [unit]
+
+    monkeypatch.setattr(ui, "appliance_apply_units", appliance_apply_units_with_durable_probe)
+    monkeypatch.setattr(
+        ui,
+        "execute_appliance_apply_unit",
+        lambda _unit, **_kwargs: {
+            **unit,
+            "unit_id": "appliance_settings",
+            "success": True,
+            "status": JobStatus.SUCCEEDED.value,
+            "dry_run": False,
+            "commands": [],
+            "management_status_transition": transition,
+        },
+    )
+
+    ui.run_appliance_apply_job("job_confirmed_management_restart")
+
+    with SessionLocal() as db:
+        completed = db.get(Job, "job_confirmed_management_restart")
+        assert completed is not None
+        assert completed.status == JobStatus.SUCCEEDED.value
+        assert json.loads(completed.result or "{}")["management_status_transition"] == transition
+    assert durable_before_reconciliation is True
 
 
 def test_appliance_apply_review_returns_management_address_connection_warning(client):

@@ -374,9 +374,15 @@ def test_dns_and_dhcp_pages_render(client):
         in app_js.text
     )
     assert (
-        "Live task status is temporarily unavailable. Atlaso will retry automatically."
+        "Live task status is temporarily unavailable. Atlaso will retry automatically; "
+        "if this persists, open Tasks in another tab."
         in app_js.text
     )
+    assert (
+        "Applying management settings; Atlaso is reconnecting to task status."
+        in app_js.text
+    )
+    assert "if this persists, open Tasks in another tab" in app_js.text
     assert "const APPLIANCE_APPLY_SUCCESS_AUTO_CLOSE_MS = 15000;" in app_js.text
     assert "function clearApplianceApplyAutoClose()" in app_js.text
     assert "function scheduleApplianceApplyAutoClose(task)" in app_js.text
@@ -399,6 +405,7 @@ def test_dns_and_dhcp_pages_render(client):
     assert "data-appliance-apply-modal" in app_js.text
     assert "data-appliance-apply-connection-warning" in dns.text
     assert "data-appliance-apply-poll-warning" in dns.text
+    assert ".alert.neutral" in app_css
     assert (
         'class="button primary hidden" type="submit" data-appliance-apply-submit'
         in dns.text

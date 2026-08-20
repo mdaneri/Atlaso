@@ -88,12 +88,49 @@
     return ["pending", "running"].includes(String(task?.status || ""));
   }
 
+  function plannedReconnectDetails(task) {
+    const transition = task?.result?.management_status_transition;
+    if (transition?.kind !== "planned_service_restart") return null;
+    const settingsStep = Array.isArray(task?._children)
+      ? task._children.find((step) => step?.component_key === "appliance_settings")
+      : null;
+    if (!settingsStep || String(settingsStep.status || "") !== "succeeded") return null;
+    const graceSeconds = Number(transition.grace_seconds);
+    const restartDelaySeconds = Number(transition.restart_delay_seconds);
+    const restartWindow = task?.management_restart_window;
+    const remainingMs = Number(restartWindow?.remaining_ms);
+    const restartDelayRemainingMs = Number(restartWindow?.restart_delay_remaining_ms);
+    if (!Number.isFinite(graceSeconds) || graceSeconds <= 0) return null;
+    if (!Number.isFinite(restartDelaySeconds) || restartDelaySeconds < 0) return null;
+    const maximumWindowMs = (graceSeconds + restartDelaySeconds) * 1000;
+    if (!Number.isFinite(remainingMs) || remainingMs < 0 || remainingMs > maximumWindowMs) return null;
+    if (
+      !Number.isFinite(restartDelayRemainingMs)
+      || restartDelayRemainingMs < 0
+      || restartDelayRemainingMs > remainingMs
+    ) return null;
+    return {
+      remainingMs,
+      restartDelayRemainingMs,
+      settingsStep,
+    };
+  }
+
   function createMonitor(options) {
     let sequence = 0;
     let acceptedSequence = 0;
     let currentTask = null;
     let trackedJobId = "";
+    let reconnectStartedAt = null;
+    let reconnectTaskId = "";
+    let reconnectObservedAt = null;
+    let reconnectObservedTaskId = "";
+    let reconnectRestartAt = null;
+    let reconnectWindowEndsAt = null;
+    let reconnectWindowMs = 0;
+    let completedReconnectTaskId = "";
 
+    const now = () => (typeof options.now === "function" ? options.now() : Date.now());
     const beginRequest = () => ++sequence;
     const hasTrackedTask = () => Boolean(trackedJobId);
 
@@ -105,23 +142,58 @@
       if (sameTask && !taskActive(currentTask) && taskActive(task)) return false;
       currentTask = task;
       acceptedSequence = observedSequence;
-      if (taskActive(task)) trackedJobId = taskId;
+      const reconnect = plannedReconnectDetails(task);
+      if (reconnect && taskId !== completedReconnectTaskId) {
+        const observedAt = now();
+        if (reconnectObservedTaskId !== taskId) {
+          reconnectObservedAt = observedAt;
+          reconnectObservedTaskId = taskId;
+          reconnectRestartAt = observedAt + reconnect.restartDelayRemainingMs;
+          reconnectWindowEndsAt = observedAt + reconnect.remainingMs;
+          reconnectWindowMs = reconnect.remainingMs;
+        } else {
+          reconnectRestartAt = Math.min(
+            reconnectRestartAt,
+            observedAt + reconnect.restartDelayRemainingMs,
+          );
+          reconnectWindowEndsAt = Math.min(
+            reconnectWindowEndsAt,
+            observedAt + reconnect.remainingMs,
+          );
+        }
+        if (
+          reconnectRestartAt === null
+          || reconnectWindowEndsAt === null
+          || observedAt >= reconnectRestartAt
+          || observedAt >= reconnectWindowEndsAt
+        ) {
+          completedReconnectTaskId = taskId;
+        }
+      }
+      if (taskActive(task) || task?.mutation_locked === true) trackedJobId = taskId;
       else if (trackedJobId === taskId) trackedJobId = "";
       options.onTask(task);
       return true;
     };
 
     const reconcileTrackedTask = async (observedSequence) => {
-      const jobId = trackedJobId;
-      const task = await options.requestTask(jobId, observedSequence);
-      if (!task || String(task.id || "") !== jobId) {
-        throw new Error("Appliance Apply returned an invalid task status response.");
+      try {
+        const jobId = trackedJobId;
+        const task = await options.requestTask(jobId, observedSequence);
+        if (!task || String(task.id || "") !== jobId) {
+          throw new Error("Appliance Apply returned an invalid task status response.");
+        }
+        const accepted = acceptTask(task, observedSequence);
+        if (accepted && !taskActive(task) && typeof options.onTerminal === "function") {
+          await options.onTerminal(task);
+        }
+        return { accepted, task };
+      } catch (error) {
+        const failure = new Error(error instanceof Error ? error.message : "Unable to reconcile the completed appliance task.");
+        failure.atlasoPollPhase = "terminal_reconciliation";
+        failure.cause = error;
+        throw failure;
       }
-      const accepted = acceptTask(task, observedSequence);
-      if (accepted && !taskActive(task) && typeof options.onTerminal === "function") {
-        await options.onTerminal(task);
-      }
-      return { accepted, task };
     };
 
     let controller;
@@ -132,6 +204,9 @@
       beginRequest,
       request: options.requestStatus,
       onStatus: async (payload, context) => {
+        if (reconnectStartedAt !== null && reconnectTaskId) completedReconnectTaskId = reconnectTaskId;
+        reconnectStartedAt = null;
+        reconnectTaskId = "";
         if (currentTask && context.sequence < acceptedSequence) {
           return { active: hasTrackedTask() };
         }
@@ -166,7 +241,33 @@
         return { active: hasTrackedTask() };
       },
       onError: (error, state) => {
-        if (typeof options.onError === "function") options.onError(error, state);
+        const observedAt = now();
+        const currentTaskId = String(currentTask?.id || "");
+        const reconnect = error?.atlasoPollPhase === "terminal_reconciliation"
+          || (currentTaskId && currentTaskId === completedReconnectTaskId)
+          ? null
+          : plannedReconnectDetails(currentTask);
+        let reconnectGraceMs = 0;
+        let reconnectElapsedMs = 0;
+        if (
+          reconnect?.settingsStep?.status === "succeeded"
+          && reconnectObservedTaskId === currentTaskId
+          && reconnectObservedAt !== null
+          && reconnectWindowEndsAt !== null
+        ) {
+          reconnectGraceMs = reconnectWindowMs;
+          reconnectElapsedMs = Math.max(0, observedAt - reconnectObservedAt);
+          if (observedAt < reconnectWindowEndsAt && reconnectStartedAt === null) {
+            reconnectStartedAt = observedAt;
+          }
+        }
+        if (reconnectStartedAt !== null) {
+          reconnectTaskId = currentTaskId;
+        }
+        const expectedReconnect = reconnectGraceMs > 0 && observedAt < reconnectWindowEndsAt;
+        if (typeof options.onError === "function") {
+          options.onError(error, { ...state, expectedReconnect, reconnectElapsedMs, reconnectGraceMs });
+        }
       },
       isActive: hasTrackedTask,
       isHidden: options.isHidden,

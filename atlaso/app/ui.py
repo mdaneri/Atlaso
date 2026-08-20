@@ -8009,7 +8009,9 @@ def _task_time_label(value: datetime | None) -> str:
     """
     if not value:
         return ""
-    return value.isoformat()
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc).isoformat()
 
 
 def _can_cancel_task(job: Job, identity: Identity | None = None) -> bool:
@@ -8103,6 +8105,10 @@ def _task_row(job: Job, identity: Identity | None = None) -> dict[str, Any]:
     }
     if job.type == "vcf-depot-download":
         row["log_url"] = f"/vcf-offline-depot/tasks/{job.id}/log"
+    if job.type == "appliance-apply":
+        management_restart_window = appliance_apply_management_restart_window(job)
+        if management_restart_window is not None:
+            row["management_restart_window"] = management_restart_window
     if steps:
         row["_children"] = [_job_step_row(step) for step in steps]
     return row
@@ -8963,6 +8969,8 @@ def _normalize_vcf_trust_address(address: str) -> tuple[str, list[str]]:
 
 
 APPLIANCE_APPLY_BASELINES_KEY = "appliance_apply.baselines.v1"
+APPLIANCE_APPLY_MANAGEMENT_RESTART_DELAY_SECONDS = 3
+APPLIANCE_APPLY_MANAGEMENT_RECONNECT_GRACE_SECONDS = 15
 MANAGEMENT_CERTIFICATE_CONNECTION_WARNING = (
     "Applying the selected management HTTPS change will replace or rebind the management certificate. "
     "This browser connection will be interrupted; reconnect and verify or trust the certificate presented by the appliance."
@@ -8985,6 +8993,43 @@ APPLIANCE_APPLY_UNIT_IDS = {
     "vcf_private_registry",
     "public_services",
 }
+
+
+def appliance_settings_management_status_transition(results: list[Any]) -> dict[str, Any] | None:
+    """Return the bounded status transition confirmed by the Appliance Settings helper.
+
+    Args:
+        results: Adapter results returned by Appliance Settings validation and apply.
+
+    Returns:
+        Durable reconnect metadata only when the real helper scheduled the restart.
+    """
+    for result in reversed(results):
+        if result.dry_run or result.returncode != 0:
+            continue
+        for line in reversed(str(result.stdout or "").splitlines()):
+            try:
+                payload = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            transition = payload.get("management_status_transition") if isinstance(payload, dict) else None
+            if not isinstance(transition, dict) or transition.get("kind") != "planned_service_restart":
+                continue
+            restart_delay_seconds = transition.get("restart_delay_seconds")
+            if (
+                not isinstance(restart_delay_seconds, int)
+                or isinstance(restart_delay_seconds, bool)
+                or restart_delay_seconds != APPLIANCE_APPLY_MANAGEMENT_RESTART_DELAY_SECONDS
+            ):
+                continue
+            return {
+                "kind": "planned_service_restart",
+                "restart_delay_seconds": restart_delay_seconds,
+                "grace_seconds": APPLIANCE_APPLY_MANAGEMENT_RECONNECT_GRACE_SECONDS,
+            }
+    return None
+
+
 SECRET_LINE_PATTERN = re.compile(
     r"(rootpw|password|passwd|token|secret|credential|private[_.-]?key|robot[_.-]?account|ca[_.-]?bundle[_.-]?pem|activation[_.-]?code|license|ipxe[_.-]?script|payload[_.-]?b64)",
     re.IGNORECASE,
@@ -12244,7 +12289,7 @@ def execute_appliance_apply_unit(
             recovery_archive.state = "applied"
             recovery_archive.applied_at = utcnow()
             clear_ldap_recovery_payload(recovery_archive)
-    return {
+    unit_result = {
         "unit_id": unit_id,
         "label": unit["label"],
         "status": JobStatus.SUCCEEDED.value if succeeded else JobStatus.FAILED.value,
@@ -12260,6 +12305,11 @@ def execute_appliance_apply_unit(
         "config_preview": unit["config_preview"],
         "config_diff": unit["config_diff"],
     }
+    if unit_id == "appliance_settings":
+        management_status_transition = appliance_settings_management_status_transition(results)
+        if management_status_transition is not None:
+            unit_result["management_status_transition"] = management_status_transition
+    return unit_result
 
 
 def update_appliance_apply_baselines(db: Session, units: list[dict[str, Any]], selected_ids: set[str]) -> None:
@@ -13343,13 +13393,63 @@ APPLIANCE_APPLY_SUBMIT_LOCK = threading.Lock()
 VCF_DEPOT_SUBMIT_LOCK = threading.Lock()
 
 
+def appliance_apply_management_restart_window(
+    job: Job,
+    *,
+    now: datetime | None = None,
+) -> dict[str, int] | None:
+    """Return server-owned remaining time for a confirmed management restart.
+
+    Args:
+        job: Appliance Apply job carrying helper-confirmed transition metadata.
+        now: Optional current UTC instant used by deterministic callers and tests.
+    """
+    transition = _job_payload(job).get("management_status_transition")
+    if not isinstance(transition, dict) or transition.get("kind") != "planned_service_restart":
+        return None
+    restart_delay_seconds = transition.get("restart_delay_seconds")
+    grace_seconds = transition.get("grace_seconds")
+    if (
+        not isinstance(restart_delay_seconds, int)
+        or isinstance(restart_delay_seconds, bool)
+        or restart_delay_seconds != APPLIANCE_APPLY_MANAGEMENT_RESTART_DELAY_SECONDS
+    ):
+        return None
+    if (
+        not isinstance(grace_seconds, int)
+        or isinstance(grace_seconds, bool)
+        or grace_seconds != APPLIANCE_APPLY_MANAGEMENT_RECONNECT_GRACE_SECONDS
+    ):
+        return None
+    settings_step = next(
+        (
+            step
+            for step in job.steps
+            if step.component_key == "appliance_settings"
+            and step.status == JobStatus.SUCCEEDED.value
+            and step.finished_at is not None
+        ),
+        None,
+    )
+    if settings_step is None:
+        return None
+    observed_at = ensure_aware(now or utcnow())
+    step_finished_at = ensure_aware(settings_step.finished_at)
+    restart_at = step_finished_at + timedelta(seconds=restart_delay_seconds)
+    deadline = restart_at + timedelta(seconds=grace_seconds)
+    return {
+        "restart_delay_remaining_ms": int(max(0.0, (restart_at - observed_at).total_seconds()) * 1000),
+        "remaining_ms": int(max(0.0, (deadline - observed_at).total_seconds()) * 1000),
+    }
+
+
 def active_appliance_apply_job(db: Session) -> Job | None:
-    """Return active appliance apply job.
+    """Return the Appliance Apply job that currently holds the mutation lock.
 
     Args:
         db: Active database session.
     """
-    return db.scalars(
+    active = db.scalars(
         select(Job)
         .options(selectinload(Job.steps))
         .where(
@@ -13359,6 +13459,38 @@ def active_appliance_apply_job(db: Session) -> Job | None:
         .order_by(Job.created_at)
         .limit(1)
     ).first()
+    if active is not None:
+        return active
+
+    now = utcnow()
+    maximum_window = timedelta(
+        seconds=(
+            APPLIANCE_APPLY_MANAGEMENT_RESTART_DELAY_SECONDS
+            + APPLIANCE_APPLY_MANAGEMENT_RECONNECT_GRACE_SECONDS
+        )
+    )
+    recent = db.scalars(
+        select(Job)
+        .options(selectinload(Job.steps))
+        .where(
+            Job.type == "appliance-apply",
+            Job.status.in_(
+                [
+                    JobStatus.SUCCEEDED.value,
+                    JobStatus.FAILED.value,
+                    JobStatus.CANCELLED.value,
+                ]
+            ),
+            Job.finished_at.is_not(None),
+            Job.finished_at >= now - maximum_window,
+        )
+        .order_by(desc(Job.finished_at))
+    ).all()
+    for job in recent:
+        restart_window = appliance_apply_management_restart_window(job, now=now)
+        if restart_window is not None and restart_window["remaining_ms"] > 0:
+            return job
+    return None
 
 
 def active_appliance_apply_submitted_unit_ids(db: Session) -> set[str]:
@@ -13506,6 +13638,9 @@ def run_appliance_apply_job(job_id: str, *, force_real: bool = False) -> None:
                 result = _redact_task_value(result)
                 db.refresh(job)
                 current_payload = _job_payload(job)
+                management_status_transition = result.get("management_status_transition")
+                if unit["id"] == "appliance_settings" and isinstance(management_status_transition, dict):
+                    current_payload["management_status_transition"] = management_status_transition
                 unit_results.append(result)
                 step.result = json.dumps(result, indent=2, sort_keys=True)
                 step.status = JobStatus.SUCCEEDED.value if result["success"] else JobStatus.FAILED.value
@@ -13517,6 +13652,10 @@ def run_appliance_apply_job(job_id: str, *, force_real: bool = False) -> None:
                 )
                 job.progress_percent = min(99, int((index / total_steps) * 100))
                 job.result = json.dumps({**current_payload, "units": unit_results}, indent=2)
+                if unit["id"] == "appliance_settings" and isinstance(management_status_transition, dict):
+                    # The helper's three-second restart timer is already running. Make the
+                    # confirmed transition and completed step durable before reconciliation.
+                    db.commit()
                 prune_network_boot_media = False
                 if result["success"]:
                     if unit["id"] == "esxi_pxe" and not result.get("dry_run"):
