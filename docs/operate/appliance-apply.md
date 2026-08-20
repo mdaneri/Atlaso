@@ -110,8 +110,9 @@ restores the previous networkd resolver directives and per-link runtime state be
 Every candidate that requests DHCP or SLAAC must acquire and pass readiness on that address family; another static or
 dynamic listener cannot mask a missing lease or router-advertised address. When the same Apply disables the firewall,
 the transition retains the previous filtering policy with minimal candidate listener admission until readiness. When
-the same Apply enables filtering from an open state, the transition remains open until readiness. In both directions,
-the candidate firewall state applies only while retiring the old path.
+the candidate firewall remains filtered, any added custom management port keeps that listener rule's configured source
+restriction. When the same Apply enables filtering from an open state, the transition remains open until readiness. In
+both directions, the candidate firewall state applies only while retiring the old path.
 If rollback started from a state with no Atlaso firewall config or service, it disables and stops any candidate service,
 removes the candidate unit/config through the snapshot restore, reloads systemd, and explicitly flushes nftables back
 to the previous open policy.

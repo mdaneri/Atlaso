@@ -262,7 +262,9 @@ family when one is missing, and a retained old-path address cannot satisfy dynam
 candidate disables nftables, the transitional ruleset keeps the previous filtering
 policy and adds only the candidate management admission rules, including the staged nondefault HTTP or HTTPS public
 port. A filtered-to-filtered handoff adds that port to both the transitional ruleset and the final candidate ruleset so
-readiness and post-retirement access use the same admission contract. When enabling filtering from an open state, the
+readiness and post-retirement access use the same admission contract. The added rule is derived from each exact
+candidate management rule and retains its interface plus IPv4 or IPv6 source expressions; a filtered candidate never
+receives an unconditional custom-port rule. When enabling filtering from an open state, the
 transitional ruleset remains open. The enabled or disabled candidate ruleset applies only after readiness while the old
 path retires. A second
 readiness pass protects retirement. Any validation, mutation, service, probe, or retirement failure restores every

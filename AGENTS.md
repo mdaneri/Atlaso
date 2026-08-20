@@ -304,7 +304,8 @@ The following cross-cutting boundaries always apply:
   dynamic candidate listener to acquire and probe each requested DHCP
   or SLAAC address family before retirement. Preserve the previous firewall policy plus minimal candidate admission when
   firewall state changes in either direction; include the configured management public port in both transitional and
-  final filtered rulesets, and apply the enabled or disabled candidate ruleset only after readiness. Commit
+  final filtered rulesets without dropping the candidate rule's source predicates, and apply the enabled or disabled
+  candidate ruleset only after readiness. Commit
   baselines only from the exact staged snapshots, and leave desired-state edits made during readiness pending. A
   flagged-access candidate must remove a stale dedicated `00-atlaso-mgmt.network` file when that file is not part of the
   candidate configuration. Retain a flagged-management VLAN's trunk parent for link rollback without treating the
