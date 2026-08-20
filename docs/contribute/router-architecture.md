@@ -37,6 +37,10 @@ templates, browser assets, remote-terminal tickets, Kickstart dependencies, and 
 established owners. Phase 15 extracts appliance power and Appliance Update management transports into two ordered
 contributions while retaining updater services, helpers, workers, durable tasks, signed-release activation, rollback,
 recovery, adapters, templates, browser assets, screenshots, and operator guidance in their established owners.
+Phase 16 extracts Certificate Authority and vSphere Key Provider transports while preserving their separated UI
+positions around Managed LDAP and their API v1 position after Managed LDAP. Phase 17 extracts the three NTP
+management transports while retaining all NTPsec, NTS, certificate, source-health, desired-state, and global Appliance
+Apply behavior in their established owners.
 
 ## Ownership and responsibilities
 
@@ -414,8 +418,7 @@ Certificate Authority and vSphere Key Provider management transports live in
 `atlaso/app/routers/ui/certificate_trust.py`. The module contributes two ordered
 management routers around Managed LDAP: Certificate Authority remains after the
 DNS/DHCP facade segment and before Managed LDAP, while vSphere Key Providers
-remain after Managed LDAP and before the facade segment that owns NTP, ESX
-Storage, and later VCF workflows. The existing public CA and certificate-request
+remain after Managed LDAP and before the extracted NTP router. The existing public CA and certificate-request
 routes retain the shared public and protocol router positions supplied by the
 stable UI facade.
 
@@ -446,6 +449,42 @@ authorization scope, session or CSRF behavior, redirect, status, response schema
 audit action, public-certificate or redaction contract, certificate/private-key
 custody, managed-certificate ownership, vCenter trust, provider identity, route
 inventory, normalized OpenAPI output, desired state, KMIP protocol, or global
+Appliance Apply boundary.
+
+## Extracted NTP ownership
+
+The three NTP and NTS management transports live in
+`atlaso/app/routers/ui/ntp.py`: the NTP page, bounded source-health response, and
+desired-state settings update. The UI registry places `ntp` immediately after
+the vSphere Key Provider contribution and before
+`facade_between_ntp_vcf_workflows`, preserving the established effective route
+order before ESX Storage and the later VCF workflows. There are no NTP-specific
+API v1 operations; the generic `/api/v1/services` compatibility surface retains
+its established operational owner.
+
+The stable `atlaso/app/ui.py` facade continues to export `ntp_page`,
+`ntp_source_health`, and `update_ntp_settings_from_ui`. It supplies late-bound
+rendering, CSRF, NTP context and apply projection, service-binding, CA
+reconciliation, and system-adapter dependencies to preserve compatibility and
+monkeypatch seams. NTPsec rendering, validation, runtime observation, NTS
+capability detection and certificate custody, restoration, lifecycle, DNS and
+firewall integration, settings archives, and global Appliance Apply execution
+retain their established owners.
+
+Independently runnable transport coverage lives in
+`tests/routers/ui/test_ntp.py`. Service, helper, CA, restoration, lifecycle,
+DNS-binding, archive, and apply coverage remains with its established tests.
+NTP source add/edit retains its existing `wizard-backed Tabulator` interaction
+using ESX Storage. Singleton NTP/NTS settings and validation remain `non-grid
+settings` using the DNS settings and validation-rail reference. Runtime and
+source-health presentation retains the established read-only operational-status
+pattern using Tasks and Audit Events.
+
+This behavior-neutral extraction changes no template, CSS, JavaScript, visible
+copy, control, layout, interaction class, route, route name, authorization,
+session or CSRF behavior, redirect, status, source-health response, form parsing,
+validation, audit, route inventory, normalized OpenAPI output, NTP/NTS protocol,
+certificate policy or custody, desired state, service behavior, or global
 Appliance Apply boundary.
 
 ## Route and OpenAPI compatibility
