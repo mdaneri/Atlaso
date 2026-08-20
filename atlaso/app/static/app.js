@@ -15502,11 +15502,13 @@ function setApplianceApplyModalError(message = "") {
   }
 }
 
-function setApplianceApplyPollWarning(message = "") {
-  const warning = applianceApplyModalElements().pollWarning;
-  if (warning instanceof HTMLElement) {
-    warning.textContent = message;
-    warning.classList.toggle("hidden", !message);
+function setApplianceApplyPollNotice(message = "", tone = "warning") {
+  const notice = applianceApplyModalElements().pollWarning;
+  if (notice instanceof HTMLElement) {
+    notice.textContent = message;
+    notice.classList.remove("neutral", "warning");
+    if (message) notice.classList.add(tone === "neutral" ? "neutral" : "warning");
+    notice.classList.toggle("hidden", !message);
   }
 }
 
@@ -15686,7 +15688,7 @@ async function openApplianceApplyReview() {
     elements.selectionSummary.textContent = "Loading appliance changes…";
   }
   setApplianceApplyModalError("");
-  setApplianceApplyPollWarning("");
+  setApplianceApplyPollNotice("");
   if (elements.connectionWarning instanceof HTMLElement) {
     elements.connectionWarning.replaceChildren();
     elements.connectionWarning.classList.add("hidden");
@@ -15982,9 +15984,19 @@ function initializeApplianceApplyProgress() {
     onTask: (task) => renderApplianceApplyTask(task),
     onTerminal: (task) => refreshCurrentWorkflowAfterApplianceApply(task),
     onError: (_error, state) => {
-      if (state.active) setApplianceApplyPollWarning("Live task status is temporarily unavailable. Atlaso will retry automatically.");
+      if (!state.active) return;
+      if (state.expectedReconnect) {
+        setApplianceApplyPollNotice(
+          "Applying management settings; Atlaso is reconnecting to task status.",
+          "neutral",
+        );
+        return;
+      }
+      setApplianceApplyPollNotice(
+        "Live task status is temporarily unavailable. Atlaso will retry automatically; if this persists, open Tasks in another tab.",
+      );
     },
-    onRecovered: () => setApplianceApplyPollWarning(""),
+    onRecovered: () => setApplianceApplyPollNotice(""),
     isHidden: () => document.visibilityState === "hidden",
     setTimer: (callback, delay) => {
       applianceApplyGlobalPollTimer = window.setTimeout(callback, delay);

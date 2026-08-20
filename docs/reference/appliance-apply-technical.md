@@ -47,12 +47,16 @@ The browser permits only one status request at a time, polls active work every t
 polling from ten to sixty seconds, suspends polling while hidden, and refreshes immediately after successful desired-
 state mutations, visibility return, and Apply completion. Once a master task is observed, the browser retains its ID
 until `/ui/management/tasks/<id>/status` returns a valid terminal task. A transient status or terminal-follow-up failure
-keeps the global lock visible, shows a retry warning in the open monitor, and retries at the two-second active cadence.
-Successful reconciliation clears that warning and converges the modal, sidebar badge, pending count, and lock from the
-authoritative status and task responses. Terminal task state is sticky so an older in-flight `pending` or `running`
-response cannot replace a newer `succeeded`, `failed`, or `cancelled` result. If another session starts a new Apply
-between polls, the browser reconciles the retained task and runs its terminal completion refresh before accepting the
-new active task. Directly observed terminal responses, including cancellation races, run the same completion refresh.
+keeps the global lock visible and retries at the two-second active cadence. A real task containing Appliance Settings
+persists `management_status_transition` before execution. Once that child is `running` or `succeeded`, the monitor uses
+the server-owned contract for at most 15 seconds of neutral **reconnecting to task status** presentation. It does not
+apply the grace window while that child is pending, to dry-run tasks, or to tasks without the transition metadata.
+Continued failure after the grace window and every unexpected failure use the actionable availability warning. Successful
+reconciliation clears either notice and converges the modal, sidebar badge, pending count, and lock from the authoritative
+status and task responses. Terminal task state is sticky so an older in-flight `pending` or `running` response cannot
+replace a newer `succeeded`, `failed`, or `cancelled` result. If another session starts a new Apply between polls, the
+browser reconciles the retained task and runs its terminal completion refresh before accepting the new active task.
+Directly observed terminal responses, including cancellation races, run the same completion refresh.
 
 Submitting transforms the review modal into a live master/child task grid. One `appliance-apply` master owns one child
 execution record per selected component. Every signed-in session sees the blocking grid while the master is pending or

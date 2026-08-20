@@ -8957,6 +8957,7 @@ def _normalize_vcf_trust_address(address: str) -> tuple[str, list[str]]:
 
 
 APPLIANCE_APPLY_BASELINES_KEY = "appliance_apply.baselines.v1"
+APPLIANCE_APPLY_MANAGEMENT_RECONNECT_GRACE_SECONDS = 15
 MANAGEMENT_CERTIFICATE_CONNECTION_WARNING = (
     "Applying the selected management HTTPS change will replace or rebind the management certificate. "
     "This browser connection will be interrupted; reconnect and verify or trust the certificate presented by the appliance."
@@ -8979,6 +8980,30 @@ APPLIANCE_APPLY_UNIT_IDS = {
     "vcf_private_registry",
     "public_services",
 }
+
+
+def appliance_apply_management_status_transition(
+    selected_unit_ids: set[str],
+    *,
+    dry_run: bool,
+) -> dict[str, Any] | None:
+    """Describe the bounded status interruption expected from real Appliance Settings apply.
+
+    Args:
+        selected_unit_ids: Apply units selected for the master task.
+        dry_run: Whether adapters only record command intent.
+
+    Returns:
+        Durable reconnect metadata for a real management-service transition, if applicable.
+    """
+    if dry_run or "appliance_settings" not in selected_unit_ids:
+        return None
+    return {
+        "kind": "planned_service_restart",
+        "grace_seconds": APPLIANCE_APPLY_MANAGEMENT_RECONNECT_GRACE_SECONDS,
+    }
+
+
 SECRET_LINE_PATTERN = re.compile(
     r"(rootpw|password|passwd|token|secret|credential|private[_.-]?key|robot[_.-]?account|ca[_.-]?bundle[_.-]?pem|activation[_.-]?code|license|ipxe[_.-]?script|payload[_.-]?b64)",
     re.IGNORECASE,
@@ -14616,6 +14641,12 @@ def _submit_appliance_apply(
         "format_authorizations": [],
         "refresh_vcf_depot_software_depot_id": refresh_vcf_depot_software_depot_id,
     }
+    management_status_transition = appliance_apply_management_status_transition(
+        selected_ids,
+        dry_run=job_result["dry_run"],
+    )
+    if management_status_transition is not None:
+        job_result["management_status_transition"] = management_status_transition
     vcf_depot_submit_guard = VCF_DEPOT_SUBMIT_LOCK if "vcf_offline_depot" in selected_ids else nullcontext()
     with vcf_depot_submit_guard, APPLIANCE_APPLY_SUBMIT_LOCK:
         db.expire_all()

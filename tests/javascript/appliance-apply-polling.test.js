@@ -22,13 +22,14 @@ function harness(request) {
   return { controller, timers, statuses, setHidden: (value) => { hidden = value; } };
 }
 
-function monitorHarness({ requestStatus, requestTask }) {
+function monitorHarness({ requestStatus, requestTask, now = () => Date.now() }) {
   let hidden = false;
   const timers = [];
   const tasks = [];
   const errors = [];
+  const errorStates = [];
   const terminals = [];
-  const ui = { modalStatus: "", locked: false, sidebarBadge: "", pendingCount: -1 };
+  const ui = { modalStatus: "", locked: false, sidebarBadge: "", pendingCount: -1, pollNotice: "", pollTone: "" };
   const monitor = createMonitor({
     requestStatus,
     requestTask,
@@ -42,7 +43,17 @@ function monitorHarness({ requestStatus, requestTask }) {
       ui.locked = ["pending", "running"].includes(task.status);
     },
     onTerminal: async (task) => terminals.push(task.status),
-    onError: (error) => errors.push(error.message),
+    onError: (error, state) => {
+      errors.push(error.message);
+      errorStates.push(state);
+      ui.pollNotice = state.expectedReconnect ? "reconnecting" : "unavailable";
+      ui.pollTone = state.expectedReconnect ? "neutral" : "warning";
+    },
+    onRecovered: () => {
+      ui.pollNotice = "";
+      ui.pollTone = "";
+    },
+    now,
     isHidden: () => hidden,
     setTimer: (callback, delay) => {
       timers.push({ callback, delay, cleared: false });
@@ -52,7 +63,23 @@ function monitorHarness({ requestStatus, requestTask }) {
       if (timers[id - 1]) timers[id - 1].cleared = true;
     },
   });
-  return { monitor, timers, tasks, errors, terminals, ui, setHidden: (value) => { hidden = value; } };
+  return { monitor, timers, tasks, errors, errorStates, terminals, ui, setHidden: (value) => { hidden = value; } };
+}
+
+function plannedRestartTask(status = "running") {
+  return {
+    id: "job-1",
+    status: "running",
+    result: {
+      management_status_transition: {
+        kind: "planned_service_restart",
+        grace_seconds: 15,
+      },
+    },
+    _children: [
+      { component_key: "appliance_settings", status },
+    ],
+  };
 }
 
 test("deduplicates an in-flight status request", async () => {
@@ -171,6 +198,120 @@ test("retries a transient terminal reconciliation failure at the active interval
   assert.equal(state.ui.modalStatus, "succeeded");
   assert.equal(state.ui.locked, false);
   assert.equal(state.monitor.trackedJobId(), "");
+});
+
+test("uses a neutral bounded reconnect state for a planned management restart", async () => {
+  const statusPayloads = [
+    { active_task: plannedRestartTask(), pending_count: 0 },
+    new Error("front door restarting"),
+    { active_task: plannedRestartTask("succeeded"), pending_count: 0 },
+    new Error("later unexpected outage"),
+  ];
+  const state = monitorHarness({
+    requestStatus: async () => {
+      const payload = statusPayloads.shift();
+      if (payload instanceof Error) throw payload;
+      return payload;
+    },
+    requestTask: async () => plannedRestartTask("succeeded"),
+  });
+
+  await state.monitor.refresh();
+  await state.timers.at(-1).callback();
+
+  assert.equal(state.errorStates[0].expectedReconnect, true);
+  assert.equal(state.errorStates[0].reconnectGraceMs, 15000);
+  assert.equal(state.ui.pollNotice, "reconnecting");
+  assert.equal(state.ui.pollTone, "neutral");
+  assert.equal(state.ui.modalStatus, "running");
+  assert.equal(state.ui.locked, true);
+  assert.equal(state.monitor.trackedJobId(), "job-1");
+
+  await state.timers.at(-1).callback();
+  assert.equal(state.ui.pollNotice, "");
+  assert.equal(state.ui.pollTone, "");
+  assert.equal(state.ui.modalStatus, "running");
+  assert.equal(state.ui.locked, true);
+
+  await state.timers.at(-1).callback();
+  assert.equal(state.errorStates[1].expectedReconnect, false);
+  assert.equal(state.ui.pollNotice, "unavailable");
+  assert.equal(state.ui.pollTone, "warning");
+});
+
+test("escalates a planned reconnect after its grace window", async () => {
+  let now = 1000;
+  const state = monitorHarness({
+    requestStatus: async () => {
+      if (!state.monitor.trackedJobId()) return { active_task: plannedRestartTask(), pending_count: 0 };
+      throw new Error("front door still unavailable");
+    },
+    requestTask: async () => plannedRestartTask(),
+    now: () => now,
+  });
+
+  await state.monitor.refresh();
+  await state.timers.at(-1).callback();
+  assert.equal(state.errorStates[0].expectedReconnect, true);
+  assert.equal(state.ui.pollTone, "neutral");
+
+  now += 16000;
+  await state.timers.at(-1).callback();
+  assert.equal(state.errorStates[1].expectedReconnect, false);
+  assert.equal(state.errorStates[1].reconnectElapsedMs, 16000);
+  assert.equal(state.ui.pollNotice, "unavailable");
+  assert.equal(state.ui.pollTone, "warning");
+  assert.equal(state.ui.modalStatus, "running");
+  assert.equal(state.ui.locked, true);
+});
+
+test("keeps unexpected active-task failures on the warning path", async () => {
+  const state = monitorHarness({
+    requestStatus: async () => {
+      if (!state.monitor.trackedJobId()) {
+        return {
+          active_task: {
+            id: "job-1",
+            status: "running",
+            result: { selected_units: ["firewall"] },
+            _children: [{ component_key: "firewall", status: "running" }],
+          },
+          pending_count: 0,
+        };
+      }
+      throw new Error("unexpected outage");
+    },
+    requestTask: async () => null,
+  });
+
+  await state.monitor.refresh();
+  await state.timers.at(-1).callback();
+
+  assert.equal(state.errorStates[0].expectedReconnect, false);
+  assert.equal(state.ui.pollNotice, "unavailable");
+  assert.equal(state.ui.pollTone, "warning");
+  assert.equal(state.ui.modalStatus, "running");
+  assert.equal(state.ui.locked, true);
+});
+
+test("keeps terminal reconciliation failures on the warning path during a planned restart task", async () => {
+  const statusPayloads = [
+    { active_task: plannedRestartTask(), pending_count: 0 },
+    { active_task: null, pending_count: 0 },
+  ];
+  const state = monitorHarness({
+    requestStatus: async () => statusPayloads.shift(),
+    requestTask: async () => { throw new Error("terminal task unavailable"); },
+  });
+
+  await state.monitor.refresh();
+  await state.timers.at(-1).callback();
+
+  assert.equal(state.errorStates[0].expectedReconnect, false);
+  assert.equal(state.errorStates[0].reconnectGraceMs, 0);
+  assert.equal(state.ui.pollNotice, "unavailable");
+  assert.equal(state.ui.pollTone, "warning");
+  assert.equal(state.monitor.trackedJobId(), "job-1");
 });
 
 test("keeps tracking when the terminal task-status request fails", async () => {

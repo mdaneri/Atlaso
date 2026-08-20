@@ -1,5 +1,7 @@
 """Test Appliance Apply management UI transport behavior."""
 
+import json
+
 from tests.routers.ui.helpers import login
 
 
@@ -114,6 +116,74 @@ def test_appliance_apply_status_uses_lightweight_projection(client, monkeypatch)
     assert refreshed.status_code == 200
     assert first.json().keys() == second.json().keys()
     assert reconcile_values == [False, False]
+
+
+def test_appliance_apply_status_preserves_planned_management_restart_context(client):
+    """Keep durable reconnect context available before the management front door restarts.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job, JobStatus, JobStep
+
+    login(client)
+    with SessionLocal() as db:
+        job = Job(
+            id="job_planned_management_restart",
+            type="appliance-apply",
+            status=JobStatus.RUNNING.value,
+            created_by="admin",
+            progress_percent=50,
+            result=json.dumps(
+                {
+                    "selected_units": ["appliance_settings"],
+                    "management_status_transition": {
+                        "kind": "planned_service_restart",
+                        "grace_seconds": 15,
+                    },
+                }
+            ),
+        )
+        db.add(job)
+        db.add(
+            JobStep(
+                id=f"{job.id}:appliance_settings",
+                job=job,
+                component_key="appliance_settings",
+                label="Appliance Settings",
+                position=1,
+                status=JobStatus.RUNNING.value,
+                progress_percent=50,
+                result="{}",
+            )
+        )
+        db.commit()
+
+    response = client.get("/appliance-apply/status")
+
+    assert response.status_code == 200
+    task = response.json()["active_task"]
+    assert task["id"] == "job_planned_management_restart"
+    assert task["result"]["management_status_transition"] == {
+        "kind": "planned_service_restart",
+        "grace_seconds": 15,
+    }
+    assert [(step["component_key"], step["status"]) for step in task["_children"]] == [
+        ("appliance_settings", "running")
+    ]
+
+
+def test_appliance_apply_transition_context_is_real_settings_apply_only():
+    """Mark only real Appliance Settings tasks as planned management transitions."""
+    from atlaso.app.ui import appliance_apply_management_status_transition
+
+    assert appliance_apply_management_status_transition({"appliance_settings"}, dry_run=False) == {
+        "kind": "planned_service_restart",
+        "grace_seconds": 15,
+    }
+    assert appliance_apply_management_status_transition({"appliance_settings"}, dry_run=True) is None
+    assert appliance_apply_management_status_transition({"firewall"}, dry_run=False) is None
 
 
 def test_appliance_apply_review_returns_management_address_connection_warning(client):

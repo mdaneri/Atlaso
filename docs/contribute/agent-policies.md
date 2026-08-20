@@ -279,6 +279,10 @@ Terminal order:
 - Apply actions should create one global job/task that captures selected units, skipped changed units, current desired
   state summaries, rendered config previews/diffs, validation results, adapter commands, dry-run status, and audit
   event.
+- Real Appliance Settings tasks must persist server-owned management-restart context before helper execution. While its
+  component is running or succeeded, the shared monitor may use that context for one bounded neutral reconnecting
+  window without dropping last-known progress or the global lock. Recovery clears the notice automatically; missing,
+  unexpected, or out-of-window status failures retain the actionable availability warning and active retry cadence.
 - Label the global submit action around the user's intent, such as `Submit appliance changes`, and explain that the task
   validates and applies selected desired state through Atlaso adapters.
 - Fresh Photon appliance startup may initialize the factory desired-state baseline automatically when no baseline,
