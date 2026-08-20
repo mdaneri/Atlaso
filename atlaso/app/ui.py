@@ -15241,7 +15241,7 @@ def _submit_appliance_apply(
     if ca_required_for_nts:
         selected_ids.add("ca")
     management_handoff = bool(
-        "network" in selected_ids
+        selected_ids.intersection(MANAGEMENT_HANDOFF_UNIT_IDS)
         and unit_map.get("network", {}).get("management_handoff_required")
     )
     if management_handoff:

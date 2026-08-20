@@ -403,8 +403,8 @@ def test_appliance_apply_review_returns_management_address_connection_warning(cl
     assert "from 192.168.49.1/24 to 192.168.49.20/24" in network["connection_warnings"][0]
 
 
-def test_management_move_submits_all_handoff_units_atomically(client):
-    """Bundle every runtime layer required for a management move.
+def test_management_move_forces_partial_dependency_selection_into_handoff(client):
+    """Bundle every runtime layer when Firewall alone is selected for a pending move.
 
     Args:
         client: HTTP test client used to exercise the Atlaso application.
@@ -428,7 +428,7 @@ def test_management_move_submits_all_handoff_units_atomically(client):
 
     response = client.post(
         "/appliance-apply",
-        data={"csrf": csrf, "selected_units": "network"},
+        data={"csrf": csrf, "selected_units": "firewall"},
         headers={"Accept": "application/json"},
     )
 
@@ -682,7 +682,7 @@ def test_appliance_apply_json_submission_returns_master_with_live_child_status(c
 
     response = client.post(
         "/appliance-apply",
-        data={"csrf": csrf, "selected_units": "firewall"},
+        data={"csrf": csrf, "selected_units": "wan"},
         headers={"Accept": "application/json"},
     )
 
@@ -692,7 +692,7 @@ def test_appliance_apply_json_submission_returns_master_with_live_child_status(c
     assert payload["status_url"] == f"/tasks/{payload['job_id']}/status"
     assert payload["task"]["type"] == "appliance-apply"
     assert [(step["component_key"], step["status"]) for step in payload["task"]["_children"]] == [
-        ("firewall", "pending")
+        ("wan", "pending")
     ]
 
     status_response = client.get(payload["status_url"])
@@ -700,7 +700,7 @@ def test_appliance_apply_json_submission_returns_master_with_live_child_status(c
     task = status_response.json()["task"]
     assert task["status"] == "succeeded"
     assert [(step["component_key"], step["status"]) for step in task["_children"]] == [
-        ("firewall", "succeeded")
+        ("wan", "succeeded")
     ]
 
 

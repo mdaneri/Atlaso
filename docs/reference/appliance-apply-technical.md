@@ -199,8 +199,10 @@ lab route table. When a VLAN was present in successful Atlaso network apply hist
 config includes an explicit removal target and the helper deletes that VLAN link after verifying it is a VLAN device.
 
 Any change to the effective management address, gateway, dedicated-management role, or flagged access-management
-listener converts five apply units into one `management-handoff` helper transaction: Certificate Authority, Network,
-Firewall, Appliance Settings, and Public Services. The helper validates all staged inputs before mutation, snapshots
+listener converts five apply units into one `management-handoff` helper transaction whenever an operator submits any
+one of them: Certificate Authority, Network, Firewall, Appliance Settings, and Public Services. This forced dependency
+closure prevents a partial Firewall, certificate, listener, or resolver apply from publishing candidate-derived state
+before candidate networking exists. The helper validates all staged inputs before mutation, snapshots
 the Atlaso-owned networkd, nftables, nginx, certificate, and related runtime files under a root-only state directory,
 and installs temporary higher-priority networkd holdovers for the previous management links. It then applies the
 candidate network and a transitional firewall that admits both previous and candidate management addresses. If the
