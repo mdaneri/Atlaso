@@ -1418,15 +1418,46 @@ def _systemd_unit_logs(unit: str) -> int:
     return result.returncode
 
 
-def _write_management_resolver(servers: list[str], domains: list[str]) -> None:
+def _management_resolver_network_path(interface_name: str) -> Path | None:
+    """Return the generated networkd file for the effective resolver link.
+
+    Args:
+        interface_name: Host network-interface name affected by the operation.
+
+    Returns:
+        The matching generated networkd path, when it exists.
+    """
+    candidates = [
+        NETWORKD_MGMT_CONFIG_PATH,
+        NETWORKD_CONFIG_DIR / _networkd_managed_filename(interface_name, "network"),
+    ]
+    for path in candidates:
+        if not path.is_file():
+            continue
+        try:
+            text = path.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        if re.search(rf"(?m)^Name={re.escape(interface_name)}\s*$", text):
+            return path
+    return None
+
+
+def _write_management_resolver(
+    interface_name: str,
+    servers: list[str],
+    domains: list[str],
+) -> None:
     """Write management resolver.
 
     Args:
+        interface_name: Host network-interface name affected by the operation.
         servers: Servers consumed by write management resolver.
         domains: Domains consumed by write management resolver.
     """
-    if NETWORKD_MGMT_CONFIG_PATH.is_file():
-        lines = NETWORKD_MGMT_CONFIG_PATH.read_text(encoding="utf-8").splitlines()
+    network_path = _management_resolver_network_path(interface_name)
+    if network_path is not None:
+        lines = network_path.read_text(encoding="utf-8").splitlines()
         updated: list[str] = []
         in_network = False
         inserted = False
@@ -1448,7 +1479,7 @@ def _write_management_resolver(servers: list[str], domains: list[str]) -> None:
         if in_network and not inserted:
             updated.extend([f"DNS={server}" for server in servers])
             updated.extend([f"Domains={domain}" for domain in domains])
-        NETWORKD_MGMT_CONFIG_PATH.write_text("\n".join(updated).rstrip() + "\n", encoding="utf-8")
+        network_path.write_text("\n".join(updated).rstrip() + "\n", encoding="utf-8")
 
 
 def _configure_resolver(interface_name: str, servers: list[str], domains: list[str]) -> subprocess.CompletedProcess[str]:
@@ -1459,7 +1490,7 @@ def _configure_resolver(interface_name: str, servers: list[str], domains: list[s
         servers: Servers consumed by configure resolver.
         domains: Domains consumed by configure resolver.
     """
-    _write_management_resolver(servers, domains)
+    _write_management_resolver(interface_name, servers, domains)
     commands = [
         ["resolvectl", "dns", interface_name, *servers],
         ["resolvectl", "domain", interface_name, *(domains or [""])],
@@ -1479,7 +1510,7 @@ def _configure_dhcp_resolver(interface_name: str) -> subprocess.CompletedProcess
     Args:
         interface_name: Host network-interface name affected by the operation.
     """
-    _write_management_resolver([], [])
+    _write_management_resolver(interface_name, [], [])
     result = _run(["resolvectl", "revert", interface_name])
     print(result.stdout, end="")
     print(result.stderr, end="", file=sys.stderr)
@@ -1498,6 +1529,13 @@ def _configure_management_handoff_resolver(payload: dict) -> subprocess.Complete
     interface_name = str(payload["management_interface"])
     resolver_mode = str(payload["resolver_mode"])
     resolver_servers = [str(server) for server in payload["resolver_servers"]]
+    if _management_resolver_network_path(interface_name) is None:
+        return subprocess.CompletedProcess(
+            ["resolvectl", "dns", interface_name],
+            1,
+            "",
+            "candidate management resolver networkd file was not generated",
+        )
     if resolver_mode == "dhcp":
         return _configure_dhcp_resolver(interface_name)
     domains = ["~."] if resolver_mode == "local_dns" else []
@@ -15466,9 +15504,15 @@ def _management_handoff_firewall_text(
         )
     ]
     candidate_disabled = "Atlaso firewall desired state is disabled" in candidate
-    if candidate_disabled and "chain input {" not in previous:
-        return candidate
-    base = previous if candidate_disabled and "chain input {" in previous else candidate
+    previous_filtered = "chain input {" in previous
+    if not previous_filtered:
+        if previous.strip():
+            return previous
+        return (
+            "flush ruleset\n"
+            "# Atlaso management handoff preserves the previous open firewall policy.\n"
+        )
+    base = previous if candidate_disabled else candidate
     desired_rules = (
         list(candidate_management_rules or [])
         if candidate_disabled

@@ -209,7 +209,8 @@ candidate listener until candidate readiness succeeds. Previous HTTPS blocks alw
 certificate and key files, including when the protocol remains HTTPS while the candidate certificate rotates.
 Within Appliance Settings, this transaction applies the management resolver interface, Atlaso loopback drop-in, and
 management nginx front door. The helper writes the selected static/local resolver directives into the candidate
-management networkd file or reverts that link to DHCP-provided DNS, then applies the matching per-link runtime state.
+generated effective-listener networkd file or reverts that link to DHCP-provided DNS, then applies the matching per-link
+runtime state. This persistence applies equally to `00-atlaso-mgmt.network` and flagged-access physical/VLAN files.
 The resolver interface follows the effective listener precedence: dedicated management first, then a flagged access
 physical interface, then a flagged access VLAN.
 If another Appliance Settings field differs from its baseline, that unit remains pending after a successful handoff so
@@ -223,8 +224,9 @@ only then may it validate and reload nginx. It requires consecutive successful d
 host-facing probes for every configured candidate address. Each dynamic listener row must acquire an address for every
 requested DHCP or SLAAC family within the shared bounded discovery window; readiness cannot succeed on another row or
 family when one is missing. When the candidate disables nftables, the transitional ruleset keeps the previous filtering
-policy and adds only the candidate management admission rules; the chainless disabled ruleset applies after readiness
-while the old path retires. A second
+policy and adds only the candidate management admission rules. When enabling filtering from an open state, the
+transitional ruleset remains open. The enabled or disabled candidate ruleset applies only after readiness while the old
+path retires. A second
 readiness pass protects retirement. Any validation, mutation, service, probe, or retirement failure restores every
 captured file, reloads networkd and nftables, reconfigures previous links, reloads nginx, and restarts Atlaso when the
 captured state requires it. Rollback explicitly reconfigures every pre-existing candidate link and removes a

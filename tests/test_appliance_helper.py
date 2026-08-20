@@ -99,6 +99,25 @@ def test_management_handoff_firewall_stays_disabled_when_already_disabled():
     assert transitional == disabled
 
 
+def test_management_handoff_firewall_enable_preserves_open_transition():
+    """Delay candidate filtering until retirement when the prior state is open."""
+    helper = load_helper_module()
+    previous = "flush ruleset\n# Atlaso firewall desired state is disabled.\n"
+    candidate = '''flush ruleset
+table inet atlaso {
+  chain input {
+    type filter hook input priority filter; policy drop;
+    iifname "eth1" tcp dport { 22,80,443 } accept comment "mgmt-console"
+  }
+}
+'''
+
+    transitional = helper._management_handoff_firewall_text(candidate, previous)
+
+    assert transitional == previous
+    assert "policy drop" not in transitional
+
+
 def test_management_handoff_builds_candidate_listener_firewall_rules(monkeypatch):
     """Admit dedicated and flagged-access candidates under prior filtering.
 
@@ -371,6 +390,11 @@ def test_management_handoff_applies_candidate_resolver(
     success = subprocess.CompletedProcess(["resolvectl"], 0, "", "")
     monkeypatch.setattr(
         helper,
+        "_management_resolver_network_path",
+        lambda _interface: Path("candidate.network"),
+    )
+    monkeypatch.setattr(
+        helper,
         "_configure_resolver",
         lambda interface, servers, domains: calls.append(
             ("static", interface, servers, domains)
@@ -396,6 +420,77 @@ def test_management_handoff_applies_candidate_resolver(
         assert calls == [("dhcp", "eth1")]
     else:
         assert calls == [("static", "eth1", resolver_servers, expected_domains)]
+
+
+@pytest.mark.parametrize("interface_name", ["eth1", "eth1.20"])
+def test_management_handoff_persists_flagged_access_resolver(
+    monkeypatch,
+    tmp_path,
+    interface_name,
+):
+    """Write DNS directives into the generated flagged-access networkd file.
+
+    Args:
+        monkeypatch: Pytest fixture used to isolate the networkd directory.
+        tmp_path: Temporary directory containing the generated candidate file.
+        interface_name: Flagged physical or VLAN listener under test.
+    """
+    helper = load_helper_module()
+    networkd_dir = tmp_path / "networkd"
+    networkd_dir.mkdir()
+    flagged_path = networkd_dir / f"10-atlaso-{interface_name}.network"
+    flagged_path.write_text(
+        f"[Match]\nName={interface_name}\n\n[Network]\nAddress=198.51.100.10/24\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(helper, "NETWORKD_CONFIG_DIR", networkd_dir)
+    monkeypatch.setattr(helper, "NETWORKD_MGMT_CONFIG_PATH", networkd_dir / "00-atlaso-mgmt.network")
+    monkeypatch.setattr(
+        helper,
+        "_run",
+        lambda command: subprocess.CompletedProcess(command, 0, "", ""),
+    )
+
+    result = helper._configure_management_handoff_resolver(
+        {
+            "management_interface": interface_name,
+            "resolver_mode": "external",
+            "resolver_servers": ["192.0.2.53"],
+        }
+    )
+
+    assert result.returncode == 0
+    text = flagged_path.read_text(encoding="utf-8")
+    assert "DNS=192.0.2.53" in text
+    assert "Domains=~." not in text
+
+
+def test_management_handoff_rejects_unpersisted_resolver(monkeypatch):
+    """Fail before runtime mutation when no candidate networkd file exists.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace persistence discovery.
+    """
+    helper = load_helper_module()
+    runtime_calls: list[list[str]] = []
+    monkeypatch.setattr(helper, "_management_resolver_network_path", lambda _interface: None)
+    monkeypatch.setattr(
+        helper,
+        "_run",
+        lambda command: runtime_calls.append(command)
+        or subprocess.CompletedProcess(command, 0, "", ""),
+    )
+
+    result = helper._configure_management_handoff_resolver(
+        {
+            "management_interface": "eth1",
+            "resolver_mode": "external",
+            "resolver_servers": ["192.0.2.53"],
+        }
+    )
+
+    assert result.returncode == 1
+    assert runtime_calls == []
 
 
 def test_management_handoff_readiness_requires_consecutive_samples(monkeypatch):

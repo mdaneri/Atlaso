@@ -99,12 +99,14 @@ A management-path change is the exception to independent component execution: At
 Network, Firewall, Appliance Settings, and Public Services together and runs them as one recoverable handoff. The task
 keeps the previous address, public port, HTTP/HTTPS listener, and snapshotted TLS certificate active until consecutive
 bounded checks prove the Atlaso loopback upstream, candidate nginx listener, and host-facing `/openapi.json` are ready.
-The same transaction moves the management resolver to the candidate interface. If that resolver apply fails, rollback
-restores the previous networkd resolver directives and per-link runtime state before the old path readiness check.
+The same transaction moves the management resolver to the candidate interface and persists its directives in the
+effective dedicated or flagged-access physical/VLAN networkd file. If that resolver apply fails, rollback restores the
+previous networkd resolver directives and per-link runtime state before the old path readiness check.
 Every candidate that requests DHCP or SLAAC must acquire and pass readiness on that address family; another static or
 dynamic listener cannot mask a missing lease or router-advertised address. When the same Apply disables the firewall,
-the transition retains the previous filtering policy with minimal candidate listener admission until readiness, then
-applies the disabled ruleset while retiring the old path.
+the transition retains the previous filtering policy with minimal candidate listener admission until readiness. When
+the same Apply enables filtering from an open state, the transition remains open until readiness. In both directions,
+the candidate firewall state applies only while retiring the old path.
 On failure, each bundled
 component records the same failing layer
 and rollback result. The handoff applies only the management front-door portion of Appliance Settings; unrelated

@@ -277,7 +277,8 @@ The following cross-cutting boundaries always apply:
   known-good address, port, protocol, and snapshotted TLS identity active until consecutive bounded Atlaso loopback,
   candidate nginx, and host-facing `/openapi.json` checks pass. Never expose a candidate nginx front door before its
   Atlaso upstream is healthy. Move the persistent and runtime management resolver to the candidate interface inside
-  the transaction, and restore the previous resolver state with the network snapshot on rollback. Retire the old path only
+  the transaction, persist its directives in the effective dedicated or flagged-access networkd file, and restore the
+  previous resolver state with the network snapshot on rollback. Retire the old path only
   after readiness succeeds; retain the durable rollback marker until Atlaso commits the bundled task state and baselines
   and explicitly acknowledges that commit. Retain the global apply lock while acknowledgement is pending. On failure,
   timeout, indeterminate helper return, interruption, or startup recovery, first stop and verify any surviving handoff
@@ -286,7 +287,7 @@ The following cross-cutting boundaries always apply:
   mutation when an active appliance has no known-good Network baseline, keep the old path reachable, and record a
   truthful non-secret failing layer. Require every dynamic candidate listener to acquire and probe each requested DHCP
   or SLAAC address family before retirement. Preserve the previous firewall policy plus minimal candidate admission when
-  the same handoff disables the firewall, and apply the disabled ruleset only after candidate readiness. Commit
+  firewall state changes in either direction; apply the enabled or disabled candidate ruleset only after readiness. Commit
   baselines only from the exact staged snapshots, and leave desired-state edits made during readiness pending. A
   flagged-access candidate must remove a stale dedicated `00-atlaso-mgmt.network` file when that file is not part of the
   candidate configuration.
