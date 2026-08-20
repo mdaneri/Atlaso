@@ -95,8 +95,8 @@ def test_factory_reset_transaction_lock_rejects_overlapping_posix_runner(
             pytest.fail("contending runner must not enter the transaction")
 
 
-def test_factory_reset_stops_transient_restart_and_automation_units(monkeypatch):
-    """Reset quiesces delayed restarts and automation after stopping writers.
+def test_factory_reset_stops_transient_helper_restart_and_automation_units(monkeypatch):
+    """Reset quiesces helper actions, delayed restarts, and automation.
 
     Args:
         monkeypatch: Pytest fixture used to replace dependencies for the test.
@@ -108,6 +108,7 @@ def test_factory_reset_stops_transient_restart_and_automation_units(monkeypatch)
         "atlaso-automation-20260815230000123456.service",
         "atlaso-automation-20260815230100654321.service",
     ]
+    helper_unit = "atlaso-helper-action-0123456789abcdef0123456789abcdef.service"
     restart_timer = "atlaso-update-restart-20260820152500123456.timer"
     restart_service = "atlaso-update-restart-20260820152500123456.service"
 
@@ -120,7 +121,9 @@ def test_factory_reset_stops_transient_restart_and_automation_units(monkeypatch)
         """
         commands.append(command)
         if command[1] == "list-units":
-            if command[-1] == "atlaso-update-restart-*.timer":
+            if command[-1] == "atlaso-helper-action-*.service":
+                stdout = f"{helper_unit} loaded active running Atlaso helper action"
+            elif command[-1] == "atlaso-update-restart-*.timer":
                 stdout = f"{restart_timer} loaded active waiting Atlaso update restart"
             elif command[-1] == "atlaso-update-restart-*.service":
                 stdout = f"{restart_service} loaded active running Atlaso update restart"
@@ -145,15 +148,18 @@ def test_factory_reset_stops_transient_restart_and_automation_units(monkeypatch)
         "atlaso.service",
         "atlaso-console.service",
     ]
-    assert commands[1][-1] == "atlaso-update-restart-*.timer"
-    assert commands[2] == ["systemctl", "stop", restart_timer]
-    assert commands[3] == ["systemctl", "is-active", "--quiet", restart_timer]
-    assert commands[4][-1] == "atlaso-update-restart-*.service"
-    assert commands[5] == ["systemctl", "stop", restart_service]
-    assert commands[6] == ["systemctl", "is-active", "--quiet", restart_service]
-    assert commands[7][-1] == "atlaso-automation-*.service"
-    assert commands[8] == ["systemctl", "stop", *automation_units]
-    assert commands[9:] == [
+    assert commands[1][-1] == "atlaso-helper-action-*.service"
+    assert commands[2] == ["systemctl", "stop", helper_unit]
+    assert commands[3] == ["systemctl", "is-active", "--quiet", helper_unit]
+    assert commands[4][-1] == "atlaso-update-restart-*.timer"
+    assert commands[5] == ["systemctl", "stop", restart_timer]
+    assert commands[6] == ["systemctl", "is-active", "--quiet", restart_timer]
+    assert commands[7][-1] == "atlaso-update-restart-*.service"
+    assert commands[8] == ["systemctl", "stop", restart_service]
+    assert commands[9] == ["systemctl", "is-active", "--quiet", restart_service]
+    assert commands[10][-1] == "atlaso-automation-*.service"
+    assert commands[11] == ["systemctl", "stop", *automation_units]
+    assert commands[12:] == [
         ["systemctl", "is-active", "--quiet", automation_units[0]],
         ["systemctl", "is-active", "--quiet", automation_units[1]],
     ]

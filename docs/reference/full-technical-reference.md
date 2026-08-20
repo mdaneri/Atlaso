@@ -947,8 +947,10 @@ management to the image-configured CIDR and HTTP preference, with the local cons
 address becomes unavailable.
 
 Before database replacement, the root helper persists `/var/lib/atlaso/factory-reset/request.json`, quiesces Atlaso
-writers, validates generated nginx, network, firewall, resolver, systemd, and service configuration, and records only
-bounded non-secret progress. `atlaso.service` resumes that marker before uvicorn starts after a reboot. Each scheduling
+writers, stops and verifies UUID-named `atlaso-helper-action-*` services, and only then inventories delayed update
+restarts so an in-flight update cannot schedule one after the reset checks. It validates generated nginx, network,
+firewall, resolver, systemd, and service configuration, and records only bounded non-secret progress. `atlaso.service`
+resumes that marker before uvicorn starts after a reboot. Each scheduling
 request owns a distinct mode-`0600` credential file. Nonblocking admission reports lock contention as a retryable
 failure and deletes only that request's file; accepted replacement passwords are prevalidated against the packaged
 factory Local Users policy. The candidate is mode `0600`; transient secret staging is scrubbed on failure and all

@@ -3995,7 +3995,53 @@ def test_real_mutating_helper_action_escapes_service_mount_namespace(monkeypatch
         "--service-type=exec",
         f"--setenv={helper.SYSTEMD_RUN_CHILD_ENV}=1",
     ]
+    assert re.fullmatch(
+        r"--unit=atlaso-helper-action-[0-9a-f]{32}", commands[0][7]
+    )
     assert commands[0][-4:] == ["dnsmasq", "apply", "--real", str(config_path)]
+
+
+def test_account_commands_use_bounded_helper_action_units(monkeypatch):
+    """Account mutations use the same reset-visible transient unit family.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+    """
+    helper = load_helper_module()
+    commands: list[list[str]] = []
+    stdin_commands: list[tuple[list[str], str]] = []
+
+    monkeypatch.setenv("ATLASO_HELPER_USE_SYSTEMD_RUN", "1")
+    monkeypatch.setattr(
+        helper.shutil,
+        "which",
+        lambda command: "/usr/bin/systemd-run" if command == "systemd-run" else None,
+    )
+    monkeypatch.setattr(
+        helper,
+        "_run",
+        lambda command: commands.append(command)
+        or subprocess.CompletedProcess(command, 0, "", ""),
+    )
+    monkeypatch.setattr(
+        helper,
+        "_run_with_input",
+        lambda command, input_text: stdin_commands.append((command, input_text))
+        or subprocess.CompletedProcess(command, 0, "", ""),
+    )
+
+    helper._run_account_command(["usermod", "--lock", "operator"])
+    helper._run_account_command_with_input(["chpasswd"], "operator:secret\n")
+
+    assert re.fullmatch(
+        r"--unit=atlaso-helper-action-[0-9a-f]{32}", commands[0][6]
+    )
+    assert re.fullmatch(
+        r"--unit=atlaso-helper-action-[0-9a-f]{32}", stdin_commands[0][0][6]
+    )
+    assert commands[0][-3:] == ["usermod", "--lock", "operator"]
+    assert stdin_commands[0][0][-1] == "chpasswd"
+    assert stdin_commands[0][1] == "operator:secret\n"
 
 
 def test_powercli_helper_actions_receive_writable_root_configuration_environment(monkeypatch, tmp_path):

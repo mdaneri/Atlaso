@@ -435,7 +435,9 @@ Terminal order:
 - Real mutating helper actions run through `systemd-run` from inside `atlaso-helper` when
   `ATLASO_HELPER_USE_SYSTEMD_RUN=1` is set. This escapes the `atlaso.service` read-only `/etc` mount namespace without
   giving the web control plane broad shell/root access. Keep that environment variable in `atlaso.service` and preserve
-  it in the Atlaso sudoers rule.
+  it in the Atlaso sudoers rule. Give every real helper action and nested account mutation an exact UUID-named
+  `atlaso-helper-action-*` transient service. Complete factory reset stops and verifies that bounded family after
+  stopping Atlaso callers and before inventorying delayed update restarts.
 - The global `/ui/management/appliance-apply` workflow remains the only ordinary host-mutation workflow. The dedicated
   complete factory-reset transaction is the sole recovery exception; it validates and activates all factory units and
   establishes matching baselines without an operator-created Apply task. Do not add

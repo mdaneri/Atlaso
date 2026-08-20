@@ -430,7 +430,9 @@ The following cross-cutting boundaries always apply:
   the bootstrap administrator and root passwords, validate changes against the packaged factory Local Users policy,
   and give each request its own protected staging file so failed admission removes only that request's secret. Keep
   submitted values out of the database, marker, jobs, audits, logs, and UI responses. Keep the recovery marker pending
-  until Atlaso, worker, nginx, and stable management OpenAPI readiness are verified after restart.
+  until Atlaso, worker, nginx, and stable management OpenAPI readiness are verified after restart. Run every real
+  mutating helper and nested account mutation in an exact UUID-named `atlaso-helper-action-*` transient service. After
+  stopping Atlaso callers, reset must stop and verify those services before inventorying delayed update-restart units.
 - Keep internal CA custody and managed service-certificate deployment available without a public CA listen interface.
   Interface selection owns portal publication only. Every selected NTS server apply includes the CA unit and executes
   it before NTP/NTS validation so runtime certificate material is present even when the CA baseline is current. Turning

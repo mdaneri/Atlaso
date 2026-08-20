@@ -64,8 +64,9 @@ Each selected unit runs its helper steps in order and stops at the first failed 
 `validate` helper fails, Atlaso records that command output in the job and does not run the unit's `apply`, reload,
 sync, or relocation steps.
 
-On Photon appliances, real mutating helper actions run through `atlaso-helper` and then re-enter via a transient
-`systemd-run` service when `ATLASO_HELPER_USE_SYSTEMD_RUN=1` is set. The web control plane remains inside the
+On Photon appliances, real mutating helper actions run through `atlaso-helper` and then re-enter via a UUID-named
+`atlaso-helper-action-*` transient `systemd-run` service when `ATLASO_HELPER_USE_SYSTEMD_RUN=1` is set. The web control
+plane remains inside the
 `atlaso.service` sandbox, while the reviewed root helper writes approved `/etc` files from outside that service's
 read-only mount namespace.
 
@@ -576,10 +577,11 @@ consecutive management OpenAPI successes. A restart/readiness failure retains th
 `atlaso.service` starts. Preflight renders prospective management and public nginx sites, root and VCF Backup sshd
 drop-ins, the management resolver file, and the Atlaso service loopback drop-in into isolated temporary trees and runs
 the native validators there without changing the active host configuration. Before candidate activation, reset stops
-the tty1 console with Atlaso and its worker, then cancels and verifies the exact timestamp-shaped
-`atlaso-update-restart-*` timers and services created by update Apply so neither a console action nor a three-second
-delayed restart can mutate runtime or revive a database writer during replacement. Readiness starts and verifies the
-console with the other required services. The non-appliance fallback likewise
+the tty1 console with Atlaso and its worker, then stops and verifies exact UUID-shaped `atlaso-helper-action-*` services
+before it inventories and cancels the timestamp-shaped `atlaso-update-restart-*` timers and services created by update
+Apply. That ordering prevents an in-flight helper from mutating runtime or scheduling a three-second restart after the
+restart inventory. Readiness starts and verifies the console with the other required services. The non-appliance
+fallback likewise
 builds and validates an isolated SQLite candidate, then copies its data under one `BEGIN IMMEDIATE` transaction that
 waits for earlier writers and blocks later writers until replacement commits.
 Each web request stages its keep-or-change password plan in a distinct mode-`0600` file. Nonblocking helper admission

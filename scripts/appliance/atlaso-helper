@@ -134,6 +134,7 @@ SYSTEMD_RUN_REAL_ACTIONS = {
     "sync-sources",
 }
 SYSTEMD_RUN_CHILD_ENV = "ATLASO_HELPER_SYSTEMD_RUN_CHILD"
+SYSTEMD_RUN_ACTION_UNIT_PREFIX = "atlaso-helper-action"
 NO_PATH_ACTIONS = {
     ("dnsmasq", "leases"),
     ("dnsmasq", "logs"),
@@ -518,7 +519,18 @@ def _run_account_command(command: list[str]) -> subprocess.CompletedProcess[str]
     if os.environ.get("ATLASO_HELPER_USE_SYSTEMD_RUN") == "1":
         systemd_run = shutil.which("systemd-run")
         if systemd_run is not None:
-            return _run([systemd_run, "--quiet", "--wait", "--pipe", "--collect", "--service-type=exec", *command])
+            return _run(
+                [
+                    systemd_run,
+                    "--quiet",
+                    "--wait",
+                    "--pipe",
+                    "--collect",
+                    "--service-type=exec",
+                    f"--unit={_systemd_run_action_unit_name()}",
+                    *command,
+                ]
+            )
     return _run(command)
 
 
@@ -532,8 +544,25 @@ def _run_account_command_with_input(command: list[str], input_text: str) -> subp
     if os.environ.get("ATLASO_HELPER_USE_SYSTEMD_RUN") == "1":
         systemd_run = shutil.which("systemd-run")
         if systemd_run is not None:
-            return _run_with_input([systemd_run, "--quiet", "--wait", "--pipe", "--collect", "--service-type=exec", *command], input_text)
+            return _run_with_input(
+                [
+                    systemd_run,
+                    "--quiet",
+                    "--wait",
+                    "--pipe",
+                    "--collect",
+                    "--service-type=exec",
+                    f"--unit={_systemd_run_action_unit_name()}",
+                    *command,
+                ],
+                input_text,
+            )
     return _run_with_input(command, input_text)
+
+
+def _systemd_run_action_unit_name() -> str:
+    """Return a collision-resistant unit name reset can inventory exactly."""
+    return f"{SYSTEMD_RUN_ACTION_UNIT_PREFIX}-{uuid.uuid4().hex}"
 
 
 def _should_run_real_action_with_systemd(action: str) -> bool:
@@ -593,6 +622,7 @@ def _run_real_action_with_systemd(group: str, action: str, args: list[str]) -> i
         "--collect",
         "--service-type=exec",
         f"--setenv={SYSTEMD_RUN_CHILD_ENV}=1",
+        f"--unit={_systemd_run_action_unit_name()}",
     ]
     if group == "appliance-update":
         powershell_env = _appliance_update_powershell_environment()

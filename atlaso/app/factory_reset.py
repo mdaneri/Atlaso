@@ -76,6 +76,9 @@ LOCAL_USERS_HOME_DIRECTORY = Path("/var/lib/atlaso/users")
 LOCAL_USER_NAME_PATTERN = re.compile(r"^[a-z_][a-z0-9_-]{0,31}$")
 BOOTSTRAP_AUTHORIZED_KEY_NAMES = ("authorized_keys", "authorized_keys2")
 AUTOMATION_TRANSIENT_UNIT_PATTERN = re.compile(r"^atlaso-automation-\d{20}\.service$")
+HELPER_ACTION_TRANSIENT_UNIT_PATTERN = re.compile(
+    r"^atlaso-helper-action-[0-9a-f]{32}\.service$"
+)
 UPDATE_RESTART_TIMER_PATTERN = re.compile(r"^atlaso-update-restart-\d{20}\.timer$")
 UPDATE_RESTART_SERVICE_PATTERN = re.compile(r"^atlaso-update-restart-\d{20}\.service$")
 WEB_TERMINAL_CREDENTIAL_PATHS = (
@@ -502,6 +505,17 @@ def _stop_transient_update_restart_units() -> None:
     _stop_and_verify_transient_units(services, label="update-restart service")
 
 
+def _stop_transient_helper_action_units() -> None:
+    """Stop privileged helper actions after their Atlaso callers are quiescent."""
+    units = _inventory_transient_units(
+        unit_type="service",
+        unit_glob="atlaso-helper-action-*.service",
+        unit_pattern=HELPER_ACTION_TRANSIENT_UNIT_PATTERN,
+        label="helper action",
+    )
+    _stop_and_verify_transient_units(units, label="helper action")
+
+
 def _stop_transient_automation_units() -> None:
     """Stop every bounded Atlaso automation transient unit after worker quiescence."""
     units = _inventory_transient_units(
@@ -528,6 +542,9 @@ def _stop_application_services(*, boot_resume: bool) -> None:
             "atlaso.service",
             "atlaso-console.service",
         )
+    # Stop helper actions first, then inventory delayed update restarts that an
+    # in-flight update helper may have scheduled immediately before it stopped.
+    _stop_transient_helper_action_units()
     _stop_transient_update_restart_units()
     _stop_transient_automation_units()
 
