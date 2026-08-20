@@ -113,6 +113,8 @@
     let trackedJobId = "";
     let reconnectStartedAt = null;
     let reconnectTaskId = "";
+    let reconnectObservedAt = null;
+    let reconnectObservedTaskId = "";
     let completedReconnectTaskId = "";
 
     const now = () => (typeof options.now === "function" ? options.now() : Date.now());
@@ -128,13 +130,18 @@
       currentTask = task;
       acceptedSequence = observedSequence;
       const reconnect = plannedReconnectDetails(task);
-      const restartScheduledAt = Date.parse(reconnect?.settingsStep?.finished_at || "");
-      if (
-        reconnect?.settingsStep?.status === "succeeded"
-        && Number.isFinite(restartScheduledAt)
-        && now() >= restartScheduledAt + reconnect.restartDelayMs
-      ) {
-        completedReconnectTaskId = taskId;
+      if (reconnect && taskId !== completedReconnectTaskId) {
+        if (reconnectObservedTaskId !== taskId) {
+          reconnectObservedAt = now();
+          reconnectObservedTaskId = taskId;
+        }
+        if (
+          reconnectStartedAt === null
+          && reconnectObservedAt !== null
+          && now() >= reconnectObservedAt + reconnect.restartDelayMs
+        ) {
+          completedReconnectTaskId = taskId;
+        }
       }
       if (taskActive(task)) trackedJobId = taskId;
       else if (trackedJobId === taskId) trackedJobId = "";
@@ -215,18 +222,15 @@
           : plannedReconnectDetails(currentTask);
         let reconnectGraceMs = 0;
         let reconnectElapsedMs = 0;
-        if (reconnect?.settingsStep?.status === "running") {
-          if (reconnectStartedAt === null) reconnectStartedAt = observedAt;
-          reconnectGraceMs = reconnect.graceMs;
-          reconnectElapsedMs = Math.max(0, observedAt - reconnectStartedAt);
-        } else if (reconnect?.settingsStep?.status === "succeeded") {
-          const restartScheduledAt = Date.parse(reconnect.settingsStep.finished_at || "");
-          if (Number.isFinite(restartScheduledAt)) {
-            reconnectGraceMs = reconnect.restartDelayMs + reconnect.graceMs;
-            reconnectElapsedMs = Math.max(0, observedAt - restartScheduledAt);
-            if (reconnectElapsedMs < reconnectGraceMs && reconnectStartedAt === null) {
-              reconnectStartedAt = observedAt;
-            }
+        if (
+          reconnect?.settingsStep?.status === "succeeded"
+          && reconnectObservedTaskId === currentTaskId
+          && reconnectObservedAt !== null
+        ) {
+          reconnectGraceMs = reconnect.restartDelayMs + reconnect.graceMs;
+          reconnectElapsedMs = Math.max(0, observedAt - reconnectObservedAt);
+          if (reconnectElapsedMs < reconnectGraceMs && reconnectStartedAt === null) {
+            reconnectStartedAt = observedAt;
           }
         }
         if (reconnectStartedAt !== null) {

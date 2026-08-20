@@ -282,7 +282,9 @@ Terminal order:
 - Real Appliance Settings tasks must persist server-owned management-restart context only after the helper confirms that
   it scheduled the restart. While the component is succeeded and within the helper's declared delayed-restart and recovery
   interval, the shared monitor may use that context for one bounded neutral reconnecting window without dropping last-known
-  progress or the global lock. Browser-submitted and local-console forced-real tasks must carry the same confirmed context.
+  progress or the global lock. Measure that interval with browser-local elapsed time beginning when the confirmed context
+  is first observed; never compare independent browser and appliance wall clocks. Browser-submitted and local-console
+  forced-real tasks must carry the same confirmed context.
   Recovery clears the notice automatically; missing, unexpected, pre-confirmation, or out-of-window status failures retain
   the actionable availability warning and active retry cadence.
 - Label the global submit action around the user's intent, such as `Submit appliance changes`, and explain that the task

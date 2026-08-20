@@ -204,7 +204,7 @@ test("retries a transient terminal reconciliation failure at the active interval
 test("uses a neutral bounded reconnect state for a planned management restart", async () => {
   let now = 1000;
   const confirmedTask = plannedRestartTask("succeeded");
-  confirmedTask._children[0].finished_at = new Date(now).toISOString().replace("Z", "+00:00");
+  confirmedTask._children[0].finished_at = new Date(now - 86400000).toISOString().replace("Z", "+00:00");
   const statusPayloads = [
     { active_task: confirmedTask, pending_count: 0 },
     new Error("front door restarting"),
@@ -327,6 +327,31 @@ test("keeps reconnect grace through the delayed restart after settings success",
   assert.equal(state.ui.locked, true);
 });
 
+test("uses browser-local elapsed time when appliance and browser clocks differ", async () => {
+  let now = 1000000;
+  const confirmedTask = plannedRestartTask("succeeded");
+  confirmedTask._children[0].finished_at = new Date(now + 86400000).toISOString().replace("Z", "+00:00");
+  const state = monitorHarness({
+    requestStatus: async () => {
+      if (!state.monitor.trackedJobId()) return { active_task: confirmedTask, pending_count: 0 };
+      throw new Error("front door unavailable");
+    },
+    requestTask: async () => confirmedTask,
+    now: () => now,
+  });
+
+  await state.monitor.refresh();
+  now += 2000;
+  await state.timers.at(-1).callback();
+  assert.equal(state.errorStates[0].expectedReconnect, true);
+  assert.equal(state.errorStates[0].reconnectElapsedMs, 2000);
+
+  now += 17000;
+  await state.timers.at(-1).callback();
+  assert.equal(state.errorStates[1].expectedReconnect, false);
+  assert.equal(state.errorStates[1].reconnectElapsedMs, 19000);
+});
+
 test("consumes unused grace after a successful poll beyond the scheduled restart", async () => {
   let now = 1000;
   const afterSettingsTask = plannedRestartTask("succeeded");
@@ -334,6 +359,7 @@ test("consumes unused grace after a successful poll beyond the scheduled restart
   afterSettingsTask._children.push({ component_key: "firewall", status: "running" });
   const statusPayloads = [
     { active_task: plannedRestartTask(), pending_count: 0 },
+    { active_task: afterSettingsTask, pending_count: 0 },
     { active_task: afterSettingsTask, pending_count: 0 },
     new Error("later unrelated outage"),
   ];
@@ -350,7 +376,9 @@ test("consumes unused grace after a successful poll beyond the scheduled restart
   await state.monitor.refresh();
   now = 5000;
   await state.timers.at(-1).callback();
-  now = 6000;
+  now = 9000;
+  await state.timers.at(-1).callback();
+  now = 10000;
   await state.timers.at(-1).callback();
 
   assert.equal(state.errorStates[0].expectedReconnect, false);

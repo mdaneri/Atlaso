@@ -989,7 +989,7 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert service_worker.headers["cache-control"] == "no-cache"
     assert service_worker.headers["service-worker-allowed"] == "/ui/management/"
     assert "ATLASO_CACHE" in service_worker.text
-    assert "atlaso-management-pwa-v264" in service_worker.text
+    assert "atlaso-management-pwa-v265" in service_worker.text
     assert 'fetch(asset, { cache: "reload" })' in service_worker.text
     assert ".catch(() => undefined)" in service_worker.text
     assert 'request.mode === "navigate"' in service_worker.text
@@ -1005,7 +1005,7 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert "/static/vendor/monaco/atlaso-monaco.min.js?v=atlaso-monaco-20260806-7" in service_worker.text
     assert "/static/app.css?v=planned-restart-network-boot-20260820-1" in service_worker.text
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-8" in service_worker.text
-    assert "/static/appliance-apply-polling.js?v=issue-420-3" in service_worker.text
+    assert "/static/appliance-apply-polling.js?v=issue-420-4" in service_worker.text
     assert "/static/ui-routes.js?v=issue-287-1" in service_worker.text
     assert "/static/app.js?v=planned-restart-network-boot-20260820-1" in service_worker.text
     assert "/static/terminal.js?v=issue-287-2" in service_worker.text
@@ -1049,7 +1049,7 @@ def test_shared_ui_pattern_shell_and_wizard_contracts(client):
     for shell, app_asset in (
         (base, "/static/app.js?v=planned-restart-network-boot-20260820-1"),
         (public_base, "/static/app.js?v=planned-restart-network-boot-20260820-1"),
-        (base, "/static/appliance-apply-polling.js?v=issue-420-3"),
+        (base, "/static/appliance-apply-polling.js?v=issue-420-4"),
     ):
         assert shell.index("/static/vendor/tabulator/tabulator.min.js") < shell.index(
             "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-8"

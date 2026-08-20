@@ -12,6 +12,8 @@ the modal, sidebar, pending count, and global lock synchronized without requirin
 task's terminal refresh before following a newer Apply started by another session. When the real Appliance Settings
 helper confirms that it scheduled a management-service restart, the task exposes that event so the monitor can show a
 short neutral reconnecting state before escalating a persisting or unexpected outage to the ordinary availability warning.
+That bounded interval uses browser-local elapsed time from the first observation of the confirmed event, so appliance and
+browser wall-clock skew cannot shorten or extend it.
 
 ![Atlaso — Everything your virtualization lab needs](docs/assets/brand/atlaso-docs-header-dark-1600x400.png)
 
