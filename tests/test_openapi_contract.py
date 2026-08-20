@@ -283,6 +283,28 @@ def test_appliance_version_openapi_contract_is_public(client):
     assert set(properties) == {"version", "base_version", "git_commit", "built_at"}
 
 
+def test_network_boot_discovered_host_removal_openapi_contract(client):
+    """Advertise assignment conflicts on discovered-host removal only.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
+    schema = client.get("/openapi.json").json()
+    removal = schema["paths"]["/api/v1/network-boot/hosts/{host_id}"]["delete"]
+    conflict = removal["responses"]["409"]
+
+    assert "assigned host returns 409" in removal["description"]
+    assert "assigned to an ESXi Host Reference" in conflict["description"]
+    assert conflict["content"]["application/json"]["schema"] == {
+        "$ref": "#/components/schemas/ProblemDetails"
+    }
+
+    media_removal = schema["paths"][
+        "/api/v1/network-boot/environments/{environment_key}/media/{version}"
+    ]["delete"]
+    assert "assigned host" not in media_removal["description"]
+
+
 def test_esxi_custom_variable_openapi_contract(client):
     """Verify that esxi custom variable openapi contract.
 

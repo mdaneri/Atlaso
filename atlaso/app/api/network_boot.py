@@ -48,6 +48,7 @@ from atlaso.app.schemas import (
     EsxiBootAuthorizationRequest,
     EsxiBootAuthorizationResponse,
     EsxiPxeHostCreate,
+    ProblemDetails,
 )
 from atlaso.app.security import Identity, require_api_or_session_scope
 from atlaso.app.services.esxi_pxe import (
@@ -576,8 +577,7 @@ def remove_network_boot_media(
 
     Uses the authentication posture documented for this endpoint. Removal or revocation takes effect
     in Atlaso application state; appliance host changes remain subject to the documented apply
-    boundary for the resource. An assigned host returns 409 and names the ESXi Host Reference that
-    must be removed first; deleting that Host Reference may optionally remove the discovery state.
+    boundary for the resource.
 
     Args:
         environment_key: Filesystem path associated with environment key.
@@ -790,7 +790,17 @@ def download_discovered_host_report(
     )
 
 
-@router.delete("/hosts/{host_id}")
+@router.delete(
+    "/hosts/{host_id}",
+    responses={
+        status.HTTP_409_CONFLICT: {
+            "model": ProblemDetails,
+            "description": (
+                "The discovered host is assigned to an ESXi Host Reference, which must be removed first."
+            ),
+        }
+    },
+)
 def remove_discovered_host(
     host_id: Annotated[int, ApiPath(description='Unique identifier of the host record addressed by this operation.')],
     request: Request,
@@ -801,7 +811,8 @@ def remove_discovered_host(
 
     Uses the authentication posture documented for this endpoint. Removal or revocation takes effect
     in Atlaso application state; appliance host changes remain subject to the documented apply
-    boundary for the resource.
+    boundary for the resource. An assigned host returns 409 and names the ESXi Host Reference that
+    must be removed first; deleting that Host Reference may optionally remove the discovery state.
 
     Args:
         host_id: Stable identifier of the associated host resource.

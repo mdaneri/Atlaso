@@ -14886,7 +14886,7 @@
     },
     "/api/v1/network-boot/hosts/{host_id}": {
       "delete": {
-        "description": "Remove an unassigned discovered host and its retained reports.\n\nUses the authentication posture documented for this endpoint. Removal or revocation takes effect\nin Atlaso application state; appliance host changes remain subject to the documented apply\nboundary for the resource.",
+        "description": "Remove an unassigned discovered host and its retained reports.\n\nUses the authentication posture documented for this endpoint. Removal or revocation takes effect\nin Atlaso application state; appliance host changes remain subject to the documented apply\nboundary for the resource. An assigned host returns 409 and names the ESXi Host Reference that\nmust be removed first; deleting that Host Reference may optionally remove the discovery state.",
         "operationId": "remove_discovered_host_api_v1_network_boot_hosts__host_id__delete",
         "parameters": [
           {
@@ -14913,6 +14913,16 @@
               }
             },
             "description": "Remove an unassigned discovered host and its retained reports. The response body matches the documented success schema."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "The discovered host is assigned to an ESXi Host Reference, which must be removed first."
           },
           "422": {
             "content": {
