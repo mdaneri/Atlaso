@@ -408,6 +408,46 @@ status code, response, rendering, caching, task, audit, adapter, helper, update-
 release-signature, activation, rollback, recovery, redaction, route inventory, normalized OpenAPI output, or global
 Appliance Apply boundary.
 
+## Extracted certificate-trust ownership
+
+Certificate Authority and vSphere Key Provider management transports live in
+`atlaso/app/routers/ui/certificate_trust.py`. The module contributes two ordered
+management routers around Managed LDAP: Certificate Authority remains after the
+DNS/DHCP facade segment and before Managed LDAP, while vSphere Key Providers
+remain after Managed LDAP and before the facade segment that owns NTP, ESX
+Storage, and later VCF workflows. The existing public CA and certificate-request
+routes retain the shared public and protocol router positions supplied by the
+stable UI facade.
+
+The vSphere Key Provider API v1 operations and the Certificate Authority status
+compatibility operation live in
+`atlaso/app/routers/api_v1/certificate_trust.py`. The API registry places this
+domain immediately after Managed LDAP and before the remaining Backup Restore
+compatibility operation. The stable `atlaso/app/ui.py` and
+`atlaso/app/api/v1.py` facades continue to export every established endpoint and
+helper name while supplying facade-owned rendering, listener, CSRF, desired-state,
+DNS, certificate, and Appliance Apply helpers as bounded dependencies.
+
+Independently runnable transport coverage lives in
+`tests/routers/ui/test_certificate_trust.py` and
+`tests/routers/api_v1/test_certificate_trust.py`. CA and KMIP service, lifecycle,
+protocol, settings-archive, rendering, credential-custody, worker, and global
+Appliance Apply behavior retain their established test owners. Certificate
+Authority singleton settings remain `non-grid settings` using the DNS settings
+and validation-rail reference. Certificate profiles, request intake, providers,
+trusted vCenters, and certificate lifecycle retain their existing
+`wizard-backed Tabulator` interactions using ESX Storage. Management and public
+request collections and operational inspection retain their existing
+`read-only Tabulator` behavior using Tasks and Audit Events.
+
+This behavior-neutral extraction changes no template, CSS, JavaScript, visible
+copy, control, layout, interaction class, route, route name, operation ID, tag,
+authorization scope, session or CSRF behavior, redirect, status, response schema,
+audit action, public-certificate or redaction contract, certificate/private-key
+custody, managed-certificate ownership, vCenter trust, provider identity, route
+inventory, normalized OpenAPI output, desired state, KMIP protocol, or global
+Appliance Apply boundary.
+
 ## Route and OpenAPI compatibility
 
 `tests/contracts/route_inventory.json` records every effective application route in order, including browser,
