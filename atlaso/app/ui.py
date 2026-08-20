@@ -11622,6 +11622,11 @@ def aggregate_appliance_update_results(
         ),
         {},
     )
+    release_worker_restarted = bool(
+        isinstance(release_transaction.get("worker_restart"), dict)
+        and release_transaction["worker_restart"].get("success") is True
+    )
+    release_no_change = release_transaction.get("no_change") is True
     return {
         "unit_id": "appliance_update",
         "label": _appliance_update_task_label(mode),
@@ -11633,7 +11638,16 @@ def aggregate_appliance_update_results(
         "dry_run": any(bool(result.get("dry_run")) for result in ordered_results),
         "restart_after_commit": mode == "run"
         and succeeded
-        and bool({"atlaso_release", "photon_os"} & set(selected)),
+        and (
+            "photon_os" in selected
+            or (
+                "atlaso_release" in selected
+                and not release_worker_restarted
+                and not release_no_change
+            )
+        ),
+        "release_worker_restarted": release_worker_restarted,
+        "release_no_change": release_no_change,
         "commands": [
             command
             for result in ordered_results
