@@ -286,9 +286,20 @@ def _rollback_requires_worker_restart() -> bool:
     """Return whether startup recovered a rollback from a different release."""
     finalizer = _release_finalizer()
     previous_version = str(finalizer.get("previous_version") or "")
+    candidate_bookkeeping = bool(
+        os.environ.get("ATLASO_RELEASE_RECOVERY_ONLY") == "1"
+        and str(finalizer.get("status") or "") == "rollback_pending"
+        and finalizer.get("bookkeeping_pending") is True
+        and finalizer.get("rollback_health") is True
+    )
     return bool(
-        str(finalizer.get("status") or "") == JobStatus.FAILED.value
-        and finalizer.get("rolled_back") is True
+        (
+            (
+                str(finalizer.get("status") or "") == JobStatus.FAILED.value
+                and finalizer.get("rolled_back") is True
+            )
+            or candidate_bookkeeping
+        )
         and previous_version
         and previous_version != __version__.split("+", 1)[0]
     )
@@ -451,7 +462,18 @@ def recover_interrupted_worker_jobs(
         if definitive:
             definitive, _startup_consistent = reconcile_release_success_finalizer(definitive)
         finalizer_status = str(definitive.get("status") or "")
+        candidate_bookkeeping = bool(
+            os.environ.get("ATLASO_RELEASE_RECOVERY_ONLY") == "1"
+            and finalizer_status == "rollback_pending"
+            and definitive.get("bookkeeping_pending") is True
+            and definitive.get("rollback_health") is True
+        )
+        if candidate_bookkeeping:
+            finalizer_status = JobStatus.FAILED.value
         recovered = finalizer_status in {JobStatus.SUCCEEDED.value, JobStatus.FAILED.value}
+        rollback_handoff_ready = bool(
+            definitive.get("rolled_back") is True or candidate_bookkeeping
+        )
         update_steps = list(job.steps) if job.type == "appliance-update" else []
         if update_steps:
             release_step = next(
@@ -491,7 +513,7 @@ def recover_interrupted_worker_jobs(
                     or (
                         finalizer_status == JobStatus.FAILED.value
                         and release_step.status == JobStatus.FAILED.value
-                        and definitive.get("rolled_back") is True
+                        and rollback_handoff_ready
                         and definitive.get("rollback_health") is True
                     )
                 )
@@ -505,7 +527,7 @@ def recover_interrupted_worker_jobs(
             legacy_rollback_handoff = bool(
                 resume_pending_children
                 and finalizer_status == JobStatus.FAILED.value
-                and definitive.get("rolled_back") is True
+                and rollback_handoff_ready
                 and not _restored_worker_supports_terminal_child_handoff(
                     definitive.get("previous_version")
                 )

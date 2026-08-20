@@ -878,6 +878,11 @@ def test_release_prestart_recovery_rolls_back_stale_transaction(
         """
         assert release.is_dir()
         assert current.resolve() == previous.resolve()
+        assert maintenance_states[-1] is True
+        pending = json.loads(finalizer.read_text(encoding="utf-8"))
+        assert pending["status"] == "rollback_pending"
+        assert pending["rolled_back"] is False
+        assert pending["bookkeeping_pending"] is True
         candidate_recovery.append(release)
         return {
             "command": ["candidate-recovery"],
@@ -923,6 +928,50 @@ def test_release_prestart_recovery_rolls_back_stale_transaction(
     assert candidate_recovery == [candidate]
     assert candidate.exists() is (not bookkeeping_success)
     assert gate.exists() is (not bookkeeping_success)
+
+
+def test_release_startup_guard_holds_maintenance_before_control_plane(monkeypatch, tmp_path):
+    """Verify provisional reboot evidence closes nginx before services can start.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace helper paths and nginx validation.
+        tmp_path: Temporary directory provided for startup-guard evidence.
+    """
+    from tests.test_appliance_update import load_helper_module
+
+    helper = load_helper_module()
+    finalizer = tmp_path / "finalizer.json"
+    finalizer.write_text(
+        json.dumps(
+            {
+                "status": "restart_pending",
+                "job_id": "job-startup-guard",
+                "transaction_recovery": {
+                    "owner": {"boot_id": "previous", "pid": 10, "start_ticks": "1"}
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    maintenance = tmp_path / "run/atlaso-update-maintenance"
+    management_site = tmp_path / "management.conf"
+    management_site.write_text("server {\n  listen 443 ssl;\n}\n", encoding="utf-8")
+    monkeypatch.setattr(helper, "ATLASO_UPDATE_FINALIZER_PATH", finalizer)
+    monkeypatch.setattr(helper, "ATLASO_UPDATE_MAINTENANCE_PATH", maintenance)
+    monkeypatch.setattr(helper, "NGINX_MANAGEMENT_SITE_PATH", management_site)
+    monkeypatch.setattr(
+        helper,
+        "_nginx_test_command",
+        lambda: subprocess.CompletedProcess(["nginx", "-t"], 0, "valid", ""),
+    )
+
+    result = helper._guard_interrupted_release_startup()
+
+    assert result["success"] is True
+    assert maintenance.is_file()
+    assert f"if (-f {maintenance}) {{ return 503; }}" in management_site.read_text(
+        encoding="utf-8"
+    )
 
 
 def test_release_prestart_runs_candidate_bookkeeping_as_atlaso(monkeypatch, tmp_path):
@@ -2885,12 +2934,12 @@ def test_worker_restart_resumes_untouched_children_after_healthy_release_rollbac
         assert "earlier selected update stream failed" in (completed_steps[-1].error or "")
 
 
-def test_worker_restart_fails_parent_without_requeueing_terminal_children_to_legacy_worker(
+def test_candidate_bookkeeping_fails_parent_before_definitive_legacy_rollback(
     client,
     monkeypatch,
     tmp_path,
 ):
-    """Verify rollback to a legacy worker cannot rerun a terminal release child.
+    """Verify candidate bookkeeping precedes definitive legacy rollback evidence.
 
     Args:
         client: HTTP test client providing isolated application state.
@@ -2909,11 +2958,12 @@ def test_worker_restart_fails_parent_without_requeueing_terminal_children_to_leg
         json.dumps(
             {
                 "job_id": "job_legacy_rollback_handoff",
-                "status": "failed",
+                "status": "rollback_pending",
                 "release": "0.9.163",
                 "previous_version": "0.9.162",
-                "rolled_back": True,
+                "rolled_back": False,
                 "rollback_health": True,
+                "bookkeeping_pending": True,
                 "failure_layer": "management_front_door",
                 "commands": [],
                 "error": "candidate readiness failed",
@@ -2922,6 +2972,7 @@ def test_worker_restart_fails_parent_without_requeueing_terminal_children_to_leg
         encoding="utf-8",
     )
     monkeypatch.setattr(worker, "APPLIANCE_UPDATE_FINALIZER_PATH", str(finalizer))
+    monkeypatch.setenv("ATLASO_RELEASE_RECOVERY_ONLY", "1")
     with SessionLocal() as db:
         job = Job(
             id="job_legacy_rollback_handoff",
@@ -2961,7 +3012,9 @@ def test_worker_restart_fails_parent_without_requeueing_terminal_children_to_leg
         assert "cannot preserve terminal release results" in (
             recovered_steps[1].error or ""
         )
-        assert json.loads(recovered.result)["release_transaction"]["rolled_back"] is True
+        transaction = json.loads(recovered.result)["release_transaction"]
+        assert transaction["status"] == "rollback_pending"
+        assert transaction["bookkeeping_pending"] is True
 
 
 @pytest.mark.parametrize("finalizer_status", ["succeeded", "failed"])

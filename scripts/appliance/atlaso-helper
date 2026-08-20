@@ -89,6 +89,7 @@ COMMANDS: dict[str, set[str]] = {
         "sync-sources",
         "restart-service",
         "bootstrap-data-disk-safety",
+        "guard-release",
         "recover-release",
         "complete-committed-release",
     },
@@ -153,6 +154,7 @@ NO_PATH_ACTIONS = {
     ("esx-storage", "status"),
     ("esx-storage", "logs"),
     ("appliance-update", "recover-release"),
+    ("appliance-update", "guard-release"),
     ("appliance-update", "complete-committed-release"),
 }
 NON_PATH_ARGUMENT_ACTIONS = {
@@ -11638,13 +11640,6 @@ def _recover_interrupted_release_transaction() -> dict:
             service_state_ready,
         )
     )
-    if pre_cleanup_ready:
-        maintenance_ready, _ = recovery_action(
-            "maintenance_cleanup",
-            lambda: _set_release_maintenance(False),
-        )
-    else:
-        maintenance_ready = False
     durable_ready, _ = recovery_action("durable_activation", _sync_release_activation)
     previous_version = str(parsed.get("previous_version") or _release_root_version(previous))
     try:
@@ -11653,6 +11648,8 @@ def _recover_interrupted_release_transaction() -> dict:
             {"version": previous_version},
             require_receipt=False,
             include_worker=False,
+            maintenance_expected=True,
+            include_front_door=False,
         )
         commands.extend(activation_commands)
     except Exception as exc:  # noqa: BLE001 - preserve fail-closed recovery evidence.
@@ -11670,37 +11667,37 @@ def _recover_interrupted_release_transaction() -> dict:
         rollback_failures.append(str(evidence["layer"]))
     rollback_ready = bool(
         pre_cleanup_ready
-        and maintenance_ready
         and durable_ready
         and activation.get("success")
     )
     if not rollback_ready:
         recovery_action("maintenance_fail_closed", lambda: _set_release_maintenance(True))
     error = "Atlaso release activation was interrupted by a host restart and required rollback."
-    definitive = {
+    provisional = {
         **parsed,
-        "status": "failed" if rollback_ready else "rollback_pending",
+        "status": "rollback_pending",
         "success": False,
-        "rolled_back": rollback_ready,
+        "rolled_back": False,
         "failure_layer": "reboot_recovery",
         "rollback_health": rollback_ready,
+        "bookkeeping_pending": rollback_ready,
         "rollback_service_checks": service_state if isinstance(service_state, dict) else {},
         "commands": commands,
         "active_release_verification": activation,
         "rollback_failures": list(dict.fromkeys(rollback_failures)),
         "error": error,
-        "finished_at": datetime.now(timezone.utc).isoformat(),
     }
     try:
-        _write_release_finalizer(definitive)
+        _write_release_finalizer(provisional)
     except OSError as exc:
         maintenance = _set_release_maintenance(True)
         commands.append(maintenance)
         incomplete = {
-            **definitive,
+            **provisional,
             "status": "rollback_pending",
             "rolled_back": False,
             "rollback_health": False,
+            "bookkeeping_pending": False,
             "commands": commands,
             "rollback_failures": list(
                 dict.fromkeys([*rollback_failures, "reboot_rollback_finalizer"])
@@ -11720,15 +11717,16 @@ def _recover_interrupted_release_transaction() -> dict:
             "error": f"Reboot rollback evidence could not be persisted: {type(exc).__name__}.",
         }
     try:
-        _write_update_info(definitive)
+        _write_update_info(provisional)
     except OSError as exc:
         maintenance = _set_release_maintenance(True)
         commands.append(maintenance)
         provisional = {
-            **definitive,
+            **provisional,
             "status": "rollback_pending",
             "rolled_back": False,
             "rollback_health": False,
+            "bookkeeping_pending": False,
             "commands": commands,
             "rollback_failures": list(
                 dict.fromkeys([*rollback_failures, "reboot_rollback_status"])
@@ -11739,10 +11737,9 @@ def _recover_interrupted_release_transaction() -> dict:
                 _write_release_finalizer(provisional)
                 break
             except OSError:
-                # The definitive marker above exists only to authorize candidate
-                # bookkeeping.  Never expose it to the restored worker when the
-                # companion status write failed; systemd may time out this
-                # pre-start helper and retry, but worker admission stays closed.
+                # Never admit candidate bookkeeping without both provisional
+                # rollback records; systemd may retry while maintenance and the
+                # restart gate keep the restored worker and front door closed.
                 time.sleep(1)
         return {
             "status": "recovery_failed",
@@ -11761,11 +11758,12 @@ def _recover_interrupted_release_transaction() -> dict:
         if not bookkeeping_ready:
             rollback_ready = False
             recovery_action("maintenance_fail_closed", lambda: _set_release_maintenance(True))
-            definitive.update(
+            provisional.update(
                 {
                     "status": "rollback_pending",
                     "rolled_back": False,
                     "rollback_health": False,
+                    "bookkeeping_pending": False,
                     "failure_layer": "reboot_recovery_bookkeeping",
                     "error": (
                         "Atlaso release rollback is healthy, but candidate-version recovery bookkeeping "
@@ -11773,8 +11771,79 @@ def _recover_interrupted_release_transaction() -> dict:
                     ),
                 }
             )
-    definitive["commands"] = commands
-    definitive["rollback_failures"] = list(dict.fromkeys(rollback_failures))
+    if rollback_ready:
+        maintenance_ready, _ = recovery_action(
+            "maintenance_cleanup",
+            lambda: _set_release_maintenance(False),
+        )
+        try:
+            exposed_activation, exposed_commands = _release_activation_verification(
+                previous,
+                {"version": previous_version},
+                require_receipt=False,
+                include_worker=False,
+            )
+            commands.extend(exposed_commands)
+        except Exception as exc:  # noqa: BLE001 - preserve fail-closed recovery evidence.
+            exposed_activation = {
+                "success": False,
+                "candidate_version": previous_version,
+                "failure_layer": "reboot_rollback_front_door_verification",
+            }
+            evidence = _release_check(
+                "reboot_rollback_front_door_verification",
+                False,
+                f"Reboot rollback front-door verification raised {type(exc).__name__}.",
+            )
+            commands.append(evidence)
+            rollback_failures.append(str(evidence["layer"]))
+        rollback_ready = bool(maintenance_ready and exposed_activation.get("success"))
+        if not rollback_ready:
+            recovery_action("maintenance_fail_closed", lambda: _set_release_maintenance(True))
+            provisional.update(
+                {
+                    "rollback_health": False,
+                    "bookkeeping_pending": False,
+                    "failure_layer": "reboot_recovery_front_door",
+                    "active_release_verification": exposed_activation,
+                    "error": "Atlaso release rollback bookkeeping completed, but the front door is not ready.",
+                }
+            )
+    provisional["commands"] = commands
+    provisional["rollback_failures"] = list(dict.fromkeys(rollback_failures))
+    if not rollback_ready:
+        try:
+            _write_release_finalizer(provisional)
+            _write_update_info(provisional)
+        except OSError as exc:
+            return {
+                "status": "recovery_failed",
+                "success": False,
+                "allow_worker": False,
+                "commands": commands,
+                "rollback_failures": list(
+                    dict.fromkeys([*rollback_failures, "reboot_rollback_finalizer"])
+                ),
+                "error": f"Reboot rollback evidence could not be persisted: {type(exc).__name__}.",
+            }
+        return {
+            "status": "rollback_pending",
+            "success": False,
+            "allow_worker": False,
+            "rolled_back": False,
+            "commands": commands,
+            "rollback_failures": provisional["rollback_failures"],
+            "error": str(provisional["error"]),
+        }
+    definitive = {
+        **provisional,
+        "status": "failed",
+        "rolled_back": True,
+        "rollback_health": True,
+        "bookkeeping_pending": False,
+        "active_release_verification": exposed_activation,
+        "finished_at": datetime.now(timezone.utc).isoformat(),
+    }
     try:
         _write_release_finalizer(definitive)
         _write_update_info(definitive)
@@ -11787,10 +11856,9 @@ def _recover_interrupted_release_transaction() -> dict:
             "rollback_failures": list(dict.fromkeys([*rollback_failures, "reboot_rollback_finalizer"])),
             "error": f"Reboot rollback evidence could not be persisted: {type(exc).__name__}.",
         }
-    if rollback_ready:
-        _set_release_restart_gate(False)
-        if ATLASO_CURRENT_LINK.is_symlink() and ATLASO_CURRENT_LINK.resolve(strict=True) == previous:
-            shutil.rmtree(candidate, ignore_errors=True)
+    _set_release_restart_gate(False)
+    if ATLASO_CURRENT_LINK.is_symlink() and ATLASO_CURRENT_LINK.resolve(strict=True) == previous:
+        shutil.rmtree(candidate, ignore_errors=True)
     return {
         "status": definitive["status"],
         "success": rollback_ready,
@@ -11800,6 +11868,75 @@ def _recover_interrupted_release_transaction() -> dict:
         "rollback_failures": definitive["rollback_failures"],
         "error": str(definitive["error"]),
     }
+
+
+def _guard_interrupted_release_startup() -> dict:
+    """Hold the management front door before services start for stale release work."""
+    try:
+        parsed = json.loads(ATLASO_UPDATE_FINALIZER_PATH.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return _release_check("release_startup_guard", True, "No release recovery is pending.")
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        ATLASO_UPDATE_MAINTENANCE_PATH.parent.mkdir(parents=True, exist_ok=True)
+        ATLASO_UPDATE_MAINTENANCE_PATH.touch(mode=0o644, exist_ok=True)
+        return _release_check(
+            "release_startup_guard",
+            False,
+            f"Release recovery evidence is unreadable; maintenance remains held: {type(exc).__name__}.",
+        )
+    if not isinstance(parsed, dict):
+        ATLASO_UPDATE_MAINTENANCE_PATH.parent.mkdir(parents=True, exist_ok=True)
+        ATLASO_UPDATE_MAINTENANCE_PATH.touch(mode=0o644, exist_ok=True)
+        return _release_check(
+            "release_startup_guard",
+            False,
+            "Release recovery evidence is invalid; maintenance remains held.",
+        )
+    status = str(parsed.get("status") or "")
+    recovery = parsed.get("transaction_recovery")
+    pending = bool(
+        status
+        in {
+            "transaction_pending",
+            "restart_pending",
+            "rollback_pending",
+            "activation_committed",
+        }
+        or (
+            status == "failed"
+            and parsed.get("rolled_back") is not True
+            and isinstance(recovery, dict)
+        )
+    )
+    if not pending:
+        return _release_check("release_startup_guard", True, "No provisional release recovery is pending.")
+    ATLASO_UPDATE_MAINTENANCE_PATH.parent.mkdir(parents=True, exist_ok=True)
+    ATLASO_UPDATE_MAINTENANCE_PATH.touch(mode=0o644, exist_ok=True)
+    if not NGINX_MANAGEMENT_SITE_PATH.is_file():
+        return _release_check(
+            "release_startup_guard",
+            False,
+            "The management nginx site is unavailable; maintenance remains held.",
+        )
+    text = NGINX_MANAGEMENT_SITE_PATH.read_text(encoding="utf-8")
+    condition = f"  if (-f {ATLASO_UPDATE_MAINTENANCE_PATH}) {{ return 503; }}"
+    if condition not in text:
+        previous = text
+        text = text.replace("server {\n", f"server {{\n{condition}\n")
+        NGINX_MANAGEMENT_SITE_PATH.write_text(text, encoding="utf-8")
+        validation = _nginx_test_command()
+        if validation.returncode != 0:
+            NGINX_MANAGEMENT_SITE_PATH.write_text(previous, encoding="utf-8")
+            return _release_check(
+                "release_startup_guard",
+                False,
+                "The guarded management nginx configuration is invalid; maintenance remains held.",
+            )
+    return _release_check(
+        "release_startup_guard",
+        True,
+        "Provisional release recovery is guarded by maintenance before service startup.",
+    )
 
 
 def _refresh_release_data_disk_identity(*, validate: bool) -> list[dict]:
@@ -14692,6 +14829,18 @@ def _handle_appliance_update(action: str, args: list[str]) -> int:
         action: Action consumed by handle appliance update.
         args: Parsed command-line options consumed by the operation.
     """
+    if action == "guard-release":
+        if args:
+            print("guard-release does not accept arguments", file=sys.stderr)
+            return 2
+        result = _guard_interrupted_release_startup()
+        print(json.dumps(result, indent=2, sort_keys=True))
+        if result.get("success") is True:
+            return 0
+        if result.get("stderr"):
+            print(str(result["stderr"]), file=sys.stderr)
+        return 75
+
     if action == "complete-committed-release":
         if args:
             print("complete-committed-release does not accept arguments", file=sys.stderr)

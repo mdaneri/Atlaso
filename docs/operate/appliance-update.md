@@ -259,11 +259,15 @@ bounded rollback manifest containing the previous and candidate releases. If ESX
 flushes its added allowlist backup and refreshes the manifest before rewriting either the claims or database, so
 rollback cannot diverge. It persists
 restart-pending evidence before establishing the volatile runtime gate, then keeps
-both workers from consuming a finalizer until its durable write and the surrounding transaction have finished. Worker
-pre-start distinguishes the live helper by boot, PID, and process-start identity. If a reboot removes the gate and the
-recorded helper no longer owns the transaction, privileged pre-start recovery restores and verifies the previous
-release, then runs the restored task's normal child, parent, log, and audit bookkeeping once through the retained
-candidate environment before deleting it or admitting the previous worker. This bounded handoff runs as the Atlaso
+both workers from consuming a finalizer until its durable write and the surrounding transaction have finished. Atlaso
+and nginx service pre-start guards inspect the durable finalizer and recreate the volatile maintenance response before
+either service starts, so a reboot cannot expose the control plane while rollback is unresolved. Worker pre-start then
+distinguishes the live helper by boot, PID, and process-start identity. If a reboot removes the gate and the recorded
+helper no longer owns the transaction, privileged recovery restores and internally verifies the previous release, then
+runs the restored task's normal child, parent, log, and audit bookkeeping once through the retained candidate environment
+while both maintenance and provisional rollback evidence remain held. Only afterward does recovery remove maintenance,
+prove the previous version at the host front door, write definitive healthy-rollback evidence, delete the candidate, and
+admit the previous worker. This bounded handoff runs as the Atlaso
 service account but leaves untouched children pending for the restored worker; a failure retains the candidate,
 maintenance response, and runtime gate for retry. Committed forward recovery instead schedules one stable per-job
 systemd unit and durably replaces the prior-boot owner with that helper's exact live identity before the candidate starts,
@@ -303,9 +307,10 @@ an administrator repairs the recorded failing layer.
 
 A failure in systemd asset activation, the atomic switch, candidate startup, internal readiness, or worker handoff before
 `activation_committed` enters the rollback boundary. Before rollback can restart a worker,
-the helper closes the same runtime gate; rollback then restores the previous release, assets, and database, validates
-and reloads nginx after removing maintenance mode, and proves the previous version through both internal and
-management-front-door OpenAPI before writing `rolled_back=true`. A missing database backup leaves rollback incomplete,
+the helper closes the same runtime gate; rollback then restores the previous release, assets, and database and proves
+internal readiness while maintenance remains held. Candidate-version task bookkeeping completes before nginx reloads,
+the management-front-door OpenAPI proves the previous version, and `rolled_back=true` becomes durable. A missing
+database backup leaves rollback incomplete,
 and each installed asset is restored independently so one failed destination cannot block later attempts. While the
 recorded helper remains live, the candidate worker extends its gate wait instead of timing out and restarting through a
 restored legacy unit before definitive rollback evidence. Atlaso Release

@@ -414,7 +414,11 @@ The following cross-cutting boundaries always apply:
   before claim migration mutates its allowlist or database, so both restore together. An already-active release completes
   from exact readiness evidence without scheduling an
   unverified service restart. A matching definitive success or healthy rollback may clear or supersede an orphaned gate;
-  incomplete rollback must retain maintenance and the gate. Rollback must preserve and verify the already-running worker
+  incomplete rollback must retain maintenance and the gate. Atlaso and nginx service pre-start guards must recreate the
+  volatile maintenance hold from durable provisional evidence before either service can start after reboot. Reboot
+  rollback must keep that hold and a provisional finalizer through candidate-version child, parent, log, and audit
+  bookkeeping; only then may it open and prove the front door and publish definitive healthy-rollback evidence.
+  Rollback must preserve and verify the already-running worker
   until the definitive rollback write; never start a restored legacy worker inside the transaction. After recovery
   bookkeeping, a candidate worker must exit for systemd to start the restored release. Before publishing any incomplete
   rollback, retain provisional owner evidence and stop and verify the caller inactive, including when the gate exists.

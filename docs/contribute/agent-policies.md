@@ -491,7 +491,9 @@ Terminal order:
   helper's exact live identity, and admit the gated candidate without requiring the not-yet-started worker; definitive
   completion then requires that worker's exact published job, version, release-root, current-boot,
   PID, and process-start identity. Stale provisional
-  evidence after a host restart must restore and verify the previous release before the worker is admitted. Flush the
+  evidence after a host restart must make Atlaso and nginx service pre-start guards recreate maintenance from the
+  durable provisional finalizer before either service starts, then restore and verify the previous release before the
+  worker is admitted. Flush the
   database and every installed-asset rollback backup plus its directory entries before publishing the durable recovery
   manifest. Missing database backup bytes make rollback incomplete. Restore installed assets independently so one
   failure cannot prevent later destinations from being attempted. While the exact recorded helper remains live, extend
@@ -500,7 +502,9 @@ Terminal order:
   or database, so both rollback together. Reboot recovery must retain the candidate environment after restoring the
   previous runtime, execute the exact release task's child, parent, terminal-log, and audit bookkeeping through that
   candidate as the
-  Atlaso service account, and only then remove it and admit the restored worker. A failed candidate bookkeeping handoff
+  Atlaso service account while maintenance and provisional rollback evidence remain held. Only after that bookkeeping
+  may recovery remove maintenance, prove the host-facing previous version, publish definitive healthy-rollback evidence,
+  remove the candidate, and admit the restored worker. A failed candidate bookkeeping handoff
   must retain the candidate, maintenance response, and runtime gate for retry.
   An already-active release must complete from exact readiness evidence without an unverified delayed service restart.
   A matching definitive success or healthy rollback may clear or supersede an orphaned runtime gate. Incomplete rollback
