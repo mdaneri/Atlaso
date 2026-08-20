@@ -49,6 +49,8 @@ from atlaso.app.services.esxi_pxe import (
 )
 from atlaso.app.services.network_boot import (
     discovered_hosts_for_esxi_host,
+    esxi_host_assignments_by_mac,
+    esxi_host_assignments_for_discovered_host,
     remove_discovered_host_state,
 )
 from atlaso.app.ui_routes import MANAGEMENT_UI_ROOT
@@ -1360,6 +1362,27 @@ def build_router(dependencies: NetworkBootUiDependencies) -> NetworkBootUiRouter
         removal_counts = {"commands": 0, "sessions": 0, "reports": 0}
         removed_discovered_hosts = 0
         if remove_discovered_host:
+            assignments_by_mac = esxi_host_assignments_by_mac(db)
+            blocking_assignments: dict[int, str] = {}
+            for discovered_host in discovered_hosts:
+                for assignment in esxi_host_assignments_for_discovered_host(
+                    discovered_host,
+                    assignments_by_mac=assignments_by_mac,
+                ):
+                    if assignment["id"] != host.id:
+                        blocking_assignments[assignment["id"]] = assignment["hostname"]
+            if blocking_assignments:
+                blockers = ", ".join(
+                    f"`{hostname}`" for hostname in blocking_assignments.values()
+                )
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        "Associated discovered-host inventory is also assigned to "
+                        f"ESXi Host Reference {blockers}. Delete this Host Reference "
+                        "without inventory cleanup, or remove the other assignments first."
+                    ),
+                )
             for discovered_host in discovered_hosts:
                 counts = remove_discovered_host_state(db, discovered_host)
                 for key in removal_counts:

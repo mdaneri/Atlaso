@@ -372,7 +372,10 @@ The following cross-cutting boundaries always apply:
   Reference variables and ESX installer ISO intake. Never delete an assigned
   discovered host directly: remove its ESXi Host Reference first, retaining the
   discovery record by default and removing its commands, sessions, reports,
-  and host row only through the explicit associated-discovery option.
+  and host row only through the explicit associated-discovery option. Keep
+  Host Reference association IDs synchronized during live discovery refresh,
+  and reject associated-discovery cleanup while another Host Reference still
+  owns any reported MAC for that discovery.
 - Windows Inventory Linux and Photon builds select the dedicated `Atlaso-Build` WSL distribution by default. WSL is a
   pre-existing host prerequisite: ordinary builds must never install or configure WSL, create a missing distribution,
   change the default distribution, elevate, reboot, or remove a distribution. Keep the pinned setup contract, explicit

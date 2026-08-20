@@ -989,7 +989,7 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert service_worker.headers["cache-control"] == "no-cache"
     assert service_worker.headers["service-worker-allowed"] == "/ui/management/"
     assert "ATLASO_CACHE" in service_worker.text
-    assert "atlaso-management-pwa-v258" in service_worker.text
+    assert "atlaso-management-pwa-v259" in service_worker.text
     assert 'fetch(asset, { cache: "reload" })' in service_worker.text
     assert ".catch(() => undefined)" in service_worker.text
     assert 'request.mode === "navigate"' in service_worker.text
@@ -1003,11 +1003,11 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert 'accept.includes("text/html")' in service_worker.text
     assert '!hasDownloadLikePath(url)' in service_worker.text
     assert "/static/vendor/monaco/atlaso-monaco.min.js?v=atlaso-monaco-20260806-7" in service_worker.text
-    assert "/static/app.css?v=network-boot-lifecycle-430-432-20260820-1" in service_worker.text
+    assert "/static/app.css?v=network-boot-lifecycle-430-432-20260820-2" in service_worker.text
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-8" in service_worker.text
     assert "/static/appliance-apply-polling.js?v=issue-294-2" in service_worker.text
     assert "/static/ui-routes.js?v=issue-287-1" in service_worker.text
-    assert "/static/app.js?v=network-boot-lifecycle-430-432-20260820-1" in service_worker.text
+    assert "/static/app.js?v=network-boot-lifecycle-430-432-20260820-2" in service_worker.text
     assert "/static/terminal.js?v=issue-287-2" in service_worker.text
     assert "/static/pwa.js?v=issue-287-2" in service_worker.text
     assert "vcfdt-configuration-248-20260807-14" not in service_worker.text
@@ -1039,8 +1039,8 @@ def test_shared_ui_pattern_shell_and_wizard_contracts(client):
     base = (templates / "base.html").read_text(encoding="utf-8")
     public_base = (templates / "public_portal_base.html").read_text(encoding="utf-8")
     for shell, app_asset in (
-        (base, "/static/app.js?v=network-boot-lifecycle-430-432-20260820-1"),
-        (public_base, "/static/app.js?v=network-boot-lifecycle-430-432-20260820-1"),
+        (base, "/static/app.js?v=network-boot-lifecycle-430-432-20260820-2"),
+        (public_base, "/static/app.js?v=network-boot-lifecycle-430-432-20260820-2"),
         (base, "/static/appliance-apply-polling.js?v=issue-294-2"),
     ):
         assert shell.index("/static/vendor/tabulator/tabulator.min.js") < shell.index(
@@ -1684,9 +1684,9 @@ def test_monitor_page_renders_template_and_browser_assets(client):
     assert "Loading devices" not in page.text
     assert "<th>Device</th><th>Read/s</th><th>Write/s</th>" in page.text
     assert "swagger-link-icon" in page.text
-    assert "/static/app.css?v=network-boot-lifecycle-430-432-20260820-1" in page.text
+    assert "/static/app.css?v=network-boot-lifecycle-430-432-20260820-2" in page.text
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-8" in page.text
-    assert "/static/app.js?v=network-boot-lifecycle-430-432-20260820-1" in page.text
+    assert "/static/app.js?v=network-boot-lifecycle-430-432-20260820-2" in page.text
     app_css = client.get("/static/app.css")
     assert app_css.status_code == 200
     assert ".split-workspace > .wide-panel" in app_css.text
@@ -7305,6 +7305,72 @@ def test_esxi_host_delete_can_retain_or_remove_associated_discovery(client):
         assert db.get(NetworkBootDiscoveredHost, discovered_host_id) is None
         assert db.get(NetworkBootInventorySession, inventory_session["session_id"]) is None
         assert db.get(NetworkBootInventoryReport, submitted.json()["report_id"]) is None
+
+
+def test_esxi_host_delete_rejects_shared_discovery_cleanup(client):
+    """Verify that cascade cleanup preserves discoveries assigned to another reference.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
+    from tests.test_network_boot import inventory_report
+
+    login(client)
+    inventory_session = client.post("/pxe/inventory/sessions").json()
+    report = inventory_report()
+    report["interfaces"].append(
+        {
+            "name": "eth1",
+            "permanent_mac": "52:54:00:65:43:21",
+            "current_mac": "52:54:00:65:43:21",
+            "driver": "virtio_net",
+            "link_state": "up",
+            "speed_mbps": 10000,
+            "addresses": [],
+            "boot_interface": False,
+        }
+    )
+    submitted = client.post(
+        "/pxe/inventory/report",
+        json=report,
+        headers={"Authorization": f"Bearer {inventory_session['access_token']}"},
+    )
+    discovered_host_id = submitted.json()["host_id"]
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import EsxiPxeHost, NetworkBootDiscoveredHost
+
+    with SessionLocal() as db:
+        first = EsxiPxeHost(
+            hostname="shared-discovery-first",
+            mac_address="52:54:00:12:34:56",
+            enabled=False,
+        )
+        second = EsxiPxeHost(
+            hostname="shared-discovery-second",
+            mac_address="52:54:00:65:43:21",
+            enabled=False,
+        )
+        db.add_all([first, second])
+        db.commit()
+        first_id = first.id
+        second_id = second.id
+
+    page = client.get("/network-boot")
+    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    blocked = client.post(
+        f"/esxi-pxe/hosts/{first_id}/delete",
+        data={"csrf": csrf, "remove_discovered_host": "on"},
+        headers={"X-Atlaso-Grid": "1", "Accept": "application/json"},
+        follow_redirects=False,
+    )
+
+    assert blocked.status_code == 409, blocked.text
+    assert "shared-discovery-second" in blocked.json()["detail"]
+    with SessionLocal() as db:
+        assert db.get(EsxiPxeHost, first_id) is not None
+        assert db.get(EsxiPxeHost, second_id) is not None
+        assert db.get(NetworkBootDiscoveredHost, discovered_host_id) is not None
 
 
 def test_esxi_pxe_boot_settings_migrate_legacy_first_stage_defaults(client):

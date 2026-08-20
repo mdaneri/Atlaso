@@ -1722,17 +1722,10 @@ def host_to_dict(
     session = latest_live_session(db, host.id)
     if assignments_by_mac is None:
         assignments_by_mac = esxi_host_assignments_by_mac(db)
-    assignments: list[dict[str, Any]] = []
-    assigned_ids: set[int] = set()
-    for mac_address in sorted({*_macs(host), host.boot_mac} - {""}):
-        try:
-            normalized_mac = normalize_mac(mac_address)
-        except ValueError:
-            continue
-        assignment = assignments_by_mac.get(normalized_mac)
-        if assignment is not None and assignment["id"] not in assigned_ids:
-            assignments.append(assignment)
-            assigned_ids.add(assignment["id"])
+    assignments = esxi_host_assignments_for_discovered_host(
+        host,
+        assignments_by_mac=assignments_by_mac,
+    )
     assignment = assignments[0] if assignments else None
     payload: dict[str, Any] = {
         "id": host.id,
@@ -1785,6 +1778,31 @@ def esxi_host_assignments_by_mac(db: Session) -> dict[str, dict[str, Any]]:
             "mac_address": mac_address,
             "enabled": bool(host.enabled),
         }
+    return assignments
+
+
+def esxi_host_assignments_for_discovered_host(
+    host: NetworkBootDiscoveredHost,
+    *,
+    assignments_by_mac: dict[str, dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Return every ESXi Host Reference assigned to one discovered host.
+
+    Args:
+        host: Discovered host whose reported MAC addresses identify assignments.
+        assignments_by_mac: Normalized ESXi Host Reference assignments by MAC.
+    """
+    assignments: list[dict[str, Any]] = []
+    assigned_ids: set[int] = set()
+    for mac_address in sorted({*_macs(host), host.boot_mac} - {""}):
+        try:
+            normalized_mac = normalize_mac(mac_address)
+        except ValueError:
+            continue
+        assignment = assignments_by_mac.get(normalized_mac)
+        if assignment is not None and assignment["id"] not in assigned_ids:
+            assignments.append(assignment)
+            assigned_ids.add(assignment["id"])
     return assignments
 
 

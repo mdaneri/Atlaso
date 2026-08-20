@@ -257,6 +257,33 @@ test("Network Boot discovered-host refresh changes rows in place", async () => {
   assert.deepEqual(additions, [{ id: 3, last_seen_at: "added" }]);
 });
 
+test("Network Boot discovered-host refresh updates Host Reference associations", async () => {
+  const referenceUpdates = [];
+  const referenceRows = [
+    {
+      getData: () => ({ id: 7, hostname: "esx-07", discovered_host_ids: [] }),
+      update: async (values) => referenceUpdates.push({ id: 7, values }),
+    },
+    {
+      getData: () => ({ id: 8, hostname: "esx-08", discovered_host_ids: [99] }),
+      update: async (values) => referenceUpdates.push({ id: 8, values }),
+    },
+  ];
+  await reconcileNetworkBootDiscoveredHosts(
+    { getRows: () => [], addRow: async () => {} },
+    [
+      { id: 41, esxi_assignments: [{ id: 7 }] },
+      { id: 42, esxi_assignments: [{ id: 7 }] },
+    ],
+    { getRows: () => referenceRows },
+  );
+
+  assert.deepEqual(JSON.parse(JSON.stringify(referenceUpdates)), [
+    { id: 7, values: { discovered_host_ids: [41, 42] } },
+    { id: 8, values: { discovered_host_ids: [] } },
+  ]);
+});
+
 test("Network Boot discovered-host refresh preserves the last list after failure", async () => {
   class HTMLElement {}
   const status = new HTMLElement();

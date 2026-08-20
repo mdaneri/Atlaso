@@ -65,7 +65,8 @@ brings infrastructure, storage, identity, networking, and lifecycle workflows in
   hostname and address remain visible, and standard grid-backed wizards manage
   Host References and installer ISOs. Assigned discoveries are removed only
   through their Host Reference, with an explicit choice to retain or remove the
-  matching discovery history. Audited Wake-on-LAN is available for
+  matching discovery history; shared discoveries remain protected while any
+  other Host Reference is assigned. Audited Wake-on-LAN is available for
   discovered hosts and saved ESXi Host References; scripted ESXi boots require
   an administrator to enter the one-time code shown by the exact host-console
   attempt before a short-lived, single-use authorization is bound to applied state.

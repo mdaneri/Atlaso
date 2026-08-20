@@ -20765,7 +20765,7 @@ function networkBootChangedRowValues(current, incoming) {
   }));
 }
 
-function reconcileNetworkBootDiscoveredHosts(hostsTable, hosts) {
+function reconcileNetworkBootDiscoveredHosts(hostsTable, hosts, hostReferencesTable = null) {
   return (async () => {
     const incoming = new Map((hosts || []).map((host) => [String(host.id), host]));
     for (const row of hostsTable.getRows()) {
@@ -20780,6 +20780,27 @@ function reconcileNetworkBootDiscoveredHosts(hostsTable, hosts) {
       if (Object.keys(changed).length) await row.update(changed);
     }
     for (const host of incoming.values()) await hostsTable.addRow(host);
+    if (hostReferencesTable && typeof hostReferencesTable.getRows === "function") {
+      const discoveredHostIdsByReferenceId = new Map();
+      for (const host of hosts || []) {
+        for (const assignment of host?.esxi_assignments || []) {
+          const referenceId = String(assignment?.id ?? "");
+          if (!referenceId) continue;
+          const discoveredHostIds = discoveredHostIdsByReferenceId.get(referenceId) || [];
+          discoveredHostIds.push(host.id);
+          discoveredHostIdsByReferenceId.set(referenceId, discoveredHostIds);
+        }
+      }
+      for (const row of hostReferencesTable.getRows()) {
+        const current = row.getData();
+        if (current.is_new || current.is_default || current.id == null) continue;
+        const discoveredHostIds = discoveredHostIdsByReferenceId.get(String(current.id)) || [];
+        const changed = networkBootChangedRowValues(current, {
+          discovered_host_ids: discoveredHostIds,
+        });
+        if (Object.keys(changed).length) await row.update(changed);
+      }
+    }
   })();
 }
 
@@ -20808,7 +20829,8 @@ function initializeNetworkBootDiscoveredHostRefresh(
     refreshing = true;
     try {
       const hosts = await request("/api/v1/network-boot/hosts");
-      await reconcileNetworkBootDiscoveredHosts(hostsTable, hosts);
+      const hostReferencesTable = document.getElementById?.("esxi-pxe-hosts-table")?.atlasoTabulator;
+      await reconcileNetworkBootDiscoveredHosts(hostsTable, hosts, hostReferencesTable);
       setStatus();
     } catch (error) {
       setStatus(error instanceof Error

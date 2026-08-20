@@ -396,7 +396,9 @@ storage as an implementation detail. When an installer ISO is selected, a new re
 or promotion defaults to Enabled. An administrator can still turn Enabled off
 explicitly, and editing preserves the saved state. Saving creates or updates
 the Host References grid immediately without a page reload and refreshes the
-matching discovered-host assignment. Use the global **Review appliance
+matching discovered-host assignment. Automatic discovery refresh also updates
+the Host References grid's association state, so deletion choices reflect hosts
+reported after the page opened. Use the global **Review appliance
 changes** workflow to enforce desired state on the appliance.
 
 Double-click an existing reference or choose **Edit host reference** from its
@@ -408,7 +410,9 @@ discovered host by default so it can be rediscovered or promoted again. When an
 association exists, the confirmation offers **Also remove the associated
 discovered host and retained inventory state**; selecting it removes the Host
 Reference and matching discovery commands, sessions, reports, and host row in
-the same transaction. Start the assigned host first and choose its ESXi entry.
+the same transaction. Atlaso rejects that cleanup when the same discovery is
+also assigned to another Host Reference; retry without inventory cleanup or
+remove the other assignment first. Start the assigned host first and choose its ESXi entry.
 The host console displays a one-time code while its unpredictable boot claim
 waits. Then choose **Authorize ESXi boot once**, enter that console code
 in the shared two-step wizard, and review the host before submitting. Atlaso
