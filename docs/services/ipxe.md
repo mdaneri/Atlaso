@@ -1290,6 +1290,12 @@ ______________________________________________________________________
 
 Native UEFI HTTP boot does not require PXELINUX or iPXE if the firmware supports HTTP boot.
 
+Atlaso defaults Native UEFI HTTP off while Network Boot / ESXi PXE is disabled. A legacy or restored disabled-PXE
+configuration that still contains an enabled Native UEFI HTTP flag and a blank URL remains dormant and does not expose
+boot services. When ESXi PXE is enabled, Atlaso accepts Native UEFI HTTP only after an absolute HTTP(S) boot URL can be
+derived from a selected IPv4 DHCP zone (or a valid absolute URL is already stored); otherwise the settings and global
+Appliance Apply review show a blocking validation error with a link back to Network Boot.
+
 ### Prerequisites for using native UEFI HTTP
 
 | Requirement                    | Notes                                                                                        |
