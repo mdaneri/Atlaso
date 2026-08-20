@@ -3241,6 +3241,7 @@ def recover_interrupted_appliance_apply_jobs(db: Session) -> int:
                 management_handoff_result_evidence(recovery),
             )
     for job in jobs:
+        job_was_pending = job.status == JobStatus.PENDING.value
         for step in job.steps:
             if step.status == JobStatus.RUNNING.value:
                 step.status = JobStatus.FAILED.value
@@ -3269,6 +3270,15 @@ def recover_interrupted_appliance_apply_jobs(db: Session) -> int:
                     "Interrupted during the management handoff. Atlaso rolled back to the previous management path; "
                     "review the task evidence and submit the desired change again."
                 )
+            elif (
+                job_was_pending
+                and recovery_result.returncode == 0
+                and recovery_state == "no interrupted transaction"
+            ):
+                job.error = (
+                    "Interrupted before the privileged management handoff transaction began. No runtime rollback was "
+                    "necessary; review the task evidence and submit the desired change again."
+                )
             else:
                 job.error = (
                     "Interrupted during the management handoff, and automatic recovery could not prove either a "
@@ -3295,6 +3305,13 @@ def recover_interrupted_appliance_apply_jobs(db: Session) -> int:
                 payload.pop("management_handoff_application_committed", None)
                 payload["management_handoff_runtime_committed"] = True
             elif recovery_result.returncode == 0 and recovery_evidence.get("rolled_back") is True:
+                payload.pop("management_handoff_runtime_commit_pending", None)
+                payload.pop("management_handoff_application_committed", None)
+            elif (
+                job_was_pending
+                and recovery_result.returncode == 0
+                and recovery_state == "no interrupted transaction"
+            ):
                 payload.pop("management_handoff_runtime_commit_pending", None)
                 payload.pop("management_handoff_application_committed", None)
             else:

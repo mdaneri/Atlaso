@@ -283,8 +283,10 @@ an incomplete pre-commit rollback is retried. Adapter timeouts and other indeter
 fixed-unit stop and rollback before the task becomes terminal. Empty or malformed systemd unit-state evidence fails
 closed before rollback. Exceptions
 reconcile the same boundary immediately. An unproven acknowledgement or rollback keeps the global Apply lock held even
-when a legacy or incomplete task payload did not already carry the pending marker. Results
-expose only a bounded failing-layer identifier and
+when a legacy or incomplete task payload did not already carry the pending marker.
+A task still durably pending when the helper reports a successful `no interrupted transaction` result proves privileged
+mutation never began; startup fails that task truthfully and releases its lock without inventing rollback evidence.
+Results expose only a bounded failing-layer identifier and
 non-secret error text; Appliance Apply writes that evidence to every bundled component and updates none of their
 baselines unless the transaction commits. The committed baselines come from the exact snapshots hash-checked and staged
 at task start; desired-state edits saved during the helper's bounded readiness interval remain pending.

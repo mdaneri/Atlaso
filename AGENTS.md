@@ -287,7 +287,9 @@ The following cross-cutting boundaries always apply:
   and explicitly acknowledges that commit. Record separate durable application-commit proof before selecting
   acknowledgement during startup; an incomplete pre-commit rollback must retry recovery instead. Sync every backup file
   and its backup directory before publishing the marker. Retain the global apply lock while recovery or acknowledgement
-  is pending, including when startup cannot prove either outcome from a legacy or incomplete task payload. On failure,
+  is pending, including when startup cannot prove either outcome from a legacy or incomplete task payload. A pending
+  task plus explicit successful no-transaction recovery proves the privileged handoff never began and releases the
+  lock. On failure,
   timeout, indeterminate helper return, interruption, or startup recovery, first stop and verify any surviving
   fixed-identity apply helper; serialize every retry under a separate fixed-identity recovery unit and stop and verify
   any surviving recovery unit before starting another. Then restore every captured runtime

@@ -1132,7 +1132,7 @@ def test_interrupted_handoff_reconciles_application_commit_without_false_rollbac
             Job(
                 id="handoff-no-marker",
                 type="appliance-apply",
-                status=JobStatus.RUNNING.value,
+                status=JobStatus.PENDING.value,
                 created_by="admin",
                 progress_percent=20,
                 result=json.dumps(
@@ -1162,18 +1162,21 @@ def test_interrupted_handoff_reconciles_application_commit_without_false_rollbac
         unproven = db.get(Job, "handoff-unproven")
         assert committed is not None and missing is not None and unproven is not None
         committed_payload = json.loads(committed.result or "{}")
+        missing_payload = json.loads(missing.result or "{}")
         unproven_payload = json.loads(unproven.result or "{}")
         assert committed_payload["management_handoff_runtime_committed"] is True
         assert committed_payload["management_handoff_runtime_commit_pending"] is False
         assert "management_handoff_application_committed" not in committed_payload
         assert "candidate management path remains active" in (committed.error or "")
-        assert "could not prove either" in (missing.error or "")
+        assert "before the privileged management handoff transaction began" in (missing.error or "")
         assert "rolled back" not in (missing.error or "").lower()
+        assert "management_handoff_runtime_commit_pending" not in missing_payload
+        assert "management_handoff_application_committed" not in missing_payload
         assert unproven_payload["management_handoff_runtime_commit_pending"] is True
         assert "management_handoff_application_committed" not in unproven_payload
         retained_lock = ui.active_appliance_apply_job(db)
         assert retained_lock is not None
-        assert retained_lock.id in {"handoff-no-marker", "handoff-unproven"}
+        assert retained_lock.id == "handoff-unproven"
         assert recovery_calls == ["acknowledge:handoff-committed", "recover", "recover"]
 
 
