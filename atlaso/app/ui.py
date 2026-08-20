@@ -365,6 +365,7 @@ from atlaso.app.services.esxi_pxe import (
     kickstart_to_dict,
     kickstart_validation,
     mark_kickstarts_applied,
+    native_uefi_http_url_is_absolute,
     render_esxi_pxe_manifest,
     render_esxi_pxe_preview,
     strict_validation_enabled,
@@ -9585,13 +9586,6 @@ def esxi_pxe_context(db: Session) -> dict[str, Any]:
     selected_boot_interfaces = split_interfaces(boot_settings.get("listen_interface"))
     selected_boot_addresses = split_addresses(boot_settings.get("listen_address"))
     available_boot_addresses = available_service_listen_addresses(boot_settings.get("listen_address"), available_interfaces)
-    if boot_settings["native_uefi_http_enabled"] and not boot_settings["native_uefi_http_url"]:
-        if boot_settings.get("effective_native_uefi_http_url"):
-            validation_warnings.append("Native UEFI HTTP boot URL will be generated from the ESXi PXE HTTP endpoint.")
-        else:
-            validation_warnings.append("Native UEFI HTTP boot is enabled, but no listen address is available to generate the boot URL.")
-    if boot_settings["native_uefi_http_enabled"] and boot_settings["native_uefi_http_url"] and len(boot_settings.get("dhcp_scope_ids") or []) > 1:
-        validation_warnings.append("Native UEFI HTTP boot uses the manual URL for every selected DHCP zone.")
     if boot_settings["enabled"]:
         if not boot_settings["hostname"]:
             validation_errors.append("ESXi PXE hostname is required when PXE/TFTP bootstrap is enabled.")
@@ -9605,6 +9599,25 @@ def esxi_pxe_context(db: Session) -> dict[str, Any]:
             validation_warnings.append(f"ESXi PXE hostname {boot_settings['hostname']} is not present in managed DNS records.")
         if not esxi_pxe_host_artifacts(hosts, boot_settings, default_host):
             validation_warnings.append("ESXi PXE bootstrap is enabled, but no enabled host reference or default profile has an installer ISO selected.")
+        if boot_settings["native_uefi_http_enabled"]:
+            native_http_url = str(
+                boot_settings["native_uefi_http_url"]
+                or boot_settings.get("effective_native_uefi_http_url")
+                or ""
+            ).strip()
+            if not native_uefi_http_url_is_absolute(native_http_url):
+                validation_errors.append(
+                    "Native UEFI HTTP requires an absolute HTTP or HTTPS URL. "
+                    "Select an IPv4 DHCP zone with a listen address or turn off Native UEFI HTTP."
+                )
+            elif not boot_settings["native_uefi_http_url"]:
+                validation_warnings.append(
+                    "Native UEFI HTTP boot URL will be generated from the ESXi PXE HTTP endpoint."
+                )
+            elif len(boot_settings.get("dhcp_scope_ids") or []) > 1:
+                validation_warnings.append(
+                    "Native UEFI HTTP boot uses the manual URL for every selected DHCP zone."
+                )
     custom_variables = custom_variable_definitions(db)
     custom_defaults = {item["name"]: item["default_value"] for item in custom_variables}
     validation_errors.extend(kickstart_template_validation_errors(kickstarts, hosts, boot_settings, default_host, custom_defaults))

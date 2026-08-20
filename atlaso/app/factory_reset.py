@@ -59,6 +59,9 @@ FACTORY_RESET_CREDENTIALS_NAME = "credentials.json"
 FACTORY_RESET_STAGED_CREDENTIALS_PATH = (
     "/var/lib/atlaso/apply/factory-reset/credentials.json"
 )
+APPLIANCE_UPDATE_FINALIZER_PATH = Path(
+    "/var/lib/atlaso/apply/appliance-update/finalizer-status.json"
+)
 FACTORY_RESET_LOCK_NAME = "transaction.lock"
 ATLASO_SERVICE_USER = "atlaso"
 FACTORY_RESET_MANAGEMENT_HOST = "127.0.0.1"
@@ -535,6 +538,44 @@ def _stop_transient_automation_units() -> None:
     _stop_and_verify_transient_units(units, label="automation")
 
 
+def _require_terminal_release_update() -> None:
+    """Reject reset while durable signed-release recovery remains pending."""
+    try:
+        payload = json.loads(APPLIANCE_UPDATE_FINALIZER_PATH.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise FactoryResetError(
+            "Factory reset cannot verify the Atlaso Release transaction; "
+            "recover the release update and retry."
+        ) from exc
+    if not isinstance(payload, dict):
+        raise FactoryResetError(
+            "Factory reset cannot verify the Atlaso Release transaction; "
+            "recover the release update and retry."
+        )
+    status = str(payload.get("status") or "")
+    recovery = payload.get("transaction_recovery")
+    pending = status in {
+        "transaction_pending",
+        "restart_pending",
+        "rollback_pending",
+        "activation_committed",
+    } or (
+        status == "failed"
+        and payload.get("rolled_back") is not True
+        and isinstance(recovery, dict)
+    )
+    terminal = status == "succeeded" or (
+        status == "failed" and not pending
+    )
+    if not terminal:
+        raise FactoryResetError(
+            "Factory reset is blocked until the active Atlaso Release transaction "
+            "reaches a definitive terminal state."
+        )
+
+
 def _stop_application_services(*, boot_resume: bool) -> None:
     """Quiesce database writers before runtime and database replacement.
 
@@ -553,6 +594,10 @@ def _stop_application_services(*, boot_resume: bool) -> None:
     # Stop helper actions first, then inventory delayed update restarts that an
     # in-flight update helper may have scheduled immediately before it stopped.
     _stop_transient_helper_action_units()
+    # A release helper can publish its recovery manifest between the admission
+    # check and helper quiescence. Preserve that manifest and fail before any
+    # factory database or apply-staging mutation.
+    _require_terminal_release_update()
     _stop_transient_update_restart_units()
     _stop_transient_automation_units()
 
@@ -589,6 +634,9 @@ def _schedule_readiness_finalizer() -> None:
 
 def _clear_apply_staging() -> None:
     """Remove only Atlaso's fixed apply staging tree after successful activation."""
+    # Recheck immediately before recursive cleanup so a late release transaction
+    # can never lose the manifest required for rollback or forward completion.
+    _require_terminal_release_update()
     apply_root = Path("/var/lib/atlaso/apply")
     if not apply_root.exists():
         return
@@ -1224,6 +1272,7 @@ def _run_factory_reset_locked(
     try:
         credential_plan = _factory_reset_credential_plan()
         if manage_services:
+            _require_terminal_release_update()
             _stop_application_services(boot_resume=boot_resume)
         _update_request("building", "Building a clean factory database and validating packaged defaults.")
         unit_count = _candidate_database(

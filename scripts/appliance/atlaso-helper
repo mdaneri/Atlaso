@@ -1730,7 +1730,8 @@ def _esxi_pxe_boot_errors(boot: dict) -> list[str]:
     native_uefi_http_enabled = bool(boot.get("native_uefi_http_enabled"))
     if enabled:
         hostname = str(boot.get("hostname") or "").strip()
-        listen_address = str(boot.get("listen_address") or "").splitlines()[0].strip()
+        listen_addresses = str(boot.get("listen_address") or "").splitlines()
+        listen_address = listen_addresses[0].strip() if listen_addresses else ""
         if not hostname or "." not in hostname:
             errors.append("ESXi PXE hostname must be a fully qualified DNS name.")
         try:

@@ -85,6 +85,12 @@ Atlaso-registered PowerShell repositories. Atlaso synchronizes every affected di
 marker to management-readiness verification, so a reboot cannot restore a deleted staging or credential entry. Payload
 storage remains outside this cleanup boundary.
 
+Factory reset refuses to quiesce services or recursively clear Apply staging while the root-owned Atlaso Release
+finalizer records a pending rollback or forward-completion transaction. It checks again after bounded helper-action
+quiescence and immediately before staging cleanup, preserving the durable finalizer if a release transaction appears
+in either race window. Recover the signed release transaction through the normal service-start recovery path, then
+retry reset after its finalizer is definitive.
+
 Earlier sessions, bearer tokens, service credentials, and removed-account credentials stop working. The reset preserves
 the current bootstrap administrator web/Photon password and root password for each **Keep current password** choice. A
 **Change password** choice applies the submitted value during the protected reset transaction; the administrator value

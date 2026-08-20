@@ -48,6 +48,7 @@ from atlaso.app.services.dnsmasq import (
     split_domains,
     validate_dns_record,
 )
+from atlaso.app.services.esxi_pxe import ESXI_PXE_NATIVE_UEFI_HTTP_ENABLED_KEY
 from atlaso.app.services.ldap import LDAP_DEFAULT_HOSTNAME, LDAP_STAGED_CONFIG_PATH
 from atlaso.app.services.local_users import (
     DEFAULT_LOCAL_USER_SHELL,
@@ -213,6 +214,18 @@ def seed_initial_data(
     if factory_defaults and factory_reset_marker is None:
         factory_reset_marker = Setting(key=FACTORY_RESET_SETTING_KEY, value="complete")
         db.add(factory_reset_marker)
+    native_uefi_http_setting = db.execute(
+        select(Setting).where(
+            Setting.key == ESXI_PXE_NATIVE_UEFI_HTTP_ENABLED_KEY
+        )
+    ).scalar_one_or_none()
+    if native_uefi_http_setting is None:
+        db.add(
+            Setting(
+                key=ESXI_PXE_NATIVE_UEFI_HTTP_ENABLED_KEY,
+                value="false",
+            )
+        )
     if db.bind is not None and db.bind.dialect.name == "sqlite":
         columns = {row[1] for row in db.execute(text("PRAGMA table_info(users)")).all()}
         if {"pending_os_password_encrypted", "os_password_pending_at"}.issubset(columns):

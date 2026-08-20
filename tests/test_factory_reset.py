@@ -7,6 +7,7 @@ import sys
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 
@@ -207,6 +208,66 @@ def test_factory_reset_fails_closed_when_helper_actions_do_not_quiesce(monkeypat
     assert stopped == [[unit]]
 
 
+@pytest.mark.parametrize(
+    ("payload", "blocked"),
+    [
+        ({"status": "transaction_pending", "transaction_recovery": {}}, True),
+        ({"status": "restart_pending", "transaction_recovery": {}}, True),
+        ({"status": "rollback_pending", "transaction_recovery": {}}, True),
+        ({"status": "activation_committed", "transaction_recovery": {}}, True),
+        (
+            {"status": "failed", "rolled_back": False, "transaction_recovery": {}},
+            True,
+        ),
+        ({"status": "succeeded", "rolled_back": False}, False),
+        ({"status": "failed", "rolled_back": True}, False),
+        ({"status": "failed", "rolled_back": False}, False),
+    ],
+)
+def test_factory_reset_requires_definitive_release_transaction(
+    tmp_path,
+    monkeypatch,
+    payload,
+    blocked,
+):
+    """Reset admits only definitive release evidence without pending recovery.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated state.
+        monkeypatch: Pytest fixture used to replace the fixed finalizer path.
+        payload: Release finalizer shape under test.
+        blocked: Whether the shape must block factory reset.
+    """
+    import atlaso.app.factory_reset as factory_reset
+
+    finalizer = tmp_path / "finalizer-status.json"
+    finalizer.write_text(json.dumps(payload), encoding="utf-8")
+    monkeypatch.setattr(factory_reset, "APPLIANCE_UPDATE_FINALIZER_PATH", finalizer)
+
+    if blocked:
+        with pytest.raises(FactoryResetError, match="definitive terminal state"):
+            factory_reset._require_terminal_release_update()
+    else:
+        factory_reset._require_terminal_release_update()
+
+
+def test_factory_reset_release_preflight_fails_closed_for_invalid_evidence(tmp_path, monkeypatch):
+    """Unreadable release evidence cannot be erased by reset staging cleanup.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated state.
+        monkeypatch: Pytest fixture used to replace the fixed finalizer path.
+    """
+    import atlaso.app.factory_reset as factory_reset
+
+    finalizer = tmp_path / "finalizer-status.json"
+    finalizer.write_text("not-json", encoding="utf-8")
+    monkeypatch.setattr(factory_reset, "APPLIANCE_UPDATE_FINALIZER_PATH", finalizer)
+
+    with pytest.raises(FactoryResetError, match="cannot verify"):
+        factory_reset._require_terminal_release_update()
+
+
 def test_fallback_sqlite_replacement_serializes_an_earlier_writer(tmp_path):
     """The fallback waits for an earlier writer and then removes its pre-reset row.
 
@@ -346,6 +407,7 @@ def test_factory_reset_durably_clears_apply_staging(tmp_path, monkeypatch):
         "Path",
         lambda value: apply_root if value == "/var/lib/atlaso/apply" else real_path(value),
     )
+    monkeypatch.setattr(factory_reset, "_require_terminal_release_update", lambda: None)
     monkeypatch.setattr(
         factory_reset,
         "_fsync_directory",
@@ -356,6 +418,43 @@ def test_factory_reset_durably_clears_apply_staging(tmp_path, monkeypatch):
 
     assert list(apply_root.iterdir()) == []
     assert synced_directories == [apply_root]
+
+
+def test_factory_reset_preserves_pending_release_finalizer_before_staging_cleanup(
+    tmp_path,
+    monkeypatch,
+):
+    """A pending release manifest survives the final recursive-cleanup guard.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated state.
+        monkeypatch: Pytest fixture used to replace fixed appliance paths.
+    """
+    import atlaso.app.factory_reset as factory_reset
+
+    apply_root = tmp_path / "apply"
+    finalizer = apply_root / "appliance-update" / "finalizer-status.json"
+    staged_secret = apply_root / "local-users" / "atlaso-users.json"
+    finalizer.parent.mkdir(parents=True)
+    staged_secret.parent.mkdir(parents=True)
+    finalizer.write_text(
+        json.dumps({"status": "transaction_pending", "transaction_recovery": {}}),
+        encoding="utf-8",
+    )
+    staged_secret.write_text("secret", encoding="utf-8")
+    monkeypatch.setattr(factory_reset, "APPLIANCE_UPDATE_FINALIZER_PATH", finalizer)
+    real_path = factory_reset.Path
+    monkeypatch.setattr(
+        factory_reset,
+        "Path",
+        lambda value: apply_root if value == "/var/lib/atlaso/apply" else real_path(value),
+    )
+
+    with pytest.raises(FactoryResetError, match="definitive terminal state"):
+        factory_reset._clear_apply_staging()
+
+    assert finalizer.is_file()
+    assert staged_secret.is_file()
 
 
 def test_factory_reset_removes_only_retired_ca_private_keys(tmp_path, monkeypatch):
