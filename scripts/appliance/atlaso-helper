@@ -15129,6 +15129,36 @@ def _load_management_handoff_manifest(path: Path) -> dict:
         values = payload[field]
         if not isinstance(values, list) or any(not isinstance(value, str) for value in values):
             raise ValueError(f"management handoff {field} must be a string list")
+    previous_paths = payload.setdefault("previous_management_paths", [])
+    if not isinstance(previous_paths, list) or len(previous_paths) > 256:
+        raise ValueError("management handoff previous_management_paths must be a bounded list")
+    normalized_previous_paths: list[dict[str, str]] = []
+    for path in previous_paths:
+        if not isinstance(path, dict):
+            raise ValueError("management handoff previous_management_paths entries must be objects")
+        name = str(path.get("name") or "")
+        ipv4_method = str(path.get("ipv4_method") or "")
+        ipv6_enabled = str(path.get("ipv6_enabled") or "").lower()
+        ipv6_cidr = str(path.get("ipv6_cidr") or "")
+        if not _valid_network_interface_name(name):
+            raise ValueError("management handoff previous management interface is invalid")
+        if ipv4_method not in {"", "static", "dhcp"}:
+            raise ValueError("management handoff previous IPv4 method is invalid")
+        if ipv6_enabled not in {"", "true", "false"}:
+            raise ValueError("management handoff previous IPv6 state is invalid")
+        if ipv6_cidr:
+            parsed_ipv6 = ip_interface(ipv6_cidr)
+            if parsed_ipv6.version != 6:
+                raise ValueError("management handoff previous IPv6 CIDR is invalid")
+        normalized_previous_paths.append(
+            {
+                "name": name,
+                "ipv4_method": ipv4_method,
+                "ipv6_enabled": ipv6_enabled,
+                "ipv6_cidr": ipv6_cidr,
+            }
+        )
+    payload["previous_management_paths"] = normalized_previous_paths
     previous_port = payload.get("previous_management_public_port")
     if previous_port is not None:
         try:
@@ -15380,6 +15410,7 @@ def _snapshot_management_handoff(payload: dict) -> dict:
             [],
         ),
         "previous_management_addresses": list(dict.fromkeys(previous_addresses)),
+        "previous_management_paths": list(payload.get("previous_management_paths") or []),
         "previous_https_enabled": bool(payload.get("previous_https_enabled", True)),
         "previous_management_public_port": int(
             payload.get("previous_management_public_port")
@@ -15689,6 +15720,7 @@ def _management_handoff_addresses(
     network_path: Path,
     *,
     previous_addresses: set[str] | None = None,
+    previous_dynamic_families: set[tuple[str, str]] | None = None,
     discovery_attempts: int = 45,
 ) -> list[str]:
     """Return configured candidate management listener addresses.
@@ -15696,6 +15728,7 @@ def _management_handoff_addresses(
     Args:
         network_path: Candidate staged network configuration.
         previous_addresses: Addresses retained only for the old-path transition.
+        previous_dynamic_families: Interface/address families that were already dynamic.
         discovery_attempts: Bounded runtime-address discovery attempts.
 
     Returns:
@@ -15721,6 +15754,7 @@ def _management_handoff_addresses(
     previous_addresses = {
         str(ip_address(address)) for address in (previous_addresses or set())
     }
+    previous_dynamic_families = previous_dynamic_families or set()
     dynamic_requirements: list[tuple[str, set[str]]] = []
     for row in rows:
         for key in ("ip_cidr", "ipv6_cidr"):
@@ -15761,7 +15795,10 @@ def _management_handoff_addresses(
                         normalized = str(ip_address(local))
                     except ValueError:
                         continue
-                    if normalized in previous_addresses:
+                    if (
+                        normalized in previous_addresses
+                        and (interface, family) not in previous_dynamic_families
+                    ):
                         continue
                     discovered.setdefault((interface, family), []).append(normalized)
         if all(
@@ -16298,16 +16335,30 @@ def _clear_management_handoff_state(*, keep_commit_receipt: bool = False) -> Non
     Args:
         keep_commit_receipt: Whether the last acknowledged job receipt remains durable.
     """
+    state_dir_exists = MANAGEMENT_HANDOFF_STATE_DIR.is_dir()
     MANAGEMENT_HANDOFF_STATE_PATH.unlink(missing_ok=True)
-    shutil.rmtree(MANAGEMENT_HANDOFF_BACKUP_DIR, ignore_errors=True)
+    if state_dir_exists:
+        _fsync_directory(MANAGEMENT_HANDOFF_STATE_DIR)
+    if MANAGEMENT_HANDOFF_BACKUP_DIR.is_dir():
+        shutil.rmtree(MANAGEMENT_HANDOFF_BACKUP_DIR)
     if not keep_commit_receipt:
         MANAGEMENT_HANDOFF_COMMIT_PATH.unlink(missing_ok=True)
+    if MANAGEMENT_HANDOFF_STATE_DIR.is_dir():
+        _fsync_directory(MANAGEMENT_HANDOFF_STATE_DIR)
+    networkd_changed = False
     for path in NETWORKD_CONFIG_DIR.glob(f"{MANAGEMENT_HANDOFF_HOLDOVER_PREFIX}*.network"):
         path.unlink(missing_ok=True)
+        networkd_changed = True
+    if networkd_changed:
+        _fsync_directory(NETWORKD_CONFIG_DIR)
+    state_dir_removed = False
     try:
         MANAGEMENT_HANDOFF_STATE_DIR.rmdir()
+        state_dir_removed = True
     except OSError:
         pass
+    if state_dir_removed:
+        _fsync_directory(MANAGEMENT_HANDOFF_STATE_DIR.parent)
 
 
 def _acknowledge_management_handoff(job_id: str) -> int:
@@ -16366,7 +16417,22 @@ def _acknowledge_management_handoff(job_id: str) -> int:
         "candidate_addresses": list(state.get("candidate_addresses") or []),
     }
     _durable_management_handoff_state_write(receipt, MANAGEMENT_HANDOFF_COMMIT_PATH)
-    _clear_management_handoff_state(keep_commit_receipt=True)
+    try:
+        _clear_management_handoff_state(keep_commit_receipt=True)
+    except OSError as exc:
+        print(
+            json.dumps(
+                {
+                    "management_handoff": "acknowledgement failed",
+                    "failing_layer": "application commit acknowledgement",
+                    "error": f"commit receipt is durable but rollback state cleanup failed: {exc}",
+                    "job_id": job_id,
+                },
+                sort_keys=True,
+            ),
+            file=sys.stderr,
+        )
+        return 1
     print(json.dumps({"management_handoff": "committed", "job_id": job_id}, sort_keys=True))
     return 0
 
@@ -16479,7 +16545,21 @@ def _recover_management_handoff() -> int:
             file=sys.stderr,
         )
         return 1
-    _clear_management_handoff_state()
+    try:
+        _clear_management_handoff_state()
+    except OSError as exc:
+        print(
+            json.dumps(
+                {
+                    "management_handoff": "rollback incomplete",
+                    "failing_layer": "interruption recovery",
+                    "error": f"rollback state cleanup failed: {exc}",
+                },
+                sort_keys=True,
+            ),
+            file=sys.stderr,
+        )
+        return 1
     print(
         json.dumps(
             {
@@ -16504,14 +16584,18 @@ def _apply_management_handoff(payload: dict) -> int:
         state = _snapshot_management_handoff(payload)
     except (OSError, ValueError, json.JSONDecodeError) as exc:
         marker_exists = MANAGEMENT_HANDOFF_STATE_PATH.is_file()
+        cleanup_error = ""
         if not marker_exists:
-            _clear_management_handoff_state()
+            try:
+                _clear_management_handoff_state()
+            except OSError as cleanup_exc:
+                cleanup_error = f"; snapshot cleanup failed: {cleanup_exc}"
         print(
             json.dumps(
                 {
                     "management_handoff": "recovery required" if marker_exists else "failed before mutation",
                     "failing_layer": "snapshot",
-                    "error": str(exc),
+                    "error": f"{exc}{cleanup_error}",
                 },
                 sort_keys=True,
             ),
@@ -16584,6 +16668,19 @@ def _apply_management_handoff(payload: dict) -> int:
         candidate_addresses = _management_handoff_addresses(
             Path(str(payload["network_config_path"])),
             previous_addresses=set(state["previous_management_addresses"]),
+            previous_dynamic_families={
+                (str(path.get("name") or ""), family)
+                for path in state.get("previous_management_paths", [])
+                for family in (
+                    (["inet"] if path.get("ipv4_method") == "dhcp" else [])
+                    + (
+                        ["inet6"]
+                        if str(path.get("ipv6_enabled") or "").lower() == "true"
+                        and not str(path.get("ipv6_cidr") or "")
+                        else []
+                    )
+                )
+            },
         )
         failing_layer = "old-path preservation"
         old_readiness = _management_handoff_readiness(
@@ -16638,7 +16735,10 @@ def _apply_management_handoff(payload: dict) -> int:
             rollback = {}
             rollback_error = str(rollback_exc)
         if not rollback_error:
-            _clear_management_handoff_state()
+            try:
+                _clear_management_handoff_state()
+            except OSError as cleanup_exc:
+                rollback_error = f"rollback state cleanup failed: {cleanup_exc}"
         print(
             json.dumps(
                 {

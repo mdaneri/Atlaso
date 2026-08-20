@@ -958,6 +958,69 @@ def test_management_handoff_dynamic_address_must_not_be_retained_old_address(mon
 
 
 @pytest.mark.parametrize(
+    ("row", "family", "address"),
+    [
+        (
+            {
+                "name": "eth1",
+                "role": "management",
+                "mode": "access",
+                "admin_state": "up",
+                "ipv4_method": "dhcp",
+                "ipv6_enabled": "false",
+            },
+            "inet",
+            "192.0.2.10",
+        ),
+        (
+            {
+                "name": "eth1",
+                "role": "management",
+                "mode": "access",
+                "admin_state": "up",
+                "ipv4_method": "static",
+                "ip_cidr": "198.51.100.10/24",
+                "ipv6_enabled": "true",
+                "ipv6_cidr": "",
+            },
+            "inet6",
+            "2001:db8::10",
+        ),
+    ],
+)
+def test_management_handoff_accepts_unchanged_dynamic_address(
+    monkeypatch,
+    tmp_path,
+    row,
+    family,
+    address,
+):
+    """Accept an existing dynamic lease during an unrelated protected change."""
+    helper = load_helper_module()
+    network_path = tmp_path / "atlaso-network.conf"
+    network_path.write_text("candidate\n", encoding="utf-8")
+    monkeypatch.setattr(helper, "_parse_network_config", lambda _path: ([row], [], []))
+    observed = json.dumps(
+        [{"addr_info": [{"family": family, "scope": "global", "local": address}]}]
+    )
+    monkeypatch.setattr(
+        helper,
+        "_run",
+        lambda command: subprocess.CompletedProcess(command, 0, observed, ""),
+    )
+
+    addresses = helper._management_handoff_addresses(
+        network_path,
+        previous_addresses={address},
+        previous_dynamic_families={("eth1", family)},
+        discovery_attempts=1,
+    )
+
+    expected = ["198.51.100.10", address] if family == "inet6" else [address]
+    assert addresses == expected
+
+
+@pytest.mark.parametrize(
     ("row", "observed_family", "expected_label"),
     [
         (
@@ -1458,6 +1521,61 @@ def test_interrupted_management_handoff_recovers_old_path(monkeypatch, tmp_path,
     assert payload["readiness"] == "old-ready"
 
 
+def test_interrupted_management_handoff_reports_cleanup_failure(monkeypatch, tmp_path, capsys):
+    """Keep recovery failed when rollback-state durability cannot be proven."""
+    helper = load_helper_module()
+    state_path = tmp_path / "state.json"
+    state_path.write_text('{"phase":"candidate-ready"}', encoding="utf-8")
+    monkeypatch.setattr(helper, "MANAGEMENT_HANDOFF_STATE_PATH", state_path)
+    monkeypatch.setattr(helper, "_quiesce_management_handoff_apply", lambda: {"state": "inactive"})
+    monkeypatch.setattr(helper, "_restore_management_handoff", lambda _state: {"readiness": "old-ready"})
+    monkeypatch.setattr(
+        helper,
+        "_clear_management_handoff_state",
+        lambda: (_ for _ in ()).throw(OSError("directory sync failed")),
+    )
+
+    assert helper._recover_management_handoff() == 1
+    payload = json.loads(capsys.readouterr().err.splitlines()[-1])
+    assert payload["management_handoff"] == "rollback incomplete"
+    assert payload["failing_layer"] == "interruption recovery"
+    assert "rollback state cleanup failed" in payload["error"]
+
+
+def test_management_handoff_state_cleanup_is_durable(monkeypatch, tmp_path):
+    """Sync marker, backup, holdover, and state-directory removals."""
+    helper = load_helper_module()
+    state_dir = tmp_path / "state"
+    backup_dir = state_dir / "backup"
+    networkd_dir = tmp_path / "networkd"
+    state_dir.mkdir()
+    backup_dir.mkdir()
+    networkd_dir.mkdir()
+    state_path = state_dir / "state.json"
+    commit_path = state_dir / "last-commit.json"
+    holdover_path = networkd_dir / f"{helper.MANAGEMENT_HANDOFF_HOLDOVER_PREFIX}eth0.network"
+    state_path.write_text("{}\n", encoding="utf-8")
+    commit_path.write_text("{}\n", encoding="utf-8")
+    (backup_dir / "000.bin").write_bytes(b"backup")
+    holdover_path.write_text("holdover\n", encoding="utf-8")
+    synced: list[Path] = []
+    monkeypatch.setattr(helper, "MANAGEMENT_HANDOFF_STATE_DIR", state_dir)
+    monkeypatch.setattr(helper, "MANAGEMENT_HANDOFF_STATE_PATH", state_path)
+    monkeypatch.setattr(helper, "MANAGEMENT_HANDOFF_BACKUP_DIR", backup_dir)
+    monkeypatch.setattr(helper, "MANAGEMENT_HANDOFF_COMMIT_PATH", commit_path)
+    monkeypatch.setattr(helper, "NETWORKD_CONFIG_DIR", networkd_dir)
+    monkeypatch.setattr(helper, "_fsync_directory", lambda path: synced.append(path))
+
+    helper._clear_management_handoff_state()
+
+    assert not state_dir.exists()
+    assert not holdover_path.exists()
+    assert synced[0] == state_dir
+    assert state_dir in synced
+    assert networkd_dir in synced
+    assert tmp_path in synced
+
+
 def test_management_handoff_recovery_stops_surviving_apply_unit(monkeypatch):
     """Serialize startup rollback against a transient helper that outlived Atlaso.
 
@@ -1575,6 +1693,37 @@ def test_management_handoff_acknowledgement_is_durable_and_idempotent(monkeypatc
     assert helper._acknowledge_management_handoff("job-435") == 0
     second = json.loads(capsys.readouterr().out.splitlines()[-1])
     assert second["management_handoff"] == "already committed"
+
+
+def test_management_handoff_acknowledgement_reports_cleanup_failure(monkeypatch, tmp_path, capsys):
+    """Report a durable receipt without claiming incomplete cleanup succeeded."""
+    helper = load_helper_module()
+    state_path = tmp_path / "state.json"
+    receipt_path = tmp_path / "last-commit.json"
+    state_path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "job_id": "job-435",
+                "phase": "awaiting-application-commit",
+                "candidate_addresses": ["198.51.100.10"],
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(helper, "MANAGEMENT_HANDOFF_STATE_PATH", state_path)
+    monkeypatch.setattr(helper, "MANAGEMENT_HANDOFF_COMMIT_PATH", receipt_path)
+    monkeypatch.setattr(
+        helper,
+        "_clear_management_handoff_state",
+        lambda **_kwargs: (_ for _ in ()).throw(OSError("directory sync failed")),
+    )
+
+    assert helper._acknowledge_management_handoff("job-435") == 1
+    assert json.loads(receipt_path.read_text(encoding="utf-8"))["phase"] == "committed"
+    payload = json.loads(capsys.readouterr().err.splitlines()[-1])
+    assert payload["management_handoff"] == "acknowledgement failed"
+    assert "commit receipt is durable" in payload["error"]
 
 
 def test_appliance_power_helper_schedules_reboot(monkeypatch):

@@ -309,6 +309,14 @@ def test_management_handoff_timeout_stops_and_recovers_indeterminate_helper(monk
     manifest = json.loads(staged[str(ui.MANAGEMENT_HANDOFF_STAGED_MANIFEST_PATH)])
     assert manifest["previous_management_interfaces"] == ["eth0.20"]
     assert manifest["previous_management_parent_interfaces"] == ["eth0"]
+    assert manifest["previous_management_paths"] == [
+        {
+            "name": "eth0.20",
+            "ipv4_method": "",
+            "ipv6_enabled": "",
+            "ipv6_cidr": "",
+        }
+    ]
 
 
 def test_management_handoff_settings_baseline_ignores_only_applied_front_door_fields():

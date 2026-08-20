@@ -12585,6 +12585,15 @@ def execute_management_handoff(
             "previous_management_interfaces": previous_interfaces,
             "previous_management_parent_interfaces": previous_parent_interfaces,
             "previous_management_addresses": list(dict.fromkeys(previous_addresses)),
+            "previous_management_paths": [
+                {
+                    "name": str(path.get("name") or ""),
+                    "ipv4_method": str(path.get("ipv4_method") or ""),
+                    "ipv6_enabled": str(path.get("ipv6_enabled") or ""),
+                    "ipv6_cidr": str(path.get("ipv6_cidr") or ""),
+                }
+                for path in previous_paths
+            ],
             "previous_https_enabled": bool(
                 previous_settings.get("management_https_enabled", True)
             ),
