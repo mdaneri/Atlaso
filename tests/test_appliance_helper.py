@@ -6728,12 +6728,13 @@ def test_appliance_settings_helper_accepts_dhcp_resolver_mode(tmp_path):
     assert errors == []
 
 
-def test_appliance_settings_helper_writes_management_nginx_proxy(monkeypatch, tmp_path):
+def test_appliance_settings_helper_writes_management_nginx_proxy(monkeypatch, tmp_path, capsys):
     """Verify that appliance settings helper writes management nginx proxy.
 
     Args:
         monkeypatch: Pytest fixture used to replace dependencies for the test.
         tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+        capsys: Pytest fixture used to capture helper output.
     """
     helper = load_helper_module()
     apply_dir = tmp_path / "apply" / "appliance-settings"
@@ -6851,6 +6852,25 @@ def test_appliance_settings_helper_writes_management_nginx_proxy(monkeypatch, tm
     assert ["/usr/sbin/sshd", "-t"] in commands
     assert ["systemctl", "restart", "sshd"] in commands
     assert any(command[:5] == ["/usr/bin/systemd-run", "--quiet", "--collect", "--on-active=3", "--unit=atlaso-management-ui-restart"] for command in commands)
+    apply_payload = next(
+        json.loads(line)
+        for line in reversed(capsys.readouterr().out.splitlines())
+        if line.startswith("{") and "apply complete" in line
+    )
+    assert apply_payload["management_status_transition"] == {
+        "kind": "planned_service_restart",
+        "restart_delay_seconds": 3,
+    }
+
+    commands.clear()
+    assert helper._handle_appliance_settings("apply", [str(config_path)]) == 0
+    repeat_payload = next(
+        json.loads(line)
+        for line in reversed(capsys.readouterr().out.splitlines())
+        if line.startswith("{") and "apply complete" in line
+    )
+    assert "management_status_transition" not in repeat_payload
+    assert not any("atlaso-management-ui-restart" in command for command in commands)
 
 
 def test_appliance_settings_helper_writes_http_management_proxy_without_https(monkeypatch, tmp_path):

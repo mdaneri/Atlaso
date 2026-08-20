@@ -94,7 +94,7 @@
     const settingsStep = Array.isArray(task?._children)
       ? task._children.find((step) => step?.component_key === "appliance_settings")
       : null;
-    if (!settingsStep || !["running", "succeeded"].includes(String(settingsStep.status || ""))) return null;
+    if (!settingsStep || String(settingsStep.status || "") !== "succeeded") return null;
     const graceSeconds = Number(transition.grace_seconds);
     const restartDelaySeconds = Number(transition.restart_delay_seconds);
     if (!Number.isFinite(graceSeconds) || graceSeconds <= 0) return null;

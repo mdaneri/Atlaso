@@ -47,16 +47,16 @@ The browser permits only one status request at a time, polls active work every t
 polling from ten to sixty seconds, suspends polling while hidden, and refreshes immediately after successful desired-
 state mutations, visibility return, and Apply completion. Once a master task is observed, the browser retains its ID
 until `/ui/management/tasks/<id>/status` returns a valid terminal task. A transient status or terminal-follow-up failure
-keeps the global lock visible and retries at the two-second active cadence. A real task containing Appliance Settings
-persists `management_status_transition` before execution. Once that child is `running`, the monitor permits at most 15
-seconds of neutral **reconnecting to task status** presentation. After the child succeeds, the server-owned contract
-covers the helper's three-second delayed restart plus the 15-second recovery grace. A successful status response at or
-after the scheduled restart instant, or recovery after an observed outage, consumes that one-time window so a later
-unrelated failure returns to the actionable warning. Task timestamps are normalized to explicit UTC offsets before the
-browser calculates that boundary, so the grace remains the same in every browser timezone. The same contract applies to
-forced-real tasks created by the local appliance console. It does not apply while that child is pending, to dry-run tasks,
-or to tasks without complete transition metadata. Continued failure after the grace window and every unexpected failure
-use the actionable availability warning.
+keeps the global lock visible and retries at the two-second active cadence. A real Appliance Settings helper result adds
+`management_status_transition` only after `systemd-run` accepts the delayed restart; an idempotent apply that does not
+schedule a restart carries no transition. Once that child is `succeeded` with the confirmed context, the monitor permits
+at most 15 seconds of neutral **reconnecting to task status** presentation around the helper's three-second delayed
+restart. A successful status response at or after the scheduled restart instant, or recovery after an observed outage,
+consumes that one-time window so a later unrelated failure returns to the actionable warning. Task timestamps are
+normalized to explicit UTC offsets before the browser calculates that boundary, so the grace remains the same in every
+browser timezone. The same result-driven contract applies to forced-real tasks created by the local appliance console. It
+does not apply while that child is pending or running, to dry-run tasks, or to tasks without complete transition metadata.
+Continued failure after the grace window and every unexpected failure use the actionable availability warning.
 Successful reconciliation clears either notice and converges the modal, sidebar badge, pending count, and lock from the
 authoritative status and task responses. Terminal task state is sticky so an older in-flight `pending` or `running`
 response cannot replace a newer `succeeded`, `failed`, or `cancelled` result. If another session starts a new Apply

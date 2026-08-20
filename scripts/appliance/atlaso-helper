@@ -5457,7 +5457,7 @@ def _management_nginx_config(payload: dict, cert_path: Path | None = None, key_p
     return "\n".join(lines)
 
 
-def _configure_atlaso_management_https(payload: dict) -> int:
+def _configure_atlaso_management_https(payload: dict) -> tuple[int, int | None]:
     """Perform configure atlaso management HTTPS.
 
     Args:
@@ -5475,7 +5475,7 @@ def _configure_atlaso_management_https(payload: dict) -> int:
         _grant_atlaso_service_key_read(key_path)
     site_apply = _install_nginx_site(NGINX_MANAGEMENT_SITE_PATH, _management_nginx_config(payload, cert_path, key_path))
     if site_apply != 0:
-        return site_apply
+        return site_apply, None
     next_text = _atlaso_service_loopback_dropin(upstream_host, port)
     ATLASO_SERVICE_DROPIN_DIR.mkdir(parents=True, exist_ok=True)
     current_text = ATLASO_SERVICE_HTTPS_DROPIN_PATH.read_text(encoding="utf-8") if ATLASO_SERVICE_HTTPS_DROPIN_PATH.exists() else ""
@@ -5486,13 +5486,13 @@ def _configure_atlaso_management_https(payload: dict) -> int:
         tmp_target.replace(ATLASO_SERVICE_HTTPS_DROPIN_PATH)
         changed = True
     if not changed:
-        return 0
+        return 0, None
 
     daemon_reload = _run(["systemctl", "daemon-reload"])
     print(daemon_reload.stdout, end="")
     print(daemon_reload.stderr, end="", file=sys.stderr)
     if daemon_reload.returncode != 0:
-        return daemon_reload.returncode
+        return daemon_reload.returncode, None
 
     restart_command = ["systemctl", "restart", "atlaso.service"]
     systemd_run = shutil.which("systemd-run")
@@ -5510,7 +5510,8 @@ def _configure_atlaso_management_https(payload: dict) -> int:
     result = _run(command)
     print(result.stdout, end="")
     print(result.stderr, end="", file=sys.stderr)
-    return result.returncode
+    restart_delay_seconds = 3 if systemd_run is not None and result.returncode == 0 else None
+    return result.returncode, restart_delay_seconds
 
 
 def _root_ssh_config(enabled: bool) -> str:
@@ -5907,28 +5908,31 @@ def _handle_appliance_settings(action: str, args: list[str]) -> int:
     vcfdt_ceip, vcfdt_ceip_status = _apply_vcf_download_tool_ceip(vmware_ceip_enabled)
     if vcfdt_ceip != 0:
         return vcfdt_ceip
-    management_https = _configure_atlaso_management_https(payload)
+    management_https, management_restart_delay_seconds = _configure_atlaso_management_https(payload)
     if management_https != 0:
         return management_https
+    result_payload = {
+        "appliance_settings": "apply complete",
+        "fqdn": fqdn,
+        "management_https_enabled": bool(payload.get("management_https_enabled")),
+        "root_ssh_enabled": bool(payload.get("root_ssh_enabled")),
+        "web_terminal_enabled": bool(payload.get("web_terminal_enabled")),
+        "web_terminal_interfaces": payload.get("web_terminal_interfaces") or [],
+        "vmware_ceip_enabled": vmware_ceip_enabled,
+        "vmware_ceip_products": {
+            "vcf_powercli": powercli_ceip_status,
+            "vcf_download_tool": vcfdt_ceip_status,
+        },
+        "resolver_mode": resolver_mode,
+        "resolver_servers": resolver_servers,
+    }
+    if management_restart_delay_seconds is not None:
+        result_payload["management_status_transition"] = {
+            "kind": "planned_service_restart",
+            "restart_delay_seconds": management_restart_delay_seconds,
+        }
     print(
-        json.dumps(
-            {
-                "appliance_settings": "apply complete",
-                "fqdn": fqdn,
-                "management_https_enabled": bool(payload.get("management_https_enabled")),
-                "root_ssh_enabled": bool(payload.get("root_ssh_enabled")),
-                "web_terminal_enabled": bool(payload.get("web_terminal_enabled")),
-                "web_terminal_interfaces": payload.get("web_terminal_interfaces") or [],
-                "vmware_ceip_enabled": vmware_ceip_enabled,
-                "vmware_ceip_products": {
-                    "vcf_powercli": powercli_ceip_status,
-                    "vcf_download_tool": vcfdt_ceip_status,
-                },
-                "resolver_mode": resolver_mode,
-                "resolver_servers": resolver_servers,
-            },
-            sort_keys=True,
-        )
+        json.dumps(result_payload, sort_keys=True)
     )
     return 0
 

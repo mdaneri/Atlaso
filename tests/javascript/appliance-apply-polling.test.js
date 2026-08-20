@@ -202,10 +202,13 @@ test("retries a transient terminal reconciliation failure at the active interval
 });
 
 test("uses a neutral bounded reconnect state for a planned management restart", async () => {
+  let now = 1000;
+  const confirmedTask = plannedRestartTask("succeeded");
+  confirmedTask._children[0].finished_at = new Date(now).toISOString().replace("Z", "+00:00");
   const statusPayloads = [
-    { active_task: plannedRestartTask(), pending_count: 0 },
+    { active_task: confirmedTask, pending_count: 0 },
     new Error("front door restarting"),
-    { active_task: plannedRestartTask("succeeded"), pending_count: 0 },
+    { active_task: confirmedTask, pending_count: 0 },
     new Error("later unexpected outage"),
   ];
   const state = monitorHarness({
@@ -214,30 +217,69 @@ test("uses a neutral bounded reconnect state for a planned management restart", 
       if (payload instanceof Error) throw payload;
       return payload;
     },
-    requestTask: async () => plannedRestartTask("succeeded"),
+    requestTask: async () => confirmedTask,
+    now: () => now,
   });
 
   await state.monitor.refresh();
+  now = 2000;
   await state.timers.at(-1).callback();
 
   assert.equal(state.errorStates[0].expectedReconnect, true);
-  assert.equal(state.errorStates[0].reconnectGraceMs, 15000);
+  assert.equal(state.errorStates[0].reconnectGraceMs, 18000);
   assert.equal(state.ui.pollNotice, "reconnecting");
   assert.equal(state.ui.pollTone, "neutral");
   assert.equal(state.ui.modalStatus, "running");
   assert.equal(state.ui.locked, true);
   assert.equal(state.monitor.trackedJobId(), "job-1");
 
+  now = 5000;
   await state.timers.at(-1).callback();
   assert.equal(state.ui.pollNotice, "");
   assert.equal(state.ui.pollTone, "");
   assert.equal(state.ui.modalStatus, "running");
   assert.equal(state.ui.locked, true);
 
+  now = 6000;
   await state.timers.at(-1).callback();
   assert.equal(state.errorStates[1].expectedReconnect, false);
   assert.equal(state.ui.pollNotice, "unavailable");
   assert.equal(state.ui.pollTone, "warning");
+});
+
+test("does not spend confirmed restart grace on a failure while settings are running", async () => {
+  let now = 1000;
+  const runningTask = plannedRestartTask();
+  const confirmedTask = plannedRestartTask("succeeded");
+  confirmedTask._children[0].finished_at = new Date(3000).toISOString().replace("Z", "+00:00");
+  const statusPayloads = [
+    { active_task: runningTask, pending_count: 0 },
+    new Error("transient failure before restart scheduling"),
+    { active_task: confirmedTask, pending_count: 0 },
+    new Error("confirmed scheduled restart"),
+  ];
+  const state = monitorHarness({
+    requestStatus: async () => {
+      const payload = statusPayloads.shift();
+      if (payload instanceof Error) throw payload;
+      return payload;
+    },
+    requestTask: async () => confirmedTask,
+    now: () => now,
+  });
+
+  await state.monitor.refresh();
+  now = 2000;
+  await state.timers.at(-1).callback();
+  assert.equal(state.errorStates[0].expectedReconnect, false);
+  assert.equal(state.ui.pollTone, "warning");
+
+  now = 3000;
+  await state.timers.at(-1).callback();
+  now = 5000;
+  await state.timers.at(-1).callback();
+  assert.equal(state.errorStates[1].expectedReconnect, true);
+  assert.equal(state.ui.pollTone, "neutral");
 });
 
 test("keeps reconnect grace through the delayed restart after settings success", async () => {
@@ -318,12 +360,14 @@ test("consumes unused grace after a successful poll beyond the scheduled restart
 
 test("escalates a planned reconnect after its grace window", async () => {
   let now = 1000;
+  const confirmedTask = plannedRestartTask("succeeded");
+  confirmedTask._children[0].finished_at = new Date(now).toISOString().replace("Z", "+00:00");
   const state = monitorHarness({
     requestStatus: async () => {
-      if (!state.monitor.trackedJobId()) return { active_task: plannedRestartTask(), pending_count: 0 };
+      if (!state.monitor.trackedJobId()) return { active_task: confirmedTask, pending_count: 0 };
       throw new Error("front door still unavailable");
     },
-    requestTask: async () => plannedRestartTask(),
+    requestTask: async () => confirmedTask,
     now: () => now,
   });
 
@@ -332,10 +376,10 @@ test("escalates a planned reconnect after its grace window", async () => {
   assert.equal(state.errorStates[0].expectedReconnect, true);
   assert.equal(state.ui.pollTone, "neutral");
 
-  now += 16000;
+  now += 19000;
   await state.timers.at(-1).callback();
   assert.equal(state.errorStates[1].expectedReconnect, false);
-  assert.equal(state.errorStates[1].reconnectElapsedMs, 16000);
+  assert.equal(state.errorStates[1].reconnectElapsedMs, 19000);
   assert.equal(state.ui.pollNotice, "unavailable");
   assert.equal(state.ui.pollTone, "warning");
   assert.equal(state.ui.modalStatus, "running");

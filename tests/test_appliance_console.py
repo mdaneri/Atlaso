@@ -1525,8 +1525,8 @@ def test_forced_real_apply_seam_rejects_non_console_jobs(client):
         run_appliance_apply_job("job_not_console", force_real=True)
 
 
-def test_console_settings_apply_persists_management_restart_context(client, monkeypatch):
-    """Verify forced-real console tasks expose the shared planned restart contract.
+def test_console_settings_apply_does_not_predict_management_restart(client, monkeypatch):
+    """Verify forced-real console tasks wait for helper restart confirmation.
 
     Args:
         client: HTTP test client used to initialize an isolated database.
@@ -1573,11 +1573,7 @@ def test_console_settings_apply_persists_management_restart_context(client, monk
 
     appliance_console._submit_console_apply({"appliance_settings"})
 
-    assert captured_results[0]["management_status_transition"] == {
-        "kind": "planned_service_restart",
-        "restart_delay_seconds": 3,
-        "grace_seconds": 15,
-    }
+    assert "management_status_transition" not in captured_results[0]
 
 
 def test_console_vcf_apply_waits_for_the_complete_download_queue(client):

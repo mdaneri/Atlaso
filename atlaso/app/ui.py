@@ -8985,27 +8985,39 @@ APPLIANCE_APPLY_UNIT_IDS = {
 }
 
 
-def appliance_apply_management_status_transition(
-    selected_unit_ids: set[str],
-    *,
-    dry_run: bool,
-) -> dict[str, Any] | None:
-    """Describe the bounded status interruption expected from real Appliance Settings apply.
+def appliance_settings_management_status_transition(results: list[Any]) -> dict[str, Any] | None:
+    """Return the bounded status transition confirmed by the Appliance Settings helper.
 
     Args:
-        selected_unit_ids: Apply units selected for the master task.
-        dry_run: Whether adapters only record command intent.
+        results: Adapter results returned by Appliance Settings validation and apply.
 
     Returns:
-        Durable reconnect metadata for a real management-service transition, if applicable.
+        Durable reconnect metadata only when the real helper scheduled the restart.
     """
-    if dry_run or "appliance_settings" not in selected_unit_ids:
-        return None
-    return {
-        "kind": "planned_service_restart",
-        "restart_delay_seconds": APPLIANCE_APPLY_MANAGEMENT_RESTART_DELAY_SECONDS,
-        "grace_seconds": APPLIANCE_APPLY_MANAGEMENT_RECONNECT_GRACE_SECONDS,
-    }
+    for result in reversed(results):
+        if result.dry_run or result.returncode != 0:
+            continue
+        for line in reversed(str(result.stdout or "").splitlines()):
+            try:
+                payload = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            transition = payload.get("management_status_transition") if isinstance(payload, dict) else None
+            if not isinstance(transition, dict) or transition.get("kind") != "planned_service_restart":
+                continue
+            restart_delay_seconds = transition.get("restart_delay_seconds")
+            if (
+                not isinstance(restart_delay_seconds, int)
+                or isinstance(restart_delay_seconds, bool)
+                or restart_delay_seconds != APPLIANCE_APPLY_MANAGEMENT_RESTART_DELAY_SECONDS
+            ):
+                continue
+            return {
+                "kind": "planned_service_restart",
+                "restart_delay_seconds": restart_delay_seconds,
+                "grace_seconds": APPLIANCE_APPLY_MANAGEMENT_RECONNECT_GRACE_SECONDS,
+            }
+    return None
 
 
 SECRET_LINE_PATTERN = re.compile(
@@ -12267,7 +12279,7 @@ def execute_appliance_apply_unit(
             recovery_archive.state = "applied"
             recovery_archive.applied_at = utcnow()
             clear_ldap_recovery_payload(recovery_archive)
-    return {
+    unit_result = {
         "unit_id": unit_id,
         "label": unit["label"],
         "status": JobStatus.SUCCEEDED.value if succeeded else JobStatus.FAILED.value,
@@ -12283,6 +12295,11 @@ def execute_appliance_apply_unit(
         "config_preview": unit["config_preview"],
         "config_diff": unit["config_diff"],
     }
+    if unit_id == "appliance_settings":
+        management_status_transition = appliance_settings_management_status_transition(results)
+        if management_status_transition is not None:
+            unit_result["management_status_transition"] = management_status_transition
+    return unit_result
 
 
 def update_appliance_apply_baselines(db: Session, units: list[dict[str, Any]], selected_ids: set[str]) -> None:
@@ -14141,6 +14158,9 @@ def run_appliance_apply_job(job_id: str, *, force_real: bool = False) -> None:
                 result = _redact_task_value(result)
                 db.refresh(job)
                 current_payload = _job_payload(job)
+                management_status_transition = result.get("management_status_transition")
+                if unit["id"] == "appliance_settings" and isinstance(management_status_transition, dict):
+                    current_payload["management_status_transition"] = management_status_transition
                 unit_results.append(result)
                 step.result = json.dumps(result, indent=2, sort_keys=True)
                 step.status = JobStatus.SUCCEEDED.value if result["success"] else JobStatus.FAILED.value
@@ -14645,12 +14665,6 @@ def _submit_appliance_apply(
         "format_authorizations": [],
         "refresh_vcf_depot_software_depot_id": refresh_vcf_depot_software_depot_id,
     }
-    management_status_transition = appliance_apply_management_status_transition(
-        selected_ids,
-        dry_run=job_result["dry_run"],
-    )
-    if management_status_transition is not None:
-        job_result["management_status_transition"] = management_status_transition
     vcf_depot_submit_guard = VCF_DEPOT_SUBMIT_LOCK if "vcf_offline_depot" in selected_ids else nullcontext()
     with vcf_depot_submit_guard, APPLIANCE_APPLY_SUBMIT_LOCK:
         db.expire_all()

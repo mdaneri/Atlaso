@@ -9,9 +9,9 @@ Authenticated pages share a lightweight, visibility-aware Appliance Apply status
 validation continue to reconcile live host state, while idle sidebar polling never starts privileged helper work. The
 shared task monitor retries transient status failures, follows a completed master to its terminal task record, and keeps
 the modal, sidebar, pending count, and global lock synchronized without requiring a page reload. It completes a retained
-task's terminal refresh before following a newer Apply started by another session. A real Appliance Settings task marks
-its planned management-service restart so the monitor can show a short neutral reconnecting state before escalating a
-persisting or unexpected outage to the ordinary availability warning.
+task's terminal refresh before following a newer Apply started by another session. When the real Appliance Settings
+helper confirms that it scheduled a management-service restart, the task exposes that event so the monitor can show a
+short neutral reconnecting state before escalating a persisting or unexpected outage to the ordinary availability warning.
 
 ![Atlaso — Everything your virtualization lab needs](docs/assets/brand/atlaso-docs-header-dark-1600x400.png)
 
