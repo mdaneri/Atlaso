@@ -208,7 +208,8 @@ the Atlaso-owned networkd, nftables, nginx, certificate, and related runtime fil
 syncs every backup file and the backup directory before publishing the rollback marker,
 and merges global runtime addresses from every previous management interface with the configured addresses before it
 installs temporary higher-priority networkd holdovers for the previous management links. Those holdovers retain DHCP
-state and IPv6 router-advertisement acceptance so dynamic old-path addresses remain owned until retirement. Flagged
+state and IPv6 router-advertisement acceptance so dynamic old-path addresses remain owned until retirement, without
+letting a previous disabled-RA state override candidate SLAAC acquisition. Flagged
 access physical listeners also preserve their real DHCP/static method when the resolver fallback is selected. It then
 applies the candidate network and a transitional firewall that admits both previous and candidate management
 addresses. If the
@@ -244,7 +245,7 @@ path retires. A second
 readiness pass protects retirement. Any validation, mutation, service, probe, or retirement failure restores every
 captured file, reloads networkd and nftables, restores the captured live MTU on every pre-existing candidate VLAN,
 reconfigures previous links, reloads nginx, and restarts Atlaso when the
-captured state requires it. Each captured artifact and later runtime layer is restored independently; one unreadable
+captured state requires it. Each captured artifact, link, and later runtime layer is restored independently; one unreadable
 backup is reported as an incomplete rollback but does not prevent restoration attempts for the remaining network,
 firewall, nginx, Atlaso, and readiness layers. Rollback explicitly reconfigures every pre-existing candidate link and
 removes a

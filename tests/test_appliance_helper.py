@@ -264,6 +264,9 @@ Gateway=198.51.100.1
     assert "Gateway=192.0.2.1" in transitional
     assert "Gateway=198.51.100.1" in transitional
     assert transitional.rfind("IPv6AcceptRA=yes") > transitional.rfind("IPv6AcceptRA=no")
+    reverse_transitional = helper._networkd_handoff_text(candidate, previous)
+    assert "IPv6AcceptRA=yes" in reverse_transitional
+    assert "IPv6AcceptRA=no" not in reverse_transitional
 
 
 def test_management_handoff_rollback_continues_after_missing_snapshot(monkeypatch, tmp_path):
@@ -485,6 +488,54 @@ def test_management_handoff_snapshot_captures_existing_vlan_mtu(monkeypatch, tmp
 
     assert vlans == ["eth0.20"]
     assert states["eth0.20"] == {"existed": True, "admin_up": True, "mtu": 1500}
+
+
+def test_management_handoff_link_rollback_continues_after_reconfigure_failure(monkeypatch, tmp_path):
+    """Restore every old link after an unrelated candidate reconfigure failure.
+
+    Args:
+        monkeypatch: Pytest fixture used to inject a candidate link failure.
+        tmp_path: Temporary networkd directory used by the rollback.
+    """
+    helper = load_helper_module()
+    networkd = tmp_path / "networkd"
+    networkd.mkdir()
+    commands: list[list[str]] = []
+    monkeypatch.setattr(helper, "NETWORKD_CONFIG_DIR", networkd)
+    monkeypatch.setattr(helper, "_link_exists", lambda _interface: True)
+
+    def run(command):
+        """Fail the unrelated candidate parent and accept every later command.
+
+        Args:
+            command: Simulated rollback command.
+        """
+        commands.append(command)
+        return subprocess.CompletedProcess(
+            command,
+            1 if command == ["networkctl", "reconfigure", "eth0"] else 0,
+            "",
+            "",
+        )
+
+    monkeypatch.setattr(helper, "_run", run)
+    state = {
+        "previous_management_interfaces": ["eth1", "eth2"],
+        "candidate_physical_interfaces": ["eth0"],
+        "candidate_vlan_interfaces": ["eth0.300"],
+        "candidate_link_states": {
+            "eth0": {"existed": True, "admin_up": False, "mtu": 1500},
+            "eth0.300": {"existed": False, "admin_up": False, "mtu": None},
+        },
+    }
+
+    with pytest.raises(ValueError, match=r"candidate parent eth0 reconfigure failed"):
+        helper._restore_management_handoff_links(state, [])
+
+    assert ["ip", "link", "delete", "dev", "eth0.300"] in commands
+    assert ["networkctl", "reconfigure", "eth1"] in commands
+    assert ["networkctl", "reconfigure", "eth2"] in commands
+    assert ["ip", "link", "set", "dev", "eth0", "down"] in commands
 
 
 def test_management_handoff_rollback_reverts_candidate_resolver(monkeypatch):
