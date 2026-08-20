@@ -47,6 +47,10 @@ from atlaso.app.services.esxi_pxe import (
     validate_kickstart_custom_references,
     validate_kickstart_vault_references,
 )
+from atlaso.app.services.network_boot import (
+    lock_esxi_host_reference_lifecycle,
+    remove_esxi_host_discovery_state,
+)
 from atlaso.app.ui_routes import MANAGEMENT_UI_ROOT
 
 Endpoint = Callable[..., Any]
@@ -1127,6 +1131,7 @@ def build_router(dependencies: NetworkBootUiDependencies) -> NetworkBootUiRouter
         """
         require_esxi_pxe_write(identity)
         verify_csrf(request, csrf)
+        lock_esxi_host_reference_lifecycle(db)
         normalized_kickstart_id = parse_optional_esxi_kickstart_id(db, kickstart_id)
         try:
             normalized_mac = normalize_host_mac(mac_address)
@@ -1218,6 +1223,7 @@ def build_router(dependencies: NetworkBootUiDependencies) -> NetworkBootUiRouter
         """
         require_esxi_pxe_write(identity)
         verify_csrf(request, csrf)
+        lock_esxi_host_reference_lifecycle(db)
         host = db.get(EsxiPxeHost, host_id)
         if not host:
             raise HTTPException(status_code=404, detail="ESXi PXE host not found")
@@ -1325,6 +1331,7 @@ def build_router(dependencies: NetworkBootUiDependencies) -> NetworkBootUiRouter
     def delete_esxi_pxe_host_from_ui(
         host_id: int,
         request: Request,
+        remove_discovered_host: bool = Form(False),
         csrf: str = Form(...),
         identity: Identity = Depends(require_session_identity),
         db: Session = Depends(get_db),
@@ -1334,6 +1341,7 @@ def build_router(dependencies: NetworkBootUiDependencies) -> NetworkBootUiRouter
         Args:
             host_id: Identifier of the host.
             request: Incoming HTTP request.
+            remove_discovered_host: Also remove matching discovered-host inventory state.
             csrf: Validated CSRF token authorizing the request.
             identity: Authenticated identity authorizing the request.
             db: Active database session.
@@ -1346,21 +1354,36 @@ def build_router(dependencies: NetworkBootUiDependencies) -> NetworkBootUiRouter
         """
         require_esxi_pxe_write(identity)
         verify_csrf(request, csrf)
+        lock_esxi_host_reference_lifecycle(db)
         host = db.get(EsxiPxeHost, host_id)
         if not host:
             raise HTTPException(status_code=404, detail="ESXi PXE host not found")
         hostname = host.hostname
+        removal_counts = {
+            "discovered_hosts_removed": 0,
+            "commands": 0,
+            "sessions": 0,
+            "reports": 0,
+        }
+        if remove_discovered_host:
+            try:
+                removal_counts = remove_esxi_host_discovery_state(db, host)
+            except ValueError as exc:
+                raise HTTPException(status_code=409, detail=str(exc)) from exc
         host.ip_address = ""
         sync_esxi_pxe_host_network_records(db, host, esxi_pxe_boot_settings(db))
         db.delete(host)
-        db.commit()
         record_audit(
             db,
             actor=identity.username,
             action="delete_esxi_pxe_host",
             resource_type="esxi_pxe_host",
             resource_id=str(host_id),
-            detail=f"hostname={hostname}",
+            detail=(
+                f"hostname={hostname}; discovered_hosts_removed={removal_counts['discovered_hosts_removed']}; "
+                f"reports={removal_counts['reports']}; sessions={removal_counts['sessions']}; "
+                f"commands={removal_counts['commands']}"
+            ),
             request_id=request.state.request_id,
         )
         return RedirectResponse("/esxi-pxe#esxi-pxe-hosts", status_code=303)

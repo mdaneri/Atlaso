@@ -399,7 +399,22 @@ The following cross-cutting boundaries always apply:
   send with no retries, and no claim that the host powered on. Keep discovered
   hosts live-refreshed while visible, expose ESXi assignment details by
   normalized reported MAC, and use the shared grid/wizard foundations for Host
-  Reference variables and ESX installer ISO intake.
+  Reference variables and ESX installer ISO intake. Never delete an assigned
+  discovered host directly: remove its ESXi Host Reference first, retaining the
+  discovery record by default and removing its commands, sessions, reports,
+  and host row only through the explicit associated-discovery option. Keep
+  Host Reference association IDs synchronized during live discovery refresh,
+  and reject associated-discovery cleanup while another Host Reference still
+  owns any reported MAC for that discovery. Serialize every Host Reference
+  write, settings-archive restore, and factory reset with inventory report
+  mutation, direct discovery deletion, associated-discovery cleanup, and
+  automatic capacity pruning so every assignment snapshot remains valid
+  through commit.
+  Protect assigned discoveries and
+  all of their retained reports from automatic capacity pruning; reject new
+  report admission as retryable when live or assigned state alone fills either
+  global storage limit. Expose the same retain-or-clean-up lifecycle through
+  the scoped `/api/v1` Host Reference deletion operation.
 - Windows Inventory Linux and Photon builds select the dedicated `Atlaso-Build` WSL distribution by default. WSL is a
   pre-existing host prerequisite: ordinary builds must never install or configure WSL, create a missing distribution,
   change the default distribution, elevate, reboot, or remove a distribution. Keep the pinned setup contract, explicit

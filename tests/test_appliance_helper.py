@@ -346,22 +346,58 @@ def test_management_handoff_rollback_restores_candidate_links(monkeypatch, tmp_p
     evidence: list[dict[str, object]] = []
     helper._restore_management_handoff_links(
         {
-            "previous_management_interfaces": ["eth0"],
+            "previous_management_interfaces": ["eth0", "eth1.200"],
             "candidate_physical_interfaces": ["eth1"],
-            "candidate_vlan_interfaces": ["eth1.200"],
+            "candidate_vlan_interfaces": ["eth1.200", "eth1.300"],
             "candidate_link_states": {
-                "eth1": {"existed": True, "admin_up": False},
-                "eth1.200": {"existed": False, "admin_up": False},
+                "eth1": {"existed": True, "admin_up": False, "mtu": 1500},
+                "eth1.200": {"existed": True, "admin_up": True, "mtu": 1500},
+                "eth1.300": {"existed": False, "admin_up": False, "mtu": None},
             },
         },
         evidence,
     )
 
     assert ["networkctl", "reconfigure", "eth1"] in commands
-    assert ["ip", "link", "delete", "dev", "eth1.200"] in commands
+    assert ["ip", "link", "delete", "dev", "eth1.300"] in commands
+    assert ["ip", "link", "set", "dev", "eth1.200", "mtu", "1500"] in commands
     assert ["ip", "link", "set", "dev", "eth0", "up"] in commands
     assert ["networkctl", "reconfigure", "eth0"] in commands
     assert ["ip", "link", "set", "dev", "eth1", "down"] in commands
+
+
+def test_management_handoff_snapshot_captures_existing_vlan_mtu(monkeypatch, tmp_path):
+    """Capture the live MTU needed to restore a pre-existing management VLAN.
+
+    Args:
+        monkeypatch: Pytest fixture used to isolate link discovery.
+        tmp_path: Temporary staged Network path.
+    """
+    helper = load_helper_module()
+    network_path = tmp_path / "network.conf"
+    monkeypatch.setattr(
+        helper,
+        "_parse_network_config",
+        lambda _path: ([], [{"name": "eth0.20"}], []),
+    )
+    monkeypatch.setattr(helper, "_link_exists", lambda _interface: True)
+    monkeypatch.setattr(
+        helper,
+        "_run",
+        lambda command: subprocess.CompletedProcess(
+            command,
+            0,
+            json.dumps([{"flags": ["UP"], "mtu": 1500}]),
+            "",
+        ),
+    )
+
+    _physical, vlans, states = helper._management_handoff_candidate_links(
+        {"network_config_path": str(network_path)}
+    )
+
+    assert vlans == ["eth0.20"]
+    assert states["eth0.20"] == {"existed": True, "admin_up": True, "mtu": 1500}
 
 
 def test_management_handoff_rollback_reverts_candidate_resolver(monkeypatch):

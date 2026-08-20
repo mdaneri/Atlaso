@@ -15191,7 +15191,7 @@ def _management_handoff_runtime_paths(payload: dict) -> list[Path]:
     return list(unique.values())
 
 
-def _management_handoff_candidate_links(payload: dict) -> tuple[list[str], list[str], dict[str, dict[str, bool]]]:
+def _management_handoff_candidate_links(payload: dict) -> tuple[list[str], list[str], dict[str, dict[str, object]]]:
     """Capture candidate link identity and pre-mutation administrative state.
 
     Args:
@@ -15203,10 +15203,11 @@ def _management_handoff_candidate_links(payload: dict) -> tuple[list[str], list[
     physical, vlans, _removed = _parse_network_config(Path(str(payload["network_config_path"])))
     physical_names = list(dict.fromkeys(str(row.get("name") or "") for row in physical if row.get("name")))
     vlan_names = list(dict.fromkeys(str(row.get("name") or "") for row in vlans if row.get("name")))
-    link_states: dict[str, dict[str, bool]] = {}
+    link_states: dict[str, dict[str, object]] = {}
     for interface in [*physical_names, *vlan_names]:
         existed = _link_exists(interface)
         admin_up = False
+        mtu: int | None = None
         if existed:
             result = _run(["ip", "-j", "link", "show", "dev", interface])
             if result.returncode != 0:
@@ -15217,7 +15218,13 @@ def _management_handoff_candidate_links(payload: dict) -> tuple[list[str], list[
                 raise ValueError(f"candidate link state was malformed for {interface}") from exc
             flags = rows[0].get("flags", []) if rows else []
             admin_up = "UP" in flags
-        link_states[interface] = {"existed": existed, "admin_up": admin_up}
+            try:
+                mtu = int(rows[0].get("mtu")) if rows else None
+            except (TypeError, ValueError) as exc:
+                raise ValueError(f"candidate link MTU was malformed for {interface}") from exc
+            if mtu is None or mtu <= 0:
+                raise ValueError(f"candidate link MTU could not be captured for {interface}")
+        link_states[interface] = {"existed": existed, "admin_up": admin_up, "mtu": mtu}
     return physical_names, vlan_names, link_states
 
 
@@ -15942,6 +15949,22 @@ def _restore_management_handoff_links(state: dict, commands: list[dict[str, obje
             time.sleep(0.5)
         if not _link_exists(interface):
             raise ValueError(f"network rollback could not recreate {interface}")
+        saved = link_states.get(interface) if isinstance(link_states.get(interface), dict) else {}
+        saved_mtu = saved.get("mtu")
+        if interface in candidate_vlans and bool(saved.get("existed")) and saved_mtu is not None:
+            if not isinstance(saved_mtu, int) or saved_mtu <= 0:
+                raise ValueError(f"network rollback MTU evidence is invalid for {interface}")
+            mtu_result = _run(["ip", "link", "set", "dev", interface, "mtu", str(saved_mtu)])
+            commands.append(
+                {
+                    "stage": "network rollback",
+                    "interface": interface,
+                    "mtu": saved_mtu,
+                    "returncode": mtu_result.returncode,
+                }
+            )
+            if mtu_result.returncode != 0:
+                raise ValueError(f"network rollback could not restore {interface} MTU")
         if interface in previous_interfaces:
             link_up = _run(["ip", "link", "set", "dev", interface, "up"])
             commands.append({"stage": "network rollback", "interface": interface, "link_up": link_up.returncode})

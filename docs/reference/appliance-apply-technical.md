@@ -239,7 +239,8 @@ policy and adds only the candidate management admission rules. When enabling fil
 transitional ruleset remains open. The enabled or disabled candidate ruleset applies only after readiness while the old
 path retires. A second
 readiness pass protects retirement. Any validation, mutation, service, probe, or retirement failure restores every
-captured file, reloads networkd and nftables, reconfigures previous links, reloads nginx, and restarts Atlaso when the
+captured file, reloads networkd and nftables, restores the captured live MTU on every pre-existing candidate VLAN,
+reconfigures previous links, reloads nginx, and restarts Atlaso when the
 captured state requires it. Rollback explicitly reconfigures every pre-existing candidate link and removes a
 candidate-only VLAN after restoring its files. A previously absent firewall state is restored by disabling/stopping the
 candidate `atlaso-firewall.service`, deleting its snapshotted-as-absent unit and config, reloading systemd, and running

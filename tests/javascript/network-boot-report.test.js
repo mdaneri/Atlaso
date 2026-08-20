@@ -12,6 +12,13 @@ function loadFunction(name, nextName, context = {}) {
   return vm.runInNewContext(`(function ${name}${functionSource})`, context);
 }
 
+function loadAsyncFunction(name, nextName, context = {}) {
+  const functionSource = source
+    .split(`async function ${name}`, 2)[1]
+    .split(`function ${nextName}`, 1)[0];
+  return vm.runInNewContext(`(async function ${name}${functionSource})`, context);
+}
+
 const networkBootReportValue = loadFunction(
   "networkBootReportValue",
   "networkBootAddressListOptions",
@@ -58,6 +65,11 @@ const esxiDiscoveredHostIsRegistered = loadFunction(
   "esxiDiscoveredHostIsRegistered",
   "esxiSuggestedHostname",
   { Boolean, esxiHostMacKey },
+);
+const selectEsxiDiscoveredHostOption = loadFunction(
+  "selectEsxiDiscoveredHostOption",
+  "esxiHostVariableRows",
+  { Array, String },
 );
 const networkBootChangedRowValues = loadFunction(
   "networkBootChangedRowValues",
@@ -151,6 +163,39 @@ test("ESXi discovered host selection skips registered hosts", () => {
   assert.equal(esxiDiscoveredHostIsRegistered({ boot_mac: "00:50:56:aa:bb:dd" }, usedMacs), false);
 });
 
+test("ESXi promotion selects the clicked discovered host instead of the first candidate", () => {
+  const select = {
+    options: [{ value: "12" }, { value: "47" }],
+    value: "12",
+  };
+  assert.equal(selectEsxiDiscoveredHostOption(select, 47), true);
+  assert.equal(select.value, "47");
+  assert.equal(selectEsxiDiscoveredHostOption(select, 99), false);
+  assert.equal(select.value, "47");
+});
+
+test("ESXi Host Reference actions preserve JSON lifecycle conflict details", async () => {
+  class FormData {
+    set() {}
+  }
+  const detail = "Associated discovered-host inventory is also assigned to ESXi Host Reference `esx-02`.";
+  const postEsxiHostAction = loadAsyncFunction(
+    "postEsxiHostAction",
+    "newEsxiHostRow",
+    {
+      FormData,
+      Object,
+      atlasoGridWizardRequest: async () => { throw new Error(detail); },
+      window: { location: { reload: () => assert.fail("must not reload after a conflict") } },
+    },
+  );
+
+  await assert.rejects(
+    postEsxiHostAction("/esxi-pxe/hosts/7/delete", {}, "csrf"),
+    new RegExp(detail.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")),
+  );
+});
+
 test("Network Boot discovered hosts refresh while visible and immediately on visibility return", async () => {
   class HTMLElement {}
   const status = new HTMLElement();
@@ -239,6 +284,33 @@ test("Network Boot discovered-host refresh changes rows in place", async () => {
   assert.deepEqual(updates, [{ last_seen_at: "new" }]);
   assert.deepEqual(deletions, [2]);
   assert.deepEqual(additions, [{ id: 3, last_seen_at: "added" }]);
+});
+
+test("Network Boot discovered-host refresh updates Host Reference associations", async () => {
+  const referenceUpdates = [];
+  const referenceRows = [
+    {
+      getData: () => ({ id: 7, hostname: "esx-07", discovered_host_ids: [] }),
+      update: async (values) => referenceUpdates.push({ id: 7, values }),
+    },
+    {
+      getData: () => ({ id: 8, hostname: "esx-08", discovered_host_ids: [99] }),
+      update: async (values) => referenceUpdates.push({ id: 8, values }),
+    },
+  ];
+  await reconcileNetworkBootDiscoveredHosts(
+    { getRows: () => [], addRow: async () => {} },
+    [
+      { id: 41, esxi_assignments: [{ id: 7 }] },
+      { id: 42, esxi_assignments: [{ id: 7 }] },
+    ],
+    { getRows: () => referenceRows },
+  );
+
+  assert.deepEqual(JSON.parse(JSON.stringify(referenceUpdates)), [
+    { id: 7, values: { discovered_host_ids: [41, 42] } },
+    { id: 8, values: { discovered_host_ids: [] } },
+  ]);
 });
 
 test("Network Boot discovered-host refresh preserves the last list after failure", async () => {

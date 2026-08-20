@@ -30,7 +30,7 @@ from typing import Any, Callable, Iterable
 
 import pycdlib
 from pycdlib import pycdlibexception
-from sqlalchemy import delete, desc, func, select, update
+from sqlalchemy import delete, desc, func, select, text, update
 from sqlalchemy.orm import Session
 
 from atlaso.app.config import get_settings
@@ -79,6 +79,7 @@ NETWORK_BOOT_MAX_DEVICE_FLAGS = 32
 NETWORK_BOOT_REPORTS_PER_HOST = 11
 NETWORK_BOOT_MAX_HOSTS = 512
 NETWORK_BOOT_MAX_REPORTS = 2048
+ESXI_HOST_REFERENCE_LIFECYCLE_LOCK_ID = 0x45535849484F5354
 NETWORK_BOOT_MAX_SESSIONS = 4096
 NETWORK_BOOT_SESSION_LIFETIME = timedelta(hours=8)
 NETWORK_BOOT_ONLINE_THRESHOLD = timedelta(seconds=30)
@@ -1248,6 +1249,7 @@ def _prune_inventory_storage(
     Raises:
         ValueError: If an input value is invalid.
     """
+    lock_esxi_host_reference_lifecycle(db)
     now = utcnow()
     heartbeat_cutoff = now - NETWORK_BOOT_ONLINE_THRESHOLD
     protected_host_ids = {
@@ -1272,6 +1274,15 @@ def _prune_inventory_storage(
                 NetworkBootInventoryCommand.expires_at > now.replace(tzinfo=None),
             )
         ).scalars()
+    )
+    assignments_by_mac = esxi_host_assignments_by_mac(db)
+    protected_host_ids.update(
+        int(host.id)
+        for host in db.execute(select(NetworkBootDiscoveredHost)).scalars()
+        if esxi_host_assignments_for_discovered_host(
+            host,
+            assignments_by_mac=assignments_by_mac,
+        )
     )
     protected_host_ids.add(preserve_host_id)
     host_rows = db.execute(
@@ -1303,7 +1314,8 @@ def _prune_inventory_storage(
         or retained_reports > NETWORK_BOOT_MAX_REPORTS
     ):
         raise ValueError(
-            "Inventory storage capacity is occupied by live clients; retry later."
+            "Inventory storage capacity is occupied by live or assigned hosts; "
+            "retry later."
         )
     for host_id, report_count in host_rows:
         host_id = int(host_id)
@@ -1362,6 +1374,7 @@ def store_inventory_report(
     """
     if session.report_submitted_at is not None:
         raise ValueError("This inventory session has already submitted its report.")
+    lock_esxi_host_reference_lifecycle(db)
     report = normalize_inventory_report(payload)
     identity_key, dmi_uuid, macs = report_identity(report)
     candidates: list[NetworkBootDiscoveredHost] = []
@@ -1722,17 +1735,10 @@ def host_to_dict(
     session = latest_live_session(db, host.id)
     if assignments_by_mac is None:
         assignments_by_mac = esxi_host_assignments_by_mac(db)
-    assignments: list[dict[str, Any]] = []
-    assigned_ids: set[int] = set()
-    for mac_address in sorted({*_macs(host), host.boot_mac} - {""}):
-        try:
-            normalized_mac = normalize_mac(mac_address)
-        except ValueError:
-            continue
-        assignment = assignments_by_mac.get(normalized_mac)
-        if assignment is not None and assignment["id"] not in assigned_ids:
-            assignments.append(assignment)
-            assigned_ids.add(assignment["id"])
+    assignments = esxi_host_assignments_for_discovered_host(
+        host,
+        assignments_by_mac=assignments_by_mac,
+    )
     assignment = assignments[0] if assignments else None
     payload: dict[str, Any] = {
         "id": host.id,
@@ -1786,6 +1792,189 @@ def esxi_host_assignments_by_mac(db: Session) -> dict[str, dict[str, Any]]:
             "enabled": bool(host.enabled),
         }
     return assignments
+
+
+def esxi_host_assignments_for_discovered_host(
+    host: NetworkBootDiscoveredHost,
+    *,
+    assignments_by_mac: dict[str, dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Return every ESXi Host Reference assigned to one discovered host.
+
+    Args:
+        host: Discovered host whose reported MAC addresses identify assignments.
+        assignments_by_mac: Normalized ESXi Host Reference assignments by MAC.
+    """
+    assignments: list[dict[str, Any]] = []
+    assigned_ids: set[int] = set()
+    for mac_address in sorted({*_macs(host), host.boot_mac} - {""}):
+        try:
+            normalized_mac = normalize_mac(mac_address)
+        except ValueError:
+            continue
+        assignment = assignments_by_mac.get(normalized_mac)
+        if assignment is not None and assignment["id"] not in assigned_ids:
+            assignments.append(assignment)
+            assigned_ids.add(assignment["id"])
+    return assignments
+
+
+def discovered_hosts_for_esxi_host(
+    db: Session,
+    esxi_host: EsxiPxeHost,
+) -> list[NetworkBootDiscoveredHost]:
+    """Return discovered hosts assigned to one ESXi Host Reference.
+
+    Args:
+        db: Active database session.
+        esxi_host: ESXi Host Reference whose normalized MAC identifies assignments.
+    """
+    try:
+        assigned_mac = normalize_mac(esxi_host.mac_address)
+    except ValueError:
+        return []
+    discovered_hosts = db.execute(
+        select(NetworkBootDiscoveredHost).order_by(NetworkBootDiscoveredHost.id)
+    ).scalars().all()
+    matches: list[NetworkBootDiscoveredHost] = []
+    for discovered_host in discovered_hosts:
+        reported_macs: set[str] = set()
+        for mac_address in {*_macs(discovered_host), discovered_host.boot_mac} - {""}:
+            try:
+                reported_macs.add(normalize_mac(mac_address))
+            except ValueError:
+                continue
+        if assigned_mac in reported_macs:
+            matches.append(discovered_host)
+    return matches
+
+
+def remove_esxi_host_discovery_state(
+    db: Session,
+    esxi_host: EsxiPxeHost,
+) -> dict[str, int]:
+    """Remove discoveries owned exclusively by one ESXi Host Reference.
+
+    The caller owns Host Reference removal, audit attribution, and the transaction
+    commit. Cleanup fails before mutation when another Host Reference owns any
+    reported MAC for an associated discovery.
+
+    Args:
+        db: Active database session.
+        esxi_host: ESXi Host Reference whose associated discoveries are removed.
+
+    Returns:
+        Counts of removed discovered hosts and retained inventory resources.
+
+    Raises:
+        ValueError: If another Host Reference still owns an associated discovery.
+    """
+    lock_esxi_host_reference_lifecycle(db)
+    discovered_hosts = discovered_hosts_for_esxi_host(db, esxi_host)
+    assignments_by_mac = esxi_host_assignments_by_mac(db)
+    blocking_assignments: dict[int, str] = {}
+    for discovered_host in discovered_hosts:
+        for assignment in esxi_host_assignments_for_discovered_host(
+            discovered_host,
+            assignments_by_mac=assignments_by_mac,
+        ):
+            if assignment["id"] != esxi_host.id:
+                blocking_assignments[assignment["id"]] = assignment["hostname"]
+    if blocking_assignments:
+        blockers = ", ".join(
+            f"`{hostname}`" for hostname in blocking_assignments.values()
+        )
+        raise ValueError(
+            "Associated discovered-host inventory is also assigned to "
+            f"ESXi Host Reference {blockers}. Delete this Host Reference "
+            "without inventory cleanup, or remove the other assignments first."
+        )
+
+    removal_counts = {
+        "discovered_hosts_removed": 0,
+        "commands": 0,
+        "sessions": 0,
+        "reports": 0,
+    }
+    for discovered_host in discovered_hosts:
+        counts = remove_discovered_host_state(db, discovered_host)
+        for key in ("commands", "sessions", "reports"):
+            removal_counts[key] += counts[key]
+        removal_counts["discovered_hosts_removed"] += 1
+    return removal_counts
+
+
+def lock_esxi_host_reference_lifecycle(db: Session) -> None:
+    """Serialize Host Reference writes with assignment-dependent inventory changes.
+
+    Args:
+        db: Active database session that owns the lifecycle transaction.
+    """
+    if db.bind is not None and db.bind.dialect.name == "postgresql":
+        db.execute(
+            text("SELECT pg_advisory_xact_lock(:lock_id)"),
+            {"lock_id": ESXI_HOST_REFERENCE_LIFECYCLE_LOCK_ID},
+        )
+
+
+def remove_discovered_host_state(
+    db: Session,
+    host: NetworkBootDiscoveredHost,
+) -> dict[str, int]:
+    """Remove one discovered host and its retained inventory state.
+
+    The caller owns assignment checks, audit attribution, and the transaction commit.
+
+    Args:
+        db: Active database session.
+        host: Discovered host whose commands, sessions, reports, and row are removed.
+
+    Returns:
+        Counts of the removed retained inventory resources.
+    """
+    counts = {
+        "commands": int(
+            db.scalar(
+                select(func.count(NetworkBootInventoryCommand.id)).where(
+                    NetworkBootInventoryCommand.host_id == host.id
+                )
+            )
+            or 0
+        ),
+        "sessions": int(
+            db.scalar(
+                select(func.count(NetworkBootInventorySession.id)).where(
+                    NetworkBootInventorySession.host_id == host.id
+                )
+            )
+            or 0
+        ),
+        "reports": int(
+            db.scalar(
+                select(func.count(NetworkBootInventoryReport.id)).where(
+                    NetworkBootInventoryReport.host_id == host.id
+                )
+            )
+            or 0
+        ),
+    }
+    db.execute(
+        delete(NetworkBootInventoryCommand).where(
+            NetworkBootInventoryCommand.host_id == host.id
+        )
+    )
+    db.execute(
+        delete(NetworkBootInventorySession).where(
+            NetworkBootInventorySession.host_id == host.id
+        )
+    )
+    db.execute(
+        delete(NetworkBootInventoryReport).where(
+            NetworkBootInventoryReport.host_id == host.id
+        )
+    )
+    db.delete(host)
+    return counts
 
 
 def report_history(

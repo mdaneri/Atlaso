@@ -25,7 +25,7 @@ from fastapi import (
 from fastapi import Path as ApiPath
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import ValidationError
-from sqlalchemy import delete, desc, func, select
+from sqlalchemy import desc, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -48,6 +48,7 @@ from atlaso.app.schemas import (
     EsxiBootAuthorizationRequest,
     EsxiBootAuthorizationResponse,
     EsxiPxeHostCreate,
+    ProblemDetails,
 )
 from atlaso.app.security import Identity, require_api_or_session_scope
 from atlaso.app.services.esxi_pxe import (
@@ -71,10 +72,12 @@ from atlaso.app.services.network_boot import (
     host_to_dict,
     inventory_session_for_token,
     issue_inventory_session,
+    lock_esxi_host_reference_lifecycle,
     network_boot_upload_path,
     normalize_mac,
     poll_inventory_command,
     queue_reboot_command,
+    remove_discovered_host_state,
     render_esxi_boot_claim,
     render_network_boot_menu,
     report_history,
@@ -788,7 +791,17 @@ def download_discovered_host_report(
     )
 
 
-@router.delete("/hosts/{host_id}")
+@router.delete(
+    "/hosts/{host_id}",
+    responses={
+        status.HTTP_409_CONFLICT: {
+            "model": ProblemDetails,
+            "description": (
+                "The discovered host is assigned to an ESXi Host Reference, which must be removed first."
+            ),
+        }
+    },
+)
 def remove_discovered_host(
     host_id: Annotated[int, ApiPath(description='Unique identifier of the host record addressed by this operation.')],
     request: Request,
@@ -799,7 +812,8 @@ def remove_discovered_host(
 
     Uses the authentication posture documented for this endpoint. Removal or revocation takes effect
     in Atlaso application state; appliance host changes remain subject to the documented apply
-    boundary for the resource.
+    boundary for the resource. An assigned host returns 409 and names the ESXi Host Reference that
+    must be removed first; deleting that Host Reference may optionally remove the discovery state.
 
     Args:
         host_id: Stable identifier of the associated host resource.
@@ -807,51 +821,25 @@ def remove_discovered_host(
         identity: Authenticated identity authorizing the operation.
         db: Active database session used by the operation.
     """
+    lock_esxi_host_reference_lifecycle(db)
     host = db.get(NetworkBootDiscoveredHost, host_id)
     if host is None:
         raise HTTPException(status_code=404, detail="Discovered host not found.")
-    counts = {
-        "commands": int(
-            db.scalar(
-                select(func.count(NetworkBootInventoryCommand.id)).where(
-                    NetworkBootInventoryCommand.host_id == host.id
-                )
-            )
-            or 0
-        ),
-        "sessions": int(
-            db.scalar(
-                select(func.count(NetworkBootInventorySession.id)).where(
-                    NetworkBootInventorySession.host_id == host.id
-                )
-            )
-            or 0
-        ),
-        "reports": int(
-            db.scalar(
-                select(func.count(NetworkBootInventoryReport.id)).where(
-                    NetworkBootInventoryReport.host_id == host.id
-                )
-            )
-            or 0
-        ),
-    }
-    db.execute(
-        delete(NetworkBootInventoryCommand).where(
-            NetworkBootInventoryCommand.host_id == host.id
+    assignments = host_to_dict(
+        db,
+        host,
+        assignments_by_mac=esxi_host_assignments_by_mac(db),
+    )["esxi_assignments"]
+    if assignments:
+        assigned_hostname = assignments[0]["hostname"]
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                f"This discovered host is assigned to ESXi host `{assigned_hostname}`. "
+                "Remove the ESXi host from ESXi Kickstarts before deleting its discovery record."
+            ),
         )
-    )
-    db.execute(
-        delete(NetworkBootInventorySession).where(
-            NetworkBootInventorySession.host_id == host.id
-        )
-    )
-    db.execute(
-        delete(NetworkBootInventoryReport).where(
-            NetworkBootInventoryReport.host_id == host.id
-        )
-    )
-    db.delete(host)
+    counts = remove_discovered_host_state(db, host)
     record_audit(
         db,
         actor=identity.username,
@@ -1273,6 +1261,7 @@ def promote_discovered_host(
         identity: Authenticated identity authorizing the operation.
         db: Active database session used by the operation.
     """
+    lock_esxi_host_reference_lifecycle(db)
     discovered = db.get(NetworkBootDiscoveredHost, host_id)
     if discovered is None:
         raise HTTPException(status_code=404, detail="Discovered host not found.")
@@ -1571,7 +1560,7 @@ def submit_inventory_report(
         db.rollback()
         message = str(exc)
         logger.warning("Rejected Inventory Linux report: %s", message)
-        if "occupied by live clients; retry later" in message:
+        if "Inventory storage capacity is occupied by" in message:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail=message,
