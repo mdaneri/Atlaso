@@ -239,6 +239,35 @@ test("uses a neutral bounded reconnect state for a planned management restart", 
   assert.equal(state.ui.pollTone, "warning");
 });
 
+test("consumes an unused reconnect grace after settings restart success", async () => {
+  const afterSettingsTask = plannedRestartTask("succeeded");
+  afterSettingsTask._children.push({ component_key: "firewall", status: "running" });
+  const statusPayloads = [
+    { active_task: plannedRestartTask(), pending_count: 0 },
+    { active_task: afterSettingsTask, pending_count: 0 },
+    new Error("later unrelated outage"),
+  ];
+  const state = monitorHarness({
+    requestStatus: async () => {
+      const payload = statusPayloads.shift();
+      if (payload instanceof Error) throw payload;
+      return payload;
+    },
+    requestTask: async () => afterSettingsTask,
+  });
+
+  await state.monitor.refresh();
+  await state.timers.at(-1).callback();
+  await state.timers.at(-1).callback();
+
+  assert.equal(state.errorStates[0].expectedReconnect, false);
+  assert.equal(state.errorStates[0].reconnectGraceMs, 0);
+  assert.equal(state.ui.pollNotice, "unavailable");
+  assert.equal(state.ui.pollTone, "warning");
+  assert.equal(state.ui.modalStatus, "running");
+  assert.equal(state.ui.locked, true);
+});
+
 test("escalates a planned reconnect after its grace window", async () => {
   let now = 1000;
   const state = monitorHarness({

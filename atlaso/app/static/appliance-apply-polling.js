@@ -99,6 +99,15 @@
     return Number.isFinite(graceSeconds) && graceSeconds > 0 ? graceSeconds * 1000 : 0;
   }
 
+  function plannedReconnectCompleted(task) {
+    const transition = task?.result?.management_status_transition;
+    if (transition?.kind !== "planned_service_restart") return false;
+    const settingsStep = Array.isArray(task?._children)
+      ? task._children.find((step) => step?.component_key === "appliance_settings")
+      : null;
+    return settingsStep?.status === "succeeded";
+  }
+
   function createMonitor(options) {
     let sequence = 0;
     let acceptedSequence = 0;
@@ -119,6 +128,7 @@
       if (sameTask && !taskActive(currentTask) && taskActive(task)) return false;
       currentTask = task;
       acceptedSequence = observedSequence;
+      if (plannedReconnectCompleted(task)) completedReconnectTaskId = taskId;
       if (taskActive(task)) trackedJobId = taskId;
       else if (trackedJobId === taskId) trackedJobId = "";
       options.onTask(task);
